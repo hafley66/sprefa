@@ -8,9 +8,9 @@ name = "sprefa"
 path = "src/main.rs"
 
 [dependencies]
-sprefa-config = { path = "../0_config" }
-sprefa-schema = { path = "../1_schema" }
-sprefa-server = { path = "../4_server" }
+sprefa_config = { path = "../0_config" }
+sprefa_schema = { path = "../1_schema" }
+sprefa_server = { path = "../4_server" }
 clap = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }

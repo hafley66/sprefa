@@ -1,10 +1,10 @@
 [package]
-name = "sprefa-extract"
+name = "sprefa_extract"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-sprefa-schema = { path = "../1_schema" }
+sprefa_schema = { path = "../1_schema" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 

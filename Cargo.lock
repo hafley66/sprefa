@@ -1514,9 +1514,9 @@ dependencies = [
  "anyhow",
  "clap",
  "serde_json",
- "sprefa-config",
- "sprefa-schema",
- "sprefa-server",
+ "sprefa_config",
+ "sprefa_schema",
+ "sprefa_server",
  "sqlx",
  "tokio",
  "toml",
@@ -1525,43 +1525,44 @@ dependencies = [
 ]
 
 [[package]]
-name = "sprefa-config"
+name = "sprefa_config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "globset",
  "insta",
  "serde",
+ "tempfile",
  "thiserror",
  "toml",
 ]
 
 [[package]]
-name = "sprefa-extract"
+name = "sprefa_extract"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "insta",
  "serde",
- "sprefa-schema",
+ "sprefa_schema",
 ]
 
 [[package]]
-name = "sprefa-scan"
+name = "sprefa_scan"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "insta",
- "sprefa-config",
- "sprefa-extract",
- "sprefa-schema",
+ "sprefa_config",
+ "sprefa_extract",
+ "sprefa_schema",
  "sqlx",
  "tokio",
  "tracing",
 ]
 
 [[package]]
-name = "sprefa-schema"
+name = "sprefa_schema"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1574,15 +1575,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "sprefa-server"
+name = "sprefa_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "serde",
  "serde_json",
- "sprefa-config",
- "sprefa-schema",
+ "sprefa_config",
+ "sprefa_schema",
  "sqlx",
  "tokio",
  "tracing",

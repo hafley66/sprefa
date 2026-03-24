@@ -1,11 +1,11 @@
 [package]
-name = "sprefa-server"
+name = "sprefa_server"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-sprefa-config = { path = "../0_config" }
-sprefa-schema = { path = "../1_schema" }
+sprefa_config = { path = "../0_config" }
+sprefa_schema = { path = "../1_schema" }
 axum = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }

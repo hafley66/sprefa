@@ -28,7 +28,16 @@ bind = "127.0.0.1:9400"
 [scan.normalize]
 strip_suffixes = ["-service", "-api", "-v2", "-client", "-server"]
 
-# per-repo config
+# Auto-discover repos from a checkout root managed by an external tool.
+# sprefa does NOT clone or fetch -- it only reads what's on disk.
+# The layout pattern maps directory levels to {org}, {branch}, {repo}.
+[[sources]]
+root = "~/checkouts"
+layout = "{org}/{branch}/{repo}"    # -> ~/checkouts/acme/main/frontend/
+# default_org = "myco"              # used when layout has no {org}
+# default_branch = "main"           # used when layout has no {branch}
+
+# Explicit repo entries (in addition to discovered sources)
 [[repos]]
 name = "my-frontend"
 path = "/home/me/repos/my-frontend"

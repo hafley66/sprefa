@@ -6,5 +6,6 @@ db:
   path: /tmp/sprefa.db
 daemon: ~
 scan: ~
+sources: []
 repos: []
 filter: ~

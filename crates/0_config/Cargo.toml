@@ -1,5 +1,5 @@
 [package]
-name = "sprefa-config"
+name = "sprefa_config"
 version.workspace = true
 edition.workspace = true
 
@@ -12,3 +12,4 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+tempfile = "3"

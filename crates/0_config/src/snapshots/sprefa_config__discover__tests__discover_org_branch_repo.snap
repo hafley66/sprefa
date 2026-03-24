@@ -1,0 +1,16 @@
+---
+source: crates/0_config/src/3_discover.rs
+expression: snapshot
+---
+- - acme
+  - main
+  - backend
+- - acme
+  - main
+  - frontend
+- - acme
+  - release-v3
+  - frontend
+- - other-org
+  - main
+  - shared-lib

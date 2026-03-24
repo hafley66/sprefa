@@ -1,12 +1,12 @@
 [package]
-name = "sprefa-scan"
+name = "sprefa_scan"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-sprefa-config = { path = "../0_config" }
-sprefa-schema = { path = "../1_schema" }
-sprefa-extract = { path = "../2_extract" }
+sprefa_config = { path = "../0_config" }
+sprefa_schema = { path = "../1_schema" }
+sprefa_extract = { path = "../2_extract" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

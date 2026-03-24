@@ -1,5 +1,5 @@
 [package]
-name = "sprefa-schema"
+name = "sprefa_schema"
 version.workspace = true
 edition.workspace = true
 

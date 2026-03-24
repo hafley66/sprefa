@@ -17,6 +17,7 @@ scan:
       - "-v2"
       - "-client"
       - "-server"
+sources: []
 repos: []
 filter:
   mode: exclude

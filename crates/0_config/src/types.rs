@@ -5,8 +5,37 @@ pub struct Config {
     pub db: DbConfig,
     pub daemon: Option<DaemonConfig>,
     pub scan: Option<ScanConfig>,
+    /// Auto-discovery from a checkout root managed by an external tool.
+    #[serde(default)]
+    pub sources: Vec<SourceConfig>,
+    /// Explicit repo entries (in addition to anything discovered via sources).
     #[serde(default)]
     pub repos: Vec<RepoConfig>,
+    pub filter: Option<FilterConfig>,
+}
+
+/// Points to a directory tree of git checkouts managed by an external tool.
+/// sprefa does not clone or fetch -- it reads what's already on disk.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SourceConfig {
+    /// Root directory containing checkouts.
+    pub root: String,
+    /// Directory layout pattern using {org}, {branch}, {repo} placeholders.
+    /// Sprefa walks `root` and matches directory structure against this pattern
+    /// to discover org, repo name, and branch for each checkout.
+    ///
+    /// Examples:
+    ///   "{org}/{branch}/{repo}"       ->  acme/main/frontend/
+    ///   "{org}/{repo}/{branch}"       ->  acme/frontend/main/
+    ///   "{org}/{repo}"                ->  acme/frontend/  (branch from git HEAD)
+    ///   "{repo}"                      ->  frontend/       (flat, no org)
+    pub layout: String,
+    /// Default org if the layout has no {org} placeholder.
+    pub default_org: Option<String>,
+    /// Default branch if the layout has no {branch} placeholder.
+    /// When absent and no {branch} in layout, branch is read from git HEAD.
+    pub default_branch: Option<String>,
+    /// Filter applied to repos discovered from this source.
     pub filter: Option<FilterConfig>,
 }
 
@@ -105,7 +134,7 @@ impl Config {
     }
 }
 
-fn expand_tilde(path: &str) -> String {
+pub(crate) fn expand_tilde(path: &str) -> String {
     if path.starts_with("~/") {
         if let Some(home) = std::env::var_os("HOME") {
             return format!("{}{}", home.to_string_lossy(), &path[1..]);

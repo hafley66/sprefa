@@ -93,6 +93,17 @@ exclude = [
   "*.map",
 ]
 
+# Auto-discover repos from a checkout root managed by an external tool.
+# The layout pattern tells sprefa how the directory tree maps to org/repo/branch.
+# sprefa does NOT clone or fetch -- it only reads what's already on disk.
+#
+# [[sources]]
+# root = "~/checkouts"
+# layout = "{org}/{branch}/{repo}"
+# # default_org = "myco"          # used when layout has no {org}
+# # default_branch = "main"       # used when layout has no {branch}
+
+# Explicit repo entries (in addition to anything discovered via sources).
 # [[repos]]
 # name = "my-repo"
 # path = "/path/to/repo"

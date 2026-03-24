@@ -1,0 +1,13 @@
+---
+source: crates/0_config/src/3_discover.rs
+expression: snapshot
+---
+- - acme
+  - backend
+  - main
+- - acme
+  - frontend
+  - develop
+- - acme
+  - frontend
+  - main
