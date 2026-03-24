@@ -4,9 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-sprefa_config = { path = "../0_config" }
-sprefa_schema = { path = "../1_schema" }
-sprefa_extract = { path = "../2_extract" }
+sprefa_config = { path = "../config" }
+sprefa_schema = { path = "../schema" }
+sprefa_extract = { path = "../extract" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

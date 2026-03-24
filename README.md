@@ -1,41 +1,73 @@
 # sprefa - (s)u(p)er(refa)ctor
 
-Generic cross-repo code intelligence indexer. Parses source files from N git repos into a single SQLite DB, extracts every interesting string as a ref with byte-level spans, normalizes for fuzzy matching, and resolves cross-file/cross-repo imports. The schema is language-agnostic; language-specific extraction happens in a pluggable scan layer.
+Rename a symbol, every reference updates. Across files, across repos, across languages. No LLM, no datacenter -- a pre-built index and a graph traversal.
 
-The system operates in two modes sharing the same transaction logic:
-- **CLI**: one-shot index run, direct SQLite access
-- **Daemon**: HTTP server wrapping the same operations, CLI becomes a client
+sprefa is a daemon that watches project folders, maintains a SQLite index of every interesting string in every source file (imports, exports, config keys, YAML values, dependency names), and performs instant deterministic rename propagation when you change something. The index makes renames O(lookup) instead of O(parse-everything).
+
+## How it works
+
+```
+watch files -> extract refs -> index in SQLite -> rename = lookup + rewrite
+```
+
+Every interesting string in a codebase is a **ref**: a file contains a string at a byte offset, classified by kind (import, export, JSON key, YAML value, dependency name, etc.). The string is deduplicated and normalized for fuzzy matching. Refs link files to strings. Resolved imports link refs to target files. That's the whole model.
+
+```
+repos 1->M files 1->M refs M<-1 strings
+ref.target_file_id -> files         (resolved cross-file link)
+refs.parent_key_string_id -> strings (key-value pairings)
+```
+
+## Why this doesn't already exist
+
+Plenty of tools do code intelligence for a single language (rust-analyzer, tsserver, gopls). They all stop at one of three walls:
+
+1. **Single-language.** Your TS frontend imports a string that matches a Go service name in a K8s manifest that references a Helm value from a TOML config. No single-language tool sees the full chain.
+
+2. **Build-system coupling.** SCIP indexers and rust-analyzer require a successful build. If the project doesn't compile, or you're looking at 500 repos and can't build all of them, you get nothing.
+
+3. **Precision religion.** IDE tooling won't ship anything less than 100% semantic precision. But most renames are unambiguous string matches within a known module graph. You don't need full type inference to propagate `UserService` through `import { UserService } from './user-service'`.
+
+sprefa operates at the **string + module graph** level. Normalized strings in SQLite with byte spans, module-aware resolution for languages that have it, honest confidence scoring instead of pretending to be a compiler. Fast enough to run as a daemon on a laptop.
+
+## Current status
+
+**Phase 1 complete**: config, schema, CLI, server skeleton.
+
+- Config system with TOML loading, glob-based filtering (exclude/include), per-repo and per-branch overrides
+- Source auto-discovery from checkout roots with configurable layout patterns
+- SQLite schema: repos, files, strings (FTS5 trigram), refs, branch_files, repo_branches, git_tags, repo_packages
+- CLI: `init`, `add`, `scan`, `status`, `query`, `serve` + `--readme` for embedded docs
+- Axum server: `/status`, `/repos`, `/query`
+- 13 insta snapshot tests
+
+**In progress**: rule engine, extractors, scan pipeline.
 
 ---
 
-## Phase 1: Config + CLI/Server Foundation
-
-### Config (`sprefa.toml`)
+## Config (`sprefa.toml`)
 
 ```toml
 [db]
-path = "~/.sprefa/index.db"        # where the SQLite DB lives
+path = "~/.sprefa/index.db"
 
 [daemon]
-# url = "http://localhost:9400"     # if set, CLI delegates to daemon
 bind = "127.0.0.1:9400"
-# auto_start = true                 # CLI starts daemon if not running
+# url = "http://localhost:9400"     # if set, CLI delegates to daemon
 
 [scan]
-# workers = 4                       # parallel scan threads
+# workers = 4
 
-# norm2 suffix stripping rules
 [scan.normalize]
 strip_suffixes = ["-service", "-api", "-v2", "-client", "-server"]
 
 # Auto-discover repos from a checkout root managed by an external tool.
 # sprefa does NOT clone or fetch -- it only reads what's on disk.
-# The layout pattern maps directory levels to {org}, {branch}, {repo}.
 [[sources]]
 root = "~/checkouts"
 layout = "{org}/{branch}/{repo}"    # -> ~/checkouts/acme/main/frontend/
-# default_org = "myco"              # used when layout has no {org}
-# default_branch = "main"           # used when layout has no {branch}
+# default_org = "myco"
+# default_branch = "main"
 
 # Explicit repo entries (in addition to discovered sources)
 [[repos]]
@@ -53,156 +85,73 @@ branches = ["main", "release/v3"]
 branch = "release/v3"
 [repos.branch_overrides.filter]
 mode = "include"
-include = ["src/**", "config/**"]   # LTS branch: only care about src + config
+include = ["src/**", "config/**"]
 
-# global file filtering - applied to all repos
+# global file filtering
 [filter]
-mode = "exclude"                    # "exclude" or "include"
-
-# glob patterns
+mode = "exclude"
 exclude = [
-  "node_modules/**",
-  "vendor/**",
-  "dist/**",
-  "target/**",
-  ".git/**",
-  "*.min.js",
-  "*.lock",
-  "*.map",
+  "node_modules/**", "vendor/**", "dist/**", "target/**",
+  ".git/**", "*.min.js", "*.lock", "*.map",
 ]
-
-# include = ["src/**", "lib/**"]    # only used when mode = "include"
 ```
 
-Config loading priority: `$SPREFA_CONFIG` env var > `./sprefa.toml` > `~/.config/sprefa/sprefa.toml`.
+Config loading: `$SPREFA_CONFIG` > `./sprefa.toml` > `~/.config/sprefa/sprefa.toml`.
 
 Filter resolution: global -> per-repo -> per-branch. Most specific wins.
 
-### CLI (clap)
+## CLI
 
 ```
-sprefa init                          # create default config + DB
-sprefa add <path> [--name <name>]    # add repo to config
-sprefa scan [--repo <name>]          # index repos (all or specific)
-sprefa query <term>                  # search strings table (FTS5)
-sprefa serve                         # start daemon
-sprefa status                        # show indexed repos, file counts
+sprefa init                          # create sprefa.toml + DB
+sprefa add <path> [--name <name>]    # register a repo
+sprefa scan [--repo <name>]          # index repos
+sprefa query <term>                  # trigram substring search
+sprefa status                        # show indexed repos
+sprefa serve                         # start HTTP daemon
+sprefa --readme                      # print this document
 ```
 
-When daemon URL is configured, `scan`/`query`/`status` become HTTP calls. Otherwise, direct SQLite.
+## Rule engine (planned)
 
-### Server (axum)
+Declarative JSON rules for "how do strings in structured files point to things in other repos." Three selector dimensions: git context (repo/branch/tag globs), file path (globs), structural position (CSS/jq hybrid path selectors + ast-grep patterns for code files).
 
-```
-POST /scan          { repo?: string }
-GET  /query?q=term
-GET  /status
-GET  /repos
-POST /repos         { name, path, branches? }
-```
+Rules replace hard-coded Rust for each new file format or naming convention. When the way services reference each other changes, you edit a JSON rule, not source code.
 
-Same functions as CLI, different transport.
+## Schema
 
-### Workspace Layout
-
-```
-sprefa/
-  Cargo.toml              # workspace root
-  crates/
-    0_config/             # config types, loading, filtering
-    1_schema/             # DB types, migrations, sqlx queries
-    2_extract/            # extractor trait + implementations
-    3_scan/               # orchestrates git + extraction + DB writes
-    4_server/             # axum HTTP server (daemon mode)
-    5_cli/                # clap CLI
-```
-
----
-
-## Phase 1 Build Order
-
-1. **`0_config`** - config structs, TOML parsing, filter glob matching, config file discovery
-2. **`1_schema`** - migrations, types, query functions, DB init
-3. **`5_cli`** - skeleton with `init`, `add`, `status` subcommands
-4. **`4_server`** - axum skeleton with `/status` endpoint
-5. Wire CLI to detect daemon and delegate
-
----
-
-## Schema (SQLite + sqlx)
-
-Core model: `repos 1->M files 1->M refs M<-1 strings`
-
-Additional edges: `ref.target_file_id -> files` (resolved cross-file link), `refs.parent_key_string_id -> strings` (key-value pairings)
-
-**repos** - git repositories being tracked
-**files** - every file from git ls-files, content-addressed (same path + different content across branches = separate rows)
-**strings** - deduplicated string values with normalized forms + FTS5 trigram index
-**refs** - file X contains string Y at byte offset Z, classified by RefKind
-**branch_files** - junction for multi-branch indexing (1 file row, N branch rows)
-**repo_branches** - git hash per repo+branch for incremental sync
-**git_tags** - tag tracking with semver detection
-**repo_packages** - dependency manifest tracking (npm, cargo, pip, etc.)
-
-### RefKind enum
-
+**RefKind enum:**
 ```
 StringLiteral, JsonKey, JsonValue, YamlKey, YamlValue, TomlKey, TomlValue,
 ImportPath, ImportName, ExportName, DepName, DepVersion,
 RsUse, RsDeclare, RsMod
 ```
 
-### String normalization
-
+**String normalization:**
 - `norm`: strip non-alphanumeric, lowercase. `my-UI` -> `myui`
-- `norm2`: additional suffix stripping via `[scan.normalize].strip_suffixes`
+- `norm2`: configurable suffix stripping (`-service`, `-api`, `-v2`)
 
----
+## Parser strategy
 
-## Phase 2: Extractors + Scan
+| Priority | Parser | Languages |
+|----------|--------|-----------|
+| 1 | oxc_parser | JS, TS, JSX, TSX |
+| 2 | SCIP consumption | Any language with a SCIP indexer (Rust, Go, Java, Python, etc.) |
+| 3 | Custom | JSON, YAML, TOML (lodash-style dot-path key encoding) |
+| 4 | ast-grep (lib) | Everything else |
 
-### Parser Strategy (layered, minimize dynamic deps)
+## Workspace
 
-| Priority | Parser | Languages | Notes |
-|----------|--------|-----------|-------|
-| 1 | oxc_parser | JS, TS, JSX, TSX | Pure Rust, fast, MVP language |
-| 2 | syn/ra_ap_syntax | Rust | Pure Rust |
-| 3 | Custom | JSON, YAML, TOML | serde_json, serde_yaml, toml. Lodash-style dot paths |
-| 4 | ast-grep (lib) | Everything else | Catchall, linked as Rust lib |
-
-JSON/YAML path encoding: `{"a": {"b": "c"}}` produces ref `a.b` (kind: JsonKey) and ref `c` (kind: JsonValue, parent_key: `a.b`). Every nested key becomes a dotted path string in the strings table.
-
-### Rust Module Resolution
-
-Four-step process:
-
-**Step 1: Find crate roots.** Locate each `Cargo.toml`. Parent dir = crate root. `src/lib.rs` or `src/main.rs` maps to `crate::`. Crate name from `[package].name` (with `-` normalized to `_`).
-
-**Step 2: Build module path map.** Walk `.rs` files, derive module path from filesystem position:
-- `src/foo.rs` -> `crate::foo`
-- `src/foo/mod.rs` -> `crate::foo`
-- `src/foo/bar.rs` -> `crate::foo::bar`
-
-Result: `HashMap<(RepoId, String), FileId>`
-
-**Step 3: Resolve use paths with tail stripping.** For `use crate::x::y::z`:
-- Try exact match in map, then strip tail segments until hit
-- Trailing stripped segments are symbols within the matched module
-- `super::x` and `self::x`: rewrite relative to source file's own module path, then same lookup
-
-**Step 4: Cross-crate resolution.** For `tokio::runtime::Runtime`:
-- `repo_packages` maps crate name -> repo_id
-- Replace first segment with `crate::`, look up in that repo's module map
-- Cargo normalizes `-` to `_` (`my-lib` -> `my_lib`)
-
----
+```
+crates/
+  config/       config types, TOML loading, filtering, source discovery
+  schema/       SQLite types, migrations, query functions
+  extract/      extractor trait + language-specific implementations
+  scan/         git integration, scanner orchestration, resolution pass
+  server/       axum HTTP daemon
+  cli/          clap CLI
+```
 
 ## Testing
 
-All tests use `insta` for snapshot assertions.
-
-- Config parsing: snapshot deserialized struct from various TOML inputs
-- Filter matching: snapshot which files pass/fail given glob patterns
-- Schema migrations: snapshot DB schema after running all migrations
-- Extractors (Phase 2): snapshot `Vec<RawRef>` output for fixture files
-- Resolution (Phase 2): snapshot resolved `target_file_id` mappings
+All tests use `insta` for snapshot assertions. 13 tests currently covering config parsing, filter resolution (exclude/include/cascade), and source auto-discovery (multiple layout patterns, hidden dir skipping, missing roots, validation).

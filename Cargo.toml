@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "crates/0_config",
-    "crates/1_schema",
-    "crates/2_extract",
-    "crates/3_scan",
-    "crates/4_server",
-    "crates/5_cli",
+    "crates/config",
+    "crates/schema",
+    "crates/extract",
+    "crates/scan",
+    "crates/server",
+    "crates/cli",
 ]
 resolver = "2"
 
