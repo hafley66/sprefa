@@ -1,0 +1,52 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: "./codegen"
+  span_start: 0
+  span_end: 0
+  kind: ExportName
+  is_path: false
+  parent_key: ~
+- value: "./codegen"
+  span_start: 0
+  span_end: 0
+  kind: ExportName
+  is_path: false
+  parent_key: ~
+- value: "./dist/src/codegen/index.d.ts"
+  span_start: 0
+  span_end: 0
+  kind: ImportPath
+  is_path: false
+  parent_key: "./codegen"
+- value: "./dist/src/codegen/index.js"
+  span_start: 0
+  span_end: 0
+  kind: ImportPath
+  is_path: false
+  parent_key: "./codegen"
+- value: "./dist/src/factory/index.d.ts"
+  span_start: 0
+  span_end: 0
+  kind: ImportPath
+  is_path: false
+  parent_key: "./factory"
+- value: "./dist/src/factory/index.js"
+  span_start: 0
+  span_end: 0
+  kind: ImportPath
+  is_path: false
+  parent_key: "./factory"
+- value: "./factory"
+  span_start: 0
+  span_end: 0
+  kind: ExportName
+  is_path: false
+  parent_key: ~
+- value: "./factory"
+  span_start: 0
+  span_end: 0
+  kind: ExportName
+  is_path: false
+  parent_key: ~

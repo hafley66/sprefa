@@ -1,0 +1,6 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: npm_names
+---
+- express
+- lodash

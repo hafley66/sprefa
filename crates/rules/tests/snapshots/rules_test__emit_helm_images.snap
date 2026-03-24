@@ -1,0 +1,28 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: envoy/envoy
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: myorg/frontend
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: v1.2.3
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: myorg/frontend
+- value: v1.28
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: envoy/envoy

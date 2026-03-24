@@ -39,9 +39,14 @@ sprefa operates at the **string + module graph** level. Normalized strings in SQ
 - SQLite schema: repos, files, strings (FTS5 trigram), refs, branch_files, repo_branches, git_tags, repo_packages
 - CLI: `init`, `add`, `scan`, `status`, `query`, `serve` + `--readme` for embedded docs
 - Axum server: `/status`, `/repos`, `/query`
-- 13 insta snapshot tests
 
-**In progress**: rule engine, extractors, scan pipeline.
+**Phase 2 in progress**: rule engine core complete, extractors and scan pipeline next.
+
+- Declarative JSON rule engine with structural tree walking, named captures, grouped emit
+- Git context matching (repo/branch/tag globs), file path matching, pipe-delimited alternatives
+- Value regex for capture splitting (scoped packages: `@scope/name@version`)
+- JSON Schema generated from Rust types via schemars
+- 49 insta snapshot tests
 
 ---
 
@@ -112,11 +117,49 @@ sprefa serve                         # start HTTP daemon
 sprefa --readme                      # print this document
 ```
 
-## Rule engine (planned)
+## Rule engine
 
-Declarative JSON rules for "how do strings in structured files point to things in other repos." Three selector dimensions: git context (repo/branch/tag globs), file path (globs), structural position (CSS/jq hybrid path selectors + ast-grep patterns for code files).
+Declarative JSON rules for "how do strings in structured files point to things in other repos." The entire indexed space is a DOM:
 
-Rules replace hard-coded Rust for each new file format or naming convention. When the way services reference each other changes, you edit a JSON rule, not source code.
+```
+root
+├── repo[name="org/frontend"][branch="main"]
+│   ├── file[path="package.json"][ext="json"]
+│   │   └── (json tree nodes)
+│   ├── file[path="values.yaml"][ext="yaml"]
+│   │   └── (yaml tree nodes)
+```
+
+Each rule is a CSS-style selector against this DOM with three dimensions:
+
+1. **Git context** -- repo/branch/tag globs (`"repo": "*/helm-charts"`, `"branch": "main|release/*"`)
+2. **File path** -- glob on repo-relative path (`"file": "values*.yaml"`)
+3. **Structural position** -- step chain that walks the parsed tree depth-first
+
+Structural steps: `key`, `key_match` (glob), `any` (descend arbitrary depth), `depth_min`/`depth_max`/`depth_eq`, `parent_key`, `array_item`, `leaf`, `object` (capture sibling values).
+
+Steps can **capture** values by name as they match. A `value` regex can split/filter captures (e.g. `"express@4.18.2"` into `name` + `version`). The `action.emit` array turns captures into refs with explicit parent linkage for grouped output (dep name + version as linked refs).
+
+```json
+{
+  "name": "npm-deps",
+  "file": "package-lock.json",
+  "select": [
+    { "step": "key", "name": "dependencies" },
+    { "step": "key_match", "pattern": "*", "capture": "name" },
+    { "step": "key", "name": "version" },
+    { "step": "leaf", "capture": "version" }
+  ],
+  "action": {
+    "emit": [
+      { "capture": "name", "kind": "dep_name" },
+      { "capture": "version", "kind": "dep_version", "parent": "name" }
+    ]
+  }
+}
+```
+
+Rules replace hard-coded Rust for each new file format or naming convention. When the way services reference each other changes, you edit a JSON rule, not source code. JSON Schema is generated from the Rust types for IDE intellisense.
 
 ## Schema
 
@@ -147,6 +190,7 @@ crates/
   config/       config types, TOML loading, filtering, source discovery
   schema/       SQLite types, migrations, query functions
   extract/      extractor trait + language-specific implementations
+  rules/        declarative rule engine: types, JSON schema, tree walker, emit
   scan/         git integration, scanner orchestration, resolution pass
   server/       axum HTTP daemon
   cli/          clap CLI
@@ -154,4 +198,4 @@ crates/
 
 ## Testing
 
-All tests use `insta` for snapshot assertions. 13 tests currently covering config parsing, filter resolution (exclude/include/cascade), and source auto-discovery (multiple layout patterns, hidden dir skipping, missing roots, validation).
+All tests use `insta` for snapshot assertions. 49 tests covering config parsing, filter resolution, source auto-discovery, rule deserialization, JSON schema generation, tree walking with captures, ref emission with parent linkage, cross-format dep extraction (package-lock + pnpm-lock), git context matching, file glob matching, and template expansion.

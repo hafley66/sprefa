@@ -1,0 +1,476 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: schema
+---
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Action": {
+      "description": "What to emit when a rule matches. One rule can emit multiple refs from a single match via the `emit` array.",
+      "properties": {
+        "confidence": {
+          "description": "Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "emit": {
+          "description": "Each entry turns a named capture into a ref.",
+          "items": {
+            "$ref": "#/definitions/EmitRef"
+          },
+          "type": "array"
+        },
+        "target_path": {
+          "description": "Template for the target file path within the target repo.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_repo": {
+          "description": "Template for the target repo name. Can reference captures: `\"{repo}\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "emit"
+      ],
+      "type": "object"
+    },
+    "ActionKind": {
+      "description": "Ref kind for action output. Snake_case string aliases for RefKind.",
+      "enum": [
+        "string_literal",
+        "json_key",
+        "json_value",
+        "yaml_key",
+        "yaml_value",
+        "toml_key",
+        "toml_value",
+        "import_path",
+        "import_name",
+        "export_name",
+        "dep_name",
+        "dep_version",
+        "rs_use",
+        "rs_declare",
+        "rs_mod"
+      ],
+      "type": "string"
+    },
+    "AstSelector": {
+      "description": "ast-grep pattern selector for code files.",
+      "properties": {
+        "capture": {
+          "default": "$NAME",
+          "type": "string"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pattern": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "EmitRef": {
+      "description": "One ref to emit from a match.",
+      "properties": {
+        "capture": {
+          "description": "Name of the capture to use as the ref value.",
+          "type": "string"
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ActionKind"
+            }
+          ],
+          "description": "RefKind to assign."
+        },
+        "parent": {
+          "description": "Name of another capture to use as parent_key (links related refs).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "capture",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "FileSelector": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "File path selector. Single glob or list of globs."
+    },
+    "GitSelector": {
+      "description": "Git context selector. All fields are glob patterns (pipe-delimited alternatives).",
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Rule": {
+      "description": "A single extraction rule.\n\nSelector chain: git context -> file path -> structural position. Think of the entire indexed space as a DOM: root > repo[name][branch] > file[path][ext] > (parsed tree nodes) Each rule is a CSS selector against this DOM. All nodes matching the full chain produce captures, and the action turns captures into refs.",
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/Action"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file": {
+          "$ref": "#/definitions/FileSelector"
+        },
+        "git": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GitSelector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "select": {
+          "items": {
+            "$ref": "#/definitions/StructStep"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "select_ast": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AstSelector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ValuePattern"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Regex applied to a named capture to split/filter it. Named groups from the regex merge back into the capture map."
+        }
+      },
+      "required": [
+        "action",
+        "file",
+        "name"
+      ],
+      "type": "object"
+    },
+    "StructStep": {
+      "description": "One step in a structural selector chain.\n\nSteps are consumed left-to-right as the engine walks the parsed tree depth-first. Each step either narrows the current node set or captures a value for later use by the action.\n\nThe `capture` field on Key/KeyMatch/Leaf/Object steps names the value so the action's `emit` array can reference it.",
+      "oneOf": [
+        {
+          "description": "Enter the child with this exact key name.",
+          "properties": {
+            "capture": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "step": {
+              "enum": [
+                "key"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Enter children whose key matches this glob pattern (pipe-delimited).",
+          "properties": {
+            "capture": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "step": {
+              "enum": [
+                "key_match"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Descend through any number of levels (like CSS `**` or jq `..`).",
+          "properties": {
+            "step": {
+              "enum": [
+                "any"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Filter: current depth >= n (0 = root).",
+          "properties": {
+            "n": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "step": {
+              "enum": [
+                "depth_min"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "n",
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Filter: current depth <= n.",
+          "properties": {
+            "n": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "step": {
+              "enum": [
+                "depth_max"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "n",
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Filter: current depth == n.",
+          "properties": {
+            "n": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "step": {
+              "enum": [
+                "depth_eq"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "n",
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Filter: parent key matches this glob pattern.",
+          "properties": {
+            "pattern": {
+              "type": "string"
+            },
+            "step": {
+              "enum": [
+                "parent_key"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Descend into array elements.",
+          "properties": {
+            "step": {
+              "enum": [
+                "array_item"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Filter: node is a leaf (string, number, bool). Captures the leaf value.",
+          "properties": {
+            "capture": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "step": {
+              "enum": [
+                "leaf"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Capture multiple sibling keys from an object node at once. Map of json_key -> capture_name. Example: `{ \"repository\": \"repo\", \"tag\": \"tag\" }`",
+          "properties": {
+            "captures": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "step": {
+              "enum": [
+                "object"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "captures",
+            "step"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ValuePattern": {
+      "description": "Regex applied to a named capture. Named groups from the regex merge into the capture map, enabling split/transform of captured values.",
+      "properties": {
+        "full_match": {
+          "default": true,
+          "description": "Anchor the regex to the full string. Default: true.",
+          "type": "boolean"
+        },
+        "pattern": {
+          "description": "Regex pattern with named groups via `(?P<name>...)`.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Which capture to run the regex against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern",
+        "source"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Top-level rules file: an array of rules plus optional metadata.",
+  "properties": {
+    "$schema": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rules": {
+      "items": {
+        "$ref": "#/definitions/Rule"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "rules"
+  ],
+  "title": "RuleSet",
+  "type": "object"
+}

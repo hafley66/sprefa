@@ -1,0 +1,40 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: 0.1.0
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: "@hafley/typespec-asyncapi"
+- value: 0.1.0
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: "@hafley/typespec-decorator-def"
+- value: 0.64.0
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: "@typespec/compiler"
+- value: "@hafley/typespec-asyncapi"
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: "@hafley/typespec-decorator-def"
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: "@typespec/compiler"
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~

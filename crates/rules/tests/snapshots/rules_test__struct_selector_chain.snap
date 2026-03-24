@@ -1,0 +1,14 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: ruleset
+---
+rules:
+  - name: nested-config-refs
+    file: config/**/*.toml
+    select:
+      - depth_min: 2
+      - parent_key: dependencies
+      - key_match: "*service*"
+      - leaf
+    action:
+      kind: dep_name

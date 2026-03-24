@@ -6,6 +6,7 @@ members = [
     "crates/scan",
     "crates/server",
     "crates/cli",
+    "crates/rules",
 ]
 resolver = "2"
 
@@ -38,6 +39,12 @@ globset = "0.4"
 # error handling
 anyhow = "1"
 thiserror = "2"
+
+# json schema generation
+schemars = "0.8"
+
+# regex
+regex = "1"
 
 # testing
 insta = { version = "1", features = ["yaml"] }

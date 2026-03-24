@@ -1,0 +1,28 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: axum
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: insta
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: serde
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: tokio
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~

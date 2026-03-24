@@ -1,0 +1,26 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: ruleset
+---
+rules:
+  - name: json-values
+    file: "**/*.json"
+    select:
+      - leaf
+    action:
+      kind: json_value
+  - name: yaml-keys
+    file: "**/*.yaml"
+    select:
+      - key_match: service*
+    action:
+      kind: yaml_key
+  - name: toml-deps
+    file: "**/Cargo.toml"
+    select:
+      - key: dependencies
+      - any: "**"
+      - leaf
+    action:
+      kind: dep_name
+      confidence: 0.95

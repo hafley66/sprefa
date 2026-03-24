@@ -1,0 +1,28 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: "@hafley/alloy-rs"
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: "@hafley/typespec-decorator-def"
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: "workspace:*"
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: "@hafley/typespec-decorator-def"
+- value: "workspace:*"
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: "@hafley/alloy-rs"

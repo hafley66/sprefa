@@ -1,7 +1,8 @@
+use serde::Serialize;
 use sprefa_schema::RefKind;
 
 /// A raw reference extracted from a source file, before DB insertion.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RawRef {
     pub value: String,
     pub span_start: u32,

@@ -1,0 +1,14 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: ruleset
+---
+rules:
+  - name: ts-imports
+    file: "**/*.ts"
+    select_ast:
+      pattern: "import { $NAME } from '$PATH'"
+      language: typescript
+      capture: $PATH
+    action:
+      kind: import_path
+      target_repo: "{PATH}"

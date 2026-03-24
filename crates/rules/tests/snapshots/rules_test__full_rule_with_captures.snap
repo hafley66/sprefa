@@ -1,0 +1,32 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: ruleset
+---
+$schema: sprefa-rules.schema.json
+rules:
+  - name: helm-image-refs
+    description: Docker image references in Helm values files
+    git:
+      repo: "*/helm-charts"
+      branch: main|release/*
+      tag: v*
+    file:
+      - values.yaml
+      - values-*.yaml
+    select:
+      - step: any
+      - step: key
+        name: image
+      - step: object
+        captures:
+          repository: repo
+          tag: tag
+    action:
+      emit:
+        - capture: repo
+          kind: dep_name
+        - capture: tag
+          kind: dep_version
+          parent: repo
+      target_repo: "{repo}"
+      confidence: 0.9

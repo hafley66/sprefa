@@ -1,0 +1,8 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: repos
+---
+- - envoy/envoy
+  - v1.28
+- - myorg/frontend
+  - v1.2.3

@@ -1,0 +1,11 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: ruleset
+---
+rules:
+  - name: catch-all
+    file: "**/*.json"
+    action:
+      emit:
+        - capture: val
+          kind: json_value

@@ -1,0 +1,8 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: pairs
+---
+- - express
+  - 4.18.2
+- - lodash
+  - 4.17.21

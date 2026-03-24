@@ -1,0 +1,40 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: 18.2.0
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: react
+- value: 4.17.21
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: lodash
+- value: 4.18.2
+  span_start: 0
+  span_end: 0
+  kind: DepVersion
+  is_path: false
+  parent_key: express
+- value: express
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: lodash
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
+- value: react
+  span_start: 0
+  span_end: 0
+  kind: DepName
+  is_path: false
+  parent_key: ~
