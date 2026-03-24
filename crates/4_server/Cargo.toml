@@ -1,0 +1,15 @@
+[package]
+name = "sprefa-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sprefa-config = { path = "../0_config" }
+sprefa-schema = { path = "../1_schema" }
+axum = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

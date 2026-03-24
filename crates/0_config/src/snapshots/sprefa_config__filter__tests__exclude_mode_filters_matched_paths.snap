@@ -1,0 +1,16 @@
+---
+source: crates/0_config/src/1_filter.rs
+expression: results
+---
+- - src/index.ts
+  - true
+- - node_modules/foo/index.js
+  - false
+- - dist/bundle.js
+  - false
+- - lib/utils.ts
+  - true
+- - app.min.js
+  - false
+- - src/components/Button.tsx
+  - true

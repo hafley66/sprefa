@@ -1,0 +1,8 @@
+---
+source: crates/0_config/src/1_filter.rs
+expression: main_filter
+---
+mode: exclude
+exclude:
+  - vendor/**
+include: ~

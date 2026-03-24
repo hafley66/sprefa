@@ -1,0 +1,46 @@
+---
+source: crates/0_config/src/2_load.rs
+expression: config
+---
+db:
+  path: ~/.sprefa/test.db
+daemon:
+  url: "http://localhost:9400"
+  bind: "0.0.0.0:9400"
+  auto_start: ~
+scan:
+  workers: 8
+  normalize:
+    strip_suffixes:
+      - "-svc"
+      - "-api"
+repos:
+  - name: frontend
+    path: /home/me/frontend
+    branches:
+      - main
+      - develop
+    filter:
+      mode: include
+      exclude: ~
+      include:
+        - src/**
+    branch_overrides:
+      - branch: develop
+        filter:
+          mode: exclude
+          exclude:
+            - src/generated/**
+          include: ~
+        scan: ~
+  - name: backend
+    path: /home/me/backend
+    branches: ~
+    filter: ~
+    branch_overrides: ~
+filter:
+  mode: exclude
+  exclude:
+    - node_modules/**
+    - target/**
+  include: ~

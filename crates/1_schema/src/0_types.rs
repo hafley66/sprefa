@@ -1,0 +1,136 @@
+use serde::{Deserialize, Serialize};
+
+/// Every interesting string extracted from source files gets classified by kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum RefKind {
+    StringLiteral = 0,
+    JsonKey = 1,
+    JsonValue = 2,
+    YamlKey = 3,
+    YamlValue = 4,
+    TomlKey = 5,
+    TomlValue = 6,
+    ImportPath = 10,
+    ImportName = 11,
+    ExportName = 12,
+    DepName = 20,
+    DepVersion = 21,
+    RsUse = 30,
+    RsDeclare = 31,
+    RsMod = 32,
+}
+
+impl RefKind {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::StringLiteral),
+            1 => Some(Self::JsonKey),
+            2 => Some(Self::JsonValue),
+            3 => Some(Self::YamlKey),
+            4 => Some(Self::YamlValue),
+            5 => Some(Self::TomlKey),
+            6 => Some(Self::TomlValue),
+            10 => Some(Self::ImportPath),
+            11 => Some(Self::ImportName),
+            12 => Some(Self::ExportName),
+            20 => Some(Self::DepName),
+            21 => Some(Self::DepVersion),
+            30 => Some(Self::RsUse),
+            31 => Some(Self::RsDeclare),
+            32 => Some(Self::RsMod),
+            _ => None,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Row from the repos table.
+#[derive(Debug, Clone, Serialize)]
+pub struct Repo {
+    pub id: i64,
+    pub name: String,
+    pub root_path: String,
+    pub org: Option<String>,
+    pub git_hash: Option<String>,
+    pub last_fetched_at: Option<String>,
+    pub last_synced_at: Option<String>,
+    pub last_remote_commit_at: Option<String>,
+    pub scanned_at: Option<String>,
+}
+
+/// Row from the files table.
+#[derive(Debug, Clone, Serialize)]
+pub struct File {
+    pub id: i64,
+    pub repo_id: i64,
+    pub path: String,
+    pub content_hash: String,
+    pub stem: Option<String>,
+    pub ext: Option<String>,
+    pub scanned_at: Option<String>,
+}
+
+/// Row from the strings table.
+#[derive(Debug, Clone, Serialize)]
+pub struct StringRow {
+    pub id: i64,
+    pub value: String,
+    pub norm: String,
+    pub norm2: Option<String>,
+}
+
+/// Row from the refs table.
+#[derive(Debug, Clone, Serialize)]
+pub struct Ref {
+    pub id: i64,
+    pub string_id: i64,
+    pub file_id: i64,
+    pub span_start: i64,
+    pub span_end: i64,
+    pub is_path: bool,
+    pub confidence: Option<f64>,
+    pub target_file_id: Option<i64>,
+    pub ref_kind: u8,
+    pub parent_key_string_id: Option<i64>,
+}
+
+/// Row from the branch_files junction table.
+#[derive(Debug, Clone, Serialize)]
+pub struct BranchFile {
+    pub repo_id: i64,
+    pub branch: String,
+    pub file_id: i64,
+}
+
+/// Row from the repo_branches table.
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoBranch {
+    pub repo_id: i64,
+    pub branch: String,
+    pub git_hash: Option<String>,
+}
+
+/// Row from the git_tags table.
+#[derive(Debug, Clone, Serialize)]
+pub struct GitTag {
+    pub id: i64,
+    pub repo_id: i64,
+    pub tag_name: String,
+    pub commit_hash: Option<String>,
+    pub is_semver: bool,
+    pub created_at: Option<String>,
+}
+
+/// Row from the repo_packages table.
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoPackage {
+    pub id: i64,
+    pub repo_id: i64,
+    pub package_name: String,
+    pub ecosystem: String,
+    pub manifest_path: String,
+}

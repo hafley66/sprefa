@@ -1,0 +1,21 @@
+[package]
+name = "sprefa"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "sprefa"
+path = "src/main.rs"
+
+[dependencies]
+sprefa-config = { path = "../0_config" }
+sprefa-schema = { path = "../1_schema" }
+sprefa-server = { path = "../4_server" }
+clap = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

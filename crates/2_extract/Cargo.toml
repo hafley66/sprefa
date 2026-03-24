@@ -1,0 +1,12 @@
+[package]
+name = "sprefa-extract"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sprefa-schema = { path = "../1_schema" }
+serde = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

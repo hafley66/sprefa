@@ -1,0 +1,10 @@
+---
+source: crates/0_config/src/2_load.rs
+expression: config
+---
+db:
+  path: /tmp/sprefa.db
+daemon: ~
+scan: ~
+repos: []
+filter: ~

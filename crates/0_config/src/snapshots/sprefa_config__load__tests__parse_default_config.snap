@@ -1,0 +1,32 @@
+---
+source: crates/0_config/src/2_load.rs
+expression: config
+---
+db:
+  path: ~/.sprefa/index.db
+daemon:
+  url: ~
+  bind: "127.0.0.1:9400"
+  auto_start: ~
+scan:
+  workers: ~
+  normalize:
+    strip_suffixes:
+      - "-service"
+      - "-api"
+      - "-v2"
+      - "-client"
+      - "-server"
+repos: []
+filter:
+  mode: exclude
+  exclude:
+    - node_modules/**
+    - vendor/**
+    - dist/**
+    - target/**
+    - ".git/**"
+    - "*.min.js"
+    - "*.lock"
+    - "*.map"
+  include: ~

@@ -1,0 +1,8 @@
+---
+source: crates/0_config/src/1_filter.rs
+expression: release_filter
+---
+mode: include
+exclude: ~
+include:
+  - src/**

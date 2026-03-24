@@ -1,0 +1,15 @@
+[package]
+name = "sprefa-schema"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sqlx = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+tokio = { workspace = true }

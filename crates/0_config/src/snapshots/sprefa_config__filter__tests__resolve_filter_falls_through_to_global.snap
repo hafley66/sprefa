@@ -1,0 +1,8 @@
+---
+source: crates/0_config/src/1_filter.rs
+expression: result
+---
+mode: exclude
+exclude:
+  - node_modules/**
+include: ~
