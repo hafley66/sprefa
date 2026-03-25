@@ -1,0 +1,18 @@
+---
+source: crates/rs/src/lib.rs
+expression: refs
+---
+- value: foo
+  span_start: 4
+  span_end: 7
+  kind: RsMod
+  is_path: false
+  parent_key: ~
+  node_path: ~
+- value: bar
+  span_start: 13
+  span_end: 16
+  kind: RsMod
+  is_path: false
+  parent_key: ~
+  node_path: ~

@@ -1,0 +1,25 @@
+---
+source: crates/rs/src/lib.rs
+expression: refs
+---
+- value: MyTrait
+  span_start: 6
+  span_end: 13
+  kind: RsDeclare
+  is_path: false
+  parent_key: ~
+  node_path: ~
+- value: method
+  span_start: 23
+  span_end: 29
+  kind: RsDeclare
+  is_path: false
+  parent_key: ~
+  node_path: ~
+- value: Output
+  span_start: 47
+  span_end: 53
+  kind: RsDeclare
+  is_path: false
+  parent_key: ~
+  node_path: ~

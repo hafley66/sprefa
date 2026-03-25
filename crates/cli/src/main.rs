@@ -4,6 +4,7 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use sprefa_config::{load_config, load_config_from, default_config_toml, Config};
 use sprefa_js::JsExtractor;
+use sprefa_rs::RsExtractor;
 use sprefa_rules::extractor::RuleExtractor;
 use sprefa_scan::Scanner;
 use sprefa_schema::{init_db, list_repos, count_files_for_repo, count_refs_for_repo, upsert_repo, search_refs};
@@ -217,6 +218,7 @@ fn build_scanner(config: &sprefa_config::Config, pool: sqlx::SqlitePool) -> anyh
         extractors: Arc::new(vec![
             Box::new(extractor) as Box<dyn sprefa_scan::Extractor>,
             Box::new(JsExtractor),
+            Box::new(RsExtractor),
         ]),
         db: pool,
         normalize_config: config.scan.as_ref().and_then(|s| s.normalize.clone()),

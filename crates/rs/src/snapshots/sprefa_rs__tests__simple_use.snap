@@ -1,0 +1,11 @@
+---
+source: crates/rs/src/lib.rs
+expression: refs
+---
+- value: "std::collections::HashMap"
+  span_start: 4
+  span_end: 29
+  kind: RsUse
+  is_path: false
+  parent_key: ~
+  node_path: ~

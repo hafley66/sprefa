@@ -2114,6 +2114,7 @@ dependencies = [
  "serde_json",
  "sprefa_config",
  "sprefa_js",
+ "sprefa_rs",
  "sprefa_rules",
  "sprefa_scan",
  "sprefa_schema",
@@ -2195,6 +2196,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprefa_rs"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "proc-macro2",
+ "sprefa_extract",
+ "sprefa_schema",
+ "syn",
+]
+
+[[package]]
 name = "sprefa_rules"
 version = "0.1.0"
 dependencies = [
@@ -2251,6 +2263,18 @@ dependencies = [
  "sprefa_schema",
  "sqlx",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sprefa_watch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sprefa_extract",
+ "sprefa_schema",
+ "sqlx",
+ "tempfile",
  "tracing",
 ]
 

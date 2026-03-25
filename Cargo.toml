@@ -10,6 +10,8 @@ members = [
     "crates/cli",
     "crates/rules",
     "crates/js",
+    "crates/rs",
+    "crates/watch",
 ]
 resolver = "2"
 
@@ -62,8 +64,13 @@ schemars = "0.8"
 # regex
 regex = "1"
 
+# rust parser
+syn = { version = "2", features = ["full"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+
 # testing
 insta = { version = "1", features = ["yaml"] }
+tempfile = "3"
 
 # git library
 git2 = { version = "0.19", default-features = false }

@@ -13,6 +13,7 @@ sprefa_schema = { path = "../schema" }
 sprefa_scan = { path = "../scan" }
 sprefa_rules = { path = "../rules" }
 sprefa_js = { path = "../js" }
+sprefa_rs = { path = "../rs" }
 sprefa_server = { path = "../server" }
 clap = { workspace = true }
 tokio = { workspace = true }

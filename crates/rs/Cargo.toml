@@ -1,0 +1,13 @@
+[package]
+name = "sprefa_rs"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sprefa_extract = { path = "../extract" }
+sprefa_schema = { path = "../schema" }
+syn = { workspace = true }
+proc-macro2 = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

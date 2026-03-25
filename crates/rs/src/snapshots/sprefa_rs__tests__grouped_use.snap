@@ -1,0 +1,18 @@
+---
+source: crates/rs/src/lib.rs
+expression: refs
+---
+- value: "std::io"
+  span_start: 4
+  span_end: 12
+  kind: RsUse
+  is_path: false
+  parent_key: ~
+  node_path: ~
+- value: "std::fmt::Display"
+  span_start: 4
+  span_end: 26
+  kind: RsUse
+  is_path: false
+  parent_key: ~
+  node_path: ~

@@ -1,0 +1,11 @@
+---
+source: crates/rs/src/lib.rs
+expression: refs
+---
+- value: "std::io::Result"
+  span_start: 4
+  span_end: 19
+  kind: RsUse
+  is_path: false
+  parent_key: ~
+  node_path: ~

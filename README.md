@@ -32,21 +32,22 @@ sprefa operates at the **string + module graph** level. Normalized strings in SQ
 
 ## Current status
 
-**Phase 1 complete**: config, schema, CLI, server skeleton.
+**Scan pipeline: working.** The full extraction loop runs end-to-end.
 
-- Config system with TOML loading, glob-based filtering (exclude/include), per-repo and per-branch overrides
-- Source auto-discovery from checkout roots with configurable layout patterns
-- SQLite schema: repos, files, strings (FTS5 trigram), refs, branch_files, repo_branches, git_tags, repo_packages
-- CLI: `init`, `add`, `scan`, `status`, `query`, `serve` + `--readme` for embedded docs
-- Axum server: `/status`, `/repos`, `/query`
+- Config, schema, CLI, axum server skeleton
+- SQLite schema: repos, files, strings (FTS5 trigram), refs, branch_files, repo_branches, git_tags, repo_packages, rules, matches
+- Declarative JSON rule engine (structural tree walking, named captures, grouped emit, git/branch/file glob matching)
+- JS/TS extractor (oxc) + rule-based extractor wired, both running in parallel (rayon) inside `tokio::task::spawn_blocking`
+- Incremental scan skip: files already indexed with the same binary hash + content hash are skipped without re-extraction; skip context loaded from DB before each scan
+- 77+ snapshot and integration tests
 
-**Phase 2 in progress**: rule engine core complete, extractors and scan pipeline next.
+**Next up:**
 
-- Declarative JSON rule engine with structural tree walking, named captures, grouped emit
-- Git context matching (repo/branch/tag globs), file path matching, pipe-delimited alternatives
-- Value regex for capture splitting (scoped packages: `@scope/name@version`)
-- JSON Schema generated from Rust types via schemars
-- 49 insta snapshot tests
+- `git2` tree walk replacing `git ls-files` subprocess (bare clone support, no working tree required)
+- Import binding extraction: named imports, default imports, `require()`, dynamic `import()`, all JS/TS module file extensions (`.mjs`, `.cjs`, `.mts`, `.cts`)
+- `target_file_id` resolver: 3-tier (relative path → bare specifier via `repo_packages` → suffix fallback)
+- `POST /scan` on daemon + `query` returning file/repo context
+- URTSL parser + `build.rs` codegen (framing, not blocking)
 
 ---
 
@@ -188,14 +189,17 @@ RsUse, RsDeclare, RsMod
 ```
 crates/
   config/       config types, TOML loading, filtering, source discovery
-  schema/       SQLite types, migrations, query functions
-  extract/      extractor trait + language-specific implementations
-  rules/        declarative rule engine: types, JSON schema, tree walker, emit
-  scan/         git integration, scanner orchestration, resolution pass
-  server/       axum HTTP daemon
-  cli/          clap CLI
+  schema/       SQLite migrations, types, query functions
+  extract/      Extractor trait + RawRef type
+  index/        pure extraction: file enumeration, parallel rayon walk, xxh3 hashing
+  cache/        DB writes: bulk flush, scan context load (skip set), scanner_hash
+  rules/        declarative JSON rule engine: types, tree walker, emit, JSON Schema
+  js/           oxc-based JS/TS extractor
+  scan/         coordinator: Scanner struct, spawn_blocking bridge, scan_repo
+  server/       axum HTTP daemon (/status, /repos, /query)
+  cli/          clap CLI (init, add, scan, status, query, serve)
 ```
 
 ## Testing
 
-All tests use `insta` for snapshot assertions. 49 tests covering config parsing, filter resolution, source auto-discovery, rule deserialization, JSON schema generation, tree walking with captures, ref emission with parent linkage, cross-format dep extraction (package-lock + pnpm-lock), git context matching, file glob matching, and template expansion.
+77+ tests using `insta` snapshot assertions and sqlx in-memory SQLite. Coverage: config parsing, filter resolution, source discovery, rule deserialization + tree walking + ref emission, cross-format dep extraction (package-lock, pnpm-lock), bulk flush correctness (dedup, idempotency, chunk boundaries), scan context skip set loading and invalidation.
