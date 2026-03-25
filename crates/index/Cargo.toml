@@ -1,14 +1,17 @@
 [package]
-name = "sprefa_scan"
+name = "sprefa_index"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 sprefa_config = { path = "../config" }
 sprefa_extract = { path = "../extract" }
-sprefa_index = { path = "../index" }
-sprefa_cache = { path = "../cache" }
-sqlx = { workspace = true }
-tokio = { workspace = true }
 anyhow = { workspace = true }
+rayon = { workspace = true }
+walkdir = { workspace = true }
+xxhash-rust = { workspace = true }
+memmap2 = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

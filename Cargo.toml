@@ -3,6 +3,8 @@ members = [
     "crates/config",
     "crates/schema",
     "crates/extract",
+    "crates/index",
+    "crates/cache",
     "crates/scan",
     "crates/server",
     "crates/cli",

@@ -1,5 +1,5 @@
 ---
-source: crates/scan/src/normalize.rs
+source: crates/index/src/normalize.rs
 expression: result
 ---
 auth-service

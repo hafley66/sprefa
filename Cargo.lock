@@ -1984,6 +1984,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprefa_cache"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "insta",
+ "sprefa_config",
+ "sprefa_extract",
+ "sprefa_index",
+ "sprefa_schema",
+ "sqlx",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "sprefa_config"
 version = "0.1.0"
 dependencies = [
@@ -2004,6 +2019,21 @@ dependencies = [
  "insta",
  "serde",
  "sprefa_schema",
+]
+
+[[package]]
+name = "sprefa_index"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "insta",
+ "memmap2",
+ "rayon",
+ "sprefa_config",
+ "sprefa_extract",
+ "tracing",
+ "walkdir",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -2043,17 +2073,13 @@ name = "sprefa_scan"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "insta",
- "memmap2",
- "rayon",
+ "sprefa_cache",
  "sprefa_config",
  "sprefa_extract",
- "sprefa_schema",
+ "sprefa_index",
  "sqlx",
  "tokio",
  "tracing",
- "walkdir",
- "xxhash-rust",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 ---
-source: crates/scan/src/normalize.rs
+source: crates/index/src/normalize.rs
 expression: "vec![normalize2(\"auth-service\", &c), normalize2(\"payments-api\", &c),\nnormalize2(\"frontend\", &c), normalize2(\"-service\", &c),\nnormalize2(\"AUTH-SERVICE\", &c),]"
 ---
 - auth
