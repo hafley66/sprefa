@@ -1,0 +1,5 @@
+---
+source: crates/scan/src/normalize.rs
+expression: result
+---
+auth-service

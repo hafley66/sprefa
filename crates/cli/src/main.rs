@@ -217,6 +217,7 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> any
         ],
         db: pool,
         normalize_config: config.scan.as_ref().and_then(|s| s.normalize.clone()),
+        global_filter: config.filter.clone(),
     };
 
     let repos: Vec<_> = config
