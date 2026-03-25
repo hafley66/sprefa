@@ -50,6 +50,72 @@ for each entry in local_export_entries:
 Output: `Vec<ExportInfo>`
 
 
+### 3. Alias binding design -- two names, two refs, one parent_key link
+
+Every aliased import or export involves two distinct identifiers with two distinct spans.
+The index must store both because the rename engine propagates along different axes for each.
+
+**Import alias:** `import { Foo as localFoo } from './mod'`
+- `Foo` -- the module-interface name (what the source file exports). Cross-file rename target.
+- `localFoo` -- the local binding. Rename propagates only within this file.
+
+**Export alias:** `export { internalName as PublicName }`
+- `PublicName` -- the module-interface name (what importers see). Cross-file rename target.
+- `internalName` -- the local binding. Rename propagates only within this file.
+
+**RefKinds emitted:**
+
+| Construct | Ref 1 kind | Ref 1 value | Ref 2 kind | Ref 2 value |
+|---|---|---|---|---|
+| `import { Foo } from './m'` | `ImportName` | `Foo` | -- | -- |
+| `import { Foo as bar } from './m'` | `ImportName` | `Foo` | `ImportAlias` | `bar` |
+| `import React from 'react'` | `ImportName` | `default` | `ImportAlias` | `React` |
+| `import * as ns from './m'` | `ImportName` | `*` | `ImportAlias` | `ns` |
+| `export { foo }` | `ExportName` | `foo` | -- | -- |
+| `export { foo as Bar }` | `ExportName` | `Bar` | `ExportLocalBinding` | `foo` |
+| `export default function f()` | `ExportName` | `default` | -- | -- |
+
+`ImportAlias.parent_key_string_id` -> the `ImportName` ref's `string_id`
+`ExportLocalBinding.parent_key_string_id` -> the `ExportName` ref's `string_id`
+
+No alias -> single ref, no pairing needed.
+
+**Rename safety invariant:**
+
+Renaming `PublicName` matches `ExportName` and `ImportName` refs with that value.
+It never touches `ImportAlias(localFoo)` because that's a different kind and string.
+Renaming `localFoo` matches `ImportAlias` refs within one file only.
+The two names are cleanly separated with no shared string_id.
+
+**Re-export chain example:**
+
+```
+// a.ts  export { inner as Mid }
+// b.ts  import { Mid as localMid } from './a'
+//        export { localMid as Public }
+```
+
+Refs in a.ts: `ExportName(Mid)`, `ExportLocalBinding(inner)`
+Refs in b.ts: `ImportName(Mid)`, `ImportAlias(localMid)`, `ExportName(Public)`, `ExportLocalBinding(localMid)`
+
+Renaming `Mid` touches: `ExportName(Mid)` in a.ts + `ImportName(Mid)` in b.ts.
+`Public` and `localMid` are untouched -- they are different string values at different kinds.
+
+**Schema:** no new table needed. `parent_key_string_id` on `refs` already supports this
+linkage pattern (same column used for dep name+version pairs in rule-extracted refs).
+New RefKind variants needed: `ImportName`, `ImportAlias`, `ExportLocalBinding`
+(existing `ExportName` covers the public export name already).
+
+**oxc source fields:**
+- `ModuleRecord.import_entries`: `ImportEntry { module_request, import_name: ImportImportName, local_name: NameSpan }`
+  - `ImportImportName::Name(ns)` -> `import_name = ns.name`, `local_name = entry.local_name`
+  - `ImportImportName::Default` -> `import_name = "default"`, `local_name = entry.local_name`
+  - `ImportImportName::NamespaceObject` -> `import_name = "*"`, `local_name = entry.local_name`
+- `ModuleRecord.local_export_entries`: `ExportEntry { export_name: ExportExportName, local_name: ExportLocalName }`
+  - `ExportExportName::Name(ns)` -> `export_name = ns.name`
+  - `ExportLocalName::Name(ns)` -> `local_name = ns.name` (if differs from export_name, emit ExportLocalBinding)
+
+
 ### 3. Import binding extraction
 
 Named imports: `import { Foo, Bar as B } from './mod'`

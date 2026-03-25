@@ -130,6 +130,30 @@ const MIGRATIONS: &[&str] = &[
         UNIQUE(repo_id, package_name, manifest_path)
     )
     "#,
+    // rules: authored extraction rules (populated by build.rs codegen or manual insert)
+    // rule_hash covers selector + all properties -- used to invalidate stale matches
+    r#"
+    CREATE TABLE IF NOT EXISTS rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        selector TEXT NOT NULL,
+        ref_kind TEXT NOT NULL,
+        rule_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    "#,
+    // matches: rule provenance for each ref
+    // populated during extraction once URTSL pipeline is wired
+    r#"
+    CREATE TABLE IF NOT EXISTS matches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_id INTEGER NOT NULL REFERENCES rules(id),
+        ref_id INTEGER NOT NULL REFERENCES refs(id),
+        UNIQUE(rule_id, ref_id)
+    )
+    "#,
+    "CREATE INDEX IF NOT EXISTS idx_matches_rule_id ON matches(rule_id)",
+    "CREATE INDEX IF NOT EXISTS idx_matches_ref_id ON matches(ref_id)",
 ];
 
 /// Run all migrations against the given pool.

@@ -1,11 +1,12 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use sprefa_config::{load_config, load_config_from, default_config_toml, Config};
 use sprefa_js::JsExtractor;
 use sprefa_rules::extractor::RuleExtractor;
 use sprefa_scan::Scanner;
-use sprefa_schema::{init_db, list_repos, count_files_for_repo, count_refs_for_repo, upsert_repo, search_strings};
+use sprefa_schema::{init_db, list_repos, count_files_for_repo, count_refs_for_repo, upsert_repo, search_refs};
 
 const README: &str = include_str!("../../../README.md");
 
@@ -95,16 +96,22 @@ enum Command {
         /// Only scan this repo (by name)
         #[arg(short, long)]
         repo: Option<String>,
+        /// Skip daemon delegation and scan directly (even if [daemon].url is set)
+        #[arg(long)]
+        once: bool,
     },
 
     /// Trigram substring search across all indexed strings
     ///
     /// Uses SQLite FTS5 with trigram tokenization. The search term is matched
-    /// as a substring against normalized string values. Returns up to 100 results
+    /// as a substring against normalized string values. Returns up to 500 results
     /// ranked by relevance.
     Query {
         /// Search term (minimum 3 characters for trigram match)
         term: String,
+        /// Skip daemon delegation and query directly (even if [daemon].url is set)
+        #[arg(long)]
+        once: bool,
     },
 
     /// Show indexed repos with file and ref counts
@@ -140,9 +147,9 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Init) => cmd_init().await?,
         Some(Command::Add { path, name }) => cmd_add(&cli.config, path, name).await?,
-        Some(Command::Scan { repo }) => cmd_scan(&cli.config, repo.as_deref()).await?,
+        Some(Command::Scan { repo, once }) => cmd_scan(&cli.config, repo.as_deref(), once).await?,
         Some(Command::Status) => cmd_status(&cli.config).await?,
-        Some(Command::Query { term }) => cmd_query(&cli.config, &term).await?,
+        Some(Command::Query { term, once }) => cmd_query(&cli.config, &term, once).await?,
         Some(Command::Serve) => cmd_serve(&cli.config).await?,
         None => {
             // No subcommand: print help
@@ -201,24 +208,52 @@ async fn cmd_add(config_path: &Option<PathBuf>, path: PathBuf, name: Option<Stri
     Ok(())
 }
 
-async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> anyhow::Result<()> {
-    let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
-
+fn build_scanner(config: &sprefa_config::Config, pool: sqlx::SqlitePool) -> anyhow::Result<Scanner> {
     let rules_path = find_rules_file()?;
     let extractor = RuleExtractor::from_json(&rules_path)
         .or_else(|_| RuleExtractor::from_yaml(&rules_path))
         .map_err(|e| anyhow::anyhow!("failed to load rules from {}: {}", rules_path.display(), e))?;
-
-    let scanner = Scanner {
-        extractors: vec![
-            Box::new(extractor),
+    Ok(Scanner {
+        extractors: Arc::new(vec![
+            Box::new(extractor) as Box<dyn sprefa_scan::Extractor>,
             Box::new(JsExtractor),
-        ],
+        ]),
         db: pool,
         normalize_config: config.scan.as_ref().and_then(|s| s.normalize.clone()),
         global_filter: config.filter.clone(),
-    };
+    })
+}
+
+async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: bool) -> anyhow::Result<()> {
+    let config = load_cfg(config_path)?;
+
+    if !once {
+        if let Some(url) = config.daemon_url() {
+            let client = reqwest::Client::new();
+            let body = only_repo.map(|r| serde_json::json!({ "repo": r }));
+            let req = client.post(format!("{}/scan", url));
+            let req = match body {
+                Some(b) => req.json(&b),
+                None => req,
+            };
+            let resp = req.send().await?.error_for_status()?;
+            let items: Vec<serde_json::Value> = resp.json().await?;
+            for item in &items {
+                println!(
+                    "{}/{}: {} files, {} refs, {} targets resolved",
+                    item["repo"].as_str().unwrap_or(""),
+                    item["branch"].as_str().unwrap_or(""),
+                    item["files_scanned"].as_u64().unwrap_or(0),
+                    item["refs_inserted"].as_u64().unwrap_or(0),
+                    item["targets_resolved"].as_u64().unwrap_or(0),
+                );
+            }
+            return Ok(());
+        }
+    }
+
+    let pool = init_db(&config.db_path()).await?;
+    let scanner = build_scanner(&config, pool)?;
 
     let repos: Vec<_> = config
         .repos
@@ -243,8 +278,9 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> any
             match scanner.scan_repo(repo, &branch).await {
                 Ok(result) => {
                     println!(
-                        "{}/{}: {} files scanned, {} refs inserted",
-                        result.repo, result.branch, result.files_scanned, result.refs_inserted
+                        "{}/{}: {} files scanned, {} refs inserted, {} targets resolved",
+                        result.repo, result.branch, result.files_scanned, result.refs_inserted,
+                        result.targets_resolved
                     );
                     total_files += result.files_scanned;
                     total_refs += result.refs_inserted;
@@ -312,29 +348,50 @@ async fn cmd_status(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_query(config_path: &Option<PathBuf>, term: &str) -> anyhow::Result<()> {
+async fn cmd_query(config_path: &Option<PathBuf>, term: &str, once: bool) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
+
+    if !once {
+        if let Some(url) = config.daemon_url() {
+            let client = reqwest::Client::new();
+            let resp = client
+                .get(format!("{}/query", url))
+                .query(&[("q", term)])
+                .send()
+                .await?
+                .error_for_status()?;
+            let hits: Vec<sprefa_schema::QueryHit> = resp.json().await?;
+            print_query_hits(&hits, term);
+            return Ok(());
+        }
+    }
+
     let pool = init_db(&config.db_path()).await?;
-
-    let results = search_strings(&pool, term).await?;
-    if results.is_empty() {
-        println!("no matches for '{}'", term);
-        return Ok(());
-    }
-
-    for s in &results {
-        println!("{:<6} {}", s.id, s.value);
-    }
-    println!("\n{} results", results.len());
-
+    let hits = search_refs(&pool, term).await?;
+    print_query_hits(&hits, term);
     Ok(())
+}
+
+fn print_query_hits(hits: &[sprefa_schema::QueryHit], term: &str) {
+    if hits.is_empty() {
+        println!("no matches for '{}'", term);
+        return;
+    }
+    for hit in hits {
+        println!("{} ({} refs)", hit.value, hit.refs.len());
+        for loc in &hit.refs {
+            println!("  {}  {}  kind={}", loc.repo, loc.file_path, loc.ref_kind);
+        }
+    }
+    println!("\n{} strings matched", hits.len());
 }
 
 async fn cmd_serve(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
     let pool = init_db(&config.db_path()).await?;
     let bind = config.daemon_bind().to_string();
-    sprefa_server::serve(pool, &bind).await?;
+    let scanner = build_scanner(&config, pool.clone()).ok().map(Arc::new);
+    sprefa_server::serve(pool, scanner, config.repos.clone(), &bind).await?;
     Ok(())
 }
 

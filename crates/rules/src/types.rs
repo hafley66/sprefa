@@ -115,7 +115,7 @@ pub enum StructStep {
     /// Map of json_key -> capture_name.
     /// Example: `{ "repository": "repo", "tag": "tag" }`
     Object {
-        captures: std::collections::HashMap<String, String>,
+        captures: std::collections::BTreeMap<String, String>,
     },
 }
 

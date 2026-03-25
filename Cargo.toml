@@ -65,6 +65,12 @@ regex = "1"
 # testing
 insta = { version = "1", features = ["yaml"] }
 
+# git library
+git2 = { version = "0.19", default-features = false }
+
+# http client (CLI daemon delegation, no TLS needed for localhost)
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
 # logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

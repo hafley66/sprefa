@@ -1,11 +1,12 @@
 use oxc_allocator::Allocator;
+use oxc_ast::ast::{Argument, Expression, Statement};
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::SourceType;
-use oxc_syntax::module_record::ExportExportName;
+use oxc_syntax::module_record::{ExportExportName, ExportLocalName, ImportImportName};
 use sprefa_extract::{Extractor, RawRef};
 use sprefa_schema::RefKind;
 
-const EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs"];
+const EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
 
 pub struct JsExtractor;
 
@@ -28,8 +29,9 @@ impl Extractor for JsExtractor {
         let mut refs = Vec::new();
         let mr = &ret.module_record;
 
-        // Imports + re-exports: requested_modules is the complete set of all specifiers.
-        // req.span covers the string literal including quotes -- strip 1 byte each side.
+        // --- ImportPath: all module specifier strings (static, dynamic, re-exports) ---
+        // requested_modules is keyed by specifier string, valued by all occurrence spans.
+        // span covers the string literal including quotes -- strip 1 byte each side.
         for (specifier, requests) in &mr.requested_modules {
             for req in requests {
                 refs.push(RawRef {
@@ -44,17 +46,117 @@ impl Extractor for JsExtractor {
             }
         }
 
-        // Local exports: names declared in this file
+        // --- ImportName + ImportAlias: named binding pairs from import statements ---
+        for entry in &mr.import_entries {
+            match &entry.import_name {
+                ImportImportName::NamespaceObject => {
+                    // import * as ns -- ns is the namespace binding, no source export name
+                    refs.push(RawRef {
+                        value: entry.local_name.name.to_string(),
+                        span_start: entry.local_name.span.start,
+                        span_end: entry.local_name.span.end,
+                        kind: RefKind::ImportName,
+                        is_path: false,
+                        parent_key: None,
+                        node_path: None,
+                    });
+                }
+                ImportImportName::Name(ns) => {
+                    let import_str = ns.name.as_str();
+                    refs.push(RawRef {
+                        value: import_str.to_string(),
+                        span_start: ns.span.start,
+                        span_end: ns.span.end,
+                        kind: RefKind::ImportName,
+                        is_path: false,
+                        parent_key: None,
+                        node_path: None,
+                    });
+                    // Alias only when local name differs from import name
+                    let local = entry.local_name.name.as_str();
+                    if local != import_str {
+                        refs.push(RawRef {
+                            value: local.to_string(),
+                            span_start: entry.local_name.span.start,
+                            span_end: entry.local_name.span.end,
+                            kind: RefKind::ImportAlias,
+                            is_path: false,
+                            parent_key: Some(import_str.to_string()),
+                            node_path: None,
+                        });
+                    }
+                }
+                ImportImportName::Default(_) => {
+                    // import React from 'react'
+                    // "default" has no physical span in this file; use statement_span.start
+                    // for uniqueness in the UNIQUE(file_id, string_id, span_start) constraint.
+                    let stmt_start = entry.statement_span.start;
+                    refs.push(RawRef {
+                        value: "default".to_string(),
+                        span_start: stmt_start,
+                        span_end: stmt_start,
+                        kind: RefKind::ImportName,
+                        is_path: false,
+                        parent_key: None,
+                        node_path: None,
+                    });
+                    refs.push(RawRef {
+                        value: entry.local_name.name.to_string(),
+                        span_start: entry.local_name.span.start,
+                        span_end: entry.local_name.span.end,
+                        kind: RefKind::ImportAlias,
+                        is_path: false,
+                        parent_key: Some("default".to_string()),
+                        node_path: None,
+                    });
+                }
+            }
+        }
+
+        // --- ExportName + ExportLocalBinding: direct exports ---
         for entry in &mr.local_export_entries {
-            let name = match &entry.export_name {
-                ExportExportName::Name(ns) => ns.name.as_str(),
-                ExportExportName::Default(_) => "default",
+            let (export_name_str, export_span) = match &entry.export_name {
+                ExportExportName::Name(ns) => (ns.name.as_str().to_string(), ns.span),
+                ExportExportName::Default(span) => ("default".to_string(), *span),
                 ExportExportName::Null => continue,
             };
             refs.push(RawRef {
-                value: name.to_string(),
-                span_start: entry.span.start,
-                span_end: entry.span.end,
+                value: export_name_str.clone(),
+                span_start: export_span.start,
+                span_end: export_span.end,
+                kind: RefKind::ExportName,
+                is_path: false,
+                parent_key: None,
+                node_path: None,
+            });
+            // Emit ExportLocalBinding when internal name differs from exported name
+            if let ExportLocalName::Name(local_ns) = &entry.local_name {
+                let local_str = local_ns.name.as_str();
+                if local_str != export_name_str {
+                    refs.push(RawRef {
+                        value: local_str.to_string(),
+                        span_start: local_ns.span.start,
+                        span_end: local_ns.span.end,
+                        kind: RefKind::ExportLocalBinding,
+                        is_path: false,
+                        parent_key: Some(export_name_str),
+                        node_path: None,
+                    });
+                }
+            }
+        }
+
+        // --- ExportName: re-exported names from indirect + star entries ---
+        for entry in mr.indirect_export_entries.iter().chain(mr.star_export_entries.iter()) {
+            let (export_name_str, export_span) = match &entry.export_name {
+                ExportExportName::Name(ns) => (ns.name.as_str().to_string(), ns.span),
+                ExportExportName::Default(span) => ("default".to_string(), *span),
+                ExportExportName::Null => continue,
+            };
+            refs.push(RawRef {
+                value: export_name_str,
+                span_start: export_span.start,
+                span_end: export_span.end,
                 kind: RefKind::ExportName,
                 is_path: false,
                 parent_key: None,
@@ -62,7 +164,57 @@ impl Extractor for JsExtractor {
             });
         }
 
+        // --- ImportPath: require() calls (CJS) ---
+        collect_require_calls(&ret.program.body, &mut refs);
+
         refs
+    }
+}
+
+/// Walk top-level statements looking for `require('specifier')` calls.
+/// Handles: variable initializers and expression statements.
+/// Nested require() inside callbacks/closures is not extracted.
+fn collect_require_calls<'a>(stmts: &'a [Statement<'a>], refs: &mut Vec<RawRef>) {
+    for stmt in stmts {
+        match stmt {
+            Statement::VariableDeclaration(decl) => {
+                for d in &decl.declarations {
+                    if let Some(init) = &d.init {
+                        collect_require_expr(init, refs);
+                    }
+                }
+            }
+            Statement::ExpressionStatement(s) => {
+                collect_require_expr(&s.expression, refs);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_require_expr<'a>(expr: &'a Expression<'a>, refs: &mut Vec<RawRef>) {
+    match expr {
+        Expression::CallExpression(call) => {
+            if let Expression::Identifier(id) = &call.callee {
+                if id.name == "require" {
+                    if let Some(Argument::StringLiteral(s)) = call.arguments.first() {
+                        refs.push(RawRef {
+                            value: s.value.to_string(),
+                            span_start: s.span.start + 1,
+                            span_end: s.span.end - 1,
+                            kind: RefKind::ImportPath,
+                            is_path: true,
+                            parent_key: None,
+                            node_path: None,
+                        });
+                    }
+                }
+            }
+        }
+        Expression::AssignmentExpression(assign) => {
+            collect_require_expr(&assign.right, refs);
+        }
+        _ => {}
     }
 }
 
@@ -72,11 +224,11 @@ fn source_type_for(path: &str) -> SourceType {
         .and_then(|e| e.to_str())
         .unwrap_or("");
     match ext {
-        "ts" => SourceType::ts(),
+        "ts" | "mts" | "cts" => SourceType::ts(),
         "tsx" => SourceType::tsx(),
         "jsx" => SourceType::jsx(),
         "mjs" | "cjs" | "js" => SourceType::mjs(),
-        _ => SourceType::tsx(), // superset fallback
+        _ => SourceType::tsx(),
     }
 }
 
@@ -95,11 +247,7 @@ mod tests {
 import type { Baz } from '../types';"#,
             "src/index.ts",
         );
-        let import_paths: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportPath)
-            .map(|r| r.value.as_str())
-            .collect();
-        insta::assert_yaml_snapshot!("named_imports", import_paths);
+        insta::assert_yaml_snapshot!("named_imports", refs);
     }
 
     #[test]
@@ -109,8 +257,7 @@ import type { Baz } from '../types';"#,
 import express from 'express';"#,
             "src/app.tsx",
         );
-        let paths: Vec<&str> = refs.iter().map(|r| r.value.as_str()).collect();
-        insta::assert_yaml_snapshot!("default_imports", paths);
+        insta::assert_yaml_snapshot!("default_imports", refs);
     }
 
     #[test]
@@ -121,11 +268,7 @@ export function bar() {}
 export default class Baz {}"#,
             "src/mod.ts",
         );
-        let exports: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ExportName)
-            .map(|r| r.value.as_str())
-            .collect();
-        insta::assert_yaml_snapshot!("exports", exports);
+        insta::assert_yaml_snapshot!("exports", refs);
     }
 
     #[test]
@@ -135,11 +278,50 @@ export default class Baz {}"#,
 export * from './barrel';"#,
             "src/index.ts",
         );
-        let paths: Vec<&str> = refs.iter()
+        insta::assert_yaml_snapshot!("reexports", refs);
+    }
+
+    #[test]
+    fn extracts_import_alias() {
+        let refs = extract(
+            r#"import { Foo as localFoo } from './mod';
+import { Bar } from './other';"#,
+            "src/x.ts",
+        );
+        insta::assert_yaml_snapshot!("import_alias", refs);
+    }
+
+    #[test]
+    fn extracts_export_alias() {
+        let refs = extract(
+            r#"const internalName = 1;
+export { internalName as PublicName };"#,
+            "src/y.ts",
+        );
+        insta::assert_yaml_snapshot!("export_alias", refs);
+    }
+
+    #[test]
+    fn extracts_namespace_import() {
+        let refs = extract(
+            r#"import * as utils from './utils';"#,
+            "src/z.ts",
+        );
+        insta::assert_yaml_snapshot!("namespace_import", refs);
+    }
+
+    #[test]
+    fn extracts_require() {
+        let refs = extract(
+            r#"const fs = require('fs');
+const path = require('path');"#,
+            "src/legacy.cjs",
+        );
+        let import_paths: Vec<&str> = refs.iter()
             .filter(|r| r.kind == RefKind::ImportPath)
             .map(|r| r.value.as_str())
             .collect();
-        insta::assert_yaml_snapshot!("reexports", paths);
+        insta::assert_yaml_snapshot!("require_calls", import_paths);
     }
 
     #[test]
@@ -147,7 +329,6 @@ export * from './barrel';"#,
         let src = r#"import { foo } from './utils';"#;
         let refs = extract(src, "src/x.ts");
         let r = refs.iter().find(|r| r.kind == RefKind::ImportPath).unwrap();
-        // span should cover "./utils" (without quotes)
         let slice = &src.as_bytes()[r.span_start as usize..r.span_end as usize];
         assert_eq!(std::str::from_utf8(slice).unwrap(), "./utils");
     }
@@ -159,18 +340,55 @@ export * from './barrel';"#,
 export default function App() { return <Button />; }"#,
             "src/App.tsx",
         );
-        // should extract the import path
         assert!(refs.iter().any(|r| r.value == "@ui/components"));
     }
 
     #[test]
-    fn commonjs_style_returns_empty() {
-        // CJS require() is not a module-record import, should produce no refs
+    fn mts_extension_parses() {
         let refs = extract(
-            r#"const fs = require('fs');
-module.exports = { fs };"#,
-            "src/legacy.cjs",
+            r#"import { foo } from './utils';"#,
+            "src/mod.mts",
         );
-        assert!(refs.is_empty());
+        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./utils"));
+    }
+
+    #[test]
+    fn cts_extension_with_require() {
+        let refs = extract(
+            r#"const x = require('./lib');"#,
+            "src/mod.cts",
+        );
+        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./lib"));
+    }
+
+    #[test]
+    fn reexport_with_rename() {
+        let refs = extract(
+            r#"export { foo as Bar } from './source';"#,
+            "src/barrel.ts",
+        );
+        insta::assert_yaml_snapshot!("reexport_rename", refs);
+    }
+
+    #[test]
+    fn import_alias_parent_key_links_to_import_name() {
+        let refs = extract(
+            r#"import { Foo as localFoo } from './mod';"#,
+            "src/x.ts",
+        );
+        let alias = refs.iter().find(|r| r.kind == RefKind::ImportAlias).unwrap();
+        assert_eq!(alias.value, "localFoo");
+        assert_eq!(alias.parent_key.as_deref(), Some("Foo"));
+    }
+
+    #[test]
+    fn export_local_binding_parent_key_links_to_export_name() {
+        let refs = extract(
+            r#"export { internal as Public };"#,
+            "src/x.ts",
+        );
+        let binding = refs.iter().find(|r| r.kind == RefKind::ExportLocalBinding).unwrap();
+        assert_eq!(binding.value, "internal");
+        assert_eq!(binding.parent_key.as_deref(), Some("Public"));
     }
 }

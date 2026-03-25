@@ -14,6 +14,8 @@ pub enum RefKind {
     ImportPath = 10,
     ImportName = 11,
     ExportName = 12,
+    ImportAlias = 13,
+    ExportLocalBinding = 14,
     DepName = 20,
     DepVersion = 21,
     RsUse = 30,
@@ -34,6 +36,8 @@ impl RefKind {
             10 => Some(Self::ImportPath),
             11 => Some(Self::ImportName),
             12 => Some(Self::ExportName),
+            13 => Some(Self::ImportAlias),
+            14 => Some(Self::ExportLocalBinding),
             20 => Some(Self::DepName),
             21 => Some(Self::DepVersion),
             30 => Some(Self::RsUse),
@@ -125,6 +129,25 @@ pub struct GitTag {
     pub commit_hash: Option<String>,
     pub is_semver: bool,
     pub created_at: Option<String>,
+}
+
+/// A single ref occurrence returned by a query: where in the codebase a string appears.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefLocation {
+    pub repo: String,
+    pub file_path: String,
+    pub ref_kind: u8,
+    pub span_start: i64,
+    pub span_end: i64,
+}
+
+/// A matched string plus all the places it appears as a ref.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryHit {
+    pub string_id: i64,
+    pub value: String,
+    pub norm: String,
+    pub refs: Vec<RefLocation>,
 }
 
 /// Row from the repo_packages table.

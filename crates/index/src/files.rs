@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::Result;
 use sprefa_config::CompiledFilter;
 
 /// List all indexable files under `repo_path`.
-/// Tries `git ls-files` first (respects .gitignore), falls back to walkdir.
+/// Uses git2 to enumerate committed files (respects .gitignore, works on any branch).
+/// Falls back to walkdir if the directory is not a git repo.
 /// Applies `filter` if provided.
 pub fn list_files(repo_path: &Path, filter: Option<&CompiledFilter>) -> Result<Vec<PathBuf>> {
-    let files = git_ls_files(repo_path).unwrap_or_else(|_| walkdir_files(repo_path));
+    let files = git2_list_files(repo_path).unwrap_or_else(|_| walkdir_files(repo_path));
 
     let filtered = files
         .into_iter()
@@ -22,22 +22,24 @@ pub fn list_files(repo_path: &Path, filter: Option<&CompiledFilter>) -> Result<V
     Ok(filtered)
 }
 
-fn git_ls_files(repo_path: &Path) -> Result<Vec<PathBuf>> {
-    let output = Command::new("git")
-        .args(["ls-files", "-z"])
-        .current_dir(repo_path)
-        .output()?;
+fn git2_list_files(repo_path: &Path) -> Result<Vec<PathBuf>> {
+    let repo = git2::Repository::open(repo_path)?;
+    let head = repo.head()?;
+    let commit = head.peel_to_commit()?;
+    let tree = commit.tree()?;
 
-    if !output.status.success() {
-        anyhow::bail!("git ls-files failed");
-    }
-
-    let paths = output.stdout
-        .split(|&b| b == 0)
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| std::str::from_utf8(s).ok())
-        .map(|s| repo_path.join(s))
-        .collect();
+    let mut paths = Vec::new();
+    tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+        if entry.kind() == Some(git2::ObjectType::Blob) {
+            let rel = if root.is_empty() {
+                PathBuf::from(entry.name().unwrap_or(""))
+            } else {
+                PathBuf::from(root).join(entry.name().unwrap_or(""))
+            };
+            paths.push(repo_path.join(rel));
+        }
+        git2::TreeWalkResult::Ok
+    })?;
 
     Ok(paths)
 }
@@ -47,7 +49,6 @@ fn walkdir_files(repo_path: &Path) -> Vec<PathBuf> {
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
-            // skip .git and other hidden dirs at the root
             let name = e.file_name().to_string_lossy();
             !(e.depth() == 1 && name.starts_with('.'))
         })

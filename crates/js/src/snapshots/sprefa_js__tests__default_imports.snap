@@ -1,6 +1,46 @@
 ---
 source: crates/js/src/lib.rs
-expression: paths
+expression: refs
 ---
-- react
-- express
+- value: react
+  span_start: 19
+  span_end: 24
+  kind: ImportPath
+  is_path: true
+  parent_key: ~
+  node_path: ~
+- value: express
+  span_start: 48
+  span_end: 55
+  kind: ImportPath
+  is_path: true
+  parent_key: ~
+  node_path: ~
+- value: default
+  span_start: 0
+  span_end: 0
+  kind: ImportName
+  is_path: false
+  parent_key: ~
+  node_path: ~
+- value: React
+  span_start: 7
+  span_end: 12
+  kind: ImportAlias
+  is_path: false
+  parent_key: default
+  node_path: ~
+- value: default
+  span_start: 27
+  span_end: 27
+  kind: ImportName
+  is_path: false
+  parent_key: ~
+  node_path: ~
+- value: express
+  span_start: 34
+  span_end: 41
+  kind: ImportAlias
+  is_path: false
+  parent_key: default
+  node_path: ~

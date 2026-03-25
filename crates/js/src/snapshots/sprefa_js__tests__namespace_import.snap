@@ -1,0 +1,18 @@
+---
+source: crates/js/src/lib.rs
+expression: refs
+---
+- value: "./utils"
+  span_start: 24
+  span_end: 31
+  kind: ImportPath
+  is_path: true
+  parent_key: ~
+  node_path: ~
+- value: utils
+  span_start: 12
+  span_end: 17
+  kind: ImportName
+  is_path: false
+  parent_key: ~
+  node_path: ~

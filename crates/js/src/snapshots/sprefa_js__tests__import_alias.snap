@@ -2,35 +2,35 @@
 source: crates/js/src/lib.rs
 expression: refs
 ---
-- value: "./utils"
-  span_start: 26
-  span_end: 33
+- value: "./mod"
+  span_start: 33
+  span_end: 38
   kind: ImportPath
   is_path: true
   parent_key: ~
   node_path: ~
-- value: "../types"
+- value: "./other"
   span_start: 62
-  span_end: 70
+  span_end: 69
   kind: ImportPath
   is_path: true
   parent_key: ~
   node_path: ~
-- value: foo
+- value: Foo
   span_start: 9
   span_end: 12
   kind: ImportName
   is_path: false
   parent_key: ~
   node_path: ~
-- value: bar
-  span_start: 14
-  span_end: 17
-  kind: ImportName
+- value: localFoo
+  span_start: 16
+  span_end: 24
+  kind: ImportAlias
   is_path: false
-  parent_key: ~
+  parent_key: Foo
   node_path: ~
-- value: Baz
+- value: Bar
   span_start: 50
   span_end: 53
   kind: ImportName

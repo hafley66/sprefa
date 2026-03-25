@@ -1,0 +1,18 @@
+---
+source: crates/js/src/lib.rs
+expression: refs
+---
+- value: "./source"
+  span_start: 28
+  span_end: 36
+  kind: ImportPath
+  is_path: true
+  parent_key: ~
+  node_path: ~
+- value: Bar
+  span_start: 16
+  span_end: 19
+  kind: ExportName
+  is_path: false
+  parent_key: ~
+  node_path: ~

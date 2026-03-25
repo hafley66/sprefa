@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -11,7 +12,7 @@ use sprefa_extract::Extractor;
 const BINARY_HASH: &str = env!("SPREFA_GIT_HASH");
 
 pub struct Scanner {
-    pub extractors: Vec<Box<dyn Extractor>>,
+    pub extractors: Arc<Vec<Box<dyn Extractor>>>,
     pub db: SqlitePool,
     pub normalize_config: Option<sprefa_config::NormalizeConfig>,
     pub global_filter: Option<sprefa_config::FilterConfig>,
@@ -23,6 +24,7 @@ pub struct ScanResult {
     pub files_scanned: usize,
     pub refs_inserted: usize,
     pub files_skipped: usize,
+    pub targets_resolved: usize,
 }
 
 impl Scanner {
@@ -35,12 +37,14 @@ impl Scanner {
 
         let scan_ctx = sprefa_cache::load_scan_context(&self.db, &config.name, BINARY_HASH).await?;
 
-        let (files_scanned, extracted) = sprefa_index::extract(
-            Path::new(&config.path),
-            compiled_filter.as_ref(),
-            &self.extractors,
-            &scan_ctx.skip_set,
-        )?;
+        let repo_path = PathBuf::from(&config.path);
+        let extractors = Arc::clone(&self.extractors);
+        let skip_set = scan_ctx.skip_set;
+
+        let (files_scanned, extracted) = tokio::task::spawn_blocking(move || {
+            sprefa_index::extract(&repo_path, compiled_filter.as_ref(), &extractors, &skip_set)
+        })
+        .await??;
 
         let files_skipped = extracted.iter().filter(|f| f.was_skipped).count();
 
@@ -59,12 +63,20 @@ impl Scanner {
             BINARY_HASH,
         ).await?;
 
+        let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;
+
+        tracing::info!(
+            "{}/{}: {} refs, {} import targets resolved",
+            config.name, branch, refs_inserted, targets_resolved,
+        );
+
         Ok(ScanResult {
             repo: config.name.clone(),
             branch: branch.to_string(),
             files_scanned,
             refs_inserted,
             files_skipped,
+            targets_resolved,
         })
     }
 }

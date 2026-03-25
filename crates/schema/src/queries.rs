@@ -1,6 +1,8 @@
 use sqlx::SqlitePool;
 
-use crate::{Repo, StringRow};
+use std::collections::HashMap;
+
+use crate::{QueryHit, RefLocation, Repo, StringRow};
 
 // -- repos --
 
@@ -145,6 +147,50 @@ pub async fn search_strings(pool: &SqlitePool, query: &str) -> anyhow::Result<Ve
         norm: r.2,
         norm2: r.3,
     }).collect())
+}
+
+/// FTS5 trigram search returning matched strings grouped with all their ref locations.
+pub async fn search_refs(pool: &SqlitePool, query: &str) -> anyhow::Result<Vec<QueryHit>> {
+    let rows: Vec<(i64, String, String, i64, i64, i64, String, String)> = sqlx::query_as(
+        r#"
+        SELECT s.id, s.value, s.norm,
+               r.span_start, r.span_end, r.ref_kind,
+               f.path AS file_path,
+               repos.name AS repo_name
+        FROM strings_fts fts
+        JOIN strings s ON s.id = fts.rowid
+        JOIN refs r ON r.string_id = s.id
+        JOIN files f ON r.file_id = f.id
+        JOIN repos ON f.repo_id = repos.id
+        WHERE fts.norm MATCH ?
+        ORDER BY rank, repos.name, f.path
+        LIMIT 500
+        "#,
+    )
+    .bind(format!("\"{}\"", query))
+    .fetch_all(pool)
+    .await?;
+
+    // Group rows by string_id, preserving rank order of first occurrence.
+    let mut hits: Vec<QueryHit> = Vec::new();
+    let mut id_to_idx: HashMap<i64, usize> = HashMap::new();
+
+    for (string_id, value, norm, span_start, span_end, ref_kind, file_path, repo_name) in rows {
+        let idx = *id_to_idx.entry(string_id).or_insert_with(|| {
+            let idx = hits.len();
+            hits.push(QueryHit { string_id, value, norm, refs: Vec::new() });
+            idx
+        });
+        hits[idx].refs.push(RefLocation {
+            repo: repo_name,
+            file_path,
+            ref_kind: ref_kind as u8,
+            span_start,
+            span_end,
+        });
+    }
+
+    Ok(hits)
 }
 
 // -- refs --

@@ -1,6 +1,32 @@
 ---
 source: crates/js/src/lib.rs
-expression: paths
+expression: refs
 ---
-- "./barrel"
-- "./foo"
+- value: "./barrel"
+  span_start: 49
+  span_end: 57
+  kind: ImportPath
+  is_path: true
+  parent_key: ~
+  node_path: ~
+- value: "./foo"
+  span_start: 26
+  span_end: 31
+  kind: ImportPath
+  is_path: true
+  parent_key: ~
+  node_path: ~
+- value: foo
+  span_start: 9
+  span_end: 12
+  kind: ExportName
+  is_path: false
+  parent_key: ~
+  node_path: ~
+- value: bar
+  span_start: 14
+  span_end: 17
+  kind: ExportName
+  is_path: false
+  parent_key: ~
+  node_path: ~
