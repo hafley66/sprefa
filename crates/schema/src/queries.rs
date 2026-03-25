@@ -158,11 +158,12 @@ pub async fn insert_ref(
     is_path: bool,
     ref_kind: u8,
     parent_key_string_id: Option<i64>,
+    node_path: Option<&str>,
 ) -> anyhow::Result<i64> {
     let result = sqlx::query_scalar::<_, i64>(
         r#"
-        INSERT INTO refs (string_id, file_id, span_start, span_end, is_path, ref_kind, parent_key_string_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO refs (string_id, file_id, span_start, span_end, is_path, ref_kind, parent_key_string_id, node_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_id, string_id, span_start) DO NOTHING
         RETURNING id
         "#,
@@ -174,6 +175,7 @@ pub async fn insert_ref(
     .bind(is_path)
     .bind(ref_kind)
     .bind(parent_key_string_id)
+    .bind(node_path)
     .fetch_optional(pool)
     .await?;
     Ok(result.unwrap_or(0))

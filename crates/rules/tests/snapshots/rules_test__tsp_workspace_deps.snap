@@ -8,21 +8,25 @@ expression: refs
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: devDependencies/@hafley/alloy-rs
 - value: "@hafley/typespec-decorator-def"
   span_start: 0
   span_end: 0
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: dependencies/@hafley/typespec-decorator-def
 - value: "workspace:*"
   span_start: 0
   span_end: 0
   kind: DepVersion
   is_path: false
   parent_key: "@hafley/typespec-decorator-def"
+  node_path: dependencies/@hafley/typespec-decorator-def
 - value: "workspace:*"
   span_start: 0
   span_end: 0
   kind: DepVersion
   is_path: false
   parent_key: "@hafley/alloy-rs"
+  node_path: devDependencies/@hafley/alloy-rs

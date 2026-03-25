@@ -1,0 +1,18 @@
+[package]
+name = "sprefa_js"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sprefa_extract = { path = "../extract" }
+sprefa_schema = { path = "../schema" }
+oxc_allocator = "0.122"
+oxc_parser = "0.122"
+oxc_ast = "0.122"
+oxc_span = "0.122"
+oxc_syntax = "0.122"
+anyhow = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

@@ -1,0 +1,7 @@
+---
+source: crates/js/src/lib.rs
+expression: exports
+---
+- foo
+- bar
+- default

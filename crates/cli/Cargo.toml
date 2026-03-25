@@ -10,6 +10,9 @@ path = "src/main.rs"
 [dependencies]
 sprefa_config = { path = "../config" }
 sprefa_schema = { path = "../schema" }
+sprefa_scan = { path = "../scan" }
+sprefa_rules = { path = "../rules" }
+sprefa_js = { path = "../js" }
 sprefa_server = { path = "../server" }
 clap = { workspace = true }
 tokio = { workspace = true }

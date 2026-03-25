@@ -8,21 +8,25 @@ expression: refs
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: dependencies/axum
 - value: insta
   span_start: 0
   span_end: 0
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: dev-dependencies/insta
 - value: serde
   span_start: 0
   span_end: 0
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: dependencies/serde
 - value: tokio
   span_start: 0
   span_end: 0
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: dependencies/tokio

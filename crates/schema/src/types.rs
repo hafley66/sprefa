@@ -96,6 +96,8 @@ pub struct Ref {
     pub target_file_id: Option<i64>,
     pub ref_kind: u8,
     pub parent_key_string_id: Option<i64>,
+    /// "/"-joined structural path through the parsed tree. Used for anti-unification.
+    pub node_path: Option<String>,
 }
 
 /// Row from the branch_files junction table.

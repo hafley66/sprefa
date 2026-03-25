@@ -10,6 +10,10 @@ pub struct RawRef {
     pub kind: RefKind,
     pub is_path: bool,
     pub parent_key: Option<String>,
+    /// "/"-joined structural path through the parsed tree to this leaf.
+    /// e.g. "dependencies/express/version" or "paths//v1/widgets/post/operationId".
+    /// Used by anti-unification to reconstruct selectors from pairs of refs.
+    pub node_path: Option<String>,
 }
 
 /// Trait for language-specific extractors.

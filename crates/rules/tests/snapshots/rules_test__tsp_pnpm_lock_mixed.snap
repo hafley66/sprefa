@@ -8,33 +8,39 @@ expression: refs
   kind: DepVersion
   is_path: false
   parent_key: "@hafley/typespec-decorator-def"
+  node_path: packages/@hafley/typespec-decorator-def@0.1.0
 - value: 0.64.0
   span_start: 0
   span_end: 0
   kind: DepVersion
   is_path: false
   parent_key: "@typespec/compiler"
+  node_path: packages/@typespec/compiler@0.64.0
 - value: 5.7.3
   span_start: 0
   span_end: 0
   kind: DepVersion
   is_path: false
   parent_key: typescript
+  node_path: packages/typescript@5.7.3
 - value: "@hafley/typespec-decorator-def"
   span_start: 0
   span_end: 0
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: packages/@hafley/typespec-decorator-def@0.1.0
 - value: "@typespec/compiler"
   span_start: 0
   span_end: 0
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: packages/@typespec/compiler@0.64.0
 - value: typescript
   span_start: 0
   span_end: 0
   kind: DepName
   is_path: false
   parent_key: ~
+  node_path: packages/typescript@5.7.3

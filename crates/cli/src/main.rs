@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use sprefa_config::{load_config, load_config_from, default_config_toml, Config};
+use sprefa_js::JsExtractor;
+use sprefa_rules::extractor::RuleExtractor;
+use sprefa_scan::Scanner;
 use sprefa_schema::{init_db, list_repos, count_files_for_repo, count_refs_for_repo, upsert_repo, search_strings};
 
 const README: &str = include_str!("../../../README.md");
@@ -198,10 +201,90 @@ async fn cmd_add(config_path: &Option<PathBuf>, path: PathBuf, name: Option<Stri
     Ok(())
 }
 
-async fn cmd_scan(_config_path: &Option<PathBuf>, _repo: Option<&str>) -> anyhow::Result<()> {
-    // TODO: Phase 2 - wire up extractors and scanner
-    println!("scan not yet implemented (Phase 2)");
+async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> anyhow::Result<()> {
+    let config = load_cfg(config_path)?;
+    let pool = init_db(&config.db_path()).await?;
+
+    let rules_path = find_rules_file()?;
+    let extractor = RuleExtractor::from_json(&rules_path)
+        .or_else(|_| RuleExtractor::from_yaml(&rules_path))
+        .map_err(|e| anyhow::anyhow!("failed to load rules from {}: {}", rules_path.display(), e))?;
+
+    let scanner = Scanner {
+        extractors: vec![
+            Box::new(extractor),
+            Box::new(JsExtractor),
+        ],
+        db: pool,
+        normalize_config: config.scan.as_ref().and_then(|s| s.normalize.clone()),
+    };
+
+    let repos: Vec<_> = config
+        .repos
+        .iter()
+        .filter(|r| only_repo.map(|name| r.name == name).unwrap_or(true))
+        .collect();
+
+    if repos.is_empty() {
+        if let Some(name) = only_repo {
+            anyhow::bail!("no repo named '{}' in config", name);
+        } else {
+            println!("no repos configured. use `sprefa add <path>` to add one.");
+            return Ok(());
+        }
+    }
+
+    let mut total_files = 0usize;
+    let mut total_refs = 0usize;
+
+    for repo in repos {
+        for branch in repo.branch_list() {
+            match scanner.scan_repo(repo, &branch).await {
+                Ok(result) => {
+                    println!(
+                        "{}/{}: {} files scanned, {} refs inserted",
+                        result.repo, result.branch, result.files_scanned, result.refs_inserted
+                    );
+                    total_files += result.files_scanned;
+                    total_refs += result.refs_inserted;
+                }
+                Err(e) => {
+                    tracing::warn!("{}/{}: scan failed: {}", repo.name, branch, e);
+                }
+            }
+        }
+    }
+
+    println!("\ntotal: {} files, {} refs", total_files, total_refs);
     Ok(())
+}
+
+/// Rules file lookup: $SPREFA_RULES > ./sprefa-rules.json > ./sprefa-rules.yaml
+/// > ~/.config/sprefa/rules.json > ~/.config/sprefa/rules.yaml
+fn find_rules_file() -> anyhow::Result<PathBuf> {
+    if let Ok(path) = std::env::var("SPREFA_RULES") {
+        return Ok(PathBuf::from(path));
+    }
+
+    let candidates = [
+        PathBuf::from("sprefa-rules.json"),
+        PathBuf::from("sprefa-rules.yaml"),
+        {
+            let home = std::env::var("HOME").unwrap_or_default();
+            PathBuf::from(format!("{}/.config/sprefa/rules.json", home))
+        },
+        {
+            let home = std::env::var("HOME").unwrap_or_default();
+            PathBuf::from(format!("{}/.config/sprefa/rules.yaml", home))
+        },
+    ];
+
+    candidates
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| anyhow::anyhow!(
+            "no rules file found. set $SPREFA_RULES or create sprefa-rules.json"
+        ))
 }
 
 async fn cmd_status(config_path: &Option<PathBuf>) -> anyhow::Result<()> {

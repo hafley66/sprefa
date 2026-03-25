@@ -1,14 +1,7 @@
 ---
-source: crates/rules/tests/rules_test.rs
+source: crates/rules/src/extractor.rs
 expression: refs
 ---
-- value: 18.2.0
-  span_start: 0
-  span_end: 0
-  kind: DepVersion
-  is_path: false
-  parent_key: react
-  node_path: dependencies/react/version
 - value: 4.17.21
   span_start: 0
   span_end: 0
@@ -37,10 +30,3 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: dependencies/lodash/version
-- value: react
-  span_start: 0
-  span_end: 0
-  kind: DepName
-  is_path: false
-  parent_key: ~
-  node_path: dependencies/react/version

@@ -7,6 +7,7 @@ members = [
     "crates/server",
     "crates/cli",
     "crates/rules",
+    "crates/js",
 ]
 resolver = "2"
 
@@ -19,6 +20,7 @@ license = "MIT"
 # serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 toml = "0.8"
 
 # database
@@ -35,6 +37,18 @@ clap = { version = "4", features = ["derive"] }
 
 # glob matching
 globset = "0.4"
+
+# parallel iteration
+rayon = "1"
+
+# directory traversal
+walkdir = "2"
+
+# fast non-crypto hashing
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# memory-mapped file I/O
+memmap2 = "0.9"
 
 # error handling
 anyhow = "1"

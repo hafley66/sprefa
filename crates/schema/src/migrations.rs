@@ -81,6 +81,7 @@ const MIGRATIONS: &[&str] = &[
         target_file_id INTEGER REFERENCES files(id),
         ref_kind INTEGER NOT NULL DEFAULT 0,
         parent_key_string_id INTEGER REFERENCES strings(id),
+        node_path TEXT,
         UNIQUE(file_id, string_id, span_start)
     )
     "#,

@@ -1,0 +1,35 @@
+{
+  "$schema": "./sprefa-rules.schema.json",
+  "rules": [
+    {
+      "name": "cargo-deps",
+      "description": "Dependency names from Cargo.toml files",
+      "file": "**/Cargo.toml",
+      "select": [
+        { "step": "key_match", "pattern": "dependencies|dev-dependencies|build-dependencies", "capture": "dep_type" },
+        { "step": "key_match", "pattern": "*", "capture": "name" }
+      ],
+      "action": {
+        "emit": [
+          { "capture": "name", "kind": "dep_name" }
+        ]
+      }
+    },
+    {
+      "name": "package-json-deps",
+      "description": "Dependency names from package.json files",
+      "file": "**/package.json",
+      "select": [
+        { "step": "key_match", "pattern": "dependencies|devDependencies|peerDependencies", "capture": "dep_type" },
+        { "step": "key_match", "pattern": "*", "capture": "name" },
+        { "step": "leaf", "capture": "version" }
+      ],
+      "action": {
+        "emit": [
+          { "capture": "name", "kind": "dep_name" },
+          { "capture": "version", "kind": "dep_version", "parent": "name" }
+        ]
+      }
+    }
+  ]
+}

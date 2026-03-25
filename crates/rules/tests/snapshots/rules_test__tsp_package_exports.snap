@@ -8,45 +8,53 @@ expression: refs
   kind: ExportName
   is_path: false
   parent_key: ~
+  node_path: exports/./codegen/import
 - value: "./codegen"
   span_start: 0
   span_end: 0
   kind: ExportName
   is_path: false
   parent_key: ~
+  node_path: exports/./codegen/types
 - value: "./dist/src/codegen/index.d.ts"
   span_start: 0
   span_end: 0
   kind: ImportPath
   is_path: false
   parent_key: "./codegen"
+  node_path: exports/./codegen/types
 - value: "./dist/src/codegen/index.js"
   span_start: 0
   span_end: 0
   kind: ImportPath
   is_path: false
   parent_key: "./codegen"
+  node_path: exports/./codegen/import
 - value: "./dist/src/factory/index.d.ts"
   span_start: 0
   span_end: 0
   kind: ImportPath
   is_path: false
   parent_key: "./factory"
+  node_path: exports/./factory/types
 - value: "./dist/src/factory/index.js"
   span_start: 0
   span_end: 0
   kind: ImportPath
   is_path: false
   parent_key: "./factory"
+  node_path: exports/./factory/import
 - value: "./factory"
   span_start: 0
   span_end: 0
   kind: ExportName
   is_path: false
   parent_key: ~
+  node_path: exports/./factory/import
 - value: "./factory"
   span_start: 0
   span_end: 0
   kind: ExportName
   is_path: false
   parent_key: ~
+  node_path: exports/./factory/types

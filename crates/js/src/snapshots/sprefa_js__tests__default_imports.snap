@@ -1,0 +1,6 @@
+---
+source: crates/js/src/lib.rs
+expression: paths
+---
+- react
+- express
