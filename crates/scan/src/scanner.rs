@@ -6,6 +6,10 @@ use sqlx::SqlitePool;
 use sprefa_config::{CompiledFilter, RepoConfig};
 use sprefa_extract::Extractor;
 
+/// Embedded at compile time from the HEAD commit of this repo.
+/// If built outside git, falls back to "unknown".
+const BINARY_HASH: &str = env!("SPREFA_GIT_HASH");
+
 pub struct Scanner {
     pub extractors: Vec<Box<dyn Extractor>>,
     pub db: SqlitePool,
@@ -18,6 +22,7 @@ pub struct ScanResult {
     pub branch: String,
     pub files_scanned: usize,
     pub refs_inserted: usize,
+    pub files_skipped: usize,
 }
 
 impl Scanner {
@@ -28,13 +33,22 @@ impl Scanner {
             .map(CompiledFilter::compile)
             .transpose()?;
 
+        let scan_ctx = sprefa_cache::load_scan_context(&self.db, &config.name, BINARY_HASH).await?;
+
         let (files_scanned, extracted) = sprefa_index::extract(
             Path::new(&config.path),
             compiled_filter.as_ref(),
             &self.extractors,
+            &scan_ctx.skip_set,
         )?;
 
-        tracing::info!("{}/{}: {} files", config.name, branch, files_scanned);
+        let files_skipped = extracted.iter().filter(|f| f.was_skipped).count();
+
+        tracing::info!(
+            "{}/{}: {} files ({} skipped, binary={})",
+            config.name, branch, files_scanned, files_skipped,
+            &BINARY_HASH[..8.min(BINARY_HASH.len())],
+        );
 
         let refs_inserted = sprefa_cache::flush(
             &self.db,
@@ -42,6 +56,7 @@ impl Scanner {
             branch,
             extracted,
             self.normalize_config.as_ref(),
+            BINARY_HASH,
         ).await?;
 
         Ok(ScanResult {
@@ -49,6 +64,7 @@ impl Scanner {
             branch: branch.to_string(),
             files_scanned,
             refs_inserted,
+            files_skipped,
         })
     }
 }

@@ -30,6 +30,7 @@ pub async fn flush(
     branch: &str,
     files: Vec<ExtractedFile>,
     normalize_config: Option<&NormalizeConfig>,
+    scanner_hash: &str,
 ) -> Result<usize> {
     // Two metadata upserts outside the main transaction (idempotent, tiny).
     let repo_id = sqlx::query_scalar::<_, i64>(
@@ -107,15 +108,16 @@ pub async fn flush(
 
     // Bulk insert files.
     for chunk in files.chunks(FILE_CHUNK) {
-        let ph = chunk.iter().map(|_| "(?,?,?,?,?)").collect::<Vec<_>>().join(",");
+        let ph = chunk.iter().map(|_| "(?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "INSERT INTO files (repo_id, path, content_hash, stem, ext) VALUES {ph}
-             ON CONFLICT(repo_id, path, content_hash) DO UPDATE SET scanned_at = NULL"
+            "INSERT INTO files (repo_id, path, content_hash, stem, ext, scanner_hash) VALUES {ph}
+             ON CONFLICT(repo_id, path, content_hash) DO UPDATE SET scanner_hash = excluded.scanner_hash"
         );
         let mut q = sqlx::query(&sql);
         for f in chunk {
             q = q.bind(repo_id).bind(&f.rel_path).bind(&f.content_hash)
-                 .bind(f.stem.as_deref()).bind(f.ext.as_deref());
+                 .bind(f.stem.as_deref()).bind(f.ext.as_deref())
+                 .bind(scanner_hash);
         }
         q.execute(&mut *tx).await?;
     }
@@ -243,6 +245,21 @@ mod tests {
             stem,
             ext: Some(ext.to_string()),
             refs,
+            was_skipped: false,
+        }
+    }
+
+    fn skipped(rel_path: &str, content_hash: &str, ext: &str) -> ExtractedFile {
+        let stem = rel_path.split('/').last()
+            .and_then(|n| n.split('.').next())
+            .map(String::from);
+        ExtractedFile {
+            rel_path: rel_path.to_string(),
+            content_hash: content_hash.to_string(),
+            stem,
+            ext: Some(ext.to_string()),
+            refs: vec![],
+            was_skipped: true,
         }
     }
 
@@ -256,7 +273,7 @@ mod tests {
             ]),
         ];
 
-        let inserted = flush(&db, &repo_config("myrepo"), "main", files, None).await.unwrap();
+        let inserted = flush(&db, &repo_config("myrepo"), "main", files, None, "v1").await.unwrap();
         assert_eq!(inserted, 2);
 
         let string_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM strings")
@@ -278,7 +295,7 @@ mod tests {
             extracted("b/package.json", "hash2", "json", vec![raw_ref("express", RefKind::DepName)]),
         ];
 
-        let inserted = flush(&db, &repo_config("myrepo"), "main", files, None).await.unwrap();
+        let inserted = flush(&db, &repo_config("myrepo"), "main", files, None, "v1").await.unwrap();
         assert_eq!(inserted, 2);
 
         let string_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM strings")
@@ -308,7 +325,7 @@ mod tests {
             ]),
         ];
 
-        flush(&db, &repo_config("myrepo"), "main", files, None).await.unwrap();
+        flush(&db, &repo_config("myrepo"), "main", files, None, "v1").await.unwrap();
 
         // Both "express" and "4.18.2" should be in strings
         let string_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM strings")
@@ -337,8 +354,8 @@ mod tests {
             extracted("package.json", "abc", "json", vec![raw_ref("express", RefKind::DepName)]),
         ];
 
-        flush(&db, &repo_config("myrepo"), "main", make_files(), None).await.unwrap();
-        let second = flush(&db, &repo_config("myrepo"), "main", make_files(), None).await.unwrap();
+        flush(&db, &repo_config("myrepo"), "main", make_files(), None, "v1").await.unwrap();
+        let second = flush(&db, &repo_config("myrepo"), "main", make_files(), None, "v1").await.unwrap();
 
         assert_eq!(second, 0);
 
@@ -361,7 +378,7 @@ mod tests {
             ],
         )).collect();
 
-        let inserted = flush(&db, &repo_config("bigmono"), "main", files, None).await.unwrap();
+        let inserted = flush(&db, &repo_config("bigmono"), "main", files, None, "v1").await.unwrap();
 
         // 3000 unique dep_N + 1 shared = 3001 strings, 6000 refs
         assert_eq!(inserted, 6000);
@@ -369,5 +386,53 @@ mod tests {
         let string_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM strings")
             .fetch_one(&db).await.unwrap();
         assert_eq!(string_count, 3001);
+    }
+
+    #[tokio::test]
+    async fn flush_stores_scanner_hash_on_files() {
+        let db = make_db().await;
+        let files = vec![
+            extracted("src/a.ts", "hash1", "ts", vec![raw_ref("lodash", RefKind::DepName)]),
+        ];
+
+        flush(&db, &repo_config("myrepo"), "main", files, None, "binary-v1").await.unwrap();
+
+        let scanner_hash: Option<String> =
+            sqlx::query_scalar("SELECT scanner_hash FROM files WHERE path = 'src/a.ts'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(scanner_hash.as_deref(), Some("binary-v1"));
+    }
+
+    #[tokio::test]
+    async fn flush_skipped_files_get_branch_files_but_no_new_refs() {
+        let db = make_db().await;
+
+        // First scan: insert a file with refs.
+        let initial = vec![
+            extracted("src/a.ts", "hash1", "ts", vec![raw_ref("lodash", RefKind::DepName)]),
+        ];
+        flush(&db, &repo_config("myrepo"), "main", initial, None, "binary-v1").await.unwrap();
+
+        let refs_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM refs")
+            .fetch_one(&db).await.unwrap();
+
+        // Second scan: same file, marked as skipped (same binary hash).
+        let second = vec![skipped("src/a.ts", "hash1", "ts")];
+        let inserted = flush(&db, &repo_config("myrepo"), "feature", second, None, "binary-v1").await.unwrap();
+
+        // No new refs inserted.
+        assert_eq!(inserted, 0);
+        let refs_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM refs")
+            .fetch_one(&db).await.unwrap();
+        assert_eq!(refs_after, refs_before);
+
+        // Branch_files entry created for the new branch.
+        let branch_file_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM branch_files WHERE branch = 'feature'"
+        )
+        .fetch_one(&db).await.unwrap();
+        assert_eq!(branch_file_count, 1);
     }
 }

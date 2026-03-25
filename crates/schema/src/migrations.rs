@@ -26,6 +26,7 @@ const MIGRATIONS: &[&str] = &[
         stem TEXT,
         ext TEXT,
         scanned_at TEXT,
+        scanner_hash TEXT,
         UNIQUE(repo_id, path, content_hash)
     )
     "#,
@@ -144,6 +145,12 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     for sql in MIGRATIONS {
         sqlx::query(sql).execute(pool).await?;
     }
+
+    // Add scanner_hash to existing DBs that predate this column.
+    // SQLite returns "duplicate column name" if it already exists -- ignore that.
+    let _ = sqlx::query("ALTER TABLE files ADD COLUMN scanner_hash TEXT")
+        .execute(pool)
+        .await;
 
     tracing::info!("migrations complete ({} statements)", MIGRATIONS.len());
     Ok(())

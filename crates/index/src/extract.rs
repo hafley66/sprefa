@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::Result;
@@ -16,14 +17,23 @@ pub struct ExtractedFile {
     pub stem: Option<String>,
     pub ext: Option<String>,
     pub refs: Vec<RawRef>,
+    /// True when (rel_path, content_hash) matched the skip set -- refs are empty
+    /// because they are already in the DB from a prior scan with the same binary.
+    pub was_skipped: bool,
 }
 
 /// Walk `repo_path`, run extractors in parallel, return (total_files_found, extracted).
-/// Files with no refs are excluded from the returned vec.
+///
+/// Files in `skip_set` (keyed on `(rel_path, content_hash)`) are returned with
+/// `was_skipped = true` and empty refs -- the caller must not re-insert refs for
+/// them but should still update branch membership.
+///
+/// Files with no matching extractor AND not in the skip set are omitted entirely.
 pub fn extract(
     repo_path: &Path,
     filter: Option<&CompiledFilter>,
     extractors: &[Box<dyn Extractor>],
+    skip_set: &HashSet<(String, String)>,
 ) -> Result<(usize, Vec<ExtractedFile>)> {
     let files = list_files(repo_path, filter)?;
     let total = files.len();
@@ -32,6 +42,21 @@ pub fn extract(
         .par_iter()
         .filter_map(|abs_path| {
             let rel = abs_path.strip_prefix(repo_path).ok()?.to_str()?;
+            let file = std::fs::File::open(abs_path).ok()?;
+            let mmap = unsafe { Mmap::map(&file).ok()? };
+            let hash = format!("{:x}", xxh3_128(&mmap));
+
+            if skip_set.contains(&(rel.to_string(), hash.clone())) {
+                return Some(ExtractedFile {
+                    rel_path: rel.to_string(),
+                    content_hash: hash,
+                    stem: abs_path.file_stem().and_then(|s| s.to_str()).map(String::from),
+                    ext: abs_path.extension().and_then(|e| e.to_str()).map(String::from),
+                    refs: vec![],
+                    was_skipped: true,
+                });
+            }
+
             let ext = abs_path.extension().and_then(|e| e.to_str());
             let extractor = ext.and_then(|e| {
                 extractors
@@ -39,9 +64,6 @@ pub fn extract(
                     .find(|ex| ex.extensions().contains(&e))
                     .map(|ex| ex.as_ref())
             })?;
-            let file = std::fs::File::open(abs_path).ok()?;
-            let mmap = unsafe { Mmap::map(&file).ok()? };
-            let hash = format!("{:x}", xxh3_128(&mmap));
             let refs = extractor.extract(&mmap, rel);
             if refs.is_empty() {
                 return None;
@@ -52,6 +74,7 @@ pub fn extract(
                 stem: abs_path.file_stem().and_then(|s| s.to_str()).map(String::from),
                 ext: ext.map(String::from),
                 refs,
+                was_skipped: false,
             })
         })
         .collect();
