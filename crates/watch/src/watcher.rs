@@ -4,7 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    event::{ModifyKind, RenameMode},
+    Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
@@ -104,16 +107,50 @@ fn spawn_notify_watcher(
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
         let Ok(event) = res else { return };
 
-        for path in event.paths {
-            let raw = match event.kind {
-                EventKind::Create(_) => RawEvent::Created(path),
-                EventKind::Remove(_) => RawEvent::Removed(path),
-                EventKind::Modify(_) => RawEvent::Modified(path),
-                _ => continue,
-            };
-            // Best-effort send. If the channel is full, we drop the event
-            // rather than blocking the OS event thread.
-            let _ = tx.try_send(raw);
+        match event.kind {
+            // Rename events (macOS FSEvents fires these instead of Create+Remove for mv).
+            EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+                // Both paths in one event: [old_path, new_path].
+                if event.paths.len() >= 2 {
+                    let _ = tx.try_send(RawEvent::Removed(event.paths[0].clone()));
+                    let _ = tx.try_send(RawEvent::Created(event.paths[1].clone()));
+                }
+            }
+            EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
+                for path in event.paths {
+                    let _ = tx.try_send(RawEvent::Removed(path));
+                }
+            }
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
+                for path in event.paths {
+                    let _ = tx.try_send(RawEvent::Created(path));
+                }
+            }
+            EventKind::Modify(ModifyKind::Name(RenameMode::Any | RenameMode::Other)) => {
+                // Ambiguous rename -- treat as both removed and created so
+                // content-hash matching can sort it out.
+                for path in event.paths {
+                    let _ = tx.try_send(RawEvent::Removed(path.clone()));
+                    let _ = tx.try_send(RawEvent::Created(path));
+                }
+            }
+            // Standard file events.
+            EventKind::Create(_) => {
+                for path in event.paths {
+                    let _ = tx.try_send(RawEvent::Created(path));
+                }
+            }
+            EventKind::Remove(_) => {
+                for path in event.paths {
+                    let _ = tx.try_send(RawEvent::Removed(path));
+                }
+            }
+            EventKind::Modify(_) => {
+                for path in event.paths {
+                    let _ = tx.try_send(RawEvent::Modified(path));
+                }
+            }
+            _ => {}
         }
     })?;
 

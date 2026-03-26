@@ -34,7 +34,7 @@ One command does everything: scans all repos to build the index, starts filesyst
 
 | Event | Detection | JS/TS rewrite | Rust rewrite |
 |-------|-----------|---------------|--------------|
-| **File move** | delete+create correlated by content hash within 100ms window | Rewrite all `import`/`require`/`export...from` paths targeting the moved file. Preserves extension convention and index-file stripping. | Rewrite all `use` statements referencing the old module path. Preserves `crate::`, `self::`, `super::` prefix style. |
+| **File move** | Rename events (macOS `Modify(Name)`) or delete+create pairs correlated by content hash within 100ms window | Rewrite all `import`/`require`/`export...from` paths targeting the moved file. Preserves extension convention and index-file stripping. | Rewrite all `use` statements referencing the old module path. Preserves `crate::`, `self::`, `super::` prefix style. |
 | **Declaration rename** | Re-extract the changed file, diff declarations by span proximity (within 64 bytes = same declaration, different name) | Rewrite all `import { OldName }` to `import { NewName }` in files importing from the source. | Rewrite all `use crate::mod::OldName` to `use crate::mod::NewName`. |
 | **File delete** | Delete with no matching create | Log warning with count of now-broken references. | Same. |
 | **New file** | Create with no matching delete | Indexed on next scan. | Same. |
@@ -52,6 +52,8 @@ src/foo/bar.rs     -> crate::foo::bar
 ```
 
 When `src/utils.rs` moves to `src/helpers/utils.rs`, every `use crate::utils::Foo` becomes `use crate::helpers::utils::Foo`. If the importing file used `super::utils::Foo` and the new path is still expressible as `super::`, the prefix is preserved.
+
+**Known limitation:** `super::` and `self::` prefixed use paths are stored as literal strings in the index. The move detection query matches against absolute module path prefixes (`crate::...`), so relative-prefix refs are not rewritten by file moves. Only `crate::`-prefixed use statements are currently caught. Fixing this requires per-file module path resolution at query time.
 
 ## Why this doesn't already exist
 
@@ -182,9 +184,10 @@ git ls-files
 ### Watch pipeline (watch)
 
 ```
-notify OS events
+notify OS events (Create, Remove, Modify(Name) for renames on macOS)
   -> debounce 100ms batches
   -> classify: correlate delete+create by content hash -> Move
+               Modify(Name(From/To/Both)) -> split into Removed+Created for move detection
                re-extract modified files, diff by span proximity -> DeclChange
   -> plan_rewrites: query index for affected refs, compute new values
   -> apply: splice edits into source files (descending offset order)
@@ -310,4 +313,4 @@ crates/
 
 ## Testing
 
-110+ tests using `insta` snapshot assertions and sqlx in-memory SQLite. Coverage spans: config parsing, filter resolution, source discovery, rule deserialization + tree walking + ref emission, cross-format dep extraction (package-lock, pnpm-lock), bulk flush correctness (dedup, idempotency, chunk boundaries), scan context skip set loading and invalidation, import target resolution (relative, tsconfig paths, bare specifiers, directory indexes), JS/TS extraction (all import/export variants), Rust extraction (use trees, declarations, spans), Rust module path conversion, path rewriting (JS relative paths, Rust module paths with prefix preservation), declaration diffing, edit application.
+180+ tests using `insta` snapshot assertions and sqlx in-memory SQLite. Coverage spans: config parsing, filter resolution, source discovery, rule deserialization + tree walking + ref emission, cross-format dep extraction (package-lock, pnpm-lock), bulk flush correctness (dedup, idempotency, chunk boundaries), scan context skip set loading and invalidation, import target resolution (relative, tsconfig paths, bare specifiers, directory indexes), JS/TS extraction (all import/export variants including side-effect, type-only, dynamic exclusion, namespace re-export), Rust extraction (use trees with nested groups/self/glob/rename, declarations, async fn, pub(crate), impl-for-trait, spans), Rust module path conversion (workspace crates, mod.rs, multiple src/ dirs), JS path rewriting (extension conventions, index stripping, cross-tree monorepo, scoped packages), Rust module path rewriting (double super::, self:: fallback, mod.rs moves, super beyond crate root), declaration diffing (threshold boundaries, cross-kind isolation, swap detection), edit application (grow/shrink, multi-file, boundary edits, missing files).
