@@ -24,6 +24,7 @@ struct ResolvedRef {
     node_path: Option<String>,
 }
 
+#[tracing::instrument(skip(db, config, files, normalize_config), fields(repo = %config.name, branch = %branch, file_count = files.len()))]
 pub async fn flush(
     db: &SqlitePool,
     config: &RepoConfig,

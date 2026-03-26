@@ -15,6 +15,7 @@ sprefa_rules = { path = "../rules" }
 sprefa_js = { path = "../js" }
 sprefa_rs = { path = "../rs" }
 sprefa_server = { path = "../server" }
+sprefa_watch = { path = "../watch" }
 clap = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }

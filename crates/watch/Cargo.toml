@@ -9,6 +9,10 @@ sprefa_schema = { path = "../schema" }
 sqlx = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+notify = { workspace = true }
+tokio = { workspace = true }
+xxhash-rust = { workspace = true }
+memmap2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

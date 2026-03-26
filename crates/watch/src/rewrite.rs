@@ -19,6 +19,7 @@ pub struct ApplyResult {
 ///
 /// This is a destructive operation -- it modifies source files on disk.
 /// The caller is responsible for confirming with the user if needed.
+#[tracing::instrument(skip(edits), fields(edit_count = edits.len()))]
 pub fn apply(edits: &[Edit]) -> ApplyResult {
     let mut result = ApplyResult::default();
 

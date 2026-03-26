@@ -60,6 +60,7 @@ pub enum EditReason {
 ///
 /// Returns edits sorted by (file_path asc, span_start desc)
 /// so applying them in order doesn't invalidate subsequent offsets.
+#[tracing::instrument(skip(pool, changes, rewriters), fields(change_count = changes.len()))]
 pub async fn plan_rewrites(
     pool: &SqlitePool,
     changes: &[Change],
@@ -103,7 +104,10 @@ pub async fn plan_rewrites(
     Ok(edits)
 }
 
-/// A file moved. Find all ImportPath refs targeting it and rewrite them.
+/// A file moved. Find all refs targeting it and rewrite them.
+///
+/// For JS/TS: finds ImportPath refs with target_file_id pointing at the moved file.
+/// For Rust: finds RsUse refs whose module path prefix matches the old module path.
 async fn plan_file_move(
     pool: &SqlitePool,
     file_id: i64,
@@ -112,8 +116,8 @@ async fn plan_file_move(
     rewriters: &[Box<dyn PathRewriter>],
     edits: &mut Vec<Edit>,
 ) -> anyhow::Result<()> {
+    // JS/TS: ImportPath refs linked by target_file_id.
     let affected = queries::import_paths_targeting(pool, file_id).await?;
-
     for aref in affected {
         let source_abs = aref.source_abs_path();
         let ext = std::path::Path::new(&source_abs)
@@ -138,15 +142,39 @@ async fn plan_file_move(
         }
     }
 
+    // Rust: RsUse refs matching the old module path.
+    let old_mod = crate::rs_path::file_to_mod_path(old_path);
+    let new_mod = crate::rs_path::file_to_mod_path(new_path);
+    if let (Some(old_mod), Some(_new_mod)) = (old_mod, new_mod) {
+        let rs_affected = queries::rs_uses_with_prefix(pool, &old_mod).await?;
+        let rs_rewriter = crate::rs_path::RsPathRewriter;
+        for aref in rs_affected {
+            let source_abs = aref.source_abs_path();
+            if let Some(new_import) = rs_rewriter.rewrite_import(
+                &source_abs, old_path, new_path, &aref.value,
+            ) {
+                edits.push(Edit {
+                    file_path: source_abs,
+                    span_start: aref.span_start,
+                    span_end: aref.span_end,
+                    new_value: new_import,
+                    reason: EditReason::FileMove {
+                        old_target: old_path.to_string(),
+                        new_target: new_path.to_string(),
+                    },
+                });
+            }
+        }
+    }
+
     Ok(())
 }
 
-/// A declaration was renamed. Find all ImportName refs that import the old name
+/// A declaration was renamed. Find all refs that import the old name
 /// from the file where it was renamed, and rewrite them.
 ///
-/// Currently handles JS/TS only. Rust use-paths store full module paths
-/// (e.g. `crate::foo::Bar`) so a leaf rename requires path-aware rewriting
-/// and a Rust module resolver -- not yet built.
+/// Handles both JS/TS (ExportName -> ImportName refs) and Rust
+/// (RsDeclare -> RsUse refs with matching module path suffix).
 async fn plan_decl_rename(
     pool: &SqlitePool,
     file_id: i64,
@@ -155,30 +183,59 @@ async fn plan_decl_rename(
     new_name: &str,
     edits: &mut Vec<Edit>,
 ) -> anyhow::Result<()> {
-    // Only JS ExportName renames are handled for now.
-    // Rust RsDeclare would need RsUse suffix matching + module resolver.
-    if kind != RefKind::ExportName {
-        return Ok(());
-    }
-
     let source_file = queries::file_abs_path(pool, file_id)
         .await?
         .unwrap_or_else(|| format!("file_id={}", file_id));
 
-    let affected = queries::import_names_from_file(pool, file_id, old_name).await?;
-
-    for aref in affected {
-        edits.push(Edit {
-            file_path: aref.source_abs_path(),
-            span_start: aref.span_start,
-            span_end: aref.span_end,
-            new_value: new_name.to_string(),
-            reason: EditReason::DeclRename {
-                old_name: old_name.to_string(),
-                new_name: new_name.to_string(),
-                source_file: source_file.clone(),
-            },
-        });
+    match kind {
+        RefKind::ExportName => {
+            // JS/TS: find ImportName refs that import old_name from the target file.
+            let affected = queries::import_names_from_file(pool, file_id, old_name).await?;
+            for aref in affected {
+                edits.push(Edit {
+                    file_path: aref.source_abs_path(),
+                    span_start: aref.span_start,
+                    span_end: aref.span_end,
+                    new_value: new_name.to_string(),
+                    reason: EditReason::DeclRename {
+                        old_name: old_name.to_string(),
+                        new_name: new_name.to_string(),
+                        source_file: source_file.clone(),
+                    },
+                });
+            }
+        }
+        RefKind::RsDeclare => {
+            // Rust: find RsUse refs like `crate::mod_path::OldName` and rewrite to
+            // `crate::mod_path::NewName`.
+            let mod_path = crate::rs_path::file_to_mod_path(&source_file);
+            if let Some(mod_path) = mod_path {
+                let affected = queries::rs_uses_ending_with(pool, &mod_path, old_name).await?;
+                for aref in affected {
+                    // The span covers the entire use path (e.g. `crate::utils::Foo`).
+                    // Replace the last segment only: rebuild with new name.
+                    let new_use_value = if let Some(prefix_end) = aref.value.rfind("::") {
+                        format!("{}::{}", &aref.value[..prefix_end], new_name)
+                    } else {
+                        new_name.to_string()
+                    };
+                    edits.push(Edit {
+                        file_path: aref.source_abs_path(),
+                        span_start: aref.span_start,
+                        span_end: aref.span_end,
+                        new_value: new_use_value,
+                        reason: EditReason::DeclRename {
+                            old_name: old_name.to_string(),
+                            new_name: new_name.to_string(),
+                            source_file: source_file.clone(),
+                        },
+                    });
+                }
+            }
+        }
+        _ => {
+            // Other kinds (RsMod, etc.) not handled yet.
+        }
     }
 
     Ok(())

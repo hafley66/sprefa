@@ -140,17 +140,20 @@ async fn scan_handler(
 
     // Block until the current scan finishes, up to SCAN_QUEUE_TIMEOUT_SECS.
     // Multiple concurrent POST /scan requests queue here naturally.
+    tracing::info!(phase = "lock_acquire", lock = "scan_lock", "waiting for scan lock");
     let _guard = tokio::time::timeout(
         Duration::from_secs(SCAN_QUEUE_TIMEOUT_SECS),
         state.scan_lock.lock(),
     )
     .await
     .map_err(|_| {
+        tracing::warn!(phase = "lock_timeout", lock = "scan_lock", timeout_secs = SCAN_QUEUE_TIMEOUT_SECS, "scan lock timeout");
         (
             StatusCode::SERVICE_UNAVAILABLE,
             format!("scan queue timeout after {SCAN_QUEUE_TIMEOUT_SECS}s"),
         )
     })?;
+    tracing::info!(phase = "lock_acquired", lock = "scan_lock", "scan lock acquired");
 
     let mut results = Vec::new();
     for repo in repos {

@@ -11,7 +11,9 @@ sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+oxc_resolver = { workspace = true }
 
 [dev-dependencies]
 sprefa_extract = { path = "../extract" }
 insta = { workspace = true }
+tempfile = { workspace = true }

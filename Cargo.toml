@@ -64,9 +64,15 @@ schemars = "0.8"
 # regex
 regex = "1"
 
+# JS/TS module resolution (tsconfig paths, node_modules, extension probing)
+oxc_resolver = "11"
+
 # rust parser
 syn = { version = "2", features = ["full"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+
+# filesystem watcher
+notify = "8"
 
 # testing
 insta = { version = "1", features = ["yaml"] }
@@ -80,4 +86,4 @@ reqwest = { version = "0.12", default-features = false, features = ["json"] }
 
 # logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

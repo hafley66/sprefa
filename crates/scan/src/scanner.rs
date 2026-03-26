@@ -28,6 +28,7 @@ pub struct ScanResult {
 }
 
 impl Scanner {
+    #[tracing::instrument(skip(self, config), fields(repo = %config.name, branch = %branch))]
     pub async fn scan_repo(&self, config: &RepoConfig, branch: &str) -> Result<ScanResult> {
         let filter_config = sprefa_config::resolve_filter(self.global_filter.as_ref(), config, branch);
         let compiled_filter = filter_config

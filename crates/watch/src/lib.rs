@@ -4,3 +4,5 @@ pub mod js_path;
 pub mod plan;
 pub mod queries;
 pub mod rewrite;
+pub mod rs_path;
+pub mod watcher;

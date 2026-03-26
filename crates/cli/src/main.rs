@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use sprefa_config::{load_config, load_config_from, default_config_toml, Config};
@@ -8,6 +9,9 @@ use sprefa_rs::RsExtractor;
 use sprefa_rules::extractor::RuleExtractor;
 use sprefa_scan::Scanner;
 use sprefa_schema::{init_db, list_repos, count_files_for_repo, count_refs_for_repo, upsert_repo, search_refs};
+use sprefa_watch::plan::{self, PathRewriter};
+use sprefa_watch::js_path::JsPathRewriter;
+use sprefa_watch::rs_path::RsPathRewriter;
 
 const README: &str = include_str!("../../../README.md");
 
@@ -17,20 +21,40 @@ const README: &str = include_str!("../../../README.md");
     about = "Cross-repo code intelligence indexer",
     long_about = "\
 sprefa (super-refactor) indexes source files from multiple git repositories \
-into a single SQLite database. Every interesting string -- imports, exports, \
-dependency names, JSON keys, YAML values -- is extracted with byte-level spans, \
-deduplicated, normalized for fuzzy matching, and linked back to its source file.
+into a single SQLite database and watches for changes. When a file moves or a \
+symbol is renamed, sprefa rewrites every affected import path and use statement \
+automatically. JS/TS and Rust are both supported.
 
-This enables cross-repo queries like \"who imports this module\" or \"which \
-repos reference this config key\" across an entire codebase.
+Every interesting string -- imports, exports, dependency names, JSON keys, \
+YAML values -- is extracted with byte-level spans, deduplicated, normalized \
+for fuzzy matching, and linked back to its source file.
 
 QUICK START:
   sprefa init                    Create sprefa.toml and initialize the DB
   sprefa add /path/to/repo       Register a repo for indexing
-  sprefa scan                    Index all registered repos
-  sprefa query <term>            Trigram substring search across all strings
+  sprefa daemon                  Scan + watch + serve, all in one process
+
+  That's it. The daemon scans all repos on startup, starts filesystem \
+  watchers for auto-rewrite, and runs the HTTP server for queries.
+
+COMMANDS:
+  sprefa scan                    Index repos (one-shot, no watching)
+  sprefa watch                   Watch and auto-rewrite (no HTTP, no scan)
+  sprefa serve                   HTTP server only (no watching, no scan)
+  sprefa daemon                  All three combined
+  sprefa query <term>            Trigram substring search
   sprefa status                  Show indexed repos with file/ref counts
-  sprefa serve                   Start the HTTP daemon
+
+TYPICAL WORKFLOWS:
+  Full daemon:     sprefa init && sprefa add . && sprefa daemon
+  Step-by-step:    sprefa scan && sprefa watch  (separate terminals)
+  Re-scan only:    sprefa scan --once
+  Skip scan:       sprefa daemon --no-scan      (index already populated)
+
+  The watch loop detects file moves (by content hash), declaration renames \
+  (by span proximity diffing), and rewrites all affected references:
+    JS/TS:  import paths, named imports, re-exports
+    Rust:   use statements (crate::, self::, super:: prefixes preserved)
 
 CONFIG:
   Config is loaded from (first match wins):
@@ -48,15 +72,19 @@ FILTERING:
   Modes: \"exclude\" (default) skips matched globs, \"include\" only indexes
   matched globs.
 
-DAEMON MODE:
-  sprefa serve starts an HTTP server (default 127.0.0.1:9400). When
-  [daemon].url is set in config, CLI commands delegate to the daemon
-  instead of opening the DB directly.
+HTTP DELEGATION:
+  When [daemon].url is set in config, the scan and query commands \
+  delegate to a running sprefa serve/daemon over HTTP instead of \
+  opening the DB directly. Use --once to bypass delegation.
 
 DATABASE:
   SQLite with FTS5 trigram indexes for substring search. Location is
   configured in [db].path (default ~/.sprefa/index.db). WAL mode is
-  enabled for concurrent reads.",
+  enabled for concurrent reads.
+
+VERBOSITY:
+  Set RUST_LOG=sprefa=debug or RUST_LOG=sprefa=trace for detailed output \
+  during watch and scan. Default level is info.",
     after_help = "Use --readme to print the full project documentation."
 )]
 struct Cli {
@@ -67,6 +95,12 @@ struct Cli {
     /// Print the full README documentation and exit
     #[arg(long)]
     readme: bool,
+
+    /// Emit structured JSON logs instead of human-readable output.
+    /// Each log line is a JSON object with timestamp, level, target, span,
+    /// and fields. Useful for piping into jq, datadog, or log aggregators.
+    #[arg(long, global = true)]
+    json: bool,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -127,18 +161,79 @@ enum Command {
     ///   GET  /query?q=term  - search strings
     ///   POST /scan          - trigger indexing
     Serve,
+
+    /// Watch repos for file changes and auto-rewrite imports
+    ///
+    /// Monitors registered repos using OS filesystem notifications (fsevents on
+    /// macOS, inotify on Linux). Events are debounced into 100ms batches and
+    /// classified:
+    ///
+    ///   File move:    delete+create with matching content hash -> rewrite all
+    ///                 import paths (JS/TS) and use statements (Rust) that
+    ///                 reference the moved file.
+    ///
+    ///   Decl rename:  re-extract the changed file, diff declarations by span
+    ///                 proximity. If a symbol at the same position changed name,
+    ///                 rewrite all importing references.
+    ///
+    ///   File delete:  log a warning with the count of now-broken references.
+    ///
+    /// Requires an initial `sprefa scan` to populate the index. The watcher
+    /// queries the index to find affected references, so stale indexes produce
+    /// stale rewrites. Re-scan periodically or after large branch switches.
+    ///
+    /// JS/TS rewrites preserve the original import style (with/without extension,
+    /// directory index stripping). Rust rewrites preserve prefix style (crate::,
+    /// self::, super::) when the new path is expressible that way.
+    Watch {
+        /// Only watch this repo (by name). Watches all repos if omitted.
+        #[arg(short, long)]
+        repo: Option<String>,
+    },
+
+    /// All-in-one: scan + watch + serve
+    ///
+    /// Runs the full pipeline in a single process:
+    ///   1. Initial scan of all registered repos (builds/updates the index)
+    ///   2. Start filesystem watchers on all repos (auto-rewrite on changes)
+    ///   3. Start the HTTP server (query, status, trigger re-scans)
+    ///
+    /// This is the recommended way to run sprefa in the background. It
+    /// replaces the three-command sequence of `scan && watch & serve`.
+    ///
+    /// The initial scan runs to completion before watchers and the server
+    /// start, ensuring the index is populated before any rewrites fire.
+    ///
+    /// Combine with --json for structured logs suitable for process managers
+    /// or log aggregators.
+    Daemon {
+        /// Only include this repo (by name). Includes all repos if omitted.
+        #[arg(short, long)]
+        repo: Option<String>,
+        /// Skip the initial scan (assume index is already populated)
+        #[arg(long)]
+        no_scan: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "sprefa=info".into()),
-        )
-        .init();
-
     let cli = Cli::parse();
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "sprefa=info".into());
+
+    if cli.json {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(env_filter)
+            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .init();
+    }
 
     if cli.readme {
         print!("{}", README);
@@ -152,6 +247,8 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Status) => cmd_status(&cli.config).await?,
         Some(Command::Query { term, once }) => cmd_query(&cli.config, &term, once).await?,
         Some(Command::Serve) => cmd_serve(&cli.config).await?,
+        Some(Command::Watch { repo }) => cmd_watch(&cli.config, repo.as_deref()).await?,
+        Some(Command::Daemon { repo, no_scan }) => cmd_daemon(&cli.config, repo.as_deref(), no_scan).await?,
         None => {
             // No subcommand: print help
             use clap::CommandFactory;
@@ -394,6 +491,256 @@ async fn cmd_serve(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
     let bind = config.daemon_bind().to_string();
     let scanner = build_scanner(&config, pool.clone()).ok().map(Arc::new);
     sprefa_server::serve(pool, scanner, config.repos.clone(), &bind).await?;
+    Ok(())
+}
+
+async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> anyhow::Result<()> {
+    let config = load_cfg(config_path)?;
+    let pool = init_db(&config.db_path()).await?;
+    let scanner = build_scanner(&config, pool.clone())?;
+
+    let rewriters: Vec<Box<dyn PathRewriter>> = vec![
+        Box::new(JsPathRewriter),
+        Box::new(RsPathRewriter),
+    ];
+
+    let repos: Vec<_> = config
+        .repos
+        .iter()
+        .filter(|r| only_repo.map(|name| r.name == name).unwrap_or(true))
+        .collect();
+
+    if repos.is_empty() {
+        if let Some(name) = only_repo {
+            anyhow::bail!("no repo named '{}' in config", name);
+        } else {
+            println!("no repos configured. use `sprefa add <path>` to add one.");
+            return Ok(());
+        }
+    }
+
+    // Start a watcher for each repo, spawn a task per repo to process changes.
+    let rewriters = Arc::new(rewriters);
+
+    for repo in &repos {
+        let abs_path = std::fs::canonicalize(&repo.path)?;
+        let repo_id = upsert_repo(&pool, &repo.name, &abs_path.to_string_lossy()).await?;
+
+        let watch_config = sprefa_watch::watcher::WatchConfig {
+            root_path: abs_path.clone(),
+            repo_id,
+            debounce: Duration::from_millis(100),
+        };
+
+        let mut rx = sprefa_watch::watcher::watch(
+            watch_config,
+            pool.clone(),
+            scanner.extractors.clone(),
+        )
+        .await?;
+
+        let pool = pool.clone();
+        let rewriters = rewriters.clone();
+        let repo_name = repo.name.clone();
+
+        tokio::spawn(async move {
+            while let Some(changes) = rx.recv().await {
+                let n_changes = changes.len();
+                tracing::info!(
+                    repo = %repo_name, phase = "changes_detected",
+                    change_count = n_changes,
+                    "batch received"
+                );
+
+                for change in &changes {
+                    tracing::debug!(repo = %repo_name, phase = "change_detail", ?change);
+                }
+
+                match plan::plan_rewrites(&pool, &changes, &rewriters).await {
+                    Ok(edits) if edits.is_empty() => {
+                        tracing::info!(
+                            repo = %repo_name, phase = "plan_complete",
+                            edit_count = 0,
+                            "no rewrites needed"
+                        );
+                    }
+                    Ok(edits) => {
+                        let edit_count = edits.len();
+                        tracing::info!(
+                            repo = %repo_name, phase = "plan_complete",
+                            edit_count,
+                            "edits planned"
+                        );
+                        for edit in &edits {
+                            tracing::info!(
+                                repo = %repo_name, phase = "edit_detail",
+                                file = %edit.file_path,
+                                span_start = edit.span_start,
+                                span_end = edit.span_end,
+                                reason = ?edit.reason,
+                            );
+                        }
+                        let result = sprefa_watch::rewrite::apply(&edits);
+                        for path in &result.rewritten {
+                            tracing::info!(
+                                repo = %repo_name, phase = "rewrite_applied",
+                                file = %path,
+                            );
+                        }
+                        for (edit, err) in &result.failed {
+                            tracing::error!(
+                                repo = %repo_name, phase = "rewrite_failed",
+                                file = %edit.file_path,
+                                span_start = edit.span_start,
+                                span_end = edit.span_end,
+                                error = %err,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            repo = %repo_name, phase = "plan_error",
+                            error = %e,
+                        );
+                    }
+                }
+            }
+        });
+
+        println!("watching {} at {}", repo.name, abs_path.display());
+    }
+
+    println!("press ctrl-c to stop");
+
+    // Wait for ctrl-c.
+    tokio::signal::ctrl_c().await?;
+    println!("\nshutting down");
+
+    Ok(())
+}
+
+async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_scan: bool) -> anyhow::Result<()> {
+    let config = load_cfg(config_path)?;
+    let pool = init_db(&config.db_path()).await?;
+    let scanner = build_scanner(&config, pool.clone())?;
+
+    let repos: Vec<_> = config
+        .repos
+        .iter()
+        .filter(|r| only_repo.map(|name| r.name == name).unwrap_or(true))
+        .collect();
+
+    if repos.is_empty() {
+        if let Some(name) = only_repo {
+            anyhow::bail!("no repo named '{}' in config", name);
+        } else {
+            println!("no repos configured. use `sprefa add <path>` to add one.");
+            return Ok(());
+        }
+    }
+
+    // Phase 1: initial scan
+    if !no_scan {
+        tracing::info!(phase = "initial_scan", repo_count = repos.len(), "starting initial scan");
+        let mut total_files = 0usize;
+        let mut total_refs = 0usize;
+        for repo in &repos {
+            for branch in repo.branch_list() {
+                match scanner.scan_repo(repo, &branch).await {
+                    Ok(result) => {
+                        println!(
+                            "scan {}/{}: {} files, {} refs, {} targets",
+                            result.repo, result.branch, result.files_scanned,
+                            result.refs_inserted, result.targets_resolved,
+                        );
+                        total_files += result.files_scanned;
+                        total_refs += result.refs_inserted;
+                    }
+                    Err(e) => tracing::warn!(repo = %repo.name, branch = %branch, error = %e, "scan failed"),
+                }
+            }
+        }
+        tracing::info!(phase = "initial_scan_complete", total_files, total_refs, "scan done");
+    } else {
+        tracing::info!(phase = "initial_scan_skipped", "skipping initial scan (--no-scan)");
+    }
+
+    // Phase 2: start watchers
+    let rewriters: Arc<Vec<Box<dyn PathRewriter>>> = Arc::new(vec![
+        Box::new(JsPathRewriter),
+        Box::new(RsPathRewriter),
+    ]);
+
+    for repo in &repos {
+        let abs_path = std::fs::canonicalize(&repo.path)?;
+        let repo_id = upsert_repo(&pool, &repo.name, &abs_path.to_string_lossy()).await?;
+
+        let watch_config = sprefa_watch::watcher::WatchConfig {
+            root_path: abs_path.clone(),
+            repo_id,
+            debounce: Duration::from_millis(100),
+        };
+
+        let mut rx = sprefa_watch::watcher::watch(
+            watch_config,
+            pool.clone(),
+            scanner.extractors.clone(),
+        )
+        .await?;
+
+        let pool = pool.clone();
+        let rewriters = rewriters.clone();
+        let repo_name = repo.name.clone();
+
+        tokio::spawn(async move {
+            while let Some(changes) = rx.recv().await {
+                tracing::info!(
+                    repo = %repo_name, phase = "changes_detected",
+                    change_count = changes.len(),
+                    "batch received"
+                );
+                for change in &changes {
+                    tracing::debug!(repo = %repo_name, phase = "change_detail", ?change);
+                }
+                match plan::plan_rewrites(&pool, &changes, &rewriters).await {
+                    Ok(edits) if edits.is_empty() => {
+                        tracing::info!(repo = %repo_name, phase = "plan_complete", edit_count = 0, "no rewrites needed");
+                    }
+                    Ok(edits) => {
+                        tracing::info!(repo = %repo_name, phase = "plan_complete", edit_count = edits.len(), "edits planned");
+                        for edit in &edits {
+                            tracing::info!(
+                                repo = %repo_name, phase = "edit_detail",
+                                file = %edit.file_path,
+                                span_start = edit.span_start, span_end = edit.span_end,
+                                reason = ?edit.reason,
+                            );
+                        }
+                        let result = sprefa_watch::rewrite::apply(&edits);
+                        for path in &result.rewritten {
+                            tracing::info!(repo = %repo_name, phase = "rewrite_applied", file = %path);
+                        }
+                        for (edit, err) in &result.failed {
+                            tracing::error!(
+                                repo = %repo_name, phase = "rewrite_failed",
+                                file = %edit.file_path, error = %err,
+                            );
+                        }
+                    }
+                    Err(e) => tracing::error!(repo = %repo_name, phase = "plan_error", error = %e),
+                }
+            }
+        });
+
+        tracing::info!(repo = %repo.name, path = %abs_path.display(), phase = "watcher_started", "watching");
+    }
+
+    // Phase 3: start HTTP server (blocks until shutdown)
+    let bind = config.daemon_bind().to_string();
+    let scanner_arc = Arc::new(scanner);
+    tracing::info!(phase = "server_starting", bind = %bind, "starting HTTP server");
+    sprefa_server::serve(pool, Some(scanner_arc), config.repos.clone(), &bind).await?;
+
     Ok(())
 }
 
