@@ -143,10 +143,13 @@ async fn plan_file_move(
     }
 
     // Rust: RsUse refs matching the old module path.
+    // Fetches all RsUse refs in the repo, resolves super::/self:: to absolute
+    // form, then filters to those referencing the moved module.
     let old_mod = crate::rs_path::file_to_mod_path(old_path);
     let new_mod = crate::rs_path::file_to_mod_path(new_path);
     if let (Some(old_mod), Some(_new_mod)) = (old_mod, new_mod) {
-        let rs_affected = queries::rs_uses_with_prefix(pool, &old_mod).await?;
+        let all_rs = queries::all_rs_uses_in_repo(pool, file_id).await?;
+        let rs_affected = crate::rs_path::filter_rs_uses_by_prefix(&all_rs, &old_mod);
         let rs_rewriter = crate::rs_path::RsPathRewriter;
         for aref in rs_affected {
             let source_abs = aref.source_abs_path();
@@ -206,11 +209,13 @@ async fn plan_decl_rename(
             }
         }
         RefKind::RsDeclare => {
-            // Rust: find RsUse refs like `crate::mod_path::OldName` and rewrite to
-            // `crate::mod_path::NewName`.
+            // Rust: find RsUse refs like `crate::mod_path::OldName` (or
+            // `super::OldName`, `self::OldName`) and rewrite to NewName.
+            // Resolves all prefix styles to absolute form before matching.
             let mod_path = crate::rs_path::file_to_mod_path(&source_file);
             if let Some(mod_path) = mod_path {
-                let affected = queries::rs_uses_ending_with(pool, &mod_path, old_name).await?;
+                let all_rs = queries::all_rs_uses_in_repo(pool, file_id).await?;
+                let affected = crate::rs_path::filter_rs_uses_by_target(&all_rs, &mod_path, old_name);
                 for aref in affected {
                     // The span covers the entire use path (e.g. `crate::utils::Foo`).
                     // Replace the last segment only: rebuild with new name.

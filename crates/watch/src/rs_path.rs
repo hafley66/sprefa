@@ -94,6 +94,59 @@ pub fn file_to_mod_path(file_path: &str) -> Option<String> {
     Some(segments.join("::"))
 }
 
+/// Filter a set of AffectedRefs to those whose use path, after resolving
+/// super::/self:: to absolute form, starts with (or equals) `target_mod`.
+///
+/// Used for file moves: find all refs that reference something under the
+/// old module path, regardless of whether they use crate::, super::, or self::.
+pub(crate) fn filter_rs_uses_by_prefix(
+    refs: &[crate::queries::AffectedRef],
+    target_mod: &str,
+) -> Vec<crate::queries::AffectedRef> {
+    let target_prefix = format!("{}::", target_mod);
+    refs.iter()
+        .filter(|aref| {
+            let from_mod = match file_to_mod_path(&aref.source_abs_path()) {
+                Some(m) => m,
+                None => return false,
+            };
+            let abs = match resolve_to_absolute(&aref.value, &from_mod) {
+                Some(a) => a,
+                None => return false,
+            };
+            abs == target_mod || abs.starts_with(&target_prefix)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Filter a set of AffectedRefs to those whose use path, after resolving
+/// to absolute form, equals exactly `module_path::name`.
+///
+/// Used for declaration renames: find all refs like `use crate::utils::Foo`
+/// (or `super::utils::Foo`, `self::Foo`) that reference the renamed symbol.
+pub(crate) fn filter_rs_uses_by_target(
+    refs: &[crate::queries::AffectedRef],
+    module_path: &str,
+    name: &str,
+) -> Vec<crate::queries::AffectedRef> {
+    let target_value = format!("{}::{}", module_path, name);
+    refs.iter()
+        .filter(|aref| {
+            let from_mod = match file_to_mod_path(&aref.source_abs_path()) {
+                Some(m) => m,
+                None => return false,
+            };
+            let abs = match resolve_to_absolute(&aref.value, &from_mod) {
+                Some(a) => a,
+                None => return false,
+            };
+            abs == target_value
+        })
+        .cloned()
+        .collect()
+}
+
 /// Rewrite a use path after a module move.
 ///
 /// Given `use crate::old::path::Item` and old_mod=`crate::old::path`, new_mod=`crate::new::path`,
@@ -130,7 +183,8 @@ fn rewrite_use_path(
 /// - `crate::foo::Bar` stays as is
 /// - `self::bar::Baz` resolves relative to from_mod
 /// - `super::baz::Qux` resolves by popping one segment from from_mod
-fn resolve_to_absolute(use_path: &str, from_mod: &str) -> Option<String> {
+/// - External crate paths (std::, serde::, etc.) return None
+pub(crate) fn resolve_to_absolute(use_path: &str, from_mod: &str) -> Option<String> {
     if use_path.starts_with("crate::") || use_path == "crate" {
         return Some(use_path.to_string());
     }
@@ -536,5 +590,175 @@ mod tests {
             "crate::utils::Foo",
         );
         assert_eq!(result, None);
+    }
+
+    // ── resolve_to_absolute ───────────────────────────────────────────────
+
+    #[test]
+    fn resolve_crate_passthrough() {
+        assert_eq!(
+            resolve_to_absolute("crate::foo::Bar", "crate::whatever"),
+            Some("crate::foo::Bar".to_string()),
+        );
+    }
+
+    #[test]
+    fn resolve_self() {
+        assert_eq!(
+            resolve_to_absolute("self::bar::Baz", "crate::foo"),
+            Some("crate::foo::bar::Baz".to_string()),
+        );
+    }
+
+    #[test]
+    fn resolve_super() {
+        assert_eq!(
+            resolve_to_absolute("super::bar::Qux", "crate::foo::consumer"),
+            Some("crate::foo::bar::Qux".to_string()),
+        );
+    }
+
+    #[test]
+    fn resolve_double_super() {
+        assert_eq!(
+            resolve_to_absolute("super::super::target::X", "crate::a::b::consumer"),
+            Some("crate::a::target::X".to_string()),
+        );
+    }
+
+    #[test]
+    fn resolve_external_returns_none() {
+        assert_eq!(resolve_to_absolute("std::io::Read", "crate::foo"), None);
+    }
+
+    #[test]
+    fn resolve_super_past_root_returns_none() {
+        assert_eq!(resolve_to_absolute("super::super::x", "crate::foo"), None);
+    }
+
+    // ── filter_rs_uses_by_prefix ──────────────────────────────────────────
+
+    fn make_aref(value: &str, source_rel: &str) -> crate::queries::AffectedRef {
+        crate::queries::AffectedRef {
+            ref_id: 0,
+            span_start: 0,
+            span_end: 0,
+            value: value.to_string(),
+            source_file_rel: source_rel.to_string(),
+            source_repo_root: "/repo".to_string(),
+        }
+    }
+
+    #[test]
+    fn filter_prefix_catches_crate_ref() {
+        let refs = vec![
+            make_aref("crate::utils::Foo", "src/app.rs"),
+            make_aref("crate::config::Bar", "src/app.rs"),
+        ];
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils");
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].value, "crate::utils::Foo");
+    }
+
+    #[test]
+    fn filter_prefix_catches_super_ref() {
+        let refs = vec![
+            // src/foo/consumer.rs: super::bar::Thing resolves to crate::foo::bar::Thing
+            make_aref("super::bar::Thing", "src/foo/consumer.rs"),
+            // src/app.rs: super::bar::Thing resolves to crate::bar::Thing (different!)
+            make_aref("super::bar::Thing", "src/app.rs"),
+        ];
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::foo::bar");
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].source_file_rel, "src/foo/consumer.rs");
+    }
+
+    #[test]
+    fn filter_prefix_catches_self_ref() {
+        let refs = vec![
+            // src/foo/mod.rs: self::bar::X resolves to crate::foo::bar::X
+            make_aref("self::bar::X", "src/foo/mod.rs"),
+        ];
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::foo::bar");
+        assert_eq!(matched.len(), 1);
+    }
+
+    #[test]
+    fn filter_prefix_matches_module_itself() {
+        let refs = vec![
+            make_aref("crate::utils", "src/app.rs"),
+        ];
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils");
+        assert_eq!(matched.len(), 1);
+    }
+
+    #[test]
+    fn filter_prefix_excludes_external_crate() {
+        let refs = vec![
+            make_aref("std::collections::HashMap", "src/app.rs"),
+        ];
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::collections");
+        assert_eq!(matched.len(), 0);
+    }
+
+    #[test]
+    fn filter_prefix_excludes_unrelated_module() {
+        let refs = vec![
+            make_aref("crate::config::Settings", "src/app.rs"),
+        ];
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils");
+        assert_eq!(matched.len(), 0);
+    }
+
+    #[test]
+    fn filter_prefix_double_super() {
+        let refs = vec![
+            // src/a/b/consumer.rs: super::super::target::X -> crate::a::target::X
+            make_aref("super::super::target::X", "src/a/b/consumer.rs"),
+        ];
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::a::target");
+        assert_eq!(matched.len(), 1);
+    }
+
+    // ── filter_rs_uses_by_target ──────────────────────────────────────────
+
+    #[test]
+    fn filter_target_catches_crate_ref() {
+        let refs = vec![
+            make_aref("crate::utils::Foo", "src/app.rs"),
+            make_aref("crate::utils::Bar", "src/app.rs"),
+        ];
+        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo");
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].value, "crate::utils::Foo");
+    }
+
+    #[test]
+    fn filter_target_catches_super_ref() {
+        let refs = vec![
+            // src/foo/consumer.rs: super::bar::Foo -> crate::foo::bar::Foo
+            make_aref("super::bar::Foo", "src/foo/consumer.rs"),
+        ];
+        let matched = filter_rs_uses_by_target(&refs, "crate::foo::bar", "Foo");
+        assert_eq!(matched.len(), 1);
+    }
+
+    #[test]
+    fn filter_target_excludes_wrong_name() {
+        let refs = vec![
+            make_aref("crate::utils::Bar", "src/app.rs"),
+        ];
+        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo");
+        assert_eq!(matched.len(), 0);
+    }
+
+    #[test]
+    fn filter_target_self_ref() {
+        let refs = vec![
+            // src/utils/mod.rs: self::Foo -> crate::utils::Foo
+            make_aref("self::Foo", "src/utils/mod.rs"),
+        ];
+        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo");
+        assert_eq!(matched.len(), 1);
     }
 }

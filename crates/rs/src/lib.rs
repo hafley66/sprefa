@@ -58,6 +58,8 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
             }
             Item::Mod(m) => {
                 let (s, e) = span_of(offsets, m.ident.span());
+                // Extract #[path = "..."] attribute if present.
+                let path_attr = extract_path_attr(&m.attrs);
                 refs.push(RawRef {
                     value: m.ident.to_string(),
                     span_start: s,
@@ -65,7 +67,7 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
                     kind: RefKind::RsMod,
                     is_path: false,
                     parent_key: None,
-                    node_path: None,
+                    node_path: path_attr,
                 });
                 if let Some((_, inner)) = &m.content {
                     extract_items(inner, offsets, refs);
@@ -127,6 +129,20 @@ fn push_declare(refs: &mut Vec<RawRef>, ident: &syn::Ident, offsets: &[usize]) {
         parent_key: None,
         node_path: None,
     });
+}
+
+/// Extract the value of `#[path = "..."]` from a list of attributes, if present.
+fn extract_path_attr(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("path") {
+            if let syn::Meta::NameValue(nv) = &attr.meta {
+                if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value {
+                    return Some(s.value());
+                }
+            }
+        }
+    }
+    None
 }
 
 // ── use-tree flattening ──────────────────────────────────────────────────────
@@ -496,5 +512,40 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].value, "alloc");
         assert_eq!(refs[0].kind, RefKind::DepName);
+    }
+
+    // ── #[path] attribute extraction ─────────────────────────────────────
+
+    #[test]
+    fn mod_with_path_attribute() {
+        let refs = extract("#[path = \"custom/location.rs\"]\nmod renamed;");
+        let m = refs.iter().find(|r| r.kind == RefKind::RsMod).unwrap();
+        assert_eq!(m.value, "renamed");
+        assert_eq!(m.node_path.as_deref(), Some("custom/location.rs"));
+    }
+
+    #[test]
+    fn mod_without_path_attribute() {
+        let refs = extract("mod normal;");
+        let m = refs.iter().find(|r| r.kind == RefKind::RsMod).unwrap();
+        assert_eq!(m.value, "normal");
+        assert_eq!(m.node_path, None);
+    }
+
+    #[test]
+    fn mod_with_cfg_and_path_attributes() {
+        let refs = extract("#[cfg(test)]\n#[path = \"test_helpers.rs\"]\nmod helpers;");
+        let m = refs.iter().find(|r| r.kind == RefKind::RsMod).unwrap();
+        assert_eq!(m.value, "helpers");
+        assert_eq!(m.node_path.as_deref(), Some("test_helpers.rs"));
+    }
+
+    #[test]
+    fn inline_mod_with_path_attribute() {
+        let refs = extract("#[path = \"alt\"]\nmod stuff {\n    fn inner() {}\n}");
+        let m = refs.iter().find(|r| r.kind == RefKind::RsMod).unwrap();
+        assert_eq!(m.node_path.as_deref(), Some("alt"));
+        // inner fn still extracted
+        assert!(refs.iter().any(|r| r.value == "inner" && r.kind == RefKind::RsDeclare));
     }
 }

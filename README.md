@@ -51,9 +51,7 @@ src/foo/mod.rs     -> crate::foo
 src/foo/bar.rs     -> crate::foo::bar
 ```
 
-When `src/utils.rs` moves to `src/helpers/utils.rs`, every `use crate::utils::Foo` becomes `use crate::helpers::utils::Foo`. If the importing file used `super::utils::Foo` and the new path is still expressible as `super::`, the prefix is preserved.
-
-**Known limitation:** `super::` and `self::` prefixed use paths are stored as literal strings in the index. The move detection query matches against absolute module path prefixes (`crate::...`), so relative-prefix refs are not rewritten by file moves. Only `crate::`-prefixed use statements are currently caught. Fixing this requires per-file module path resolution at query time.
+When `src/utils.rs` moves to `src/helpers/utils.rs`, every `use crate::utils::Foo` becomes `use crate::helpers::utils::Foo`. If the importing file used `super::utils::Foo` and the new path is still expressible as `super::`, the prefix is preserved. All prefix styles (`crate::`, `self::`, `super::`, including chained `super::super::`) are resolved to absolute module paths at query time, so they are all caught by file moves and declaration renames.
 
 ## Why this doesn't already exist
 

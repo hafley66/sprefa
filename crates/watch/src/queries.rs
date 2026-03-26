@@ -91,17 +91,19 @@ pub async fn import_names_from_file(
     Ok(to_affected(rows))
 }
 
-/// All RsUse refs whose string value starts with the given module path prefix.
+/// All RsUse refs in the same repo as the given file.
 ///
-/// Used when a Rust file moves: all `use crate::old_mod::...` refs need rewriting.
-/// The prefix should be a module path like `crate::utils` -- this matches both
-/// `crate::utils` exactly and `crate::utils::Foo`, `crate::utils::*`, etc.
-pub async fn rs_uses_with_prefix(
+/// The caller resolves super::/self:: to absolute form in Rust and filters
+/// by module path. This avoids the SQL prefix-matching gap where relative
+/// paths (super::, self::) can't be matched by string comparison alone.
+///
+/// Typical repo has hundreds to low thousands of RsUse refs, so fetching
+/// all and filtering in Rust is cheaper than complex SQL with per-file
+/// module path resolution.
+pub async fn all_rs_uses_in_repo(
     pool: &SqlitePool,
-    prefix: &str,
+    file_id: i64,
 ) -> anyhow::Result<Vec<AffectedRef>> {
-    let exact = prefix.to_string();
-    let starts = format!("{}::", prefix);
     let rows: Vec<(i64, i64, i64, String, String, String)> = sqlx::query_as(
         r#"
         SELECT r.id, r.span_start, r.span_end, s.value, f.path, repos.root_path
@@ -110,39 +112,10 @@ pub async fn rs_uses_with_prefix(
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
         WHERE r.ref_kind = 30
-          AND (s.value = ? OR s.value LIKE ? || '%')
+          AND f.repo_id = (SELECT repo_id FROM files WHERE id = ?)
         "#,
     )
-    .bind(&exact)
-    .bind(&starts)
-    .fetch_all(pool)
-    .await?;
-    Ok(to_affected(rows))
-}
-
-/// All RsUse refs whose last path segment matches the given name,
-/// in files that are within the given repo.
-///
-/// Used for Rust declaration renames: when `Foo` is renamed to `Bar` in
-/// `crate::utils`, find all `use crate::utils::Foo` refs.
-pub async fn rs_uses_ending_with(
-    pool: &SqlitePool,
-    module_path: &str,
-    name: &str,
-) -> anyhow::Result<Vec<AffectedRef>> {
-    let target_value = format!("{}::{}", module_path, name);
-    let rows: Vec<(i64, i64, i64, String, String, String)> = sqlx::query_as(
-        r#"
-        SELECT r.id, r.span_start, r.span_end, s.value, f.path, repos.root_path
-        FROM refs r
-        JOIN strings s ON r.string_id = s.id
-        JOIN files f ON r.file_id = f.id
-        JOIN repos ON f.repo_id = repos.id
-        WHERE r.ref_kind = 30
-          AND s.value = ?
-        "#,
-    )
-    .bind(&target_value)
+    .bind(file_id)
     .fetch_all(pool)
     .await?;
     Ok(to_affected(rows))
