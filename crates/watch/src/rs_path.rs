@@ -371,4 +371,170 @@ mod tests {
             Some("crate::bar")
         );
     }
+
+    // ── file_to_mod_path edge cases ───────────────────────────────────────
+
+    #[test]
+    fn no_src_dir_returns_none() {
+        assert_eq!(file_to_mod_path("/repo/lib/utils.rs"), None);
+    }
+
+    #[test]
+    fn file_directly_in_src_no_extension() {
+        // Pathological: no .rs extension. file_stem returns the whole filename.
+        assert_eq!(
+            file_to_mod_path("/repo/src/Makefile").as_deref(),
+            Some("crate::Makefile")
+        );
+    }
+
+    #[test]
+    fn multiple_src_dirs_uses_last() {
+        // rposition picks the last "src" occurrence
+        assert_eq!(
+            file_to_mod_path("/repo/src/generated/src/models.rs").as_deref(),
+            Some("crate::models")
+        );
+    }
+
+    #[test]
+    fn src_alone_returns_none() {
+        // Just "src" with nothing after it
+        assert_eq!(file_to_mod_path("/repo/src/"), None);
+    }
+
+    #[test]
+    fn deeply_nested_file() {
+        assert_eq!(
+            file_to_mod_path("/repo/src/a/b/c/d/e.rs").as_deref(),
+            Some("crate::a::b::c::d::e")
+        );
+    }
+
+    // ── rewrite edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn double_super() {
+        // from: src/a/b/consumer.rs (crate::a::b::consumer)
+        // old:  src/a/target.rs     (crate::a::target)
+        // new:  src/c/target.rs     (crate::c::target)
+        // super::super::target::X resolves to crate::a::target::X (pop b, pop a... wait)
+        // Actually from_mod = crate::a::b::consumer
+        // super:: pops to crate::a::b, super:: again pops to crate::a
+        // So super::super::target::X = crate::a::target::X
+        // After move: crate::c::target::X
+        // Can we express as super::super::? parent after 2 supers = crate::a
+        // crate::c::target::X doesn't start with crate::a:: -> fallback to crate::
+        let result = rewrite(
+            "/repo/src/a/b/consumer.rs",
+            "/repo/src/a/target.rs",
+            "/repo/src/c/target.rs",
+            "super::super::target::X",
+        );
+        assert_eq!(result.as_deref(), Some("crate::c::target::X"));
+    }
+
+    #[test]
+    fn double_super_stays_when_possible() {
+        // from: src/a/b/consumer.rs (crate::a::b::consumer)
+        // old:  src/a/old.rs        (crate::a::old)
+        // new:  src/a/new.rs        (crate::a::new)
+        // super::super::old::X -> super::super::new::X (same grandparent)
+        let result = rewrite(
+            "/repo/src/a/b/consumer.rs",
+            "/repo/src/a/old.rs",
+            "/repo/src/a/new.rs",
+            "super::super::old::X",
+        );
+        assert_eq!(result.as_deref(), Some("super::super::new::X"));
+    }
+
+    #[test]
+    fn self_fallback_to_crate_when_moved_out() {
+        // from: src/foo/mod.rs (crate::foo)
+        // old:  src/foo/bar.rs (crate::foo::bar)
+        // new:  src/other/bar.rs (crate::other::bar)
+        // self::bar::X -> crate::other::bar::X (can't be self:: anymore)
+        let result = rewrite(
+            "/repo/src/foo/mod.rs",
+            "/repo/src/foo/bar.rs",
+            "/repo/src/other/bar.rs",
+            "self::bar::X",
+        );
+        assert_eq!(result.as_deref(), Some("crate::other::bar::X"));
+    }
+
+    #[test]
+    fn super_beyond_crate_root_returns_none() {
+        // from: src/foo.rs (crate::foo) -- one level deep
+        // super:: resolves to crate, then super:: again tries to pop past crate -> None
+        let result = rewrite(
+            "/repo/src/foo.rs",
+            "/repo/src/bar.rs",
+            "/repo/src/baz.rs",
+            "super::super::bar::X",
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn mod_rs_file_moves() {
+        // Moving a mod.rs to a different directory
+        // from: src/app.rs (crate::app)
+        // old:  src/utils/mod.rs (crate::utils)
+        // new:  src/helpers/mod.rs (crate::helpers)
+        let result = rewrite(
+            "/repo/src/app.rs",
+            "/repo/src/utils/mod.rs",
+            "/repo/src/helpers/mod.rs",
+            "crate::utils::Foo",
+        );
+        assert_eq!(result.as_deref(), Some("crate::helpers::Foo"));
+    }
+
+    #[test]
+    fn mod_rs_module_itself() {
+        let result = rewrite(
+            "/repo/src/app.rs",
+            "/repo/src/utils/mod.rs",
+            "/repo/src/helpers/mod.rs",
+            "crate::utils",
+        );
+        assert_eq!(result.as_deref(), Some("crate::helpers"));
+    }
+
+    #[test]
+    fn glob_with_super() {
+        // super::old::* where old moves but stays as sibling
+        let result = rewrite(
+            "/repo/src/foo/consumer.rs",
+            "/repo/src/foo/old.rs",
+            "/repo/src/foo/fresh.rs",
+            "super::old::*",
+        );
+        assert_eq!(result.as_deref(), Some("super::fresh::*"));
+    }
+
+    #[test]
+    fn from_file_has_no_src_returns_none() {
+        // from_file doesn't have src/ -> file_to_mod_path returns None -> overall None
+        let result = rewrite(
+            "/repo/lib/consumer.rs",
+            "/repo/src/utils.rs",
+            "/repo/src/helpers/utils.rs",
+            "crate::utils::Foo",
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn target_has_no_src_returns_none() {
+        let result = rewrite(
+            "/repo/src/app.rs",
+            "/repo/lib/utils.rs",
+            "/repo/src/utils.rs",
+            "crate::utils::Foo",
+        );
+        assert_eq!(result, None);
+    }
 }

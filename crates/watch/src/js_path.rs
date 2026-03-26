@@ -185,4 +185,131 @@ mod tests {
         );
         assert_eq!(result.as_deref(), Some("../../lib/http"));
     }
+
+    // ── edge cases ────────────────────────────────────────────────────────
+
+    #[test]
+    fn import_with_js_extension_on_ts_file() {
+        // Common ESM pattern: import './foo.js' even though source is .ts
+        let result = rewrite(
+            "/repo/src/app.ts",
+            "/repo/src/utils.ts",
+            "/repo/src/lib/utils.ts",
+            "./utils.js",
+        );
+        // .js is a probe extension, old had extension -> preserve extension convention
+        assert_eq!(result.as_deref(), Some("./lib/utils.ts"));
+    }
+
+    #[test]
+    fn non_probe_extension_preserved() {
+        // .json, .css, .wasm etc. are not in PROBE_EXTENSIONS
+        let result = rewrite(
+            "/repo/src/app.ts",
+            "/repo/src/data.json",
+            "/repo/src/assets/data.json",
+            "./data.json",
+        );
+        assert_eq!(result.as_deref(), Some("./assets/data.json"));
+    }
+
+    #[test]
+    fn move_to_same_directory_different_name() {
+        // Rename within same dir: utils.ts -> helpers.ts
+        let result = rewrite(
+            "/repo/src/app.ts",
+            "/repo/src/utils.ts",
+            "/repo/src/helpers.ts",
+            "./utils",
+        );
+        assert_eq!(result.as_deref(), Some("./helpers"));
+    }
+
+    #[test]
+    fn index_file_moved_import_had_explicit_index() {
+        // import './components/index' (explicit /index) -> target moves
+        let result = rewrite(
+            "/repo/src/app.ts",
+            "/repo/src/components/index.ts",
+            "/repo/src/ui/index.ts",
+            "./components/index",
+        );
+        // Old import had no extension but had explicit /index.
+        // strip_importable_ext strips .ts, strip_index_suffix strips /index -> ./ui
+        assert_eq!(result.as_deref(), Some("./ui"));
+    }
+
+    #[test]
+    fn index_file_with_extension_preserved() {
+        // import './components/index.ts' (has extension) -> don't strip
+        let result = rewrite(
+            "/repo/src/app.ts",
+            "/repo/src/components/index.ts",
+            "/repo/src/ui/index.ts",
+            "./components/index.ts",
+        );
+        assert_eq!(result.as_deref(), Some("./ui/index.ts"));
+    }
+
+    #[test]
+    fn move_up_to_root_level() {
+        // File moves from deep nesting to near root
+        let result = rewrite(
+            "/repo/src/features/auth/login.ts",
+            "/repo/src/features/auth/utils.ts",
+            "/repo/src/utils.ts",
+            "./utils",
+        );
+        assert_eq!(result.as_deref(), Some("../../utils"));
+    }
+
+    #[test]
+    fn move_down_many_levels() {
+        let result = rewrite(
+            "/repo/src/app.ts",
+            "/repo/src/utils.ts",
+            "/repo/src/a/b/c/utils.ts",
+            "./utils",
+        );
+        assert_eq!(result.as_deref(), Some("./a/b/c/utils"));
+    }
+
+    #[test]
+    fn dot_slash_import_stays_dot_slash() {
+        // Sibling move: both in same dir, target just renames
+        let result = rewrite(
+            "/repo/src/a.ts",
+            "/repo/src/b.ts",
+            "/repo/src/c.ts",
+            "./b",
+        );
+        assert_eq!(result.as_deref(), Some("./c"));
+    }
+
+    #[test]
+    fn scoped_package_returns_none() {
+        let result = rewrite(
+            "/repo/src/app.ts",
+            "/repo/node_modules/@org/pkg/index.js",
+            "/repo/node_modules/@org/pkg/index.js",
+            "@org/pkg",
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn importer_and_target_in_completely_different_trees() {
+        // from_dir: /repo/packages/frontend/src
+        // new_target: /repo/packages/common/src/utils.ts
+        // common prefix: /repo/packages
+        // ups from from_dir: frontend/src = 2
+        // remainder: common/src/utils.ts
+        let result = rewrite(
+            "/repo/packages/frontend/src/app.ts",
+            "/repo/packages/shared/src/utils.ts",
+            "/repo/packages/common/src/utils.ts",
+            "../../shared/src/utils",
+        );
+        assert_eq!(result.as_deref(), Some("../../common/src/utils"));
+    }
 }

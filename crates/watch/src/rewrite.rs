@@ -165,4 +165,163 @@ mod tests {
         assert!(result.rewritten.is_empty());
         assert_eq!(result.failed.len(), 1);
     }
+
+    // ── edge cases ────────────────────────────────────────────────────────
+
+    fn make_edit(path: &str, start: u32, end: u32, new_val: &str) -> Edit {
+        Edit {
+            file_path: path.to_string(),
+            span_start: start,
+            span_end: end,
+            new_value: new_val.to_string(),
+            reason: EditReason::FileMove {
+                old_target: "old".to_string(),
+                new_target: "new".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn edit_at_start_of_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.rs");
+        std::fs::write(&file, "use old::path;").unwrap();
+
+        let edits = vec![make_edit(
+            &file.to_string_lossy(),
+            0, 3,  // "use"
+            "pub use",
+        )];
+        let result = apply(&edits);
+        assert_eq!(result.rewritten.len(), 1);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "pub use old::path;");
+    }
+
+    #[test]
+    fn edit_at_end_of_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.rs");
+        //                          0123456789...
+        let content = "use crate::foo";
+        std::fs::write(&file, content).unwrap();
+
+        let edits = vec![make_edit(
+            &file.to_string_lossy(),
+            4, 14,  // "crate::foo" starts at byte 4
+            "crate::bar",
+        )];
+        let result = apply(&edits);
+        assert_eq!(result.rewritten.len(), 1);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "use crate::bar");
+    }
+
+    #[test]
+    fn edit_that_grows_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.ts");
+        //                          0         1         2
+        //                          0123456789012345678901234
+        let content = "import { x } from './a';";
+        std::fs::write(&file, content).unwrap();
+
+        // './a' occupies bytes 19..22 (inside the quotes)
+        let edits = vec![make_edit(
+            &file.to_string_lossy(),
+            19, 22,
+            "./very/long/path",
+        )];
+        let result = apply(&edits);
+        assert_eq!(result.rewritten.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "import { x } from './very/long/path';"
+        );
+    }
+
+    #[test]
+    fn edit_that_shrinks_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.ts");
+        //                          0         1         2         3         4
+        //                          01234567890123456789012345678901234567890123
+        let content = "import { x } from '../../long/path/utils';";
+        std::fs::write(&file, content).unwrap();
+
+        // '../../long/path/utils' occupies bytes 19..40 (inside the quotes)
+        let edits = vec![make_edit(
+            &file.to_string_lossy(),
+            19, 40,
+            "./u",
+        )];
+        let result = apply(&edits);
+        assert_eq!(result.rewritten.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "import { x } from './u';"
+        );
+    }
+
+    #[test]
+    fn multiple_files_in_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_a = dir.path().join("a.ts");
+        let file_b = dir.path().join("b.ts");
+        std::fs::write(&file_a, "import './old';").unwrap();
+        std::fs::write(&file_b, "import './old';").unwrap();
+
+        let edits = vec![
+            make_edit(&file_a.to_string_lossy(), 8, 13, "./new"),
+            make_edit(&file_b.to_string_lossy(), 8, 13, "./new"),
+        ];
+        let result = apply(&edits);
+        assert_eq!(result.rewritten.len(), 2);
+        assert!(result.failed.is_empty());
+        assert_eq!(std::fs::read_to_string(&file_a).unwrap(), "import './new';");
+        assert_eq!(std::fs::read_to_string(&file_b).unwrap(), "import './new';");
+    }
+
+    #[test]
+    fn missing_file_fails_gracefully() {
+        let edits = vec![make_edit(
+            "/nonexistent/path/file.ts",
+            0, 5,
+            "hello",
+        )];
+        let result = apply(&edits);
+        assert!(result.rewritten.is_empty());
+        assert_eq!(result.failed.len(), 1);
+    }
+
+    #[test]
+    fn empty_file_with_zero_span() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("empty.ts");
+        std::fs::write(&file, "").unwrap();
+
+        let edits = vec![make_edit(
+            &file.to_string_lossy(),
+            0, 0,
+            "// inserted",
+        )];
+        let result = apply(&edits);
+        assert_eq!(result.rewritten.len(), 1);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "// inserted");
+    }
+
+    #[test]
+    fn start_equals_end_inserts_without_deleting() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.rs");
+        std::fs::write(&file, "use crate::foo;").unwrap();
+
+        // Insert at position 14 (before the semicolon) without removing anything
+        let edits = vec![make_edit(
+            &file.to_string_lossy(),
+            14, 14,
+            "::bar",
+        )];
+        let result = apply(&edits);
+        assert_eq!(result.rewritten.len(), 1);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "use crate::foo::bar;");
+    }
 }

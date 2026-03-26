@@ -391,4 +391,219 @@ export default function App() { return <Button />; }"#,
         assert_eq!(binding.value, "internal");
         assert_eq!(binding.parent_key.as_deref(), Some("Public"));
     }
+
+    // ── edge cases ────────────────────────────────────────────────────────
+
+    #[test]
+    fn side_effect_import() {
+        // import './polyfill' has an ImportPath but no ImportName/ImportAlias
+        let refs = extract(
+            r#"import './polyfill';
+import 'reflect-metadata';"#,
+            "src/main.ts",
+        );
+        let mut paths: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportPath)
+            .map(|r| r.value.as_str())
+            .collect();
+        paths.sort();
+        assert_eq!(paths, vec!["./polyfill", "reflect-metadata"]);
+        // No ImportName refs for side-effect imports
+        assert!(refs.iter().all(|r| r.kind != RefKind::ImportName));
+    }
+
+    #[test]
+    fn type_only_import() {
+        // `import type` still produces ImportPath + ImportName refs
+        let refs = extract(
+            r#"import type { MyType, OtherType } from './types';"#,
+            "src/app.ts",
+        );
+        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./types"));
+        let names: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportName)
+            .map(|r| r.value.as_str())
+            .collect();
+        assert_eq!(names, vec!["MyType", "OtherType"]);
+    }
+
+    #[test]
+    fn type_only_export() {
+        let refs = extract(
+            r#"export type { Foo, Bar } from './models';"#,
+            "src/index.ts",
+        );
+        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./models"));
+        let exports: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ExportName)
+            .map(|r| r.value.as_str())
+            .collect();
+        assert_eq!(exports, vec!["Foo", "Bar"]);
+    }
+
+    #[test]
+    fn dynamic_import_not_captured() {
+        // import() expressions are NOT in oxc's requested_modules --
+        // they're runtime calls, not static module requests.
+        // This is correct: we only rewrite static imports.
+        let refs = extract(
+            r#"const mod = await import('./lazy');
+const other = import('./another');"#,
+            "src/app.ts",
+        );
+        let paths: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportPath)
+            .map(|r| r.value.as_str())
+            .collect();
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn empty_file() {
+        let refs = extract("", "src/empty.ts");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn whitespace_only_file() {
+        let refs = extract("   \n\n  \t  \n", "src/blank.ts");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn anonymous_default_export_function() {
+        let refs = extract(
+            r#"export default function() { return 42; }"#,
+            "src/anon.ts",
+        );
+        let exports: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ExportName)
+            .map(|r| r.value.as_str())
+            .collect();
+        assert_eq!(exports, vec!["default"]);
+    }
+
+    #[test]
+    fn anonymous_default_export_arrow() {
+        let refs = extract(
+            r#"export default () => 42;"#,
+            "src/arrow.ts",
+        );
+        assert!(refs.iter().any(|r| r.kind == RefKind::ExportName && r.value == "default"));
+    }
+
+    #[test]
+    fn namespace_reexport() {
+        // export * as ns from './mod'
+        let refs = extract(
+            r#"export * as utils from './utils';"#,
+            "src/barrel.ts",
+        );
+        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./utils"));
+        // "utils" should be an ExportName
+        assert!(refs.iter().any(|r| r.kind == RefKind::ExportName && r.value == "utils"));
+    }
+
+    #[test]
+    fn multiple_imports_same_module() {
+        // Two import statements from same module -- both produce ImportPath
+        let refs = extract(
+            r#"import { foo } from './utils';
+import { bar } from './utils';"#,
+            "src/app.ts",
+        );
+        let path_count = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportPath && r.value == "./utils")
+            .count();
+        assert_eq!(path_count, 2);
+    }
+
+    #[test]
+    fn mixed_esm_and_require() {
+        let refs = extract(
+            r#"import { foo } from './esm';
+const bar = require('./cjs');"#,
+            "src/mixed.ts",
+        );
+        let paths: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportPath)
+            .map(|r| r.value.as_str())
+            .collect();
+        assert!(paths.contains(&"./esm"));
+        assert!(paths.contains(&"./cjs"));
+    }
+
+    #[test]
+    fn require_with_non_string_arg_ignored() {
+        let refs = extract(
+            r#"const x = require(variableName);
+const y = require('./valid');"#,
+            "src/dynamic.cjs",
+        );
+        let paths: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportPath)
+            .map(|r| r.value.as_str())
+            .collect();
+        // Only the string literal require is captured
+        assert_eq!(paths, vec!["./valid"]);
+    }
+
+    #[test]
+    fn nested_require_in_function_not_captured() {
+        let refs = extract(
+            r#"function load() {
+    const x = require('./nested');
+}"#,
+            "src/fn.cjs",
+        );
+        // collect_require_calls only walks top-level statements
+        assert!(refs.iter().all(|r| r.value != "./nested"));
+    }
+
+    #[test]
+    fn export_default_class_named() {
+        let refs = extract(
+            r#"export default class MyClass {}"#,
+            "src/cls.ts",
+        );
+        assert!(refs.iter().any(|r| r.kind == RefKind::ExportName && r.value == "default"));
+    }
+
+    #[test]
+    fn import_and_reexport_same_specifier() {
+        let refs = extract(
+            r#"import { foo } from './shared';
+export { bar } from './shared';"#,
+            "src/bridge.ts",
+        );
+        let path_refs: Vec<_> = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportPath && r.value == "./shared")
+            .collect();
+        assert_eq!(path_refs.len(), 2);
+    }
+
+    #[test]
+    fn invalid_utf8_returns_empty() {
+        let bytes: &[u8] = &[0xFF, 0xFE, 0x00, 0x00];
+        let refs = JsExtractor.extract(bytes, "src/binary.ts");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn span_accuracy_on_import_name() {
+        let src = r#"import { FooBar } from './mod';"#;
+        let refs = extract(src, "src/x.ts");
+        let name_ref = refs.iter().find(|r| r.kind == RefKind::ImportName && r.value == "FooBar").unwrap();
+        let slice = &src[name_ref.span_start as usize..name_ref.span_end as usize];
+        assert_eq!(slice, "FooBar");
+    }
+
+    #[test]
+    fn span_accuracy_on_export_name() {
+        let src = r#"export function myFunc() {}"#;
+        let refs = extract(src, "src/x.ts");
+        let exp = refs.iter().find(|r| r.kind == RefKind::ExportName).unwrap();
+        let slice = &src[exp.span_start as usize..exp.span_end as usize];
+        assert_eq!(slice, "myFunc");
+    }
 }
