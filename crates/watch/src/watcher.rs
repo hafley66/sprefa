@@ -11,7 +11,7 @@ use notify::{
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
-use sprefa_extract::Extractor;
+use sprefa_extract::{Extractor, RawRef};
 use sprefa_schema::RefKind;
 
 use crate::change::{Change, DeclChange, FsChange};
@@ -240,6 +240,15 @@ async fn classify_batch(
                 .into(),
             );
             matched_creates.push(create_path.clone());
+
+            // Update DB so future lookups find this file at its new path.
+            let new_rel = rel_path(root, create_path);
+            sqlx::query("UPDATE files SET path = ? WHERE id = ?")
+                .bind(&new_rel)
+                .bind(file_id)
+                .execute(pool)
+                .await?;
+            tracing::debug!(file_id, old = %old_path.display(), new = %new_rel, "db: file path updated");
         }
     }
 
@@ -266,7 +275,7 @@ async fn classify_batch(
         }
     }
 
-    // Modified files = content changes. Re-extract and diff.
+    // Modified files = content changes. Re-extract, diff decls, and sync DB.
     for path in &modified {
         let rel = rel_path(root, path);
         if let Some((file_id, _old_hash)) = lookup_file(pool, repo_id, &rel).await? {
@@ -278,10 +287,19 @@ async fn classify_batch(
                 .into(),
             );
 
-            // Re-extract the file and diff against old refs.
+            // Re-extract the file, diff decls, and replace refs in DB.
             let decl_changes =
                 extract_and_diff(pool, file_id, path, extractors).await?;
             changes.extend(decl_changes.into_iter().map(Change::from));
+
+            // Update content_hash so future move correlation uses the new hash.
+            if let Some(new_hash) = hash_file(path) {
+                sqlx::query("UPDATE files SET content_hash = ? WHERE id = ?")
+                    .bind(&new_hash)
+                    .bind(file_id)
+                    .execute(pool)
+                    .await?;
+            }
         }
     }
 
@@ -320,7 +338,8 @@ async fn lookup_file(
     Ok(row)
 }
 
-/// Re-extract a modified file and diff its declarations against the DB.
+/// Re-extract a modified file, diff its declarations against the DB,
+/// and replace all refs in the DB with the freshly extracted set.
 async fn extract_and_diff(
     pool: &SqlitePool,
     file_id: i64,
@@ -344,40 +363,37 @@ async fn extract_and_diff(
 
     let new_refs = extractor.extract(&content, &abs_path.to_string_lossy());
 
-    // Load old refs from DB for this file (declaration kinds only).
+    // Load old decl refs from DB for diffing (declaration kinds only).
     let old_refs = load_decl_refs(pool, file_id).await?;
+    let decl_changes = diff_refs(file_id, &old_refs, &new_refs);
 
-    Ok(diff_refs(file_id, &old_refs, &new_refs))
+    // Replace ALL refs in DB for this file so spans and values stay current.
+    replace_file_refs(pool, file_id, &new_refs).await?;
+
+    Ok(decl_changes)
 }
 
 /// Load existing refs for a file from the DB, filtered to declaration kinds.
 async fn load_decl_refs(
     pool: &SqlitePool,
     file_id: i64,
-) -> Result<Vec<sprefa_extract::RawRef>> {
-    use sprefa_extract::RawRef;
-
-    let decl_kinds: Vec<i64> = DECL_KINDS
-        .iter()
-        .map(|k| k.as_u8() as i64)
-        .collect();
-
-    // Build a query that fetches all decl refs for this file.
-    // We need: ref_kind, value, span_start, span_end
+) -> Result<Vec<RawRef>> {
     let rows: Vec<(i64, String, i64, i64)> = sqlx::query_as(
         "SELECT r.ref_kind, s.value, r.span_start, r.span_end
          FROM refs r
          JOIN strings s ON r.string_id = s.id
-         WHERE r.file_id = ?
+         WHERE r.file_id = ? AND r.ref_kind IN (?, ?, ?)
          ORDER BY r.span_start",
     )
     .bind(file_id)
+    .bind(DECL_KINDS[0].as_u8() as i64)
+    .bind(DECL_KINDS[1].as_u8() as i64)
+    .bind(DECL_KINDS[2].as_u8() as i64)
     .fetch_all(pool)
     .await?;
 
     Ok(rows
         .into_iter()
-        .filter(|(kind, _, _, _)| decl_kinds.contains(kind))
         .filter_map(|(kind, value, start, end)| {
             Some(RawRef {
                 kind: RefKind::from_u8(kind as u8)?,
@@ -390,6 +406,122 @@ async fn load_decl_refs(
             })
         })
         .collect())
+}
+
+/// Replace all refs for a file in the DB with a freshly extracted set.
+///
+/// Runs in a single transaction: delete old refs, bulk-insert strings,
+/// bulk-insert new refs. Keeps the DB in sync with the filesystem after
+/// content changes or rewrites.
+async fn replace_file_refs(
+    pool: &SqlitePool,
+    file_id: i64,
+    new_refs: &[RawRef],
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("DELETE FROM refs WHERE file_id = ?")
+        .bind(file_id)
+        .execute(&mut *tx)
+        .await?;
+
+    if new_refs.is_empty() {
+        tx.commit().await?;
+        return Ok(());
+    }
+
+    // Collect unique string values (ref values + parent keys).
+    let mut seen = std::collections::HashSet::new();
+    let mut unique_strings: Vec<&str> = Vec::new();
+    for r in new_refs {
+        if seen.insert(r.value.as_str()) {
+            unique_strings.push(&r.value);
+        }
+        if let Some(pk) = &r.parent_key {
+            if seen.insert(pk.as_str()) {
+                unique_strings.push(pk);
+            }
+        }
+    }
+
+    // Bulk-insert strings. norm = lowercase(value) matches the index crate.
+    for chunk in unique_strings.chunks(500) {
+        let ph = chunk.iter().map(|_| "(?,?)").collect::<Vec<_>>().join(",");
+        let sql = format!("INSERT OR IGNORE INTO strings (value, norm) VALUES {ph}");
+        let mut q = sqlx::query(&sql);
+        for v in chunk {
+            q = q.bind(*v).bind(v.trim().to_lowercase());
+        }
+        q.execute(&mut *tx).await?;
+    }
+
+    // Bulk look up string IDs.
+    let mut string_ids: HashMap<String, i64> = HashMap::with_capacity(unique_strings.len());
+    for chunk in unique_strings.chunks(500) {
+        let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("SELECT id, value FROM strings WHERE value IN ({ph})");
+        let mut q = sqlx::query_as::<_, (i64, String)>(&sql);
+        for v in chunk {
+            q = q.bind(*v);
+        }
+        for (id, value) in q.fetch_all(&mut *tx).await? {
+            string_ids.insert(value, id);
+        }
+    }
+
+    // Resolve all foreign keys before bulk insert.
+    struct ResolvedRef {
+        string_id: i64,
+        span_start: i64,
+        span_end: i64,
+        is_path: bool,
+        ref_kind: i64,
+        parent_key_string_id: Option<i64>,
+        node_path: Option<String>,
+    }
+    let resolved: Vec<ResolvedRef> = new_refs
+        .iter()
+        .filter_map(|r| {
+            let &string_id = string_ids.get(&r.value)?;
+            Some(ResolvedRef {
+                string_id,
+                span_start: r.span_start as i64,
+                span_end: r.span_end as i64,
+                is_path: r.is_path,
+                ref_kind: r.kind.as_u8() as i64,
+                parent_key_string_id: r.parent_key.as_ref().and_then(|pk| string_ids.get(pk).copied()),
+                node_path: r.node_path.clone(),
+            })
+        })
+        .collect();
+
+    // Bulk-insert refs.
+    for chunk in resolved.chunks(200) {
+        let ph = chunk.iter().map(|_| "(?,?,?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "INSERT OR IGNORE INTO refs
+             (string_id, file_id, span_start, span_end, is_path, ref_kind,
+              parent_key_string_id, node_path)
+             VALUES {ph}"
+        );
+        let mut q = sqlx::query(&sql);
+        for r in chunk {
+            q = q
+                .bind(r.string_id)
+                .bind(file_id)
+                .bind(r.span_start)
+                .bind(r.span_end)
+                .bind(r.is_path)
+                .bind(r.ref_kind)
+                .bind(r.parent_key_string_id)
+                .bind(r.node_path.as_deref());
+        }
+        q.execute(&mut *tx).await?;
+    }
+
+    tx.commit().await?;
+    tracing::debug!(file_id, ref_count = new_refs.len(), "db: refs replaced");
+    Ok(())
 }
 
 const DECL_KINDS: &[RefKind] = &[
