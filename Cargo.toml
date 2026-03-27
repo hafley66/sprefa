@@ -12,6 +12,7 @@ members = [
     "crates/js",
     "crates/rs",
     "crates/watch",
+    "crates/query",
 ]
 resolver = "2"
 

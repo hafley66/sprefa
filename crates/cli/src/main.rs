@@ -452,7 +452,8 @@ async fn cmd_status(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
 
 fn parse_scope(s: Option<&str>) -> anyhow::Result<Option<BranchScope>> {
     match s {
-        None | Some("all") => Ok(None),
+        None => Ok(None), // default: Committed (set in search_refs)
+        Some("all") => Ok(Some(BranchScope::All)),
         Some("committed") => Ok(Some(BranchScope::Committed)),
         Some("local") => Ok(Some(BranchScope::Local)),
         Some(other) => anyhow::bail!("unknown scope '{}' (expected: committed, local, all)", other),

@@ -2465,6 +2465,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprefa_query"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glob",
+ "sprefa_extract",
+ "sprefa_schema",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "sprefa_rs"
 version = "0.1.0"
 dependencies = [

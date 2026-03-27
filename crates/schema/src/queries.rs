@@ -159,7 +159,7 @@ pub async fn search_refs(
     query: &str,
     scope: Option<BranchScope>,
 ) -> anyhow::Result<Vec<QueryHit>> {
-    let scope = scope.unwrap_or(BranchScope::All);
+    let scope = scope.unwrap_or(BranchScope::Committed);
 
     let (branch_join, branch_where) = match scope {
         BranchScope::All => ("", ""),

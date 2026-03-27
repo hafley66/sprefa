@@ -591,16 +591,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn query_default_returns_all() {
+    async fn query_default_is_committed() {
         let db = seed_scoped_db().await;
 
-        // No scope / All should return refs from both branches
+        // None defaults to Committed -- only committed branch refs
         let hits = sprefa_schema::search_refs(&db, "shared", None).await.unwrap();
         assert_eq!(hits.len(), 1);
-        // "shared" appears in a.ts and b.ts
+        assert_eq!(hits[0].refs.len(), 1);
+        assert_eq!(hits[0].refs[0].file_path, "src/a.ts");
+
+        // "beta" only in wt, default (committed) should not find it
+        let hits = sprefa_schema::search_refs(&db, "beta", None).await.unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn query_all_returns_both_tiers() {
+        let db = seed_scoped_db().await;
+
+        // Explicit All returns refs from both branches
+        let hits = sprefa_schema::search_refs(&db, "shared", Some(BranchScope::All)).await.unwrap();
+        assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].refs.len(), 2);
 
-        // Both alpha and beta should be findable
         let alpha = sprefa_schema::search_refs(&db, "alpha", Some(BranchScope::All)).await.unwrap();
         assert_eq!(alpha.len(), 1);
         let beta = sprefa_schema::search_refs(&db, "beta", Some(BranchScope::All)).await.unwrap();
