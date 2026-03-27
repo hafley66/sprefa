@@ -1,5 +1,17 @@
 use serde::{Deserialize, Serialize};
 
+/// Controls which branch tier search_refs returns results from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BranchScope {
+    /// Only committed branches (is_working_tree = 0)
+    Committed,
+    /// Only working-tree branches (is_working_tree = 1)
+    Local,
+    /// Both committed and working-tree (default, no filter)
+    All,
+}
+
 /// Every interesting string extracted from source files gets classified by kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]

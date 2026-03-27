@@ -531,4 +531,79 @@ mod tests {
         ).fetch_all(&db).await.unwrap();
         assert_eq!(paths, vec!["src/a.ts", "src/b.ts"]);
     }
+
+    // -- scope filtering tests --
+
+    use sprefa_schema::BranchScope;
+
+    /// Populate committed (main) with file_a containing "alpha", and wt (main+wt) with
+    /// file_b containing "beta". Both share "shared".
+    async fn seed_scoped_db() -> SqlitePool {
+        let db = make_db().await;
+
+        let committed_files = vec![
+            extracted("src/a.ts", "ha", "ts", vec![
+                raw_ref("alpha", RefKind::ImportName),
+                raw_ref("shared", RefKind::ImportName),
+            ]),
+        ];
+        flush(&db, &repo_config("myrepo"), "main", committed_files, None, "v1").await.unwrap();
+
+        let wt_files = vec![
+            extracted("src/b.ts", "hb", "ts", vec![
+                raw_ref("beta", RefKind::ImportName),
+                raw_ref("shared", RefKind::ImportName),
+            ]),
+        ];
+        flush(&db, &repo_config("myrepo"), "main+wt", wt_files, None, "v1").await.unwrap();
+
+        db
+    }
+
+    #[tokio::test]
+    async fn query_committed_excludes_wt_refs() {
+        let db = seed_scoped_db().await;
+
+        // "shared" exists in both branches, but committed scope should only return a.ts
+        let hits = sprefa_schema::search_refs(&db, "shared", Some(BranchScope::Committed)).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].refs.len(), 1);
+        assert_eq!(hits[0].refs[0].file_path, "src/a.ts");
+
+        // "beta" only exists in wt, committed should find nothing
+        let hits = sprefa_schema::search_refs(&db, "beta", Some(BranchScope::Committed)).await.unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn query_local_returns_only_wt_refs() {
+        let db = seed_scoped_db().await;
+
+        // "shared" in local scope should only return b.ts
+        let hits = sprefa_schema::search_refs(&db, "shared", Some(BranchScope::Local)).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].refs.len(), 1);
+        assert_eq!(hits[0].refs[0].file_path, "src/b.ts");
+
+        // "alpha" only exists in committed, local should find nothing
+        let hits = sprefa_schema::search_refs(&db, "alpha", Some(BranchScope::Local)).await.unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn query_default_returns_all() {
+        let db = seed_scoped_db().await;
+
+        // No scope / All should return refs from both branches
+        let hits = sprefa_schema::search_refs(&db, "shared", None).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        // "shared" appears in a.ts and b.ts
+        assert_eq!(hits[0].refs.len(), 2);
+
+        // Both alpha and beta should be findable
+        let alpha = sprefa_schema::search_refs(&db, "alpha", Some(BranchScope::All)).await.unwrap();
+        assert_eq!(alpha.len(), 1);
+        let beta = sprefa_schema::search_refs(&db, "beta", Some(BranchScope::All)).await.unwrap();
+        assert_eq!(beta.len(), 1);
+    }
 }

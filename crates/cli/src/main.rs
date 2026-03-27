@@ -8,7 +8,7 @@ use sprefa_js::JsExtractor;
 use sprefa_rs::RsExtractor;
 use sprefa_rules::extractor::RuleExtractor;
 use sprefa_scan::Scanner;
-use sprefa_schema::{init_db, list_repos, count_files_for_repo, count_refs_for_repo, upsert_repo, search_refs};
+use sprefa_schema::{BranchScope, init_db, list_repos, count_files_for_repo, count_refs_for_repo, upsert_repo, search_refs};
 use sprefa_watch::plan::{self, PathRewriter};
 use sprefa_watch::js_path::JsPathRewriter;
 use sprefa_watch::rs_path::RsPathRewriter;
@@ -144,6 +144,9 @@ enum Command {
     Query {
         /// Search term (minimum 3 characters for trigram match)
         term: String,
+        /// Filter by branch scope: committed, local, or all (default: all)
+        #[arg(long)]
+        scope: Option<String>,
         /// Skip daemon delegation and query directly (even if [daemon].url is set)
         #[arg(long)]
         once: bool,
@@ -245,7 +248,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Add { path, name }) => cmd_add(&cli.config, path, name).await?,
         Some(Command::Scan { repo, once }) => cmd_scan(&cli.config, repo.as_deref(), once).await?,
         Some(Command::Status) => cmd_status(&cli.config).await?,
-        Some(Command::Query { term, once }) => cmd_query(&cli.config, &term, once).await?,
+        Some(Command::Query { term, scope, once }) => cmd_query(&cli.config, &term, scope.as_deref(), once).await?,
         Some(Command::Serve) => cmd_serve(&cli.config).await?,
         Some(Command::Watch { repo }) => cmd_watch(&cli.config, repo.as_deref()).await?,
         Some(Command::Daemon { repo, no_scan }) => cmd_daemon(&cli.config, repo.as_deref(), no_scan).await?,
@@ -447,15 +450,35 @@ async fn cmd_status(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_query(config_path: &Option<PathBuf>, term: &str, once: bool) -> anyhow::Result<()> {
+fn parse_scope(s: Option<&str>) -> anyhow::Result<Option<BranchScope>> {
+    match s {
+        None | Some("all") => Ok(None),
+        Some("committed") => Ok(Some(BranchScope::Committed)),
+        Some("local") => Ok(Some(BranchScope::Local)),
+        Some(other) => anyhow::bail!("unknown scope '{}' (expected: committed, local, all)", other),
+    }
+}
+
+async fn cmd_query(config_path: &Option<PathBuf>, term: &str, scope: Option<&str>, once: bool) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
+    let scope = parse_scope(scope)?;
 
     if !once {
         if let Some(url) = config.daemon_url() {
             let client = reqwest::Client::new();
+            let mut params: Vec<(&str, &str)> = vec![("q", term)];
+            let scope_str;
+            if let Some(s) = &scope {
+                scope_str = match s {
+                    BranchScope::Committed => "committed",
+                    BranchScope::Local => "local",
+                    BranchScope::All => "all",
+                };
+                params.push(("scope", scope_str));
+            }
             let resp = client
                 .get(format!("{}/query", url))
-                .query(&[("q", term)])
+                .query(&params)
                 .send()
                 .await?
                 .error_for_status()?;
@@ -466,7 +489,7 @@ async fn cmd_query(config_path: &Option<PathBuf>, term: &str, once: bool) -> any
     }
 
     let pool = init_db(&config.db_path()).await?;
-    let hits = search_refs(&pool, term).await?;
+    let hits = search_refs(&pool, term, scope).await?;
     print_query_hits(&hits, term);
     Ok(())
 }

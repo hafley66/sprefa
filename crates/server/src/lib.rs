@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use sprefa_config::RepoConfig;
 use sprefa_scan::Scanner;
 use sprefa_schema::{
-    QueryHit, list_repos, count_files_for_repo, count_refs_for_repo, search_refs,
+    BranchScope, QueryHit, list_repos, count_files_for_repo, count_refs_for_repo, search_refs,
 };
 
 /// How long a queued POST /scan will wait for the current scan to finish.
@@ -87,13 +87,14 @@ async fn repos_handler(
 #[derive(Deserialize)]
 struct QueryParams {
     q: String,
+    scope: Option<BranchScope>,
 }
 
 async fn query_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<QueryParams>,
 ) -> Result<Json<Vec<QueryHit>>, (StatusCode, String)> {
-    let results = search_refs(&state.pool, &params.q).await.map_err(e500)?;
+    let results = search_refs(&state.pool, &params.q, params.scope).await.map_err(e500)?;
     Ok(Json(results))
 }
 

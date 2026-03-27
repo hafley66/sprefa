@@ -2,7 +2,7 @@ use sqlx::SqlitePool;
 
 use std::collections::HashMap;
 
-use crate::{QueryHit, RefLocation, Repo, StringRow};
+use crate::{BranchScope, QueryHit, RefLocation, Repo, StringRow};
 
 // -- repos --
 
@@ -150,10 +150,34 @@ pub async fn search_strings(pool: &SqlitePool, query: &str) -> anyhow::Result<Ve
 }
 
 /// FTS5 trigram search returning matched strings grouped with all their ref locations.
-pub async fn search_refs(pool: &SqlitePool, query: &str) -> anyhow::Result<Vec<QueryHit>> {
-    let rows: Vec<(i64, String, String, i64, i64, i64, String, String)> = sqlx::query_as(
+///
+/// When `scope` is `None` or `Some(All)`, returns all refs (no branch filtering).
+/// When `Committed`, only refs whose file belongs to a non-wt branch.
+/// When `Local`, only refs whose file belongs to a +wt branch.
+pub async fn search_refs(
+    pool: &SqlitePool,
+    query: &str,
+    scope: Option<BranchScope>,
+) -> anyhow::Result<Vec<QueryHit>> {
+    let scope = scope.unwrap_or(BranchScope::All);
+
+    let (branch_join, branch_where) = match scope {
+        BranchScope::All => ("", ""),
+        BranchScope::Committed => (
+            "JOIN branch_files bf ON bf.file_id = f.id AND bf.repo_id = f.repo_id \
+             JOIN repo_branches rb ON rb.repo_id = bf.repo_id AND rb.branch = bf.branch",
+            "AND rb.is_working_tree = 0",
+        ),
+        BranchScope::Local => (
+            "JOIN branch_files bf ON bf.file_id = f.id AND bf.repo_id = f.repo_id \
+             JOIN repo_branches rb ON rb.repo_id = bf.repo_id AND rb.branch = bf.branch",
+            "AND rb.is_working_tree = 1",
+        ),
+    };
+
+    let sql = format!(
         r#"
-        SELECT s.id, s.value, s.norm,
+        SELECT DISTINCT s.id, s.value, s.norm,
                r.span_start, r.span_end, r.ref_kind,
                f.path AS file_path,
                repos.name AS repo_name
@@ -162,14 +186,18 @@ pub async fn search_refs(pool: &SqlitePool, query: &str) -> anyhow::Result<Vec<Q
         JOIN refs r ON r.string_id = s.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
+        {branch_join}
         WHERE fts.norm MATCH ?
+        {branch_where}
         ORDER BY rank, repos.name, f.path
         LIMIT 500
         "#,
-    )
-    .bind(format!("\"{}\"", query))
-    .fetch_all(pool)
-    .await?;
+    );
+
+    let rows: Vec<(i64, String, String, i64, i64, i64, String, String)> = sqlx::query_as(&sql)
+        .bind(format!("\"{}\"", query))
+        .fetch_all(pool)
+        .await?;
 
     // Group rows by string_id, preserving rank order of first occurrence.
     let mut hits: Vec<QueryHit> = Vec::new();
