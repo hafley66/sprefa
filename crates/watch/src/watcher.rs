@@ -26,6 +26,9 @@ pub struct WatchConfig {
     pub repo_id: i64,
     /// Debounce window for correlating events.
     pub debounce: Duration,
+    /// Working-tree branch name (e.g. "main+wt"). The watcher updates
+    /// branch_files for this branch on file create/delete events.
+    pub wt_branch: Option<String>,
 }
 
 impl Default for WatchConfig {
@@ -34,6 +37,7 @@ impl Default for WatchConfig {
             root_path: PathBuf::new(),
             repo_id: 0,
             debounce: Duration::from_millis(100),
+            wt_branch: None,
         }
     }
 }
@@ -81,6 +85,7 @@ pub async fn watch(
                 config.repo_id,
                 &pool,
                 &extractors,
+                config.wt_branch.as_deref(),
             )
             .await
             {
@@ -184,13 +189,14 @@ async fn collect_batch(
 
 /// Classify a debounced batch of raw events into semantic FsChanges,
 /// then derive DeclChanges for content changes.
-#[tracing::instrument(skip(batch, root, pool, extractors), fields(event_count = batch.len()))]
+#[tracing::instrument(skip(batch, root, pool, extractors, wt_branch), fields(event_count = batch.len()))]
 async fn classify_batch(
     batch: &[RawEvent],
     root: &Path,
     repo_id: i64,
     pool: &SqlitePool,
     extractors: &[Box<dyn Extractor>],
+    wt_branch: Option<&str>,
 ) -> Result<Vec<Change>> {
     let mut created: HashMap<PathBuf, String> = HashMap::new(); // path -> content_hash
     let mut removed: Vec<PathBuf> = Vec::new();
@@ -215,6 +221,32 @@ async fn classify_batch(
             }
         }
     }
+
+    // Deduplicate created vs modified using the DB as source of truth.
+    // macOS can report both Create and Modify for the same path in one batch
+    // (e.g. git checkout, atomic saves). Resolution:
+    //   - File exists in DB: it's a modify, not a create. Drop from created.
+    //   - File not in DB: it's a create, not a modify. Drop from modified.
+    let mut drop_from_created: Vec<PathBuf> = Vec::new();
+    let mut drop_from_modified: Vec<PathBuf> = Vec::new();
+    for path in created.keys() {
+        let rel = rel_path(root, path);
+        if let Ok(Some(_)) = lookup_file(pool, repo_id, &rel).await {
+            // Exists in DB -- treat as modify
+            drop_from_created.push(path.clone());
+            if !modified.contains(path) {
+                modified.push(path.clone());
+            }
+            tracing::debug!(path = %path.display(), "classify: promoted create -> modify (file exists in DB)");
+        } else if modified.contains(path) {
+            // Doesn't exist in DB -- treat as create, remove from modified
+            drop_from_modified.push(path.clone());
+        }
+    }
+    for path in &drop_from_created {
+        created.remove(path);
+    }
+    modified.retain(|p| !drop_from_modified.contains(p));
 
     let mut changes: Vec<Change> = Vec::new();
 
@@ -303,17 +335,62 @@ async fn classify_batch(
             }
             .into(),
         );
+
+        // Remove from working-tree branch_files.
+        if let Some(wt) = wt_branch {
+            sqlx::query(
+                "DELETE FROM branch_files WHERE repo_id = ? AND branch = ? AND file_id = ?",
+            )
+            .bind(repo_id)
+            .bind(wt)
+            .bind(*file_id)
+            .execute(pool)
+            .await?;
+
+            tracing::debug!(file_id, branch = wt, "wt: unlinked deleted file");
+        }
     }
 
     // Unmatched creates = new files.
-    for (path, _hash) in &created {
+    for (path, hash) in &created {
         if !matched_creates.contains(path) && !same_path_creates.contains(path) {
+            let rel = rel_path(root, path);
             changes.push(
                 FsChange::Create {
                     path: path.to_string_lossy().to_string(),
                 }
                 .into(),
             );
+
+            // Insert into files + branch_files for the working-tree branch.
+            if let Some(wt) = wt_branch {
+                let stem = Path::new(&rel).file_stem().map(|s| s.to_string_lossy().to_string());
+                let ext = Path::new(&rel).extension().map(|s| s.to_string_lossy().to_string());
+                let file_id: i64 = sqlx::query_scalar(
+                    "INSERT INTO files (repo_id, path, content_hash, stem, ext)
+                     VALUES (?, ?, ?, ?, ?)
+                     ON CONFLICT(repo_id, path, content_hash) DO UPDATE SET stem = excluded.stem
+                     RETURNING id",
+                )
+                .bind(repo_id)
+                .bind(&rel)
+                .bind(hash)
+                .bind(stem.as_deref())
+                .bind(ext.as_deref())
+                .fetch_one(pool)
+                .await?;
+
+                sqlx::query(
+                    "INSERT OR IGNORE INTO branch_files (repo_id, branch, file_id) VALUES (?, ?, ?)",
+                )
+                .bind(repo_id)
+                .bind(wt)
+                .bind(file_id)
+                .execute(pool)
+                .await?;
+
+                tracing::debug!(file_id, branch = wt, path = %rel, "wt: linked new file");
+            }
         }
     }
 

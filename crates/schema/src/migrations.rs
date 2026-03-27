@@ -176,6 +176,13 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await;
 
+    // Add is_working_tree to existing DBs that predate this column.
+    let _ = sqlx::query(
+        "ALTER TABLE repo_branches ADD COLUMN is_working_tree INTEGER NOT NULL DEFAULT 0",
+    )
+    .execute(pool)
+    .await;
+
     tracing::info!("migrations complete ({} statements)", MIGRATIONS.len());
     Ok(())
 }

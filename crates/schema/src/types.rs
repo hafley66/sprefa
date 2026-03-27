@@ -118,6 +118,7 @@ pub struct RepoBranch {
     pub repo_id: i64,
     pub branch: String,
     pub git_hash: Option<String>,
+    pub is_working_tree: bool,
 }
 
 /// Row from the git_tags table.

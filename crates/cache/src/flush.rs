@@ -44,12 +44,14 @@ pub async fn flush(
     .fetch_one(db)
     .await?;
 
+    let is_wt = super::is_wt_branch(branch);
     sqlx::query(
-        "INSERT INTO repo_branches (repo_id, branch) VALUES (?, ?)
-         ON CONFLICT(repo_id, branch) DO NOTHING",
+        "INSERT INTO repo_branches (repo_id, branch, is_working_tree) VALUES (?, ?, ?)
+         ON CONFLICT(repo_id, branch) DO UPDATE SET is_working_tree = excluded.is_working_tree",
     )
     .bind(repo_id)
     .bind(branch)
+    .bind(is_wt)
     .execute(db)
     .await?;
 
@@ -134,6 +136,17 @@ pub async fn flush(
     .collect();
 
     // Bulk insert branch_files.
+    // Working-tree branches do full-replace: the scanner knows the complete
+    // on-disk file set, so stale entries must be removed. Committed branches
+    // stay additive (files accumulate across incremental fetches).
+    if is_wt {
+        sqlx::query("DELETE FROM branch_files WHERE repo_id = ? AND branch = ?")
+            .bind(repo_id)
+            .bind(branch)
+            .execute(&mut *tx)
+            .await?;
+    }
+
     let branch_file_ids: Vec<i64> = files.iter()
         .filter_map(|f| file_id_map.get(&f.rel_path).copied())
         .collect();
@@ -435,5 +448,87 @@ mod tests {
         )
         .fetch_one(&db).await.unwrap();
         assert_eq!(branch_file_count, 1);
+    }
+
+    #[tokio::test]
+    async fn flush_wt_sets_is_working_tree() {
+        let db = make_db().await;
+
+        let files_a = vec![extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", RefKind::DepName)])];
+        let files_b = vec![extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", RefKind::DepName)])];
+
+        flush(&db, &repo_config("myrepo"), "main", files_a, None, "v1").await.unwrap();
+        flush(&db, &repo_config("myrepo"), "main+wt", files_b, None, "v1").await.unwrap();
+
+        let committed: (i64,) = sqlx::query_as(
+            "SELECT is_working_tree FROM repo_branches WHERE branch = 'main'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(committed.0, 0);
+
+        let wt: (i64,) = sqlx::query_as(
+            "SELECT is_working_tree FROM repo_branches WHERE branch = 'main+wt'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(wt.0, 1);
+    }
+
+    #[tokio::test]
+    async fn flush_wt_replaces_branch_files() {
+        let db = make_db().await;
+
+        // First wt flush: a.ts + b.ts
+        let files1 = vec![
+            extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", RefKind::DepName)]),
+            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", RefKind::DepName)]),
+        ];
+        flush(&db, &repo_config("myrepo"), "main+wt", files1, None, "v1").await.unwrap();
+
+        let count1: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM branch_files WHERE branch = 'main+wt'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(count1, 2);
+
+        // Second wt flush: b.ts + c.ts (a.ts removed from disk)
+        let files2 = vec![
+            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", RefKind::DepName)]),
+            extracted("src/c.ts", "h3", "ts", vec![raw_ref("z", RefKind::DepName)]),
+        ];
+        flush(&db, &repo_config("myrepo"), "main+wt", files2, None, "v1").await.unwrap();
+
+        let count2: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM branch_files WHERE branch = 'main+wt'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(count2, 2);
+
+        // a.ts should be gone, c.ts should be present
+        let paths: Vec<String> = sqlx::query_scalar(
+            "SELECT f.path FROM branch_files bf JOIN files f ON bf.file_id = f.id WHERE bf.branch = 'main+wt' ORDER BY f.path"
+        ).fetch_all(&db).await.unwrap();
+        assert_eq!(paths, vec!["src/b.ts", "src/c.ts"]);
+    }
+
+    #[tokio::test]
+    async fn flush_committed_is_additive() {
+        let db = make_db().await;
+
+        let files1 = vec![
+            extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", RefKind::DepName)]),
+        ];
+        flush(&db, &repo_config("myrepo"), "main", files1, None, "v1").await.unwrap();
+
+        let files2 = vec![
+            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", RefKind::DepName)]),
+        ];
+        flush(&db, &repo_config("myrepo"), "main", files2, None, "v1").await.unwrap();
+
+        // Both should survive -- committed flush is additive
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM branch_files WHERE branch = 'main'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(count, 2);
+
+        let paths: Vec<String> = sqlx::query_scalar(
+            "SELECT f.path FROM branch_files bf JOIN files f ON bf.file_id = f.id WHERE bf.branch = 'main' ORDER BY f.path"
+        ).fetch_all(&db).await.unwrap();
+        assert_eq!(paths, vec!["src/a.ts", "src/b.ts"]);
     }
 }
