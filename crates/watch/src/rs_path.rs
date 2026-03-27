@@ -1,8 +1,53 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::plan::PathRewriter;
 
 const RS_EXTENSIONS: &[&str] = &["rs"];
+
+/// Maps absolute file paths to their correct module paths when #[path]
+/// attributes override the default filesystem convention.
+pub type ModOverrides = HashMap<String, String>;
+
+/// Build a module path override map from #[path] attribute data.
+///
+/// For each `#[path = "weird.rs"] mod foo;` found in the repo, maps
+/// the actual file path (parent_dir/weird.rs) to the correct module
+/// path (parent_mod::foo).
+///
+/// Handles one level of nesting. Nested #[path] overrides (a #[path]'d
+/// module containing another #[path]'d module) would need iterative
+/// resolution, but this is extremely rare in practice.
+pub fn build_mod_overrides(
+    rows: &[(String, String, String, String)], // (parent_rel_path, repo_root, mod_name, node_path)
+) -> ModOverrides {
+    let mut overrides = ModOverrides::new();
+    for (parent_rel, repo_root, mod_name, node_path) in rows {
+        let parent_abs = format!("{}/{}", repo_root, parent_rel);
+        let parent_dir = match Path::new(&parent_abs).parent() {
+            Some(d) => d,
+            None => continue,
+        };
+        let actual_file = parent_dir.join(node_path);
+        let actual_abs = actual_file.to_string_lossy().to_string();
+
+        let parent_mod = match file_to_mod_path(&parent_abs) {
+            Some(m) => m,
+            None => continue,
+        };
+        let mod_path = format!("{}::{}", parent_mod, mod_name);
+        overrides.insert(actual_abs, mod_path);
+    }
+    overrides
+}
+
+/// Resolve a file path to its module path, checking #[path] overrides first.
+pub fn file_to_mod_path_checked(file_path: &str, overrides: &ModOverrides) -> Option<String> {
+    if let Some(mod_path) = overrides.get(file_path) {
+        return Some(mod_path.clone());
+    }
+    file_to_mod_path(file_path)
+}
 
 pub struct RsPathRewriter;
 
@@ -102,11 +147,12 @@ pub fn file_to_mod_path(file_path: &str) -> Option<String> {
 pub(crate) fn filter_rs_uses_by_prefix(
     refs: &[crate::queries::AffectedRef],
     target_mod: &str,
+    overrides: &ModOverrides,
 ) -> Vec<crate::queries::AffectedRef> {
     let target_prefix = format!("{}::", target_mod);
     refs.iter()
         .filter(|aref| {
-            let from_mod = match file_to_mod_path(&aref.source_abs_path()) {
+            let from_mod = match file_to_mod_path_checked(&aref.source_abs_path(), overrides) {
                 Some(m) => m,
                 None => return false,
             };
@@ -129,11 +175,12 @@ pub(crate) fn filter_rs_uses_by_target(
     refs: &[crate::queries::AffectedRef],
     module_path: &str,
     name: &str,
+    overrides: &ModOverrides,
 ) -> Vec<crate::queries::AffectedRef> {
     let target_value = format!("{}::{}", module_path, name);
     refs.iter()
         .filter(|aref| {
-            let from_mod = match file_to_mod_path(&aref.source_abs_path()) {
+            let from_mod = match file_to_mod_path_checked(&aref.source_abs_path(), overrides) {
                 Some(m) => m,
                 None => return false,
             };
@@ -142,6 +189,30 @@ pub(crate) fn filter_rs_uses_by_target(
                 None => return false,
             };
             abs == target_value
+        })
+        .cloned()
+        .collect()
+}
+
+/// Filter RsUse refs that are glob imports (`use crate::utils::*`) resolving
+/// to the given module path.
+pub(crate) fn filter_rs_glob_uses(
+    refs: &[crate::queries::AffectedRef],
+    module_path: &str,
+    overrides: &ModOverrides,
+) -> Vec<crate::queries::AffectedRef> {
+    let glob_target = format!("{}::*", module_path);
+    refs.iter()
+        .filter(|aref| {
+            let from_mod = match file_to_mod_path_checked(&aref.source_abs_path(), overrides) {
+                Some(m) => m,
+                None => return false,
+            };
+            let abs = match resolve_to_absolute(&aref.value, &from_mod) {
+                Some(a) => a,
+                None => return false,
+            };
+            abs == glob_target
         })
         .cloned()
         .collect()
@@ -651,72 +722,79 @@ mod tests {
 
     #[test]
     fn filter_prefix_catches_crate_ref() {
+        let no = ModOverrides::new();
         let refs = vec![
             make_aref("crate::utils::Foo", "src/app.rs"),
             make_aref("crate::config::Bar", "src/app.rs"),
         ];
-        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils");
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils", &no);
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].value, "crate::utils::Foo");
     }
 
     #[test]
     fn filter_prefix_catches_super_ref() {
+        let no = ModOverrides::new();
         let refs = vec![
             // src/foo/consumer.rs: super::bar::Thing resolves to crate::foo::bar::Thing
             make_aref("super::bar::Thing", "src/foo/consumer.rs"),
             // src/app.rs: super::bar::Thing resolves to crate::bar::Thing (different!)
             make_aref("super::bar::Thing", "src/app.rs"),
         ];
-        let matched = filter_rs_uses_by_prefix(&refs, "crate::foo::bar");
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::foo::bar", &no);
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].source_file_rel, "src/foo/consumer.rs");
     }
 
     #[test]
     fn filter_prefix_catches_self_ref() {
+        let no = ModOverrides::new();
         let refs = vec![
             // src/foo/mod.rs: self::bar::X resolves to crate::foo::bar::X
             make_aref("self::bar::X", "src/foo/mod.rs"),
         ];
-        let matched = filter_rs_uses_by_prefix(&refs, "crate::foo::bar");
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::foo::bar", &no);
         assert_eq!(matched.len(), 1);
     }
 
     #[test]
     fn filter_prefix_matches_module_itself() {
+        let no = ModOverrides::new();
         let refs = vec![
             make_aref("crate::utils", "src/app.rs"),
         ];
-        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils");
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils", &no);
         assert_eq!(matched.len(), 1);
     }
 
     #[test]
     fn filter_prefix_excludes_external_crate() {
+        let no = ModOverrides::new();
         let refs = vec![
             make_aref("std::collections::HashMap", "src/app.rs"),
         ];
-        let matched = filter_rs_uses_by_prefix(&refs, "crate::collections");
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::collections", &no);
         assert_eq!(matched.len(), 0);
     }
 
     #[test]
     fn filter_prefix_excludes_unrelated_module() {
+        let no = ModOverrides::new();
         let refs = vec![
             make_aref("crate::config::Settings", "src/app.rs"),
         ];
-        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils");
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::utils", &no);
         assert_eq!(matched.len(), 0);
     }
 
     #[test]
     fn filter_prefix_double_super() {
+        let no = ModOverrides::new();
         let refs = vec![
             // src/a/b/consumer.rs: super::super::target::X -> crate::a::target::X
             make_aref("super::super::target::X", "src/a/b/consumer.rs"),
         ];
-        let matched = filter_rs_uses_by_prefix(&refs, "crate::a::target");
+        let matched = filter_rs_uses_by_prefix(&refs, "crate::a::target", &no);
         assert_eq!(matched.len(), 1);
     }
 
@@ -724,41 +802,99 @@ mod tests {
 
     #[test]
     fn filter_target_catches_crate_ref() {
+        let no = ModOverrides::new();
         let refs = vec![
             make_aref("crate::utils::Foo", "src/app.rs"),
             make_aref("crate::utils::Bar", "src/app.rs"),
         ];
-        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo");
+        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo", &no);
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].value, "crate::utils::Foo");
     }
 
     #[test]
     fn filter_target_catches_super_ref() {
+        let no = ModOverrides::new();
         let refs = vec![
             // src/foo/consumer.rs: super::bar::Foo -> crate::foo::bar::Foo
             make_aref("super::bar::Foo", "src/foo/consumer.rs"),
         ];
-        let matched = filter_rs_uses_by_target(&refs, "crate::foo::bar", "Foo");
+        let matched = filter_rs_uses_by_target(&refs, "crate::foo::bar", "Foo", &no);
         assert_eq!(matched.len(), 1);
     }
 
     #[test]
     fn filter_target_excludes_wrong_name() {
+        let no = ModOverrides::new();
         let refs = vec![
             make_aref("crate::utils::Bar", "src/app.rs"),
         ];
-        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo");
+        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo", &no);
         assert_eq!(matched.len(), 0);
     }
 
     #[test]
     fn filter_target_self_ref() {
+        let no = ModOverrides::new();
         let refs = vec![
             // src/utils/mod.rs: self::Foo -> crate::utils::Foo
             make_aref("self::Foo", "src/utils/mod.rs"),
         ];
-        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo");
+        let matched = filter_rs_uses_by_target(&refs, "crate::utils", "Foo", &no);
         assert_eq!(matched.len(), 1);
+    }
+
+    // ── mod override tests ──────────────────────────────────────────────
+
+    #[test]
+    fn file_to_mod_path_with_override() {
+        let mut overrides = ModOverrides::new();
+        overrides.insert("/repo/src/weird.rs".to_string(), "crate::foo".to_string());
+        // Override takes precedence
+        assert_eq!(
+            file_to_mod_path_checked("/repo/src/weird.rs", &overrides).as_deref(),
+            Some("crate::foo"),
+        );
+        // Non-overridden file still works normally
+        assert_eq!(
+            file_to_mod_path_checked("/repo/src/bar.rs", &overrides).as_deref(),
+            Some("crate::bar"),
+        );
+    }
+
+    #[test]
+    fn build_mod_overrides_from_rows() {
+        let rows = vec![
+            ("src/lib.rs".to_string(), "/repo".to_string(), "foo".to_string(), "weird.rs".to_string()),
+        ];
+        let overrides = build_mod_overrides(&rows);
+        // src/lib.rs is crate root, parent dir is /repo/src
+        // actual file = /repo/src/weird.rs, mod path = crate::foo
+        assert_eq!(overrides.get("/repo/src/weird.rs").map(|s| s.as_str()), Some("crate::foo"));
+    }
+
+    #[test]
+    fn filter_prefix_with_override() {
+        let mut overrides = ModOverrides::new();
+        overrides.insert("/repo/src/weird.rs".to_string(), "crate::foo".to_string());
+        // self:: resolution depends on the source file's mod path
+        let refs2 = vec![
+            crate::queries::AffectedRef {
+                ref_id: 0,
+                span_start: 0,
+                span_end: 0,
+                value: "self::bar".to_string(),
+                source_file_rel: "src/weird.rs".to_string(),
+                source_repo_root: "/repo".to_string(),
+            },
+        ];
+        // Without override: weird.rs = crate::weird, self::bar = crate::weird::bar
+        // With override: weird.rs = crate::foo, self::bar = crate::foo::bar
+        let matched = filter_rs_uses_by_prefix(&refs2, "crate::foo::bar", &overrides);
+        assert_eq!(matched.len(), 1);
+        // Without override, should not match
+        let no = ModOverrides::new();
+        let matched2 = filter_rs_uses_by_prefix(&refs2, "crate::foo::bar", &no);
+        assert_eq!(matched2.len(), 0);
     }
 }

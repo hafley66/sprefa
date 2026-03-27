@@ -227,6 +227,90 @@ pub async fn export_ref_in_file(
     Ok(to_affected(rows))
 }
 
+/// All RsMod refs with a #[path] override in the same repo as `file_id`.
+///
+/// Returns (parent_file_rel_path, repo_root, mod_name, node_path) tuples.
+/// Used to build a module path override map for files whose filesystem
+/// name doesn't match their module name.
+pub async fn path_attr_overrides(
+    pool: &SqlitePool,
+    file_id: i64,
+) -> anyhow::Result<Vec<(String, String, String, String)>> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        r#"
+        SELECT f.path, repos.root_path, s.value, r.node_path
+        FROM refs r
+        JOIN strings s ON r.string_id = s.id
+        JOIN files f ON r.file_id = f.id
+        JOIN repos ON f.repo_id = repos.id
+        WHERE r.ref_kind = 32
+          AND r.node_path IS NOT NULL
+          AND f.repo_id = (SELECT repo_id FROM files WHERE id = ?)
+        "#,
+    )
+    .bind(file_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// All RsDeclare ref names in a specific file.
+///
+/// Used for glob import expansion: resolving `use crate::utils::*` to
+/// the set of symbols that `*` expands to.
+pub async fn declarations_in_file(
+    pool: &SqlitePool,
+    file_id: i64,
+) -> anyhow::Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT s.value
+        FROM refs r
+        JOIN strings s ON r.string_id = s.id
+        WHERE r.file_id = ?
+          AND r.ref_kind = 31
+        "#,
+    )
+    .bind(file_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(v,)| v).collect())
+}
+
+/// Find the file_id for a given relative path in the same repo.
+pub async fn file_id_by_path(
+    pool: &SqlitePool,
+    repo_file_id: i64,
+    rel_path: &str,
+) -> anyhow::Result<Option<i64>> {
+    let row: Option<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT f.id FROM files f
+        WHERE f.path = ?
+          AND f.repo_id = (SELECT repo_id FROM files WHERE id = ?)
+        "#,
+    )
+    .bind(rel_path)
+    .bind(repo_file_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(id,)| id))
+}
+
+/// Repo root path for a file.
+pub async fn repo_root_for_file(
+    pool: &SqlitePool,
+    file_id: i64,
+) -> anyhow::Result<Option<String>> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT repos.root_path FROM files f JOIN repos ON f.repo_id = repos.id WHERE f.id = ?",
+    )
+    .bind(file_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(rr,)| rr))
+}
+
 /// Absolute path for a file_id (repo root + relative path).
 pub async fn file_abs_path(
     pool: &SqlitePool,

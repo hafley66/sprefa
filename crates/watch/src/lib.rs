@@ -6,3 +6,4 @@ pub mod queries;
 pub mod rewrite;
 pub mod rs_path;
 pub mod watcher;
+pub mod workspace;

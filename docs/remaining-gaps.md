@@ -15,42 +15,30 @@ transitively via rename_through_reexports, with cycle detection. Aliased
 re-exports (`export { Foo as Bar }`) correctly stop propagation at the
 alias boundary.
 
-### 2. Rust glob imports and renamed symbols
+### ~~2. Rust glob imports and renamed symbols~~ FIXED
 
-`use crate::utils::*` rewrites the module path on move. But if a
-symbol pulled in via `*` is renamed in utils, there is no explicit
-ref in the consuming file to rewrite. The consumer just silently
-breaks.
+Fixed by expanding glob imports on rename. When `Foo` is renamed in
+`utils.rs` and `consumer.rs` has `use crate::utils::*`, the planner
+queries all RsDeclare names in the target file, applies the rename,
+and rewrites the glob to explicit imports:
+`use crate::utils::{Bar, Other}`. filter_rs_glob_uses resolves
+super::/self:: glob paths to absolute form before matching.
 
-**Fix**: expand glob imports at index time. syn parses `use foo::*`
-and we already store it as an RsUse ref. At query time, resolve what
-`*` expands to by cross-referencing with RsDeclare refs in the target
-module. Then treat each expanded symbol as an implicit ref for rename
-tracking. Does not require type info -- module-level declarations are
-statically enumerable.
+### ~~3. Cross-crate workspace imports (Rust)~~ FIXED
 
-### 3. Cross-crate workspace imports (Rust)
+Fixed by building a WorkspaceMap from Cargo.toml workspace members.
+Maps crate names (with hyphen-to-underscore normalization) to their
+src/ directories. plan_file_move and plan_decl_rename use the map to
+find cross-crate `use other_crate::module::Item` refs and rewrite
+them alongside same-crate refs.
 
-`use other_crate::foo::Bar` -- sprefa tracks within a single crate's
-module tree (looks for `src/`). Workspace members referencing each
-other via crate names aren't resolved because file_to_mod_path maps
-paths to `crate::...` relative to the nearest `src/`.
+### ~~4. Consume #[path] attribute in module resolution (Rust)~~ FIXED
 
-**Fix**: during scan, detect Cargo.toml workspace members and build a
-map of crate_name -> root module path. When resolving `use other_crate::`,
-look up the crate name in the workspace map and resolve against that
-crate's file tree. All info is in Cargo.toml + the filesystem. syn
-already extracts `extern crate` refs as DepName.
-
-### 4. Consume #[path] attribute in module resolution (Rust)
-
-`#[path = "weird_name.rs"] mod foo;` is now extracted (node_path field
-on RsMod refs) but file_to_mod_path ignores it. The resolver assumes
-`mod foo` lives in `foo.rs` or `foo/mod.rs`.
-
-**Fix**: when building the module tree, check node_path on RsMod refs.
-If present, use it instead of the default naming convention. All the
-data is already in the DB. Pure wiring.
+Fixed by building a ModOverrides map from RsMod refs with non-null
+node_path. file_to_mod_path_checked checks the override map before
+falling back to filesystem convention. Threaded through plan_file_move
+and plan_decl_rename so that `#[path = "weird.rs"] mod foo;` correctly
+resolves src/weird.rs to crate::foo instead of crate::weird.
 
 ### 5. TypeScript path aliases without tsconfig resolution
 

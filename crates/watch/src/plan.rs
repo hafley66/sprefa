@@ -68,13 +68,28 @@ pub async fn plan_rewrites(
 ) -> anyhow::Result<Vec<Edit>> {
     let mut edits: Vec<Edit> = Vec::new();
 
+    // Build #[path] attribute override map once for the whole batch.
+    // Uses the first file_id from any change to identify the repo.
+    let (mod_overrides, workspace) = if let Some(fid) = first_file_id(changes) {
+        let rows = queries::path_attr_overrides(pool, fid).await?;
+        let overrides = crate::rs_path::build_mod_overrides(&rows);
+        // Build workspace map from repo root for cross-crate resolution.
+        let ws = match queries::repo_root_for_file(pool, fid).await? {
+            Some(r) => crate::workspace::build_workspace_map(&r),
+            None => crate::workspace::WorkspaceMap::default(),
+        };
+        (overrides, ws)
+    } else {
+        (crate::rs_path::ModOverrides::new(), crate::workspace::WorkspaceMap::default())
+    };
+
     for change in changes {
         match change {
             Change::Fs(FsChange::Move { file_id, old_path, new_path }) => {
-                plan_file_move(pool, *file_id, old_path, new_path, rewriters, &mut edits).await?;
+                plan_file_move(pool, *file_id, old_path, new_path, rewriters, &mut edits, &mod_overrides, &workspace).await?;
             }
             Change::Decl(DeclChange::Rename { file_id, kind, old_name, new_name, .. }) => {
-                plan_decl_rename(pool, *file_id, *kind, old_name, new_name, &mut edits).await?;
+                plan_decl_rename(pool, *file_id, *kind, old_name, new_name, &mut edits, &mod_overrides, &workspace).await?;
             }
             Change::Fs(FsChange::Delete { file_id, path }) => {
                 let count = queries::import_paths_targeting(pool, *file_id).await?.len();
@@ -104,6 +119,18 @@ pub async fn plan_rewrites(
     Ok(edits)
 }
 
+fn first_file_id(changes: &[Change]) -> Option<i64> {
+    changes.iter().find_map(|c| match c {
+        Change::Fs(FsChange::Move { file_id, .. })
+        | Change::Fs(FsChange::Delete { file_id, .. })
+        | Change::Fs(FsChange::ContentChange { file_id, .. })
+        | Change::Decl(DeclChange::Rename { file_id, .. })
+        | Change::Decl(DeclChange::Added { file_id, .. })
+        | Change::Decl(DeclChange::Removed { file_id, .. }) => Some(*file_id),
+        Change::Fs(FsChange::Create { .. }) => None,
+    })
+}
+
 /// A file moved. Find all refs targeting it and rewrite them.
 ///
 /// For JS/TS: finds ImportPath refs with target_file_id pointing at the moved file.
@@ -115,6 +142,8 @@ async fn plan_file_move(
     new_path: &str,
     rewriters: &[Box<dyn PathRewriter>],
     edits: &mut Vec<Edit>,
+    mod_overrides: &crate::rs_path::ModOverrides,
+    workspace: &crate::workspace::WorkspaceMap,
 ) -> anyhow::Result<()> {
     // JS/TS: ImportPath refs linked by target_file_id.
     let affected = queries::import_paths_targeting(pool, file_id).await?;
@@ -145,11 +174,11 @@ async fn plan_file_move(
     // Rust: RsUse refs matching the old module path.
     // Fetches all RsUse refs in the repo, resolves super::/self:: to absolute
     // form, then filters to those referencing the moved module.
-    let old_mod = crate::rs_path::file_to_mod_path(old_path);
-    let new_mod = crate::rs_path::file_to_mod_path(new_path);
+    let old_mod = crate::rs_path::file_to_mod_path_checked(old_path, mod_overrides);
+    let new_mod = crate::rs_path::file_to_mod_path_checked(new_path, mod_overrides);
     if let (Some(old_mod), Some(_new_mod)) = (old_mod, new_mod) {
         let all_rs = queries::all_rs_uses_in_repo(pool, file_id).await?;
-        let rs_affected = crate::rs_path::filter_rs_uses_by_prefix(&all_rs, &old_mod);
+        let rs_affected = crate::rs_path::filter_rs_uses_by_prefix(&all_rs, &old_mod, mod_overrides);
         let rs_rewriter = crate::rs_path::RsPathRewriter;
         for aref in rs_affected {
             let source_abs = aref.source_abs_path();
@@ -161,6 +190,41 @@ async fn plan_file_move(
                     span_start: aref.span_start,
                     span_end: aref.span_end,
                     new_value: new_import,
+                    reason: EditReason::FileMove {
+                        old_target: old_path.to_string(),
+                        new_target: new_path.to_string(),
+                    },
+                });
+            }
+        }
+    }
+
+    // Cross-crate: if the moved file belongs to a workspace crate, other crates
+    // may reference it via `use crate_name::module::Item`. These refs use the
+    // crate name as prefix instead of `crate::`, so the above filter misses them.
+    if let (Some(ref old_mod), Some(ref new_mod)) = (
+        crate::rs_path::file_to_mod_path_checked(old_path, mod_overrides),
+        crate::rs_path::file_to_mod_path_checked(new_path, mod_overrides),
+    ) {
+        if let Some(crate_name) = workspace.crate_for_file(old_path) {
+            let old_cross = old_mod.replacen("crate", crate_name, 1);
+            let new_cross = new_mod.replacen("crate", crate_name, 1);
+            let old_cross_prefix = format!("{}::", old_cross);
+
+            let all_rs = queries::all_rs_uses_in_repo(pool, file_id).await?;
+            for aref in &all_rs {
+                let new_value = if aref.value == old_cross {
+                    new_cross.clone()
+                } else if aref.value.starts_with(&old_cross_prefix) {
+                    format!("{}{}", new_cross, &aref.value[old_cross.len()..])
+                } else {
+                    continue;
+                };
+                edits.push(Edit {
+                    file_path: aref.source_abs_path(),
+                    span_start: aref.span_start,
+                    span_end: aref.span_end,
+                    new_value,
                     reason: EditReason::FileMove {
                         old_target: old_path.to_string(),
                         new_target: new_path.to_string(),
@@ -189,6 +253,8 @@ async fn plan_decl_rename(
     old_name: &str,
     new_name: &str,
     edits: &mut Vec<Edit>,
+    mod_overrides: &crate::rs_path::ModOverrides,
+    workspace: &crate::workspace::WorkspaceMap,
 ) -> anyhow::Result<()> {
     let source_file = queries::file_abs_path(pool, file_id)
         .await?
@@ -204,10 +270,10 @@ async fn plan_decl_rename(
             // Rust: find RsUse refs like `crate::mod_path::OldName` (or
             // `super::OldName`, `self::OldName`) and rewrite to NewName.
             // Resolves all prefix styles to absolute form before matching.
-            let mod_path = crate::rs_path::file_to_mod_path(&source_file);
+            let mod_path = crate::rs_path::file_to_mod_path_checked(&source_file, mod_overrides);
             if let Some(mod_path) = mod_path {
                 let all_rs = queries::all_rs_uses_in_repo(pool, file_id).await?;
-                let affected = crate::rs_path::filter_rs_uses_by_target(&all_rs, &mod_path, old_name);
+                let affected = crate::rs_path::filter_rs_uses_by_target(&all_rs, &mod_path, old_name, mod_overrides);
                 for aref in affected {
                     // The span covers the entire use path (e.g. `crate::utils::Foo`).
                     // Replace the last segment only: rebuild with new name.
@@ -227,6 +293,62 @@ async fn plan_decl_rename(
                             source_file: source_file.clone(),
                         },
                     });
+                }
+
+                // Glob expansion: find `use crate::mod_path::*` and expand to
+                // explicit imports with the rename applied.
+                let glob_uses = crate::rs_path::filter_rs_glob_uses(&all_rs, &mod_path, mod_overrides);
+                if !glob_uses.is_empty() {
+                    let mut decl_names = queries::declarations_in_file(pool, file_id).await?;
+                    // Apply the rename to the declaration list
+                    for name in &mut decl_names {
+                        if name == old_name {
+                            *name = new_name.to_string();
+                        }
+                    }
+                    decl_names.sort();
+                    for aref in glob_uses {
+                        // Replace `crate::utils::*` with `crate::utils::{Bar, Foo, ...}`
+                        let prefix = &aref.value[..aref.value.len() - 1]; // strip trailing *
+                        let expanded = format!("{}{{{}}}", prefix, decl_names.join(", "));
+                        edits.push(Edit {
+                            file_path: aref.source_abs_path(),
+                            span_start: aref.span_start,
+                            span_end: aref.span_end,
+                            new_value: expanded,
+                            reason: EditReason::DeclRename {
+                                old_name: old_name.to_string(),
+                                new_name: new_name.to_string(),
+                                source_file: source_file.clone(),
+                            },
+                        });
+                    }
+                }
+
+                // Cross-crate: find `use crate_name::mod_path::OldName` in other crates
+                if let Some(crate_name) = workspace.crate_for_file(&source_file) {
+                    let cross_target = format!("{}::{}::{}", crate_name, mod_path, old_name)
+                        .replacen(&format!("{}::crate::", crate_name), &format!("{}::", crate_name), 1);
+                    for aref in &all_rs {
+                        if aref.value == cross_target {
+                            let new_use_value = if let Some(prefix_end) = aref.value.rfind("::") {
+                                format!("{}::{}", &aref.value[..prefix_end], new_name)
+                            } else {
+                                new_name.to_string()
+                            };
+                            edits.push(Edit {
+                                file_path: aref.source_abs_path(),
+                                span_start: aref.span_start,
+                                span_end: aref.span_end,
+                                new_value: new_use_value,
+                                reason: EditReason::DeclRename {
+                                    old_name: old_name.to_string(),
+                                    new_name: new_name.to_string(),
+                                    source_file: source_file.clone(),
+                                },
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -777,5 +899,93 @@ mod tests {
         // Downstream: consumer.ts ImportName should be renamed
         assert!(edited_files.contains("/repo/src/consumer.ts"));
         assert!(edits.iter().all(|e| e.new_value == "Bar"));
+    }
+
+    // ── Rust glob import expansion tests ──────────────────────────────
+
+    /// utils.rs has `pub fn Foo` and `pub fn Other`.
+    /// consumer.rs has `use crate::utils::*`.
+    /// Renaming Foo -> Bar in utils.rs should expand the glob to
+    /// `use crate::utils::{Bar, Other}`.
+    #[tokio::test]
+    async fn glob_import_expanded_on_rename() {
+        let db = make_db().await;
+        let repo_id = seed_repo(&db, "/repo").await;
+        let utils_id = seed_file(&db, repo_id, "src/utils.rs").await;
+        let consumer_id = seed_file(&db, repo_id, "src/consumer.rs").await;
+
+        // utils.rs: declares Foo and Other
+        seed_ref(&db, utils_id, "Foo", RefKind::RsDeclare, None).await;
+        seed_ref(&db, utils_id, "Other", RefKind::RsDeclare, None).await;
+
+        // consumer.rs: use crate::utils::*
+        seed_ref(&db, consumer_id, "crate::utils::*", RefKind::RsUse, None).await;
+
+        let changes = vec![Change::Decl(DeclChange::Rename {
+            file_id: utils_id,
+            kind: RefKind::RsDeclare,
+            old_name: "Foo".to_string(),
+            new_name: "Bar".to_string(),
+            new_span_start: 0,
+            new_span_end: 0,
+        })];
+
+        let edits = plan_rewrites(&db, &changes, &[]).await.unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].file_path, "/repo/src/consumer.rs");
+        // Glob expanded with rename applied, sorted
+        assert_eq!(edits[0].new_value, "crate::utils::{Bar, Other}");
+    }
+
+    /// No glob uses from the renamed module produces no glob edits
+    #[tokio::test]
+    async fn no_glob_no_expansion() {
+        let db = make_db().await;
+        let repo_id = seed_repo(&db, "/repo").await;
+        let utils_id = seed_file(&db, repo_id, "src/utils.rs").await;
+        let consumer_id = seed_file(&db, repo_id, "src/consumer.rs").await;
+
+        seed_ref(&db, utils_id, "Foo", RefKind::RsDeclare, None).await;
+        // Explicit import, not glob
+        seed_ref(&db, consumer_id, "crate::utils::Foo", RefKind::RsUse, None).await;
+
+        let changes = vec![Change::Decl(DeclChange::Rename {
+            file_id: utils_id,
+            kind: RefKind::RsDeclare,
+            old_name: "Foo".to_string(),
+            new_name: "Bar".to_string(),
+            new_span_start: 0,
+            new_span_end: 0,
+        })];
+
+        let edits = plan_rewrites(&db, &changes, &[]).await.unwrap();
+        assert_eq!(edits.len(), 1);
+        // Should be a direct rename, not glob expansion
+        assert_eq!(edits[0].new_value, "crate::utils::Bar");
+    }
+
+    /// Glob from an unrelated module should not be expanded
+    #[tokio::test]
+    async fn glob_from_different_module_ignored() {
+        let db = make_db().await;
+        let repo_id = seed_repo(&db, "/repo").await;
+        let utils_id = seed_file(&db, repo_id, "src/utils.rs").await;
+        let consumer_id = seed_file(&db, repo_id, "src/consumer.rs").await;
+
+        seed_ref(&db, utils_id, "Foo", RefKind::RsDeclare, None).await;
+        // Glob from a different module
+        seed_ref(&db, consumer_id, "crate::other::*", RefKind::RsUse, None).await;
+
+        let changes = vec![Change::Decl(DeclChange::Rename {
+            file_id: utils_id,
+            kind: RefKind::RsDeclare,
+            old_name: "Foo".to_string(),
+            new_name: "Bar".to_string(),
+            new_span_start: 0,
+            new_span_end: 0,
+        })];
+
+        let edits = plan_rewrites(&db, &changes, &[]).await.unwrap();
+        assert!(edits.is_empty());
     }
 }
