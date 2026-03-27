@@ -1,5 +1,5 @@
 ---
-source: crates/0_config/src/2_load.rs
+source: crates/config/src/load.rs
 expression: config
 ---
 db:
@@ -14,6 +14,7 @@ scan:
     strip_suffixes:
       - "-svc"
       - "-api"
+ghcache: ~
 sources: []
 repos:
   - name: frontend

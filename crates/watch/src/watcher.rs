@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -29,6 +30,9 @@ pub struct WatchConfig {
     /// Working-tree branch name (e.g. "main+wt"). The watcher updates
     /// branch_files for this branch on file create/delete events.
     pub wt_branch: Option<String>,
+    /// When true, the watcher drains events without classifying them.
+    /// Used to suppress rewrite activity during external checkout updates.
+    pub pause: Arc<AtomicBool>,
 }
 
 impl Default for WatchConfig {
@@ -38,6 +42,7 @@ impl Default for WatchConfig {
             repo_id: 0,
             debounce: Duration::from_millis(100),
             wt_branch: None,
+            pause: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -76,6 +81,15 @@ pub async fn watch(
         loop {
             let batch = collect_batch(&mut event_rx, debounce).await;
             if batch.is_empty() {
+                continue;
+            }
+
+            if config.pause.load(Ordering::Relaxed) {
+                tracing::debug!(
+                    repo_id = config.repo_id,
+                    dropped = batch.len(),
+                    "watcher paused, draining events"
+                );
                 continue;
             }
 

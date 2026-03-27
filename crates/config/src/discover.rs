@@ -155,6 +155,7 @@ mod tests {
             layout: "{org}/{branch}/{repo}".to_string(),
             default_org: None,
             default_branch: None,
+            branch_patterns: vec![],
             filter: None,
         };
 
@@ -183,6 +184,7 @@ mod tests {
             layout: "{org}/{repo}/{branch}".to_string(),
             default_org: None,
             default_branch: None,
+            branch_patterns: vec![],
             filter: None,
         };
 
@@ -206,6 +208,7 @@ mod tests {
             layout: "{repo}".to_string(),
             default_org: Some("myco".to_string()),
             default_branch: Some("main".to_string()),
+            branch_patterns: vec![],
             filter: None,
         };
 
@@ -229,6 +232,7 @@ mod tests {
             layout: "{org}/{branch}/{repo}".to_string(),
             default_org: None,
             default_branch: None,
+            branch_patterns: vec![],
             filter: None,
         };
 
@@ -244,6 +248,7 @@ mod tests {
             layout: "{org}/{repo}".to_string(),
             default_org: None,
             default_branch: None,
+            branch_patterns: vec![],
             filter: None,
         };
 
@@ -258,6 +263,7 @@ mod tests {
             layout: "{org}/{branch}".to_string(),
             default_org: None,
             default_branch: None,
+            branch_patterns: vec![],
             filter: None,
         };
 

@@ -543,7 +543,7 @@ async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> an
     }
 
     let rewriters = Arc::new(rewriters);
-    spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters).await?;
+    let _pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters).await?;
 
     println!("press ctrl-c to stop");
     tokio::signal::ctrl_c().await?;
@@ -617,27 +617,54 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
         Box::new(RsPathRewriter),
     ]);
 
-    spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters).await?;
+    let pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters).await?;
 
-    // Phase 3: start HTTP server (blocks until shutdown)
-    let bind = config.daemon_bind().to_string();
+    // Phase 3: start ghcache subscriber (if configured)
     let scanner_arc = Arc::new(scanner);
+    if let Some(ghcache) = &config.ghcache {
+        let ghcache_db = ghcache.db_path();
+        let scanner_for_sub = scanner_arc.clone();
+        let pauses_for_sub = pauses;
+        let sources = config.sources.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ghcache_subscribe(
+                &ghcache_db,
+                &scanner_for_sub,
+                &pauses_for_sub,
+                &sources,
+            ).await {
+                tracing::error!(error = %e, "ghcache subscriber exited");
+            }
+        });
+    }
+
+    // Phase 4: start HTTP server (blocks until shutdown)
+    let bind = config.daemon_bind().to_string();
     tracing::info!(phase = "server_starting", bind = %bind, "starting HTTP server");
     sprefa_server::serve(pool, Some(scanner_arc), config.repos.clone(), &bind).await?;
 
     Ok(())
 }
 
+/// Pause flag for a single repo's watcher, keyed by repo name.
+type PauseFlags = std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>;
+
 /// Start a watcher + rewrite loop for each repo. Shared by cmd_watch and cmd_daemon.
+/// Returns the per-repo pause flags so callers can suppress watcher activity
+/// during external checkout updates.
 async fn spawn_watchers(
     repos: &[&sprefa_config::RepoConfig],
     pool: &sqlx::SqlitePool,
     extractors: &Arc<Vec<Box<dyn sprefa_scan::Extractor>>>,
     rewriters: &Arc<Vec<Box<dyn PathRewriter>>>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PauseFlags> {
+    let mut pauses = PauseFlags::new();
     for repo in repos {
         let abs_path = std::fs::canonicalize(&repo.path)?;
         let repo_id = upsert_repo(pool, &repo.name, &abs_path.to_string_lossy()).await?;
+
+        let pause = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        pauses.insert(repo.name.clone(), pause.clone());
 
         let wt = repo.branch_list().first().map(|b| sprefa_watch::wt_branch(b));
         let watch_config = sprefa_watch::watcher::WatchConfig {
@@ -645,6 +672,7 @@ async fn spawn_watchers(
             repo_id,
             debounce: Duration::from_millis(100),
             wt_branch: wt,
+            pause,
         };
 
         let mut rx = sprefa_watch::watcher::watch(
@@ -700,7 +728,7 @@ async fn spawn_watchers(
 
         tracing::info!(repo = %repo.name, path = %abs_path.display(), "watching");
     }
-    Ok(())
+    Ok(pauses)
 }
 
 fn load_cfg(config_path: &Option<PathBuf>) -> anyhow::Result<Config> {
@@ -721,4 +749,148 @@ fn find_config_file(config_path: &Option<PathBuf>) -> anyhow::Result<PathBuf> {
             Ok(path)
         }
     }
+}
+
+/// Subscribe to ghcache checkout events and rescan repos when their staging
+/// directory changes. Pauses the watcher during rescan to avoid spurious
+/// rewrite activity from the git checkout churn.
+async fn ghcache_subscribe(
+    ghcache_db: &str,
+    scanner: &Arc<Scanner>,
+    pauses: &PauseFlags,
+    sources: &[sprefa_config::SourceConfig],
+) -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+
+    tracing::info!(db = ghcache_db, "subscribing to ghcache checkout events");
+
+    let subscriber = ghcache_client::Subscriber::new(ghcache_db)
+        .interval(Duration::from_millis(500));
+
+    subscriber.subscribe(|events| {
+        let scanner = scanner.clone();
+        let pauses = pauses.clone();
+        let sources = sources.to_vec();
+        async move {
+            for event in events {
+                if event.entity_type != "checkout" {
+                    continue;
+                }
+
+                let repo_slug = match &event.repo_slug {
+                    Some(s) => s.clone(),
+                    None => continue,
+                };
+                let branch = event.payload.get("branch")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("main")
+                    .to_string();
+                let local_path = match event.payload.get("local_path").and_then(|v| v.as_str()) {
+                    Some(p) => p.to_string(),
+                    None => {
+                        tracing::warn!(
+                            repo = %repo_slug, branch = %branch,
+                            "checkout event missing local_path in payload, skipping"
+                        );
+                        continue;
+                    }
+                };
+
+                // Match against source patterns to see if we should index this checkout.
+                let repo_name = repo_slug.split('/').last().unwrap_or(&repo_slug);
+                if !sources.is_empty() && !source_matches_checkout(&sources, &repo_slug, &branch) {
+                    tracing::debug!(
+                        repo = %repo_slug, branch = %branch,
+                        "checkout does not match any source pattern, skipping"
+                    );
+                    continue;
+                }
+
+                tracing::info!(
+                    repo = %repo_slug, branch = %branch, path = %local_path,
+                    event = %event.event,
+                    "ghcache checkout event, rescanning"
+                );
+
+                // Pause watcher if one exists for this repo.
+                if let Some(flag) = pauses.get(repo_name) {
+                    flag.store(true, Ordering::Relaxed);
+                }
+
+                // Build a temporary RepoConfig for the checkout.
+                let repo_config = sprefa_config::RepoConfig {
+                    name: repo_name.to_string(),
+                    path: local_path.clone(),
+                    branches: Some(vec![branch.clone()]),
+                    filter: None,
+                    branch_overrides: None,
+                };
+
+                // Scan committed branch.
+                match scanner.scan_repo(&repo_config, &branch).await {
+                    Ok(r) => tracing::info!(
+                        repo = %repo_slug, branch = %branch,
+                        files = r.files_scanned, refs = r.refs_inserted,
+                        "committed scan complete"
+                    ),
+                    Err(e) => tracing::error!(
+                        repo = %repo_slug, branch = %branch, error = %e,
+                        "committed scan failed"
+                    ),
+                }
+
+                // Scan working-tree branch.
+                let wt = sprefa_watch::wt_branch(&branch);
+                match scanner.scan_repo(&repo_config, &wt).await {
+                    Ok(r) => tracing::info!(
+                        repo = %repo_slug, branch = %wt,
+                        files = r.files_scanned, refs = r.refs_inserted,
+                        "wt scan complete"
+                    ),
+                    Err(e) => tracing::error!(
+                        repo = %repo_slug, branch = %wt, error = %e,
+                        "wt scan failed"
+                    ),
+                }
+
+                // Unpause watcher.
+                if let Some(flag) = pauses.get(repo_name) {
+                    flag.store(false, Ordering::Relaxed);
+                    tracing::info!(repo = %repo_name, "watcher unpaused after rescan");
+                }
+            }
+            Ok(())
+        }
+    }).await?;
+
+    Ok(())
+}
+
+/// Check whether a checkout (repo_slug + branch) matches any configured source.
+/// A source matches if it has no branch_patterns (open policy) or the branch
+/// matches at least one glob pattern.
+fn source_matches_checkout(
+    sources: &[sprefa_config::SourceConfig],
+    _repo_slug: &str,
+    branch: &str,
+) -> bool {
+    for source in sources {
+        if source.branch_patterns.is_empty() {
+            return true;
+        }
+        for pattern in &source.branch_patterns {
+            if glob_match(pattern, branch) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Simple glob match supporting `*` (any segment chars) and `**` is not needed
+/// since branch names are flat. Uses the `glob` crate's Pattern matching.
+fn glob_match(pattern: &str, value: &str) -> bool {
+    glob::Pattern::new(pattern)
+        .map(|p| p.matches(value))
+        .unwrap_or(false)
 }

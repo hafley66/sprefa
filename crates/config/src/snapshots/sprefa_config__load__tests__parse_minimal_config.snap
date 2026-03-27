@@ -1,11 +1,12 @@
 ---
-source: crates/0_config/src/2_load.rs
+source: crates/config/src/load.rs
 expression: config
 ---
 db:
   path: /tmp/sprefa.db
 daemon: ~
 scan: ~
+ghcache: ~
 sources: []
 repos: []
 filter: ~

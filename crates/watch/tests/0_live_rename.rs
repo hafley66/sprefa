@@ -91,7 +91,7 @@ async fn js_rename_propagates_through_reexport_chain() {
         root_path: root.to_path_buf(),
         repo_id,
         debounce: Duration::from_millis(200),
-        wt_branch: None,
+        ..Default::default()
     };
     let mut rx = sprefa_watch::watcher::watch(watch_config, db.clone(), extractors.clone())
         .await
@@ -200,7 +200,7 @@ edition = "2021"
         root_path: root.to_path_buf(),
         repo_id,
         debounce: Duration::from_millis(200),
-        wt_branch: None,
+        ..Default::default()
     };
     let mut rx = sprefa_watch::watcher::watch(watch_config, db.clone(), extractors.clone())
         .await

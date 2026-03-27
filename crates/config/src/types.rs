@@ -5,6 +5,8 @@ pub struct Config {
     pub db: DbConfig,
     pub daemon: Option<DaemonConfig>,
     pub scan: Option<ScanConfig>,
+    /// Connection to a ghcache instance for checkout event subscriptions.
+    pub ghcache: Option<GhcacheConfig>,
     /// Auto-discovery from a checkout root managed by an external tool.
     #[serde(default)]
     pub sources: Vec<SourceConfig>,
@@ -35,6 +37,12 @@ pub struct SourceConfig {
     /// Default branch if the layout has no {branch} placeholder.
     /// When absent and no {branch} in layout, branch is read from git HEAD.
     pub default_branch: Option<String>,
+    /// Branch patterns to subscribe to via ghcache. When a checkout event
+    /// arrives, the branch name is matched against these globs.
+    /// e.g. ["main", "feature/3.2/*", "release/*"]
+    /// If empty, all branches are accepted.
+    #[serde(default)]
+    pub branch_patterns: Vec<String>,
     /// Filter applied to repos discovered from this source.
     pub filter: Option<FilterConfig>,
 }
@@ -131,6 +139,27 @@ impl Config {
             .as_ref()
             .and_then(|d| d.bind.as_deref())
             .unwrap_or("127.0.0.1:9400")
+    }
+}
+
+/// Connection to a ghcache SQLite database for checkout event subscriptions.
+/// When configured, the daemon subscribes to change_log events and auto-scans
+/// new or updated checkouts that match the configured source patterns.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GhcacheConfig {
+    /// Path to the ghcache SQLite database.
+    pub db: String,
+    /// Poll interval in milliseconds (default 500).
+    pub poll_ms: Option<u64>,
+}
+
+impl GhcacheConfig {
+    pub fn db_path(&self) -> String {
+        expand_tilde(&self.db)
+    }
+
+    pub fn poll_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.poll_ms.unwrap_or(500))
     }
 }
 

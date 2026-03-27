@@ -1,5 +1,5 @@
 ---
-source: crates/0_config/src/2_load.rs
+source: crates/config/src/load.rs
 expression: config
 ---
 db:
@@ -17,6 +17,7 @@ scan:
       - "-v2"
       - "-client"
       - "-server"
+ghcache: ~
 sources: []
 repos: []
 filter:

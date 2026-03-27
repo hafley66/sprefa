@@ -93,6 +93,7 @@ async fn watcher_links_new_file_to_wt_branch() {
         repo_id,
         debounce: Duration::from_millis(200),
         wt_branch: Some("main+wt".to_string()),
+        ..Default::default()
     };
     let mut rx = sprefa_watch::watcher::watch(watch_config, db.clone(), extractors.clone())
         .await
@@ -190,6 +191,7 @@ async fn watcher_unlinks_deleted_file_from_wt_branch() {
         repo_id,
         debounce: Duration::from_millis(200),
         wt_branch: Some("main+wt".to_string()),
+        ..Default::default()
     };
     let mut rx = sprefa_watch::watcher::watch(watch_config, db.clone(), extractors.clone())
         .await
@@ -325,6 +327,7 @@ async fn git_checkout_burst_does_not_corrupt_state() {
         repo_id,
         debounce: Duration::from_millis(200),
         wt_branch: Some("main+wt".to_string()),
+        ..Default::default()
     };
     let mut rx = sprefa_watch::watcher::watch(watch_config, db.clone(), extractors.clone())
         .await
