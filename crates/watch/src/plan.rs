@@ -988,4 +988,115 @@ mod tests {
         let edits = plan_rewrites(&db, &changes, &[]).await.unwrap();
         assert!(edits.is_empty());
     }
+
+    // ── integration: extractor → DB → plan ──────────────────────────────
+
+    /// Full pipeline: run the JS extractor on real source code, insert refs
+    /// into the DB through the same INSERT OR IGNORE path the scanner uses,
+    /// then verify plan_rewrites produces the expected edits.
+    ///
+    /// This catches UNIQUE constraint collisions that silently drop refs
+    /// (the ExportName + ImportName at same span issue on re-exports).
+    #[tokio::test]
+    async fn integration_extractor_to_plan_reexport_rename() {
+        use sprefa_extract::Extractor;
+        let js_ext = sprefa_js::JsExtractor;
+
+        let utils_src = b"export function computeScore(): number { return 42; }\nexport function formatOutput(val: number): string { return `${val}`; }";
+
+        let barrel_src = b"export { computeScore, formatOutput } from './utils';";
+
+        let consumer_src = b"import { computeScore, formatOutput } from './barrel';\nconsole.log(formatOutput(computeScore()));";
+
+        // Extract refs from actual source code
+        let utils_refs = js_ext.extract(utils_src, "utils.ts");
+        let barrel_refs = js_ext.extract(barrel_src, "barrel.ts");
+        let consumer_refs = js_ext.extract(consumer_src, "consumer.ts");
+
+        // Barrel must produce both ExportName and ImportName for re-exported names
+        let barrel_export_names: Vec<_> = barrel_refs.iter()
+            .filter(|r| r.kind == RefKind::ExportName)
+            .map(|r| r.value.as_str())
+            .collect();
+        let barrel_import_names: Vec<_> = barrel_refs.iter()
+            .filter(|r| r.kind == RefKind::ImportName)
+            .map(|r| r.value.as_str())
+            .collect();
+        assert!(barrel_export_names.contains(&"computeScore"), "barrel missing ExportName computeScore");
+        assert!(barrel_import_names.contains(&"computeScore"), "barrel missing ImportName computeScore");
+
+        // Set up DB and insert refs via the same INSERT OR IGNORE used by scanner
+        let db = make_db().await;
+        let repo_id = seed_repo(&db, "/repo").await;
+        let utils_id = seed_file(&db, repo_id, "src/utils.ts").await;
+        let barrel_id = seed_file(&db, repo_id, "src/barrel.ts").await;
+        let consumer_id = seed_file(&db, repo_id, "src/consumer.ts").await;
+
+        // Insert all refs using the real spans from extraction, through INSERT OR IGNORE.
+        // This is the path that was dropping ImportName refs before the UNIQUE fix.
+        for (file_id, refs) in [
+            (utils_id, &utils_refs),
+            (barrel_id, &barrel_refs),
+            (consumer_id, &consumer_refs),
+        ] {
+            for r in refs.iter() {
+                let string_id = seed_string(&db, &r.value).await;
+                let parent_key_sid = match &r.parent_key {
+                    Some(pk) => Some(seed_string(&db, pk).await),
+                    None => None,
+                };
+                // Use INSERT OR IGNORE -- same as scanner flush and watcher replace_file_refs
+                sqlx::query(
+                    "INSERT OR IGNORE INTO refs (string_id, file_id, span_start, span_end, is_path, ref_kind, parent_key_string_id, node_path)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(string_id)
+                .bind(file_id)
+                .bind(r.span_start as i64)
+                .bind(r.span_end as i64)
+                .bind(r.is_path)
+                .bind(r.kind.as_u8() as i64)
+                .bind(parent_key_sid)
+                .bind(r.node_path.as_deref())
+                .execute(&db)
+                .await
+                .unwrap();
+            }
+        }
+
+        // Wire up ImportPath target_file_id links (barrel→utils, consumer→barrel)
+        sqlx::query(
+            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND ref_kind = 10 AND string_id IN (SELECT id FROM strings WHERE value = './utils')"
+        ).bind(utils_id).bind(barrel_id).execute(&db).await.unwrap();
+        sqlx::query(
+            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND ref_kind = 10 AND string_id IN (SELECT id FROM strings WHERE value = './barrel')"
+        ).bind(barrel_id).bind(consumer_id).execute(&db).await.unwrap();
+
+        // Verify ImportName refs survived insertion
+        let barrel_import_count: i64 = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM refs WHERE file_id = ? AND ref_kind = 11"
+        ).bind(barrel_id).fetch_one(&db).await.unwrap();
+        assert!(barrel_import_count >= 2,
+            "barrel.ts should have ImportName refs after INSERT OR IGNORE (got {barrel_import_count})");
+
+        // Simulate rename: computeScore → calculateScore in utils.ts
+        let changes = vec![Change::Decl(DeclChange::Rename {
+            file_id: utils_id,
+            kind: RefKind::ExportName,
+            old_name: "computeScore".to_string(),
+            new_name: "calculateScore".to_string(),
+            new_span_start: 0,
+            new_span_end: 0,
+        })];
+
+        let edits = plan_rewrites(&db, &changes, &[]).await.unwrap();
+
+        let edited_files: Vec<&str> = edits.iter().map(|e| e.file_path.as_str()).collect();
+        assert!(edited_files.contains(&"/repo/src/barrel.ts"),
+            "barrel.ts should be edited (re-export ImportName)");
+        assert!(edited_files.contains(&"/repo/src/consumer.ts"),
+            "consumer.ts should be edited (direct ImportName)");
+        assert!(edits.iter().all(|e| e.new_value == "calculateScore"),
+            "all edits should rename to calculateScore");
+    }
 }

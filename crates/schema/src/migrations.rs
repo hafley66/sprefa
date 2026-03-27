@@ -83,7 +83,7 @@ const MIGRATIONS: &[&str] = &[
         ref_kind INTEGER NOT NULL DEFAULT 0,
         parent_key_string_id INTEGER REFERENCES strings(id),
         node_path TEXT,
-        UNIQUE(file_id, string_id, span_start)
+        UNIQUE(file_id, string_id, span_start, ref_kind)
     )
     "#,
     "CREATE INDEX IF NOT EXISTS idx_refs_string_id ON refs(string_id)",

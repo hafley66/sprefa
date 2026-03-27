@@ -218,6 +218,13 @@ async fn classify_batch(
 
     let mut changes: Vec<Change> = Vec::new();
 
+    tracing::info!(
+        created_count = created.len(),
+        removed_count = removed.len(),
+        modified_count = modified.len(),
+        "classify: raw event counts"
+    );
+
     // Query DB for removed files' content_hash to correlate moves.
     let mut removed_info: HashMap<String, (i64, PathBuf)> = HashMap::new(); // hash -> (file_id, path)
     for path in &removed {
@@ -252,6 +259,41 @@ async fn classify_batch(
         }
     }
 
+    // Same-path delete+create with different content = content change.
+    // This happens on macOS when editors do atomic saves (delete + create).
+    let mut same_path_creates: Vec<PathBuf> = Vec::new();
+    let mut same_path_removes: Vec<String> = Vec::new();
+    for (create_path, _create_hash) in &created {
+        if matched_creates.contains(create_path) {
+            continue;
+        }
+        // Check if a remove exists at the same path (by comparing against DB path)
+        let create_rel = rel_path(root, create_path);
+        let matching_remove = removed_info.iter()
+            .find(|(_hash, (_fid, rem_path))| rel_path(root, rem_path) == create_rel);
+        if let Some((hash, (file_id, _rem_path))) = matching_remove {
+            tracing::info!(file_id, path = %create_rel, "classify: same-path content change detected");
+            changes.push(
+                FsChange::ContentChange {
+                    file_id: *file_id,
+                    path: create_path.to_string_lossy().to_string(),
+                }
+                .into(),
+            );
+            let decl_changes =
+                extract_and_diff(pool, *file_id, create_path, extractors).await?;
+            changes.extend(decl_changes.into_iter().map(Change::from));
+            if let Some(new_hash) = hash_file(create_path) {
+                update_content_hash(pool, *file_id, &new_hash).await?;
+            }
+            same_path_creates.push(create_path.clone());
+            same_path_removes.push(hash.clone());
+        }
+    }
+    for hash in &same_path_removes {
+        removed_info.remove(hash);
+    }
+
     // Unmatched removes = deletes.
     for (_hash, (file_id, path)) in &removed_info {
         changes.push(
@@ -265,7 +307,7 @@ async fn classify_batch(
 
     // Unmatched creates = new files.
     for (path, _hash) in &created {
-        if !matched_creates.contains(path) {
+        if !matched_creates.contains(path) && !same_path_creates.contains(path) {
             changes.push(
                 FsChange::Create {
                     path: path.to_string_lossy().to_string(),
@@ -294,16 +336,42 @@ async fn classify_batch(
 
             // Update content_hash so future move correlation uses the new hash.
             if let Some(new_hash) = hash_file(path) {
-                sqlx::query("UPDATE files SET content_hash = ? WHERE id = ?")
-                    .bind(&new_hash)
-                    .bind(file_id)
-                    .execute(pool)
-                    .await?;
+                update_content_hash(pool, file_id, &new_hash).await?;
             }
         }
     }
 
     Ok(changes)
+}
+
+/// Update content_hash for a file, handling the UNIQUE(repo_id, path, content_hash)
+/// constraint by first deleting any stale duplicate rows at the same path.
+async fn update_content_hash(pool: &SqlitePool, file_id: i64, new_hash: &str) -> Result<()> {
+    // Delete refs for stale duplicate rows first (FK constraint), then the rows themselves.
+    sqlx::query(
+        "DELETE FROM refs WHERE file_id IN (SELECT id FROM files WHERE id != ? AND repo_id = (SELECT repo_id FROM files WHERE id = ?) AND path = (SELECT path FROM files WHERE id = ?))"
+    )
+    .bind(file_id)
+    .bind(file_id)
+    .bind(file_id)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "DELETE FROM files WHERE id != ? AND repo_id = (SELECT repo_id FROM files WHERE id = ?) AND path = (SELECT path FROM files WHERE id = ?)"
+    )
+    .bind(file_id)
+    .bind(file_id)
+    .bind(file_id)
+    .execute(pool)
+    .await?;
+
+    sqlx::query("UPDATE files SET content_hash = ? WHERE id = ?")
+        .bind(new_hash)
+        .bind(file_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Hash a file using xxh3_128, matching the index crate's approach.
@@ -378,19 +446,20 @@ async fn load_decl_refs(
     pool: &SqlitePool,
     file_id: i64,
 ) -> Result<Vec<RawRef>> {
-    let rows: Vec<(i64, String, i64, i64)> = sqlx::query_as(
+    let placeholders = DECL_KINDS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
         "SELECT r.ref_kind, s.value, r.span_start, r.span_end
          FROM refs r
          JOIN strings s ON r.string_id = s.id
-         WHERE r.file_id = ? AND r.ref_kind IN (?, ?, ?)
+         WHERE r.file_id = ? AND r.ref_kind IN ({})
          ORDER BY r.span_start",
-    )
-    .bind(file_id)
-    .bind(DECL_KINDS[0].as_u8() as i64)
-    .bind(DECL_KINDS[1].as_u8() as i64)
-    .bind(DECL_KINDS[2].as_u8() as i64)
-    .fetch_all(pool)
-    .await?;
+        placeholders
+    );
+    let mut query = sqlx::query_as::<_, (i64, String, i64, i64)>(&sql).bind(file_id);
+    for kind in DECL_KINDS {
+        query = query.bind(kind.as_u8() as i64);
+    }
+    let rows: Vec<(i64, String, i64, i64)> = query.fetch_all(pool).await?;
 
     Ok(rows
         .into_iter()
@@ -528,4 +597,5 @@ const DECL_KINDS: &[RefKind] = &[
     RefKind::ExportName,
     RefKind::RsDeclare,
     RefKind::RsMod,
+    RefKind::ImportName,
 ];
