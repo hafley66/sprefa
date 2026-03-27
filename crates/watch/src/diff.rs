@@ -3,22 +3,17 @@ use sprefa_schema::RefKind;
 
 use crate::change::DeclChange;
 
-/// Kinds that represent declarations (things other files can reference).
-/// Only these are diffed for rename detection.
+/// Kinds that represent declarations or references worth tracking for rename.
+///
+/// Declarations (ExportName, RsDeclare, RsMod) propagate downstream to consumers.
+/// References (ImportName) propagate upstream to the declaring file, then back
+/// down to all other consumers. This enables "rename at any point in the chain"
+/// behavior.
 const DECL_KINDS: &[RefKind] = &[
     RefKind::ExportName,
     RefKind::RsDeclare,
     RefKind::RsMod,
-];
-
-/// Kinds that represent imports/references (things that point at declarations).
-/// These are not diffed -- they're the *targets* of rewrite, not the *source* of change.
-const _REF_KINDS: &[RefKind] = &[
-    RefKind::ImportPath,
     RefKind::ImportName,
-    RefKind::ImportAlias,
-    RefKind::ExportLocalBinding,
-    RefKind::RsUse,
 ];
 
 /// Maximum byte distance between old and new spans to consider them
@@ -327,7 +322,7 @@ mod tests {
 
     #[test]
     fn mixed_ref_kinds_filtered_correctly() {
-        // ImportPath and ImportName refs should be completely ignored
+        // ImportPath refs are ignored; ImportName, ExportName, RsDeclare are tracked
         let old = vec![
             make_ref("./utils", RefKind::ImportPath, 5),
             make_ref("foo", RefKind::ImportName, 15),
@@ -341,12 +336,13 @@ mod tests {
             make_ref("my_fn_v2", RefKind::RsDeclare, 50),
         ];
         let changes = diff_refs(1, &old, &new);
-        // Only ExportName and RsDeclare changes
-        assert_eq!(changes.len(), 2);
+        // ImportName, ExportName, and RsDeclare changes detected (ImportPath ignored)
+        assert_eq!(changes.len(), 3);
         let renames: Vec<_> = changes.iter().filter_map(|c| match c {
             DeclChange::Rename { old_name, new_name, .. } => Some((old_name.as_str(), new_name.as_str())),
             _ => None,
         }).collect();
+        assert!(renames.contains(&("foo", "bar")));
         assert!(renames.contains(&("MyExport", "MyExportV2")));
         assert!(renames.contains(&("my_fn", "my_fn_v2")));
     }

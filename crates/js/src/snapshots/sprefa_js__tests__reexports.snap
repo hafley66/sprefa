@@ -23,10 +23,24 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: ~
+- value: foo
+  span_start: 9
+  span_end: 12
+  kind: ImportName
+  is_path: false
+  parent_key: ~
+  node_path: ~
 - value: bar
   span_start: 14
   span_end: 17
   kind: ExportName
+  is_path: false
+  parent_key: ~
+  node_path: ~
+- value: bar
+  span_start: 14
+  span_end: 17
+  kind: ImportName
   is_path: false
   parent_key: ~
   node_path: ~

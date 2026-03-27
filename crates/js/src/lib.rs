@@ -2,7 +2,7 @@ use oxc_allocator::Allocator;
 use oxc_ast::ast::{Argument, Expression, Statement};
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::SourceType;
-use oxc_syntax::module_record::{ExportExportName, ExportLocalName, ImportImportName};
+use oxc_syntax::module_record::{ExportExportName, ExportImportName, ExportLocalName, ImportImportName};
 use sprefa_extract::{Extractor, RawRef};
 use sprefa_schema::RefKind;
 
@@ -146,7 +146,19 @@ impl Extractor for JsExtractor {
             }
         }
 
-        // --- ExportName: re-exported names from indirect + star entries ---
+        // --- ExportName + ImportName: re-exported names from indirect + star entries ---
+        //
+        // `export { Foo } from './utils'` produces:
+        //   - ExportName "Foo" (the public name consumers import)
+        //   - ImportName "Foo" (the source-side name from the target module)
+        //
+        // `export { Foo as Bar } from './utils'` produces:
+        //   - ExportName "Bar"
+        //   - ImportName "Foo" (different from export name)
+        //
+        // The ImportName on re-exports is critical for transitive rename propagation:
+        // when Foo is renamed in utils.ts, the barrel file is found as an importer of
+        // "Foo" through the same import_names_from_file query used for direct imports.
         for entry in mr.indirect_export_entries.iter().chain(mr.star_export_entries.iter()) {
             let (export_name_str, export_span) = match &entry.export_name {
                 ExportExportName::Name(ns) => (ns.name.as_str().to_string(), ns.span),
@@ -154,7 +166,7 @@ impl Extractor for JsExtractor {
                 ExportExportName::Null => continue,
             };
             refs.push(RawRef {
-                value: export_name_str,
+                value: export_name_str.clone(),
                 span_start: export_span.start,
                 span_end: export_span.end,
                 kind: RefKind::ExportName,
@@ -162,6 +174,25 @@ impl Extractor for JsExtractor {
                 parent_key: None,
                 node_path: None,
             });
+
+            // Emit ImportName for the source-side name of the re-export.
+            // This makes the barrel file visible as an "importer" of the name
+            // from the source module, enabling transitive chain following.
+            if let ExportImportName::Name(import_ns) = &entry.import_name {
+                let import_str = import_ns.name.as_str();
+                refs.push(RawRef {
+                    value: import_str.to_string(),
+                    span_start: import_ns.span.start,
+                    span_end: import_ns.span.end,
+                    kind: RefKind::ImportName,
+                    is_path: false,
+                    parent_key: None,
+                    node_path: None,
+                });
+                // If the re-export aliases (Foo as Bar), the ImportName "Foo"
+                // differs from ExportName "Bar". No alias ref needed here --
+                // the ExportName is already the public-facing name.
+            }
         }
 
         // --- ImportPath: require() calls (CJS) ---
@@ -605,5 +636,90 @@ export { bar } from './shared';"#,
         let exp = refs.iter().find(|r| r.kind == RefKind::ExportName).unwrap();
         let slice = &src[exp.span_start as usize..exp.span_end as usize];
         assert_eq!(slice, "myFunc");
+    }
+
+    // ── re-export chain extraction ───────────────────────────────────────
+
+    #[test]
+    fn reexport_emits_import_name_for_source_side() {
+        // `export { Foo } from './utils'` should produce both ExportName and ImportName "Foo"
+        let refs = extract(
+            r#"export { Foo } from './utils';"#,
+            "src/barrel.ts",
+        );
+        let import_names: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportName)
+            .map(|r| r.value.as_str())
+            .collect();
+        let export_names: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ExportName)
+            .map(|r| r.value.as_str())
+            .collect();
+        assert_eq!(import_names, vec!["Foo"]);
+        assert_eq!(export_names, vec!["Foo"]);
+    }
+
+    #[test]
+    fn aliased_reexport_emits_different_import_and_export_names() {
+        // `export { Foo as Bar } from './utils'` -> ImportName "Foo", ExportName "Bar"
+        let refs = extract(
+            r#"export { Foo as Bar } from './utils';"#,
+            "src/barrel.ts",
+        );
+        let import_name = refs.iter()
+            .find(|r| r.kind == RefKind::ImportName)
+            .expect("should emit ImportName for source-side name");
+        let export_name = refs.iter()
+            .find(|r| r.kind == RefKind::ExportName)
+            .expect("should emit ExportName for public name");
+        assert_eq!(import_name.value, "Foo");
+        assert_eq!(export_name.value, "Bar");
+    }
+
+    #[test]
+    fn reexport_import_name_span_accuracy() {
+        let src = r#"export { Foo } from './utils';"#;
+        let refs = extract(src, "src/barrel.ts");
+        let import_name = refs.iter()
+            .find(|r| r.kind == RefKind::ImportName)
+            .unwrap();
+        let slice = &src[import_name.span_start as usize..import_name.span_end as usize];
+        assert_eq!(slice, "Foo");
+    }
+
+    #[test]
+    fn multiple_reexports_emit_import_names() {
+        let refs = extract(
+            r#"export { Foo, Bar, Baz } from './utils';"#,
+            "src/barrel.ts",
+        );
+        let mut import_names: Vec<&str> = refs.iter()
+            .filter(|r| r.kind == RefKind::ImportName)
+            .map(|r| r.value.as_str())
+            .collect();
+        import_names.sort();
+        assert_eq!(import_names, vec!["Bar", "Baz", "Foo"]);
+    }
+
+    #[test]
+    fn star_reexport_no_import_name() {
+        // `export * from './utils'` has no specific import name (ExportName is Null -> skipped)
+        let refs = extract(
+            r#"export * from './utils';"#,
+            "src/barrel.ts",
+        );
+        // Star re-exports produce ImportPath but no ImportName (no specific named binding)
+        assert!(refs.iter().all(|r| r.kind != RefKind::ImportName));
+    }
+
+    #[test]
+    fn cjs_reexport_module_exports_require() {
+        // CJS re-export pattern: module.exports = require('./utils')
+        // This only captures the require ImportPath, not individual names
+        let refs = extract(
+            r#"module.exports = require('./utils');"#,
+            "src/barrel.cjs",
+        );
+        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./utils"));
     }
 }
