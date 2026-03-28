@@ -11,25 +11,22 @@ pub struct RuleSet {
 
 /// A single extraction rule.
 ///
-/// Selector chain: git context -> file path -> structural position.
-/// Think of the entire indexed space as a DOM:
-///   root > repo[name][branch] > file[path][ext] > (parsed tree nodes)
-/// Each rule is a CSS selector against this DOM.
-/// All nodes matching the full chain produce captures, and the action
-/// turns captures into refs.
+/// The `select` chain is a CSS selector against the full index DOM:
+///   root > repo > branch > tag > folder* > file > (parsed tree nodes)
+///
+/// Context steps (Repo, Branch, Tag, Folder, File) filter by git context
+/// and file path before the file is parsed. Structural steps (Key, KeyMatch,
+/// Any, etc.) walk the parsed tree to produce captures.
+///
+/// Ordering constraint enforced at compile time: all context steps must
+/// precede all structural steps.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Rule {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub git: Option<GitSelector>,
-
-    pub file: FileSelector,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub select: Option<Vec<StructStep>>,
+    pub select: Vec<SelectStep>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select_ast: Option<AstSelector>,
@@ -47,36 +44,55 @@ pub struct Rule {
     pub confidence: Option<f64>,
 }
 
-/// Git context selector. All fields are glob patterns (pipe-delimited alternatives).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GitSelector {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repo: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tag: Option<String>,
-}
-
-/// File path selector. Single glob or list of globs.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum FileSelector {
-    Single(String),
-    Multiple(Vec<String>),
-}
-
-/// One step in a structural selector chain.
+/// One step in a selector chain.
 ///
-/// Steps are consumed left-to-right as the engine walks the parsed tree
-/// depth-first. Each step either narrows the current node set or captures
-/// a value for later use by the action.
+/// Context steps filter before parsing. Structural steps walk the parsed tree.
+/// Pattern fields use pipe-delimited glob syntax: `"main|release/*"`.
 ///
-/// The `capture` field on Key/KeyMatch/Leaf/Object steps names the value
-/// so the action's `emit` array can reference it.
+/// For Folder: `*` captures one path segment, `**` captures the remaining path.
+/// For File: glob matches against the full relative file path.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "step", rename_all = "snake_case")]
-pub enum StructStep {
+pub enum SelectStep {
+    // ── Context steps ──────────────────────────────
+
+    /// Filter by repository name (pipe-delimited glob).
+    Repo {
+        pattern: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
+
+    /// Filter by branch name (pipe-delimited glob).
+    Branch {
+        pattern: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
+
+    /// Filter by git tag (pipe-delimited glob).
+    Tag {
+        pattern: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
+
+    /// Filter by directory path (pipe-delimited glob against dir portion).
+    Folder {
+        pattern: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
+
+    /// Filter by file path (pipe-delimited glob against full relative path).
+    File {
+        pattern: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
+
+    // ── Structural steps ───────────────────────────
+
     /// Enter the child with this exact key name.
     Key {
         name: String,
@@ -122,6 +138,21 @@ pub enum StructStep {
     Object {
         captures: std::collections::BTreeMap<String, String>,
     },
+}
+
+impl SelectStep {
+    /// Returns true for steps that filter by context (git/filesystem) rather
+    /// than walking the parsed tree.
+    pub fn is_context_step(&self) -> bool {
+        matches!(
+            self,
+            SelectStep::Repo { .. }
+                | SelectStep::Branch { .. }
+                | SelectStep::Tag { .. }
+                | SelectStep::Folder { .. }
+                | SelectStep::File { .. }
+        )
+    }
 }
 
 /// ast-grep pattern selector for code files.

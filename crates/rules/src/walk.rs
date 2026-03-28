@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use globset::{Glob, GlobMatcher};
 use serde_json::Value;
 
-use crate::types::StructStep;
+use crate::types::SelectStep;
 
 /// A value captured during a walk, with its position in the source.
 #[derive(Debug, Clone)]
@@ -57,7 +57,7 @@ impl WalkState {
 /// Byte spans are not tracked by serde_json::Value, so span_start/span_end
 /// in CapturedValue are set to 0. The caller resolves spans by searching
 /// the raw source bytes for captured strings.
-pub fn walk(node: &Value, steps: &[StructStep]) -> Vec<MatchResult> {
+pub fn walk(node: &Value, steps: &[SelectStep]) -> Vec<MatchResult> {
     let state = WalkState {
         depth: 0,
         parent_key: None,
@@ -67,7 +67,7 @@ pub fn walk(node: &Value, steps: &[StructStep]) -> Vec<MatchResult> {
     walk_inner(node, steps, &state)
 }
 
-fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<MatchResult> {
+fn walk_inner(node: &Value, steps: &[SelectStep], state: &WalkState) -> Vec<MatchResult> {
     if steps.is_empty() {
         return vec![state.clone().into_result()];
     }
@@ -80,7 +80,7 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
     let rest = &steps[1..];
 
     match step {
-        StructStep::Any => {
+        SelectStep::Any => {
             let mut results = vec![];
             // Fork 1: stop consuming Any, advance to next step at this node
             results.extend(walk_inner(node, rest, state));
@@ -103,7 +103,7 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             results
         }
 
-        StructStep::Key { name, capture } => match node {
+        SelectStep::Key { name, capture } => match node {
             Value::Object(map) => match map.get(name.as_str()) {
                 Some(child) => {
                     let mut child_state = state.descend(Some(name));
@@ -124,7 +124,7 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             _ => vec![],
         },
 
-        StructStep::KeyMatch { pattern, capture } => match node {
+        SelectStep::KeyMatch { pattern, capture } => match node {
             Value::Object(map) => {
                 let mut results = vec![];
                 for (k, v) in map {
@@ -148,7 +148,7 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             _ => vec![],
         },
 
-        StructStep::DepthMin { n } => {
+        SelectStep::DepthMin { n } => {
             if state.depth >= *n {
                 walk_inner(node, rest, state)
             } else {
@@ -156,7 +156,7 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             }
         }
 
-        StructStep::DepthMax { n } => {
+        SelectStep::DepthMax { n } => {
             if state.depth <= *n {
                 walk_inner(node, rest, state)
             } else {
@@ -164,7 +164,7 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             }
         }
 
-        StructStep::DepthEq { n } => {
+        SelectStep::DepthEq { n } => {
             if state.depth == *n {
                 walk_inner(node, rest, state)
             } else {
@@ -172,12 +172,12 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             }
         }
 
-        StructStep::ParentKey { pattern } => match &state.parent_key {
+        SelectStep::ParentKey { pattern } => match &state.parent_key {
             Some(pk) if pipe_glob_matches(pattern, pk) => walk_inner(node, rest, state),
             _ => vec![],
         },
 
-        StructStep::ArrayItem => match node {
+        SelectStep::ArrayItem => match node {
             Value::Array(arr) => {
                 let mut results = vec![];
                 for (i, v) in arr.iter().enumerate() {
@@ -189,7 +189,7 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             _ => vec![],
         },
 
-        StructStep::Leaf { capture } => match node {
+        SelectStep::Leaf { capture } => match node {
             Value::String(s) => {
                 let mut next_state = state.clone();
                 if let Some(cap_name) = capture {
@@ -235,7 +235,7 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             _ => vec![],
         },
 
-        StructStep::Object { captures } => match node {
+        SelectStep::Object { captures } => match node {
             Value::Object(map) => {
                 let mut next_state = state.clone();
                 for (json_key, cap_name) in captures {
@@ -281,6 +281,15 @@ fn walk_inner(node: &Value, steps: &[StructStep], state: &WalkState) -> Vec<Matc
             }
             _ => vec![],
         },
+
+        // Context steps (Repo/Branch/Tag/Folder/File) should never reach the
+        // walk engine -- they are partitioned out during compilation.
+        // If one slips through, skip it and advance to the next step.
+        SelectStep::Repo { .. }
+        | SelectStep::Branch { .. }
+        | SelectStep::Tag { .. }
+        | SelectStep::Folder { .. }
+        | SelectStep::File { .. } => walk_inner(node, rest, state),
     }
 }
 

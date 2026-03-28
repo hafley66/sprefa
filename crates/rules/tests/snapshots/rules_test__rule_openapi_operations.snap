@@ -1,0 +1,36 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: createUser
+  span_start: 0
+  span_end: 0
+  kind: operation_id
+  rule_name: openapi-operations
+  is_path: false
+  parent_key: ~
+  node_path: paths//users/post/operationId
+- value: deleteUser
+  span_start: 0
+  span_end: 0
+  kind: operation_id
+  rule_name: openapi-operations
+  is_path: false
+  parent_key: ~
+  node_path: "paths//users/{id}/delete/operationId"
+- value: getUser
+  span_start: 0
+  span_end: 0
+  kind: operation_id
+  rule_name: openapi-operations
+  is_path: false
+  parent_key: ~
+  node_path: "paths//users/{id}/get/operationId"
+- value: listUsers
+  span_start: 0
+  span_end: 0
+  kind: operation_id
+  rule_name: openapi-operations
+  is_path: false
+  parent_key: ~
+  node_path: paths//users/get/operationId

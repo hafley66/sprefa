@@ -1,0 +1,28 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: apps/*
+  span_start: 0
+  span_end: 0
+  kind: workspace_member
+  rule_name: pnpm-workspace
+  is_path: false
+  parent_key: ~
+  node_path: packages/1
+- value: packages/*
+  span_start: 0
+  span_end: 0
+  kind: workspace_member
+  rule_name: pnpm-workspace
+  is_path: false
+  parent_key: ~
+  node_path: packages/0
+- value: tools/scripts
+  span_start: 0
+  span_end: 0
+  kind: workspace_member
+  rule_name: pnpm-workspace
+  is_path: false
+  parent_key: ~
+  node_path: packages/2

@@ -1,28 +1,45 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use sprefa_extract::{ExtractContext, Extractor, RawRef};
 
 use crate::{
     emit, walk,
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
-    types::{EmitRef, RuleSet, StructStep, ValuePattern},
+    types::{EmitRef, RuleSet, SelectStep, ValuePattern},
+    walk::CapturedValue,
 };
 
 // All data extensions this extractor handles.
 // The file selector on each rule does the fine-grained filtering.
 const DATA_EXTENSIONS: &[&str] = &["json", "yaml", "yml", "toml"];
 
+#[derive(Debug)]
 pub struct CompiledRule {
     pub name: String,
-    pub git: Option<CompiledGitSelector>,
+    pub git: CompiledGitSelector,
     pub file: CompiledFileSelector,
-    pub steps: Vec<StructStep>,
+    /// (capture_name, value) pairs seeded from context step captures.
+    pub context_captures: Vec<(String, ContextCaptureSource)>,
+    pub steps: Vec<SelectStep>,
     pub value_pattern: Option<ValuePattern>,
     pub emit: Vec<EmitRef>,
 }
 
+/// Where a context capture gets its value from at match time.
+#[derive(Debug)]
+pub enum ContextCaptureSource {
+    Repo,
+    Branch,
+    Tag,
+    /// Capture the filename (basename without extension).
+    FileName,
+    /// Capture the directory portion of the path.
+    FolderPath,
+}
+
+#[derive(Debug)]
 pub struct RuleExtractor {
     rules: Vec<CompiledRule>,
 }
@@ -32,19 +49,12 @@ impl RuleExtractor {
         let rules = ruleset
             .rules
             .iter()
-            .filter(|r| r.select.is_some()) // skip ast-only rules until ast engine exists
-            .map(|r| {
-                let git = r.git.as_ref().map(CompiledGitSelector::compile).transpose()?;
-                let file = CompiledFileSelector::compile(&r.file)?;
-                Ok(CompiledRule {
-                    name: r.name.clone(),
-                    git,
-                    file,
-                    steps: r.select.clone().unwrap_or_default(),
-                    value_pattern: r.value.clone(),
-                    emit: r.emit.clone(),
-                })
+            .filter(|r| {
+                // skip rules with no structural steps (ast-only rules
+                // are skipped until ast engine exists)
+                r.select.iter().any(|s| !s.is_context_step())
             })
+            .map(compile_rule)
             .collect::<Result<Vec<_>>>()?;
         Ok(Self { rules })
     }
@@ -62,9 +72,10 @@ impl RuleExtractor {
     }
 
     /// Filter rules to those whose file selector could match the given path.
-    /// Used by the scanner to skip rules early without parsing the file.
     pub fn rules_for_path<'a>(&'a self, path: &'a str) -> impl Iterator<Item = &'a CompiledRule> + 'a {
-        self.rules.iter().filter(move |r| r.file.matches(path))
+        self.rules.iter().filter(move |r| {
+            r.file.is_empty() || r.file.matches(path)
+        })
     }
 }
 
@@ -86,18 +97,154 @@ impl Extractor for RuleExtractor {
 
         let mut refs = vec![];
         for rule in self.rules_for_path(path) {
-            if let Some(ref git) = rule.git {
-                let repo = ctx.repo.unwrap_or("");
-                if !git.matches(repo, ctx.branch, ctx.tags) {
-                    continue;
-                }
+            let repo = ctx.repo.unwrap_or("");
+            if !rule.git.matches(repo, ctx.branch, ctx.tags) {
+                continue;
             }
+
+            // Seed captures from context steps
+            let context_caps = resolve_context_captures(&rule.context_captures, ctx, path);
+
             let results = walk::walk(&value, &rule.steps);
             for result in results {
-                refs.extend(emit::emit_refs(&result, &rule.emit, rule.value_pattern.as_ref(), &rule.name));
+                // Merge context captures into the walk result
+                let merged = if context_caps.is_empty() {
+                    result.clone()
+                } else {
+                    let mut merged = result.clone();
+                    for (name, cv) in &context_caps {
+                        merged.captures.insert(name.clone(), cv.clone());
+                    }
+                    merged
+                };
+                refs.extend(emit::emit_refs(&merged, &rule.emit, rule.value_pattern.as_ref(), &rule.name));
             }
         }
         refs
+    }
+}
+
+/// Resolve context captures to concrete values for this file/context.
+fn resolve_context_captures(
+    captures: &[(String, ContextCaptureSource)],
+    ctx: &ExtractContext,
+    path: &str,
+) -> Vec<(String, CapturedValue)> {
+    captures
+        .iter()
+        .filter_map(|(name, source)| {
+            let text = match source {
+                ContextCaptureSource::Repo => ctx.repo?.to_string(),
+                ContextCaptureSource::Branch => ctx.branch?.to_string(),
+                ContextCaptureSource::Tag => ctx.tags.first().map(|t| t.to_string())?,
+                ContextCaptureSource::FileName => {
+                    Path::new(path).file_stem()?.to_str()?.to_string()
+                }
+                ContextCaptureSource::FolderPath => {
+                    Path::new(path).parent()?.to_str()?.to_string()
+                }
+            };
+            Some((
+                name.clone(),
+                CapturedValue {
+                    text,
+                    span_start: 0,
+                    span_end: 0,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Compile a Rule into a CompiledRule, partitioning context and structural steps.
+fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
+    let mut repo_patterns: Vec<&str> = vec![];
+    let mut branch_patterns: Vec<&str> = vec![];
+    let mut tag_patterns: Vec<&str> = vec![];
+    let mut file_patterns: Vec<&str> = vec![];
+    let mut context_captures: Vec<(String, ContextCaptureSource)> = vec![];
+    let mut structural_steps: Vec<SelectStep> = vec![];
+    let mut seen_structural = false;
+
+    for step in &r.select {
+        if step.is_context_step() {
+            if seen_structural {
+                bail!(
+                    "rule '{}': context step ({:?}) after structural step -- \
+                     all context steps (repo/branch/tag/folder/file) must precede structural steps",
+                    r.name,
+                    step_kind_label(step),
+                );
+            }
+            match step {
+                SelectStep::Repo { pattern, capture } => {
+                    repo_patterns.push(pattern);
+                    if let Some(c) = capture {
+                        context_captures.push((c.clone(), ContextCaptureSource::Repo));
+                    }
+                }
+                SelectStep::Branch { pattern, capture } => {
+                    branch_patterns.push(pattern);
+                    if let Some(c) = capture {
+                        context_captures.push((c.clone(), ContextCaptureSource::Branch));
+                    }
+                }
+                SelectStep::Tag { pattern, capture } => {
+                    tag_patterns.push(pattern);
+                    if let Some(c) = capture {
+                        context_captures.push((c.clone(), ContextCaptureSource::Tag));
+                    }
+                }
+                SelectStep::Folder { pattern, capture } => {
+                    // Folder pattern matches against directory portion of path.
+                    // We prepend **/ if the pattern doesn't start with ** to allow
+                    // matching at any depth, then append /** to match any files within.
+                    let dir_glob = if pattern.contains('/') || pattern.starts_with("**") {
+                        format!("{}/**", pattern)
+                    } else {
+                        format!("**/{}/**", pattern)
+                    };
+                    file_patterns.push(Box::leak(dir_glob.into_boxed_str()));
+                    if let Some(c) = capture {
+                        context_captures.push((c.clone(), ContextCaptureSource::FolderPath));
+                    }
+                }
+                SelectStep::File { pattern, capture } => {
+                    file_patterns.push(pattern);
+                    if let Some(c) = capture {
+                        context_captures.push((c.clone(), ContextCaptureSource::FileName));
+                    }
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            seen_structural = true;
+            structural_steps.push(step.clone());
+        }
+    }
+
+    let git = CompiledGitSelector::from_patterns(&repo_patterns, &branch_patterns, &tag_patterns)?;
+    let file = CompiledFileSelector::from_patterns(&file_patterns)?;
+
+    Ok(CompiledRule {
+        name: r.name.clone(),
+        git,
+        file,
+        context_captures,
+        steps: structural_steps,
+        value_pattern: r.value.clone(),
+        emit: r.emit.clone(),
+    })
+}
+
+fn step_kind_label(step: &SelectStep) -> &'static str {
+    match step {
+        SelectStep::Repo { .. } => "repo",
+        SelectStep::Branch { .. } => "branch",
+        SelectStep::Tag { .. } => "tag",
+        SelectStep::Folder { .. } => "folder",
+        SelectStep::File { .. } => "file",
+        _ => "structural",
     }
 }
 
@@ -122,8 +269,8 @@ mod tests {
         "rules": [
             {
                 "name": "npm-deps",
-                "file": ["**/package.json", "**/package-lock.json"],
                 "select": [
+                    { "step": "file", "pattern": "**/package.json|**/package-lock.json" },
                     { "step": "key", "name": "dependencies" },
                     { "step": "key_match", "pattern": "*", "capture": "name" },
                     { "step": "key", "name": "version" },
@@ -136,8 +283,8 @@ mod tests {
             },
             {
                 "name": "helm-images",
-                "file": ["**/values.yaml", "**/values-*.yaml"],
                 "select": [
+                    { "step": "file", "pattern": "**/values.yaml|**/values-*.yaml" },
                     { "step": "any" },
                     { "step": "key", "name": "image" },
                     { "step": "object", "captures": { "repository": "repo", "tag": "tag" } }
@@ -209,9 +356,7 @@ mod tests {
             }
         }"#;
         let refs = run(&ex, src, "package-lock.json");
-        // All refs should have node_path set
         assert!(refs.iter().all(|r| r.node_path.is_some()));
-        // The version ref path should reflect the structural walk
         let version_ref = refs.iter().find(|r| r.value == "4.18.2").unwrap();
         assert_eq!(version_ref.node_path.as_deref(), Some("dependencies/express/version"));
     }
@@ -222,7 +367,7 @@ mod tests {
             "rules": [
                 {
                     "name": "ast-rule",
-                    "file": "**/*.rs",
+                    "select": [],
                     "select_ast": { "pattern": "use $PATH" },
                     "emit": [{ "capture": "$PATH", "kind": "rs_use" }]
                 }
@@ -230,7 +375,23 @@ mod tests {
         }"#;
         let ruleset: RuleSet = serde_json::from_str(json).unwrap();
         let ex = RuleExtractor::from_ruleset(&ruleset).unwrap();
-        // ast-only rule has no `select` so it's filtered out
         assert_eq!(ex.rules.len(), 0);
+    }
+
+    #[test]
+    fn context_step_after_structural_rejected() {
+        let json = r#"{
+            "rules": [{
+                "name": "bad-order",
+                "select": [
+                    { "step": "key", "name": "foo" },
+                    { "step": "file", "pattern": "*.json" }
+                ],
+                "emit": [{ "capture": "x", "kind": "y" }]
+            }]
+        }"#;
+        let ruleset: RuleSet = serde_json::from_str(json).unwrap();
+        let err = RuleExtractor::from_ruleset(&ruleset).unwrap_err();
+        assert!(err.to_string().contains("context step"), "{}", err);
     }
 }

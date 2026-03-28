@@ -6,14 +6,15 @@ $schema: sprefa-rules.schema.json
 rules:
   - name: helm-image-refs
     description: Docker image references in Helm values files
-    git:
-      repo: "*/helm-charts"
-      branch: main|release/*
-      tag: v*
-    file:
-      - values.yaml
-      - values-*.yaml
     select:
+      - step: repo
+        pattern: "*/helm-charts"
+      - step: branch
+        pattern: main|release/*
+      - step: tag
+        pattern: v*
+      - step: file
+        pattern: values.yaml|values-*.yaml
       - step: any
       - step: key
         name: image

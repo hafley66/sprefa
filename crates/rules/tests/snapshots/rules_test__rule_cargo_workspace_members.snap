@@ -1,0 +1,44 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: crates/cli
+  span_start: 0
+  span_end: 0
+  kind: workspace_member
+  rule_name: cargo-workspace-members
+  is_path: false
+  parent_key: ~
+  node_path: workspace/members/1
+- value: crates/core
+  span_start: 0
+  span_end: 0
+  kind: workspace_member
+  rule_name: cargo-workspace-members
+  is_path: false
+  parent_key: ~
+  node_path: workspace/members/0
+- value: crates/extract
+  span_start: 0
+  span_end: 0
+  kind: workspace_member
+  rule_name: cargo-workspace-members
+  is_path: false
+  parent_key: ~
+  node_path: workspace/members/2
+- value: crates/rules
+  span_start: 0
+  span_end: 0
+  kind: workspace_member
+  rule_name: cargo-workspace-members
+  is_path: false
+  parent_key: ~
+  node_path: workspace/members/3
+- value: crates/schema
+  span_start: 0
+  span_end: 0
+  kind: workspace_member
+  rule_name: cargo-workspace-members
+  is_path: false
+  parent_key: ~
+  node_path: workspace/members/4

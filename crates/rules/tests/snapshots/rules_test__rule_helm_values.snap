@@ -1,0 +1,44 @@
+---
+source: crates/rules/tests/rules_test.rs
+expression: refs
+---
+- value: "3"
+  span_start: 0
+  span_end: 0
+  kind: helm_value
+  rule_name: helm-values
+  is_path: false
+  parent_key: ~
+  node_path: replicaCount
+- value: "8080"
+  span_start: 0
+  span_end: 0
+  kind: helm_value
+  rule_name: helm-values
+  is_path: false
+  parent_key: ~
+  node_path: service/port
+- value: ClusterIP
+  span_start: 0
+  span_end: 0
+  kind: helm_value
+  rule_name: helm-values
+  is_path: false
+  parent_key: ~
+  node_path: service/type
+- value: myorg/api
+  span_start: 0
+  span_end: 0
+  kind: helm_value
+  rule_name: helm-values
+  is_path: false
+  parent_key: ~
+  node_path: image/repository
+- value: v2.1.0
+  span_start: 0
+  span_end: 0
+  kind: helm_value
+  rule_name: helm-values
+  is_path: false
+  parent_key: ~
+  node_path: image/tag

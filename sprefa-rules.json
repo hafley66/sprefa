@@ -4,32 +4,138 @@
     {
       "name": "cargo-deps",
       "description": "Dependency names from Cargo.toml files",
-      "file": "**/Cargo.toml",
       "select": [
+        { "step": "file", "pattern": "**/Cargo.toml" },
         { "step": "key_match", "pattern": "dependencies|dev-dependencies|build-dependencies", "capture": "dep_type" },
         { "step": "key_match", "pattern": "*", "capture": "name" }
       ],
-      "action": {
-        "emit": [
-          { "capture": "name", "kind": "dep_name" }
-        ]
-      }
+      "emit": [
+        { "capture": "name", "kind": "dep_name" }
+      ]
     },
     {
       "name": "package-json-deps",
-      "description": "Dependency names from package.json files",
-      "file": "**/package.json",
+      "description": "Dependency names and versions from package.json files",
       "select": [
+        { "step": "file", "pattern": "**/package.json" },
         { "step": "key_match", "pattern": "dependencies|devDependencies|peerDependencies", "capture": "dep_type" },
         { "step": "key_match", "pattern": "*", "capture": "name" },
         { "step": "leaf", "capture": "version" }
       ],
-      "action": {
-        "emit": [
-          { "capture": "name", "kind": "dep_name" },
-          { "capture": "version", "kind": "dep_version", "parent": "name" }
-        ]
-      }
+      "emit": [
+        { "capture": "name", "kind": "dep_name" },
+        { "capture": "version", "kind": "dep_version", "parent": "name" }
+      ]
+    },
+    {
+      "name": "tsconfig-paths",
+      "description": "Path alias mappings from tsconfig.json compilerOptions.paths",
+      "select": [
+        { "step": "file", "pattern": "**/tsconfig.json" },
+        { "step": "key", "name": "compilerOptions" },
+        { "step": "key", "name": "paths" },
+        { "step": "key_match", "pattern": "*", "capture": "alias" },
+        { "step": "array_item" },
+        { "step": "leaf", "capture": "target" }
+      ],
+      "emit": [
+        { "capture": "alias", "kind": "path_alias" },
+        { "capture": "target", "kind": "import_path", "parent": "alias" }
+      ]
+    },
+    {
+      "name": "package-json-exports",
+      "description": "Package entry points from package.json exports fields",
+      "select": [
+        { "step": "file", "pattern": "**/package.json" },
+        { "step": "key", "name": "exports" },
+        { "step": "key_match", "pattern": "*", "capture": "subpath" },
+        { "step": "any" },
+        { "step": "leaf", "capture": "entry" }
+      ],
+      "emit": [
+        { "capture": "subpath", "kind": "package_entry" },
+        { "capture": "entry", "kind": "import_path", "parent": "subpath" }
+      ]
+    },
+    {
+      "name": "helm-values",
+      "description": "Configuration values from Helm values.yaml files",
+      "select": [
+        { "step": "file", "pattern": "**/values.yaml|**/values-*.yaml" },
+        { "step": "any" },
+        { "step": "depth_min", "n": 1 },
+        { "step": "leaf", "capture": "val" }
+      ],
+      "emit": [
+        { "capture": "val", "kind": "helm_value" }
+      ]
+    },
+    {
+      "name": "k8s-configmap-envs",
+      "description": "Environment variable names from Kubernetes ConfigMap data keys",
+      "select": [
+        { "step": "file", "pattern": "**/*configmap*.yaml" },
+        { "step": "key", "name": "data" },
+        { "step": "key_match", "pattern": "*", "capture": "key" }
+      ],
+      "emit": [
+        { "capture": "key", "kind": "env_var_name" }
+      ]
+    },
+    {
+      "name": "docker-compose-services",
+      "description": "Service names from docker-compose files",
+      "select": [
+        { "step": "file", "pattern": "**/docker-compose.yaml|**/docker-compose.yml|**/docker-compose*.yaml|**/docker-compose*.yml" },
+        { "step": "key", "name": "services" },
+        { "step": "key_match", "pattern": "*", "capture": "name" }
+      ],
+      "emit": [
+        { "capture": "name", "kind": "service_name" }
+      ]
+    },
+    {
+      "name": "openapi-operations",
+      "description": "Operation IDs from OpenAPI spec files",
+      "select": [
+        { "step": "file", "pattern": "**/openapi.yaml|**/openapi.yml|**/openapi*.yaml|**/openapi*.yml|**/openapi.json" },
+        { "step": "key", "name": "paths" },
+        { "step": "key_match", "pattern": "*", "capture": "path" },
+        { "step": "key_match", "pattern": "get|post|put|delete|patch|options|head", "capture": "method" },
+        { "step": "key", "name": "operationId" },
+        { "step": "leaf", "capture": "op_id" }
+      ],
+      "emit": [
+        { "capture": "op_id", "kind": "operation_id" }
+      ]
+    },
+    {
+      "name": "cargo-workspace-members",
+      "description": "Workspace member paths from Cargo.toml",
+      "select": [
+        { "step": "file", "pattern": "**/Cargo.toml" },
+        { "step": "key", "name": "workspace" },
+        { "step": "key", "name": "members" },
+        { "step": "array_item" },
+        { "step": "leaf", "capture": "member" }
+      ],
+      "emit": [
+        { "capture": "member", "kind": "workspace_member" }
+      ]
+    },
+    {
+      "name": "pnpm-workspace",
+      "description": "Workspace package globs from pnpm-workspace.yaml",
+      "select": [
+        { "step": "file", "pattern": "**/pnpm-workspace.yaml" },
+        { "step": "key", "name": "packages" },
+        { "step": "array_item" },
+        { "step": "leaf", "capture": "member" }
+      ],
+      "emit": [
+        { "capture": "member", "kind": "workspace_member" }
+      ]
     }
   ]
 }

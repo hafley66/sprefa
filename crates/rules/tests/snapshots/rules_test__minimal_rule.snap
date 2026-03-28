@@ -4,7 +4,9 @@ expression: ruleset
 ---
 rules:
   - name: catch-all
-    file: "**/*.json"
+    select:
+      - step: file
+        pattern: "**/*.json"
     emit:
       - capture: val
         kind: json_value

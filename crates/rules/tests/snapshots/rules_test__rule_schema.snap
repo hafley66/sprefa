@@ -72,51 +72,13 @@ expression: schema
         }
       }
     },
-    "FileSelector": {
-      "description": "File path selector. Single glob or list of globs.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      ]
-    },
-    "GitSelector": {
-      "description": "Git context selector. All fields are glob patterns (pipe-delimited alternatives).",
-      "type": "object",
-      "properties": {
-        "branch": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "repo": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "tag": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      }
-    },
     "Rule": {
-      "description": "A single extraction rule.\n\nSelector chain: git context -> file path -> structural position. Think of the entire indexed space as a DOM: root > repo[name][branch] > file[path][ext] > (parsed tree nodes) Each rule is a CSS selector against this DOM. All nodes matching the full chain produce captures, and the action turns captures into refs.",
+      "description": "A single extraction rule.\n\nThe `select` chain is a CSS selector against the full index DOM: root > repo > branch > tag > folder* > file > (parsed tree nodes)\n\nContext steps (Repo, Branch, Tag, Folder, File) filter by git context and file path before the file is parsed. Structural steps (Key, KeyMatch, Any, etc.) walk the parsed tree to produce captures.\n\nOrdering constraint enforced at compile time: all context steps must precede all structural steps.",
       "type": "object",
       "required": [
         "emit",
-        "file",
-        "name"
+        "name",
+        "select"
       ],
       "properties": {
         "confidence": {
@@ -140,29 +102,13 @@ expression: schema
             "$ref": "#/definitions/EmitRef"
           }
         },
-        "file": {
-          "$ref": "#/definitions/FileSelector"
-        },
-        "git": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/GitSelector"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "name": {
           "type": "string"
         },
         "select": {
-          "type": [
-            "array",
-            "null"
-          ],
+          "type": "array",
           "items": {
-            "$ref": "#/definitions/StructStep"
+            "$ref": "#/definitions/SelectStep"
           }
         },
         "select_ast": {
@@ -188,9 +134,134 @@ expression: schema
         }
       }
     },
-    "StructStep": {
-      "description": "One step in a structural selector chain.\n\nSteps are consumed left-to-right as the engine walks the parsed tree depth-first. Each step either narrows the current node set or captures a value for later use by the action.\n\nThe `capture` field on Key/KeyMatch/Leaf/Object steps names the value so the action's `emit` array can reference it.",
+    "SelectStep": {
+      "description": "One step in a selector chain.\n\nContext steps filter before parsing. Structural steps walk the parsed tree. Pattern fields use pipe-delimited glob syntax: `\"main|release/*\"`.\n\nFor Folder: `*` captures one path segment, `**` captures the remaining path. For File: glob matches against the full relative file path.",
       "oneOf": [
+        {
+          "description": "Filter by repository name (pipe-delimited glob).",
+          "type": "object",
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "properties": {
+            "capture": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "step": {
+              "type": "string",
+              "enum": [
+                "repo"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Filter by branch name (pipe-delimited glob).",
+          "type": "object",
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "properties": {
+            "capture": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "step": {
+              "type": "string",
+              "enum": [
+                "branch"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Filter by git tag (pipe-delimited glob).",
+          "type": "object",
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "properties": {
+            "capture": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "step": {
+              "type": "string",
+              "enum": [
+                "tag"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Filter by directory path (pipe-delimited glob against dir portion).",
+          "type": "object",
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "properties": {
+            "capture": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "step": {
+              "type": "string",
+              "enum": [
+                "folder"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Filter by file path (pipe-delimited glob against full relative path).",
+          "type": "object",
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "properties": {
+            "capture": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "step": {
+              "type": "string",
+              "enum": [
+                "file"
+              ]
+            }
+          }
+        },
         {
           "description": "Enter the child with this exact key name.",
           "type": "object",
