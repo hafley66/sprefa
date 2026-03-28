@@ -25,65 +25,6 @@ expression: schema
     }
   },
   "definitions": {
-    "Action": {
-      "description": "What to emit when a rule matches. One rule can emit multiple refs from a single match via the `emit` array.",
-      "type": "object",
-      "required": [
-        "emit"
-      ],
-      "properties": {
-        "confidence": {
-          "description": "Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.",
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double"
-        },
-        "emit": {
-          "description": "Each entry turns a named capture into a ref.",
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/EmitRef"
-          }
-        },
-        "target_path": {
-          "description": "Template for the target file path within the target repo.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "target_repo": {
-          "description": "Template for the target repo name. Can reference captures: `\"{repo}\"`.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      }
-    },
-    "ActionKind": {
-      "description": "Ref kind for action output. Snake_case string aliases for RefKind.",
-      "type": "string",
-      "enum": [
-        "string_literal",
-        "json_key",
-        "json_value",
-        "yaml_key",
-        "yaml_value",
-        "toml_key",
-        "toml_value",
-        "import_path",
-        "import_name",
-        "export_name",
-        "dep_name",
-        "dep_version",
-        "rs_use",
-        "rs_declare",
-        "rs_mod"
-      ]
-    },
     "AstSelector": {
       "description": "ast-grep pattern selector for code files.",
       "type": "object",
@@ -119,12 +60,8 @@ expression: schema
           "type": "string"
         },
         "kind": {
-          "description": "RefKind to assign.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/ActionKind"
-            }
-          ]
+          "description": "Free-text kind string (e.g. \"dep_name\", \"helm_value\", \"operation_id\").",
+          "type": "string"
         },
         "parent": {
           "description": "Name of another capture to use as parent_key (links related refs).",
@@ -177,19 +114,31 @@ expression: schema
       "description": "A single extraction rule.\n\nSelector chain: git context -> file path -> structural position. Think of the entire indexed space as a DOM: root > repo[name][branch] > file[path][ext] > (parsed tree nodes) Each rule is a CSS selector against this DOM. All nodes matching the full chain produce captures, and the action turns captures into refs.",
       "type": "object",
       "required": [
-        "action",
+        "emit",
         "file",
         "name"
       ],
       "properties": {
-        "action": {
-          "$ref": "#/definitions/Action"
+        "confidence": {
+          "description": "Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         },
         "description": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "emit": {
+          "description": "Each entry turns a named capture into a ref.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/EmitRef"
+          }
         },
         "file": {
           "$ref": "#/definitions/FileSelector"

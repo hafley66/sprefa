@@ -1,4 +1,4 @@
-use sprefa_extract::{kind, Extractor, RawRef};
+use sprefa_extract::{kind, ExtractContext, Extractor, RawRef};
 
 use crate::change::DeclChange;
 
@@ -111,6 +111,7 @@ pub fn detect_decl_changes(
     source: &[u8],
     path: &str,
     extractors: &[Box<dyn Extractor>],
+    ctx: &ExtractContext,
 ) -> Vec<DeclChange> {
     let ext = std::path::Path::new(path)
         .extension()
@@ -122,7 +123,7 @@ pub fn detect_decl_changes(
         .find(|ex| ex.extensions().contains(&ext));
 
     let new_refs = match extractor {
-        Some(ex) => ex.extract(source, path),
+        Some(ex) => ex.extract(source, path, ctx),
         None => return vec![],
     };
 

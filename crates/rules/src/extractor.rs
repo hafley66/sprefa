@@ -1,13 +1,13 @@
 use std::path::Path;
 
 use anyhow::Result;
-use sprefa_extract::{Extractor, RawRef};
+use sprefa_extract::{ExtractContext, Extractor, RawRef};
 
 use crate::{
     emit, walk,
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
-    types::{Action, RuleSet, StructStep, ValuePattern},
+    types::{EmitRef, RuleSet, StructStep, ValuePattern},
 };
 
 // All data extensions this extractor handles.
@@ -20,7 +20,7 @@ pub struct CompiledRule {
     pub file: CompiledFileSelector,
     pub steps: Vec<StructStep>,
     pub value_pattern: Option<ValuePattern>,
-    pub action: Action,
+    pub emit: Vec<EmitRef>,
 }
 
 pub struct RuleExtractor {
@@ -42,7 +42,7 @@ impl RuleExtractor {
                     file,
                     steps: r.select.clone().unwrap_or_default(),
                     value_pattern: r.value.clone(),
-                    action: r.action.clone(),
+                    emit: r.emit.clone(),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -73,7 +73,7 @@ impl Extractor for RuleExtractor {
         DATA_EXTENSIONS
     }
 
-    fn extract(&self, source: &[u8], path: &str) -> Vec<RawRef> {
+    fn extract(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<RawRef> {
         let ext = Path::new(path)
             .extension()
             .and_then(|e| e.to_str())
@@ -86,9 +86,15 @@ impl Extractor for RuleExtractor {
 
         let mut refs = vec![];
         for rule in self.rules_for_path(path) {
+            if let Some(ref git) = rule.git {
+                let repo = ctx.repo.unwrap_or("");
+                if !git.matches(repo, ctx.branch, ctx.tags) {
+                    continue;
+                }
+            }
             let results = walk::walk(&value, &rule.steps);
             for result in results {
-                refs.extend(emit::emit_refs(&result, &rule.action, rule.value_pattern.as_ref(), &rule.name));
+                refs.extend(emit::emit_refs(&result, &rule.emit, rule.value_pattern.as_ref(), &rule.name));
             }
         }
         refs
@@ -123,12 +129,10 @@ mod tests {
                     { "step": "key", "name": "version" },
                     { "step": "leaf", "capture": "version" }
                 ],
-                "action": {
-                    "emit": [
-                        { "capture": "name", "kind": "dep_name" },
-                        { "capture": "version", "kind": "dep_version", "parent": "name" }
-                    ]
-                }
+                "emit": [
+                    { "capture": "name", "kind": "dep_name" },
+                    { "capture": "version", "kind": "dep_version", "parent": "name" }
+                ]
             },
             {
                 "name": "helm-images",
@@ -138,12 +142,10 @@ mod tests {
                     { "step": "key", "name": "image" },
                     { "step": "object", "captures": { "repository": "repo", "tag": "tag" } }
                 ],
-                "action": {
-                    "emit": [
-                        { "capture": "repo", "kind": "dep_name" },
-                        { "capture": "tag", "kind": "dep_version", "parent": "repo" }
-                    ]
-                }
+                "emit": [
+                    { "capture": "repo", "kind": "dep_name" },
+                    { "capture": "tag", "kind": "dep_version", "parent": "repo" }
+                ]
             }
         ]
     }"#;
@@ -151,6 +153,10 @@ mod tests {
     fn make_extractor() -> RuleExtractor {
         let ruleset: RuleSet = serde_json::from_str(RULES_JSON).unwrap();
         RuleExtractor::from_ruleset(&ruleset).unwrap()
+    }
+
+    fn run(extractor: &RuleExtractor, src: &[u8], path: &str) -> Vec<RawRef> {
+        extractor.extract(src, path, &ExtractContext::default())
     }
 
     #[test]
@@ -162,7 +168,7 @@ mod tests {
                 "lodash": { "version": "4.17.21" }
             }
         }"#;
-        let mut refs = ex.extract(src, "apps/api/package-lock.json");
+        let mut refs = run(&ex, src, "apps/api/package-lock.json");
         refs.sort_by(|a, b| a.value.cmp(&b.value));
         insta::assert_yaml_snapshot!("extractor_json_deps", refs);
     }
@@ -171,7 +177,7 @@ mod tests {
     fn extracts_yaml_helm_values() {
         let ex = make_extractor();
         let src = b"image:\n  repository: myorg/frontend\n  tag: v1.2.3\n";
-        let mut refs = ex.extract(src, "charts/values.yaml");
+        let mut refs = run(&ex, src, "charts/values.yaml");
         refs.sort_by(|a, b| a.value.cmp(&b.value));
         insta::assert_yaml_snapshot!("extractor_yaml_helm", refs);
     }
@@ -181,7 +187,7 @@ mod tests {
         let ex = make_extractor();
         // Cargo.toml doesn't match any rule file selector so should return empty
         let src = b"[dependencies]\nserde = \"1\"\n";
-        let refs = ex.extract(src, "Cargo.toml");
+        let refs = run(&ex, src, "Cargo.toml");
         assert!(refs.is_empty());
     }
 
@@ -190,7 +196,7 @@ mod tests {
         let ex = make_extractor();
         // A JSON file that doesn't match any rule's file selector
         let src = br#"{ "dependencies": { "foo": { "version": "1.0" } } }"#;
-        let refs = ex.extract(src, "config/db-config.json");
+        let refs = run(&ex, src, "config/db-config.json");
         assert!(refs.is_empty());
     }
 
@@ -202,7 +208,7 @@ mod tests {
                 "express": { "version": "4.18.2" }
             }
         }"#;
-        let refs = ex.extract(src, "package-lock.json");
+        let refs = run(&ex, src, "package-lock.json");
         // All refs should have node_path set
         assert!(refs.iter().all(|r| r.node_path.is_some()));
         // The version ref path should reflect the structural walk
@@ -218,7 +224,7 @@ mod tests {
                     "name": "ast-rule",
                     "file": "**/*.rs",
                     "select_ast": { "pattern": "use $PATH" },
-                    "action": { "emit": [{ "capture": "$PATH", "kind": "rs_use" }] }
+                    "emit": [{ "capture": "$PATH", "kind": "rs_use" }]
                 }
             ]
         }"#;

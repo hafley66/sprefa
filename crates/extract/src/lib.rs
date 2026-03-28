@@ -17,6 +17,15 @@ pub mod kind {
     pub const RS_MOD: &str = "rs_mod";
 }
 
+/// Git context passed to extractors. Rules use this to filter by repo/branch/tag.
+/// Built-in extractors (js, rs) ignore it.
+#[derive(Debug, Clone, Default)]
+pub struct ExtractContext<'a> {
+    pub repo: Option<&'a str>,
+    pub branch: Option<&'a str>,
+    pub tags: &'a [&'a str],
+}
+
 /// A raw reference extracted from a source file, before DB insertion.
 #[derive(Debug, Clone, Serialize)]
 pub struct RawRef {
@@ -40,5 +49,5 @@ pub struct RawRef {
 /// Each extractor handles a set of file extensions and produces raw refs from source bytes.
 pub trait Extractor: Send + Sync {
     fn extensions(&self) -> &[&str];
-    fn extract(&self, source: &[u8], path: &str) -> Vec<RawRef>;
+    fn extract(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<RawRef>;
 }

@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use xxhash_rust::xxh3::xxh3_128;
 
 use sprefa_config::CompiledFilter;
-use sprefa_extract::{Extractor, RawRef};
+use sprefa_extract::{ExtractContext, Extractor, RawRef};
 
 use crate::files::list_files;
 
@@ -34,6 +34,7 @@ pub fn extract(
     filter: Option<&CompiledFilter>,
     extractors: &[Box<dyn Extractor>],
     skip_set: &HashSet<(String, String)>,
+    ctx: &ExtractContext,
 ) -> Result<(usize, Vec<ExtractedFile>)> {
     let files = list_files(repo_path, filter)?;
     let total = files.len();
@@ -64,7 +65,7 @@ pub fn extract(
                     .find(|ex| ex.extensions().contains(&e))
                     .map(|ex| ex.as_ref())
             })?;
-            let refs = extractor.extract(&mmap, rel);
+            let refs = extractor.extract(&mmap, rel, ctx);
             if refs.is_empty() {
                 return None;
             }

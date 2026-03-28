@@ -15,9 +15,7 @@ fn minimal_rule() {
         "rules": [{
             "name": "catch-all",
             "file": "**/*.json",
-            "action": {
-                "emit": [{ "capture": "val", "kind": "json_value" }]
-            }
+            "emit": [{ "capture": "val", "kind": "json_value" }]
         }]
     }"#;
     let ruleset: RuleSet = serde_json::from_str(json).unwrap();
@@ -42,14 +40,11 @@ fn full_rule_with_captures() {
                 { "step": "key", "name": "image" },
                 { "step": "object", "captures": { "repository": "repo", "tag": "tag" } }
             ],
-            "action": {
-                "emit": [
-                    { "capture": "repo", "kind": "dep_name" },
-                    { "capture": "tag", "kind": "dep_version", "parent": "repo" }
-                ],
-                "target_repo": "{repo}",
-                "confidence": 0.9
-            }
+            "emit": [
+                { "capture": "repo", "kind": "dep_name" },
+                { "capture": "tag", "kind": "dep_version", "parent": "repo" }
+            ],
+            "confidence": 0.9
         }]
     }"#;
     let ruleset: RuleSet = serde_json::from_str(json).unwrap();
@@ -57,50 +52,27 @@ fn full_rule_with_captures() {
 }
 
 #[test]
-fn action_kind_to_kind_str() {
-    let pairs = [
-        (ActionKind::StringLiteral, "string_literal"),
-        (ActionKind::JsonKey, "json_key"),
-        (ActionKind::JsonValue, "json_value"),
-        (ActionKind::YamlKey, "yaml_key"),
-        (ActionKind::YamlValue, "yaml_value"),
-        (ActionKind::TomlKey, "toml_key"),
-        (ActionKind::TomlValue, "toml_value"),
-        (ActionKind::ImportPath, kind::IMPORT_PATH),
-        (ActionKind::ImportName, kind::IMPORT_NAME),
-        (ActionKind::ExportName, kind::EXPORT_NAME),
-        (ActionKind::DepName, kind::DEP_NAME),
-        (ActionKind::DepVersion, kind::DEP_VERSION),
-        (ActionKind::RsUse, kind::RS_USE),
-        (ActionKind::RsDeclare, kind::RS_DECLARE),
-        (ActionKind::RsMod, kind::RS_MOD),
-    ];
-    for (action_kind, expected) in pairs {
-        assert_eq!(action_kind.to_kind_str(), expected);
-    }
-}
-
-#[test]
 fn reject_missing_name() {
     let json = r#"{
         "rules": [{
             "file": "*.json",
-            "action": { "emit": [] }
+            "emit": []
         }]
     }"#;
     assert!(serde_json::from_str::<RuleSet>(json).is_err());
 }
 
 #[test]
-fn reject_invalid_kind() {
+fn accept_arbitrary_kind_string() {
     let json = r#"{
         "rules": [{
-            "name": "bad",
+            "name": "custom",
             "file": "*.json",
-            "action": { "emit": [{ "capture": "x", "kind": "not_real" }] }
+            "emit": [{ "capture": "x", "kind": "helm_value" }]
         }]
     }"#;
-    assert!(serde_json::from_str::<RuleSet>(json).is_err());
+    let ruleset: RuleSet = serde_json::from_str(json).unwrap();
+    assert_eq!(ruleset.rules[0].emit[0].kind, "helm_value");
 }
 
 // ── Walk engine tests ──────────────────────────────────────────────
@@ -297,19 +269,14 @@ fn emit_package_lock_deps() {
         StructStep::Leaf { capture: Some("version".into()) },
     ];
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "name".into(), kind: ActionKind::DepName, parent: None },
-            EmitRef { capture: "version".into(), kind: ActionKind::DepVersion, parent: Some("name".into()) },
-        ],
-        target_repo: None,
-        target_path: None,
-        confidence: None,
-    };
+    let emits = vec![
+        EmitRef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
+        EmitRef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, None, "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("emit_package_lock_deps", refs);
@@ -335,19 +302,14 @@ fn emit_pnpm_lock_deps_with_regex_split() {
         full_match: true,
     };
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "name".into(), kind: ActionKind::DepName, parent: None },
-            EmitRef { capture: "version".into(), kind: ActionKind::DepVersion, parent: Some("name".into()) },
-        ],
-        target_repo: None,
-        target_path: None,
-        confidence: None,
-    };
+    let emits = vec![
+            EmitRef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
+            EmitRef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern), "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, Some(&value_pattern), "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("emit_pnpm_lock_deps", refs);
@@ -381,19 +343,14 @@ fn emit_helm_image_object_capture() {
         },
     ];
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "repo".into(), kind: ActionKind::DepName, parent: None },
-            EmitRef { capture: "tag".into(), kind: ActionKind::DepVersion, parent: Some("repo".into()) },
-        ],
-        target_repo: Some("{repo}".into()),
-        target_path: None,
-        confidence: Some(0.9),
-    };
+    let emits = vec![
+            EmitRef { capture: "repo".into(), kind: kind::DEP_NAME.into(), parent: None },
+            EmitRef { capture: "tag".into(), kind: kind::DEP_VERSION.into(), parent: Some("repo".into()) },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, None, "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("emit_helm_images", refs);
@@ -422,10 +379,7 @@ fn cross_lockfile_same_deps() {
         StructStep::Key { name: "dependencies".into(), capture: None },
         StructStep::KeyMatch { pattern: "*".into(), capture: Some("name".into()) },
     ];
-    let npm_action = Action {
-        emit: vec![EmitRef { capture: "name".into(), kind: ActionKind::DepName, parent: None }],
-        target_repo: None, target_path: None, confidence: None,
-    };
+    let npm_emits = vec![EmitRef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None }];
 
     // pnpm rule
     let pnpm_steps = vec![
@@ -437,16 +391,13 @@ fn cross_lockfile_same_deps() {
         pattern: r"(?P<name>[^@]+)@(?P<version>.+)".into(),
         full_match: true,
     };
-    let pnpm_action = Action {
-        emit: vec![EmitRef { capture: "name".into(), kind: ActionKind::DepName, parent: None }],
-        target_repo: None, target_path: None, confidence: None,
-    };
+    let pnpm_emits = vec![EmitRef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None }];
 
     let npm_refs: Vec<_> = walk::walk(&npm_source, &npm_steps).iter()
-        .flat_map(|r| emit::emit_refs(r, &npm_action, None, "test"))
+        .flat_map(|r| emit::emit_refs(r, &npm_emits, None, "test"))
         .collect();
     let pnpm_refs: Vec<_> = walk::walk(&pnpm_source, &pnpm_steps).iter()
-        .flat_map(|r| emit::emit_refs(r, &pnpm_action, Some(&pnpm_value), "test"))
+        .flat_map(|r| emit::emit_refs(r, &pnpm_emits, Some(&pnpm_value), "test"))
         .collect();
 
     // Both formats produce the same dep names
@@ -544,17 +495,14 @@ fn tsp_workspace_deps() {
         StructStep::Leaf { capture: Some("version".into()) },
     ];
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "name".into(), kind: ActionKind::DepName, parent: None },
-            EmitRef { capture: "version".into(), kind: ActionKind::DepVersion, parent: Some("name".into()) },
-        ],
-        target_repo: None, target_path: None, confidence: None,
-    };
+    let emits = vec![
+            EmitRef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
+            EmitRef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, None, "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("tsp_workspace_deps", refs);
@@ -584,17 +532,14 @@ fn tsp_package_json_exports() {
         StructStep::Leaf { capture: Some("file_path".into()) },
     ];
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "export_path".into(), kind: ActionKind::ExportName, parent: None },
-            EmitRef { capture: "file_path".into(), kind: ActionKind::ImportPath, parent: Some("export_path".into()) },
-        ],
-        target_repo: None, target_path: None, confidence: None,
-    };
+    let emits = vec![
+            EmitRef { capture: "export_path".into(), kind: kind::EXPORT_NAME.into(), parent: None },
+            EmitRef { capture: "file_path".into(), kind: kind::IMPORT_PATH.into(), parent: Some("export_path".into()) },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, None, "test"))
         .collect();
     refs.sort_by(|a, b| (&a.value, &a.parent_key).cmp(&(&b.value, &b.parent_key)));
     insta::assert_yaml_snapshot!("tsp_package_exports", refs);
@@ -617,16 +562,13 @@ fn tsp_tsconfig_jsx_import_source() {
         StructStep::Leaf { capture: Some("pkg".into()) },
     ];
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "pkg".into(), kind: ActionKind::DepName, parent: None },
-        ],
-        target_repo: None, target_path: None, confidence: None,
-    };
+    let emits = vec![
+            EmitRef { capture: "pkg".into(), kind: kind::DEP_NAME.into(), parent: None },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, None, "test"))
         .collect();
 
     assert_eq!(refs.len(), 1);
@@ -653,16 +595,13 @@ fn tsp_cargo_toml_deps() {
         StructStep::KeyMatch { pattern: "*".into(), capture: Some("name".into()) },
     ];
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "name".into(), kind: ActionKind::DepName, parent: None },
-        ],
-        target_repo: None, target_path: None, confidence: None,
-    };
+    let emits = vec![
+            EmitRef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, None, "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("tsp_cargo_deps", refs);
@@ -692,17 +631,14 @@ fn tsp_pnpm_lock_scoped_packages() {
         full_match: true,
     };
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "name".into(), kind: ActionKind::DepName, parent: None },
-            EmitRef { capture: "version".into(), kind: ActionKind::DepVersion, parent: Some("name".into()) },
-        ],
-        target_repo: None, target_path: None, confidence: None,
-    };
+    let emits = vec![
+            EmitRef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
+            EmitRef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern), "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, Some(&value_pattern), "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("tsp_pnpm_lock_scoped", refs);
@@ -732,17 +668,14 @@ fn tsp_pnpm_lock_mixed_scoped_and_unscoped() {
         full_match: true,
     };
 
-    let action = Action {
-        emit: vec![
-            EmitRef { capture: "name".into(), kind: ActionKind::DepName, parent: None },
-            EmitRef { capture: "version".into(), kind: ActionKind::DepVersion, parent: Some("name".into()) },
-        ],
-        target_repo: None, target_path: None, confidence: None,
-    };
+    let emits = vec![
+            EmitRef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
+            EmitRef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+    ];
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern), "test"))
+        .flat_map(|r| emit::emit_refs(r, &emits, Some(&value_pattern), "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("tsp_pnpm_lock_mixed", refs);

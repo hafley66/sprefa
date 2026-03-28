@@ -1,6 +1,5 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sprefa_extract::kind;
 
 /// Top-level rules file: an array of rules plus optional metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -40,7 +39,12 @@ pub struct Rule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<ValuePattern>,
 
-    pub action: Action,
+    /// Each entry turns a named capture into a ref.
+    pub emit: Vec<EmitRef>,
+
+    /// Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
 }
 
 /// Git context selector. All fields are glob patterns (pipe-delimited alternatives).
@@ -151,77 +155,14 @@ fn default_true() -> bool {
     true
 }
 
-/// What to emit when a rule matches. One rule can emit multiple refs
-/// from a single match via the `emit` array.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Action {
-    /// Each entry turns a named capture into a ref.
-    pub emit: Vec<EmitRef>,
-
-    /// Template for the target repo name. Can reference captures: `"{repo}"`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_repo: Option<String>,
-
-    /// Template for the target file path within the target repo.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_path: Option<String>,
-
-    /// Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<f64>,
-}
-
 /// One ref to emit from a match.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EmitRef {
     /// Name of the capture to use as the ref value.
     pub capture: String,
-    /// RefKind to assign.
-    pub kind: ActionKind,
+    /// Free-text kind string (e.g. "dep_name", "helm_value", "operation_id").
+    pub kind: String,
     /// Name of another capture to use as parent_key (links related refs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
-}
-
-/// Ref kind for action output. Snake_case string aliases for RefKind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionKind {
-    StringLiteral,
-    JsonKey,
-    JsonValue,
-    YamlKey,
-    YamlValue,
-    TomlKey,
-    TomlValue,
-    ImportPath,
-    ImportName,
-    ExportName,
-    DepName,
-    DepVersion,
-    RsUse,
-    RsDeclare,
-    RsMod,
-}
-
-impl ActionKind {
-    pub fn to_kind_str(self) -> &'static str {
-        match self {
-            Self::StringLiteral => "string_literal",
-            Self::JsonKey => "json_key",
-            Self::JsonValue => "json_value",
-            Self::YamlKey => "yaml_key",
-            Self::YamlValue => "yaml_value",
-            Self::TomlKey => "toml_key",
-            Self::TomlValue => "toml_value",
-            Self::ImportPath => kind::IMPORT_PATH,
-            Self::ImportName => kind::IMPORT_NAME,
-            Self::ExportName => kind::EXPORT_NAME,
-            Self::DepName => kind::DEP_NAME,
-            Self::DepVersion => kind::DEP_VERSION,
-            Self::RsUse => kind::RS_USE,
-            Self::RsDeclare => kind::RS_DECLARE,
-            Self::RsMod => kind::RS_MOD,
-        }
-    }
 }

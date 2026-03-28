@@ -12,7 +12,7 @@ use notify::{
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
-use sprefa_extract::{kind, Extractor, RawRef};
+use sprefa_extract::{kind, ExtractContext, Extractor, RawRef};
 
 use crate::change::{Change, DeclChange, FsChange};
 use crate::diff::diff_refs;
@@ -519,7 +519,8 @@ async fn extract_and_diff(
         Err(_) => return Ok(vec![]), // file may have been deleted between events
     };
 
-    let new_refs = extractor.extract(&content, &abs_path.to_string_lossy());
+    let ctx = ExtractContext::default();
+    let new_refs = extractor.extract(&content, &abs_path.to_string_lossy(), &ctx);
 
     // Load old decl refs from DB for diffing (declaration kinds only).
     let old_refs = load_decl_refs(pool, file_id).await?;
@@ -541,7 +542,7 @@ async fn load_decl_refs(
         "SELECT m.kind, s.value, r.span_start, r.span_end, m.rule_name
          FROM refs r
          JOIN strings s ON r.string_id = s.id
-         JOIN matches_v2 m ON m.ref_id = r.id
+         JOIN matches m ON m.ref_id = r.id
          WHERE r.file_id = ? AND m.kind IN ({})
          ORDER BY r.span_start",
         placeholders
@@ -581,8 +582,8 @@ async fn replace_file_refs(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
 
-    // Delete matches_v2 rows for refs in this file, then delete refs.
-    sqlx::query("DELETE FROM matches_v2 WHERE ref_id IN (SELECT id FROM refs WHERE file_id = ?)")
+    // Delete matches rows for refs in this file, then delete refs.
+    sqlx::query("DELETE FROM matches WHERE ref_id IN (SELECT id FROM refs WHERE file_id = ?)")
         .bind(file_id)
         .execute(&mut *tx)
         .await?;
@@ -686,7 +687,7 @@ async fn replace_file_refs(
         q.execute(&mut *tx).await?;
     }
 
-    // Read back ref IDs for matches_v2 insertion.
+    // Read back ref IDs for matches insertion.
     let ref_rows: Vec<(i64, i64, i64)> = sqlx::query_as(
         "SELECT id, string_id, span_start FROM refs WHERE file_id = ?",
     )
@@ -698,11 +699,11 @@ async fn replace_file_refs(
         .map(|(id, sid, ss)| ((sid, ss), id))
         .collect();
 
-    // Bulk-insert matches_v2.
+    // Bulk-insert matches.
     for chunk in resolved.chunks(200) {
         let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES {ph}"
+            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES {ph}"
         );
         let mut q = sqlx::query(&sql);
         for r in chunk {

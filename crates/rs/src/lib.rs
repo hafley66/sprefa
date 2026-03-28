@@ -1,7 +1,7 @@
 use proc_macro2::LineColumn;
 use syn::{Item, UseTree, spanned::Spanned};
 
-use sprefa_extract::{kind, Extractor, RawRef};
+use sprefa_extract::{kind, ExtractContext, Extractor, RawRef};
 
 const EXTENSIONS: &[&str] = &["rs"];
 
@@ -12,7 +12,7 @@ impl Extractor for RsExtractor {
         EXTENSIONS
     }
 
-    fn extract(&self, source: &[u8], _path: &str) -> Vec<RawRef> {
+    fn extract(&self, source: &[u8], _path: &str, _ctx: &ExtractContext) -> Vec<RawRef> {
         let Ok(source_text) = std::str::from_utf8(source) else {
             return vec![];
         };
@@ -239,7 +239,7 @@ mod tests {
     use super::*;
 
     fn extract(src: &str) -> Vec<RawRef> {
-        RsExtractor.extract(src.as_bytes(), "src/lib.rs")
+        RsExtractor.extract(src.as_bytes(), "src/lib.rs", &ExtractContext::default())
     }
 
     #[test]
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn invalid_utf8_returns_empty() {
         let bytes: &[u8] = &[0xFF, 0xFE, 0x00, 0x00];
-        let refs = RsExtractor.extract(bytes, "src/lib.rs");
+        let refs = RsExtractor.extract(bytes, "src/lib.rs", &ExtractContext::default());
         assert!(refs.is_empty());
     }
 

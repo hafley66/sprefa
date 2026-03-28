@@ -3,7 +3,7 @@ use oxc_ast::ast::{Argument, Expression, Statement};
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::SourceType;
 use oxc_syntax::module_record::{ExportExportName, ExportImportName, ExportLocalName, ImportImportName};
-use sprefa_extract::{kind, Extractor, RawRef};
+use sprefa_extract::{kind, ExtractContext, Extractor, RawRef};
 
 const EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
 
@@ -14,7 +14,7 @@ impl Extractor for JsExtractor {
         EXTENSIONS
     }
 
-    fn extract(&self, source: &[u8], path: &str) -> Vec<RawRef> {
+    fn extract(&self, source: &[u8], path: &str, _ctx: &ExtractContext) -> Vec<RawRef> {
         let Ok(source_text) = std::str::from_utf8(source) else {
             return vec![];
         };
@@ -278,7 +278,7 @@ mod tests {
     use super::*;
 
     fn extract(src: &str, path: &str) -> Vec<RawRef> {
-        JsExtractor.extract(src.as_bytes(), path)
+        JsExtractor.extract(src.as_bytes(), path, &ExtractContext::default())
     }
 
     #[test]
@@ -626,7 +626,7 @@ export { bar } from './shared';"#,
     #[test]
     fn invalid_utf8_returns_empty() {
         let bytes: &[u8] = &[0xFF, 0xFE, 0x00, 0x00];
-        let refs = JsExtractor.extract(bytes, "src/binary.ts");
+        let refs = JsExtractor.extract(bytes, "src/binary.ts", &ExtractContext::default());
         assert!(refs.is_empty());
     }
 

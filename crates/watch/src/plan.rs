@@ -563,7 +563,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::query(
-            "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES (?, 'test', ?)",
+            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES (?, 'test', ?)",
         )
         .bind(ref_id)
         .bind(kind)
@@ -1007,8 +1007,9 @@ mod tests {
     /// (the ExportName + ImportName at same span issue on re-exports).
     #[tokio::test]
     async fn integration_extractor_to_plan_reexport_rename() {
-        use sprefa_extract::Extractor;
+        use sprefa_extract::{ExtractContext, Extractor};
         let js_ext = sprefa_js::JsExtractor;
+        let ctx = ExtractContext::default();
 
         let utils_src = b"export function computeScore(): number { return 42; }\nexport function formatOutput(val: number): string { return `${val}`; }";
 
@@ -1017,9 +1018,9 @@ mod tests {
         let consumer_src = b"import { computeScore, formatOutput } from './barrel';\nconsole.log(formatOutput(computeScore()));";
 
         // Extract refs from actual source code
-        let utils_refs = js_ext.extract(utils_src, "utils.ts");
-        let barrel_refs = js_ext.extract(barrel_src, "barrel.ts");
-        let consumer_refs = js_ext.extract(consumer_src, "consumer.ts");
+        let utils_refs = js_ext.extract(utils_src, "utils.ts", &ctx);
+        let barrel_refs = js_ext.extract(barrel_src, "barrel.ts", &ctx);
+        let consumer_refs = js_ext.extract(consumer_src, "consumer.ts", &ctx);
 
         // Barrel must produce both ExportName and ImportName for re-exported names
         let barrel_export_names: Vec<_> = barrel_refs.iter()
@@ -1071,7 +1072,7 @@ mod tests {
                 .await
                 .unwrap();
                 sqlx::query(
-                    "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES (?, ?, ?)",
                 )
                 .bind(ref_id)
                 .bind(&r.rule_name)
@@ -1084,15 +1085,15 @@ mod tests {
 
         // Wire up ImportPath target_file_id links (barrel->utils, consumer->barrel)
         sqlx::query(
-            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN matches_v2 m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_path' AND r.string_id IN (SELECT id FROM strings WHERE value = './utils'))"
+            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN matches m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_path' AND r.string_id IN (SELECT id FROM strings WHERE value = './utils'))"
         ).bind(utils_id).bind(barrel_id).bind(barrel_id).execute(&db).await.unwrap();
         sqlx::query(
-            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN matches_v2 m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_path' AND r.string_id IN (SELECT id FROM strings WHERE value = './barrel'))"
+            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN matches m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_path' AND r.string_id IN (SELECT id FROM strings WHERE value = './barrel'))"
         ).bind(barrel_id).bind(consumer_id).bind(consumer_id).execute(&db).await.unwrap();
 
         // Verify ImportName refs survived insertion
         let barrel_import_count: i64 = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM refs r JOIN matches_v2 m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_name'"
+            "SELECT COUNT(*) FROM refs r JOIN matches m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_name'"
         ).bind(barrel_id).fetch_one(&db).await.unwrap();
         assert!(barrel_import_count >= 2,
             "barrel.ts should have ImportName refs after INSERT OR IGNORE (got {barrel_import_count})");

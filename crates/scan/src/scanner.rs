@@ -5,7 +5,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 use sprefa_config::{CompiledFilter, RepoConfig};
-use sprefa_extract::Extractor;
+use sprefa_extract::{ExtractContext, Extractor};
 
 /// Embedded at compile time from the HEAD commit of this repo.
 /// If built outside git, falls back to "unknown".
@@ -41,9 +41,16 @@ impl Scanner {
         let repo_path = PathBuf::from(&config.path);
         let extractors = Arc::clone(&self.extractors);
         let skip_set = scan_ctx.skip_set;
+        let repo_name = config.name.clone();
+        let branch_name = branch.to_string();
 
         let (files_scanned, extracted) = tokio::task::spawn_blocking(move || {
-            sprefa_index::extract(&repo_path, compiled_filter.as_ref(), &extractors, &skip_set)
+            let ctx = ExtractContext {
+                repo: Some(&repo_name),
+                branch: Some(&branch_name),
+                tags: &[],
+            };
+            sprefa_index::extract(&repo_path, compiled_filter.as_ref(), &extractors, &skip_set, &ctx)
         })
         .await??;
 

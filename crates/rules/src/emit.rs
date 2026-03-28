@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use regex::Regex;
 use sprefa_extract::RawRef;
 
-use crate::types::{Action, EmitRef, ValuePattern};
+use crate::types::{EmitRef, ValuePattern};
 use crate::walk::{CapturedValue, MatchResult};
 
 /// Apply a value pattern (regex) to the captures, merging named groups back in.
@@ -47,10 +47,10 @@ pub fn apply_value_pattern(
     true
 }
 
-/// Turn a match result into RawRefs according to the action's emit list.
+/// Turn a match result into RawRefs according to the emit list.
 pub fn emit_refs(
     result: &MatchResult,
-    action: &Action,
+    emits: &[EmitRef],
     value_pattern: Option<&ValuePattern>,
     rule_name: &str,
 ) -> Vec<RawRef> {
@@ -71,7 +71,7 @@ pub fn emit_refs(
 
     let mut refs = vec![];
 
-    for emit in &action.emit {
+    for emit in emits {
         if let Some(raw) = emit_one(emit, rule_name, &captures, node_path.as_deref()) {
             refs.push(raw);
         }
@@ -93,7 +93,7 @@ fn emit_one(emit: &EmitRef, rule_name: &str, captures: &HashMap<String, Captured
         value: cv.text.clone(),
         span_start: cv.span_start,
         span_end: cv.span_end,
-        kind: emit.kind.to_kind_str().to_string(),
+        kind: emit.kind.clone(),
         rule_name: rule_name.to_string(),
         is_path: false,
         parent_key,

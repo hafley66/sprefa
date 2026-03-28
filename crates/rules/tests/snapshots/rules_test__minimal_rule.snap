@@ -5,7 +5,6 @@ expression: ruleset
 rules:
   - name: catch-all
     file: "**/*.json"
-    action:
-      emit:
-        - capture: val
-          kind: json_value
+    emit:
+      - capture: val
+        kind: json_value

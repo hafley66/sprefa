@@ -21,12 +21,10 @@ rules:
         captures:
           repository: repo
           tag: tag
-    action:
-      emit:
-        - capture: repo
-          kind: dep_name
-        - capture: tag
-          kind: dep_version
-          parent: repo
-      target_repo: "{repo}"
-      confidence: 0.9
+    emit:
+      - capture: repo
+        kind: dep_name
+      - capture: tag
+        kind: dep_version
+        parent: repo
+    confidence: 0.9
