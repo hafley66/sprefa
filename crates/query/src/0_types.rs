@@ -1,5 +1,3 @@
-use sprefa_schema::RefKind;
-
 // ── Result types ─────────────────────────────────────────────────────────────
 
 /// A single match: a string_id with a confidence score and source location.
@@ -12,7 +10,8 @@ pub struct Hit {
     pub file_path: String,
     pub repo_name: String,
     pub branch: String,
-    pub ref_kind: RefKind,
+    pub kind: String,
+    pub rule_name: String,
     pub span_start: i64,
     pub span_end: i64,
 }
@@ -93,10 +92,10 @@ pub enum Filter {
     InRepo(String),
     /// Restrict to refs in files matching this glob.
     InFile(String),
-    /// Restrict to these ref kinds. If the inner vec is empty, no filtering.
-    OfKind(Vec<RefKind>),
-    /// Exclude these ref kinds.
-    NotKind(Vec<RefKind>),
+    /// Restrict to these kind strings (e.g. "dep_name", "import_path").
+    OfKind(Vec<String>),
+    /// Exclude these kind strings.
+    NotKind(Vec<String>),
     /// Restrict to refs visible on branches matching this glob.
     OnBranch(String),
     /// Only refs whose target_file_id is non-null (resolved imports).
@@ -167,12 +166,12 @@ impl Expr {
         Expr::Filter(Box::new(self), Filter::InFile(glob.into()))
     }
 
-    pub fn of_kind(self, kinds: impl IntoIterator<Item = RefKind>) -> Self {
-        Expr::Filter(Box::new(self), Filter::OfKind(kinds.into_iter().collect()))
+    pub fn of_kind(self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Expr::Filter(Box::new(self), Filter::OfKind(kinds.into_iter().map(Into::into).collect()))
     }
 
-    pub fn not_kind(self, kinds: impl IntoIterator<Item = RefKind>) -> Self {
-        Expr::Filter(Box::new(self), Filter::NotKind(kinds.into_iter().collect()))
+    pub fn not_kind(self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Expr::Filter(Box::new(self), Filter::NotKind(kinds.into_iter().map(Into::into).collect()))
     }
 
     pub fn on_branch(self, glob: impl Into<String>) -> Self {

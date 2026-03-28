@@ -2470,9 +2470,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "glob",
+ "sprefa_config",
  "sprefa_extract",
+ "sprefa_js",
+ "sprefa_rs",
+ "sprefa_rules",
+ "sprefa_scan",
  "sprefa_schema",
  "sqlx",
+ "tempfile",
  "tokio",
 ]
 
@@ -2513,7 +2519,12 @@ dependencies = [
  "sprefa_config",
  "sprefa_extract",
  "sprefa_index",
+ "sprefa_js",
+ "sprefa_rs",
+ "sprefa_rules",
+ "sprefa_schema",
  "sqlx",
+ "tempfile",
  "tokio",
  "tracing",
 ]

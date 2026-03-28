@@ -25,8 +25,8 @@ pub fn eval<'a>(pool: &'a SqlitePool, expr: &'a Expr) -> std::pin::Pin<Box<dyn s
     })
 }
 
-// Row shape returned by all atom queries.
-type AtomRow = (i64, String, i64, i64, i64, String, String, i64, String);
+// (string_id, value, kind, rule_name, file_id, span_start, file_path, repo_name, span_end, branch)
+type AtomRow = (i64, String, String, String, i64, i64, String, String, i64, String);
 
 async fn eval_atom(pool: &SqlitePool, atom: &Atom) -> anyhow::Result<HitSet> {
     let (sql, binds) = atom_to_sql(atom);
@@ -37,7 +37,7 @@ async fn eval_atom(pool: &SqlitePool, atom: &Atom) -> anyhow::Result<HitSet> {
     let rows = query.fetch_all(pool).await?;
 
     let conf = atom_confidence(atom);
-    let hits = rows.into_iter().map(|(string_id, value, ref_kind, file_id, span_start, file_path, repo_name, span_end, branch)| {
+    let hits = rows.into_iter().map(|(string_id, value, kind, rule_name, file_id, span_start, file_path, repo_name, span_end, branch)| {
         Hit {
             string_id,
             value,
@@ -46,8 +46,8 @@ async fn eval_atom(pool: &SqlitePool, atom: &Atom) -> anyhow::Result<HitSet> {
             file_path,
             repo_name,
             branch,
-            ref_kind: sprefa_schema::RefKind::from_u8(ref_kind as u8)
-                .unwrap_or(sprefa_schema::RefKind::StringLiteral),
+            kind,
+            rule_name,
             span_start,
             span_end,
         }
@@ -68,11 +68,12 @@ fn atom_confidence(atom: &Atom) -> f64 {
     }
 }
 
-/// SELECT returning (string_id, value, ref_kind, file_id, span_start, file_path, repo_name, span_end, branch).
+/// SELECT returning (string_id, value, kind, rule_name, file_id, span_start, file_path, repo_name, span_end, branch).
 fn atom_to_sql(atom: &Atom) -> (String, Vec<String>) {
-    let base_cols = "s.id, s.value, r.ref_kind, r.file_id, r.span_start, \
-                     f.path, repos.name, r.span_end, bf.branch";
+    let base_cols = "s.id, s.value, COALESCE(m.kind, ''), COALESCE(m.rule_name, ''), \
+                     r.file_id, r.span_start, f.path, repos.name, r.span_end, bf.branch";
     let base_joins = "JOIN refs r ON r.string_id = s.id \
+                      LEFT JOIN matches m ON m.ref_id = r.id \
                       JOIN files f ON r.file_id = f.id \
                       JOIN repos ON f.repo_id = repos.id \
                       JOIN branch_files bf ON bf.file_id = f.id AND bf.repo_id = f.repo_id \
@@ -171,11 +172,11 @@ fn apply_filter(hits: &mut HitSet, filter: &Filter) {
         }
         Filter::OfKind(kinds) => {
             if !kinds.is_empty() {
-                hits.hits.retain(|h| kinds.contains(&h.ref_kind));
+                hits.hits.retain(|h| kinds.iter().any(|k| k == &h.kind));
             }
         }
         Filter::NotKind(kinds) => {
-            hits.hits.retain(|h| !kinds.contains(&h.ref_kind));
+            hits.hits.retain(|h| !kinds.iter().any(|k| k == &h.kind));
         }
         Filter::OnBranch(glob_pattern) => {
             let pat = glob::Pattern::new(glob_pattern)
@@ -202,8 +203,6 @@ fn apply_filter(hits: &mut HitSet, filter: &Filter) {
 fn set_op(left: &HitSet, right: &HitSet, op: SetOp) -> HitSet {
     use std::collections::{HashMap, HashSet};
 
-    // Key on the ref itself (string_id, file_id, span_start), not just string_id.
-    // Two branches can share a string_id but reference it from different files.
     match op {
         SetOp::Intersect => {
             let right_keys: HashMap<(i64, i64, i64), f64> = right.hits.iter()

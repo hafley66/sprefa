@@ -12,3 +12,12 @@ sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+sprefa_schema = { path = "../schema" }
+sprefa_rules = { path = "../rules" }
+sprefa_js = { path = "../js" }
+sprefa_rs = { path = "../rs" }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+sqlx = { workspace = true }

@@ -142,23 +142,11 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
     "#,
-    // matches: rule provenance for each ref
-    // populated during extraction once URTSL pipeline is wired
-    r#"
-    CREATE TABLE IF NOT EXISTS matches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rule_id INTEGER NOT NULL REFERENCES rules(id),
-        ref_id INTEGER NOT NULL REFERENCES refs(id),
-        UNIQUE(rule_id, ref_id)
-    )
-    "#,
-    "CREATE INDEX IF NOT EXISTS idx_matches_rule_id ON matches(rule_id)",
-    "CREATE INDEX IF NOT EXISTS idx_matches_ref_id ON matches(ref_id)",
-    // matches_v2: semantic interpretation of physical refs
+    // matches: semantic interpretation of physical refs
     // One ref can have multiple matches from different rules.
     // kind is a free-text string (no enum), rule_name identifies which rule produced it.
     r#"
-    CREATE TABLE IF NOT EXISTS matches_v2 (
+    CREATE TABLE IF NOT EXISTS matches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ref_id INTEGER NOT NULL REFERENCES refs(id),
         rule_name TEXT NOT NULL,
@@ -166,13 +154,13 @@ const MIGRATIONS: &[&str] = &[
         UNIQUE(ref_id, rule_name, kind)
     )
     "#,
-    "CREATE INDEX IF NOT EXISTS idx_matches_v2_ref_id ON matches_v2(ref_id)",
-    "CREATE INDEX IF NOT EXISTS idx_matches_v2_kind ON matches_v2(kind)",
-    "CREATE INDEX IF NOT EXISTS idx_matches_v2_rule_name ON matches_v2(rule_name)",
+    "CREATE INDEX IF NOT EXISTS idx_matches_ref_id ON matches(ref_id)",
+    "CREATE INDEX IF NOT EXISTS idx_matches_kind ON matches(kind)",
+    "CREATE INDEX IF NOT EXISTS idx_matches_rule_name ON matches(rule_name)",
     // match_labels: arbitrary key-value metadata on semantic matches
     r#"
     CREATE TABLE IF NOT EXISTS match_labels (
-        match_id INTEGER NOT NULL REFERENCES matches_v2(id),
+        match_id INTEGER NOT NULL REFERENCES matches(id),
         key TEXT NOT NULL,
         value TEXT NOT NULL,
         UNIQUE(match_id, key)

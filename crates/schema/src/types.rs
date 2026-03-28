@@ -63,7 +63,7 @@ impl RefKind {
         self as u8
     }
 
-    /// Convert to the canonical kind string used in matches_v2.
+    /// Convert to the canonical kind string used in matches.
     pub fn to_kind_str(self) -> &'static str {
         match self {
             Self::StringLiteral => "string_literal",

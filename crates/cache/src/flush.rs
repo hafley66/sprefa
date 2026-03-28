@@ -22,7 +22,7 @@ struct ResolvedRef {
     is_path: bool,
     parent_key_string_id: Option<i64>,
     node_path: Option<String>,
-    // For matches_v2 insertion after ref_id is known
+    // For matches insertion after ref_id is known
     kind: String,
     rule_name: String,
 }
@@ -216,7 +216,7 @@ pub async fn flush(
         refs_inserted += changes as usize;
     }
 
-    // Read back ref IDs for all files in this batch to build matches_v2 rows.
+    // Read back ref IDs for all files in this batch to build matches rows.
     let file_ids: Vec<i64> = files.iter()
         .filter_map(|f| file_id_map.get(&f.rel_path).copied())
         .collect();
@@ -233,7 +233,7 @@ pub async fn flush(
         }
     }
 
-    // Bulk insert matches_v2 (semantic layer).
+    // Bulk insert matches (semantic layer).
     let match_rows: Vec<(i64, &str, &str)> = resolved_refs.iter()
         .filter_map(|r| {
             let ref_id = ref_id_map.get(&(r.file_id, r.string_id, r.span_start))?;
@@ -244,7 +244,7 @@ pub async fn flush(
     for chunk in match_rows.chunks(MATCH_CHUNK) {
         let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES {ph}"
+            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES {ph}"
         );
         let mut q = sqlx::query(&sql);
         for (ref_id, rule_name, kind) in chunk {

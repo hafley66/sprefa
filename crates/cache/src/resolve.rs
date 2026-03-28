@@ -70,7 +70,7 @@ pub async fn resolve_import_targets(db: &SqlitePool, repo_name: &str) -> Result<
          FROM refs r
          JOIN files f ON r.file_id = f.id
          JOIN strings s ON r.string_id = s.id
-         JOIN matches_v2 m ON m.ref_id = r.id
+         JOIN matches m ON m.ref_id = r.id
          WHERE f.repo_id = ? AND m.kind = 'import_path' AND r.target_file_id IS NULL",
     )
     .bind(repo_id)
@@ -259,7 +259,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::query(
-            "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES (?, 'test', 'import_path')",
+            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES (?, 'test', 'import_path')",
         )
         .bind(ref_id)
         .execute(db)

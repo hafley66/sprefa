@@ -185,7 +185,7 @@ pub async fn search_refs(
         FROM strings_fts fts
         JOIN strings s ON s.id = fts.rowid
         JOIN refs r ON r.string_id = s.id
-        LEFT JOIN matches_v2 m ON m.ref_id = r.id
+        LEFT JOIN matches m ON m.ref_id = r.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
         {branch_join}

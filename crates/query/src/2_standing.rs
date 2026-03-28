@@ -1,12 +1,15 @@
 use sqlx::SqlitePool;
 
-use crate::{Expr, HitSet};
+use crate::{Expr, Hit, HitSet};
 
 /// A standing rule: a named URTSL expression that re-evaluates on index changes.
 #[derive(Debug, Clone)]
 pub struct StandingRule {
     pub name: String,
     pub expr: Expr,
+    /// The kind string to write into matches for hits produced by this rule.
+    /// e.g. "standing", "stale_ref", or whatever semantic label fits.
+    pub kind: String,
     /// Hash of the serialized expression. Used to detect when a rule changes
     /// and its matches need to be invalidated.
     pub rule_hash: String,
@@ -26,7 +29,6 @@ pub async fn upsert_rule(
     pool: &SqlitePool,
     rule: &StandingRule,
 ) -> anyhow::Result<i64> {
-    // Check if rule exists with same hash (no-op).
     let existing: Option<(i64, String)> = sqlx::query_as(
         "SELECT id, rule_hash FROM rules WHERE name = ?"
     )
@@ -38,15 +40,15 @@ pub async fn upsert_rule(
         if hash == rule.rule_hash {
             return Ok(id);
         }
-        // Hash changed: delete old matches, update rule.
-        sqlx::query("DELETE FROM matches WHERE rule_id = ?")
-            .bind(id)
+        // Hash changed: delete old matches by rule_name, update rule row.
+        sqlx::query("DELETE FROM matches WHERE rule_name = ?")
+            .bind(&rule.name)
             .execute(pool)
             .await?;
         sqlx::query(
             "UPDATE rules SET selector = ?, rule_hash = ? WHERE id = ?"
         )
-        .bind(&rule.name) // selector stores the name for now; will store serialized expr
+        .bind(&rule.name)
         .bind(&rule.rule_hash)
         .bind(id)
         .execute(pool)
@@ -74,54 +76,68 @@ pub async fn evaluate_rule(
     pool: &SqlitePool,
     rule: &StandingRule,
 ) -> anyhow::Result<RuleEvalResult> {
-    let rule_id = upsert_rule(pool, rule).await?;
+    upsert_rule(pool, rule).await?;
     let hits = crate::eval(pool, &rule.expr).await?;
 
-    // Current matches in DB.
+    // Current matches in DB for this rule_name.
     let existing: Vec<i64> = sqlx::query_scalar(
-        "SELECT ref_id FROM matches WHERE rule_id = ?"
+        "SELECT ref_id FROM matches WHERE rule_name = ?"
     )
-    .bind(rule_id)
+    .bind(&rule.name)
     .fetch_all(pool)
     .await?;
-
     let existing_set: std::collections::HashSet<i64> = existing.into_iter().collect();
 
-    // Build set of ref_ids from hits. We need to look up ref_id from
-    // (file_id, string_id, span_start).
+    // Batch resolve ref_ids from hits via OR-chained conditions.
     let mut new_ref_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
-    for hit in &hits.hits {
-        let ref_id: Option<i64> = sqlx::query_scalar(
-            "SELECT id FROM refs WHERE file_id = ? AND string_id = ? AND span_start = ?"
-        )
-        .bind(hit.file_id)
-        .bind(hit.string_id)
-        .bind(hit.span_start)
-        .fetch_optional(pool)
-        .await?;
-        if let Some(id) = ref_id {
-            new_ref_ids.insert(id);
+
+    for chunk in hits.hits.chunks(100) {
+        let conditions: Vec<String> = chunk.iter()
+            .map(|_| "(r.file_id = ? AND r.string_id = ? AND r.span_start = ?)".to_string())
+            .collect();
+        let sql = format!(
+            "SELECT r.id FROM refs r WHERE {}",
+            conditions.join(" OR ")
+        );
+        let mut query = sqlx::query_scalar::<_, i64>(&sql);
+        for hit in chunk {
+            query = query.bind(hit.file_id).bind(hit.string_id).bind(hit.span_start);
         }
+        let ids = query.fetch_all(pool).await?;
+        new_ref_ids.extend(ids);
     }
 
     // Insert new matches.
     let to_insert: Vec<i64> = new_ref_ids.difference(&existing_set).copied().collect();
-    for ref_id in &to_insert {
-        sqlx::query("INSERT OR IGNORE INTO matches (rule_id, ref_id) VALUES (?, ?)")
-            .bind(rule_id)
-            .bind(ref_id)
-            .execute(pool)
-            .await?;
+    for chunk in to_insert.chunks(100) {
+        let placeholders: Vec<String> = chunk.iter()
+            .map(|_| "(?, ?, ?)".to_string())
+            .collect();
+        let sql = format!(
+            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        for ref_id in chunk {
+            query = query.bind(ref_id).bind(&rule.name).bind(&rule.kind);
+        }
+        query.execute(pool).await?;
     }
 
     // Remove stale matches.
     let to_remove: Vec<i64> = existing_set.difference(&new_ref_ids).copied().collect();
-    for ref_id in &to_remove {
-        sqlx::query("DELETE FROM matches WHERE rule_id = ? AND ref_id = ?")
-            .bind(rule_id)
-            .bind(ref_id)
-            .execute(pool)
-            .await?;
+    for chunk in to_remove.chunks(100) {
+        let placeholders: Vec<String> = chunk.iter().map(|_| "?".to_string()).collect();
+        let sql = format!(
+            "DELETE FROM matches WHERE rule_name = ? AND ref_id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        query = query.bind(&rule.name);
+        for ref_id in chunk {
+            query = query.bind(ref_id);
+        }
+        query.execute(pool).await?;
     }
 
     Ok(RuleEvalResult {
@@ -136,25 +152,25 @@ pub async fn get_matches(
     pool: &SqlitePool,
     rule_name: &str,
 ) -> anyhow::Result<HitSet> {
-    let rows: Vec<(i64, String, i64, i64, i64, String, String, i64, String)> = sqlx::query_as(
-        "SELECT s.id, s.value, r.ref_kind, r.file_id, r.span_start, f.path, repos.name, r.span_end, \
+    let rows: Vec<(i64, String, String, String, i64, i64, String, String, i64, String)> = sqlx::query_as(
+        "SELECT s.id, s.value, COALESCE(m.kind, ''), m.rule_name, \
+         r.file_id, r.span_start, f.path, repos.name, r.span_end, \
          COALESCE(bf.branch, '') \
          FROM matches m \
-         JOIN rules rl ON rl.id = m.rule_id \
          JOIN refs r ON r.id = m.ref_id \
          JOIN strings s ON s.id = r.string_id \
          JOIN files f ON r.file_id = f.id \
          JOIN repos ON f.repo_id = repos.id \
          LEFT JOIN branch_files bf ON bf.file_id = f.id AND bf.repo_id = f.repo_id \
-         WHERE rl.name = ? \
+         WHERE m.rule_name = ? \
          ORDER BY repos.name, f.path"
     )
     .bind(rule_name)
     .fetch_all(pool)
     .await?;
 
-    let hits = rows.into_iter().map(|(string_id, value, ref_kind, file_id, span_start, file_path, repo_name, span_end, branch)| {
-        crate::Hit {
+    let hits = rows.into_iter().map(|(string_id, value, kind, rule_name, file_id, span_start, file_path, repo_name, span_end, branch)| {
+        Hit {
             string_id,
             value,
             confidence: 1.0,
@@ -162,8 +178,8 @@ pub async fn get_matches(
             file_path,
             repo_name,
             branch,
-            ref_kind: sprefa_schema::RefKind::from_u8(ref_kind as u8)
-                .unwrap_or(sprefa_schema::RefKind::StringLiteral),
+            kind,
+            rule_name,
             span_start,
             span_end,
         }
