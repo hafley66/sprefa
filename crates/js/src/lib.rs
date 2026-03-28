@@ -3,8 +3,7 @@ use oxc_ast::ast::{Argument, Expression, Statement};
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::SourceType;
 use oxc_syntax::module_record::{ExportExportName, ExportImportName, ExportLocalName, ImportImportName};
-use sprefa_extract::{Extractor, RawRef};
-use sprefa_schema::RefKind;
+use sprefa_extract::{kind, Extractor, RawRef};
 
 const EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
 
@@ -38,7 +37,8 @@ impl Extractor for JsExtractor {
                     value: specifier.to_string(),
                     span_start: req.span.start + 1,
                     span_end: req.span.end - 1,
-                    kind: RefKind::ImportPath,
+                    kind: kind::IMPORT_PATH.into(),
+                    rule_name: "js".into(),
                     is_path: true,
                     parent_key: None,
                     node_path: None,
@@ -55,7 +55,8 @@ impl Extractor for JsExtractor {
                         value: entry.local_name.name.to_string(),
                         span_start: entry.local_name.span.start,
                         span_end: entry.local_name.span.end,
-                        kind: RefKind::ImportName,
+                        kind: kind::IMPORT_NAME.into(),
+                    rule_name: "js".into(),
                         is_path: false,
                         parent_key: None,
                         node_path: None,
@@ -67,7 +68,8 @@ impl Extractor for JsExtractor {
                         value: import_str.to_string(),
                         span_start: ns.span.start,
                         span_end: ns.span.end,
-                        kind: RefKind::ImportName,
+                        kind: kind::IMPORT_NAME.into(),
+                    rule_name: "js".into(),
                         is_path: false,
                         parent_key: None,
                         node_path: None,
@@ -79,7 +81,8 @@ impl Extractor for JsExtractor {
                             value: local.to_string(),
                             span_start: entry.local_name.span.start,
                             span_end: entry.local_name.span.end,
-                            kind: RefKind::ImportAlias,
+                            kind: kind::IMPORT_ALIAS.into(),
+                    rule_name: "js".into(),
                             is_path: false,
                             parent_key: Some(import_str.to_string()),
                             node_path: None,
@@ -95,7 +98,8 @@ impl Extractor for JsExtractor {
                         value: "default".to_string(),
                         span_start: stmt_start,
                         span_end: stmt_start,
-                        kind: RefKind::ImportName,
+                        kind: kind::IMPORT_NAME.into(),
+                    rule_name: "js".into(),
                         is_path: false,
                         parent_key: None,
                         node_path: None,
@@ -104,7 +108,8 @@ impl Extractor for JsExtractor {
                         value: entry.local_name.name.to_string(),
                         span_start: entry.local_name.span.start,
                         span_end: entry.local_name.span.end,
-                        kind: RefKind::ImportAlias,
+                        kind: "import_alias".into(),
+                    rule_name: "js".into(),
                         is_path: false,
                         parent_key: Some("default".to_string()),
                         node_path: None,
@@ -124,7 +129,8 @@ impl Extractor for JsExtractor {
                 value: export_name_str.clone(),
                 span_start: export_span.start,
                 span_end: export_span.end,
-                kind: RefKind::ExportName,
+                kind: kind::EXPORT_NAME.into(),
+                rule_name: "js".into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
@@ -137,7 +143,8 @@ impl Extractor for JsExtractor {
                         value: local_str.to_string(),
                         span_start: local_ns.span.start,
                         span_end: local_ns.span.end,
-                        kind: RefKind::ExportLocalBinding,
+                        kind: kind::EXPORT_LOCAL_BINDING.into(),
+                    rule_name: "js".into(),
                         is_path: false,
                         parent_key: Some(export_name_str),
                         node_path: None,
@@ -169,7 +176,8 @@ impl Extractor for JsExtractor {
                 value: export_name_str.clone(),
                 span_start: export_span.start,
                 span_end: export_span.end,
-                kind: RefKind::ExportName,
+                kind: kind::EXPORT_NAME.into(),
+                rule_name: "js".into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
@@ -184,7 +192,8 @@ impl Extractor for JsExtractor {
                     value: import_str.to_string(),
                     span_start: import_ns.span.start,
                     span_end: import_ns.span.end,
-                    kind: RefKind::ImportName,
+                    kind: kind::IMPORT_NAME.into(),
+                    rule_name: "js".into(),
                     is_path: false,
                     parent_key: None,
                     node_path: None,
@@ -233,7 +242,8 @@ fn collect_require_expr<'a>(expr: &'a Expression<'a>, refs: &mut Vec<RawRef>) {
                             value: s.value.to_string(),
                             span_start: s.span.start + 1,
                             span_end: s.span.end - 1,
-                            kind: RefKind::ImportPath,
+                            kind: kind::IMPORT_PATH.into(),
+                    rule_name: "js".into(),
                             is_path: true,
                             parent_key: None,
                             node_path: None,
@@ -349,7 +359,7 @@ const path = require('path');"#,
             "src/legacy.cjs",
         );
         let import_paths: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportPath)
+            .filter(|r| r.kind == kind::IMPORT_PATH)
             .map(|r| r.value.as_str())
             .collect();
         insta::assert_yaml_snapshot!("require_calls", import_paths);
@@ -359,7 +369,7 @@ const path = require('path');"#,
     fn span_points_at_specifier() {
         let src = r#"import { foo } from './utils';"#;
         let refs = extract(src, "src/x.ts");
-        let r = refs.iter().find(|r| r.kind == RefKind::ImportPath).unwrap();
+        let r = refs.iter().find(|r| r.kind == kind::IMPORT_PATH).unwrap();
         let slice = &src.as_bytes()[r.span_start as usize..r.span_end as usize];
         assert_eq!(std::str::from_utf8(slice).unwrap(), "./utils");
     }
@@ -380,7 +390,7 @@ export default function App() { return <Button />; }"#,
             r#"import { foo } from './utils';"#,
             "src/mod.mts",
         );
-        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./utils"));
+        assert!(refs.iter().any(|r| r.kind == kind::IMPORT_PATH && r.value == "./utils"));
     }
 
     #[test]
@@ -389,7 +399,7 @@ export default function App() { return <Button />; }"#,
             r#"const x = require('./lib');"#,
             "src/mod.cts",
         );
-        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./lib"));
+        assert!(refs.iter().any(|r| r.kind == kind::IMPORT_PATH && r.value == "./lib"));
     }
 
     #[test]
@@ -407,7 +417,7 @@ export default function App() { return <Button />; }"#,
             r#"import { Foo as localFoo } from './mod';"#,
             "src/x.ts",
         );
-        let alias = refs.iter().find(|r| r.kind == RefKind::ImportAlias).unwrap();
+        let alias = refs.iter().find(|r| r.kind == kind::IMPORT_ALIAS).unwrap();
         assert_eq!(alias.value, "localFoo");
         assert_eq!(alias.parent_key.as_deref(), Some("Foo"));
     }
@@ -418,7 +428,7 @@ export default function App() { return <Button />; }"#,
             r#"export { internal as Public };"#,
             "src/x.ts",
         );
-        let binding = refs.iter().find(|r| r.kind == RefKind::ExportLocalBinding).unwrap();
+        let binding = refs.iter().find(|r| r.kind == kind::EXPORT_LOCAL_BINDING).unwrap();
         assert_eq!(binding.value, "internal");
         assert_eq!(binding.parent_key.as_deref(), Some("Public"));
     }
@@ -434,13 +444,13 @@ import 'reflect-metadata';"#,
             "src/main.ts",
         );
         let mut paths: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportPath)
+            .filter(|r| r.kind == kind::IMPORT_PATH)
             .map(|r| r.value.as_str())
             .collect();
         paths.sort();
         assert_eq!(paths, vec!["./polyfill", "reflect-metadata"]);
         // No ImportName refs for side-effect imports
-        assert!(refs.iter().all(|r| r.kind != RefKind::ImportName));
+        assert!(refs.iter().all(|r| r.kind != kind::IMPORT_NAME));
     }
 
     #[test]
@@ -450,9 +460,9 @@ import 'reflect-metadata';"#,
             r#"import type { MyType, OtherType } from './types';"#,
             "src/app.ts",
         );
-        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./types"));
+        assert!(refs.iter().any(|r| r.kind == kind::IMPORT_PATH && r.value == "./types"));
         let names: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportName)
+            .filter(|r| r.kind == kind::IMPORT_NAME)
             .map(|r| r.value.as_str())
             .collect();
         assert_eq!(names, vec!["MyType", "OtherType"]);
@@ -464,9 +474,9 @@ import 'reflect-metadata';"#,
             r#"export type { Foo, Bar } from './models';"#,
             "src/index.ts",
         );
-        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./models"));
+        assert!(refs.iter().any(|r| r.kind == kind::IMPORT_PATH && r.value == "./models"));
         let exports: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ExportName)
+            .filter(|r| r.kind == kind::EXPORT_NAME)
             .map(|r| r.value.as_str())
             .collect();
         assert_eq!(exports, vec!["Foo", "Bar"]);
@@ -483,7 +493,7 @@ const other = import('./another');"#,
             "src/app.ts",
         );
         let paths: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportPath)
+            .filter(|r| r.kind == kind::IMPORT_PATH)
             .map(|r| r.value.as_str())
             .collect();
         assert!(paths.is_empty());
@@ -508,7 +518,7 @@ const other = import('./another');"#,
             "src/anon.ts",
         );
         let exports: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ExportName)
+            .filter(|r| r.kind == kind::EXPORT_NAME)
             .map(|r| r.value.as_str())
             .collect();
         assert_eq!(exports, vec!["default"]);
@@ -520,7 +530,7 @@ const other = import('./another');"#,
             r#"export default () => 42;"#,
             "src/arrow.ts",
         );
-        assert!(refs.iter().any(|r| r.kind == RefKind::ExportName && r.value == "default"));
+        assert!(refs.iter().any(|r| r.kind == kind::EXPORT_NAME && r.value == "default"));
     }
 
     #[test]
@@ -530,9 +540,9 @@ const other = import('./another');"#,
             r#"export * as utils from './utils';"#,
             "src/barrel.ts",
         );
-        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./utils"));
+        assert!(refs.iter().any(|r| r.kind == kind::IMPORT_PATH && r.value == "./utils"));
         // "utils" should be an ExportName
-        assert!(refs.iter().any(|r| r.kind == RefKind::ExportName && r.value == "utils"));
+        assert!(refs.iter().any(|r| r.kind == kind::EXPORT_NAME && r.value == "utils"));
     }
 
     #[test]
@@ -544,7 +554,7 @@ import { bar } from './utils';"#,
             "src/app.ts",
         );
         let path_count = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportPath && r.value == "./utils")
+            .filter(|r| r.kind == kind::IMPORT_PATH && r.value == "./utils")
             .count();
         assert_eq!(path_count, 2);
     }
@@ -557,7 +567,7 @@ const bar = require('./cjs');"#,
             "src/mixed.ts",
         );
         let paths: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportPath)
+            .filter(|r| r.kind == kind::IMPORT_PATH)
             .map(|r| r.value.as_str())
             .collect();
         assert!(paths.contains(&"./esm"));
@@ -572,7 +582,7 @@ const y = require('./valid');"#,
             "src/dynamic.cjs",
         );
         let paths: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportPath)
+            .filter(|r| r.kind == kind::IMPORT_PATH)
             .map(|r| r.value.as_str())
             .collect();
         // Only the string literal require is captured
@@ -597,7 +607,7 @@ const y = require('./valid');"#,
             r#"export default class MyClass {}"#,
             "src/cls.ts",
         );
-        assert!(refs.iter().any(|r| r.kind == RefKind::ExportName && r.value == "default"));
+        assert!(refs.iter().any(|r| r.kind == kind::EXPORT_NAME && r.value == "default"));
     }
 
     #[test]
@@ -608,7 +618,7 @@ export { bar } from './shared';"#,
             "src/bridge.ts",
         );
         let path_refs: Vec<_> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportPath && r.value == "./shared")
+            .filter(|r| r.kind == kind::IMPORT_PATH && r.value == "./shared")
             .collect();
         assert_eq!(path_refs.len(), 2);
     }
@@ -624,7 +634,7 @@ export { bar } from './shared';"#,
     fn span_accuracy_on_import_name() {
         let src = r#"import { FooBar } from './mod';"#;
         let refs = extract(src, "src/x.ts");
-        let name_ref = refs.iter().find(|r| r.kind == RefKind::ImportName && r.value == "FooBar").unwrap();
+        let name_ref = refs.iter().find(|r| r.kind == kind::IMPORT_NAME && r.value == "FooBar").unwrap();
         let slice = &src[name_ref.span_start as usize..name_ref.span_end as usize];
         assert_eq!(slice, "FooBar");
     }
@@ -633,7 +643,7 @@ export { bar } from './shared';"#,
     fn span_accuracy_on_export_name() {
         let src = r#"export function myFunc() {}"#;
         let refs = extract(src, "src/x.ts");
-        let exp = refs.iter().find(|r| r.kind == RefKind::ExportName).unwrap();
+        let exp = refs.iter().find(|r| r.kind == kind::EXPORT_NAME).unwrap();
         let slice = &src[exp.span_start as usize..exp.span_end as usize];
         assert_eq!(slice, "myFunc");
     }
@@ -648,11 +658,11 @@ export { bar } from './shared';"#,
             "src/barrel.ts",
         );
         let import_names: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportName)
+            .filter(|r| r.kind == kind::IMPORT_NAME)
             .map(|r| r.value.as_str())
             .collect();
         let export_names: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ExportName)
+            .filter(|r| r.kind == kind::EXPORT_NAME)
             .map(|r| r.value.as_str())
             .collect();
         assert_eq!(import_names, vec!["Foo"]);
@@ -667,10 +677,10 @@ export { bar } from './shared';"#,
             "src/barrel.ts",
         );
         let import_name = refs.iter()
-            .find(|r| r.kind == RefKind::ImportName)
+            .find(|r| r.kind == kind::IMPORT_NAME)
             .expect("should emit ImportName for source-side name");
         let export_name = refs.iter()
-            .find(|r| r.kind == RefKind::ExportName)
+            .find(|r| r.kind == kind::EXPORT_NAME)
             .expect("should emit ExportName for public name");
         assert_eq!(import_name.value, "Foo");
         assert_eq!(export_name.value, "Bar");
@@ -681,7 +691,7 @@ export { bar } from './shared';"#,
         let src = r#"export { Foo } from './utils';"#;
         let refs = extract(src, "src/barrel.ts");
         let import_name = refs.iter()
-            .find(|r| r.kind == RefKind::ImportName)
+            .find(|r| r.kind == kind::IMPORT_NAME)
             .unwrap();
         let slice = &src[import_name.span_start as usize..import_name.span_end as usize];
         assert_eq!(slice, "Foo");
@@ -694,7 +704,7 @@ export { bar } from './shared';"#,
             "src/barrel.ts",
         );
         let mut import_names: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::ImportName)
+            .filter(|r| r.kind == kind::IMPORT_NAME)
             .map(|r| r.value.as_str())
             .collect();
         import_names.sort();
@@ -709,7 +719,7 @@ export { bar } from './shared';"#,
             "src/barrel.ts",
         );
         // Star re-exports produce ImportPath but no ImportName (no specific named binding)
-        assert!(refs.iter().all(|r| r.kind != RefKind::ImportName));
+        assert!(refs.iter().all(|r| r.kind != kind::IMPORT_NAME));
     }
 
     #[test]
@@ -720,6 +730,6 @@ export { bar } from './shared';"#,
             r#"module.exports = require('./utils');"#,
             "src/barrel.cjs",
         );
-        assert!(refs.iter().any(|r| r.kind == RefKind::ImportPath && r.value == "./utils"));
+        assert!(refs.iter().any(|r| r.kind == kind::IMPORT_PATH && r.value == "./utils"));
     }
 }

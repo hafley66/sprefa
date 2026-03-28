@@ -1,3 +1,4 @@
+use sprefa_extract::kind;
 use sprefa_rules::*;
 
 // ── Schema + deserialization tests ─────────────────────────────────
@@ -56,27 +57,26 @@ fn full_rule_with_captures() {
 }
 
 #[test]
-fn action_kind_to_ref_kind() {
-    use sprefa_schema::RefKind;
+fn action_kind_to_kind_str() {
     let pairs = [
-        (ActionKind::StringLiteral, RefKind::StringLiteral),
-        (ActionKind::JsonKey, RefKind::JsonKey),
-        (ActionKind::JsonValue, RefKind::JsonValue),
-        (ActionKind::YamlKey, RefKind::YamlKey),
-        (ActionKind::YamlValue, RefKind::YamlValue),
-        (ActionKind::TomlKey, RefKind::TomlKey),
-        (ActionKind::TomlValue, RefKind::TomlValue),
-        (ActionKind::ImportPath, RefKind::ImportPath),
-        (ActionKind::ImportName, RefKind::ImportName),
-        (ActionKind::ExportName, RefKind::ExportName),
-        (ActionKind::DepName, RefKind::DepName),
-        (ActionKind::DepVersion, RefKind::DepVersion),
-        (ActionKind::RsUse, RefKind::RsUse),
-        (ActionKind::RsDeclare, RefKind::RsDeclare),
-        (ActionKind::RsMod, RefKind::RsMod),
+        (ActionKind::StringLiteral, "string_literal"),
+        (ActionKind::JsonKey, "json_key"),
+        (ActionKind::JsonValue, "json_value"),
+        (ActionKind::YamlKey, "yaml_key"),
+        (ActionKind::YamlValue, "yaml_value"),
+        (ActionKind::TomlKey, "toml_key"),
+        (ActionKind::TomlValue, "toml_value"),
+        (ActionKind::ImportPath, kind::IMPORT_PATH),
+        (ActionKind::ImportName, kind::IMPORT_NAME),
+        (ActionKind::ExportName, kind::EXPORT_NAME),
+        (ActionKind::DepName, kind::DEP_NAME),
+        (ActionKind::DepVersion, kind::DEP_VERSION),
+        (ActionKind::RsUse, kind::RS_USE),
+        (ActionKind::RsDeclare, kind::RS_DECLARE),
+        (ActionKind::RsMod, kind::RS_MOD),
     ];
     for (action_kind, expected) in pairs {
-        assert_eq!(action_kind.to_ref_kind(), expected);
+        assert_eq!(action_kind.to_kind_str(), expected);
     }
 }
 
@@ -309,7 +309,7 @@ fn emit_package_lock_deps() {
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None))
+        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("emit_package_lock_deps", refs);
@@ -347,7 +347,7 @@ fn emit_pnpm_lock_deps_with_regex_split() {
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern)))
+        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern), "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("emit_pnpm_lock_deps", refs);
@@ -393,7 +393,7 @@ fn emit_helm_image_object_capture() {
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None))
+        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("emit_helm_images", refs);
@@ -443,10 +443,10 @@ fn cross_lockfile_same_deps() {
     };
 
     let npm_refs: Vec<_> = walk::walk(&npm_source, &npm_steps).iter()
-        .flat_map(|r| emit::emit_refs(r, &npm_action, None))
+        .flat_map(|r| emit::emit_refs(r, &npm_action, None, "test"))
         .collect();
     let pnpm_refs: Vec<_> = walk::walk(&pnpm_source, &pnpm_steps).iter()
-        .flat_map(|r| emit::emit_refs(r, &pnpm_action, Some(&pnpm_value)))
+        .flat_map(|r| emit::emit_refs(r, &pnpm_action, Some(&pnpm_value), "test"))
         .collect();
 
     // Both formats produce the same dep names
@@ -554,7 +554,7 @@ fn tsp_workspace_deps() {
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None))
+        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("tsp_workspace_deps", refs);
@@ -594,7 +594,7 @@ fn tsp_package_json_exports() {
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None))
+        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
         .collect();
     refs.sort_by(|a, b| (&a.value, &a.parent_key).cmp(&(&b.value, &b.parent_key)));
     insta::assert_yaml_snapshot!("tsp_package_exports", refs);
@@ -626,12 +626,12 @@ fn tsp_tsconfig_jsx_import_source() {
 
     let walk_results = walk::walk(&source, &steps);
     let refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None))
+        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
         .collect();
 
     assert_eq!(refs.len(), 1);
     assert_eq!(refs[0].value, "@alloy-js/core");
-    assert_eq!(refs[0].kind, sprefa_schema::RefKind::DepName);
+    assert_eq!(refs[0].kind, kind::DEP_NAME);
 }
 
 #[test]
@@ -662,7 +662,7 @@ fn tsp_cargo_toml_deps() {
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, None))
+        .flat_map(|r| emit::emit_refs(r, &action, None, "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("tsp_cargo_deps", refs);
@@ -702,7 +702,7 @@ fn tsp_pnpm_lock_scoped_packages() {
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern)))
+        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern), "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("tsp_pnpm_lock_scoped", refs);
@@ -742,7 +742,7 @@ fn tsp_pnpm_lock_mixed_scoped_and_unscoped() {
 
     let walk_results = walk::walk(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
-        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern)))
+        .flat_map(|r| emit::emit_refs(r, &action, Some(&value_pattern), "test"))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
     insta::assert_yaml_snapshot!("tsp_pnpm_lock_mixed", refs);

@@ -1,5 +1,3 @@
-use sprefa_schema::RefKind;
-
 // ── raw FS events after debounce + correlation ───────────────────────────────
 
 /// A semantic filesystem change, classified from raw notify events.
@@ -39,7 +37,7 @@ pub enum DeclChange {
     /// e.g. `export const Foo` became `export const Bar` at the same position.
     Rename {
         file_id: i64,
-        kind: RefKind,
+        kind: String,
         old_name: String,
         new_name: String,
         /// The span of the declaration in the new file content.
@@ -49,13 +47,13 @@ pub enum DeclChange {
     /// A declaration was added (no matching old ref by span proximity).
     Added {
         file_id: i64,
-        kind: RefKind,
+        kind: String,
         name: String,
     },
     /// A declaration was removed (no matching new ref by span proximity).
     Removed {
         file_id: i64,
-        kind: RefKind,
+        kind: String,
         name: String,
     },
 }

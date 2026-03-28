@@ -5,35 +5,40 @@ expression: refs
 - value: "./mod"
   span_start: 33
   span_end: 38
-  kind: ImportPath
+  kind: import_path
+  rule_name: js
   is_path: true
   parent_key: ~
   node_path: ~
 - value: "./other"
   span_start: 62
   span_end: 69
-  kind: ImportPath
+  kind: import_path
+  rule_name: js
   is_path: true
   parent_key: ~
   node_path: ~
 - value: Foo
   span_start: 9
   span_end: 12
-  kind: ImportName
+  kind: import_name
+  rule_name: js
   is_path: false
   parent_key: ~
   node_path: ~
 - value: localFoo
   span_start: 16
   span_end: 24
-  kind: ImportAlias
+  kind: import_alias
+  rule_name: js
   is_path: false
   parent_key: Foo
   node_path: ~
 - value: Bar
   span_start: 50
   span_end: 53
-  kind: ImportName
+  kind: import_name
+  rule_name: js
   is_path: false
   parent_key: ~
   node_path: ~

@@ -178,12 +178,14 @@ pub async fn search_refs(
     let sql = format!(
         r#"
         SELECT DISTINCT s.id, s.value, s.norm,
-               r.span_start, r.span_end, r.ref_kind,
+               r.span_start, r.span_end,
+               COALESCE(m.kind, ''), COALESCE(m.rule_name, ''),
                f.path AS file_path,
                repos.name AS repo_name
         FROM strings_fts fts
         JOIN strings s ON s.id = fts.rowid
         JOIN refs r ON r.string_id = s.id
+        LEFT JOIN matches_v2 m ON m.ref_id = r.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
         {branch_join}
@@ -194,7 +196,7 @@ pub async fn search_refs(
         "#,
     );
 
-    let rows: Vec<(i64, String, String, i64, i64, i64, String, String)> = sqlx::query_as(&sql)
+    let rows: Vec<(i64, String, String, i64, i64, String, String, String, String)> = sqlx::query_as(&sql)
         .bind(format!("\"{}\"", query))
         .fetch_all(pool)
         .await?;
@@ -203,7 +205,7 @@ pub async fn search_refs(
     let mut hits: Vec<QueryHit> = Vec::new();
     let mut id_to_idx: HashMap<i64, usize> = HashMap::new();
 
-    for (string_id, value, norm, span_start, span_end, ref_kind, file_path, repo_name) in rows {
+    for (string_id, value, norm, span_start, span_end, kind, rule_name, file_path, repo_name) in rows {
         let idx = *id_to_idx.entry(string_id).or_insert_with(|| {
             let idx = hits.len();
             hits.push(QueryHit { string_id, value, norm, refs: Vec::new() });
@@ -212,7 +214,8 @@ pub async fn search_refs(
         hits[idx].refs.push(RefLocation {
             repo: repo_name,
             file_path,
-            ref_kind: ref_kind as u8,
+            kind,
+            rule_name,
             span_start,
             span_end,
         });
@@ -230,14 +233,13 @@ pub async fn insert_ref(
     span_start: i64,
     span_end: i64,
     is_path: bool,
-    ref_kind: u8,
     parent_key_string_id: Option<i64>,
     node_path: Option<&str>,
 ) -> anyhow::Result<i64> {
     let result = sqlx::query_scalar::<_, i64>(
         r#"
-        INSERT INTO refs (string_id, file_id, span_start, span_end, is_path, ref_kind, parent_key_string_id, node_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO refs (string_id, file_id, span_start, span_end, is_path, parent_key_string_id, node_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_id, string_id, span_start) DO NOTHING
         RETURNING id
         "#,
@@ -247,7 +249,6 @@ pub async fn insert_ref(
     .bind(span_start)
     .bind(span_end)
     .bind(is_path)
-    .bind(ref_kind)
     .bind(parent_key_string_id)
     .bind(node_path)
     .fetch_optional(pool)

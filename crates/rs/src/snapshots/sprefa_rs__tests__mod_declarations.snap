@@ -5,14 +5,16 @@ expression: refs
 - value: foo
   span_start: 4
   span_end: 7
-  kind: RsMod
+  kind: rs_mod
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~
 - value: bar
   span_start: 13
   span_end: 16
-  kind: RsMod
+  kind: rs_mod
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~

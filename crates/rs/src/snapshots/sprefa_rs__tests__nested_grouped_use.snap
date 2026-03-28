@@ -5,21 +5,24 @@ expression: refs
 - value: "std::io"
   span_start: 4
   span_end: 19
-  kind: RsUse
+  kind: rs_use
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~
 - value: "std::io::Write"
   span_start: 4
   span_end: 26
-  kind: RsUse
+  kind: rs_use
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~
 - value: "std::fmt"
   span_start: 4
   span_end: 32
-  kind: RsUse
+  kind: rs_use
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~

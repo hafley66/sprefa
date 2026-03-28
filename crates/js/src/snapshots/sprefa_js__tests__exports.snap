@@ -5,28 +5,32 @@ expression: refs
 - value: foo
   span_start: 13
   span_end: 16
-  kind: ExportName
+  kind: export_name
+  rule_name: js
   is_path: false
   parent_key: ~
   node_path: ~
 - value: bar
   span_start: 38
   span_end: 41
-  kind: ExportName
+  kind: export_name
+  rule_name: js
   is_path: false
   parent_key: ~
   node_path: ~
 - value: default
   span_start: 54
   span_end: 61
-  kind: ExportName
+  kind: export_name
+  rule_name: js
   is_path: false
   parent_key: ~
   node_path: ~
 - value: Baz
   span_start: 68
   span_end: 71
-  kind: ExportLocalBinding
+  kind: export_local_binding
+  rule_name: js
   is_path: false
   parent_key: default
   node_path: ~

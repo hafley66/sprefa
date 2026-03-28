@@ -5,7 +5,6 @@ use anyhow::Result;
 use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery, TsconfigOptions, TsconfigReferences};
 use sqlx::SqlitePool;
 
-use sprefa_schema::RefKind;
 
 /// Resolve `refs.target_file_id` for all `ImportPath` refs in a repo that currently
 /// have no target set.
@@ -66,16 +65,15 @@ pub async fn resolve_import_targets(db: &SqlitePool, repo_name: &str) -> Result<
     let pkg_map: HashMap<String, i64> = pkg_rows.into_iter().collect();
 
     // All unresolved ImportPath refs: (ref_id, specifier, importing_file_relative_path)
-    let import_path_kind = RefKind::ImportPath.as_u8() as i64;
     let unresolved: Vec<(i64, String, String)> = sqlx::query_as(
         "SELECT r.id, s.value, f.path
          FROM refs r
          JOIN files f ON r.file_id = f.id
          JOIN strings s ON r.string_id = s.id
-         WHERE f.repo_id = ? AND r.ref_kind = ? AND r.target_file_id IS NULL",
+         JOIN matches_v2 m ON m.ref_id = r.id
+         WHERE f.repo_id = ? AND m.kind = 'import_path' AND r.target_file_id IS NULL",
     )
     .bind(repo_id)
-    .bind(import_path_kind)
     .fetch_all(db)
     .await?;
 
@@ -110,13 +108,21 @@ pub async fn resolve_import_targets(db: &SqlitePool, repo_name: &str) -> Result<
 
     let mut tx = db.begin().await?;
     for chunk in updates.chunks(500) {
+        // Batch UPDATE via CASE/WHEN: one statement per chunk instead of per row.
+        let whens = chunk.iter().map(|_| "WHEN id = ? THEN ?").collect::<Vec<_>>().join(" ");
+        let ids = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "UPDATE refs SET target_file_id = CASE {} END WHERE id IN ({})",
+            whens, ids
+        );
+        let mut q = sqlx::query(&sql);
         for (target_id, ref_id) in chunk {
-            sqlx::query("UPDATE refs SET target_file_id = ? WHERE id = ?")
-                .bind(target_id)
-                .bind(ref_id)
-                .execute(&mut *tx)
-                .await?;
+            q = q.bind(ref_id).bind(target_id);
         }
+        for (_target_id, ref_id) in chunk {
+            q = q.bind(ref_id);
+        }
+        q.execute(&mut *tx).await?;
     }
     tx.commit().await?;
 
@@ -199,7 +205,7 @@ fn resolve_bare_fallback(specifier: &str, pkg_map: &HashMap<String, i64>) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sprefa_schema::{init_db, RefKind};
+    use sprefa_schema::init_db;
 
     async fn make_db() -> SqlitePool {
         init_db(":memory:").await.unwrap()
@@ -243,16 +249,23 @@ mod tests {
 
     async fn seed_import_ref(db: &SqlitePool, file_id: i64, specifier: &str) -> i64 {
         let string_id = seed_string(db, specifier).await;
-        sqlx::query_scalar(
-            "INSERT INTO refs (string_id, file_id, span_start, span_end, is_path, ref_kind)
-             VALUES (?, ?, 0, 0, 1, ?) RETURNING id",
+        let ref_id: i64 = sqlx::query_scalar(
+            "INSERT INTO refs (string_id, file_id, span_start, span_end, is_path)
+             VALUES (?, ?, 0, 0, 1) RETURNING id",
         )
         .bind(string_id)
         .bind(file_id)
-        .bind(RefKind::ImportPath.as_u8() as i64)
         .fetch_one(db)
         .await
-        .unwrap()
+        .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES (?, 'test', 'import_path')",
+        )
+        .bind(ref_id)
+        .execute(db)
+        .await
+        .unwrap();
+        ref_id
     }
 
     async fn target_file_id(db: &SqlitePool, ref_id: i64) -> Option<i64> {

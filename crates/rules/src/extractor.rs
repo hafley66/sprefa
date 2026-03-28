@@ -15,6 +15,7 @@ use crate::{
 const DATA_EXTENSIONS: &[&str] = &["json", "yaml", "yml", "toml"];
 
 pub struct CompiledRule {
+    pub name: String,
     pub git: Option<CompiledGitSelector>,
     pub file: CompiledFileSelector,
     pub steps: Vec<StructStep>,
@@ -36,6 +37,7 @@ impl RuleExtractor {
                 let git = r.git.as_ref().map(CompiledGitSelector::compile).transpose()?;
                 let file = CompiledFileSelector::compile(&r.file)?;
                 Ok(CompiledRule {
+                    name: r.name.clone(),
                     git,
                     file,
                     steps: r.select.clone().unwrap_or_default(),
@@ -86,7 +88,7 @@ impl Extractor for RuleExtractor {
         for rule in self.rules_for_path(path) {
             let results = walk::walk(&value, &rule.steps);
             for result in results {
-                refs.extend(emit::emit_refs(&result, &rule.action, rule.value_pattern.as_ref()));
+                refs.extend(emit::emit_refs(&result, &rule.action, rule.value_pattern.as_ref(), &rule.name));
             }
         }
         refs

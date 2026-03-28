@@ -5,7 +5,8 @@ expression: refs
 - value: "std::io::Result"
   span_start: 4
   span_end: 19
-  kind: RsUse
+  kind: rs_use
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~

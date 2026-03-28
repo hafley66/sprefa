@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sprefa_extract::kind;
 
 /// Top-level rules file: an array of rules plus optional metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -204,23 +205,23 @@ pub enum ActionKind {
 }
 
 impl ActionKind {
-    pub fn to_ref_kind(self) -> sprefa_schema::RefKind {
+    pub fn to_kind_str(self) -> &'static str {
         match self {
-            Self::StringLiteral => sprefa_schema::RefKind::StringLiteral,
-            Self::JsonKey => sprefa_schema::RefKind::JsonKey,
-            Self::JsonValue => sprefa_schema::RefKind::JsonValue,
-            Self::YamlKey => sprefa_schema::RefKind::YamlKey,
-            Self::YamlValue => sprefa_schema::RefKind::YamlValue,
-            Self::TomlKey => sprefa_schema::RefKind::TomlKey,
-            Self::TomlValue => sprefa_schema::RefKind::TomlValue,
-            Self::ImportPath => sprefa_schema::RefKind::ImportPath,
-            Self::ImportName => sprefa_schema::RefKind::ImportName,
-            Self::ExportName => sprefa_schema::RefKind::ExportName,
-            Self::DepName => sprefa_schema::RefKind::DepName,
-            Self::DepVersion => sprefa_schema::RefKind::DepVersion,
-            Self::RsUse => sprefa_schema::RefKind::RsUse,
-            Self::RsDeclare => sprefa_schema::RefKind::RsDeclare,
-            Self::RsMod => sprefa_schema::RefKind::RsMod,
+            Self::StringLiteral => "string_literal",
+            Self::JsonKey => "json_key",
+            Self::JsonValue => "json_value",
+            Self::YamlKey => "yaml_key",
+            Self::YamlValue => "yaml_value",
+            Self::TomlKey => "toml_key",
+            Self::TomlValue => "toml_value",
+            Self::ImportPath => kind::IMPORT_PATH,
+            Self::ImportName => kind::IMPORT_NAME,
+            Self::ExportName => kind::EXPORT_NAME,
+            Self::DepName => kind::DEP_NAME,
+            Self::DepVersion => kind::DEP_VERSION,
+            Self::RsUse => kind::RS_USE,
+            Self::RsDeclare => kind::RS_DECLARE,
+            Self::RsMod => kind::RS_MOD,
         }
     }
 }

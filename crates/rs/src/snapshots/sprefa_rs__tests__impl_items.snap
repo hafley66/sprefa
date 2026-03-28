@@ -5,21 +5,24 @@ expression: refs
 - value: Foo
   span_start: 7
   span_end: 10
-  kind: RsDeclare
+  kind: rs_declare
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~
 - value: bar
   span_start: 30
   span_end: 33
-  kind: RsDeclare
+  kind: rs_declare
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~
 - value: baz
   span_start: 51
   span_end: 54
-  kind: RsDeclare
+  kind: rs_declare
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~

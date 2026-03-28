@@ -5,14 +5,16 @@ expression: refs
 - value: hello
   span_start: 7
   span_end: 12
-  kind: RsDeclare
+  kind: rs_declare
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~
 - value: private
   span_start: 21
   span_end: 28
-  kind: RsDeclare
+  kind: rs_declare
+  rule_name: rs
   is_path: false
   parent_key: ~
   node_path: ~

@@ -62,6 +62,53 @@ impl RefKind {
     pub fn as_u8(self) -> u8 {
         self as u8
     }
+
+    /// Convert to the canonical kind string used in matches_v2.
+    pub fn to_kind_str(self) -> &'static str {
+        match self {
+            Self::StringLiteral => "string_literal",
+            Self::JsonKey => "json_key",
+            Self::JsonValue => "json_value",
+            Self::YamlKey => "yaml_key",
+            Self::YamlValue => "yaml_value",
+            Self::TomlKey => "toml_key",
+            Self::TomlValue => "toml_value",
+            Self::ImportPath => "import_path",
+            Self::ImportName => "import_name",
+            Self::ExportName => "export_name",
+            Self::ImportAlias => "import_alias",
+            Self::ExportLocalBinding => "export_local_binding",
+            Self::DepName => "dep_name",
+            Self::DepVersion => "dep_version",
+            Self::RsUse => "rs_use",
+            Self::RsDeclare => "rs_declare",
+            Self::RsMod => "rs_mod",
+        }
+    }
+
+    /// Parse a kind string back to RefKind (for known kinds only).
+    pub fn from_kind_str(s: &str) -> Option<Self> {
+        match s {
+            "string_literal" => Some(Self::StringLiteral),
+            "json_key" => Some(Self::JsonKey),
+            "json_value" => Some(Self::JsonValue),
+            "yaml_key" => Some(Self::YamlKey),
+            "yaml_value" => Some(Self::YamlValue),
+            "toml_key" => Some(Self::TomlKey),
+            "toml_value" => Some(Self::TomlValue),
+            "import_path" => Some(Self::ImportPath),
+            "import_name" => Some(Self::ImportName),
+            "export_name" => Some(Self::ExportName),
+            "import_alias" => Some(Self::ImportAlias),
+            "export_local_binding" => Some(Self::ExportLocalBinding),
+            "dep_name" => Some(Self::DepName),
+            "dep_version" => Some(Self::DepVersion),
+            "rs_use" => Some(Self::RsUse),
+            "rs_declare" => Some(Self::RsDeclare),
+            "rs_mod" => Some(Self::RsMod),
+            _ => None,
+        }
+    }
 }
 
 /// Row from the repos table.
@@ -149,7 +196,8 @@ pub struct GitTag {
 pub struct RefLocation {
     pub repo: String,
     pub file_path: String,
-    pub ref_kind: u8,
+    pub kind: String,
+    pub rule_name: String,
     pub span_start: i64,
     pub span_end: i64,
 }

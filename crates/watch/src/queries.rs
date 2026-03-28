@@ -44,8 +44,9 @@ pub async fn import_paths_targeting(
         JOIN strings s ON r.string_id = s.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
+        JOIN matches_v2 m ON m.ref_id = r.id
         WHERE r.target_file_id = ?
-          AND r.ref_kind = 10
+          AND m.kind = 'import_path'
         "#,
     )
     .bind(target_file_id)
@@ -75,12 +76,14 @@ pub async fn import_names_from_file(
         JOIN strings s ON r.string_id = s.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
-        WHERE r.ref_kind = 11
+        JOIN matches_v2 m ON m.ref_id = r.id
+        WHERE m.kind = 'import_name'
           AND s.value = ?
           AND r.file_id IN (
               SELECT r2.file_id FROM refs r2
+              JOIN matches_v2 m2 ON m2.ref_id = r2.id
               WHERE r2.target_file_id = ?
-                AND r2.ref_kind = 10
+                AND m2.kind = 'import_path'
           )
         "#,
     )
@@ -111,7 +114,8 @@ pub async fn all_rs_uses_in_repo(
         JOIN strings s ON r.string_id = s.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
-        WHERE r.ref_kind = 30
+        JOIN matches_v2 m ON m.ref_id = r.id
+        WHERE m.kind = 'rs_use'
           AND f.repo_id = (SELECT repo_id FROM files WHERE id = ?)
         "#,
     )
@@ -140,20 +144,23 @@ pub async fn reexport_relay_file_ids(
         SELECT DISTINCT f.id
         FROM refs r_path
         JOIN files f ON r_path.file_id = f.id
+        JOIN matches_v2 m_path ON m_path.ref_id = r_path.id
         WHERE r_path.target_file_id = ?
-          AND r_path.ref_kind = 10
+          AND m_path.kind = 'import_path'
           AND EXISTS (
               SELECT 1 FROM refs r_exp
               JOIN strings s_exp ON r_exp.string_id = s_exp.id
+              JOIN matches_v2 m_exp ON m_exp.ref_id = r_exp.id
               WHERE r_exp.file_id = f.id
-                AND r_exp.ref_kind = 12
+                AND m_exp.kind = 'export_name'
                 AND s_exp.value = ?
           )
           AND EXISTS (
               SELECT 1 FROM refs r_imp
               JOIN strings s_imp ON r_imp.string_id = s_imp.id
+              JOIN matches_v2 m_imp ON m_imp.ref_id = r_imp.id
               WHERE r_imp.file_id = f.id
-                AND r_imp.ref_kind = 11
+                AND m_imp.kind = 'import_name'
                 AND s_imp.value = ?
           )
         "#,
@@ -181,14 +188,16 @@ pub async fn upstream_export_file(
         r#"
         SELECT DISTINCT r_path.target_file_id
         FROM refs r_path
+        JOIN matches_v2 m_path ON m_path.ref_id = r_path.id
         WHERE r_path.file_id = ?
-          AND r_path.ref_kind = 10
+          AND m_path.kind = 'import_path'
           AND r_path.target_file_id IS NOT NULL
           AND EXISTS (
               SELECT 1 FROM refs r_exp
               JOIN strings s ON r_exp.string_id = s.id
+              JOIN matches_v2 m_exp ON m_exp.ref_id = r_exp.id
               WHERE r_exp.file_id = r_path.target_file_id
-                AND r_exp.ref_kind = 12
+                AND m_exp.kind = 'export_name'
                 AND s.value = ?
           )
         LIMIT 1
@@ -215,8 +224,9 @@ pub async fn export_ref_in_file(
         JOIN strings s ON r.string_id = s.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
+        JOIN matches_v2 m ON m.ref_id = r.id
         WHERE r.file_id = ?
-          AND r.ref_kind = 12
+          AND m.kind = 'export_name'
           AND s.value = ?
         "#,
     )
@@ -243,7 +253,8 @@ pub async fn path_attr_overrides(
         JOIN strings s ON r.string_id = s.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
-        WHERE r.ref_kind = 32
+        JOIN matches_v2 m ON m.ref_id = r.id
+        WHERE m.kind = 'rs_mod'
           AND r.node_path IS NOT NULL
           AND f.repo_id = (SELECT repo_id FROM files WHERE id = ?)
         "#,
@@ -267,8 +278,9 @@ pub async fn declarations_in_file(
         SELECT DISTINCT s.value
         FROM refs r
         JOIN strings s ON r.string_id = s.id
+        JOIN matches_v2 m ON m.ref_id = r.id
         WHERE r.file_id = ?
-          AND r.ref_kind = 31
+          AND m.kind = 'rs_declare'
         "#,
     )
     .bind(file_id)

@@ -503,7 +503,7 @@ fn print_query_hits(hits: &[sprefa_schema::QueryHit], term: &str) {
     for hit in hits {
         println!("{} ({} refs)", hit.value, hit.refs.len());
         for loc in &hit.refs {
-            println!("  {}  {}  kind={}", loc.repo, loc.file_path, loc.ref_kind);
+            println!("  {}  {}  kind={}", loc.repo, loc.file_path, loc.kind);
         }
     }
     println!("\n{} strings matched", hits.len());

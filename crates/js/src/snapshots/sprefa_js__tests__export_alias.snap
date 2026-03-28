@@ -5,14 +5,16 @@ expression: refs
 - value: PublicName
   span_start: 49
   span_end: 59
-  kind: ExportName
+  kind: export_name
+  rule_name: js
   is_path: false
   parent_key: ~
   node_path: ~
 - value: internalName
   span_start: 33
   span_end: 45
-  kind: ExportLocalBinding
+  kind: export_local_binding
+  rule_name: js
   is_path: false
   parent_key: PublicName
   node_path: ~

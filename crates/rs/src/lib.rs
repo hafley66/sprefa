@@ -1,8 +1,7 @@
 use proc_macro2::LineColumn;
 use syn::{Item, UseTree, spanned::Spanned};
 
-use sprefa_extract::{Extractor, RawRef};
-use sprefa_schema::RefKind;
+use sprefa_extract::{kind, Extractor, RawRef};
 
 const EXTENSIONS: &[&str] = &["rs"];
 
@@ -64,7 +63,8 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
                     value: m.ident.to_string(),
                     span_start: s,
                     span_end: e,
-                    kind: RefKind::RsMod,
+                    kind: kind::RS_MOD.into(),
+                    rule_name: "rs".into(),
                     is_path: false,
                     parent_key: None,
                     node_path: path_attr,
@@ -107,7 +107,8 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
                     value: e.ident.to_string(),
                     span_start: s,
                     span_end: end,
-                    kind: RefKind::DepName,
+                    kind: kind::DEP_NAME.into(),
+                    rule_name: "rs".into(),
                     is_path: false,
                     parent_key: None,
                     node_path: None,
@@ -124,7 +125,8 @@ fn push_declare(refs: &mut Vec<RawRef>, ident: &syn::Ident, offsets: &[usize]) {
         value: ident.to_string(),
         span_start: s,
         span_end: e,
-        kind: RefKind::RsDeclare,
+        kind: kind::RS_DECLARE.into(),
+        rule_name: "rs".into(),
         is_path: false,
         parent_key: None,
         node_path: None,
@@ -180,7 +182,8 @@ fn flatten_use_tree(
                 value,
                 span_start: to_byte(offsets, start.start()),
                 span_end: to_byte(offsets, n.ident.span().end()),
-                kind: RefKind::RsUse,
+                kind: kind::RS_USE.into(),
+                rule_name: "rs".into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
@@ -198,7 +201,8 @@ fn flatten_use_tree(
                 value,
                 span_start: to_byte(offsets, start.start()),
                 span_end: to_byte(offsets, r.ident.span().end()),
-                kind: RefKind::RsUse,
+                kind: kind::RS_USE.into(),
+                rule_name: "rs".into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
@@ -215,7 +219,8 @@ fn flatten_use_tree(
                 value,
                 span_start: to_byte(offsets, start.start()),
                 span_end: to_byte(offsets, g.star_token.span().end()),
-                kind: RefKind::RsUse,
+                kind: kind::RS_USE.into(),
+                rule_name: "rs".into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
@@ -326,7 +331,7 @@ mod tests {
         let refs = extract("extern crate serde;");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].value, "serde");
-        assert_eq!(refs[0].kind, RefKind::DepName);
+        assert_eq!(refs[0].kind, kind::DEP_NAME);
     }
 
     // ── edge cases ────────────────────────────────────────────────────────
@@ -369,7 +374,7 @@ mod tests {
         let refs = extract("pub(crate) fn internal_fn() {}");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].value, "internal_fn");
-        assert_eq!(refs[0].kind, RefKind::RsDeclare);
+        assert_eq!(refs[0].kind, kind::RS_DECLARE);
     }
 
     #[test]
@@ -377,7 +382,7 @@ mod tests {
         let refs = extract("pub async fn do_work() {}");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].value, "do_work");
-        assert_eq!(refs[0].kind, RefKind::RsDeclare);
+        assert_eq!(refs[0].kind, kind::RS_DECLARE);
     }
 
     #[test]
@@ -394,7 +399,7 @@ mod tests {
         let refs = extract("type Result<T> = std::result::Result<T, MyError>;");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].value, "Result");
-        assert_eq!(refs[0].kind, RefKind::RsDeclare);
+        assert_eq!(refs[0].kind, kind::RS_DECLARE);
     }
 
     #[test]
@@ -402,7 +407,7 @@ mod tests {
         let refs = extract("union MyUnion { f1: u32, f2: f32 }");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].value, "MyUnion");
-        assert_eq!(refs[0].kind, RefKind::RsDeclare);
+        assert_eq!(refs[0].kind, kind::RS_DECLARE);
     }
 
     #[test]
@@ -410,7 +415,7 @@ mod tests {
         // Items inside `impl Trait for Struct` should be extracted
         let refs = extract("struct Foo;\ntrait Bar { fn baz(&self); }\nimpl Bar for Foo { fn baz(&self) {} }");
         let values: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::RsDeclare)
+            .filter(|r| r.kind == kind::RS_DECLARE)
             .map(|r| r.value.as_str())
             .collect();
         assert!(values.contains(&"Foo"));
@@ -425,20 +430,20 @@ mod tests {
             "mod outer {\n    use std::io;\n    mod inner {\n        use std::fmt;\n        fn helper() {}\n    }\n}",
         );
         let mods: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::RsMod)
+            .filter(|r| r.kind == kind::RS_MOD)
             .map(|r| r.value.as_str())
             .collect();
         assert!(mods.contains(&"outer"));
         assert!(mods.contains(&"inner"));
 
         let uses: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::RsUse)
+            .filter(|r| r.kind == kind::RS_USE)
             .map(|r| r.value.as_str())
             .collect();
         assert!(uses.contains(&"std::io"));
         assert!(uses.contains(&"std::fmt"));
 
-        assert!(refs.iter().any(|r| r.kind == RefKind::RsDeclare && r.value == "helper"));
+        assert!(refs.iter().any(|r| r.kind == kind::RS_DECLARE && r.value == "helper"));
     }
 
     #[test]
@@ -466,7 +471,7 @@ mod tests {
             "struct S;\nimpl S {\n    fn a() {}\n    fn b() {}\n    fn c() {}\n    type T = u32;\n    const N: u32 = 0;\n}",
         );
         let decl_values: Vec<&str> = refs.iter()
-            .filter(|r| r.kind == RefKind::RsDeclare)
+            .filter(|r| r.kind == kind::RS_DECLARE)
             .map(|r| r.value.as_str())
             .collect();
         assert!(decl_values.contains(&"S"));
@@ -492,7 +497,7 @@ mod tests {
         let refs = extract("use crate::{self};");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].value, "crate");
-        assert_eq!(refs[0].kind, RefKind::RsUse);
+        assert_eq!(refs[0].kind, kind::RS_USE);
     }
 
     #[test]
@@ -511,7 +516,7 @@ mod tests {
         // extern crate rename -- syn parses e.ident as "alloc"
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].value, "alloc");
-        assert_eq!(refs[0].kind, RefKind::DepName);
+        assert_eq!(refs[0].kind, kind::DEP_NAME);
     }
 
     // ── #[path] attribute extraction ─────────────────────────────────────
@@ -519,7 +524,7 @@ mod tests {
     #[test]
     fn mod_with_path_attribute() {
         let refs = extract("#[path = \"custom/location.rs\"]\nmod renamed;");
-        let m = refs.iter().find(|r| r.kind == RefKind::RsMod).unwrap();
+        let m = refs.iter().find(|r| r.kind == kind::RS_MOD).unwrap();
         assert_eq!(m.value, "renamed");
         assert_eq!(m.node_path.as_deref(), Some("custom/location.rs"));
     }
@@ -527,7 +532,7 @@ mod tests {
     #[test]
     fn mod_without_path_attribute() {
         let refs = extract("mod normal;");
-        let m = refs.iter().find(|r| r.kind == RefKind::RsMod).unwrap();
+        let m = refs.iter().find(|r| r.kind == kind::RS_MOD).unwrap();
         assert_eq!(m.value, "normal");
         assert_eq!(m.node_path, None);
     }
@@ -535,7 +540,7 @@ mod tests {
     #[test]
     fn mod_with_cfg_and_path_attributes() {
         let refs = extract("#[cfg(test)]\n#[path = \"test_helpers.rs\"]\nmod helpers;");
-        let m = refs.iter().find(|r| r.kind == RefKind::RsMod).unwrap();
+        let m = refs.iter().find(|r| r.kind == kind::RS_MOD).unwrap();
         assert_eq!(m.value, "helpers");
         assert_eq!(m.node_path.as_deref(), Some("test_helpers.rs"));
     }
@@ -543,9 +548,9 @@ mod tests {
     #[test]
     fn inline_mod_with_path_attribute() {
         let refs = extract("#[path = \"alt\"]\nmod stuff {\n    fn inner() {}\n}");
-        let m = refs.iter().find(|r| r.kind == RefKind::RsMod).unwrap();
+        let m = refs.iter().find(|r| r.kind == kind::RS_MOD).unwrap();
         assert_eq!(m.node_path.as_deref(), Some("alt"));
         // inner fn still extracted
-        assert!(refs.iter().any(|r| r.value == "inner" && r.kind == RefKind::RsDeclare));
+        assert!(refs.iter().any(|r| r.value == "inner" && r.kind == kind::RS_DECLARE));
     }
 }

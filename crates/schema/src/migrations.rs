@@ -83,7 +83,7 @@ const MIGRATIONS: &[&str] = &[
         ref_kind INTEGER NOT NULL DEFAULT 0,
         parent_key_string_id INTEGER REFERENCES strings(id),
         node_path TEXT,
-        UNIQUE(file_id, string_id, span_start, ref_kind)
+        UNIQUE(file_id, string_id, span_start)
     )
     "#,
     "CREATE INDEX IF NOT EXISTS idx_refs_string_id ON refs(string_id)",
@@ -154,6 +154,31 @@ const MIGRATIONS: &[&str] = &[
     "#,
     "CREATE INDEX IF NOT EXISTS idx_matches_rule_id ON matches(rule_id)",
     "CREATE INDEX IF NOT EXISTS idx_matches_ref_id ON matches(ref_id)",
+    // matches_v2: semantic interpretation of physical refs
+    // One ref can have multiple matches from different rules.
+    // kind is a free-text string (no enum), rule_name identifies which rule produced it.
+    r#"
+    CREATE TABLE IF NOT EXISTS matches_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ref_id INTEGER NOT NULL REFERENCES refs(id),
+        rule_name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        UNIQUE(ref_id, rule_name, kind)
+    )
+    "#,
+    "CREATE INDEX IF NOT EXISTS idx_matches_v2_ref_id ON matches_v2(ref_id)",
+    "CREATE INDEX IF NOT EXISTS idx_matches_v2_kind ON matches_v2(kind)",
+    "CREATE INDEX IF NOT EXISTS idx_matches_v2_rule_name ON matches_v2(rule_name)",
+    // match_labels: arbitrary key-value metadata on semantic matches
+    r#"
+    CREATE TABLE IF NOT EXISTS match_labels (
+        match_id INTEGER NOT NULL REFERENCES matches_v2(id),
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        UNIQUE(match_id, key)
+    )
+    "#,
+    "CREATE INDEX IF NOT EXISTS idx_match_labels_match_id ON match_labels(match_id)",
 ];
 
 /// Run all migrations against the given pool.

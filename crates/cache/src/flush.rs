@@ -10,7 +10,8 @@ use sprefa_index::{normalize, normalize2, ExtractedFile};
 // Keep chunks well under that ceiling.
 const STR_CHUNK: usize = 2000;  // 3 params each  -> 6000 per stmt
 const FILE_CHUNK: usize = 2000; // 5 params each  -> 10000 per stmt
-const REF_CHUNK: usize = 1000;  // 8 params each  -> 8000 per stmt
+const REF_CHUNK: usize = 1000;  // 7 params each  -> 7000 per stmt
+const MATCH_CHUNK: usize = 1000; // 3 params each -> 3000 per stmt
 
 // All foreign keys resolved to real DB ids -- ready for bulk insert.
 struct ResolvedRef {
@@ -19,9 +20,11 @@ struct ResolvedRef {
     span_start: i64,
     span_end: i64,
     is_path: bool,
-    ref_kind: i64,
     parent_key_string_id: Option<i64>,
     node_path: Option<String>,
+    // For matches_v2 insertion after ref_id is known
+    kind: String,
+    rule_name: String,
 }
 
 #[tracing::instrument(skip(db, config, files, normalize_config), fields(repo = %config.name, branch = %branch, file_count = files.len()))]
@@ -181,21 +184,22 @@ pub async fn flush(
                 span_start: r.span_start as i64,
                 span_end: r.span_end as i64,
                 is_path: r.is_path,
-                ref_kind: r.kind.as_u8() as i64,
                 parent_key_string_id: r.parent_key.as_ref()
                     .and_then(|pk| string_id_map.get(pk).copied()),
                 node_path: r.node_path.clone(),
+                kind: r.kind.clone(),
+                rule_name: r.rule_name.clone(),
             });
         }
     }
 
-    // Bulk insert refs, count inserted via changes().
+    // Bulk insert refs (physical layer -- no kind column).
     let mut refs_inserted = 0usize;
     for chunk in resolved_refs.chunks(REF_CHUNK) {
-        let ph = chunk.iter().map(|_| "(?,?,?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
+        let ph = chunk.iter().map(|_| "(?,?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
             "INSERT OR IGNORE INTO refs
-             (string_id, file_id, span_start, span_end, is_path, ref_kind,
+             (string_id, file_id, span_start, span_end, is_path,
               parent_key_string_id, node_path)
              VALUES {ph}"
         );
@@ -203,13 +207,50 @@ pub async fn flush(
         for r in chunk {
             q = q.bind(r.string_id).bind(r.file_id)
                  .bind(r.span_start).bind(r.span_end)
-                 .bind(r.is_path).bind(r.ref_kind)
+                 .bind(r.is_path)
                  .bind(r.parent_key_string_id).bind(r.node_path.as_deref());
         }
         q.execute(&mut *tx).await?;
         let changes: i64 = sqlx::query_scalar("SELECT changes()")
             .fetch_one(&mut *tx).await?;
         refs_inserted += changes as usize;
+    }
+
+    // Read back ref IDs for all files in this batch to build matches_v2 rows.
+    let file_ids: Vec<i64> = files.iter()
+        .filter_map(|f| file_id_map.get(&f.rel_path).copied())
+        .collect();
+    let mut ref_id_map: HashMap<(i64, i64, i64), i64> = HashMap::new();
+    for chunk in file_ids.chunks(FILE_CHUNK) {
+        let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, file_id, string_id, span_start FROM refs WHERE file_id IN ({ph})"
+        );
+        let mut q = sqlx::query_as::<_, (i64, i64, i64, i64)>(&sql);
+        for fid in chunk { q = q.bind(fid); }
+        for (id, fid, sid, ss) in q.fetch_all(&mut *tx).await? {
+            ref_id_map.insert((fid, sid, ss), id);
+        }
+    }
+
+    // Bulk insert matches_v2 (semantic layer).
+    let match_rows: Vec<(i64, &str, &str)> = resolved_refs.iter()
+        .filter_map(|r| {
+            let ref_id = ref_id_map.get(&(r.file_id, r.string_id, r.span_start))?;
+            Some((*ref_id, r.rule_name.as_str(), r.kind.as_str()))
+        })
+        .collect();
+
+    for chunk in match_rows.chunks(MATCH_CHUNK) {
+        let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES {ph}"
+        );
+        let mut q = sqlx::query(&sql);
+        for (ref_id, rule_name, kind) in chunk {
+            q = q.bind(ref_id).bind(rule_name).bind(kind);
+        }
+        q.execute(&mut *tx).await?;
     }
 
     tx.commit().await?;
@@ -221,7 +262,7 @@ mod tests {
     use super::*;
     use sprefa_extract::RawRef;
     use sprefa_index::ExtractedFile;
-    use sprefa_schema::{init_db, RefKind};
+    use sprefa_schema::init_db;
 
     async fn make_db() -> SqlitePool {
         init_db(":memory:").await.unwrap()
@@ -237,12 +278,13 @@ mod tests {
         }
     }
 
-    fn raw_ref(value: &str, kind: RefKind) -> RawRef {
+    fn raw_ref(value: &str, kind: &str) -> RawRef {
         RawRef {
             value: value.to_string(),
             span_start: 0,
             span_end: 0,
-            kind,
+            kind: kind.to_string(),
+            rule_name: "test".to_string(),
             is_path: false,
             parent_key: None,
             node_path: None,
@@ -282,8 +324,8 @@ mod tests {
         let db = make_db().await;
         let files = vec![
             extracted("package.json", "abc123", "json", vec![
-                raw_ref("express", RefKind::DepName),
-                raw_ref("lodash", RefKind::DepName),
+                raw_ref("express", sprefa_extract::kind::DEP_NAME),
+                raw_ref("lodash", sprefa_extract::kind::DEP_NAME),
             ]),
         ];
 
@@ -305,8 +347,8 @@ mod tests {
 
         // "express" appears in two files -- should produce one strings row, two refs rows
         let files = vec![
-            extracted("a/package.json", "hash1", "json", vec![raw_ref("express", RefKind::DepName)]),
-            extracted("b/package.json", "hash2", "json", vec![raw_ref("express", RefKind::DepName)]),
+            extracted("a/package.json", "hash1", "json", vec![raw_ref("express", sprefa_extract::kind::DEP_NAME)]),
+            extracted("b/package.json", "hash2", "json", vec![raw_ref("express", sprefa_extract::kind::DEP_NAME)]),
         ];
 
         let inserted = flush(&db, &repo_config("myrepo"), "main", files, None, "v1").await.unwrap();
@@ -330,12 +372,13 @@ mod tests {
                     value: "4.18.2".to_string(),
                     span_start: 0,
                     span_end: 0,
-                    kind: RefKind::DepVersion,
+                    kind: sprefa_extract::kind::DEP_VERSION.to_string(),
+                    rule_name: "test".to_string(),
                     is_path: false,
                     parent_key: Some("express".to_string()),
                     node_path: Some("dependencies/express/version".to_string()),
                 },
-                raw_ref("express", RefKind::DepName),
+                raw_ref("express", sprefa_extract::kind::DEP_NAME),
             ]),
         ];
 
@@ -365,7 +408,7 @@ mod tests {
         let db = make_db().await;
 
         let make_files = || vec![
-            extracted("package.json", "abc", "json", vec![raw_ref("express", RefKind::DepName)]),
+            extracted("package.json", "abc", "json", vec![raw_ref("express", sprefa_extract::kind::DEP_NAME)]),
         ];
 
         flush(&db, &repo_config("myrepo"), "main", make_files(), None, "v1").await.unwrap();
@@ -387,8 +430,8 @@ mod tests {
             &format!("hash_{i}"),
             "ts",
             vec![
-                raw_ref(&format!("dep_{i}"), RefKind::DepName),
-                raw_ref("shared-dep", RefKind::DepName),
+                raw_ref(&format!("dep_{i}"), sprefa_extract::kind::DEP_NAME),
+                raw_ref("shared-dep", sprefa_extract::kind::DEP_NAME),
             ],
         )).collect();
 
@@ -406,7 +449,7 @@ mod tests {
     async fn flush_stores_scanner_hash_on_files() {
         let db = make_db().await;
         let files = vec![
-            extracted("src/a.ts", "hash1", "ts", vec![raw_ref("lodash", RefKind::DepName)]),
+            extracted("src/a.ts", "hash1", "ts", vec![raw_ref("lodash", sprefa_extract::kind::DEP_NAME)]),
         ];
 
         flush(&db, &repo_config("myrepo"), "main", files, None, "binary-v1").await.unwrap();
@@ -425,7 +468,7 @@ mod tests {
 
         // First scan: insert a file with refs.
         let initial = vec![
-            extracted("src/a.ts", "hash1", "ts", vec![raw_ref("lodash", RefKind::DepName)]),
+            extracted("src/a.ts", "hash1", "ts", vec![raw_ref("lodash", sprefa_extract::kind::DEP_NAME)]),
         ];
         flush(&db, &repo_config("myrepo"), "main", initial, None, "binary-v1").await.unwrap();
 
@@ -454,8 +497,8 @@ mod tests {
     async fn flush_wt_sets_is_working_tree() {
         let db = make_db().await;
 
-        let files_a = vec![extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", RefKind::DepName)])];
-        let files_b = vec![extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", RefKind::DepName)])];
+        let files_a = vec![extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", sprefa_extract::kind::DEP_NAME)])];
+        let files_b = vec![extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", sprefa_extract::kind::DEP_NAME)])];
 
         flush(&db, &repo_config("myrepo"), "main", files_a, None, "v1").await.unwrap();
         flush(&db, &repo_config("myrepo"), "main+wt", files_b, None, "v1").await.unwrap();
@@ -477,8 +520,8 @@ mod tests {
 
         // First wt flush: a.ts + b.ts
         let files1 = vec![
-            extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", RefKind::DepName)]),
-            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", RefKind::DepName)]),
+            extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", sprefa_extract::kind::DEP_NAME)]),
+            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", sprefa_extract::kind::DEP_NAME)]),
         ];
         flush(&db, &repo_config("myrepo"), "main+wt", files1, None, "v1").await.unwrap();
 
@@ -489,8 +532,8 @@ mod tests {
 
         // Second wt flush: b.ts + c.ts (a.ts removed from disk)
         let files2 = vec![
-            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", RefKind::DepName)]),
-            extracted("src/c.ts", "h3", "ts", vec![raw_ref("z", RefKind::DepName)]),
+            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", sprefa_extract::kind::DEP_NAME)]),
+            extracted("src/c.ts", "h3", "ts", vec![raw_ref("z", sprefa_extract::kind::DEP_NAME)]),
         ];
         flush(&db, &repo_config("myrepo"), "main+wt", files2, None, "v1").await.unwrap();
 
@@ -511,12 +554,12 @@ mod tests {
         let db = make_db().await;
 
         let files1 = vec![
-            extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", RefKind::DepName)]),
+            extracted("src/a.ts", "h1", "ts", vec![raw_ref("x", sprefa_extract::kind::DEP_NAME)]),
         ];
         flush(&db, &repo_config("myrepo"), "main", files1, None, "v1").await.unwrap();
 
         let files2 = vec![
-            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", RefKind::DepName)]),
+            extracted("src/b.ts", "h2", "ts", vec![raw_ref("y", sprefa_extract::kind::DEP_NAME)]),
         ];
         flush(&db, &repo_config("myrepo"), "main", files2, None, "v1").await.unwrap();
 
@@ -543,16 +586,16 @@ mod tests {
 
         let committed_files = vec![
             extracted("src/a.ts", "ha", "ts", vec![
-                raw_ref("alpha", RefKind::ImportName),
-                raw_ref("shared", RefKind::ImportName),
+                raw_ref("alpha", sprefa_extract::kind::IMPORT_NAME),
+                raw_ref("shared", sprefa_extract::kind::IMPORT_NAME),
             ]),
         ];
         flush(&db, &repo_config("myrepo"), "main", committed_files, None, "v1").await.unwrap();
 
         let wt_files = vec![
             extracted("src/b.ts", "hb", "ts", vec![
-                raw_ref("beta", RefKind::ImportName),
-                raw_ref("shared", RefKind::ImportName),
+                raw_ref("beta", sprefa_extract::kind::IMPORT_NAME),
+                raw_ref("shared", sprefa_extract::kind::IMPORT_NAME),
             ]),
         ];
         flush(&db, &repo_config("myrepo"), "main+wt", wt_files, None, "v1").await.unwrap();

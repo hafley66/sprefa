@@ -1,19 +1,18 @@
-use sprefa_extract::{Extractor, RawRef};
-use sprefa_schema::RefKind;
+use sprefa_extract::{kind, Extractor, RawRef};
 
 use crate::change::DeclChange;
 
 /// Kinds that represent declarations or references worth tracking for rename.
 ///
-/// Declarations (ExportName, RsDeclare, RsMod) propagate downstream to consumers.
-/// References (ImportName) propagate upstream to the declaring file, then back
+/// Declarations (export_name, rs_declare, rs_mod) propagate downstream to consumers.
+/// References (import_name) propagate upstream to the declaring file, then back
 /// down to all other consumers. This enables "rename at any point in the chain"
 /// behavior.
-const DECL_KINDS: &[RefKind] = &[
-    RefKind::ExportName,
-    RefKind::RsDeclare,
-    RefKind::RsMod,
-    RefKind::ImportName,
+const DECL_KINDS: &[&str] = &[
+    kind::EXPORT_NAME,
+    kind::RS_DECLARE,
+    kind::RS_MOD,
+    kind::IMPORT_NAME,
 ];
 
 /// Maximum byte distance between old and new spans to consider them
@@ -37,12 +36,12 @@ pub fn diff_refs(
 ) -> Vec<DeclChange> {
     let old_decls: Vec<&RawRef> = old_refs
         .iter()
-        .filter(|r| DECL_KINDS.contains(&r.kind))
+        .filter(|r| DECL_KINDS.contains(&r.kind.as_str()))
         .collect();
 
     let new_decls: Vec<&RawRef> = new_refs
         .iter()
-        .filter(|r| DECL_KINDS.contains(&r.kind))
+        .filter(|r| DECL_KINDS.contains(&r.kind.as_str()))
         .collect();
 
     let mut matched_new: Vec<bool> = vec![false; new_decls.len()];
@@ -62,7 +61,7 @@ pub fn diff_refs(
                 matched_new[idx] = true;
                 changes.push(DeclChange::Rename {
                     file_id,
-                    kind: old.kind,
+                    kind: old.kind.clone(),
                     old_name: old.value.clone(),
                     new_name: new.value.clone(),
                     new_span_start: new.span_start,
@@ -76,7 +75,7 @@ pub fn diff_refs(
             None => {
                 changes.push(DeclChange::Removed {
                     file_id,
-                    kind: old.kind,
+                    kind: old.kind.clone(),
                     name: old.value.clone(),
                 });
             }
@@ -87,7 +86,7 @@ pub fn diff_refs(
         if !matched_new[i] {
             changes.push(DeclChange::Added {
                 file_id,
-                kind: new.kind,
+                kind: new.kind.clone(),
                 name: new.value.clone(),
             });
         }
@@ -134,12 +133,13 @@ pub fn detect_decl_changes(
 mod tests {
     use super::*;
 
-    fn make_ref(value: &str, kind: RefKind, span_start: u32) -> RawRef {
+    fn make_ref(value: &str, kind: &str, span_start: u32) -> RawRef {
         RawRef {
             value: value.to_string(),
             span_start,
             span_end: span_start + value.len() as u32,
-            kind,
+            kind: kind.to_string(),
+            rule_name: "test".to_string(),
             is_path: false,
             parent_key: None,
             node_path: None,
@@ -148,8 +148,8 @@ mod tests {
 
     #[test]
     fn detects_rename() {
-        let old = vec![make_ref("Foo", RefKind::ExportName, 10)];
-        let new = vec![make_ref("Bar", RefKind::ExportName, 10)];
+        let old = vec![make_ref("Foo", kind::EXPORT_NAME, 10)];
+        let new = vec![make_ref("Bar", kind::EXPORT_NAME, 10)];
         let changes = diff_refs(1, &old, &new);
         assert_eq!(changes.len(), 1);
         match &changes[0] {
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn detects_added() {
         let old = vec![];
-        let new = vec![make_ref("Baz", RefKind::ExportName, 20)];
+        let new = vec![make_ref("Baz", kind::EXPORT_NAME, 20)];
         let changes = diff_refs(1, &old, &new);
         assert_eq!(changes.len(), 1);
         match &changes[0] {
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn detects_removed() {
-        let old = vec![make_ref("Gone", RefKind::RsDeclare, 5)];
+        let old = vec![make_ref("Gone", kind::RS_DECLARE, 5)];
         let new = vec![];
         let changes = diff_refs(1, &old, &new);
         assert_eq!(changes.len(), 1);
@@ -187,16 +187,16 @@ mod tests {
 
     #[test]
     fn unchanged_produces_no_changes() {
-        let old = vec![make_ref("Same", RefKind::ExportName, 10)];
-        let new = vec![make_ref("Same", RefKind::ExportName, 10)];
+        let old = vec![make_ref("Same", kind::EXPORT_NAME, 10)];
+        let new = vec![make_ref("Same", kind::EXPORT_NAME, 10)];
         let changes = diff_refs(1, &old, &new);
         assert!(changes.is_empty());
     }
 
     #[test]
     fn ignores_non_decl_kinds() {
-        let old = vec![make_ref("./utils", RefKind::ImportPath, 20)];
-        let new = vec![make_ref("./lib/utils", RefKind::ImportPath, 20)];
+        let old = vec![make_ref("./utils", kind::IMPORT_PATH, 20)];
+        let new = vec![make_ref("./lib/utils", kind::IMPORT_PATH, 20)];
         let changes = diff_refs(1, &old, &new);
         // ImportPath is not a DECL_KIND, so no changes detected
         assert!(changes.is_empty());
@@ -204,8 +204,8 @@ mod tests {
 
     #[test]
     fn span_too_far_is_remove_plus_add() {
-        let old = vec![make_ref("Foo", RefKind::ExportName, 10)];
-        let new = vec![make_ref("Bar", RefKind::ExportName, 500)];
+        let old = vec![make_ref("Foo", kind::EXPORT_NAME, 10)];
+        let new = vec![make_ref("Bar", kind::EXPORT_NAME, 500)];
         let changes = diff_refs(1, &old, &new);
         assert_eq!(changes.len(), 2);
         assert!(changes.iter().any(|c| matches!(c, DeclChange::Removed { .. })));
@@ -217,8 +217,8 @@ mod tests {
     #[test]
     fn span_at_exact_threshold_matches() {
         // Exactly SPAN_PROXIMITY_THRESHOLD apart should still match
-        let old = vec![make_ref("Foo", RefKind::ExportName, 10)];
-        let new = vec![make_ref("Bar", RefKind::ExportName, 10 + SPAN_PROXIMITY_THRESHOLD)];
+        let old = vec![make_ref("Foo", kind::EXPORT_NAME, 10)];
+        let new = vec![make_ref("Bar", kind::EXPORT_NAME, 10 + SPAN_PROXIMITY_THRESHOLD)];
         let changes = diff_refs(1, &old, &new);
         assert_eq!(changes.len(), 1);
         assert!(matches!(&changes[0], DeclChange::Rename { old_name, new_name, .. }
@@ -227,8 +227,8 @@ mod tests {
 
     #[test]
     fn span_one_past_threshold_splits() {
-        let old = vec![make_ref("Foo", RefKind::ExportName, 10)];
-        let new = vec![make_ref("Bar", RefKind::ExportName, 11 + SPAN_PROXIMITY_THRESHOLD)];
+        let old = vec![make_ref("Foo", kind::EXPORT_NAME, 10)];
+        let new = vec![make_ref("Bar", kind::EXPORT_NAME, 11 + SPAN_PROXIMITY_THRESHOLD)];
         let changes = diff_refs(1, &old, &new);
         assert_eq!(changes.len(), 2);
     }
@@ -236,25 +236,25 @@ mod tests {
     #[test]
     fn same_name_different_kind_no_match() {
         // ExportName "Foo" and RsDeclare "Foo" should not match each other
-        let old = vec![make_ref("Foo", RefKind::ExportName, 10)];
-        let new = vec![make_ref("Foo", RefKind::RsDeclare, 10)];
+        let old = vec![make_ref("Foo", kind::EXPORT_NAME, 10)];
+        let new = vec![make_ref("Foo", kind::RS_DECLARE, 10)];
         let changes = diff_refs(1, &old, &new);
         // Old ExportName removed, new RsDeclare added
         assert_eq!(changes.len(), 2);
-        assert!(changes.iter().any(|c| matches!(c, DeclChange::Removed { kind, .. } if *kind == RefKind::ExportName)));
-        assert!(changes.iter().any(|c| matches!(c, DeclChange::Added { kind, .. } if *kind == RefKind::RsDeclare)));
+        assert!(changes.iter().any(|c| matches!(c, DeclChange::Removed { kind, .. } if *kind == kind::EXPORT_NAME)));
+        assert!(changes.iter().any(|c| matches!(c, DeclChange::Added { kind, .. } if *kind == kind::RS_DECLARE)));
     }
 
     #[test]
     fn multiple_decls_same_kind_matched_by_proximity() {
         // Two exports at different positions, both renamed
         let old = vec![
-            make_ref("Alpha", RefKind::ExportName, 10),
-            make_ref("Beta", RefKind::ExportName, 100),
+            make_ref("Alpha", kind::EXPORT_NAME, 10),
+            make_ref("Beta", kind::EXPORT_NAME, 100),
         ];
         let new = vec![
-            make_ref("AlphaV2", RefKind::ExportName, 12),
-            make_ref("BetaV2", RefKind::ExportName, 102),
+            make_ref("AlphaV2", kind::EXPORT_NAME, 12),
+            make_ref("BetaV2", kind::EXPORT_NAME, 102),
         ];
         let changes = diff_refs(1, &old, &new);
         assert_eq!(changes.len(), 2);
@@ -270,12 +270,12 @@ mod tests {
     fn swap_rename_detects_closest_match() {
         // A and B swap positions -- proximity matching picks closest
         let old = vec![
-            make_ref("A", RefKind::ExportName, 10),
-            make_ref("B", RefKind::ExportName, 50),
+            make_ref("A", kind::EXPORT_NAME, 10),
+            make_ref("B", kind::EXPORT_NAME, 50),
         ];
         let new = vec![
-            make_ref("B", RefKind::ExportName, 12),
-            make_ref("A", RefKind::ExportName, 52),
+            make_ref("B", kind::EXPORT_NAME, 12),
+            make_ref("A", kind::EXPORT_NAME, 52),
         ];
         let changes = diff_refs(1, &old, &new);
         // Old "A" at 10 matches new "B" at 12 (distance 2), old "B" at 50 matches new "A" at 52 (distance 2)
@@ -286,8 +286,8 @@ mod tests {
     #[test]
     fn rs_mod_is_tracked_as_decl() {
         // RsMod is in DECL_KINDS, so mod renames should be detected
-        let old = vec![make_ref("old_mod", RefKind::RsMod, 4)];
-        let new = vec![make_ref("new_mod", RefKind::RsMod, 4)];
+        let old = vec![make_ref("old_mod", kind::RS_MOD, 4)];
+        let new = vec![make_ref("new_mod", kind::RS_MOD, 4)];
         let changes = diff_refs(1, &old, &new);
         assert_eq!(changes.len(), 1);
         assert!(matches!(&changes[0], DeclChange::Rename { old_name, new_name, .. }
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn many_additions_no_old() {
         let new: Vec<_> = (0..10)
-            .map(|i| make_ref(&format!("Item{}", i), RefKind::ExportName, i * 20))
+            .map(|i| make_ref(&format!("Item{}", i), kind::EXPORT_NAME, i * 20))
             .collect();
         let changes = diff_refs(1, &[], &new);
         assert_eq!(changes.len(), 10);
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn many_removals_no_new() {
         let old: Vec<_> = (0..10)
-            .map(|i| make_ref(&format!("Item{}", i), RefKind::RsDeclare, i * 20))
+            .map(|i| make_ref(&format!("Item{}", i), kind::RS_DECLARE, i * 20))
             .collect();
         let changes = diff_refs(1, &old, &[]);
         assert_eq!(changes.len(), 10);
@@ -324,16 +324,16 @@ mod tests {
     fn mixed_ref_kinds_filtered_correctly() {
         // ImportPath refs are ignored; ImportName, ExportName, RsDeclare are tracked
         let old = vec![
-            make_ref("./utils", RefKind::ImportPath, 5),
-            make_ref("foo", RefKind::ImportName, 15),
-            make_ref("MyExport", RefKind::ExportName, 30),
-            make_ref("my_fn", RefKind::RsDeclare, 50),
+            make_ref("./utils", kind::IMPORT_PATH, 5),
+            make_ref("foo", kind::IMPORT_NAME, 15),
+            make_ref("MyExport", kind::EXPORT_NAME, 30),
+            make_ref("my_fn", kind::RS_DECLARE, 50),
         ];
         let new = vec![
-            make_ref("./lib/utils", RefKind::ImportPath, 5),
-            make_ref("bar", RefKind::ImportName, 15),
-            make_ref("MyExportV2", RefKind::ExportName, 30),
-            make_ref("my_fn_v2", RefKind::RsDeclare, 50),
+            make_ref("./lib/utils", kind::IMPORT_PATH, 5),
+            make_ref("bar", kind::IMPORT_NAME, 15),
+            make_ref("MyExportV2", kind::EXPORT_NAME, 30),
+            make_ref("my_fn_v2", kind::RS_DECLARE, 50),
         ];
         let changes = diff_refs(1, &old, &new);
         // ImportName, ExportName, and RsDeclare changes detected (ImportPath ignored)

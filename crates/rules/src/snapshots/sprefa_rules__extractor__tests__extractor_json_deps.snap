@@ -5,28 +5,32 @@ expression: refs
 - value: 4.17.21
   span_start: 0
   span_end: 0
-  kind: DepVersion
+  kind: dep_version
+  rule_name: npm-deps
   is_path: false
   parent_key: lodash
   node_path: dependencies/lodash/version
 - value: 4.18.2
   span_start: 0
   span_end: 0
-  kind: DepVersion
+  kind: dep_version
+  rule_name: npm-deps
   is_path: false
   parent_key: express
   node_path: dependencies/express/version
 - value: express
   span_start: 0
   span_end: 0
-  kind: DepName
+  kind: dep_name
+  rule_name: npm-deps
   is_path: false
   parent_key: ~
   node_path: dependencies/express/version
 - value: lodash
   span_start: 0
   span_end: 0
-  kind: DepName
+  kind: dep_name
+  rule_name: npm-deps
   is_path: false
   parent_key: ~
   node_path: dependencies/lodash/version

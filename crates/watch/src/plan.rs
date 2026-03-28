@@ -1,5 +1,5 @@
-use sprefa_schema::RefKind;
 use sqlx::SqlitePool;
+use sprefa_extract::kind;
 
 use crate::change::{Change, DeclChange, FsChange};
 use crate::queries;
@@ -89,7 +89,7 @@ pub async fn plan_rewrites(
                 plan_file_move(pool, *file_id, old_path, new_path, rewriters, &mut edits, &mod_overrides, &workspace).await?;
             }
             Change::Decl(DeclChange::Rename { file_id, kind, old_name, new_name, .. }) => {
-                plan_decl_rename(pool, *file_id, *kind, old_name, new_name, &mut edits, &mod_overrides, &workspace).await?;
+                plan_decl_rename(pool, *file_id, kind, old_name, new_name, &mut edits, &mod_overrides, &workspace).await?;
             }
             Change::Fs(FsChange::Delete { file_id, path }) => {
                 let count = queries::import_paths_targeting(pool, *file_id).await?.len();
@@ -249,7 +249,7 @@ async fn plan_file_move(
 async fn plan_decl_rename(
     pool: &SqlitePool,
     file_id: i64,
-    kind: RefKind,
+    kind: &str,
     old_name: &str,
     new_name: &str,
     edits: &mut Vec<Edit>,
@@ -261,12 +261,12 @@ async fn plan_decl_rename(
         .unwrap_or_else(|| format!("file_id={}", file_id));
 
     match kind {
-        RefKind::ExportName => {
+        kind::EXPORT_NAME => {
             // JS/TS: find ImportName refs that import old_name from the target file,
             // then follow re-export chains transitively.
             rename_through_reexports(pool, file_id, old_name, new_name, &source_file, edits).await?;
         }
-        RefKind::RsDeclare => {
+        kind::RS_DECLARE => {
             // Rust: find RsUse refs like `crate::mod_path::OldName` (or
             // `super::OldName`, `self::OldName`) and rewrite to NewName.
             // Resolves all prefix styles to absolute form before matching.
@@ -352,7 +352,7 @@ async fn plan_decl_rename(
                 }
             }
         }
-        RefKind::ImportName => {
+        kind::IMPORT_NAME => {
             // User renamed an import binding. Propagate upstream to the declaring
             // file, then back down to all other consumers in the chain.
             //
@@ -494,7 +494,7 @@ async fn rename_chain_step(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sprefa_schema::{init_db, RefKind};
+    use sprefa_schema::init_db;
     use sqlx::SqlitePool;
 
     async fn make_db() -> SqlitePool {
@@ -543,22 +543,30 @@ mod tests {
         db: &SqlitePool,
         file_id: i64,
         value: &str,
-        kind: RefKind,
+        kind: &str,
         target_file_id: Option<i64>,
     ) {
         let string_id = seed_string(db, value).await;
         let span = SPAN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        sqlx::query(
-            "INSERT INTO refs (string_id, file_id, span_start, span_end, is_path, ref_kind, target_file_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        let ref_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO refs (string_id, file_id, span_start, span_end, is_path, target_file_id)
+             VALUES (?, ?, ?, ?, ?, ?)
+             RETURNING id",
         )
         .bind(string_id)
         .bind(file_id)
         .bind(span)
         .bind(span)
-        .bind(kind == RefKind::ImportPath)
-        .bind(kind.as_u8() as i64)
+        .bind(kind == kind::IMPORT_PATH)
         .bind(target_file_id)
+        .fetch_one(db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES (?, 'test', ?)",
+        )
+        .bind(ref_id)
+        .bind(kind)
         .execute(db)
         .await
         .unwrap();
@@ -580,20 +588,20 @@ mod tests {
         let consumer_id = seed_file(&db, repo_id, "src/consumer.ts").await;
 
         // utils.ts: ExportName "Foo"
-        seed_ref(&db, utils_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // barrel.ts: ImportPath -> utils, ImportName "Foo", ExportName "Foo"
-        seed_ref(&db, barrel_id, "./utils", RefKind::ImportPath, Some(utils_id)).await;
-        seed_ref(&db, barrel_id, "Foo", RefKind::ImportName, None).await;
-        seed_ref(&db, barrel_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, barrel_id, "./utils", kind::IMPORT_PATH, Some(utils_id)).await;
+        seed_ref(&db, barrel_id, "Foo", kind::IMPORT_NAME, None).await;
+        seed_ref(&db, barrel_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // consumer.ts: ImportPath -> barrel, ImportName "Foo"
-        seed_ref(&db, consumer_id, "./barrel", RefKind::ImportPath, Some(barrel_id)).await;
-        seed_ref(&db, consumer_id, "Foo", RefKind::ImportName, None).await;
+        seed_ref(&db, consumer_id, "./barrel", kind::IMPORT_PATH, Some(barrel_id)).await;
+        seed_ref(&db, consumer_id, "Foo", kind::IMPORT_NAME, None).await;
 
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: utils_id,
-            kind: RefKind::ExportName,
+            kind: kind::EXPORT_NAME.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -627,20 +635,20 @@ mod tests {
         let consumer_id = seed_file(&db, repo_id, "src/consumer.ts").await;
 
         // utils.ts: ExportName "Foo"
-        seed_ref(&db, utils_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // barrel.ts: ImportPath -> utils, ImportName "Foo", ExportName "PublicFoo"
-        seed_ref(&db, barrel_id, "./utils", RefKind::ImportPath, Some(utils_id)).await;
-        seed_ref(&db, barrel_id, "Foo", RefKind::ImportName, None).await;
-        seed_ref(&db, barrel_id, "PublicFoo", RefKind::ExportName, None).await;
+        seed_ref(&db, barrel_id, "./utils", kind::IMPORT_PATH, Some(utils_id)).await;
+        seed_ref(&db, barrel_id, "Foo", kind::IMPORT_NAME, None).await;
+        seed_ref(&db, barrel_id, "PublicFoo", kind::EXPORT_NAME, None).await;
 
         // consumer.ts: ImportPath -> barrel, ImportName "PublicFoo"
-        seed_ref(&db, consumer_id, "./barrel", RefKind::ImportPath, Some(barrel_id)).await;
-        seed_ref(&db, consumer_id, "PublicFoo", RefKind::ImportName, None).await;
+        seed_ref(&db, consumer_id, "./barrel", kind::IMPORT_PATH, Some(barrel_id)).await;
+        seed_ref(&db, consumer_id, "PublicFoo", kind::IMPORT_NAME, None).await;
 
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: utils_id,
-            kind: RefKind::ExportName,
+            kind: kind::EXPORT_NAME.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -671,25 +679,25 @@ mod tests {
         let consumer_id = seed_file(&db, repo_id, "src/consumer.ts").await;
 
         // utils: ExportName "Foo"
-        seed_ref(&db, utils_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // barrel1: re-exports Foo from utils
-        seed_ref(&db, barrel1_id, "./utils", RefKind::ImportPath, Some(utils_id)).await;
-        seed_ref(&db, barrel1_id, "Foo", RefKind::ImportName, None).await;
-        seed_ref(&db, barrel1_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, barrel1_id, "./utils", kind::IMPORT_PATH, Some(utils_id)).await;
+        seed_ref(&db, barrel1_id, "Foo", kind::IMPORT_NAME, None).await;
+        seed_ref(&db, barrel1_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // barrel2: re-exports Foo from barrel1
-        seed_ref(&db, barrel2_id, "./barrel1", RefKind::ImportPath, Some(barrel1_id)).await;
-        seed_ref(&db, barrel2_id, "Foo", RefKind::ImportName, None).await;
-        seed_ref(&db, barrel2_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, barrel2_id, "./barrel1", kind::IMPORT_PATH, Some(barrel1_id)).await;
+        seed_ref(&db, barrel2_id, "Foo", kind::IMPORT_NAME, None).await;
+        seed_ref(&db, barrel2_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // consumer: imports Foo from barrel2
-        seed_ref(&db, consumer_id, "./barrel2", RefKind::ImportPath, Some(barrel2_id)).await;
-        seed_ref(&db, consumer_id, "Foo", RefKind::ImportName, None).await;
+        seed_ref(&db, consumer_id, "./barrel2", kind::IMPORT_PATH, Some(barrel2_id)).await;
+        seed_ref(&db, consumer_id, "Foo", kind::IMPORT_NAME, None).await;
 
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: utils_id,
-            kind: RefKind::ExportName,
+            kind: kind::EXPORT_NAME.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -716,13 +724,13 @@ mod tests {
         let utils_id = seed_file(&db, repo_id, "src/utils.ts").await;
         let consumer_id = seed_file(&db, repo_id, "src/consumer.ts").await;
 
-        seed_ref(&db, utils_id, "Foo", RefKind::ExportName, None).await;
-        seed_ref(&db, consumer_id, "./utils", RefKind::ImportPath, Some(utils_id)).await;
-        seed_ref(&db, consumer_id, "Foo", RefKind::ImportName, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::EXPORT_NAME, None).await;
+        seed_ref(&db, consumer_id, "./utils", kind::IMPORT_PATH, Some(utils_id)).await;
+        seed_ref(&db, consumer_id, "Foo", kind::IMPORT_NAME, None).await;
 
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: utils_id,
-            kind: RefKind::ExportName,
+            kind: kind::EXPORT_NAME.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -748,20 +756,20 @@ mod tests {
         let other_id = seed_file(&db, repo_id, "src/other.ts").await;
 
         // utils.ts: ExportName "Foo"
-        seed_ref(&db, utils_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // consumer.ts: imports Foo from utils
-        seed_ref(&db, consumer_id, "./utils", RefKind::ImportPath, Some(utils_id)).await;
-        seed_ref(&db, consumer_id, "Foo", RefKind::ImportName, None).await;
+        seed_ref(&db, consumer_id, "./utils", kind::IMPORT_PATH, Some(utils_id)).await;
+        seed_ref(&db, consumer_id, "Foo", kind::IMPORT_NAME, None).await;
 
         // other.ts: also imports Foo from utils
-        seed_ref(&db, other_id, "./utils", RefKind::ImportPath, Some(utils_id)).await;
-        seed_ref(&db, other_id, "Foo", RefKind::ImportName, None).await;
+        seed_ref(&db, other_id, "./utils", kind::IMPORT_PATH, Some(utils_id)).await;
+        seed_ref(&db, other_id, "Foo", kind::IMPORT_NAME, None).await;
 
         // User renamed ImportName in consumer.ts: Foo -> Bar
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: consumer_id,
-            kind: RefKind::ImportName,
+            kind: kind::IMPORT_NAME.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -799,21 +807,21 @@ mod tests {
         let consumer_id = seed_file(&db, repo_id, "src/consumer.ts").await;
 
         // utils.ts: ExportName "Foo"
-        seed_ref(&db, utils_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // barrel.ts: re-exports Foo from utils
-        seed_ref(&db, barrel_id, "./utils", RefKind::ImportPath, Some(utils_id)).await;
-        seed_ref(&db, barrel_id, "Foo", RefKind::ImportName, None).await;
-        seed_ref(&db, barrel_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, barrel_id, "./utils", kind::IMPORT_PATH, Some(utils_id)).await;
+        seed_ref(&db, barrel_id, "Foo", kind::IMPORT_NAME, None).await;
+        seed_ref(&db, barrel_id, "Foo", kind::EXPORT_NAME, None).await;
 
         // consumer.ts: imports Foo from barrel
-        seed_ref(&db, consumer_id, "./barrel", RefKind::ImportPath, Some(barrel_id)).await;
-        seed_ref(&db, consumer_id, "Foo", RefKind::ImportName, None).await;
+        seed_ref(&db, consumer_id, "./barrel", kind::IMPORT_PATH, Some(barrel_id)).await;
+        seed_ref(&db, consumer_id, "Foo", kind::IMPORT_NAME, None).await;
 
         // User renamed ImportName in consumer.ts: Foo -> Bar
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: consumer_id,
-            kind: RefKind::ImportName,
+            kind: kind::IMPORT_NAME.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -845,12 +853,12 @@ mod tests {
         let consumer_id = seed_file(&db, repo_id, "src/app.ts").await;
 
         // Import from 'react' -- no target_file_id
-        seed_ref(&db, consumer_id, "react", RefKind::ImportPath, None).await;
-        seed_ref(&db, consumer_id, "useState", RefKind::ImportName, None).await;
+        seed_ref(&db, consumer_id, "react", kind::IMPORT_PATH, None).await;
+        seed_ref(&db, consumer_id, "useState", kind::IMPORT_NAME, None).await;
 
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: consumer_id,
-            kind: RefKind::ImportName,
+            kind: kind::IMPORT_NAME.to_string(),
             old_name: "useState".to_string(),
             new_name: "useMyState".to_string(),
             new_span_start: 0,
@@ -871,19 +879,19 @@ mod tests {
         let barrel_id = seed_file(&db, repo_id, "src/barrel.ts").await;
         let consumer_id = seed_file(&db, repo_id, "src/consumer.ts").await;
 
-        seed_ref(&db, utils_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::EXPORT_NAME, None).await;
 
-        seed_ref(&db, barrel_id, "./utils", RefKind::ImportPath, Some(utils_id)).await;
-        seed_ref(&db, barrel_id, "Foo", RefKind::ImportName, None).await;
-        seed_ref(&db, barrel_id, "Foo", RefKind::ExportName, None).await;
+        seed_ref(&db, barrel_id, "./utils", kind::IMPORT_PATH, Some(utils_id)).await;
+        seed_ref(&db, barrel_id, "Foo", kind::IMPORT_NAME, None).await;
+        seed_ref(&db, barrel_id, "Foo", kind::EXPORT_NAME, None).await;
 
-        seed_ref(&db, consumer_id, "./barrel", RefKind::ImportPath, Some(barrel_id)).await;
-        seed_ref(&db, consumer_id, "Foo", RefKind::ImportName, None).await;
+        seed_ref(&db, consumer_id, "./barrel", kind::IMPORT_PATH, Some(barrel_id)).await;
+        seed_ref(&db, consumer_id, "Foo", kind::IMPORT_NAME, None).await;
 
         // ExportName rename in barrel (middle of chain)
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: barrel_id,
-            kind: RefKind::ExportName,
+            kind: kind::EXPORT_NAME.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -915,15 +923,15 @@ mod tests {
         let consumer_id = seed_file(&db, repo_id, "src/consumer.rs").await;
 
         // utils.rs: declares Foo and Other
-        seed_ref(&db, utils_id, "Foo", RefKind::RsDeclare, None).await;
-        seed_ref(&db, utils_id, "Other", RefKind::RsDeclare, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::RS_DECLARE, None).await;
+        seed_ref(&db, utils_id, "Other", kind::RS_DECLARE, None).await;
 
         // consumer.rs: use crate::utils::*
-        seed_ref(&db, consumer_id, "crate::utils::*", RefKind::RsUse, None).await;
+        seed_ref(&db, consumer_id, "crate::utils::*", kind::RS_USE, None).await;
 
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: utils_id,
-            kind: RefKind::RsDeclare,
+            kind: kind::RS_DECLARE.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -945,13 +953,13 @@ mod tests {
         let utils_id = seed_file(&db, repo_id, "src/utils.rs").await;
         let consumer_id = seed_file(&db, repo_id, "src/consumer.rs").await;
 
-        seed_ref(&db, utils_id, "Foo", RefKind::RsDeclare, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::RS_DECLARE, None).await;
         // Explicit import, not glob
-        seed_ref(&db, consumer_id, "crate::utils::Foo", RefKind::RsUse, None).await;
+        seed_ref(&db, consumer_id, "crate::utils::Foo", kind::RS_USE, None).await;
 
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: utils_id,
-            kind: RefKind::RsDeclare,
+            kind: kind::RS_DECLARE.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -972,13 +980,13 @@ mod tests {
         let utils_id = seed_file(&db, repo_id, "src/utils.rs").await;
         let consumer_id = seed_file(&db, repo_id, "src/consumer.rs").await;
 
-        seed_ref(&db, utils_id, "Foo", RefKind::RsDeclare, None).await;
+        seed_ref(&db, utils_id, "Foo", kind::RS_DECLARE, None).await;
         // Glob from a different module
-        seed_ref(&db, consumer_id, "crate::other::*", RefKind::RsUse, None).await;
+        seed_ref(&db, consumer_id, "crate::other::*", kind::RS_USE, None).await;
 
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: utils_id,
-            kind: RefKind::RsDeclare,
+            kind: kind::RS_DECLARE.to_string(),
             old_name: "Foo".to_string(),
             new_name: "Bar".to_string(),
             new_span_start: 0,
@@ -1015,11 +1023,11 @@ mod tests {
 
         // Barrel must produce both ExportName and ImportName for re-exported names
         let barrel_export_names: Vec<_> = barrel_refs.iter()
-            .filter(|r| r.kind == RefKind::ExportName)
+            .filter(|r| r.kind == kind::EXPORT_NAME)
             .map(|r| r.value.as_str())
             .collect();
         let barrel_import_names: Vec<_> = barrel_refs.iter()
-            .filter(|r| r.kind == RefKind::ImportName)
+            .filter(|r| r.kind == kind::IMPORT_NAME)
             .map(|r| r.value.as_str())
             .collect();
         assert!(barrel_export_names.contains(&"computeScore"), "barrel missing ExportName computeScore");
@@ -1046,35 +1054,45 @@ mod tests {
                     None => None,
                 };
                 // Use INSERT OR IGNORE -- same as scanner flush and watcher replace_file_refs
-                sqlx::query(
-                    "INSERT OR IGNORE INTO refs (string_id, file_id, span_start, span_end, is_path, ref_kind, parent_key_string_id, node_path)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                let ref_id = sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO refs (string_id, file_id, span_start, span_end, is_path, parent_key_string_id, node_path)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(file_id, string_id, span_start) DO UPDATE SET span_end = excluded.span_end
+                     RETURNING id",
                 )
                 .bind(string_id)
                 .bind(file_id)
                 .bind(r.span_start as i64)
                 .bind(r.span_end as i64)
                 .bind(r.is_path)
-                .bind(r.kind.as_u8() as i64)
                 .bind(parent_key_sid)
                 .bind(r.node_path.as_deref())
+                .fetch_one(&db)
+                .await
+                .unwrap();
+                sqlx::query(
+                    "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES (?, ?, ?)",
+                )
+                .bind(ref_id)
+                .bind(&r.rule_name)
+                .bind(&r.kind)
                 .execute(&db)
                 .await
                 .unwrap();
             }
         }
 
-        // Wire up ImportPath target_file_id links (barrel→utils, consumer→barrel)
+        // Wire up ImportPath target_file_id links (barrel->utils, consumer->barrel)
         sqlx::query(
-            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND ref_kind = 10 AND string_id IN (SELECT id FROM strings WHERE value = './utils')"
-        ).bind(utils_id).bind(barrel_id).execute(&db).await.unwrap();
+            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN matches_v2 m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_path' AND r.string_id IN (SELECT id FROM strings WHERE value = './utils'))"
+        ).bind(utils_id).bind(barrel_id).bind(barrel_id).execute(&db).await.unwrap();
         sqlx::query(
-            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND ref_kind = 10 AND string_id IN (SELECT id FROM strings WHERE value = './barrel')"
-        ).bind(barrel_id).bind(consumer_id).execute(&db).await.unwrap();
+            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN matches_v2 m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_path' AND r.string_id IN (SELECT id FROM strings WHERE value = './barrel'))"
+        ).bind(barrel_id).bind(consumer_id).bind(consumer_id).execute(&db).await.unwrap();
 
         // Verify ImportName refs survived insertion
         let barrel_import_count: i64 = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM refs WHERE file_id = ? AND ref_kind = 11"
+            "SELECT COUNT(*) FROM refs r JOIN matches_v2 m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_name'"
         ).bind(barrel_id).fetch_one(&db).await.unwrap();
         assert!(barrel_import_count >= 2,
             "barrel.ts should have ImportName refs after INSERT OR IGNORE (got {barrel_import_count})");
@@ -1082,7 +1100,7 @@ mod tests {
         // Simulate rename: computeScore → calculateScore in utils.ts
         let changes = vec![Change::Decl(DeclChange::Rename {
             file_id: utils_id,
-            kind: RefKind::ExportName,
+            kind: kind::EXPORT_NAME.to_string(),
             old_name: "computeScore".to_string(),
             new_name: "calculateScore".to_string(),
             new_span_start: 0,

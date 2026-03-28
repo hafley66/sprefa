@@ -52,6 +52,7 @@ pub fn emit_refs(
     result: &MatchResult,
     action: &Action,
     value_pattern: Option<&ValuePattern>,
+    rule_name: &str,
 ) -> Vec<RawRef> {
     let mut captures = result.captures.clone();
 
@@ -71,7 +72,7 @@ pub fn emit_refs(
     let mut refs = vec![];
 
     for emit in &action.emit {
-        if let Some(raw) = emit_one(emit, &captures, node_path.as_deref()) {
+        if let Some(raw) = emit_one(emit, rule_name, &captures, node_path.as_deref()) {
             refs.push(raw);
         }
     }
@@ -79,7 +80,7 @@ pub fn emit_refs(
     refs
 }
 
-fn emit_one(emit: &EmitRef, captures: &HashMap<String, CapturedValue>, node_path: Option<&str>) -> Option<RawRef> {
+fn emit_one(emit: &EmitRef, rule_name: &str, captures: &HashMap<String, CapturedValue>, node_path: Option<&str>) -> Option<RawRef> {
     let cv = captures.get(&emit.capture)?;
 
     let parent_key = emit
@@ -92,7 +93,8 @@ fn emit_one(emit: &EmitRef, captures: &HashMap<String, CapturedValue>, node_path
         value: cv.text.clone(),
         span_start: cv.span_start,
         span_end: cv.span_end,
-        kind: emit.kind.to_ref_kind(),
+        kind: emit.kind.to_kind_str().to_string(),
+        rule_name: rule_name.to_string(),
         is_path: false,
         parent_key,
         node_path: node_path.map(String::from),

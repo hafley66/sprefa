@@ -12,8 +12,7 @@ use notify::{
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
-use sprefa_extract::{Extractor, RawRef};
-use sprefa_schema::RefKind;
+use sprefa_extract::{kind, Extractor, RawRef};
 
 use crate::change::{Change, DeclChange, FsChange};
 use crate::diff::diff_refs;
@@ -539,31 +538,33 @@ async fn load_decl_refs(
 ) -> Result<Vec<RawRef>> {
     let placeholders = DECL_KINDS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
-        "SELECT r.ref_kind, s.value, r.span_start, r.span_end
+        "SELECT m.kind, s.value, r.span_start, r.span_end, m.rule_name
          FROM refs r
          JOIN strings s ON r.string_id = s.id
-         WHERE r.file_id = ? AND r.ref_kind IN ({})
+         JOIN matches_v2 m ON m.ref_id = r.id
+         WHERE r.file_id = ? AND m.kind IN ({})
          ORDER BY r.span_start",
         placeholders
     );
-    let mut query = sqlx::query_as::<_, (i64, String, i64, i64)>(&sql).bind(file_id);
+    let mut query = sqlx::query_as::<_, (String, String, i64, i64, String)>(&sql).bind(file_id);
     for kind in DECL_KINDS {
-        query = query.bind(kind.as_u8() as i64);
+        query = query.bind(*kind);
     }
-    let rows: Vec<(i64, String, i64, i64)> = query.fetch_all(pool).await?;
+    let rows = query.fetch_all(pool).await?;
 
     Ok(rows
         .into_iter()
-        .filter_map(|(kind, value, start, end)| {
-            Some(RawRef {
-                kind: RefKind::from_u8(kind as u8)?,
+        .map(|(kind, value, start, end, rule_name)| {
+            RawRef {
+                kind,
+                rule_name,
                 value,
                 span_start: start as u32,
                 span_end: end as u32,
                 is_path: false,
                 parent_key: None,
                 node_path: None,
-            })
+            }
         })
         .collect())
 }
@@ -580,6 +581,11 @@ async fn replace_file_refs(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
 
+    // Delete matches_v2 rows for refs in this file, then delete refs.
+    sqlx::query("DELETE FROM matches_v2 WHERE ref_id IN (SELECT id FROM refs WHERE file_id = ?)")
+        .bind(file_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM refs WHERE file_id = ?")
         .bind(file_id)
         .execute(&mut *tx)
@@ -630,16 +636,17 @@ async fn replace_file_refs(
     }
 
     // Resolve all foreign keys before bulk insert.
-    struct ResolvedRef {
+    struct ResolvedRef<'a> {
         string_id: i64,
         span_start: i64,
         span_end: i64,
         is_path: bool,
-        ref_kind: i64,
         parent_key_string_id: Option<i64>,
         node_path: Option<String>,
+        kind: &'a str,
+        rule_name: &'a str,
     }
-    let resolved: Vec<ResolvedRef> = new_refs
+    let resolved: Vec<ResolvedRef<'_>> = new_refs
         .iter()
         .filter_map(|r| {
             let &string_id = string_ids.get(&r.value)?;
@@ -648,19 +655,20 @@ async fn replace_file_refs(
                 span_start: r.span_start as i64,
                 span_end: r.span_end as i64,
                 is_path: r.is_path,
-                ref_kind: r.kind.as_u8() as i64,
                 parent_key_string_id: r.parent_key.as_ref().and_then(|pk| string_ids.get(pk).copied()),
                 node_path: r.node_path.clone(),
+                kind: &r.kind,
+                rule_name: &r.rule_name,
             })
         })
         .collect();
 
     // Bulk-insert refs.
     for chunk in resolved.chunks(200) {
-        let ph = chunk.iter().map(|_| "(?,?,?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
+        let ph = chunk.iter().map(|_| "(?,?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
             "INSERT OR IGNORE INTO refs
-             (string_id, file_id, span_start, span_end, is_path, ref_kind,
+             (string_id, file_id, span_start, span_end, is_path,
               parent_key_string_id, node_path)
              VALUES {ph}"
         );
@@ -672,9 +680,34 @@ async fn replace_file_refs(
                 .bind(r.span_start)
                 .bind(r.span_end)
                 .bind(r.is_path)
-                .bind(r.ref_kind)
                 .bind(r.parent_key_string_id)
                 .bind(r.node_path.as_deref());
+        }
+        q.execute(&mut *tx).await?;
+    }
+
+    // Read back ref IDs for matches_v2 insertion.
+    let ref_rows: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT id, string_id, span_start FROM refs WHERE file_id = ?",
+    )
+    .bind(file_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let ref_id_map: HashMap<(i64, i64), i64> = ref_rows
+        .into_iter()
+        .map(|(id, sid, ss)| ((sid, ss), id))
+        .collect();
+
+    // Bulk-insert matches_v2.
+    for chunk in resolved.chunks(200) {
+        let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "INSERT OR IGNORE INTO matches_v2 (ref_id, rule_name, kind) VALUES {ph}"
+        );
+        let mut q = sqlx::query(&sql);
+        for r in chunk {
+            let ref_id = ref_id_map.get(&(r.string_id, r.span_start)).copied().unwrap_or(0);
+            q = q.bind(ref_id).bind(r.rule_name).bind(r.kind);
         }
         q.execute(&mut *tx).await?;
     }
@@ -684,9 +717,9 @@ async fn replace_file_refs(
     Ok(())
 }
 
-const DECL_KINDS: &[RefKind] = &[
-    RefKind::ExportName,
-    RefKind::RsDeclare,
-    RefKind::RsMod,
-    RefKind::ImportName,
+const DECL_KINDS: &[&str] = &[
+    kind::EXPORT_NAME,
+    kind::RS_DECLARE,
+    kind::RS_MOD,
+    kind::IMPORT_NAME,
 ];
