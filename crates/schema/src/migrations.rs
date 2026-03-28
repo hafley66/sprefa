@@ -183,6 +183,8 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await;
 
+
+
     tracing::info!("migrations complete ({} statements)", MIGRATIONS.len());
     Ok(())
 }
