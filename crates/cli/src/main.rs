@@ -194,6 +194,23 @@ enum Command {
         repo: Option<String>,
     },
 
+    /// Run a read-only SQL query against the index database
+    ///
+    /// Opens the sprefa SQLite database and executes the given SQL statement.
+    /// Only SELECT statements are allowed (no INSERT, UPDATE, DELETE, DROP, etc).
+    /// Results are printed as tab-separated values with a header row.
+    ///
+    /// The database location is resolved from config (default ~/.sprefa/index.db).
+    ///
+    /// Examples:
+    ///   sprefa sql "SELECT COUNT(*) FROM refs"
+    ///   sprefa sql "SELECT s.value, m.kind FROM strings s JOIN refs r ON r.string_id = s.id JOIN matches m ON m.ref_id = r.id LIMIT 20"
+    ///   sprefa sql "SELECT s.value, COUNT(*) as cnt FROM strings s JOIN refs r ON r.string_id = s.id GROUP BY s.value ORDER BY cnt DESC LIMIT 10"
+    Sql {
+        /// SQL SELECT statement to execute
+        sql: String,
+    },
+
     /// All-in-one: scan + watch + serve
     ///
     /// Runs the full pipeline in a single process:
@@ -249,6 +266,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Scan { repo, once }) => cmd_scan(&cli.config, repo.as_deref(), once).await?,
         Some(Command::Status) => cmd_status(&cli.config).await?,
         Some(Command::Query { term, scope, once }) => cmd_query(&cli.config, &term, scope.as_deref(), once).await?,
+        Some(Command::Sql { sql }) => cmd_sql(&cli.config, &sql).await?,
         Some(Command::Serve) => cmd_serve(&cli.config).await?,
         Some(Command::Watch { repo }) => cmd_watch(&cli.config, repo.as_deref()).await?,
         Some(Command::Daemon { repo, no_scan }) => cmd_daemon(&cli.config, repo.as_deref(), no_scan).await?,
@@ -507,6 +525,79 @@ fn print_query_hits(hits: &[sprefa_schema::QueryHit], term: &str) {
         }
     }
     println!("\n{} strings matched", hits.len());
+}
+
+async fn cmd_sql(config_path: &Option<PathBuf>, sql: &str) -> anyhow::Result<()> {
+    // Block anything that isn't a SELECT.
+    let trimmed = sql.trim();
+    let first_word = trimmed.split_whitespace().next().unwrap_or("");
+    if !first_word.eq_ignore_ascii_case("SELECT")
+        && !first_word.eq_ignore_ascii_case("WITH")
+        && !first_word.eq_ignore_ascii_case("EXPLAIN")
+        && !first_word.eq_ignore_ascii_case("PRAGMA")
+    {
+        anyhow::bail!("only SELECT, WITH, EXPLAIN, and PRAGMA statements are allowed");
+    }
+
+    // Reject semicolons that could chain a second statement.
+    let without_trailing = trimmed.trim_end_matches(';').trim();
+    if without_trailing.contains(';') {
+        anyhow::bail!("multiple statements are not allowed");
+    }
+
+    let config = load_cfg(config_path)?;
+    let pool = init_db(&config.db_path()).await?;
+
+    let rows: Vec<sqlx::sqlite::SqliteRow> =
+        sqlx::query(trimmed).fetch_all(&pool).await?;
+
+    if rows.is_empty() {
+        println!("(0 rows)");
+        return Ok(());
+    }
+
+    // Print header from column names.
+    use sqlx::Row;
+    let columns = rows[0].columns();
+    let col_names: Vec<&str> = columns.iter().map(|c| c.name()).collect();
+    println!("{}", col_names.join("\t"));
+
+    // Print each row. Try to decode each column as text; fall back to integer then to raw display.
+    use sqlx::Column;
+    use sqlx::TypeInfo;
+    for row in &rows {
+        let vals: Vec<String> = columns
+            .iter()
+            .map(|col| {
+                let idx = col.ordinal();
+                let type_name = col.type_info().name();
+                match type_name {
+                    "INTEGER" | "BIGINT" | "INT" | "INT8" => {
+                        row.try_get::<i64, _>(idx)
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|_| "NULL".to_string())
+                    }
+                    "REAL" | "DOUBLE" | "FLOAT" => {
+                        row.try_get::<f64, _>(idx)
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|_| "NULL".to_string())
+                    }
+                    _ => {
+                        // TEXT, BLOB, or unknown -- try string first
+                        row.try_get::<String, _>(idx)
+                            .unwrap_or_else(|_| {
+                                row.try_get::<i64, _>(idx)
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|_| "NULL".to_string())
+                            })
+                    }
+                }
+            })
+            .collect();
+        println!("{}", vals.join("\t"));
+    }
+    println!("\n({} rows)", rows.len());
+    Ok(())
 }
 
 async fn cmd_serve(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
