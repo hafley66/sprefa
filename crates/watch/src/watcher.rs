@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -582,17 +582,16 @@ async fn replace_file_refs(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
 
-    // Delete matches rows for refs in this file, then delete refs.
-    sqlx::query("DELETE FROM matches WHERE ref_id IN (SELECT id FROM refs WHERE file_id = ?)")
-        .bind(file_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM refs WHERE file_id = ?")
-        .bind(file_id)
-        .execute(&mut *tx)
-        .await?;
-
     if new_refs.is_empty() {
+        // No new refs -- prune all existing refs + matches for this file.
+        sqlx::query("DELETE FROM matches WHERE ref_id IN (SELECT id FROM refs WHERE file_id = ?)")
+            .bind(file_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM refs WHERE file_id = ?")
+            .bind(file_id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         return Ok(());
     }
@@ -636,7 +635,7 @@ async fn replace_file_refs(
         }
     }
 
-    // Resolve all foreign keys before bulk insert.
+    // Resolve all foreign keys before bulk operations.
     struct ResolvedRef<'a> {
         string_id: i64,
         span_start: i64,
@@ -664,14 +663,20 @@ async fn replace_file_refs(
         })
         .collect();
 
-    // Bulk-insert refs.
+    // Upsert refs: existing refs keep their IDs, new refs get inserted.
+    // UNIQUE(file_id, string_id, span_start) is the stable identity.
     for chunk in resolved.chunks(200) {
         let ph = chunk.iter().map(|_| "(?,?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "INSERT OR IGNORE INTO refs
+            "INSERT INTO refs
              (string_id, file_id, span_start, span_end, is_path,
               parent_key_string_id, node_path)
-             VALUES {ph}"
+             VALUES {ph}
+             ON CONFLICT(file_id, string_id, span_start) DO UPDATE SET
+               span_end = excluded.span_end,
+               is_path = excluded.is_path,
+               parent_key_string_id = excluded.parent_key_string_id,
+               node_path = excluded.node_path"
         );
         let mut q = sqlx::query(&sql);
         for r in chunk {
@@ -687,23 +692,50 @@ async fn replace_file_refs(
         q.execute(&mut *tx).await?;
     }
 
-    // Read back ref IDs for matches insertion.
-    let ref_rows: Vec<(i64, i64, i64)> = sqlx::query_as(
+    // Prune stale refs: refs in DB for this file that aren't in the new set.
+    let new_keys: HashSet<(i64, i64)> = resolved.iter()
+        .map(|r| (r.string_id, r.span_start))
+        .collect();
+    let all_refs: Vec<(i64, i64, i64)> = sqlx::query_as(
         "SELECT id, string_id, span_start FROM refs WHERE file_id = ?",
     )
     .bind(file_id)
     .fetch_all(&mut *tx)
     .await?;
-    let ref_id_map: HashMap<(i64, i64), i64> = ref_rows
-        .into_iter()
-        .map(|(id, sid, ss)| ((sid, ss), id))
+    let stale_ids: Vec<i64> = all_refs.iter()
+        .filter(|(_, sid, ss)| !new_keys.contains(&(*sid, *ss)))
+        .map(|(id, _, _)| *id)
+        .collect();
+    // Delete matches + refs for stale refs (cascading: matches first).
+    if !stale_ids.is_empty() {
+        for chunk in stale_ids.chunks(500) {
+            let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!("DELETE FROM matches WHERE ref_id IN ({ph})");
+            let mut q = sqlx::query(&sql);
+            for id in chunk { q = q.bind(id); }
+            q.execute(&mut *tx).await?;
+
+            let sql = format!("DELETE FROM refs WHERE id IN ({ph})");
+            let mut q = sqlx::query(&sql);
+            for id in chunk { q = q.bind(id); }
+            q.execute(&mut *tx).await?;
+        }
+    }
+
+    // Build ref ID map from surviving + new refs.
+    let ref_id_map: HashMap<(i64, i64), i64> = all_refs.iter()
+        .filter(|(_, sid, ss)| new_keys.contains(&(*sid, *ss)))
+        .map(|(id, sid, ss)| ((*sid, *ss), *id))
         .collect();
 
-    // Bulk-insert matches.
+    // Upsert matches: UNIQUE(ref_id, rule_name, kind) is the stable identity.
+    // Matches have no mutable columns beyond the key, so ON CONFLICT is a no-op
+    // update -- the point is to not fail on existing rows.
     for chunk in resolved.chunks(200) {
         let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES {ph}"
+            "INSERT INTO matches (ref_id, rule_name, kind) VALUES {ph}
+             ON CONFLICT(ref_id, rule_name, kind) DO NOTHING"
         );
         let mut q = sqlx::query(&sql);
         for r in chunk {
@@ -713,8 +745,50 @@ async fn replace_file_refs(
         q.execute(&mut *tx).await?;
     }
 
+    // Prune stale matches: matches on surviving refs whose (rule_name, kind)
+    // combo is no longer in the new extraction.
+    let surviving_ref_ids: Vec<i64> = all_refs.iter()
+        .filter(|(_, sid, ss)| new_keys.contains(&(*sid, *ss)))
+        .map(|(id, _, _)| *id)
+        .collect();
+    if !surviving_ref_ids.is_empty() {
+        // Build set of (ref_id, rule_name, kind) from new extraction.
+        let new_match_keys: HashSet<(i64, &str, &str)> = resolved.iter()
+            .filter_map(|r| {
+                let ref_id = ref_id_map.get(&(r.string_id, r.span_start))?;
+                Some((*ref_id, r.rule_name, r.kind))
+            })
+            .collect();
+
+        // Load existing matches for surviving refs.
+        for chunk in surviving_ref_ids.chunks(500) {
+            let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT id, ref_id, rule_name, kind FROM matches WHERE ref_id IN ({ph})"
+            );
+            let mut q = sqlx::query_as::<_, (i64, i64, String, String)>(&sql);
+            for id in chunk { q = q.bind(id); }
+            let existing = q.fetch_all(&mut *tx).await?;
+
+            let stale_match_ids: Vec<i64> = existing.iter()
+                .filter(|(_, rid, rn, k)| {
+                    !new_match_keys.contains(&(*rid, rn.as_str(), k.as_str()))
+                })
+                .map(|(id, _, _, _)| *id)
+                .collect();
+
+            if !stale_match_ids.is_empty() {
+                let ph = stale_match_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let sql = format!("DELETE FROM matches WHERE id IN ({ph})");
+                let mut q = sqlx::query(&sql);
+                for id in &stale_match_ids { q = q.bind(id); }
+                q.execute(&mut *tx).await?;
+            }
+        }
+    }
+
     tx.commit().await?;
-    tracing::debug!(file_id, ref_count = new_refs.len(), "db: refs replaced");
+    tracing::debug!(file_id, ref_count = new_refs.len(), "db: refs upserted");
     Ok(())
 }
 
