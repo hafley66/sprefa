@@ -43,6 +43,7 @@ COMMANDS:
   sprefa serve                   HTTP server only (no watching, no scan)
   sprefa daemon                  All three combined
   sprefa query <term>            Trigram substring search
+  sprefa sql \"<SELECT ...>\"      Run read-only SQL against the index DB
   sprefa status                  Show indexed repos with file/ref counts
 
 TYPICAL WORKFLOWS:

@@ -2430,7 +2430,6 @@ dependencies = [
  "anyhow",
  "insta",
  "serde",
- "sprefa_schema",
 ]
 
 [[package]]
@@ -2462,24 +2461,6 @@ dependencies = [
  "oxc_syntax",
  "sprefa_extract",
  "sprefa_schema",
-]
-
-[[package]]
-name = "sprefa_query"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "glob",
- "sprefa_config",
- "sprefa_extract",
- "sprefa_js",
- "sprefa_rs",
- "sprefa_rules",
- "sprefa_scan",
- "sprefa_schema",
- "sqlx",
- "tempfile",
- "tokio",
 ]
 
 [[package]]

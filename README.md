@@ -10,10 +10,15 @@ sprefa is a daemon that watches project folders, maintains a SQLite index of eve
 scan files -> extract refs -> index in SQLite -> watch -> detect change -> plan rewrites -> apply
 ```
 
-Every interesting string in a codebase is a **ref**: a file contains a string at a byte offset, classified by kind (import path, export name, use statement, JSON key, YAML value, dependency name, etc.). The string is deduplicated and normalized for fuzzy matching. Refs link files to strings. Resolved imports link refs to target files. That's the whole model.
+Every interesting string in a codebase is a **ref**: a file contains a string at a byte offset. Semantic interpretation lives on **matches**: each ref can have multiple matches from different extraction rules, each with a kind string and rule name. The string is deduplicated and normalized for fuzzy matching. Refs link files to strings. Resolved imports link refs to target files. That's the whole model.
 
 ```
 repos 1->M files 1->M refs M<-1 strings
+                        |
+                    matches (kind TEXT, rule_name TEXT)
+                        |
+                    match_labels (key-value metadata)
+
 ref.target_file_id -> files         (resolved cross-file link)
 refs.parent_key_string_id -> strings (key-value pairings)
 ```
@@ -76,6 +81,7 @@ sprefa scan [--repo <name>] [--once] # index repos only
 sprefa watch [--repo <name>]         # watch and auto-rewrite only
 sprefa serve                         # HTTP server only (127.0.0.1:9400)
 sprefa query <term> [--once]         # trigram substring search
+sprefa sql "<SELECT ...>"            # read-only SQL against the index DB
 sprefa status                        # show indexed repos
 sprefa --readme                      # print this document
 sprefa --json <command>              # structured JSON logs (all commands)
@@ -98,6 +104,19 @@ The individual pieces are also available as separate commands for flexibility:
 **`sprefa watch`** -- filesystem watching only, no HTTP server, no initial scan. Requires a prior `sprefa scan` to populate the index.
 
 **`sprefa serve`** -- HTTP server only, no watching, no scanning. When `[daemon].url` is set in config, CLI commands (`scan`, `query`) delegate to the daemon over HTTP.
+
+### Direct SQL access
+
+```bash
+sprefa sql "SELECT COUNT(*) FROM refs"
+sprefa sql "SELECT s.value, m.kind, m.rule_name
+            FROM strings s
+            JOIN refs r ON r.string_id = s.id
+            JOIN matches m ON m.ref_id = r.id
+            LIMIT 20"
+```
+
+Opens the index DB (resolved from config) and runs the query. Only SELECT, WITH, EXPLAIN, and PRAGMA are allowed -- DML is blocked. Output is tab-separated with a header row. The database is the query language; this command just removes the need to find the file path.
 
 ### Structured logging
 

@@ -130,18 +130,6 @@ const MIGRATIONS: &[&str] = &[
         UNIQUE(repo_id, package_name, manifest_path)
     )
     "#,
-    // rules: authored extraction rules (populated by build.rs codegen or manual insert)
-    // rule_hash covers selector + all properties -- used to invalidate stale matches
-    r#"
-    CREATE TABLE IF NOT EXISTS rules (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        selector TEXT NOT NULL,
-        ref_kind TEXT NOT NULL,
-        rule_hash TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-    "#,
     // matches: semantic interpretation of physical refs
     // One ref can have multiple matches from different rules.
     // kind is a free-text string (no enum), rule_name identifies which rule produced it.

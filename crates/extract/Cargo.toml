@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-sprefa_schema = { path = "../schema" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 
