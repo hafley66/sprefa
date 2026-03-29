@@ -58,6 +58,7 @@ async fn setup_dual_branch_repo(
         db: db.clone(),
         normalize_config: None,
         global_filter: None,
+        link_rules: vec![],
     };
 
     // Scan as committed main

@@ -16,6 +16,7 @@ pub struct Scanner {
     pub db: SqlitePool,
     pub normalize_config: Option<sprefa_config::NormalizeConfig>,
     pub global_filter: Option<sprefa_config::FilterConfig>,
+    pub link_rules: Vec<sprefa_cache::LinkRule>,
 }
 
 pub struct ScanResult {
@@ -25,6 +26,7 @@ pub struct ScanResult {
     pub refs_inserted: usize,
     pub files_skipped: usize,
     pub targets_resolved: usize,
+    pub links_created: usize,
 }
 
 impl Scanner {
@@ -72,10 +74,11 @@ impl Scanner {
         ).await?;
 
         let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;
+        let links_created = sprefa_cache::resolve_match_links(&self.db, &config.name, &self.link_rules).await?;
 
         tracing::info!(
-            "{}/{}: {} refs, {} import targets resolved",
-            config.name, branch, refs_inserted, targets_resolved,
+            "{}/{}: {} refs, {} import targets resolved, {} match links",
+            config.name, branch, refs_inserted, targets_resolved, links_created,
         );
 
         Ok(ScanResult {
@@ -85,6 +88,7 @@ impl Scanner {
             refs_inserted,
             files_skipped,
             targets_resolved,
+            links_created,
         })
     }
 }

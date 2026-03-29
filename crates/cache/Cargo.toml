@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 sprefa_config = { path = "../config" }
+sprefa_rules = { path = "../rules" }
 sprefa_schema = { path = "../schema" }
 sprefa_index = { path = "../index" }
 sqlx = { workspace = true }

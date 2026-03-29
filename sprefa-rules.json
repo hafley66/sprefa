@@ -137,5 +137,11 @@
         { "capture": "member", "kind": "workspace_member" }
       ]
     }
+  ],
+  "link_rules": [
+    {
+      "kind": "import_binding",
+      "sql": "src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id"
+    }
   ]
 }

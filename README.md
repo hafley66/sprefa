@@ -10,7 +10,7 @@ sprefa is a daemon that watches project folders, maintains a SQLite index of eve
 scan files -> extract refs -> index in SQLite -> watch -> detect change -> plan rewrites -> apply
 ```
 
-Every interesting string in a codebase is a **ref**: a file contains a string at a byte offset. Semantic interpretation lives on **matches**: each ref can have multiple matches from different extraction rules, each with a kind string and rule name. The string is deduplicated and normalized for fuzzy matching. Refs link files to strings. Resolved imports link refs to target files. That's the whole model.
+Every interesting string in a codebase is a **ref**: a file contains a string at a byte offset. Semantic interpretation lives on **matches**: each ref can have multiple matches from different extraction rules, each with a kind string and rule name. The string is deduplicated and normalized for fuzzy matching. Refs link files to strings. Resolved imports link refs to target files. **Link rules** connect matches across files and repos (import_name to export_name, dep_name to package_name, image tag to git tag).
 
 ```
 repos 1->M files 1->M refs M<-1 strings
@@ -20,7 +20,8 @@ repos 1->M files 1->M refs M<-1 strings
                     match_labels (key-value metadata)
 
 ref.target_file_id -> files         (resolved cross-file link)
-refs.parent_key_string_id -> strings (key-value pairings)
+refs.parent_key_string_id -> strings (intra-file sibling pairing)
+match_links (source_match_id, target_match_id, link_kind)  -- cross-file/cross-repo semantic links
 ```
 
 When something changes, the watcher classifies the event (file move, declaration rename, delete), queries the index for every ref affected, computes new values using language-specific path rewriters, and applies the edits to disk.
@@ -196,6 +197,7 @@ git ls-files
   -> per-file extraction (JS extractor, Rust extractor, rule extractor)
   -> bulk flush to SQLite (dedup strings, chunk inserts)
   -> resolve import targets (oxc_resolver with tsconfig support, bare specifier fallback)
+  -> resolve match links (execute link rules from sprefa-rules.json)
 ```
 
 ### Watch pipeline (watch)
@@ -276,6 +278,126 @@ Steps can **capture** values by name as they match. A `value` regex can split/fi
 
 Rules replace hard-coded Rust for each new file format or naming convention. When the way services reference each other changes, you edit a JSON rule, not source code. JSON Schema is generated from the Rust types for IDE intellisense.
 
+## Link rules
+
+`match_links` edges between matches, defined in `sprefa-rules.json`. Each rule = a `kind` + a raw SQL WHERE fragment injected into a fixed skeleton.
+
+```
+extraction rules produce matches -> link rules connect them across files/repos
+```
+
+```json
+{
+  "link_rules": [
+    {
+      "kind": "import_binding",
+      "sql": "src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id"
+    },
+    {
+      "kind": "dependency",
+      "sql": "src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm"
+    }
+  ]
+}
+```
+
+### Skeleton
+
+`sql` is injected as `AND (<sql>)`:
+
+```sql
+INSERT OR IGNORE INTO match_links (source_match_id, target_match_id, link_kind)
+SELECT src_m.id, tgt_m.id, '<kind>'
+FROM matches src_m
+JOIN refs    src_r  ON src_m.ref_id     = src_r.id
+JOIN strings src_s  ON src_r.string_id  = src_s.id
+JOIN files   src_f  ON src_r.file_id    = src_f.id
+JOIN repos   src_rp ON src_f.repo_id    = src_rp.id
+JOIN matches tgt_m  ON tgt_m.id != src_m.id
+JOIN refs    tgt_r  ON tgt_m.ref_id     = tgt_r.id
+JOIN strings tgt_s  ON tgt_r.string_id  = tgt_s.id
+JOIN files   tgt_f  ON tgt_r.file_id    = tgt_f.id
+WHERE src_rp.name = :repo_name
+  AND NOT EXISTS (
+      SELECT 1 FROM match_links ml
+      WHERE ml.source_match_id = src_m.id AND ml.link_kind = '<kind>'
+  )
+  AND (<sql>)
+```
+
+### Columns available in `sql`
+
+- **src_m** (matches) -> id, ref_id, rule_name, kind
+- **src_r** (refs) -> id, string_id, file_id, span_start, span_end, target_file_id, parent_key_string_id, node_path
+- **src_s** (strings) -> id, value, norm, norm2
+- **src_f** (files) -> id, repo_id, path, stem, ext
+- **src_rp** (repos) -> id, name, root_path
+- **tgt_m** (matches) -> id, ref_id, rule_name, kind
+- **tgt_r** (refs) -> id, string_id, file_id, span_start, span_end, target_file_id, parent_key_string_id, node_path
+- **tgt_s** (strings) -> id, value, norm, norm2
+- **tgt_f** (files) -> id, repo_id, path, stem, ext
+
+Raw SQL, no sanitization. Local toolchain tradeoff. Idempotent via NOT EXISTS + INSERT OR IGNORE. Runs after extraction + import resolution on every scan.
+
+### How rules flow through the system
+
+```mermaid
+graph TD
+    subgraph FS["Filesystem"]
+        RF[sprefa-rules.json]
+        SRC[source files<br/>js/ts/rs/yaml/json/toml]
+    end
+
+    subgraph RUST["Rust types"]
+        RS[RuleSet]
+        R[Rule + SelectStep]
+        LR[LinkRule]
+        CE[CompiledRule]
+        RE[RuleExtractor]
+        RR[RawRef]
+    end
+
+    subgraph SCAN["Scan pipeline"]
+        EX[extract per file]
+        FL[flush to DB]
+        RIT[resolve_import_targets]
+        RML[resolve_match_links]
+    end
+
+    subgraph DB["SQLite"]
+        STR[(strings)]
+        REF[(refs)]
+        MAT[(matches)]
+        ML[(match_links)]
+        FIL[(files)]
+    end
+
+    RF -->|serde_json| RS
+    RS --> R
+    RS --> LR
+    R -->|compile| CE
+    CE --> RE
+
+    SRC --> EX
+    RE -->|walk + capture| EX
+    EX --> RR
+    RR --> FL
+
+    FL --> STR
+    FL --> REF
+    FL --> MAT
+    FL --> FIL
+
+    RIT -->|oxc_resolver| REF
+    LR -->|sql injected into skeleton| RML
+    RML --> ML
+
+    REF -.->|ref_id| MAT
+    MAT -.->|source/target match_id| ML
+    REF -.->|string_id| STR
+    REF -.->|file_id| FIL
+```
+
 ## Schema
 
 **RefKind enum:**
@@ -300,7 +422,7 @@ crates/
   extract/      Extractor trait + RawRef type
   index/        pure extraction: file enumeration, parallel rayon walk, xxh3 hashing
   cache/        DB writes: bulk flush, import target resolution (oxc_resolver),
-                scan context (skip set by content hash + scanner hash)
+                match link resolution, scan context (skip set by content hash + scanner hash)
   rules/        declarative JSON rule engine: types, tree walker, create_matches, JSON Schema
   js/           oxc-based JS/TS extractor (imports, exports, require, re-exports)
   rs/           syn-based Rust extractor (use trees, declarations, mod, extern crate)
@@ -329,4 +451,17 @@ crates/
 
 ## Testing
 
-180+ tests using `insta` snapshot assertions and sqlx in-memory SQLite. Coverage spans: config parsing, filter resolution, source discovery, rule deserialization + tree walking + ref emission, cross-format dep extraction (package-lock, pnpm-lock), bulk flush correctness (dedup, idempotency, chunk boundaries), scan context skip set loading and invalidation, import target resolution (relative, tsconfig paths, bare specifiers, directory indexes), JS/TS extraction (all import/export variants including side-effect, type-only, dynamic exclusion, namespace re-export), Rust extraction (use trees with nested groups/self/glob/rename, declarations, async fn, pub(crate), impl-for-trait, spans), Rust module path conversion (workspace crates, mod.rs, multiple src/ dirs), JS path rewriting (extension conventions, index stripping, cross-tree monorepo, scoped packages), Rust module path rewriting (double super::, self:: fallback, mod.rs moves, super beyond crate root), declaration diffing (threshold boundaries, cross-kind isolation, swap detection), edit application (grow/shrink, multi-file, boundary edits, missing files).
+295+ tests using `insta` snapshot assertions and sqlx in-memory SQLite. Coverage spans: config parsing, filter resolution, source discovery, rule deserialization + tree walking + ref emission, cross-format dep extraction (package-lock, pnpm-lock), bulk flush correctness (dedup, idempotency, chunk boundaries), scan context skip set loading and invalidation, import target resolution (relative, tsconfig paths, bare specifiers, directory indexes), match link resolution (generic link rule execution, cross-repo norm linking, idempotency, multiple rules in sequence), JS/TS extraction (all import/export variants including side-effect, type-only, dynamic exclusion, namespace re-export), Rust extraction (use trees with nested groups/self/glob/rename, declarations, async fn, pub(crate), impl-for-trait, spans), Rust module path conversion (workspace crates, mod.rs, multiple src/ dirs), JS path rewriting (extension conventions, index stripping, cross-tree monorepo, scoped packages), Rust module path rewriting (double super::, self:: fallback, mod.rs moves, super beyond crate root), declaration diffing (threshold boundaries, cross-kind isolation, swap detection), edit application (grow/shrink, multi-file, boundary edits, missing files).
+
+## Roadmap
+
+- [ ] Generic comment parser: line-comment extraction across languages (// # -- %% etc.) to capture annotations, TODOs, and cross-ref hints embedded in comments. Since comment syntax per language is just a line prefix, a small grammar table covers most languages without needing full AST parsing.
+- [ ] Populate git_tags during scan (git tag --list per repo)
+- [ ] Production link rules for: helm image_repo/image_tag to repos+tags, dep_name to package_name by norm
+- [ ] Repo name as a matchable entity: extract package_name from manifests so link rules can join config values to repos by norm match (subsumes repo_packages table)
+- [ ] Rust super::/self:: resolution in rs_uses_with_prefix queries
+- [ ] Static type/property tree extraction for rename propagation through type hierarchies
+- [ ] tree-sitter incremental parsing for watch-path re-extraction
+- [ ] ast-grep lib integration for structural pattern matching (priority 5 parser)
+- [ ] SCIP indexer consumption for languages without dedicated extractors
+- [ ] Link rule DSL to replace raw SQL injection with a bounded predicate language

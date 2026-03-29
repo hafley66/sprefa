@@ -7,6 +7,94 @@ pub struct RuleSet {
     #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub rules: Vec<Rule>,
+    /// Link rules create edges in `match_links` between matches produced by
+    /// extraction rules. Each link rule supplies a raw SQL WHERE clause that
+    /// is injected into a fixed query skeleton.
+    ///
+    /// ## SQL skeleton
+    ///
+    /// The engine runs each link rule against this template:
+    ///
+    /// ```sql
+    /// INSERT OR IGNORE INTO match_links (source_match_id, target_match_id, link_kind)
+    /// SELECT src_m.id, tgt_m.id, '<link_rule.kind>'
+    /// FROM matches src_m
+    /// JOIN refs    src_r ON src_m.ref_id     = src_r.id
+    /// JOIN strings src_s ON src_r.string_id  = src_s.id
+    /// JOIN files   src_f ON src_r.file_id    = src_f.id
+    /// JOIN repos   src_rp ON src_f.repo_id   = src_rp.id
+    ///
+    /// JOIN matches tgt_m ON tgt_m.id != src_m.id
+    /// JOIN refs    tgt_r ON tgt_m.ref_id     = tgt_r.id
+    /// JOIN strings tgt_s ON tgt_r.string_id  = tgt_s.id
+    /// JOIN files   tgt_f ON tgt_r.file_id    = tgt_f.id
+    ///
+    /// WHERE src_rp.name = :repo_name
+    ///   AND NOT EXISTS (
+    ///       SELECT 1 FROM match_links ml
+    ///       WHERE ml.source_match_id = src_m.id AND ml.link_kind = '<link_rule.kind>'
+    ///   )
+    ///   AND (<link_rule.sql>)        -- ← your WHERE clause goes here
+    /// ```
+    ///
+    /// ## Available columns in your WHERE clause
+    ///
+    /// | Alias   | Table   | Useful columns                                     |
+    /// |---------|---------|----------------------------------------------------|
+    /// | src_m   | matches | id, ref_id, rule_name, kind                        |
+    /// | src_r   | refs    | id, string_id, file_id, span_start, span_end,      |
+    /// |         |         | target_file_id, parent_key_string_id, node_path     |
+    /// | src_s   | strings | id, value, norm, norm2                             |
+    /// | src_f   | files   | id, repo_id, path, stem, ext                       |
+    /// | src_rp  | repos   | id, name, root_path                                |
+    /// | tgt_m   | matches | id, ref_id, rule_name, kind                        |
+    /// | tgt_r   | refs    | id, string_id, file_id, span_start, span_end,      |
+    /// |         |         | target_file_id, parent_key_string_id, node_path     |
+    /// | tgt_s   | strings | id, value, norm, norm2                             |
+    /// | tgt_f   | files   | id, repo_id, path, stem, ext                       |
+    ///
+    /// ## Examples
+    ///
+    /// Import binding (scoped to resolved target file, exact string match):
+    /// ```json
+    /// {
+    ///   "kind": "import_binding",
+    ///   "sql": "src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id"
+    /// }
+    /// ```
+    ///
+    /// Cross-repo dep linking by normalized name:
+    /// ```json
+    /// {
+    ///   "kind": "dependency",
+    ///   "sql": "src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm"
+    /// }
+    /// ```
+    ///
+    /// ## WARNING: raw SQL injection
+    ///
+    /// The `sql` field is interpolated directly into the query with no
+    /// sanitization. This is a local developer toolchain, not a web service.
+    /// The tradeoff is intentional: full SQL expressiveness for prototyping,
+    /// with a documented skeleton so the user knows exactly what they're
+    /// plugging into. A DSL may replace this in the future.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_rules: Vec<LinkRule>,
+}
+
+/// A link rule creates edges in `match_links` between matches.
+///
+/// The `sql` field is a raw SQL WHERE fragment injected into the skeleton
+/// documented on [`RuleSet::link_rules`]. See that doc comment for the
+/// full template and available column aliases.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LinkRule {
+    /// Identifier for this link rule. Written to match_links.link_kind
+    /// and used in log messages.
+    pub kind: String,
+    /// Raw SQL WHERE clause. Plugged into the skeleton as `AND (<sql>)`.
+    /// Available aliases: src_m, src_r, src_s, src_f, src_rp, tgt_m, tgt_r, tgt_s, tgt_f.
+    pub sql: String,
 }
 
 /// A single extraction rule.

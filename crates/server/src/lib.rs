@@ -113,6 +113,7 @@ struct ScanResultItem {
     files_scanned: usize,
     refs_inserted: usize,
     targets_resolved: usize,
+    links_created: usize,
 }
 
 async fn scan_handler(
@@ -166,6 +167,7 @@ async fn scan_handler(
                     files_scanned: r.files_scanned,
                     refs_inserted: r.refs_inserted,
                     targets_resolved: r.targets_resolved,
+                    links_created: r.links_created,
                 }),
                 Err(e) => tracing::warn!("{}/{}: scan failed: {}", repo.name, branch, e),
             }

@@ -54,6 +54,7 @@ fn make_scanner(db: SqlitePool) -> Scanner {
         db,
         normalize_config: None,
         global_filter: None,
+        link_rules: vec![],
     }
 }
 

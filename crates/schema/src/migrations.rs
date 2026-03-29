@@ -155,6 +155,21 @@ const MIGRATIONS: &[&str] = &[
     )
     "#,
     "CREATE INDEX IF NOT EXISTS idx_match_labels_match_id ON match_labels(match_id)",
+    // match_links: cross-file semantic links between matches.
+    // e.g. import_name in file A -> export_name in file B.
+    // Additive-only table: can DROP + recreate without touching refs/matches.
+    r#"
+    CREATE TABLE IF NOT EXISTS match_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_match_id INTEGER NOT NULL REFERENCES matches(id),
+        target_match_id INTEGER NOT NULL REFERENCES matches(id),
+        link_kind TEXT NOT NULL,
+        UNIQUE(source_match_id, target_match_id, link_kind)
+    )
+    "#,
+    "CREATE INDEX IF NOT EXISTS idx_match_links_source ON match_links(source_match_id)",
+    "CREATE INDEX IF NOT EXISTS idx_match_links_target ON match_links(target_match_id)",
+    "CREATE INDEX IF NOT EXISTS idx_match_links_kind ON match_links(link_kind)",
 ];
 
 /// Run all migrations against the given pool.

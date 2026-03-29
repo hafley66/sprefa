@@ -330,9 +330,9 @@ async fn cmd_add(config_path: &Option<PathBuf>, path: PathBuf, name: Option<Stri
 
 fn build_scanner(config: &sprefa_config::Config, pool: sqlx::SqlitePool) -> anyhow::Result<Scanner> {
     let rules_path = find_rules_file()?;
-    let extractor = RuleExtractor::from_json(&rules_path)
-        .or_else(|_| RuleExtractor::from_yaml(&rules_path))
-        .map_err(|e| anyhow::anyhow!("failed to load rules from {}: {}", rules_path.display(), e))?;
+    let ruleset = load_ruleset(&rules_path)?;
+    let link_rules = ruleset.link_rules.clone();
+    let extractor = RuleExtractor::from_ruleset(&ruleset)?;
     Ok(Scanner {
         extractors: Arc::new(vec![
             Box::new(extractor) as Box<dyn sprefa_scan::Extractor>,
@@ -342,7 +342,14 @@ fn build_scanner(config: &sprefa_config::Config, pool: sqlx::SqlitePool) -> anyh
         db: pool,
         normalize_config: config.scan.as_ref().and_then(|s| s.normalize.clone()),
         global_filter: config.filter.clone(),
+        link_rules,
     })
+}
+
+fn load_ruleset(path: &std::path::Path) -> anyhow::Result<sprefa_rules::RuleSet> {
+    let bytes = std::fs::read(path)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e))
 }
 
 async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: bool) -> anyhow::Result<()> {
@@ -361,12 +368,13 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
             let items: Vec<serde_json::Value> = resp.json().await?;
             for item in &items {
                 println!(
-                    "{}/{}: {} files, {} refs, {} targets resolved",
+                    "{}/{}: {} files, {} refs, {} targets resolved, {} links",
                     item["repo"].as_str().unwrap_or(""),
                     item["branch"].as_str().unwrap_or(""),
                     item["files_scanned"].as_u64().unwrap_or(0),
                     item["refs_inserted"].as_u64().unwrap_or(0),
                     item["targets_resolved"].as_u64().unwrap_or(0),
+                    item["links_created"].as_u64().unwrap_or(0),
                 );
             }
             return Ok(());
@@ -399,9 +407,9 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
             match scanner.scan_repo(repo, &branch).await {
                 Ok(result) => {
                     println!(
-                        "{}/{}: {} files scanned, {} refs inserted, {} targets resolved",
+                        "{}/{}: {} files scanned, {} refs inserted, {} targets resolved, {} links",
                         result.repo, result.branch, result.files_scanned, result.refs_inserted,
-                        result.targets_resolved
+                        result.targets_resolved, result.links_created
                     );
                     total_files += result.files_scanned;
                     total_refs += result.refs_inserted;

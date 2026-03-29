@@ -77,6 +77,7 @@ async fn js_rename_propagates_through_reexport_chain() {
         db: db.clone(),
         normalize_config: None,
         global_filter: None,
+        link_rules: vec![],
     };
     let result = scanner.scan_repo(&config, "main").await.unwrap();
     assert!(result.refs_inserted > 0, "scan should insert refs");
@@ -187,6 +188,7 @@ edition = "2021"
         db: db.clone(),
         normalize_config: None,
         global_filter: None,
+        link_rules: vec![],
     };
     let result = scanner.scan_repo(&config, "main").await.unwrap();
     assert!(result.refs_inserted > 0, "scan should insert Rust refs");

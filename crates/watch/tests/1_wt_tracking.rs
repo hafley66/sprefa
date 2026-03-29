@@ -54,6 +54,7 @@ async fn setup_scanned_repo(
         db: db.clone(),
         normalize_config: None,
         global_filter: None,
+        link_rules: vec![],
     };
     scanner.scan_repo(&config, "main").await.unwrap();
 
@@ -271,6 +272,7 @@ async fn wt_scan_captures_uncommitted_files() {
         db: db.clone(),
         normalize_config: None,
         global_filter: None,
+        link_rules: vec![],
     };
 
     // Scan committed with only a.ts and b.ts by scanning, then removing c.ts from committed branch_files
