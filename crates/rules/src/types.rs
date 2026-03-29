@@ -36,8 +36,9 @@ pub struct Rule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<ValuePattern>,
 
-    /// Each entry turns a named capture into a ref.
-    pub emit: Vec<EmitRef>,
+    /// Each entry turns a named capture into a match row.
+    #[serde(alias = "emit")]
+    pub create_matches: Vec<MatchDef>,
 
     /// Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,9 +187,9 @@ fn default_true() -> bool {
     true
 }
 
-/// One ref to emit from a match.
+/// One match to create from a captured value.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct EmitRef {
+pub struct MatchDef {
     /// Name of the capture to use as the ref value.
     pub capture: String,
     /// Free-text kind string (e.g. "dep_name", "helm_value", "operation_id").

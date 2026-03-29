@@ -216,7 +216,7 @@ notify OS events (Create, Remove, Modify(Name) for renames on macOS)
 |-----------|-----------|------------------|
 | **JsExtractor** (oxc) | .js, .jsx, .ts, .tsx, .mjs, .cjs, .mts, .cts | ImportPath, ImportName, ImportAlias, ExportName, ExportLocalBinding, require() calls |
 | **RsExtractor** (syn) | .rs | RsUse (full paths, flattened from use-trees), RsDeclare (fn, struct, enum, trait, impl items, type, const, static), RsMod, DepName (extern crate) |
-| **RuleExtractor** (JSON/YAML rules) | Any structured format | Configurable: JSON keys/values, YAML keys/values, TOML keys/values, dependency names/versions. Rules define tree-walking patterns with captures and emit actions. |
+| **RuleExtractor** (JSON/YAML rules) | Any structured format | Configurable: JSON keys/values, YAML keys/values, TOML keys/values, dependency names/versions. Rules define tree-walking patterns with captures. Patterns support glob or regex (`re:` prefix). |
 
 ### Path rewriters
 
@@ -252,26 +252,25 @@ Each rule is a CSS-style selector against this DOM with three dimensions:
 2. **File path** -- glob on repo-relative path (`"file": "values*.yaml"`)
 3. **Structural position** -- step chain that walks the parsed tree depth-first
 
-Structural steps: `key`, `key_match` (glob), `any` (descend arbitrary depth), `depth_min`/`depth_max`/`depth_eq`, `parent_key`, `array_item`, `leaf`, `object` (capture sibling values).
+Structural steps: `key`, `key_match`, `any` (descend arbitrary depth), `depth_min`/`depth_max`/`depth_eq`, `parent_key`, `array_item`, `leaf`, `object` (capture sibling values).
 
-Steps can **capture** values by name as they match. A `value` regex can split/filter captures (e.g. `"express@4.18.2"` into `name` + `version`). The `action.emit` array turns captures into refs with explicit parent linkage for grouped output (dep name + version as linked refs).
+All pattern fields accept **glob** (default) or **regex** (`re:` prefix). Glob uses pipe-delimited alternatives (`"main|release/*"`). Regex uses standard Perl syntax (`"re:^v\d+\.\d+"`) with named capture groups via `(?P<name>...)`. Both syntaxes work uniformly across all pattern fields: file, folder, repo, branch, tag, key_match, parent_key.
+
+Steps can **capture** values by name as they match. A `value` regex can split/filter captures (e.g. `"express@4.18.2"` into `name` + `version`). The `create_matches` array turns captures into match rows with explicit parent linkage for grouped output (dep name + version as linked refs).
 
 ```json
 {
   "name": "npm-deps",
-  "file": "package-lock.json",
   "select": [
-    { "step": "key", "name": "dependencies" },
+    { "step": "file", "pattern": "**/package.json" },
+    { "step": "key_match", "pattern": "dependencies|devDependencies", "capture": "dep_type" },
     { "step": "key_match", "pattern": "*", "capture": "name" },
-    { "step": "key", "name": "version" },
     { "step": "leaf", "capture": "version" }
   ],
-  "action": {
-    "emit": [
-      { "capture": "name", "kind": "dep_name" },
-      { "capture": "version", "kind": "dep_version", "parent": "name" }
-    ]
-  }
+  "create_matches": [
+    { "capture": "name", "kind": "dep_name" },
+    { "capture": "version", "kind": "dep_version", "parent": "name" }
+  ]
 }
 ```
 
@@ -302,7 +301,7 @@ crates/
   index/        pure extraction: file enumeration, parallel rayon walk, xxh3 hashing
   cache/        DB writes: bulk flush, import target resolution (oxc_resolver),
                 scan context (skip set by content hash + scanner hash)
-  rules/        declarative JSON rule engine: types, tree walker, emit, JSON Schema
+  rules/        declarative JSON rule engine: types, tree walker, create_matches, JSON Schema
   js/           oxc-based JS/TS extractor (imports, exports, require, re-exports)
   rs/           syn-based Rust extractor (use trees, declarations, mod, extern crate)
   watch/        filesystem watcher + rewrite pipeline:

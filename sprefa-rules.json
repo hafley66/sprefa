@@ -9,7 +9,7 @@
         { "step": "key_match", "pattern": "dependencies|dev-dependencies|build-dependencies", "capture": "dep_type" },
         { "step": "key_match", "pattern": "*", "capture": "name" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "name", "kind": "dep_name" }
       ]
     },
@@ -22,7 +22,7 @@
         { "step": "key_match", "pattern": "*", "capture": "name" },
         { "step": "leaf", "capture": "version" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "name", "kind": "dep_name" },
         { "capture": "version", "kind": "dep_version", "parent": "name" }
       ]
@@ -38,7 +38,7 @@
         { "step": "array_item" },
         { "step": "leaf", "capture": "target" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "alias", "kind": "path_alias" },
         { "capture": "target", "kind": "import_path", "parent": "alias" }
       ]
@@ -53,7 +53,7 @@
         { "step": "any" },
         { "step": "leaf", "capture": "entry" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "subpath", "kind": "package_entry" },
         { "capture": "entry", "kind": "import_path", "parent": "subpath" }
       ]
@@ -67,7 +67,7 @@
         { "step": "depth_min", "n": 1 },
         { "step": "leaf", "capture": "val" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "val", "kind": "helm_value" }
       ]
     },
@@ -79,7 +79,7 @@
         { "step": "key", "name": "data" },
         { "step": "key_match", "pattern": "*", "capture": "key" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "key", "kind": "env_var_name" }
       ]
     },
@@ -91,7 +91,7 @@
         { "step": "key", "name": "services" },
         { "step": "key_match", "pattern": "*", "capture": "name" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "name", "kind": "service_name" }
       ]
     },
@@ -106,7 +106,7 @@
         { "step": "key", "name": "operationId" },
         { "step": "leaf", "capture": "op_id" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "op_id", "kind": "operation_id" }
       ]
     },
@@ -120,7 +120,7 @@
         { "step": "array_item" },
         { "step": "leaf", "capture": "member" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "member", "kind": "workspace_member" }
       ]
     },
@@ -133,7 +133,7 @@
         { "step": "array_item" },
         { "step": "leaf", "capture": "member" }
       ],
-      "emit": [
+      "create_matches": [
         { "capture": "member", "kind": "workspace_member" }
       ]
     }

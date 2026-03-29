@@ -22,7 +22,7 @@ rules:
         captures:
           repository: repo
           tag: tag
-    emit:
+    create_matches:
       - capture: repo
         kind: dep_name
       - capture: tag

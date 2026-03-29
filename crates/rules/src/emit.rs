@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use regex::Regex;
 use sprefa_extract::RawRef;
 
-use crate::types::{EmitRef, ValuePattern};
+use crate::types::{MatchDef, ValuePattern};
 use crate::walk::{CapturedValue, MatchResult};
 
 /// Apply a value pattern (regex) to the captures, merging named groups back in.
@@ -47,10 +47,10 @@ pub fn apply_value_pattern(
     true
 }
 
-/// Turn a match result into RawRefs according to the emit list.
-pub fn emit_refs(
+/// Turn a match result into RawRefs according to the create_matches list.
+pub fn create_refs(
     result: &MatchResult,
-    emits: &[EmitRef],
+    match_defs: &[MatchDef],
     value_pattern: Option<&ValuePattern>,
     rule_name: &str,
 ) -> Vec<RawRef> {
@@ -71,8 +71,8 @@ pub fn emit_refs(
 
     let mut refs = vec![];
 
-    for emit in emits {
-        if let Some(raw) = emit_one(emit, rule_name, &captures, node_path.as_deref()) {
+    for def in match_defs {
+        if let Some(raw) = create_one(def, rule_name, &captures, node_path.as_deref()) {
             refs.push(raw);
         }
     }
@@ -80,10 +80,10 @@ pub fn emit_refs(
     refs
 }
 
-fn emit_one(emit: &EmitRef, rule_name: &str, captures: &HashMap<String, CapturedValue>, node_path: Option<&str>) -> Option<RawRef> {
-    let cv = captures.get(&emit.capture)?;
+fn create_one(def: &MatchDef, rule_name: &str, captures: &HashMap<String, CapturedValue>, node_path: Option<&str>) -> Option<RawRef> {
+    let cv = captures.get(&def.capture)?;
 
-    let parent_key = emit
+    let parent_key = def
         .parent
         .as_ref()
         .and_then(|p| captures.get(p))
@@ -93,7 +93,7 @@ fn emit_one(emit: &EmitRef, rule_name: &str, captures: &HashMap<String, Captured
         value: cv.text.clone(),
         span_start: cv.span_start,
         span_end: cv.span_end,
-        kind: emit.kind.clone(),
+        kind: def.kind.clone(),
         rule_name: rule_name.to_string(),
         is_path: false,
         parent_key,

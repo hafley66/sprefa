@@ -7,7 +7,7 @@ use crate::{
     emit, walk,
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
-    types::{EmitRef, RuleSet, SelectStep, ValuePattern},
+    types::{MatchDef, RuleSet, SelectStep, ValuePattern},
     walk::CapturedValue,
 };
 
@@ -24,7 +24,7 @@ pub struct CompiledRule {
     pub context_captures: Vec<(String, ContextCaptureSource)>,
     pub steps: Vec<SelectStep>,
     pub value_pattern: Option<ValuePattern>,
-    pub emit: Vec<EmitRef>,
+    pub create_matches: Vec<MatchDef>,
 }
 
 /// Where a context capture gets its value from at match time.
@@ -117,7 +117,7 @@ impl Extractor for RuleExtractor {
                     }
                     merged
                 };
-                refs.extend(emit::emit_refs(&merged, &rule.emit, rule.value_pattern.as_ref(), &rule.name));
+                refs.extend(emit::create_refs(&merged, &rule.create_matches, rule.value_pattern.as_ref(), &rule.name));
             }
         }
         refs
@@ -233,7 +233,7 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
         context_captures,
         steps: structural_steps,
         value_pattern: r.value.clone(),
-        emit: r.emit.clone(),
+        create_matches: r.create_matches.clone(),
     })
 }
 
@@ -276,7 +276,7 @@ mod tests {
                     { "step": "key", "name": "version" },
                     { "step": "leaf", "capture": "version" }
                 ],
-                "emit": [
+                "create_matches": [
                     { "capture": "name", "kind": "dep_name" },
                     { "capture": "version", "kind": "dep_version", "parent": "name" }
                 ]
@@ -289,7 +289,7 @@ mod tests {
                     { "step": "key", "name": "image" },
                     { "step": "object", "captures": { "repository": "repo", "tag": "tag" } }
                 ],
-                "emit": [
+                "create_matches": [
                     { "capture": "repo", "kind": "dep_name" },
                     { "capture": "tag", "kind": "dep_version", "parent": "repo" }
                 ]
@@ -369,7 +369,7 @@ mod tests {
                     "name": "ast-rule",
                     "select": [],
                     "select_ast": { "pattern": "use $PATH" },
-                    "emit": [{ "capture": "$PATH", "kind": "rs_use" }]
+                    "create_matches": [{ "capture": "$PATH", "kind": "rs_use" }]
                 }
             ]
         }"#;
@@ -387,7 +387,7 @@ mod tests {
                     { "step": "key", "name": "foo" },
                     { "step": "file", "pattern": "*.json" }
                 ],
-                "emit": [{ "capture": "x", "kind": "y" }]
+                "create_matches": [{ "capture": "x", "kind": "y" }]
             }]
         }"#;
         let ruleset: RuleSet = serde_json::from_str(json).unwrap();

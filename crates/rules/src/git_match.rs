@@ -1,11 +1,27 @@
 use globset::{Glob, GlobMatcher};
+use regex::Regex;
+
+/// A single compiled pattern: either a glob or a regex.
+enum PatternMatcher {
+    Glob(GlobMatcher),
+    Regex(Regex),
+}
+
+impl PatternMatcher {
+    fn is_match(&self, value: &str) -> bool {
+        match self {
+            Self::Glob(g) => g.is_match(value),
+            Self::Regex(r) => r.is_match(value),
+        }
+    }
+}
 
 /// Compiled git selector for fast matching.
 /// Built from Repo/Branch/Tag steps extracted from the select chain.
 pub struct CompiledGitSelector {
-    repo: Vec<GlobMatcher>,
-    branch: Vec<GlobMatcher>,
-    tag: Vec<GlobMatcher>,
+    repo: Vec<PatternMatcher>,
+    branch: Vec<PatternMatcher>,
+    tag: Vec<PatternMatcher>,
 }
 
 impl std::fmt::Debug for CompiledGitSelector {
@@ -23,7 +39,7 @@ impl CompiledGitSelector {
         repo_patterns: &[&str],
         branch_patterns: &[&str],
         tag_patterns: &[&str],
-    ) -> Result<Self, globset::Error> {
+    ) -> anyhow::Result<Self> {
         let repo = compile_patterns(repo_patterns)?;
         let branch = compile_patterns(branch_patterns)?;
         let tag = compile_patterns(tag_patterns)?;
@@ -37,31 +53,36 @@ impl CompiledGitSelector {
 
         if !self.branch.is_empty() {
             match branch {
-                Some(b) => {
-                    if !self.branch.iter().any(|m| m.is_match(b)) {
-                        return false;
-                    }
-                }
-                None => return false,
+                Some(b) if self.branch.iter().any(|m| m.is_match(b)) => {}
+                _ => return false,
             }
         }
 
-        if !self.tag.is_empty() {
-            if !tags.iter().any(|t| self.tag.iter().any(|m| m.is_match(t))) {
-                return false;
-            }
+        if !self.tag.is_empty()
+            && !tags.iter().any(|t| self.tag.iter().any(|m| m.is_match(t)))
+        {
+            return false;
         }
 
         true
     }
 }
 
-fn compile_patterns(patterns: &[&str]) -> Result<Vec<GlobMatcher>, globset::Error> {
-    patterns
-        .iter()
-        .flat_map(|p| p.split('|').map(|s| s.trim()))
-        .map(|p| Glob::new(p).map(|g| g.compile_matcher()))
-        .collect()
+fn compile_patterns(patterns: &[&str]) -> anyhow::Result<Vec<PatternMatcher>> {
+    let mut matchers = Vec::new();
+    for p in patterns {
+        if let Some(re_pattern) = p.strip_prefix("re:") {
+            matchers.push(PatternMatcher::Regex(Regex::new(re_pattern)?));
+        } else {
+            for segment in p.split('|') {
+                let segment = segment.trim();
+                matchers.push(PatternMatcher::Glob(
+                    Glob::new(segment)?.compile_matcher(),
+                ));
+            }
+        }
+    }
+    Ok(matchers)
 }
 
 #[cfg(test)]

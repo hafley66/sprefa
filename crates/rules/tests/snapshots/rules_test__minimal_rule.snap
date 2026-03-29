@@ -7,6 +7,6 @@ rules:
     select:
       - step: file
         pattern: "**/*.json"
-    emit:
+    create_matches:
       - capture: val
         kind: json_value

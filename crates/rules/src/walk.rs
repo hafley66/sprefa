@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use globset::{Glob, GlobMatcher};
+use regex::Regex;
 use serde_json::Value;
 
 use crate::types::SelectStep;
@@ -293,32 +294,50 @@ fn walk_inner(node: &Value, steps: &[SelectStep], state: &WalkState) -> Vec<Matc
     }
 }
 
-/// Match a string against a pipe-delimited glob pattern.
-/// `"*image*|*repository*"` matches if either `*image*` or `*repository*` matches.
+/// Match a string against a pipe-delimited pattern.
+/// Patterns prefixed with `re:` are treated as regex, otherwise as glob.
+/// `"*image*|*repository*"` matches if either glob matches.
+/// `"re:^dep(endencies|.*)"` matches via regex.
 fn pipe_glob_matches(pattern: &str, value: &str) -> bool {
-    pattern.split('|').any(|p| {
-        Glob::new(p.trim())
+    if let Some(re_pattern) = pattern.strip_prefix("re:") {
+        Regex::new(re_pattern)
             .ok()
-            .map(|g| g.compile_matcher().is_match(value))
+            .map(|re| re.is_match(value))
             .unwrap_or(false)
-    })
+    } else {
+        pattern.split('|').any(|p| {
+            Glob::new(p.trim())
+                .ok()
+                .map(|g| g.compile_matcher().is_match(value))
+                .unwrap_or(false)
+        })
+    }
 }
 
-// Compiled version for hot-path use (avoids recompiling globs per call).
-pub struct CompiledPipeGlob {
-    matchers: Vec<GlobMatcher>,
+/// Compiled pattern matcher: glob (pipe-delimited) or regex (re: prefix).
+pub enum CompiledPipeGlob {
+    Globs(Vec<GlobMatcher>),
+    Regex(Regex),
 }
 
 impl CompiledPipeGlob {
-    pub fn compile(pattern: &str) -> Result<Self, globset::Error> {
-        let matchers = pattern
-            .split('|')
-            .map(|p| Glob::new(p.trim()).map(|g| g.compile_matcher()))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { matchers })
+    pub fn compile(pattern: &str) -> anyhow::Result<Self> {
+        if let Some(re_pattern) = pattern.strip_prefix("re:") {
+            let re = Regex::new(re_pattern)?;
+            Ok(Self::Regex(re))
+        } else {
+            let matchers = pattern
+                .split('|')
+                .map(|p| Glob::new(p.trim()).map(|g| g.compile_matcher()))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Self::Globs(matchers))
+        }
     }
 
     pub fn is_match(&self, value: &str) -> bool {
-        self.matchers.iter().any(|m| m.is_match(value))
+        match self {
+            Self::Globs(matchers) => matchers.iter().any(|m| m.is_match(value)),
+            Self::Regex(re) => re.is_match(value),
+        }
     }
 }

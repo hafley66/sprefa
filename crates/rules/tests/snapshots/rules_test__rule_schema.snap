@@ -47,8 +47,8 @@ expression: schema
         }
       }
     },
-    "EmitRef": {
-      "description": "One ref to emit from a match.",
+    "MatchDef": {
+      "description": "One match to create from a captured value.",
       "type": "object",
       "required": [
         "capture",
@@ -76,7 +76,7 @@ expression: schema
       "description": "A single extraction rule.\n\nThe `select` chain is a CSS selector against the full index DOM: root > repo > branch > tag > folder* > file > (parsed tree nodes)\n\nContext steps (Repo, Branch, Tag, Folder, File) filter by git context and file path before the file is parsed. Structural steps (Key, KeyMatch, Any, etc.) walk the parsed tree to produce captures.\n\nOrdering constraint enforced at compile time: all context steps must precede all structural steps.",
       "type": "object",
       "required": [
-        "emit",
+        "create_matches",
         "name",
         "select"
       ],
@@ -89,18 +89,18 @@ expression: schema
           ],
           "format": "double"
         },
+        "create_matches": {
+          "description": "Each entry turns a named capture into a match row.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/MatchDef"
+          }
+        },
         "description": {
           "type": [
             "string",
             "null"
           ]
-        },
-        "emit": {
-          "description": "Each entry turns a named capture into a ref.",
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/EmitRef"
-          }
         },
         "name": {
           "type": "string"
