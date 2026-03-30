@@ -862,19 +862,163 @@ fn find_config_file(config_path: &Option<PathBuf>) -> anyhow::Result<PathBuf> {
     }
 }
 
+/// Scan a single ghcache checkout: committed branch (incremental if possible)
+/// plus working-tree branch. Pauses/unpauses the watcher during scan.
+async fn scan_checkout(
+    scanner: &Scanner,
+    repo_slug: &str,
+    branch: &str,
+    local_path: &str,
+    pauses: &PauseFlags,
+) {
+    use std::sync::atomic::Ordering;
+
+    let repo_name = repo_slug.split('/').last().unwrap_or(repo_slug);
+
+    // Pause watcher if one exists for this repo.
+    if let Some(flag) = pauses.get(repo_name) {
+        flag.store(true, Ordering::Relaxed);
+    }
+
+    let repo_config = sprefa_config::RepoConfig {
+        name: repo_name.to_string(),
+        path: local_path.to_string(),
+        branches: Some(vec![branch.to_string()]),
+        filter: None,
+        branch_overrides: None,
+    };
+
+    // Scan committed branch (incremental if we have a previous sha).
+    let repo_id = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM repos WHERE name = ?"
+    ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
+
+    let prev_sha = match repo_id {
+        Some(rid) => sprefa_schema::get_repo_branch_hash(&scanner.db, rid, branch)
+            .await.ok().flatten(),
+        None => None,
+    };
+
+    let scan_result = match &prev_sha {
+        Some(sha) => {
+            tracing::info!(
+                repo = %repo_slug, branch = %branch, old_sha = %sha,
+                "incremental scan_diff"
+            );
+            match scanner.scan_diff(&repo_config, branch, sha).await {
+                Ok(r) => Ok(r),
+                Err(e) => {
+                    tracing::warn!(
+                        repo = %repo_slug, branch = %branch, error = %e,
+                        "scan_diff failed, falling back to full scan"
+                    );
+                    scanner.scan_repo(&repo_config, branch).await
+                }
+            }
+        }
+        None => scanner.scan_repo(&repo_config, branch).await,
+    };
+
+    match &scan_result {
+        Ok(r) => {
+            tracing::info!(
+                repo = %repo_slug, branch = %branch,
+                files = r.files_scanned, refs = r.refs_inserted,
+                deleted = r.files_deleted, renamed = r.files_renamed,
+                "committed scan complete"
+            );
+            // Persist the new HEAD sha for future incremental scans.
+            if let Some(sha) = &r.new_git_hash {
+                let rid = match repo_id {
+                    Some(rid) => Some(rid),
+                    None => sqlx::query_scalar::<_, i64>(
+                        "SELECT id FROM repos WHERE name = ?"
+                    ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten(),
+                };
+                if let Some(rid) = rid {
+                    let _ = sprefa_schema::upsert_repo_branch(
+                        &scanner.db, rid, branch, Some(sha),
+                    ).await;
+                }
+            }
+        }
+        Err(e) => tracing::error!(
+            repo = %repo_slug, branch = %branch, error = %e,
+            "committed scan failed"
+        ),
+    }
+
+    // Scan working-tree branch.
+    let wt = sprefa_watch::wt_branch(branch);
+    match scanner.scan_repo(&repo_config, &wt).await {
+        Ok(r) => tracing::info!(
+            repo = %repo_slug, branch = %wt,
+            files = r.files_scanned, refs = r.refs_inserted,
+            "wt scan complete"
+        ),
+        Err(e) => tracing::error!(
+            repo = %repo_slug, branch = %wt, error = %e,
+            "wt scan failed"
+        ),
+    }
+
+    // Unpause watcher.
+    if let Some(flag) = pauses.get(repo_name) {
+        flag.store(false, Ordering::Relaxed);
+        tracing::info!(repo = %repo_name, "watcher unpaused after rescan");
+    }
+}
+
 /// Subscribe to ghcache checkout events and rescan repos when their staging
-/// directory changes. Pauses the watcher during rescan to avoid spurious
-/// rewrite activity from the git checkout churn.
+/// directory changes. On startup, scans all existing checkouts so the index
+/// is populated without waiting for a change_log event. Then polls for new
+/// events and rescans incrementally.
 async fn ghcache_subscribe(
     ghcache_db: &str,
     scanner: &Arc<Scanner>,
     pauses: &PauseFlags,
     sources: &[sprefa_config::SourceConfig],
 ) -> anyhow::Result<()> {
-    use std::sync::atomic::Ordering;
-
     tracing::info!(db = ghcache_db, "subscribing to ghcache checkout events");
 
+    // Phase 1: scan all existing checkouts at startup.
+    let client = ghcache_client::Client::open(std::path::Path::new(ghcache_db)).await?;
+    let checkouts = client.checkouts(None).await?;
+    tracing::info!(count = checkouts.len(), "scanning existing ghcache checkouts");
+
+    for co in &checkouts {
+        if !sources.is_empty() && !source_matches_checkout(sources, &co.repo_slug, &co.branch) {
+            continue;
+        }
+
+        // Skip if the checkout sha matches what we already have indexed.
+        if let Some(co_sha) = &co.sha {
+            let repo_name = co.repo_slug.split('/').last().unwrap_or(&co.repo_slug);
+            let rid = sqlx::query_scalar::<_, i64>(
+                "SELECT id FROM repos WHERE name = ?"
+            ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
+            let stored_sha = match rid {
+                Some(rid) => sprefa_schema::get_repo_branch_hash(&scanner.db, rid, &co.branch)
+                    .await.ok().flatten(),
+                None => None,
+            };
+            if stored_sha.as_deref() == Some(co_sha.as_str()) {
+                tracing::debug!(
+                    repo = %co.repo_slug, branch = %co.branch,
+                    "checkout sha matches stored hash, skipping"
+                );
+                continue;
+            }
+        }
+
+        tracing::info!(
+            repo = %co.repo_slug, branch = %co.branch, path = %co.local_path,
+            "initial scan of existing checkout"
+        );
+        scan_checkout(scanner, &co.repo_slug, &co.branch, &co.local_path, pauses).await;
+    }
+
+    // Phase 2: poll for new checkout events.
     let subscriber = ghcache_client::Subscriber::new(ghcache_db)
         .interval(Duration::from_millis(500));
 
@@ -907,8 +1051,6 @@ async fn ghcache_subscribe(
                     }
                 };
 
-                // Match against source patterns to see if we should index this checkout.
-                let repo_name = repo_slug.split('/').last().unwrap_or(&repo_slug);
                 if !sources.is_empty() && !source_matches_checkout(&sources, &repo_slug, &branch) {
                     tracing::debug!(
                         repo = %repo_slug, branch = %branch,
@@ -917,105 +1059,33 @@ async fn ghcache_subscribe(
                     continue;
                 }
 
+                // Skip if event carries a sha that matches what we have indexed.
+                if let Some(event_sha) = event.payload.get("sha").and_then(|v| v.as_str()) {
+                    let repo_name = repo_slug.split('/').last().unwrap_or(&repo_slug);
+                    let rid = sqlx::query_scalar::<_, i64>(
+                        "SELECT id FROM repos WHERE name = ?"
+                    ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
+                    let stored = match rid {
+                        Some(rid) => sprefa_schema::get_repo_branch_hash(&scanner.db, rid, &branch)
+                            .await.ok().flatten(),
+                        None => None,
+                    };
+                    if stored.as_deref() == Some(event_sha) {
+                        tracing::debug!(
+                            repo = %repo_slug, branch = %branch, sha = %event_sha,
+                            "event sha matches stored hash, skipping"
+                        );
+                        continue;
+                    }
+                }
+
                 tracing::info!(
                     repo = %repo_slug, branch = %branch, path = %local_path,
                     event = %event.event,
                     "ghcache checkout event, rescanning"
                 );
 
-                // Pause watcher if one exists for this repo.
-                if let Some(flag) = pauses.get(repo_name) {
-                    flag.store(true, Ordering::Relaxed);
-                }
-
-                // Build a temporary RepoConfig for the checkout.
-                let repo_config = sprefa_config::RepoConfig {
-                    name: repo_name.to_string(),
-                    path: local_path.clone(),
-                    branches: Some(vec![branch.clone()]),
-                    filter: None,
-                    branch_overrides: None,
-                };
-
-                // Scan committed branch (incremental if we have a previous sha).
-                let repo_id = sqlx::query_scalar::<_, i64>(
-                    "SELECT id FROM repos WHERE name = ?"
-                ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
-
-                let prev_sha = match repo_id {
-                    Some(rid) => sprefa_schema::get_repo_branch_hash(&scanner.db, rid, &branch)
-                        .await.ok().flatten(),
-                    None => None,
-                };
-
-                let scan_result = match &prev_sha {
-                    Some(sha) => {
-                        tracing::info!(
-                            repo = %repo_slug, branch = %branch, old_sha = %sha,
-                            "incremental scan_diff"
-                        );
-                        match scanner.scan_diff(&repo_config, &branch, sha).await {
-                            Ok(r) => Ok(r),
-                            Err(e) => {
-                                tracing::warn!(
-                                    repo = %repo_slug, branch = %branch, error = %e,
-                                    "scan_diff failed, falling back to full scan"
-                                );
-                                scanner.scan_repo(&repo_config, &branch).await
-                            }
-                        }
-                    }
-                    None => scanner.scan_repo(&repo_config, &branch).await,
-                };
-
-                match &scan_result {
-                    Ok(r) => {
-                        tracing::info!(
-                            repo = %repo_slug, branch = %branch,
-                            files = r.files_scanned, refs = r.refs_inserted,
-                            deleted = r.files_deleted, renamed = r.files_renamed,
-                            "committed scan complete"
-                        );
-                        // Persist the new HEAD sha for future incremental scans.
-                        if let Some(sha) = &r.new_git_hash {
-                            let rid = match repo_id {
-                                Some(rid) => Some(rid),
-                                None => sqlx::query_scalar::<_, i64>(
-                                    "SELECT id FROM repos WHERE name = ?"
-                                ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten(),
-                            };
-                            if let Some(rid) = rid {
-                                let _ = sprefa_schema::upsert_repo_branch(
-                                    &scanner.db, rid, &branch, Some(sha),
-                                ).await;
-                            }
-                        }
-                    }
-                    Err(e) => tracing::error!(
-                        repo = %repo_slug, branch = %branch, error = %e,
-                        "committed scan failed"
-                    ),
-                }
-
-                // Scan working-tree branch.
-                let wt = sprefa_watch::wt_branch(&branch);
-                match scanner.scan_repo(&repo_config, &wt).await {
-                    Ok(r) => tracing::info!(
-                        repo = %repo_slug, branch = %wt,
-                        files = r.files_scanned, refs = r.refs_inserted,
-                        "wt scan complete"
-                    ),
-                    Err(e) => tracing::error!(
-                        repo = %repo_slug, branch = %wt, error = %e,
-                        "wt scan failed"
-                    ),
-                }
-
-                // Unpause watcher.
-                if let Some(flag) = pauses.get(repo_name) {
-                    flag.store(false, Ordering::Relaxed);
-                    tracing::info!(repo = %repo_name, "watcher unpaused after rescan");
-                }
+                scan_checkout(&scanner, &repo_slug, &branch, &local_path, &pauses).await;
             }
             Ok(())
         }
