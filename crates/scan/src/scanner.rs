@@ -45,16 +45,27 @@ impl Scanner {
         let scan_ctx = sprefa_cache::load_scan_context(&self.db, &config.name, BINARY_HASH).await?;
 
         let repo_path = PathBuf::from(&config.path);
+
+        // Read git tags (for ExtractContext and DB persistence).
+        let git_tags = {
+            let rp = repo_path.clone();
+            tokio::task::spawn_blocking(move || {
+                sprefa_index::read_git_tags(&rp).unwrap_or_default()
+            }).await?
+        };
+        let tag_names: Vec<String> = git_tags.iter().map(|(n, _)| n.clone()).collect();
+
         let extractors = Arc::clone(&self.extractors);
         let skip_set = scan_ctx.skip_set;
         let repo_name = config.name.clone();
         let branch_name = branch.to_string();
 
         let (files_scanned, extracted) = tokio::task::spawn_blocking(move || {
+            let tag_refs: Vec<&str> = tag_names.iter().map(|s| s.as_str()).collect();
             let ctx = ExtractContext {
                 repo: Some(&repo_name),
                 branch: Some(&branch_name),
-                tags: &[],
+                tags: &tag_refs,
             };
             sprefa_index::extract(&repo_path, compiled_filter.as_ref(), &extractors, &skip_set, &ctx)
         })
@@ -63,8 +74,8 @@ impl Scanner {
         let files_skipped = extracted.iter().filter(|f| f.was_skipped).count();
 
         tracing::info!(
-            "{}/{}: {} files ({} skipped, binary={})",
-            config.name, branch, files_scanned, files_skipped,
+            "{}/{}: {} files ({} skipped, {} tags, binary={})",
+            config.name, branch, files_scanned, files_skipped, git_tags.len(),
             &BINARY_HASH[..8.min(BINARY_HASH.len())],
         );
 
@@ -76,6 +87,15 @@ impl Scanner {
             self.normalize_config.as_ref(),
             BINARY_HASH,
         ).await?;
+
+        // Persist git tags.
+        let tag_rows: Vec<(String, Option<String>, bool)> = git_tags.into_iter()
+            .map(|(name, hash)| {
+                let semver = sprefa_index::is_semver(&name);
+                (name, hash, semver)
+            })
+            .collect();
+        sprefa_cache::flush_git_tags(&self.db, &config.name, &tag_rows).await?;
 
         let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;
         let links_created = sprefa_cache::resolve_match_links(&self.db, &config.name, &self.link_rules).await?;
@@ -136,10 +156,15 @@ impl Scanner {
         let repo_path = PathBuf::from(&config.path);
         let old_sha_owned = old_sha.to_string();
 
-        let diff = tokio::task::spawn_blocking({
+        let (diff, git_tags) = tokio::task::spawn_blocking({
             let repo_path = repo_path.clone();
-            move || sprefa_index::diff_files(&repo_path, &old_sha_owned, compiled_filter.as_ref())
+            move || -> Result<_> {
+                let diff = sprefa_index::diff_files(&repo_path, &old_sha_owned, compiled_filter.as_ref())?;
+                let tags = sprefa_index::read_git_tags(&repo_path).unwrap_or_default();
+                Ok((diff, tags))
+            }
         }).await??;
+        let tag_names: Vec<String> = git_tags.iter().map(|(n, _)| n.clone()).collect();
 
         let files_deleted = if !diff.deleted.is_empty() {
             tracing::info!(
@@ -162,6 +187,15 @@ impl Scanner {
         } else {
             0
         };
+
+        // Persist git tags (even if no files changed).
+        let tag_rows: Vec<(String, Option<String>, bool)> = git_tags.into_iter()
+            .map(|(name, hash)| {
+                let semver = sprefa_index::is_semver(&name);
+                (name, hash, semver)
+            })
+            .collect();
+        sprefa_cache::flush_git_tags(&self.db, &config.name, &tag_rows).await?;
 
         if diff.changed.is_empty() {
             tracing::info!("{}/{}: no modified files to extract", config.name, branch);
@@ -187,10 +221,11 @@ impl Scanner {
         let (files_scanned, extracted) = tokio::task::spawn_blocking({
             let repo_path = repo_path.clone();
             move || {
+                let tag_refs: Vec<&str> = tag_names.iter().map(|s| s.as_str()).collect();
                 let ctx = ExtractContext {
                     repo: Some(&repo_name),
                     branch: Some(&branch_name),
-                    tags: &[],
+                    tags: &tag_refs,
                 };
                 sprefa_index::extract_files(repo_path.as_path(), diff.changed, &extractors, &skip_set, &ctx)
             }
@@ -199,8 +234,8 @@ impl Scanner {
         let files_skipped = extracted.iter().filter(|f| f.was_skipped).count();
 
         tracing::info!(
-            "{}/{}: diff scan {} changed files ({} skipped, binary={})",
-            config.name, branch, files_scanned, files_skipped,
+            "{}/{}: diff scan {} changed files ({} skipped, {} tags, binary={})",
+            config.name, branch, files_scanned, files_skipped, tag_rows.len(),
             &BINARY_HASH[..8.min(BINARY_HASH.len())],
         );
 

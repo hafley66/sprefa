@@ -3,7 +3,10 @@ pub mod match_links;
 pub mod resolve;
 pub mod scan_context;
 
+pub mod tags;
+
 pub use flush::{flush, delete_branch_files_by_paths, rename_file_paths};
+pub use tags::flush_git_tags;
 pub use match_links::resolve_match_links;
 pub use sprefa_rules::LinkRule;
 pub use resolve::resolve_import_targets;

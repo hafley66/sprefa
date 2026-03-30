@@ -326,3 +326,54 @@ pub async fn get_repo_branch_hash(
     .await?;
     Ok(hash)
 }
+
+// -- git_tags --
+
+/// Bulk upsert git tags for a repo. Chunked to stay within SQLite param limits.
+pub async fn upsert_git_tags(
+    pool: &SqlitePool,
+    repo_id: i64,
+    tags: &[(String, Option<String>, bool)], // (tag_name, commit_hash, is_semver)
+) -> anyhow::Result<usize> {
+    if tags.is_empty() {
+        return Ok(0);
+    }
+
+    let mut total = 0usize;
+    // 4 params per row, stay well under SQLite's 32766 limit.
+    for chunk in tags.chunks(2000) {
+        let ph = chunk.iter().map(|_| "(?,?,?,?)").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "INSERT INTO git_tags (repo_id, tag_name, commit_hash, is_semver) VALUES {ph}
+             ON CONFLICT(repo_id, tag_name) DO UPDATE SET
+               commit_hash = excluded.commit_hash,
+               is_semver = excluded.is_semver"
+        );
+        let mut q = sqlx::query(&sql);
+        for (name, hash, semver) in chunk {
+            q = q.bind(repo_id).bind(name).bind(hash.as_deref()).bind(*semver);
+        }
+        q.execute(pool).await?;
+        let changes: i64 = sqlx::query_scalar("SELECT changes()")
+            .fetch_one(pool).await?;
+        total += changes as usize;
+    }
+    Ok(total)
+}
+
+pub async fn get_git_tags(
+    pool: &SqlitePool,
+    repo_id: i64,
+) -> anyhow::Result<Vec<super::GitTag>> {
+    let rows = sqlx::query_as::<_, (i64, i64, String, Option<String>, bool, Option<String>)>(
+        "SELECT id, repo_id, tag_name, commit_hash, is_semver, created_at
+         FROM git_tags WHERE repo_id = ? ORDER BY tag_name"
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|(id, repo_id, tag_name, commit_hash, is_semver, created_at)| {
+        super::GitTag { id, repo_id, tag_name, commit_hash, is_semver, created_at }
+    }).collect())
+}

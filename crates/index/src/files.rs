@@ -144,6 +144,34 @@ fn git2_list_files(repo_path: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+/// Read all tags from a git repository.
+/// Returns (tag_name, commit_hash) pairs. Annotated tags are peeled to their commit.
+pub fn read_git_tags(repo_path: &Path) -> Result<Vec<(String, Option<String>)>> {
+    let repo = git2::Repository::open(repo_path)?;
+    let tag_names = repo.tag_names(None)?;
+    let mut tags = Vec::with_capacity(tag_names.len());
+
+    for name in tag_names.iter().flatten() {
+        let refname = format!("refs/tags/{name}");
+        let commit_hash = repo.find_reference(&refname).ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .map(|c| c.id().to_string());
+        tags.push((name.to_string(), commit_hash));
+    }
+
+    Ok(tags)
+}
+
+/// Check whether a tag name looks like semver (v?MAJOR.MINOR.PATCH with optional suffix).
+pub fn is_semver(name: &str) -> bool {
+    let s = name.strip_prefix('v').unwrap_or(name);
+    let mut parts = s.splitn(4, |c: char| c == '.' || c == '-' || c == '+');
+    let major = parts.next().and_then(|p| p.parse::<u64>().ok());
+    let minor = parts.next().and_then(|p| p.parse::<u64>().ok());
+    let patch = parts.next().and_then(|p| p.parse::<u64>().ok());
+    major.is_some() && minor.is_some() && patch.is_some()
+}
+
 fn walkdir_files(repo_path: &Path) -> Vec<PathBuf> {
     walkdir::WalkDir::new(repo_path)
         .follow_links(false)
@@ -251,6 +279,38 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_git_repo(tmp.path());
         assert!(diff_files(tmp.path(), "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", None).is_err());
+    }
+
+    #[test]
+    fn is_semver_valid() {
+        assert!(is_semver("1.0.0"));
+        assert!(is_semver("v1.0.0"));
+        assert!(is_semver("v2.3.4-rc1"));
+        assert!(is_semver("0.1.0+build.123"));
+    }
+
+    #[test]
+    fn is_semver_invalid() {
+        assert!(!is_semver("latest"));
+        assert!(!is_semver("v1"));
+        assert!(!is_semver("1.0"));
+        assert!(!is_semver("release-2024"));
+    }
+
+    #[test]
+    fn read_tags_from_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = make_git_repo(tmp.path());
+        commit_file(&repo, "a.txt", b"data");
+
+        // Create a lightweight tag.
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.tag_lightweight("v1.0.0", head.as_object(), false).unwrap();
+
+        let tags = read_git_tags(tmp.path()).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].0, "v1.0.0");
+        assert!(tags[0].1.is_some());
     }
 
     #[test]
