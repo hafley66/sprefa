@@ -257,6 +257,101 @@ pub async fn flush(
     Ok(refs_inserted)
 }
 
+/// Remove branch_files entries for files that were deleted in a git diff.
+/// Only removes the branch membership -- files/refs/matches rows stay.
+// TODO: soft-delete / diff table for diagnostic holes
+pub async fn delete_branch_files_by_paths(
+    db: &SqlitePool,
+    repo_name: &str,
+    branch: &str,
+    deleted_paths: &[String],
+) -> Result<usize> {
+    if deleted_paths.is_empty() {
+        return Ok(0);
+    }
+
+    let repo_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM repos WHERE name = ?")
+            .bind(repo_name)
+            .fetch_optional(db)
+            .await?;
+
+    let Some(repo_id) = repo_id else {
+        return Ok(0);
+    };
+
+    let mut total_deleted = 0usize;
+    for chunk in deleted_paths.chunks(FILE_CHUNK) {
+        let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "DELETE FROM branch_files
+             WHERE repo_id = ? AND branch = ?
+             AND file_id IN (SELECT id FROM files WHERE repo_id = ? AND path IN ({ph}))"
+        );
+        let mut q = sqlx::query(&sql);
+        q = q.bind(repo_id).bind(branch).bind(repo_id);
+        for path in chunk {
+            q = q.bind(path.as_str());
+        }
+        q.execute(db).await?;
+        let changes: i64 = sqlx::query_scalar("SELECT changes()")
+            .fetch_one(db)
+            .await?;
+        total_deleted += changes as usize;
+    }
+
+    Ok(total_deleted)
+}
+
+/// Update file paths for pure renames (same content, different path).
+/// Preserves file_id, refs, and matches -- only the path column changes.
+/// Returns the number of files updated.
+pub async fn rename_file_paths(
+    db: &SqlitePool,
+    repo_name: &str,
+    renames: &[(String, String)],
+) -> Result<usize> {
+    if renames.is_empty() {
+        return Ok(0);
+    }
+
+    let repo_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM repos WHERE name = ?")
+            .bind(repo_name)
+            .fetch_optional(db)
+            .await?;
+
+    let Some(repo_id) = repo_id else {
+        return Ok(0);
+    };
+
+    let mut updated = 0usize;
+    for (old_path, new_path) in renames {
+        let new_stem = new_path.rsplit('/').next()
+            .and_then(|n| n.split('.').next())
+            .map(String::from);
+        let new_ext = new_path.rsplit('.').next()
+            .filter(|_| new_path.contains('.'))
+            .map(String::from);
+
+        let rows = sqlx::query(
+            "UPDATE files SET path = ?, stem = ?, ext = ?
+             WHERE repo_id = ? AND path = ?",
+        )
+        .bind(new_path)
+        .bind(new_stem)
+        .bind(new_ext)
+        .bind(repo_id)
+        .bind(old_path)
+        .execute(db)
+        .await?;
+
+        updated += rows.rows_affected() as usize;
+    }
+
+    Ok(updated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

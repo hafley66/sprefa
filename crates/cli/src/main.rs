@@ -690,6 +690,13 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
                         );
                         total_files += result.files_scanned;
                         total_refs += result.refs_inserted;
+                        // Persist HEAD sha for future incremental scans.
+                        if let Some(sha) = &result.new_git_hash {
+                            let rid = upsert_repo(&pool, &repo.name, &repo.path).await.ok();
+                            if let Some(rid) = rid {
+                                let _ = sprefa_schema::upsert_repo_branch(&pool, rid, &branch, Some(sha)).await;
+                            }
+                        }
                     }
                     Err(e) => tracing::warn!(repo = %repo.name, branch = %branch, error = %e, "scan failed"),
                 }
@@ -927,13 +934,60 @@ async fn ghcache_subscribe(
                     branch_overrides: None,
                 };
 
-                // Scan committed branch.
-                match scanner.scan_repo(&repo_config, &branch).await {
-                    Ok(r) => tracing::info!(
-                        repo = %repo_slug, branch = %branch,
-                        files = r.files_scanned, refs = r.refs_inserted,
-                        "committed scan complete"
-                    ),
+                // Scan committed branch (incremental if we have a previous sha).
+                let repo_id = sqlx::query_scalar::<_, i64>(
+                    "SELECT id FROM repos WHERE name = ?"
+                ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
+
+                let prev_sha = match repo_id {
+                    Some(rid) => sprefa_schema::get_repo_branch_hash(&scanner.db, rid, &branch)
+                        .await.ok().flatten(),
+                    None => None,
+                };
+
+                let scan_result = match &prev_sha {
+                    Some(sha) => {
+                        tracing::info!(
+                            repo = %repo_slug, branch = %branch, old_sha = %sha,
+                            "incremental scan_diff"
+                        );
+                        match scanner.scan_diff(&repo_config, &branch, sha).await {
+                            Ok(r) => Ok(r),
+                            Err(e) => {
+                                tracing::warn!(
+                                    repo = %repo_slug, branch = %branch, error = %e,
+                                    "scan_diff failed, falling back to full scan"
+                                );
+                                scanner.scan_repo(&repo_config, &branch).await
+                            }
+                        }
+                    }
+                    None => scanner.scan_repo(&repo_config, &branch).await,
+                };
+
+                match &scan_result {
+                    Ok(r) => {
+                        tracing::info!(
+                            repo = %repo_slug, branch = %branch,
+                            files = r.files_scanned, refs = r.refs_inserted,
+                            deleted = r.files_deleted, renamed = r.files_renamed,
+                            "committed scan complete"
+                        );
+                        // Persist the new HEAD sha for future incremental scans.
+                        if let Some(sha) = &r.new_git_hash {
+                            let rid = match repo_id {
+                                Some(rid) => Some(rid),
+                                None => sqlx::query_scalar::<_, i64>(
+                                    "SELECT id FROM repos WHERE name = ?"
+                                ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten(),
+                            };
+                            if let Some(rid) = rid {
+                                let _ = sprefa_schema::upsert_repo_branch(
+                                    &scanner.db, rid, &branch, Some(sha),
+                                ).await;
+                            }
+                        }
+                    }
                     Err(e) => tracing::error!(
                         repo = %repo_slug, branch = %branch, error = %e,
                         "committed scan failed"

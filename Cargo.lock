@@ -2497,6 +2497,7 @@ name = "sprefa_scan"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "git2",
  "sprefa_cache",
  "sprefa_config",
  "sprefa_extract",

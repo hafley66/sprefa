@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use memmap2::Mmap;
@@ -29,17 +29,15 @@ pub struct ExtractedFile {
 /// them but should still update branch membership.
 ///
 /// Files with no matching extractor AND not in the skip set are omitted entirely.
-pub fn extract(
+/// Shared parallel extraction over an explicit file list.
+fn extract_from_list(
     repo_path: &Path,
-    filter: Option<&CompiledFilter>,
+    files: &[PathBuf],
     extractors: &[Box<dyn Extractor>],
     skip_set: &HashSet<(String, String)>,
     ctx: &ExtractContext,
-) -> Result<(usize, Vec<ExtractedFile>)> {
-    let files = list_files(repo_path, filter)?;
-    let total = files.len();
-
-    let extracted: Vec<ExtractedFile> = files
+) -> Vec<ExtractedFile> {
+    files
         .par_iter()
         .filter_map(|abs_path| {
             let rel = abs_path.strip_prefix(repo_path).ok()?.to_str()?;
@@ -78,7 +76,33 @@ pub fn extract(
                 was_skipped: false,
             })
         })
-        .collect();
+        .collect()
+}
 
+pub fn extract(
+    repo_path: &Path,
+    filter: Option<&CompiledFilter>,
+    extractors: &[Box<dyn Extractor>],
+    skip_set: &HashSet<(String, String)>,
+    ctx: &ExtractContext,
+) -> Result<(usize, Vec<ExtractedFile>)> {
+    let files = list_files(repo_path, filter)?;
+    let total = files.len();
+    let extracted = extract_from_list(repo_path, &files, extractors, skip_set, ctx);
+    Ok((total, extracted))
+}
+
+/// Extract refs from a specific set of files (absolute paths).
+/// Same logic as `extract()` but skips the tree walk -- only processes
+/// the provided file list.
+pub fn extract_files(
+    repo_path: &Path,
+    files: Vec<PathBuf>,
+    extractors: &[Box<dyn Extractor>],
+    skip_set: &HashSet<(String, String)>,
+    ctx: &ExtractContext,
+) -> Result<(usize, Vec<ExtractedFile>)> {
+    let total = files.len();
+    let extracted = extract_from_list(repo_path, &files, extractors, skip_set, ctx);
     Ok((total, extracted))
 }
