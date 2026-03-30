@@ -290,8 +290,8 @@ mod tests {
                     { "step": "object", "captures": { "repository": "repo", "tag": "tag" } }
                 ],
                 "create_matches": [
-                    { "capture": "repo", "kind": "dep_name" },
-                    { "capture": "tag", "kind": "dep_version", "parent": "repo" }
+                    { "capture": "repo", "kind": "image_repo" },
+                    { "capture": "tag", "kind": "image_tag", "parent": "repo" }
                 ]
             }
         ]

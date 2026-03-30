@@ -2444,6 +2444,7 @@ dependencies = [
  "rayon",
  "sprefa_config",
  "sprefa_extract",
+ "tempfile",
  "tracing",
  "walkdir",
  "xxhash-rust",
