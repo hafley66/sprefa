@@ -65,6 +65,11 @@ pub struct LinkRule {
     /// Structured predicate compiled to SQL at runtime.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate: Option<LinkPredicate>,
+    /// Restrict target matches to these repo names. When set, only matches
+    /// in the listed repos can be link targets. When absent, targets are
+    /// unconstrained (cross-repo by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_repos: Option<Vec<String>>,
 }
 
 /// Which side of a link (source or target) a predicate applies to.

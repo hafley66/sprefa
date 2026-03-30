@@ -61,6 +61,24 @@ pub async fn resolve_match_links(
             (None, None) => bail!("link rule '{}': neither sql nor predicate set", label),
         };
 
+        // Optional target repo scoping: JOIN repos on the target side and
+        // add an IN clause to restrict which repos can be link targets.
+        let (tgt_repo_join, tgt_repo_where, tgt_repo_binds) =
+            if let Some(repos) = &rule.target_repos {
+                if repos.is_empty() {
+                    (String::new(), String::new(), vec![])
+                } else {
+                    let placeholders: Vec<&str> = repos.iter().map(|_| "?").collect();
+                    (
+                        "\n             JOIN repos tgt_rp ON tgt_f.repo_id = tgt_rp.id".into(),
+                        format!("\n               AND tgt_rp.name IN ({})", placeholders.join(", ")),
+                        repos.clone(),
+                    )
+                }
+            } else {
+                (String::new(), String::new(), vec![])
+            };
+
         let query = format!(
             "INSERT OR IGNORE INTO match_links (source_match_id, target_match_id, link_kind)
              SELECT src_m.id, tgt_m.id, '{kind}'
@@ -73,21 +91,22 @@ pub async fn resolve_match_links(
              JOIN matches tgt_m  ON tgt_m.id != src_m.id
              JOIN refs    tgt_r  ON tgt_m.ref_id     = tgt_r.id
              JOIN strings tgt_s  ON tgt_r.string_id  = tgt_s.id
-             JOIN files   tgt_f  ON tgt_r.file_id    = tgt_f.id
+             JOIN files   tgt_f  ON tgt_r.file_id    = tgt_f.id{tgt_repo_join}
 
              WHERE src_rp.name = ?
                AND NOT EXISTS (
                    SELECT 1 FROM match_links ml
                    WHERE ml.source_match_id = src_m.id AND ml.link_kind = '{kind}'
-               )
+               ){tgt_repo_where}
                AND ({user_sql})",
             kind = rule.kind,
         );
 
-        let result = sqlx::query(&query)
-            .bind(repo_name)
-            .execute(db)
-            .await;
+        let mut q = sqlx::query(&query).bind(repo_name);
+        for repo in &tgt_repo_binds {
+            q = q.bind(repo);
+        }
+        let result = q.execute(db).await;
 
         match result {
             Ok(r) => {
@@ -190,6 +209,7 @@ mod tests {
             kind: "import_binding".into(),
             sql: Some("src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id".into()),
             predicate: None,
+            target_repos: None,
         }
     }
 
@@ -279,6 +299,7 @@ mod tests {
             kind: "image_source".into(),
             sql: Some("src_m.kind = 'image_repo' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm".into()),
             predicate: None,
+            target_repos: None,
         };
 
         let linked = resolve_match_links(&db, "consumer", &[rule]).await.unwrap();
@@ -312,6 +333,7 @@ mod tests {
                 kind: "dependency".into(),
                 sql: Some("src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm".into()),
                 predicate: None,
+                target_repos: None,
             },
         ];
 
@@ -323,5 +345,71 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    /// target_repos restricts which repos can be link targets.
+    #[tokio::test]
+    async fn target_repos_scopes_linking() {
+        let db = make_db().await;
+        let repo_src = seed_repo(&db, "consumer").await;
+        let repo_a = seed_repo(&db, "provider-a").await;
+        let repo_b = seed_repo(&db, "provider-b").await;
+        let file_src = seed_file(&db, repo_src, "values.yaml").await;
+        let file_a = seed_file(&db, repo_a, "package.json").await;
+        let file_b = seed_file(&db, repo_b, "package.json").await;
+
+        // Source repo has an image_repo match.
+        seed_ref_match(&db, file_src, "myapp", "image_repo", None).await;
+        // Both target repos have a matching package_name.
+        seed_ref_match(&db, file_a, "myapp", "package_name", None).await;
+        seed_ref_match(&db, file_b, "myapp", "package_name", None).await;
+
+        // Scope to only provider-a.
+        let rule = LinkRule {
+            kind: "image_source".into(),
+            sql: Some("src_m.kind = 'image_repo' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm".into()),
+            predicate: None,
+            target_repos: Some(vec!["provider-a".into()]),
+        };
+
+        let linked = resolve_match_links(&db, "consumer", &[rule]).await.unwrap();
+        assert_eq!(linked, 1);
+
+        // Verify only provider-a got linked, not provider-b.
+        let tgt_file_id: i64 = sqlx::query_scalar(
+            "SELECT tgt_r.file_id FROM match_links ml
+             JOIN matches tgt_m ON ml.target_match_id = tgt_m.id
+             JOIN refs tgt_r ON tgt_m.ref_id = tgt_r.id",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(tgt_file_id, file_a);
+    }
+
+    /// target_repos: None links across all repos (default behavior).
+    #[tokio::test]
+    async fn no_target_repos_links_all() {
+        let db = make_db().await;
+        let repo_src = seed_repo(&db, "consumer").await;
+        let repo_a = seed_repo(&db, "provider-a").await;
+        let repo_b = seed_repo(&db, "provider-b").await;
+        let file_src = seed_file(&db, repo_src, "values.yaml").await;
+        let file_a = seed_file(&db, repo_a, "package.json").await;
+        let file_b = seed_file(&db, repo_b, "package.json").await;
+
+        seed_ref_match(&db, file_src, "myapp", "image_repo", None).await;
+        seed_ref_match(&db, file_a, "myapp", "package_name", None).await;
+        seed_ref_match(&db, file_b, "myapp", "package_name", None).await;
+
+        let rule = LinkRule {
+            kind: "image_source".into(),
+            sql: Some("src_m.kind = 'image_repo' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm".into()),
+            predicate: None,
+            target_repos: None,
+        };
+
+        let linked = resolve_match_links(&db, "consumer", &[rule]).await.unwrap();
+        assert_eq!(linked, 2);
     }
 }

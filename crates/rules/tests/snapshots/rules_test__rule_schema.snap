@@ -1,44 +1,12 @@
 ---
 source: crates/rules/tests/rules_test.rs
-assertion_line: 9
 expression: schema
 ---
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "RuleSet",
-  "description": "Top-level rules file: an array of rules plus optional metadata.",
-  "type": "object",
-  "required": [
-    "rules"
-  ],
-  "properties": {
-    "$schema": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "link_rules": {
-      "description": "Link rules create edges in `match_links` between matches produced by extraction rules. Each link rule uses either a `predicate` (structured DSL compiled to SQL) or a raw `sql` WHERE clause injected into a fixed query skeleton. Exactly one must be set.\n\n## Predicate DSL (preferred)\n\n```json { \"kind\": \"import_binding\", \"predicate\": { \"op\": \"and\", \"all\": [ { \"op\": \"kind_eq\", \"side\": \"src\", \"value\": \"import_name\" }, { \"op\": \"kind_eq\", \"side\": \"tgt\", \"value\": \"export_name\" }, { \"op\": \"target_file_eq\" }, { \"op\": \"string_eq\" } ] } } ```\n\nAvailable predicates: `kind_eq`, `norm_eq`, `norm2_eq`, `target_file_eq`, `string_eq`, `same_repo`, `and`.\n\n## Raw SQL escape hatch\n\nFor predicates the DSL cannot express, use `sql` with a raw WHERE fragment. The fragment is interpolated directly (no sanitization). Available aliases: src_m, src_r, src_s, src_f, src_rp, tgt_m, tgt_r, tgt_s, tgt_f.\n\n```json { \"kind\": \"dependency\", \"sql\": \"src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm\" } ```",
-      "type": "array",
-      "items": {
-        "$ref": "#/definitions/LinkRule"
-      }
-    },
-    "rules": {
-      "type": "array",
-      "items": {
-        "$ref": "#/definitions/Rule"
-      }
-    }
-  },
   "definitions": {
     "AstSelector": {
       "description": "ast-grep pattern selector for code files.",
-      "type": "object",
-      "required": [
-        "pattern"
-      ],
       "properties": {
         "capture": {
           "default": "$NAME",
@@ -53,25 +21,23 @@ expression: schema
         "pattern": {
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "pattern"
+      ],
+      "type": "object"
     },
     "LinkPredicate": {
       "description": "Structured predicate for link rules, compiled to SQL WHERE fragments.\n\nEach variant maps to a specific SQL condition against the link skeleton's aliases (src_m, src_r, src_s, src_f, tgt_m, tgt_r, tgt_s, tgt_f).",
       "oneOf": [
         {
           "description": "Match kind on one side: `{side}_m.kind = '{value}'`",
-          "type": "object",
-          "required": [
-            "op",
-            "side",
-            "value"
-          ],
           "properties": {
             "op": {
-              "type": "string",
               "enum": [
                 "kind_eq"
-              ]
+              ],
+              "type": "string"
             },
             "side": {
               "$ref": "#/definitions/Side"
@@ -79,120 +45,121 @@ expression: schema
             "value": {
               "type": "string"
             }
-          }
+          },
+          "required": [
+            "op",
+            "side",
+            "value"
+          ],
+          "type": "object"
         },
         {
           "description": "Normalized strings equal: `src_s.norm = tgt_s.norm`",
-          "type": "object",
+          "properties": {
+            "op": {
+              "enum": [
+                "norm_eq"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "op"
           ],
-          "properties": {
-            "op": {
-              "type": "string",
-              "enum": [
-                "norm_eq"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Secondary normalization equal: `src_s.norm2 = tgt_s.norm2`",
-          "type": "object",
+          "properties": {
+            "op": {
+              "enum": [
+                "norm2_eq"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "op"
           ],
-          "properties": {
-            "op": {
-              "type": "string",
-              "enum": [
-                "norm2_eq"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Source's resolved target file matches target's file: `src_r.target_file_id = tgt_r.file_id`",
-          "type": "object",
+          "properties": {
+            "op": {
+              "enum": [
+                "target_file_eq"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "op"
           ],
-          "properties": {
-            "op": {
-              "type": "string",
-              "enum": [
-                "target_file_eq"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Same string_id on both sides: `tgt_r.string_id = src_r.string_id`",
-          "type": "object",
+          "properties": {
+            "op": {
+              "enum": [
+                "string_eq"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "op"
           ],
-          "properties": {
-            "op": {
-              "type": "string",
-              "enum": [
-                "string_eq"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Both matches in the same repo: `src_f.repo_id = tgt_f.repo_id`",
-          "type": "object",
+          "properties": {
+            "op": {
+              "enum": [
+                "same_repo"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "op"
           ],
-          "properties": {
-            "op": {
-              "type": "string",
-              "enum": [
-                "same_repo"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "All sub-predicates must hold.",
-          "type": "object",
+          "properties": {
+            "all": {
+              "items": {
+                "$ref": "#/definitions/LinkPredicate"
+              },
+              "type": "array"
+            },
+            "op": {
+              "enum": [
+                "and"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "all",
             "op"
           ],
-          "properties": {
-            "all": {
-              "type": "array",
-              "items": {
-                "$ref": "#/definitions/LinkPredicate"
-              }
-            },
-            "op": {
-              "type": "string",
-              "enum": [
-                "and"
-              ]
-            }
-          }
+          "type": "object"
         }
       ]
     },
     "LinkRule": {
       "description": "A link rule creates edges in `match_links` between matches.\n\nExactly one of `sql` or `predicate` must be set. The predicate DSL covers common patterns (kind checks, norm equality, file scoping). The raw `sql` escape hatch remains for anything the DSL can't express.",
-      "type": "object",
-      "required": [
-        "kind"
-      ],
       "properties": {
         "kind": {
           "description": "Identifier for this link rule. Written to match_links.link_kind and used in log messages.",
           "type": "string"
         },
         "predicate": {
-          "description": "Structured predicate compiled to SQL at runtime.",
           "anyOf": [
             {
               "$ref": "#/definitions/LinkPredicate"
@@ -200,7 +167,8 @@ expression: schema
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Structured predicate compiled to SQL at runtime."
         },
         "sql": {
           "description": "Raw SQL WHERE clause. Plugged into the skeleton as `AND (<sql>)`. Available aliases: src_m, src_r, src_s, src_f, src_rp, tgt_m, tgt_r, tgt_s, tgt_f.",
@@ -208,16 +176,25 @@ expression: schema
             "string",
             "null"
           ]
+        },
+        "target_repos": {
+          "description": "Restrict target matches to these repo names. When set, only matches in the listed repos can be link targets. When absent, targets are unconstrained (cross-repo by default).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         }
-      }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
     },
     "MatchDef": {
       "description": "One match to create from a captured value.",
-      "type": "object",
-      "required": [
-        "capture",
-        "kind"
-      ],
       "properties": {
         "capture": {
           "description": "Name of the capture to use as the ref value.",
@@ -234,31 +211,30 @@ expression: schema
             "null"
           ]
         }
-      }
+      },
+      "required": [
+        "capture",
+        "kind"
+      ],
+      "type": "object"
     },
     "Rule": {
       "description": "A single extraction rule.\n\nThe `select` chain is a CSS selector against the full index DOM: root > repo > branch > tag > folder* > file > (parsed tree nodes)\n\nContext steps (Repo, Branch, Tag, Folder, File) filter by git context and file path before the file is parsed. Structural steps (Key, KeyMatch, Any, etc.) walk the parsed tree to produce captures.\n\nOrdering constraint enforced at compile time: all context steps must precede all structural steps.",
-      "type": "object",
-      "required": [
-        "create_matches",
-        "name",
-        "select"
-      ],
       "properties": {
         "confidence": {
           "description": "Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.",
+          "format": "double",
           "type": [
             "number",
             "null"
-          ],
-          "format": "double"
+          ]
         },
         "create_matches": {
           "description": "Each entry turns a named capture into a match row.",
-          "type": "array",
           "items": {
             "$ref": "#/definitions/MatchDef"
-          }
+          },
+          "type": "array"
         },
         "description": {
           "type": [
@@ -270,10 +246,10 @@ expression: schema
           "type": "string"
         },
         "select": {
-          "type": "array",
           "items": {
             "$ref": "#/definitions/SelectStep"
-          }
+          },
+          "type": "array"
         },
         "select_ast": {
           "anyOf": [
@@ -286,7 +262,6 @@ expression: schema
           ]
         },
         "value": {
-          "description": "Regex applied to a named capture to split/filter it. Named groups from the regex merge back into the capture map.",
           "anyOf": [
             {
               "$ref": "#/definitions/ValuePattern"
@@ -294,20 +269,22 @@ expression: schema
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Regex applied to a named capture to split/filter it. Named groups from the regex merge back into the capture map."
         }
-      }
+      },
+      "required": [
+        "create_matches",
+        "name",
+        "select"
+      ],
+      "type": "object"
     },
     "SelectStep": {
       "description": "One step in a selector chain.\n\nContext steps filter before parsing. Structural steps walk the parsed tree. Pattern fields use pipe-delimited glob syntax: `\"main|release/*\"`.\n\nFor Folder: `*` captures one path segment, `**` captures the remaining path. For File: glob matches against the full relative file path.",
       "oneOf": [
         {
           "description": "Filter by repository name (pipe-delimited glob).",
-          "type": "object",
-          "required": [
-            "pattern",
-            "step"
-          ],
           "properties": {
             "capture": {
               "type": [
@@ -319,20 +296,20 @@ expression: schema
               "type": "string"
             },
             "step": {
-              "type": "string",
               "enum": [
                 "repo"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Filter by branch name (pipe-delimited glob).",
-          "type": "object",
-          "required": [
-            "pattern",
-            "step"
-          ],
           "properties": {
             "capture": {
               "type": [
@@ -344,20 +321,20 @@ expression: schema
               "type": "string"
             },
             "step": {
-              "type": "string",
               "enum": [
                 "branch"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Filter by git tag (pipe-delimited glob).",
-          "type": "object",
-          "required": [
-            "pattern",
-            "step"
-          ],
           "properties": {
             "capture": {
               "type": [
@@ -369,20 +346,20 @@ expression: schema
               "type": "string"
             },
             "step": {
-              "type": "string",
               "enum": [
                 "tag"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Filter by directory path (pipe-delimited glob against dir portion).",
-          "type": "object",
-          "required": [
-            "pattern",
-            "step"
-          ],
           "properties": {
             "capture": {
               "type": [
@@ -394,20 +371,20 @@ expression: schema
               "type": "string"
             },
             "step": {
-              "type": "string",
               "enum": [
                 "folder"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Filter by file path (pipe-delimited glob against full relative path).",
-          "type": "object",
-          "required": [
-            "pattern",
-            "step"
-          ],
           "properties": {
             "capture": {
               "type": [
@@ -419,20 +396,20 @@ expression: schema
               "type": "string"
             },
             "step": {
-              "type": "string",
               "enum": [
                 "file"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Enter the child with this exact key name.",
-          "type": "object",
-          "required": [
-            "name",
-            "step"
-          ],
           "properties": {
             "capture": {
               "type": [
@@ -444,20 +421,20 @@ expression: schema
               "type": "string"
             },
             "step": {
-              "type": "string",
               "enum": [
                 "key"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "name",
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Enter children whose key matches this glob pattern (pipe-delimited).",
-          "type": "object",
-          "required": [
-            "pattern",
-            "step"
-          ],
           "properties": {
             "capture": {
               "type": [
@@ -469,131 +446,132 @@ expression: schema
               "type": "string"
             },
             "step": {
-              "type": "string",
               "enum": [
                 "key_match"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Descend through any number of levels (like CSS `**` or jq `..`).",
-          "type": "object",
+          "properties": {
+            "step": {
+              "enum": [
+                "any"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "step"
           ],
-          "properties": {
-            "step": {
-              "type": "string",
-              "enum": [
-                "any"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Filter: current depth >= n (0 = root).",
-          "type": "object",
+          "properties": {
+            "n": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "step": {
+              "enum": [
+                "depth_min"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "n",
             "step"
           ],
-          "properties": {
-            "n": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "step": {
-              "type": "string",
-              "enum": [
-                "depth_min"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Filter: current depth <= n.",
-          "type": "object",
+          "properties": {
+            "n": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "step": {
+              "enum": [
+                "depth_max"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "n",
             "step"
           ],
-          "properties": {
-            "n": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "step": {
-              "type": "string",
-              "enum": [
-                "depth_max"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Filter: current depth == n.",
-          "type": "object",
+          "properties": {
+            "n": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "step": {
+              "enum": [
+                "depth_eq"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "n",
             "step"
           ],
-          "properties": {
-            "n": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0.0
-            },
-            "step": {
-              "type": "string",
-              "enum": [
-                "depth_eq"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Filter: parent key matches this glob pattern.",
-          "type": "object",
-          "required": [
-            "pattern",
-            "step"
-          ],
           "properties": {
             "pattern": {
               "type": "string"
             },
             "step": {
-              "type": "string",
               "enum": [
                 "parent_key"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "pattern",
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Descend into array elements.",
-          "type": "object",
+          "properties": {
+            "step": {
+              "enum": [
+                "array_item"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "step"
           ],
-          "properties": {
-            "step": {
-              "type": "string",
-              "enum": [
-                "array_item"
-              ]
-            }
-          }
+          "type": "object"
         },
         {
           "description": "Filter: node is a leaf (string, number, bool). Captures the leaf value.",
-          "type": "object",
-          "required": [
-            "step"
-          ],
           "properties": {
             "capture": {
               "type": [
@@ -602,56 +580,55 @@ expression: schema
               ]
             },
             "step": {
-              "type": "string",
               "enum": [
                 "leaf"
-              ]
+              ],
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "step"
+          ],
+          "type": "object"
         },
         {
           "description": "Capture multiple sibling keys from an object node at once. Map of json_key -> capture_name. Example: `{ \"repository\": \"repo\", \"tag\": \"tag\" }`",
-          "type": "object",
+          "properties": {
+            "captures": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "step": {
+              "enum": [
+                "object"
+              ],
+              "type": "string"
+            }
+          },
           "required": [
             "captures",
             "step"
           ],
-          "properties": {
-            "captures": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string"
-              }
-            },
-            "step": {
-              "type": "string",
-              "enum": [
-                "object"
-              ]
-            }
-          }
+          "type": "object"
         }
       ]
     },
     "Side": {
       "description": "Which side of a link (source or target) a predicate applies to.",
-      "type": "string",
       "enum": [
         "src",
         "tgt"
-      ]
+      ],
+      "type": "string"
     },
     "ValuePattern": {
       "description": "Regex applied to a named capture. Named groups from the regex merge into the capture map, enabling split/transform of captured values.",
-      "type": "object",
-      "required": [
-        "pattern",
-        "source"
-      ],
       "properties": {
         "full_match": {
-          "description": "Anchor the regex to the full string. Default: true.",
           "default": true,
+          "description": "Anchor the regex to the full string. Default: true.",
           "type": "boolean"
         },
         "pattern": {
@@ -662,7 +639,39 @@ expression: schema
           "description": "Which capture to run the regex against.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "pattern",
+        "source"
+      ],
+      "type": "object"
     }
-  }
+  },
+  "description": "Top-level rules file: an array of rules plus optional metadata.",
+  "properties": {
+    "$schema": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "link_rules": {
+      "description": "Link rules create edges in `match_links` between matches produced by extraction rules. Each link rule uses either a `predicate` (structured DSL compiled to SQL) or a raw `sql` WHERE clause injected into a fixed query skeleton. Exactly one must be set.\n\n## Predicate DSL (preferred)\n\n```json { \"kind\": \"import_binding\", \"predicate\": { \"op\": \"and\", \"all\": [ { \"op\": \"kind_eq\", \"side\": \"src\", \"value\": \"import_name\" }, { \"op\": \"kind_eq\", \"side\": \"tgt\", \"value\": \"export_name\" }, { \"op\": \"target_file_eq\" }, { \"op\": \"string_eq\" } ] } } ```\n\nAvailable predicates: `kind_eq`, `norm_eq`, `norm2_eq`, `target_file_eq`, `string_eq`, `same_repo`, `and`.\n\n## Raw SQL escape hatch\n\nFor predicates the DSL cannot express, use `sql` with a raw WHERE fragment. The fragment is interpolated directly (no sanitization). Available aliases: src_m, src_r, src_s, src_f, src_rp, tgt_m, tgt_r, tgt_s, tgt_f.\n\n```json { \"kind\": \"dependency\", \"sql\": \"src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm\" } ```",
+      "items": {
+        "$ref": "#/definitions/LinkRule"
+      },
+      "type": "array"
+    },
+    "rules": {
+      "items": {
+        "$ref": "#/definitions/Rule"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "rules"
+  ],
+  "title": "RuleSet",
+  "type": "object"
 }
