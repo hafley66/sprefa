@@ -97,6 +97,16 @@ impl Scanner {
             .collect();
         sprefa_cache::flush_git_tags(&self.db, &config.name, &tag_rows).await?;
 
+        // Intern repo-level metadata (repo name, git tags, branches) as linkable entities.
+        let meta_tag_names: Vec<String> = tag_rows.iter().map(|(n, _, _)| n.clone()).collect();
+        sprefa_cache::flush_repo_meta(
+            &self.db,
+            &config.name,
+            None, // org -- not in RepoConfig yet
+            &meta_tag_names,
+            &[branch.to_string()],
+        ).await?;
+
         let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;
         let links_created = sprefa_cache::resolve_match_links(&self.db, &config.name, &self.link_rules).await?;
 
@@ -246,6 +256,16 @@ impl Scanner {
             extracted,
             self.normalize_config.as_ref(),
             BINARY_HASH,
+        ).await?;
+
+        // Intern repo-level metadata as linkable entities.
+        let meta_tag_names: Vec<String> = tag_rows.iter().map(|(n, _, _)| n.clone()).collect();
+        sprefa_cache::flush_repo_meta(
+            &self.db,
+            &config.name,
+            None,
+            &meta_tag_names,
+            &[branch.to_string()],
         ).await?;
 
         let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;

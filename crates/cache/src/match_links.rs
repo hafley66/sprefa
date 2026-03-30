@@ -13,6 +13,10 @@ use sprefa_rules::{LinkPredicate, Side};
 ///
 /// ## Skeleton (reproduced here for grep-ability)
 ///
+/// Source side: always file-backed (INNER JOINs).
+/// Target side: LEFT JOINs to support both file-backed and repo_ref-backed matches.
+/// The CHECK on matches guarantees exactly one of (ref_id, repo_ref_id) is non-null.
+///
 /// ```sql
 /// INSERT OR IGNORE INTO match_links (source_match_id, target_match_id, link_kind)
 /// SELECT src_m.id, tgt_m.id, '<link_rule.kind>'
@@ -22,10 +26,11 @@ use sprefa_rules::{LinkPredicate, Side};
 /// JOIN files   src_f  ON src_r.file_id    = src_f.id
 /// JOIN repos   src_rp ON src_f.repo_id    = src_rp.id
 ///
-/// JOIN matches tgt_m  ON tgt_m.id != src_m.id
-/// JOIN refs    tgt_r  ON tgt_m.ref_id     = tgt_r.id
-/// JOIN strings tgt_s  ON tgt_r.string_id  = tgt_s.id
-/// JOIN files   tgt_f  ON tgt_r.file_id    = tgt_f.id
+/// JOIN matches       tgt_m  ON tgt_m.id != src_m.id
+/// LEFT JOIN refs      tgt_r  ON tgt_m.ref_id      = tgt_r.id
+/// LEFT JOIN repo_refs tgt_rr ON tgt_m.repo_ref_id  = tgt_rr.id
+/// JOIN strings       tgt_s  ON COALESCE(tgt_r.string_id, tgt_rr.string_id) = tgt_s.id
+/// LEFT JOIN files     tgt_f  ON tgt_r.file_id      = tgt_f.id
 ///
 /// WHERE src_rp.name = :repo_name
 ///   AND NOT EXISTS (
@@ -73,7 +78,7 @@ pub async fn resolve_match_links(
                 } else {
                     let placeholders: Vec<&str> = repos.iter().map(|_| "?").collect();
                     (
-                        "\n             JOIN repos tgt_rp ON tgt_f.repo_id = tgt_rp.id".into(),
+                        "\n             JOIN repos tgt_rp ON COALESCE(tgt_f.repo_id, tgt_rr.repo_id) = tgt_rp.id".into(),
                         format!("\n               AND tgt_rp.name IN ({})", placeholders.join(", ")),
                         repos.clone(),
                     )
@@ -91,10 +96,11 @@ pub async fn resolve_match_links(
              JOIN files   src_f  ON src_r.file_id    = src_f.id
              JOIN repos   src_rp ON src_f.repo_id    = src_rp.id
 
-             JOIN matches tgt_m  ON tgt_m.id != src_m.id
-             JOIN refs    tgt_r  ON tgt_m.ref_id     = tgt_r.id
-             JOIN strings tgt_s  ON tgt_r.string_id  = tgt_s.id
-             JOIN files   tgt_f  ON tgt_r.file_id    = tgt_f.id{tgt_repo_join}
+             JOIN matches        tgt_m  ON tgt_m.id != src_m.id
+             LEFT JOIN refs      tgt_r  ON tgt_m.ref_id      = tgt_r.id
+             LEFT JOIN repo_refs tgt_rr ON tgt_m.repo_ref_id  = tgt_rr.id
+             JOIN strings        tgt_s  ON COALESCE(tgt_r.string_id, tgt_rr.string_id) = tgt_s.id
+             LEFT JOIN files     tgt_f  ON tgt_r.file_id      = tgt_f.id{tgt_repo_join}
 
              WHERE src_rp.name = ?
                AND NOT EXISTS (
@@ -197,7 +203,7 @@ mod tests {
         .await
         .unwrap();
         let match_id: i64 = sqlx::query_scalar(
-            "INSERT INTO matches (ref_id, rule_name, kind) VALUES (?, 'test', ?) RETURNING id",
+            "INSERT INTO matches (ref_id, repo_ref_id, rule_name, kind) VALUES (?, NULL, 'test', ?) RETURNING id",
         )
         .bind(ref_id)
         .bind(kind)
@@ -205,6 +211,34 @@ mod tests {
         .await
         .unwrap();
         (ref_id, match_id)
+    }
+
+    /// Seed a repo_ref + match (repo-anchored, no file). Returns match_id.
+    async fn seed_repo_ref_match(
+        db: &SqlitePool,
+        repo_id: i64,
+        value: &str,
+        kind: &str,
+    ) -> i64 {
+        let string_id = seed_string(db, value).await;
+        let repo_ref_id: i64 = sqlx::query_scalar(
+            "INSERT OR IGNORE INTO repo_refs (string_id, repo_id, kind) VALUES (?, ?, ?) RETURNING id",
+        )
+        .bind(string_id)
+        .bind(repo_id)
+        .bind(kind)
+        .fetch_one(db)
+        .await
+        .unwrap();
+        let match_id: i64 = sqlx::query_scalar(
+            "INSERT INTO matches (ref_id, repo_ref_id, rule_name, kind) VALUES (NULL, ?, '__meta__', ?) RETURNING id",
+        )
+        .bind(repo_ref_id)
+        .bind(kind)
+        .fetch_one(db)
+        .await
+        .unwrap();
+        match_id
     }
 
     fn import_binding_rule() -> LinkRule {
@@ -492,5 +526,103 @@ mod tests {
 
         let linked = resolve_match_links(&db, "consumer", &[rule]).await.unwrap();
         assert_eq!(linked, 2);
+    }
+
+    /// Link a file-backed match to a repo_ref-backed match (image_tag -> git_tag).
+    #[tokio::test]
+    async fn links_to_repo_ref_target() {
+        let db = make_db().await;
+        let repo_src = seed_repo(&db, "infra").await;
+        let repo_tgt = seed_repo(&db, "api").await;
+        let file_src = seed_file(&db, repo_src, "helm/values.yaml").await;
+
+        // Source: helm image tag in infra repo (file-backed)
+        let (_, src_match) = seed_ref_match(&db, file_src, "v1.2.3", "helm_image_tag", None).await;
+        // Target: git tag in api repo (repo_ref-backed)
+        let tgt_match = seed_repo_ref_match(&db, repo_tgt, "v1.2.3", "git_tag").await;
+
+        let rule = LinkRule {
+            kind: "image_tag_to_git_tag".into(),
+            sql: None,
+            predicate: Some(LinkPredicate::And {
+                all: vec![
+                    LinkPredicate::KindEq { side: Side::Src, value: "helm_image_tag".into() },
+                    LinkPredicate::KindEq { side: Side::Tgt, value: "git_tag".into() },
+                    LinkPredicate::NormEq,
+                ],
+            }),
+            target_repos: None,
+        };
+
+        let linked = resolve_match_links(&db, "infra", &[rule]).await.unwrap();
+        assert_eq!(linked, 1);
+
+        let row: Option<(i64, i64, String)> = sqlx::query_as(
+            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
+        )
+        .fetch_optional(&db)
+        .await
+        .unwrap();
+        assert_eq!(row, Some((src_match, tgt_match, "image_tag_to_git_tag".to_string())));
+    }
+
+    /// Link a file-backed match to a repo_ref-backed match with target_repos scoping.
+    #[tokio::test]
+    async fn repo_ref_target_with_target_repos_scope() {
+        let db = make_db().await;
+        let repo_src = seed_repo(&db, "infra").await;
+        let repo_a = seed_repo(&db, "api").await;
+        let repo_b = seed_repo(&db, "web").await;
+        let file_src = seed_file(&db, repo_src, "helm/values.yaml").await;
+
+        seed_ref_match(&db, file_src, "v2.0.0", "helm_image_tag", None).await;
+        // Both repos have the same git tag
+        seed_repo_ref_match(&db, repo_a, "v2.0.0", "git_tag").await;
+        seed_repo_ref_match(&db, repo_b, "v2.0.0", "git_tag").await;
+
+        // Scope to only api repo
+        let rule = LinkRule {
+            kind: "image_tag_to_git_tag".into(),
+            sql: None,
+            predicate: Some(LinkPredicate::And {
+                all: vec![
+                    LinkPredicate::KindEq { side: Side::Src, value: "helm_image_tag".into() },
+                    LinkPredicate::KindEq { side: Side::Tgt, value: "git_tag".into() },
+                    LinkPredicate::NormEq,
+                ],
+            }),
+            target_repos: Some(vec!["api".into()]),
+        };
+
+        let linked = resolve_match_links(&db, "infra", &[rule]).await.unwrap();
+        assert_eq!(linked, 1);
+    }
+
+    /// Existing file-to-file links still work with the new LEFT JOIN skeleton.
+    #[tokio::test]
+    async fn file_to_file_links_unchanged() {
+        let db = make_db().await;
+        let repo_id = seed_repo(&db, "app").await;
+        let file_a = seed_file(&db, repo_id, "src/app.ts").await;
+        let file_b = seed_file(&db, repo_id, "src/utils.ts").await;
+
+        let (_, export_match) =
+            seed_ref_match(&db, file_b, "foo", "export_name", None).await;
+        let (_, import_match) =
+            seed_ref_match(&db, file_a, "foo", "import_name", Some(file_b)).await;
+
+        // Also seed a repo_ref to ensure it doesn't interfere
+        seed_repo_ref_match(&db, repo_id, "app", "repo_name").await;
+
+        let linked = resolve_match_links(&db, "app", &[import_binding_rule()]).await.unwrap();
+        assert_eq!(linked, 1);
+
+        let row: Option<(i64, i64, String)> = sqlx::query_as(
+            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
+        )
+        .fetch_optional(&db)
+        .await
+        .unwrap();
+        assert_eq!(row, Some((import_match, export_match, "import_binding".to_string())));
     }
 }

@@ -14,13 +14,16 @@ Every interesting string in a codebase is a **ref**: a file contains a string at
 
 ```
 repos 1->M files 1->M refs M<-1 strings
-                        |
+  |                           |
+  +--1->M repo_refs ----+     |
+                        |     |
                     matches (kind TEXT, rule_name TEXT)
-                        |
+                        |         exactly one of: ref_id | repo_ref_id
                     match_labels (key-value metadata)
 
 ref.target_file_id -> files         (resolved cross-file link)
 refs.parent_key_string_id -> strings (intra-file sibling pairing)
+repo_refs(string_id, repo_id, kind) -- repo-level metadata (repo_name, git_tag, branch_name)
 match_links (source_match_id, target_match_id, link_kind)  -- cross-file/cross-repo semantic links
 ```
 
@@ -280,30 +283,67 @@ Rules replace hard-coded Rust for each new file format or naming convention. Whe
 
 ## Link rules
 
-`match_links` edges between matches, defined in `sprefa-rules.json`. Each rule = a `kind` + a raw SQL WHERE fragment injected into a fixed skeleton.
+`match_links` edges between matches, defined in `sprefa-rules.json`. Each rule = a `kind` + either a structured predicate DSL or a raw SQL WHERE fragment injected into a fixed skeleton.
+
+Matches can be file-backed (from extraction) or repo_ref-backed (repo name, git tags, branches). The link skeleton uses LEFT JOINs on the target side so predicates can match either kind.
 
 ```
-extraction rules produce matches -> link rules connect them across files/repos
+extraction rules produce file-backed matches
+flush_repo_meta produces repo_ref-backed matches (repo_name, git_tag, branch_name)
+link rules connect them across files/repos
 ```
+
+### Predicate DSL (preferred)
 
 ```json
 {
   "link_rules": [
     {
-      "kind": "import_binding",
-      "sql": "src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id"
+      "kind": "dep_to_package",
+      "predicate": {
+        "op": "and",
+        "all": [
+          { "op": "kind_eq", "side": "src", "value": "dep_name" },
+          { "op": "kind_eq", "side": "tgt", "value": "package_name" },
+          { "op": "norm_eq" }
+        ]
+      }
     },
     {
-      "kind": "dependency",
-      "sql": "src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm"
+      "kind": "image_tag_to_git_tag",
+      "predicate": {
+        "op": "and",
+        "all": [
+          { "op": "kind_eq", "side": "src", "value": "helm_image_tag" },
+          { "op": "kind_eq", "side": "tgt", "value": "git_tag" },
+          { "op": "norm_eq" }
+        ]
+      }
     }
   ]
 }
 ```
 
+Available predicates: `kind_eq`, `norm_eq`, `norm2_eq`, `target_file_eq`, `string_eq`, `same_repo`, `stem_eq`, `ext_eq`, `dir_eq`, `and`.
+
+- `stem_eq { side }` -- file stem on {side} matches string norm on other side. Use for `mod foo;` -> `foo.rs` linking.
+- `ext_eq { side }` -- file extension on {side} matches string norm on other side.
+- `dir_eq { side }` -- file directory on {side} matches string norm on other side. Use for workspace member -> directory linking.
+
+### Raw SQL escape hatch
+
+For predicates the DSL cannot express:
+
+```json
+{
+  "kind": "import_binding",
+  "sql": "src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id"
+}
+```
+
 ### Skeleton
 
-`sql` is injected as `AND (<sql>)`:
+`sql` is injected as `AND (<sql>)`. Source side uses INNER JOINs (always file-backed). Target side uses LEFT JOINs to support both file-backed and repo_ref-backed matches:
 
 ```sql
 INSERT OR IGNORE INTO match_links (source_match_id, target_match_id, link_kind)
@@ -313,10 +353,13 @@ JOIN refs    src_r  ON src_m.ref_id     = src_r.id
 JOIN strings src_s  ON src_r.string_id  = src_s.id
 JOIN files   src_f  ON src_r.file_id    = src_f.id
 JOIN repos   src_rp ON src_f.repo_id    = src_rp.id
-JOIN matches tgt_m  ON tgt_m.id != src_m.id
-JOIN refs    tgt_r  ON tgt_m.ref_id     = tgt_r.id
-JOIN strings tgt_s  ON tgt_r.string_id  = tgt_s.id
-JOIN files   tgt_f  ON tgt_r.file_id    = tgt_f.id
+
+JOIN matches        tgt_m  ON tgt_m.id != src_m.id
+LEFT JOIN refs      tgt_r  ON tgt_m.ref_id      = tgt_r.id
+LEFT JOIN repo_refs tgt_rr ON tgt_m.repo_ref_id  = tgt_rr.id
+JOIN strings        tgt_s  ON COALESCE(tgt_r.string_id, tgt_rr.string_id) = tgt_s.id
+LEFT JOIN files     tgt_f  ON tgt_r.file_id      = tgt_f.id
+
 WHERE src_rp.name = :repo_name
   AND NOT EXISTS (
       SELECT 1 FROM match_links ml
@@ -327,15 +370,19 @@ WHERE src_rp.name = :repo_name
 
 ### Columns available in `sql`
 
+Source side (always file-backed):
 - **src_m** (matches) -> id, ref_id, rule_name, kind
 - **src_r** (refs) -> id, string_id, file_id, span_start, span_end, target_file_id, parent_key_string_id, node_path
 - **src_s** (strings) -> id, value, norm, norm2
-- **src_f** (files) -> id, repo_id, path, stem, ext
+- **src_f** (files) -> id, repo_id, path, stem, ext, dir
 - **src_rp** (repos) -> id, name, root_path
-- **tgt_m** (matches) -> id, ref_id, rule_name, kind
-- **tgt_r** (refs) -> id, string_id, file_id, span_start, span_end, target_file_id, parent_key_string_id, node_path
+
+Target side (file-backed or repo_ref-backed, LEFT JOINed):
+- **tgt_m** (matches) -> id, ref_id, repo_ref_id, rule_name, kind
+- **tgt_r** (refs) -> nullable; id, string_id, file_id, ...
+- **tgt_rr** (repo_refs) -> nullable; id, string_id, repo_id, kind
 - **tgt_s** (strings) -> id, value, norm, norm2
-- **tgt_f** (files) -> id, repo_id, path, stem, ext
+- **tgt_f** (files) -> nullable for repo_ref targets; id, repo_id, path, stem, ext, dir
 
 Raw SQL, no sanitization. Local toolchain tradeoff. Idempotent via NOT EXISTS + INSERT OR IGNORE. Runs after extraction + import resolution on every scan.
 
@@ -367,6 +414,7 @@ graph TD
     subgraph DB["SQLite"]
         STR[(strings)]
         REF[(refs)]
+        RRF[(repo_refs)]
         MAT[(matches)]
         ML[(match_links)]
         FIL[(files)]
@@ -387,14 +435,17 @@ graph TD
     FL --> REF
     FL --> MAT
     FL --> FIL
+    FL -->|flush_repo_meta| RRF
 
     RIT -->|oxc_resolver| REF
     LR -->|sql injected into skeleton| RML
     RML --> ML
 
     REF -.->|ref_id| MAT
+    RRF -.->|repo_ref_id| MAT
     MAT -.->|source/target match_id| ML
     REF -.->|string_id| STR
+    RRF -.->|string_id| STR
     REF -.->|file_id| FIL
 ```
 
@@ -470,6 +521,9 @@ LINK PREDICATE ALGEBRA
       target_file_eq(mₛ,mₜ) =  mₛ.ref.target_file_id = mₜ.ref.file_id
       string_eq(mₛ,mₜ)      =  mₛ.ref.string_id = mₜ.ref.string_id
       same_repo(mₛ,mₜ)      =  mₛ.file.repo_id = mₜ.file.repo_id
+      stem_eq(σ)(mₛ,mₜ)     =  lower(m_σ.file.stem) = m_other.str.norm
+      ext_eq(σ)(mₛ,mₜ)      =  lower(m_σ.file.ext)  = m_other.str.norm
+      dir_eq(σ)(mₛ,mₜ)      =  lower(m_σ.file.dir)  = m_other.str.norm
       and(P₁…Pₙ)            =  P₁ ∧ … ∧ Pₙ
 
   Compilation is a homomorphism into SQL boolean algebra:
@@ -478,6 +532,8 @@ LINK PREDICATE ALGEBRA
 
       compile(kind_eq(src,v))   ↦  "src_m.kind = 'v'"
       compile(norm_eq)          ↦  "src_s.norm = tgt_s.norm"
+      compile(same_repo)        ↦  "src_f.repo_id = COALESCE(tgt_f.repo_id, tgt_rr.repo_id)"
+      compile(stem_eq(tgt))     ↦  "LOWER(tgt_f.stem) = src_s.norm"
       compile(and(P₁…Pₙ))      ↦  "(compile(P₁) AND … AND compile(Pₙ))"
 
 FULL PIPELINE  (composition)
@@ -491,6 +547,20 @@ FULL PIPELINE  (composition)
 ```
 
 ## Schema
+
+**Tables:**
+- `repos` -- registered git repositories
+- `files` -- indexed files with path, stem, ext, dir, content_hash
+- `strings` -- deduplicated string values with norm/norm2
+- `refs` -- string occurrences in files (string_id, file_id, byte span)
+- `repo_refs` -- repo-level metadata strings (string_id, repo_id, kind). Kinds: `repo_name`, `git_tag`, `branch_name`, `repo_org`
+- `matches` -- semantic labels on refs or repo_refs. Exactly one of (ref_id, repo_ref_id) is non-null
+- `match_labels` -- key-value metadata on matches
+- `match_links` -- directed edges between matches (source_match_id, target_match_id, link_kind)
+- `branch_files` -- junction: which files belong to which branch
+- `repo_branches` -- branch metadata (git_hash, is_working_tree)
+- `git_tags` -- git tag metadata (tag_name, commit_hash, is_semver)
+- `repo_packages` -- package manifest metadata (package_name, ecosystem, manifest_path)
 
 **RefKind enum:**
 ```
@@ -514,7 +584,8 @@ crates/
   extract/      Extractor trait + RawRef type
   index/        pure extraction: file enumeration, parallel rayon walk, xxh3 hashing
   cache/        DB writes: bulk flush, import target resolution (oxc_resolver),
-                match link resolution, scan context (skip set by content hash + scanner hash)
+                match link resolution, repo metadata interning (flush_repo_meta),
+                scan context (skip set by content hash + scanner hash)
   rules/        declarative JSON rule engine: types, tree walker, create_matches, JSON Schema
   js/           oxc-based JS/TS extractor (imports, exports, require, re-exports)
   rs/           syn-based Rust extractor (use trees, declarations, mod, extern crate)
@@ -548,12 +619,14 @@ crates/
 ## Roadmap
 
 - [ ] Generic comment parser: line-comment extraction across languages (// # -- %% etc.) to capture annotations, TODOs, and cross-ref hints embedded in comments. Since comment syntax per language is just a line prefix, a small grammar table covers most languages without needing full AST parsing.
-- [ ] Populate git_tags during scan (git tag --list per repo)
+- [x] Populate git_tags during scan (git tag --list per repo)
 - [ ] Production link rules for: helm image_repo/image_tag to repos+tags, dep_name to package_name by norm
-- [ ] Repo name as a matchable entity: extract package_name from manifests so link rules can join config values to repos by norm match (subsumes repo_packages table)
+- [x] Repo-level metadata as matchable entities: repo_refs table interns repo name, git tags, branches as linkable matches
+- [x] File metadata predicates: StemEq, ExtEq, DirEq link predicates reference files.stem/ext/dir directly (zero extra rows)
+- [x] Link rule predicate DSL: structured predicates compiled to SQL (kind_eq, norm_eq, same_repo, stem_eq, ext_eq, dir_eq, and)
+- [ ] Second link-rule pass after all repos indexed (remove scan-order dependency for cross-repo links)
 - [ ] Rust super::/self:: resolution in rs_uses_with_prefix queries
 - [ ] Static type/property tree extraction for rename propagation through type hierarchies
 - [ ] tree-sitter incremental parsing for watch-path re-extraction
 - [ ] ast-grep lib integration for structural pattern matching (priority 5 parser)
 - [ ] SCIP indexer consumption for languages without dedicated extractors
-- [ ] Link rule DSL to replace raw SQL injection with a bounded predicate language

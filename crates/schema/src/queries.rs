@@ -191,13 +191,30 @@ pub async fn search_refs(
         {branch_join}
         WHERE fts.norm MATCH ?
         {branch_where}
-        ORDER BY rank, repos.name, f.path
+
+        UNION ALL
+
+        SELECT DISTINCT s.id, s.value, s.norm,
+               0 AS span_start, 0 AS span_end,
+               m.kind, m.rule_name,
+               NULL AS file_path,
+               repos.name AS repo_name
+        FROM strings_fts fts
+        JOIN strings s ON s.id = fts.rowid
+        JOIN repo_refs rr ON rr.string_id = s.id
+        JOIN matches m ON m.repo_ref_id = rr.id
+        JOIN repos ON rr.repo_id = repos.id
+        WHERE fts.norm MATCH ?
+
+        ORDER BY repo_name, file_path
         LIMIT 500
         "#,
     );
 
-    let rows: Vec<(i64, String, String, i64, i64, String, String, String, String)> = sqlx::query_as(&sql)
-        .bind(format!("\"{}\"", query))
+    let phrase = format!("\"{}\"", query);
+    let rows: Vec<(i64, String, String, i64, i64, String, String, Option<String>, String)> = sqlx::query_as(&sql)
+        .bind(&phrase)
+        .bind(&phrase)
         .fetch_all(pool)
         .await?;
 

@@ -18,7 +18,19 @@ pub fn compile(pred: &LinkPredicate) -> String {
         LinkPredicate::Norm2Eq => "src_s.norm2 = tgt_s.norm2".into(),
         LinkPredicate::TargetFileEq => "src_r.target_file_id = tgt_r.file_id".into(),
         LinkPredicate::StringEq => "tgt_r.string_id = src_r.string_id".into(),
-        LinkPredicate::SameRepo => "src_f.repo_id = tgt_f.repo_id".into(),
+        LinkPredicate::SameRepo => "src_f.repo_id = COALESCE(tgt_f.repo_id, tgt_rr.repo_id)".into(),
+        LinkPredicate::StemEq { side } => match side {
+            Side::Src => "LOWER(src_f.stem) = tgt_s.norm".into(),
+            Side::Tgt => "LOWER(tgt_f.stem) = src_s.norm".into(),
+        },
+        LinkPredicate::ExtEq { side } => match side {
+            Side::Src => "LOWER(src_f.ext) = tgt_s.norm".into(),
+            Side::Tgt => "LOWER(tgt_f.ext) = src_s.norm".into(),
+        },
+        LinkPredicate::DirEq { side } => match side {
+            Side::Src => "LOWER(src_f.dir) = tgt_s.norm".into(),
+            Side::Tgt => "LOWER(tgt_f.dir) = src_s.norm".into(),
+        },
         LinkPredicate::And { all } => {
             let parts: Vec<String> = all.iter().map(compile).collect();
             format!("({})", parts.join(" AND "))
@@ -63,7 +75,43 @@ mod tests {
         assert_eq!(compile(&LinkPredicate::Norm2Eq), "src_s.norm2 = tgt_s.norm2");
         assert_eq!(compile(&LinkPredicate::TargetFileEq), "src_r.target_file_id = tgt_r.file_id");
         assert_eq!(compile(&LinkPredicate::StringEq), "tgt_r.string_id = src_r.string_id");
-        assert_eq!(compile(&LinkPredicate::SameRepo), "src_f.repo_id = tgt_f.repo_id");
+        assert_eq!(compile(&LinkPredicate::SameRepo), "src_f.repo_id = COALESCE(tgt_f.repo_id, tgt_rr.repo_id)");
+    }
+
+    #[test]
+    fn stem_eq() {
+        assert_eq!(
+            compile(&LinkPredicate::StemEq { side: Side::Src }),
+            "LOWER(src_f.stem) = tgt_s.norm",
+        );
+        assert_eq!(
+            compile(&LinkPredicate::StemEq { side: Side::Tgt }),
+            "LOWER(tgt_f.stem) = src_s.norm",
+        );
+    }
+
+    #[test]
+    fn ext_eq() {
+        assert_eq!(
+            compile(&LinkPredicate::ExtEq { side: Side::Src }),
+            "LOWER(src_f.ext) = tgt_s.norm",
+        );
+        assert_eq!(
+            compile(&LinkPredicate::ExtEq { side: Side::Tgt }),
+            "LOWER(tgt_f.ext) = src_s.norm",
+        );
+    }
+
+    #[test]
+    fn dir_eq() {
+        assert_eq!(
+            compile(&LinkPredicate::DirEq { side: Side::Src }),
+            "LOWER(src_f.dir) = tgt_s.norm",
+        );
+        assert_eq!(
+            compile(&LinkPredicate::DirEq { side: Side::Tgt }),
+            "LOWER(tgt_f.dir) = src_s.norm",
+        );
     }
 
     #[test]

@@ -114,15 +114,20 @@ pub async fn flush(
 
     // Bulk insert files.
     for chunk in files.chunks(FILE_CHUNK) {
-        let ph = chunk.iter().map(|_| "(?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
+        let ph = chunk.iter().map(|_| "(?,?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "INSERT INTO files (repo_id, path, content_hash, stem, ext, scanner_hash) VALUES {ph}
-             ON CONFLICT(repo_id, path, content_hash) DO UPDATE SET scanner_hash = excluded.scanner_hash"
+            "INSERT INTO files (repo_id, path, content_hash, stem, ext, dir, scanner_hash) VALUES {ph}
+             ON CONFLICT(repo_id, path, content_hash) DO UPDATE SET scanner_hash = excluded.scanner_hash, dir = excluded.dir"
         );
         let mut q = sqlx::query(&sql);
         for f in chunk {
+            let dir = std::path::Path::new(&f.rel_path)
+                .parent()
+                .and_then(|p| p.to_str())
+                .filter(|s| !s.is_empty());
             q = q.bind(repo_id).bind(&f.rel_path).bind(&f.content_hash)
                  .bind(f.stem.as_deref()).bind(f.ext.as_deref())
+                 .bind(dir)
                  .bind(scanner_hash);
         }
         q.execute(&mut *tx).await?;
@@ -760,7 +765,7 @@ mod tests {
         let hits = sprefa_schema::search_refs(&db, "shared", Some(BranchScope::Committed)).await.unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].refs.len(), 1);
-        assert_eq!(hits[0].refs[0].file_path, "src/a.ts");
+        assert_eq!(hits[0].refs[0].file_path.as_deref(), Some("src/a.ts"));
 
         // "beta" only exists in wt, committed should find nothing
         let hits = sprefa_schema::search_refs(&db, "beta", Some(BranchScope::Committed)).await.unwrap();
@@ -775,7 +780,7 @@ mod tests {
         let hits = sprefa_schema::search_refs(&db, "shared", Some(BranchScope::Local)).await.unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].refs.len(), 1);
-        assert_eq!(hits[0].refs[0].file_path, "src/b.ts");
+        assert_eq!(hits[0].refs[0].file_path.as_deref(), Some("src/b.ts"));
 
         // "alpha" only exists in committed, local should find nothing
         let hits = sprefa_schema::search_refs(&db, "alpha", Some(BranchScope::Local)).await.unwrap();
@@ -790,7 +795,7 @@ mod tests {
         let hits = sprefa_schema::search_refs(&db, "shared", None).await.unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].refs.len(), 1);
-        assert_eq!(hits[0].refs[0].file_path, "src/a.ts");
+        assert_eq!(hits[0].refs[0].file_path.as_deref(), Some("src/a.ts"));
 
         // "beta" only in wt, default (committed) should not find it
         let hits = sprefa_schema::search_refs(&db, "beta", None).await.unwrap();

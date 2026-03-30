@@ -134,6 +134,7 @@ pub struct File {
     pub content_hash: String,
     pub stem: Option<String>,
     pub ext: Option<String>,
+    pub dir: Option<String>,
     pub scanned_at: Option<String>,
 }
 
@@ -191,11 +192,21 @@ pub struct GitTag {
     pub created_at: Option<String>,
 }
 
+/// Row from the repo_refs table.
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoRef {
+    pub id: i64,
+    pub string_id: i64,
+    pub repo_id: i64,
+    pub kind: String,
+}
+
 /// A single ref occurrence returned by a query: where in the codebase a string appears.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefLocation {
     pub repo: String,
-    pub file_path: String,
+    /// None for repo-level metadata (repo_name, git_tag, branch_name).
+    pub file_path: Option<String>,
     pub kind: String,
     pub rule_name: String,
     pub span_start: i64,

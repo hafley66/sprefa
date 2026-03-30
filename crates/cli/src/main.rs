@@ -27,7 +27,9 @@ automatically. JS/TS and Rust are both supported.
 
 Every interesting string -- imports, exports, dependency names, JSON keys, \
 YAML values -- is extracted with byte-level spans, deduplicated, normalized \
-for fuzzy matching, and linked back to its source file.
+for fuzzy matching, and linked back to its source file. Repo-level metadata \
+(repo name, git tags, branches) is also interned into the string system so \
+link rules can connect code references to repository entities.
 
 QUICK START:
   sprefa init                    Create sprefa.toml and initialize the DB
@@ -530,7 +532,8 @@ fn print_query_hits(hits: &[sprefa_schema::QueryHit], term: &str) {
     for hit in hits {
         println!("{} ({} refs)", hit.value, hit.refs.len());
         for loc in &hit.refs {
-            println!("  {}  {}  kind={}", loc.repo, loc.file_path, loc.kind);
+            let path = loc.file_path.as_deref().unwrap_or("(repo)");
+            println!("  {}  {}  kind={}", loc.repo, path, loc.kind);
         }
     }
     println!("\n{} strings matched", hits.len());

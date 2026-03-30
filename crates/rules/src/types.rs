@@ -97,8 +97,14 @@ pub enum LinkPredicate {
     TargetFileEq,
     /// Same string_id on both sides: `tgt_r.string_id = src_r.string_id`
     StringEq,
-    /// Both matches in the same repo: `src_f.repo_id = tgt_f.repo_id`
+    /// Both matches in the same repo: `src_f.repo_id = COALESCE(tgt_f.repo_id, tgt_rr.repo_id)`
     SameRepo,
+    /// File stem on {side} matches string norm on other side.
+    StemEq { side: Side },
+    /// File extension on {side} matches string norm on other side.
+    ExtEq { side: Side },
+    /// File dir on {side} matches string norm on other side.
+    DirEq { side: Side },
     /// All sub-predicates must hold.
     And { all: Vec<LinkPredicate> },
 }
