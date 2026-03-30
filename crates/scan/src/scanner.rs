@@ -289,4 +289,11 @@ impl Scanner {
             new_git_hash: Some(diff.new_sha),
         })
     }
+
+    /// Re-resolve match links for a repo without re-scanning files.
+    /// Used as a second pass after all repos are scanned to pick up
+    /// cross-repo links that couldn't resolve due to scan order.
+    pub async fn resolve_links(&self, repo_name: &str) -> Result<usize> {
+        sprefa_cache::resolve_match_links(&self.db, repo_name, &self.link_rules).await
+    }
 }

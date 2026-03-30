@@ -404,7 +404,7 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
     let mut total_files = 0usize;
     let mut total_refs = 0usize;
 
-    for repo in repos {
+    for repo in &repos {
         for branch in repo.branch_list() {
             match scanner.scan_repo(repo, &branch).await {
                 Ok(result) => {
@@ -420,6 +420,22 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
                     tracing::warn!("{}/{}: scan failed: {}", repo.name, branch, e);
                 }
             }
+        }
+    }
+
+    // Second pass: re-resolve match links for all scanned repos.
+    // During the first pass each repo only sees targets that were already indexed.
+    // This pass picks up cross-repo links that couldn't resolve due to scan order.
+    if repos.len() > 1 && !scanner.link_rules.is_empty() {
+        let mut second_pass_links = 0usize;
+        for repo in &repos {
+            match scanner.resolve_links(&repo.name).await {
+                Ok(n) => second_pass_links += n,
+                Err(e) => tracing::warn!("{}: second-pass link resolution failed: {}", repo.name, e),
+            }
+        }
+        if second_pass_links > 0 {
+            println!("second pass: {} additional cross-repo links", second_pass_links);
         }
     }
 
