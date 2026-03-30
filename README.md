@@ -398,6 +398,98 @@ graph TD
     REF -.->|file_id| FIL
 ```
 
+## Formal model
+
+```
+PRIMITIVES
+
+  Σ         alphabet of source bytes
+  F  ⊂  Σ*  files (byte strings)
+  R         refs  =  (v:Str, s:ℕ, e:ℕ, k:Kind, rule:Str, path?:Bool)
+  M         matches  =  R × Kind           -- semantic label on a ref
+  L         links  =  M × M × Kind         -- directed edge in match graph
+
+NORMALIZATION  (ℕorm : Str → Str)
+
+  norm(s)   =  lowercase(s↾[a-z0-9])
+  norm₂(s)  =  norm(s \ Suffixes)          Suffixes = {-service,-api,-v2,…}
+
+EXTRACTORS
+
+  Each extractor  eᵢ  is a partial function:
+
+      eᵢ : (F × Path × Ctx) ⇀ 𝒫(R)      dom(eᵢ) = { f | ext(f) ∈ Exts(eᵢ) }
+
+  Three implementations:
+
+      e_js   : oxc_parser   →  { import_path, import_name, export_name, … }
+      e_rs   : syn          →  { rs_use, rs_declare, rs_mod, … }
+      e_rule : rules engine →  structural walk ∪ ast-grep
+
+  Dispatch runs all matching extractors and unions their output:
+
+      E(f,ctx)  =  ⋃ { eᵢ(f,ctx) | f ∈ dom(eᵢ) }
+
+RULE ENGINE  (e_rule internals)
+
+  A compiled rule  ρ = (git:Φ, file:Φ, ctx_caps, selector:Sel, emit:Act)
+
+  Selector is one of two modes (mutually exclusive):
+
+      Sel_struct  =  steps : Vec<Step>
+      Sel_ast     =  { pattern:Str, lang?:Lang, captures:Var↦Name }
+
+  Walk function (structural):
+
+      walk : Value × Steps → List[MatchResult]        MatchResult = Name ↦ CapturedValue
+
+  AST match function:
+
+      ast_match(src, path, sel) =
+        let lang  = sel.lang ?: infer_lang(path)
+        let tree  = parse(src, lang)
+        [ { name → (node.text, node.range.start, node.range.end)
+            | ($var → name) ∈ sel.captures,  node = env[$var] }
+          | env ∈ find_all(tree, sel.pattern) ]
+
+  Unified extract for rule ρ:
+
+      results_ρ(f) =  if ρ.selector ∈ Sel_ast
+                      then  ast_match(f, path(f), ρ.sel)
+                      else  walk(parse_data(f), ρ.steps)
+
+LINK PREDICATE ALGEBRA
+
+  P : M × M → Bool
+
+  Generators:
+
+      kind_eq(σ,v)(mₛ,mₜ)   =  m_σ.kind = v               σ ∈ {src,tgt}
+      norm_eq(mₛ,mₜ)        =  norm(mₛ.v) = norm(mₜ.v)
+      norm₂_eq(mₛ,mₜ)       =  norm₂(mₛ.v) = norm₂(mₜ.v)
+      target_file_eq(mₛ,mₜ) =  mₛ.ref.target_file_id = mₜ.ref.file_id
+      string_eq(mₛ,mₜ)      =  mₛ.ref.string_id = mₜ.ref.string_id
+      same_repo(mₛ,mₜ)      =  mₛ.file.repo_id = mₜ.file.repo_id
+      and(P₁…Pₙ)            =  P₁ ∧ … ∧ Pₙ
+
+  Compilation is a homomorphism into SQL boolean algebra:
+
+      compile : P → SQL_fragment
+
+      compile(kind_eq(src,v))   ↦  "src_m.kind = 'v'"
+      compile(norm_eq)          ↦  "src_s.norm = tgt_s.norm"
+      compile(and(P₁…Pₙ))      ↦  "(compile(P₁) AND … AND compile(Pₙ))"
+
+FULL PIPELINE  (composition)
+
+  Index(repo) =  resolve_links ∘ resolve_imports ∘ flush ∘ E(─, ctx(repo)) ∘ list_files(repo)
+
+  Index_Δ(repo, sha₀, sha₁) =  resolve_links ∘ resolve_imports ∘ flush
+                                ∘ E(─, ctx) ∘ diff_files(repo, sha₀, sha₁)
+
+  Idempotency:  flush ∘ flush = flush     (INSERT OR IGNORE + UNIQUE constraints)
+```
+
 ## Schema
 
 **RefKind enum:**

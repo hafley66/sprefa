@@ -15,6 +15,9 @@ regex = { workspace = true }
 anyhow = { workspace = true }
 sprefa_schema = { path = "../schema" }
 sprefa_extract = { path = "../extract" }
+ast-grep-core = "0.42"
+ast-grep-language = "0.42"
+ast-grep-config = "0.42"
 
 [dev-dependencies]
 insta = { workspace = true }

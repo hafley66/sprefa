@@ -57,13 +57,14 @@ fn extract_from_list(
             }
 
             let ext = abs_path.extension().and_then(|e| e.to_str());
-            let extractor = ext.and_then(|e| {
-                extractors
+            let refs: Vec<RawRef> = match ext {
+                Some(e) => extractors
                     .iter()
-                    .find(|ex| ex.extensions().contains(&e))
-                    .map(|ex| ex.as_ref())
-            })?;
-            let refs = extractor.extract(&mmap, rel, ctx);
+                    .filter(|ex| ex.extensions().contains(&e))
+                    .flat_map(|ex| ex.extract(&mmap, rel, ctx))
+                    .collect(),
+                None => return None,
+            };
             if refs.is_empty() {
                 return None;
             }

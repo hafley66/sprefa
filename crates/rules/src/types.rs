@@ -250,14 +250,68 @@ impl SelectStep {
     }
 }
 
-/// ast-grep pattern selector for code files.
+/// ast-grep selector for source code files.
+///
+/// Exactly one of `pattern`, `rule`, or `rule_file` must be set.
+///
+/// ## Simple pattern
+/// ```json
+/// { "pattern": "console.log($ARG)", "language": "js", "captures": { "$ARG": "arg" } }
+/// ```
+///
+/// ## Inline ast-grep rule object
+/// The `rule` field is the ast-grep `rule:` matcher object (supports `pattern`, `inside`,
+/// `has`, `all`, `any`, `not`, `kind`, `regex`). `language` is required.
+/// `constraints` mirrors the ast-grep `constraints:` field.
+/// ```json
+/// {
+///   "language": "typescript",
+///   "rule": { "all": [{ "pattern": "foo($ARG)" }, { "inside": { "kind": "function_declaration" } }] },
+///   "constraints": { "ARG": { "regex": "^bar" } },
+///   "captures": { "$ARG": "arg" }
+/// }
+/// ```
+///
+/// ## Rule file reference
+/// Path to a complete ast-grep `.yml` rule file, relative to the rules JSON/YAML file.
+/// Language is read from the rule file. `captures` can still be provided here to map
+/// metavariables to capture names.
+/// ```json
+/// { "rule_file": "ast-rules/my-rule.yml", "captures": { "$NAME": "name" } }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AstSelector {
-    pub pattern: String,
+    /// Simple pattern string (e.g. `"import $NAME from $PATH"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+
+    /// Inline ast-grep rule matcher object. Mirrors the `rule:` field in ast-grep YAML.
+    /// Supports `pattern`, `inside`, `has`, `follows`, `precedes`, `all`, `any`, `not`,
+    /// `kind`, `regex`, `matches`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<serde_json::Value>,
+
+    /// Inline `constraints:` for metavariables. Only used when `rule` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<serde_json::Value>,
+
+    /// Path to a complete ast-grep `.yml` rule file, relative to the sprefa rules file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_file: Option<String>,
+
+    /// Language override. Required when using `rule`. Inferred from file extension otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+
+    /// Single-capture: the whole matched node's text goes into this capture name.
+    /// Ignored when `captures` is set. Default: "$NAME".
     #[serde(default = "default_ast_capture")]
     pub capture: String,
+
+    /// Multi-capture: map of metavar (e.g. "$FUNC") to capture name (e.g. "name").
+    /// When set, each listed metavar is extracted as a separate capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captures: Option<std::collections::BTreeMap<String, String>>,
 }
 
 fn default_ast_capture() -> String {

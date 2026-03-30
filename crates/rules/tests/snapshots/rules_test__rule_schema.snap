@@ -1,6 +1,5 @@
 ---
 source: crates/rules/tests/rules_test.rs
-assertion_line: 9
 expression: schema
 ---
 {
@@ -41,8 +40,19 @@ expression: schema
       ],
       "properties": {
         "capture": {
+          "description": "Single-capture: the whole matched node's text goes into this capture name. Ignored when `captures` is set. Default: \"$NAME\".",
           "default": "$NAME",
           "type": "string"
+        },
+        "captures": {
+          "description": "Multi-capture: map of metavar (e.g. \"$FUNC\") to capture name (e.g. \"name\"). When set, each listed metavar is extracted as a separate capture.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "language": {
           "type": [

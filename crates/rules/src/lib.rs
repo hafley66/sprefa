@@ -6,5 +6,6 @@ pub mod walk;
 pub mod emit;
 pub mod extractor;
 pub mod link_compile;
+pub mod ast;
 
 pub use types::*;

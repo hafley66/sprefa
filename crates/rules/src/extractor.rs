@@ -4,16 +4,13 @@ use anyhow::{bail, Result};
 use sprefa_extract::{ExtractContext, Extractor, RawRef};
 
 use crate::{
-    emit, walk,
+    ast, emit, walk,
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
-    types::{MatchDef, RuleSet, SelectStep, ValuePattern},
+    types::{AstSelector, MatchDef, RuleSet, SelectStep, ValuePattern},
     walk::CapturedValue,
 };
 
-// All data extensions this extractor handles.
-// The file selector on each rule does the fine-grained filtering.
-const DATA_EXTENSIONS: &[&str] = &["json", "yaml", "yml", "toml"];
 
 #[derive(Debug)]
 pub struct CompiledRule {
@@ -23,6 +20,7 @@ pub struct CompiledRule {
     /// (capture_name, value) pairs seeded from context step captures.
     pub context_captures: Vec<(String, ContextCaptureSource)>,
     pub steps: Vec<SelectStep>,
+    pub ast: Option<AstSelector>,
     pub value_pattern: Option<ValuePattern>,
     pub create_matches: Vec<MatchDef>,
 }
@@ -42,33 +40,38 @@ pub enum ContextCaptureSource {
 #[derive(Debug)]
 pub struct RuleExtractor {
     rules: Vec<CompiledRule>,
+    /// Directory of the rules file, used to resolve `rule_file` paths.
+    config_dir: Option<std::path::PathBuf>,
 }
 
 impl RuleExtractor {
     pub fn from_ruleset(ruleset: &RuleSet) -> Result<Self> {
+        Self::from_ruleset_with_dir(ruleset, None)
+    }
+
+    pub fn from_ruleset_with_dir(ruleset: &RuleSet, config_dir: Option<&Path>) -> Result<Self> {
         let rules = ruleset
             .rules
             .iter()
             .filter(|r| {
-                // skip rules with no structural steps (ast-only rules
-                // are skipped until ast engine exists)
-                r.select.iter().any(|s| !s.is_context_step())
+                // Rule is valid if it has structural steps OR an ast selector.
+                r.select.iter().any(|s| !s.is_context_step()) || r.select_ast.is_some()
             })
             .map(compile_rule)
             .collect::<Result<Vec<_>>>()?;
-        Ok(Self { rules })
+        Ok(Self { rules, config_dir: config_dir.map(|p| p.to_path_buf()) })
     }
 
     pub fn from_json(path: &Path) -> Result<Self> {
         let bytes = std::fs::read(path)?;
         let ruleset: RuleSet = serde_json::from_slice(&bytes)?;
-        Self::from_ruleset(&ruleset)
+        Self::from_ruleset_with_dir(&ruleset, path.parent())
     }
 
     pub fn from_yaml(path: &Path) -> Result<Self> {
         let bytes = std::fs::read(path)?;
         let ruleset: RuleSet = serde_yaml::from_slice(&bytes)?;
-        Self::from_ruleset(&ruleset)
+        Self::from_ruleset_with_dir(&ruleset, path.parent())
     }
 
     /// Filter rules to those whose file selector could match the given path.
@@ -81,7 +84,19 @@ impl RuleExtractor {
 
 impl Extractor for RuleExtractor {
     fn extensions(&self) -> &[&str] {
-        DATA_EXTENSIONS
+        // Claim both structured-data and source-code extensions.
+        // Per-rule file selectors do the precise filtering within extract().
+        // The run-all dispatch in crates/index means claiming an ext already
+        // claimed by JsExtractor/RsExtractor is fine -- refs are merged.
+        &[
+            "json", "yaml", "yml", "toml",
+            "js", "jsx", "cjs", "mjs", "ts", "tsx", "cts", "mts",
+            "rs",
+            "py", "py3", "pyi",
+            "go",
+            "kt", "kts",
+            "sh", "bash", "zsh",
+        ]
     }
 
     fn extract(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<RawRef> {
@@ -90,11 +105,6 @@ impl Extractor for RuleExtractor {
             .and_then(|e| e.to_str())
             .unwrap_or("");
 
-        let value = match parse_data(source, ext) {
-            Some(v) => v,
-            None => return vec![],
-        };
-
         let mut refs = vec![];
         for rule in self.rules_for_path(path) {
             let repo = ctx.repo.unwrap_or("");
@@ -102,12 +112,19 @@ impl Extractor for RuleExtractor {
                 continue;
             }
 
-            // Seed captures from context steps
             let context_caps = resolve_context_captures(&rule.context_captures, ctx, path);
 
-            let results = walk::walk(&value, &rule.steps);
+            let results = if let Some(ast_sel) = &rule.ast {
+                ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
+            } else {
+                let value = match parse_data(source, ext) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                walk::walk(&value, &rule.steps)
+            };
+
             for result in results {
-                // Merge context captures into the walk result
                 let merged = if context_caps.is_empty() {
                     result.clone()
                 } else {
@@ -232,6 +249,7 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
         file,
         context_captures,
         steps: structural_steps,
+        ast: r.select_ast.clone(),
         value_pattern: r.value.clone(),
         create_matches: r.create_matches.clone(),
     })
@@ -362,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn from_ruleset_skips_ast_only_rules() {
+    fn ast_only_rules_are_compiled() {
         let json = r#"{
             "rules": [
                 {
@@ -375,7 +393,8 @@ mod tests {
         }"#;
         let ruleset: RuleSet = serde_json::from_str(json).unwrap();
         let ex = RuleExtractor::from_ruleset(&ruleset).unwrap();
-        assert_eq!(ex.rules.len(), 0);
+        assert_eq!(ex.rules.len(), 1);
+        assert!(ex.rules[0].ast.is_some());
     }
 
     #[test]
