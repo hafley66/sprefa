@@ -24,6 +24,10 @@ pub struct WatchConfig {
     pub root_path: PathBuf,
     /// Repo ID in the database.
     pub repo_id: i64,
+    /// Repo name for match-link resolution.
+    pub repo_name: String,
+    /// Link rules to resolve after each batch of changes.
+    pub link_rules: Vec<sprefa_cache::LinkRule>,
     /// Debounce window for correlating events.
     pub debounce: Duration,
     /// Working-tree branch name (e.g. "main+wt"). The watcher updates
@@ -39,6 +43,8 @@ impl Default for WatchConfig {
         Self {
             root_path: PathBuf::new(),
             repo_id: 0,
+            repo_name: String::new(),
+            link_rules: Vec::new(),
             debounce: Duration::from_millis(100),
             wt_branch: None,
             pause: Arc::new(AtomicBool::new(false)),
@@ -103,6 +109,22 @@ pub async fn watch(
             .await
             {
                 Ok(changes) if !changes.is_empty() => {
+                    // Resolve match links after refs/matches changed.
+                    if !config.link_rules.is_empty() {
+                        match sprefa_cache::resolve_match_links(
+                            &pool, &config.repo_name, &config.link_rules,
+                        ).await {
+                            Ok(n) if n > 0 => tracing::info!(
+                                repo = %config.repo_name, links = n,
+                                "match links resolved after watch batch"
+                            ),
+                            Ok(_) => {}
+                            Err(e) => tracing::error!(
+                                repo = %config.repo_name, error = %e,
+                                "match link resolution failed"
+                            ),
+                        }
+                    }
                     if change_tx.send(changes).await.is_err() {
                         break; // receiver dropped
                     }

@@ -644,7 +644,7 @@ async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> an
     }
 
     let rewriters = Arc::new(rewriters);
-    let _pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters).await?;
+    let _pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters, &scanner.link_rules).await?;
 
     println!("press ctrl-c to stop");
     tokio::signal::ctrl_c().await?;
@@ -725,7 +725,7 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
         Box::new(RsPathRewriter),
     ]);
 
-    let pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters).await?;
+    let pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters, &scanner.link_rules).await?;
 
     // Phase 3: start ghcache subscriber (if configured)
     let scanner_arc = Arc::new(scanner);
@@ -765,6 +765,7 @@ async fn spawn_watchers(
     pool: &sqlx::SqlitePool,
     extractors: &Arc<Vec<Box<dyn sprefa_scan::Extractor>>>,
     rewriters: &Arc<Vec<Box<dyn PathRewriter>>>,
+    link_rules: &[sprefa_rules::LinkRule],
 ) -> anyhow::Result<PauseFlags> {
     let mut pauses = PauseFlags::new();
     for repo in repos {
@@ -778,6 +779,8 @@ async fn spawn_watchers(
         let watch_config = sprefa_watch::watcher::WatchConfig {
             root_path: abs_path.clone(),
             repo_id,
+            repo_name: repo.name.clone(),
+            link_rules: link_rules.to_vec(),
             debounce: Duration::from_millis(100),
             wt_branch: wt,
             pause,

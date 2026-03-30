@@ -7,7 +7,7 @@ pub use flush::{flush, delete_branch_files_by_paths, rename_file_paths};
 pub use match_links::resolve_match_links;
 pub use sprefa_rules::LinkRule;
 pub use resolve::resolve_import_targets;
-pub use scan_context::{load_scan_context, ScanContext};
+pub use scan_context::{has_stale_scanner_hash, load_scan_context, ScanContext};
 
 /// Return the working-tree branch name for a given base branch.
 /// e.g. `"main"` -> `"main+wt"`

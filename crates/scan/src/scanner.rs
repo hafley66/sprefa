@@ -112,9 +112,19 @@ impl Scanner {
     }
 
     /// Incremental scan: only extract files changed between `old_sha` and HEAD.
-    /// Falls back with an error if old_sha can't be resolved (caller should retry with scan_repo).
+    /// Falls back with an error if old_sha can't be resolved or binary hash changed
+    /// (caller should retry with scan_repo).
     #[tracing::instrument(skip(self, config), fields(repo = %config.name, branch = %branch, old_sha = %old_sha))]
     pub async fn scan_diff(&self, config: &RepoConfig, branch: &str, old_sha: &str) -> Result<ScanResult> {
+        // If the binary was rebuilt since last scan, some files have stale extraction
+        // output. Fall back to full scan so every file gets re-extracted.
+        if sprefa_cache::has_stale_scanner_hash(&self.db, &config.name, BINARY_HASH).await? {
+            anyhow::bail!(
+                "binary hash changed ({}), full rescan required",
+                &BINARY_HASH[..8.min(BINARY_HASH.len())],
+            );
+        }
+
         let filter_config = sprefa_config::resolve_filter(self.global_filter.as_ref(), config, branch);
         let compiled_filter = filter_config
             .as_ref()

@@ -9,6 +9,26 @@ pub struct ScanContext {
     pub skip_set: HashSet<(String, String)>,
 }
 
+/// Check whether any file in the repo was scanned with a different binary hash.
+/// Returns true if at least one file has `scanner_hash != current_hash`,
+/// meaning a full re-scan is needed to pick up extraction logic changes.
+pub async fn has_stale_scanner_hash(
+    db: &SqlitePool,
+    repo_name: &str,
+    current_hash: &str,
+) -> Result<bool> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM files f
+         JOIN repos r ON f.repo_id = r.id
+         WHERE r.name = ? AND f.scanner_hash IS NOT NULL AND f.scanner_hash != ?",
+    )
+    .bind(repo_name)
+    .bind(current_hash)
+    .fetch_one(db)
+    .await?;
+    Ok(count > 0)
+}
+
 /// Load the set of files for `repo_name` that were last scanned with
 /// `scanner_hash`.  Returns an empty set if the repo does not exist yet.
 pub async fn load_scan_context(

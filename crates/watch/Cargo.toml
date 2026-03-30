@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 sprefa_extract = { path = "../extract" }
+sprefa_cache = { path = "../cache" }
 sprefa_schema = { path = "../schema" }
 sqlx = { workspace = true }
 anyhow = { workspace = true }
