@@ -744,14 +744,15 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
         Box::new(RsPathRewriter),
     ]);
 
-    let pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters, &scanner.link_rules).await?;
+    let _pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters, &scanner.link_rules).await?;
 
     // Phase 3: start ghcache subscriber (if configured)
     let scanner_arc = Arc::new(scanner);
+    #[cfg(feature = "ghcache")]
     if let Some(ghcache) = &config.ghcache {
         let ghcache_db = ghcache.db_path();
         let scanner_for_sub = scanner_arc.clone();
-        let pauses_for_sub = pauses;
+        let pauses_for_sub = _pauses;
         let sources = config.sources.clone();
         tokio::spawn(async move {
             if let Err(e) = ghcache_subscribe(
@@ -881,6 +882,7 @@ fn find_config_file(config_path: &Option<PathBuf>) -> anyhow::Result<PathBuf> {
     }
 }
 
+#[cfg(feature = "ghcache")]
 /// Scan a single ghcache checkout: committed branch (incremental if possible)
 /// plus working-tree branch. Pauses/unpauses the watcher during scan.
 async fn scan_checkout(
@@ -988,6 +990,7 @@ async fn scan_checkout(
     }
 }
 
+#[cfg(feature = "ghcache")]
 /// Subscribe to ghcache checkout events and rescan repos when their staging
 /// directory changes. On startup, scans all existing checkouts so the index
 /// is populated without waiting for a change_log event. Then polls for new
@@ -1113,6 +1116,7 @@ async fn ghcache_subscribe(
     Ok(())
 }
 
+#[cfg(feature = "ghcache")]
 /// Check whether a checkout (repo_slug + branch) matches any configured source.
 /// A source matches if it has no branch_patterns (open policy) or the branch
 /// matches at least one glob pattern.
@@ -1134,6 +1138,7 @@ fn source_matches_checkout(
     false
 }
 
+#[cfg(feature = "ghcache")]
 /// Simple glob match supporting `*` (any segment chars) and `**` is not needed
 /// since branch names are flat. Uses the `glob` crate's Pattern matching.
 fn glob_match(pattern: &str, value: &str) -> bool {
