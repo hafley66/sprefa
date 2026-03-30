@@ -155,11 +155,26 @@
   "link_rules": [
     {
       "kind": "import_binding",
-      "sql": "src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id"
+      "predicate": {
+        "op": "and",
+        "all": [
+          { "op": "kind_eq", "side": "src", "value": "import_name" },
+          { "op": "kind_eq", "side": "tgt", "value": "export_name" },
+          { "op": "target_file_eq" },
+          { "op": "string_eq" }
+        ]
+      }
     },
     {
       "kind": "image_source",
-      "sql": "src_m.kind = 'image_repo' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm"
+      "predicate": {
+        "op": "and",
+        "all": [
+          { "op": "kind_eq", "side": "src", "value": "image_repo" },
+          { "op": "kind_eq", "side": "tgt", "value": "package_name" },
+          { "op": "norm_eq" }
+        ]
+      }
     }
   ]
 }

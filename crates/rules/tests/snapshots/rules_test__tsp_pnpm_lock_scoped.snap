@@ -1,5 +1,6 @@
 ---
 source: crates/rules/tests/rules_test.rs
+assertion_line: 648
 expression: refs
 ---
 - value: 0.1.0

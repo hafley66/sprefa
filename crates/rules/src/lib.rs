@@ -5,5 +5,6 @@ pub mod file_match;
 pub mod walk;
 pub mod emit;
 pub mod extractor;
+pub mod link_compile;
 
 pub use types::*;

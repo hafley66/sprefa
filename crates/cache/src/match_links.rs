@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use sqlx::SqlitePool;
 use sprefa_rules::LinkRule;
 
@@ -53,13 +53,14 @@ pub async fn resolve_match_links(
     for rule in link_rules {
         let label = &rule.kind;
 
-        // Build the full query by injecting the user's WHERE clause into the skeleton.
-        //
-        // The skeleton joins source-side (src_m/src_r/src_s/src_f/src_rp) and
-        // target-side (tgt_m/tgt_r/tgt_s/tgt_f) tables. The user's SQL fragment
-        // in `rule.sql` provides the predicate that determines which source matches
-        // link to which target matches. See RuleSet::link_rules doc for the full
-        // column reference.
+        // Resolve the WHERE fragment from either predicate DSL or raw sql.
+        let user_sql = match (&rule.predicate, &rule.sql) {
+            (Some(pred), None) => sprefa_rules::link_compile::compile(pred),
+            (None, Some(sql)) => sql.clone(),
+            (Some(_), Some(_)) => bail!("link rule '{}': both sql and predicate set", label),
+            (None, None) => bail!("link rule '{}': neither sql nor predicate set", label),
+        };
+
         let query = format!(
             "INSERT OR IGNORE INTO match_links (source_match_id, target_match_id, link_kind)
              SELECT src_m.id, tgt_m.id, '{kind}'
@@ -81,7 +82,6 @@ pub async fn resolve_match_links(
                )
                AND ({user_sql})",
             kind = rule.kind,
-            user_sql = rule.sql,
         );
 
         let result = sqlx::query(&query)
@@ -100,7 +100,7 @@ pub async fn resolve_match_links(
             Err(e) => {
                 tracing::error!(
                     "{}: link rule '{}' failed: {}. SQL fragment was: {}",
-                    repo_name, label, e, rule.sql
+                    repo_name, label, e, user_sql
                 );
                 return Err(e.into());
             }
@@ -188,7 +188,8 @@ mod tests {
     fn import_binding_rule() -> LinkRule {
         LinkRule {
             kind: "import_binding".into(),
-            sql: "src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id".into(),
+            sql: Some("src_m.kind = 'import_name' AND tgt_m.kind = 'export_name' AND src_r.target_file_id = tgt_r.file_id AND tgt_r.string_id = src_r.string_id".into()),
+            predicate: None,
         }
     }
 
@@ -276,7 +277,8 @@ mod tests {
 
         let rule = LinkRule {
             kind: "image_source".into(),
-            sql: "src_m.kind = 'image_repo' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm".into(),
+            sql: Some("src_m.kind = 'image_repo' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm".into()),
+            predicate: None,
         };
 
         let linked = resolve_match_links(&db, "consumer", &[rule]).await.unwrap();
@@ -308,7 +310,8 @@ mod tests {
             import_binding_rule(),
             LinkRule {
                 kind: "dependency".into(),
-                sql: "src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm".into(),
+                sql: Some("src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm".into()),
+                predicate: None,
             },
         ];
 
