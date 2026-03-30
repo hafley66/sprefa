@@ -2,6 +2,19 @@
   "$schema": "./sprefa-rules.schema.json",
   "rules": [
     {
+      "name": "cargo-package-name",
+      "description": "Package name declared in Cargo.toml [package] section",
+      "select": [
+        { "step": "file", "pattern": "**/Cargo.toml" },
+        { "step": "key", "name": "package" },
+        { "step": "key", "name": "name" },
+        { "step": "leaf", "capture": "name" }
+      ],
+      "create_matches": [
+        { "capture": "name", "kind": "package_name" }
+      ]
+    },
+    {
       "name": "cargo-deps",
       "description": "Dependency names from Cargo.toml files",
       "select": [
@@ -11,6 +24,18 @@
       ],
       "create_matches": [
         { "capture": "name", "kind": "dep_name" }
+      ]
+    },
+    {
+      "name": "package-json-name",
+      "description": "Package name declared in package.json",
+      "select": [
+        { "step": "file", "pattern": "**/package.json" },
+        { "step": "key", "name": "name" },
+        { "step": "leaf", "capture": "name" }
+      ],
+      "create_matches": [
+        { "capture": "name", "kind": "package_name" }
       ]
     },
     {
@@ -138,6 +163,20 @@
       ]
     },
     {
+      "name": "js-env-var-refs",
+      "description": "Environment variable references via process.env in JS/TS source",
+      "select": [
+        { "step": "file", "pattern": "**/*.js|**/*.jsx|**/*.cjs|**/*.mjs|**/*.ts|**/*.tsx|**/*.cts|**/*.mts" }
+      ],
+      "select_ast": {
+        "pattern": "process.env.$NAME",
+        "captures": { "$NAME": "env_ref" }
+      },
+      "create_matches": [
+        { "capture": "env_ref", "kind": "env_var_ref" }
+      ]
+    },
+    {
       "name": "helm-image",
       "description": "Container image references from Helm values files",
       "select": [
@@ -172,6 +211,28 @@
         "all": [
           { "op": "kind_eq", "side": "src", "value": "image_repo" },
           { "op": "kind_eq", "side": "tgt", "value": "package_name" },
+          { "op": "norm_eq" }
+        ]
+      }
+    },
+    {
+      "kind": "dep_to_package",
+      "predicate": {
+        "op": "and",
+        "all": [
+          { "op": "kind_eq", "side": "src", "value": "dep_name" },
+          { "op": "kind_eq", "side": "tgt", "value": "package_name" },
+          { "op": "norm_eq" }
+        ]
+      }
+    },
+    {
+      "kind": "env_var_binding",
+      "predicate": {
+        "op": "and",
+        "all": [
+          { "op": "kind_eq", "side": "src", "value": "env_var_ref" },
+          { "op": "kind_eq", "side": "tgt", "value": "env_var_name" },
           { "op": "norm_eq" }
         ]
       }

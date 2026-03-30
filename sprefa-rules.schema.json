@@ -1,0 +1,7 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.74s
+     Running `target/debug/sprefa schema`
+error: unrecognized subcommand 'schema'
+
+Usage: sprefa [OPTIONS] [COMMAND]
+
+For more information, try '--help'.

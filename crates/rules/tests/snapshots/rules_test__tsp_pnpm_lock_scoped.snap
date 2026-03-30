@@ -8,16 +8,16 @@ expression: refs
   kind: dep_version
   rule_name: test
   is_path: false
-  parent_key: "@hafley/typespec-decorator-def"
-  node_path: packages/@hafley/typespec-decorator-def@0.1.0
+  parent_key: "@hafley/typespec-asyncapi"
+  node_path: packages/@hafley/typespec-asyncapi@0.1.0
 - value: 0.1.0
   span_start: 0
   span_end: 0
   kind: dep_version
   rule_name: test
   is_path: false
-  parent_key: "@hafley/typespec-asyncapi"
-  node_path: packages/@hafley/typespec-asyncapi@0.1.0
+  parent_key: "@hafley/typespec-decorator-def"
+  node_path: packages/@hafley/typespec-decorator-def@0.1.0
 - value: 0.64.0
   span_start: 0
   span_end: 0
