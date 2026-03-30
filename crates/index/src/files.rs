@@ -157,3 +157,111 @@ fn walkdir_files(repo_path: &Path) -> Vec<PathBuf> {
         .map(|e| e.into_path())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::{Oid, Repository, Signature};
+    use std::fs;
+
+    fn make_git_repo(dir: &Path) -> Repository {
+        let repo = Repository::init(dir).unwrap();
+        // Need an initial commit so HEAD exists.
+        let sig = Signature::now("test", "test@test.com").unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        {
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[]).unwrap();
+        }
+        repo
+    }
+
+    fn commit_file(repo: &Repository, path: &str, content: &[u8]) -> Oid {
+        let root = repo.workdir().unwrap();
+        let abs = root.join(path);
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&abs, content).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(path)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("test", "test@test.com").unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, &format!("add {path}"), &tree, &[&parent]).unwrap()
+    }
+
+    fn delete_file(repo: &Repository, path: &str) -> Oid {
+        let root = repo.workdir().unwrap();
+        fs::remove_file(root.join(path)).unwrap();
+        let mut index = repo.index().unwrap();
+        index.remove_path(Path::new(path)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("test", "test@test.com").unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, &format!("rm {path}"), &tree, &[&parent]).unwrap()
+    }
+
+    #[test]
+    fn diff_detects_added_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = make_git_repo(tmp.path());
+        let old_sha = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        commit_file(&repo, "src/a.ts", b"hello");
+
+        let result = diff_files(tmp.path(), &old_sha, None).unwrap();
+        assert_eq!(result.changed.len(), 1);
+        assert!(result.changed[0].ends_with("src/a.ts"));
+        assert!(result.deleted.is_empty());
+        assert!(result.renamed.is_empty());
+    }
+
+    #[test]
+    fn diff_detects_deleted_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = make_git_repo(tmp.path());
+        commit_file(&repo, "src/a.ts", b"hello");
+        let old_sha = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        delete_file(&repo, "src/a.ts");
+
+        let result = diff_files(tmp.path(), &old_sha, None).unwrap();
+        assert!(result.changed.is_empty());
+        assert_eq!(result.deleted, vec!["src/a.ts"]);
+    }
+
+    #[test]
+    fn diff_detects_modified_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = make_git_repo(tmp.path());
+        commit_file(&repo, "src/a.ts", b"v1");
+        let old_sha = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        commit_file(&repo, "src/a.ts", b"v2");
+
+        let result = diff_files(tmp.path(), &old_sha, None).unwrap();
+        assert_eq!(result.changed.len(), 1);
+        assert!(result.changed[0].ends_with("src/a.ts"));
+    }
+
+    #[test]
+    fn diff_bad_sha_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_git_repo(tmp.path());
+        assert!(diff_files(tmp.path(), "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", None).is_err());
+    }
+
+    #[test]
+    fn diff_returns_new_sha() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = make_git_repo(tmp.path());
+        let old_sha = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        commit_file(&repo, "x.txt", b"data");
+        let expected = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+
+        let result = diff_files(tmp.path(), &old_sha, None).unwrap();
+        assert_eq!(result.new_sha, expected);
+    }
+}

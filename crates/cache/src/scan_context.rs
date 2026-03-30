@@ -143,4 +143,42 @@ mod tests {
         // (path, hash2) is NOT in the skip set -- different content_hash.
         assert!(!ctx.skip_set.contains(&("src/a.ts".to_string(), "hash2".to_string())));
     }
+
+    // -- has_stale_scanner_hash tests --
+
+    #[tokio::test]
+    async fn no_stale_when_all_match() {
+        let db = make_db().await;
+        let repo_id = insert_repo(&db, "myrepo").await;
+        insert_file(&db, repo_id, "src/a.ts", "h1", Some("v1")).await;
+        insert_file(&db, repo_id, "src/b.ts", "h2", Some("v1")).await;
+
+        assert!(!has_stale_scanner_hash(&db, "myrepo", "v1").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn stale_when_different_hash() {
+        let db = make_db().await;
+        let repo_id = insert_repo(&db, "myrepo").await;
+        insert_file(&db, repo_id, "src/a.ts", "h1", Some("v1")).await;
+        insert_file(&db, repo_id, "src/b.ts", "h2", Some("v2")).await;
+
+        assert!(has_stale_scanner_hash(&db, "myrepo", "v2").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn no_stale_when_repo_empty() {
+        let db = make_db().await;
+        insert_repo(&db, "empty").await;
+        assert!(!has_stale_scanner_hash(&db, "empty", "v1").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn null_scanner_hash_not_counted_as_stale() {
+        let db = make_db().await;
+        let repo_id = insert_repo(&db, "myrepo").await;
+        insert_file(&db, repo_id, "src/a.ts", "h1", None).await;
+
+        assert!(!has_stale_scanner_hash(&db, "myrepo", "v1").await.unwrap());
+    }
 }

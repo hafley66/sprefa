@@ -811,4 +811,107 @@ mod tests {
         let beta = sprefa_schema::search_refs(&db, "beta", Some(BranchScope::All)).await.unwrap();
         assert_eq!(beta.len(), 1);
     }
+
+    // -- rename_file_paths tests --
+
+    #[tokio::test]
+    async fn rename_updates_path_and_derived_columns() {
+        let db = make_db().await;
+        let files = vec![extracted("src/old_name.ts", "h1", "ts", vec![
+            raw_ref("x", sprefa_extract::kind::DEP_NAME),
+        ])];
+        flush(&db, &repo_config("myrepo"), "main", files, None, "v1").await.unwrap();
+
+        let updated = rename_file_paths(&db, "myrepo", &[
+            ("src/old_name.ts".into(), "src/new_name.tsx".into()),
+        ]).await.unwrap();
+        assert_eq!(updated, 1);
+
+        let (path, stem, ext): (String, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT path, stem, ext FROM files WHERE repo_id = (SELECT id FROM repos WHERE name = 'myrepo')"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(path, "src/new_name.tsx");
+        assert_eq!(stem.as_deref(), Some("new_name"));
+        assert_eq!(ext.as_deref(), Some("tsx"));
+    }
+
+    #[tokio::test]
+    async fn rename_empty_is_noop() {
+        let db = make_db().await;
+        assert_eq!(rename_file_paths(&db, "myrepo", &[]).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn rename_missing_repo_returns_zero() {
+        let db = make_db().await;
+        let result = rename_file_paths(&db, "nonexistent", &[
+            ("a.ts".into(), "b.ts".into()),
+        ]).await.unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn rename_preserves_refs() {
+        let db = make_db().await;
+        let files = vec![extracted("src/a.ts", "h1", "ts", vec![
+            raw_ref("lodash", sprefa_extract::kind::DEP_NAME),
+            raw_ref("express", sprefa_extract::kind::DEP_NAME),
+        ])];
+        flush(&db, &repo_config("myrepo"), "main", files, None, "v1").await.unwrap();
+
+        let refs_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM refs")
+            .fetch_one(&db).await.unwrap();
+
+        rename_file_paths(&db, "myrepo", &[
+            ("src/a.ts".into(), "src/b.ts".into()),
+        ]).await.unwrap();
+
+        let refs_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM refs")
+            .fetch_one(&db).await.unwrap();
+        assert_eq!(refs_before, refs_after);
+
+        // Refs still join to the renamed file.
+        let joined: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM refs r JOIN files f ON r.file_id = f.id WHERE f.path = 'src/b.ts'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(joined, refs_before);
+    }
+
+    // -- delete_branch_files_by_paths tests --
+
+    #[tokio::test]
+    async fn delete_cascades_through_all_tables() {
+        let db = make_db().await;
+        let files = vec![
+            extracted("src/a.ts", "h1", "ts", vec![
+                raw_ref("lodash", sprefa_extract::kind::DEP_NAME),
+            ]),
+            extracted("src/b.ts", "h2", "ts", vec![
+                raw_ref("express", sprefa_extract::kind::DEP_NAME),
+            ]),
+        ];
+        flush(&db, &repo_config("myrepo"), "main", files, None, "v1").await.unwrap();
+
+        let deleted = delete_branch_files_by_paths(
+            &db, "myrepo", "main", &["src/a.ts".into()],
+        ).await.unwrap();
+        assert_eq!(deleted, 1);
+
+        // a.ts should be gone from files, refs, matches
+        let file_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM files WHERE path = 'src/a.ts'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(file_count, 0);
+
+        let ref_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM refs r JOIN files f ON r.file_id = f.id WHERE f.path = 'src/a.ts'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(ref_count, 0);
+
+        // b.ts should survive
+        let surviving: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM refs r JOIN files f ON r.file_id = f.id WHERE f.path = 'src/b.ts'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(surviving, 1);
+    }
 }
