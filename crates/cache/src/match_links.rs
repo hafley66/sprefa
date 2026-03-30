@@ -2,6 +2,9 @@ use anyhow::{bail, Result};
 use sqlx::SqlitePool;
 use sprefa_rules::LinkRule;
 
+#[cfg(test)]
+use sprefa_rules::{LinkPredicate, Side};
+
 /// Execute all link rules to create edges in match_links.
 ///
 /// Each [`LinkRule`] supplies a raw SQL WHERE fragment that is injected into
@@ -385,6 +388,84 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(tgt_file_id, file_a);
+    }
+
+    /// Predicate DSL form: dep_name -> package_name via norm_eq.
+    /// Exercises compile() round-trip rather than raw sql.
+    #[tokio::test]
+    async fn dep_to_package_via_predicate() {
+        let db = make_db().await;
+        let repo_a = seed_repo(&db, "consumer").await;
+        let repo_b = seed_repo(&db, "provider").await;
+        let file_a = seed_file(&db, repo_a, "package.json").await;
+        let file_b = seed_file(&db, repo_b, "package.json").await;
+
+        // Case differs: dep uses "React", package declares "react" -- norm_eq should match.
+        let (_, src_match) = seed_ref_match(&db, file_a, "React", "dep_name", None).await;
+        let (_, tgt_match) = seed_ref_match(&db, file_b, "react", "package_name", None).await;
+
+        let rule = LinkRule {
+            kind: "dep_to_package".into(),
+            sql: None,
+            predicate: Some(LinkPredicate::And {
+                all: vec![
+                    LinkPredicate::KindEq { side: Side::Src, value: "dep_name".into() },
+                    LinkPredicate::KindEq { side: Side::Tgt, value: "package_name".into() },
+                    LinkPredicate::NormEq,
+                ],
+            }),
+            target_repos: None,
+        };
+
+        let linked = resolve_match_links(&db, "consumer", &[rule]).await.unwrap();
+        assert_eq!(linked, 1);
+
+        let row: Option<(i64, i64, String)> = sqlx::query_as(
+            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
+        )
+        .fetch_optional(&db)
+        .await
+        .unwrap();
+        assert_eq!(row, Some((src_match, tgt_match, "dep_to_package".to_string())));
+    }
+
+    /// Predicate DSL form: env_var_ref -> env_var_name via norm_eq.
+    #[tokio::test]
+    async fn env_var_binding_via_predicate() {
+        let db = make_db().await;
+        let repo_src = seed_repo(&db, "app").await;
+        let repo_infra = seed_repo(&db, "infra").await;
+        let file_src = seed_file(&db, repo_src, "src/config.ts").await;
+        let file_infra = seed_file(&db, repo_infra, "k8s/configmap.yaml").await;
+
+        let (_, src_match) =
+            seed_ref_match(&db, file_src, "DATABASE_URL", "env_var_ref", None).await;
+        let (_, tgt_match) =
+            seed_ref_match(&db, file_infra, "DATABASE_URL", "env_var_name", None).await;
+
+        let rule = LinkRule {
+            kind: "env_var_binding".into(),
+            sql: None,
+            predicate: Some(LinkPredicate::And {
+                all: vec![
+                    LinkPredicate::KindEq { side: Side::Src, value: "env_var_ref".into() },
+                    LinkPredicate::KindEq { side: Side::Tgt, value: "env_var_name".into() },
+                    LinkPredicate::NormEq,
+                ],
+            }),
+            target_repos: None,
+        };
+
+        let linked = resolve_match_links(&db, "app", &[rule]).await.unwrap();
+        assert_eq!(linked, 1);
+
+        let row: Option<(i64, i64, String)> = sqlx::query_as(
+            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
+        )
+        .fetch_optional(&db)
+        .await
+        .unwrap();
+        assert_eq!(row, Some((src_match, tgt_match, "env_var_binding".to_string())));
     }
 
     /// target_repos: None links across all repos (default behavior).

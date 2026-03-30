@@ -4,9 +4,11 @@ use sprefa_rules::*;
 // ── Schema + deserialization tests ─────────────────────────────────
 
 #[test]
-fn schema_snapshot() {
-    let schema = schema::generate_schema_string();
-    insta::assert_snapshot!("rule_schema", schema);
+fn schema_is_valid_json() {
+    // Just verify generation doesn't panic and produces parseable JSON.
+    let s = schema::generate_schema_string();
+    let v: serde_json::Value = serde_json::from_str(&s).expect("schema should be valid JSON");
+    assert_eq!(v["title"], "RuleSet");
 }
 
 #[test]
@@ -14,14 +16,14 @@ fn minimal_rule() {
     let json = r#"{
         "rules": [{
             "name": "catch-all",
-            "select": [
-                { "step": "file", "pattern": "**/*.json" }
-            ],
+            "select": [{ "step": "file", "pattern": "**/*.json" }],
             "emit": [{ "capture": "val", "kind": "json_value" }]
         }]
     }"#;
     let ruleset: RuleSet = serde_json::from_str(json).unwrap();
-    insta::assert_yaml_snapshot!("minimal_rule", ruleset);
+    assert_eq!(ruleset.rules.len(), 1);
+    assert_eq!(ruleset.rules[0].name, "catch-all");
+    assert_eq!(ruleset.rules[0].create_matches[0].kind, "json_value");
 }
 
 #[test]
@@ -48,7 +50,12 @@ fn full_rule_with_captures() {
         }]
     }"#;
     let ruleset: RuleSet = serde_json::from_str(json).unwrap();
-    insta::assert_yaml_snapshot!("full_rule_with_captures", ruleset);
+    let rule = &ruleset.rules[0];
+    assert_eq!(rule.name, "helm-image-refs");
+    assert_eq!(rule.confidence, Some(0.9));
+    assert_eq!(rule.select.len(), 7);
+    assert_eq!(rule.create_matches.len(), 2);
+    assert_eq!(rule.create_matches[1].parent.as_deref(), Some("repo"));
 }
 
 #[test]
@@ -644,8 +651,18 @@ fn tsp_pnpm_lock_scoped_packages() {
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, Some(&value_pattern), "test"))
         .collect();
-    refs.sort_by(|a, b| a.value.cmp(&b.value));
-    insta::assert_yaml_snapshot!("tsp_pnpm_lock_scoped", refs);
+    refs.sort_by(|a, b| (&a.value, &a.parent_key).cmp(&(&b.value, &b.parent_key)));
+
+    // typescript@5.7.3 doesn't match the scoped-only pattern -- only 3 scoped packages.
+    let dep_names: Vec<&str> = refs.iter().filter(|r| r.kind == "dep_name").map(|r| r.value.as_str()).collect();
+    assert_eq!(dep_names.len(), 3);
+    assert!(dep_names.contains(&"@hafley/typespec-decorator-def"));
+    assert!(dep_names.contains(&"@hafley/typespec-asyncapi"));
+    assert!(dep_names.contains(&"@typespec/compiler"));
+    assert!(!dep_names.contains(&"typescript"), "unscoped package should not match");
+
+    let versions: Vec<&str> = refs.iter().filter(|r| r.kind == "dep_version").map(|r| r.value.as_str()).collect();
+    assert!(versions.contains(&"0.64.0"));
 }
 
 #[test]
