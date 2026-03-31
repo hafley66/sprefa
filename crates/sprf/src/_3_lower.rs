@@ -15,30 +15,45 @@
 ///   ast[lang](pat)     -> AstSelector { pattern, language }
 ///   re(pat)            -> ValuePattern { source, pattern }
 use anyhow::{bail, Result};
-use sprefa_rules::types::{AstSelector, Rule, SelectStep, ValuePattern};
+use sprefa_rules::types::{
+    AstSelector, LinkPredicate, LinkRule, MatchDef, Rule, RuleSet, SelectStep, Side, ValuePattern,
+};
 
-use crate::_0_ast::{Program, SelectorChain, Slot, Statement, Tag};
+use crate::_0_ast::{LinkDecl, Program, SelectorChain, Slot, Statement, Tag};
 use crate::_2_pattern::parse_json_body;
 
-/// Lower a parsed program into a Vec<Rule>.
-/// Rule names are auto-generated from position if not otherwise specified.
-pub fn lower_program(program: &Program) -> Result<Vec<Rule>> {
+/// Lower a parsed program into a RuleSet (rules + link rules).
+pub fn lower_program(program: &Program) -> Result<RuleSet> {
     let mut rules = vec![];
-    for (i, stmt) in program.iter().enumerate() {
+    let mut link_rules = vec![];
+    let mut rule_idx = 0;
+
+    for stmt in program {
         match stmt {
             Statement::Rule(chain) => {
-                let rule = lower_chain(chain, i)?;
+                let rule = lower_chain(chain, rule_idx)?;
                 rules.push(rule);
+                rule_idx += 1;
+            }
+            Statement::Link(decl) => {
+                let lr = lower_link(decl)?;
+                link_rules.push(lr);
             }
         }
     }
-    Ok(rules)
+
+    Ok(RuleSet {
+        schema: None,
+        rules,
+        link_rules,
+    })
 }
 
 fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
     let mut select: Vec<SelectStep> = vec![];
     let mut select_ast: Option<AstSelector> = None;
     let mut value_pattern: Option<ValuePattern> = None;
+    let mut create_matches: Vec<MatchDef> = vec![];
 
     // Count leading bare globs
     let bare_count = chain.slots.iter().take_while(|s| matches!(s, Slot::Bare(_))).count();
@@ -75,7 +90,7 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
         }
     }
 
-    // Process tagged slots
+    // Process tagged and match slots
     for slot in &chain.slots[first_tagged..] {
         match slot {
             Slot::Bare(_) => {
@@ -84,6 +99,13 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
                      Use explicit tags.",
                     index,
                 );
+            }
+            Slot::Match { capture, kind } => {
+                create_matches.push(MatchDef {
+                    capture: capture.clone(),
+                    kind: kind.clone(),
+                    parent: None,
+                });
             }
             Slot::Tagged { tag, arg, body } => match tag {
                 Tag::Fs => {
@@ -126,10 +148,6 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
                     if value_pattern.is_some() {
                         bail!("rule {}: multiple re() slots not supported", index);
                     }
-                    // The re() body is the regex pattern. The source capture
-                    // needs to be specified somehow. For now, default to the
-                    // first leaf capture in the chain.
-                    // TODO: this needs a source capture convention.
                     value_pattern = Some(ValuePattern {
                         source: String::new(),
                         pattern: body.clone(),
@@ -146,8 +164,51 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
         select,
         select_ast,
         value: value_pattern,
-        create_matches: vec![],
+        create_matches,
         confidence: None,
+    })
+}
+
+/// Lower a link declaration to a LinkRule.
+fn lower_link(decl: &LinkDecl) -> Result<LinkRule> {
+    let mut all = vec![
+        LinkPredicate::KindEq {
+            side: Side::Src,
+            value: decl.src_kind.clone(),
+        },
+        LinkPredicate::KindEq {
+            side: Side::Tgt,
+            value: decl.tgt_kind.clone(),
+        },
+    ];
+
+    for pred_str in &decl.predicates {
+        let pred = match pred_str.as_str() {
+            "norm_eq" => LinkPredicate::NormEq,
+            "norm2_eq" => LinkPredicate::Norm2Eq,
+            "string_eq" => LinkPredicate::StringEq,
+            "target_file_eq" => LinkPredicate::TargetFileEq,
+            "same_repo" => LinkPredicate::SameRepo,
+            "stem_eq_src" => LinkPredicate::StemEq { side: Side::Src },
+            "stem_eq_tgt" => LinkPredicate::StemEq { side: Side::Tgt },
+            "ext_eq_src" => LinkPredicate::ExtEq { side: Side::Src },
+            "ext_eq_tgt" => LinkPredicate::ExtEq { side: Side::Tgt },
+            "dir_eq_src" => LinkPredicate::DirEq { side: Side::Src },
+            "dir_eq_tgt" => LinkPredicate::DirEq { side: Side::Tgt },
+            other => bail!("unknown link predicate: {:?}", other),
+        };
+        all.push(pred);
+    }
+
+    let kind = decl.kind_name.clone().unwrap_or_else(|| {
+        format!("{}__{}", decl.src_kind, decl.tgt_kind)
+    });
+
+    Ok(LinkRule {
+        kind,
+        sql: None,
+        predicate: Some(LinkPredicate::And { all }),
+        target_repos: None,
     })
 }
 
@@ -158,7 +219,7 @@ mod tests {
 
     fn lower(input: &str) -> Vec<Rule> {
         let program = parse_program(input).unwrap();
-        lower_program(&program).unwrap()
+        lower_program(&program).unwrap().rules
     }
 
     #[test]
@@ -245,5 +306,72 @@ mod tests {
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].name, "sprf-rule-0");
         assert_eq!(rules[1].name, "sprf-rule-1");
+    }
+
+    #[test]
+    fn lower_match_slots() {
+        let rules = lower(
+            "fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);"
+        );
+        let r = &rules[0];
+        assert_eq!(r.create_matches.len(), 1);
+        assert_eq!(r.create_matches[0].capture, "NAME");
+        assert_eq!(r.create_matches[0].kind, "package_name");
+        assert!(r.create_matches[0].parent.is_none());
+    }
+
+    #[test]
+    fn lower_multiple_match_slots() {
+        let rules = lower(
+            "fs(**/package.json) > json({ dependencies: { $N: $V } }) > match($N, dep_name) > match($V, dep_version);"
+        );
+        let r = &rules[0];
+        assert_eq!(r.create_matches.len(), 2);
+        assert_eq!(r.create_matches[0].kind, "dep_name");
+        assert_eq!(r.create_matches[1].kind, "dep_version");
+    }
+
+    fn lower_full(input: &str) -> RuleSet {
+        let program = parse_program(input).unwrap();
+        lower_program(&program).unwrap()
+    }
+
+    #[test]
+    fn lower_link_rule() {
+        let rs = lower_full("link(dep_name > package_name, norm_eq) > $dep_to_package;");
+        assert_eq!(rs.link_rules.len(), 1);
+        let lr = &rs.link_rules[0];
+        assert_eq!(lr.kind, "dep_to_package");
+        assert!(lr.predicate.is_some());
+    }
+
+    #[test]
+    fn lower_link_auto_kind() {
+        let rs = lower_full("link(dep_name > package_name, norm_eq);");
+        assert_eq!(rs.link_rules[0].kind, "dep_name__package_name");
+    }
+
+    #[test]
+    fn lower_link_multiple_predicates() {
+        let rs = lower_full("link(import_name > export_name, target_file_eq, string_eq) > $import_binding;");
+        let lr = &rs.link_rules[0];
+        match lr.predicate.as_ref().unwrap() {
+            LinkPredicate::And { all } => {
+                // 2 KindEq + 2 predicates = 4
+                assert_eq!(all.len(), 4);
+            }
+            _ => panic!("expected And"),
+        }
+    }
+
+    #[test]
+    fn lower_mixed_rules_and_links() {
+        let rs = lower_full(r#"
+            fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);
+            link(dep_name > package_name, norm_eq) > $dep_to_package;
+        "#);
+        assert_eq!(rs.rules.len(), 1);
+        assert_eq!(rs.link_rules.len(), 1);
+        assert_eq!(rs.rules[0].create_matches.len(), 1);
     }
 }

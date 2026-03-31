@@ -11,12 +11,7 @@ use sprefa_rules::types::RuleSet;
 /// Parse a .sprf file and produce a RuleSet compatible with the JSON rule format.
 pub fn parse_sprf(source: &str) -> Result<RuleSet> {
     let program = _1_parse::parse_program(source)?;
-    let rules = _3_lower::lower_program(&program)?;
-    Ok(RuleSet {
-        schema: None,
-        rules,
-        link_rules: vec![],
-    })
+    _3_lower::lower_program(&program)
 }
 
 /// Load a .sprf file from disk and produce a RuleSet.
@@ -132,6 +127,57 @@ mod integration_tests {
         let results = run_sprf(sprf, toml, "toml");
         // 1 from package name + 2 from workspace members
         assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn kitchen_sink_sprf_parses() {
+        let sprf_src = std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../sprefa-rules.sprf")
+        ).unwrap();
+        let ruleset = parse_sprf(&sprf_src).unwrap();
+        assert!(ruleset.rules.len() >= 10, "expected 10+ rules, got {}", ruleset.rules.len());
+        assert!(ruleset.link_rules.len() >= 3, "expected 3+ link rules, got {}", ruleset.link_rules.len());
+
+        // Every rule should have at least one create_matches entry
+        for rule in &ruleset.rules {
+            assert!(
+                !rule.create_matches.is_empty(),
+                "rule '{}' has no match slots",
+                rule.name
+            );
+        }
+    }
+
+    #[test]
+    fn kitchen_sink_cargo_deps() {
+        let sprf_src = std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../sprefa-rules.sprf")
+        ).unwrap();
+        let ruleset = parse_sprf(&sprf_src).unwrap();
+
+        // Run the cargo-deps rule against the rules crate Cargo.toml
+        let cargo_bytes = std::fs::read(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../rules/Cargo.toml")
+        ).unwrap();
+        let json_val = parse_data(&cargo_bytes, "toml").unwrap();
+
+        // Find the dep_name rule (second rule, index 1)
+        let dep_rule = ruleset.rules.iter()
+            .find(|r| r.create_matches.iter().any(|m| m.kind == "dep_name"))
+            .expect("no dep_name rule found");
+
+        let structural: Vec<_> = dep_rule.select.iter()
+            .filter(|s| !s.is_context_step())
+            .cloned()
+            .collect();
+        let results = walk::walk(&json_val, &structural);
+        let dep_names: Vec<_> = results.iter()
+            .filter_map(|m| m.captures.get("NAME").map(|c| c.text.clone()))
+            .collect();
+        // $_ matches any value shape, so workspace = { workspace = true } deps are included
+        assert!(dep_names.contains(&"serde".to_string()), "expected serde in deps, got {:?}", dep_names);
+        assert!(dep_names.contains(&"anyhow".to_string()), "expected anyhow in deps, got {:?}", dep_names);
+        assert!(dep_names.contains(&"ast-grep-core".to_string()), "expected ast-grep-core in deps, got {:?}", dep_names);
     }
 
     #[test]

@@ -5,10 +5,11 @@
 /// A complete .sprf file: a sequence of statements.
 pub type Program = Vec<Statement>;
 
-/// One top-level statement. Currently only extraction rules.
+/// One top-level statement.
 #[derive(Debug, Clone)]
 pub enum Statement {
     Rule(SelectorChain),
+    Link(LinkDecl),
 }
 
 /// A chain of slots separated by `>`, terminated by `;`.
@@ -33,6 +34,20 @@ pub enum Slot {
         arg: Option<String>,
         body: String,
     },
+    /// A match slot: `match($CAPTURE, kind)`.
+    Match {
+        capture: String,
+        kind: String,
+    },
+}
+
+/// A link declaration: `link(src_kind > tgt_kind, pred, ...) > $kind_name;`
+#[derive(Debug, Clone)]
+pub struct LinkDecl {
+    pub src_kind: String,
+    pub tgt_kind: String,
+    pub predicates: Vec<String>,
+    pub kind_name: Option<String>,
 }
 
 /// Known tag names in `tag(body)` notation.

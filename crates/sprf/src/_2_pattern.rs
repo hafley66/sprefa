@@ -143,7 +143,9 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> anyhow::Result<Vec
             || !input.as_bytes()[*pos + 1].is_ascii_alphanumeric())
     {
         *pos += 1;
-        return Ok(vec![SelectStep::Leaf { capture: None }]);
+        // Empty steps = "match succeeded here" = any value, any shape.
+        // Unlike Leaf which only matches scalars.
+        return Ok(vec![]);
     }
 
     // Screaming capture: $NAME
@@ -376,7 +378,8 @@ mod tests {
                 match &entries[0].value[0] {
                     SelectStep::Object { entries: inner } => {
                         assert!(matches!(&inner[0].key, KeyMatcher::Capture(s) if s == "NAME"));
-                        assert!(matches!(&inner[0].value[0], SelectStep::Leaf { capture: None }));
+                        // $_ produces empty steps = match any value shape
+                        assert!(inner[0].value.is_empty());
                     }
                     _ => panic!("expected inner Object"),
                 }

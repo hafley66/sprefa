@@ -1,0 +1,67 @@
+# sprefa-rules.sprf -- kitchen sink for this repo
+# equivalent to sprefa-rules.json
+
+# ── Cargo ──────────────────────────────────────────
+
+fs(**/Cargo.toml) > json({ package: { name: $NAME } })
+  > match($NAME, package_name);
+
+fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } })
+  > match($NAME, dep_name);
+
+fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } })
+  > match($MEMBER, workspace_member);
+
+# ── Node / package.json ────────────────────────────
+
+fs(**/package.json) > json({ name: $NAME })
+  > match($NAME, package_name);
+
+fs(**/package.json) > json({ re:^(dev|peer)?[Dd]ependencies: { $NAME: $VERSION } })
+  > match($NAME, dep_name)
+  > match($VERSION, dep_version);
+
+fs(**/tsconfig.json) > json({ compilerOptions: { paths: { $ALIAS: [...$TARGET] } } })
+  > match($ALIAS, path_alias)
+  > match($TARGET, import_path);
+
+fs(**/package.json) > json({ exports: { $SUBPATH: $_ } })
+  > match($SUBPATH, package_entry);
+
+# ── pnpm ───────────────────────────────────────────
+
+fs(**/pnpm-workspace.yaml) > json({ packages: [...$MEMBER] })
+  > match($MEMBER, workspace_member);
+
+# ── Helm / k8s ─────────────────────────────────────
+
+fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
+  > match($REPO, image_repo)
+  > match($TAG, image_tag);
+
+fs(**/*configmap*.yaml) > json({ data: { $KEY: $_ } })
+  > match($KEY, env_var_name);
+
+# ── Docker ─────────────────────────────────────────
+
+fs(**/docker-compose*.yaml) > json({ services: { $NAME: $_ } })
+  > match($NAME, service_name);
+
+# ── OpenAPI ────────────────────────────────────────
+
+fs(**/openapi*.yaml) > json({ paths: { $PATH: { re:^(get|post|put|delete|patch|options|head)$: { operationId: $OP } } } })
+  > match($OP, operation_id);
+
+# ── Source code (ast-grep) ─────────────────────────
+
+fs(**/*.js) > ast(process.env.$NAME)
+  > match($NAME, env_var_ref);
+
+fs(**/*.ts) > ast(process.env.$NAME)
+  > match($NAME, env_var_ref);
+
+# ── Links ──────────────────────────────────────────
+
+link(dep_name > package_name, norm_eq) > $dep_to_package;
+link(image_repo > package_name, norm_eq) > $image_source;
+link(env_var_ref > env_var_name, norm_eq) > $env_var_binding;
