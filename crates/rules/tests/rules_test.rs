@@ -40,7 +40,10 @@ fn full_rule_with_captures() {
                 { "step": "file", "pattern": "values.yaml|values-*.yaml" },
                 { "step": "any" },
                 { "step": "key", "name": "image" },
-                { "step": "object", "captures": { "repository": "repo", "tag": "tag" } }
+                { "step": "object", "entries": [
+                    { "key": "repository", "value": [{ "step": "leaf", "capture": "repo" }] },
+                    { "key": "tag", "value": [{ "step": "leaf", "capture": "tag" }] }
+                ] }
             ],
             "emit": [
                 { "capture": "repo", "kind": "dep_name" },
@@ -155,10 +158,10 @@ fn walk_any_descends_arbitrary_depth() {
         SelectStep::Any,
         SelectStep::Key { name: "image".into(), capture: None },
         SelectStep::Object {
-            captures: [
-                ("repository".into(), "repo".into()),
-                ("tag".into(), "tag".into()),
-            ].into_iter().collect(),
+            entries: vec![
+                ObjectEntry { key: KeyMatcher::Exact("repository".into()), value: vec![SelectStep::Leaf { capture: Some("repo".into()) }] },
+                ObjectEntry { key: KeyMatcher::Exact("tag".into()), value: vec![SelectStep::Leaf { capture: Some("tag".into()) }] },
+            ],
         },
     ];
 
@@ -240,11 +243,11 @@ fn walk_object_step_captures_siblings() {
     let steps = vec![
         SelectStep::Key { name: "service".into(), capture: None },
         SelectStep::Object {
-            captures: [
-                ("name".into(), "svc_name".into()),
-                ("port".into(), "svc_port".into()),
-                ("enabled".into(), "svc_enabled".into()),
-            ].into_iter().collect(),
+            entries: vec![
+                ObjectEntry { key: KeyMatcher::Exact("name".into()), value: vec![SelectStep::Leaf { capture: Some("svc_name".into()) }] },
+                ObjectEntry { key: KeyMatcher::Exact("port".into()), value: vec![SelectStep::Leaf { capture: Some("svc_port".into()) }] },
+                ObjectEntry { key: KeyMatcher::Exact("enabled".into()), value: vec![SelectStep::Leaf { capture: Some("svc_enabled".into()) }] },
+            ],
         },
     ];
 
@@ -342,10 +345,10 @@ fn emit_helm_image_object_capture() {
         SelectStep::Any,
         SelectStep::Key { name: "image".into(), capture: None },
         SelectStep::Object {
-            captures: [
-                ("repository".into(), "repo".into()),
-                ("tag".into(), "tag".into()),
-            ].into_iter().collect(),
+            entries: vec![
+                ObjectEntry { key: KeyMatcher::Exact("repository".into()), value: vec![SelectStep::Leaf { capture: Some("repo".into()) }] },
+                ObjectEntry { key: KeyMatcher::Exact("tag".into()), value: vec![SelectStep::Leaf { capture: Some("tag".into()) }] },
+            ],
         },
     ];
 

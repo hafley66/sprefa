@@ -349,9 +349,22 @@ fn build_scanner(config: &sprefa_config::Config, pool: sqlx::SqlitePool) -> anyh
 }
 
 fn load_ruleset(path: &std::path::Path) -> anyhow::Result<sprefa_rules::RuleSet> {
-    let bytes = std::fs::read(path)?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e))
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("sprf") => {
+            sprefa_sprf::load_sprf(path)
+                .map_err(|e| anyhow::anyhow!("failed to parse .sprf rules from {}: {}", path.display(), e))
+        }
+        Some("yaml" | "yml") => {
+            let bytes = std::fs::read(path)?;
+            serde_yaml::from_slice(&bytes)
+                .map_err(|e| anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e))
+        }
+        _ => {
+            let bytes = std::fs::read(path)?;
+            serde_json::from_slice(&bytes)
+                .map_err(|e| anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e))
+        }
+    }
 }
 
 async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: bool) -> anyhow::Result<()> {
@@ -443,14 +456,15 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
     Ok(())
 }
 
-/// Rules file lookup: $SPREFA_RULES > ./sprefa-rules.json > ./sprefa-rules.yaml
-/// > ~/.config/sprefa/rules.json > ~/.config/sprefa/rules.yaml
+/// Rules file lookup: $SPREFA_RULES > ./sprefa-rules.sprf > ./sprefa-rules.json
+/// > ./sprefa-rules.yaml > ~/.config/sprefa/rules.json > ~/.config/sprefa/rules.yaml
 fn find_rules_file() -> anyhow::Result<PathBuf> {
     if let Ok(path) = std::env::var("SPREFA_RULES") {
         return Ok(PathBuf::from(path));
     }
 
     let candidates = [
+        PathBuf::from("sprefa-rules.sprf"),
         PathBuf::from("sprefa-rules.json"),
         PathBuf::from("sprefa-rules.yaml"),
         {

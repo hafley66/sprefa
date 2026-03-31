@@ -1,6 +1,86 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// How to match an object key in a destructuring pattern.
+///
+/// Serializes as a plain string:
+/// - `"$_"` → Wildcard
+/// - `"$NAME"` (screaming after `$`) → Capture
+/// - contains `*`, `?`, `[` → Glob
+/// - otherwise → Exact
+#[derive(Debug, Clone)]
+pub enum KeyMatcher {
+    /// Match exact key name.
+    Exact(String),
+    /// Match key name by glob pattern (e.g. `"dep_*"`).
+    Glob(String),
+    /// Capture the key name into a named variable (e.g. `"$KEY"`).
+    Capture(String),
+    /// Match any key, don't bind.
+    Wildcard,
+}
+
+impl KeyMatcher {
+    pub fn parse(s: &str) -> Self {
+        if s == "$_" {
+            KeyMatcher::Wildcard
+        } else if s.starts_with('$')
+            && s.len() > 1
+            && s[1..].starts_with(|c: char| c.is_ascii_uppercase())
+        {
+            KeyMatcher::Capture(s[1..].to_string())
+        } else if s.contains('*') || s.contains('?') || s.contains('[') {
+            KeyMatcher::Glob(s.to_string())
+        } else {
+            KeyMatcher::Exact(s.to_string())
+        }
+    }
+
+    fn as_str(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            KeyMatcher::Exact(s) | KeyMatcher::Glob(s) => std::borrow::Cow::Borrowed(s),
+            KeyMatcher::Capture(name) => std::borrow::Cow::Owned(format!("${name}")),
+            KeyMatcher::Wildcard => std::borrow::Cow::Borrowed("$_"),
+        }
+    }
+}
+
+impl Serialize for KeyMatcher {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for KeyMatcher {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(KeyMatcher::parse(&s))
+    }
+}
+
+impl JsonSchema for KeyMatcher {
+    fn schema_name() -> String {
+        "KeyMatcher".to_string()
+    }
+    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::String.into()),
+            ..Default::default()
+        }
+        .into()
+    }
+}
+
+/// One branch in a destructuring Object pattern.
+///
+/// The `key` matches against object key names. The `value` is a sub-chain
+/// of SelectSteps applied to the matched key's value.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ObjectEntry {
+    pub key: KeyMatcher,
+    pub value: Vec<SelectStep>,
+}
+
 /// Top-level rules file: an array of rules plus optional metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RuleSet {
@@ -233,11 +313,22 @@ pub enum SelectStep {
         capture: Option<String>,
     },
 
-    /// Capture multiple sibling keys from an object node at once.
-    /// Map of json_key -> capture_name.
-    /// Example: `{ "repository": "repo", "tag": "tag" }`
+    /// Destructure an object node: match keys and recurse into values.
+    ///
+    /// Each entry matches a key (exact, glob, capture, or wildcard) and
+    /// applies its `value` sub-chain to the matched child. All entries
+    /// are conjunctive (all must match). Results are cross-producted
+    /// across entries for ancestor carry-forward.
     Object {
-        captures: std::collections::BTreeMap<String, String>,
+        entries: Vec<ObjectEntry>,
+    },
+
+    /// Iterate array elements, applying the sub-chain to each.
+    ///
+    /// Captures from the surrounding context carry forward into each
+    /// element's sub-chain (ancestor carry-forward).
+    Array {
+        item: Vec<SelectStep>,
     },
 }
 

@@ -4,7 +4,7 @@ use globset::{Glob, GlobMatcher};
 use regex::Regex;
 use serde_json::Value;
 
-use crate::types::SelectStep;
+use crate::types::{KeyMatcher, SelectStep};
 
 /// A value captured during a walk, with its position in the source.
 #[derive(Debug, Clone)]
@@ -236,49 +236,73 @@ fn walk_inner(node: &Value, steps: &[SelectStep], state: &WalkState) -> Vec<Matc
             _ => vec![],
         },
 
-        SelectStep::Object { captures } => match node {
+        SelectStep::Object { entries } => match node {
             Value::Object(map) => {
-                let mut next_state = state.clone();
-                for (json_key, cap_name) in captures {
-                    match map.get(json_key.as_str()) {
-                        Some(Value::String(s)) => {
-                            next_state.captures.insert(
-                                cap_name.clone(),
-                                CapturedValue {
-                                    text: s.clone(),
-                                    span_start: 0,
-                                    span_end: 0,
-                                },
-                            );
-                        }
-                        Some(Value::Number(n)) => {
-                            next_state.captures.insert(
-                                cap_name.clone(),
-                                CapturedValue {
-                                    text: n.to_string(),
-                                    span_start: 0,
-                                    span_end: 0,
-                                },
-                            );
-                        }
-                        Some(Value::Bool(b)) => {
-                            next_state.captures.insert(
-                                cap_name.clone(),
-                                CapturedValue {
-                                    text: b.to_string(),
-                                    span_start: 0,
-                                    span_end: 0,
-                                },
-                            );
-                        }
-                        _ => {
-                            // Key missing or not a leaf value -- skip this capture.
-                            // The match still proceeds; missing captures just won't
-                            // produce refs in the emit phase.
+                // Each entry produces capture sets. Cross-product across entries
+                // gives ancestor carry-forward (conjunctive: all must match).
+                let mut product: Vec<HashMap<String, CapturedValue>> =
+                    vec![state.captures.clone()];
+
+                for entry in entries {
+                    let matching_keys = key_matches(&entry.key, map);
+                    let mut next_product = vec![];
+
+                    for caps_so_far in &product {
+                        for (key_name, child_value) in &matching_keys {
+                            let mut child_state = state.descend(Some(key_name));
+                            child_state.captures = caps_so_far.clone();
+
+                            // If key is a capture, bind the key name
+                            if let KeyMatcher::Capture(cap) = &entry.key {
+                                child_state.captures.insert(
+                                    cap.clone(),
+                                    CapturedValue {
+                                        text: key_name.clone(),
+                                        span_start: 0,
+                                        span_end: 0,
+                                    },
+                                );
+                            }
+
+                            let sub_results =
+                                walk_inner(child_value, &entry.value, &child_state);
+                            for r in sub_results {
+                                next_product.push(r.captures);
+                            }
                         }
                     }
+
+                    if next_product.is_empty() {
+                        return vec![];
+                    }
+                    product = next_product;
                 }
-                walk_inner(node, rest, &next_state)
+
+                // Continue rest of chain at this node with merged captures
+                let mut results = vec![];
+                for merged in product {
+                    let mut next_state = state.clone();
+                    next_state.captures = merged;
+                    results.extend(walk_inner(node, rest, &next_state));
+                }
+                results
+            }
+            _ => vec![],
+        },
+
+        SelectStep::Array { item } => match node {
+            Value::Array(arr) => {
+                let mut results = vec![];
+                for (i, v) in arr.iter().enumerate() {
+                    let child_state = state.descend(Some(&i.to_string()));
+                    let sub_results = walk_inner(v, item, &child_state);
+                    for r in sub_results {
+                        let mut next_state = state.clone();
+                        next_state.captures = r.captures;
+                        results.extend(walk_inner(node, rest, &next_state));
+                    }
+                }
+                results
             }
             _ => vec![],
         },
@@ -311,6 +335,28 @@ fn pipe_glob_matches(pattern: &str, value: &str) -> bool {
                 .map(|g| g.compile_matcher().is_match(value))
                 .unwrap_or(false)
         })
+    }
+}
+
+/// Find all keys in a JSON object that match a KeyMatcher.
+/// Returns (key_name, &Value) pairs for matching keys.
+fn key_matches<'a>(
+    matcher: &KeyMatcher,
+    map: &'a serde_json::Map<String, Value>,
+) -> Vec<(String, &'a Value)> {
+    match matcher {
+        KeyMatcher::Exact(name) => map
+            .get(name)
+            .map(|v| vec![(name.clone(), v)])
+            .unwrap_or_default(),
+        KeyMatcher::Glob(pattern) => map
+            .iter()
+            .filter(|(k, _)| pipe_glob_matches(pattern, k))
+            .map(|(k, v)| (k.clone(), v))
+            .collect(),
+        KeyMatcher::Capture(_) | KeyMatcher::Wildcard => {
+            map.iter().map(|(k, v)| (k.clone(), v)).collect()
+        }
     }
 }
 

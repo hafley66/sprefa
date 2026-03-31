@@ -2502,6 +2502,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sprefa_config",
  "sprefa_js",
  "sprefa_rs",
@@ -2509,6 +2510,7 @@ dependencies = [
  "sprefa_scan",
  "sprefa_schema",
  "sprefa_server",
+ "sprefa_sprf",
  "sprefa_watch",
  "sqlx",
  "tokio",
@@ -2668,6 +2670,20 @@ dependencies = [
  "sqlx",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "sprefa_sprf"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "globset",
+ "insta",
+ "serde_json",
+ "serde_yaml",
+ "sprefa_rules",
+ "toml",
+ "winnow",
 ]
 
 [[package]]

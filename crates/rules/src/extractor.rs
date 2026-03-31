@@ -305,7 +305,10 @@ mod tests {
                     { "step": "file", "pattern": "**/values.yaml|**/values-*.yaml" },
                     { "step": "any" },
                     { "step": "key", "name": "image" },
-                    { "step": "object", "captures": { "repository": "repo", "tag": "tag" } }
+                    { "step": "object", "entries": [
+                        { "key": "repository", "value": [{ "step": "leaf", "capture": "repo" }] },
+                        { "key": "tag", "value": [{ "step": "leaf", "capture": "tag" }] }
+                    ] }
                 ],
                 "create_matches": [
                     { "capture": "repo", "kind": "image_repo" },

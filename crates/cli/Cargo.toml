@@ -16,6 +16,7 @@ sprefa_js = { path = "../js" }
 sprefa_rs = { path = "../rs" }
 sprefa_server = { path = "../server" }
 sprefa_watch = { path = "../watch" }
+sprefa_sprf = { path = "../sprf" }
 ghcache-client = { path = "../../../ghcacher/ghcache-client", optional = true }
 glob = { version = "0.3", optional = true }
 clap = { workspace = true }
@@ -23,6 +24,7 @@ clap = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
