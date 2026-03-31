@@ -9,9 +9,11 @@ So with that concept, and the filesystem as a tree, we now have a very large shi
 
 So this is an attempt at creating a very higher and lower scoped tree query/matching engine that attemps to unify all of that tree into 1 interface.
 
-TLDR; Programmable ripgrep and fzf and ast-grep go BURRRRRR. But also what if ai could trace its steps into a system that allows describing every grep and filesystem find etc. were all encoded into a language that embeds that flow. In order to encode arbitrary filesystem+source AST into prolog for graph and tree algorithms, is a great time.
+TLDR; Programmable ripgrep and fzf and ast-grep go BURRRRRR. But also what if ai could trace its steps into a system that allows describing every grep and filesystem find etc. were all encoded into a language that embeds that flow. In order to encode arbitrary filesystem+source AST into prolog for graph and tree algorithms, I wanted to build this.
 
-This system does a whacky refactoring that was the OG idea, that turned into journey studying ast-grep and sqlite and wanting to be able to encode cross filesystem relationships with whatever pattern matching tech I can find open source then make. `ast-grep` hauls ass.
+This system does a whacky refactoring that was the OG idea, that turned into journey studying ast-grep and sqlite and wanting to be able to encode cross filesystem relationships with whatever pattern matching tech I can find open source then make. `ast-grep` hauls ass. json/yaml/toml/xml are all trees already, so thats nice. 
+
+So now you can imagine every tree node as an html element or a div with a classname. Okay now make that work like prolog.
 `</human-no-llm-kthnx>`
 
 # sprefa - (s)u(p)er(refa)ctor
