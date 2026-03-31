@@ -1,6 +1,24 @@
+`<human-no-llm-kthnx>`
+Hi, the main thesis of this is to ask the question of how far can source strings constants, their import/export identifiers, their filename paths, and their git repo names, take a semantic grep engine that just spits things into prolog aka recursive sqlite queries.
+
+I want to basically allow extremely bespoke pattern chaining of any and all open source tools for parsing. 
+
+Can't believe I'm gonna say this but just imagine html(really xml please), all ast's are representable as a dom tree.
+
+So with that concept, and the filesystem as a tree, we now have a very large shit load of trees.
+
+So this is an attempt at creating a very higher and lower scoped tree query/matching engine that attemps to unify all of that tree into 1 interface.
+
+TLDR; Programmable ripgrep and fzf and ast-grep go BURRRRRR. But also what if ai could trace its steps into a system that allows describing every grep and filesystem find etc. were all encoded into a language that embeds that flow. In order to encode arbitrary filesystem+source AST into prolog for graph and tree algorithms, is a great time.
+
+This system does a whacky refactoring that was the OG idea, that turned into journey studying ast-grep and sqlite and wanting to be able to encode cross filesystem relationships with whatever pattern matching tech I can find open source then make. `ast-grep` hauls ass.
+`</human-no-llm-kthnx>`
+
 # sprefa - (s)u(p)er(refa)ctor
 
-Rename a symbol, every reference updates. Across files, across repos, across languages. No LLM, no datacenter -- a pre-built index and a graph traversal.
+Rename a symbol, every reference updates. Its 2026. Across files, across repos, across languages. No LLM, no datacenter -- a pre-built index and a graph traversal after ripping regex on filesystems and ASTs. You can tag whatever you want in this tree and then do prolog on it.
+
+Okay now for how I'm gonna do that is basically ast-grep but if the filesystem were also an ast and I could also query it, aka regex.
 
 sprefa is a daemon that watches project folders, maintains a SQLite index of every interesting string in every source file (imports, exports, config keys, YAML values, dependency names), and performs instant deterministic rename propagation when you change something. The index makes renames O(lookup) instead of O(parse-everything).
 
