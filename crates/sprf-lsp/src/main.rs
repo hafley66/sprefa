@@ -5,7 +5,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use sprefa_sprf::_0_ast::{LinkDecl, Slot, Statement, Tag};
+use sprefa_sprf::_0_ast::{LinkDecl, QueryDecl, Slot, Statement, Tag};
 use sprefa_sprf::_1_parse::parse_program;
 
 struct SprfLsp {
@@ -150,6 +150,23 @@ impl DocState {
                             format!("target kind '{}' is not defined by any match() slot", tgt_kind),
                             DiagnosticSeverity::WARNING,
                         ));
+                    }
+                }
+                Statement::Query(decl) => {
+                    // Validate: body relations should reference known link kinds or other queries
+                    for atom in &decl.body {
+                        if atom.relation != decl.head.relation
+                            && !self.link_kinds.contains(&atom.relation)
+                        {
+                            self.diagnostics.push((
+                                span.clone(),
+                                format!(
+                                    "relation '{}' is not a known link kind or query",
+                                    atom.relation
+                                ),
+                                DiagnosticSeverity::WARNING,
+                            ));
+                        }
                     }
                 }
             }
@@ -340,6 +357,7 @@ const TAGS: &[(&str, &str)] = &[
     ("match", "Map capture to kind: match($CAP, kind)"),
     ("link", "Link declaration: link(src > tgt, predicate)"),
     ("rule", "Name this rule: rule(my_rule_name)"),
+    ("query", "Datalog query: query name($A, $C) :- rel($A, $B), name($B, $C);"),
 ];
 
 #[tower_lsp::async_trait]

@@ -572,6 +572,11 @@ fn parse_scope(s: Option<&str>) -> anyhow::Result<Option<BranchScope>> {
 }
 
 async fn cmd_query(config_path: &Option<PathBuf>, term: &str, scope: Option<&str>, once: bool) -> anyhow::Result<()> {
+    // Detect Datalog goal syntax: `relation($VAR, "lit")` -- has parens
+    if term.contains('(') && term.contains(')') {
+        return cmd_query_datalog(config_path, term).await;
+    }
+
     let config = load_cfg(config_path)?;
     let scope = parse_scope(scope)?;
 
@@ -604,6 +609,116 @@ async fn cmd_query(config_path: &Option<PathBuf>, term: &str, scope: Option<&str
     let hits = search_refs(&pool, term, scope).await?;
     print_query_hits(&hits, term);
     Ok(())
+}
+
+/// Execute a Datalog-style goal against compiled query rules from .sprf.
+///
+/// Parses the goal as an atom, finds the matching QueryDef in the rules file,
+/// compiles it to SQL, applies goal bindings, and executes against the DB.
+async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> anyhow::Result<()> {
+    use sprefa_rules::query::{compile_query, compile_goal_filter};
+    use std::collections::HashMap;
+
+    // Parse goal atom using the sprf parser
+    let goal_input = format!("query _goal($__UNUSED) :- {};", goal_str);
+    let program = sprefa_sprf::_1_parse::parse_program(&goal_input);
+    // That's a hack -- just parse the atom directly. Let me parse it properly.
+    // Actually, reuse the atom parser by parsing as a query body.
+    drop(program);
+
+    // Parse the goal as an atom: `name($ARG1, $ARG2)` or `name($ARG1, "lit")`
+    let goal_atom = parse_goal_atom(goal_str)?;
+
+    // Load rules file to get query definitions
+    let rules_path = find_rules_file()?;
+    let ruleset = load_ruleset(&rules_path)?;
+
+    if ruleset.query_rules.is_empty() {
+        anyhow::bail!("no query rules defined in {}", rules_path.display());
+    }
+
+    // Find the matching query def
+    let qdef = ruleset.query_rules.iter()
+        .find(|q| q.name == goal_atom.relation)
+        .ok_or_else(|| anyhow::anyhow!(
+            "no query rule named '{}'. available: {}",
+            goal_atom.relation,
+            ruleset.query_rules.iter().map(|q| q.name.as_str()).collect::<Vec<_>>().join(", ")
+        ))?;
+
+    if goal_atom.args.len() != qdef.arity {
+        anyhow::bail!(
+            "query '{}' expects {} args, goal has {}",
+            qdef.name, qdef.arity, goal_atom.args.len()
+        );
+    }
+
+    // Build known queries map
+    let known: HashMap<String, usize> = ruleset.query_rules.iter()
+        .map(|q| (q.name.clone(), q.arity))
+        .collect();
+
+    // Compile query to SQL
+    let base_sql = compile_query(qdef, &known);
+
+    // Apply goal bindings
+    let goal_args: Vec<String> = goal_atom.args.iter().map(|t| {
+        match t {
+            sprefa_sprf::_0_ast::Term::Var(name) => name.clone(),
+            sprefa_sprf::_0_ast::Term::Lit(val) => format!("={val}"),
+            sprefa_sprf::_0_ast::Term::Wild => "_".to_string(),
+        }
+    }).collect();
+
+    let (_output_cols, goal_where) = compile_goal_filter(&goal_args, qdef);
+
+    let full_sql = format!("{base_sql}{goal_where}");
+
+    // Execute
+    let config = load_cfg(config_path)?;
+    let pool = init_db(&config.db_path()).await?;
+
+    let rows: Vec<sqlx::sqlite::SqliteRow> =
+        sqlx::query(&full_sql).fetch_all(&pool).await?;
+
+    if rows.is_empty() {
+        println!("(0 rows)");
+        return Ok(());
+    }
+
+    // Print results using the same TSV format as cmd_sql
+    use sqlx::{Column, Row};
+    let cols: Vec<String> = rows[0].columns().iter().map(|c| c.name().to_string()).collect();
+    println!("{}", cols.join("\t"));
+
+    for row in &rows {
+        let vals: Vec<String> = (0..cols.len()).map(|i| {
+            row.try_get::<String, _>(i)
+                .or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string()))
+                .or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string()))
+                .unwrap_or_else(|_| "NULL".into())
+        }).collect();
+        println!("{}", vals.join("\t"));
+    }
+    println!("\n({} rows)", rows.len());
+
+    Ok(())
+}
+
+/// Parse a goal string like `all_deps($WHO, "lodash")` into an Atom.
+fn parse_goal_atom(input: &str) -> anyhow::Result<sprefa_sprf::_0_ast::Atom> {
+    // Wrap in a dummy query to reuse the parser
+    let wrapped = format!("query __goal($__X) :- {input};");
+    let program = sprefa_sprf::_1_parse::parse_program(&wrapped)?;
+    match program.into_iter().next() {
+        Some(sprefa_sprf::_0_ast::Statement::Query(decl)) => {
+            if decl.body.len() != 1 {
+                anyhow::bail!("goal must be a single atom");
+            }
+            Ok(decl.body.into_iter().next().unwrap())
+        }
+        _ => anyhow::bail!("failed to parse goal: {}", input),
+    }
 }
 
 fn print_query_hits(hits: &[sprefa_schema::QueryHit], term: &str) {

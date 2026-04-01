@@ -10,6 +10,7 @@ pub type Program = Vec<Statement>;
 pub enum Statement {
     Rule(SelectorChain),
     Link(LinkDecl),
+    Query(QueryDecl),
 }
 
 /// A chain of slots separated by `>`, terminated by `;`.
@@ -75,4 +76,31 @@ impl Tag {
             _ => None,
         }
     }
+}
+
+/// A query rule: `query head($A, $C) :- rel($A, $B), head($B, $C);`
+///
+/// Compiles to a SQL CTE (recursive when head appears in body).
+#[derive(Debug, Clone)]
+pub struct QueryDecl {
+    pub head: Atom,
+    pub body: Vec<Atom>,
+}
+
+/// One atom in a query rule: `relation($ARG1, $ARG2)` or `relation($ARG1, "literal")`.
+#[derive(Debug, Clone)]
+pub struct Atom {
+    pub relation: String,
+    pub args: Vec<Term>,
+}
+
+/// A term in a query atom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Term {
+    /// `$VAR` -- binds or unifies with a named variable.
+    Var(String),
+    /// `"literal"` or bare identifier -- matches a specific string value.
+    Lit(String),
+    /// `$_` -- matches anything, no binding.
+    Wild,
 }

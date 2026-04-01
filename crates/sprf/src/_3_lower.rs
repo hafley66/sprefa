@@ -16,16 +16,18 @@
 ///   re(pat)            -> ValuePattern { source, pattern }
 use anyhow::{bail, Result};
 use sprefa_rules::types::{
-    AstSelector, LinkPredicate, LinkRule, MatchDef, Rule, RuleSet, SelectStep, Side, ValuePattern,
+    AstSelector, LinkPredicate, LinkRule, MatchDef, QueryAtom, QueryDef, Rule, RuleSet, SelectStep,
+    Side, ValuePattern,
 };
 
-use crate::_0_ast::{LinkDecl, Program, SelectorChain, Slot, Statement, Tag};
+use crate::_0_ast::{LinkDecl, Program, QueryDecl, SelectorChain, Slot, Statement, Tag, Term};
 use crate::_2_pattern::parse_json_body;
 
 /// Lower a parsed program into a RuleSet (rules + link rules).
 pub fn lower_program(program: &Program) -> Result<RuleSet> {
     let mut rules = vec![];
     let mut link_rules = vec![];
+    let mut query_rules = vec![];
     let mut rule_idx = 0;
 
     for stmt in program {
@@ -39,6 +41,10 @@ pub fn lower_program(program: &Program) -> Result<RuleSet> {
                 let lr = lower_link(decl)?;
                 link_rules.push(lr);
             }
+            Statement::Query(decl) => {
+                let qd = lower_query(decl)?;
+                query_rules.push(qd);
+            }
         }
     }
 
@@ -46,6 +52,7 @@ pub fn lower_program(program: &Program) -> Result<RuleSet> {
         schema: None,
         rules,
         link_rules,
+        query_rules,
     })
 }
 
@@ -170,6 +177,40 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
         value: value_pattern,
         create_matches,
         confidence: None,
+    })
+}
+
+/// Lower a query declaration to a QueryDef.
+fn lower_query(decl: &QueryDecl) -> Result<QueryDef> {
+    fn lower_term(t: &Term) -> String {
+        match t {
+            Term::Var(name) => name.clone(),
+            Term::Lit(val) => format!("={}", val),
+            Term::Wild => "_".to_string(),
+        }
+    }
+
+    let head_args: Vec<String> = decl.head.args.iter().map(lower_term).collect();
+    let arity = head_args.len();
+    let name = decl.head.relation.clone();
+
+    let body: Vec<QueryAtom> = decl
+        .body
+        .iter()
+        .map(|atom| QueryAtom {
+            relation: atom.relation.clone(),
+            args: atom.args.iter().map(lower_term).collect(),
+        })
+        .collect();
+
+    let is_recursive = decl.body.iter().any(|atom| atom.relation == name);
+
+    Ok(QueryDef {
+        name,
+        arity,
+        head_args,
+        body,
+        is_recursive,
     })
 }
 
@@ -395,5 +436,54 @@ mod tests {
         assert_eq!(rs.rules.len(), 1);
         assert_eq!(rs.link_rules.len(), 1);
         assert_eq!(rs.rules[0].create_matches.len(), 1);
+    }
+
+    #[test]
+    fn lower_query_recursive() {
+        let rs = lower_full(
+            "query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);"
+        );
+        assert_eq!(rs.query_rules.len(), 1);
+        let q = &rs.query_rules[0];
+        assert_eq!(q.name, "all_deps");
+        assert_eq!(q.arity, 2);
+        assert!(q.is_recursive);
+        assert_eq!(q.head_args, vec!["A", "C"]);
+        assert_eq!(q.body.len(), 2);
+        assert_eq!(q.body[0].relation, "dep_to_package");
+        assert_eq!(q.body[1].relation, "all_deps");
+    }
+
+    #[test]
+    fn lower_query_nonrecursive() {
+        let rs = lower_full(
+            "query same_eco($A, $B) :- dep_to_package($A, $X), dep_to_package($B, $X);"
+        );
+        let q = &rs.query_rules[0];
+        assert!(!q.is_recursive);
+        assert_eq!(q.body[0].args, vec!["A", "X"]);
+        assert_eq!(q.body[1].args, vec!["B", "X"]);
+    }
+
+    #[test]
+    fn lower_query_with_literal() {
+        let rs = lower_full(
+            r#"query who_uses($WHO) :- dep_to_package($WHO, "lodash");"#
+        );
+        let q = &rs.query_rules[0];
+        assert_eq!(q.body[0].args, vec!["WHO", "=lodash"]);
+    }
+
+    #[test]
+    fn lower_full_pipeline() {
+        let rs = lower_full(r#"
+            fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);
+            fs(**/Cargo.toml) > json({ dependencies: { $N: $_ } }) > match($N, dep_name);
+            link(dep_name > package_name, norm_eq) > $dep_to_package;
+            query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
+        "#);
+        assert_eq!(rs.rules.len(), 2);
+        assert_eq!(rs.link_rules.len(), 1);
+        assert_eq!(rs.query_rules.len(), 1);
     }
 }

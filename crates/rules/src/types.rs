@@ -81,6 +81,39 @@ pub struct ObjectEntry {
     pub value: Vec<SelectStep>,
 }
 
+/// A compiled query rule: Datalog-style horn clause over match_links.
+///
+/// Parsed from `.sprf` syntax:
+/// ```sprf
+/// query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
+/// ```
+///
+/// Compiled to SQL CTEs by `query::compile_query()`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct QueryDef {
+    /// Name of this derived relation.
+    pub name: String,
+    /// Number of columns (arity of the head atom).
+    pub arity: usize,
+    /// Head argument names (variable names or "_" for wild).
+    pub head_args: Vec<String>,
+    /// Body atoms: each is (relation_name, args).
+    /// Args are either variable names, literal strings prefixed with `=`,
+    /// or `_` for wildcard.
+    pub body: Vec<QueryAtom>,
+    /// Whether head relation appears in body (requires WITH RECURSIVE).
+    pub is_recursive: bool,
+}
+
+/// One atom in a query body, as lowered from the parse tree.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct QueryAtom {
+    pub relation: String,
+    /// Each arg is: variable name (e.g. "A"), literal prefixed with `=` (e.g. "=lodash"),
+    /// or "_" for wildcard.
+    pub args: Vec<String>,
+}
+
 /// Top-level rules file: an array of rules plus optional metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RuleSet {
@@ -126,6 +159,10 @@ pub struct RuleSet {
     /// ```
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_rules: Vec<LinkRule>,
+    /// Query rules: Datalog-style derived relations over match_links.
+    /// Compiled to SQL CTEs at query time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub query_rules: Vec<QueryDef>,
 }
 
 /// A link rule creates edges in `match_links` between matches.

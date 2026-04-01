@@ -2,7 +2,7 @@
 ///
 /// Parses the outer structure: statements, selector chains, slots.
 /// Does NOT parse the inside of json() bodies -- that's _2_pattern.rs.
-use crate::_0_ast::{LinkDecl, Program, Statement, SelectorChain, Slot, Tag};
+use crate::_0_ast::{Atom, LinkDecl, Program, QueryDecl, Statement, SelectorChain, Slot, Tag, Term};
 
 pub fn parse_program(input: &str) -> anyhow::Result<Program> {
     let mut stmts = vec![];
@@ -36,7 +36,7 @@ fn skip_ws_and_comments(mut input: &str) -> &str {
     }
 }
 
-/// Dispatch: `link(...)` or a normal rule.
+/// Dispatch: `link(...)`, `query ...`, or a normal rule.
 fn parse_statement(input: &str) -> anyhow::Result<(Statement, &str)> {
     let trimmed = skip_ws_and_comments(input);
     if trimmed.starts_with("link") {
@@ -47,8 +47,107 @@ fn parse_statement(input: &str) -> anyhow::Result<(Statement, &str)> {
             return Ok((Statement::Link(decl), rest));
         }
     }
+    if trimmed.starts_with("query") {
+        let after = &trimmed[5..];
+        let after_trimmed = after.trim_start();
+        // Disambiguate: `query` keyword requires `name(` next, not a tag like `query(...)`
+        // which would be a rule slot. Check for `word(` pattern without being a known tag.
+        if let Some(paren_pos) = after_trimmed.find('(') {
+            let before_paren = after_trimmed[..paren_pos].trim();
+            // If it looks like an identifier (the query name), parse as query decl
+            if !before_paren.is_empty()
+                && before_paren.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                let (decl, rest) = parse_query_decl(after_trimmed)?;
+                return Ok((Statement::Query(decl), rest));
+            }
+        }
+    }
     let (chain, rest) = parse_rule(trimmed)?;
     Ok((Statement::Rule(chain), rest))
+}
+
+/// Parse `query name($A, $B) :- rel($A, $X), rel2($X, $B);`
+fn parse_query_decl(input: &str) -> anyhow::Result<(QueryDecl, &str)> {
+    // Parse head atom: name($A, $B)
+    let (head, rest) = parse_atom(input)?;
+    let rest = rest.trim_start();
+
+    // Expect `:-`
+    if !rest.starts_with(":-") {
+        anyhow::bail!("expected `:-` after query head, found {:?}", &rest[..rest.len().min(20)]);
+    }
+    let mut rest = rest[2..].trim_start();
+
+    // Parse body atoms separated by `,`
+    let mut body = vec![];
+    loop {
+        let (atom, r) = parse_atom(rest)?;
+        body.push(atom);
+        let r = r.trim_start();
+        if r.starts_with(',') {
+            rest = r[1..].trim_start();
+        } else if r.starts_with(';') {
+            rest = &r[1..];
+            break;
+        } else {
+            anyhow::bail!("expected `,` or `;` in query body, found {:?}", &r[..r.len().min(20)]);
+        }
+    }
+
+    if body.is_empty() {
+        anyhow::bail!("query body cannot be empty");
+    }
+
+    Ok((QueryDecl { head, body }, rest))
+}
+
+/// Parse one atom: `name($ARG1, $ARG2)` or `name($ARG1, "literal")`.
+fn parse_atom(input: &str) -> anyhow::Result<(Atom, &str)> {
+    let input = input.trim_start();
+    let name_end = input.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .unwrap_or(input.len());
+    if name_end == 0 {
+        anyhow::bail!("expected relation name, found {:?}", &input[..input.len().min(20)]);
+    }
+    let relation = input[..name_end].to_string();
+    let rest = input[name_end..].trim_start();
+
+    if !rest.starts_with('(') {
+        anyhow::bail!("expected `(` after relation name `{}`", relation);
+    }
+    let (body, rest) = parse_paren_body(&rest[1..])?;
+
+    let mut args = vec![];
+    for part in body.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        args.push(parse_term(part)?);
+    }
+
+    Ok((Atom { relation, args }, rest))
+}
+
+/// Parse a single term: `$VAR`, `$_`, `"literal"`, or bare identifier.
+fn parse_term(input: &str) -> anyhow::Result<Term> {
+    let input = input.trim();
+    if input == "$_" {
+        return Ok(Term::Wild);
+    }
+    if input.starts_with('$') {
+        let name = &input[1..];
+        if name.is_empty() || !name.chars().next().unwrap().is_ascii_uppercase() {
+            anyhow::bail!("query variable must be SCREAMING_CASE: {:?}", input);
+        }
+        return Ok(Term::Var(name.to_string()));
+    }
+    if input.starts_with('"') && input.ends_with('"') && input.len() >= 2 {
+        return Ok(Term::Lit(input[1..input.len() - 1].to_string()));
+    }
+    // Bare identifier as literal
+    Ok(Term::Lit(input.to_string()))
 }
 
 /// Parse `link(src > tgt, pred, ...) > $kind;`
@@ -493,5 +592,67 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
         assert_eq!(program.len(), 2);
         assert!(matches!(&program[0], Statement::Rule(_)));
         assert!(matches!(&program[1], Statement::Link(_)));
+    }
+
+    #[test]
+    fn parse_query_basic() {
+        let input = "query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);";
+        let program = parse_program(input).unwrap();
+        assert_eq!(program.len(), 1);
+        let Statement::Query(q) = &program[0] else { panic!("expected Query") };
+        assert_eq!(q.head.relation, "all_deps");
+        assert_eq!(q.head.args.len(), 2);
+        assert_eq!(q.head.args[0], Term::Var("A".into()));
+        assert_eq!(q.head.args[1], Term::Var("C".into()));
+        assert_eq!(q.body.len(), 2);
+        assert_eq!(q.body[0].relation, "dep_to_package");
+        assert_eq!(q.body[1].relation, "all_deps");
+    }
+
+    #[test]
+    fn parse_query_with_literal() {
+        let input = r#"query who_uses($WHO) :- dep_to_package($WHO, "lodash");"#;
+        let program = parse_program(input).unwrap();
+        let Statement::Query(q) = &program[0] else { panic!("expected Query") };
+        assert_eq!(q.head.args.len(), 1);
+        assert_eq!(q.body[0].args[1], Term::Lit("lodash".into()));
+    }
+
+    #[test]
+    fn parse_query_with_wildcard() {
+        let input = "query has_dep($A) :- dep_to_package($A, $_);";
+        let program = parse_program(input).unwrap();
+        let Statement::Query(q) = &program[0] else { panic!("expected Query") };
+        assert_eq!(q.body[0].args[1], Term::Wild);
+    }
+
+    #[test]
+    fn parse_query_nonrecursive() {
+        let input = "query same_eco($A, $B) :- dep_to_package($A, $X), dep_to_package($B, $X);";
+        let program = parse_program(input).unwrap();
+        let Statement::Query(q) = &program[0] else { panic!("expected Query") };
+        assert_eq!(q.body.len(), 2);
+        assert_eq!(q.body[0].args[1], Term::Var("X".into()));
+        assert_eq!(q.body[1].args[1], Term::Var("X".into()));
+    }
+
+    #[test]
+    fn parse_query_mixed_with_rules_and_links() {
+        let input = r#"
+            fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);
+            link(dep_name > package_name, norm_eq) > $dep_to_package;
+            query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
+        "#;
+        let program = parse_program(input).unwrap();
+        assert_eq!(program.len(), 3);
+        assert!(matches!(&program[0], Statement::Rule(_)));
+        assert!(matches!(&program[1], Statement::Link(_)));
+        assert!(matches!(&program[2], Statement::Query(_)));
+    }
+
+    #[test]
+    fn parse_query_missing_horn_errors() {
+        let err = parse_program("query foo($A) dep($A);").unwrap_err();
+        assert!(err.to_string().contains(":-"), "{}", err);
     }
 }
