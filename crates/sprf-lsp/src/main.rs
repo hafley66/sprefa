@@ -388,7 +388,7 @@ const TAGS: &[(&str, &str)] = &[
     ("ast", "ast-grep pattern: ast(pattern) or ast[lang](pattern)"),
     ("re", "Regex on file content: re(pattern)"),
     ("repo", "Repository glob: repo(org/*)"),
-    ("branch", "Branch glob: branch(main|release/*)"),
+    ("rev", "Rev glob (branch or tag): rev(main|v*)"),
     ("match", "Map capture to kind: match($CAP, kind)"),
     ("link", "Link declaration: link(src > tgt, predicate)"),
     ("rule", "Name this rule: rule(my_rule_name)"),

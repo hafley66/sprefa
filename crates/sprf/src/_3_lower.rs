@@ -3,13 +3,13 @@
 /// SelectorChain -> Rule
 ///
 /// Bare glob inference: N bare globs before first tagged slot.
-///   N=3: repo > branch > fs
+///   N=3: repo > rev > fs
 ///   N<3 or N>3: error
 ///
 /// Tagged slots dispatch by tag:
 ///   fs(pat)            -> File { pattern }
 ///   repo(pat)          -> Repo { pattern }
-///   branch(pat)        -> Branch { pattern }
+///   rev(pat)           -> Rev { pattern }  (aliases: branch, tag)
 ///   json(body)         -> parse body via _2_pattern, get Vec<SelectStep>
 ///   ast(pat)           -> AstSelector { pattern }
 ///   ast[lang](pat)     -> AstSelector { pattern, language }
@@ -71,8 +71,8 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
     if bare_count > 0 {
         if bare_count != 3 {
             bail!(
-                "rule {}: bare context requires exactly 3 slots (repo > branch > fs), found {}. \
-                 Use explicit tags: repo(...), branch(...), fs(...)",
+                "rule {}: bare context requires exactly 3 slots (repo > rev > fs), found {}. \
+                 Use explicit tags: repo(...), rev(...), fs(...)",
                 index,
                 bare_count,
             );
@@ -85,7 +85,7 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
             });
         }
         if let Slot::Bare(pat) = &chain.slots[1] {
-            select.push(SelectStep::Branch {
+            select.push(SelectStep::Rev {
                 pattern: pat.clone(),
                 capture: None,
             });
@@ -128,8 +128,8 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
                         capture: None,
                     });
                 }
-                Tag::Branch => {
-                    select.push(SelectStep::Branch {
+                Tag::Rev => {
+                    select.push(SelectStep::Rev {
                         pattern: body.clone(),
                         capture: None,
                     });
@@ -285,7 +285,7 @@ mod tests {
         let r = &rules[0];
 
         assert!(matches!(&r.select[0], SelectStep::Repo { pattern, .. } if pattern == "my-org/*"));
-        assert!(matches!(&r.select[1], SelectStep::Branch { pattern, .. } if pattern == "main"));
+        assert!(matches!(&r.select[1], SelectStep::Rev { pattern, .. } if pattern == "main"));
         assert!(matches!(&r.select[2], SelectStep::File { pattern, .. } if pattern == "**/Cargo.toml"));
         assert!(matches!(&r.select[3], SelectStep::Object { .. }));
     }

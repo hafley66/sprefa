@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{bail, Result};
@@ -29,8 +30,7 @@ pub struct CompiledRule {
 #[derive(Debug)]
 pub enum ContextCaptureSource {
     Repo,
-    Branch,
-    Tag,
+    Rev,
     /// Capture the filename (basename without extension).
     FileName,
     /// Capture the directory portion of the path.
@@ -92,11 +92,19 @@ impl RuleExtractor {
         let mut all = vec![];
         for rule in self.rules_for_path(path) {
             let repo = ctx.repo.unwrap_or("");
-            if !rule.git.matches(repo, ctx.branch, ctx.tags) {
-                continue;
-            }
+            let git_caps = match rule.git.matches_with_captures(repo, ctx.branch, ctx.tags) {
+                Some(c) => c,
+                None => continue,
+            };
 
-            let context_caps = resolve_context_captures(&rule.context_captures, ctx, path);
+            let file_caps = match rule.file.matches_with_captures(path) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let context_caps = resolve_context_captures(
+                &rule.context_captures, ctx, path, &git_caps, &file_caps,
+            );
 
             let results = if let Some(ast_sel) = &rule.ast {
                 ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
@@ -150,11 +158,19 @@ impl Extractor for RuleExtractor {
         let mut refs = vec![];
         for rule in self.rules_for_path(path) {
             let repo = ctx.repo.unwrap_or("");
-            if !rule.git.matches(repo, ctx.branch, ctx.tags) {
-                continue;
-            }
+            let git_caps = match rule.git.matches_with_captures(repo, ctx.branch, ctx.tags) {
+                Some(c) => c,
+                None => continue,
+            };
 
-            let context_caps = resolve_context_captures(&rule.context_captures, ctx, path);
+            let file_caps = match rule.file.matches_with_captures(path) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let context_caps = resolve_context_captures(
+                &rule.context_captures, ctx, path, &git_caps, &file_caps,
+            );
 
             let results = if let Some(ast_sel) = &rule.ast {
                 ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
@@ -184,18 +200,27 @@ impl Extractor for RuleExtractor {
 }
 
 /// Resolve context captures to concrete values for this file/context.
+///
+/// Slot-level captures (e.g. `repo[$REPO](...)`) grab the whole value.
+/// Pattern-level captures from segment/regex patterns (e.g. `repo($ORG/$REPO)`)
+/// are passed in via `git_caps` and `file_caps` and merged in.
 fn resolve_context_captures(
     captures: &[(String, ContextCaptureSource)],
     ctx: &ExtractContext,
     path: &str,
+    git_caps: &HashMap<String, String>,
+    file_caps: &HashMap<String, String>,
 ) -> Vec<(String, CapturedValue)> {
-    captures
+    let mut result: Vec<(String, CapturedValue)> = captures
         .iter()
         .filter_map(|(name, source)| {
             let text = match source {
                 ContextCaptureSource::Repo => ctx.repo?.to_string(),
-                ContextCaptureSource::Branch => ctx.branch?.to_string(),
-                ContextCaptureSource::Tag => ctx.tags.first().map(|t| t.to_string())?,
+                ContextCaptureSource::Rev => {
+                    // Prefer branch, fall back to first tag
+                    ctx.branch.map(|b| b.to_string())
+                        .or_else(|| ctx.tags.first().map(|t| t.to_string()))?
+                }
                 ContextCaptureSource::FileName => {
                     Path::new(path).file_stem()?.to_str()?.to_string()
                 }
@@ -212,14 +237,27 @@ fn resolve_context_captures(
                 },
             ))
         })
-        .collect()
+        .collect();
+
+    // Merge pattern-level captures from segment/regex patterns
+    for (name, text) in git_caps.iter().chain(file_caps.iter()) {
+        result.push((
+            name.clone(),
+            CapturedValue {
+                text: text.clone(),
+                span_start: 0,
+                span_end: 0,
+            },
+        ));
+    }
+
+    result
 }
 
 /// Compile a Rule into a CompiledRule, partitioning context and structural steps.
 fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
     let mut repo_patterns: Vec<&str> = vec![];
-    let mut branch_patterns: Vec<&str> = vec![];
-    let mut tag_patterns: Vec<&str> = vec![];
+    let mut rev_patterns: Vec<&str> = vec![];
     let mut file_patterns: Vec<&str> = vec![];
     let mut context_captures: Vec<(String, ContextCaptureSource)> = vec![];
     let mut structural_steps: Vec<SelectStep> = vec![];
@@ -242,16 +280,10 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
                         context_captures.push((c.clone(), ContextCaptureSource::Repo));
                     }
                 }
-                SelectStep::Branch { pattern, capture } => {
-                    branch_patterns.push(pattern);
+                SelectStep::Rev { pattern, capture } => {
+                    rev_patterns.push(pattern);
                     if let Some(c) = capture {
-                        context_captures.push((c.clone(), ContextCaptureSource::Branch));
-                    }
-                }
-                SelectStep::Tag { pattern, capture } => {
-                    tag_patterns.push(pattern);
-                    if let Some(c) = capture {
-                        context_captures.push((c.clone(), ContextCaptureSource::Tag));
+                        context_captures.push((c.clone(), ContextCaptureSource::Rev));
                     }
                 }
                 SelectStep::Folder { pattern, capture } => {
@@ -282,7 +314,7 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
         }
     }
 
-    let git = CompiledGitSelector::from_patterns(&repo_patterns, &branch_patterns, &tag_patterns)?;
+    let git = CompiledGitSelector::from_patterns(&repo_patterns, &rev_patterns)?;
     let file = CompiledFileSelector::from_patterns(&file_patterns)?;
 
     Ok(CompiledRule {
@@ -300,8 +332,7 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
 fn step_kind_label(step: &SelectStep) -> &'static str {
     match step {
         SelectStep::Repo { .. } => "repo",
-        SelectStep::Branch { .. } => "branch",
-        SelectStep::Tag { .. } => "tag",
+        SelectStep::Rev { .. } => "rev",
         SelectStep::Folder { .. } => "folder",
         SelectStep::File { .. } => "file",
         _ => "structural",

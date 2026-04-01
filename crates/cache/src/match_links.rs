@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
-use sqlx::SqlitePool;
 use sprefa_rules::LinkRule;
+use sqlx::SqlitePool;
 
 #[cfg(test)]
 use sprefa_rules::{LinkPredicate, Side};
@@ -71,43 +71,44 @@ pub async fn resolve_match_links(
 
         // Optional target repo scoping: JOIN repos on the target side and
         // add an IN clause to restrict which repos can be link targets.
-        let (tgt_repo_join, tgt_repo_where, tgt_repo_binds) =
-            if let Some(repos) = &rule.target_repos {
-                if repos.is_empty() {
-                    (String::new(), String::new(), vec![])
-                } else {
-                    let placeholders: Vec<&str> = repos.iter().map(|_| "?").collect();
-                    (
+        let (tgt_repo_join, tgt_repo_where, tgt_repo_binds) = if let Some(repos) =
+            &rule.target_repos
+        {
+            if repos.is_empty() {
+                (String::new(), String::new(), vec![])
+            } else {
+                let placeholders: Vec<&str> = repos.iter().map(|_| "?").collect();
+                (
                         "\n             JOIN repos tgt_rp ON COALESCE(tgt_f.repo_id, tgt_rr.repo_id) = tgt_rp.id".into(),
                         format!("\n               AND tgt_rp.name IN ({})", placeholders.join(", ")),
                         repos.clone(),
                     )
-                }
-            } else {
-                (String::new(), String::new(), vec![])
-            };
+            }
+        } else {
+            (String::new(), String::new(), vec![])
+        };
 
         let query = format!(
             "INSERT OR IGNORE INTO match_links (source_match_id, target_match_id, link_kind)
-             SELECT src_m.id, tgt_m.id, '{kind}'
-             FROM matches src_m
-             JOIN refs    src_r  ON src_m.ref_id     = src_r.id
-             JOIN strings src_s  ON src_r.string_id  = src_s.id
-             JOIN files   src_f  ON src_r.file_id    = src_f.id
-             JOIN repos   src_rp ON src_f.repo_id    = src_rp.id
+            SELECT src_m.id, tgt_m.id, '{kind}'
+            FROM matches src_m
+            JOIN refs    src_r  ON src_m.ref_id     = src_r.id
+            JOIN strings src_s  ON src_r.string_id  = src_s.id
+            JOIN files   src_f  ON src_r.file_id    = src_f.id
+            JOIN repos   src_rp ON src_f.repo_id    = src_rp.id
 
-             JOIN matches        tgt_m  ON tgt_m.id != src_m.id
-             LEFT JOIN refs      tgt_r  ON tgt_m.ref_id      = tgt_r.id
-             LEFT JOIN repo_refs tgt_rr ON tgt_m.repo_ref_id  = tgt_rr.id
-             JOIN strings        tgt_s  ON COALESCE(tgt_r.string_id, tgt_rr.string_id) = tgt_s.id
-             LEFT JOIN files     tgt_f  ON tgt_r.file_id      = tgt_f.id{tgt_repo_join}
+            JOIN matches        tgt_m  ON tgt_m.id != src_m.id
+            LEFT JOIN refs      tgt_r  ON tgt_m.ref_id      = tgt_r.id
+            LEFT JOIN repo_refs tgt_rr ON tgt_m.repo_ref_id  = tgt_rr.id
+            JOIN strings        tgt_s  ON COALESCE(tgt_r.string_id, tgt_rr.string_id) = tgt_s.id
+            LEFT JOIN files     tgt_f  ON tgt_r.file_id      = tgt_f.id{tgt_repo_join}
 
-             WHERE src_rp.name = ?
-               AND NOT EXISTS (
-                   SELECT 1 FROM match_links ml
-                   WHERE ml.source_match_id = src_m.id AND ml.link_kind = '{kind}'
-               ){tgt_repo_where}
-               AND ({user_sql})",
+            WHERE src_rp.name = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM match_links ml
+                  WHERE ml.source_match_id = src_m.id AND ml.link_kind = '{kind}'
+              ){tgt_repo_where}
+              AND ({user_sql})",
             kind = rule.kind,
         );
 
@@ -121,14 +122,22 @@ pub async fn resolve_match_links(
             Ok(r) => {
                 let count = r.rows_affected() as usize;
                 if count > 0 {
-                    tracing::debug!("{}: link rule '{}' created {} links", repo_name, label, count);
+                    tracing::debug!(
+                        "{}: link rule '{}' created {} links",
+                        repo_name,
+                        label,
+                        count
+                    );
                 }
                 total += count;
             }
             Err(e) => {
                 tracing::error!(
                     "{}: link rule '{}' failed: {}. SQL fragment was: {}",
-                    repo_name, label, e, user_sql
+                    repo_name,
+                    label,
+                    e,
+                    user_sql
                 );
                 return Err(e.into());
             }
@@ -214,12 +223,7 @@ mod tests {
     }
 
     /// Seed a repo_ref + match (repo-anchored, no file). Returns match_id.
-    async fn seed_repo_ref_match(
-        db: &SqlitePool,
-        repo_id: i64,
-        value: &str,
-        kind: &str,
-    ) -> i64 {
+    async fn seed_repo_ref_match(db: &SqlitePool, repo_id: i64, value: &str, kind: &str) -> i64 {
         let string_id = seed_string(db, value).await;
         let repo_ref_id: i64 = sqlx::query_scalar(
             "INSERT OR IGNORE INTO repo_refs (string_id, repo_id, kind) VALUES (?, ?, ?) RETURNING id",
@@ -262,16 +266,20 @@ mod tests {
         let (_import_ref, import_match) =
             seed_ref_match(&db, file_a, "foo", "import_name", Some(file_b)).await;
 
-        let linked = resolve_match_links(&db, "app", &[import_binding_rule()]).await.unwrap();
+        let linked = resolve_match_links(&db, "app", &[import_binding_rule()])
+            .await
+            .unwrap();
         assert_eq!(linked, 1);
 
-        let row: Option<(i64, i64, String)> = sqlx::query_as(
-            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
-        )
-        .fetch_optional(&db)
-        .await
-        .unwrap();
-        assert_eq!(row, Some((import_match, export_match, "import_binding".to_string())));
+        let row: Option<(i64, i64, String)> =
+            sqlx::query_as("SELECT source_match_id, target_match_id, link_kind FROM match_links")
+                .fetch_optional(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            row,
+            Some((import_match, export_match, "import_binding".to_string()))
+        );
     }
 
     #[tokio::test]
@@ -301,7 +309,9 @@ mod tests {
         seed_ref_match(&db, file_b, "foo", "export_name", None).await;
         seed_ref_match(&db, file_a, "foo", "import_name", None).await;
 
-        let linked = resolve_match_links(&db, "app", &[import_binding_rule()]).await.unwrap();
+        let linked = resolve_match_links(&db, "app", &[import_binding_rule()])
+            .await
+            .unwrap();
         assert_eq!(linked, 0);
     }
 
@@ -315,7 +325,9 @@ mod tests {
         seed_ref_match(&db, file_b, "bar", "export_name", None).await;
         seed_ref_match(&db, file_a, "foo", "import_name", Some(file_b)).await;
 
-        let linked = resolve_match_links(&db, "app", &[import_binding_rule()]).await.unwrap();
+        let linked = resolve_match_links(&db, "app", &[import_binding_rule()])
+            .await
+            .unwrap();
         assert_eq!(linked, 0);
     }
 
@@ -342,13 +354,15 @@ mod tests {
         let linked = resolve_match_links(&db, "consumer", &[rule]).await.unwrap();
         assert_eq!(linked, 1);
 
-        let row: Option<(i64, i64, String)> = sqlx::query_as(
-            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
-        )
-        .fetch_optional(&db)
-        .await
-        .unwrap();
-        assert_eq!(row, Some((src_match, tgt_match, "image_source".to_string())));
+        let row: Option<(i64, i64, String)> =
+            sqlx::query_as("SELECT source_match_id, target_match_id, link_kind FROM match_links")
+                .fetch_optional(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            row,
+            Some((src_match, tgt_match, "image_source".to_string()))
+        );
     }
 
     /// Multiple link rules execute in sequence.
@@ -443,8 +457,14 @@ mod tests {
             sql: None,
             predicate: Some(LinkPredicate::And {
                 all: vec![
-                    LinkPredicate::KindEq { side: Side::Src, value: "dep_name".into() },
-                    LinkPredicate::KindEq { side: Side::Tgt, value: "package_name".into() },
+                    LinkPredicate::KindEq {
+                        side: Side::Src,
+                        value: "dep_name".into(),
+                    },
+                    LinkPredicate::KindEq {
+                        side: Side::Tgt,
+                        value: "package_name".into(),
+                    },
                     LinkPredicate::NormEq,
                 ],
             }),
@@ -454,13 +474,15 @@ mod tests {
         let linked = resolve_match_links(&db, "consumer", &[rule]).await.unwrap();
         assert_eq!(linked, 1);
 
-        let row: Option<(i64, i64, String)> = sqlx::query_as(
-            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
-        )
-        .fetch_optional(&db)
-        .await
-        .unwrap();
-        assert_eq!(row, Some((src_match, tgt_match, "dep_to_package".to_string())));
+        let row: Option<(i64, i64, String)> =
+            sqlx::query_as("SELECT source_match_id, target_match_id, link_kind FROM match_links")
+                .fetch_optional(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            row,
+            Some((src_match, tgt_match, "dep_to_package".to_string()))
+        );
     }
 
     /// Predicate DSL form: env_var_ref -> env_var_name via norm_eq.
@@ -482,8 +504,14 @@ mod tests {
             sql: None,
             predicate: Some(LinkPredicate::And {
                 all: vec![
-                    LinkPredicate::KindEq { side: Side::Src, value: "env_var_ref".into() },
-                    LinkPredicate::KindEq { side: Side::Tgt, value: "env_var_name".into() },
+                    LinkPredicate::KindEq {
+                        side: Side::Src,
+                        value: "env_var_ref".into(),
+                    },
+                    LinkPredicate::KindEq {
+                        side: Side::Tgt,
+                        value: "env_var_name".into(),
+                    },
                     LinkPredicate::NormEq,
                 ],
             }),
@@ -493,13 +521,15 @@ mod tests {
         let linked = resolve_match_links(&db, "app", &[rule]).await.unwrap();
         assert_eq!(linked, 1);
 
-        let row: Option<(i64, i64, String)> = sqlx::query_as(
-            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
-        )
-        .fetch_optional(&db)
-        .await
-        .unwrap();
-        assert_eq!(row, Some((src_match, tgt_match, "env_var_binding".to_string())));
+        let row: Option<(i64, i64, String)> =
+            sqlx::query_as("SELECT source_match_id, target_match_id, link_kind FROM match_links")
+                .fetch_optional(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            row,
+            Some((src_match, tgt_match, "env_var_binding".to_string()))
+        );
     }
 
     /// target_repos: None links across all repos (default behavior).
@@ -546,8 +576,14 @@ mod tests {
             sql: None,
             predicate: Some(LinkPredicate::And {
                 all: vec![
-                    LinkPredicate::KindEq { side: Side::Src, value: "helm_image_tag".into() },
-                    LinkPredicate::KindEq { side: Side::Tgt, value: "git_tag".into() },
+                    LinkPredicate::KindEq {
+                        side: Side::Src,
+                        value: "helm_image_tag".into(),
+                    },
+                    LinkPredicate::KindEq {
+                        side: Side::Tgt,
+                        value: "git_tag".into(),
+                    },
                     LinkPredicate::NormEq,
                 ],
             }),
@@ -557,13 +593,15 @@ mod tests {
         let linked = resolve_match_links(&db, "infra", &[rule]).await.unwrap();
         assert_eq!(linked, 1);
 
-        let row: Option<(i64, i64, String)> = sqlx::query_as(
-            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
-        )
-        .fetch_optional(&db)
-        .await
-        .unwrap();
-        assert_eq!(row, Some((src_match, tgt_match, "image_tag_to_git_tag".to_string())));
+        let row: Option<(i64, i64, String)> =
+            sqlx::query_as("SELECT source_match_id, target_match_id, link_kind FROM match_links")
+                .fetch_optional(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            row,
+            Some((src_match, tgt_match, "image_tag_to_git_tag".to_string()))
+        );
     }
 
     /// Link a file-backed match to a repo_ref-backed match with target_repos scoping.
@@ -586,8 +624,14 @@ mod tests {
             sql: None,
             predicate: Some(LinkPredicate::And {
                 all: vec![
-                    LinkPredicate::KindEq { side: Side::Src, value: "helm_image_tag".into() },
-                    LinkPredicate::KindEq { side: Side::Tgt, value: "git_tag".into() },
+                    LinkPredicate::KindEq {
+                        side: Side::Src,
+                        value: "helm_image_tag".into(),
+                    },
+                    LinkPredicate::KindEq {
+                        side: Side::Tgt,
+                        value: "git_tag".into(),
+                    },
                     LinkPredicate::NormEq,
                 ],
             }),
@@ -606,23 +650,26 @@ mod tests {
         let file_a = seed_file(&db, repo_id, "src/app.ts").await;
         let file_b = seed_file(&db, repo_id, "src/utils.ts").await;
 
-        let (_, export_match) =
-            seed_ref_match(&db, file_b, "foo", "export_name", None).await;
+        let (_, export_match) = seed_ref_match(&db, file_b, "foo", "export_name", None).await;
         let (_, import_match) =
             seed_ref_match(&db, file_a, "foo", "import_name", Some(file_b)).await;
 
         // Also seed a repo_ref to ensure it doesn't interfere
         seed_repo_ref_match(&db, repo_id, "app", "repo_name").await;
 
-        let linked = resolve_match_links(&db, "app", &[import_binding_rule()]).await.unwrap();
+        let linked = resolve_match_links(&db, "app", &[import_binding_rule()])
+            .await
+            .unwrap();
         assert_eq!(linked, 1);
 
-        let row: Option<(i64, i64, String)> = sqlx::query_as(
-            "SELECT source_match_id, target_match_id, link_kind FROM match_links",
-        )
-        .fetch_optional(&db)
-        .await
-        .unwrap();
-        assert_eq!(row, Some((import_match, export_match, "import_binding".to_string())));
+        let row: Option<(i64, i64, String)> =
+            sqlx::query_as("SELECT source_match_id, target_match_id, link_kind FROM match_links")
+                .fetch_optional(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            row,
+            Some((import_match, export_match, "import_binding".to_string()))
+        );
     }
 }

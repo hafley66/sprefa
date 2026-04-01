@@ -35,8 +35,7 @@ fn full_rule_with_captures() {
             "description": "Docker image references in Helm values files",
             "select": [
                 { "step": "repo", "pattern": "*/helm-charts" },
-                { "step": "branch", "pattern": "main|release/*" },
-                { "step": "tag", "pattern": "v*" },
+                { "step": "rev", "pattern": "main|release/*|v*" },
                 { "step": "file", "pattern": "values.yaml|values-*.yaml" },
                 { "step": "any" },
                 { "step": "key", "name": "image" },
@@ -56,7 +55,7 @@ fn full_rule_with_captures() {
     let rule = &ruleset.rules[0];
     assert_eq!(rule.name, "helm-image-refs");
     assert_eq!(rule.confidence, Some(0.9));
-    assert_eq!(rule.select.len(), 7);
+    assert_eq!(rule.select.len(), 6);
     assert_eq!(rule.create_matches.len(), 2);
     assert_eq!(rule.create_matches[1].parent.as_deref(), Some("repo"));
 }
@@ -421,18 +420,17 @@ fn git_match_all_fields() {
     let compiled = git_match::CompiledGitSelector::from_patterns(
         &["org/*"],
         &["main|release/*"],
-        &["v*"],
     ).unwrap();
 
-    assert!(compiled.matches("org/repo", Some("main"), &["v1.0"]));
-    assert!(!compiled.matches("other/repo", Some("main"), &["v1.0"]));
-    assert!(!compiled.matches("org/repo", Some("dev"), &["v1.0"]));
-    assert!(!compiled.matches("org/repo", Some("main"), &["latest"]));
+    assert!(compiled.matches("org/repo", Some("main"), &[]));
+    assert!(compiled.matches("org/repo", Some("release/v3"), &[]));
+    assert!(!compiled.matches("other/repo", Some("main"), &[]));
+    assert!(!compiled.matches("org/repo", Some("dev"), &[]));
 }
 
 #[test]
 fn git_match_empty_matches_everything() {
-    let compiled = git_match::CompiledGitSelector::from_patterns(&[], &[], &[]).unwrap();
+    let compiled = git_match::CompiledGitSelector::from_patterns(&[], &[]).unwrap();
     assert!(compiled.matches("anything", Some("any-branch"), &[]));
     assert!(compiled.matches("anything", None, &[]));
 }

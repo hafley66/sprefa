@@ -1,35 +1,19 @@
-use globset::{Glob, GlobMatcher};
-use regex::Regex;
+use std::collections::HashMap;
 
-/// A single compiled pattern: either a glob or a regex.
-enum PatternMatcher {
-    Glob(GlobMatcher),
-    Regex(Regex),
-}
-
-impl PatternMatcher {
-    fn is_match(&self, value: &str) -> bool {
-        match self {
-            Self::Glob(g) => g.is_match(value),
-            Self::Regex(r) => r.is_match(value),
-        }
-    }
-}
+use crate::pattern::{compile_patterns, PatternMatcher};
 
 /// Compiled git selector for fast matching.
-/// Built from Repo/Branch/Tag steps extracted from the select chain.
+/// Built from Repo/Rev steps extracted from the select chain.
 pub struct CompiledGitSelector {
     repo: Vec<PatternMatcher>,
-    branch: Vec<PatternMatcher>,
-    tag: Vec<PatternMatcher>,
+    rev: Vec<PatternMatcher>,
 }
 
 impl std::fmt::Debug for CompiledGitSelector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CompiledGitSelector")
             .field("repo_count", &self.repo.len())
-            .field("branch_count", &self.branch.len())
-            .field("tag_count", &self.tag.len())
+            .field("rev_count", &self.rev.len())
             .finish()
     }
 }
@@ -37,13 +21,11 @@ impl std::fmt::Debug for CompiledGitSelector {
 impl CompiledGitSelector {
     pub fn from_patterns(
         repo_patterns: &[&str],
-        branch_patterns: &[&str],
-        tag_patterns: &[&str],
+        rev_patterns: &[&str],
     ) -> anyhow::Result<Self> {
         let repo = compile_patterns(repo_patterns)?;
-        let branch = compile_patterns(branch_patterns)?;
-        let tag = compile_patterns(tag_patterns)?;
-        Ok(Self { repo, branch, tag })
+        let rev = compile_patterns(rev_patterns)?;
+        Ok(Self { repo, rev })
     }
 
     pub fn matches(&self, repo_name: &str, branch: Option<&str>, tags: &[&str]) -> bool {
@@ -51,38 +33,82 @@ impl CompiledGitSelector {
             return false;
         }
 
-        if !self.branch.is_empty() {
-            match branch {
-                Some(b) if self.branch.iter().any(|m| m.is_match(b)) => {}
-                _ => return false,
+        if !self.rev.is_empty() {
+            // Rev matches against branch OR any tag
+            let branch_hit = branch.map_or(false, |b| self.rev.iter().any(|m| m.is_match(b)));
+            let tag_hit = tags.iter().any(|t| self.rev.iter().any(|m| m.is_match(t)));
+            if !branch_hit && !tag_hit {
+                return false;
             }
-        }
-
-        if !self.tag.is_empty()
-            && !tags.iter().any(|t| self.tag.iter().any(|m| m.is_match(t)))
-        {
-            return false;
         }
 
         true
     }
-}
 
-fn compile_patterns(patterns: &[&str]) -> anyhow::Result<Vec<PatternMatcher>> {
-    let mut matchers = Vec::new();
-    for p in patterns {
-        if let Some(re_pattern) = p.strip_prefix("re:") {
-            matchers.push(PatternMatcher::Regex(Regex::new(re_pattern)?));
-        } else {
-            for segment in p.split('|') {
-                let segment = segment.trim();
-                matchers.push(PatternMatcher::Glob(
-                    Glob::new(segment)?.compile_matcher(),
-                ));
+    /// Like `matches`, but also returns segment/regex captures from patterns.
+    /// Captures from repo and rev patterns are merged into one map.
+    pub fn matches_with_captures(
+        &self,
+        repo_name: &str,
+        branch: Option<&str>,
+        tags: &[&str],
+    ) -> Option<HashMap<String, String>> {
+        let mut caps = HashMap::new();
+
+        if !self.repo.is_empty() {
+            let mut hit = false;
+            for m in &self.repo {
+                if m.is_match(repo_name) {
+                    hit = true;
+                    if let Some(c) = m.captures(repo_name) {
+                        caps.extend(c);
+                    }
+                    break;
+                }
+            }
+            if !hit {
+                return None;
             }
         }
+
+        if !self.rev.is_empty() {
+            let mut hit = false;
+            // Try branch first
+            if let Some(b) = branch {
+                for m in &self.rev {
+                    if m.is_match(b) {
+                        hit = true;
+                        if let Some(c) = m.captures(b) {
+                            caps.extend(c);
+                        }
+                        break;
+                    }
+                }
+            }
+            // Try tags if branch didn't hit
+            if !hit {
+                for t in tags {
+                    for m in &self.rev {
+                        if m.is_match(t) {
+                            hit = true;
+                            if let Some(c) = m.captures(t) {
+                                caps.extend(c);
+                            }
+                            break;
+                        }
+                    }
+                    if hit {
+                        break;
+                    }
+                }
+            }
+            if !hit {
+                return None;
+            }
+        }
+
+        Some(caps)
     }
-    Ok(matchers)
 }
 
 #[cfg(test)]
@@ -91,21 +117,21 @@ mod tests {
 
     #[test]
     fn empty_selector_matches_everything() {
-        let c = CompiledGitSelector::from_patterns(&[], &[], &[]).unwrap();
+        let c = CompiledGitSelector::from_patterns(&[], &[]).unwrap();
         assert!(c.matches("anything", Some("main"), &[]));
         assert!(c.matches("anything", None, &[]));
     }
 
     #[test]
     fn repo_glob() {
-        let c = CompiledGitSelector::from_patterns(&["*/helm-charts"], &[], &[]).unwrap();
+        let c = CompiledGitSelector::from_patterns(&["*/helm-charts"], &[]).unwrap();
         assert!(c.matches("org/helm-charts", Some("main"), &[]));
         assert!(!c.matches("org/backend", Some("main"), &[]));
     }
 
     #[test]
-    fn branch_pipe_pattern() {
-        let c = CompiledGitSelector::from_patterns(&[], &["main|release/*"], &[]).unwrap();
+    fn rev_matches_branch() {
+        let c = CompiledGitSelector::from_patterns(&[], &["main|release/*"]).unwrap();
         assert!(c.matches("repo", Some("main"), &[]));
         assert!(c.matches("repo", Some("release/v3"), &[]));
         assert!(!c.matches("repo", Some("feature/foo"), &[]));
@@ -113,8 +139,8 @@ mod tests {
     }
 
     #[test]
-    fn tag_matching() {
-        let c = CompiledGitSelector::from_patterns(&[], &[], &["v*"]).unwrap();
+    fn rev_matches_tag() {
+        let c = CompiledGitSelector::from_patterns(&[], &["v*"]).unwrap();
         assert!(c.matches("repo", None, &["v1.0.0"]));
         assert!(c.matches("repo", None, &["latest", "v2.0"]));
         assert!(!c.matches("repo", None, &["latest"]));
@@ -122,16 +148,23 @@ mod tests {
     }
 
     #[test]
+    fn rev_matches_branch_or_tag() {
+        let c = CompiledGitSelector::from_patterns(&[], &["main|v*"]).unwrap();
+        assert!(c.matches("repo", Some("main"), &[]));
+        assert!(c.matches("repo", None, &["v1.0"]));
+        assert!(c.matches("repo", Some("dev"), &["v2.0"]));
+        assert!(!c.matches("repo", Some("dev"), &["latest"]));
+    }
+
+    #[test]
     fn all_fields_must_match() {
         let c = CompiledGitSelector::from_patterns(
             &["org/*"],
             &["main"],
-            &["v*"],
         )
         .unwrap();
-        assert!(c.matches("org/repo", Some("main"), &["v1.0"]));
-        assert!(!c.matches("other/repo", Some("main"), &["v1.0"]));
-        assert!(!c.matches("org/repo", Some("dev"), &["v1.0"]));
-        assert!(!c.matches("org/repo", Some("main"), &["latest"]));
+        assert!(c.matches("org/repo", Some("main"), &[]));
+        assert!(!c.matches("other/repo", Some("main"), &[]));
+        assert!(!c.matches("org/repo", Some("dev"), &[]));
     }
 }

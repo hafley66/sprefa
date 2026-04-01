@@ -1,3 +1,4 @@
+pub mod pattern;
 pub mod types;
 pub mod schema;
 pub mod git_match;

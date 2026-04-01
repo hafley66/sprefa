@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use globset::{Glob, GlobMatcher};
-use regex::Regex;
 use serde_json::Value;
 
+use crate::pattern::pattern_matches;
 use crate::types::{KeyMatcher, SelectStep};
 
 /// A value captured during a walk, with its position in the source.
@@ -129,7 +128,7 @@ fn walk_inner(node: &Value, steps: &[SelectStep], state: &WalkState) -> Vec<Matc
             Value::Object(map) => {
                 let mut results = vec![];
                 for (k, v) in map {
-                    if pipe_glob_matches(pattern, k) {
+                    if pattern_matches(pattern, k) {
                         let mut child_state = state.descend(Some(k));
                         if let Some(cap_name) = capture {
                             child_state.captures.insert(
@@ -174,7 +173,7 @@ fn walk_inner(node: &Value, steps: &[SelectStep], state: &WalkState) -> Vec<Matc
         }
 
         SelectStep::ParentKey { pattern } => match &state.parent_key {
-            Some(pk) if pipe_glob_matches(pattern, pk) => walk_inner(node, rest, state),
+            Some(pk) if pattern_matches(pattern, pk) => walk_inner(node, rest, state),
             _ => vec![],
         },
 
@@ -307,34 +306,13 @@ fn walk_inner(node: &Value, steps: &[SelectStep], state: &WalkState) -> Vec<Matc
             _ => vec![],
         },
 
-        // Context steps (Repo/Branch/Tag/Folder/File) should never reach the
+        // Context steps (Repo/Rev/Folder/File) should never reach the
         // walk engine -- they are partitioned out during compilation.
         // If one slips through, skip it and advance to the next step.
         SelectStep::Repo { .. }
-        | SelectStep::Branch { .. }
-        | SelectStep::Tag { .. }
+        | SelectStep::Rev { .. }
         | SelectStep::Folder { .. }
         | SelectStep::File { .. } => walk_inner(node, rest, state),
-    }
-}
-
-/// Match a string against a pipe-delimited pattern.
-/// Patterns prefixed with `re:` are treated as regex, otherwise as glob.
-/// `"*image*|*repository*"` matches if either glob matches.
-/// `"re:^dep(endencies|.*)"` matches via regex.
-fn pipe_glob_matches(pattern: &str, value: &str) -> bool {
-    if let Some(re_pattern) = pattern.strip_prefix("re:") {
-        Regex::new(re_pattern)
-            .ok()
-            .map(|re| re.is_match(value))
-            .unwrap_or(false)
-    } else {
-        pattern.split('|').any(|p| {
-            Glob::new(p.trim())
-                .ok()
-                .map(|g| g.compile_matcher().is_match(value))
-                .unwrap_or(false)
-        })
     }
 }
 
@@ -351,7 +329,7 @@ fn key_matches<'a>(
             .unwrap_or_default(),
         KeyMatcher::Glob(pattern) => map
             .iter()
-            .filter(|(k, _)| pipe_glob_matches(pattern, k))
+            .filter(|(k, _)| pattern_matches(pattern, k))
             .map(|(k, v)| (k.clone(), v))
             .collect(),
         KeyMatcher::Capture(_) | KeyMatcher::Wildcard => {
@@ -360,30 +338,4 @@ fn key_matches<'a>(
     }
 }
 
-/// Compiled pattern matcher: glob (pipe-delimited) or regex (re: prefix).
-pub enum CompiledPipeGlob {
-    Globs(Vec<GlobMatcher>),
-    Regex(Regex),
-}
 
-impl CompiledPipeGlob {
-    pub fn compile(pattern: &str) -> anyhow::Result<Self> {
-        if let Some(re_pattern) = pattern.strip_prefix("re:") {
-            let re = Regex::new(re_pattern)?;
-            Ok(Self::Regex(re))
-        } else {
-            let matchers = pattern
-                .split('|')
-                .map(|p| Glob::new(p.trim()).map(|g| g.compile_matcher()))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Self::Globs(matchers))
-        }
-    }
-
-    pub fn is_match(&self, value: &str) -> bool {
-        match self {
-            Self::Globs(matchers) => matchers.iter().any(|m| m.is_match(value)),
-            Self::Regex(re) => re.is_match(value),
-        }
-    }
-}

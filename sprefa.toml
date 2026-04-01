@@ -43,3 +43,8 @@ exclude = [
 name = "test-fixture"
 path = "/private/tmp/sprefa-test"
 branches = ["main"]
+
+[[repos]]
+name = "sprefa"
+path = "/Users/chrishafley/projects/sprefa"
+branches = ["main"]

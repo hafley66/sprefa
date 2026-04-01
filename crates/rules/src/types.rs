@@ -283,15 +283,8 @@ pub enum SelectStep {
         capture: Option<String>,
     },
 
-    /// Filter by branch name (pipe-delimited glob).
-    Branch {
-        pattern: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        capture: Option<String>,
-    },
-
-    /// Filter by git tag (pipe-delimited glob).
-    Tag {
+    /// Filter by git rev (branch or tag). pipe-delimited glob.
+    Rev {
         pattern: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capture: Option<String>,
@@ -378,8 +371,7 @@ impl SelectStep {
         matches!(
             self,
             SelectStep::Repo { .. }
-                | SelectStep::Branch { .. }
-                | SelectStep::Tag { .. }
+                | SelectStep::Rev { .. }
                 | SelectStep::Folder { .. }
                 | SelectStep::File { .. }
         )
