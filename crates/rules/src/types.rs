@@ -216,6 +216,8 @@ pub enum LinkPredicate {
     StringEq,
     /// Both matches in the same repo: `src_f.repo_id = COALESCE(tgt_f.repo_id, tgt_rr.repo_id)`
     SameRepo,
+    /// Both matches in the same file: `src_r.file_id = tgt_r.file_id`
+    SameFile,
     /// File stem on {side} matches string norm on other side.
     StemEq { side: Side },
     /// File extension on {side} matches string norm on other side.

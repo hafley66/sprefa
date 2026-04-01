@@ -63,10 +63,16 @@ fs(**/*.ts) > ast(process.env.$NAME)
 # ── Links ──────────────────────────────────────────
 
 link(dep_name > package_name, norm_eq) > $dep_to_package;
+link(package_name > dep_name, same_file) > $package_has_dep;
 link(image_repo > package_name, norm_eq) > $image_source;
 link(env_var_ref > env_var_name, norm_eq) > $env_var_binding;
 
 # ── Queries ───────────────────────────────────────
 
-query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
+# transitive deps: dep -> package -> colocated deps -> package -> ...
+query transitive_dep($A, $C) :-
+  dep_to_package($A, $B),
+  package_has_dep($B, $C);
+
+# shared dependency: two dep_name matches that resolve to the same package
 query same_ecosystem($A, $B) :- dep_to_package($A, $X), dep_to_package($B, $X);

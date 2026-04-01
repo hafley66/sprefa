@@ -26,7 +26,7 @@
       "patterns": [
         { "include": "#comment" },
         {
-          "match": "\\b(norm_eq|norm2_eq|string_eq|target_file_eq|same_repo|stem_eq_src|stem_eq_tgt|ext_eq_src|ext_eq_tgt|dir_eq_src|dir_eq_tgt)\\b",
+          "match": "\\b(norm_eq|norm2_eq|string_eq|target_file_eq|same_repo|same_file|stem_eq_src|stem_eq_tgt|ext_eq_src|ext_eq_tgt|dir_eq_src|dir_eq_tgt)\\b",
           "name": "support.function.predicate.sprf"
         },
         {

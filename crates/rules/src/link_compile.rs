@@ -19,6 +19,7 @@ pub fn compile(pred: &LinkPredicate) -> String {
         LinkPredicate::TargetFileEq => "src_r.target_file_id = tgt_r.file_id".into(),
         LinkPredicate::StringEq => "tgt_r.string_id = src_r.string_id".into(),
         LinkPredicate::SameRepo => "src_f.repo_id = COALESCE(tgt_f.repo_id, tgt_rr.repo_id)".into(),
+        LinkPredicate::SameFile => "src_r.file_id = tgt_r.file_id".into(),
         LinkPredicate::StemEq { side } => match side {
             Side::Src => "LOWER(src_f.stem) = tgt_s.norm".into(),
             Side::Tgt => "LOWER(tgt_f.stem) = src_s.norm".into(),

@@ -234,6 +234,7 @@ fn lower_link(decl: &LinkDecl) -> Result<LinkRule> {
             "string_eq" => LinkPredicate::StringEq,
             "target_file_eq" => LinkPredicate::TargetFileEq,
             "same_repo" => LinkPredicate::SameRepo,
+            "same_file" => LinkPredicate::SameFile,
             "stem_eq_src" => LinkPredicate::StemEq { side: Side::Src },
             "stem_eq_tgt" => LinkPredicate::StemEq { side: Side::Tgt },
             "ext_eq_src" => LinkPredicate::ExtEq { side: Side::Src },

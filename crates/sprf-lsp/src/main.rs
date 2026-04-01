@@ -5,7 +5,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use sprefa_sprf::_0_ast::{LinkDecl, QueryDecl, Slot, Statement, Tag};
+use sprefa_sprf::_0_ast::{LinkDecl, Slot, Statement, Tag};
 use sprefa_sprf::_1_parse::parse_program;
 
 struct SprfLsp {
@@ -69,6 +69,10 @@ impl DocState {
         // Build a map of statement byte ranges by finding ; terminators
         let stmt_spans = find_statement_spans(text);
 
+        // Pass 1: collect all names (match kinds, link kinds, query names, captures)
+        let mut query_names: HashSet<String> = HashSet::new();
+        let mut rule_data: Vec<(StmtSpan, Vec<String>, HashSet<String>)> = vec![];
+
         for (idx, stmt) in program.iter().enumerate() {
             let span = stmt_spans.get(idx).cloned().unwrap_or(StmtSpan {
                 start: 0,
@@ -99,44 +103,75 @@ impl DocState {
                         }
                     }
 
-                    // Validate: match() captures should reference captures from this rule's bodies
-                    for slot in &chain.slots {
-                        if let Slot::Match { capture, .. } = slot {
-                            if !rule_captures.contains(capture) {
+                    self.rules.push(RuleInfo {
+                        span: span.clone(),
+                        captures: rule_captures.clone(),
+                    });
+                    rule_data.push((span, rule_captures, rule_match_caps));
+                }
+                Statement::Link(LinkDecl {
+                    src_kind,
+                    tgt_kind,
+                    kind_name,
+                    ..
+                }) => {
+                    let link_kind = kind_name.clone().unwrap_or_else(|| {
+                        format!("{}__{}", src_kind, tgt_kind)
+                    });
+                    self.link_kinds.insert(link_kind);
+                }
+                Statement::Query(decl) => {
+                    query_names.insert(decl.head.relation.clone());
+                }
+            }
+        }
+
+        // Pass 2: validate references (order-independent)
+        for (idx, stmt) in program.iter().enumerate() {
+            let span = stmt_spans.get(idx).cloned().unwrap_or(StmtSpan {
+                start: 0,
+                end: text.len(),
+            });
+
+            match stmt {
+                Statement::Rule(_) => {
+                    if let Some((_, rule_captures, rule_match_caps)) = rule_data.get(
+                        program.iter().take(idx + 1)
+                            .filter(|s| matches!(s, Statement::Rule(_)))
+                            .count() - 1
+                    ) {
+                        // Validate: match() captures should reference captures from this rule
+                        if let Statement::Rule(chain) = stmt {
+                            for slot in &chain.slots {
+                                if let Slot::Match { capture, .. } = slot {
+                                    if !rule_captures.contains(capture) {
+                                        self.diagnostics.push((
+                                            span.clone(),
+                                            format!("${} is not captured by any json() or ast() slot in this rule", capture),
+                                            DiagnosticSeverity::WARNING,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Validate: captures without match() slot
+                        for cap in rule_captures {
+                            if !rule_match_caps.contains(cap) {
                                 self.diagnostics.push((
                                     span.clone(),
-                                    format!("${} is not captured by any json() or ast() slot in this rule", capture),
-                                    DiagnosticSeverity::WARNING,
+                                    format!("${} is captured but has no match() slot", cap),
+                                    DiagnosticSeverity::HINT,
                                 ));
                             }
                         }
                     }
-
-                    // Validate: captures in bodies that have no match() slot
-                    for cap in &rule_captures {
-                        if !rule_match_caps.contains(cap) {
-                            self.diagnostics.push((
-                                span.clone(),
-                                format!("${} is captured but has no match() slot", cap),
-                                DiagnosticSeverity::HINT,
-                                ));
-                        }
-                    }
-
-                    self.rules.push(RuleInfo {
-                        span,
-                        captures: rule_captures,
-                    });
                 }
                 Statement::Link(LinkDecl {
                     src_kind,
                     tgt_kind,
                     ..
                 }) => {
-                    self.link_kinds.insert(src_kind.clone());
-                    self.link_kinds.insert(tgt_kind.clone());
-
-                    // Validate: link kinds should reference known match kinds
                     if !self.match_kinds.contains(src_kind) {
                         self.diagnostics.push((
                             span.clone(),
@@ -153,10 +188,10 @@ impl DocState {
                     }
                 }
                 Statement::Query(decl) => {
-                    // Validate: body relations should reference known link kinds or other queries
                     for atom in &decl.body {
                         if atom.relation != decl.head.relation
                             && !self.link_kinds.contains(&atom.relation)
+                            && !query_names.contains(&atom.relation)
                         {
                             self.diagnostics.push((
                                 span.clone(),
@@ -342,7 +377,7 @@ fn offset_to_position(text: &str, offset: usize) -> Position {
 }
 
 const PREDICATES: &[&str] = &[
-    "norm_eq", "norm2_eq", "string_eq", "target_file_eq", "same_repo",
+    "norm_eq", "norm2_eq", "string_eq", "target_file_eq", "same_repo", "same_file",
     "stem_eq_src", "stem_eq_tgt", "ext_eq_src", "ext_eq_tgt",
     "dir_eq_src", "dir_eq_tgt",
 ];
