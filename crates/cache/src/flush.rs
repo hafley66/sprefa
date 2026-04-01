@@ -11,7 +11,7 @@ use sprefa_index::{normalize, normalize2, ExtractedFile};
 const STR_CHUNK: usize = 2000;  // 3 params each  -> 6000 per stmt
 const FILE_CHUNK: usize = 2000; // 5 params each  -> 10000 per stmt
 const REF_CHUNK: usize = 1000;  // 7 params each  -> 7000 per stmt
-const MATCH_CHUNK: usize = 1000; // 3 params each -> 3000 per stmt
+const MATCH_CHUNK: usize = 1000; // 4 params each -> 4000 per stmt
 
 // All foreign keys resolved to real DB ids -- ready for bulk insert.
 struct ResolvedRef {
@@ -27,6 +27,8 @@ struct ResolvedRef {
     rule_name: String,
     /// Demand-scan role: "repo" or "rev". Written to match_labels after match insertion.
     scan: Option<String>,
+    /// Per-file group tag from the extractor. Mapped to a global group_id during flush.
+    group: Option<u32>,
 }
 
 #[tracing::instrument(skip(db, config, files, normalize_config), fields(repo = %config.name, branch = %branch, file_count = files.len()))]
@@ -197,6 +199,7 @@ pub async fn flush(
                 kind: r.kind.clone(),
                 rule_name: r.rule_name.clone(),
                 scan: r.scan.clone(),
+                group: r.group,
             });
         }
     }
@@ -242,21 +245,34 @@ pub async fn flush(
     }
 
     // Bulk insert matches (semantic layer).
-    let match_rows: Vec<(i64, &str, &str)> = resolved_refs.iter()
+    // Assign global group_ids: start from max existing + 1, map (file_id, local_group) pairs.
+    let max_group: Option<i64> = sqlx::query_scalar("SELECT MAX(group_id) FROM matches")
+        .fetch_one(&mut *tx).await.unwrap_or(None);
+    let mut next_group_id: i64 = max_group.unwrap_or(0) + 1;
+    let mut group_map: HashMap<(i64, u32), i64> = HashMap::new();
+
+    let match_rows: Vec<(i64, &str, &str, Option<i64>)> = resolved_refs.iter()
         .filter_map(|r| {
             let ref_id = ref_id_map.get(&(r.file_id, r.string_id, r.span_start))?;
-            Some((*ref_id, r.rule_name.as_str(), r.kind.as_str()))
+            let gid = r.group.map(|local_g| {
+                *group_map.entry((r.file_id, local_g)).or_insert_with(|| {
+                    let g = next_group_id;
+                    next_group_id += 1;
+                    g
+                })
+            });
+            Some((*ref_id, r.rule_name.as_str(), r.kind.as_str(), gid))
         })
         .collect();
 
     for chunk in match_rows.chunks(MATCH_CHUNK) {
-        let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
+        let ph = chunk.iter().map(|_| "(?,?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES {ph}"
+            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind, group_id) VALUES {ph}"
         );
         let mut q = sqlx::query(&sql);
-        for (ref_id, rule_name, kind) in chunk {
-            q = q.bind(ref_id).bind(rule_name).bind(kind);
+        for (ref_id, rule_name, kind, gid) in chunk {
+            q = q.bind(ref_id).bind(rule_name).bind(kind).bind(gid);
         }
         q.execute(&mut *tx).await?;
     }
@@ -493,6 +509,7 @@ mod tests {
             parent_key: None,
             node_path: None,
             scan: None,
+            group: None,
         }
     }
 
@@ -583,6 +600,7 @@ mod tests {
                     parent_key: Some("express".to_string()),
                     node_path: Some("dependencies/express/version".to_string()),
                     scan: None,
+                    group: None,
                 },
                 raw_ref("express", sprefa_extract::kind::DEP_NAME),
             ]),

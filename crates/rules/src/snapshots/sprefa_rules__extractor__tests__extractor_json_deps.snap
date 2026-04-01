@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: lodash
   node_path: dependencies/lodash/version
+  group: 1
 - value: 4.18.2
   span_start: 0
   span_end: 0
@@ -18,6 +19,7 @@ expression: refs
   is_path: false
   parent_key: express
   node_path: dependencies/express/version
+  group: 0
 - value: express
   span_start: 0
   span_end: 0
@@ -26,6 +28,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: dependencies/express/version
+  group: 0
 - value: lodash
   span_start: 0
   span_end: 0
@@ -34,3 +37,4 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: dependencies/lodash/version
+  group: 1

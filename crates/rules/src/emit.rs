@@ -48,11 +48,13 @@ pub fn apply_value_pattern(
 }
 
 /// Turn a match result into RawRefs according to the create_matches list.
+/// `group` tags all refs from this extraction site so they share a group_id in the DB.
 pub fn create_refs(
     result: &MatchResult,
     match_defs: &[MatchDef],
     value_pattern: Option<&ValuePattern>,
     rule_name: &str,
+    group: Option<u32>,
 ) -> Vec<RawRef> {
     let mut captures = result.captures.clone();
 
@@ -72,7 +74,7 @@ pub fn create_refs(
     let mut refs = vec![];
 
     for def in match_defs {
-        if let Some(raw) = create_one(def, rule_name, &captures, node_path.as_deref()) {
+        if let Some(raw) = create_one(def, rule_name, &captures, node_path.as_deref(), group) {
             refs.push(raw);
         }
     }
@@ -80,7 +82,7 @@ pub fn create_refs(
     refs
 }
 
-fn create_one(def: &MatchDef, rule_name: &str, captures: &HashMap<String, CapturedValue>, node_path: Option<&str>) -> Option<RawRef> {
+fn create_one(def: &MatchDef, rule_name: &str, captures: &HashMap<String, CapturedValue>, node_path: Option<&str>, group: Option<u32>) -> Option<RawRef> {
     let cv = captures.get(&def.capture)?;
 
     let parent_key = def
@@ -99,6 +101,7 @@ fn create_one(def: &MatchDef, rule_name: &str, captures: &HashMap<String, Captur
         parent_key,
         node_path: node_path.map(String::from),
         scan: def.scan.clone(),
+        group,
     })
 }
 

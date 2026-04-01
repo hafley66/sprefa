@@ -145,6 +145,7 @@ mod tests {
             parent_key: None,
             node_path: None,
             scan: None,
+            group: None,
         }
     }
 

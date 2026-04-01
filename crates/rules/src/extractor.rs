@@ -156,6 +156,7 @@ impl Extractor for RuleExtractor {
             .unwrap_or("");
 
         let mut refs = vec![];
+        let mut group_counter: u32 = 0;
         for rule in self.rules_for_path(path) {
             let repo = ctx.repo.unwrap_or("");
             let git_caps = match rule.git.matches_with_captures(repo, ctx.branch, ctx.tags) {
@@ -182,6 +183,7 @@ impl Extractor for RuleExtractor {
                 walk::walk(&value, &rule.steps)
             };
 
+            let has_matches = !rule.create_matches.is_empty();
             for result in results {
                 let merged = if context_caps.is_empty() {
                     result.clone()
@@ -192,7 +194,14 @@ impl Extractor for RuleExtractor {
                     }
                     merged
                 };
-                refs.extend(emit::create_refs(&merged, &rule.create_matches, rule.value_pattern.as_ref(), &rule.name));
+                let group = if has_matches {
+                    let g = group_counter;
+                    group_counter += 1;
+                    Some(g)
+                } else {
+                    None
+                };
+                refs.extend(emit::create_refs(&merged, &rule.create_matches, rule.value_pattern.as_ref(), &rule.name, group));
             }
         }
         refs

@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: image
+  group: 0
 - value: v1.2.3
   span_start: 0
   span_end: 0
@@ -18,3 +19,4 @@ expression: refs
   is_path: false
   parent_key: myorg/frontend
   node_path: image
+  group: 0

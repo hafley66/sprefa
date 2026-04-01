@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: "."
   node_path: exports/./types
+  group: 1
 - value: "./dist/index.js"
   span_start: 0
   span_end: 0
@@ -18,6 +19,7 @@ expression: refs
   is_path: false
   parent_key: "."
   node_path: exports/./import
+  group: 0
 - value: "./dist/math.d.ts"
   span_start: 0
   span_end: 0
@@ -26,6 +28,7 @@ expression: refs
   is_path: false
   parent_key: "./math"
   node_path: exports/./math/types
+  group: 3
 - value: "./dist/math.js"
   span_start: 0
   span_end: 0
@@ -34,6 +37,7 @@ expression: refs
   is_path: false
   parent_key: "./math"
   node_path: exports/./math/import
+  group: 2
 - value: "."
   span_start: 0
   span_end: 0
@@ -42,6 +46,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: exports/./import
+  group: 0
 - value: "."
   span_start: 0
   span_end: 0
@@ -50,6 +55,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: exports/./types
+  group: 1
 - value: "./math"
   span_start: 0
   span_end: 0
@@ -58,6 +64,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: exports/./math/import
+  group: 2
 - value: "./math"
   span_start: 0
   span_end: 0
@@ -66,3 +73,4 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: exports/./math/types
+  group: 3

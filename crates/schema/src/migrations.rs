@@ -143,6 +143,7 @@ const MIGRATIONS: &[&str] = &[
         repo_ref_id INTEGER REFERENCES repo_refs(id),
         rule_name TEXT NOT NULL,
         kind TEXT NOT NULL,
+        group_id INTEGER,
         CHECK((ref_id IS NULL) != (repo_ref_id IS NULL))
     )
     "#,
@@ -152,6 +153,7 @@ const MIGRATIONS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_matches_repo_ref_id ON matches(repo_ref_id)",
     "CREATE INDEX IF NOT EXISTS idx_matches_kind ON matches(kind)",
     "CREATE INDEX IF NOT EXISTS idx_matches_rule_name ON matches(rule_name)",
+    "CREATE INDEX IF NOT EXISTS idx_matches_group_id ON matches(group_id)",
     // match_labels: arbitrary key-value metadata on semantic matches
     r#"
     CREATE TABLE IF NOT EXISTS match_labels (
@@ -217,6 +219,14 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
 
     // Add dir column to files for link predicates (DirEq).
     let _ = sqlx::query("ALTER TABLE files ADD COLUMN dir TEXT")
+        .execute(pool)
+        .await;
+
+    // Add group_id to matches for co-extraction grouping.
+    let _ = sqlx::query("ALTER TABLE matches ADD COLUMN group_id INTEGER")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_matches_group_id ON matches(group_id)")
         .execute(pool)
         .await;
 

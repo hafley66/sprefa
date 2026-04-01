@@ -69,6 +69,7 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
                     parent_key: None,
                     node_path: path_attr,
                     scan: None,
+                    group: None,
                 });
                 if let Some((_, inner)) = &m.content {
                     extract_items(inner, offsets, refs);
@@ -114,6 +115,7 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
                     parent_key: None,
                     node_path: None,
                     scan: None,
+                    group: None,
                 });
             }
             _ => {}
@@ -133,6 +135,7 @@ fn push_declare(refs: &mut Vec<RawRef>, ident: &syn::Ident, offsets: &[usize]) {
         parent_key: None,
         node_path: None,
         scan: None,
+                    group: None,
     });
 }
 
@@ -191,6 +194,7 @@ fn flatten_use_tree(
                 parent_key: None,
                 node_path: None,
                 scan: None,
+                    group: None,
             });
         }
         UseTree::Rename(r) => {
@@ -211,6 +215,7 @@ fn flatten_use_tree(
                 parent_key: None,
                 node_path: None,
                 scan: None,
+                    group: None,
             });
         }
         UseTree::Glob(g) => {
@@ -230,6 +235,7 @@ fn flatten_use_tree(
                 parent_key: None,
                 node_path: None,
                 scan: None,
+                    group: None,
             });
         }
         UseTree::Group(g) => {

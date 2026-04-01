@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: packages/1
+  group: 1
 - value: packages/*
   span_start: 0
   span_end: 0
@@ -18,6 +19,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: packages/0
+  group: 0
 - value: tools/scripts
   span_start: 0
   span_end: 0
@@ -26,3 +28,4 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: packages/2
+  group: 2

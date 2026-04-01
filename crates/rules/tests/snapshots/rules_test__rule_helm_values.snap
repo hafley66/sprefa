@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: replicaCount
+  group: 0
 - value: "8080"
   span_start: 0
   span_end: 0
@@ -18,6 +19,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: service/port
+  group: 4
 - value: ClusterIP
   span_start: 0
   span_end: 0
@@ -26,6 +28,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: service/type
+  group: 3
 - value: myorg/api
   span_start: 0
   span_end: 0
@@ -34,6 +37,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: image/repository
+  group: 1
 - value: v2.1.0
   span_start: 0
   span_end: 0
@@ -42,3 +46,4 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: image/tag
+  group: 2

@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: services/api
+  group: 0
 - value: postgres
   span_start: 0
   span_end: 0
@@ -18,6 +19,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: services/postgres
+  group: 2
 - value: redis
   span_start: 0
   span_end: 0
@@ -26,6 +28,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: services/redis
+  group: 3
 - value: worker
   span_start: 0
   span_end: 0
@@ -34,3 +37,4 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: services/worker
+  group: 1

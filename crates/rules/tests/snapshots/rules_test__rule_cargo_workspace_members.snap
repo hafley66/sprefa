@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: workspace/members/1
+  group: 1
 - value: crates/core
   span_start: 0
   span_end: 0
@@ -18,6 +19,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: workspace/members/0
+  group: 0
 - value: crates/extract
   span_start: 0
   span_end: 0
@@ -26,6 +28,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: workspace/members/2
+  group: 2
 - value: crates/rules
   span_start: 0
   span_end: 0
@@ -34,6 +37,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: workspace/members/3
+  group: 3
 - value: crates/schema
   span_start: 0
   span_end: 0
@@ -42,3 +46,4 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: workspace/members/4
+  group: 4

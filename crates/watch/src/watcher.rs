@@ -617,6 +617,7 @@ async fn load_decl_refs(
                 parent_key: None,
                 node_path: None,
                 scan: None,
+                group: None,
             }
         })
         .collect())

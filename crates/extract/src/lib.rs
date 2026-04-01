@@ -47,6 +47,10 @@ pub struct RawRef {
     /// "repo" = value is a repository name, "rev" = value is a tag/branch to scan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scan: Option<String>,
+    /// Group tag: all refs from the same extraction site share the same group
+    /// value. Used to assign group_id on the matches table during flush.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u32>,
 }
 
 /// Trait for language-specific extractors.

@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: paths//users/post/operationId
+  group: 1
 - value: deleteUser
   span_start: 0
   span_end: 0
@@ -18,6 +19,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: "paths//users/{id}/delete/operationId"
+  group: 3
 - value: getUser
   span_start: 0
   span_end: 0
@@ -26,6 +28,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: "paths//users/{id}/get/operationId"
+  group: 2
 - value: listUsers
   span_start: 0
   span_end: 0
@@ -34,3 +37,4 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: paths//users/get/operationId
+  group: 0

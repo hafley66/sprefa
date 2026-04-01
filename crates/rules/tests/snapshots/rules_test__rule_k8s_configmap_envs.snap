@@ -10,6 +10,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: data/DATABASE_URL
+  group: 0
 - value: LOG_LEVEL
   span_start: 0
   span_end: 0
@@ -18,6 +19,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: data/LOG_LEVEL
+  group: 2
 - value: MAX_CONNECTIONS
   span_start: 0
   span_end: 0
@@ -26,6 +28,7 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: data/MAX_CONNECTIONS
+  group: 3
 - value: REDIS_HOST
   span_start: 0
   span_end: 0
@@ -34,3 +37,4 @@ expression: refs
   is_path: false
   parent_key: ~
   node_path: data/REDIS_HOST
+  group: 1
