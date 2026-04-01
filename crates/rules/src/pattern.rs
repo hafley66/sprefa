@@ -34,6 +34,16 @@ pub enum PatternMatcher {
     SegmentCapture(Vec<Segment>),
 }
 
+impl std::fmt::Debug for PatternMatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Glob(_) => write!(f, "Glob(..)"),
+            Self::Regex(r) => write!(f, "Regex({})", r.as_str()),
+            Self::SegmentCapture(segs) => write!(f, "SegmentCapture({:?})", segs),
+        }
+    }
+}
+
 impl PatternMatcher {
     pub fn is_match(&self, value: &str) -> bool {
         match self {

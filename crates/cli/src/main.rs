@@ -616,7 +616,7 @@ async fn cmd_query(config_path: &Option<PathBuf>, term: &str, scope: Option<&str
 /// Parses the goal as an atom, finds the matching QueryDef in the rules file,
 /// compiles it to SQL, applies goal bindings, and executes against the DB.
 async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> anyhow::Result<()> {
-    use sprefa_rules::query::{compile_query, compile_goal_filter};
+    use sprefa_rules::query::{compile_query_with_deps, compile_goal_filter};
     use std::collections::HashMap;
 
     // Parse goal atom using the sprf parser
@@ -653,13 +653,17 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
         );
     }
 
-    // Build known queries map
+    // Build query maps
     let known: HashMap<String, usize> = ruleset.query_rules.iter()
         .map(|q| (q.name.clone(), q.arity))
         .collect();
+    let all_queries: HashMap<String, &sprefa_rules::QueryDef> = ruleset.query_rules.iter()
+        .map(|q| (q.name.clone(), q))
+        .collect();
 
-    // Compile query to SQL
-    let base_sql = compile_query(qdef, &known);
+    // Compile query with all transitive dependencies
+    let base_sql = compile_query_with_deps(qdef, &all_queries, &known)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Apply goal bindings
     let goal_args: Vec<String> = goal_atom.args.iter().map(|t| {

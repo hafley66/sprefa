@@ -9,7 +9,7 @@ use crate::{
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
     types::{AstSelector, MatchDef, RuleSet, SelectStep, ValuePattern},
-    walk::CapturedValue,
+    walk::{CapturedValue, CompiledStep},
 };
 
 
@@ -20,7 +20,7 @@ pub struct CompiledRule {
     pub file: CompiledFileSelector,
     /// (capture_name, value) pairs seeded from context step captures.
     pub context_captures: Vec<(String, ContextCaptureSource)>,
-    pub steps: Vec<SelectStep>,
+    pub steps: Vec<CompiledStep>,
     pub ast: Option<AstSelector>,
     pub value_pattern: Option<ValuePattern>,
     pub create_matches: Vec<MatchDef>,
@@ -316,13 +316,14 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
 
     let git = CompiledGitSelector::from_patterns(&repo_patterns, &rev_patterns)?;
     let file = CompiledFileSelector::from_patterns(&file_patterns)?;
+    let compiled_steps = walk::compile_steps(&structural_steps)?;
 
     Ok(CompiledRule {
         name: r.name.clone(),
         git,
         file,
         context_captures,
-        steps: structural_steps,
+        steps: compiled_steps,
         ast: r.select_ast.clone(),
         value_pattern: r.value.clone(),
         create_matches: r.create_matches.clone(),

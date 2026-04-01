@@ -47,7 +47,7 @@ mod integration_tests {
                 .filter(|s| !s.is_context_step())
                 .cloned()
                 .collect();
-            let results = walk::walk(&json_val, &structural);
+            let results = walk::walk_select(&json_val, &structural);
             for m in results {
                 let mut caps: Vec<_> = m.captures.iter()
                     .map(|(k, v)| (k.clone(), v.text.clone()))
@@ -170,7 +170,7 @@ mod integration_tests {
             .filter(|s| !s.is_context_step())
             .cloned()
             .collect();
-        let results = walk::walk(&json_val, &structural);
+        let results = walk::walk_select(&json_val, &structural);
         let dep_names: Vec<_> = results.iter()
             .filter_map(|m| m.captures.get("NAME").map(|c| c.text.clone()))
             .collect();

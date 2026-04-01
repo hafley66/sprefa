@@ -8,22 +8,95 @@
 ///   - another query name: reference to that CTE
 ///
 /// The final query resolves match IDs back through strings/files for display.
+use std::collections::HashSet;
 use std::collections::HashMap;
 
 use crate::types::{QueryAtom, QueryDef};
 
-/// Compile a query definition into a complete SQL SELECT statement.
+/// Compile a query and all its transitive query dependencies into SQL.
+///
+/// Topologically sorts dependent queries so each CTE is defined before
+/// it is referenced. Detects non-self-referencing cycles and returns Err.
+pub fn compile_query_with_deps(
+    def: &QueryDef,
+    all_queries: &HashMap<String, &QueryDef>,
+    known_queries: &HashMap<String, usize>,
+) -> Result<String, String> {
+    let mut order = Vec::new();
+    let mut visited = HashSet::new();
+    let mut in_stack = HashSet::new();
+    topo_sort(def, all_queries, &mut visited, &mut in_stack, &mut order)?;
+
+    // Build chained CTEs for all dependencies, then the target query last
+    let mut cte_parts = Vec::new();
+    let mut seen_recursive = false;
+    for q in &order {
+        let cte_body = compile_cte_body(q, known_queries);
+        if q.is_recursive {
+            seen_recursive = true;
+        }
+        let col_list: Vec<String> = (0..q.arity).map(|i| format!("a{i}")).collect();
+        let cols = col_list.join(", ");
+        cte_parts.push(format!("{name}({cols}) AS (\n  {body}\n)", name = q.name, cols = cols, body = cte_body));
+    }
+
+    let with_keyword = if seen_recursive { "WITH RECURSIVE" } else { "WITH" };
+    let ctes = cte_parts.join(",\n");
+
+    // Final SELECT from the target query
+    let final_select = compile_final_select(def);
+    Ok(format!("{with_keyword} {ctes}\n{final_select}"))
+}
+
+fn topo_sort<'a>(
+    def: &'a QueryDef,
+    all_queries: &HashMap<String, &'a QueryDef>,
+    visited: &mut HashSet<String>,
+    in_stack: &mut HashSet<String>,
+    order: &mut Vec<&'a QueryDef>,
+) -> Result<(), String> {
+    if visited.contains(&def.name) {
+        return Ok(());
+    }
+    if in_stack.contains(&def.name) {
+        return Err(format!("cycle detected: query '{}' has a non-self-referencing cycle", def.name));
+    }
+    in_stack.insert(def.name.clone());
+
+    for atom in &def.body {
+        // Skip self-references (handled by WITH RECURSIVE)
+        if atom.relation == def.name {
+            continue;
+        }
+        if let Some(dep) = all_queries.get(&atom.relation) {
+            topo_sort(dep, all_queries, visited, in_stack, order)?;
+        }
+    }
+
+    in_stack.remove(&def.name);
+    visited.insert(def.name.clone());
+    order.push(def);
+    Ok(())
+}
+
+/// Compile a single query definition into a complete SQL SELECT statement.
 ///
 /// `known_queries` maps query names to their arity, used to distinguish
 /// query-derived relations from link_kind base relations.
+///
+/// For queries with no dependencies on other queries, this is sufficient.
+/// For queries that reference other queries, use `compile_query_with_deps`.
 pub fn compile_query(
     def: &QueryDef,
     known_queries: &HashMap<String, usize>,
 ) -> String {
     let cte = compile_cte(def, known_queries);
+    let final_select = compile_final_select(def);
+    format!("{cte}\n{final_select}")
+}
 
-    // Final SELECT: resolve match IDs to human-readable values.
-    // Each column a0..aN is a match_id. Join through to strings for display.
+/// Build the final SELECT that resolves match IDs to human-readable values.
+fn compile_final_select(def: &QueryDef) -> String {
     let mut select_cols = Vec::new();
     let mut joins = Vec::new();
     for i in 0..def.arity {
@@ -49,23 +122,17 @@ pub fn compile_query(
         select_cols.push(format!("{f_alias}.path AS {label}_file"));
         select_cols.push(format!("{alias}.kind AS {label}_kind"));
     }
-
     format!(
-        "{cte}\nSELECT {cols}\nFROM {name} q\n{joins}",
-        cte = cte,
+        "SELECT {cols}\nFROM {name} q\n{joins}",
         cols = select_cols.join(", "),
         name = def.name,
         joins = joins.join("\n"),
     )
 }
 
-/// Compile the CTE portion (WITH [RECURSIVE] name AS (...)).
-fn compile_cte(def: &QueryDef, known_queries: &HashMap<String, usize>) -> String {
-    let col_list: Vec<String> = (0..def.arity).map(|i| format!("a{i}")).collect();
-    let cols = col_list.join(", ");
-
+/// Compile the CTE body (the SELECT inside the AS (...)).
+fn compile_cte_body(def: &QueryDef, known_queries: &HashMap<String, usize>) -> String {
     if def.is_recursive {
-        // Split body into base atoms (not self-referencing) and recursive atoms
         let base_atoms: Vec<&QueryAtom> = def
             .body
             .iter()
@@ -78,28 +145,30 @@ fn compile_cte(def: &QueryDef, known_queries: &HashMap<String, usize>) -> String
             .collect();
 
         let base_sql = compile_body_select(&base_atoms, &def.head_args, def, known_queries);
-
-        // Recursive step: join the recursive CTE with base relations
-        // For `all_deps($A, $C) :- link($A, $B), all_deps($B, $C)`:
-        //   SELECT base.a0, rec.a1 FROM all_deps rec JOIN <link> base ON rec.a0 = base.a1
         let rec_sql =
             compile_recursive_step(def, &base_atoms, &recursive_atoms, known_queries);
 
+        format!("{base_sql}\n  UNION\n  {rec_sql}")
+    } else {
+        compile_body_select(&def.body.iter().collect::<Vec<_>>(), &def.head_args, def, known_queries)
+    }
+}
+
+/// Compile the CTE portion (WITH [RECURSIVE] name AS (...)).
+fn compile_cte(def: &QueryDef, known_queries: &HashMap<String, usize>) -> String {
+    let col_list: Vec<String> = (0..def.arity).map(|i| format!("a{i}")).collect();
+    let cols = col_list.join(", ");
+    let body = compile_cte_body(def, known_queries);
+
+    if def.is_recursive {
         format!(
-            "WITH RECURSIVE {name}({cols}) AS (\n  {base}\n  UNION\n  {rec}\n)",
+            "WITH RECURSIVE {name}({cols}) AS (\n  {body}\n)",
             name = def.name,
-            cols = cols,
-            base = base_sql,
-            rec = rec_sql,
         )
     } else {
-        let body_sql =
-            compile_body_select(&def.body.iter().collect::<Vec<_>>(), &def.head_args, def, known_queries);
         format!(
             "WITH {name}({cols}) AS (\n  {body}\n)",
             name = def.name,
-            cols = cols,
-            body = body_sql,
         )
     }
 }
@@ -127,6 +196,7 @@ fn compile_body_select(
 
     for (idx, atom) in atoms.iter().enumerate() {
         let alias = format!("t{idx}");
+        let is_builtin = builtin_relation(&atom.relation).is_some();
         let subquery = relation_source(&atom.relation, atom.args.len(), known_queries);
         from_parts.push(format!("({subquery}) AS {alias}"));
 
@@ -136,15 +206,20 @@ fn compile_body_select(
             if arg == "_" {
                 // wildcard, no binding
             } else if arg.starts_with('=') {
-                // literal: need to resolve through strings table
                 let lit = arg[1..].replace('\'', "''");
-                where_parts.push(format!(
-                    "{col_ref} IN (SELECT m.id FROM matches m \
-                     LEFT JOIN refs r ON m.ref_id = r.id \
-                     LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
-                     JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id \
-                     WHERE s.norm = '{lit}')"
-                ));
+                if is_builtin && col_idx > 0 {
+                    // Built-in relations expose string values directly in non-a0 columns.
+                    where_parts.push(format!("{col_ref} = '{lit}'"));
+                } else {
+                    // Link/query relations use match IDs -- resolve through strings.
+                    where_parts.push(format!(
+                        "{col_ref} IN (SELECT m.id FROM matches m \
+                         LEFT JOIN refs r ON m.ref_id = r.id \
+                         LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
+                         JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id \
+                         WHERE s.norm = '{lit}')"
+                    ));
+                }
             } else {
                 // variable: record binding for unification
                 var_bindings.entry(arg.clone()).or_default().push(col_ref);
@@ -218,6 +293,7 @@ fn compile_recursive_step(
     // Add base relation references
     for atom in base_atoms {
         let alias = format!("b{table_idx}");
+        let is_builtin = builtin_relation(&atom.relation).is_some();
         let subquery = relation_source(&atom.relation, atom.args.len(), known_queries);
         from_parts.push(format!("({subquery}) AS {alias}"));
         for (col_idx, arg) in atom.args.iter().enumerate() {
@@ -226,13 +302,17 @@ fn compile_recursive_step(
                 // skip
             } else if arg.starts_with('=') {
                 let lit = arg[1..].replace('\'', "''");
-                where_parts.push(format!(
-                    "{col_ref} IN (SELECT m.id FROM matches m \
-                     LEFT JOIN refs r ON m.ref_id = r.id \
-                     LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
-                     JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id \
-                     WHERE s.norm = '{lit}')"
-                ));
+                if is_builtin && col_idx > 0 {
+                    where_parts.push(format!("{col_ref} = '{lit}'"));
+                } else {
+                    where_parts.push(format!(
+                        "{col_ref} IN (SELECT m.id FROM matches m \
+                         LEFT JOIN refs r ON m.ref_id = r.id \
+                         LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
+                         JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id \
+                         WHERE s.norm = '{lit}')"
+                    ));
+                }
             } else {
                 var_bindings.entry(arg.clone()).or_default().push(col_ref);
             }
@@ -272,21 +352,143 @@ fn compile_recursive_step(
 
 /// SQL source for a relation name.
 ///
-/// If the relation is a known query, reference it by name (CTE).
-/// Otherwise, treat it as a link_kind in match_links.
+/// Resolution order:
+/// 1. Known query -> CTE reference
+/// 2. Built-in relation -> SQL over base tables
+/// 3. Fallback -> link_kind in match_links
 fn relation_source(name: &str, arity: usize, known_queries: &HashMap<String, usize>) -> String {
     if known_queries.contains_key(name) {
-        // Reference to another CTE -- just SELECT from it
         let cols: Vec<String> = (0..arity).map(|i| format!("a{i}")).collect();
         format!("SELECT {} FROM {}", cols.join(", "), name)
+    } else if let Some(sql) = builtin_relation(name) {
+        sql
     } else {
-        // Base relation: link_kind in match_links (binary, arity 2)
         let escaped = name.replace('\'', "''");
         format!(
             "SELECT source_match_id AS a0, target_match_id AS a1 \
              FROM match_links WHERE link_kind = '{escaped}'"
         )
     }
+}
+
+/// Built-in relations that query base tables directly.
+///
+/// These compile to SQL subqueries over matches/refs/strings/files/repos
+/// without requiring materialized link edges.
+///
+/// | Relation              | Arity | Semantics                                      |
+/// |-----------------------|-------|-------------------------------------------------|
+/// | has_kind($M, "kind")  | 2     | match M has this kind                           |
+/// | has_norm($M, "val")   | 2     | match M's string has this normalized value      |
+/// | same_norm($A, $B)     | 2     | matches A and B share the same norm              |
+/// | same_repo($A, $B)     | 2     | matches A and B are in the same repo             |
+/// | same_file($A, $B)     | 2     | matches A and B are in the same file             |
+/// | in_repo($M, "name")   | 2     | match M is in a repo with this name              |
+/// | in_file($M, "glob")   | 2     | match M is in a file matching this glob          |
+/// | has_value($M, "val")  | 2     | match M's raw string value (not normalized)      |
+fn builtin_relation(name: &str) -> Option<String> {
+    let sql = match name {
+        // has_kind($M, "kind"): a0 = match_id, a1 = match_id (self-join pattern)
+        // Used with literal arg: has_kind($M, "image_repo") -> WHERE kind = 'image_repo'
+        // The literal handling happens in compile_body_select via the =prefix convention.
+        // Here we just produce the source relation.
+        "has_kind" => {
+            "SELECT m.id AS a0, m.kind AS a1 FROM matches m".to_string()
+        }
+
+        // has_norm($M, "lodash"): a0 = match_id, a1 = norm string
+        "has_norm" => {
+            "SELECT m.id AS a0, s.norm AS a1 \
+             FROM matches m \
+             LEFT JOIN refs r ON m.ref_id = r.id \
+             LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
+             JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id"
+                .to_string()
+        }
+
+        // has_value($M, "val"): a0 = match_id, a1 = raw value
+        "has_value" => {
+            "SELECT m.id AS a0, s.value AS a1 \
+             FROM matches m \
+             LEFT JOIN refs r ON m.ref_id = r.id \
+             LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
+             JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id"
+                .to_string()
+        }
+
+        // same_norm($A, $B): two matches with equal normalized strings
+        "same_norm" => {
+            "SELECT m1.id AS a0, m2.id AS a1 \
+             FROM matches m1 \
+             LEFT JOIN refs r1 ON m1.ref_id = r1.id \
+             LEFT JOIN repo_refs rr1 ON m1.repo_ref_id = rr1.id \
+             JOIN strings s1 ON COALESCE(r1.string_id, rr1.string_id) = s1.id \
+             JOIN strings s2 ON s1.norm = s2.norm \
+             LEFT JOIN refs r2 ON r2.string_id = s2.id \
+             LEFT JOIN repo_refs rr2 ON rr2.string_id = s2.id \
+             JOIN matches m2 ON (m2.ref_id = r2.id OR m2.repo_ref_id = rr2.id) \
+             WHERE m1.id != m2.id"
+                .to_string()
+        }
+
+        // same_repo($A, $B): two matches in the same repo
+        "same_repo" => {
+            "SELECT m1.id AS a0, m2.id AS a1 \
+             FROM matches m1 \
+             LEFT JOIN refs r1 ON m1.ref_id = r1.id \
+             LEFT JOIN repo_refs rr1 ON m1.repo_ref_id = rr1.id \
+             LEFT JOIN files f1 ON r1.file_id = f1.id \
+             JOIN files f2 ON COALESCE(f1.repo_id, rr1.repo_id) = f2.repo_id \
+             JOIN refs r2 ON r2.file_id = f2.id \
+             JOIN matches m2 ON m2.ref_id = r2.id \
+             WHERE m1.id != m2.id \
+             UNION ALL \
+             SELECT m1.id AS a0, m2.id AS a1 \
+             FROM matches m1 \
+             LEFT JOIN refs r1 ON m1.ref_id = r1.id \
+             LEFT JOIN repo_refs rr1 ON m1.repo_ref_id = rr1.id \
+             LEFT JOIN files f1 ON r1.file_id = f1.id \
+             JOIN repo_refs rr2 ON COALESCE(f1.repo_id, rr1.repo_id) = rr2.repo_id \
+             JOIN matches m2 ON m2.repo_ref_id = rr2.id \
+             WHERE m1.id != m2.id"
+                .to_string()
+        }
+
+        // same_file($A, $B): two matches in the same file
+        "same_file" => {
+            "SELECT m1.id AS a0, m2.id AS a1 \
+             FROM matches m1 \
+             JOIN refs r1 ON m1.ref_id = r1.id \
+             JOIN refs r2 ON r1.file_id = r2.file_id \
+             JOIN matches m2 ON m2.ref_id = r2.id \
+             WHERE m1.id != m2.id"
+                .to_string()
+        }
+
+        // in_repo($M, "org/name"): match is in a repo with this name
+        // a1 is the repo name string for literal matching
+        "in_repo" => {
+            "SELECT m.id AS a0, rp.name AS a1 \
+             FROM matches m \
+             LEFT JOIN refs r ON m.ref_id = r.id \
+             LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
+             LEFT JOIN files f ON r.file_id = f.id \
+             JOIN repos rp ON COALESCE(f.repo_id, rr.repo_id) = rp.id"
+                .to_string()
+        }
+
+        // in_file($M, "path"): match is in a file with this path
+        "in_file" => {
+            "SELECT m.id AS a0, f.path AS a1 \
+             FROM matches m \
+             JOIN refs r ON m.ref_id = r.id \
+             JOIN files f ON r.file_id = f.id"
+                .to_string()
+        }
+
+        _ => return None,
+    };
+    Some(sql)
 }
 
 /// Compile a goal expression (CLI query) into WHERE clauses to append.
@@ -418,5 +620,114 @@ mod tests {
         let sql = compile_query(&def, &known);
         // Wildcard should not generate any WHERE condition for that column
         assert!(!sql.contains("t0.a1 ="), "sql: {}", sql);
+    }
+
+    #[test]
+    fn builtin_has_kind() {
+        let def = make_def(
+            "find_images",
+            &["M"],
+            vec![atom("has_kind", &["M", "=image_repo"])],
+            false,
+        );
+        let known = HashMap::new();
+        let sql = compile_query(&def, &known);
+        // Should use direct string comparison, not match ID resolution
+        assert!(sql.contains("= 'image_repo'"), "sql: {}", sql);
+        assert!(!sql.contains("s.norm"), "should not resolve through strings: {}", sql);
+    }
+
+    #[test]
+    fn builtin_same_norm_unifies() {
+        let def = make_def(
+            "norm_match",
+            &["A", "B"],
+            vec![
+                atom("has_kind", &["A", "=image_repo"]),
+                atom("has_kind", &["B", "=repo_name"]),
+                atom("same_norm", &["A", "B"]),
+            ],
+            false,
+        );
+        let known = HashMap::new();
+        let sql = compile_query(&def, &known);
+        // same_norm should produce a subquery with norm join
+        assert!(sql.contains("s1.norm = s2.norm"), "sql: {}", sql);
+        // Variable A should unify across has_kind and same_norm
+        assert!(sql.contains("t0.a0") && sql.contains("t2.a0"), "sql: {}", sql);
+    }
+
+    #[test]
+    fn builtin_in_repo_literal() {
+        let def = make_def(
+            "repo_matches",
+            &["M"],
+            vec![atom("in_repo", &["M", "=myorg/frontend"])],
+            false,
+        );
+        let known = HashMap::new();
+        let sql = compile_query(&def, &known);
+        assert!(sql.contains("= 'myorg/frontend'"), "sql: {}", sql);
+    }
+
+    #[test]
+    fn query_with_deps_topo_sorts() {
+        let base = make_def(
+            "direct",
+            &["A", "B"],
+            vec![atom("dep_link", &["A", "B"])],
+            false,
+        );
+        let transitive = make_def(
+            "all",
+            &["A", "C"],
+            vec![
+                atom("direct", &["A", "B"]),
+                atom("all", &["B", "C"]),
+            ],
+            true,
+        );
+        let all_queries: HashMap<String, &QueryDef> = [
+            ("direct".to_string(), &base),
+            ("all".to_string(), &transitive),
+        ].into();
+        let known: HashMap<String, usize> = [
+            ("direct".to_string(), 2),
+            ("all".to_string(), 2),
+        ].into();
+
+        let sql = compile_query_with_deps(&transitive, &all_queries, &known).unwrap();
+        // "direct" CTE should appear before "all" CTE
+        let direct_pos = sql.find("direct(").unwrap();
+        let all_pos = sql.find("all(").unwrap();
+        assert!(direct_pos < all_pos, "direct should come before all in CTE chain: {}", sql);
+    }
+
+    #[test]
+    fn cycle_detection() {
+        let a = make_def(
+            "a",
+            &["X"],
+            vec![atom("b", &["X"])],
+            false,
+        );
+        let b = make_def(
+            "b",
+            &["X"],
+            vec![atom("a", &["X"])],
+            false,
+        );
+        let all_queries: HashMap<String, &QueryDef> = [
+            ("a".to_string(), &a),
+            ("b".to_string(), &b),
+        ].into();
+        let known: HashMap<String, usize> = [
+            ("a".to_string(), 1),
+            ("b".to_string(), 1),
+        ].into();
+
+        let result = compile_query_with_deps(&a, &all_queries, &known);
+        assert!(result.is_err(), "should detect cycle");
+        assert!(result.unwrap_err().contains("cycle"), "error should mention cycle");
     }
 }

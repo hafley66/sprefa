@@ -100,7 +100,7 @@ fn walk_key_then_key_match() {
         SelectStep::KeyMatch { pattern: "*".into(), capture: Some("name".into()) },
     ];
 
-    let results = walk::walk(&source, &steps);
+    let results = walk::walk_select(&source, &steps);
     let mut names: Vec<&str> = results.iter()
         .filter_map(|r| r.captures.get("name").map(|c| c.text.as_str()))
         .collect();
@@ -124,7 +124,7 @@ fn walk_key_match_capture_then_leaf_capture() {
         SelectStep::Leaf { capture: Some("version".into()) },
     ];
 
-    let results = walk::walk(&source, &steps);
+    let results = walk::walk_select(&source, &steps);
     let mut pairs: Vec<(&str, &str)> = results.iter()
         .filter_map(|r| {
             let name = r.captures.get("name")?.text.as_str();
@@ -164,7 +164,7 @@ fn walk_any_descends_arbitrary_depth() {
         },
     ];
 
-    let results = walk::walk(&source, &steps);
+    let results = walk::walk_select(&source, &steps);
     let mut repos: Vec<(&str, &str)> = results.iter()
         .filter_map(|r| {
             let repo = r.captures.get("repo")?.text.as_str();
@@ -199,7 +199,7 @@ fn walk_without_any_only_matches_root_level() {
         SelectStep::Leaf { capture: Some("repo".into()) },
     ];
 
-    let results = walk::walk(&source, &steps);
+    let results = walk::walk_select(&source, &steps);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].captures.get("repo").unwrap().text, "myorg/frontend");
 }
@@ -221,7 +221,7 @@ fn walk_depth_filter() {
         SelectStep::Leaf { capture: Some("val".into()) },
     ];
 
-    let results = walk::walk(&source, &steps);
+    let results = walk::walk_select(&source, &steps);
     let mut vals: Vec<&str> = results.iter()
         .filter_map(|r| r.captures.get("val").map(|c| c.text.as_str()))
         .collect();
@@ -250,7 +250,7 @@ fn walk_object_step_captures_siblings() {
         },
     ];
 
-    let results = walk::walk(&source, &steps);
+    let results = walk::walk_select(&source, &steps);
     assert_eq!(results.len(), 1);
     let caps = &results[0].captures;
     assert_eq!(caps.get("svc_name").unwrap().text, "api-gateway");
@@ -282,7 +282,7 @@ fn emit_package_lock_deps() {
         MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, None, "test"))
         .collect();
@@ -315,7 +315,7 @@ fn emit_pnpm_lock_deps_with_regex_split() {
             MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, Some(&value_pattern), "test"))
         .collect();
@@ -356,7 +356,7 @@ fn emit_helm_image_object_capture() {
             MatchDef { capture: "tag".into(), kind: kind::DEP_VERSION.into(), parent: Some("repo".into()) },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, None, "test"))
         .collect();
@@ -397,10 +397,10 @@ fn cross_lockfile_same_deps() {
     };
     let pnpm_emits = vec![MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None }];
 
-    let npm_refs: Vec<_> = walk::walk(&npm_source, &npm_steps).iter()
+    let npm_refs: Vec<_> = walk::walk_select(&npm_source, &npm_steps).iter()
         .flat_map(|r| emit::create_refs(r, &npm_emits, None, "test"))
         .collect();
-    let pnpm_refs: Vec<_> = walk::walk(&pnpm_source, &pnpm_steps).iter()
+    let pnpm_refs: Vec<_> = walk::walk_select(&pnpm_source, &pnpm_steps).iter()
         .flat_map(|r| emit::create_refs(r, &pnpm_emits, Some(&pnpm_value), "test"))
         .collect();
 
@@ -516,7 +516,7 @@ fn tsp_workspace_deps() {
             MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, None, "test"))
         .collect();
@@ -552,7 +552,7 @@ fn tsp_package_json_exports() {
             MatchDef { capture: "file_path".into(), kind: kind::IMPORT_PATH.into(), parent: Some("export_path".into()) },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, None, "test"))
         .collect();
@@ -581,7 +581,7 @@ fn tsp_tsconfig_jsx_import_source() {
             MatchDef { capture: "pkg".into(), kind: kind::DEP_NAME.into(), parent: None },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, None, "test"))
         .collect();
@@ -613,7 +613,7 @@ fn tsp_cargo_toml_deps() {
             MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, None, "test"))
         .collect();
@@ -648,7 +648,7 @@ fn tsp_pnpm_lock_scoped_packages() {
             MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, Some(&value_pattern), "test"))
         .collect();
@@ -692,7 +692,7 @@ fn tsp_pnpm_lock_mixed_scoped_and_unscoped() {
             MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
     ];
 
-    let walk_results = walk::walk(&source, &steps);
+    let walk_results = walk::walk_select(&source, &steps);
     let mut refs: Vec<_> = walk_results.iter()
         .flat_map(|r| emit::create_refs(r, &emits, Some(&value_pattern), "test"))
         .collect();
