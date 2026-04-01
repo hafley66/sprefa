@@ -95,6 +95,8 @@ pub enum ScanRole {
 pub struct QueryDecl {
     pub head: Atom,
     pub body: Vec<Atom>,
+    /// When true, this is a `check` rule: non-empty result = violation.
+    pub is_check: bool,
 }
 
 /// One atom in a query rule: `relation($ARG1, $ARG2)` or `relation($ARG1, "literal")`.
@@ -102,6 +104,8 @@ pub struct QueryDecl {
 pub struct Atom {
     pub relation: String,
     pub args: Vec<Term>,
+    /// When true, this atom is negated (`not rel(...)`). Compiles to NOT EXISTS.
+    pub negated: bool,
 }
 
 /// A term in a query atom.

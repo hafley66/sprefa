@@ -212,7 +212,7 @@ fn lower_query(decl: &QueryDecl) -> Result<QueryDef> {
         .map(|atom| QueryAtom {
             relation: atom.relation.clone(),
             args: atom.args.iter().map(lower_term).collect(),
-            negated: false,
+            negated: atom.negated,
         })
         .collect();
 
@@ -224,7 +224,7 @@ fn lower_query(decl: &QueryDecl) -> Result<QueryDef> {
         head_args,
         body,
         is_recursive,
-        is_check: false,
+        is_check: decl.is_check,
     })
 }
 
@@ -500,5 +500,47 @@ mod tests {
         assert_eq!(rs.rules.len(), 2);
         assert_eq!(dr.link_rules.len(), 1);
         assert_eq!(dr.query_rules.len(), 1);
+    }
+
+    #[test]
+    fn lower_check_with_negation() {
+        use crate::_0_ast::{Atom, QueryDecl, Term};
+
+        let decl = QueryDecl {
+            head: Atom {
+                relation: "orphan_dep".into(),
+                args: vec![Term::Var("X".into())],
+                negated: false,
+            },
+            body: vec![
+                Atom {
+                    relation: "has_kind".into(),
+                    args: vec![Term::Var("X".into()), Term::Lit("dep".into())],
+                    negated: false,
+                },
+                Atom {
+                    relation: "dep_link".into(),
+                    args: vec![Term::Var("X".into()), Term::Wild],
+                    negated: true,
+                },
+            ],
+            is_check: true,
+        };
+        let qd = lower_query(&decl).unwrap();
+        assert!(qd.is_check);
+        assert_eq!(qd.name, "orphan_dep");
+        assert_eq!(qd.body.len(), 2);
+        assert!(!qd.body[0].negated);
+        assert!(qd.body[1].negated);
+        assert_eq!(qd.body[1].relation, "dep_link");
+    }
+
+    #[test]
+    fn lower_query_not_check_by_default() {
+        let (_, dr) = lower_full(
+            "query some_q($A) :- dep_to_package($A, $_);"
+        );
+        assert!(!dr.query_rules[0].is_check);
+        assert!(!dr.query_rules[0].body[0].negated);
     }
 }

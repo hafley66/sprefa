@@ -99,7 +99,7 @@ fn parse_query_decl(input: &str) -> anyhow::Result<(QueryDecl, &str)> {
         anyhow::bail!("query body cannot be empty");
     }
 
-    Ok((QueryDecl { head, body }, rest))
+    Ok((QueryDecl { head, body, is_check: false }, rest))
 }
 
 /// Parse one atom: `name($ARG1, $ARG2)` or `name($ARG1, "literal")`.
@@ -127,7 +127,7 @@ fn parse_atom(input: &str) -> anyhow::Result<(Atom, &str)> {
         args.push(parse_term(part)?);
     }
 
-    Ok((Atom { relation, args }, rest))
+    Ok((Atom { relation, args, negated: false }, rest))
 }
 
 /// Parse a single term: `$VAR`, `$_`, `"literal"`, or bare identifier.
