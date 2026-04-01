@@ -46,16 +46,25 @@ struct DocState {
 impl DocState {
     fn rebuild(&mut self, text: &str) {
         self.text = text.to_string();
+
+        // Try parsing. On error, try adding a semicolon (user may be mid-statement).
+        // If both fail, keep previous match_kinds/captures/rules for completions.
+        let program = match parse_program(text) {
+            Ok(p) => p,
+            Err(_) => match parse_program(&format!("{};", text.trim_end())) {
+                Ok(p) => p,
+                Err(_) => {
+                    self.diagnostics.clear();
+                    return;
+                }
+            },
+        };
+
         self.match_kinds.clear();
         self.all_captures.clear();
         self.link_kinds.clear();
         self.rules.clear();
         self.diagnostics.clear();
-
-        let program = match parse_program(text) {
-            Ok(p) => p,
-            Err(_) => return,
-        };
 
         // Build a map of statement byte ranges by finding ; terminators
         let stmt_spans = find_statement_spans(text);
@@ -330,6 +339,7 @@ const TAGS: &[(&str, &str)] = &[
     ("branch", "Branch glob: branch(main|release/*)"),
     ("match", "Map capture to kind: match($CAP, kind)"),
     ("link", "Link declaration: link(src > tgt, predicate)"),
+    ("rule", "Name this rule: rule(my_rule_name)"),
 ];
 
 #[tower_lsp::async_trait]
