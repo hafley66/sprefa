@@ -9,7 +9,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use sprefa_config::RepoConfig;
-use sprefa_rules::{extractor::RuleExtractor, RuleSet};
+use sprefa_rules::{extractor::RuleExtractor, DerivedRules, RuleSet};
 use sprefa_scan::{Extractor, Scanner};
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -44,9 +44,27 @@ fn rules_path() -> PathBuf {
         .join("sprefa-rules.json")
 }
 
-fn load_ruleset() -> RuleSet {
+/// JSON rule files still carry link_rules/query_rules at top level.
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct RuleFile {
+    #[serde(rename = "$schema", default)]
+    schema: Option<String>,
+    #[serde(default)]
+    rules: Vec<sprefa_rules::Rule>,
+    #[serde(default)]
+    link_rules: Vec<sprefa_rules::LinkRule>,
+    #[serde(default)]
+    query_rules: Vec<sprefa_rules::QueryDef>,
+}
+
+fn load_ruleset() -> (RuleSet, DerivedRules) {
     let bytes = std::fs::read(rules_path()).unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+    let rf: RuleFile = serde_json::from_slice(&bytes).unwrap();
+    (
+        RuleSet { schema: rf.schema, rules: rf.rules },
+        DerivedRules { link_rules: rf.link_rules, query_rules: rf.query_rules },
+    )
 }
 
 fn make_scanner(db: SqlitePool) -> Scanner {
@@ -65,7 +83,7 @@ fn make_scanner(db: SqlitePool) -> Scanner {
 }
 
 fn make_scanner_with_links(db: SqlitePool) -> Scanner {
-    let ruleset = load_ruleset();
+    let (ruleset, derived) = load_ruleset();
     let rule_ext = RuleExtractor::from_ruleset(&ruleset).unwrap();
     Scanner {
         extractors: Arc::new(vec![
@@ -76,7 +94,7 @@ fn make_scanner_with_links(db: SqlitePool) -> Scanner {
         db,
         normalize_config: None,
         global_filter: None,
-        link_rules: ruleset.link_rules,
+        link_rules: derived.link_rules,
     }
 }
 

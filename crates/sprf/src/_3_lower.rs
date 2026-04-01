@@ -16,15 +16,18 @@
 ///   re(pat)            -> ValuePattern { source, pattern }
 use anyhow::{bail, Result};
 use sprefa_rules::types::{
-    AstSelector, LinkPredicate, LinkRule, MatchDef, QueryAtom, QueryDef, Rule, RuleSet, SelectStep,
-    Side, ValuePattern,
+    AstSelector, DerivedRules, LinkPredicate, LinkRule, MatchDef, QueryAtom, QueryDef, Rule,
+    RuleSet, SelectStep, Side, ValuePattern,
 };
 
 use crate::_0_ast::{LinkDecl, Program, QueryDecl, SelectorChain, Slot, Statement, Tag, Term};
 use crate::_2_pattern::parse_json_body;
 
-/// Lower a parsed program into a RuleSet (rules + link rules).
-pub fn lower_program(program: &Program) -> Result<RuleSet> {
+/// Lower a parsed program into extraction rules and derived rules.
+///
+/// Returns `(RuleSet, DerivedRules)`: extraction rules that produce ground
+/// truth rows, and derived rules (links + queries) that operate on that output.
+pub fn lower_program(program: &Program) -> Result<(RuleSet, DerivedRules)> {
     let mut rules = vec![];
     let mut link_rules = vec![];
     let mut query_rules = vec![];
@@ -48,12 +51,16 @@ pub fn lower_program(program: &Program) -> Result<RuleSet> {
         }
     }
 
-    Ok(RuleSet {
-        schema: None,
-        rules,
-        link_rules,
-        query_rules,
-    })
+    Ok((
+        RuleSet {
+            schema: None,
+            rules,
+        },
+        DerivedRules {
+            link_rules,
+            query_rules,
+        },
+    ))
 }
 
 fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
@@ -205,6 +212,7 @@ fn lower_query(decl: &QueryDecl) -> Result<QueryDef> {
         .map(|atom| QueryAtom {
             relation: atom.relation.clone(),
             args: atom.args.iter().map(lower_term).collect(),
+            negated: false,
         })
         .collect();
 
@@ -216,6 +224,7 @@ fn lower_query(decl: &QueryDecl) -> Result<QueryDef> {
         head_args,
         body,
         is_recursive,
+        is_check: false,
     })
 }
 
@@ -270,7 +279,7 @@ mod tests {
 
     fn lower(input: &str) -> Vec<Rule> {
         let program = parse_program(input).unwrap();
-        lower_program(&program).unwrap().rules
+        lower_program(&program).unwrap().0.rules
     }
 
     #[test]
@@ -400,30 +409,30 @@ mod tests {
         assert_eq!(r.create_matches[1].kind, "dep_version");
     }
 
-    fn lower_full(input: &str) -> RuleSet {
+    fn lower_full(input: &str) -> (RuleSet, DerivedRules) {
         let program = parse_program(input).unwrap();
         lower_program(&program).unwrap()
     }
 
     #[test]
     fn lower_link_rule() {
-        let rs = lower_full("link(dep_name > package_name, norm_eq) > $dep_to_package;");
-        assert_eq!(rs.link_rules.len(), 1);
-        let lr = &rs.link_rules[0];
+        let (_, dr) = lower_full("link(dep_name > package_name, norm_eq) > $dep_to_package;");
+        assert_eq!(dr.link_rules.len(), 1);
+        let lr = &dr.link_rules[0];
         assert_eq!(lr.kind, "dep_to_package");
         assert!(lr.predicate.is_some());
     }
 
     #[test]
     fn lower_link_auto_kind() {
-        let rs = lower_full("link(dep_name > package_name, norm_eq);");
-        assert_eq!(rs.link_rules[0].kind, "dep_name__package_name");
+        let (_, dr) = lower_full("link(dep_name > package_name, norm_eq);");
+        assert_eq!(dr.link_rules[0].kind, "dep_name__package_name");
     }
 
     #[test]
     fn lower_link_multiple_predicates() {
-        let rs = lower_full("link(import_name > export_name, target_file_eq, string_eq) > $import_binding;");
-        let lr = &rs.link_rules[0];
+        let (_, dr) = lower_full("link(import_name > export_name, target_file_eq, string_eq) > $import_binding;");
+        let lr = &dr.link_rules[0];
         match lr.predicate.as_ref().unwrap() {
             LinkPredicate::And { all } => {
                 // 2 KindEq + 2 predicates = 4
@@ -435,22 +444,22 @@ mod tests {
 
     #[test]
     fn lower_mixed_rules_and_links() {
-        let rs = lower_full(r#"
+        let (rs, dr) = lower_full(r#"
             fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);
             link(dep_name > package_name, norm_eq) > $dep_to_package;
         "#);
         assert_eq!(rs.rules.len(), 1);
-        assert_eq!(rs.link_rules.len(), 1);
+        assert_eq!(dr.link_rules.len(), 1);
         assert_eq!(rs.rules[0].create_matches.len(), 1);
     }
 
     #[test]
     fn lower_query_recursive() {
-        let rs = lower_full(
+        let (_, dr) = lower_full(
             "query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);"
         );
-        assert_eq!(rs.query_rules.len(), 1);
-        let q = &rs.query_rules[0];
+        assert_eq!(dr.query_rules.len(), 1);
+        let q = &dr.query_rules[0];
         assert_eq!(q.name, "all_deps");
         assert_eq!(q.arity, 2);
         assert!(q.is_recursive);
@@ -462,10 +471,10 @@ mod tests {
 
     #[test]
     fn lower_query_nonrecursive() {
-        let rs = lower_full(
+        let (_, dr) = lower_full(
             "query same_eco($A, $B) :- dep_to_package($A, $X), dep_to_package($B, $X);"
         );
-        let q = &rs.query_rules[0];
+        let q = &dr.query_rules[0];
         assert!(!q.is_recursive);
         assert_eq!(q.body[0].args, vec!["A", "X"]);
         assert_eq!(q.body[1].args, vec!["B", "X"]);
@@ -473,23 +482,23 @@ mod tests {
 
     #[test]
     fn lower_query_with_literal() {
-        let rs = lower_full(
+        let (_, dr) = lower_full(
             r#"query who_uses($WHO) :- dep_to_package($WHO, "lodash");"#
         );
-        let q = &rs.query_rules[0];
+        let q = &dr.query_rules[0];
         assert_eq!(q.body[0].args, vec!["WHO", "=lodash"]);
     }
 
     #[test]
     fn lower_full_pipeline() {
-        let rs = lower_full(r#"
+        let (rs, dr) = lower_full(r#"
             fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);
             fs(**/Cargo.toml) > json({ dependencies: { $N: $_ } }) > match($N, dep_name);
             link(dep_name > package_name, norm_eq) > $dep_to_package;
             query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
         "#);
         assert_eq!(rs.rules.len(), 2);
-        assert_eq!(rs.link_rules.len(), 1);
-        assert_eq!(rs.query_rules.len(), 1);
+        assert_eq!(dr.link_rules.len(), 1);
+        assert_eq!(dr.query_rules.len(), 1);
     }
 }

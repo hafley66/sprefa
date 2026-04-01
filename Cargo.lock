@@ -2734,6 +2734,7 @@ dependencies = [
  "anyhow",
  "git2",
  "globset",
+ "serde",
  "serde_json",
  "sprefa_cache",
  "sprefa_config",

@@ -22,6 +22,7 @@ sprefa_js = { path = "../js" }
 sprefa_rs = { path = "../rs" }
 sprefa_cache = { path = "../cache" }
 sprefa_index = { path = "../index" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 git2 = { workspace = true }

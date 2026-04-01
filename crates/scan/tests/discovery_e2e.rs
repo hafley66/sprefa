@@ -62,14 +62,14 @@ async fn make_db() -> SqlitePool {
 }
 
 fn make_scanner(db: SqlitePool, sprf_source: &str) -> Scanner {
-    let ruleset = sprefa_sprf::parse_sprf(sprf_source).unwrap();
+    let (ruleset, derived) = sprefa_sprf::parse_sprf(sprf_source).unwrap();
     let rule_ext = RuleExtractor::from_ruleset(&ruleset).unwrap();
     Scanner {
         extractors: Arc::new(vec![Box::new(rule_ext) as Box<dyn Extractor>]),
         db,
         normalize_config: None,
         global_filter: None,
-        link_rules: ruleset.link_rules,
+        link_rules: derived.link_rules,
     }
 }
 

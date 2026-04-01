@@ -6,16 +6,16 @@ pub mod _3_lower;
 use std::path::Path;
 
 use anyhow::Result;
-use sprefa_rules::types::RuleSet;
+use sprefa_rules::types::{DerivedRules, RuleSet};
 
-/// Parse a .sprf file and produce a RuleSet compatible with the JSON rule format.
-pub fn parse_sprf(source: &str) -> Result<RuleSet> {
+/// Parse a .sprf file and produce extraction rules + derived rules.
+pub fn parse_sprf(source: &str) -> Result<(RuleSet, DerivedRules)> {
     let program = _1_parse::parse_program(source)?;
     _3_lower::lower_program(&program)
 }
 
-/// Load a .sprf file from disk and produce a RuleSet.
-pub fn load_sprf(path: &Path) -> Result<RuleSet> {
+/// Load a .sprf file from disk and produce extraction rules + derived rules.
+pub fn load_sprf(path: &Path) -> Result<(RuleSet, DerivedRules)> {
     let source = std::fs::read_to_string(path)?;
     parse_sprf(&source)
 }
@@ -39,7 +39,7 @@ mod integration_tests {
     }
 
     fn run_sprf(sprf_src: &str, data: &[u8], ext: &str) -> Vec<Vec<(String, String)>> {
-        let ruleset = parse_sprf(sprf_src).unwrap();
+        let (ruleset, _) = parse_sprf(sprf_src).unwrap();
         let json_val = parse_data(data, ext).unwrap();
         let mut all = vec![];
         for rule in &ruleset.rules {
@@ -134,9 +134,9 @@ mod integration_tests {
         let sprf_src = std::fs::read_to_string(
             concat!(env!("CARGO_MANIFEST_DIR"), "/../../sprefa-rules.sprf")
         ).unwrap();
-        let ruleset = parse_sprf(&sprf_src).unwrap();
+        let (ruleset, derived) = parse_sprf(&sprf_src).unwrap();
         assert!(ruleset.rules.len() >= 10, "expected 10+ rules, got {}", ruleset.rules.len());
-        assert!(ruleset.link_rules.len() >= 3, "expected 3+ link rules, got {}", ruleset.link_rules.len());
+        assert!(derived.link_rules.len() >= 3, "expected 3+ link rules, got {}", derived.link_rules.len());
 
         // Every rule should have at least one create_matches entry
         for rule in &ruleset.rules {
@@ -153,7 +153,7 @@ mod integration_tests {
         let sprf_src = std::fs::read_to_string(
             concat!(env!("CARGO_MANIFEST_DIR"), "/../../sprefa-rules.sprf")
         ).unwrap();
-        let ruleset = parse_sprf(&sprf_src).unwrap();
+        let (ruleset, _) = parse_sprf(&sprf_src).unwrap();
 
         // Run the cargo-deps rule against the rules crate Cargo.toml
         let cargo_bytes = std::fs::read(

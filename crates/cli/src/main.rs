@@ -3,14 +3,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use sprefa_config::{load_config, load_config_from, default_config_toml, Config};
+use sprefa_config::{default_config_toml, load_config, load_config_from, Config};
 use sprefa_js::JsExtractor;
 use sprefa_rs::RsExtractor;
 use sprefa_rules::extractor::RuleExtractor;
 use sprefa_scan::Scanner;
-use sprefa_schema::{BranchScope, init_db, list_repos, count_files_for_repo, count_refs_for_repo, upsert_repo, search_refs};
-use sprefa_watch::plan::{self, PathRewriter};
+use sprefa_schema::{
+    count_files_for_repo, count_refs_for_repo, init_db, list_repos, search_refs, upsert_repo,
+    BranchScope,
+};
 use sprefa_watch::js_path::JsPathRewriter;
+use sprefa_watch::plan::{self, PathRewriter};
 use sprefa_watch::rs_path::RsPathRewriter;
 
 const README: &str = include_str!("../../../README.md");
@@ -284,9 +287,7 @@ async fn main() -> anyhow::Result<()> {
             .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
             .init();
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .init();
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
     }
 
     if cli.readme {
@@ -302,11 +303,15 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Eval { rule, files }) => cmd_eval(&rule, &files)?,
         Some(Command::Scan { repo, once }) => cmd_scan(&cli.config, repo.as_deref(), once).await?,
         Some(Command::Status) => cmd_status(&cli.config).await?,
-        Some(Command::Query { term, scope, once }) => cmd_query(&cli.config, &term, scope.as_deref(), once).await?,
+        Some(Command::Query { term, scope, once }) => {
+            cmd_query(&cli.config, &term, scope.as_deref(), once).await?
+        }
         Some(Command::Sql { sql }) => cmd_sql(&cli.config, &sql).await?,
         Some(Command::Serve) => cmd_serve(&cli.config).await?,
         Some(Command::Watch { repo }) => cmd_watch(&cli.config, repo.as_deref()).await?,
-        Some(Command::Daemon { repo, no_scan }) => cmd_daemon(&cli.config, repo.as_deref(), no_scan).await?,
+        Some(Command::Daemon { repo, no_scan }) => {
+            cmd_daemon(&cli.config, repo.as_deref(), no_scan).await?
+        }
         None => {
             // No subcommand: print help
             use clap::CommandFactory;
@@ -353,7 +358,11 @@ async fn cmd_init() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_add(config_path: &Option<PathBuf>, path: PathBuf, name: Option<String>) -> anyhow::Result<()> {
+async fn cmd_add(
+    config_path: &Option<PathBuf>,
+    path: PathBuf,
+    name: Option<String>,
+) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
     let pool = init_db(&config.db_path()).await?;
 
@@ -366,7 +375,12 @@ async fn cmd_add(config_path: &Option<PathBuf>, path: PathBuf, name: Option<Stri
     });
 
     let id = upsert_repo(&pool, &repo_name, &abs_path.to_string_lossy()).await?;
-    println!("added repo '{}' (id={}) at {}", repo_name, id, abs_path.display());
+    println!(
+        "added repo '{}' (id={}) at {}",
+        repo_name,
+        id,
+        abs_path.display()
+    );
 
     // Append to config file
     let config_file = find_config_file(config_path)?;
@@ -382,10 +396,13 @@ async fn cmd_add(config_path: &Option<PathBuf>, path: PathBuf, name: Option<Stri
     Ok(())
 }
 
-fn build_scanner(config: &sprefa_config::Config, pool: sqlx::SqlitePool) -> anyhow::Result<Scanner> {
+fn build_scanner(
+    config: &sprefa_config::Config,
+    pool: sqlx::SqlitePool,
+) -> anyhow::Result<Scanner> {
     let rules_path = find_rules_file()?;
-    let ruleset = load_ruleset(&rules_path)?;
-    let link_rules = ruleset.link_rules.clone();
+    let (ruleset, derived) = load_ruleset(&rules_path)?;
+    let link_rules = derived.link_rules;
     let extractor = RuleExtractor::from_ruleset(&ruleset)?;
     Ok(Scanner {
         extractors: Arc::new(vec![
@@ -400,26 +417,62 @@ fn build_scanner(config: &sprefa_config::Config, pool: sqlx::SqlitePool) -> anyh
     })
 }
 
-fn load_ruleset(path: &std::path::Path) -> anyhow::Result<sprefa_rules::RuleSet> {
+/// Combined rule file shape for JSON/YAML backward compat.
+/// .sprf files use the split return from `parse_sprf` directly.
+#[derive(serde::Deserialize)]
+struct RuleFile {
+    #[serde(rename = "$schema", default)]
+    schema: Option<String>,
+    #[serde(default)]
+    rules: Vec<sprefa_rules::Rule>,
+    #[serde(default)]
+    link_rules: Vec<sprefa_rules::LinkRule>,
+    #[serde(default)]
+    query_rules: Vec<sprefa_rules::QueryDef>,
+}
+
+impl RuleFile {
+    fn split(self) -> (sprefa_rules::RuleSet, sprefa_rules::DerivedRules) {
+        (
+            sprefa_rules::RuleSet {
+                schema: self.schema,
+                rules: self.rules,
+            },
+            sprefa_rules::DerivedRules {
+                link_rules: self.link_rules,
+                query_rules: self.query_rules,
+            },
+        )
+    }
+}
+
+fn load_ruleset(path: &std::path::Path) -> anyhow::Result<(sprefa_rules::RuleSet, sprefa_rules::DerivedRules)> {
     match path.extension().and_then(|e| e.to_str()) {
-        Some("sprf") => {
-            sprefa_sprf::load_sprf(path)
-                .map_err(|e| anyhow::anyhow!("failed to parse .sprf rules from {}: {}", path.display(), e))
-        }
+        Some("sprf") => sprefa_sprf::load_sprf(path).map_err(|e| {
+            anyhow::anyhow!("failed to parse .sprf rules from {}: {}", path.display(), e)
+        }),
         Some("yaml" | "yml") => {
             let bytes = std::fs::read(path)?;
-            serde_yaml::from_slice(&bytes)
-                .map_err(|e| anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e))
+            let rf: RuleFile = serde_yaml::from_slice(&bytes).map_err(|e| {
+                anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e)
+            })?;
+            Ok(rf.split())
         }
         _ => {
             let bytes = std::fs::read(path)?;
-            serde_json::from_slice(&bytes)
-                .map_err(|e| anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e))
+            let rf: RuleFile = serde_json::from_slice(&bytes).map_err(|e| {
+                anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e)
+            })?;
+            Ok(rf.split())
         }
     }
 }
 
-async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: bool) -> anyhow::Result<()> {
+async fn cmd_scan(
+    config_path: &Option<PathBuf>,
+    only_repo: Option<&str>,
+    once: bool,
+) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
 
     if !once {
@@ -473,16 +526,15 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
         let repo_path = std::path::Path::new(&repo.path);
         let all_revs = sprefa_index::read_git_revs(repo_path).unwrap_or_default();
         let rev_patterns = repo.rev_list();
-        let rev_globs: Vec<globset::GlobMatcher> = rev_patterns.iter()
+        let rev_globs: Vec<globset::GlobMatcher> = rev_patterns
+            .iter()
             .filter_map(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()))
             .collect();
 
         // Detect the checked-out branch for working-tree decision.
         let checked_out_branch: Option<String> = git2::Repository::open(repo_path)
             .ok()
-            .and_then(|r| {
-                r.head().ok().and_then(|h| h.shorthand().map(String::from))
-            });
+            .and_then(|r| r.head().ok().and_then(|h| h.shorthand().map(String::from)));
 
         for git_rev in &all_revs {
             if !rev_globs.iter().any(|g| g.is_match(&git_rev.name)) {
@@ -525,11 +577,16 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
         for repo in &repos {
             match scanner.resolve_links(&repo.name).await {
                 Ok(n) => second_pass_links += n,
-                Err(e) => tracing::warn!("{}: second-pass link resolution failed: {}", repo.name, e),
+                Err(e) => {
+                    tracing::warn!("{}: second-pass link resolution failed: {}", repo.name, e)
+                }
             }
         }
         if second_pass_links > 0 {
-            println!("second pass: {} additional cross-repo links", second_pass_links);
+            println!(
+                "second pass: {} additional cross-repo links",
+                second_pass_links
+            );
         }
     }
 
@@ -548,24 +605,48 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
                 // Only scan repos we have a local path for.
                 let Some(repo_cfg) = repo_map.get(target.repo_name.as_str()) else {
                     sprefa_cache::discovery::log_discovery(
-                        &scanner.db, iteration, target, "skipped_no_path", None, None,
-                    ).await?;
+                        &scanner.db,
+                        iteration,
+                        target,
+                        "skipped_no_path",
+                        None,
+                        None,
+                    )
+                    .await?;
                     continue;
                 };
 
                 // Skip excluded revs.
                 if repo_cfg.rev_excluded(&target.rev) {
                     sprefa_cache::discovery::log_discovery(
-                        &scanner.db, iteration, target, "skipped_excluded", None, None,
-                    ).await?;
+                        &scanner.db,
+                        iteration,
+                        target,
+                        "skipped_excluded",
+                        None,
+                        None,
+                    )
+                    .await?;
                     continue;
                 }
 
                 // Skip revs already scanned.
-                if sprefa_cache::discovery::is_rev_scanned(&scanner.db, &target.repo_name, &target.rev).await? {
+                if sprefa_cache::discovery::is_rev_scanned(
+                    &scanner.db,
+                    &target.repo_name,
+                    &target.rev,
+                )
+                .await?
+                {
                     sprefa_cache::discovery::log_discovery(
-                        &scanner.db, iteration, target, "skipped_scanned", None, None,
-                    ).await?;
+                        &scanner.db,
+                        iteration,
+                        target,
+                        "skipped_scanned",
+                        None,
+                        None,
+                    )
+                    .await?;
                     continue;
                 }
 
@@ -581,7 +662,8 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
 
             tracing::info!(
                 "discovery iteration {}: {} new targets",
-                iteration, new_targets.len(),
+                iteration,
+                new_targets.len(),
             );
 
             for (target, repo_cfg) in &new_targets {
@@ -589,24 +671,41 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
                     Ok(result) => {
                         println!(
                             "discovery {}/{} @ {}: {} blobs, {} refs, {} links",
-                            iteration, result.repo, result.branch,
-                            result.files_scanned, result.refs_inserted, result.links_created,
+                            iteration,
+                            result.repo,
+                            result.branch,
+                            result.files_scanned,
+                            result.refs_inserted,
+                            result.links_created,
                         );
                         sprefa_cache::discovery::log_discovery(
-                            &scanner.db, iteration, target, "scanned",
-                            Some(result.files_scanned), Some(result.refs_inserted),
-                        ).await?;
+                            &scanner.db,
+                            iteration,
+                            target,
+                            "scanned",
+                            Some(result.files_scanned),
+                            Some(result.refs_inserted),
+                        )
+                        .await?;
                         total_files += result.files_scanned;
                         total_refs += result.refs_inserted;
                     }
                     Err(e) => {
                         tracing::warn!(
                             "discovery {} @ {}: scan failed: {}",
-                            target.repo_name, target.rev, e,
+                            target.repo_name,
+                            target.rev,
+                            e,
                         );
                         sprefa_cache::discovery::log_discovery(
-                            &scanner.db, iteration, target, "failed", None, None,
-                        ).await?;
+                            &scanner.db,
+                            iteration,
+                            target,
+                            "failed",
+                            None,
+                            None,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -618,12 +717,16 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
                     Ok(n) => discovery_links += n,
                     Err(e) => tracing::warn!(
                         "discovery {}: link resolution failed: {}",
-                        target.repo_name, e,
+                        target.repo_name,
+                        e,
                     ),
                 }
             }
             if discovery_links > 0 {
-                println!("discovery iteration {}: {} links resolved", iteration, discovery_links);
+                println!(
+                    "discovery iteration {}: {} links resolved",
+                    iteration, discovery_links
+                );
             }
         }
     }
@@ -653,12 +756,9 @@ fn find_rules_file() -> anyhow::Result<PathBuf> {
         },
     ];
 
-    candidates
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| anyhow::anyhow!(
-            "no rules file found. set $SPREFA_RULES or create sprefa-rules.json"
-        ))
+    candidates.into_iter().find(|p| p.exists()).ok_or_else(|| {
+        anyhow::anyhow!("no rules file found. set $SPREFA_RULES or create sprefa-rules.json")
+    })
 }
 
 async fn cmd_status(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
@@ -691,11 +791,19 @@ fn parse_scope(s: Option<&str>) -> anyhow::Result<Option<BranchScope>> {
         Some("all") => Ok(Some(BranchScope::All)),
         Some("committed") => Ok(Some(BranchScope::Committed)),
         Some("local") => Ok(Some(BranchScope::Local)),
-        Some(other) => anyhow::bail!("unknown scope '{}' (expected: committed, local, all)", other),
+        Some(other) => anyhow::bail!(
+            "unknown scope '{}' (expected: committed, local, all)",
+            other
+        ),
     }
 }
 
-async fn cmd_query(config_path: &Option<PathBuf>, term: &str, scope: Option<&str>, once: bool) -> anyhow::Result<()> {
+async fn cmd_query(
+    config_path: &Option<PathBuf>,
+    term: &str,
+    scope: Option<&str>,
+    once: bool,
+) -> anyhow::Result<()> {
     // Detect Datalog goal syntax: `relation($VAR, "lit")` -- has parens
     if term.contains('(') && term.contains(')') {
         return cmd_query_datalog(config_path, term).await;
@@ -740,7 +848,7 @@ async fn cmd_query(config_path: &Option<PathBuf>, term: &str, scope: Option<&str
 /// Parses the goal as an atom, finds the matching QueryDef in the rules file,
 /// compiles it to SQL, applies goal bindings, and executes against the DB.
 async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> anyhow::Result<()> {
-    use sprefa_rules::query::{compile_query_with_deps, compile_goal_filter};
+    use sprefa_rules::query::{compile_goal_filter, compile_query_with_deps};
     use std::collections::HashMap;
 
     // Parse goal atom using the sprf parser
@@ -755,33 +863,48 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
 
     // Load rules file to get query definitions
     let rules_path = find_rules_file()?;
-    let ruleset = load_ruleset(&rules_path)?;
+    let (_, derived) = load_ruleset(&rules_path)?;
 
-    if ruleset.query_rules.is_empty() {
+    if derived.query_rules.is_empty() {
         anyhow::bail!("no query rules defined in {}", rules_path.display());
     }
 
     // Find the matching query def
-    let qdef = ruleset.query_rules.iter()
+    let qdef = derived
+        .query_rules
+        .iter()
         .find(|q| q.name == goal_atom.relation)
-        .ok_or_else(|| anyhow::anyhow!(
-            "no query rule named '{}'. available: {}",
-            goal_atom.relation,
-            ruleset.query_rules.iter().map(|q| q.name.as_str()).collect::<Vec<_>>().join(", ")
-        ))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no query rule named '{}'. available: {}",
+                goal_atom.relation,
+                derived
+                    .query_rules
+                    .iter()
+                    .map(|q| q.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
 
     if goal_atom.args.len() != qdef.arity {
         anyhow::bail!(
             "query '{}' expects {} args, goal has {}",
-            qdef.name, qdef.arity, goal_atom.args.len()
+            qdef.name,
+            qdef.arity,
+            goal_atom.args.len()
         );
     }
 
     // Build query maps
-    let known: HashMap<String, usize> = ruleset.query_rules.iter()
+    let known: HashMap<String, usize> = derived
+        .query_rules
+        .iter()
         .map(|q| (q.name.clone(), q.arity))
         .collect();
-    let all_queries: HashMap<String, &sprefa_rules::QueryDef> = ruleset.query_rules.iter()
+    let all_queries: HashMap<String, &sprefa_rules::QueryDef> = derived
+        .query_rules
+        .iter()
         .map(|q| (q.name.clone(), q))
         .collect();
 
@@ -790,13 +913,15 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Apply goal bindings
-    let goal_args: Vec<String> = goal_atom.args.iter().map(|t| {
-        match t {
+    let goal_args: Vec<String> = goal_atom
+        .args
+        .iter()
+        .map(|t| match t {
             sprefa_sprf::_0_ast::Term::Var(name) => name.clone(),
             sprefa_sprf::_0_ast::Term::Lit(val) => format!("={val}"),
             sprefa_sprf::_0_ast::Term::Wild => "_".to_string(),
-        }
-    }).collect();
+        })
+        .collect();
 
     let (_output_cols, goal_where) = compile_goal_filter(&goal_args, qdef);
 
@@ -806,8 +931,7 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
     let config = load_cfg(config_path)?;
     let pool = init_db(&config.db_path()).await?;
 
-    let rows: Vec<sqlx::sqlite::SqliteRow> =
-        sqlx::query(&full_sql).fetch_all(&pool).await?;
+    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(&full_sql).fetch_all(&pool).await?;
 
     if rows.is_empty() {
         println!("(0 rows)");
@@ -816,16 +940,22 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
 
     // Print results using the same TSV format as cmd_sql
     use sqlx::{Column, Row};
-    let cols: Vec<String> = rows[0].columns().iter().map(|c| c.name().to_string()).collect();
+    let cols: Vec<String> = rows[0]
+        .columns()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect();
     println!("{}", cols.join("\t"));
 
     for row in &rows {
-        let vals: Vec<String> = (0..cols.len()).map(|i| {
-            row.try_get::<String, _>(i)
-                .or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string()))
-                .or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string()))
-                .unwrap_or_else(|_| "NULL".into())
-        }).collect();
+        let vals: Vec<String> = (0..cols.len())
+            .map(|i| {
+                row.try_get::<String, _>(i)
+                    .or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string()))
+                    .or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string()))
+                    .unwrap_or_else(|_| "NULL".into())
+            })
+            .collect();
         println!("{}", vals.join("\t"));
     }
     println!("\n({} rows)", rows.len());
@@ -885,8 +1015,7 @@ async fn cmd_sql(config_path: &Option<PathBuf>, sql: &str) -> anyhow::Result<()>
     let config = load_cfg(config_path)?;
     let pool = init_db(&config.db_path()).await?;
 
-    let rows: Vec<sqlx::sqlite::SqliteRow> =
-        sqlx::query(trimmed).fetch_all(&pool).await?;
+    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(trimmed).fetch_all(&pool).await?;
 
     if rows.is_empty() {
         println!("(0 rows)");
@@ -906,27 +1035,24 @@ async fn cmd_sql(config_path: &Option<PathBuf>, sql: &str) -> anyhow::Result<()>
         let vals: Vec<String> = columns
             .iter()
             .map(|col| {
-                let idx = col.ordinal();
+                let idx: usize = col.ordinal();
                 let type_name = col.type_info().name();
                 match type_name {
-                    "INTEGER" | "BIGINT" | "INT" | "INT8" => {
-                        row.try_get::<i64, _>(idx)
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|_| "NULL".to_string())
-                    }
-                    "REAL" | "DOUBLE" | "FLOAT" => {
-                        row.try_get::<f64, _>(idx)
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|_| "NULL".to_string())
-                    }
+                    "INTEGER" | "BIGINT" | "INT" | "INT8" => row
+                        .try_get::<i64, _>(idx)
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| "NULL".to_string()),
+                    "REAL" | "DOUBLE" | "FLOAT" => row
+                        .try_get::<f64, _>(idx)
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| "NULL".to_string()),
                     _ => {
                         // TEXT, BLOB, or unknown -- try string first
-                        row.try_get::<String, _>(idx)
-                            .unwrap_or_else(|_| {
-                                row.try_get::<i64, _>(idx)
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_else(|_| "NULL".to_string())
-                            })
+                        row.try_get::<String, _>(idx).unwrap_or_else(|_| {
+                            row.try_get::<i64, _>(idx)
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|_| "NULL".to_string())
+                        })
                     }
                 }
             })
@@ -951,10 +1077,8 @@ async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> an
     let pool = init_db(&config.db_path()).await?;
     let scanner = build_scanner(&config, pool.clone())?;
 
-    let rewriters: Vec<Box<dyn PathRewriter>> = vec![
-        Box::new(JsPathRewriter),
-        Box::new(RsPathRewriter),
-    ];
+    let rewriters: Vec<Box<dyn PathRewriter>> =
+        vec![Box::new(JsPathRewriter), Box::new(RsPathRewriter)];
 
     let repos: Vec<_> = config
         .repos
@@ -972,7 +1096,14 @@ async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> an
     }
 
     let rewriters = Arc::new(rewriters);
-    let _pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters, &scanner.link_rules).await?;
+    let _pauses = spawn_watchers(
+        &repos,
+        &pool,
+        &scanner.extractors,
+        &rewriters,
+        &scanner.link_rules,
+    )
+    .await?;
 
     println!("press ctrl-c to stop");
     tokio::signal::ctrl_c().await?;
@@ -981,7 +1112,11 @@ async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> an
     Ok(())
 }
 
-async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_scan: bool) -> anyhow::Result<()> {
+async fn cmd_daemon(
+    config_path: &Option<PathBuf>,
+    only_repo: Option<&str>,
+    no_scan: bool,
+) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
     let pool = init_db(&config.db_path()).await?;
     let scanner = build_scanner(&config, pool.clone())?;
@@ -1003,24 +1138,29 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
 
     // Phase 1: initial scan (committed branches + working-tree branches)
     if !no_scan {
-        tracing::info!(phase = "initial_scan", repo_count = repos.len(), "starting initial scan");
+        tracing::info!(
+            phase = "initial_scan",
+            repo_count = repos.len(),
+            "starting initial scan"
+        );
         let mut total_files = 0usize;
         let mut total_refs = 0usize;
         for repo in &repos {
             // Only scan checked-out branch for daemon initial scan (fs-based).
             let checked_out: Option<String> = git2::Repository::open(&repo.path)
                 .ok()
-                .and_then(|r| {
-                    r.head().ok().and_then(|h| h.shorthand().map(String::from))
-                });
+                .and_then(|r| r.head().ok().and_then(|h| h.shorthand().map(String::from)));
             if let Some(branch) = &checked_out {
                 // Committed scan
                 match scanner.scan_repo(repo, branch).await {
                     Ok(result) => {
                         println!(
                             "scan {} @ {}: {} files, {} refs, {} targets",
-                            result.repo, result.branch, result.files_scanned,
-                            result.refs_inserted, result.targets_resolved,
+                            result.repo,
+                            result.branch,
+                            result.files_scanned,
+                            result.refs_inserted,
+                            result.targets_resolved,
                         );
                         total_files += result.files_scanned;
                         total_refs += result.refs_inserted;
@@ -1028,11 +1168,21 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
                         if let Some(sha) = &result.new_git_hash {
                             let rid = upsert_repo(&pool, &repo.name, &repo.path).await.ok();
                             if let Some(rid) = rid {
-                                let _ = sprefa_schema::upsert_repo_rev(&pool, rid, branch, Some(sha), false, false).await;
+                                let _ = sprefa_schema::upsert_repo_rev(
+                                    &pool,
+                                    rid,
+                                    branch,
+                                    Some(sha),
+                                    false,
+                                    false,
+                                )
+                                .await;
                             }
                         }
                     }
-                    Err(e) => tracing::warn!(repo = %repo.name, rev = %branch, error = %e, "scan failed"),
+                    Err(e) => {
+                        tracing::warn!(repo = %repo.name, rev = %branch, error = %e, "scan failed")
+                    }
                 }
                 // Working-tree scan (same files, tagged under +wt rev)
                 let wt = sprefa_watch::wt_rev(branch);
@@ -1040,26 +1190,44 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
                     Ok(result) => {
                         println!(
                             "scan {} @ {}: {} files, {} refs, {} targets",
-                            result.repo, result.branch, result.files_scanned,
-                            result.refs_inserted, result.targets_resolved,
+                            result.repo,
+                            result.branch,
+                            result.files_scanned,
+                            result.refs_inserted,
+                            result.targets_resolved,
                         );
                     }
-                    Err(e) => tracing::warn!(repo = %repo.name, rev = %wt, error = %e, "wt scan failed"),
+                    Err(e) => {
+                        tracing::warn!(repo = %repo.name, rev = %wt, error = %e, "wt scan failed")
+                    }
                 }
             }
         }
-        tracing::info!(phase = "initial_scan_complete", total_files, total_refs, "scan done");
+        tracing::info!(
+            phase = "initial_scan_complete",
+            total_files,
+            total_refs,
+            "scan done"
+        );
     } else {
-        tracing::info!(phase = "initial_scan_skipped", "skipping initial scan (--no-scan)");
+        tracing::info!(
+            phase = "initial_scan_skipped",
+            "skipping initial scan (--no-scan)"
+        );
     }
 
     // Phase 2: start watchers
-    let rewriters: Arc<Vec<Box<dyn PathRewriter>>> = Arc::new(vec![
-        Box::new(JsPathRewriter),
-        Box::new(RsPathRewriter),
-    ]);
+    let rewriters: Arc<Vec<Box<dyn PathRewriter>>> =
+        Arc::new(vec![Box::new(JsPathRewriter), Box::new(RsPathRewriter)]);
 
-    let _pauses = spawn_watchers(&repos, &pool, &scanner.extractors, &rewriters, &scanner.link_rules).await?;
+    let _pauses = spawn_watchers(
+        &repos,
+        &pool,
+        &scanner.extractors,
+        &rewriters,
+        &scanner.link_rules,
+    )
+    .await?;
 
     // Phase 3: start ghcache subscriber (if configured)
     let scanner_arc = Arc::new(scanner);
@@ -1070,12 +1238,9 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
         let pauses_for_sub = _pauses;
         let sources = config.sources.clone();
         tokio::spawn(async move {
-            if let Err(e) = ghcache_subscribe(
-                &ghcache_db,
-                &scanner_for_sub,
-                &pauses_for_sub,
-                &sources,
-            ).await {
+            if let Err(e) =
+                ghcache_subscribe(&ghcache_db, &scanner_for_sub, &pauses_for_sub, &sources).await
+            {
                 tracing::error!(error = %e, "ghcache subscriber exited");
             }
         });
@@ -1112,9 +1277,7 @@ async fn spawn_watchers(
 
         let checked_out: Option<String> = git2::Repository::open(&abs_path)
             .ok()
-            .and_then(|r| {
-                r.head().ok().and_then(|h| h.shorthand().map(String::from))
-            });
+            .and_then(|r| r.head().ok().and_then(|h| h.shorthand().map(String::from)));
         let wt = checked_out.as_deref().map(sprefa_watch::wt_rev);
         let watch_config = sprefa_watch::watcher::WatchConfig {
             root_path: abs_path.clone(),
@@ -1126,12 +1289,8 @@ async fn spawn_watchers(
             pause,
         };
 
-        let mut rx = sprefa_watch::watcher::watch(
-            watch_config,
-            pool.clone(),
-            extractors.clone(),
-        )
-        .await?;
+        let mut rx =
+            sprefa_watch::watcher::watch(watch_config, pool.clone(), extractors.clone()).await?;
 
         let pool = pool.clone();
         let rewriters = rewriters.clone();
@@ -1212,7 +1371,7 @@ fn cmd_eval(rule_str: &str, files: &[PathBuf]) -> anyhow::Result<()> {
         format!("{};", rule_str)
     };
 
-    let ruleset = sprefa_sprf::parse_sprf(&source)?;
+    let (ruleset, _) = sprefa_sprf::parse_sprf(&source)?;
     let has_match_slots = !ruleset.rules.iter().all(|r| r.create_matches.is_empty());
     let extractor = RuleExtractor::from_ruleset(&ruleset)?;
 
@@ -1234,7 +1393,10 @@ fn cmd_eval(rule_str: &str, files: &[PathBuf]) -> anyhow::Result<()> {
         .map(|s| s.trim().to_string());
 
     let repo_name = repo.as_ref().and_then(|r| {
-        std::path::Path::new(r).file_name()?.to_str().map(|s| s.to_string())
+        std::path::Path::new(r)
+            .file_name()?
+            .to_str()
+            .map(|s| s.to_string())
     });
 
     let ctx = ExtractContext {
@@ -1247,7 +1409,9 @@ fn cmd_eval(rule_str: &str, files: &[PathBuf]) -> anyhow::Result<()> {
 
     // Does the rule have an fs() slot? If so, always walk files.
     let has_fs_slot = ruleset.rules.iter().any(|r| {
-        r.select.iter().any(|s| matches!(s, sprefa_rules::types::SelectStep::File { .. }))
+        r.select
+            .iter()
+            .any(|s| matches!(s, sprefa_rules::types::SelectStep::File { .. }))
     });
 
     // Collect files to evaluate.
@@ -1304,7 +1468,9 @@ fn eval_one_file(
         // No match() slots: dump raw captures from walk/ast results.
         let results = extractor.eval_raw(source, path, ctx);
         for result in &results {
-            let pairs: Vec<String> = result.captures.iter()
+            let pairs: Vec<String> = result
+                .captures
+                .iter()
                 .map(|(k, v)| format!("{}={}", k, v.text))
                 .collect();
             if !pairs.is_empty() {
@@ -1323,7 +1489,12 @@ fn walk_dir(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') || matches!(name, "node_modules" | "target" | "vendor" | "dist" | "__pycache__") {
+            if name.starts_with('.')
+                || matches!(
+                    name,
+                    "node_modules" | "target" | "vendor" | "dist" | "__pycache__"
+                )
+            {
                 continue;
             }
         }
@@ -1372,13 +1543,18 @@ async fn scan_checkout(
     };
 
     // Scan committed branch (incremental if we have a previous sha).
-    let repo_id = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM repos WHERE name = ?"
-    ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
+    let repo_id = sqlx::query_scalar::<_, i64>("SELECT id FROM repos WHERE name = ?")
+        .bind(repo_name)
+        .fetch_optional(&scanner.db)
+        .await
+        .ok()
+        .flatten();
 
     let prev_sha = match repo_id {
         Some(rid) => sprefa_schema::get_repo_rev_hash(&scanner.db, rid, branch)
-            .await.ok().flatten(),
+            .await
+            .ok()
+            .flatten(),
         None => None,
     };
 
@@ -1414,14 +1590,23 @@ async fn scan_checkout(
             if let Some(sha) = &r.new_git_hash {
                 let rid = match repo_id {
                     Some(rid) => Some(rid),
-                    None => sqlx::query_scalar::<_, i64>(
-                        "SELECT id FROM repos WHERE name = ?"
-                    ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten(),
+                    None => sqlx::query_scalar::<_, i64>("SELECT id FROM repos WHERE name = ?")
+                        .bind(repo_name)
+                        .fetch_optional(&scanner.db)
+                        .await
+                        .ok()
+                        .flatten(),
                 };
                 if let Some(rid) = rid {
                     let _ = sprefa_schema::upsert_repo_rev(
-                        &scanner.db, rid, branch, Some(sha), false, false,
-                    ).await;
+                        &scanner.db,
+                        rid,
+                        branch,
+                        Some(sha),
+                        false,
+                        false,
+                    )
+                    .await;
                 }
             }
         }
@@ -1468,7 +1653,10 @@ async fn ghcache_subscribe(
     // Phase 1: scan all existing checkouts at startup.
     let client = ghcache_client::Client::open(std::path::Path::new(ghcache_db)).await?;
     let checkouts = client.checkouts(None).await?;
-    tracing::info!(count = checkouts.len(), "scanning existing ghcache checkouts");
+    tracing::info!(
+        count = checkouts.len(),
+        "scanning existing ghcache checkouts"
+    );
 
     for co in &checkouts {
         if !sources.is_empty() && !source_matches_checkout(sources, &co.repo_slug, &co.branch) {
@@ -1478,12 +1666,17 @@ async fn ghcache_subscribe(
         // Skip if the checkout sha matches what we already have indexed.
         if let Some(co_sha) = &co.sha {
             let repo_name = co.repo_slug.split('/').last().unwrap_or(&co.repo_slug);
-            let rid = sqlx::query_scalar::<_, i64>(
-                "SELECT id FROM repos WHERE name = ?"
-            ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
+            let rid = sqlx::query_scalar::<_, i64>("SELECT id FROM repos WHERE name = ?")
+                .bind(repo_name)
+                .fetch_optional(&scanner.db)
+                .await
+                .ok()
+                .flatten();
             let stored_sha = match rid {
                 Some(rid) => sprefa_schema::get_repo_branch_hash(&scanner.db, rid, &co.branch)
-                    .await.ok().flatten(),
+                    .await
+                    .ok()
+                    .flatten(),
                 None => None,
             };
             if stored_sha.as_deref() == Some(co_sha.as_str()) {
@@ -1503,77 +1696,92 @@ async fn ghcache_subscribe(
     }
 
     // Phase 2: poll for new checkout events.
-    let subscriber = ghcache_client::Subscriber::new(ghcache_db)
-        .interval(Duration::from_millis(500));
+    let subscriber =
+        ghcache_client::Subscriber::new(ghcache_db).interval(Duration::from_millis(500));
 
-    subscriber.subscribe(|events| {
-        let scanner = scanner.clone();
-        let pauses = pauses.clone();
-        let sources = sources.to_vec();
-        async move {
-            for event in events {
-                if event.entity_type != "checkout" {
-                    continue;
-                }
-
-                let repo_slug = match &event.repo_slug {
-                    Some(s) => s.clone(),
-                    None => continue,
-                };
-                let branch = event.payload.get("branch")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("main")
-                    .to_string();
-                let local_path = match event.payload.get("local_path").and_then(|v| v.as_str()) {
-                    Some(p) => p.to_string(),
-                    None => {
-                        tracing::warn!(
-                            repo = %repo_slug, branch = %branch,
-                            "checkout event missing local_path in payload, skipping"
-                        );
+    subscriber
+        .subscribe(|events| {
+            let scanner = scanner.clone();
+            let pauses = pauses.clone();
+            let sources = sources.to_vec();
+            async move {
+                for event in events {
+                    if event.entity_type != "checkout" {
                         continue;
                     }
-                };
 
-                if !sources.is_empty() && !source_matches_checkout(&sources, &repo_slug, &branch) {
-                    tracing::debug!(
-                        repo = %repo_slug, branch = %branch,
-                        "checkout does not match any source pattern, skipping"
-                    );
-                    continue;
-                }
-
-                // Skip if event carries a sha that matches what we have indexed.
-                if let Some(event_sha) = event.payload.get("sha").and_then(|v| v.as_str()) {
-                    let repo_name = repo_slug.split('/').last().unwrap_or(&repo_slug);
-                    let rid = sqlx::query_scalar::<_, i64>(
-                        "SELECT id FROM repos WHERE name = ?"
-                    ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
-                    let stored = match rid {
-                        Some(rid) => sprefa_schema::get_repo_branch_hash(&scanner.db, rid, &branch)
-                            .await.ok().flatten(),
-                        None => None,
+                    let repo_slug = match &event.repo_slug {
+                        Some(s) => s.clone(),
+                        None => continue,
                     };
-                    if stored.as_deref() == Some(event_sha) {
+                    let branch = event
+                        .payload
+                        .get("branch")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("main")
+                        .to_string();
+                    let local_path = match event.payload.get("local_path").and_then(|v| v.as_str())
+                    {
+                        Some(p) => p.to_string(),
+                        None => {
+                            tracing::warn!(
+                                repo = %repo_slug, branch = %branch,
+                                "checkout event missing local_path in payload, skipping"
+                            );
+                            continue;
+                        }
+                    };
+
+                    if !sources.is_empty()
+                        && !source_matches_checkout(&sources, &repo_slug, &branch)
+                    {
                         tracing::debug!(
-                            repo = %repo_slug, branch = %branch, sha = %event_sha,
-                            "event sha matches stored hash, skipping"
+                            repo = %repo_slug, branch = %branch,
+                            "checkout does not match any source pattern, skipping"
                         );
                         continue;
                     }
+
+                    // Skip if event carries a sha that matches what we have indexed.
+                    if let Some(event_sha) = event.payload.get("sha").and_then(|v| v.as_str()) {
+                        let repo_name = repo_slug.split('/').last().unwrap_or(&repo_slug);
+                        let rid =
+                            sqlx::query_scalar::<_, i64>("SELECT id FROM repos WHERE name = ?")
+                                .bind(repo_name)
+                                .fetch_optional(&scanner.db)
+                                .await
+                                .ok()
+                                .flatten();
+                        let stored = match rid {
+                            Some(rid) => {
+                                sprefa_schema::get_repo_branch_hash(&scanner.db, rid, &branch)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                            }
+                            None => None,
+                        };
+                        if stored.as_deref() == Some(event_sha) {
+                            tracing::debug!(
+                                repo = %repo_slug, branch = %branch, sha = %event_sha,
+                                "event sha matches stored hash, skipping"
+                            );
+                            continue;
+                        }
+                    }
+
+                    tracing::info!(
+                        repo = %repo_slug, branch = %branch, path = %local_path,
+                        event = %event.event,
+                        "ghcache checkout event, rescanning"
+                    );
+
+                    scan_checkout(&scanner, &repo_slug, &branch, &local_path, &pauses).await;
                 }
-
-                tracing::info!(
-                    repo = %repo_slug, branch = %branch, path = %local_path,
-                    event = %event.event,
-                    "ghcache checkout event, rescanning"
-                );
-
-                scan_checkout(&scanner, &repo_slug, &branch, &local_path, &pauses).await;
+                Ok(())
             }
-            Ok(())
-        }
-    }).await?;
+        })
+        .await?;
 
     Ok(())
 }

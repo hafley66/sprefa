@@ -534,6 +534,7 @@ mod tests {
             head_args: head_args.iter().map(|s| s.to_string()).collect(),
             body,
             is_recursive,
+            is_check: false,
         }
     }
 
@@ -541,6 +542,7 @@ mod tests {
         QueryAtom {
             relation: rel.to_string(),
             args: args.iter().map(|s| s.to_string()).collect(),
+            negated: false,
         }
     }
 

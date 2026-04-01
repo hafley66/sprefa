@@ -8,7 +8,7 @@ use sprefa_rules::{LinkPredicate, Side};
 /// Execute all link rules to create edges in match_links.
 ///
 /// Each [`LinkRule`] supplies a raw SQL WHERE fragment that is injected into
-/// a fixed query skeleton. See the doc comment on [`sprefa_rules::RuleSet::link_rules`]
+/// a fixed query skeleton. See the doc comment on [`sprefa_rules::DerivedRules::link_rules`]
 /// for the full skeleton, available column aliases, and examples.
 ///
 /// ## Skeleton (reproduced here for grep-ability)

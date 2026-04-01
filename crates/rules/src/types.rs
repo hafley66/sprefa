@@ -103,6 +103,10 @@ pub struct QueryDef {
     pub body: Vec<QueryAtom>,
     /// Whether head relation appears in body (requires WITH RECURSIVE).
     pub is_recursive: bool,
+    /// Check queries assert zero results. They are not materialized as
+    /// relations -- they exist to flag constraint violations.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_check: bool,
 }
 
 /// One atom in a query body, as lowered from the parse tree.
@@ -112,6 +116,9 @@ pub struct QueryAtom {
     /// Each arg is: variable name (e.g. "A"), literal prefixed with `=` (e.g. "=lodash"),
     /// or "_" for wildcard.
     pub args: Vec<String>,
+    /// When true, this atom is negated: compiles to NOT EXISTS.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub negated: bool,
 }
 
 /// Top-level rules file: an array of rules plus optional metadata.
@@ -120,47 +127,16 @@ pub struct RuleSet {
     #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub rules: Vec<Rule>,
-    /// Link rules create edges in `match_links` between matches produced by
-    /// extraction rules. Each link rule uses either a `predicate` (structured
-    /// DSL compiled to SQL) or a raw `sql` WHERE clause injected into a fixed
-    /// query skeleton. Exactly one must be set.
-    ///
-    /// ## Predicate DSL (preferred)
-    ///
-    /// ```json
-    /// {
-    ///   "kind": "import_binding",
-    ///   "predicate": {
-    ///     "op": "and",
-    ///     "all": [
-    ///       { "op": "kind_eq", "side": "src", "value": "import_name" },
-    ///       { "op": "kind_eq", "side": "tgt", "value": "export_name" },
-    ///       { "op": "target_file_eq" },
-    ///       { "op": "string_eq" }
-    ///     ]
-    ///   }
-    /// }
-    /// ```
-    ///
-    /// Available predicates: `kind_eq`, `norm_eq`, `norm2_eq`, `target_file_eq`,
-    /// `string_eq`, `same_repo`, `and`.
-    ///
-    /// ## Raw SQL escape hatch
-    ///
-    /// For predicates the DSL cannot express, use `sql` with a raw WHERE fragment.
-    /// The fragment is interpolated directly (no sanitization). Available aliases:
-    /// src_m, src_r, src_s, src_f, src_rp, tgt_m, tgt_r, tgt_s, tgt_f.
-    ///
-    /// ```json
-    /// {
-    ///   "kind": "dependency",
-    ///   "sql": "src_m.kind = 'dep_name' AND tgt_m.kind = 'package_name' AND src_s.norm = tgt_s.norm"
-    /// }
-    /// ```
+}
+
+/// Derived rules: link + query definitions that operate on extraction output.
+///
+/// These never write to refs/matches/strings. They consume ground truth
+/// to produce edges (match_links) and views (SQL CTEs).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DerivedRules {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_rules: Vec<LinkRule>,
-    /// Query rules: Datalog-style derived relations over match_links.
-    /// Compiled to SQL CTEs at query time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub query_rules: Vec<QueryDef>,
 }
@@ -461,6 +437,10 @@ pub struct ValuePattern {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
 }
 
 /// One match to create from a captured value.
