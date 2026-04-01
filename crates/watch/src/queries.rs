@@ -210,6 +210,46 @@ pub async fn upstream_export_file(
     Ok(row.map(|(id,)| id))
 }
 
+/// Walk upstream through re-export chains to find the root declaring file.
+///
+/// Uses a recursive CTE instead of per-hop queries. The root is the file
+/// that exports `name` without importing it from somewhere else.
+pub async fn find_chain_root(
+    pool: &SqlitePool,
+    file_id: i64,
+    name: &str,
+) -> anyhow::Result<i64> {
+    let row: Option<(i64,)> = sqlx::query_as(
+        r#"
+        WITH RECURSIVE chain(fid, depth) AS (
+            SELECT ?1, 0
+            UNION ALL
+            SELECT DISTINCT r_path.target_file_id, chain.depth + 1
+            FROM chain
+            JOIN refs r_path ON r_path.file_id = chain.fid
+            JOIN matches m_path ON m_path.ref_id = r_path.id
+            WHERE m_path.kind = 'import_path'
+              AND r_path.target_file_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM refs r_exp
+                  JOIN strings s ON r_exp.string_id = s.id
+                  JOIN matches m_exp ON m_exp.ref_id = r_exp.id
+                  WHERE r_exp.file_id = r_path.target_file_id
+                    AND m_exp.kind = 'export_name'
+                    AND s.value = ?2
+              )
+              AND chain.depth < 50
+        )
+        SELECT fid FROM chain ORDER BY depth DESC LIMIT 1
+        "#,
+    )
+    .bind(file_id)
+    .bind(name)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(id,)| id).unwrap_or(file_id))
+}
+
 /// Find ExportName ref(s) for `name` in a specific file.
 /// Returns AffectedRef with span info for editing.
 pub async fn export_ref_in_file(

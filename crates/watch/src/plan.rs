@@ -172,12 +172,13 @@ async fn plan_file_move(
     }
 
     // Rust: RsUse refs matching the old module path.
-    // Fetches all RsUse refs in the repo, resolves super::/self:: to absolute
-    // form, then filters to those referencing the moved module.
+    // Fetch all RsUse refs once for both intra-crate and cross-crate matching.
     let old_mod = crate::rs_path::file_to_mod_path_checked(old_path, mod_overrides);
     let new_mod = crate::rs_path::file_to_mod_path_checked(new_path, mod_overrides);
-    if let (Some(old_mod), Some(_new_mod)) = (old_mod, new_mod) {
+    if let (Some(old_mod), Some(new_mod)) = (old_mod, new_mod) {
         let all_rs = queries::all_rs_uses_in_repo(pool, file_id).await?;
+
+        // Intra-crate: resolve super::/self:: to absolute form, filter by old module path.
         let rs_affected = crate::rs_path::filter_rs_uses_by_prefix(&all_rs, &old_mod, mod_overrides);
         let rs_rewriter = crate::rs_path::RsPathRewriter;
         for aref in rs_affected {
@@ -197,21 +198,13 @@ async fn plan_file_move(
                 });
             }
         }
-    }
 
-    // Cross-crate: if the moved file belongs to a workspace crate, other crates
-    // may reference it via `use crate_name::module::Item`. These refs use the
-    // crate name as prefix instead of `crate::`, so the above filter misses them.
-    if let (Some(ref old_mod), Some(ref new_mod)) = (
-        crate::rs_path::file_to_mod_path_checked(old_path, mod_overrides),
-        crate::rs_path::file_to_mod_path_checked(new_path, mod_overrides),
-    ) {
+        // Cross-crate: `use crate_name::module::Item` refs from other crates.
         if let Some(crate_name) = workspace.crate_for_file(old_path) {
             let old_cross = old_mod.replacen("crate", crate_name, 1);
             let new_cross = new_mod.replacen("crate", crate_name, 1);
             let old_cross_prefix = format!("{}::", old_cross);
 
-            let all_rs = queries::all_rs_uses_in_repo(pool, file_id).await?;
             for aref in &all_rs {
                 let new_value = if aref.value == old_cross {
                     new_cross.clone()
@@ -363,7 +356,7 @@ async fn plan_decl_rename(
             // (already edited by user).
             let target = queries::upstream_export_file(pool, file_id, old_name).await?;
             if let Some(target_id) = target {
-                let root_id = find_chain_root(pool, target_id, old_name).await?;
+                let root_id = queries::find_chain_root(pool, target_id, old_name).await?;
 
                 // Rename ExportName in the root declaring file
                 let export_refs = queries::export_ref_in_file(pool, root_id, old_name).await?;
@@ -382,10 +375,9 @@ async fn plan_decl_rename(
                 }
 
                 // Propagate downstream from root, skipping the originating file
-                let mut visited = std::collections::HashSet::new();
-                rename_chain_step(
+                rename_through_reexports_skip(
                     pool, root_id, old_name, new_name,
-                    &source_file, edits, &mut visited, Some(&source_file),
+                    &source_file, edits, Some(&source_file),
                 ).await?;
             }
         }
@@ -397,38 +389,14 @@ async fn plan_decl_rename(
     Ok(())
 }
 
-/// Walk upstream through re-export chains to find the root declaring file.
-///
-/// Starting from `file_id`, check if this file also imports `name` from an
-/// upstream file. If so, follow the chain. The root is the file that exports
-/// `name` without importing it from somewhere else.
-async fn find_chain_root(
-    pool: &SqlitePool,
-    file_id: i64,
-    name: &str,
-) -> anyhow::Result<i64> {
-    let mut current = file_id;
-    let mut visited = std::collections::HashSet::new();
-    loop {
-        if !visited.insert(current) {
-            break; // cycle detected
-        }
-        match queries::upstream_export_file(pool, current, name).await? {
-            Some(upstream_id) => current = upstream_id,
-            None => break, // current is the root
-        }
-    }
-    Ok(current)
-}
 
-/// Follow re-export chains transitively for a renamed name.
+/// Follow re-export chains transitively for a renamed name using iterative BFS.
 ///
 /// Given that `old_name` was renamed to `new_name` in `source_file_id`:
 /// 1. Find all files that import `old_name` from `source_file_id` (direct consumers)
 /// 2. Find relay files that re-export `old_name` from `source_file_id` without aliasing
-/// 3. For each relay, rename its ImportName ref and recurse (its consumers also need updates)
+/// 3. Enqueue each relay for the same treatment (its consumers also need updates)
 ///
-/// Cycle detection via `visited` set prevents infinite loops in pathological re-export cycles.
 /// `skip_abs_path`: if set, refs in files matching this absolute path are not edited
 /// (used to skip the file the user already changed when propagating upstream).
 async fn rename_through_reexports(
@@ -439,53 +407,49 @@ async fn rename_through_reexports(
     original_source_file: &str,
     edits: &mut Vec<Edit>,
 ) -> anyhow::Result<()> {
-    let mut visited = std::collections::HashSet::new();
-    rename_chain_step(pool, source_file_id, old_name, new_name, original_source_file, edits, &mut visited, None).await
+    rename_through_reexports_skip(pool, source_file_id, old_name, new_name, original_source_file, edits, None).await
 }
 
-async fn rename_chain_step(
+async fn rename_through_reexports_skip(
     pool: &SqlitePool,
     source_file_id: i64,
     old_name: &str,
     new_name: &str,
     original_source_file: &str,
     edits: &mut Vec<Edit>,
-    visited: &mut std::collections::HashSet<i64>,
     skip_abs_path: Option<&str>,
 ) -> anyhow::Result<()> {
-    if !visited.insert(source_file_id) {
-        return Ok(());
-    }
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::from([source_file_id]);
 
-    // Direct consumers: files that `import { old_name } from <source_file>`
-    let affected = queries::import_names_from_file(pool, source_file_id, old_name).await?;
-    for aref in &affected {
-        let abs = aref.source_abs_path();
-        if skip_abs_path.is_some_and(|s| s == abs) {
+    while let Some(fid) = queue.pop_front() {
+        if !visited.insert(fid) {
             continue;
         }
-        edits.push(Edit {
-            file_path: abs,
-            span_start: aref.span_start,
-            span_end: aref.span_end,
-            new_value: new_name.to_string(),
-            reason: EditReason::DeclRename {
-                old_name: old_name.to_string(),
-                new_name: new_name.to_string(),
-                source_file: original_source_file.to_string(),
-            },
-        });
-    }
 
-    // Relay files: re-export old_name from source_file without aliasing.
-    // These are barrel files whose consumers also need updating.
-    let relays = queries::reexport_relay_file_ids(pool, source_file_id, old_name).await?;
-    for relay_file_id in relays {
-        // Recurse: consumers of the relay file also import old_name transitively.
-        Box::pin(rename_chain_step(
-            pool, relay_file_id, old_name, new_name,
-            original_source_file, edits, visited, skip_abs_path,
-        )).await?;
+        // Direct consumers: files that `import { old_name } from <fid>`
+        let affected = queries::import_names_from_file(pool, fid, old_name).await?;
+        for aref in &affected {
+            let abs = aref.source_abs_path();
+            if skip_abs_path.is_some_and(|s| s == abs) {
+                continue;
+            }
+            edits.push(Edit {
+                file_path: abs,
+                span_start: aref.span_start,
+                span_end: aref.span_end,
+                new_value: new_name.to_string(),
+                reason: EditReason::DeclRename {
+                    old_name: old_name.to_string(),
+                    new_name: new_name.to_string(),
+                    source_file: original_source_file.to_string(),
+                },
+            });
+        }
+
+        // Relay files: re-export old_name without aliasing. Enqueue for BFS.
+        let relays = queries::reexport_relay_file_ids(pool, fid, old_name).await?;
+        queue.extend(relays);
     }
 
     Ok(())
