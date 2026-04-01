@@ -135,7 +135,7 @@ mod tests {
         let repo = RepoConfig {
             name: "test".into(),
             path: "/tmp/test".into(),
-            branches: Some(vec!["main".into(), "release/v3".into()]),
+            revs: Some(vec!["main".into(), "release/v3".into()]),
             filter: Some(FilterConfig {
                 mode: FilterMode::Exclude,
                 exclude: Some(vec!["vendor/**".into()]),
@@ -150,6 +150,7 @@ mod tests {
                 }),
                 scan: None,
             }]),
+            exclude_revs: None,
         };
 
         // branch override wins for release/v3
@@ -172,9 +173,10 @@ mod tests {
         let repo = RepoConfig {
             name: "bare".into(),
             path: "/tmp/bare".into(),
-            branches: None,
+            revs: None,
             filter: None,
             branch_overrides: None,
+            exclude_revs: None,
         };
 
         let result = resolve_filter(Some(&global), &repo, "main");

@@ -35,10 +35,11 @@ pub enum Slot {
         arg: Option<String>,
         body: String,
     },
-    /// A match slot: `match($CAPTURE, kind)`.
+    /// A match slot: `match($CAPTURE, kind)` or `match($CAPTURE, kind, IS_REPO)`.
     Match {
         capture: String,
         kind: String,
+        scan: Option<ScanRole>,
     },
 }
 
@@ -76,6 +77,15 @@ impl Tag {
             _ => None,
         }
     }
+}
+
+/// Annotation on a match slot indicating this value drives demand scanning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanRole {
+    /// This match's value is a repository name to scan.
+    Repo,
+    /// This match's value is a rev (tag/branch) to scan.
+    Rev,
 }
 
 /// A query rule: `query head($A, $C) :- rel($A, $B), head($B, $C);`

@@ -43,6 +43,10 @@ pub struct RawRef {
     /// e.g. "dependencies/express/version" or "paths//v1/widgets/post/operationId".
     /// Used by anti-unification to reconstruct selectors from pairs of refs.
     pub node_path: Option<String>,
+    /// When set, this ref drives demand scanning.
+    /// "repo" = value is a repository name, "rev" = value is a tag/branch to scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan: Option<String>,
 }
 
 /// Trait for language-specific extractors.

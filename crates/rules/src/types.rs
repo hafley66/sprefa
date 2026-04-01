@@ -473,4 +473,8 @@ pub struct MatchDef {
     /// Name of another capture to use as parent_key (links related refs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// When set, this match's value drives demand scanning.
+    /// "repo" = value is a repository name, "rev" = value is a tag/branch to scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan: Option<String>,
 }

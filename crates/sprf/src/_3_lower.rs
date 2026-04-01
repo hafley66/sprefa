@@ -108,11 +108,16 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
                     index,
                 );
             }
-            Slot::Match { capture, kind } => {
+            Slot::Match { capture, kind, scan } => {
+                let scan_str = scan.map(|r| match r {
+                    crate::_0_ast::ScanRole::Repo => "repo".to_string(),
+                    crate::_0_ast::ScanRole::Rev => "rev".to_string(),
+                });
                 create_matches.push(MatchDef {
                     capture: capture.clone(),
                     kind: kind.clone(),
                     parent: None,
+                    scan: scan_str,
                 });
             }
             Slot::Tagged { tag, arg, body } => match tag {

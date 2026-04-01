@@ -1,21 +1,20 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
 
-use sprefa_index::normalize;
+use sprefa_index::{GitRev, normalize};
 
 const STR_CHUNK: usize = 2000;
 const META_CHUNK: usize = 2000;
 
 /// Intern repo-level metadata strings and create repo_refs + matches.
 ///
-/// Inserts `repo_name`, `repo_org`, each git tag, and each branch as
+/// Inserts `repo_name`, `repo_org`, and each git rev as
 /// repo-anchored refs that participate in the match_links system.
 pub async fn flush_repo_meta(
     db: &SqlitePool,
     repo_name: &str,
     org: Option<&str>,
-    tag_names: &[String],
-    branch_names: &[String],
+    revs: &[GitRev],
 ) -> Result<usize> {
     let repo_id: Option<i64> =
         sqlx::query_scalar("SELECT id FROM repos WHERE name = ?")
@@ -33,11 +32,9 @@ pub async fn flush_repo_meta(
     if let Some(org) = org {
         entities.push((org, "repo_org"));
     }
-    for tag in tag_names {
-        entities.push((tag, "git_tag"));
-    }
-    for branch in branch_names {
-        entities.push((branch, "branch_name"));
+    for rev in revs {
+        let kind = if rev.is_tag { "git_tag" } else { "branch_name" };
+        entities.push((&rev.name, kind));
     }
 
     if entities.is_empty() {

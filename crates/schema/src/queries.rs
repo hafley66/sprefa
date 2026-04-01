@@ -161,17 +161,17 @@ pub async fn search_refs(
 ) -> anyhow::Result<Vec<QueryHit>> {
     let scope = scope.unwrap_or(BranchScope::Committed);
 
-    let (branch_join, branch_where) = match scope {
+    let (rev_join, rev_where) = match scope {
         BranchScope::All => ("", ""),
         BranchScope::Committed => (
-            "JOIN branch_files bf ON bf.file_id = f.id AND bf.repo_id = f.repo_id \
-             JOIN repo_branches rb ON rb.repo_id = bf.repo_id AND rb.branch = bf.branch",
-            "AND rb.is_working_tree = 0",
+            "JOIN rev_files rf ON rf.file_id = f.id AND rf.repo_id = f.repo_id \
+             JOIN repo_revs rr ON rr.repo_id = rf.repo_id AND rr.rev = rf.rev",
+            "AND rr.is_working_tree = 0",
         ),
         BranchScope::Local => (
-            "JOIN branch_files bf ON bf.file_id = f.id AND bf.repo_id = f.repo_id \
-             JOIN repo_branches rb ON rb.repo_id = bf.repo_id AND rb.branch = bf.branch",
-            "AND rb.is_working_tree = 1",
+            "JOIN rev_files rf ON rf.file_id = f.id AND rf.repo_id = f.repo_id \
+             JOIN repo_revs rr ON rr.repo_id = rf.repo_id AND rr.rev = rf.rev",
+            "AND rr.is_working_tree = 1",
         ),
     };
 
@@ -188,9 +188,9 @@ pub async fn search_refs(
         LEFT JOIN matches m ON m.ref_id = r.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
-        {branch_join}
+        {rev_join}
         WHERE fts.norm MATCH ?
-        {branch_where}
+        {rev_where}
 
         UNION ALL
 
@@ -283,114 +283,70 @@ pub async fn count_refs_for_repo(pool: &SqlitePool, repo_id: i64) -> anyhow::Res
     Ok(count)
 }
 
-// -- branch_files --
+// -- rev_files --
 
-pub async fn upsert_branch_file(
+pub async fn upsert_rev_file(
     pool: &SqlitePool,
     repo_id: i64,
-    branch: &str,
+    rev: &str,
     file_id: i64,
 ) -> anyhow::Result<()> {
     sqlx::query(
         r#"
-        INSERT INTO branch_files (repo_id, branch, file_id)
+        INSERT INTO rev_files (repo_id, rev, file_id)
         VALUES (?, ?, ?)
-        ON CONFLICT(repo_id, branch, file_id) DO NOTHING
+        ON CONFLICT(repo_id, rev, file_id) DO NOTHING
         "#,
     )
     .bind(repo_id)
-    .bind(branch)
+    .bind(rev)
     .bind(file_id)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-// -- repo_branches --
+// -- repo_revs --
 
-pub async fn upsert_repo_branch(
+pub async fn upsert_repo_rev(
     pool: &SqlitePool,
     repo_id: i64,
-    branch: &str,
+    rev: &str,
     git_hash: Option<&str>,
+    is_working_tree: bool,
+    is_semver: bool,
 ) -> anyhow::Result<()> {
     sqlx::query(
         r#"
-        INSERT INTO repo_branches (repo_id, branch, git_hash)
-        VALUES (?, ?, ?)
-        ON CONFLICT(repo_id, branch) DO UPDATE SET git_hash = excluded.git_hash
+        INSERT INTO repo_revs (repo_id, rev, git_hash, is_working_tree, is_semver)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(repo_id, rev) DO UPDATE SET
+            git_hash = excluded.git_hash,
+            is_working_tree = excluded.is_working_tree,
+            is_semver = excluded.is_semver
         "#,
     )
     .bind(repo_id)
-    .bind(branch)
+    .bind(rev)
     .bind(git_hash)
+    .bind(is_working_tree)
+    .bind(is_semver)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-pub async fn get_repo_branch_hash(
+pub async fn get_repo_rev_hash(
     pool: &SqlitePool,
     repo_id: i64,
-    branch: &str,
+    rev: &str,
 ) -> anyhow::Result<Option<String>> {
     let hash = sqlx::query_scalar::<_, String>(
-        "SELECT git_hash FROM repo_branches WHERE repo_id = ? AND branch = ?"
+        "SELECT git_hash FROM repo_revs WHERE repo_id = ? AND rev = ?"
     )
     .bind(repo_id)
-    .bind(branch)
+    .bind(rev)
     .fetch_optional(pool)
     .await?;
     Ok(hash)
-}
-
-// -- git_tags --
-
-/// Bulk upsert git tags for a repo. Chunked to stay within SQLite param limits.
-pub async fn upsert_git_tags(
-    pool: &SqlitePool,
-    repo_id: i64,
-    tags: &[(String, Option<String>, bool)], // (tag_name, commit_hash, is_semver)
-) -> anyhow::Result<usize> {
-    if tags.is_empty() {
-        return Ok(0);
-    }
-
-    let mut total = 0usize;
-    // 4 params per row, stay well under SQLite's 32766 limit.
-    for chunk in tags.chunks(2000) {
-        let ph = chunk.iter().map(|_| "(?,?,?,?)").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "INSERT INTO git_tags (repo_id, tag_name, commit_hash, is_semver) VALUES {ph}
-             ON CONFLICT(repo_id, tag_name) DO UPDATE SET
-               commit_hash = excluded.commit_hash,
-               is_semver = excluded.is_semver"
-        );
-        let mut q = sqlx::query(&sql);
-        for (name, hash, semver) in chunk {
-            q = q.bind(repo_id).bind(name).bind(hash.as_deref()).bind(*semver);
-        }
-        q.execute(pool).await?;
-        let changes: i64 = sqlx::query_scalar("SELECT changes()")
-            .fetch_one(pool).await?;
-        total += changes as usize;
-    }
-    Ok(total)
-}
-
-pub async fn get_git_tags(
-    pool: &SqlitePool,
-    repo_id: i64,
-) -> anyhow::Result<Vec<super::GitTag>> {
-    let rows = sqlx::query_as::<_, (i64, i64, String, Option<String>, bool, Option<String>)>(
-        "SELECT id, repo_id, tag_name, commit_hash, is_semver, created_at
-         FROM git_tags WHERE repo_id = ? ORDER BY tag_name"
-    )
-    .bind(repo_id)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows.into_iter().map(|(id, repo_id, tag_name, commit_hash, is_semver, created_at)| {
-        super::GitTag { id, repo_id, tag_name, commit_hash, is_semver, created_at }
-    }).collect())
 }

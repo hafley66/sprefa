@@ -278,8 +278,8 @@ fn emit_package_lock_deps() {
     ];
 
     let emits = vec![
-        MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
-        MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+        MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None },
+        MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()), scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);
@@ -311,8 +311,8 @@ fn emit_pnpm_lock_deps_with_regex_split() {
     };
 
     let emits = vec![
-            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
-            MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None },
+            MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()), scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);
@@ -352,8 +352,8 @@ fn emit_helm_image_object_capture() {
     ];
 
     let emits = vec![
-            MatchDef { capture: "repo".into(), kind: kind::DEP_NAME.into(), parent: None },
-            MatchDef { capture: "tag".into(), kind: kind::DEP_VERSION.into(), parent: Some("repo".into()) },
+            MatchDef { capture: "repo".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None },
+            MatchDef { capture: "tag".into(), kind: kind::DEP_VERSION.into(), parent: Some("repo".into()), scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);
@@ -384,7 +384,7 @@ fn cross_lockfile_same_deps() {
         SelectStep::Key { name: "dependencies".into(), capture: None },
         SelectStep::KeyMatch { pattern: "*".into(), capture: Some("name".into()) },
     ];
-    let npm_emits = vec![MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None }];
+    let npm_emits = vec![MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None }];
 
     let pnpm_steps = vec![
         SelectStep::Key { name: "packages".into(), capture: None },
@@ -395,7 +395,7 @@ fn cross_lockfile_same_deps() {
         pattern: r"(?P<name>[^@]+)@(?P<version>.+)".into(),
         full_match: true,
     };
-    let pnpm_emits = vec![MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None }];
+    let pnpm_emits = vec![MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None }];
 
     let npm_refs: Vec<_> = walk::walk_select(&npm_source, &npm_steps).iter()
         .flat_map(|r| emit::create_refs(r, &npm_emits, None, "test"))
@@ -512,8 +512,8 @@ fn tsp_workspace_deps() {
     ];
 
     let emits = vec![
-            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
-            MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None },
+            MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()), scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);
@@ -548,8 +548,8 @@ fn tsp_package_json_exports() {
     ];
 
     let emits = vec![
-            MatchDef { capture: "export_path".into(), kind: kind::EXPORT_NAME.into(), parent: None },
-            MatchDef { capture: "file_path".into(), kind: kind::IMPORT_PATH.into(), parent: Some("export_path".into()) },
+            MatchDef { capture: "export_path".into(), kind: kind::EXPORT_NAME.into(), parent: None, scan: None },
+            MatchDef { capture: "file_path".into(), kind: kind::IMPORT_PATH.into(), parent: Some("export_path".into()), scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);
@@ -578,7 +578,7 @@ fn tsp_tsconfig_jsx_import_source() {
     ];
 
     let emits = vec![
-            MatchDef { capture: "pkg".into(), kind: kind::DEP_NAME.into(), parent: None },
+            MatchDef { capture: "pkg".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);
@@ -610,7 +610,7 @@ fn tsp_cargo_toml_deps() {
     ];
 
     let emits = vec![
-            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
+            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);
@@ -644,8 +644,8 @@ fn tsp_pnpm_lock_scoped_packages() {
     };
 
     let emits = vec![
-            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
-            MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None },
+            MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()), scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);
@@ -688,8 +688,8 @@ fn tsp_pnpm_lock_mixed_scoped_and_unscoped() {
     };
 
     let emits = vec![
-            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None },
-            MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()) },
+            MatchDef { capture: "name".into(), kind: kind::DEP_NAME.into(), parent: None, scan: None },
+            MatchDef { capture: "version".into(), kind: kind::DEP_VERSION.into(), parent: Some("name".into()), scan: None },
     ];
 
     let walk_results = walk::walk_select(&source, &steps);

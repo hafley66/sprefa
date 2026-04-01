@@ -19,7 +19,7 @@ sources: []
 repos:
   - name: frontend
     path: /home/me/frontend
-    branches:
+    revs:
       - main
       - develop
     filter:
@@ -37,7 +37,7 @@ repos:
         scan: ~
   - name: backend
     path: /home/me/backend
-    branches: ~
+    revs: ~
     filter: ~
     branch_overrides: ~
 filter:

@@ -25,6 +25,8 @@ struct ResolvedRef {
     // For matches insertion after ref_id is known
     kind: String,
     rule_name: String,
+    /// Demand-scan role: "repo" or "rev". Written to match_labels after match insertion.
+    scan: Option<String>,
 }
 
 #[tracing::instrument(skip(db, config, files, normalize_config), fields(repo = %config.name, branch = %branch, file_count = files.len()))]
@@ -47,10 +49,10 @@ pub async fn flush(
     .fetch_one(db)
     .await?;
 
-    let is_wt = super::is_wt_branch(branch);
+    let is_wt = super::is_wt_rev(branch);
     sqlx::query(
-        "INSERT INTO repo_branches (repo_id, branch, is_working_tree) VALUES (?, ?, ?)
-         ON CONFLICT(repo_id, branch) DO UPDATE SET is_working_tree = excluded.is_working_tree",
+        "INSERT INTO repo_revs (repo_id, rev, is_working_tree) VALUES (?, ?, ?)
+         ON CONFLICT(repo_id, rev) DO UPDATE SET is_working_tree = excluded.is_working_tree",
     )
     .bind(repo_id)
     .bind(branch)
@@ -143,26 +145,26 @@ pub async fn flush(
     .into_iter()
     .collect();
 
-    // Bulk insert branch_files.
-    // Working-tree branches do full-replace: the scanner knows the complete
-    // on-disk file set, so stale entries must be removed. Committed branches
+    // Bulk insert rev_files.
+    // Working-tree revs do full-replace: the scanner knows the complete
+    // on-disk file set, so stale entries must be removed. Committed revs
     // stay additive (files accumulate across incremental fetches).
     if is_wt {
-        sqlx::query("DELETE FROM branch_files WHERE repo_id = ? AND branch = ?")
+        sqlx::query("DELETE FROM rev_files WHERE repo_id = ? AND rev = ?")
             .bind(repo_id)
             .bind(branch)
             .execute(&mut *tx)
             .await?;
     }
 
-    let branch_file_ids: Vec<i64> = files.iter()
+    let rev_file_ids: Vec<i64> = files.iter()
         .filter_map(|f| file_id_map.get(&f.rel_path).copied())
         .collect();
 
-    for chunk in branch_file_ids.chunks(FILE_CHUNK) {
+    for chunk in rev_file_ids.chunks(FILE_CHUNK) {
         let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "INSERT OR IGNORE INTO branch_files (repo_id, branch, file_id) VALUES {ph}"
+            "INSERT OR IGNORE INTO rev_files (repo_id, rev, file_id) VALUES {ph}"
         );
         let mut q = sqlx::query(&sql);
         for file_id in chunk {
@@ -194,6 +196,7 @@ pub async fn flush(
                 node_path: r.node_path.clone(),
                 kind: r.kind.clone(),
                 rule_name: r.rule_name.clone(),
+                scan: r.scan.clone(),
             });
         }
     }
@@ -258,16 +261,62 @@ pub async fn flush(
         q.execute(&mut *tx).await?;
     }
 
+    // Insert match_labels for scan-annotated refs (IS_REPO / IS_REV).
+    let scan_refs: Vec<(&ResolvedRef, i64)> = resolved_refs.iter()
+        .filter(|r| r.scan.is_some())
+        .filter_map(|r| {
+            let ref_id = ref_id_map.get(&(r.file_id, r.string_id, r.span_start))?;
+            Some((r, *ref_id))
+        })
+        .collect();
+
+    if !scan_refs.is_empty() {
+        // Read back match IDs for these refs.
+        let scan_ref_ids: Vec<i64> = scan_refs.iter().map(|(_, rid)| *rid).collect();
+        let mut match_id_map: HashMap<i64, i64> = HashMap::new();
+        for chunk in scan_ref_ids.chunks(FILE_CHUNK) {
+            let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!("SELECT id, ref_id FROM matches WHERE ref_id IN ({ph})");
+            let mut q = sqlx::query_as::<_, (i64, i64)>(&sql);
+            for rid in chunk { q = q.bind(rid); }
+            for (mid, rid) in q.fetch_all(&mut *tx).await? {
+                match_id_map.insert(rid, mid);
+            }
+        }
+
+        // Bulk insert match_labels.
+        let label_rows: Vec<(i64, &str)> = scan_refs.iter()
+            .filter_map(|(r, ref_id)| {
+                let match_id = match_id_map.get(ref_id)?;
+                Some((*match_id, r.scan.as_deref().unwrap()))
+            })
+            .collect();
+
+        for chunk in label_rows.chunks(MATCH_CHUNK) {
+            let ph = chunk.iter().map(|_| "(?, 'scan', ?)").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "INSERT OR IGNORE INTO match_labels (match_id, key, value) VALUES {ph}"
+            );
+            let mut q = sqlx::query(&sql);
+            for (match_id, scan_value) in chunk {
+                q = q.bind(match_id).bind(scan_value);
+            }
+            q.execute(&mut *tx).await?;
+        }
+
+        tracing::info!("{} scan labels inserted (IS_REPO/IS_REV)", label_rows.len());
+    }
+
     tx.commit().await?;
     Ok(refs_inserted)
 }
 
 /// Remove files that were deleted in a git diff. Cascades through
-/// branch_files, match_links, matches, refs, and files.
+/// rev_files, match_links, matches, refs, and files.
 ///
 /// Uses a temp table to resolve file IDs once, then five non-looping
 /// DELETEs that join against it.
-pub async fn delete_branch_files_by_paths(
+pub async fn delete_rev_files_by_paths(
     db: &SqlitePool,
     repo_name: &str,
     branch: &str,
@@ -320,7 +369,7 @@ pub async fn delete_branch_files_by_paths(
     ).execute(&mut *tx).await?;
 
     sqlx::query(
-        "DELETE FROM branch_files WHERE repo_id = ? AND branch = ? AND file_id IN (SELECT id FROM _dead_files)"
+        "DELETE FROM rev_files WHERE repo_id = ? AND rev = ? AND file_id IN (SELECT id FROM _dead_files)"
     ).bind(repo_id).bind(branch).execute(&mut *tx).await?;
     let deleted: i64 = sqlx::query_scalar("SELECT changes()")
         .fetch_one(&mut *tx).await?;
@@ -426,9 +475,10 @@ mod tests {
         RepoConfig {
             name: name.to_string(),
             path: "/tmp/test".to_string(),
-            branches: None,
+            revs: None,
             filter: None,
             branch_overrides: None,
+            exclude_revs: None,
         }
     }
 
@@ -442,6 +492,7 @@ mod tests {
             is_path: false,
             parent_key: None,
             node_path: None,
+            scan: None,
         }
     }
 
@@ -531,6 +582,7 @@ mod tests {
                     is_path: false,
                     parent_key: Some("express".to_string()),
                     node_path: Some("dependencies/express/version".to_string()),
+                    scan: None,
                 },
                 raw_ref("express", sprefa_extract::kind::DEP_NAME),
             ]),
@@ -617,7 +669,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flush_skipped_files_get_branch_files_but_no_new_refs() {
+    async fn flush_skipped_files_get_rev_files_but_no_new_refs() {
         let db = make_db().await;
 
         // First scan: insert a file with refs.
@@ -639,12 +691,12 @@ mod tests {
             .fetch_one(&db).await.unwrap();
         assert_eq!(refs_after, refs_before);
 
-        // Branch_files entry created for the new branch.
-        let branch_file_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM branch_files WHERE branch = 'feature'"
+        // rev_files entry created for the new rev.
+        let rev_file_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM rev_files WHERE rev = 'feature'"
         )
         .fetch_one(&db).await.unwrap();
-        assert_eq!(branch_file_count, 1);
+        assert_eq!(rev_file_count, 1);
     }
 
     #[tokio::test]
@@ -658,18 +710,18 @@ mod tests {
         flush(&db, &repo_config("myrepo"), "main+wt", files_b, None, "v1").await.unwrap();
 
         let committed: (i64,) = sqlx::query_as(
-            "SELECT is_working_tree FROM repo_branches WHERE branch = 'main'"
+            "SELECT is_working_tree FROM repo_revs WHERE rev = 'main'"
         ).fetch_one(&db).await.unwrap();
         assert_eq!(committed.0, 0);
 
         let wt: (i64,) = sqlx::query_as(
-            "SELECT is_working_tree FROM repo_branches WHERE branch = 'main+wt'"
+            "SELECT is_working_tree FROM repo_revs WHERE rev = 'main+wt'"
         ).fetch_one(&db).await.unwrap();
         assert_eq!(wt.0, 1);
     }
 
     #[tokio::test]
-    async fn flush_wt_replaces_branch_files() {
+    async fn flush_wt_replaces_rev_files() {
         let db = make_db().await;
 
         // First wt flush: a.ts + b.ts
@@ -680,7 +732,7 @@ mod tests {
         flush(&db, &repo_config("myrepo"), "main+wt", files1, None, "v1").await.unwrap();
 
         let count1: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM branch_files WHERE branch = 'main+wt'"
+            "SELECT COUNT(*) FROM rev_files WHERE rev = 'main+wt'"
         ).fetch_one(&db).await.unwrap();
         assert_eq!(count1, 2);
 
@@ -692,13 +744,13 @@ mod tests {
         flush(&db, &repo_config("myrepo"), "main+wt", files2, None, "v1").await.unwrap();
 
         let count2: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM branch_files WHERE branch = 'main+wt'"
+            "SELECT COUNT(*) FROM rev_files WHERE rev = 'main+wt'"
         ).fetch_one(&db).await.unwrap();
         assert_eq!(count2, 2);
 
         // a.ts should be gone, c.ts should be present
         let paths: Vec<String> = sqlx::query_scalar(
-            "SELECT f.path FROM branch_files bf JOIN files f ON bf.file_id = f.id WHERE bf.branch = 'main+wt' ORDER BY f.path"
+            "SELECT f.path FROM rev_files rf JOIN files f ON rf.file_id = f.id WHERE rf.rev = 'main+wt' ORDER BY f.path"
         ).fetch_all(&db).await.unwrap();
         assert_eq!(paths, vec!["src/b.ts", "src/c.ts"]);
     }
@@ -719,12 +771,12 @@ mod tests {
 
         // Both should survive -- committed flush is additive
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM branch_files WHERE branch = 'main'"
+            "SELECT COUNT(*) FROM rev_files WHERE rev = 'main'"
         ).fetch_one(&db).await.unwrap();
         assert_eq!(count, 2);
 
         let paths: Vec<String> = sqlx::query_scalar(
-            "SELECT f.path FROM branch_files bf JOIN files f ON bf.file_id = f.id WHERE bf.branch = 'main' ORDER BY f.path"
+            "SELECT f.path FROM rev_files rf JOIN files f ON rf.file_id = f.id WHERE rf.rev = 'main' ORDER BY f.path"
         ).fetch_all(&db).await.unwrap();
         assert_eq!(paths, vec!["src/a.ts", "src/b.ts"]);
     }
@@ -882,7 +934,7 @@ mod tests {
         assert_eq!(joined, refs_before);
     }
 
-    // -- delete_branch_files_by_paths tests --
+    // -- delete_rev_files_by_paths tests --
 
     #[tokio::test]
     async fn delete_cascades_through_all_tables() {
@@ -897,7 +949,7 @@ mod tests {
         ];
         flush(&db, &repo_config("myrepo"), "main", files, None, "v1").await.unwrap();
 
-        let deleted = delete_branch_files_by_paths(
+        let deleted = delete_rev_files_by_paths(
             &db, "myrepo", "main", &["src/a.ts".into()],
         ).await.unwrap();
         assert_eq!(deleted, 1);

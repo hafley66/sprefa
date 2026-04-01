@@ -46,14 +46,17 @@ impl Scanner {
 
         let repo_path = PathBuf::from(&config.path);
 
-        // Read git tags (for ExtractContext and DB persistence).
-        let git_tags = {
+        // Read all git revs (branches + tags) for ExtractContext and DB persistence.
+        let git_revs = {
             let rp = repo_path.clone();
             tokio::task::spawn_blocking(move || {
-                sprefa_index::read_git_tags(&rp).unwrap_or_default()
+                sprefa_index::read_git_revs(&rp).unwrap_or_default()
             }).await?
         };
-        let tag_names: Vec<String> = git_tags.iter().map(|(n, _)| n.clone()).collect();
+        let tag_names: Vec<String> = git_revs.iter()
+            .filter(|r| r.is_tag)
+            .map(|r| r.name.clone())
+            .collect();
 
         let extractors = Arc::clone(&self.extractors);
         let skip_set = scan_ctx.skip_set;
@@ -74,8 +77,8 @@ impl Scanner {
         let files_skipped = extracted.iter().filter(|f| f.was_skipped).count();
 
         tracing::info!(
-            "{}/{}: {} files ({} skipped, {} tags, binary={})",
-            config.name, branch, files_scanned, files_skipped, git_tags.len(),
+            "{}/{}: {} files ({} skipped, {} revs, binary={})",
+            config.name, branch, files_scanned, files_skipped, git_revs.len(),
             &BINARY_HASH[..8.min(BINARY_HASH.len())],
         );
 
@@ -88,23 +91,12 @@ impl Scanner {
             BINARY_HASH,
         ).await?;
 
-        // Persist git tags.
-        let tag_rows: Vec<(String, Option<String>, bool)> = git_tags.into_iter()
-            .map(|(name, hash)| {
-                let semver = sprefa_index::is_semver(&name);
-                (name, hash, semver)
-            })
-            .collect();
-        sprefa_cache::flush_git_tags(&self.db, &config.name, &tag_rows).await?;
-
-        // Intern repo-level metadata (repo name, git tags, branches) as linkable entities.
-        let meta_tag_names: Vec<String> = tag_rows.iter().map(|(n, _, _)| n.clone()).collect();
+        // Intern repo-level metadata (repo name, git revs) as linkable entities.
         sprefa_cache::flush_repo_meta(
             &self.db,
             &config.name,
             None, // org -- not in RepoConfig yet
-            &meta_tag_names,
-            &[branch.to_string()],
+            &git_revs,
         ).await?;
 
         let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;
@@ -115,8 +107,8 @@ impl Scanner {
             config.name, branch, refs_inserted, targets_resolved, links_created,
         );
 
-        // Read HEAD sha for callers to persist (only for committed branches).
-        let new_git_hash = if !sprefa_cache::is_wt_branch(branch) {
+        // Read HEAD sha for callers to persist (only for committed revs).
+        let new_git_hash = if !sprefa_cache::is_wt_rev(branch) {
             let repo_path = PathBuf::from(&config.path);
             tokio::task::spawn_blocking(move || -> Option<String> {
                 let repo = git2::Repository::open(&repo_path).ok()?;
@@ -166,22 +158,25 @@ impl Scanner {
         let repo_path = PathBuf::from(&config.path);
         let old_sha_owned = old_sha.to_string();
 
-        let (diff, git_tags) = tokio::task::spawn_blocking({
+        let (diff, git_revs) = tokio::task::spawn_blocking({
             let repo_path = repo_path.clone();
             move || -> Result<_> {
                 let diff = sprefa_index::diff_files(&repo_path, &old_sha_owned, compiled_filter.as_ref())?;
-                let tags = sprefa_index::read_git_tags(&repo_path).unwrap_or_default();
-                Ok((diff, tags))
+                let revs = sprefa_index::read_git_revs(&repo_path).unwrap_or_default();
+                Ok((diff, revs))
             }
         }).await??;
-        let tag_names: Vec<String> = git_tags.iter().map(|(n, _)| n.clone()).collect();
+        let tag_names: Vec<String> = git_revs.iter()
+            .filter(|r| r.is_tag)
+            .map(|r| r.name.clone())
+            .collect();
 
         let files_deleted = if !diff.deleted.is_empty() {
             tracing::info!(
                 "{}/{}: {} files deleted in diff",
                 config.name, branch, diff.deleted.len(),
             );
-            sprefa_cache::delete_branch_files_by_paths(&self.db, &config.name, branch, &diff.deleted).await?
+            sprefa_cache::delete_rev_files_by_paths(&self.db, &config.name, branch, &diff.deleted).await?
         } else {
             0
         };
@@ -197,15 +192,6 @@ impl Scanner {
         } else {
             0
         };
-
-        // Persist git tags (even if no files changed).
-        let tag_rows: Vec<(String, Option<String>, bool)> = git_tags.into_iter()
-            .map(|(name, hash)| {
-                let semver = sprefa_index::is_semver(&name);
-                (name, hash, semver)
-            })
-            .collect();
-        sprefa_cache::flush_git_tags(&self.db, &config.name, &tag_rows).await?;
 
         if diff.changed.is_empty() {
             tracing::info!("{}/{}: no modified files to extract", config.name, branch);
@@ -244,8 +230,8 @@ impl Scanner {
         let files_skipped = extracted.iter().filter(|f| f.was_skipped).count();
 
         tracing::info!(
-            "{}/{}: diff scan {} changed files ({} skipped, {} tags, binary={})",
-            config.name, branch, files_scanned, files_skipped, tag_rows.len(),
+            "{}/{}: diff scan {} changed files ({} skipped, {} revs, binary={})",
+            config.name, branch, files_scanned, files_skipped, git_revs.len(),
             &BINARY_HASH[..8.min(BINARY_HASH.len())],
         );
 
@@ -259,13 +245,11 @@ impl Scanner {
         ).await?;
 
         // Intern repo-level metadata as linkable entities.
-        let meta_tag_names: Vec<String> = tag_rows.iter().map(|(n, _, _)| n.clone()).collect();
         sprefa_cache::flush_repo_meta(
             &self.db,
             &config.name,
             None,
-            &meta_tag_names,
-            &[branch.to_string()],
+            &git_revs,
         ).await?;
 
         let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;
@@ -287,6 +271,80 @@ impl Scanner {
             targets_resolved,
             links_created,
             new_git_hash: Some(diff.new_sha),
+        })
+    }
+
+    /// Scan a specific git revision (tag, branch sha) using the git blob reader.
+    /// No checkout needed. Stores results with `rev` as the rev key in rev_files.
+    /// Skips flush_repo_meta and resolve_import_targets (historical snapshots).
+    #[tracing::instrument(skip(self, config), fields(repo = %config.name, rev = %rev))]
+    pub async fn scan_rev(&self, config: &RepoConfig, rev: &str) -> Result<ScanResult> {
+        let filter_config = sprefa_config::resolve_filter(self.global_filter.as_ref(), config, rev);
+        let compiled_filter = filter_config
+            .as_ref()
+            .map(CompiledFilter::compile)
+            .transpose()?;
+
+        let scan_ctx = sprefa_cache::load_scan_context(&self.db, &config.name, BINARY_HASH).await?;
+
+        let repo_path = PathBuf::from(&config.path);
+        let extractors = Arc::clone(&self.extractors);
+        let skip_set = scan_ctx.skip_set;
+        let repo_name = config.name.clone();
+        let rev_owned = rev.to_string();
+
+        let (files_scanned, extracted) = tokio::task::spawn_blocking(move || {
+            let ctx = ExtractContext {
+                repo: Some(&repo_name),
+                branch: Some(&rev_owned),
+                tags: &[],
+            };
+            sprefa_index::extract_rev(
+                &repo_path,
+                &rev_owned,
+                compiled_filter.as_ref(),
+                &extractors,
+                &skip_set,
+                &ctx,
+            )
+        })
+        .await??;
+
+        let files_skipped = extracted.iter().filter(|f| f.was_skipped).count();
+
+        tracing::info!(
+            "{} @ {}: {} blobs ({} skipped, binary={})",
+            config.name, rev, files_scanned, files_skipped,
+            &BINARY_HASH[..8.min(BINARY_HASH.len())],
+        );
+
+        let refs_inserted = sprefa_cache::flush(
+            &self.db,
+            config,
+            rev,
+            extracted,
+            self.normalize_config.as_ref(),
+            BINARY_HASH,
+        ).await?;
+
+        let links_created = sprefa_cache::resolve_match_links(&self.db, &config.name, &self.link_rules).await?;
+
+        tracing::info!(
+            "{} @ {}: {} refs, {} match links",
+            config.name, rev, refs_inserted, links_created,
+        );
+
+        Ok(ScanResult {
+            repo: config.name.clone(),
+            branch: rev.to_string(),
+            files_scanned,
+            refs_inserted,
+            files_skipped,
+            files_deleted: 0,
+            files_renamed: 0,
+            targets_resolved: 0,
+            links_created,
+            new_git_hash: None,
         })
     }
 

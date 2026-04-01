@@ -164,32 +164,22 @@ pub struct Ref {
     pub node_path: Option<String>,
 }
 
-/// Row from the branch_files junction table.
+/// Row from the rev_files junction table.
 #[derive(Debug, Clone, Serialize)]
-pub struct BranchFile {
+pub struct RevFile {
     pub repo_id: i64,
-    pub branch: String,
+    pub rev: String,
     pub file_id: i64,
 }
 
-/// Row from the repo_branches table.
+/// Row from the repo_revs table.
 #[derive(Debug, Clone, Serialize)]
-pub struct RepoBranch {
+pub struct RepoRev {
     pub repo_id: i64,
-    pub branch: String,
+    pub rev: String,
     pub git_hash: Option<String>,
     pub is_working_tree: bool,
-}
-
-/// Row from the git_tags table.
-#[derive(Debug, Clone, Serialize)]
-pub struct GitTag {
-    pub id: i64,
-    pub repo_id: i64,
-    pub tag_name: String,
-    pub commit_hash: Option<String>,
     pub is_semver: bool,
-    pub created_at: Option<String>,
 }
 
 /// Row from the repo_refs table.

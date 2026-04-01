@@ -159,7 +159,7 @@ async fn scan_handler(
 
     let mut results = Vec::new();
     for repo in repos {
-        for branch in repo.branch_list() {
+        for branch in repo.rev_list() {
             match scanner.scan_repo(repo, &branch).await {
                 Ok(r) => results.push(ScanResultItem {
                     repo: r.repo,

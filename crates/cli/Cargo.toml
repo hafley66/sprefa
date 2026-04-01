@@ -17,10 +17,14 @@ sprefa_rs = { path = "../rs" }
 sprefa_server = { path = "../server" }
 sprefa_watch = { path = "../watch" }
 sprefa_sprf = { path = "../sprf" }
+sprefa_cache = { path = "../cache" }
 sprefa_extract = { path = "../extract" }
+sprefa_index = { path = "../index" }
 ghcache-client = { path = "../../../ghcacher/ghcache-client", optional = true }
 glob = { version = "0.3", optional = true }
 clap = { workspace = true }
+globset = { workspace = true }
+git2 = { workspace = true }
 
 tokio = { workspace = true }
 sqlx = { workspace = true }

@@ -7,7 +7,7 @@ use sprefa_config::CompiledFilter;
 pub struct DiffResult {
     /// Absolute paths of files added or modified (need extraction).
     pub changed: Vec<PathBuf>,
-    /// Relative paths of files deleted (need branch_files cleanup).
+    /// Relative paths of files deleted (need rev_files cleanup).
     pub deleted: Vec<String>,
     /// Pure renames where content is identical (old_rel_path, new_rel_path).
     /// These only need a path update on the files row, no re-extraction.
@@ -144,22 +144,49 @@ fn git2_list_files(repo_path: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-/// Read all tags from a git repository.
-/// Returns (tag_name, commit_hash) pairs. Annotated tags are peeled to their commit.
-pub fn read_git_tags(repo_path: &Path) -> Result<Vec<(String, Option<String>)>> {
-    let repo = git2::Repository::open(repo_path)?;
-    let tag_names = repo.tag_names(None)?;
-    let mut tags = Vec::with_capacity(tag_names.len());
+/// A git revision (branch or tag) with its commit hash.
+#[derive(Debug, Clone)]
+pub struct GitRev {
+    pub name: String,
+    pub commit_hash: String,
+    pub is_tag: bool,
+}
 
-    for name in tag_names.iter().flatten() {
-        let refname = format!("refs/tags/{name}");
-        let commit_hash = repo.find_reference(&refname).ok()
-            .and_then(|r| r.peel_to_commit().ok())
-            .map(|c| c.id().to_string());
-        tags.push((name.to_string(), commit_hash));
+/// Read all branches and tags from a git repository.
+/// Annotated tags are peeled to their commit.
+pub fn read_git_revs(repo_path: &Path) -> Result<Vec<GitRev>> {
+    let repo = git2::Repository::open(repo_path)?;
+    let mut revs = Vec::new();
+
+    for reference in repo.references()? {
+        let reference = match reference {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let refname = match reference.name() {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        let (name, is_tag) = if let Some(branch) = refname.strip_prefix("refs/heads/") {
+            (branch.to_string(), false)
+        } else if let Some(tag) = refname.strip_prefix("refs/tags/") {
+            (tag.to_string(), true)
+        } else {
+            continue;
+        };
+
+        let commit_hash = reference
+            .peel_to_commit()
+            .map(|c| c.id().to_string())
+            .unwrap_or_default();
+
+        if !commit_hash.is_empty() {
+            revs.push(GitRev { name, commit_hash, is_tag });
+        }
     }
 
-    Ok(tags)
+    Ok(revs)
 }
 
 /// Check whether a tag name looks like semver (v?MAJOR.MINOR.PATCH with optional suffix).
@@ -170,6 +197,47 @@ pub fn is_semver(name: &str) -> bool {
     let minor = parts.next().and_then(|p| p.parse::<u64>().ok());
     let patch = parts.next().and_then(|p| p.parse::<u64>().ok());
     major.is_some() && minor.is_some() && patch.is_some()
+}
+
+/// Read file contents from a git tree at an arbitrary revision (tag, branch, sha).
+/// Returns `(relative_path, blob_bytes)` pairs. No checkout needed.
+pub fn list_blobs_at_rev(
+    repo_path: &Path,
+    rev: &str,
+    filter: Option<&CompiledFilter>,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let repo = git2::Repository::open(repo_path)?;
+    let obj = repo.revparse_single(rev)?;
+    let tree = obj.peel_to_tree()?;
+
+    let mut blobs = Vec::new();
+    tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+        if entry.kind() != Some(git2::ObjectType::Blob) {
+            return git2::TreeWalkResult::Ok;
+        }
+        let name = match entry.name() {
+            Some(n) => n,
+            None => return git2::TreeWalkResult::Ok,
+        };
+        let rel = if root.is_empty() {
+            name.to_string()
+        } else {
+            format!("{root}{name}")
+        };
+        if let Some(f) = filter {
+            if !f.allows(&rel) {
+                return git2::TreeWalkResult::Ok;
+            }
+        }
+        if let Ok(obj) = entry.to_object(&repo) {
+            if let Ok(blob) = obj.peel_to_blob() {
+                blobs.push((rel, blob.content().to_vec()));
+            }
+        }
+        git2::TreeWalkResult::Ok
+    })?;
+
+    Ok(blobs)
 }
 
 fn walkdir_files(repo_path: &Path) -> Vec<PathBuf> {
@@ -298,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn read_tags_from_repo() {
+    fn read_revs_from_repo() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = make_git_repo(tmp.path());
         commit_file(&repo, "a.txt", b"data");
@@ -307,10 +375,13 @@ mod tests {
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         repo.tag_lightweight("v1.0.0", head.as_object(), false).unwrap();
 
-        let tags = read_git_tags(tmp.path()).unwrap();
-        assert_eq!(tags.len(), 1);
-        assert_eq!(tags[0].0, "v1.0.0");
-        assert!(tags[0].1.is_some());
+        let revs = read_git_revs(tmp.path()).unwrap();
+        // Should have the branch (master or main) + the tag
+        let tag = revs.iter().find(|r| r.name == "v1.0.0").expect("tag not found");
+        assert!(tag.is_tag);
+        assert!(!tag.commit_hash.is_empty());
+        let branch = revs.iter().find(|r| !r.is_tag).expect("branch not found");
+        assert!(!branch.commit_hash.is_empty());
     }
 
     #[test]
@@ -323,5 +394,62 @@ mod tests {
 
         let result = diff_files(tmp.path(), &old_sha, None).unwrap();
         assert_eq!(result.new_sha, expected);
+    }
+
+    #[test]
+    fn blobs_at_tag_returns_tagged_content_not_head() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = make_git_repo(tmp.path());
+        commit_file(&repo, "src/lib.rs", b"fn v1() {}");
+        commit_file(&repo, "Cargo.toml", b"[package]\nname = \"foo\"");
+
+        // Tag current state as v1.0.0
+        let v1_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.tag_lightweight("v1.0.0", v1_commit.as_object(), false).unwrap();
+
+        // Modify files at HEAD (after the tag)
+        commit_file(&repo, "src/lib.rs", b"fn v2() {}");
+        commit_file(&repo, "src/new.rs", b"// added after tag");
+
+        let blobs = list_blobs_at_rev(tmp.path(), "v1.0.0", None).unwrap();
+        let paths: Vec<&str> = blobs.iter().map(|(p, _)| p.as_str()).collect();
+
+        // Should see the files as they were at v1.0.0
+        assert!(paths.contains(&"src/lib.rs"));
+        assert!(paths.contains(&"Cargo.toml"));
+        // new.rs was added after the tag
+        assert!(!paths.contains(&"src/new.rs"));
+
+        // Content should be the v1 version
+        let lib_content = blobs.iter().find(|(p, _)| p == "src/lib.rs").unwrap();
+        assert_eq!(lib_content.1, b"fn v1() {}");
+    }
+
+    #[test]
+    fn blobs_at_rev_respects_filter() {
+        use sprefa_config::{FilterConfig, FilterMode};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = make_git_repo(tmp.path());
+        commit_file(&repo, "src/lib.rs", b"code");
+        commit_file(&repo, "docs/readme.md", b"readme");
+
+        let filter = CompiledFilter::compile(&FilterConfig {
+            mode: FilterMode::Include,
+            include: Some(vec!["src/**".into()]),
+            exclude: None,
+        }).unwrap();
+        let blobs = list_blobs_at_rev(tmp.path(), "HEAD", Some(&filter)).unwrap();
+        let paths: Vec<&str> = blobs.iter().map(|(p, _)| p.as_str()).collect();
+
+        assert!(paths.contains(&"src/lib.rs"));
+        assert!(!paths.contains(&"docs/readme.md"));
+    }
+
+    #[test]
+    fn blobs_at_rev_bad_rev_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_git_repo(tmp.path());
+        assert!(list_blobs_at_rev(tmp.path(), "nonexistent-tag", None).is_err());
     }
 }

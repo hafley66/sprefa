@@ -42,6 +42,7 @@ impl Extractor for JsExtractor {
                     is_path: true,
                     parent_key: None,
                     node_path: None,
+                    scan: None,
                 });
             }
         }
@@ -60,6 +61,7 @@ impl Extractor for JsExtractor {
                         is_path: false,
                         parent_key: None,
                         node_path: None,
+                        scan: None,
                     });
                 }
                 ImportImportName::Name(ns) => {
@@ -73,6 +75,7 @@ impl Extractor for JsExtractor {
                         is_path: false,
                         parent_key: None,
                         node_path: None,
+                        scan: None,
                     });
                     // Alias only when local name differs from import name
                     let local = entry.local_name.name.as_str();
@@ -86,6 +89,7 @@ impl Extractor for JsExtractor {
                             is_path: false,
                             parent_key: Some(import_str.to_string()),
                             node_path: None,
+                            scan: None,
                         });
                     }
                 }
@@ -103,6 +107,7 @@ impl Extractor for JsExtractor {
                         is_path: false,
                         parent_key: None,
                         node_path: None,
+                        scan: None,
                     });
                     refs.push(RawRef {
                         value: entry.local_name.name.to_string(),
@@ -113,6 +118,7 @@ impl Extractor for JsExtractor {
                         is_path: false,
                         parent_key: Some("default".to_string()),
                         node_path: None,
+                        scan: None,
                     });
                 }
             }
@@ -134,6 +140,7 @@ impl Extractor for JsExtractor {
                 is_path: false,
                 parent_key: None,
                 node_path: None,
+                scan: None,
             });
             // Emit ExportLocalBinding when internal name differs from exported name
             if let ExportLocalName::Name(local_ns) = &entry.local_name {
@@ -148,6 +155,7 @@ impl Extractor for JsExtractor {
                         is_path: false,
                         parent_key: Some(export_name_str),
                         node_path: None,
+                        scan: None,
                     });
                 }
             }
@@ -181,6 +189,7 @@ impl Extractor for JsExtractor {
                 is_path: false,
                 parent_key: None,
                 node_path: None,
+                scan: None,
             });
 
             // Emit ImportName for the source-side name of the re-export.
@@ -197,6 +206,7 @@ impl Extractor for JsExtractor {
                     is_path: false,
                     parent_key: None,
                     node_path: None,
+                    scan: None,
                 });
                 // If the re-export aliases (Foo as Bar), the ImportName "Foo"
                 // differs from ExportName "Bar". No alias ref needed here --
@@ -247,6 +257,7 @@ fn collect_require_expr<'a>(expr: &'a Expression<'a>, refs: &mut Vec<RawRef>) {
                             is_path: true,
                             parent_key: None,
                             node_path: None,
+                            scan: None,
                         });
                     }
                 }

@@ -470,11 +470,40 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
     let mut total_refs = 0usize;
 
     for repo in &repos {
-        for branch in repo.branch_list() {
-            match scanner.scan_repo(repo, &branch).await {
+        let repo_path = std::path::Path::new(&repo.path);
+        let all_revs = sprefa_index::read_git_revs(repo_path).unwrap_or_default();
+        let rev_patterns = repo.rev_list();
+        let rev_globs: Vec<globset::GlobMatcher> = rev_patterns.iter()
+            .filter_map(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()))
+            .collect();
+
+        // Detect the checked-out branch for working-tree decision.
+        let checked_out_branch: Option<String> = git2::Repository::open(repo_path)
+            .ok()
+            .and_then(|r| {
+                r.head().ok().and_then(|h| h.shorthand().map(String::from))
+            });
+
+        for git_rev in &all_revs {
+            if !rev_globs.iter().any(|g| g.is_match(&git_rev.name)) {
+                continue;
+            }
+            if repo.rev_excluded(&git_rev.name) {
+                tracing::debug!("{} @ {}: excluded by exclude_revs", repo.name, git_rev.name);
+                continue;
+            }
+
+            let is_checked_out = checked_out_branch.as_deref() == Some(&git_rev.name);
+            let scan_result = if is_checked_out {
+                scanner.scan_repo(repo, &git_rev.name).await
+            } else {
+                scanner.scan_rev(repo, &git_rev.name).await
+            };
+
+            match scan_result {
                 Ok(result) => {
                     println!(
-                        "{}/{}: {} files scanned, {} refs inserted, {} targets resolved, {} links",
+                        "{} @ {}: {} files scanned, {} refs inserted, {} targets resolved, {} links",
                         result.repo, result.branch, result.files_scanned, result.refs_inserted,
                         result.targets_resolved, result.links_created
                     );
@@ -482,7 +511,7 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
                     total_refs += result.refs_inserted;
                 }
                 Err(e) => {
-                    tracing::warn!("{}/{}: scan failed: {}", repo.name, branch, e);
+                    tracing::warn!("{} @ {}: scan failed: {}", repo.name, git_rev.name, e);
                 }
             }
         }
@@ -501,6 +530,101 @@ async fn cmd_scan(config_path: &Option<PathBuf>, only_repo: Option<&str>, once: 
         }
         if second_pass_links > 0 {
             println!("second pass: {} additional cross-repo links", second_pass_links);
+        }
+    }
+
+    // Tier 2: discovery loop. Query match_labels for (repo, rev) pairs
+    // annotated with IS_REPO/IS_REV, scan those revs, repeat until stable.
+    {
+        let repo_map: std::collections::HashMap<&str, &sprefa_config::RepoConfig> =
+            repos.iter().map(|r| (r.name.as_str(), *r)).collect();
+
+        const MAX_DISCOVERY_ITERATIONS: i32 = 10;
+        for iteration in 1..=MAX_DISCOVERY_ITERATIONS {
+            let targets = sprefa_cache::discovery::discover_scan_targets(&scanner.db).await?;
+            let mut new_targets = Vec::new();
+
+            for target in &targets {
+                // Only scan repos we have a local path for.
+                let Some(repo_cfg) = repo_map.get(target.repo_name.as_str()) else {
+                    sprefa_cache::discovery::log_discovery(
+                        &scanner.db, iteration, target, "skipped_no_path", None, None,
+                    ).await?;
+                    continue;
+                };
+
+                // Skip excluded revs.
+                if repo_cfg.rev_excluded(&target.rev) {
+                    sprefa_cache::discovery::log_discovery(
+                        &scanner.db, iteration, target, "skipped_excluded", None, None,
+                    ).await?;
+                    continue;
+                }
+
+                // Skip revs already scanned.
+                if sprefa_cache::discovery::is_rev_scanned(&scanner.db, &target.repo_name, &target.rev).await? {
+                    sprefa_cache::discovery::log_discovery(
+                        &scanner.db, iteration, target, "skipped_scanned", None, None,
+                    ).await?;
+                    continue;
+                }
+
+                new_targets.push((target.clone(), *repo_cfg));
+            }
+
+            if new_targets.is_empty() {
+                if iteration > 1 {
+                    tracing::info!("discovery: stable after {} iterations", iteration - 1);
+                }
+                break;
+            }
+
+            tracing::info!(
+                "discovery iteration {}: {} new targets",
+                iteration, new_targets.len(),
+            );
+
+            for (target, repo_cfg) in &new_targets {
+                match scanner.scan_rev(repo_cfg, &target.rev).await {
+                    Ok(result) => {
+                        println!(
+                            "discovery {}/{} @ {}: {} blobs, {} refs, {} links",
+                            iteration, result.repo, result.branch,
+                            result.files_scanned, result.refs_inserted, result.links_created,
+                        );
+                        sprefa_cache::discovery::log_discovery(
+                            &scanner.db, iteration, target, "scanned",
+                            Some(result.files_scanned), Some(result.refs_inserted),
+                        ).await?;
+                        total_files += result.files_scanned;
+                        total_refs += result.refs_inserted;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "discovery {} @ {}: scan failed: {}",
+                            target.repo_name, target.rev, e,
+                        );
+                        sprefa_cache::discovery::log_discovery(
+                            &scanner.db, iteration, target, "failed", None, None,
+                        ).await?;
+                    }
+                }
+            }
+
+            // Re-resolve links for affected repos after discovery scans.
+            let mut discovery_links = 0usize;
+            for (target, _) in &new_targets {
+                match scanner.resolve_links(&target.repo_name).await {
+                    Ok(n) => discovery_links += n,
+                    Err(e) => tracing::warn!(
+                        "discovery {}: link resolution failed: {}",
+                        target.repo_name, e,
+                    ),
+                }
+            }
+            if discovery_links > 0 {
+                println!("discovery iteration {}: {} links resolved", iteration, discovery_links);
+            }
         }
     }
 
@@ -883,12 +1007,18 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
         let mut total_files = 0usize;
         let mut total_refs = 0usize;
         for repo in &repos {
-            for branch in repo.branch_list() {
+            // Only scan checked-out branch for daemon initial scan (fs-based).
+            let checked_out: Option<String> = git2::Repository::open(&repo.path)
+                .ok()
+                .and_then(|r| {
+                    r.head().ok().and_then(|h| h.shorthand().map(String::from))
+                });
+            if let Some(branch) = &checked_out {
                 // Committed scan
-                match scanner.scan_repo(repo, &branch).await {
+                match scanner.scan_repo(repo, branch).await {
                     Ok(result) => {
                         println!(
-                            "scan {}/{}: {} files, {} refs, {} targets",
+                            "scan {} @ {}: {} files, {} refs, {} targets",
                             result.repo, result.branch, result.files_scanned,
                             result.refs_inserted, result.targets_resolved,
                         );
@@ -898,23 +1028,23 @@ async fn cmd_daemon(config_path: &Option<PathBuf>, only_repo: Option<&str>, no_s
                         if let Some(sha) = &result.new_git_hash {
                             let rid = upsert_repo(&pool, &repo.name, &repo.path).await.ok();
                             if let Some(rid) = rid {
-                                let _ = sprefa_schema::upsert_repo_branch(&pool, rid, &branch, Some(sha)).await;
+                                let _ = sprefa_schema::upsert_repo_rev(&pool, rid, branch, Some(sha), false, false).await;
                             }
                         }
                     }
-                    Err(e) => tracing::warn!(repo = %repo.name, branch = %branch, error = %e, "scan failed"),
+                    Err(e) => tracing::warn!(repo = %repo.name, rev = %branch, error = %e, "scan failed"),
                 }
-                // Working-tree scan (same files, tagged under +wt branch)
-                let wt = sprefa_watch::wt_branch(&branch);
+                // Working-tree scan (same files, tagged under +wt rev)
+                let wt = sprefa_watch::wt_rev(branch);
                 match scanner.scan_repo(repo, &wt).await {
                     Ok(result) => {
                         println!(
-                            "scan {}/{}: {} files, {} refs, {} targets",
+                            "scan {} @ {}: {} files, {} refs, {} targets",
                             result.repo, result.branch, result.files_scanned,
                             result.refs_inserted, result.targets_resolved,
                         );
                     }
-                    Err(e) => tracing::warn!(repo = %repo.name, branch = %wt, error = %e, "wt scan failed"),
+                    Err(e) => tracing::warn!(repo = %repo.name, rev = %wt, error = %e, "wt scan failed"),
                 }
             }
         }
@@ -980,7 +1110,12 @@ async fn spawn_watchers(
         let pause = Arc::new(std::sync::atomic::AtomicBool::new(false));
         pauses.insert(repo.name.clone(), pause.clone());
 
-        let wt = repo.branch_list().first().map(|b| sprefa_watch::wt_branch(b));
+        let checked_out: Option<String> = git2::Repository::open(&abs_path)
+            .ok()
+            .and_then(|r| {
+                r.head().ok().and_then(|h| h.shorthand().map(String::from))
+            });
+        let wt = checked_out.as_deref().map(sprefa_watch::wt_rev);
         let watch_config = sprefa_watch::watcher::WatchConfig {
             root_path: abs_path.clone(),
             repo_id,
@@ -1230,9 +1365,10 @@ async fn scan_checkout(
     let repo_config = sprefa_config::RepoConfig {
         name: repo_name.to_string(),
         path: local_path.to_string(),
-        branches: Some(vec![branch.to_string()]),
+        revs: Some(vec![branch.to_string()]),
         filter: None,
         branch_overrides: None,
+        exclude_revs: None,
     };
 
     // Scan committed branch (incremental if we have a previous sha).
@@ -1241,7 +1377,7 @@ async fn scan_checkout(
     ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten();
 
     let prev_sha = match repo_id {
-        Some(rid) => sprefa_schema::get_repo_branch_hash(&scanner.db, rid, branch)
+        Some(rid) => sprefa_schema::get_repo_rev_hash(&scanner.db, rid, branch)
             .await.ok().flatten(),
         None => None,
     };
@@ -1283,8 +1419,8 @@ async fn scan_checkout(
                     ).bind(repo_name).fetch_optional(&scanner.db).await.ok().flatten(),
                 };
                 if let Some(rid) = rid {
-                    let _ = sprefa_schema::upsert_repo_branch(
-                        &scanner.db, rid, branch, Some(sha),
+                    let _ = sprefa_schema::upsert_repo_rev(
+                        &scanner.db, rid, branch, Some(sha), false, false,
                     ).await;
                 }
             }
@@ -1295,8 +1431,8 @@ async fn scan_checkout(
         ),
     }
 
-    // Scan working-tree branch.
-    let wt = sprefa_watch::wt_branch(branch);
+    // Scan working-tree rev.
+    let wt = sprefa_watch::wt_rev(branch);
     match scanner.scan_repo(&repo_config, &wt).await {
         Ok(r) => tracing::info!(
             repo = %repo_slug, branch = %wt,

@@ -97,13 +97,18 @@ pub enum FilterMode {
 pub struct RepoConfig {
     pub name: String,
     pub path: String,
-    /// Branches to index. Defaults to ["main"].
-    pub branches: Option<Vec<String>>,
+    /// Rev patterns to scan. Glob-matched against all git revs (branches + tags).
+    /// Defaults to ["main"]. e.g. ["main", "v*", "release/*"]
+    pub revs: Option<Vec<String>>,
     /// Per-repo filter, merged with global.
     pub filter: Option<FilterConfig>,
     /// Per-branch overrides, most specific wins.
     #[serde(default)]
     pub branch_overrides: Option<Vec<BranchOverride>>,
+    /// Rev patterns to exclude from scanning.
+    /// e.g. ["*-rc*", "0.*"] skips release candidates and pre-1.0 tags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_revs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -117,11 +122,25 @@ pub struct BranchOverride {
 }
 
 impl RepoConfig {
-    pub fn branch_list(&self) -> Vec<String> {
-        match &self.branches {
-            Some(b) if !b.is_empty() => b.clone(),
+    pub fn rev_list(&self) -> Vec<String> {
+        match &self.revs {
+            Some(r) if !r.is_empty() => r.clone(),
             _ => vec!["main".to_string()],
         }
+    }
+
+    /// Check whether a rev should be excluded from scanning.
+    pub fn rev_excluded(&self, rev: &str) -> bool {
+        let patterns = match &self.exclude_revs {
+            Some(p) if !p.is_empty() => p,
+            _ => return false,
+        };
+        patterns.iter().any(|p| {
+            globset::Glob::new(p)
+                .ok()
+                .map(|g| g.compile_matcher().is_match(rev))
+                .unwrap_or(false)
+        })
     }
 }
 

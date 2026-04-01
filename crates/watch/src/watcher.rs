@@ -30,8 +30,8 @@ pub struct WatchConfig {
     pub link_rules: Vec<sprefa_cache::LinkRule>,
     /// Debounce window for correlating events.
     pub debounce: Duration,
-    /// Working-tree branch name (e.g. "main+wt"). The watcher updates
-    /// branch_files for this branch on file create/delete events.
+    /// Working-tree rev name (e.g. "main+wt"). The watcher updates
+    /// rev_files for this rev on file create/delete events.
     pub wt_branch: Option<String>,
     /// When true, the watcher drains events without classifying them.
     /// Used to suppress rewrite activity during external checkout updates.
@@ -400,10 +400,10 @@ async fn classify_batch(
             .into(),
         );
 
-        // Remove from working-tree branch_files.
+        // Remove from working-tree rev_files.
         if let Some(wt) = wt_branch {
             sqlx::query(
-                "DELETE FROM branch_files WHERE repo_id = ? AND branch = ? AND file_id = ?",
+                "DELETE FROM rev_files WHERE repo_id = ? AND rev = ? AND file_id = ?",
             )
             .bind(repo_id)
             .bind(wt)
@@ -426,7 +426,7 @@ async fn classify_batch(
                 .into(),
             );
 
-            // Insert into files + branch_files for the working-tree branch.
+            // Insert into files + rev_files for the working-tree rev.
             if let Some(wt) = wt_branch {
                 let stem = Path::new(&rel).file_stem().map(|s| s.to_string_lossy().to_string());
                 let ext = Path::new(&rel).extension().map(|s| s.to_string_lossy().to_string());
@@ -445,7 +445,7 @@ async fn classify_batch(
                 .await?;
 
                 sqlx::query(
-                    "INSERT OR IGNORE INTO branch_files (repo_id, branch, file_id) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO rev_files (repo_id, rev, file_id) VALUES (?, ?, ?)",
                 )
                 .bind(repo_id)
                 .bind(wt)
@@ -616,6 +616,7 @@ async fn load_decl_refs(
                 is_path: false,
                 parent_key: None,
                 node_path: None,
+                scan: None,
             }
         })
         .collect())

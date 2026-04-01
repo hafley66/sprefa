@@ -86,7 +86,7 @@ impl DocState {
 
                     for slot in &chain.slots {
                         match slot {
-                            Slot::Match { capture, kind } => {
+                            Slot::Match { capture, kind, .. } => {
                                 self.match_kinds.insert(kind.clone());
                                 self.all_captures.insert(capture.clone());
                                 rule_match_caps.insert(capture.clone());

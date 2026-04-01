@@ -93,6 +93,72 @@ pub fn extract(
     Ok((total, extracted))
 }
 
+/// Extract refs from in-memory blobs (git object store content).
+/// Same shape as `extract_from_list` but reads bytes directly instead of mmap.
+fn extract_from_blobs(
+    blobs: &[(String, Vec<u8>)],
+    extractors: &[Box<dyn Extractor>],
+    skip_set: &HashSet<(String, String)>,
+    ctx: &ExtractContext,
+) -> Vec<ExtractedFile> {
+    blobs
+        .par_iter()
+        .filter_map(|(rel_path, content)| {
+            let hash = format!("{:x}", xxh3_128(content));
+
+            if skip_set.contains(&(rel_path.clone(), hash.clone())) {
+                let p = Path::new(rel_path);
+                return Some(ExtractedFile {
+                    rel_path: rel_path.clone(),
+                    content_hash: hash,
+                    stem: p.file_stem().and_then(|s| s.to_str()).map(String::from),
+                    ext: p.extension().and_then(|e| e.to_str()).map(String::from),
+                    refs: vec![],
+                    was_skipped: true,
+                });
+            }
+
+            let p = Path::new(rel_path);
+            let ext = p.extension().and_then(|e| e.to_str());
+            let refs: Vec<RawRef> = match ext {
+                Some(e) => extractors
+                    .iter()
+                    .filter(|ex| ex.extensions().contains(&e))
+                    .flat_map(|ex| ex.extract(content, rel_path, ctx))
+                    .collect(),
+                None => return None,
+            };
+            if refs.is_empty() {
+                return None;
+            }
+            Some(ExtractedFile {
+                rel_path: rel_path.clone(),
+                content_hash: hash,
+                stem: p.file_stem().and_then(|s| s.to_str()).map(String::from),
+                ext: ext.map(String::from),
+                refs,
+                was_skipped: false,
+            })
+        })
+        .collect()
+}
+
+/// Extract refs from files at a specific git revision (tag, branch, sha).
+/// Uses `list_blobs_at_rev` to read file content from the git object store.
+pub fn extract_rev(
+    repo_path: &Path,
+    rev: &str,
+    filter: Option<&CompiledFilter>,
+    extractors: &[Box<dyn Extractor>],
+    skip_set: &HashSet<(String, String)>,
+    ctx: &ExtractContext,
+) -> Result<(usize, Vec<ExtractedFile>)> {
+    let blobs = crate::files::list_blobs_at_rev(repo_path, rev, filter)?;
+    let total = blobs.len();
+    let extracted = extract_from_blobs(&blobs, extractors, skip_set, ctx);
+    Ok((total, extracted))
+}
+
 /// Extract refs from a specific set of files (absolute paths).
 /// Same logic as `extract()` but skips the tree walk -- only processes
 /// the provided file list.

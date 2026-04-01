@@ -142,7 +142,7 @@ strip_suffixes = ["-svc", "-api"]
 [[repos]]
 name = "frontend"
 path = "/home/me/frontend"
-branches = ["main", "develop"]
+revs = ["main", "develop"]
 
 [repos.filter]
 mode = "include"

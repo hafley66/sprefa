@@ -17,9 +17,14 @@ git2 = { workspace = true }
 [dev-dependencies]
 sprefa_schema = { path = "../schema" }
 sprefa_rules = { path = "../rules" }
+sprefa_sprf = { path = "../sprf" }
 sprefa_js = { path = "../js" }
 sprefa_rs = { path = "../rs" }
+sprefa_cache = { path = "../cache" }
+sprefa_index = { path = "../index" }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+git2 = { workspace = true }
+globset = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 sqlx = { workspace = true }

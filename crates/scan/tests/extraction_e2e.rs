@@ -28,9 +28,10 @@ fn repo_config(name: &str, path: &Path) -> RepoConfig {
     RepoConfig {
         name: name.to_string(),
         path: path.to_str().unwrap().to_string(),
-        branches: Some(vec!["main".to_string()]),
+        revs: None,
         filter: None,
         branch_overrides: None,
+        exclude_revs: None,
     }
 }
 

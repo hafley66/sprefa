@@ -144,6 +144,7 @@ mod tests {
             is_path: false,
             parent_key: None,
             node_path: None,
+            scan: None,
         }
     }
 

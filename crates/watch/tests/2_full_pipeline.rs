@@ -26,9 +26,10 @@ fn repo_config(name: &str, path: &str) -> RepoConfig {
     RepoConfig {
         name: name.to_string(),
         path: path.to_string(),
-        branches: Some(vec!["main".to_string()]),
+        revs: Some(vec!["main".to_string()]),
         filter: None,
         branch_overrides: None,
+        exclude_revs: None,
     }
 }
 
@@ -67,7 +68,7 @@ async fn setup_dual_branch_repo(
 
     // Scan as working-tree main+wt
     scanner
-        .scan_repo(&config, &sprefa_watch::wt_branch("main"))
+        .scan_repo(&config, &sprefa_watch::wt_rev("main"))
         .await
         .unwrap();
 
@@ -375,7 +376,7 @@ async fn rs_rename_updates_matches_and_consumers() {
 /// value while the working-tree branch file set reflects the new content.
 /// The watcher re-extracts modified files into the DB, so refs/matches for
 /// the changed file update in-place (they are not branch-scoped -- refs are
-/// file-scoped). Branch divergence shows up in branch_files: the committed
+/// file-scoped). Branch divergence shows up in rev_files: the committed
 /// branch and wt branch both link the same file_id, but the file's refs
 /// now reflect the renamed state.
 ///
@@ -385,7 +386,7 @@ async fn rs_rename_updates_matches_and_consumers() {
 /// 3. Refs in DB reflect the new content (watcher re-extracted)
 /// 4. No orphaned matches or refs after the pipeline
 #[tokio::test]
-async fn branch_files_intact_after_rename_pipeline() {
+async fn rev_files_intact_after_rename_pipeline() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
@@ -406,13 +407,13 @@ async fn branch_files_intact_after_rename_pipeline() {
 
     // Both branches should link the same files
     let main_files: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files WHERE branch = 'main'",
+        "SELECT COUNT(*) FROM rev_files WHERE branch = 'main'",
     )
     .fetch_one(&db)
     .await
     .unwrap();
     let wt_files: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files WHERE branch = 'main+wt'",
+        "SELECT COUNT(*) FROM rev_files WHERE branch = 'main+wt'",
     )
     .fetch_one(&db)
     .await
@@ -429,7 +430,7 @@ async fn branch_files_intact_after_rename_pipeline() {
 
     // wt branch should still link all files (no orphans)
     let wt_after: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files WHERE branch = 'main+wt'",
+        "SELECT COUNT(*) FROM rev_files WHERE branch = 'main+wt'",
     )
     .fetch_one(&db)
     .await
@@ -478,7 +479,7 @@ async fn branch_files_intact_after_rename_pipeline() {
 // ─── New file during watch gets matches ───────────────────────────────
 
 /// When the watcher detects a new file create, the file gets added to
-/// branch_files for +wt. On the next content change to that file, the
+/// rev_files for +wt. On the next content change to that file, the
 /// watcher re-extracts and inserts refs + matches.
 ///
 /// This verifies the full insert path: files → refs → strings → matches
@@ -527,16 +528,16 @@ async fn new_file_during_watch_gets_indexed_with_matches() {
         }
     }
 
-    // The file should be in wt branch_files
+    // The file should be in wt rev_files
     let wt_linked: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main+wt' AND f.path = 'src/added.ts'",
     )
     .fetch_one(&db)
     .await
     .unwrap();
-    assert_eq!(wt_linked, 1, "new file should be in main+wt branch_files");
+    assert_eq!(wt_linked, 1, "new file should be in main+wt rev_files");
 
     // Modify the file to trigger re-extraction via ContentChange
     tokio::time::sleep(Duration::from_millis(300)).await;

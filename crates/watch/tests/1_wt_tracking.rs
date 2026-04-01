@@ -24,9 +24,10 @@ fn repo_config(name: &str, path: &str) -> RepoConfig {
     RepoConfig {
         name: name.to_string(),
         path: path.to_string(),
-        branches: Some(vec!["main".to_string()]),
+        revs: Some(vec!["main".to_string()]),
         filter: None,
         branch_overrides: None,
+        exclude_revs: None,
     }
 }
 
@@ -58,9 +59,9 @@ async fn setup_scanned_repo(
     };
     scanner.scan_repo(&config, "main").await.unwrap();
 
-    // Also scan as main+wt so branch_files exist for wt
+    // Also scan as main+wt so rev_files exist for wt
     scanner
-        .scan_repo(&config, &sprefa_watch::wt_branch("main"))
+        .scan_repo(&config, &sprefa_watch::wt_rev("main"))
         .await
         .unwrap();
 
@@ -128,20 +129,20 @@ async fn watcher_links_new_file_to_wt_branch() {
         }
     }
 
-    // Verify the new file is in branch_files for main+wt
+    // Verify the new file is in rev_files for main+wt
     let wt_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main+wt' AND f.path = 'src/newfile.ts'",
     )
     .fetch_one(&db)
     .await
     .unwrap();
-    assert_eq!(wt_count, 1, "new file should be in main+wt branch_files");
+    assert_eq!(wt_count, 1, "new file should be in main+wt rev_files");
 
-    // Verify it's NOT in the committed main branch_files
+    // Verify it's NOT in the committed main rev_files
     let committed_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main' AND f.path = 'src/newfile.ts'",
     )
@@ -150,7 +151,7 @@ async fn watcher_links_new_file_to_wt_branch() {
     .unwrap();
     assert_eq!(
         committed_count, 0,
-        "new file should NOT be in committed main branch_files"
+        "new file should NOT be in committed main rev_files"
     );
 }
 
@@ -176,9 +177,9 @@ async fn watcher_unlinks_deleted_file_from_wt_branch() {
     let root = root.as_path();
     let (db, repo_id, extractors) = setup_scanned_repo(root).await;
 
-    // Verify doomed.ts is in wt branch_files before deletion
+    // Verify doomed.ts is in wt rev_files before deletion
     let before: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main+wt' AND f.path = 'src/doomed.ts'",
     )
@@ -221,9 +222,9 @@ async fn watcher_unlinks_deleted_file_from_wt_branch() {
         }
     }
 
-    // Verify doomed.ts is removed from wt branch_files
+    // Verify doomed.ts is removed from wt rev_files
     let after: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main+wt' AND f.path = 'src/doomed.ts'",
     )
@@ -232,12 +233,12 @@ async fn watcher_unlinks_deleted_file_from_wt_branch() {
     .unwrap();
     assert_eq!(
         after, 0,
-        "doomed.ts should be removed from wt branch_files after deletion"
+        "doomed.ts should be removed from wt rev_files after deletion"
     );
 
     // Committed branch should still have it
     let committed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main' AND f.path = 'src/doomed.ts'",
     )
@@ -246,7 +247,7 @@ async fn watcher_unlinks_deleted_file_from_wt_branch() {
     .unwrap();
     assert_eq!(
         committed, 1,
-        "doomed.ts should still be in committed main branch_files"
+        "doomed.ts should still be in committed main rev_files"
     );
 }
 
@@ -275,12 +276,12 @@ async fn wt_scan_captures_uncommitted_files() {
         link_rules: vec![],
     };
 
-    // Scan committed with only a.ts and b.ts by scanning, then removing c.ts from committed branch_files
+    // Scan committed with only a.ts and b.ts by scanning, then removing c.ts from committed rev_files
     scanner.scan_repo(&config, "main").await.unwrap();
 
     // Scan working tree -- should have all three files
     let wt_result = scanner
-        .scan_repo(&config, &sprefa_watch::wt_branch("main"))
+        .scan_repo(&config, &sprefa_watch::wt_rev("main"))
         .await
         .unwrap();
     assert!(
@@ -289,14 +290,14 @@ async fn wt_scan_captures_uncommitted_files() {
     );
 
     let wt_file_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files WHERE branch = 'main+wt'",
+        "SELECT COUNT(*) FROM rev_files WHERE branch = 'main+wt'",
     )
     .fetch_one(&db)
     .await
     .unwrap();
     assert!(
         wt_file_count >= 3,
-        "main+wt branch_files should include all on-disk files, got {wt_file_count}"
+        "main+wt rev_files should include all on-disk files, got {wt_file_count}"
     );
 }
 
@@ -304,7 +305,7 @@ async fn wt_scan_captures_uncommitted_files() {
 
 /// Simulate a git checkout: many files deleted + created simultaneously.
 /// The watcher should process the burst without DB errors or corrupt state.
-/// After the storm, branch_files for +wt should reflect the new file set,
+/// After the storm, rev_files for +wt should reflect the new file set,
 /// and a rename in one of the new files should still propagate.
 #[tokio::test]
 async fn git_checkout_burst_does_not_corrupt_state() {
@@ -382,19 +383,19 @@ async fn git_checkout_burst_does_not_corrupt_state() {
 
     assert!(batches_received > 0, "should have received at least one batch");
 
-    // Verify DB state is consistent: no orphaned branch_files pointing at missing files
+    // Verify DB state is consistent: no orphaned rev_files pointing at missing files
     let orphaned: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = bf.file_id)",
     )
     .fetch_one(&db)
     .await
     .unwrap();
-    assert_eq!(orphaned, 0, "no orphaned branch_files entries");
+    assert_eq!(orphaned, 0, "no orphaned rev_files entries");
 
     // gamma.ts should be unlinked from wt
     let gamma_wt: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main+wt' AND f.path = 'src/gamma.ts'",
     )
@@ -405,7 +406,7 @@ async fn git_checkout_burst_does_not_corrupt_state() {
 
     // delta.ts and epsilon.ts should be in wt
     let delta_wt: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main+wt' AND f.path = 'src/delta.ts'",
     )
@@ -416,7 +417,7 @@ async fn git_checkout_burst_does_not_corrupt_state() {
 
     // gamma.ts should still be in committed main (checkout doesn't touch committed state)
     let gamma_committed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM branch_files bf
+        "SELECT COUNT(*) FROM rev_files bf
          JOIN files f ON bf.file_id = f.id
          WHERE bf.branch = 'main' AND f.path = 'src/gamma.ts'",
     )

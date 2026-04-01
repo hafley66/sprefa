@@ -37,14 +37,14 @@ exclude = [
 # [[repos]]
 # name = "my-repo"
 # path = "/path/to/repo"
-# branches = ["main"]
+# revs = ["main"]
 
 [[repos]]
 name = "test-fixture"
 path = "/private/tmp/sprefa-test"
-branches = ["main"]
+revs = ["main"]
 
 [[repos]]
 name = "sprefa"
 path = "/Users/chrishafley/projects/sprefa"
-branches = ["main"]
+revs = ["main"]

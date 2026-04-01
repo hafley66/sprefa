@@ -2,7 +2,7 @@
 ///
 /// Parses the outer structure: statements, selector chains, slots.
 /// Does NOT parse the inside of json() bodies -- that's _2_pattern.rs.
-use crate::_0_ast::{Atom, LinkDecl, Program, QueryDecl, Statement, SelectorChain, Slot, Tag, Term};
+use crate::_0_ast::{Atom, LinkDecl, Program, QueryDecl, ScanRole, Statement, SelectorChain, Slot, Tag, Term};
 
 pub fn parse_program(input: &str) -> anyhow::Result<Program> {
     let mut stmts = vec![];
@@ -253,8 +253,8 @@ fn parse_slot(input: &str) -> anyhow::Result<(Slot, &str)> {
         let rest = rest.trim_start();
         if rest.starts_with('(') {
             let (body, rest) = parse_paren_body(&rest[1..])?;
-            let (capture, kind) = parse_match_body(&body)?;
-            return Ok((Slot::Match { capture, kind }, rest));
+            let (capture, kind, scan) = parse_match_body(&body)?;
+            return Ok((Slot::Match { capture, kind, scan }, rest));
         }
     }
 
@@ -296,13 +296,13 @@ fn try_parse_match_keyword(input: &str) -> Option<&str> {
     None
 }
 
-/// Parse the body of `match($CAPTURE, kind)`.
-fn parse_match_body(body: &str) -> anyhow::Result<(String, String)> {
+/// Parse the body of `match($CAPTURE, kind)` or `match($CAPTURE, kind, IS_REPO)`.
+fn parse_match_body(body: &str) -> anyhow::Result<(String, String, Option<ScanRole>)> {
     let body = body.trim();
     let comma = body.find(',')
         .ok_or_else(|| anyhow::anyhow!("match() requires `$CAPTURE, kind`"))?;
     let cap_part = body[..comma].trim();
-    let kind_part = body[comma + 1..].trim();
+    let rest = body[comma + 1..].trim();
 
     if !cap_part.starts_with('$') {
         anyhow::bail!("match() capture must start with `$`, found {:?}", cap_part);
@@ -312,11 +312,27 @@ fn parse_match_body(body: &str) -> anyhow::Result<(String, String)> {
         anyhow::bail!("empty capture name in match()");
     }
 
+    // Split remaining into kind and optional scan role
+    let (kind_part, scan) = if let Some(comma2) = rest.find(',') {
+        let kind = rest[..comma2].trim();
+        let scan_str = rest[comma2 + 1..].trim();
+        let role = match scan_str {
+            "IS_REPO" => ScanRole::Repo,
+            "IS_REV" => ScanRole::Rev,
+            other => anyhow::bail!(
+                "match() 3rd argument must be IS_REPO or IS_REV, found {:?}", other
+            ),
+        };
+        (kind, Some(role))
+    } else {
+        (rest, None)
+    };
+
     if kind_part.is_empty() {
         anyhow::bail!("empty kind in match()");
     }
 
-    Ok((capture, kind_part.to_string()))
+    Ok((capture, kind_part.to_string(), scan))
 }
 
 /// If the input starts with a known tag name followed by `(` or `[`, return
@@ -537,7 +553,7 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
         assert_eq!(chain.slots.len(), 3);
 
         match &chain.slots[2] {
-            Slot::Match { capture, kind } => {
+            Slot::Match { capture, kind, .. } => {
                 assert_eq!(capture, "NAME");
                 assert_eq!(kind, "package_name");
             }
@@ -551,8 +567,53 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
         let program = parse_program(input).unwrap();
         let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
         assert_eq!(chain.slots.len(), 4);
-        assert!(matches!(&chain.slots[2], Slot::Match { capture, kind } if capture == "NAME" && kind == "dep_name"));
-        assert!(matches!(&chain.slots[3], Slot::Match { capture, kind } if capture == "VER" && kind == "dep_version"));
+        assert!(matches!(&chain.slots[2], Slot::Match { capture, kind, .. } if capture == "NAME" && kind == "dep_name"));
+        assert!(matches!(&chain.slots[3], Slot::Match { capture, kind, .. } if capture == "VER" && kind == "dep_version"));
+    }
+
+    #[test]
+    fn parse_match_with_scan_role() {
+        let input = "fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } }) > match($REPO, image_repo, IS_REPO) > match($TAG, image_tag, IS_REV);";
+        let program = parse_program(input).unwrap();
+        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
+        assert_eq!(chain.slots.len(), 4);
+
+        match &chain.slots[2] {
+            Slot::Match { capture, kind, scan } => {
+                assert_eq!(capture, "REPO");
+                assert_eq!(kind, "image_repo");
+                assert_eq!(*scan, Some(ScanRole::Repo));
+            }
+            _ => panic!("expected Match"),
+        }
+        match &chain.slots[3] {
+            Slot::Match { capture, kind, scan } => {
+                assert_eq!(capture, "TAG");
+                assert_eq!(kind, "image_tag");
+                assert_eq!(*scan, Some(ScanRole::Rev));
+            }
+            _ => panic!("expected Match"),
+        }
+    }
+
+    #[test]
+    fn parse_match_without_scan_role() {
+        let input = "fs(**/Cargo.toml) > json({ package: { name: $N } }) > match($N, pkg);";
+        let program = parse_program(input).unwrap();
+        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
+        match &chain.slots[2] {
+            Slot::Match { scan, .. } => assert_eq!(*scan, None),
+            _ => panic!("expected Match"),
+        }
+    }
+
+    #[test]
+    fn parse_match_invalid_scan_role() {
+        let input = "fs(**/x.yaml) > json({ x: $X }) > match($X, kind, IS_BANANA);";
+        let result = parse_program(input);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("IS_REPO or IS_REV"), "error: {}", err);
     }
 
     #[test]

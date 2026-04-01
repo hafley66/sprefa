@@ -98,6 +98,7 @@ fn create_one(def: &MatchDef, rule_name: &str, captures: &HashMap<String, Captur
         is_path: false,
         parent_key,
         node_path: node_path.map(String::from),
+        scan: def.scan.clone(),
     })
 }
 

@@ -89,34 +89,24 @@ const MIGRATIONS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_refs_string_id ON refs(string_id)",
     "CREATE INDEX IF NOT EXISTS idx_refs_file_id ON refs(file_id)",
     "CREATE INDEX IF NOT EXISTS idx_refs_target_file_id ON refs(target_file_id)",
-    // branch_files junction
+    // rev_files junction (maps revs to their constituent files)
     r#"
-    CREATE TABLE IF NOT EXISTS branch_files (
+    CREATE TABLE IF NOT EXISTS rev_files (
         repo_id INTEGER NOT NULL REFERENCES repos(id),
-        branch TEXT NOT NULL,
+        rev TEXT NOT NULL,
         file_id INTEGER NOT NULL REFERENCES files(id),
-        UNIQUE(repo_id, branch, file_id)
+        UNIQUE(repo_id, rev, file_id)
     )
     "#,
-    // repo_branches
+    // repo_revs (unified branch + tag tracking)
     r#"
-    CREATE TABLE IF NOT EXISTS repo_branches (
+    CREATE TABLE IF NOT EXISTS repo_revs (
         repo_id INTEGER NOT NULL REFERENCES repos(id),
-        branch TEXT NOT NULL,
+        rev TEXT NOT NULL,
         git_hash TEXT,
-        UNIQUE(repo_id, branch)
-    )
-    "#,
-    // git_tags
-    r#"
-    CREATE TABLE IF NOT EXISTS git_tags (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        repo_id INTEGER NOT NULL REFERENCES repos(id),
-        tag_name TEXT NOT NULL,
-        commit_hash TEXT,
+        is_working_tree INTEGER NOT NULL DEFAULT 0,
         is_semver INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT,
-        UNIQUE(repo_id, tag_name)
+        UNIQUE(repo_id, rev)
     )
     "#,
     // repo_packages
@@ -187,6 +177,22 @@ const MIGRATIONS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_match_links_source ON match_links(source_match_id)",
     "CREATE INDEX IF NOT EXISTS idx_match_links_target ON match_links(target_match_id)",
     "CREATE INDEX IF NOT EXISTS idx_match_links_kind ON match_links(link_kind)",
+    // discovery_log: records each (repo, rev) target found by tier 2 discovery.
+    r#"
+    CREATE TABLE IF NOT EXISTS discovery_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        iteration INTEGER NOT NULL,
+        source_repo TEXT NOT NULL,
+        source_file TEXT,
+        source_kind TEXT,
+        target_repo TEXT NOT NULL,
+        target_rev TEXT NOT NULL,
+        status TEXT NOT NULL,
+        files_scanned INTEGER,
+        refs_inserted INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    "#,
 ];
 
 /// Run all migrations against the given pool.
@@ -213,13 +219,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     let _ = sqlx::query("ALTER TABLE files ADD COLUMN dir TEXT")
         .execute(pool)
         .await;
-
-    // Add is_working_tree to existing DBs that predate this column.
-    let _ = sqlx::query(
-        "ALTER TABLE repo_branches ADD COLUMN is_working_tree INTEGER NOT NULL DEFAULT 0",
-    )
-    .execute(pool)
-    .await;
 
     // If matches table has old shape (ref_id NOT NULL, no repo_ref_id), rebuild it.
     // The DB is a rebuildable cache so data loss is acceptable.
