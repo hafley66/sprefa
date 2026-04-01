@@ -221,6 +221,30 @@ enum Command {
     /// is corrupted.
     Reset,
 
+    /// Print resolved config file path and contents
+    Config,
+
+    /// Evaluate a .sprf rule against files without a database
+    ///
+    /// Parses an inline rule string, infers repo/branch from the current git
+    /// worktree, and runs the rule against the target files. One bare glob
+    /// segment is treated as an fs pattern; multiple bare segments require
+    /// explicit tags (fs(), branch(), repo()).
+    ///
+    /// With no file arguments and no fs() slot, reads stdin as content.
+    ///
+    /// Examples:
+    ///   sprefa eval 'json({ name: $N })' package.json
+    ///   sprefa eval 'fs(**/Cargo.toml) > json({ package: { name: $N } })'
+    ///   cat values.yaml | sprefa eval 'json({ image: { repository: $R } })'
+    Eval {
+        /// Inline .sprf rule string
+        rule: String,
+        /// File paths to evaluate (overrides fs() glob)
+        #[arg(trailing_var_arg = true)]
+        files: Vec<PathBuf>,
+    },
+
     /// All-in-one: scan + watch + serve
     ///
     /// Runs the full pipeline in a single process:
@@ -274,6 +298,8 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Init) => cmd_init().await?,
         Some(Command::Add { path, name }) => cmd_add(&cli.config, path, name).await?,
         Some(Command::Reset) => cmd_reset(&cli.config).await?,
+        Some(Command::Config) => cmd_config(&cli.config)?,
+        Some(Command::Eval { rule, files }) => cmd_eval(&rule, &files)?,
         Some(Command::Scan { repo, once }) => cmd_scan(&cli.config, repo.as_deref(), once).await?,
         Some(Command::Status) => cmd_status(&cli.config).await?,
         Some(Command::Query { term, scope, once }) => cmd_query(&cli.config, &term, scope.as_deref(), once).await?,
@@ -920,6 +946,147 @@ fn find_config_file(config_path: &Option<PathBuf>) -> anyhow::Result<PathBuf> {
             Ok(path)
         }
     }
+}
+
+fn cmd_eval(rule_str: &str, files: &[PathBuf]) -> anyhow::Result<()> {
+    use sprefa_extract::ExtractContext;
+
+    // Ensure the rule ends with a semicolon for the parser.
+    let source = if rule_str.trim_end().ends_with(';') {
+        rule_str.to_string()
+    } else {
+        format!("{};", rule_str)
+    };
+
+    let ruleset = sprefa_sprf::parse_sprf(&source)?;
+    let has_match_slots = !ruleset.rules.iter().all(|r| r.create_matches.is_empty());
+    let extractor = RuleExtractor::from_ruleset(&ruleset)?;
+
+    // Infer git context from cwd.
+    let repo = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string());
+
+    let branch = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string());
+
+    let repo_name = repo.as_ref().and_then(|r| {
+        std::path::Path::new(r).file_name()?.to_str().map(|s| s.to_string())
+    });
+
+    let ctx = ExtractContext {
+        repo: repo_name.as_deref(),
+        branch: branch.as_deref(),
+        tags: &[],
+    };
+
+    let cwd = std::env::current_dir()?;
+
+    // Does the rule have an fs() slot? If so, always walk files.
+    let has_fs_slot = ruleset.rules.iter().any(|r| {
+        r.select.iter().any(|s| matches!(s, sprefa_rules::types::SelectStep::File { .. }))
+    });
+
+    // Collect files to evaluate.
+    let file_list: Vec<PathBuf> = if !files.is_empty() {
+        files.iter().map(|f| cwd.join(f)).collect()
+    } else if has_fs_slot || std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        let mut found = vec![];
+        walk_dir(&cwd, &mut found);
+        found
+    } else {
+        // Stdin: read content, detect format, evaluate, print, done.
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+        let ext = match buf.trim_start().chars().next() {
+            Some('{') | Some('[') => "json",
+            _ => "yaml",
+        };
+        let path = format!("stdin.{}", ext);
+        eval_one_file(&extractor, buf.as_bytes(), &path, &ctx, has_match_slots);
+        return Ok(());
+    };
+
+    for path in &file_list {
+        // For file selector matching, use cwd-relative path (not repo-relative)
+        // since eval scopes from cwd.
+        let rel = path.strip_prefix(&cwd).unwrap_or(path);
+        let rel_str = rel.to_string_lossy();
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        eval_one_file(&extractor, &bytes, &rel_str, &ctx, has_match_slots);
+    }
+
+    Ok(())
+}
+
+fn eval_one_file(
+    extractor: &sprefa_rules::extractor::RuleExtractor,
+    source: &[u8],
+    path: &str,
+    ctx: &sprefa_extract::ExtractContext,
+    has_match_slots: bool,
+) {
+    use sprefa_extract::Extractor;
+
+    if has_match_slots {
+        // Structured output via match() slots.
+        let refs = extractor.extract(source, path, ctx);
+        for r in &refs {
+            println!("{}\t{}\t{}\t{}", path, r.kind, r.rule_name, r.value);
+        }
+    } else {
+        // No match() slots: dump raw captures from walk/ast results.
+        let results = extractor.eval_raw(source, path, ctx);
+        for result in &results {
+            let pairs: Vec<String> = result.captures.iter()
+                .map(|(k, v)| format!("{}={}", k, v.text))
+                .collect();
+            if !pairs.is_empty() {
+                println!("{}\t{}", path, pairs.join("\t"));
+            }
+        }
+    }
+}
+
+/// Recursively walk a directory, collecting file paths. Skips hidden dirs and common ignores.
+fn walk_dir(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with('.') || matches!(name, "node_modules" | "target" | "vendor" | "dist" | "__pycache__") {
+                continue;
+            }
+        }
+        if path.is_dir() {
+            walk_dir(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+fn cmd_config(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
+    let path = find_config_file(config_path)?;
+    println!("{}", path.display());
+    println!("---");
+    print!("{}", std::fs::read_to_string(&path)?);
+    Ok(())
 }
 
 #[cfg(feature = "ghcache")]

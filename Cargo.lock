@@ -2604,6 +2604,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sprefa_config",
+ "sprefa_extract",
  "sprefa_js",
  "sprefa_rs",
  "sprefa_rules",

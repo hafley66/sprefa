@@ -80,6 +80,48 @@ impl RuleExtractor {
             r.file.is_empty() || r.file.matches(path)
         })
     }
+
+    /// Run rules and return raw MatchResults (captures) without going through emit.
+    /// Used by `sprefa eval` when no match() slots are present.
+    pub fn eval_raw(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<walk::MatchResult> {
+        let ext = Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let mut all = vec![];
+        for rule in self.rules_for_path(path) {
+            let repo = ctx.repo.unwrap_or("");
+            if !rule.git.matches(repo, ctx.branch, ctx.tags) {
+                continue;
+            }
+
+            let context_caps = resolve_context_captures(&rule.context_captures, ctx, path);
+
+            let results = if let Some(ast_sel) = &rule.ast {
+                ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
+            } else {
+                let value = match parse_data(source, ext) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                walk::walk(&value, &rule.steps)
+            };
+
+            for result in results {
+                if context_caps.is_empty() {
+                    all.push(result);
+                } else {
+                    let mut merged = result;
+                    for (name, cv) in &context_caps {
+                        merged.captures.insert(name.clone(), cv.clone());
+                    }
+                    all.push(merged);
+                }
+            }
+        }
+        all
+    }
 }
 
 impl Extractor for RuleExtractor {

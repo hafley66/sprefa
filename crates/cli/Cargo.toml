@@ -17,6 +17,7 @@ sprefa_rs = { path = "../rs" }
 sprefa_server = { path = "../server" }
 sprefa_watch = { path = "../watch" }
 sprefa_sprf = { path = "../sprf" }
+sprefa_extract = { path = "../extract" }
 ghcache-client = { path = "../../../ghcacher/ghcache-client", optional = true }
 glob = { version = "0.3", optional = true }
 clap = { workspace = true }

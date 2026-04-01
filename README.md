@@ -101,11 +101,13 @@ sprefa init                          # create sprefa.toml + DB
 sprefa add <path> [--name <name>]    # register a repo
 sprefa daemon [--repo <name>]        # scan + watch + serve, all in one
        [--no-scan]                   # skip initial scan (index already populated)
+                                     # + ghcache subscriber if [ghcache] configured
 sprefa scan [--repo <name>] [--once] # index repos only
 sprefa watch [--repo <name>]         # watch and auto-rewrite only
 sprefa serve                         # HTTP server only (127.0.0.1:9400)
 sprefa query <term> [--once]         # trigram substring search
 sprefa sql "<SELECT ...>"            # read-only SQL against the index DB
+sprefa reset                         # drop + recreate the index DB
 sprefa status                        # show indexed repos
 sprefa --readme                      # print this document
 sprefa --json <command>              # structured JSON logs (all commands)
@@ -117,7 +119,8 @@ sprefa --json <command>              # structured JSON logs (all commands)
 
 1. Initial scan of all registered repos (builds the index)
 2. Start filesystem watchers on all repos (auto-rewrite on changes)
-3. Start the HTTP server (queries, status, trigger re-scans)
+3. Start ghcache subscriber if `[ghcache]` is configured (auto-scan checkouts)
+4. Start the HTTP server (queries, status, trigger re-scans)
 
 Use `--no-scan` to skip step 1 if the index is already populated. Use `--repo` to limit to a single repo.
 
@@ -209,6 +212,49 @@ exclude = [
 Config loading: `$SPREFA_CONFIG` > `./sprefa.toml` > `~/.config/sprefa/sprefa.toml`.
 
 Filter resolution: global -> per-repo -> per-branch. Most specific wins.
+
+## ghcache integration
+
+sprefa can subscribe to [ghcache](../ghcacher) checkout events to auto-scan repos that ghcache manages on disk. When a checkout appears or updates, sprefa rescans it without manual `sprefa add` or `sprefa scan`.
+
+### Setup
+
+1. Build sprefa with the ghcache feature:
+
+```bash
+cargo build -p sprefa --features ghcache
+```
+
+2. Add `[ghcache]` to `sprefa.toml` pointing at ghcache's SQLite database:
+
+```toml
+[ghcache]
+db = "~/.ghcache/ghcache.db"
+poll_ms = 500                    # poll interval, default 500ms
+```
+
+3. Optionally filter which repos/branches get scanned via `[[sources]]`:
+
+```toml
+[[sources]]
+root = "~/checkouts"
+layout = "{org}/{branch}/{repo}"
+branch_patterns = ["main", "release/*"]   # omit to accept all branches
+```
+
+### How it works
+
+When `sprefa daemon` starts with `[ghcache]` configured:
+
+1. **Startup scan** -- reads all existing checkouts from ghcache's DB, scans each one that matches `[[sources]]` patterns
+2. **Event subscription** -- polls ghcache's `change_log` table every `poll_ms` for new checkout/update/delete events
+3. **Incremental rescan** -- on each event, rescans only the affected repo+branch. Pauses the filesystem watcher for that repo during scan to avoid duplicate processing.
+
+Each checkout is scanned as two branches: the committed state and the working-tree state. This means the index sees both what's merged and what's locally modified.
+
+### Without ghcache
+
+Without the feature flag or `[ghcache]` config section, sprefa works entirely standalone. Register repos manually with `sprefa add` and scan with `sprefa daemon` or `sprefa scan`.
 
 ## Architecture
 
