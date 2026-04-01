@@ -59,6 +59,7 @@ pub enum Tag {
     Repo,
     Branch,
     Fs,
+    Rule,
 }
 
 impl Tag {
@@ -70,6 +71,7 @@ impl Tag {
             "repo" => Some(Tag::Repo),
             "branch" => Some(Tag::Branch),
             "fs" => Some(Tag::Fs),
+            "rule" => Some(Tag::Rule),
             _ => None,
         }
     }

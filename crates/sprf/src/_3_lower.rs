@@ -54,6 +54,7 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
     let mut select_ast: Option<AstSelector> = None;
     let mut value_pattern: Option<ValuePattern> = None;
     let mut create_matches: Vec<MatchDef> = vec![];
+    let mut rule_name: Option<String> = None;
 
     // Count leading bare globs
     let bare_count = chain.slots.iter().take_while(|s| matches!(s, Slot::Bare(_))).count();
@@ -154,12 +155,15 @@ fn lower_chain(chain: &SelectorChain, index: usize) -> Result<Rule> {
                         full_match: true,
                     });
                 }
+                Tag::Rule => {
+                    rule_name = Some(body.clone());
+                }
             },
         }
     }
 
     Ok(Rule {
-        name: format!("sprf-rule-{}", index),
+        name: rule_name.unwrap_or_else(|| format!("sprf-rule-{}", index)),
         description: None,
         select,
         select_ast,
@@ -295,6 +299,24 @@ mod tests {
         let r = &rules[0];
         assert!(r.value.is_some());
         assert_eq!(r.value.as_ref().unwrap().pattern, r"image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)");
+    }
+
+    #[test]
+    fn lower_rule_name() {
+        let rules = lower("rule(cargo_packages) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });");
+        assert_eq!(rules[0].name, "cargo_packages");
+    }
+
+    #[test]
+    fn lower_rule_name_at_end() {
+        let rules = lower("fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > rule(my_rule);");
+        assert_eq!(rules[0].name, "my_rule");
+    }
+
+    #[test]
+    fn lower_rule_name_absent_uses_index() {
+        let rules = lower("fs(**/Cargo.toml) > json({ package: { name: $NAME } });");
+        assert_eq!(rules[0].name, "sprf-rule-0");
     }
 
     #[test]

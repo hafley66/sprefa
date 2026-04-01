@@ -106,7 +106,8 @@
         { "include": "#re-slot" },
         { "include": "#fs-slot" },
         { "include": "#repo-slot" },
-        { "include": "#branch-slot" }
+        { "include": "#branch-slot" },
+        { "include": "#rule-slot" }
       ]
     },
 
@@ -160,6 +161,20 @@
       },
       "patterns": [
         { "match": "[^)]+", "name": "string.unquoted.glob.sprf" }
+      ]
+    },
+
+    "rule-slot": {
+      "begin": "\\b(rule)\\s*\\(",
+      "end": "\\)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.tag.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.sprf" }
+      },
+      "patterns": [
+        { "match": "[^)]+", "name": "entity.name.function.rule.sprf" }
       ]
     },
 
