@@ -301,6 +301,125 @@ Steps can **capture** values by name as they match. A `value` regex can split/fi
 
 Rules replace hard-coded Rust for each new file format or naming convention. When the way services reference each other changes, you edit a JSON rule, not source code. JSON Schema is generated from the Rust types for IDE intellisense.
 
+## .sprf DSL
+
+The same rule engine has a compact DSL alternative to JSON. CSS-style selector chains with `>`, function-call notation for slot types, and a JSON destructuring mini-lang for tree matching.
+
+```
+sprefa-rules.sprf        # looked up first, before .json/.yaml
+```
+
+### Grammar
+
+```
+statement  = rule | link
+rule       = slot ( ">" slot )* ";"
+slot       = tagged | match | bare_glob
+tagged     = tag "(" body ")"              # paren-counted, allows nested parens
+match      = "match(" "$" CAP "," kind ")"
+bare_glob  = (not > ; #)+                  # 3 consecutive = repo > branch > fs
+
+tag        = fs | json | ast | re | repo | branch
+           | ast "[" lang "]"              # language override: ast[typescript](...)
+
+link       = "link(" src ">" tgt ("," pred)* ")" ( ">" "$" kind )? ";"
+```
+
+### Selector chain
+
+Each rule is a `>` separated chain of slots. Bare globs infer context position, tagged slots dispatch by type:
+
+```sprf
+# tagged slots (recommended)
+fs(**/Cargo.toml) > json({ package: { name: $NAME } })
+  > match($NAME, package_name);
+
+# bare 3-slot context: repo > branch > fs
+my-org/* > main > **/Cargo.toml > json({ package: { name: $NAME } })
+  > match($NAME, package_name);
+
+# ast-grep with language override
+fs(**/*.config) > ast[typescript](import $NAME from '$PATH');
+
+# regex on file content
+fs(helm/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));
+```
+
+### JSON destructuring
+
+The `json(...)` body is a pattern that walks parsed JSON/YAML/TOML trees. Partial matching -- unlisted keys are ignored.
+
+| Syntax | Meaning |
+|--------|---------|
+| `{ key: pat }` | Match key, descend into pattern |
+| `{ $KEY: $VAL }` | Iterate all keys, capture each pair |
+| `{ dep_*: $VAL }` | Glob on key name |
+| `{ re:^pattern: $V }` | Regex on key name |
+| `{ **: pat }` | Recursive descent (any depth) |
+| `[...pat]` | Array: iterate elements |
+| `$NAME` | Capture leaf value (SCREAMING required) |
+| `$_` | Wildcard: match any value shape, don't bind |
+
+Ancestor captures carry forward through arrays: `{ name: $N, items: [...{v: $X}] }` yields one result per element, each containing both `$N` and `$X`.
+
+### match() slots
+
+`match($CAPTURE, kind)` maps a captured variable to a match kind. Multiple match slots per rule are allowed:
+
+```sprf
+fs(**/package.json) > json({ dependencies: { $NAME: $VERSION } })
+  > match($NAME, dep_name)
+  > match($VERSION, dep_version);
+```
+
+### link() declarations
+
+Top-level declarations connecting match kinds across files/repos:
+
+```sprf
+link(dep_name > package_name, norm_eq) > $dep_to_package;
+link(image_repo > package_name, norm_eq) > $image_source;
+link(import_name > export_name, target_file_eq, string_eq) > $import_binding;
+```
+
+The `>` between source and target kinds is inside parens, so unambiguous. Available predicates: `norm_eq`, `norm2_eq`, `string_eq`, `target_file_eq`, `same_repo`, `stem_eq_src`, `stem_eq_tgt`, `ext_eq_src`, `ext_eq_tgt`, `dir_eq_src`, `dir_eq_tgt`. If `> $kind` is omitted, kind auto-generates as `src__tgt`.
+
+### Full example (this repo's rules)
+
+```sprf
+# Cargo
+fs(**/Cargo.toml) > json({ package: { name: $NAME } })
+  > match($NAME, package_name);
+
+fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } })
+  > match($NAME, dep_name);
+
+fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } })
+  > match($MEMBER, workspace_member);
+
+# Node
+fs(**/package.json) > json({ name: $NAME })
+  > match($NAME, package_name);
+
+fs(**/package.json) > json({ re:^(dev|peer)?[Dd]ependencies: { $NAME: $VERSION } })
+  > match($NAME, dep_name)
+  > match($VERSION, dep_version);
+
+# Helm
+fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
+  > match($REPO, image_repo)
+  > match($TAG, image_tag);
+
+# ast-grep
+fs(**/*.ts) > ast(process.env.$NAME)
+  > match($NAME, env_var_ref);
+
+# Links
+link(dep_name > package_name, norm_eq) > $dep_to_package;
+link(image_repo > package_name, norm_eq) > $image_source;
+link(env_var_ref > env_var_name, norm_eq) > $env_var_binding;
+```
+
 ## Link rules
 
 `match_links` edges between matches, defined in `sprefa-rules.json`. Each rule = a `kind` + either a structured predicate DSL or a raw SQL WHERE fragment injected into a fixed skeleton.
@@ -411,7 +530,7 @@ Raw SQL, no sanitization. Local toolchain tradeoff. Idempotent via NOT EXISTS + 
 ```mermaid
 graph TD
     subgraph FS["Filesystem"]
-        RF[sprefa-rules.json]
+        RF[sprefa-rules.json<br/>or sprefa-rules.sprf]
         SRC[source files<br/>js/ts/rs/yaml/json/toml]
     end
 
@@ -440,7 +559,7 @@ graph TD
         FIL[(files)]
     end
 
-    RF -->|serde_json| RS
+    RF -->|serde_json / sprf parser| RS
     RS --> R
     RS --> LR
     R -->|compile| CE
@@ -606,7 +725,8 @@ crates/
   cache/        DB writes: bulk flush, import target resolution (oxc_resolver),
                 match link resolution, repo metadata interning (flush_repo_meta),
                 scan context (skip set by content hash + scanner hash)
-  rules/        declarative JSON rule engine: types, tree walker, create_matches, JSON Schema
+  rules/        declarative rule engine: types, tree walker, create_matches, JSON Schema
+  sprf/         .sprf DSL parser: text -> AST -> RuleSet (same types as JSON path)
   js/           oxc-based JS/TS extractor (imports, exports, require, re-exports)
   rs/           syn-based Rust extractor (use trees, declarations, mod, extern crate)
   watch/        filesystem watcher + rewrite pipeline:

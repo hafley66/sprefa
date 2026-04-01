@@ -1,0 +1,4 @@
+[build]
+# Parallel frontend: rustc splits type/borrow checking across threads.
+# Requires nightly toolchain (set via `rustup override set nightly`).
+rustflags = ["-Z", "threads=8"]

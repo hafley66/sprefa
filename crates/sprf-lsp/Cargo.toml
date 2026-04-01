@@ -1,0 +1,15 @@
+[package]
+name = "sprefa_sprf_lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sprf-lsp"
+path = "src/main.rs"
+
+[dependencies]
+tower-lsp = { workspace = true }
+tokio = { workspace = true }
+sprefa_sprf = { path = "../sprf" }
+serde_json = { workspace = true }

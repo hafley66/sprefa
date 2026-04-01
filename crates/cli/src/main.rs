@@ -214,6 +214,13 @@ enum Command {
         sql: String,
     },
 
+    /// Drop and recreate the index database
+    ///
+    /// Deletes the SQLite database file and reinitializes it with a fresh schema.
+    /// Use before `scan` or `daemon` when the schema has changed or the index
+    /// is corrupted.
+    Reset,
+
     /// All-in-one: scan + watch + serve
     ///
     /// Runs the full pipeline in a single process:
@@ -266,6 +273,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Init) => cmd_init().await?,
         Some(Command::Add { path, name }) => cmd_add(&cli.config, path, name).await?,
+        Some(Command::Reset) => cmd_reset(&cli.config).await?,
         Some(Command::Scan { repo, once }) => cmd_scan(&cli.config, repo.as_deref(), once).await?,
         Some(Command::Status) => cmd_status(&cli.config).await?,
         Some(Command::Query { term, scope, once }) => cmd_query(&cli.config, &term, scope.as_deref(), once).await?,
@@ -281,6 +289,24 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn cmd_reset(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
+    let config = load_cfg(config_path)?;
+    let db_path = config.db_path();
+    let path = std::path::Path::new(&db_path);
+    if path.exists() {
+        std::fs::remove_file(path)?;
+        println!("removed {}", db_path);
+    }
+    // Also remove WAL/SHM files
+    for suffix in &["-wal", "-shm"] {
+        let p = format!("{}{}", db_path, suffix);
+        let _ = std::fs::remove_file(&p);
+    }
+    let _pool = init_db(&db_path).await?;
+    println!("recreated database at {}", db_path);
     Ok(())
 }
 

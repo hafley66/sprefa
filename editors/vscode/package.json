@@ -1,0 +1,62 @@
+{
+  "name": "sprf",
+  "displayName": "sprf",
+  "description": "Syntax highlighting and language server for .sprf rule files",
+  "version": "0.1.0",
+  "publisher": "sprefa",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:sprf"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "sprf",
+        "aliases": [
+          "sprf",
+          "SPRF"
+        ],
+        "extensions": [
+          ".sprf"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sprf",
+        "scopeName": "source.sprf",
+        "path": "./syntaxes/sprf.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "sprf",
+      "properties": {
+        "sprf.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to sprf-lsp binary. If empty, searches PATH."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p ."
+  }
+}

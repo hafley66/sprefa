@@ -13,6 +13,7 @@ members = [
     "crates/rs",
     "crates/watch",
     "crates/sprf",
+    "crates/sprf-lsp",
 ]
 resolver = "2"
 
@@ -88,3 +89,13 @@ reqwest = { version = "0.12", default-features = false, features = ["json"] }
 # logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# lsp
+tower-lsp = "0.20"
+
+[profile.dev]
+opt-level = 0
+debug = 1
+
+[profile.dev.package."*"]
+opt-level = 2

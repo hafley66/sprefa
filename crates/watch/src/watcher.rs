@@ -140,12 +140,41 @@ pub async fn watch(
     Ok(change_rx)
 }
 
+/// Directories that should never trigger watcher events.
+const IGNORED_DIRS: &[&str] = &[
+    "target", "node_modules", "dist", ".git", "vendor",
+    "__pycache__", ".next", ".nuxt", "build",
+];
+
+fn is_ignored_path(path: &Path, root: &Path) -> bool {
+    let rel = match path.strip_prefix(root) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    for component in rel.components() {
+        if let std::path::Component::Normal(name) = component {
+            if let Some(s) = name.to_str() {
+                if IGNORED_DIRS.contains(&s) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn spawn_notify_watcher(
     root: PathBuf,
     tx: mpsc::Sender<RawEvent>,
 ) -> Result<RecommendedWatcher> {
+    let root_for_filter = root.clone();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
         let Ok(event) = res else { return };
+
+        // Skip events from ignored directories (target/, node_modules/, etc.)
+        if event.paths.iter().all(|p| is_ignored_path(p, &root_for_filter)) {
+            return;
+        }
 
         match event.kind {
             // Rename events (macOS FSEvents fires these instead of Create+Remove for mv).
