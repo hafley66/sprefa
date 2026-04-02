@@ -622,59 +622,52 @@ async fn cmd_scan(
         const MAX_DISCOVERY_ITERATIONS: i32 = 10;
         for iteration in 1..=MAX_DISCOVERY_ITERATIONS {
             let targets = sprefa_cache::discovery::discover_scan_targets(&scanner.db).await?;
+            let scanned = sprefa_cache::discovery::scanned_revs(&scanner.db).await?;
             let mut new_targets = Vec::new();
+            let mut log_entries = Vec::new();
 
             for target in &targets {
                 // Only scan repos we have a local path for.
                 let Some(repo_cfg) = repo_map.get(target.repo_name.as_str()) else {
-                    sprefa_cache::discovery::log_discovery(
-                        &scanner.db,
+                    log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
                         iteration,
                         target,
-                        "skipped_no_path",
-                        None,
-                        None,
-                    )
-                    .await?;
+                        status: "skipped_no_path",
+                        files_scanned: None,
+                        refs_inserted: None,
+                    });
                     continue;
                 };
 
                 // Skip excluded revs.
                 if repo_cfg.rev_excluded(&target.rev) {
-                    sprefa_cache::discovery::log_discovery(
-                        &scanner.db,
+                    log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
                         iteration,
                         target,
-                        "skipped_excluded",
-                        None,
-                        None,
-                    )
-                    .await?;
+                        status: "skipped_excluded",
+                        files_scanned: None,
+                        refs_inserted: None,
+                    });
                     continue;
                 }
 
                 // Skip revs already scanned.
-                if sprefa_cache::discovery::is_rev_scanned(
-                    &scanner.db,
-                    &target.repo_name,
-                    &target.rev,
-                )
-                .await?
-                {
-                    sprefa_cache::discovery::log_discovery(
-                        &scanner.db,
+                if scanned.contains(&(target.repo_name.clone(), target.rev.clone())) {
+                    log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
                         iteration,
                         target,
-                        "skipped_scanned",
-                        None,
-                        None,
-                    )
-                    .await?;
+                        status: "skipped_scanned",
+                        files_scanned: None,
+                        refs_inserted: None,
+                    });
                     continue;
                 }
 
                 new_targets.push((target.clone(), *repo_cfg));
             }
+
+            // Flush skip-phase log entries in one batch.
+            sprefa_cache::discovery::log_discovery_batch(&scanner.db, &log_entries).await?;
 
             if new_targets.is_empty() {
                 if iteration > 1 {
@@ -689,6 +682,7 @@ async fn cmd_scan(
                 new_targets.len(),
             );
 
+            let mut scan_log_entries = Vec::new();
             for (target, repo_cfg) in &new_targets {
                 match scanner.scan_rev(repo_cfg, &target.rev).await {
                     Ok(result) => {
@@ -701,15 +695,13 @@ async fn cmd_scan(
                             result.refs_inserted,
                             result.links_created,
                         );
-                        sprefa_cache::discovery::log_discovery(
-                            &scanner.db,
+                        scan_log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
                             iteration,
                             target,
-                            "scanned",
-                            Some(result.files_scanned),
-                            Some(result.refs_inserted),
-                        )
-                        .await?;
+                            status: "scanned",
+                            files_scanned: Some(result.files_scanned),
+                            refs_inserted: Some(result.refs_inserted),
+                        });
                         total_files += result.files_scanned;
                         total_refs += result.refs_inserted;
                     }
@@ -720,18 +712,17 @@ async fn cmd_scan(
                             target.rev,
                             e,
                         );
-                        sprefa_cache::discovery::log_discovery(
-                            &scanner.db,
+                        scan_log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
                             iteration,
                             target,
-                            "failed",
-                            None,
-                            None,
-                        )
-                        .await?;
+                            status: "failed",
+                            files_scanned: None,
+                            refs_inserted: None,
+                        });
                     }
                 }
             }
+            sprefa_cache::discovery::log_discovery_batch(&scanner.db, &scan_log_entries).await?;
 
             // Re-resolve links for affected repos after discovery scans.
             let mut discovery_links = 0usize;

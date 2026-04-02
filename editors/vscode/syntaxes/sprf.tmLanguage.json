@@ -4,6 +4,7 @@
   "scopeName": "source.sprf",
   "patterns": [
     { "include": "#comment" },
+    { "include": "#rule-declaration" },
     { "include": "#query-declaration" },
     { "include": "#link-declaration" },
     { "include": "#rule" }
@@ -91,11 +92,51 @@
       ]
     },
 
+    "rule-declaration": {
+      "begin": "\\b(rule)\\s+([a-z_][a-z0-9_]*)\\s*\\(",
+      "end": ";",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.rule.sprf" },
+        "2": { "name": "entity.name.function.rule.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.terminator.sprf" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#rule-head-captures" },
+        { "include": "#tagged-slot" },
+        { "include": "#chain-separator" },
+        { "include": "#capture" },
+        { "include": "#bare-glob" }
+      ]
+    },
+
+    "rule-head-captures": {
+      "patterns": [
+        {
+          "match": "\\b(repo|rev|name|file)(?=\\s*\\(\\s*\\$)",
+          "name": "storage.type.annotation.sprf"
+        },
+        {
+          "match": "\\$[A-Z_][A-Za-z0-9_]*",
+          "name": "variable.other.capture.sprf"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.comma.sprf"
+        },
+        {
+          "match": "[()]",
+          "name": "punctuation.bracket.round.sprf"
+        }
+      ]
+    },
+
     "rule": {
       "patterns": [
         { "include": "#comment" },
-        { "include": "#query-declaration" },
-        { "include": "#match-slot" },
+        { "include": "#rule-declaration" },
         { "include": "#tagged-slot" },
         { "include": "#chain-separator" },
         { "include": "#semicolon" },
@@ -119,40 +160,13 @@
       "name": "variable.language.wildcard.sprf"
     },
 
-    "match-slot": {
-      "begin": "\\b(match)\\s*\\(",
-      "end": "\\)",
-      "beginCaptures": {
-        "1": { "name": "keyword.control.match.sprf" }
-      },
-      "endCaptures": {
-        "0": { "name": "punctuation.bracket.round.sprf" }
-      },
-      "patterns": [
-        {
-          "match": "\\$[A-Z_][A-Za-z0-9_]*",
-          "name": "variable.other.capture.sprf"
-        },
-        {
-          "match": ",",
-          "name": "punctuation.separator.comma.sprf"
-        },
-        {
-          "match": "[a-z_][a-z0-9_]*",
-          "name": "entity.name.type.kind.sprf"
-        }
-      ]
-    },
-
     "tagged-slot": {
       "patterns": [
         { "include": "#json-slot" },
         { "include": "#ast-slot" },
         { "include": "#re-slot" },
         { "include": "#fs-slot" },
-        { "include": "#repo-slot" },
-        { "include": "#branch-slot" },
-        { "include": "#rule-slot" }
+        { "include": "#repo-slot" }
       ]
     },
 
@@ -192,34 +206,6 @@
       },
       "patterns": [
         { "match": "[^)]+", "name": "string.unquoted.glob.sprf" }
-      ]
-    },
-
-    "branch-slot": {
-      "begin": "\\b(branch)\\s*\\(",
-      "end": "\\)",
-      "beginCaptures": {
-        "1": { "name": "keyword.control.tag.sprf" }
-      },
-      "endCaptures": {
-        "0": { "name": "punctuation.bracket.round.sprf" }
-      },
-      "patterns": [
-        { "match": "[^)]+", "name": "string.unquoted.glob.sprf" }
-      ]
-    },
-
-    "rule-slot": {
-      "begin": "\\b(rule)\\s*\\(",
-      "end": "\\)",
-      "beginCaptures": {
-        "1": { "name": "keyword.control.tag.sprf" }
-      },
-      "endCaptures": {
-        "0": { "name": "punctuation.bracket.round.sprf" }
-      },
-      "patterns": [
-        { "match": "[^)]+", "name": "entity.name.function.rule.sprf" }
       ]
     },
 

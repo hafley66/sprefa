@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use sqlx::SqlitePool;
 
 /// A discovered (repo, rev) target from match_labels annotations.
@@ -8,6 +10,15 @@ pub struct DiscoveryTarget {
     pub source_repo: String,
     pub source_file: Option<String>,
     pub source_kind: Option<String>,
+}
+
+/// Entry for batch-inserting discovery log rows.
+pub struct DiscoveryLogEntry<'a> {
+    pub iteration: i32,
+    pub target: &'a DiscoveryTarget,
+    pub status: &'a str,
+    pub files_scanned: Option<usize>,
+    pub refs_inserted: Option<usize>,
 }
 
 /// Query match_labels for (repo, rev) pairs linked by IS_REPO/IS_REV annotations.
@@ -55,48 +66,55 @@ pub async fn discover_scan_targets(pool: &SqlitePool) -> anyhow::Result<Vec<Disc
         .collect())
 }
 
-/// Check whether a (repo, rev) has already been scanned.
-pub async fn is_rev_scanned(pool: &SqlitePool, repo_name: &str, rev: &str) -> anyhow::Result<bool> {
-    let count: i64 = sqlx::query_scalar(
+/// Fetch all already-scanned (repo_name, rev) pairs in one query.
+pub async fn scanned_revs(pool: &SqlitePool) -> anyhow::Result<HashSet<(String, String)>> {
+    let rows = sqlx::query_as::<_, (String, String)>(
         r#"
-        SELECT COUNT(*) FROM repo_revs rv
+        SELECT r.name, rv.rev
+        FROM repo_revs rv
         JOIN repos r ON rv.repo_id = r.id
-        WHERE r.name = ? AND rv.rev = ?
         "#,
     )
-    .bind(repo_name)
-    .bind(rev)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await?;
-    Ok(count > 0)
+    Ok(rows.into_iter().collect())
 }
 
-/// Log a discovery event.
-pub async fn log_discovery(
+/// Batch-insert discovery log entries.
+pub async fn log_discovery_batch(
     pool: &SqlitePool,
-    iteration: i32,
-    target: &DiscoveryTarget,
-    status: &str,
-    files_scanned: Option<usize>,
-    refs_inserted: Option<usize>,
+    entries: &[DiscoveryLogEntry<'_>],
 ) -> anyhow::Result<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO discovery_log (iteration, source_repo, source_file, source_kind,
-                                   target_repo, target_rev, status, files_scanned, refs_inserted)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-    )
-    .bind(iteration)
-    .bind(&target.source_repo)
-    .bind(&target.source_file)
-    .bind(&target.source_kind)
-    .bind(&target.repo_name)
-    .bind(&target.rev)
-    .bind(status)
-    .bind(files_scanned.map(|n| n as i64))
-    .bind(refs_inserted.map(|n| n as i64))
-    .execute(pool)
-    .await?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+    // Build a single INSERT with multiple VALUE tuples.
+    let mut sql = String::from(
+        "INSERT INTO discovery_log (iteration, source_repo, source_file, source_kind, \
+         target_repo, target_rev, status, files_scanned, refs_inserted) VALUES ",
+    );
+    let mut first = true;
+    for _ in entries {
+        if !first {
+            sql.push(',');
+        }
+        sql.push_str("(?,?,?,?,?,?,?,?,?)");
+        first = false;
+    }
+
+    let mut q = sqlx::query(&sql);
+    for e in entries {
+        q = q
+            .bind(e.iteration)
+            .bind(&e.target.source_repo)
+            .bind(&e.target.source_file)
+            .bind(&e.target.source_kind)
+            .bind(&e.target.repo_name)
+            .bind(&e.target.rev)
+            .bind(e.status)
+            .bind(e.files_scanned.map(|n| n as i64))
+            .bind(e.refs_inserted.map(|n| n as i64));
+    }
+    q.execute(pool).await?;
     Ok(())
 }
