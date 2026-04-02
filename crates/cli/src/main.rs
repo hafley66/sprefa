@@ -875,7 +875,7 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
     use std::collections::HashMap;
 
     // Parse goal atom using the sprf parser
-    let goal_input = format!("query _goal($__UNUSED) :- {};", goal_str);
+    let goal_input = format!("query _goal($__UNUSED) > {};", goal_str);
     let program = sprefa_sprf::_1_parse::parse_program(&goal_input);
     // That's a hack -- just parse the atom directly. Let me parse it properly.
     // Actually, reuse the atom parser by parsing as a query body.
@@ -1073,7 +1073,7 @@ async fn cmd_check(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
 /// Parse a goal string like `all_deps($WHO, "lodash")` into an Atom.
 fn parse_goal_atom(input: &str) -> anyhow::Result<sprefa_sprf::_0_ast::Atom> {
     // Wrap in a dummy query to reuse the parser
-    let wrapped = format!("query __goal($__X) :- {input};");
+    let wrapped = format!("query __goal($__X) > {input};");
     let program = sprefa_sprf::_1_parse::parse_program(&wrapped)?;
     match program.into_iter().next() {
         Some(sprefa_sprf::_0_ast::Statement::Query(decl)) => {

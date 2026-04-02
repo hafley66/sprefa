@@ -57,7 +57,7 @@ pub fn compile_query_with_deps(
     let ctes = cte_parts.join(",\n");
 
     // Final SELECT from the target query
-    let final_select = compile_final_select(def);
+    let final_select = compile_final_select(def, known_queries, known_rules);
     Ok(format!("{with_keyword} {ctes}\n{final_select}"))
 }
 
@@ -105,12 +105,49 @@ pub fn compile_query(
     known_rules: &HashMap<String, RuleSchema>,
 ) -> String {
     let cte = compile_cte(def, known_queries, known_rules);
-    let final_select = compile_final_select(def);
+    let final_select = compile_final_select(def, known_queries, known_rules);
     format!("{cte}\n{final_select}")
 }
 
-/// Build the final SELECT that resolves match IDs to human-readable values.
-fn compile_final_select(def: &QueryDef) -> String {
+/// Build the final SELECT that resolves CTE columns to human-readable values.
+///
+/// Two modes:
+/// - All-string: CTE columns are already string values (rule-relations, all-string builtins).
+///   Final select just echoes the values.
+/// - Match-ID: CTE columns are match IDs. Final select resolves through matches -> refs -> strings.
+fn compile_final_select(def: &QueryDef, known_queries: &HashMap<String, usize>, known_rules: &HashMap<String, RuleSchema>) -> String {
+    let all_string = def.body.iter()
+        .filter(|a| !a.negated)
+        .all(|a| a.relation == def.name || is_all_string_relation(&a.relation, known_queries, known_rules));
+
+    if all_string {
+        compile_final_select_string(def)
+    } else {
+        compile_final_select_match_id(def)
+    }
+}
+
+/// Final select for all-string queries: columns are already string values.
+fn compile_final_select_string(def: &QueryDef) -> String {
+    let mut select_cols = Vec::new();
+    for i in 0..def.arity {
+        let col_name = &def.head_args[i];
+        let label = if col_name.starts_with('=') || col_name == "_" {
+            format!("col{i}")
+        } else {
+            col_name.to_lowercase()
+        };
+        select_cols.push(format!("q.a{i} AS {label}"));
+    }
+    format!(
+        "SELECT {cols}\nFROM {name} q",
+        cols = select_cols.join(", "),
+        name = def.name,
+    )
+}
+
+/// Final select for match-ID queries: resolve through matches -> refs -> strings.
+fn compile_final_select_match_id(def: &QueryDef) -> String {
     let mut select_cols = Vec::new();
     let mut joins = Vec::new();
     for i in 0..def.arity {
@@ -215,7 +252,7 @@ fn compile_body_select(
 
     for (idx, atom) in positive.iter().enumerate() {
         let alias = format!("t{idx}");
-        let builtin = builtin_relation(&atom.relation);
+        let all_string = is_all_string_relation(&atom.relation, known_queries, known_rules);
         let subquery = relation_source(&atom.relation, atom.args.len(), known_queries, known_rules);
         from_parts.push(format!("({subquery}) AS {alias}"));
 
@@ -226,7 +263,8 @@ fn compile_body_select(
                 // wildcard, no binding
             } else if arg.starts_with('=') {
                 let lit = arg[1..].replace('\'', "''");
-                let is_string_col = builtin.as_ref().map_or(false, |b| b.all_string || col_idx > 0);
+                let builtin = builtin_relation(&atom.relation);
+                let is_string_col = all_string || builtin.as_ref().map_or(false, |_| col_idx > 0);
                 if is_string_col {
                     // Column is a string value -- compare directly.
                     where_parts.push(format!("{col_ref} = '{lit}'"));
@@ -258,7 +296,7 @@ fn compile_body_select(
     for atom in &negated {
         let subquery = relation_source(&atom.relation, atom.args.len(), known_queries, known_rules);
         let mut sub_conditions = Vec::new();
-        let builtin = builtin_relation(&atom.relation);
+        let all_string = is_all_string_relation(&atom.relation, known_queries, known_rules);
 
         for (col_idx, arg) in atom.args.iter().enumerate() {
             let inner_col = format!("neg.a{col_idx}");
@@ -266,7 +304,8 @@ fn compile_body_select(
                 // wildcard, no constraint
             } else if arg.starts_with('=') {
                 let lit = arg[1..].replace('\'', "''");
-                let is_string_col = builtin.as_ref().map_or(false, |b| b.all_string || col_idx > 0);
+                let builtin = builtin_relation(&atom.relation);
+                let is_string_col = all_string || builtin.as_ref().map_or(false, |_| col_idx > 0);
                 if is_string_col {
                     sub_conditions.push(format!("{inner_col} = '{lit}'"));
                 } else {
@@ -326,7 +365,7 @@ fn compile_recursive_step(
     known_rules: &HashMap<String, RuleSchema>,
 ) -> String {
     // For simplicity, handle the common pattern:
-    //   head($A, $C) :- base($A, $B), head($B, $C)
+    //   head($A, $C) > base($A, $B) head($B, $C)
     // which becomes:
     //   SELECT base.a0, rec.a1 FROM head rec JOIN (base_source) base ON rec.a1 = base.a0
     //
@@ -356,7 +395,7 @@ fn compile_recursive_step(
 
     for atom in &pos_base {
         let alias = format!("b{table_idx}");
-        let builtin = builtin_relation(&atom.relation);
+        let all_string = is_all_string_relation(&atom.relation, known_queries, known_rules);
         let subquery = relation_source(&atom.relation, atom.args.len(), known_queries, known_rules);
         from_parts.push(format!("({subquery}) AS {alias}"));
         for (col_idx, arg) in atom.args.iter().enumerate() {
@@ -365,7 +404,8 @@ fn compile_recursive_step(
                 // skip
             } else if arg.starts_with('=') {
                 let lit = arg[1..].replace('\'', "''");
-                let is_string_col = builtin.as_ref().map_or(false, |b| b.all_string || col_idx > 0);
+                let builtin = builtin_relation(&atom.relation);
+                let is_string_col = all_string || builtin.as_ref().map_or(false, |_| col_idx > 0);
                 if is_string_col {
                     where_parts.push(format!("{col_ref} = '{lit}'"));
                 } else {
@@ -394,7 +434,7 @@ fn compile_recursive_step(
     // Negated base atoms: NOT EXISTS subqueries
     for atom in &neg_base {
         let subquery = relation_source(&atom.relation, atom.args.len(), known_queries, known_rules);
-        let builtin = builtin_relation(&atom.relation);
+        let all_string = is_all_string_relation(&atom.relation, known_queries, known_rules);
         let mut sub_conditions = Vec::new();
         for (col_idx, arg) in atom.args.iter().enumerate() {
             let inner_col = format!("neg.a{col_idx}");
@@ -402,7 +442,8 @@ fn compile_recursive_step(
                 // wildcard
             } else if arg.starts_with('=') {
                 let lit = arg[1..].replace('\'', "''");
-                let is_string_col = builtin.as_ref().map_or(false, |b| b.all_string || col_idx > 0);
+                let builtin = builtin_relation(&atom.relation);
+                let is_string_col = all_string || builtin.as_ref().map_or(false, |_| col_idx > 0);
                 if is_string_col {
                     sub_conditions.push(format!("{inner_col} = '{lit}'"));
                 } else {
@@ -451,6 +492,25 @@ fn compile_recursive_step(
     format!("SELECT {select}\nFROM {from}{where_clause}")
 }
 
+/// Whether a relation's columns are all string-valued (vs match IDs).
+fn is_all_string_relation(
+    name: &str,
+    known_queries: &HashMap<String, usize>,
+    known_rules: &HashMap<String, RuleSchema>,
+) -> bool {
+    if known_queries.contains_key(name) {
+        // Query CTEs inherit from their body -- conservatively treat as all-string
+        // since rule-relations (the primary source) are now all-string.
+        true
+    } else if known_rules.contains_key(name) {
+        true
+    } else if let Some(info) = builtin_relation(name) {
+        info.all_string
+    } else {
+        false // match_links: match IDs
+    }
+}
+
 /// SQL source for a relation name.
 ///
 /// Resolution order:
@@ -480,12 +540,11 @@ fn relation_source(
     }
 }
 
-/// Generate SQL for a rule-as-relation: JOIN matches within the same group_id.
+/// Generate SQL for a rule-as-relation: JOIN matches within the same group_id,
+/// resolving each capture to its string value.
 ///
-/// Each capture kind becomes a column. The anchor match (first kind) provides
-/// the group_id and rule_name filter. Remaining kinds JOIN on group_id.
-///
-/// Returns match IDs so `compile_final_select` can resolve to strings.
+/// Each capture kind becomes a string-valued column. This allows direct
+/// unification with all-string builtins like repo_has_tag.
 fn rule_relation_source(rule_name: &str, schema: &RuleSchema) -> String {
     if schema.kinds.is_empty() {
         return "SELECT NULL AS a0 WHERE 0".to_string();
@@ -494,23 +553,27 @@ fn rule_relation_source(rule_name: &str, schema: &RuleSchema) -> String {
     let escaped_rule = rule_name.replace('\'', "''");
     let escaped_kind0 = schema.kinds[0].replace('\'', "''");
 
-    let mut select_cols = vec![format!("m0.id AS a0")];
+    let mut select_cols = Vec::new();
     let mut joins = Vec::new();
 
-    for (i, kind) in schema.kinds.iter().enumerate().skip(1) {
+    for (i, kind) in schema.kinds.iter().enumerate() {
         let escaped_kind = kind.replace('\'', "''");
-        select_cols.push(format!("m{i}.id AS a{i}"));
+        // Resolve match -> ref -> string to get the actual value
+        select_cols.push(format!("s{i}.value AS a{i}"));
+        if i > 0 {
+            joins.push(format!(
+                "JOIN matches m{i} ON m{i}.group_id = m0.group_id AND m{i}.kind = '{escaped_kind}'"
+            ));
+        }
         joins.push(format!(
-            "JOIN matches m{i} ON m{i}.group_id = m0.group_id AND m{i}.kind = '{escaped_kind}'"
+            "LEFT JOIN refs r{i} ON m{i}.ref_id = r{i}.id\n\
+             LEFT JOIN repo_refs rr{i} ON m{i}.repo_ref_id = rr{i}.id\n\
+             JOIN strings s{i} ON COALESCE(r{i}.string_id, rr{i}.string_id) = s{i}.id"
         ));
     }
 
     let select = select_cols.join(", ");
-    let join_clause = if joins.is_empty() {
-        String::new()
-    } else {
-        format!("\n{}", joins.join("\n"))
-    };
+    let join_clause = format!("\n{}", joins.join("\n"));
 
     format!(
         "SELECT {select} FROM matches m0{join_clause} \
@@ -1013,8 +1076,8 @@ mod tests {
 
     #[test]
     fn rule_relation_with_negated_builtin() {
-        // check missing_tag($SVC, $REPO, $TAG) :-
-        //     deploy_config($SVC, $REPO, $TAG),
+        // check missing_tag($SVC, $REPO, $TAG) >
+        //     deploy_config($SVC, $REPO, $TAG)
         //     not repo_has_tag($REPO, $TAG);
         let def = make_def(
             "missing_tag",

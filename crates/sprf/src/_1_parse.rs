@@ -2,7 +2,7 @@
 ///
 /// Parses the outer structure: statements, selector chains, slots.
 /// Does NOT parse the inside of json() bodies -- that's _2_pattern.rs.
-use crate::_0_ast::{Atom, LinkDecl, Program, QueryDecl, ScanRole, Statement, SelectorChain, Slot, Tag, Term};
+use crate::_0_ast::{Atom, Capture, CaptureAnnotation, LinkDecl, Program, QueryDecl, RuleDecl, Statement, SelectorChain, Slot, Tag, Term};
 
 pub fn parse_program(input: &str) -> anyhow::Result<Program> {
     let mut stmts = vec![];
@@ -36,9 +36,17 @@ fn skip_ws_and_comments(mut input: &str) -> &str {
     }
 }
 
-/// Dispatch: `link(...)`, `query ...`, or a normal rule.
+/// Dispatch: `rule ...`, `link(...)`, `query ...`, `check ...`.
 fn parse_statement(input: &str) -> anyhow::Result<(Statement, &str)> {
     let trimmed = skip_ws_and_comments(input);
+
+    // rule name(captures) > selectors;
+    if let Some(after) = strip_keyword(trimmed, "rule") {
+        let (decl, rest) = parse_rule_decl(after)?;
+        return Ok((Statement::Rule(decl), rest));
+    }
+
+    // link(src > tgt, pred) > $kind;
     if trimmed.starts_with("link") {
         let after = &trimmed[4..];
         let after_trimmed = after.trim_start();
@@ -47,54 +55,156 @@ fn parse_statement(input: &str) -> anyhow::Result<(Statement, &str)> {
             return Ok((Statement::Link(decl), rest));
         }
     }
+
+    // query/check name(args) > body;
     for (keyword, is_check) in [("check", true), ("query", false)] {
-        if trimmed.starts_with(keyword) {
-            let after = &trimmed[keyword.len()..];
-            let after_trimmed = after.trim_start();
-            // Disambiguate: keyword requires `name(` next, not a tag like `query(...)`
-            // which would be a rule slot. Check for `word(` pattern without being a known tag.
-            if let Some(paren_pos) = after_trimmed.find('(') {
-                let before_paren = after_trimmed[..paren_pos].trim();
-                if !before_paren.is_empty()
-                    && before_paren.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                {
-                    let (mut decl, rest) = parse_query_decl(after_trimmed)?;
-                    decl.is_check = is_check;
-                    return Ok((Statement::Query(decl), rest));
-                }
-            }
+        if let Some(after) = strip_keyword(trimmed, keyword) {
+            let (mut decl, rest) = parse_query_decl(after)?;
+            decl.is_check = is_check;
+            return Ok((Statement::Query(decl), rest));
         }
     }
-    let (chain, rest) = parse_rule(trimmed)?;
-    Ok((Statement::Rule(chain), rest))
+
+    anyhow::bail!(
+        "expected `rule`, `link`, `query`, or `check`, found {:?}",
+        &trimmed[..trimmed.len().min(30)]
+    );
 }
 
-/// Parse `query name($A, $B) :- rel($A, $X), rel2($X, $B);`
+/// Strip a keyword followed by whitespace and a `name(` pattern.
+/// Returns the remaining input starting at the name.
+fn strip_keyword<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
+    if !input.starts_with(keyword) {
+        return None;
+    }
+    let after = &input[keyword.len()..];
+    let after_trimmed = after.trim_start();
+    // Must be followed by `name(` -- an identifier then `(`
+    if let Some(paren_pos) = after_trimmed.find('(') {
+        let before_paren = after_trimmed[..paren_pos].trim();
+        if !before_paren.is_empty()
+            && before_paren.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Some(after_trimmed);
+        }
+    }
+    None
+}
+
+/// Parse `rule name($SVC, repo($REPO), rev($TAG)) > selectors;`
+fn parse_rule_decl(input: &str) -> anyhow::Result<(RuleDecl, &str)> {
+    // Parse name
+    let name_end = input.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .unwrap_or(input.len());
+    if name_end == 0 {
+        anyhow::bail!("expected rule name");
+    }
+    let name = input[..name_end].to_string();
+    let rest = input[name_end..].trim_start();
+
+    if !rest.starts_with('(') {
+        anyhow::bail!("expected `(` after rule name `{}`", name);
+    }
+    let (captures_body, rest) = parse_paren_body(&rest[1..])?;
+    let captures = parse_captures(&captures_body)?;
+
+    let rest = rest.trim_start();
+    if !rest.starts_with('>') {
+        anyhow::bail!("expected `>` after rule head `{}(...)`", name);
+    }
+    let rest = &rest[1..];
+
+    // Parse selector chain as body
+    let (chain, rest) = parse_selector_chain(rest)?;
+
+    Ok((RuleDecl { name, captures, chain }, rest))
+}
+
+/// Parse comma-separated captures: `$SVC, repo($REPO), rev($TAG)`
+fn parse_captures(input: &str) -> anyhow::Result<Vec<Capture>> {
+    let mut captures = vec![];
+    for part in input.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        captures.push(parse_one_capture(part)?);
+    }
+    if captures.is_empty() {
+        anyhow::bail!("rule head must have at least one capture");
+    }
+    Ok(captures)
+}
+
+/// Parse one capture: `$VAR`, `repo($VAR)`, `rev($VAR)`, `name($VAR)`, `file($VAR)`
+fn parse_one_capture(input: &str) -> anyhow::Result<Capture> {
+    let input = input.trim();
+
+    // Bare $VAR
+    if input.starts_with('$') {
+        let var = &input[1..];
+        if var.is_empty() || !var.chars().next().unwrap().is_ascii_uppercase() {
+            anyhow::bail!("capture variable must be SCREAMING_CASE: {:?}", input);
+        }
+        return Ok(Capture { var: var.to_string(), annotation: None });
+    }
+
+    // Annotated: annotation($VAR)
+    let paren = input.find('(')
+        .ok_or_else(|| anyhow::anyhow!("expected `$VAR` or `annotation($VAR)`, found {:?}", input))?;
+    let ann_name = input[..paren].trim();
+    let annotation = match ann_name {
+        "repo" => CaptureAnnotation::Repo,
+        "rev" => CaptureAnnotation::Rev,
+        "name" => CaptureAnnotation::Name,
+        "file" => CaptureAnnotation::File,
+        _ => anyhow::bail!("unknown capture annotation `{}`, expected repo/rev/name/file", ann_name),
+    };
+
+    let inner = &input[paren + 1..];
+    let close = inner.find(')')
+        .ok_or_else(|| anyhow::anyhow!("unclosed `(` in capture annotation"))?;
+    let var_str = inner[..close].trim();
+
+    if !var_str.starts_with('$') {
+        anyhow::bail!("capture annotation body must be `$VAR`, found {:?}", var_str);
+    }
+    let var = &var_str[1..];
+    if var.is_empty() || !var.chars().next().unwrap().is_ascii_uppercase() {
+        anyhow::bail!("capture variable must be SCREAMING_CASE: {:?}", var_str);
+    }
+
+    Ok(Capture { var: var.to_string(), annotation: Some(annotation) })
+}
+
+/// Parse `query name($A, $B) > rel($A, $X)  rel2($X, $B);`
+///
+/// Head and body separated by `>`. Body atoms are whitespace-delimited
+/// (newline or space), terminated by `;`.
 fn parse_query_decl(input: &str) -> anyhow::Result<(QueryDecl, &str)> {
     // Parse head atom: name($A, $B)
     let (head, rest) = parse_atom(input)?;
     let rest = rest.trim_start();
 
-    // Expect `:-`
-    if !rest.starts_with(":-") {
-        anyhow::bail!("expected `:-` after query head, found {:?}", &rest[..rest.len().min(20)]);
+    // Expect `>`
+    if !rest.starts_with('>') {
+        anyhow::bail!("expected `>` after query head, found {:?}", &rest[..rest.len().min(20)]);
     }
-    let mut rest = rest[2..].trim_start();
+    let mut rest = skip_ws_and_comments(&rest[1..]);
 
-    // Parse body atoms separated by `,`
+    // Parse body atoms: whitespace-delimited, terminated by `;`
     let mut body = vec![];
     loop {
+        if rest.starts_with(';') {
+            rest = &rest[1..];
+            break;
+        }
+        if rest.is_empty() {
+            anyhow::bail!("unexpected end of input in query body, expected `;`");
+        }
         let (atom, r) = parse_atom(rest)?;
         body.push(atom);
-        let r = r.trim_start();
-        if r.starts_with(',') {
-            rest = r[1..].trim_start();
-        } else if r.starts_with(';') {
-            rest = &r[1..];
-            break;
-        } else {
-            anyhow::bail!("expected `,` or `;` in query body, found {:?}", &r[..r.len().min(20)]);
-        }
+        rest = skip_ws_and_comments(r);
     }
 
     if body.is_empty() {
@@ -219,9 +329,9 @@ fn parse_link_decl(input: &str) -> anyhow::Result<(LinkDecl, &str)> {
     ))
 }
 
-/// Parse one rule: `slot > slot > ... ;`
+/// Parse a selector chain: `slot > slot > ... ;`
 /// Returns (SelectorChain, remaining input).
-fn parse_rule(input: &str) -> anyhow::Result<(SelectorChain, &str)> {
+fn parse_selector_chain(input: &str) -> anyhow::Result<(SelectorChain, &str)> {
     let mut slots = vec![];
     let mut remaining = input;
 
@@ -257,19 +367,9 @@ fn parse_rule(input: &str) -> anyhow::Result<(SelectorChain, &str)> {
     Ok((SelectorChain { slots }, remaining))
 }
 
-/// Parse one slot: `match($CAP, kind)`, `tag[arg](body)`, `tag(body)`, or bare glob.
+/// Parse one slot: `tag[arg](body)`, `tag(body)`, or bare glob.
 fn parse_slot(input: &str) -> anyhow::Result<(Slot, &str)> {
     let input = skip_ws_and_comments(input);
-
-    // Check for match() slot
-    if let Some(rest) = try_parse_match_keyword(input) {
-        let rest = rest.trim_start();
-        if rest.starts_with('(') {
-            let (body, rest) = parse_paren_body(&rest[1..])?;
-            let (capture, kind, scan) = parse_match_body(&body)?;
-            return Ok((Slot::Match { capture, kind, scan }, rest));
-        }
-    }
 
     // Try to parse as tagged: word followed by `(` or `[`
     if let Some((tag, rest)) = try_parse_tag(input) {
@@ -295,57 +395,6 @@ fn parse_slot(input: &str) -> anyhow::Result<(Slot, &str)> {
         let (glob, rest) = parse_bare_glob(input)?;
         Ok((Slot::Bare(glob), rest))
     }
-}
-
-/// Check if input starts with `match` followed by `(`.
-fn try_parse_match_keyword(input: &str) -> Option<&str> {
-    if input.starts_with("match") {
-        let rest = &input[5..];
-        let rest_trimmed = rest.trim_start();
-        if rest_trimmed.starts_with('(') {
-            return Some(rest);
-        }
-    }
-    None
-}
-
-/// Parse the body of `match($CAPTURE, kind)` or `match($CAPTURE, kind, IS_REPO)`.
-fn parse_match_body(body: &str) -> anyhow::Result<(String, String, Option<ScanRole>)> {
-    let body = body.trim();
-    let comma = body.find(',')
-        .ok_or_else(|| anyhow::anyhow!("match() requires `$CAPTURE, kind`"))?;
-    let cap_part = body[..comma].trim();
-    let rest = body[comma + 1..].trim();
-
-    if !cap_part.starts_with('$') {
-        anyhow::bail!("match() capture must start with `$`, found {:?}", cap_part);
-    }
-    let capture = cap_part[1..].to_string();
-    if capture.is_empty() {
-        anyhow::bail!("empty capture name in match()");
-    }
-
-    // Split remaining into kind and optional scan role
-    let (kind_part, scan) = if let Some(comma2) = rest.find(',') {
-        let kind = rest[..comma2].trim();
-        let scan_str = rest[comma2 + 1..].trim();
-        let role = match scan_str {
-            "IS_REPO" => ScanRole::Repo,
-            "IS_REV" => ScanRole::Rev,
-            other => anyhow::bail!(
-                "match() 3rd argument must be IS_REPO or IS_REV, found {:?}", other
-            ),
-        };
-        (kind, Some(role))
-    } else {
-        (rest, None)
-    };
-
-    if kind_part.is_empty() {
-        anyhow::bail!("empty kind in match()");
-    }
-
-    Ok((capture, kind_part.to_string(), scan))
 }
 
 /// If the input starts with a known tag name followed by `(` or `[`, return
@@ -453,14 +502,18 @@ mod tests {
     use crate::_0_ast::Tag;
 
     #[test]
-    fn parse_tagged_fs_json() {
-        let input = "fs(**/Cargo.toml) > json({ package: { name: $NAME } });";
+    fn parse_rule_head_and_selectors() {
+        let input = "rule pkg($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });";
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 1);
-        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
-        assert_eq!(chain.slots.len(), 2);
+        let Statement::Rule(decl) = &program[0] else { panic!("expected Rule") };
+        assert_eq!(decl.name, "pkg");
+        assert_eq!(decl.captures.len(), 1);
+        assert_eq!(decl.captures[0].var, "NAME");
+        assert!(decl.captures[0].annotation.is_none());
+        assert_eq!(decl.chain.slots.len(), 2);
 
-        match &chain.slots[0] {
+        match &decl.chain.slots[0] {
             Slot::Tagged { tag, arg, body } => {
                 assert_eq!(*tag, Tag::Fs);
                 assert!(arg.is_none());
@@ -468,45 +521,46 @@ mod tests {
             }
             _ => panic!("expected Tagged"),
         }
-        match &chain.slots[1] {
-            Slot::Tagged { tag, arg, body } => {
-                assert_eq!(*tag, Tag::Json);
-                assert!(arg.is_none());
-                assert_eq!(body, "{ package: { name: $NAME } }");
-            }
-            _ => panic!("expected Tagged"),
-        }
     }
 
     #[test]
-    fn parse_bare_three_then_tagged() {
-        let input = "my-org/* > main|release/* > **/Cargo.toml > json({ deps: { $K: $_ } });";
+    fn parse_rule_with_annotations() {
+        let input = "rule deploy($SVC, repo($REPO), rev($TAG)) > fs(**/values.yaml) > json({ svc: $SVC, repo: $REPO, tag: $TAG });";
         let program = parse_program(input).unwrap();
-        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
-        assert_eq!(chain.slots.len(), 4);
+        let Statement::Rule(decl) = &program[0] else { panic!("expected Rule") };
+        assert_eq!(decl.name, "deploy");
+        assert_eq!(decl.captures.len(), 3);
+        assert_eq!(decl.captures[0].var, "SVC");
+        assert!(decl.captures[0].annotation.is_none());
+        assert_eq!(decl.captures[1].var, "REPO");
+        assert_eq!(decl.captures[1].annotation, Some(CaptureAnnotation::Repo));
+        assert_eq!(decl.captures[2].var, "TAG");
+        assert_eq!(decl.captures[2].annotation, Some(CaptureAnnotation::Rev));
+    }
 
-        match &chain.slots[0] {
+    #[test]
+    fn parse_rule_bare_three() {
+        let input = "rule deps($K) > my-org/* > main|release/* > **/Cargo.toml > json({ deps: { $K: $_ } });";
+        let program = parse_program(input).unwrap();
+        let Statement::Rule(decl) = &program[0] else { panic!("expected Rule") };
+        assert_eq!(decl.chain.slots.len(), 4);
+
+        match &decl.chain.slots[0] {
             Slot::Bare(g) => assert_eq!(g, "my-org/*"),
             _ => panic!("expected Bare"),
         }
-        match &chain.slots[1] {
+        match &decl.chain.slots[1] {
             Slot::Bare(g) => assert_eq!(g, "main|release/*"),
-            _ => panic!("expected Bare"),
-        }
-        match &chain.slots[2] {
-            Slot::Bare(g) => assert_eq!(g, "**/Cargo.toml"),
             _ => panic!("expected Bare"),
         }
     }
 
     #[test]
-    fn parse_ast_with_lang_arg() {
-        let input = "fs(**/*.config) > ast[typescript](import $NAME from '$PATH');";
+    fn parse_rule_ast_with_lang() {
+        let input = "rule imports($NAME, $PATH) > fs(**/*.config) > ast[typescript](import $NAME from '$PATH');";
         let program = parse_program(input).unwrap();
-        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
-        assert_eq!(chain.slots.len(), 2);
-
-        match &chain.slots[1] {
+        let Statement::Rule(decl) = &program[0] else { panic!("expected Rule") };
+        match &decl.chain.slots[1] {
             Slot::Tagged { tag, arg, body } => {
                 assert_eq!(*tag, Tag::Ast);
                 assert_eq!(arg.as_deref(), Some("typescript"));
@@ -517,12 +571,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_nested_parens_in_re() {
-        let input = r"fs(helm/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));";
+    fn parse_rule_nested_parens_in_re() {
+        let input = r"rule img($REPO, $TAG) > fs(helm/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));";
         let program = parse_program(input).unwrap();
-        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
-
-        match &chain.slots[1] {
+        let Statement::Rule(decl) = &program[0] else { panic!("expected Rule") };
+        match &decl.chain.slots[1] {
             Slot::Tagged { tag, body, .. } => {
                 assert_eq!(*tag, Tag::Re);
                 assert_eq!(body, r"image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)");
@@ -535,10 +588,10 @@ mod tests {
     fn parse_comments_and_multiple_rules() {
         let input = r#"
 # first rule
-fs(**/package.json) > json({ name: $NAME });
+rule a($NAME) > fs(**/package.json) > json({ name: $NAME });
 
 # second rule
-fs(**/Cargo.toml) > json({ package: { name: $N } });
+rule b($N) > fs(**/Cargo.toml) > json({ package: { name: $N } });
 "#;
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 2);
@@ -546,87 +599,16 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
 
     #[test]
     fn unclosed_paren_errors() {
-        let input = "fs(**/foo > json({ x: $Y });";
+        let input = "rule x($Y) > fs(**/foo > json({ x: $Y });";
         let err = parse_program(input).unwrap_err();
         assert!(err.to_string().contains("unclosed"), "{}", err);
     }
 
     #[test]
-    fn missing_semicolon_errors() {
-        let input = "fs(**/foo)";
+    fn missing_keyword_errors() {
+        let input = "fs(**/foo);";
         let err = parse_program(input).unwrap_err();
-        assert!(err.to_string().contains("`;`") || err.to_string().contains("end of input"), "{}", err);
-    }
-
-    #[test]
-    fn parse_match_slot() {
-        let input = "fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);";
-        let program = parse_program(input).unwrap();
-        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
-        assert_eq!(chain.slots.len(), 3);
-
-        match &chain.slots[2] {
-            Slot::Match { capture, kind, .. } => {
-                assert_eq!(capture, "NAME");
-                assert_eq!(kind, "package_name");
-            }
-            _ => panic!("expected Match"),
-        }
-    }
-
-    #[test]
-    fn parse_multiple_match_slots() {
-        let input = "fs(**/package.json) > json({ dependencies: { $NAME: $VER } }) > match($NAME, dep_name) > match($VER, dep_version);";
-        let program = parse_program(input).unwrap();
-        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
-        assert_eq!(chain.slots.len(), 4);
-        assert!(matches!(&chain.slots[2], Slot::Match { capture, kind, .. } if capture == "NAME" && kind == "dep_name"));
-        assert!(matches!(&chain.slots[3], Slot::Match { capture, kind, .. } if capture == "VER" && kind == "dep_version"));
-    }
-
-    #[test]
-    fn parse_match_with_scan_role() {
-        let input = "fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } }) > match($REPO, image_repo, IS_REPO) > match($TAG, image_tag, IS_REV);";
-        let program = parse_program(input).unwrap();
-        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
-        assert_eq!(chain.slots.len(), 4);
-
-        match &chain.slots[2] {
-            Slot::Match { capture, kind, scan } => {
-                assert_eq!(capture, "REPO");
-                assert_eq!(kind, "image_repo");
-                assert_eq!(*scan, Some(ScanRole::Repo));
-            }
-            _ => panic!("expected Match"),
-        }
-        match &chain.slots[3] {
-            Slot::Match { capture, kind, scan } => {
-                assert_eq!(capture, "TAG");
-                assert_eq!(kind, "image_tag");
-                assert_eq!(*scan, Some(ScanRole::Rev));
-            }
-            _ => panic!("expected Match"),
-        }
-    }
-
-    #[test]
-    fn parse_match_without_scan_role() {
-        let input = "fs(**/Cargo.toml) > json({ package: { name: $N } }) > match($N, pkg);";
-        let program = parse_program(input).unwrap();
-        let Statement::Rule(chain) = &program[0] else { panic!("expected Rule") };
-        match &chain.slots[2] {
-            Slot::Match { scan, .. } => assert_eq!(*scan, None),
-            _ => panic!("expected Match"),
-        }
-    }
-
-    #[test]
-    fn parse_match_invalid_scan_role() {
-        let input = "fs(**/x.yaml) > json({ x: $X }) > match($X, kind, IS_BANANA);";
-        let result = parse_program(input);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("IS_REPO or IS_REV"), "error: {}", err);
+        assert!(err.to_string().contains("rule") || err.to_string().contains("expected"), "{}", err);
     }
 
     #[test]
@@ -659,8 +641,8 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
     #[test]
     fn parse_mixed_rules_and_links() {
         let input = r#"
-            fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);
-            link(dep_name > package_name, norm_eq) > $dep_to_package;
+            rule package_name($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });
+            link(NAME > NAME, norm_eq) > $dep_to_package;
         "#;
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 2);
@@ -670,7 +652,7 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
 
     #[test]
     fn parse_query_basic() {
-        let input = "query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);";
+        let input = "query all_deps($A, $C) > dep_to_package($A, $B) all_deps($B, $C);";
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 1);
         let Statement::Query(q) = &program[0] else { panic!("expected Query") };
@@ -685,7 +667,7 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
 
     #[test]
     fn parse_query_with_literal() {
-        let input = r#"query who_uses($WHO) :- dep_to_package($WHO, "lodash");"#;
+        let input = r#"query who_uses($WHO) > dep_to_package($WHO, "lodash");"#;
         let program = parse_program(input).unwrap();
         let Statement::Query(q) = &program[0] else { panic!("expected Query") };
         assert_eq!(q.head.args.len(), 1);
@@ -694,7 +676,7 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
 
     #[test]
     fn parse_query_with_wildcard() {
-        let input = "query has_dep($A) :- dep_to_package($A, $_);";
+        let input = "query has_dep($A) > dep_to_package($A, $_);";
         let program = parse_program(input).unwrap();
         let Statement::Query(q) = &program[0] else { panic!("expected Query") };
         assert_eq!(q.body[0].args[1], Term::Wild);
@@ -702,7 +684,7 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
 
     #[test]
     fn parse_query_nonrecursive() {
-        let input = "query same_eco($A, $B) :- dep_to_package($A, $X), dep_to_package($B, $X);";
+        let input = "query same_eco($A, $B) > dep_to_package($A, $X) dep_to_package($B, $X);";
         let program = parse_program(input).unwrap();
         let Statement::Query(q) = &program[0] else { panic!("expected Query") };
         assert_eq!(q.body.len(), 2);
@@ -713,9 +695,9 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
     #[test]
     fn parse_query_mixed_with_rules_and_links() {
         let input = r#"
-            fs(**/Cargo.toml) > json({ package: { name: $NAME } }) > match($NAME, package_name);
-            link(dep_name > package_name, norm_eq) > $dep_to_package;
-            query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
+            rule package_name($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });
+            link(NAME > NAME, norm_eq) > $dep_to_package;
+            query all_deps($A, $C) > dep_to_package($A, $B) all_deps($B, $C);
         "#;
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 3);
@@ -725,14 +707,14 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
     }
 
     #[test]
-    fn parse_query_missing_horn_errors() {
+    fn parse_query_missing_arrow_errors() {
         let err = parse_program("query foo($A) dep($A);").unwrap_err();
-        assert!(err.to_string().contains(":-"), "{}", err);
+        assert!(err.to_string().contains(">"), "{}", err);
     }
 
     #[test]
     fn parse_check_basic() {
-        let input = r#"check orphan_dep($X) :- has_kind($X, "dep"), not dep_link($X, $_);"#;
+        let input = r#"check orphan_dep($X) > has_kind($X, "dep") not dep_link($X, $_);"#;
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 1);
         let Statement::Query(q) = &program[0] else { panic!("expected Query") };
@@ -746,7 +728,7 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
 
     #[test]
     fn parse_query_is_not_check() {
-        let input = "query foo($A) :- bar($A, $_);";
+        let input = "query foo($A) > bar($A, $_);";
         let program = parse_program(input).unwrap();
         let Statement::Query(q) = &program[0] else { panic!("expected Query") };
         assert!(!q.is_check);
@@ -754,7 +736,7 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
 
     #[test]
     fn parse_negated_atom_in_query() {
-        let input = "query no_link($A) :- has_kind($A, \"dep\"), not linked($A, $_);";
+        let input = "query no_link($A) > has_kind($A, \"dep\") not linked($A, $_);";
         let program = parse_program(input).unwrap();
         let Statement::Query(q) = &program[0] else { panic!("expected Query") };
         assert!(!q.body[0].negated);
@@ -765,8 +747,8 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
     #[test]
     fn parse_check_mixed() {
         let input = r#"
-            query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
-            check orphan($X) :- has_kind($X, "dep"), not dep_link($X, $_);
+            query all_deps($A, $C) > dep_to_package($A, $B) all_deps($B, $C);
+            check orphan($X) > has_kind($X, "dep") not dep_link($X, $_);
         "#;
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 2);

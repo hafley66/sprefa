@@ -1,78 +1,74 @@
 # sprefa-rules.sprf -- kitchen sink for this repo
-# equivalent to sprefa-rules.json
 
 # ── Cargo ──────────────────────────────────────────
 
-rule(lol) > fs(**/Cargo.toml) > json({ package: { name: $NAME } })
-  > match($NAME, package_name);
+rule package_name($NAME) >
+  fs(**/Cargo.toml) > json({ package: { name: $NAME } });
 
-fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } })
-  > match($NAME, dep_name) > rule(cargo-deps);
+rule dep_name($NAME) >
+  fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } });
 
-rule(loll) > fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } })
-  > match($MEMBER, wasd);
+rule workspace_member($MEMBER) >
+  fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } });
 
 # ── Node / package.json ────────────────────────────
 
-fs(**/package.json) > json({ name: $NAME })
-  > match($NAME, package_name);
+rule npm_package($NAME) >
+  fs(**/package.json) > json({ name: $NAME });
 
-fs(**/package.json) > json({ re:^(dev|peer)?[Dd]ependencies: { $NAME: $VERSION } })
-  > match($NAME, dep_name)
-  > match($VERSION, dep_version);
+rule npm_dep($NAME, $VERSION) >
+  fs(**/package.json) > json({ re:^(dev|peer)?[Dd]ependencies: { $NAME: $VERSION } });
 
-fs(**/tsconfig.json) > json({ compilerOptions: { paths: { $ALIAS: [...$TARGET] } } })
-  > match($ALIAS, path_alias)
-  > match($TARGET, import_path);
+rule tsconfig_path($ALIAS, $TARGET) >
+  fs(**/tsconfig.json) > json({ compilerOptions: { paths: { $ALIAS: [...$TARGET] } } });
 
-fs(**/package.json) > json({ exports: { $SUBPATH: $_ } })
-  > match($SUBPATH, package_entry);
+rule package_entry($SUBPATH) >
+  fs(**/package.json) > json({ exports: { $SUBPATH: $_ } });
 
 # ── pnpm ───────────────────────────────────────────
 
-fs(**/pnpm-workspace.yaml) > json({ packages: [...$MEMBER] })
-  > match($MEMBER, workspace_member);
+rule pnpm_workspace($MEMBER) >
+  fs(**/pnpm-workspace.yaml) > json({ packages: [...$MEMBER] });
 
 # ── Helm / k8s ─────────────────────────────────────
 
-fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
-  > match($REPO, image_repo)
-  > match($TAG, image_tag);
+rule helm_image(repo($REPO), rev($TAG)) >
+  fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });
 
-fs(**/*configmap*.yaml) > json({ data: { $KEY: $_ } })
-  > match($KEY, env_var_name);
+rule configmap_env($KEY) >
+  fs(**/*configmap*.yaml) > json({ data: { $KEY: $_ } });
 
 # ── Docker ─────────────────────────────────────────
 
-fs(**/docker-compose*.yaml) > json({ services: { $NAME: $_ } })
-  > match($NAME, service_name);
+rule docker_service($NAME) >
+  fs(**/docker-compose*.yaml) > json({ services: { $NAME: $_ } });
 
 # ── OpenAPI ────────────────────────────────────────
 
-fs(**/openapi*.yaml) > json({ paths: { $PATH: { re:^(get|post|put|delete|patch|options|head)$: { operationId: $OP } } } })
-  > match($OP, operation_id);
+rule openapi_op($OP) >
+  fs(**/openapi*.yaml) > json({ paths: { $PATH: { re:^(get|post|put|delete|patch|options|head)$: { operationId: $OP } } } });
 
 # ── Source code (ast-grep) ─────────────────────────
 
-fs(**/*.js) > ast(process.env.$NAME)
-  > match($NAME, env_var_ref);
+rule env_var_ref_js($NAME) >
+  fs(**/*.js) > ast(process.env.$NAME);
 
-fs(**/*.ts) > ast(process.env.$NAME)
-  > match($NAME, env_var_ref);
+rule env_var_ref_ts($NAME) >
+  fs(**/*.ts) > ast(process.env.$NAME);
 
 # ── Links ──────────────────────────────────────────
 
-link(dep_name > package_name, norm_eq) > $dep_to_package;
-link(package_name > dep_name, same_file) > $package_has_dep;
-link(image_repo > package_name, norm_eq) > $image_source;
-link(env_var_ref > env_var_name, norm_eq) > $env_var_binding;
+link(NAME > NAME, norm_eq) > $dep_to_package;
+link(NAME > NAME, same_file) > $package_has_dep;
+link(REPO > NAME, norm_eq) > $image_source;
+link(NAME > KEY, norm_eq) > $env_var_binding;
 
 # ── Queries ───────────────────────────────────────
 
 # transitive deps: dep -> package -> colocated deps -> package -> ...
-query transitive_dep($A, $C) :-
-  dep_to_package($A, $B),
+query transitive_dep($A, $C) >
+  dep_to_package($A, $B)
   package_has_dep($B, $C);
 
 # shared dependency: two dep_name matches that resolve to the same package
-query same_ecosystem($A, $B) :- dep_to_package($A, $X), dep_to_package($B, $X);
+query same_ecosystem($A, $B) > dep_to_package($A, $X) dep_to_package($B, $X);

@@ -61,10 +61,6 @@
       "patterns": [
         { "include": "#comment" },
         {
-          "match": ":-",
-          "name": "keyword.operator.horn.sprf"
-        },
-        {
           "match": "\\bnot(?=\\s+[a-z_])",
           "name": "keyword.operator.negation.sprf"
         },

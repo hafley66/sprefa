@@ -80,26 +80,24 @@ impl DocState {
             });
 
             match stmt {
-                Statement::Rule(chain) => {
+                Statement::Rule(decl) => {
                     let mut rule_captures = vec![];
-                    let mut rule_match_caps = HashSet::new();
 
-                    for slot in &chain.slots {
-                        match slot {
-                            Slot::Match { capture, kind, .. } => {
-                                self.match_kinds.insert(kind.clone());
-                                self.all_captures.insert(capture.clone());
-                                rule_match_caps.insert(capture.clone());
-                            }
-                            Slot::Tagged { tag, body, .. } => {
-                                if matches!(tag, Tag::Json | Tag::Ast) {
-                                    for cap in extract_captures(body) {
-                                        self.all_captures.insert(cap.clone());
-                                        rule_captures.push(cap);
-                                    }
+                    // Captures from head declaration
+                    for cap in &decl.captures {
+                        self.all_captures.insert(cap.var.clone());
+                        self.match_kinds.insert(cap.var.clone());
+                    }
+
+                    // Captures from selector chain body
+                    for slot in &decl.chain.slots {
+                        if let Slot::Tagged { tag, body, .. } = slot {
+                            if matches!(tag, Tag::Json | Tag::Ast) {
+                                for cap in extract_captures(&body) {
+                                    self.all_captures.insert(cap.clone());
+                                    rule_captures.push(cap);
                                 }
                             }
-                            _ => {}
                         }
                     }
 
@@ -107,7 +105,8 @@ impl DocState {
                         span: span.clone(),
                         captures: rule_captures.clone(),
                     });
-                    rule_data.push((span, rule_captures, rule_match_caps));
+                    let head_caps: HashSet<String> = decl.captures.iter().map(|c| c.var.clone()).collect();
+                    rule_data.push((span, rule_captures, head_caps));
                 }
                 Statement::Link(LinkDecl {
                     src_kind,
@@ -134,34 +133,19 @@ impl DocState {
             });
 
             match stmt {
-                Statement::Rule(_) => {
-                    if let Some((_, rule_captures, rule_match_caps)) = rule_data.get(
+                Statement::Rule(decl) => {
+                    if let Some((_, rule_captures, head_caps)) = rule_data.get(
                         program.iter().take(idx + 1)
                             .filter(|s| matches!(s, Statement::Rule(_)))
                             .count() - 1
                     ) {
-                        // Validate: match() captures should reference captures from this rule
-                        if let Statement::Rule(chain) = stmt {
-                            for slot in &chain.slots {
-                                if let Slot::Match { capture, .. } = slot {
-                                    if !rule_captures.contains(capture) {
-                                        self.diagnostics.push((
-                                            span.clone(),
-                                            format!("${} is not captured by any json() or ast() slot in this rule", capture),
-                                            DiagnosticSeverity::WARNING,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-
-                        // Validate: captures without match() slot
-                        for cap in rule_captures {
-                            if !rule_match_caps.contains(cap) {
+                        // Validate: head captures should reference captures from the selector body
+                        for cap_var in head_caps {
+                            if !rule_captures.contains(cap_var) {
                                 self.diagnostics.push((
                                     span.clone(),
-                                    format!("${} is captured but has no match() slot", cap),
-                                    DiagnosticSeverity::HINT,
+                                    format!("${} in rule head is not captured by any json() or ast() slot", cap_var),
+                                    DiagnosticSeverity::WARNING,
                                 ));
                             }
                         }
@@ -175,14 +159,14 @@ impl DocState {
                     if !self.match_kinds.contains(src_kind) {
                         self.diagnostics.push((
                             span.clone(),
-                            format!("source kind '{}' is not defined by any match() slot", src_kind),
+                            format!("source kind '{}' is not defined by any rule head capture", src_kind),
                             DiagnosticSeverity::WARNING,
                         ));
                     }
                     if !self.match_kinds.contains(tgt_kind) {
                         self.diagnostics.push((
                             span.clone(),
-                            format!("target kind '{}' is not defined by any match() slot", tgt_kind),
+                            format!("target kind '{}' is not defined by any rule head capture", tgt_kind),
                             DiagnosticSeverity::WARNING,
                         ));
                     }
@@ -389,10 +373,10 @@ const TAGS: &[(&str, &str)] = &[
     ("re", "Regex on file content: re(pattern)"),
     ("repo", "Repository glob: repo(org/*)"),
     ("rev", "Rev glob (branch or tag): rev(main|v*)"),
-    ("match", "Map capture to kind: match($CAP, kind)"),
+    ("rule", "Rule declaration: rule name($CAP) > selectors;"),
     ("link", "Link declaration: link(src > tgt, predicate)"),
-    ("rule", "Name this rule: rule(my_rule_name)"),
-    ("query", "Datalog query: query name($A, $C) :- rel($A, $B), name($B, $C);"),
+    ("check", "Check rule: check name($A) > body atoms;"),
+    ("query", "Datalog query: query name($A, $C) > rel($A, $B) name($B, $C);"),
 ];
 
 #[tower_lsp::async_trait]

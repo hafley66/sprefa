@@ -8,9 +8,42 @@ pub type Program = Vec<Statement>;
 /// One top-level statement.
 #[derive(Debug, Clone)]
 pub enum Statement {
-    Rule(SelectorChain),
+    Rule(RuleDecl),
     Link(LinkDecl),
     Query(QueryDecl),
+}
+
+/// A rule with a head declaration and selector chain body.
+///
+/// ```sprf
+/// rule deploy_config($SVC, repo($REPO), rev($TAG)) >
+///     fs(**/services.yaml) > json({ services: { $SVC: { repo: $REPO, tag: $TAG } } });
+/// ```
+#[derive(Debug, Clone)]
+pub struct RuleDecl {
+    pub name: String,
+    pub captures: Vec<Capture>,
+    pub chain: SelectorChain,
+}
+
+/// One capture in a rule head: bare `$VAR` or annotated `repo($VAR)`.
+#[derive(Debug, Clone)]
+pub struct Capture {
+    pub var: String,
+    pub annotation: Option<CaptureAnnotation>,
+}
+
+/// Annotation on a capture variable in a rule head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureAnnotation {
+    /// `repo($VAR)` -- value drives IS_REPO demand scanning.
+    Repo,
+    /// `rev($VAR)` -- value drives IS_REV demand scanning.
+    Rev,
+    /// `name($VAR)` -- semantic tag, no runtime behavior yet.
+    Name,
+    /// `file($VAR)` -- path resolution, no runtime behavior yet.
+    File,
 }
 
 /// A chain of slots separated by `>`, terminated by `;`.
@@ -35,12 +68,6 @@ pub enum Slot {
         arg: Option<String>,
         body: String,
     },
-    /// A match slot: `match($CAPTURE, kind)` or `match($CAPTURE, kind, IS_REPO)`.
-    Match {
-        capture: String,
-        kind: String,
-        scan: Option<ScanRole>,
-    },
 }
 
 /// A link declaration: `link(src_kind > tgt_kind, pred, ...) > $kind_name;`
@@ -61,7 +88,6 @@ pub enum Tag {
     Repo,
     Rev,
     Fs,
-    Rule,
 }
 
 impl Tag {
@@ -73,22 +99,12 @@ impl Tag {
             "repo" => Some(Tag::Repo),
             "rev" | "branch" | "tag" => Some(Tag::Rev),
             "fs" => Some(Tag::Fs),
-            "rule" => Some(Tag::Rule),
             _ => None,
         }
     }
 }
 
-/// Annotation on a match slot indicating this value drives demand scanning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScanRole {
-    /// This match's value is a repository name to scan.
-    Repo,
-    /// This match's value is a rev (tag/branch) to scan.
-    Rev,
-}
-
-/// A query rule: `query head($A, $C) :- rel($A, $B), head($B, $C);`
+/// A query rule: `query head($A, $C) > rel($A, $B)  head($B, $C);`
 ///
 /// Compiles to a SQL CTE (recursive when head appears in body).
 #[derive(Debug, Clone)]

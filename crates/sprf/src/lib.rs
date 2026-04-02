@@ -61,7 +61,7 @@ mod integration_tests {
 
     #[test]
     fn cargo_package_name() {
-        let sprf = "fs(**/Cargo.toml) > json({ package: { name: $NAME } });";
+        let sprf = "rule pkg($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });";
         let toml = br#"
             [package]
             name = "sprefa"
@@ -74,7 +74,7 @@ mod integration_tests {
 
     #[test]
     fn cargo_workspace_members() {
-        let sprf = "fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } });";
+        let sprf = "rule ws($MEMBER) > fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } });";
         let toml = br#"
             [workspace]
             members = ["crates/foo", "crates/bar"]
@@ -90,7 +90,7 @@ mod integration_tests {
 
     #[test]
     fn json_nested_deps() {
-        let sprf = "fs(**/package.json) > json({ dependencies: { $NAME: $VERSION } });";
+        let sprf = "rule deps($NAME, $VERSION) > fs(**/package.json) > json({ dependencies: { $NAME: $VERSION } });";
         let json = br#"{ "dependencies": { "express": "4.18.2", "lodash": "4.17.21" } }"#;
         let mut results = run_sprf(sprf, json, "json");
         results.sort();
@@ -101,7 +101,7 @@ mod integration_tests {
 
     #[test]
     fn yaml_recursive_descent() {
-        let sprf = "fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });";
+        let sprf = "rule img($REPO, $TAG) > fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });";
         let yaml = b"services:\n  frontend:\n    image:\n      repository: myorg/frontend\n      tag: v1.2.3\n";
         let mut results = run_sprf(sprf, yaml, "yaml");
         assert_eq!(results.len(), 1);
@@ -115,8 +115,8 @@ mod integration_tests {
     #[test]
     fn multiple_rules() {
         let sprf = r#"
-            fs(**/Cargo.toml) > json({ package: { name: $NAME } });
-            fs(**/Cargo.toml) > json({ workspace: { members: [...$M] } });
+            rule pkg($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });
+            rule ws($M) > fs(**/Cargo.toml) > json({ workspace: { members: [...$M] } });
         "#;
         let toml = br#"
             [package]
@@ -161,9 +161,9 @@ mod integration_tests {
         ).unwrap();
         let json_val = parse_data(&cargo_bytes, "toml").unwrap();
 
-        // Find the dep_name rule (second rule, index 1)
+        // Find the dep_name rule by name
         let dep_rule = ruleset.rules.iter()
-            .find(|r| r.create_matches.iter().any(|m| m.kind == "dep_name"))
+            .find(|r| r.name == "dep_name")
             .expect("no dep_name rule found");
 
         let structural: Vec<_> = dep_rule.select.iter()
@@ -183,7 +183,7 @@ mod integration_tests {
     #[test]
     fn real_workspace_cargo_toml() {
         let toml_bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml")).unwrap();
-        let sprf = "fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } });";
+        let sprf = "rule ws($MEMBER) > fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } });";
         let results = run_sprf(sprf, &toml_bytes, "toml");
         assert!(results.len() > 5, "expected multiple workspace members, got {}", results.len());
         let members: Vec<_> = results.iter()

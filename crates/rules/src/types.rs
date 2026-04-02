@@ -85,7 +85,7 @@ pub struct ObjectEntry {
 ///
 /// Parsed from `.sprf` syntax:
 /// ```sprf
-/// query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
+/// query all_deps($A, $C) > dep_to_package($A, $B) all_deps($B, $C);
 /// ```
 ///
 /// Compiled to SQL CTEs by `query::compile_query()`.
