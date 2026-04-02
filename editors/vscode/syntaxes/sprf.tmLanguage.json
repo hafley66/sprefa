@@ -49,7 +49,7 @@
     },
 
     "query-declaration": {
-      "begin": "\\b(query)\\s+([a-z_][a-z0-9_]*)\\s*\\(",
+      "begin": "\\b(query|check)\\s+([a-z_][a-z0-9_]*)\\s*\\(",
       "end": ";",
       "beginCaptures": {
         "1": { "name": "keyword.control.query.sprf" },
@@ -63,6 +63,10 @@
         {
           "match": ":-",
           "name": "keyword.operator.horn.sprf"
+        },
+        {
+          "match": "\\bnot(?=\\s+[a-z_])",
+          "name": "keyword.operator.negation.sprf"
         },
         {
           "match": "\\$[A-Z_][A-Za-z0-9_]*",

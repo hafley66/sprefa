@@ -47,19 +47,21 @@ fn parse_statement(input: &str) -> anyhow::Result<(Statement, &str)> {
             return Ok((Statement::Link(decl), rest));
         }
     }
-    if trimmed.starts_with("query") {
-        let after = &trimmed[5..];
-        let after_trimmed = after.trim_start();
-        // Disambiguate: `query` keyword requires `name(` next, not a tag like `query(...)`
-        // which would be a rule slot. Check for `word(` pattern without being a known tag.
-        if let Some(paren_pos) = after_trimmed.find('(') {
-            let before_paren = after_trimmed[..paren_pos].trim();
-            // If it looks like an identifier (the query name), parse as query decl
-            if !before_paren.is_empty()
-                && before_paren.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
-                let (decl, rest) = parse_query_decl(after_trimmed)?;
-                return Ok((Statement::Query(decl), rest));
+    for (keyword, is_check) in [("check", true), ("query", false)] {
+        if trimmed.starts_with(keyword) {
+            let after = &trimmed[keyword.len()..];
+            let after_trimmed = after.trim_start();
+            // Disambiguate: keyword requires `name(` next, not a tag like `query(...)`
+            // which would be a rule slot. Check for `word(` pattern without being a known tag.
+            if let Some(paren_pos) = after_trimmed.find('(') {
+                let before_paren = after_trimmed[..paren_pos].trim();
+                if !before_paren.is_empty()
+                    && before_paren.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    let (mut decl, rest) = parse_query_decl(after_trimmed)?;
+                    decl.is_check = is_check;
+                    return Ok((Statement::Query(decl), rest));
+                }
             }
         }
     }
@@ -102,9 +104,20 @@ fn parse_query_decl(input: &str) -> anyhow::Result<(QueryDecl, &str)> {
     Ok((QueryDecl { head, body, is_check: false }, rest))
 }
 
-/// Parse one atom: `name($ARG1, $ARG2)` or `name($ARG1, "literal")`.
+/// Parse one atom: `name($ARG1, $ARG2)` or `not name($ARG1, "literal")`.
 fn parse_atom(input: &str) -> anyhow::Result<(Atom, &str)> {
     let input = input.trim_start();
+
+    // Consume optional `not` prefix
+    let (negated, input) = if input.starts_with("not ")
+        || input.starts_with("not\t")
+        || input.starts_with("not\n")
+    {
+        (true, input[3..].trim_start())
+    } else {
+        (false, input)
+    };
+
     let name_end = input.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .unwrap_or(input.len());
     if name_end == 0 {
@@ -127,7 +140,7 @@ fn parse_atom(input: &str) -> anyhow::Result<(Atom, &str)> {
         args.push(parse_term(part)?);
     }
 
-    Ok((Atom { relation, args, negated: false }, rest))
+    Ok((Atom { relation, args, negated }, rest))
 }
 
 /// Parse a single term: `$VAR`, `$_`, `"literal"`, or bare identifier.
@@ -715,5 +728,51 @@ fs(**/Cargo.toml) > json({ package: { name: $N } });
     fn parse_query_missing_horn_errors() {
         let err = parse_program("query foo($A) dep($A);").unwrap_err();
         assert!(err.to_string().contains(":-"), "{}", err);
+    }
+
+    #[test]
+    fn parse_check_basic() {
+        let input = r#"check orphan_dep($X) :- has_kind($X, "dep"), not dep_link($X, $_);"#;
+        let program = parse_program(input).unwrap();
+        assert_eq!(program.len(), 1);
+        let Statement::Query(q) = &program[0] else { panic!("expected Query") };
+        assert!(q.is_check);
+        assert_eq!(q.head.relation, "orphan_dep");
+        assert_eq!(q.body.len(), 2);
+        assert!(!q.body[0].negated);
+        assert!(q.body[1].negated);
+        assert_eq!(q.body[1].relation, "dep_link");
+    }
+
+    #[test]
+    fn parse_query_is_not_check() {
+        let input = "query foo($A) :- bar($A, $_);";
+        let program = parse_program(input).unwrap();
+        let Statement::Query(q) = &program[0] else { panic!("expected Query") };
+        assert!(!q.is_check);
+    }
+
+    #[test]
+    fn parse_negated_atom_in_query() {
+        let input = "query no_link($A) :- has_kind($A, \"dep\"), not linked($A, $_);";
+        let program = parse_program(input).unwrap();
+        let Statement::Query(q) = &program[0] else { panic!("expected Query") };
+        assert!(!q.body[0].negated);
+        assert!(q.body[1].negated);
+        assert_eq!(q.body[1].relation, "linked");
+    }
+
+    #[test]
+    fn parse_check_mixed() {
+        let input = r#"
+            query all_deps($A, $C) :- dep_to_package($A, $B), all_deps($B, $C);
+            check orphan($X) :- has_kind($X, "dep"), not dep_link($X, $_);
+        "#;
+        let program = parse_program(input).unwrap();
+        assert_eq!(program.len(), 2);
+        let Statement::Query(q1) = &program[0] else { panic!("expected Query") };
+        let Statement::Query(q2) = &program[1] else { panic!("expected Query") };
+        assert!(!q1.is_check);
+        assert!(q2.is_check);
     }
 }

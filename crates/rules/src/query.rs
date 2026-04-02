@@ -4,14 +4,26 @@
 /// Variable unification across body atoms becomes JOIN ON conditions.
 ///
 /// Relations resolve to:
-///   - link_kind in match_links: SELECT source_match_id AS a0, target_match_id AS a1
-///   - another query name: reference to that CTE
+///   1. Known query → CTE reference
+///   2. Known rule  → group_id JOIN over matches (rule-as-relation)
+///   3. Built-in    → SQL over base tables
+///   4. Fallback    → link_kind in match_links
 ///
 /// The final query resolves match IDs back through strings/files for display.
 use std::collections::HashSet;
 use std::collections::HashMap;
 
 use crate::types::{QueryAtom, QueryDef};
+
+/// Schema for an extraction rule: ordered list of capture kinds.
+/// Built from `Rule.create_matches` during lowering.
+///
+/// Example: rule `deploy_config` with matches `[svc, repo, tag]`
+/// → `RuleSchema { kinds: ["svc", "repo", "tag"] }`
+#[derive(Debug, Clone)]
+pub struct RuleSchema {
+    pub kinds: Vec<String>,
+}
 
 /// Compile a query and all its transitive query dependencies into SQL.
 ///
@@ -21,6 +33,7 @@ pub fn compile_query_with_deps(
     def: &QueryDef,
     all_queries: &HashMap<String, &QueryDef>,
     known_queries: &HashMap<String, usize>,
+    known_rules: &HashMap<String, RuleSchema>,
 ) -> Result<String, String> {
     let mut order = Vec::new();
     let mut visited = HashSet::new();
@@ -31,7 +44,7 @@ pub fn compile_query_with_deps(
     let mut cte_parts = Vec::new();
     let mut seen_recursive = false;
     for q in &order {
-        let cte_body = compile_cte_body(q, known_queries);
+        let cte_body = compile_cte_body(q, known_queries, known_rules);
         if q.is_recursive {
             seen_recursive = true;
         }
@@ -89,8 +102,9 @@ fn topo_sort<'a>(
 pub fn compile_query(
     def: &QueryDef,
     known_queries: &HashMap<String, usize>,
+    known_rules: &HashMap<String, RuleSchema>,
 ) -> String {
-    let cte = compile_cte(def, known_queries);
+    let cte = compile_cte(def, known_queries, known_rules);
     let final_select = compile_final_select(def);
     format!("{cte}\n{final_select}")
 }
@@ -131,7 +145,7 @@ fn compile_final_select(def: &QueryDef) -> String {
 }
 
 /// Compile the CTE body (the SELECT inside the AS (...)).
-fn compile_cte_body(def: &QueryDef, known_queries: &HashMap<String, usize>) -> String {
+fn compile_cte_body(def: &QueryDef, known_queries: &HashMap<String, usize>, known_rules: &HashMap<String, RuleSchema>) -> String {
     if def.is_recursive {
         let base_atoms: Vec<&QueryAtom> = def
             .body
@@ -144,21 +158,21 @@ fn compile_cte_body(def: &QueryDef, known_queries: &HashMap<String, usize>) -> S
             .filter(|a| a.relation == def.name)
             .collect();
 
-        let base_sql = compile_body_select(&base_atoms, &def.head_args, def, known_queries);
+        let base_sql = compile_body_select(&base_atoms, &def.head_args, def, known_queries, known_rules);
         let rec_sql =
-            compile_recursive_step(def, &base_atoms, &recursive_atoms, known_queries);
+            compile_recursive_step(def, &base_atoms, &recursive_atoms, known_queries, known_rules);
 
         format!("{base_sql}\n  UNION\n  {rec_sql}")
     } else {
-        compile_body_select(&def.body.iter().collect::<Vec<_>>(), &def.head_args, def, known_queries)
+        compile_body_select(&def.body.iter().collect::<Vec<_>>(), &def.head_args, def, known_queries, known_rules)
     }
 }
 
 /// Compile the CTE portion (WITH [RECURSIVE] name AS (...)).
-fn compile_cte(def: &QueryDef, known_queries: &HashMap<String, usize>) -> String {
+fn compile_cte(def: &QueryDef, known_queries: &HashMap<String, usize>, known_rules: &HashMap<String, RuleSchema>) -> String {
     let col_list: Vec<String> = (0..def.arity).map(|i| format!("a{i}")).collect();
     let cols = col_list.join(", ");
-    let body = compile_cte_body(def, known_queries);
+    let body = compile_cte_body(def, known_queries, known_rules);
 
     if def.is_recursive {
         format!(
@@ -175,29 +189,34 @@ fn compile_cte(def: &QueryDef, known_queries: &HashMap<String, usize>) -> String
 
 /// Compile a non-recursive body into a SELECT.
 ///
-/// Each body atom becomes a subquery or table reference. Shared variables
-/// across atoms become JOIN ON conditions.
+/// Positive atoms become subquery sources joined via shared variables.
+/// Negated atoms compile to NOT EXISTS subqueries that reference
+/// variables already bound by positive atoms.
 fn compile_body_select(
     atoms: &[&QueryAtom],
     head_args: &[String],
     _def: &QueryDef,
     known_queries: &HashMap<String, usize>,
+    known_rules: &HashMap<String, RuleSchema>,
 ) -> String {
-    if atoms.is_empty() {
+    let positive: Vec<&QueryAtom> = atoms.iter().filter(|a| !a.negated).copied().collect();
+    let negated: Vec<&QueryAtom> = atoms.iter().filter(|a| a.negated).copied().collect();
+
+    if positive.is_empty() && negated.is_empty() {
         return "SELECT NULL WHERE 0".to_string();
     }
 
-    // Each atom gets a table alias: t0, t1, ...
+    // Each positive atom gets a table alias: t0, t1, ...
     let mut from_parts = Vec::new();
     let mut where_parts = Vec::new();
 
     // Track which variable maps to which table.column
     let mut var_bindings: HashMap<String, Vec<String>> = HashMap::new();
 
-    for (idx, atom) in atoms.iter().enumerate() {
+    for (idx, atom) in positive.iter().enumerate() {
         let alias = format!("t{idx}");
-        let is_builtin = builtin_relation(&atom.relation).is_some();
-        let subquery = relation_source(&atom.relation, atom.args.len(), known_queries);
+        let builtin = builtin_relation(&atom.relation);
+        let subquery = relation_source(&atom.relation, atom.args.len(), known_queries, known_rules);
         from_parts.push(format!("({subquery}) AS {alias}"));
 
         for (col_idx, arg) in atom.args.iter().enumerate() {
@@ -207,11 +226,12 @@ fn compile_body_select(
                 // wildcard, no binding
             } else if arg.starts_with('=') {
                 let lit = arg[1..].replace('\'', "''");
-                if is_builtin && col_idx > 0 {
-                    // Built-in relations expose string values directly in non-a0 columns.
+                let is_string_col = builtin.as_ref().map_or(false, |b| b.all_string || col_idx > 0);
+                if is_string_col {
+                    // Column is a string value -- compare directly.
                     where_parts.push(format!("{col_ref} = '{lit}'"));
                 } else {
-                    // Link/query relations use match IDs -- resolve through strings.
+                    // Column is a match ID -- resolve through strings.
                     where_parts.push(format!(
                         "{col_ref} IN (SELECT m.id FROM matches m \
                          LEFT JOIN refs r ON m.ref_id = r.id \
@@ -234,11 +254,50 @@ fn compile_body_select(
         }
     }
 
+    // Negated atoms: NOT EXISTS subqueries referencing bound variables
+    for atom in &negated {
+        let subquery = relation_source(&atom.relation, atom.args.len(), known_queries, known_rules);
+        let mut sub_conditions = Vec::new();
+        let builtin = builtin_relation(&atom.relation);
+
+        for (col_idx, arg) in atom.args.iter().enumerate() {
+            let inner_col = format!("neg.a{col_idx}");
+            if arg == "_" {
+                // wildcard, no constraint
+            } else if arg.starts_with('=') {
+                let lit = arg[1..].replace('\'', "''");
+                let is_string_col = builtin.as_ref().map_or(false, |b| b.all_string || col_idx > 0);
+                if is_string_col {
+                    sub_conditions.push(format!("{inner_col} = '{lit}'"));
+                } else {
+                    sub_conditions.push(format!(
+                        "{inner_col} IN (SELECT m.id FROM matches m \
+                         LEFT JOIN refs r ON m.ref_id = r.id \
+                         LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
+                         JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id \
+                         WHERE s.norm = '{lit}')"
+                    ));
+                }
+            } else if let Some(refs) = var_bindings.get(arg.as_str()) {
+                // Bind to the positive atom's column
+                sub_conditions.push(format!("{inner_col} = {}", refs[0]));
+            }
+        }
+
+        let sub_where = if sub_conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", sub_conditions.join(" AND "))
+        };
+        where_parts.push(format!(
+            "NOT EXISTS (SELECT 1 FROM ({subquery}) AS neg{sub_where})"
+        ));
+    }
+
     // Build SELECT columns from head_args
     let mut select_cols = Vec::new();
     for (i, head_arg) in head_args.iter().enumerate() {
         if head_arg == "_" || head_arg.starts_with('=') {
-            // Should not normally appear in head, but handle gracefully
             select_cols.push(format!("NULL AS a{i}"));
         } else if let Some(refs) = var_bindings.get(head_arg.as_str()) {
             select_cols.push(format!("{} AS a{i}", refs[0]));
@@ -264,6 +323,7 @@ fn compile_recursive_step(
     base_atoms: &[&QueryAtom],
     recursive_atoms: &[&QueryAtom],
     known_queries: &HashMap<String, usize>,
+    known_rules: &HashMap<String, RuleSchema>,
 ) -> String {
     // For simplicity, handle the common pattern:
     //   head($A, $C) :- base($A, $B), head($B, $C)
@@ -290,11 +350,14 @@ fn compile_recursive_step(
         table_idx += 1;
     }
 
-    // Add base relation references
-    for atom in base_atoms {
+    // Add positive base relation references
+    let pos_base: Vec<&&QueryAtom> = base_atoms.iter().filter(|a| !a.negated).collect();
+    let neg_base: Vec<&&QueryAtom> = base_atoms.iter().filter(|a| a.negated).collect();
+
+    for atom in &pos_base {
         let alias = format!("b{table_idx}");
-        let is_builtin = builtin_relation(&atom.relation).is_some();
-        let subquery = relation_source(&atom.relation, atom.args.len(), known_queries);
+        let builtin = builtin_relation(&atom.relation);
+        let subquery = relation_source(&atom.relation, atom.args.len(), known_queries, known_rules);
         from_parts.push(format!("({subquery}) AS {alias}"));
         for (col_idx, arg) in atom.args.iter().enumerate() {
             let col_ref = format!("{alias}.a{col_idx}");
@@ -302,7 +365,8 @@ fn compile_recursive_step(
                 // skip
             } else if arg.starts_with('=') {
                 let lit = arg[1..].replace('\'', "''");
-                if is_builtin && col_idx > 0 {
+                let is_string_col = builtin.as_ref().map_or(false, |b| b.all_string || col_idx > 0);
+                if is_string_col {
                     where_parts.push(format!("{col_ref} = '{lit}'"));
                 } else {
                     where_parts.push(format!(
@@ -325,6 +389,43 @@ fn compile_recursive_step(
         for pair in refs.windows(2) {
             where_parts.push(format!("{} = {}", pair[0], pair[1]));
         }
+    }
+
+    // Negated base atoms: NOT EXISTS subqueries
+    for atom in &neg_base {
+        let subquery = relation_source(&atom.relation, atom.args.len(), known_queries, known_rules);
+        let builtin = builtin_relation(&atom.relation);
+        let mut sub_conditions = Vec::new();
+        for (col_idx, arg) in atom.args.iter().enumerate() {
+            let inner_col = format!("neg.a{col_idx}");
+            if arg == "_" {
+                // wildcard
+            } else if arg.starts_with('=') {
+                let lit = arg[1..].replace('\'', "''");
+                let is_string_col = builtin.as_ref().map_or(false, |b| b.all_string || col_idx > 0);
+                if is_string_col {
+                    sub_conditions.push(format!("{inner_col} = '{lit}'"));
+                } else {
+                    sub_conditions.push(format!(
+                        "{inner_col} IN (SELECT m.id FROM matches m \
+                         LEFT JOIN refs r ON m.ref_id = r.id \
+                         LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
+                         JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id \
+                         WHERE s.norm = '{lit}')"
+                    ));
+                }
+            } else if let Some(refs) = var_bindings.get(arg.as_str()) {
+                sub_conditions.push(format!("{inner_col} = {}", refs[0]));
+            }
+        }
+        let sub_where = if sub_conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", sub_conditions.join(" AND "))
+        };
+        where_parts.push(format!(
+            "NOT EXISTS (SELECT 1 FROM ({subquery}) AS neg{sub_where})"
+        ));
     }
 
     // Build SELECT from head args
@@ -353,15 +454,23 @@ fn compile_recursive_step(
 /// SQL source for a relation name.
 ///
 /// Resolution order:
-/// 1. Known query -> CTE reference
-/// 2. Built-in relation -> SQL over base tables
-/// 3. Fallback -> link_kind in match_links
-fn relation_source(name: &str, arity: usize, known_queries: &HashMap<String, usize>) -> String {
+/// 1. Known query → CTE reference
+/// 2. Known rule  → group_id JOIN over matches (rule-as-relation)
+/// 3. Built-in    → SQL over base tables
+/// 4. Fallback    → link_kind in match_links
+fn relation_source(
+    name: &str,
+    arity: usize,
+    known_queries: &HashMap<String, usize>,
+    known_rules: &HashMap<String, RuleSchema>,
+) -> String {
     if known_queries.contains_key(name) {
         let cols: Vec<String> = (0..arity).map(|i| format!("a{i}")).collect();
         format!("SELECT {} FROM {}", cols.join(", "), name)
-    } else if let Some(sql) = builtin_relation(name) {
-        sql
+    } else if let Some(schema) = known_rules.get(name) {
+        rule_relation_source(name, schema)
+    } else if let Some(info) = builtin_relation(name) {
+        info.sql
     } else {
         let escaped = name.replace('\'', "''");
         format!(
@@ -369,6 +478,53 @@ fn relation_source(name: &str, arity: usize, known_queries: &HashMap<String, usi
              FROM match_links WHERE link_kind = '{escaped}'"
         )
     }
+}
+
+/// Generate SQL for a rule-as-relation: JOIN matches within the same group_id.
+///
+/// Each capture kind becomes a column. The anchor match (first kind) provides
+/// the group_id and rule_name filter. Remaining kinds JOIN on group_id.
+///
+/// Returns match IDs so `compile_final_select` can resolve to strings.
+fn rule_relation_source(rule_name: &str, schema: &RuleSchema) -> String {
+    if schema.kinds.is_empty() {
+        return "SELECT NULL AS a0 WHERE 0".to_string();
+    }
+
+    let escaped_rule = rule_name.replace('\'', "''");
+    let escaped_kind0 = schema.kinds[0].replace('\'', "''");
+
+    let mut select_cols = vec![format!("m0.id AS a0")];
+    let mut joins = Vec::new();
+
+    for (i, kind) in schema.kinds.iter().enumerate().skip(1) {
+        let escaped_kind = kind.replace('\'', "''");
+        select_cols.push(format!("m{i}.id AS a{i}"));
+        joins.push(format!(
+            "JOIN matches m{i} ON m{i}.group_id = m0.group_id AND m{i}.kind = '{escaped_kind}'"
+        ));
+    }
+
+    let select = select_cols.join(", ");
+    let join_clause = if joins.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", joins.join("\n"))
+    };
+
+    format!(
+        "SELECT {select} FROM matches m0{join_clause} \
+         WHERE m0.rule_name = '{escaped_rule}' AND m0.kind = '{escaped_kind0}'"
+    )
+}
+
+/// Info about a built-in relation.
+struct BuiltinInfo {
+    /// The SQL subquery.
+    sql: String,
+    /// If true, ALL columns are string-valued (not match IDs).
+    /// If false, a0 is a match ID and a1+ are string-valued.
+    all_string: bool,
 }
 
 /// Built-in relations that query base tables directly.
@@ -386,38 +542,34 @@ fn relation_source(name: &str, arity: usize, known_queries: &HashMap<String, usi
 /// | in_repo($M, "name")   | 2     | match M is in a repo with this name              |
 /// | in_file($M, "glob")   | 2     | match M is in a file matching this glob          |
 /// | has_value($M, "val")  | 2     | match M's raw string value (not normalized)      |
-fn builtin_relation(name: &str) -> Option<String> {
-    let sql = match name {
-        // has_kind($M, "kind"): a0 = match_id, a1 = match_id (self-join pattern)
-        // Used with literal arg: has_kind($M, "image_repo") -> WHERE kind = 'image_repo'
-        // The literal handling happens in compile_body_select via the =prefix convention.
-        // Here we just produce the source relation.
-        "has_kind" => {
-            "SELECT m.id AS a0, m.kind AS a1 FROM matches m".to_string()
-        }
-
-        // has_norm($M, "lodash"): a0 = match_id, a1 = norm string
-        "has_norm" => {
+/// | repo_has_tag($R, $T)  | 2     | repo R has tag T (all-string)                    |
+/// | repo_has_branch($R,$B)| 2     | repo R has branch B (all-string)                 |
+/// | repo_has_rev($R, $V)  | 2     | repo R has rev V (all-string)                    |
+fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
+    let (sql, all_string) = match name {
+        "has_kind" => (
+            "SELECT m.id AS a0, m.kind AS a1 FROM matches m".to_string(),
+            false,
+        ),
+        "has_norm" => (
             "SELECT m.id AS a0, s.norm AS a1 \
              FROM matches m \
              LEFT JOIN refs r ON m.ref_id = r.id \
              LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
              JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id"
-                .to_string()
-        }
-
-        // has_value($M, "val"): a0 = match_id, a1 = raw value
-        "has_value" => {
+                .to_string(),
+            false,
+        ),
+        "has_value" => (
             "SELECT m.id AS a0, s.value AS a1 \
              FROM matches m \
              LEFT JOIN refs r ON m.ref_id = r.id \
              LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
              JOIN strings s ON COALESCE(r.string_id, rr.string_id) = s.id"
-                .to_string()
-        }
-
-        // same_norm($A, $B): two matches with equal normalized strings
-        "same_norm" => {
+                .to_string(),
+            false,
+        ),
+        "same_norm" => (
             "SELECT m1.id AS a0, m2.id AS a1 \
              FROM matches m1 \
              LEFT JOIN refs r1 ON m1.ref_id = r1.id \
@@ -428,11 +580,10 @@ fn builtin_relation(name: &str) -> Option<String> {
              LEFT JOIN repo_refs rr2 ON rr2.string_id = s2.id \
              JOIN matches m2 ON (m2.ref_id = r2.id OR m2.repo_ref_id = rr2.id) \
              WHERE m1.id != m2.id"
-                .to_string()
-        }
-
-        // same_repo($A, $B): two matches in the same repo
-        "same_repo" => {
+                .to_string(),
+            false,
+        ),
+        "same_repo" => (
             "SELECT m1.id AS a0, m2.id AS a1 \
              FROM matches m1 \
              LEFT JOIN refs r1 ON m1.ref_id = r1.id \
@@ -451,44 +602,64 @@ fn builtin_relation(name: &str) -> Option<String> {
              JOIN repo_refs rr2 ON COALESCE(f1.repo_id, rr1.repo_id) = rr2.repo_id \
              JOIN matches m2 ON m2.repo_ref_id = rr2.id \
              WHERE m1.id != m2.id"
-                .to_string()
-        }
-
-        // same_file($A, $B): two matches in the same file
-        "same_file" => {
+                .to_string(),
+            false,
+        ),
+        "same_file" => (
             "SELECT m1.id AS a0, m2.id AS a1 \
              FROM matches m1 \
              JOIN refs r1 ON m1.ref_id = r1.id \
              JOIN refs r2 ON r1.file_id = r2.file_id \
              JOIN matches m2 ON m2.ref_id = r2.id \
              WHERE m1.id != m2.id"
-                .to_string()
-        }
-
-        // in_repo($M, "org/name"): match is in a repo with this name
-        // a1 is the repo name string for literal matching
-        "in_repo" => {
+                .to_string(),
+            false,
+        ),
+        "in_repo" => (
             "SELECT m.id AS a0, rp.name AS a1 \
              FROM matches m \
              LEFT JOIN refs r ON m.ref_id = r.id \
              LEFT JOIN repo_refs rr ON m.repo_ref_id = rr.id \
              LEFT JOIN files f ON r.file_id = f.id \
              JOIN repos rp ON COALESCE(f.repo_id, rr.repo_id) = rp.id"
-                .to_string()
-        }
-
-        // in_file($M, "path"): match is in a file with this path
-        "in_file" => {
+                .to_string(),
+            false,
+        ),
+        "in_file" => (
             "SELECT m.id AS a0, f.path AS a1 \
              FROM matches m \
              JOIN refs r ON m.ref_id = r.id \
              JOIN files f ON r.file_id = f.id"
-                .to_string()
-        }
-
+                .to_string(),
+            false,
+        ),
+        // All-string builtins: both columns are string values, not match IDs.
+        "repo_has_tag" => (
+            "SELECT rp.name AS a0, rv.rev AS a1 \
+             FROM repo_revs rv \
+             JOIN repos rp ON rv.repo_id = rp.id \
+             WHERE rv.is_semver = 1 OR rv.is_working_tree = 0"
+                .to_string(),
+            true,
+        ),
+        "repo_has_branch" => (
+            "SELECT rp.name AS a0, rv.rev AS a1 \
+             FROM repo_revs rv \
+             JOIN repos rp ON rv.repo_id = rp.id \
+             WHERE rv.is_working_tree = 0"
+                .to_string(),
+            true,
+        ),
+        "repo_has_rev" => (
+            "SELECT rp.name AS a0, rv.rev AS a1 \
+             FROM repo_revs rv \
+             JOIN repos rp ON rv.repo_id = rp.id"
+                .to_string(),
+            true,
+        ),
         _ => return None,
     };
-    Some(sql)
+    Some(BuiltinInfo { sql, all_string })
 }
 
 /// Compile a goal expression (CLI query) into WHERE clauses to append.
@@ -546,6 +717,10 @@ mod tests {
         }
     }
 
+    fn no_rules() -> HashMap<String, RuleSchema> {
+        HashMap::new()
+    }
+
     #[test]
     fn nonrecursive_join() {
         let def = make_def(
@@ -558,7 +733,7 @@ mod tests {
             false,
         );
         let known = HashMap::new();
-        let sql = compile_query(&def, &known);
+        let sql = compile_query(&def, &known, &no_rules());
         // Should contain WITH (not RECURSIVE)
         assert!(sql.starts_with("WITH same_eco"), "sql: {}", sql);
         assert!(!sql.contains("RECURSIVE"), "sql: {}", sql);
@@ -580,7 +755,7 @@ mod tests {
             true,
         );
         let known: HashMap<String, usize> = [("all_deps".to_string(), 2)].into();
-        let sql = compile_query(&def, &known);
+        let sql = compile_query(&def, &known, &no_rules());
         assert!(sql.contains("WITH RECURSIVE all_deps"), "sql: {}", sql);
         // Base case should reference dep_to_package
         assert!(sql.contains("link_kind = 'dep_to_package'"), "sql: {}", sql);
@@ -597,7 +772,7 @@ mod tests {
             false,
         );
         let known = HashMap::new();
-        let sql = compile_query(&def, &known);
+        let sql = compile_query(&def, &known, &no_rules());
         assert!(sql.contains("s.norm = 'lodash'"), "sql: {}", sql);
     }
 
@@ -619,7 +794,7 @@ mod tests {
             false,
         );
         let known = HashMap::new();
-        let sql = compile_query(&def, &known);
+        let sql = compile_query(&def, &known, &no_rules());
         // Wildcard should not generate any WHERE condition for that column
         assert!(!sql.contains("t0.a1 ="), "sql: {}", sql);
     }
@@ -633,7 +808,7 @@ mod tests {
             false,
         );
         let known = HashMap::new();
-        let sql = compile_query(&def, &known);
+        let sql = compile_query(&def, &known, &no_rules());
         // Should use direct string comparison, not match ID resolution
         assert!(sql.contains("= 'image_repo'"), "sql: {}", sql);
         assert!(!sql.contains("s.norm"), "should not resolve through strings: {}", sql);
@@ -652,7 +827,7 @@ mod tests {
             false,
         );
         let known = HashMap::new();
-        let sql = compile_query(&def, &known);
+        let sql = compile_query(&def, &known, &no_rules());
         // same_norm should produce a subquery with norm join
         assert!(sql.contains("s1.norm = s2.norm"), "sql: {}", sql);
         // Variable A should unify across has_kind and same_norm
@@ -668,7 +843,7 @@ mod tests {
             false,
         );
         let known = HashMap::new();
-        let sql = compile_query(&def, &known);
+        let sql = compile_query(&def, &known, &no_rules());
         assert!(sql.contains("= 'myorg/frontend'"), "sql: {}", sql);
     }
 
@@ -698,7 +873,7 @@ mod tests {
             ("all".to_string(), 2),
         ].into();
 
-        let sql = compile_query_with_deps(&transitive, &all_queries, &known).unwrap();
+        let sql = compile_query_with_deps(&transitive, &all_queries, &known, &no_rules()).unwrap();
         // "direct" CTE should appear before "all" CTE
         let direct_pos = sql.find("direct(").unwrap();
         let all_pos = sql.find("all(").unwrap();
@@ -728,8 +903,139 @@ mod tests {
             ("b".to_string(), 1),
         ].into();
 
-        let result = compile_query_with_deps(&a, &all_queries, &known);
+        let result = compile_query_with_deps(&a, &all_queries, &known, &no_rules());
         assert!(result.is_err(), "should detect cycle");
         assert!(result.unwrap_err().contains("cycle"), "error should mention cycle");
+    }
+
+    fn neg_atom(rel: &str, args: &[&str]) -> QueryAtom {
+        QueryAtom {
+            relation: rel.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            negated: true,
+        }
+    }
+
+    #[test]
+    fn negated_atom_compiles_to_not_exists() {
+        let def = make_def(
+            "orphan_dep",
+            &["X"],
+            vec![
+                atom("has_kind", &["X", "=dep_name"]),
+                neg_atom("dep_to_package", &["X", "_"]),
+            ],
+            false,
+        );
+        let known = HashMap::new();
+        let sql = compile_query(&def, &known, &no_rules());
+        assert!(sql.contains("NOT EXISTS"), "sql: {}", sql);
+        assert!(sql.contains("link_kind = 'dep_to_package'"), "sql: {}", sql);
+        // The negated atom should not appear in FROM
+        assert!(!sql.contains("AS t1"), "negated atom should not be a FROM source: {}", sql);
+    }
+
+    #[test]
+    fn negated_atom_binds_to_positive_var() {
+        let def = make_def(
+            "unlinked",
+            &["A"],
+            vec![
+                atom("has_kind", &["A", "=dep_name"]),
+                neg_atom("dep_to_package", &["A", "_"]),
+            ],
+            false,
+        );
+        let known = HashMap::new();
+        let sql = compile_query(&def, &known, &no_rules());
+        // The NOT EXISTS subquery should reference the outer binding for A
+        assert!(sql.contains("neg.a0 = t0.a0"), "should bind negated var to positive: {}", sql);
+    }
+
+    #[test]
+    fn check_query_compiles_same_as_query() {
+        let query_def = make_def(
+            "orphan",
+            &["X"],
+            vec![
+                atom("has_kind", &["X", "=dep_name"]),
+                neg_atom("dep_to_package", &["X", "_"]),
+            ],
+            false,
+        );
+        let mut check_def = query_def.clone();
+        check_def.is_check = true;
+
+        let known = HashMap::new();
+        let query_sql = compile_query(&query_def, &known, &no_rules());
+        let check_sql = compile_query(&check_def, &known, &no_rules());
+        // SQL is identical -- is_check is a CLI-level concern
+        assert_eq!(query_sql, check_sql);
+    }
+
+    #[test]
+    fn rule_as_relation_single_capture() {
+        let def = make_def(
+            "find_pkgs",
+            &["X"],
+            vec![atom("pkg_manifest", &["X"])],
+            false,
+        );
+        let known_queries = HashMap::new();
+        let known_rules: HashMap<String, RuleSchema> = [(
+            "pkg_manifest".to_string(),
+            RuleSchema { kinds: vec!["name".to_string()] },
+        )].into();
+        let sql = compile_query(&def, &known_queries, &known_rules);
+        assert!(sql.contains("rule_name = 'pkg_manifest'"), "sql: {}", sql);
+        assert!(sql.contains("m0.kind = 'name'"), "sql: {}", sql);
+    }
+
+    #[test]
+    fn rule_as_relation_multi_capture() {
+        let def = make_def(
+            "find_deps",
+            &["N", "V"],
+            vec![atom("dep_source", &["N", "V"])],
+            false,
+        );
+        let known_queries = HashMap::new();
+        let known_rules: HashMap<String, RuleSchema> = [(
+            "dep_source".to_string(),
+            RuleSchema { kinds: vec!["dep".to_string(), "version".to_string()] },
+        )].into();
+        let sql = compile_query(&def, &known_queries, &known_rules);
+        assert!(sql.contains("rule_name = 'dep_source'"), "sql: {}", sql);
+        assert!(sql.contains("m0.kind = 'dep'"), "sql: {}", sql);
+        assert!(sql.contains("m1.group_id = m0.group_id"), "sql: {}", sql);
+        assert!(sql.contains("m1.kind = 'version'"), "sql: {}", sql);
+    }
+
+    #[test]
+    fn rule_relation_with_negated_builtin() {
+        // check missing_tag($SVC, $REPO, $TAG) :-
+        //     deploy_config($SVC, $REPO, $TAG),
+        //     not repo_has_tag($REPO, $TAG);
+        let def = make_def(
+            "missing_tag",
+            &["SVC", "REPO", "TAG"],
+            vec![
+                atom("deploy_config", &["SVC", "REPO", "TAG"]),
+                neg_atom("repo_has_tag", &["REPO", "TAG"]),
+            ],
+            false,
+        );
+        let known_queries = HashMap::new();
+        let known_rules: HashMap<String, RuleSchema> = [(
+            "deploy_config".to_string(),
+            RuleSchema { kinds: vec!["svc".to_string(), "repo".to_string(), "tag".to_string()] },
+        )].into();
+        let sql = compile_query(&def, &known_queries, &known_rules);
+        // Should use rule relation for deploy_config
+        assert!(sql.contains("rule_name = 'deploy_config'"), "sql: {}", sql);
+        assert!(sql.contains("group_id"), "sql: {}", sql);
+        // Should use NOT EXISTS for repo_has_tag
+        assert!(sql.contains("NOT EXISTS"), "sql: {}", sql);
+        assert!(sql.contains("repo_revs"), "sql: {}", sql);
     }
 }

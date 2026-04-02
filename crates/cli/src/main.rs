@@ -248,6 +248,15 @@ enum Command {
         files: Vec<PathBuf>,
     },
 
+    /// Run check rules and report violations
+    ///
+    /// Executes all `check` rules from the .sprf rules file against the
+    /// indexed database. Each check asserts zero matching rows -- any
+    /// results are constraint violations.
+    ///
+    /// Exit code 0 = all checks pass. Exit code 1 = violations found.
+    Check,
+
     /// All-in-one: scan + watch + serve
     ///
     /// Runs the full pipeline in a single process:
@@ -306,6 +315,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Query { term, scope, once }) => {
             cmd_query(&cli.config, &term, scope.as_deref(), once).await?
         }
+        Some(Command::Check) => cmd_check(&cli.config).await?,
         Some(Command::Sql { sql }) => cmd_sql(&cli.config, &sql).await?,
         Some(Command::Serve) => cmd_serve(&cli.config).await?,
         Some(Command::Watch { repo }) => cmd_watch(&cli.config, repo.as_deref()).await?,
@@ -466,6 +476,19 @@ fn load_ruleset(path: &std::path::Path) -> anyhow::Result<(sprefa_rules::RuleSet
             Ok(rf.split())
         }
     }
+}
+
+/// Build a map of rule name → capture kinds for rule-as-relation resolution.
+fn build_known_rules(ruleset: &sprefa_rules::RuleSet) -> std::collections::HashMap<String, sprefa_rules::query::RuleSchema> {
+    let mut map = std::collections::HashMap::new();
+    for rule in &ruleset.rules {
+        let kinds: Vec<String> = rule.create_matches.iter().map(|m| m.kind.clone()).collect();
+        if !kinds.is_empty() {
+            map.entry(rule.name.clone())
+                .or_insert_with(|| sprefa_rules::query::RuleSchema { kinds });
+        }
+    }
+    map
 }
 
 async fn cmd_scan(
@@ -848,7 +871,7 @@ async fn cmd_query(
 /// Parses the goal as an atom, finds the matching QueryDef in the rules file,
 /// compiles it to SQL, applies goal bindings, and executes against the DB.
 async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> anyhow::Result<()> {
-    use sprefa_rules::query::{compile_goal_filter, compile_query_with_deps};
+    use sprefa_rules::query::{compile_goal_filter, compile_query_with_deps, RuleSchema};
     use std::collections::HashMap;
 
     // Parse goal atom using the sprf parser
@@ -863,7 +886,7 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
 
     // Load rules file to get query definitions
     let rules_path = find_rules_file()?;
-    let (_, derived) = load_ruleset(&rules_path)?;
+    let (ruleset, derived) = load_ruleset(&rules_path)?;
 
     if derived.query_rules.is_empty() {
         anyhow::bail!("no query rules defined in {}", rules_path.display());
@@ -907,9 +930,10 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
         .iter()
         .map(|q| (q.name.clone(), q))
         .collect();
+    let known_rules: HashMap<String, RuleSchema> = build_known_rules(&ruleset);
 
     // Compile query with all transitive dependencies
-    let base_sql = compile_query_with_deps(qdef, &all_queries, &known)
+    let base_sql = compile_query_with_deps(qdef, &all_queries, &known, &known_rules)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Apply goal bindings
@@ -959,6 +983,89 @@ async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> any
         println!("{}", vals.join("\t"));
     }
     println!("\n({} rows)", rows.len());
+
+    Ok(())
+}
+
+/// Run all check rules and report violations.
+///
+/// Each check rule compiles to SQL the same way as a query. Non-empty
+/// results are violations. Prints violations per check, exits 1 if any found.
+async fn cmd_check(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
+    use sprefa_rules::query::{compile_query_with_deps, RuleSchema};
+    use std::collections::HashMap;
+
+    let rules_path = find_rules_file()?;
+    let (ruleset, derived) = load_ruleset(&rules_path)?;
+
+    let checks: Vec<&sprefa_rules::QueryDef> = derived
+        .query_rules
+        .iter()
+        .filter(|q| q.is_check)
+        .collect();
+
+    if checks.is_empty() {
+        println!("no check rules defined");
+        return Ok(());
+    }
+
+    let known: HashMap<String, usize> = derived
+        .query_rules
+        .iter()
+        .map(|q| (q.name.clone(), q.arity))
+        .collect();
+    let all_queries: HashMap<String, &sprefa_rules::QueryDef> = derived
+        .query_rules
+        .iter()
+        .map(|q| (q.name.clone(), q))
+        .collect();
+    let known_rules: HashMap<String, RuleSchema> = build_known_rules(&ruleset);
+
+    let config = load_cfg(config_path)?;
+    let pool = init_db(&config.db_path()).await?;
+
+    let mut total_violations = 0usize;
+
+    for check in &checks {
+        let sql = compile_query_with_deps(check, &all_queries, &known, &known_rules)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(&sql).fetch_all(&pool).await?;
+
+        if rows.is_empty() {
+            println!("  PASS  {}", check.name);
+        } else {
+            println!("  FAIL  {} ({} violations)", check.name, rows.len());
+            total_violations += rows.len();
+
+            // Print violation details
+            use sqlx::{Column, Row};
+            let cols: Vec<String> = rows[0]
+                .columns()
+                .iter()
+                .map(|c| c.name().to_string())
+                .collect();
+            println!("        {}", cols.join("\t"));
+            for row in &rows {
+                let vals: Vec<String> = (0..cols.len())
+                    .map(|i| {
+                        row.try_get::<String, _>(i)
+                            .or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string()))
+                            .or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string()))
+                            .unwrap_or_else(|_| "NULL".into())
+                    })
+                    .collect();
+                println!("        {}", vals.join("\t"));
+            }
+        }
+    }
+
+    if total_violations > 0 {
+        println!("\n{} total violations across {} checks", total_violations, checks.len());
+        std::process::exit(1);
+    } else {
+        println!("\nall {} checks passed", checks.len());
+    }
 
     Ok(())
 }
