@@ -74,6 +74,10 @@
           "name": "variable.language.wildcard.sprf"
         },
         {
+          "match": "\\$\\.[a-z_][a-z0-9_]*(?=\\s*\\()",
+          "name": "support.function.builtin.sprf"
+        },
+        {
           "match": "\\b[a-z_][a-z0-9_]*(?=\\s*\\()",
           "name": "entity.name.function.relation.sprf"
         },

@@ -523,7 +523,7 @@ mod tests {
             },
             body: vec![
                 Atom {
-                    relation: "has_kind".into(),
+                    relation: "$.has_kind".into(),
                     args: vec![Term::Var("X".into()), Term::Lit("dep".into())],
                     negated: false,
                 },

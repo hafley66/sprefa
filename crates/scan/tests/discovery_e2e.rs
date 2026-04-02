@@ -1,15 +1,13 @@
-//! End-to-end test for multi-rev discovery via IS_REPO/IS_REV annotations.
+//! End-to-end test for demand scanning via repo()/rev() capture annotations.
 //!
-//! Two git repos:
-//!   - "infra" has a values.yaml referencing service-api at tag v1.0.0
-//!   - "service-api" has different package.json at v1.0.0 vs HEAD
-//!
-//! The test verifies:
-//!   1. IS_REPO/IS_REV annotations produce match_labels rows
-//!   2. discover_scan_targets() finds the (service-api, v1.0.0) pair
-//!   3. scan_rev() indexes the v1.0.0 blob content (not HEAD)
+//! Tests verify:
+//!   1. repo()/rev() annotations produce match_labels rows
+//!   2. discover_scan_targets() finds (repo, rev) pairs
+//!   3. scan_rev() indexes the tagged blob content
 //!   4. exclude_revs prevents scanning excluded patterns
+//!   5. Multi-round diamond-shaped discovery chains reach fixed point
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -86,7 +84,7 @@ fn repo_config(name: &str, path: &Path) -> RepoConfig {
 
 // ── test ──────────────────────────────────────────────────────────────────
 
-/// Full discovery pipeline: IS_REPO/IS_REV -> match_labels -> discover -> scan_rev -> verify blob content.
+/// Full discovery pipeline: repo()/rev() -> match_labels -> discover -> scan_rev -> verify blob content.
 #[tokio::test]
 async fn discovery_indexes_tag_content_not_head() {
     let tmp = tempfile::tempdir().unwrap();
@@ -108,13 +106,11 @@ image:
   tag: v1.0.0
 "#);
 
-    // -- .sprf rules: extract image repo+tag with IS_REPO/IS_REV, and package name --
     let sprf = r#"
-        rule(image_refs) > fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
-            > match($REPO, image_repo, IS_REPO)
-            > match($TAG, image_tag, IS_REV);
-        rule(pkg_name) > fs(**/package.json) > json({ name: $NAME })
-            > match($NAME, package_name);
+        rule image_refs(repo($REPO), rev($TAG)) >
+            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } });
+        rule pkg_name($NAME) >
+            fs(**/package.json) > json({ name: $NAME });
     "#;
 
     let db = make_db().await;
@@ -139,7 +135,7 @@ image:
          JOIN strings s ON r.string_id = s.id
          JOIN files f ON r.file_id = f.id
          JOIN repos rp ON f.repo_id = rp.id
-         WHERE m.kind = 'package_name' AND rp.name = 'service-api'",
+         WHERE m.kind = 'NAME' AND rp.name = 'service-api'",
     ).fetch_all(&db).await.unwrap();
     let names: Vec<&str> = head_names.iter().map(|r| r.0.as_str()).collect();
     assert!(names.contains(&"service-api-v2"), "HEAD should have v2 name, got: {:?}", names);
@@ -168,7 +164,7 @@ image:
          JOIN repos rp ON f.repo_id = rp.id
          JOIN rev_files bf ON bf.file_id = f.id AND bf.repo_id = rp.id
          JOIN repo_revs rv ON rv.repo_id = rp.id AND rv.rev = bf.rev
-         WHERE m.kind = 'package_name' AND rp.name = 'service-api'",
+         WHERE m.kind = 'NAME' AND rp.name = 'service-api'",
     ).fetch_all(&db).await.unwrap();
 
     let v1_names: Vec<&str> = all_pkg_names.iter()
@@ -180,29 +176,29 @@ image:
 
     // -- Second loop pass: verify dedup and idempotency --
 
-    // After scan_rev, repo_revs should mark v1.0.0 as scanned.
+    // After scan_rev, scanned_revs should include (service-api, v1.0.0).
+    let scanned = sprefa_cache::discovery::scanned_revs(&db).await.unwrap();
     assert!(
-        sprefa_cache::discovery::is_rev_scanned(&db, "service-api", "v1.0.0").await.unwrap(),
+        scanned.contains(&("service-api".into(), "v1.0.0".into())),
         "v1.0.0 should be marked as scanned in repo_revs",
     );
-    // Unscanned rev should return false.
     assert!(
-        !sprefa_cache::discovery::is_rev_scanned(&db, "service-api", "v9.9.9").await.unwrap(),
+        !scanned.contains(&("service-api".into(), "v9.9.9".into())),
         "v9.9.9 was never scanned",
     );
 
     // Discovery query still returns targets (match_labels persist),
-    // but the loop logic skips them via is_rev_scanned.
+    // but the loop logic skips them via scanned_revs.
     let targets2 = sprefa_cache::discovery::discover_scan_targets(&db).await.unwrap();
     let svc_targets2: Vec<_> = targets2.iter()
         .filter(|t| t.repo_name == "service-api" && t.rev == "v1.0.0")
         .collect();
     assert!(!svc_targets2.is_empty(), "discovery query still returns the target");
 
-    // Simulate what the loop does: check is_rev_scanned for each target.
+    // All discovered targets are already scanned.
     for t in &svc_targets2 {
         assert!(
-            sprefa_cache::discovery::is_rev_scanned(&db, &t.repo_name, &t.rev).await.unwrap(),
+            scanned.contains(&(t.repo_name.clone(), t.rev.clone())),
             "loop would skip {}@{} because already scanned", t.repo_name, t.rev,
         );
     }
@@ -243,9 +239,8 @@ image:
 "#);
 
     let sprf = r#"
-        rule(image_refs) > fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
-            > match($REPO, image_repo, IS_REPO)
-            > match($TAG, image_tag, IS_REV);
+        rule image_refs(repo($REPO), rev($TAG)) >
+            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } });
     "#;
 
     let db = make_db().await;
@@ -287,8 +282,8 @@ async fn static_revs_indexes_tag_content() {
     tag_head(&svc_repo, "v2.0.0");
 
     let sprf = r#"
-        rule(pkg_name) > fs(**/package.json) > json({ name: $NAME })
-            > match($NAME, package_name);
+        rule pkg_name($NAME) >
+            fs(**/package.json) > json({ name: $NAME });
     "#;
 
     let db = make_db().await;
@@ -325,7 +320,7 @@ async fn static_revs_indexes_tag_content() {
          JOIN strings s ON r.string_id = s.id
          JOIN files f ON r.file_id = f.id
          JOIN rev_files bf ON bf.file_id = f.id AND bf.repo_id = f.repo_id
-         WHERE m.kind = 'package_name' AND bf.rev = 'v1.0.0'",
+         WHERE m.kind = 'NAME' AND bf.rev = 'v1.0.0'",
     ).fetch_all(&db).await.unwrap();
     let names: Vec<&str> = v1_names.iter().map(|r| r.0.as_str()).collect();
     assert!(names.contains(&"myservice-v1"), "v1.0.0 should have myservice-v1, got: {:?}", names);
@@ -371,9 +366,8 @@ svc_b:
 "#);
 
     let sprf = r#"
-        rule(image_refs) > fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
-            > match($REPO, image_repo, IS_REPO)
-            > match($TAG, image_tag, IS_REV);
+        rule image_refs(repo($REPO), rev($TAG)) >
+            fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });
     "#;
 
     let db = make_db().await;
@@ -409,4 +403,323 @@ svc_b:
             count, pairs,
         );
     }
+}
+
+/// Diamond-shaped 4-round discovery chain:
+///
+///   helm ──> app ──> lib-core ──> lib-utils@v3.1.0
+///                \──> lib-utils@v3.0.0
+///
+/// Round 1: scan helm -> discovers app@v1.0.0
+/// Round 2: scan app@v1.0.0 -> discovers lib-core@v2.0.0, lib-utils@v3.0.0
+/// Round 3: scan lib-core@v2.0.0 -> discovers lib-utils@v3.1.0
+/// Round 4: scan lib-utils@v3.1.0 -> no new targets, stable
+#[tokio::test]
+async fn diamond_chain_four_round_discovery() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+
+    // -- lib-utils: leaf repo, two tagged versions --
+    let utils_path = root.join("lib-utils");
+    let utils_repo = init_repo(&utils_path);
+    commit_file(&utils_repo, "package.json", br#"{ "name": "lib-utils", "version": "3.0.0" }"#);
+    tag_head(&utils_repo, "v3.0.0");
+    commit_file(&utils_repo, "package.json", br#"{ "name": "lib-utils", "version": "3.1.0" }"#);
+    tag_head(&utils_repo, "v3.1.0");
+
+    // -- lib-core: depends on lib-utils@v3.1.0 --
+    let core_path = root.join("lib-core");
+    let core_repo = init_repo(&core_path);
+    commit_file(&core_repo, "package.json", br#"{ "name": "lib-core", "version": "2.0.0" }"#);
+    commit_file(&core_repo, "deps/lib-utils.yaml", br#"
+dependency:
+  name: lib-utils
+  version: v3.1.0
+"#);
+    tag_head(&core_repo, "v2.0.0");
+
+    // -- app: depends on lib-core@v2.0.0 AND lib-utils@v3.0.0 (diamond) --
+    // Each dep in its own file to avoid cartesian product from file_id join.
+    let app_path = root.join("app-service");
+    let app_repo = init_repo(&app_path);
+    commit_file(&app_repo, "package.json", br#"{ "name": "app-service", "version": "1.0.0" }"#);
+    commit_file(&app_repo, "deps/lib-core.yaml", br#"
+dependency:
+  name: lib-core
+  version: v2.0.0
+"#);
+    commit_file(&app_repo, "deps/lib-utils.yaml", br#"
+dependency:
+  name: lib-utils
+  version: v3.0.0
+"#);
+    tag_head(&app_repo, "v1.0.0");
+
+    // -- helm: references app-service@v1.0.0 --
+    let helm_path = root.join("helm");
+    let helm_repo = init_repo(&helm_path);
+    commit_file(&helm_repo, "deploy/values.yaml", br#"
+image:
+  repository: app-service
+  tag: v1.0.0
+"#);
+
+    let sprf = r#"
+        rule deploy_ref(repo($REPO), rev($TAG)) >
+            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } });
+        rule lib_dep(repo($LIB), rev($VER)) >
+            fs(**/deps/*.yaml) > json({ dependency: { name: $LIB, version: $VER } });
+        rule pkg_name($NAME) >
+            fs(**/package.json) > json({ name: $NAME });
+    "#;
+
+    let db = make_db().await;
+    let scanner = make_scanner(db.clone(), sprf);
+
+    // Build repo configs.
+    let repo_cfgs: HashMap<&str, (RepoConfig, &Path)> = [
+        ("helm", helm_path.as_path()),
+        ("app-service", app_path.as_path()),
+        ("lib-core", core_path.as_path()),
+        ("lib-utils", utils_path.as_path()),
+    ]
+    .into_iter()
+    .map(|(name, path)| (name, (repo_config(name, path), path)))
+    .collect();
+
+    // Initial scan: only helm (the entry point).
+    scanner.scan_repo(&repo_cfgs["helm"].0, "main").await.unwrap();
+
+    // Run the discovery loop, tracking which rounds scan what.
+    let mut round_scans: Vec<Vec<(String, String)>> = Vec::new();
+    let max_iterations = 10;
+
+    for _iteration in 1..=max_iterations {
+        let targets = sprefa_cache::discovery::discover_scan_targets(&db).await.unwrap();
+        let scanned = sprefa_cache::discovery::scanned_revs(&db).await.unwrap();
+        let mut new_targets = Vec::new();
+
+        for target in &targets {
+            if scanned.contains(&(target.repo_name.clone(), target.rev.clone())) {
+                continue;
+            }
+            let Some((cfg, _)) = repo_cfgs.get(target.repo_name.as_str()) else {
+                continue;
+            };
+            new_targets.push((target.clone(), cfg.clone()));
+        }
+
+        if new_targets.is_empty() {
+            break;
+        }
+
+        let mut this_round = Vec::new();
+        for (target, cfg) in &new_targets {
+            match scanner.scan_rev(cfg, &target.rev).await {
+                Ok(_) => this_round.push((target.repo_name.clone(), target.rev.clone())),
+                Err(e) => eprintln!("scan {}@{} failed (expected for cartesian ghosts): {}",
+                    target.repo_name, target.rev, e),
+            }
+        }
+        if !this_round.is_empty() {
+            round_scans.push(this_round);
+        }
+    }
+
+    // Verify we got exactly 3 rounds of actual scanning (4th finds nothing).
+    assert_eq!(round_scans.len(), 3,
+        "expected 3 discovery rounds, got {}: {:?}", round_scans.len(), round_scans);
+
+    // Round 1: helm discovered app-service@v1.0.0
+    let r1: HashSet<_> = round_scans[0].iter().collect();
+    assert!(r1.contains(&("app-service".into(), "v1.0.0".into())),
+        "round 1 should discover app-service@v1.0.0, got: {:?}", round_scans[0]);
+
+    // Round 2: app discovered lib-core@v2.0.0 and lib-utils@v3.0.0
+    let r2: HashSet<_> = round_scans[1].iter().collect();
+    assert!(r2.contains(&("lib-core".into(), "v2.0.0".into())),
+        "round 2 should discover lib-core@v2.0.0, got: {:?}", round_scans[1]);
+    assert!(r2.contains(&("lib-utils".into(), "v3.0.0".into())),
+        "round 2 should discover lib-utils@v3.0.0, got: {:?}", round_scans[1]);
+
+    // Round 3: lib-core discovered lib-utils@v3.1.0
+    let r3: HashSet<_> = round_scans[2].iter().collect();
+    assert!(r3.contains(&("lib-utils".into(), "v3.1.0".into())),
+        "round 3 should discover lib-utils@v3.1.0, got: {:?}", round_scans[2]);
+
+    // Verify all repos have indexed content.
+    let all_scanned = sprefa_cache::discovery::scanned_revs(&db).await.unwrap();
+    for (repo, rev) in &[
+        ("app-service", "v1.0.0"),
+        ("lib-core", "v2.0.0"),
+        ("lib-utils", "v3.0.0"),
+        ("lib-utils", "v3.1.0"),
+    ] {
+        assert!(all_scanned.contains(&(repo.to_string(), rev.to_string())),
+            "{}@{} should be scanned", repo, rev);
+    }
+
+    // Verify package names were extracted at correct versions.
+    let pkg_names: Vec<(String, String)> = sqlx::query_as(
+        "SELECT s.value, rv.rev FROM matches m
+         JOIN refs r ON m.ref_id = r.id
+         JOIN strings s ON r.string_id = s.id
+         JOIN files f ON r.file_id = f.id
+         JOIN repos rp ON f.repo_id = rp.id
+         JOIN rev_files bf ON bf.file_id = f.id AND bf.repo_id = rp.id
+         JOIN repo_revs rv ON rv.repo_id = rp.id AND rv.rev = bf.rev
+         WHERE m.kind = 'NAME'",
+    ).fetch_all(&db).await.unwrap();
+    let name_at: HashSet<_> = pkg_names.iter()
+        .map(|(name, rev)| (name.as_str(), rev.as_str()))
+        .collect();
+
+    assert!(name_at.contains(&("app-service", "v1.0.0")),
+        "app-service should be indexed at v1.0.0, got: {:?}", pkg_names);
+    assert!(name_at.contains(&("lib-core", "v2.0.0")),
+        "lib-core should be indexed at v2.0.0, got: {:?}", pkg_names);
+    // lib-utils has two versions indexed
+    assert!(name_at.contains(&("lib-utils", "v3.0.0")),
+        "lib-utils should be indexed at v3.0.0, got: {:?}", pkg_names);
+    assert!(name_at.contains(&("lib-utils", "v3.1.0")),
+        "lib-utils should be indexed at v3.1.0, got: {:?}", pkg_names);
+
+    // Total: 4 repos registered or discovered, 5 rev scans total
+    // (helm@main + app@v1.0.0 + lib-core@v2.0.0 + lib-utils@v3.0.0 + lib-utils@v3.1.0)
+    let total_revs = all_scanned.len();
+    assert!(total_revs >= 4, "at least 4 rev entries, got {}", total_revs);
+}
+
+/// End-to-end: extraction rules + check query execution against populated DB.
+///
+/// Two repos:
+///   - "api-specs" has two canonical OpenAPI specs (payments v3.0.0, users v2.1.0)
+///   - "api-clients" has three copies:
+///       - payments v3.0.0 (current)
+///       - users v2.0.0 (STALE -- behind source)
+///       - users v2.1.0 (current)
+///
+/// The check `stale_spec` should fire exactly once: users@v2.0.0.
+#[tokio::test]
+async fn check_detects_stale_openapi_copy() {
+    use sprefa_rules::query::{compile_query_with_deps, RuleSchema};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+
+    // -- api-specs repo: canonical specs --
+    let specs_path = root.join("api-specs");
+    let specs_repo = init_repo(&specs_path);
+    commit_file(&specs_repo, "specs/payments/openapi.json", br#"{
+        "info": { "title": "payments", "version": "3.0.0" }
+    }"#);
+    commit_file(&specs_repo, "specs/users/openapi.json", br#"{
+        "info": { "title": "users", "version": "2.1.0" }
+    }"#);
+
+    // -- api-clients repo: generated client copies --
+    let clients_path = root.join("api-clients");
+    let clients_repo = init_repo(&clients_path);
+    // payments: current
+    commit_file(&clients_repo, "clients/go/payments/openapi.json", br#"{
+        "info": { "title": "payments", "version": "3.0.0" }
+    }"#);
+    // users: STALE copy at v2.0.0
+    commit_file(&clients_repo, "clients/go/users/openapi.json", br#"{
+        "info": { "title": "users", "version": "2.0.0" }
+    }"#);
+    // users: current copy in python client
+    commit_file(&clients_repo, "clients/python/users/openapi.json", br#"{
+        "info": { "title": "users", "version": "2.1.0" }
+    }"#);
+
+    let sprf = r#"
+        rule api_source($TITLE, $VERSION) >
+            fs(specs/**/openapi.json) > json({ info: { title: $TITLE, version: $VERSION } });
+
+        rule api_copy($TITLE, $VERSION) >
+            fs(clients/**/openapi.json) > json({ info: { title: $TITLE, version: $VERSION } });
+
+        check stale_spec($TITLE, $COPY_V) >
+            api_copy($TITLE, $COPY_V)
+            not api_source($TITLE, $COPY_V);
+    "#;
+
+    let db = make_db().await;
+    let (ruleset, derived) = sprefa_sprf::parse_sprf(sprf).unwrap();
+    let rule_ext = RuleExtractor::from_ruleset(&ruleset).unwrap();
+    let scanner = Scanner {
+        extractors: Arc::new(vec![Box::new(rule_ext) as Box<dyn Extractor>]),
+        db: db.clone(),
+        normalize_config: None,
+        global_filter: None,
+        link_rules: derived.link_rules,
+    };
+
+    // Scan both repos.
+    let specs_cfg = repo_config("api-specs", &specs_path);
+    let clients_cfg = repo_config("api-clients", &clients_path);
+    scanner.scan_repo(&specs_cfg, "main").await.unwrap();
+    scanner.scan_repo(&clients_cfg, "main").await.unwrap();
+
+    // Verify extraction produced the expected matches.
+    let source_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM matches m
+         JOIN refs r ON m.ref_id = r.id
+         JOIN files f ON r.file_id = f.id
+         JOIN repos rp ON f.repo_id = rp.id
+         WHERE m.rule_name = 'api_source' AND rp.name = 'api-specs'",
+    ).fetch_one(&db).await.unwrap();
+    assert!(source_count >= 2, "api_source should produce matches for title+version, got {}", source_count);
+
+    let copy_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM matches m
+         JOIN refs r ON m.ref_id = r.id
+         JOIN files f ON r.file_id = f.id
+         JOIN repos rp ON f.repo_id = rp.id
+         WHERE m.rule_name = 'api_copy' AND rp.name = 'api-clients'",
+    ).fetch_one(&db).await.unwrap();
+    assert!(copy_count >= 3, "api_copy should produce matches for 3 copies, got {}", copy_count);
+
+    // Compile and execute the check query.
+    let checks: Vec<&sprefa_rules::QueryDef> = derived
+        .query_rules
+        .iter()
+        .filter(|q| q.is_check)
+        .collect();
+    assert_eq!(checks.len(), 1, "expected 1 check rule");
+    assert_eq!(checks[0].name, "stale_spec");
+
+    let known: HashMap<String, usize> = derived
+        .query_rules
+        .iter()
+        .map(|q| (q.name.clone(), q.arity))
+        .collect();
+    let all_queries: HashMap<String, &sprefa_rules::QueryDef> = derived
+        .query_rules
+        .iter()
+        .map(|q| (q.name.clone(), q))
+        .collect();
+    let known_rules: HashMap<String, RuleSchema> = ruleset
+        .rules
+        .iter()
+        .filter_map(|r| {
+            let kinds: Vec<String> = r.create_matches.iter().map(|m| m.kind.clone()).collect();
+            if kinds.is_empty() { None }
+            else { Some((r.name.clone(), RuleSchema { kinds })) }
+        })
+        .collect();
+
+    let sql = compile_query_with_deps(checks[0], &all_queries, &known, &known_rules)
+        .expect("check query should compile");
+
+    let rows: Vec<(String, String)> = sqlx::query_as(&sql)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+
+    // Exactly one violation: users@v2.0.0 (stale copy in go client).
+    assert_eq!(rows.len(), 1, "expected 1 violation, got {}: {:?}", rows.len(), rows);
+    assert_eq!(rows[0].0, "users", "violation title should be 'users', got '{}'", rows[0].0);
+    assert_eq!(rows[0].1, "2.0.0", "violation version should be '2.0.0', got '{}'", rows[0].1);
 }

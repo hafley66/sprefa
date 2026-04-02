@@ -228,9 +228,15 @@ fn parse_atom(input: &str) -> anyhow::Result<(Atom, &str)> {
         (false, input)
     };
 
-    let name_end = input.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .unwrap_or(input.len());
-    if name_end == 0 {
+    // Relation names: alphanumeric + underscores, optionally prefixed with `$.` for builtins.
+    let name_end = if input.starts_with("$.") {
+        2 + input[2..].find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .unwrap_or(input.len() - 2)
+    } else {
+        input.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .unwrap_or(input.len())
+    };
+    if name_end == 0 || (input.starts_with("$.") && name_end <= 2) {
         anyhow::bail!("expected relation name, found {:?}", &input[..input.len().min(20)]);
     }
     let relation = input[..name_end].to_string();
@@ -714,7 +720,7 @@ rule b($N) > fs(**/Cargo.toml) > json({ package: { name: $N } });
 
     #[test]
     fn parse_check_basic() {
-        let input = r#"check orphan_dep($X) > has_kind($X, "dep") not dep_link($X, $_);"#;
+        let input = r#"check orphan_dep($X) > $.has_kind($X, "dep") not dep_link($X, $_);"#;
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 1);
         let Statement::Query(q) = &program[0] else { panic!("expected Query") };
@@ -748,7 +754,7 @@ rule b($N) > fs(**/Cargo.toml) > json({ package: { name: $N } });
     fn parse_check_mixed() {
         let input = r#"
             query all_deps($A, $C) > dep_to_package($A, $B) all_deps($B, $C);
-            check orphan($X) > has_kind($X, "dep") not dep_link($X, $_);
+            check orphan($X) > $.has_kind($X, "dep") not dep_link($X, $_);
         "#;
         let program = parse_program(input).unwrap();
         assert_eq!(program.len(), 2);

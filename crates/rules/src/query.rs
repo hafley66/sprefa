@@ -597,24 +597,25 @@ struct BuiltinInfo {
 ///
 /// | Relation              | Arity | Semantics                                      |
 /// |-----------------------|-------|-------------------------------------------------|
-/// | has_kind($M, "kind")  | 2     | match M has this kind                           |
-/// | has_norm($M, "val")   | 2     | match M's string has this normalized value      |
-/// | same_norm($A, $B)     | 2     | matches A and B share the same norm              |
-/// | same_repo($A, $B)     | 2     | matches A and B are in the same repo             |
-/// | same_file($A, $B)     | 2     | matches A and B are in the same file             |
-/// | in_repo($M, "name")   | 2     | match M is in a repo with this name              |
-/// | in_file($M, "glob")   | 2     | match M is in a file matching this glob          |
-/// | has_value($M, "val")  | 2     | match M's raw string value (not normalized)      |
-/// | repo_has_tag($R, $T)  | 2     | repo R has tag T (all-string)                    |
-/// | repo_has_branch($R,$B)| 2     | repo R has branch B (all-string)                 |
-/// | repo_has_rev($R, $V)  | 2     | repo R has rev V (all-string)                    |
+/// | $.has_kind($M, "kind")  | 2     | match M has this kind                           |
+/// | $.has_norm($M, "val")   | 2     | match M's string has this normalized value      |
+/// | $.has_value($M, "val")  | 2     | match M's raw string value (not normalized)      |
+/// | $.same_norm($A, $B)     | 2     | matches A and B share the same norm              |
+/// | $.same_norm2($A, $B)    | 2     | matches A and B share the same norm2             |
+/// | $.same_repo($A, $B)     | 2     | matches A and B are in the same repo             |
+/// | $.same_file($A, $B)     | 2     | matches A and B are in the same file             |
+/// | $.in_repo($M, "name")   | 2     | match M is in a repo with this name              |
+/// | $.in_file($M, "glob")   | 2     | match M is in a file matching this glob          |
+/// | $.repo_has_tag($R, $T)  | 2     | repo R has tag T (all-string)                    |
+/// | $.repo_has_branch($R,$B)| 2     | repo R has branch B (all-string)                 |
+/// | $.repo_has_rev($R, $V)  | 2     | repo R has rev V (all-string)                    |
 fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
     let (sql, all_string) = match name {
-        "has_kind" => (
+        "$.has_kind" => (
             "SELECT m.id AS a0, m.kind AS a1 FROM matches m".to_string(),
             false,
         ),
-        "has_norm" => (
+        "$.has_norm" => (
             "SELECT m.id AS a0, s.norm AS a1 \
              FROM matches m \
              LEFT JOIN refs r ON m.ref_id = r.id \
@@ -623,7 +624,7 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
                 .to_string(),
             false,
         ),
-        "has_value" => (
+        "$.has_value" => (
             "SELECT m.id AS a0, s.value AS a1 \
              FROM matches m \
              LEFT JOIN refs r ON m.ref_id = r.id \
@@ -632,7 +633,7 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
                 .to_string(),
             false,
         ),
-        "same_norm" => (
+        "$.same_norm" => (
             "SELECT m1.id AS a0, m2.id AS a1 \
              FROM matches m1 \
              LEFT JOIN refs r1 ON m1.ref_id = r1.id \
@@ -646,7 +647,21 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
                 .to_string(),
             false,
         ),
-        "same_repo" => (
+        "$.same_norm2" => (
+            "SELECT m1.id AS a0, m2.id AS a1 \
+             FROM matches m1 \
+             LEFT JOIN refs r1 ON m1.ref_id = r1.id \
+             LEFT JOIN repo_refs rr1 ON m1.repo_ref_id = rr1.id \
+             JOIN strings s1 ON COALESCE(r1.string_id, rr1.string_id) = s1.id \
+             JOIN strings s2 ON s1.norm2 = s2.norm2 \
+             LEFT JOIN refs r2 ON r2.string_id = s2.id \
+             LEFT JOIN repo_refs rr2 ON rr2.string_id = s2.id \
+             JOIN matches m2 ON (m2.ref_id = r2.id OR m2.repo_ref_id = rr2.id) \
+             WHERE m1.id != m2.id"
+                .to_string(),
+            false,
+        ),
+        "$.same_repo" => (
             "SELECT m1.id AS a0, m2.id AS a1 \
              FROM matches m1 \
              LEFT JOIN refs r1 ON m1.ref_id = r1.id \
@@ -668,7 +683,7 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
                 .to_string(),
             false,
         ),
-        "same_file" => (
+        "$.same_file" => (
             "SELECT m1.id AS a0, m2.id AS a1 \
              FROM matches m1 \
              JOIN refs r1 ON m1.ref_id = r1.id \
@@ -678,7 +693,7 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
                 .to_string(),
             false,
         ),
-        "in_repo" => (
+        "$.in_repo" => (
             "SELECT m.id AS a0, rp.name AS a1 \
              FROM matches m \
              LEFT JOIN refs r ON m.ref_id = r.id \
@@ -688,7 +703,7 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
                 .to_string(),
             false,
         ),
-        "in_file" => (
+        "$.in_file" => (
             "SELECT m.id AS a0, f.path AS a1 \
              FROM matches m \
              JOIN refs r ON m.ref_id = r.id \
@@ -697,7 +712,7 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
             false,
         ),
         // All-string builtins: both columns are string values, not match IDs.
-        "repo_has_tag" => (
+        "$.repo_has_tag" => (
             "SELECT rp.name AS a0, rv.rev AS a1 \
              FROM repo_revs rv \
              JOIN repos rp ON rv.repo_id = rp.id \
@@ -705,7 +720,7 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
                 .to_string(),
             true,
         ),
-        "repo_has_branch" => (
+        "$.repo_has_branch" => (
             "SELECT rp.name AS a0, rv.rev AS a1 \
              FROM repo_revs rv \
              JOIN repos rp ON rv.repo_id = rp.id \
@@ -713,7 +728,7 @@ fn builtin_relation(name: &str) -> Option<BuiltinInfo> {
                 .to_string(),
             true,
         ),
-        "repo_has_rev" => (
+        "$.repo_has_rev" => (
             "SELECT rp.name AS a0, rv.rev AS a1 \
              FROM repo_revs rv \
              JOIN repos rp ON rv.repo_id = rp.id"
@@ -867,7 +882,7 @@ mod tests {
         let def = make_def(
             "find_images",
             &["M"],
-            vec![atom("has_kind", &["M", "=image_repo"])],
+            vec![atom("$.has_kind", &["M", "=image_repo"])],
             false,
         );
         let known = HashMap::new();
@@ -883,9 +898,9 @@ mod tests {
             "norm_match",
             &["A", "B"],
             vec![
-                atom("has_kind", &["A", "=image_repo"]),
-                atom("has_kind", &["B", "=repo_name"]),
-                atom("same_norm", &["A", "B"]),
+                atom("$.has_kind", &["A", "=image_repo"]),
+                atom("$.has_kind", &["B", "=repo_name"]),
+                atom("$.same_norm", &["A", "B"]),
             ],
             false,
         );
@@ -902,7 +917,7 @@ mod tests {
         let def = make_def(
             "repo_matches",
             &["M"],
-            vec![atom("in_repo", &["M", "=myorg/frontend"])],
+            vec![atom("$.in_repo", &["M", "=myorg/frontend"])],
             false,
         );
         let known = HashMap::new();
@@ -985,7 +1000,7 @@ mod tests {
             "orphan_dep",
             &["X"],
             vec![
-                atom("has_kind", &["X", "=dep_name"]),
+                atom("$.has_kind", &["X", "=dep_name"]),
                 neg_atom("dep_to_package", &["X", "_"]),
             ],
             false,
@@ -1004,7 +1019,7 @@ mod tests {
             "unlinked",
             &["A"],
             vec![
-                atom("has_kind", &["A", "=dep_name"]),
+                atom("$.has_kind", &["A", "=dep_name"]),
                 neg_atom("dep_to_package", &["A", "_"]),
             ],
             false,
@@ -1021,7 +1036,7 @@ mod tests {
             "orphan",
             &["X"],
             vec![
-                atom("has_kind", &["X", "=dep_name"]),
+                atom("$.has_kind", &["X", "=dep_name"]),
                 neg_atom("dep_to_package", &["X", "_"]),
             ],
             false,
@@ -1084,7 +1099,7 @@ mod tests {
             &["SVC", "REPO", "TAG"],
             vec![
                 atom("deploy_config", &["SVC", "REPO", "TAG"]),
-                neg_atom("repo_has_tag", &["REPO", "TAG"]),
+                neg_atom("$.repo_has_tag", &["REPO", "TAG"]),
             ],
             false,
         );

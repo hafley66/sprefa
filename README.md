@@ -129,9 +129,18 @@ query same_ecosystem($A, $B) >
 
 | Relation | Source |
 |---|---|
-| `repo_has_tag($REPO, $TAG)` | `revisions` where `rev_type='tag'` |
-| `repo_has_branch($REPO, $BRANCH)` | `revisions` where `rev_type='branch'` |
-| `file_exists($REPO, $REV, $PATH)` | `branch_files` join chain |
+| `$.has_kind($M, "kind")` | matches with this kind |
+| `$.has_norm($M, "val")` | matches whose string normalizes to val |
+| `$.has_value($M, "val")` | matches with exact string value |
+| `$.same_norm($A, $B)` | matches A and B share the same norm |
+| `$.same_norm2($A, $B)` | matches A and B share the same norm2 (suffix-stripped) |
+| `$.same_repo($A, $B)` | matches A and B are in the same repo |
+| `$.same_file($A, $B)` | matches A and B are in the same file |
+| `$.in_repo($M, "name")` | match M is in repo with this name |
+| `$.in_file($M, "path")` | match M is in file matching this path |
+| `$.repo_has_tag($REPO, $TAG)` | repo has this git tag |
+| `$.repo_has_branch($REPO, $BRANCH)` | repo has this branch |
+| `$.repo_has_rev($REPO, $REV)` | repo has this revision (tag or branch) |
 
 ### check -- invariant verification
 
@@ -140,7 +149,7 @@ Same syntax as query. A check with results means violations. Exit code 1.
 ```sprf
 check missing_tag($SVC, $REPO, $TAG) >
   deploy_config($SVC, $REPO, $TAG)
-  not repo_has_tag($REPO, $TAG);
+  not $.repo_has_tag($REPO, $TAG);
 ```
 
 `not` compiles to `NOT EXISTS`. Negated relations must be fully computed first (topological ordering enforces this).
