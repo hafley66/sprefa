@@ -6,7 +6,7 @@ expression: refs
   span_start: 0
   span_end: 0
   kind: image_repo
-  rule_name: helm-images
+  rule_name: deploy-images
   is_path: false
   parent_key: ~
   node_path: image
@@ -15,7 +15,7 @@ expression: refs
   span_start: 0
   span_end: 0
   kind: image_tag
-  rule_name: helm-images
+  rule_name: deploy-images
   is_path: false
   parent_key: myorg/frontend
   node_path: image

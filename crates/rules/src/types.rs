@@ -448,7 +448,7 @@ fn is_false(v: &bool) -> bool {
 pub struct MatchDef {
     /// Name of the capture to use as the ref value.
     pub capture: String,
-    /// Free-text kind string (e.g. "dep_name", "helm_value", "operation_id").
+    /// Free-text kind string (e.g. "dep_name", "deploy_value", "operation_id").
     pub kind: String,
     /// Name of another capture to use as parent_key (links related refs).
     #[serde(default, skip_serializing_if = "Option::is_none")]

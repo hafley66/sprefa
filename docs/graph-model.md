@@ -185,8 +185,8 @@ Serialized in edges as `(source_table, source_id)`. The discriminator is the tab
 /* files in repos that depend on a package named "@myorg/api" */
 repo:links-to(package[name="@myorg/api"]:via(depends_on)) > branch > file
 
-/* matches that resolve to a repo containing helm values */
-match:links-to(repo:has(match[kind="helm_value"]):via(resolves_to))
+/* matches that resolve to a repo containing deploy values */
+match:links-to(repo:has(match[kind="deploy_value"]):via(resolves_to))
 
 /* repos with cross-dependency: A depends on B and B depends on A */
 repo:links-to(repo:linked-from(repo:is-same):via(depends_on)):via(depends_on)
@@ -395,13 +395,13 @@ query(MatchId) :-
     edge(match, MatchId, package, PkgId, _, _),
     entity_attr(package, PkgId, "name", "lodash").
 
-% CSS: repo:has(match[kind="helm_value"]):has(match[kind="import_path"])
+% CSS: repo:has(match[kind="deploy_value"]):has(match[kind="import_path"])
 query(RepoName) :-
     repo(RepoName, _),
     branch(RepoName, Branch1),
     file(RepoName, Branch1, Path1, _, _),
     ref(File1Id, _, _, _), file_id(RepoName, Branch1, Path1, File1Id),
-    match(Ref1Id, _, "helm_value"), ref_id(File1Id, Ref1Id),
+    match(Ref1Id, _, "deploy_value"), ref_id(File1Id, Ref1Id),
     branch(RepoName, Branch2),
     file(RepoName, Branch2, Path2, _, _),
     ref(File2Id, _, _, _), file_id(RepoName, Branch2, Path2, File2Id),

@@ -86,7 +86,7 @@ When `src/utils.rs` moves to `src/helpers/utils.rs`, every `use crate::utils::Fo
 
 Plenty of tools do code intelligence for a single language (rust-analyzer, tsserver, gopls). They all stop at one of three walls:
 
-1. **Single-language.** Your TS frontend imports a string that matches a Go service name in a K8s manifest that references a Helm value from a TOML config. No single-language tool sees the full chain.
+1. **Single-language.** Your TS frontend imports a string that matches a Go service name in a K8s manifest that references a Deploy value from a TOML config. No single-language tool sees the full chain.
 
 2. **Build-system coupling.** SCIP indexers and rust-analyzer require a successful build. If the project doesn't compile, or you're looking at 500 repos and can't build all of them, you get nothing.
 
@@ -319,7 +319,7 @@ root
 
 Each rule is a CSS-style selector against this DOM with three dimensions:
 
-1. **Git context** -- repo/branch/tag globs (`"repo": "*/helm-charts"`, `"branch": "main|release/*"`)
+1. **Git context** -- repo/branch/tag globs (`"repo": "*/deploy-charts"`, `"branch": "main|release/*"`)
 2. **File path** -- glob on repo-relative path (`"file": "values*.yaml"`)
 3. **Structural position** -- step chain that walks the parsed tree depth-first
 
@@ -388,7 +388,7 @@ my-org/* > main > **/Cargo.toml > json({ package: { name: $NAME } })
 fs(**/*.config) > ast[typescript](import $NAME from '$PATH');
 
 # regex on file content
-fs(helm/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));
+fs(deploy/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));
 ```
 
 ### JSON destructuring
@@ -451,7 +451,7 @@ fs(**/package.json) > json({ re:^(dev|peer)?[Dd]ependencies: { $NAME: $VERSION }
   > match($NAME, dep_name)
   > match($VERSION, dep_version);
 
-# Helm
+# Deploy
 fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
   > match($REPO, image_repo)
   > match($TAG, image_tag);
@@ -499,7 +499,7 @@ link rules connect them across files/repos
       "predicate": {
         "op": "and",
         "all": [
-          { "op": "kind_eq", "side": "src", "value": "helm_image_tag" },
+          { "op": "kind_eq", "side": "src", "value": "deploy_image_tag" },
           { "op": "kind_eq", "side": "tgt", "value": "git_tag" },
           { "op": "norm_eq" }
         ]
@@ -806,7 +806,7 @@ crates/
 
 - [ ] Generic comment parser: line-comment extraction across languages (// # -- %% etc.) to capture annotations, TODOs, and cross-ref hints embedded in comments. Since comment syntax per language is just a line prefix, a small grammar table covers most languages without needing full AST parsing.
 - [x] Populate git_tags during scan (git tag --list per repo)
-- [ ] Production link rules for: helm image_repo/image_tag to repos+tags, dep_name to package_name by norm
+- [ ] Production link rules for: deploy image_repo/image_tag to repos+tags, dep_name to package_name by norm
 - [x] Repo-level metadata as matchable entities: repo_refs table interns repo name, git tags, branches as linkable matches
 - [x] File metadata predicates: StemEq, ExtEq, DirEq link predicates reference files.stem/ext/dir directly (zero extra rows)
 - [x] Link rule predicate DSL: structured predicates compiled to SQL (kind_eq, norm_eq, same_repo, stem_eq, ext_eq, dir_eq, and)

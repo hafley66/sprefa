@@ -383,7 +383,7 @@ mod tests {
                 ]
             },
             {
-                "name": "helm-images",
+                "name": "deploy-images",
                 "select": [
                     { "step": "file", "pattern": "**/values.yaml|**/values-*.yaml" },
                     { "step": "any" },
@@ -425,12 +425,12 @@ mod tests {
     }
 
     #[test]
-    fn extracts_yaml_helm_values() {
+    fn extracts_yaml_deploy_values() {
         let ex = make_extractor();
         let src = b"image:\n  repository: myorg/frontend\n  tag: v1.2.3\n";
         let mut refs = run(&ex, src, "charts/values.yaml");
         refs.sort_by(|a, b| a.value.cmp(&b.value));
-        insta::assert_yaml_snapshot!("extractor_yaml_helm", refs);
+        insta::assert_yaml_snapshot!("extractor_yaml_deploy", refs);
     }
 
     #[test]

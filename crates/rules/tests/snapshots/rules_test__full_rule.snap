@@ -4,10 +4,10 @@ expression: ruleset
 ---
 $schema: sprefa-rules.schema.json
 rules:
-  - name: helm-image-refs
-    description: Docker image references in Helm values files
+  - name: deploy-image-refs
+    description: Docker image references in deploy values files
     git:
-      repo: "*/helm-charts"
+      repo: "*/deploy-charts"
       branch: main|release/*
       tag: v*
     file:

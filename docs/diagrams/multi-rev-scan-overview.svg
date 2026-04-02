@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 700" font-family="monospace" font-size="12">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#16a34a"/>
+    </marker>
+  </defs>
+
+  <style>
+    .title { font-size: 16px; font-weight: bold; fill: #1e293b; }
+    .subtitle { font-size: 11px; fill: #64748b; }
+    .box-existing { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.5; rx: 6; }
+    .box-new { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; rx: 6; stroke-dasharray: none; }
+    .box-discovery { fill: #f0fdf4; stroke: #16a34a; stroke-width: 2; rx: 6; }
+    .box-config { fill: #fefce8; stroke: #ca8a04; stroke-width: 1.5; rx: 6; }
+    .box-db { fill: #faf5ff; stroke: #7c3aed; stroke-width: 1.5; rx: 6; }
+    .label { font-size: 12px; fill: #1e293b; font-weight: bold; }
+    .label-new { font-size: 12px; fill: #2563eb; font-weight: bold; }
+    .label-green { font-size: 12px; fill: #16a34a; font-weight: bold; }
+    .detail { font-size: 10px; fill: #64748b; }
+    .tier-label { font-size: 13px; font-weight: bold; fill: #fff; }
+    .tier-bg-1 { fill: #475569; rx: 4; }
+    .tier-bg-2 { fill: #16a34a; rx: 4; }
+  </style>
+
+  <text x="450" y="28" text-anchor="middle" class="title">Multi-Rev Scan Pipeline</text>
+  <text x="450" y="44" text-anchor="middle" class="subtitle">Tier 1 (static config) + Tier 2 (IS_REPO/IS_REV discovery)</text>
+
+  <!-- Config inputs -->
+  <rect x="30" y="60" width="160" height="50" class="box-config"/>
+  <text x="110" y="82" text-anchor="middle" class="label">sprefa.toml</text>
+  <text x="110" y="96" text-anchor="middle" class="detail">repos, branches, scan_tags</text>
+
+  <rect x="220" y="60" width="160" height="50" class="box-config"/>
+  <text x="300" y="82" text-anchor="middle" class="label">.sprf rules</text>
+  <text x="300" y="96" text-anchor="middle" class="detail">match(..., IS_REPO/IS_REV)</text>
+
+  <!-- TIER 1 banner -->
+  <rect x="30" y="130" width="90" height="22" class="tier-bg-1"/>
+  <text x="75" y="145" text-anchor="middle" class="tier-label">TIER 1</text>
+
+  <!-- scan_repo (existing) -->
+  <rect x="30" y="165" width="180" height="55" class="box-existing"/>
+  <text x="120" y="185" text-anchor="middle" class="label">scan_repo()</text>
+  <text x="120" y="200" text-anchor="middle" class="detail">filesystem mmap</text>
+  <text x="120" y="212" text-anchor="middle" class="detail">HEAD tree walk</text>
+
+  <!-- scan_rev (new) -->
+  <rect x="240" y="165" width="180" height="55" class="box-new"/>
+  <text x="330" y="185" text-anchor="middle" class="label-new">scan_rev()</text>
+  <text x="330" y="200" text-anchor="middle" class="detail">git2 blob reader</text>
+  <text x="330" y="212" text-anchor="middle" class="detail">any rev, no checkout</text>
+
+  <!-- arrows from config -->
+  <line x1="110" y1="110" x2="110" y2="165" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="300" y1="110" x2="330" y2="165" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="190" y1="90" x2="240" y2="90" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+
+  <!-- extraction detail boxes -->
+  <rect x="30" y="240" width="180" height="45" class="box-existing"/>
+  <text x="120" y="258" text-anchor="middle" class="detail">list_files() + mmap</text>
+  <text x="120" y="272" text-anchor="middle" class="detail">extract_from_list()</text>
+
+  <rect x="240" y="240" width="180" height="45" class="box-new"/>
+  <text x="330" y="258" text-anchor="middle" class="detail">list_blobs_at_rev()</text>
+  <text x="330" y="272" text-anchor="middle" class="detail">extract_from_blobs()</text>
+
+  <line x1="120" y1="220" x2="120" y2="240" stroke="#555" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="330" y1="220" x2="330" y2="240" stroke="#2563eb" stroke-width="1" marker-end="url(#arrow-blue)"/>
+
+  <!-- converge to flush -->
+  <rect x="140" y="310" width="200" height="45" class="box-existing"/>
+  <text x="240" y="328" text-anchor="middle" class="label">flush()</text>
+  <text x="240" y="342" text-anchor="middle" class="detail">refs + matches + branch_files</text>
+
+  <line x1="120" y1="285" x2="200" y2="310" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="330" y1="285" x2="280" y2="310" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- match_labels -->
+  <rect x="370" y="310" width="180" height="45" class="box-new"/>
+  <text x="460" y="328" text-anchor="middle" class="label-new">match_labels</text>
+  <text x="460" y="342" text-anchor="middle" class="detail">scan=repo | scan=rev</text>
+
+  <line x1="340" y1="332" x2="370" y2="332" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- resolve links -->
+  <rect x="140" y="375" width="200" height="35" class="box-existing"/>
+  <text x="240" y="397" text-anchor="middle" class="label">resolve_links()</text>
+
+  <line x1="240" y1="355" x2="240" y2="375" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- TIER 2 banner -->
+  <rect x="30" y="435" width="90" height="22" class="tier-bg-2"/>
+  <text x="75" y="450" text-anchor="middle" class="tier-label">TIER 2</text>
+
+  <!-- Discovery loop -->
+  <rect x="30" y="470" width="520" height="200" class="box-discovery" fill-opacity="0.3"/>
+
+  <rect x="50" y="485" width="200" height="40" class="box-discovery"/>
+  <text x="150" y="502" text-anchor="middle" class="label-green">query match_labels</text>
+  <text x="150" y="516" text-anchor="middle" class="detail">(repo, rev) pairs</text>
+
+  <line x1="240" y1="410" x2="240" y2="460" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <line x1="240" y1="460" x2="150" y2="485" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <rect x="280" y="485" width="250" height="40" class="box-discovery"/>
+  <text x="405" y="502" text-anchor="middle" class="label-green">filter</text>
+  <text x="405" y="516" text-anchor="middle" class="detail">repo in config? rev already scanned?</text>
+
+  <line x1="250" y1="505" x2="280" y2="505" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <rect x="130" y="545" width="200" height="40" class="box-discovery"/>
+  <text x="230" y="562" text-anchor="middle" class="label-green">scan_rev(repo, rev)</text>
+  <text x="230" y="577" text-anchor="middle" class="detail">git2 blob reader</text>
+
+  <line x1="405" y1="525" x2="280" y2="545" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <rect x="130" y="605" width="200" height="35" class="box-discovery"/>
+  <text x="230" y="627" text-anchor="middle" class="label-green">resolve_links()</text>
+
+  <line x1="230" y1="585" x2="230" y2="605" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <!-- loop arrow -->
+  <path d="M 330 622 L 480 622 L 480 495 L 530 495" stroke="#16a34a" stroke-width="1.5" fill="none" marker-end="url(#arrow-green)"/>
+  <text x="510" y="560" class="detail" fill="#16a34a" transform="rotate(90,510,560)">loop until stable</text>
+
+  <!-- DB box -->
+  <rect x="620" y="280" width="250" height="150" class="box-db"/>
+  <text x="745" y="300" text-anchor="middle" class="label" fill="#7c3aed">SQLite</text>
+  <text x="645" y="322" class="detail">refs</text>
+  <text x="645" y="338" class="detail">matches</text>
+  <text x="645" y="354" class="detail">match_labels  (scan=repo/rev)</text>
+  <text x="645" y="370" class="detail">branch_files  (tag as branch key)</text>
+  <text x="645" y="386" class="detail">repo_refs     (tag names, metadata)</text>
+  <text x="645" y="402" class="detail">repo_branches (tracks scanned revs)</text>
+  <text x="645" y="418" class="detail">strings, files</text>
+
+  <line x1="340" y1="340" x2="620" y2="340" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <line x1="550" y1="505" x2="620" y2="400" stroke="#16a34a" stroke-width="1" stroke-dasharray="4"/>
+
+  <!-- Legend -->
+  <rect x="620" y="470" width="250" height="100" fill="#fff" stroke="#e2e8f0" rx="6"/>
+  <text x="635" y="490" class="label">Legend</text>
+  <rect x="635" y="498" width="20" height="12" class="box-existing"/>
+  <text x="665" y="508" class="detail">Existing code</text>
+  <rect x="635" y="516" width="20" height="12" class="box-new"/>
+  <text x="665" y="526" class="detail">New (blob reader, annotations)</text>
+  <rect x="635" y="534" width="20" height="12" class="box-discovery"/>
+  <text x="665" y="544" class="detail">Discovery loop (tier 2)</text>
+  <rect x="635" y="552" width="20" height="12" class="box-config"/>
+  <text x="665" y="562" class="detail">Config / rules input</text>
+</svg>

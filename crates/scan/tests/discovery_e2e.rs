@@ -407,10 +407,10 @@ svc_b:
 
 /// Diamond-shaped 4-round discovery chain:
 ///
-///   helm ──> app ──> lib-core ──> lib-utils@v3.1.0
+///   deploy ──> app ──> lib-core ──> lib-utils@v3.1.0
 ///                \──> lib-utils@v3.0.0
 ///
-/// Round 1: scan helm -> discovers app@v1.0.0
+/// Round 1: scan deploy -> discovers app@v1.0.0
 /// Round 2: scan app@v1.0.0 -> discovers lib-core@v2.0.0, lib-utils@v3.0.0
 /// Round 3: scan lib-core@v2.0.0 -> discovers lib-utils@v3.1.0
 /// Round 4: scan lib-utils@v3.1.0 -> no new targets, stable
@@ -455,10 +455,10 @@ dependency:
 "#);
     tag_head(&app_repo, "v1.0.0");
 
-    // -- helm: references app-service@v1.0.0 --
-    let helm_path = root.join("helm");
-    let helm_repo = init_repo(&helm_path);
-    commit_file(&helm_repo, "deploy/values.yaml", br#"
+    // -- deploy: references app-service@v1.0.0 --
+    let deploy_path = root.join("deploy");
+    let deploy_repo = init_repo(&deploy_path);
+    commit_file(&deploy_repo, "deploy/values.yaml", br#"
 image:
   repository: app-service
   tag: v1.0.0
@@ -478,7 +478,7 @@ image:
 
     // Build repo configs.
     let repo_cfgs: HashMap<&str, (RepoConfig, &Path)> = [
-        ("helm", helm_path.as_path()),
+        ("deploy", deploy_path.as_path()),
         ("app-service", app_path.as_path()),
         ("lib-core", core_path.as_path()),
         ("lib-utils", utils_path.as_path()),
@@ -487,8 +487,8 @@ image:
     .map(|(name, path)| (name, (repo_config(name, path), path)))
     .collect();
 
-    // Initial scan: only helm (the entry point).
-    scanner.scan_repo(&repo_cfgs["helm"].0, "main").await.unwrap();
+    // Initial scan: only deploy (the entry point).
+    scanner.scan_repo(&repo_cfgs["deploy"].0, "main").await.unwrap();
 
     // Run the discovery loop, tracking which rounds scan what.
     let mut round_scans: Vec<Vec<(String, String)>> = Vec::new();
@@ -530,7 +530,7 @@ image:
     assert_eq!(round_scans.len(), 3,
         "expected 3 discovery rounds, got {}: {:?}", round_scans.len(), round_scans);
 
-    // Round 1: helm discovered app-service@v1.0.0
+    // Round 1: deploy discovered app-service@v1.0.0
     let r1: HashSet<_> = round_scans[0].iter().collect();
     assert!(r1.contains(&("app-service".into(), "v1.0.0".into())),
         "round 1 should discover app-service@v1.0.0, got: {:?}", round_scans[0]);
@@ -585,7 +585,7 @@ image:
         "lib-utils should be indexed at v3.1.0, got: {:?}", pkg_names);
 
     // Total: 4 repos registered or discovered, 5 rev scans total
-    // (helm@main + app@v1.0.0 + lib-core@v2.0.0 + lib-utils@v3.0.0 + lib-utils@v3.1.0)
+    // (deploy@main + app@v1.0.0 + lib-core@v2.0.0 + lib-utils@v3.0.0 + lib-utils@v3.1.0)
     let total_revs = all_scanned.len();
     assert!(total_revs >= 4, "at least 4 rev entries, got {}", total_revs);
 }

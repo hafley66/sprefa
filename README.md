@@ -39,7 +39,7 @@ rule package_name($NAME) >
 rule dep_name($NAME) >
   fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } });
 
-rule helm_image(repo($REPO), rev($TAG)) >
+rule deploy_image(repo($REPO), rev($TAG)) >
   fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });
 
 rule env_var_ref_ts($NAME) >
@@ -189,7 +189,7 @@ When a rule captures `repo($REPO)` and `rev($TAG)`, the scan pipeline:
 3. Checks out and scans each discovered (repo, rev) target
 4. Repeats until stable (fixed-point iteration, max 10 rounds)
 
-This lets a Helm values.yaml referencing `repository: myorg/backend, tag: v2.1.0` trigger scanning of `myorg/backend` at tag `v2.1.0`, indexing its contents into the same graph.
+This lets a deploy values.yaml referencing `repository: myorg/backend, tag: v2.1.0` trigger scanning of `myorg/backend` at tag `v2.1.0`, indexing its contents into the same graph.
 
 ## CLI
 

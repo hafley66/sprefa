@@ -222,7 +222,7 @@ fn write_shared_lib_fixtures(root: &Path) {
 fn write_infra_fixtures(root: &Path) {
     write_file(
         root,
-        "helm/values.yaml",
+        "deploy/values.yaml",
         r#"
 replicaCount: 3
 image:
@@ -324,7 +324,7 @@ async fn extraction_e2e() {
     assert_eq!(count_kind(&db, "operation_id").await, 3);       // listWidgets, createWidget, listUsers
     assert_eq!(count_kind(&db, "path_alias").await, 2);         // @app/*, @shared/*
     assert_eq!(count_kind(&db, "package_entry").await, 2);      // ., ./utils
-    assert_eq!(count_kind(&db, "helm_value").await, 4);         // 3, myapp, latest, 8080
+    assert_eq!(count_kind(&db, "deploy_value").await, 4);         // 3, myapp, latest, 8080
     assert_eq!(count_kind(&db, "env_var_name").await, 3);       // DATABASE_URL, REDIS_HOST, LOG_LEVEL
     assert_eq!(count_kind(&db, "env_var_ref").await, 2);        // DATABASE_URL, LOG_LEVEL (from config.ts)
     assert_eq!(count_kind(&db, "service_name").await, 3);       // web, worker, redis
@@ -338,7 +338,7 @@ async fn extraction_e2e() {
     let names: Vec<&str> = rule_names.iter().map(|r| r.0.as_str()).collect();
     for expected in [
         "cargo-deps", "cargo-package-name", "cargo-workspace-members",
-        "docker-compose-services", "helm-values", "js-env-var-refs",
+        "docker-compose-services", "deploy-values", "js-env-var-refs",
         "k8s-configmap-envs", "openapi-operations", "package-json-deps",
         "package-json-exports", "package-json-name", "tsconfig-paths",
         "js", "rs",

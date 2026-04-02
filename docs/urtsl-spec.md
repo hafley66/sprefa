@@ -45,7 +45,7 @@ parent-key: key;                    the key of the current mapping entry is the 
 scan-repos: value|key|false;        run repo-name scanner on value or key string
 value: strip-version-operators | strip-leading-eq | split-first | split-last;
 @preprocess: gotmpl | jsonnet | none;   applied at file node level
-ecosystem: npm|cargo|pip|helm|gradle;   for pkg_identity refs
+ecosystem: npm|cargo|pip|deploy|gradle;   for pkg_identity refs
 ```
 
 ## Content detectors (pseudo-attribute on file segment)
@@ -108,7 +108,7 @@ struct ExtractedRef {
 
 ## Examples
 
-### Helm chart dependencies
+### Deploy chart dependencies
 
 ```
 * > * > {Chart,chart}.{yaml,yml} > dependencies > [*]:as($dep) > version {

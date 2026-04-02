@@ -29,7 +29,7 @@ my-org/* > main|release/* > **/Cargo.toml > json({ deps: { $K: $_ } })
   > match($NAME, import_name);
 
 # regex content match
-helm/**/*.yaml > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+))
+deploy/**/*.yaml > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+))
   > match($REPO, image_repo)
   > match($TAG, image_tag);
 

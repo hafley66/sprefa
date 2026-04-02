@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn lower_re() {
         let rules = lower(
-            r"rule img($REPO, $TAG) > fs(helm/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));",
+            r"rule img($REPO, $TAG) > fs(deploy/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));",
         );
         let r = &rules[0];
         assert!(r.value.is_some());

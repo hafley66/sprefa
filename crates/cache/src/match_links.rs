@@ -564,10 +564,10 @@ mod tests {
         let db = make_db().await;
         let repo_src = seed_repo(&db, "infra").await;
         let repo_tgt = seed_repo(&db, "api").await;
-        let file_src = seed_file(&db, repo_src, "helm/values.yaml").await;
+        let file_src = seed_file(&db, repo_src, "deploy/values.yaml").await;
 
-        // Source: helm image tag in infra repo (file-backed)
-        let (_, src_match) = seed_ref_match(&db, file_src, "v1.2.3", "helm_image_tag", None).await;
+        // Source: deploy image tag in infra repo (file-backed)
+        let (_, src_match) = seed_ref_match(&db, file_src, "v1.2.3", "deploy_image_tag", None).await;
         // Target: git tag in api repo (repo_ref-backed)
         let tgt_match = seed_repo_ref_match(&db, repo_tgt, "v1.2.3", "git_tag").await;
 
@@ -578,7 +578,7 @@ mod tests {
                 all: vec![
                     LinkPredicate::KindEq {
                         side: Side::Src,
-                        value: "helm_image_tag".into(),
+                        value: "deploy_image_tag".into(),
                     },
                     LinkPredicate::KindEq {
                         side: Side::Tgt,
@@ -611,9 +611,9 @@ mod tests {
         let repo_src = seed_repo(&db, "infra").await;
         let repo_a = seed_repo(&db, "api").await;
         let repo_b = seed_repo(&db, "web").await;
-        let file_src = seed_file(&db, repo_src, "helm/values.yaml").await;
+        let file_src = seed_file(&db, repo_src, "deploy/values.yaml").await;
 
-        seed_ref_match(&db, file_src, "v2.0.0", "helm_image_tag", None).await;
+        seed_ref_match(&db, file_src, "v2.0.0", "deploy_image_tag", None).await;
         // Both repos have the same git tag
         seed_repo_ref_match(&db, repo_a, "v2.0.0", "git_tag").await;
         seed_repo_ref_match(&db, repo_b, "v2.0.0", "git_tag").await;
@@ -626,7 +626,7 @@ mod tests {
                 all: vec![
                     LinkPredicate::KindEq {
                         side: Side::Src,
-                        value: "helm_image_tag".into(),
+                        value: "deploy_image_tag".into(),
                     },
                     LinkPredicate::KindEq {
                         side: Side::Tgt,

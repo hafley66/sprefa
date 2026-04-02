@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 400" font-family="monospace" font-size="12">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <style>
+    .title { font-size: 16px; font-weight: bold; fill: #1e293b; }
+    .col-title { font-size: 13px; font-weight: bold; fill: #1e293b; }
+    .box-fs { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.5; rx: 6; }
+    .box-blob { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; rx: 6; }
+    .box-shared { fill: #fefce8; stroke: #ca8a04; stroke-width: 1.5; rx: 6; }
+    .code { font-size: 11px; fill: #334155; }
+    .label { font-size: 12px; fill: #1e293b; font-weight: bold; }
+    .detail { font-size: 10px; fill: #64748b; }
+    .vs { font-size: 20px; fill: #94a3b8; font-weight: bold; }
+  </style>
+
+  <text x="425" y="28" text-anchor="middle" class="title">Filesystem Reader vs Git Blob Reader</text>
+
+  <!-- Left column: Filesystem -->
+  <text x="200" y="60" text-anchor="middle" class="col-title">Filesystem (existing)</text>
+  <text x="200" y="75" text-anchor="middle" class="detail">HEAD only, requires checkout on disk</text>
+
+  <!-- Right column: Blob -->
+  <text x="650" y="60" text-anchor="middle" class="col-title">Git Blob (new)</text>
+  <text x="650" y="75" text-anchor="middle" class="detail">Any rev, reads from .git object store</text>
+
+  <!-- VS -->
+  <text x="425" y="200" text-anchor="middle" class="vs">vs</text>
+
+  <!-- FS Step 1 -->
+  <rect x="50" y="90" width="300" height="45" class="box-fs"/>
+  <text x="65" y="108" class="label">list_files(repo_path)</text>
+  <text x="65" y="124" class="code">git2: HEAD -> commit -> tree.walk()</text>
+
+  <!-- FS Step 2 -->
+  <rect x="50" y="150" width="300" height="55" class="box-fs"/>
+  <text x="65" y="168" class="label">extract_from_list(paths)</text>
+  <text x="65" y="184" class="code">fs::File::open(abs_path)</text>
+  <text x="65" y="198" class="code">mmap -> &amp;[u8]</text>
+
+  <!-- FS Step 3 -->
+  <rect x="50" y="220" width="300" height="40" class="box-fs"/>
+  <text x="65" y="238" class="code">xxh3_128(&amp;mmap) -> content_hash</text>
+  <text x="65" y="252" class="code">extractor.extract(&amp;mmap, rel_path, ctx)</text>
+
+  <!-- Blob Step 1 -->
+  <rect x="500" y="90" width="300" height="45" class="box-blob"/>
+  <text x="515" y="108" class="label">list_blobs_at_rev(path, "v2.3.1")</text>
+  <text x="515" y="124" class="code">git2: revparse -> tree.walk() -> blob</text>
+
+  <!-- Blob Step 2 -->
+  <rect x="500" y="150" width="300" height="55" class="box-blob"/>
+  <text x="515" y="168" class="label">extract_from_blobs(blobs)</text>
+  <text x="515" y="184" class="code">blob.content() -> &amp;[u8]</text>
+  <text x="515" y="198" class="code">already in memory, no disk I/O</text>
+
+  <!-- Blob Step 3 -->
+  <rect x="500" y="220" width="300" height="40" class="box-blob"/>
+  <text x="515" y="238" class="code">xxh3_128(&amp;blob) -> content_hash</text>
+  <text x="515" y="252" class="code">extractor.extract(&amp;blob, rel_path, ctx)</text>
+
+  <!-- Arrows down -->
+  <line x1="200" y1="135" x2="200" y2="150" stroke="#555" stroke-width="1" marker-end="url(#a)"/>
+  <line x1="200" y1="205" x2="200" y2="220" stroke="#555" stroke-width="1" marker-end="url(#a)"/>
+  <line x1="650" y1="135" x2="650" y2="150" stroke="#555" stroke-width="1" marker-end="url(#a)"/>
+  <line x1="650" y1="205" x2="650" y2="220" stroke="#555" stroke-width="1" marker-end="url(#a)"/>
+
+  <!-- Converge -->
+  <line x1="200" y1="260" x2="320" y2="300" stroke="#555" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="650" y1="260" x2="530" y2="300" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- Shared output -->
+  <rect x="270" y="300" width="310" height="80" class="box-shared"/>
+  <text x="425" y="320" text-anchor="middle" class="label">Same output: Vec&lt;ExtractedFile&gt;</text>
+  <text x="295" y="340" class="code">rel_path: "package.json"</text>
+  <text x="295" y="355" class="code">content_hash: "a1b2c3..."</text>
+  <text x="295" y="370" class="code">refs: [RawRef { value: "lodash", ... }]</text>
+
+  <!-- Arrow to flush -->
+  <text x="425" y="395" text-anchor="middle" class="detail">flush() is identical for both paths</text>
+</svg>

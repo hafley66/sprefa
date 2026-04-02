@@ -578,7 +578,7 @@ mod tests {
 
     #[test]
     fn parse_rule_nested_parens_in_re() {
-        let input = r"rule img($REPO, $TAG) > fs(helm/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));";
+        let input = r"rule img($REPO, $TAG) > fs(deploy/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));";
         let program = parse_program(input).unwrap();
         let Statement::Rule(decl) = &program[0] else { panic!("expected Rule") };
         match &decl.chain.slots[1] {

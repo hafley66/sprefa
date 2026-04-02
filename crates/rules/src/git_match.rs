@@ -124,8 +124,8 @@ mod tests {
 
     #[test]
     fn repo_glob() {
-        let c = CompiledGitSelector::from_patterns(&["*/helm-charts"], &[]).unwrap();
-        assert!(c.matches("org/helm-charts", Some("main"), &[]));
+        let c = CompiledGitSelector::from_patterns(&["*/deploy-charts"], &[]).unwrap();
+        assert!(c.matches("org/deploy-charts", Some("main"), &[]));
         assert!(!c.matches("org/backend", Some("main"), &[]));
     }
 

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 520" font-family="monospace" font-size="12">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <style>
+    .title { font-size: 16px; font-weight: bold; fill: #1e293b; }
+    .subtitle { font-size: 11px; fill: #64748b; }
+    .box { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.5; rx: 6; }
+    .box-hl { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; rx: 6; }
+    .box-db { fill: #faf5ff; stroke: #7c3aed; stroke-width: 1.5; rx: 6; }
+    .code { font-size: 11px; fill: #1e293b; font-family: monospace; }
+    .code-hl { font-size: 11px; fill: #2563eb; font-weight: bold; font-family: monospace; }
+    .label { font-size: 12px; fill: #1e293b; font-weight: bold; }
+    .detail { font-size: 10px; fill: #64748b; }
+    .phase { font-size: 11px; fill: #94a3b8; font-weight: bold; }
+  </style>
+
+  <text x="425" y="28" text-anchor="middle" class="title">IS_REPO / IS_REV: Data Flow Through Pipeline</text>
+
+  <!-- Phase labels on left -->
+  <text x="15" y="82" class="phase">.sprf</text>
+  <text x="15" y="82" class="phase" dy="14">source</text>
+
+  <text x="15" y="162" class="phase">parse</text>
+
+  <text x="15" y="242" class="phase">lower</text>
+
+  <text x="15" y="322" class="phase">emit</text>
+
+  <text x="15" y="402" class="phase">flush</text>
+
+  <text x="15" y="482" class="phase">DB</text>
+
+  <!-- Step 1: .sprf source -->
+  <rect x="70" y="58" width="740" height="45" class="box"/>
+  <text x="85" y="78" class="code">fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })</text>
+  <text x="85" y="94" class="code">  > match($REPO, image_repo, <tspan class="code-hl">IS_REPO</tspan>) > match($TAG, image_tag, <tspan class="code-hl">IS_REV</tspan>);</text>
+
+  <!-- Arrow -->
+  <line x1="350" y1="103" x2="350" y2="130" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 2: Parse -->
+  <rect x="70" y="130" width="340" height="55" class="box-hl"/>
+  <text x="85" y="148" class="label">Slot::Match</text>
+  <text x="85" y="164" class="code">capture: "REPO"</text>
+  <text x="85" y="178" class="code">kind: "image_repo"</text>
+  <text x="250" y="164" class="code-hl">scan: Some(Repo)</text>
+
+  <rect x="440" y="130" width="340" height="55" class="box-hl"/>
+  <text x="455" y="148" class="label">Slot::Match</text>
+  <text x="455" y="164" class="code">capture: "TAG"</text>
+  <text x="455" y="178" class="code">kind: "image_tag"</text>
+  <text x="620" y="164" class="code-hl">scan: Some(Rev)</text>
+
+  <!-- Arrow -->
+  <line x1="240" y1="185" x2="240" y2="210" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="610" y1="185" x2="610" y2="210" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 3: Lower to MatchDef -->
+  <rect x="70" y="210" width="340" height="55" class="box"/>
+  <text x="85" y="228" class="label">MatchDef</text>
+  <text x="85" y="244" class="code">capture: "REPO", kind: "image_repo"</text>
+  <text x="85" y="258" class="code-hl">scan: Some("repo")</text>
+
+  <rect x="440" y="210" width="340" height="55" class="box"/>
+  <text x="455" y="228" class="label">MatchDef</text>
+  <text x="455" y="244" class="code">capture: "TAG", kind: "image_tag"</text>
+  <text x="455" y="258" class="code-hl">scan: Some("rev")</text>
+  <text x="455" y="258" class="code" dx="180">parent: "REPO"</text>
+
+  <!-- Arrow -->
+  <line x1="240" y1="265" x2="240" y2="290" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="610" y1="265" x2="610" y2="290" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 4: Emit to RawRef -->
+  <rect x="70" y="290" width="340" height="55" class="box"/>
+  <text x="85" y="308" class="label">RawRef</text>
+  <text x="85" y="324" class="code">value: "myorg/backend"</text>
+  <text x="85" y="338" class="code">kind: "image_repo"</text>
+  <text x="250" y="324" class="code-hl">scan: "repo"</text>
+
+  <rect x="440" y="290" width="340" height="55" class="box"/>
+  <text x="455" y="308" class="label">RawRef</text>
+  <text x="455" y="324" class="code">value: "v2.3.1"</text>
+  <text x="455" y="338" class="code">kind: "image_tag"</text>
+  <text x="620" y="324" class="code-hl">scan: "rev"</text>
+  <text x="620" y="338" class="code">parent_key: "myorg/backend"</text>
+
+  <!-- Arrow -->
+  <line x1="240" y1="345" x2="240" y2="370" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="610" y1="345" x2="610" y2="370" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 5: Flush -->
+  <rect x="70" y="370" width="340" height="55" class="box-db"/>
+  <text x="85" y="388" class="label" fill="#7c3aed">matches + match_labels</text>
+  <text x="85" y="404" class="code">matches: ref_id=42, kind="image_repo"</text>
+  <text x="85" y="418" class="code-hl">match_labels: key="scan", val="repo"</text>
+
+  <rect x="440" y="370" width="340" height="55" class="box-db"/>
+  <text x="455" y="388" class="label" fill="#7c3aed">matches + match_labels</text>
+  <text x="455" y="404" class="code">matches: ref_id=43, kind="image_tag"</text>
+  <text x="455" y="418" class="code-hl">match_labels: key="scan", val="rev"</text>
+
+  <!-- Arrow to discovery -->
+  <line x1="350" y1="425" x2="350" y2="450" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="550" y1="425" x2="550" y2="450" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 6: Discovery query result -->
+  <rect x="200" y="450" width="460" height="50" class="box-hl"/>
+  <text x="430" y="468" text-anchor="middle" class="label">Discovery Query Result</text>
+  <text x="430" y="488" text-anchor="middle" class="code">repo_name = "myorg/backend"    rev = "v2.3.1"    -->  scan_rev()</text>
+</svg>

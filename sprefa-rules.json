@@ -84,8 +84,8 @@
       ]
     },
     {
-      "name": "helm-values",
-      "description": "Configuration values from Helm values.yaml files",
+      "name": "deploy-values",
+      "description": "Configuration values from deploy values.yaml files",
       "select": [
         { "step": "file", "pattern": "**/values.yaml|**/values-*.yaml" },
         { "step": "any" },
@@ -93,7 +93,7 @@
         { "step": "leaf", "capture": "val" }
       ],
       "create_matches": [
-        { "capture": "val", "kind": "helm_value" }
+        { "capture": "val", "kind": "deploy_value" }
       ]
     },
     {
@@ -177,8 +177,8 @@
       ]
     },
     {
-      "name": "helm-image",
-      "description": "Container image references from Helm values files",
+      "name": "deploy-image",
+      "description": "Container image references from deploy values files",
       "select": [
         { "step": "file", "pattern": "**/values.yaml|**/values-*.yaml" },
         { "step": "any" },

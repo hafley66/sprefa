@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 550" font-family="monospace" font-size="12">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#16a34a"/>
+    </marker>
+    <marker id="ar-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <style>
+    .title { font-size: 16px; font-weight: bold; fill: #1e293b; }
+    .subtitle { font-size: 11px; fill: #64748b; }
+    .box { fill: #f0fdf4; stroke: #16a34a; stroke-width: 2; rx: 8; }
+    .box-dim { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; rx: 8; }
+    .box-stop { fill: #fef2f2; stroke: #dc2626; stroke-width: 1.5; rx: 8; }
+    .label { font-size: 12px; fill: #1e293b; font-weight: bold; }
+    .code { font-size: 11px; fill: #334155; }
+    .detail { font-size: 10px; fill: #64748b; }
+    .iter { font-size: 11px; fill: #16a34a; font-weight: bold; }
+  </style>
+
+  <text x="350" y="28" text-anchor="middle" class="title">Tier 2: Discovery Fixed-Point Loop</text>
+  <text x="350" y="46" text-anchor="middle" class="subtitle">Runs after all Tier 1 scans + link resolution complete</text>
+
+  <!-- Entry -->
+  <rect x="200" y="65" width="300" height="35" class="box-dim"/>
+  <text x="350" y="87" text-anchor="middle" class="label">Tier 1 complete</text>
+
+  <line x1="350" y1="100" x2="350" y2="125" stroke="#16a34a" stroke-width="2" marker-end="url(#ar)"/>
+
+  <!-- Step 1: Query -->
+  <rect x="120" y="125" width="460" height="60" class="box"/>
+  <text x="135" y="145" class="label">1. Query match_labels for scan targets</text>
+  <text x="135" y="162" class="code">SELECT repo_s.value, rev_s.value</text>
+  <text x="135" y="176" class="code">FROM match_labels WHERE key='scan'  (join through parent_key)</text>
+
+  <line x1="350" y1="185" x2="350" y2="210" stroke="#16a34a" stroke-width="2" marker-end="url(#ar)"/>
+
+  <!-- Step 2: Filter -->
+  <rect x="120" y="210" width="460" height="55" class="box"/>
+  <text x="135" y="230" class="label">2. Filter targets</text>
+  <text x="135" y="247" class="code">repo exists in config?  (has path on disk)</text>
+  <text x="135" y="261" class="code">rev already in repo_branches?  (skip if scanned)</text>
+
+  <line x1="350" y1="265" x2="350" y2="290" stroke="#16a34a" stroke-width="2" marker-end="url(#ar)"/>
+
+  <!-- Decision -->
+  <polygon points="350,290 450,320 350,350 250,320" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="350" y="324" text-anchor="middle" class="label">new targets?</text>
+
+  <!-- No branch -->
+  <line x1="450" y1="320" x2="560" y2="320" stroke="#dc2626" stroke-width="1.5" marker-end="url(#ar-gray)"/>
+  <rect x="560" y="302" width="100" height="35" class="box-stop"/>
+  <text x="610" y="324" text-anchor="middle" class="label">done</text>
+
+  <!-- Yes branch -->
+  <line x1="350" y1="350" x2="350" y2="375" stroke="#16a34a" stroke-width="2" marker-end="url(#ar)"/>
+
+  <!-- Step 3: Scan -->
+  <rect x="120" y="375" width="460" height="45" class="box"/>
+  <text x="135" y="395" class="label">3. scan_rev(repo, rev) for each new target</text>
+  <text x="135" y="411" class="code">git2 blob reader -> extract -> flush -> match_labels</text>
+
+  <line x1="350" y1="420" x2="350" y2="445" stroke="#16a34a" stroke-width="2" marker-end="url(#ar)"/>
+
+  <!-- Step 4: Resolve -->
+  <rect x="120" y="445" width="460" height="35" class="box"/>
+  <text x="135" y="467" class="label">4. resolve_links() for affected repos</text>
+
+  <!-- Loop back arrow -->
+  <path d="M 350 480 L 350 505 L 60 505 L 60 145 L 120 145" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="60" y="340" text-anchor="middle" class="iter" transform="rotate(-90,60,340)">iteration++  (max 10)</text>
+
+  <!-- Example trace -->
+  <rect x="420" y="65" width="250" height="180" fill="#fff" stroke="#e2e8f0" rx="6"/>
+  <text x="435" y="83" class="label">Example trace</text>
+  <text x="435" y="100" class="detail">Iter 1:</text>
+  <text x="435" y="114" class="code"> helm values.yaml</text>
+  <text x="435" y="128" class="code">  -> (backend, v2.3.1)</text>
+  <text x="435" y="146" class="detail">Iter 2:</text>
+  <text x="435" y="160" class="code"> backend@v2.3.1 package-lock</text>
+  <text x="435" y="174" class="code">  -> (auth-lib, v1.0.5)</text>
+  <text x="435" y="192" class="detail">Iter 3:</text>
+  <text x="435" y="206" class="code"> auth-lib@v1.0.5 package-lock</text>
+  <text x="435" y="220" class="code">  -> no new targets -> done</text>
+</svg>

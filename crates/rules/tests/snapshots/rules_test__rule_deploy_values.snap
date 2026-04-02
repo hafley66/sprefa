@@ -5,8 +5,8 @@ expression: refs
 - value: "3"
   span_start: 0
   span_end: 0
-  kind: helm_value
-  rule_name: helm-values
+  kind: deploy_value
+  rule_name: deploy-values
   is_path: false
   parent_key: ~
   node_path: replicaCount
@@ -14,8 +14,8 @@ expression: refs
 - value: "8080"
   span_start: 0
   span_end: 0
-  kind: helm_value
-  rule_name: helm-values
+  kind: deploy_value
+  rule_name: deploy-values
   is_path: false
   parent_key: ~
   node_path: service/port
@@ -23,8 +23,8 @@ expression: refs
 - value: ClusterIP
   span_start: 0
   span_end: 0
-  kind: helm_value
-  rule_name: helm-values
+  kind: deploy_value
+  rule_name: deploy-values
   is_path: false
   parent_key: ~
   node_path: service/type
@@ -32,8 +32,8 @@ expression: refs
 - value: myorg/api
   span_start: 0
   span_end: 0
-  kind: helm_value
-  rule_name: helm-values
+  kind: deploy_value
+  rule_name: deploy-values
   is_path: false
   parent_key: ~
   node_path: image/repository
@@ -41,8 +41,8 @@ expression: refs
 - value: v2.1.0
   span_start: 0
   span_end: 0
-  kind: helm_value
-  rule_name: helm-values
+  kind: deploy_value
+  rule_name: deploy-values
   is_path: false
   parent_key: ~
   node_path: image/tag

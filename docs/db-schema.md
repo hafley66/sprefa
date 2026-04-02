@@ -147,7 +147,7 @@ Kinds from language extractors:
 | dep_version | cargo-deps | version string, parent_key links to dep_name |
 | workspace_member | cargo-workspace-members | path from workspace.members |
 
-User-defined rules in `sprefa-rules.yaml` produce arbitrary kind strings (e.g. "helm_value", "operation_id", "path_alias", "service_name").
+User-defined rules in `sprefa-rules.yaml` produce arbitrary kind strings (e.g. "deploy_value", "operation_id", "path_alias", "service_name").
 
 ## Common queries
 

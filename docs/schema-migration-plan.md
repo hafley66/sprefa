@@ -4,7 +4,7 @@
 
 sprefa indexes all string references across codebases into a normalized SQLite DB. Two problems with the current schema:
 
-1. **ref_kind is a hardcoded Rust enum** -- adding a new extraction pattern (helm values, OpenAPI operationIds) means editing Rust code and assigning u8 slots. Kinds should be user-definable strings from config.
+1. **ref_kind is a hardcoded Rust enum** -- adding a new extraction pattern (deploy values, OpenAPI operationIds) means editing Rust code and assigning u8 slots. Kinds should be user-definable strings from config.
 
 2. **No provenance on refs** -- when two rules extract the same string at the same byte offset, there's no way to record both interpretations. The `matches` table exists but is only used by the (dormant) standing rules system.
 
@@ -24,7 +24,7 @@ refs (physical)                    matches (semantic)              match_labels 
 │ confidence           │         │                               │
 │ target_file_id       │         │  "js" / "dep_name"            │  "env" / "prod"
 │ parent_key_string_id │         │  "rs" / "rs_use"              │  "codegen" / "true"
-│ node_path            │         │  "helm-values" / "helm_value" │
+│ node_path            │         │  "deploy-values" / "deploy_value" │
 └──────────────────────┘         │  "pkg-json-deps" / "dep_name" │
   UNIQUE(file_id,                │                               │
          string_id,              └───────────────────────────────┘
@@ -134,7 +134,7 @@ pub struct RawRef {
 
 1. **tsconfig-paths** -- `**/tsconfig.json`, extract `compilerOptions.paths` keys as `kind: "path_alias"`
 2. **package-json-exports** -- `**/package.json`, extract `exports` and `main` as `kind: "package_entry"`
-3. **helm-values** -- `**/values.yaml`, extract keys as `kind: "helm_value"`
+3. **deploy-values** -- `**/values.yaml`, extract keys as `kind: "deploy_value"`
 4. **k8s-configmap-envs** -- `**/*configmap*.yaml`, extract `data` keys as `kind: "env_var_name"`
 5. **docker-compose-services** -- `**/docker-compose*.yaml`, extract service names as `kind: "service_name"`
 6. **openapi-operations** -- `**/openapi*.yaml`, extract operationId as `kind: "operation_id"`
@@ -161,7 +161,7 @@ The `ActionKind` enum in `crates/rules/src/types.rs` needs to support arbitrary 
 test_fixtures/
   backend/      -- Cargo.toml, src/main.rs, openapi.yaml
   frontend/     -- package.json, tsconfig.json, src/app.ts
-  infra/        -- helm/values.yaml, k8s/configmap.yaml, docker-compose.yaml
+  infra/        -- deploy/values.yaml, k8s/configmap.yaml, docker-compose.yaml
 ```
 
 ### SQL assertions

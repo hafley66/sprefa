@@ -31,10 +31,10 @@ fn full_rule_with_captures() {
     let json = r#"{
         "$schema": "sprefa-rules.schema.json",
         "rules": [{
-            "name": "helm-image-refs",
-            "description": "Docker image references in Helm values files",
+            "name": "deploy-image-refs",
+            "description": "Docker image references in deploy values files",
             "select": [
-                { "step": "repo", "pattern": "*/helm-charts" },
+                { "step": "repo", "pattern": "*/deploy-charts" },
                 { "step": "rev", "pattern": "main|release/*|v*" },
                 { "step": "file", "pattern": "values.yaml|values-*.yaml" },
                 { "step": "any" },
@@ -53,7 +53,7 @@ fn full_rule_with_captures() {
     }"#;
     let ruleset: RuleSet = serde_json::from_str(json).unwrap();
     let rule = &ruleset.rules[0];
-    assert_eq!(rule.name, "helm-image-refs");
+    assert_eq!(rule.name, "deploy-image-refs");
     assert_eq!(rule.confidence, Some(0.9));
     assert_eq!(rule.select.len(), 6);
     assert_eq!(rule.create_matches.len(), 2);
@@ -77,11 +77,11 @@ fn accept_arbitrary_kind_string() {
         "rules": [{
             "name": "custom",
             "select": [{ "step": "file", "pattern": "*.json" }],
-            "emit": [{ "capture": "x", "kind": "helm_value" }]
+            "emit": [{ "capture": "x", "kind": "deploy_value" }]
         }]
     }"#;
     let ruleset: RuleSet = serde_json::from_str(json).unwrap();
-    assert_eq!(ruleset.rules[0].create_matches[0].kind, "helm_value");
+    assert_eq!(ruleset.rules[0].create_matches[0].kind, "deploy_value");
 }
 
 // ── Walk engine tests ──────────────────────────────────────────────
@@ -173,7 +173,7 @@ fn walk_any_descends_arbitrary_depth() {
         })
         .collect();
     repos.sort();
-    insta::assert_yaml_snapshot!("walk_helm_image_refs", repos);
+    insta::assert_yaml_snapshot!("walk_deploy_image_refs", repos);
 }
 
 #[test]
@@ -324,7 +324,7 @@ fn emit_pnpm_lock_deps_with_regex_split() {
 }
 
 #[test]
-fn emit_helm_image_object_capture() {
+fn emit_deploy_image_object_capture() {
     let source: serde_json::Value = serde_json::from_str(r#"{
         "image": {
             "repository": "myorg/frontend",
@@ -361,7 +361,7 @@ fn emit_helm_image_object_capture() {
         .flat_map(|r| emit::create_refs(r, &emits, None, "test", None))
         .collect();
     refs.sort_by(|a, b| a.value.cmp(&b.value));
-    insta::assert_yaml_snapshot!("emit_helm_images", refs);
+    insta::assert_yaml_snapshot!("emit_deploy_images", refs);
 }
 
 #[test]
@@ -790,10 +790,10 @@ fn rule_package_json_exports() {
 }
 
 #[test]
-fn rule_helm_values() {
+fn rule_deploy_values() {
     let rule = r#"{
         "rules": [{
-            "name": "helm-values",
+            "name": "deploy-values",
             "select": [
                 { "step": "file", "pattern": "**/values.yaml|**/values-*.yaml" },
                 { "step": "any" },
@@ -801,7 +801,7 @@ fn rule_helm_values() {
                 { "step": "leaf", "capture": "val" }
             ],
             "emit": [
-                { "capture": "val", "kind": "helm_value" }
+                { "capture": "val", "kind": "deploy_value" }
             ]
         }]
     }"#;
@@ -819,7 +819,7 @@ fn rule_helm_values() {
     }"#;
 
     let refs = run_rule(rule, source, "charts/api/values.yaml");
-    insta::assert_yaml_snapshot!("rule_helm_values", refs);
+    insta::assert_yaml_snapshot!("rule_deploy_values", refs);
 }
 
 #[test]
