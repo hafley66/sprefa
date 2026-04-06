@@ -9,58 +9,72 @@ pub type Program = Vec<Statement>;
 #[derive(Debug, Clone)]
 pub enum Statement {
     Rule(RuleDecl),
-    Link(LinkDecl),
-    Query(QueryDecl),
 }
 
-/// A rule with a head declaration and selector chain body.
+/// A rule with a name and body in braces.
 ///
 /// ```sprf
-/// rule deploy_config($SVC, repo($REPO), rev($TAG)) >
-///     fs(**/services.yaml) > json({ services: { $SVC: { repo: $REPO, tag: $TAG } } });
+/// rule(deploy_config) {
+///     repo($REPO) {
+///         rev(main) {
+///             fs(**/services.yaml) > json({ ... })
+///         }
+///     }
+/// };
 /// ```
+///
+/// Captures are inferred from `$VAR` usage in the body during lowering.
+/// The body is a list of RuleBody items, allowing flat chains and scoped blocks.
 #[derive(Debug, Clone)]
 pub struct RuleDecl {
     pub name: String,
-    pub captures: Vec<Capture>,
-    pub chain: SelectorChain,
+    pub body: Vec<RuleBody>,
 }
 
-/// One capture in a rule head: bare `$VAR` or annotated `repo($VAR)`.
-#[derive(Debug, Clone)]
-pub struct Capture {
-    pub var: String,
-    pub annotation: Option<CaptureAnnotation>,
-}
-
-/// Annotation on a capture variable in a rule head.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CaptureAnnotation {
-    /// `repo($VAR)` -- value drives IS_REPO demand scanning.
-    Repo,
-    /// `rev($VAR)` -- value drives IS_REV demand scanning.
-    Rev,
-    /// `name($VAR)` -- semantic tag, no runtime behavior yet.
-    Name,
-    /// `file($VAR)` -- path resolution, no runtime behavior yet.
-    File,
-}
-
-/// A chain of slots separated by `>`, terminated by `;`.
+/// A cross-rule reference: `rulename(col: $VAR, col: $VAR)`.
 ///
-/// ```sprf
-/// fs(**/Cargo.toml) > json({ package: { name: $NAME } });
-/// ```
+/// Binds columns from a previously-evaluated rule's output table.
+/// Parsed as a dependency edge during lowering.
 #[derive(Debug, Clone)]
-pub struct SelectorChain {
-    pub slots: Vec<Slot>,
+pub struct CrossRef {
+    pub rule_name: String,
+    pub bindings: Vec<CrossRefBinding>,
 }
 
-/// One segment of a selector chain.
+/// One column binding in a cross-rule reference.
+#[derive(Debug, Clone)]
+pub struct CrossRefBinding {
+    /// Column name in the referenced rule's output table.
+    pub column: String,
+    /// Local variable to bind the column value to.
+    pub var: String,
+}
+
+/// Recursive rule body: steps, nested scopes, or cross-rule references.
+///
+/// A step is a single matcher like `fs(**/file)`. A block introduces a scope
+/// that can contain nested bodies. Variables captured in a block are available
+/// to all nested children. A cross-ref binds upstream rule output columns.
+#[derive(Debug, Clone)]
+pub enum RuleBody {
+    /// A single step in the chain (leaf or non-scoped match).
+    Step(Slot),
+    /// A scoped block: the slot captures variables that flow into children.
+    ///
+    /// Example: `repo($REPO) { fs(...) }` - $REPO is available inside.
+    Block { slot: Slot, children: Vec<RuleBody> },
+    /// A cross-rule reference, optionally scoping a block of children.
+    ///
+    /// Example: `helm_image(repo: $REPO, rev: $TAG) { fs(...) }`
+    /// Binds columns from the referenced rule's output, optionally scoping
+    /// children under each row.
+    Ref { cross_ref: CrossRef, children: Vec<RuleBody> },
+}
+
+/// One segment of a selector.
 #[derive(Debug, Clone)]
 pub enum Slot {
-    /// A bare glob string (no tag). Could be repo, branch, or fs
-    /// depending on position during lowering.
+    /// A bare glob string (no tag). Inferred context during lowering.
     Bare(String),
     /// A tagged slot: `tag(body)` or `tag[arg](body)`.
     Tagged {
@@ -68,15 +82,6 @@ pub enum Slot {
         arg: Option<String>,
         body: String,
     },
-}
-
-/// A link declaration: `link(src_kind > tgt_kind, pred, ...) > $kind_name;`
-#[derive(Debug, Clone)]
-pub struct LinkDecl {
-    pub src_kind: String,
-    pub tgt_kind: String,
-    pub predicates: Vec<String>,
-    pub kind_name: Option<String>,
 }
 
 /// Known tag names in `tag(body)` notation.
@@ -87,7 +92,12 @@ pub enum Tag {
     Ast,
     Repo,
     Rev,
+    Folder,
+    File,
     Fs,
+    /// `scan(repo: $VAR, rev: $VAR)` -- marks captures as scan-driving
+    /// without adding context steps. Annotation-only.
+    Scan,
 }
 
 impl Tag {
@@ -98,39 +108,128 @@ impl Tag {
             "ast" => Some(Tag::Ast),
             "repo" => Some(Tag::Repo),
             "rev" | "branch" | "tag" => Some(Tag::Rev),
+            "folder" => Some(Tag::Folder),
+            "file" => Some(Tag::File),
             "fs" => Some(Tag::Fs),
+            "scan" => Some(Tag::Scan),
             _ => None,
         }
     }
 }
 
-/// A query rule: `query head($A, $C) > rel($A, $B)  head($B, $C);`
-///
-/// Compiles to a SQL CTE (recursive when head appears in body).
-#[derive(Debug, Clone)]
-pub struct QueryDecl {
-    pub head: Atom,
-    pub body: Vec<Atom>,
-    /// When true, this is a `check` rule: non-empty result = violation.
-    pub is_check: bool,
+impl RuleBody {
+    /// Collect all captures from slots at this level and nested levels.
+    /// Used to validate that head captures are actually captured somewhere.
+    pub fn all_captures(&self) -> Vec<String> {
+        let mut caps = Vec::new();
+        self.collect_captures(&mut caps);
+        caps
+    }
+
+    fn collect_captures(&self, out: &mut Vec<String>) {
+        match self {
+            RuleBody::Step(slot) => {
+                out.extend(slot.captures());
+            }
+            RuleBody::Block { slot, children } => {
+                out.extend(slot.captures());
+                for child in children {
+                    child.collect_captures(out);
+                }
+            }
+            RuleBody::Ref { cross_ref, children } => {
+                for binding in &cross_ref.bindings {
+                    out.push(binding.var.clone());
+                }
+                for child in children {
+                    child.collect_captures(out);
+                }
+            }
+        }
+    }
+
+    /// Flatten to a list of (scope_depth, slot) pairs for lowering.
+    /// Depth 0 = top level, depth 1 = first block, etc.
+    pub fn flatten(&self) -> Vec<(usize, Slot)> {
+        let mut result = Vec::new();
+        self.flatten_with_depth(0, &mut result);
+        result
+    }
+
+    fn flatten_with_depth(&self, depth: usize, out: &mut Vec<(usize, Slot)>) {
+        match self {
+            RuleBody::Step(slot) => {
+                out.push((depth, slot.clone()));
+            }
+            RuleBody::Block { slot, children } => {
+                // The block slot is at current depth
+                out.push((depth, slot.clone()));
+                // Children are at next depth level
+                for child in children {
+                    child.flatten_with_depth(depth + 1, out);
+                }
+            }
+            RuleBody::Ref { children, .. } => {
+                // Cross-ref itself doesn't produce a slot, but children do
+                for child in children {
+                    child.flatten_with_depth(depth + 1, out);
+                }
+            }
+        }
+    }
 }
 
-/// One atom in a query rule: `relation($ARG1, $ARG2)` or `relation($ARG1, "literal")`.
-#[derive(Debug, Clone)]
-pub struct Atom {
-    pub relation: String,
-    pub args: Vec<Term>,
-    /// When true, this atom is negated (`not rel(...)`). Compiles to NOT EXISTS.
-    pub negated: bool,
+impl Slot {
+    /// Extract $SCREAMING capture variables from slot body.
+    pub fn captures(&self) -> Vec<String> {
+        match self {
+            Slot::Bare(glob) => extract_captures_from_str(glob),
+            Slot::Tagged { body, .. } => extract_captures_from_str(body),
+        }
+    }
+
+    /// Get the tag if this is a tagged slot, None for bare.
+    pub fn tag(&self) -> Option<Tag> {
+        match self {
+            Slot::Bare(_) => None,
+            Slot::Tagged { tag, .. } => Some(*tag),
+        }
+    }
 }
 
-/// A term in a query atom.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Term {
-    /// `$VAR` -- binds or unifies with a named variable.
-    Var(String),
-    /// `"literal"` or bare identifier -- matches a specific string value.
-    Lit(String),
-    /// `$_` -- matches anything, no binding.
-    Wild,
+/// Extract $SCREAMING variables from a string.
+fn extract_captures_from_str(s: &str) -> Vec<String> {
+    let mut caps = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            i += 1;
+            // Check for wildcard $_
+            if i < bytes.len()
+                && bytes[i] == b'_'
+                && (i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric())
+            {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if i > start {
+                let name = &s[start..i];
+                if name
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+                {
+                    caps.push(name.to_string());
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    caps
 }

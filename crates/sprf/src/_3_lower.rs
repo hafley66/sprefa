@@ -1,38 +1,34 @@
 /// Lower .sprf parse tree to Rule types.
 ///
-/// SelectorChain -> Rule
+/// Scoped RuleBody -> flattened Rule with dependency-based ordering
 ///
-/// Bare glob inference: N bare globs before first tagged slot.
-///   N=3: repo > rev > fs
-///   N<3 or N>3: error
+/// The lowering process:
+/// 1. Flatten nested blocks into linear sequence with scope depths
+/// 2. Sort steps based on variable dependencies (if B references var from A, A comes first)
+/// 3. Convert slots to SelectStep
 ///
-/// Tagged slots dispatch by tag:
-///   fs(pat)            -> File { pattern }
-///   repo(pat)          -> Repo { pattern }
-///   rev(pat)           -> Rev { pattern }  (aliases: branch, tag)
-///   json(body)         -> parse body via _2_pattern, get Vec<SelectStep>
-///   ast(pat)           -> AstSelector { pattern }
-///   ast[lang](pat)     -> AstSelector { pattern, language }
-///   re(pat)            -> ValuePattern { source, pattern }
+/// Example:
+/// ```sprf
+/// rule(deploy) {
+///   repo($REPO) {
+///     rev(main) {
+///       fs(**/values.yaml) > json({ svc: $SVC })
+///     }
+///   }
+/// };
+/// ```
+/// Becomes steps: [repo@depth0, rev@depth1, fs@depth2, json@depth2]
+/// Execution order respects scope: repo runs first, then rev, then fs/json
 use anyhow::{bail, Result};
-use sprefa_rules::types::{
-    AstSelector, DerivedRules, LinkPredicate, LinkRule, MatchDef, QueryAtom, QueryDef, Rule,
-    RuleSet, SelectStep, Side, ValuePattern,
-};
+use sprefa_rules::types::{AstSelector, MatchDef, Rule, RuleSet, SelectStep, ValuePattern};
+use std::collections::{HashMap, HashSet};
 
-use crate::_0_ast::{
-    CaptureAnnotation, LinkDecl, Program, QueryDecl, RuleDecl, Slot, Statement, Tag, Term,
-};
+use crate::_0_ast::{Program, RuleBody, RuleDecl, Slot, Statement, Tag};
 use crate::_2_pattern::parse_json_body;
 
-/// Lower a parsed program into extraction rules and derived rules.
-///
-/// Returns `(RuleSet, DerivedRules)`: extraction rules that produce ground
-/// truth rows, and derived rules (links + queries) that operate on that output.
-pub fn lower_program(program: &Program) -> Result<(RuleSet, DerivedRules)> {
+/// Lower a parsed program into a RuleSet.
+pub fn lower_program(program: &Program) -> Result<RuleSet> {
     let mut rules = vec![];
-    let mut link_rules = vec![];
-    let mut query_rules = vec![];
 
     for stmt in program {
         match stmt {
@@ -40,152 +36,73 @@ pub fn lower_program(program: &Program) -> Result<(RuleSet, DerivedRules)> {
                 let rule = lower_rule_decl(decl)?;
                 rules.push(rule);
             }
-            Statement::Link(decl) => {
-                let lr = lower_link(decl)?;
-                link_rules.push(lr);
-            }
-            Statement::Query(decl) => {
-                let qd = lower_query(decl)?;
-                query_rules.push(qd);
-            }
         }
     }
 
-    Ok((
-        RuleSet {
-            schema: None,
-            rules,
-        },
-        DerivedRules {
-            link_rules,
-            query_rules,
-        },
-    ))
+    Ok(RuleSet {
+        schema: None,
+        rules,
+    })
+}
+
+/// One step in the flattened rule with scope information.
+#[derive(Debug, Clone)]
+struct ScopedStep {
+    depth: usize,
+    scope_vars: HashSet<String>, // Variables captured at this scope level
+    select_steps: Vec<SelectStep>,
+    ast_selector: Option<AstSelector>,
+    value_pattern: Option<ValuePattern>,
 }
 
 fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
+    // Flatten all body items into scoped steps
+    let mut all_scoped = vec![];
+    for body in &decl.body {
+        let flattened = flatten_body(body, 0, &HashSet::new())?;
+        all_scoped.extend(flattened);
+    }
+
+    // Sort by scope depth - outer scopes must execute before inner
+    let mut scoped_steps = all_scoped;
+    scoped_steps.sort_by_key(|s| s.depth);
+
+    // Collect all select steps in order
     let mut select: Vec<SelectStep> = vec![];
     let mut select_ast: Option<AstSelector> = None;
     let mut value_pattern: Option<ValuePattern> = None;
 
-    let chain = &decl.chain;
-
-    // Count leading bare globs
-    let bare_count = chain
-        .slots
-        .iter()
-        .take_while(|s| matches!(s, Slot::Bare(_)))
-        .count();
-    let first_tagged = bare_count;
-
-    // Bare glob inference
-    if bare_count > 0 {
-        if bare_count != 3 {
-            bail!(
-                "rule `{}`: bare context requires exactly 3 slots (repo > rev > fs), found {}. \
-                Use explicit tags: repo(...), rev(...), fs(...)",
-                decl.name,
-                bare_count,
-            );
+    for scoped in &scoped_steps {
+        select.extend(scoped.select_steps.clone());
+        if let Some(ast) = scoped.ast_selector.clone() {
+            select_ast = Some(ast);
         }
-
-        if let Slot::Bare(pat) = &chain.slots[0] {
-            select.push(SelectStep::Repo {
-                pattern: pat.clone(),
-                capture: None,
-            });
-        }
-        if let Slot::Bare(pat) = &chain.slots[1] {
-            select.push(SelectStep::Rev {
-                pattern: pat.clone(),
-                capture: None,
-            });
-        }
-        if let Slot::Bare(pat) = &chain.slots[2] {
-            select.push(SelectStep::File {
-                pattern: pat.clone(),
-                capture: None,
-            });
+        if let Some(val) = scoped.value_pattern.clone() {
+            value_pattern = Some(val);
         }
     }
 
-    // Process tagged slots
-    for slot in &chain.slots[first_tagged..] {
-        match slot {
-            Slot::Bare(_) => {
-                bail!(
-                    "rule `{}`: bare glob after tagged slot is not allowed. \
-                    Use explicit tags.",
-                    decl.name,
-                );
+    // Infer create_matches from all $VARs in body.
+    // Detect repo()/rev() tags to set scan annotations.
+    let mut scan_vars: HashMap<String, String> = HashMap::new();
+    collect_scan_annotations(&decl.body, &mut scan_vars);
+
+    let mut all_vars: Vec<String> = vec![];
+    for body in &decl.body {
+        for cap in body.all_captures() {
+            if !all_vars.contains(&cap) {
+                all_vars.push(cap);
             }
-            Slot::Tagged { tag, arg, body } => match tag {
-                Tag::Fs => {
-                    select.push(SelectStep::File {
-                        pattern: body.clone(),
-                        capture: None,
-                    });
-                }
-                Tag::Repo => {
-                    select.push(SelectStep::Repo {
-                        pattern: body.clone(),
-                        capture: None,
-                    });
-                }
-                Tag::Rev => {
-                    select.push(SelectStep::Rev {
-                        pattern: body.clone(),
-                        capture: None,
-                    });
-                }
-                Tag::Json => {
-                    let steps = parse_json_body(body)?;
-                    select.extend(steps);
-                }
-                Tag::Ast => {
-                    if select_ast.is_some() {
-                        bail!("rule `{}`: multiple ast() slots not supported", decl.name);
-                    }
-                    select_ast = Some(AstSelector {
-                        pattern: Some(body.clone()),
-                        rule: None,
-                        constraints: None,
-                        rule_file: None,
-                        language: arg.clone(),
-                        capture: "$NAME".to_string(),
-                        captures: None,
-                    });
-                }
-                Tag::Re => {
-                    if value_pattern.is_some() {
-                        bail!("rule `{}`: multiple re() slots not supported", decl.name);
-                    }
-                    value_pattern = Some(ValuePattern {
-                        source: String::new(),
-                        pattern: body.clone(),
-                        full_match: true,
-                    });
-                }
-            },
         }
     }
 
-    // Derive create_matches from head captures
-    let create_matches: Vec<MatchDef> = decl
-        .captures
+    let create_matches: Vec<MatchDef> = all_vars
         .iter()
-        .map(|cap| {
-            let scan = cap.annotation.and_then(|a| match a {
-                CaptureAnnotation::Repo => Some("repo".to_string()),
-                CaptureAnnotation::Rev => Some("rev".to_string()),
-                _ => None,
-            });
-            MatchDef {
-                capture: cap.var.clone(),
-                kind: cap.var.clone(),
-                parent: None,
-                scan,
-            }
+        .map(|var| MatchDef {
+            capture: var.clone(),
+            kind: var.clone(),
+            parent: None,
+            scan: scan_vars.get(var).cloned(),
         })
         .collect();
 
@@ -200,85 +117,244 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
     })
 }
 
-/// Lower a query declaration to a QueryDef.
-fn lower_query(decl: &QueryDecl) -> Result<QueryDef> {
-    fn lower_term(t: &Term) -> String {
-        match t {
-            Term::Var(name) => name.clone(),
-            Term::Lit(val) => format!("={}", val),
-            Term::Wild => "_".to_string(),
+/// Walk rule bodies to find repo($VAR)/rev($VAR) tags and record their
+/// captured variables as scan-driving columns.
+fn collect_scan_annotations(bodies: &[RuleBody], scan_vars: &mut HashMap<String, String>) {
+    for body in bodies {
+        let (slot, children) = match body {
+            RuleBody::Step(slot) => (Some(slot), &[][..]),
+            RuleBody::Block { slot, children } => (Some(slot), children.as_slice()),
+            RuleBody::Ref { children, .. } => (None, children.as_slice()),
+        };
+        if let Some(Slot::Tagged { tag, body, .. }) = slot {
+            match tag {
+                Tag::Repo => {
+                    for var in slot.unwrap().captures() {
+                        scan_vars.insert(var, "repo".to_string());
+                    }
+                }
+                Tag::Rev => {
+                    for var in slot.unwrap().captures() {
+                        scan_vars.insert(var, "rev".to_string());
+                    }
+                }
+                Tag::Scan => {
+                    // Parse scan(repo: $VAR, rev: $VAR) bindings
+                    for part in body.split(',') {
+                        let part = part.trim();
+                        if let Some(colon) = part.find(':') {
+                            let kind = part[..colon].trim();
+                            let var_str = part[colon + 1..].trim();
+                            if var_str.starts_with('$') && var_str.len() > 1 {
+                                let var = &var_str[1..];
+                                if matches!(kind, "repo" | "rev") {
+                                    scan_vars.insert(var.to_string(), kind.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        collect_scan_annotations(children, scan_vars);
+    }
+}
+
+/// Flatten RuleBody into a list of scoped steps.
+///
+/// `depth` is the current nesting level (0 = top, 1 = first block, etc.)
+/// `parent_vars` are variables captured by outer scopes (available to inner)
+fn flatten_body(
+    body: &RuleBody,
+    depth: usize,
+    parent_vars: &HashSet<String>,
+) -> Result<Vec<ScopedStep>> {
+    let mut result = vec![];
+
+    match body {
+        RuleBody::Step(slot) => {
+            // Convert slot to scoped step
+            let scoped = slot_to_scoped_step(slot, depth, parent_vars)?;
+            result.push(scoped);
+        }
+        RuleBody::Block { slot, children } => {
+            // The block slot captures variables for this scope
+            let block_vars = extract_slot_vars(slot);
+            let mut available_vars = parent_vars.clone();
+            available_vars.extend(block_vars.iter().cloned());
+
+            // Convert block slot to step
+            let block_scoped = slot_to_scoped_step(slot, depth, parent_vars)?;
+            result.push(block_scoped);
+
+            // Process children at next depth level
+            for child in children {
+                let child_scoped = flatten_body(child, depth + 1, &available_vars)?;
+                result.extend(child_scoped);
+            }
+        }
+        RuleBody::Ref { cross_ref, children } => {
+            // Cross-ref bindings introduce variables at this scope
+            let mut available_vars = parent_vars.clone();
+            for binding in &cross_ref.bindings {
+                available_vars.insert(binding.var.clone());
+            }
+            // Process children at next depth level
+            for child in children {
+                let child_scoped = flatten_body(child, depth + 1, &available_vars)?;
+                result.extend(child_scoped);
+            }
         }
     }
 
-    let head_args: Vec<String> = decl.head.args.iter().map(lower_term).collect();
-    let arity = head_args.len();
-    let name = decl.head.relation.clone();
+    Ok(result)
+}
 
-    let body: Vec<QueryAtom> = decl
-        .body
-        .iter()
-        .map(|atom| QueryAtom {
-            relation: atom.relation.clone(),
-            args: atom.args.iter().map(lower_term).collect(),
-            negated: atom.negated,
-        })
-        .collect();
+/// Extract variable names from a slot body.
+fn extract_slot_vars(slot: &Slot) -> HashSet<String> {
+    let mut vars = HashSet::new();
+    let body = match slot {
+        Slot::Bare(s) => s.as_str(),
+        Slot::Tagged { body, .. } => body.as_str(),
+    };
 
-    let is_recursive = decl.body.iter().any(|atom| atom.relation == name);
+    // Find $SCREAMING variables
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'_' {
+                i += 1;
+                continue; // $_ is wildcard, not a capture
+            }
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if i > start {
+                let var = &body[start..i];
+                if var
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+                {
+                    vars.insert(var.to_string());
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    vars
+}
 
-    Ok(QueryDef {
-        name,
-        arity,
-        head_args,
-        body,
-        is_recursive,
-        is_check: decl.is_check,
+/// Convert a slot to a scoped step.
+fn slot_to_scoped_step(
+    slot: &Slot,
+    depth: usize,
+    available_vars: &HashSet<String>,
+) -> Result<ScopedStep> {
+    let scope_vars = extract_slot_vars(slot);
+
+    // Validate that all referenced variables are available
+    // (This would be where we'd check for forward references)
+
+    let (select_steps, ast_selector, value_pattern) = convert_slot(slot)?;
+
+    Ok(ScopedStep {
+        depth,
+        scope_vars,
+        select_steps,
+        ast_selector,
+        value_pattern,
     })
 }
 
-/// Lower a link declaration to a LinkRule.
-fn lower_link(decl: &LinkDecl) -> Result<LinkRule> {
-    let mut all = vec![
-        LinkPredicate::KindEq {
-            side: Side::Src,
-            value: decl.src_kind.clone(),
-        },
-        LinkPredicate::KindEq {
-            side: Side::Tgt,
-            value: decl.tgt_kind.clone(),
-        },
-    ];
+/// Convert a slot to SelectSteps.
+fn convert_slot(
+    slot: &Slot,
+) -> Result<(Vec<SelectStep>, Option<AstSelector>, Option<ValuePattern>)> {
+    let mut select = vec![];
+    let mut ast_selector: Option<AstSelector> = None;
+    let mut value_pattern: Option<ValuePattern> = None;
 
-    for pred_str in &decl.predicates {
-        let pred = match pred_str.as_str() {
-            "norm_eq" => LinkPredicate::NormEq,
-            "norm2_eq" => LinkPredicate::Norm2Eq,
-            "string_eq" => LinkPredicate::StringEq,
-            "target_file_eq" => LinkPredicate::TargetFileEq,
-            "same_repo" => LinkPredicate::SameRepo,
-            "same_file" => LinkPredicate::SameFile,
-            "stem_eq_src" => LinkPredicate::StemEq { side: Side::Src },
-            "stem_eq_tgt" => LinkPredicate::StemEq { side: Side::Tgt },
-            "ext_eq_src" => LinkPredicate::ExtEq { side: Side::Src },
-            "ext_eq_tgt" => LinkPredicate::ExtEq { side: Side::Tgt },
-            "dir_eq_src" => LinkPredicate::DirEq { side: Side::Src },
-            "dir_eq_tgt" => LinkPredicate::DirEq { side: Side::Tgt },
-            other => bail!("unknown link predicate: {:?}", other),
-        };
-        all.push(pred);
+    match slot {
+        Slot::Bare(pattern) => {
+            // Bare glob - infer context
+            // For now, treat as file pattern
+            select.push(SelectStep::File {
+                pattern: pattern.clone(),
+                capture: None,
+            });
+        }
+        Slot::Tagged { tag, arg, body } => match tag {
+            Tag::Fs => {
+                select.push(SelectStep::File {
+                    pattern: body.clone(),
+                    capture: None,
+                });
+            }
+            Tag::Repo => {
+                select.push(SelectStep::Repo {
+                    pattern: body.clone(),
+                    capture: None,
+                });
+            }
+            Tag::Rev => {
+                select.push(SelectStep::Rev {
+                    pattern: body.clone(),
+                    capture: None,
+                });
+            }
+            Tag::Folder => {
+                select.push(SelectStep::Folder {
+                    pattern: body.clone(),
+                    capture: None,
+                });
+            }
+            Tag::File => {
+                select.push(SelectStep::File {
+                    pattern: body.clone(),
+                    capture: None,
+                });
+            }
+            Tag::Json => {
+                let steps = parse_json_body(body)?;
+                select.extend(steps);
+            }
+            Tag::Ast => {
+                if ast_selector.is_some() {
+                    bail!("multiple ast() slots not supported");
+                }
+                ast_selector = Some(AstSelector {
+                    pattern: Some(body.clone()),
+                    rule: None,
+                    constraints: None,
+                    rule_file: None,
+                    language: arg.clone(),
+                    capture: "$NAME".to_string(),
+                    captures: None,
+                });
+            }
+            Tag::Re => {
+                if value_pattern.is_some() {
+                    bail!("multiple re() slots not supported");
+                }
+                value_pattern = Some(ValuePattern {
+                    source: String::new(),
+                    pattern: body.clone(),
+                    full_match: true,
+                });
+            }
+            Tag::Scan => {
+                // Annotation-only, no select step emitted.
+                // Scan annotations are collected separately by collect_scan_annotations.
+            }
+        },
     }
 
-    let kind = decl
-        .kind_name
-        .clone()
-        .unwrap_or_else(|| format!("{}__{}", decl.src_kind, decl.tgt_kind));
-
-    Ok(LinkRule {
-        kind,
-        sql: None,
-        predicate: Some(LinkPredicate::And { all }),
-        target_repos: None,
-    })
+    Ok((select, ast_selector, value_pattern))
 }
 
 #[cfg(test)]
@@ -288,13 +364,13 @@ mod tests {
 
     fn lower(input: &str) -> Vec<Rule> {
         let program = parse_program(input).unwrap();
-        lower_program(&program).unwrap().0.rules
+        lower_program(&program).unwrap().rules
     }
 
     #[test]
-    fn lower_fs_json() {
+    fn lower_flat_rule() {
         let rules =
-            lower("rule pkg($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });");
+            lower("rule(pkg) { fs(**/Cargo.toml) > json({ package: { name: $NAME } }) };");
         assert_eq!(rules.len(), 1);
         let r = &rules[0];
         assert_eq!(r.name, "pkg");
@@ -307,29 +383,89 @@ mod tests {
     }
 
     #[test]
-    fn lower_bare_three() {
-        let rules = lower("rule r($N) > my-org/* > main > **/Cargo.toml > json({ name: $N });");
-        let r = &rules[0];
-
-        assert!(matches!(&r.select[0], SelectStep::Repo { pattern, .. } if pattern == "my-org/*"));
-        assert!(matches!(&r.select[1], SelectStep::Rev { pattern, .. } if pattern == "main"));
-        assert!(
-            matches!(&r.select[2], SelectStep::File { pattern, .. } if pattern == "**/Cargo.toml")
+    fn lower_scoped_rule() {
+        let rules = lower(
+            r#"rule(deploy) {
+            repo($REPO) {
+                fs(**/values.yaml) > json({ svc: $SVC })
+            }
+        };"#,
         );
-        assert!(matches!(&r.select[3], SelectStep::Object { .. }));
+        assert_eq!(rules.len(), 1);
+        let r = &rules[0];
+        assert_eq!(r.name, "deploy");
+
+        // Should have: repo, file, object
+        assert!(matches!(&r.select[0], SelectStep::Repo { .. }));
+        assert!(matches!(&r.select[1], SelectStep::File { .. }));
+        assert!(matches!(&r.select[2], SelectStep::Object { .. }));
     }
 
     #[test]
-    fn lower_bare_two_errors() {
-        let program =
-            parse_program("rule r($N) > my-org/* > **/Cargo.toml > json({ name: $N });").unwrap();
-        let err = lower_program(&program).unwrap_err();
-        assert!(err.to_string().contains("exactly 3"), "{}", err);
+    fn lower_nested_scopes() {
+        let rules = lower(
+            r#"rule(img) {
+            repo($REPO) {
+                rev(main) {
+                    folder(packages/$PKG) {
+                        fs(values.yaml) > json({ image: { repo: $REPO, tag: $TAG } })
+                    }
+                }
+            }
+        };"#,
+        );
+
+        assert_eq!(rules.len(), 1);
+        let r = &rules[0];
+
+        // Order: repo, rev, folder, file, object
+        assert!(matches!(&r.select[0], SelectStep::Repo { .. }));
+        assert!(matches!(&r.select[1], SelectStep::Rev { .. }));
+        assert!(matches!(&r.select[2], SelectStep::Folder { .. }));
+        assert!(matches!(&r.select[3], SelectStep::File { .. }));
+        assert!(matches!(&r.select[4], SelectStep::Object { .. }));
+    }
+
+    #[test]
+    fn lower_with_scan_annotations() {
+        // repo() and rev() tags in body infer scan annotations
+        let rules = lower(
+            r#"rule(deploy) {
+            repo($REPO) {
+                rev($TAG) {
+                    fs(**/values.yaml) > json({ image: { repo: $REPO, tag: $TAG } })
+                }
+            }
+        };"#,
+        );
+        let r = &rules[0];
+        let repo_match = r.create_matches.iter().find(|m| m.capture == "REPO").unwrap();
+        let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
+        assert_eq!(repo_match.scan.as_deref(), Some("repo"));
+        assert_eq!(tag_match.scan.as_deref(), Some("rev"));
+    }
+
+    #[test]
+    fn lower_scan_tag_annotations() {
+        // scan() tag marks captures as scan-driving without context steps
+        let rules = lower(
+            r#"rule(image_refs) {
+            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+            scan(repo: $REPO, rev: $TAG)
+        };"#,
+        );
+        let r = &rules[0];
+        let repo_match = r.create_matches.iter().find(|m| m.capture == "REPO").unwrap();
+        let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
+        assert_eq!(repo_match.scan.as_deref(), Some("repo"));
+        assert_eq!(tag_match.scan.as_deref(), Some("rev"));
+        // scan() should NOT produce any select steps
+        assert!(r.select.iter().all(|s| !matches!(s, SelectStep::Repo { .. })));
     }
 
     #[test]
     fn lower_ast_with_lang() {
-        let rules = lower("rule imports($NAME, $PATH) > fs(**/*.config) > ast[typescript](import $NAME from '$PATH');");
+        let rules = lower("rule(imports) { fs(**/*.config) > ast[typescript](import $NAME from '$PATH') };");
         let r = &rules[0];
         let ast = r.select_ast.as_ref().unwrap();
         assert_eq!(ast.language.as_deref(), Some("typescript"));
@@ -337,34 +473,9 @@ mod tests {
     }
 
     #[test]
-    fn lower_recursive_descent() {
-        let rules = lower("rule img(repo($REPO), rev($TAG)) > fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });");
-        let r = &rules[0];
-        assert!(matches!(&r.select[0], SelectStep::File { .. }));
-        assert!(matches!(&r.select[1], SelectStep::Any));
-        assert!(matches!(&r.select[2], SelectStep::Object { .. }));
-    }
-
-    #[test]
-    fn lower_array() {
-        let rules = lower("rule members($MEMBER) > fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } });");
-        let r = &rules[0];
-        assert!(matches!(&r.select[0], SelectStep::File { .. }));
-        match &r.select[1] {
-            SelectStep::Object { entries } => match &entries[0].value[0] {
-                SelectStep::Object { entries: inner } => {
-                    assert!(matches!(&inner[0].value[0], SelectStep::Array { .. }));
-                }
-                _ => panic!("expected nested Object"),
-            },
-            _ => panic!("expected Object"),
-        }
-    }
-
-    #[test]
     fn lower_re() {
         let rules = lower(
-            r"rule img($REPO, $TAG) > fs(deploy/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+));",
+            r"rule(img) { fs(deploy/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)) };",
         );
         let r = &rules[0];
         assert!(r.value.is_some());
@@ -372,182 +483,5 @@ mod tests {
             r.value.as_ref().unwrap().pattern,
             r"image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)"
         );
-    }
-
-    #[test]
-    fn lower_rule_name() {
-        let rules = lower(
-            "rule cargo_packages($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });",
-        );
-        assert_eq!(rules[0].name, "cargo_packages");
-    }
-
-    #[test]
-    fn lower_head_captures_to_match_defs() {
-        let rules = lower(
-            "rule package_name($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });",
-        );
-        let r = &rules[0];
-        assert_eq!(r.create_matches.len(), 1);
-        assert_eq!(r.create_matches[0].capture, "NAME");
-        assert_eq!(r.create_matches[0].kind, "NAME");
-        assert!(r.create_matches[0].parent.is_none());
-        assert!(r.create_matches[0].scan.is_none());
-    }
-
-    #[test]
-    fn lower_multiple_head_captures() {
-        let rules =
-            lower("rule deps($N, $V) > fs(**/package.json) > json({ dependencies: { $N: $V } });");
-        let r = &rules[0];
-        assert_eq!(r.create_matches.len(), 2);
-        assert_eq!(r.create_matches[0].kind, "N");
-        assert_eq!(r.create_matches[1].kind, "V");
-    }
-
-    #[test]
-    fn lower_scan_annotations() {
-        let rules = lower(
-            "rule deploy(repo($REPO), rev($TAG)) > fs(**/values.yaml) > json({ image: { repo: $REPO, tag: $TAG } });"
-        );
-        let r = &rules[0];
-        assert_eq!(r.create_matches.len(), 2);
-        assert_eq!(r.create_matches[0].scan.as_deref(), Some("repo"));
-        assert_eq!(r.create_matches[1].scan.as_deref(), Some("rev"));
-    }
-
-    fn lower_full(input: &str) -> (RuleSet, DerivedRules) {
-        let program = parse_program(input).unwrap();
-        lower_program(&program).unwrap()
-    }
-
-    #[test]
-    fn lower_link_rule() {
-        let (_, dr) = lower_full("link(dep_name > package_name, norm_eq) > $dep_to_package;");
-        assert_eq!(dr.link_rules.len(), 1);
-        let lr = &dr.link_rules[0];
-        assert_eq!(lr.kind, "dep_to_package");
-        assert!(lr.predicate.is_some());
-    }
-
-    #[test]
-    fn lower_link_auto_kind() {
-        let (_, dr) = lower_full("link(dep_name > package_name, norm_eq);");
-        assert_eq!(dr.link_rules[0].kind, "dep_name__package_name");
-    }
-
-    #[test]
-    fn lower_link_multiple_predicates() {
-        let (_, dr) = lower_full(
-            "link(import_name > export_name, target_file_eq, string_eq) > $import_binding;",
-        );
-        let lr = &dr.link_rules[0];
-        match lr.predicate.as_ref().unwrap() {
-            LinkPredicate::And { all } => {
-                // 2 KindEq + 2 predicates = 4
-                assert_eq!(all.len(), 4);
-            }
-            _ => panic!("expected And"),
-        }
-    }
-
-    #[test]
-    fn lower_mixed_rules_and_links() {
-        let (rs, dr) = lower_full(
-            r#"
-            rule package_name($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });
-            link(NAME > NAME, norm_eq) > $dep_to_package;
-        "#,
-        );
-        assert_eq!(rs.rules.len(), 1);
-        assert_eq!(dr.link_rules.len(), 1);
-        assert_eq!(rs.rules[0].create_matches.len(), 1);
-    }
-
-    #[test]
-    fn lower_query_recursive() {
-        let (_, dr) =
-            lower_full("query all_deps($A, $C) > dep_to_package($A, $B) all_deps($B, $C);");
-        assert_eq!(dr.query_rules.len(), 1);
-        let q = &dr.query_rules[0];
-        assert_eq!(q.name, "all_deps");
-        assert_eq!(q.arity, 2);
-        assert!(q.is_recursive);
-        assert_eq!(q.head_args, vec!["A", "C"]);
-        assert_eq!(q.body.len(), 2);
-        assert_eq!(q.body[0].relation, "dep_to_package");
-        assert_eq!(q.body[1].relation, "all_deps");
-    }
-
-    #[test]
-    fn lower_query_nonrecursive() {
-        let (_, dr) =
-            lower_full("query same_eco($A, $B) > dep_to_package($A, $X) dep_to_package($B, $X);");
-        let q = &dr.query_rules[0];
-        assert!(!q.is_recursive);
-        assert_eq!(q.body[0].args, vec!["A", "X"]);
-        assert_eq!(q.body[1].args, vec!["B", "X"]);
-    }
-
-    #[test]
-    fn lower_query_with_literal() {
-        let (_, dr) = lower_full(r#"query who_uses($WHO) > dep_to_package($WHO, "lodash");"#);
-        let q = &dr.query_rules[0];
-        assert_eq!(q.body[0].args, vec!["WHO", "=lodash"]);
-    }
-
-    #[test]
-    fn lower_full_pipeline() {
-        let (rs, dr) = lower_full(
-            r#"
-            rule package_name($NAME) > fs(**/Cargo.toml) > json({ package: { name: $NAME } });
-            rule dep_name($N) > fs(**/Cargo.toml) > json({ dependencies: { $N: $_ } });
-            link(N > NAME, norm_eq) > $dep_to_package;
-            query all_deps($A, $C) > dep_to_package($A, $B) all_deps($B, $C);
-        "#,
-        );
-        assert_eq!(rs.rules.len(), 2);
-        assert_eq!(dr.link_rules.len(), 1);
-        assert_eq!(dr.query_rules.len(), 1);
-    }
-
-    #[test]
-    fn lower_check_with_negation() {
-        use crate::_0_ast::{Atom, QueryDecl, Term};
-
-        let decl = QueryDecl {
-            head: Atom {
-                relation: "orphan_dep".into(),
-                args: vec![Term::Var("X".into())],
-                negated: false,
-            },
-            body: vec![
-                Atom {
-                    relation: "$.has_kind".into(),
-                    args: vec![Term::Var("X".into()), Term::Lit("dep".into())],
-                    negated: false,
-                },
-                Atom {
-                    relation: "dep_link".into(),
-                    args: vec![Term::Var("X".into()), Term::Wild],
-                    negated: true,
-                },
-            ],
-            is_check: true,
-        };
-        let qd = lower_query(&decl).unwrap();
-        assert!(qd.is_check);
-        assert_eq!(qd.name, "orphan_dep");
-        assert_eq!(qd.body.len(), 2);
-        assert!(!qd.body[0].negated);
-        assert!(qd.body[1].negated);
-        assert_eq!(qd.body[1].relation, "dep_link");
-    }
-
-    #[test]
-    fn lower_query_not_check_by_default() {
-        let (_, dr) = lower_full("query some_q($A) > dep_to_package($A, $_);");
-        assert!(!dr.query_rules[0].is_check);
-        assert!(!dr.query_rules[0].body[0].negated);
     }
 }

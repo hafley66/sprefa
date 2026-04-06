@@ -14,6 +14,7 @@ use std::sync::Arc;
 use git2::{Repository, Signature};
 use sqlx::SqlitePool;
 
+use sprefa_cache::SqliteStore;
 use sprefa_config::RepoConfig;
 use sprefa_rules::extractor::RuleExtractor;
 use sprefa_scan::{Extractor, Scanner};
@@ -59,15 +60,18 @@ async fn make_db() -> SqlitePool {
     sprefa_schema::init_db(":memory:").await.unwrap()
 }
 
-fn make_scanner(db: SqlitePool, sprf_source: &str) -> Scanner {
-    let (ruleset, derived) = sprefa_sprf::parse_sprf(sprf_source).unwrap();
+fn make_scanner(db: SqlitePool, sprf_source: &str) -> Scanner<SqliteStore> {
+    let ruleset = sprefa_sprf::parse_sprf(sprf_source).unwrap();
+    eprintln!("DEBUG: parsed {} rules", ruleset.rules.len());
+    for r in &ruleset.rules {
+        eprintln!("DEBUG: rule '{}' has {} select steps", r.name, r.select.len());
+    }
     let rule_ext = RuleExtractor::from_ruleset(&ruleset).unwrap();
     Scanner {
         extractors: Arc::new(vec![Box::new(rule_ext) as Box<dyn Extractor>]),
-        db,
+        store: SqliteStore::new(db),
         normalize_config: None,
         global_filter: None,
-        link_rules: derived.link_rules,
     }
 }
 
@@ -107,10 +111,13 @@ image:
 "#);
 
     let sprf = r#"
-        rule image_refs(repo($REPO), rev($TAG)) >
-            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } });
-        rule pkg_name($NAME) >
-            fs(**/package.json) > json({ name: $NAME });
+        rule(image_refs) {
+            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+            scan(repo: $REPO, rev: $TAG)
+        };
+        rule(pkg_name) {
+            fs(**/package.json) > json({ name: $NAME })
+        };
     "#;
 
     let db = make_db().await;
@@ -122,10 +129,23 @@ image:
     scanner.scan_repo(&infra_cfg, "main").await.unwrap();
     scanner.scan_repo(&svc_cfg, "main").await.unwrap();
 
+    // Debug: Check what's in the database
+    let total_matches: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM matches")
+        .fetch_one(&db).await.unwrap();
+    let total_refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM refs")
+        .fetch_one(&db).await.unwrap();
+    eprintln!("DEBUG: total_matches={}, total_refs={}", total_matches, total_refs);
+    
+    // Check what files were scanned and their content
+    let files: Vec<(String,)> = sqlx::query_as("SELECT path FROM files")
+        .fetch_all(&db).await.unwrap();
+    eprintln!("DEBUG: files={:?}", files.iter().map(|f| &f.0).collect::<Vec<_>>());
+
     // Verify match_labels were populated with scan annotations.
     let scan_labels: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM match_labels WHERE key = 'scan'",
     ).fetch_one(&db).await.unwrap();
+    eprintln!("DEBUG: scan_labels={}", scan_labels);
     assert!(scan_labels >= 2, "expected at least 2 scan labels (repo+rev), got {}", scan_labels);
 
     // Verify HEAD scan got the v2 name.
@@ -239,8 +259,10 @@ image:
 "#);
 
     let sprf = r#"
-        rule image_refs(repo($REPO), rev($TAG)) >
-            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } });
+        rule(image_refs) {
+            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+            scan(repo: $REPO, rev: $TAG)
+        };
     "#;
 
     let db = make_db().await;
@@ -282,8 +304,9 @@ async fn static_revs_indexes_tag_content() {
     tag_head(&svc_repo, "v2.0.0");
 
     let sprf = r#"
-        rule pkg_name($NAME) >
-            fs(**/package.json) > json({ name: $NAME });
+        rule(pkg_name) {
+            fs(**/package.json) > json({ name: $NAME })
+        };
     "#;
 
     let db = make_db().await;
@@ -366,8 +389,10 @@ svc_b:
 "#);
 
     let sprf = r#"
-        rule image_refs(repo($REPO), rev($TAG)) >
-            fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });
+        rule(image_refs) {
+            fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
+            scan(repo: $REPO, rev: $TAG)
+        };
     "#;
 
     let db = make_db().await;
@@ -465,12 +490,17 @@ image:
 "#);
 
     let sprf = r#"
-        rule deploy_ref(repo($REPO), rev($TAG)) >
-            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } });
-        rule lib_dep(repo($LIB), rev($VER)) >
-            fs(**/deps/*.yaml) > json({ dependency: { name: $LIB, version: $VER } });
-        rule pkg_name($NAME) >
-            fs(**/package.json) > json({ name: $NAME });
+        rule(deploy_ref) {
+            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+            scan(repo: $REPO, rev: $TAG)
+        };
+        rule(lib_dep) {
+            fs(**/deps/*.yaml) > json({ dependency: { name: $LIB, version: $VER } })
+            scan(repo: $LIB, rev: $VER)
+        };
+        rule(pkg_name) {
+            fs(**/package.json) > json({ name: $NAME })
+        };
     "#;
 
     let db = make_db().await;
@@ -590,136 +620,4 @@ image:
     assert!(total_revs >= 4, "at least 4 rev entries, got {}", total_revs);
 }
 
-/// End-to-end: extraction rules + check query execution against populated DB.
-///
-/// Two repos:
-///   - "api-specs" has two canonical OpenAPI specs (payments v3.0.0, users v2.1.0)
-///   - "api-clients" has three copies:
-///       - payments v3.0.0 (current)
-///       - users v2.0.0 (STALE -- behind source)
-///       - users v2.1.0 (current)
-///
-/// The check `stale_spec` should fire exactly once: users@v2.0.0.
-#[tokio::test]
-async fn check_detects_stale_openapi_copy() {
-    use sprefa_rules::query::{compile_query_with_deps, RuleSchema};
-
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().canonicalize().unwrap();
-
-    // -- api-specs repo: canonical specs --
-    let specs_path = root.join("api-specs");
-    let specs_repo = init_repo(&specs_path);
-    commit_file(&specs_repo, "specs/payments/openapi.json", br#"{
-        "info": { "title": "payments", "version": "3.0.0" }
-    }"#);
-    commit_file(&specs_repo, "specs/users/openapi.json", br#"{
-        "info": { "title": "users", "version": "2.1.0" }
-    }"#);
-
-    // -- api-clients repo: generated client copies --
-    let clients_path = root.join("api-clients");
-    let clients_repo = init_repo(&clients_path);
-    // payments: current
-    commit_file(&clients_repo, "clients/go/payments/openapi.json", br#"{
-        "info": { "title": "payments", "version": "3.0.0" }
-    }"#);
-    // users: STALE copy at v2.0.0
-    commit_file(&clients_repo, "clients/go/users/openapi.json", br#"{
-        "info": { "title": "users", "version": "2.0.0" }
-    }"#);
-    // users: current copy in python client
-    commit_file(&clients_repo, "clients/python/users/openapi.json", br#"{
-        "info": { "title": "users", "version": "2.1.0" }
-    }"#);
-
-    let sprf = r#"
-        rule api_source($TITLE, $VERSION) >
-            fs(specs/**/openapi.json) > json({ info: { title: $TITLE, version: $VERSION } });
-
-        rule api_copy($TITLE, $VERSION) >
-            fs(clients/**/openapi.json) > json({ info: { title: $TITLE, version: $VERSION } });
-
-        check stale_spec($TITLE, $COPY_V) >
-            api_copy($TITLE, $COPY_V)
-            not api_source($TITLE, $COPY_V);
-    "#;
-
-    let db = make_db().await;
-    let (ruleset, derived) = sprefa_sprf::parse_sprf(sprf).unwrap();
-    let rule_ext = RuleExtractor::from_ruleset(&ruleset).unwrap();
-    let scanner = Scanner {
-        extractors: Arc::new(vec![Box::new(rule_ext) as Box<dyn Extractor>]),
-        db: db.clone(),
-        normalize_config: None,
-        global_filter: None,
-        link_rules: derived.link_rules,
-    };
-
-    // Scan both repos.
-    let specs_cfg = repo_config("api-specs", &specs_path);
-    let clients_cfg = repo_config("api-clients", &clients_path);
-    scanner.scan_repo(&specs_cfg, "main").await.unwrap();
-    scanner.scan_repo(&clients_cfg, "main").await.unwrap();
-
-    // Verify extraction produced the expected matches.
-    let source_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM matches m
-         JOIN refs r ON m.ref_id = r.id
-         JOIN files f ON r.file_id = f.id
-         JOIN repos rp ON f.repo_id = rp.id
-         WHERE m.rule_name = 'api_source' AND rp.name = 'api-specs'",
-    ).fetch_one(&db).await.unwrap();
-    assert!(source_count >= 2, "api_source should produce matches for title+version, got {}", source_count);
-
-    let copy_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM matches m
-         JOIN refs r ON m.ref_id = r.id
-         JOIN files f ON r.file_id = f.id
-         JOIN repos rp ON f.repo_id = rp.id
-         WHERE m.rule_name = 'api_copy' AND rp.name = 'api-clients'",
-    ).fetch_one(&db).await.unwrap();
-    assert!(copy_count >= 3, "api_copy should produce matches for 3 copies, got {}", copy_count);
-
-    // Compile and execute the check query.
-    let checks: Vec<&sprefa_rules::QueryDef> = derived
-        .query_rules
-        .iter()
-        .filter(|q| q.is_check)
-        .collect();
-    assert_eq!(checks.len(), 1, "expected 1 check rule");
-    assert_eq!(checks[0].name, "stale_spec");
-
-    let known: HashMap<String, usize> = derived
-        .query_rules
-        .iter()
-        .map(|q| (q.name.clone(), q.arity))
-        .collect();
-    let all_queries: HashMap<String, &sprefa_rules::QueryDef> = derived
-        .query_rules
-        .iter()
-        .map(|q| (q.name.clone(), q))
-        .collect();
-    let known_rules: HashMap<String, RuleSchema> = ruleset
-        .rules
-        .iter()
-        .filter_map(|r| {
-            let kinds: Vec<String> = r.create_matches.iter().map(|m| m.kind.clone()).collect();
-            if kinds.is_empty() { None }
-            else { Some((r.name.clone(), RuleSchema { kinds })) }
-        })
-        .collect();
-
-    let sql = compile_query_with_deps(checks[0], &all_queries, &known, &known_rules)
-        .expect("check query should compile");
-
-    let rows: Vec<(String, String)> = sqlx::query_as(&sql)
-        .fetch_all(&db)
-        .await
-        .unwrap();
-
-    // Exactly one violation: users@v2.0.0 (stale copy in go client).
-    assert_eq!(rows.len(), 1, "expected 1 violation, got {}: {:?}", rows.len(), rows);
-    assert_eq!(rows[0].0, "users", "violation title should be 'users', got '{}'", rows[0].0);
-    assert_eq!(rows[0].1, "2.0.0", "violation version should be '2.0.0', got '{}'", rows[0].1);
-}
+// NOTE: Query/check tests removed - query system was cut in favor of scoped block syntax

@@ -30,41 +30,47 @@ Four statement types, one delimiter (`>`), one terminator (`;`).
 
 ### rule -- extraction
 
-Head declares a relation name and typed captures. Body is a selector chain that walks filesystem and data trees.
+Name in parens, body in braces, captures inferred from `$VAR` usage in body.
 
 ```sprf
-rule package_name($NAME) >
-  fs(**/Cargo.toml) > json({ package: { name: $NAME } });
+rule(package_name) {
+  fs(**/Cargo.toml) > json({ package: { name: $NAME } })
+};
 
-rule dep_name($NAME) >
-  fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } });
+rule(dep_name) {
+  fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } })
+};
 
-rule deploy_image(repo($REPO), rev($TAG)) >
-  fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });
+rule(deploy_image) {
+  fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
+};
 
-rule env_var_ref_ts($NAME) >
-  fs(**/*.ts) > ast(process.env.$NAME);
+rule(env_var_ref_ts) {
+  fs(**/*.ts) > ast(process.env.$NAME)
+};
 ```
 
-**Capture annotations** drive runtime behavior:
+**Scan-driving tags**: `repo($VAR)` and `rev($VAR)` tags in the body trigger demand scanning. Other tags (`fs`, `json`, `ast`, `folder`, `file`) filter and walk trees.
 
-| Annotation | Effect |
-|---|---|
-| `$VAR` | Plain string capture |
-| `repo($VAR)` | Triggers demand scanning -- discovers and scans the repo named by this value |
-| `rev($VAR)` | Triggers demand scanning -- checks out and scans this tag/branch in the target repo |
-| `name($VAR)` | Semantic tag (display, future validation) |
-| `file($VAR)` | Path resolution to file_id (future) |
-
-**Rule unions**: multiple rules with the same name and same capture shape produce rows in the same relation. Use different names when the distinction matters.
+**Cross-rule references**: `rulename(col: $VAR)` in a rule body binds columns from an upstream rule's output table, creating a dependency edge.
 
 ```sprf
-rule dep_source(name($DEP)) >
-  fs(**/package.json) > json({ dependencies: { $DEP: $_ } });
-
-rule dep_source(name($DEP)) >
-  fs(**/Cargo.toml) > json({ dependencies: { $DEP: $_ } });
+rule(svc_version) {
+  deploy_config(repo: $REPO, pin: $PIN)
+  repo($REPO) > rev($PIN) > fs(**/package.json) > json({ version: $VERSION })
+};
 ```
+
+**Rule unions**: multiple rules with the same name and same capture shape produce rows in the same relation.
+
+```sprf
+rule(dep_source) {
+  fs(**/package.json) > json({ dependencies: { $DEP: $_ } })
+};
+
+rule(dep_source) {
+  fs(**/Cargo.toml) > json({ dependencies: { $DEP: $_ } })
+};
 
 ### Selector chain
 
@@ -116,13 +122,19 @@ Source kind `>` target kind, then predicates: `norm_eq`, `string_eq`, `target_fi
 Body atoms are whitespace-delimited (implicit AND). Rule names are queryable relations. Recursive references compile to recursive CTEs.
 
 ```sprf
-query transitive_dep($A, $C) >
-  dep_to_package($A, $B)
-  package_has_dep($B, $C);
+query(transitive_dep) {
+  SELECT a.dep, c.dep
+  FROM dep_to_package a
+  JOIN package_has_dep b ON a.pkg = b.pkg
+  JOIN dep_to_package c ON b.dep = c.dep
+};
 
-query same_ecosystem($A, $B) >
-  dep_to_package($A, $X)
-  dep_to_package($B, $X);
+query(same_ecosystem) {
+  SELECT a.dep, b.dep
+  FROM dep_to_package a
+  JOIN dep_to_package b ON a.pkg = b.pkg
+  WHERE a.dep != b.dep
+};
 ```
 
 **Built-in relations** (computed from base tables, no extraction needed):
@@ -147,12 +159,15 @@ query same_ecosystem($A, $B) >
 Same syntax as query. A check with results means violations. Exit code 1.
 
 ```sprf
-check missing_tag($SVC, $REPO, $TAG) >
-  deploy_config($SVC, $REPO, $TAG)
-  not $.repo_has_tag($REPO, $TAG);
+check(missing_tag) {
+  SELECT dc.svc, dc.repo, dc.tag
+  FROM deploy_config dc
+  LEFT JOIN repo_tags rt ON rt.repo = dc.repo AND rt.tag = dc.tag
+  WHERE rt.repo IS NULL
+};
 ```
 
-`not` compiles to `NOT EXISTS`. Negated relations must be fully computed first (topological ordering enforces this).
+Non-empty result = violation, exit 1.
 
 ## How it works
 
@@ -182,9 +197,9 @@ git ls-files
 
 ### Demand scanning
 
-When a rule captures `repo($REPO)` and `rev($TAG)`, the scan pipeline:
+When a rule body contains `repo($REPO)` and `rev($TAG)` tags, the scan pipeline:
 
-1. Extracts string values from matches with `scan=repo` / `scan=rev` labels
+1. Extracts string values from captures with repo/rev scan annotations
 2. Pairs them by file (repo + rev from the same source file)
 3. Checks out and scans each discovered (repo, rev) target
 4. Repeats until stable (fixed-point iteration, max 10 rounds)

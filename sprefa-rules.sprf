@@ -2,73 +2,70 @@
 
 # ── Cargo ──────────────────────────────────────────
 
-rule package_name($NAME) >
-  fs(**/Cargo.toml) > json({ package: { name: $NAME } });
+rule(package_name) {
+  fs(**/Cargo.toml) > json({ package: { name: $NAME } })
+};
 
-rule dep_name($NAME) >
-  fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } });
+rule(dep_name) {
+  fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } })
+};
 
-rule workspace_member($MEMBER) >
-  fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } });
+rule(workspace_member) {
+  fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } })
+};
 
 # ── Node / package.json ────────────────────────────
 
-rule npm_package($NAME) >
-  fs(**/package.json) > json({ name: $NAME });
+rule(npm_package) {
+  fs(**/package.json) > json({ name: $NAME })
+};
 
-rule npm_dep($NAME, $VERSION) >
-  fs(**/package.json) > json({ re:^(dev|peer)?[Dd]ependencies: { $NAME: $VERSION } });
+rule(npm_dep) {
+  fs(**/package.json) > json({ re:^(dev|peer)?[Dd]ependencies: { $NAME: $VERSION } })
+};
 
-rule tsconfig_path($ALIAS, $TARGET) >
-  fs(**/tsconfig.json) > json({ compilerOptions: { paths: { $ALIAS: [...$TARGET] } } });
+rule(tsconfig_path) {
+  fs(**/tsconfig.json) > json({ compilerOptions: { paths: { $ALIAS: [...$TARGET] } } })
+};
 
-rule package_entry($SUBPATH) >
-  fs(**/package.json) > json({ exports: { $SUBPATH: $_ } });
+rule(package_entry) {
+  fs(**/package.json) > json({ exports: { $SUBPATH: $_ } })
+};
 
 # ── pnpm ───────────────────────────────────────────
 
-rule pnpm_workspace($MEMBER) >
-  fs(**/pnpm-workspace.yaml) > json({ packages: [...$MEMBER] });
+rule(pnpm_workspace) {
+  fs(**/pnpm-workspace.yaml) > json({ packages: [...$MEMBER] })
+};
 
-# ── Helm / k8s ─────────────────────────────────────
+# ── Deploy / k8s ──────────────────────────────────
 
-rule helm_image(repo($REPO), rev($TAG)) >
-  fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } });
+rule(deploy_image) {
+  fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
+};
 
-rule configmap_env($KEY) >
-  fs(**/*configmap*.yaml) > json({ data: { $KEY: $_ } });
+rule(configmap_env) {
+  fs(**/*configmap*.yaml) > json({ data: { $KEY: $_ } })
+};
 
 # ── Docker ─────────────────────────────────────────
 
-rule docker_service($NAME) >
-  fs(**/docker-compose*.yaml) > json({ services: { $NAME: $_ } });
+rule(docker_service) {
+  fs(**/docker-compose*.yaml) > json({ services: { $NAME: $_ } })
+};
 
 # ── OpenAPI ────────────────────────────────────────
 
-rule openapi_op($OP) >
-  fs(**/openapi*.yaml) > json({ paths: { $PATH: { re:^(get|post|put|delete|patch|options|head)$: { operationId: $OP } } } });
+rule(openapi_op) {
+  fs(**/openapi*.yaml) > json({ paths: { $PATH: { re:^(get|post|put|delete|patch|options|head)$: { operationId: $OP } } } })
+};
 
 # ── Source code (ast-grep) ─────────────────────────
 
-rule env_var_ref_js($NAME) >
-  fs(**/*.js) > ast(process.env.$NAME);
+rule(env_var_ref_js) {
+  fs(**/*.js) > ast(process.env.$NAME)
+};
 
-rule env_var_ref_ts($NAME) >
-  fs(**/*.ts) > ast(process.env.$NAME);
-
-# ── Links ──────────────────────────────────────────
-
-link(NAME > NAME, norm_eq) > $dep_to_package;
-link(NAME > NAME, same_file) > $package_has_dep;
-link(REPO > NAME, norm_eq) > $image_source;
-link(NAME > KEY, norm_eq) > $env_var_binding;
-
-# ── Queries ───────────────────────────────────────
-
-# transitive deps: dep -> package -> colocated deps -> package -> ...
-query transitive_dep($A, $C) >
-  dep_to_package($A, $B)
-  package_has_dep($B, $C);
-
-# shared dependency: two dep_name matches that resolve to the same package
-query same_ecosystem($A, $B) > dep_to_package($A, $X) dep_to_package($B, $X);
+rule(env_var_ref_ts) {
+  fs(**/*.ts) > ast(process.env.$NAME)
+};

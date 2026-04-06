@@ -5,7 +5,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use sprefa_sprf::_0_ast::{LinkDecl, Slot, Statement, Tag};
+use sprefa_sprf::_0_ast::{RuleBody, Slot, Statement, Tag};
 use sprefa_sprf::_1_parse::parse_program;
 
 struct SprfLsp {
@@ -31,12 +31,8 @@ struct RuleInfo {
 struct DocState {
     /// Full document text for context detection.
     text: String,
-    /// All match kinds defined in the file via match() slots.
-    match_kinds: HashSet<String>,
-    /// All capture names found across the file (for link() suggestions).
+    /// All capture names found across the file.
     all_captures: HashSet<String>,
-    /// Link src/tgt kinds referenced.
-    link_kinds: HashSet<String>,
     /// Per-rule capture info with source spans.
     rules: Vec<RuleInfo>,
     /// Diagnostics from validation (not just parse errors).
@@ -48,7 +44,7 @@ impl DocState {
         self.text = text.to_string();
 
         // Try parsing. On error, try adding a semicolon (user may be mid-statement).
-        // If both fail, keep previous match_kinds/captures/rules for completions.
+        // If both fail, keep previous captures/rules for completions.
         let program = match parse_program(text) {
             Ok(p) => p,
             Err(_) => match parse_program(&format!("{};", text.trim_end())) {
@@ -60,134 +56,59 @@ impl DocState {
             },
         };
 
-        self.match_kinds.clear();
         self.all_captures.clear();
-        self.link_kinds.clear();
         self.rules.clear();
         self.diagnostics.clear();
 
         // Build a map of statement byte ranges by finding ; terminators
         let stmt_spans = find_statement_spans(text);
 
-        // Pass 1: collect all names (match kinds, link kinds, query names, captures)
-        let mut query_names: HashSet<String> = HashSet::new();
-        let mut rule_data: Vec<(StmtSpan, Vec<String>, HashSet<String>)> = vec![];
-
         for (idx, stmt) in program.iter().enumerate() {
             let span = stmt_spans.get(idx).cloned().unwrap_or(StmtSpan {
                 start: 0,
                 end: text.len(),
             });
 
-            match stmt {
-                Statement::Rule(decl) => {
-                    let mut rule_captures = vec![];
+            if let Statement::Rule(decl) = stmt {
+                let mut rule_captures = vec![];
 
-                    // Captures from head declaration
-                    for cap in &decl.captures {
-                        self.all_captures.insert(cap.var.clone());
-                        self.match_kinds.insert(cap.var.clone());
-                    }
-
-                    // Captures from selector chain body
-                    for slot in &decl.chain.slots {
-                        if let Slot::Tagged { tag, body, .. } = slot {
-                            if matches!(tag, Tag::Json | Tag::Ast) {
-                                for cap in extract_captures(&body) {
-                                    self.all_captures.insert(cap.clone());
-                                    rule_captures.push(cap);
-                                }
+                // Captures inferred from rule body
+                fn collect_body_captures(body: &RuleBody, all_caps: &mut HashSet<String>, rule_caps: &mut Vec<String>) {
+                    match body {
+                        RuleBody::Step(slot) => {
+                            for cap in slot.captures() {
+                                all_caps.insert(cap.clone());
+                                rule_caps.push(cap);
                             }
                         }
-                    }
-
-                    self.rules.push(RuleInfo {
-                        span: span.clone(),
-                        captures: rule_captures.clone(),
-                    });
-                    let head_caps: HashSet<String> = decl.captures.iter().map(|c| c.var.clone()).collect();
-                    rule_data.push((span, rule_captures, head_caps));
-                }
-                Statement::Link(LinkDecl {
-                    src_kind,
-                    tgt_kind,
-                    kind_name,
-                    ..
-                }) => {
-                    let link_kind = kind_name.clone().unwrap_or_else(|| {
-                        format!("{}__{}", src_kind, tgt_kind)
-                    });
-                    self.link_kinds.insert(link_kind);
-                }
-                Statement::Query(decl) => {
-                    query_names.insert(decl.head.relation.clone());
-                }
-            }
-        }
-
-        // Pass 2: validate references (order-independent)
-        for (idx, stmt) in program.iter().enumerate() {
-            let span = stmt_spans.get(idx).cloned().unwrap_or(StmtSpan {
-                start: 0,
-                end: text.len(),
-            });
-
-            match stmt {
-                Statement::Rule(decl) => {
-                    if let Some((_, rule_captures, head_caps)) = rule_data.get(
-                        program.iter().take(idx + 1)
-                            .filter(|s| matches!(s, Statement::Rule(_)))
-                            .count() - 1
-                    ) {
-                        // Validate: head captures should reference captures from the selector body
-                        for cap_var in head_caps {
-                            if !rule_captures.contains(cap_var) {
-                                self.diagnostics.push((
-                                    span.clone(),
-                                    format!("${} in rule head is not captured by any json() or ast() slot", cap_var),
-                                    DiagnosticSeverity::WARNING,
-                                ));
+                        RuleBody::Block { slot, children } => {
+                            for cap in slot.captures() {
+                                all_caps.insert(cap.clone());
+                                rule_caps.push(cap);
+                            }
+                            for child in children {
+                                collect_body_captures(child, all_caps, rule_caps);
+                            }
+                        }
+                        RuleBody::Ref { cross_ref, children } => {
+                            for binding in &cross_ref.bindings {
+                                all_caps.insert(binding.var.clone());
+                                rule_caps.push(binding.var.clone());
+                            }
+                            for child in children {
+                                collect_body_captures(child, all_caps, rule_caps);
                             }
                         }
                     }
                 }
-                Statement::Link(LinkDecl {
-                    src_kind,
-                    tgt_kind,
-                    ..
-                }) => {
-                    if !self.match_kinds.contains(src_kind) {
-                        self.diagnostics.push((
-                            span.clone(),
-                            format!("source kind '{}' is not defined by any rule head capture", src_kind),
-                            DiagnosticSeverity::WARNING,
-                        ));
-                    }
-                    if !self.match_kinds.contains(tgt_kind) {
-                        self.diagnostics.push((
-                            span.clone(),
-                            format!("target kind '{}' is not defined by any rule head capture", tgt_kind),
-                            DiagnosticSeverity::WARNING,
-                        ));
-                    }
+                for body in &decl.body {
+                    collect_body_captures(body, &mut self.all_captures, &mut rule_captures);
                 }
-                Statement::Query(decl) => {
-                    for atom in &decl.body {
-                        if atom.relation != decl.head.relation
-                            && !self.link_kinds.contains(&atom.relation)
-                            && !query_names.contains(&atom.relation)
-                        {
-                            self.diagnostics.push((
-                                span.clone(),
-                                format!(
-                                    "relation '{}' is not a known link kind or query",
-                                    atom.relation
-                                ),
-                                DiagnosticSeverity::WARNING,
-                            ));
-                        }
-                    }
-                }
+
+                self.rules.push(RuleInfo {
+                    span: span.clone(),
+                    captures: rule_captures.clone(),
+                });
             }
         }
     }
@@ -262,9 +183,6 @@ fn extract_captures(body: &str) -> Vec<String> {
 
 /// Detect what completion context the cursor is in.
 enum CompletionContext {
-    MatchKind,
-    LinkKind,
-    LinkPredicate,
     TagName,
     Capture,
     Unknown,
@@ -291,23 +209,6 @@ fn detect_context(text: &str, offset: usize) -> CompletionContext {
 
     if let Some(paren_pos) = last_open {
         let pre = before[..paren_pos].trim_end();
-
-        if pre.ends_with("match") {
-            let inside = &before[paren_pos + 1..];
-            if inside.contains(',') {
-                return CompletionContext::MatchKind;
-            }
-            return CompletionContext::Capture;
-        }
-
-        if pre.ends_with("link") {
-            let inside = &before[paren_pos + 1..];
-            let comma_count = inside.chars().filter(|&c| c == ',').count();
-            if comma_count >= 1 {
-                return CompletionContext::LinkPredicate;
-            }
-            return CompletionContext::LinkKind;
-        }
 
         if pre.ends_with("json") || pre.ends_with("ast") {
             return CompletionContext::Capture;
@@ -360,12 +261,6 @@ fn offset_to_position(text: &str, offset: usize) -> Position {
     Position::new(line, col)
 }
 
-const PREDICATES: &[&str] = &[
-    "norm_eq", "norm2_eq", "string_eq", "target_file_eq", "same_repo", "same_file",
-    "stem_eq_src", "stem_eq_tgt", "ext_eq_src", "ext_eq_tgt",
-    "dir_eq_src", "dir_eq_tgt",
-];
-
 const TAGS: &[(&str, &str)] = &[
     ("fs", "File path glob: fs(**/pattern)"),
     ("json", "JSON/YAML/TOML destructuring: json({ key: $CAP })"),
@@ -373,10 +268,7 @@ const TAGS: &[(&str, &str)] = &[
     ("re", "Regex on file content: re(pattern)"),
     ("repo", "Repository glob: repo(org/*)"),
     ("rev", "Rev glob (branch or tag): rev(main|v*)"),
-    ("rule", "Rule declaration: rule name($CAP) > selectors;"),
-    ("link", "Link declaration: link(src > tgt, predicate)"),
-    ("check", "Check rule: check name($A) > body atoms;"),
-    ("query", "Datalog query: query name($A, $C) > rel($A, $B) name($B, $C);"),
+    ("rule", "Rule declaration: rule(name) { selectors };"),
 ];
 
 #[tower_lsp::async_trait]
@@ -430,26 +322,6 @@ impl LanguageServer for SprfLsp {
         let mut items = vec![];
 
         match ctx {
-            CompletionContext::MatchKind | CompletionContext::LinkKind => {
-                for kind in &state.match_kinds {
-                    items.push(CompletionItem {
-                        label: kind.clone(),
-                        kind: Some(CompletionItemKind::ENUM_MEMBER),
-                        detail: Some("match kind".into()),
-                        ..Default::default()
-                    });
-                }
-            }
-            CompletionContext::LinkPredicate => {
-                for &pred in PREDICATES {
-                    items.push(CompletionItem {
-                        label: pred.into(),
-                        kind: Some(CompletionItemKind::FUNCTION),
-                        detail: Some("link predicate".into()),
-                        ..Default::default()
-                    });
-                }
-            }
             CompletionContext::TagName => {
                 for &(tag, detail) in TAGS {
                     items.push(CompletionItem {
@@ -480,14 +352,6 @@ impl LanguageServer for SprfLsp {
                 });
             }
             CompletionContext::Unknown => {
-                for kind in &state.match_kinds {
-                    items.push(CompletionItem {
-                        label: kind.clone(),
-                        kind: Some(CompletionItemKind::ENUM_MEMBER),
-                        detail: Some("match kind".into()),
-                        ..Default::default()
-                    });
-                }
                 for &(tag, detail) in TAGS {
                     items.push(CompletionItem {
                         label: tag.into(),
@@ -528,7 +392,7 @@ impl SprfLsp {
             });
         }
 
-        // Validation diagnostics (capture mismatches, unknown link kinds)
+        // Validation diagnostics
         let text_copy = text.to_string();
         for (span, msg, severity) in validation_diags {
             let start = offset_to_position(&text_copy, span.start);
