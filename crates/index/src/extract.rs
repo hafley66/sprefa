@@ -49,20 +49,44 @@ fn extract_from_list(
                 return Some(ExtractedFile {
                     rel_path: rel.to_string(),
                     content_hash: hash,
-                    stem: abs_path.file_stem().and_then(|s| s.to_str()).map(String::from),
-                    ext: abs_path.extension().and_then(|e| e.to_str()).map(String::from),
+                    stem: abs_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .map(String::from),
+                    ext: abs_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(String::from),
                     refs: vec![],
                     was_skipped: true,
                 });
             }
 
             let ext = abs_path.extension().and_then(|e| e.to_str());
+            eprintln!("INDEX_DEBUG: file='{}' ext={:?}", rel, ext);
             let refs: Vec<RawRef> = match ext {
-                Some(e) => extractors
-                    .iter()
-                    .filter(|ex| ex.extensions().contains(&e))
-                    .flat_map(|ex| ex.extract(&mmap, rel, ctx))
-                    .collect(),
+                Some(e) => {
+                    eprintln!(
+                        "INDEX_DEBUG: checking {} extractors for ext '{}'",
+                        extractors.len(),
+                        e
+                    );
+                    extractors
+                        .iter()
+                        .filter(|ex| {
+                            let exts = ex.extensions();
+                            let has = exts.contains(&e);
+                            eprintln!(
+                                "INDEX_DEBUG: extractor has {} exts, contains '{}': {}",
+                                exts.len(),
+                                e,
+                                has
+                            );
+                            has
+                        })
+                        .flat_map(|ex| ex.extract(&mmap, rel, ctx))
+                        .collect()
+                }
                 None => return None,
             };
             if refs.is_empty() {
@@ -71,7 +95,10 @@ fn extract_from_list(
             Some(ExtractedFile {
                 rel_path: rel.to_string(),
                 content_hash: hash,
-                stem: abs_path.file_stem().and_then(|s| s.to_str()).map(String::from),
+                stem: abs_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(String::from),
                 ext: ext.map(String::from),
                 refs,
                 was_skipped: false,

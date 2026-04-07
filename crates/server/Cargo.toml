@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+sprefa_cache = { path = "../cache" }
 sprefa_config = { path = "../config" }
 sprefa_schema = { path = "../schema" }
 sprefa_scan = { path = "../scan" }

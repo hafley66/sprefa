@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
+use sprefa_cache::SqliteStore;
 use sprefa_config::RepoConfig;
-use sprefa_rules::{extractor::RuleExtractor, DerivedRules, RuleSet};
+use sprefa_rules::{extractor::RuleExtractor, RuleSet};
 use sprefa_scan::{Extractor, Scanner};
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -44,7 +45,7 @@ fn rules_path() -> PathBuf {
         .join("sprefa-rules.json")
 }
 
-/// JSON rule files still carry link_rules/query_rules at top level.
+/// JSON rule files - extraction rules only.
 #[derive(serde::Deserialize)]
 #[allow(dead_code)]
 struct RuleFile {
@@ -52,22 +53,15 @@ struct RuleFile {
     schema: Option<String>,
     #[serde(default)]
     rules: Vec<sprefa_rules::Rule>,
-    #[serde(default)]
-    link_rules: Vec<sprefa_rules::LinkRule>,
-    #[serde(default)]
-    query_rules: Vec<sprefa_rules::QueryDef>,
 }
 
-fn load_ruleset() -> (RuleSet, DerivedRules) {
+fn load_ruleset() -> RuleSet {
     let bytes = std::fs::read(rules_path()).unwrap();
     let rf: RuleFile = serde_json::from_slice(&bytes).unwrap();
-    (
-        RuleSet { schema: rf.schema, rules: rf.rules },
-        DerivedRules { link_rules: rf.link_rules, query_rules: rf.query_rules },
-    )
+    RuleSet { schema: rf.schema, rules: rf.rules }
 }
 
-fn make_scanner(db: SqlitePool) -> Scanner {
+fn make_scanner(db: SqlitePool) -> Scanner<sprefa_cache::SqliteStore> {
     let rule_ext = RuleExtractor::from_json(&rules_path()).unwrap();
     Scanner {
         extractors: Arc::new(vec![
@@ -75,27 +69,15 @@ fn make_scanner(db: SqlitePool) -> Scanner {
             Box::new(sprefa_js::JsExtractor),
             Box::new(sprefa_rs::RsExtractor),
         ]),
-        db,
+        store: sprefa_cache::SqliteStore::new(db),
         normalize_config: None,
         global_filter: None,
-        link_rules: vec![],
     }
 }
 
-fn make_scanner_with_links(db: SqlitePool) -> Scanner {
-    let (ruleset, derived) = load_ruleset();
-    let rule_ext = RuleExtractor::from_ruleset(&ruleset).unwrap();
-    Scanner {
-        extractors: Arc::new(vec![
-            Box::new(rule_ext) as Box<dyn Extractor>,
-            Box::new(sprefa_js::JsExtractor),
-            Box::new(sprefa_rs::RsExtractor),
-        ]),
-        db,
-        normalize_config: None,
-        global_filter: None,
-        link_rules: derived.link_rules,
-    }
+// NOTE: Link rules removed - using extraction rules only
+fn make_scanner_with_links(db: SqlitePool) -> Scanner<sprefa_cache::SqliteStore> {
+    make_scanner(db)
 }
 
 async fn count_kind(db: &SqlitePool, kind: &str) -> i64 {
@@ -287,7 +269,7 @@ fn setup_fixtures() -> FixtureSet {
     FixtureSet { _dir: dir, backend, frontend, infra, shared_lib }
 }
 
-async fn scan_all(scanner: &Scanner, fixtures: &FixtureSet) {
+async fn scan_all(scanner: &Scanner<sprefa_cache::SqliteStore>, fixtures: &FixtureSet) {
     // Providers scanned before consumers so cross-repo link rules fire on first pass:
     // shared-lib (package_name) and infra (env_var_name) before backend/frontend.
     // NOTE: this ordering dependency is a known architectural gap -- in production,

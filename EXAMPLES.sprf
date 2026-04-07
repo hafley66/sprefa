@@ -11,14 +11,12 @@
 # Level 0: extract repo+rev from helmfile/values
 rule(deploy_ref) {
   fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
-  scan(repo: $REPO, rev: $TAG)
 };
 
 # Level 1: in each referenced repo at that rev, find internal deps
 rule(internal_dep) {
   deploy_ref(repo: $REPO, rev: $TAG) {
     fs(**/package.json) > json({ dependencies: { $DEP: $SPEC } })
-    scan(repo: $DEP, rev: $SPEC)
   }
 };
 
@@ -27,14 +25,6 @@ rule(lock_pin) {
   internal_dep(dep: $DEP, repo: $REPO) {
     fs(**/package-lock.json) > line($DEP.*resolved.*#$PINNED_REV)
   }
-};
-
-# Drift detection: spec vs lock
-check(dep_version_drift) {
-  SELECT id.dep, id.spec, lp.pinned_rev
-  FROM internal_dep id
-  LEFT JOIN lock_pin lp ON id.dep = lp.dep AND id.repo = lp.repo
-  WHERE lp.pinned_rev IS NULL OR lp.pinned_rev != id.spec
 };
 
 
@@ -67,22 +57,6 @@ rule(hardcoded_url) {
   }
 };
 
-# Ops in spec with zero frontend references
-check(stale_ops) {
-  SELECT o.op, o.path
-  FROM api_ops o
-  LEFT JOIN frontend_op_ref f ON o.op = f.op
-  WHERE f.op IS NULL
-};
-
-# Frontend refs to ops no longer in the spec
-check(dead_refs) {
-  SELECT f.op
-  FROM frontend_op_ref f
-  LEFT JOIN api_ops o ON f.op = o.op
-  WHERE o.op IS NULL
-};
-
 
 # ═══════════════════════════════════════════════════════
 # 3. Cross-repo string sync detection
@@ -102,13 +76,6 @@ rule(consumer_strings) {
   }
 };
 
-check(string_drift) {
-  SELECT s.name, s.value as source_val, c.value as consumer_val
-  FROM source_strings s
-  JOIN consumer_strings c ON s.name = c.name
-  WHERE s.value != c.value
-};
-
 
 # ═══════════════════════════════════════════════════════
 # 4. Monorepo workspace internal dep graph
@@ -126,18 +93,6 @@ rule(internal_dep_chain) {
   }
 };
 
-# Transitive closure query
-query(transitive_deps) {
-  WITH RECURSIVE transitive AS (
-    SELECT pkg, dep FROM internal_dep_chain
-    UNION
-    SELECT t.pkg, ic.dep
-    FROM transitive t
-    JOIN internal_dep_chain ic ON t.dep = ic.pkg
-  )
-  SELECT * FROM transitive
-};
-
 
 # ═══════════════════════════════════════════════════════
 # 5. Terraform module chain (recursive discovery)
@@ -146,7 +101,6 @@ query(transitive_deps) {
 # Root modules reference child modules by path
 rule(tf_module) {
   fs(**/*.tf) > line(source\s*=\s*"\./$PATH")
-  scan(repo: $PATH)
 };
 
 # Each discovered module path gets scanned,
@@ -155,20 +109,7 @@ rule(tf_module) {
 rule(tf_transitive) {
   tf_module(path: $PARENT) {
     fs(**/*.tf) > line(source\s*=\s*"\./$CHILD")
-    scan(repo: $CHILD)
   }
-};
-
-# Full module tree
-query(module_tree) {
-  WITH RECURSIVE tree AS (
-    SELECT path as module, path as root FROM tf_module
-    UNION
-    SELECT t.child, tr.root
-    FROM tf_transitive t
-    JOIN tree tr ON t.parent = tr.module
-  )
-  SELECT * FROM tree
 };
 
 
@@ -178,27 +119,13 @@ query(module_tree) {
 
 rule(dockerfile_from) {
   fs(**/Dockerfile) > line(FROM\s+$IMAGE:$TAG)
-  scan(repo: $IMAGE, rev: $TAG)
 };
 
 # Each base image might have its own Dockerfile with FROM
 rule(base_image_chain) {
   dockerfile_from(image: $IMAGE, tag: $TAG) {
     fs(**/Dockerfile) > line(FROM\s+$BASE_IMAGE:$BASE_TAG)
-    scan(repo: $BASE_IMAGE, rev: $BASE_TAG)
   }
-};
-
-# All images in the transitive base chain
-query(full_image_lineage) {
-  WITH RECURSIVE lineage AS (
-    SELECT image, tag FROM dockerfile_from
-    UNION
-    SELECT b.base_image, b.base_tag
-    FROM base_image_chain b
-    JOIN lineage l ON b.image = l.image AND b.tag = l.tag
-  )
-  SELECT * FROM lineage
 };
 
 
@@ -292,55 +219,3 @@ rule(rs_seaorm_ref) {
   }
 };
 
-# ── Checks ────────────────────────────────────────
-
-# Tables in DDL with zero ORM references anywhere
-check(orphan_tables) {
-  SELECT t.table
-  FROM ddl_table t
-  LEFT JOIN py_orm_ref py ON t.table = py.table
-  LEFT JOIN ts_typeorm_ref ts ON t.table = ts.table
-  LEFT JOIN ts_prisma_ref pr ON t.table = pr.table
-  LEFT JOIN ts_drizzle_ref dr ON t.table = dr.table
-  LEFT JOIN go_gorm_ref go ON t.table = go.table
-  LEFT JOIN java_entity_ref j ON t.table = j.table
-  LEFT JOIN rs_diesel_ref rd ON t.table = rd.table
-  WHERE py.table IS NULL
-    AND ts.table IS NULL
-    AND pr.table IS NULL
-    AND dr.table IS NULL
-    AND go.table IS NULL
-    AND j.table IS NULL
-    AND rd.table IS NULL
-};
-
-# ORM refs to tables not in any migration
-check(phantom_tables) {
-  WITH all_orm_refs AS (
-    SELECT table FROM py_orm_ref
-    UNION SELECT table FROM ts_typeorm_ref
-    UNION SELECT table FROM ts_prisma_ref
-    UNION SELECT table FROM ts_drizzle_ref
-    UNION SELECT table FROM go_gorm_ref
-    UNION SELECT table FROM java_entity_ref
-    UNION SELECT table FROM rs_diesel_ref
-  )
-  SELECT r.table FROM all_orm_refs r
-  LEFT JOIN ddl_table t ON r.table = t.table
-  WHERE t.table IS NULL
-};
-
-# Column added in migration but missing from ORM model
-check(missing_columns) {
-  WITH all_columns AS (
-    SELECT table, column FROM ddl_column
-    UNION SELECT table, column FROM ddl_column_create
-  ),
-  all_col_refs AS (
-    SELECT table, column FROM py_column_ref
-  )
-  SELECT c.table, c.column
-  FROM all_columns c
-  LEFT JOIN all_col_refs r ON c.table = r.table AND c.column = r.column
-  WHERE r.column IS NULL
-};

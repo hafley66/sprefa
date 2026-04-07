@@ -1,16 +1,16 @@
 pub mod discovery;
 pub mod flush;
-pub mod match_links;
 pub mod meta;
 pub mod resolve;
 pub mod scan_context;
+pub mod store;
+pub mod sqlite_store;
 
 pub use flush::{flush, delete_rev_files_by_paths, rename_file_paths};
 pub use meta::flush_repo_meta;
-pub use match_links::resolve_match_links;
-pub use sprefa_rules::LinkRule;
 pub use resolve::resolve_import_targets;
-pub use scan_context::{has_stale_scanner_hash, load_scan_context, ScanContext};
+pub use store::{Store, to_file_results, ScanContext};
+pub use sqlite_store::SqliteStore;
 
 /// Return the working-tree rev name for a given base rev.
 /// e.g. `"main"` -> `"main+wt"`

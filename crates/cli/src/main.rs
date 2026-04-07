@@ -8,6 +8,7 @@ use sprefa_js::JsExtractor;
 use sprefa_rs::RsExtractor;
 use sprefa_rules::extractor::RuleExtractor;
 use sprefa_scan::Scanner;
+use sprefa_cache::{SqliteStore, Store};
 use sprefa_schema::{
     count_files_for_repo, count_refs_for_repo, init_db, list_repos, search_refs, upsert_repo,
     BranchScope,
@@ -248,15 +249,6 @@ enum Command {
         files: Vec<PathBuf>,
     },
 
-    /// Run check rules and report violations
-    ///
-    /// Executes all `check` rules from the .sprf rules file against the
-    /// indexed database. Each check asserts zero matching rows -- any
-    /// results are constraint violations.
-    ///
-    /// Exit code 0 = all checks pass. Exit code 1 = violations found.
-    Check,
-
     /// All-in-one: scan + watch + serve
     ///
     /// Runs the full pipeline in a single process:
@@ -315,7 +307,6 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Query { term, scope, once }) => {
             cmd_query(&cli.config, &term, scope.as_deref(), once).await?
         }
-        Some(Command::Check) => cmd_check(&cli.config).await?,
         Some(Command::Sql { sql }) => cmd_sql(&cli.config, &sql).await?,
         Some(Command::Serve) => cmd_serve(&cli.config).await?,
         Some(Command::Watch { repo }) => cmd_watch(&cli.config, repo.as_deref()).await?,
@@ -409,54 +400,43 @@ async fn cmd_add(
 fn build_scanner(
     config: &sprefa_config::Config,
     pool: sqlx::SqlitePool,
-) -> anyhow::Result<Scanner> {
+) -> anyhow::Result<Scanner<SqliteStore>> {
     let rules_path = find_rules_file()?;
-    let (ruleset, derived) = load_ruleset(&rules_path)?;
-    let link_rules = derived.link_rules;
+    let ruleset = load_ruleset(&rules_path)?;
     let extractor = RuleExtractor::from_ruleset(&ruleset)?;
+    let store = SqliteStore::new(pool);
     Ok(Scanner {
         extractors: Arc::new(vec![
             Box::new(extractor) as Box<dyn sprefa_scan::Extractor>,
             Box::new(JsExtractor),
             Box::new(RsExtractor),
         ]),
-        db: pool,
+        store,
         normalize_config: config.scan.as_ref().and_then(|s| s.normalize.clone()),
         global_filter: config.filter.clone(),
-        link_rules,
     })
 }
 
 /// Combined rule file shape for JSON/YAML backward compat.
-/// .sprf files use the split return from `parse_sprf` directly.
+/// .sprf files use the return from `parse_sprf` directly.
 #[derive(serde::Deserialize)]
 struct RuleFile {
     #[serde(rename = "$schema", default)]
     schema: Option<String>,
     #[serde(default)]
     rules: Vec<sprefa_rules::Rule>,
-    #[serde(default)]
-    link_rules: Vec<sprefa_rules::LinkRule>,
-    #[serde(default)]
-    query_rules: Vec<sprefa_rules::QueryDef>,
 }
 
 impl RuleFile {
-    fn split(self) -> (sprefa_rules::RuleSet, sprefa_rules::DerivedRules) {
-        (
-            sprefa_rules::RuleSet {
-                schema: self.schema,
-                rules: self.rules,
-            },
-            sprefa_rules::DerivedRules {
-                link_rules: self.link_rules,
-                query_rules: self.query_rules,
-            },
-        )
+    fn into_ruleset(self) -> sprefa_rules::RuleSet {
+        sprefa_rules::RuleSet {
+            schema: self.schema,
+            rules: self.rules,
+        }
     }
 }
 
-fn load_ruleset(path: &std::path::Path) -> anyhow::Result<(sprefa_rules::RuleSet, sprefa_rules::DerivedRules)> {
+fn load_ruleset(path: &std::path::Path) -> anyhow::Result<sprefa_rules::RuleSet> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("sprf") => sprefa_sprf::load_sprf(path).map_err(|e| {
             anyhow::anyhow!("failed to parse .sprf rules from {}: {}", path.display(), e)
@@ -466,29 +446,16 @@ fn load_ruleset(path: &std::path::Path) -> anyhow::Result<(sprefa_rules::RuleSet
             let rf: RuleFile = serde_yaml::from_slice(&bytes).map_err(|e| {
                 anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e)
             })?;
-            Ok(rf.split())
+            Ok(rf.into_ruleset())
         }
         _ => {
             let bytes = std::fs::read(path)?;
             let rf: RuleFile = serde_json::from_slice(&bytes).map_err(|e| {
                 anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e)
             })?;
-            Ok(rf.split())
+            Ok(rf.into_ruleset())
         }
     }
-}
-
-/// Build a map of rule name → capture kinds for rule-as-relation resolution.
-fn build_known_rules(ruleset: &sprefa_rules::RuleSet) -> std::collections::HashMap<String, sprefa_rules::query::RuleSchema> {
-    let mut map = std::collections::HashMap::new();
-    for rule in &ruleset.rules {
-        let kinds: Vec<String> = rule.create_matches.iter().map(|m| m.kind.clone()).collect();
-        if !kinds.is_empty() {
-            map.entry(rule.name.clone())
-                .or_insert_with(|| sprefa_rules::query::RuleSchema { kinds });
-        }
-    }
-    map
 }
 
 async fn cmd_scan(
@@ -593,24 +560,9 @@ async fn cmd_scan(
     }
 
     // Second pass: re-resolve match links for all scanned repos.
-    // During the first pass each repo only sees targets that were already indexed.
-    // This pass picks up cross-repo links that couldn't resolve due to scan order.
-    if repos.len() > 1 && !scanner.link_rules.is_empty() {
-        let mut second_pass_links = 0usize;
-        for repo in &repos {
-            match scanner.resolve_links(&repo.name).await {
-                Ok(n) => second_pass_links += n,
-                Err(e) => {
-                    tracing::warn!("{}: second-pass link resolution failed: {}", repo.name, e)
-                }
-            }
-        }
-        if second_pass_links > 0 {
-            println!(
-                "second pass: {} additional cross-repo links",
-                second_pass_links
-            );
-        }
+    // DEPRECATED: Link rules have been removed.
+    if repos.len() > 1 {
+        tracing::info!("link resolution skipped: link rules have been removed");
     }
 
     // Tier 2: discovery loop. Query match_labels for (repo, rev) pairs
@@ -621,8 +573,9 @@ async fn cmd_scan(
 
         const MAX_DISCOVERY_ITERATIONS: i32 = 10;
         for iteration in 1..=MAX_DISCOVERY_ITERATIONS {
-            let targets = sprefa_cache::discovery::discover_scan_targets(&scanner.db).await?;
-            let scanned = sprefa_cache::discovery::scanned_revs(&scanner.db).await?;
+            let pool = scanner.store.sqlite_pool().ok_or_else(|| anyhow::anyhow!("discovery requires sqlite store"))?;
+            let targets = sprefa_cache::discovery::discover_scan_targets(pool).await?;
+            let scanned = sprefa_cache::discovery::scanned_revs(pool).await?;
             let mut new_targets = Vec::new();
             let mut log_entries = Vec::new();
 
@@ -667,7 +620,8 @@ async fn cmd_scan(
             }
 
             // Flush skip-phase log entries in one batch.
-            sprefa_cache::discovery::log_discovery_batch(&scanner.db, &log_entries).await?;
+            let pool = scanner.store.sqlite_pool().ok_or_else(|| anyhow::anyhow!("discovery requires sqlite store"))?;
+            sprefa_cache::discovery::log_discovery_batch(pool, &log_entries).await?;
 
             if new_targets.is_empty() {
                 if iteration > 1 {
@@ -722,7 +676,8 @@ async fn cmd_scan(
                     }
                 }
             }
-            sprefa_cache::discovery::log_discovery_batch(&scanner.db, &scan_log_entries).await?;
+            let pool = scanner.store.sqlite_pool().ok_or_else(|| anyhow::anyhow!("discovery requires sqlite store"))?;
+            sprefa_cache::discovery::log_discovery_batch(pool, &scan_log_entries).await?;
 
             // Re-resolve links for affected repos after discovery scans.
             let mut discovery_links = 0usize;
@@ -818,11 +773,6 @@ async fn cmd_query(
     scope: Option<&str>,
     once: bool,
 ) -> anyhow::Result<()> {
-    // Detect Datalog goal syntax: `relation($VAR, "lit")` -- has parens
-    if term.contains('(') && term.contains(')') {
-        return cmd_query_datalog(config_path, term).await;
-    }
-
     let config = load_cfg(config_path)?;
     let scope = parse_scope(scope)?;
 
@@ -855,226 +805,6 @@ async fn cmd_query(
     let hits = search_refs(&pool, term, scope).await?;
     print_query_hits(&hits, term);
     Ok(())
-}
-
-/// Execute a Datalog-style goal against compiled query rules from .sprf.
-///
-/// Parses the goal as an atom, finds the matching QueryDef in the rules file,
-/// compiles it to SQL, applies goal bindings, and executes against the DB.
-async fn cmd_query_datalog(config_path: &Option<PathBuf>, goal_str: &str) -> anyhow::Result<()> {
-    use sprefa_rules::query::{compile_goal_filter, compile_query_with_deps, RuleSchema};
-    use std::collections::HashMap;
-
-    // Parse goal atom using the sprf parser
-    let goal_input = format!("query _goal($__UNUSED) > {};", goal_str);
-    let program = sprefa_sprf::_1_parse::parse_program(&goal_input);
-    // That's a hack -- just parse the atom directly. Let me parse it properly.
-    // Actually, reuse the atom parser by parsing as a query body.
-    drop(program);
-
-    // Parse the goal as an atom: `name($ARG1, $ARG2)` or `name($ARG1, "lit")`
-    let goal_atom = parse_goal_atom(goal_str)?;
-
-    // Load rules file to get query definitions
-    let rules_path = find_rules_file()?;
-    let (ruleset, derived) = load_ruleset(&rules_path)?;
-
-    if derived.query_rules.is_empty() {
-        anyhow::bail!("no query rules defined in {}", rules_path.display());
-    }
-
-    // Find the matching query def
-    let qdef = derived
-        .query_rules
-        .iter()
-        .find(|q| q.name == goal_atom.relation)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no query rule named '{}'. available: {}",
-                goal_atom.relation,
-                derived
-                    .query_rules
-                    .iter()
-                    .map(|q| q.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })?;
-
-    if goal_atom.args.len() != qdef.arity {
-        anyhow::bail!(
-            "query '{}' expects {} args, goal has {}",
-            qdef.name,
-            qdef.arity,
-            goal_atom.args.len()
-        );
-    }
-
-    // Build query maps
-    let known: HashMap<String, usize> = derived
-        .query_rules
-        .iter()
-        .map(|q| (q.name.clone(), q.arity))
-        .collect();
-    let all_queries: HashMap<String, &sprefa_rules::QueryDef> = derived
-        .query_rules
-        .iter()
-        .map(|q| (q.name.clone(), q))
-        .collect();
-    let known_rules: HashMap<String, RuleSchema> = build_known_rules(&ruleset);
-
-    // Compile query with all transitive dependencies
-    let base_sql = compile_query_with_deps(qdef, &all_queries, &known, &known_rules)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    // Apply goal bindings
-    let goal_args: Vec<String> = goal_atom
-        .args
-        .iter()
-        .map(|t| match t {
-            sprefa_sprf::_0_ast::Term::Var(name) => name.clone(),
-            sprefa_sprf::_0_ast::Term::Lit(val) => format!("={val}"),
-            sprefa_sprf::_0_ast::Term::Wild => "_".to_string(),
-        })
-        .collect();
-
-    let (_output_cols, goal_where) = compile_goal_filter(&goal_args, qdef);
-
-    let full_sql = format!("{base_sql}{goal_where}");
-
-    // Execute
-    let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
-
-    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(&full_sql).fetch_all(&pool).await?;
-
-    if rows.is_empty() {
-        println!("(0 rows)");
-        return Ok(());
-    }
-
-    // Print results using the same TSV format as cmd_sql
-    use sqlx::{Column, Row};
-    let cols: Vec<String> = rows[0]
-        .columns()
-        .iter()
-        .map(|c| c.name().to_string())
-        .collect();
-    println!("{}", cols.join("\t"));
-
-    for row in &rows {
-        let vals: Vec<String> = (0..cols.len())
-            .map(|i| {
-                row.try_get::<String, _>(i)
-                    .or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string()))
-                    .or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string()))
-                    .unwrap_or_else(|_| "NULL".into())
-            })
-            .collect();
-        println!("{}", vals.join("\t"));
-    }
-    println!("\n({} rows)", rows.len());
-
-    Ok(())
-}
-
-/// Run all check rules and report violations.
-///
-/// Each check rule compiles to SQL the same way as a query. Non-empty
-/// results are violations. Prints violations per check, exits 1 if any found.
-async fn cmd_check(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
-    use sprefa_rules::query::{compile_query_with_deps, RuleSchema};
-    use std::collections::HashMap;
-
-    let rules_path = find_rules_file()?;
-    let (ruleset, derived) = load_ruleset(&rules_path)?;
-
-    let checks: Vec<&sprefa_rules::QueryDef> = derived
-        .query_rules
-        .iter()
-        .filter(|q| q.is_check)
-        .collect();
-
-    if checks.is_empty() {
-        println!("no check rules defined");
-        return Ok(());
-    }
-
-    let known: HashMap<String, usize> = derived
-        .query_rules
-        .iter()
-        .map(|q| (q.name.clone(), q.arity))
-        .collect();
-    let all_queries: HashMap<String, &sprefa_rules::QueryDef> = derived
-        .query_rules
-        .iter()
-        .map(|q| (q.name.clone(), q))
-        .collect();
-    let known_rules: HashMap<String, RuleSchema> = build_known_rules(&ruleset);
-
-    let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
-
-    let mut total_violations = 0usize;
-
-    for check in &checks {
-        let sql = compile_query_with_deps(check, &all_queries, &known, &known_rules)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(&sql).fetch_all(&pool).await?;
-
-        if rows.is_empty() {
-            println!("  PASS  {}", check.name);
-        } else {
-            println!("  FAIL  {} ({} violations)", check.name, rows.len());
-            total_violations += rows.len();
-
-            // Print violation details
-            use sqlx::{Column, Row};
-            let cols: Vec<String> = rows[0]
-                .columns()
-                .iter()
-                .map(|c| c.name().to_string())
-                .collect();
-            println!("        {}", cols.join("\t"));
-            for row in &rows {
-                let vals: Vec<String> = (0..cols.len())
-                    .map(|i| {
-                        row.try_get::<String, _>(i)
-                            .or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string()))
-                            .or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string()))
-                            .unwrap_or_else(|_| "NULL".into())
-                    })
-                    .collect();
-                println!("        {}", vals.join("\t"));
-            }
-        }
-    }
-
-    if total_violations > 0 {
-        println!("\n{} total violations across {} checks", total_violations, checks.len());
-        std::process::exit(1);
-    } else {
-        println!("\nall {} checks passed", checks.len());
-    }
-
-    Ok(())
-}
-
-/// Parse a goal string like `all_deps($WHO, "lodash")` into an Atom.
-fn parse_goal_atom(input: &str) -> anyhow::Result<sprefa_sprf::_0_ast::Atom> {
-    // Wrap in a dummy query to reuse the parser
-    let wrapped = format!("query __goal($__X) > {input};");
-    let program = sprefa_sprf::_1_parse::parse_program(&wrapped)?;
-    match program.into_iter().next() {
-        Some(sprefa_sprf::_0_ast::Statement::Query(decl)) => {
-            if decl.body.len() != 1 {
-                anyhow::bail!("goal must be a single atom");
-            }
-            Ok(decl.body.into_iter().next().unwrap())
-        }
-        _ => anyhow::bail!("failed to parse goal: {}", input),
-    }
 }
 
 fn print_query_hits(hits: &[sprefa_schema::QueryHit], term: &str) {
@@ -1199,7 +929,6 @@ async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> an
         &pool,
         &scanner.extractors,
         &rewriters,
-        &scanner.link_rules,
     )
     .await?;
 
@@ -1323,7 +1052,6 @@ async fn cmd_daemon(
         &pool,
         &scanner.extractors,
         &rewriters,
-        &scanner.link_rules,
     )
     .await?;
 
@@ -1363,7 +1091,6 @@ async fn spawn_watchers(
     pool: &sqlx::SqlitePool,
     extractors: &Arc<Vec<Box<dyn sprefa_scan::Extractor>>>,
     rewriters: &Arc<Vec<Box<dyn PathRewriter>>>,
-    link_rules: &[sprefa_rules::LinkRule],
 ) -> anyhow::Result<PauseFlags> {
     let mut pauses = PauseFlags::new();
     for repo in repos {
@@ -1381,7 +1108,6 @@ async fn spawn_watchers(
             root_path: abs_path.clone(),
             repo_id,
             repo_name: repo.name.clone(),
-            link_rules: link_rules.to_vec(),
             debounce: Duration::from_millis(100),
             wt_branch: wt,
             pause,
@@ -1469,7 +1195,7 @@ fn cmd_eval(rule_str: &str, files: &[PathBuf]) -> anyhow::Result<()> {
         format!("{};", rule_str)
     };
 
-    let (ruleset, _) = sprefa_sprf::parse_sprf(&source)?;
+    let ruleset = sprefa_sprf::parse_sprf(&source)?;
     let has_match_slots = !ruleset.rules.iter().all(|r| r.create_matches.is_empty());
     let extractor = RuleExtractor::from_ruleset(&ruleset)?;
 
@@ -1616,7 +1342,7 @@ fn cmd_config(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
 /// Scan a single ghcache checkout: committed branch (incremental if possible)
 /// plus working-tree branch. Pauses/unpauses the watcher during scan.
 async fn scan_checkout(
-    scanner: &Scanner,
+    scanner: &Scanner<SqliteStore>,
     repo_slug: &str,
     branch: &str,
     local_path: &str,
@@ -1742,7 +1468,7 @@ async fn scan_checkout(
 /// events and rescans incrementally.
 async fn ghcache_subscribe(
     ghcache_db: &str,
-    scanner: &Arc<Scanner>,
+    scanner: &Arc<Scanner<SqliteStore>>,
     pauses: &PauseFlags,
     sources: &[sprefa_config::SourceConfig],
 ) -> anyhow::Result<()> {

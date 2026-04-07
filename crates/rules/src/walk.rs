@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::pattern::{compile_pattern, PatternMatcher};
+use crate::pattern::{compile_pattern, parse_segment_pattern, PatternMatcher, Segment};
 use crate::types::{KeyMatcher, ObjectEntry, SelectStep};
 
 /// A value captured during a walk, with its position in the source.
@@ -25,16 +25,39 @@ pub struct MatchResult {
 #[derive(Debug)]
 pub enum CompiledStep {
     Any,
-    Key { name: String, capture: Option<String> },
-    KeyMatch { matchers: Vec<PatternMatcher>, capture: Option<String> },
-    DepthMin { n: u32 },
-    DepthMax { n: u32 },
-    DepthEq { n: u32 },
-    ParentKey { matchers: Vec<PatternMatcher> },
+    Key {
+        name: String,
+        capture: Option<String>,
+    },
+    KeyMatch {
+        matchers: Vec<PatternMatcher>,
+        capture: Option<String>,
+    },
+    DepthMin {
+        n: u32,
+    },
+    DepthMax {
+        n: u32,
+    },
+    DepthEq {
+        n: u32,
+    },
+    ParentKey {
+        matchers: Vec<PatternMatcher>,
+    },
     ArrayItem,
-    Leaf { capture: Option<String> },
-    Object { entries: Vec<CompiledObjectEntry> },
-    Array { item: Vec<CompiledStep> },
+    Leaf {
+        capture: Option<String>,
+    },
+    LeafPattern {
+        segments: Vec<Segment>,
+    },
+    Object {
+        entries: Vec<CompiledObjectEntry>,
+    },
+    Array {
+        item: Vec<CompiledStep>,
+    },
 }
 
 /// Pre-compiled object entry for Object step destructuring.
@@ -79,8 +102,14 @@ fn compile_one_step(step: &SelectStep) -> anyhow::Result<CompiledStep> {
         SelectStep::Leaf { capture } => CompiledStep::Leaf {
             capture: capture.clone(),
         },
+        SelectStep::LeafPattern { pattern } => CompiledStep::LeafPattern {
+            segments: parse_segment_pattern(pattern),
+        },
         SelectStep::Object { entries } => CompiledStep::Object {
-            entries: entries.iter().map(compile_object_entry).collect::<anyhow::Result<_>>()?,
+            entries: entries
+                .iter()
+                .map(compile_object_entry)
+                .collect::<anyhow::Result<_>>()?,
         },
         SelectStep::Array { item } => CompiledStep::Array {
             item: compile_steps(item)?,
@@ -261,9 +290,7 @@ fn walk_inner(node: &Value, steps: &[CompiledStep], state: &WalkState) -> Vec<Ma
         }
 
         CompiledStep::ParentKey { matchers } => match &state.parent_key {
-            Some(pk) if matchers.iter().any(|m| m.is_match(pk)) => {
-                walk_inner(node, rest, state)
-            }
+            Some(pk) if matchers.iter().any(|m| m.is_match(pk)) => walk_inner(node, rest, state),
             _ => vec![],
         },
 
@@ -325,10 +352,35 @@ fn walk_inner(node: &Value, steps: &[CompiledStep], state: &WalkState) -> Vec<Ma
             _ => vec![],
         },
 
+        CompiledStep::LeafPattern { segments } => {
+            let text = match node {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                Value::Bool(b) => b.to_string(),
+                _ => return vec![],
+            };
+            match crate::pattern::match_segments_pub(segments, &text) {
+                Some(caps) => {
+                    let mut next_state = state.clone();
+                    for (name, value) in caps {
+                        next_state.captures.insert(
+                            name,
+                            CapturedValue {
+                                text: value,
+                                span_start: 0,
+                                span_end: 0,
+                            },
+                        );
+                    }
+                    walk_inner(node, rest, &next_state)
+                }
+                None => vec![],
+            }
+        }
+
         CompiledStep::Object { entries } => match node {
             Value::Object(map) => {
-                let mut product: Vec<HashMap<String, CapturedValue>> =
-                    vec![state.captures.clone()];
+                let mut product: Vec<HashMap<String, CapturedValue>> = vec![state.captures.clone()];
 
                 for entry in entries {
                     let matching_keys = compiled_key_matches(&entry.key, map);
@@ -339,19 +391,38 @@ fn walk_inner(node: &Value, steps: &[CompiledStep], state: &WalkState) -> Vec<Ma
                             let mut child_state = state.descend(Some(key_name));
                             child_state.captures = caps_so_far.clone();
 
-                            if let CompiledKeyMatcher::Capture(cap) = &entry.key {
-                                child_state.captures.insert(
-                                    cap.clone(),
-                                    CapturedValue {
-                                        text: key_name.clone(),
-                                        span_start: 0,
-                                        span_end: 0,
-                                    },
-                                );
+                            match &entry.key {
+                                CompiledKeyMatcher::Capture(cap) => {
+                                    child_state.captures.insert(
+                                        cap.clone(),
+                                        CapturedValue {
+                                            text: key_name.clone(),
+                                            span_start: 0,
+                                            span_end: 0,
+                                        },
+                                    );
+                                }
+                                CompiledKeyMatcher::Glob(matchers) => {
+                                    // Extract segment captures from pattern keys
+                                    for m in matchers {
+                                        if let Some(caps) = m.captures(key_name) {
+                                            for (name, value) in caps {
+                                                child_state.captures.insert(
+                                                    name,
+                                                    CapturedValue {
+                                                        text: value,
+                                                        span_start: 0,
+                                                        span_end: 0,
+                                                    },
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
 
-                            let sub_results =
-                                walk_inner(child_value, &entry.value, &child_state);
+                            let sub_results = walk_inner(child_value, &entry.value, &child_state);
                             for r in sub_results {
                                 next_product.push(r.captures);
                             }
@@ -412,5 +483,100 @@ fn compiled_key_matches<'a>(
         CompiledKeyMatcher::Capture(_) | CompiledKeyMatcher::Wildcard => {
             map.iter().map(|(k, v)| (k.clone(), v)).collect()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn leaf_pattern_captures() {
+        let node = json!({ "image": "nginx:1.25" });
+        let steps = vec![
+            SelectStep::Object {
+                entries: vec![ObjectEntry {
+                    key: KeyMatcher::Exact("image".into()),
+                    value: vec![SelectStep::LeafPattern {
+                        pattern: "$REPO:$TAG".into(),
+                    }],
+                }],
+            },
+        ];
+        let results = walk_select(&node, &steps);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].captures["REPO"].text, "nginx");
+        assert_eq!(results[0].captures["TAG"].text, "1.25");
+    }
+
+    #[test]
+    fn leaf_pattern_no_match() {
+        let node = json!({ "image": "nocolon" });
+        let steps = vec![
+            SelectStep::Object {
+                entries: vec![ObjectEntry {
+                    key: KeyMatcher::Exact("image".into()),
+                    value: vec![SelectStep::LeafPattern {
+                        pattern: "$REPO:$TAG".into(),
+                    }],
+                }],
+            },
+        ];
+        let results = walk_select(&node, &steps);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn key_segment_captures() {
+        let node = json!({ "@myorg/mylib": "^1.0.0" });
+        let steps = vec![
+            SelectStep::Object {
+                entries: vec![ObjectEntry {
+                    key: KeyMatcher::Glob("@$SCOPE/$NAME".into()),
+                    value: vec![SelectStep::Leaf {
+                        capture: Some("VERSION".into()),
+                    }],
+                }],
+            },
+        ];
+        let results = walk_select(&node, &steps);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].captures["SCOPE"].text, "myorg");
+        assert_eq!(results[0].captures["NAME"].text, "mylib");
+        assert_eq!(results[0].captures["VERSION"].text, "^1.0.0");
+    }
+
+    #[test]
+    fn scoped_npm_deps() {
+        let node = json!({
+            "dependencies": {
+                "@angular/core": "^17.0.0",
+                "@angular/forms": "^17.0.0",
+                "lodash": "^4.17.0"
+            }
+        });
+        let steps = vec![
+            SelectStep::Object {
+                entries: vec![ObjectEntry {
+                    key: KeyMatcher::Exact("dependencies".into()),
+                    value: vec![SelectStep::Object {
+                        entries: vec![ObjectEntry {
+                            key: KeyMatcher::Glob("@$SCOPE/$NAME".into()),
+                            value: vec![SelectStep::Leaf {
+                                capture: Some("VERSION".into()),
+                            }],
+                        }],
+                    }],
+                }],
+            },
+        ];
+        let results = walk_select(&node, &steps);
+        assert_eq!(results.len(), 2);
+        let scopes: Vec<&str> = results.iter().map(|r| r.captures["SCOPE"].text.as_str()).collect();
+        assert!(scopes.contains(&"angular"));
+        let names: Vec<&str> = results.iter().map(|r| r.captures["NAME"].text.as_str()).collect();
+        assert!(names.contains(&"core"));
+        assert!(names.contains(&"forms"));
     }
 }

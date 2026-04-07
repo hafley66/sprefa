@@ -19,10 +19,7 @@ impl std::fmt::Debug for CompiledGitSelector {
 }
 
 impl CompiledGitSelector {
-    pub fn from_patterns(
-        repo_patterns: &[&str],
-        rev_patterns: &[&str],
-    ) -> anyhow::Result<Self> {
+    pub fn from_patterns(repo_patterns: &[&str], rev_patterns: &[&str]) -> anyhow::Result<Self> {
         let repo = compile_patterns(repo_patterns)?;
         let rev = compile_patterns(rev_patterns)?;
         Ok(Self { repo, rev })
@@ -158,11 +155,7 @@ mod tests {
 
     #[test]
     fn all_fields_must_match() {
-        let c = CompiledGitSelector::from_patterns(
-            &["org/*"],
-            &["main"],
-        )
-        .unwrap();
+        let c = CompiledGitSelector::from_patterns(&["org/*"], &["main"]).unwrap();
         assert!(c.matches("org/repo", Some("main"), &[]));
         assert!(!c.matches("other/repo", Some("main"), &[]));
         assert!(!c.matches("org/repo", Some("dev"), &[]));

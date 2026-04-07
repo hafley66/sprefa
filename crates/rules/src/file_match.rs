@@ -63,10 +63,8 @@ mod tests {
 
     #[test]
     fn multiple_patterns() {
-        let c = CompiledFileSelector::from_patterns(&[
-            "*.yaml|*.yml",
-            "templates/**/*.yaml",
-        ]).unwrap();
+        let c =
+            CompiledFileSelector::from_patterns(&["*.yaml|*.yml", "templates/**/*.yaml"]).unwrap();
         assert!(c.matches("values.yaml"));
         assert!(c.matches("config.yml"));
         assert!(c.matches("templates/deploy/service.yaml"));

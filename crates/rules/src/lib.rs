@@ -1,13 +1,11 @@
-pub mod pattern;
-pub mod types;
-pub mod schema;
-pub mod git_match;
-pub mod file_match;
-pub mod walk;
+pub mod ast;
 pub mod emit;
 pub mod extractor;
-pub mod link_compile;
-pub mod query;
-pub mod ast;
+pub mod file_match;
+pub mod git_match;
+pub mod pattern;
+pub mod schema;
+pub mod types;
+pub mod walk;
 
 pub use types::*;

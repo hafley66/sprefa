@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use sprefa_cache::SqliteStore;
 use sprefa_config::RepoConfig;
 use sprefa_extract::Extractor;
 use sprefa_schema::init_db;
@@ -75,10 +76,9 @@ async fn js_rename_propagates_through_reexport_chain() {
 
     let scanner = sprefa_scan::Scanner {
         extractors: extractors.clone(),
-        db: db.clone(),
+        store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
-        link_rules: vec![],
     };
     let result = scanner.scan_repo(&config, "main").await.unwrap();
     assert!(result.refs_inserted > 0, "scan should insert refs");
@@ -186,10 +186,9 @@ edition = "2021"
 
     let scanner = sprefa_scan::Scanner {
         extractors: extractors.clone(),
-        db: db.clone(),
+        store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
-        link_rules: vec![],
     };
     let result = scanner.scan_repo(&config, "main").await.unwrap();
     assert!(result.refs_inserted > 0, "scan should insert Rust refs");

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use sprefa_cache::SqliteStore;
 use sprefa_config::RepoConfig;
 use sprefa_scan::Scanner;
 use sprefa_schema::{
@@ -23,7 +24,7 @@ const SCAN_QUEUE_TIMEOUT_SECS: u64 = 300;
 pub struct AppState {
     pub pool: SqlitePool,
     /// None when the daemon was started without a rules file (scan is disabled).
-    pub scanner: Option<Arc<Scanner>>,
+    pub scanner: Option<Arc<Scanner<SqliteStore>>>,
     pub repos: Vec<RepoConfig>,
     /// Mutex used to queue concurrent scan requests. Held for the duration of a scan.
     pub scan_lock: Mutex<()>,
@@ -186,7 +187,7 @@ fn e500(e: anyhow::Error) -> (StatusCode, String) {
 /// Start the HTTP daemon.
 pub async fn serve(
     pool: SqlitePool,
-    scanner: Option<Arc<Scanner>>,
+    scanner: Option<Arc<Scanner<SqliteStore>>>,
     repos: Vec<RepoConfig>,
     bind: &str,
 ) -> anyhow::Result<()> {

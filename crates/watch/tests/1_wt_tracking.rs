@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use sprefa_cache::SqliteStore;
 use sprefa_config::RepoConfig;
 use sprefa_extract::Extractor;
 use sprefa_schema::init_db;
@@ -52,10 +53,9 @@ async fn setup_scanned_repo(
 
     let scanner = sprefa_scan::Scanner {
         extractors: extractors.clone(),
-        db: db.clone(),
+        store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
-        link_rules: vec![],
     };
     scanner.scan_repo(&config, "main").await.unwrap();
 
@@ -270,10 +270,9 @@ async fn wt_scan_captures_uncommitted_files() {
 
     let scanner = sprefa_scan::Scanner {
         extractors: extractors.clone(),
-        db: db.clone(),
+        store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
-        link_rules: vec![],
     };
 
     // Scan committed with only a.ts and b.ts by scanning, then removing c.ts from committed rev_files

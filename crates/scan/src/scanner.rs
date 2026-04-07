@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
 
+use sprefa_cache::{is_wt_rev, Store, to_file_results};
 use sprefa_config::{CompiledFilter, RepoConfig};
 use sprefa_extract::{ExtractContext, Extractor};
 
@@ -11,12 +11,11 @@ use sprefa_extract::{ExtractContext, Extractor};
 /// If built outside git, falls back to "unknown".
 const BINARY_HASH: &str = env!("SPREFA_GIT_HASH");
 
-pub struct Scanner {
+pub struct Scanner<S: Store> {
     pub extractors: Arc<Vec<Box<dyn Extractor>>>,
-    pub db: SqlitePool,
+    pub store: S,
     pub normalize_config: Option<sprefa_config::NormalizeConfig>,
     pub global_filter: Option<sprefa_config::FilterConfig>,
-    pub link_rules: Vec<sprefa_cache::LinkRule>,
 }
 
 pub struct ScanResult {
@@ -33,7 +32,7 @@ pub struct ScanResult {
     pub new_git_hash: Option<String>,
 }
 
-impl Scanner {
+impl<S: Store> Scanner<S> {
     #[tracing::instrument(skip(self, config), fields(repo = %config.name, branch = %branch))]
     pub async fn scan_repo(&self, config: &RepoConfig, branch: &str) -> Result<ScanResult> {
         let filter_config = sprefa_config::resolve_filter(self.global_filter.as_ref(), config, branch);
@@ -42,7 +41,7 @@ impl Scanner {
             .map(CompiledFilter::compile)
             .transpose()?;
 
-        let scan_ctx = sprefa_cache::load_scan_context(&self.db, &config.name, BINARY_HASH).await?;
+        let scan_ctx = self.store.load_scan_context(&config.name, BINARY_HASH).await?;
 
         let repo_path = PathBuf::from(&config.path);
 
@@ -82,25 +81,29 @@ impl Scanner {
             &BINARY_HASH[..8.min(BINARY_HASH.len())],
         );
 
-        let refs_inserted = sprefa_cache::flush(
-            &self.db,
-            config,
+        // Convert extraction output to Store format and flush
+        let file_results = to_file_results(&extracted);
+        let refs_inserted = self.store.flush_batch(
+            &config.name,
             branch,
-            extracted,
-            self.normalize_config.as_ref(),
-            BINARY_HASH,
+            &file_results,
         ).await?;
 
         // Intern repo-level metadata (repo name, git revs) as linkable entities.
-        sprefa_cache::flush_repo_meta(
-            &self.db,
-            &config.name,
-            None, // org -- not in RepoConfig yet
-            &git_revs,
-        ).await?;
+        // TODO: Migrate to Store trait method
+        let (targets_resolved, links_created) = if let Some(pool) = self.store.sqlite_pool() {
+            sprefa_cache::flush_repo_meta(
+                pool,
+                &config.name,
+                None, // org -- not in RepoConfig yet
+                &git_revs,
+            ).await?;
 
-        let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;
-        let links_created = sprefa_cache::resolve_match_links(&self.db, &config.name, &self.link_rules).await?;
+            let targets = sprefa_cache::resolve_import_targets(pool, &config.name).await?;
+            (targets, 0)
+        } else {
+            (0, 0)
+        };
 
         tracing::info!(
             "{}/{}: {} refs, {} import targets resolved, {} match links",
@@ -108,7 +111,7 @@ impl Scanner {
         );
 
         // Read HEAD sha for callers to persist (only for committed revs).
-        let new_git_hash = if !sprefa_cache::is_wt_rev(branch) {
+        let new_git_hash = if !is_wt_rev(branch) {
             let repo_path = PathBuf::from(&config.path);
             tokio::task::spawn_blocking(move || -> Option<String> {
                 let repo = git2::Repository::open(&repo_path).ok()?;
@@ -140,7 +143,7 @@ impl Scanner {
     pub async fn scan_diff(&self, config: &RepoConfig, branch: &str, old_sha: &str) -> Result<ScanResult> {
         // If the binary was rebuilt since last scan, some files have stale extraction
         // output. Fall back to full scan so every file gets re-extracted.
-        if sprefa_cache::has_stale_scanner_hash(&self.db, &config.name, BINARY_HASH).await? {
+        if self.store.has_stale_scanner_hash(&config.name, BINARY_HASH).await? {
             anyhow::bail!(
                 "binary hash changed ({}), full rescan required",
                 &BINARY_HASH[..8.min(BINARY_HASH.len())],
@@ -153,7 +156,7 @@ impl Scanner {
             .map(CompiledFilter::compile)
             .transpose()?;
 
-        let scan_ctx = sprefa_cache::load_scan_context(&self.db, &config.name, BINARY_HASH).await?;
+        let scan_ctx = self.store.load_scan_context(&config.name, BINARY_HASH).await?;
 
         let repo_path = PathBuf::from(&config.path);
         let old_sha_owned = old_sha.to_string();
@@ -176,7 +179,7 @@ impl Scanner {
                 "{}/{}: {} files deleted in diff",
                 config.name, branch, diff.deleted.len(),
             );
-            sprefa_cache::delete_rev_files_by_paths(&self.db, &config.name, branch, &diff.deleted).await?
+            self.store.delete_files(&config.name, branch, &diff.deleted).await?
         } else {
             0
         };
@@ -188,7 +191,7 @@ impl Scanner {
                 "{}/{}: {} pure renames in diff",
                 config.name, branch, diff.renamed.len(),
             );
-            sprefa_cache::rename_file_paths(&self.db, &config.name, &diff.renamed).await?
+            self.store.rename_files(&config.name, &diff.renamed).await?
         } else {
             0
         };
@@ -235,25 +238,29 @@ impl Scanner {
             &BINARY_HASH[..8.min(BINARY_HASH.len())],
         );
 
-        let refs_inserted = sprefa_cache::flush(
-            &self.db,
-            config,
+        // Convert extraction output to Store format and flush
+        let file_results = to_file_results(&extracted);
+        let refs_inserted = self.store.flush_batch(
+            &config.name,
             branch,
-            extracted,
-            self.normalize_config.as_ref(),
-            BINARY_HASH,
+            &file_results,
         ).await?;
 
         // Intern repo-level metadata as linkable entities.
-        sprefa_cache::flush_repo_meta(
-            &self.db,
-            &config.name,
-            None,
-            &git_revs,
-        ).await?;
+        // TODO: Migrate to Store trait method
+        let (targets_resolved, links_created) = if let Some(pool) = self.store.sqlite_pool() {
+            sprefa_cache::flush_repo_meta(
+                pool,
+                &config.name,
+                None,
+                &git_revs,
+            ).await?;
 
-        let targets_resolved = sprefa_cache::resolve_import_targets(&self.db, &config.name).await?;
-        let links_created = sprefa_cache::resolve_match_links(&self.db, &config.name, &self.link_rules).await?;
+            let targets = sprefa_cache::resolve_import_targets(pool, &config.name).await?;
+            (targets, 0)
+        } else {
+            (0, 0)
+        };
 
         tracing::info!(
             "{}/{}: diff scan {} refs, {} targets, {} links",
@@ -285,7 +292,7 @@ impl Scanner {
             .map(CompiledFilter::compile)
             .transpose()?;
 
-        let scan_ctx = sprefa_cache::load_scan_context(&self.db, &config.name, BINARY_HASH).await?;
+        let scan_ctx = self.store.load_scan_context(&config.name, BINARY_HASH).await?;
 
         let repo_path = PathBuf::from(&config.path);
         let extractors = Arc::clone(&self.extractors);
@@ -318,21 +325,13 @@ impl Scanner {
             &BINARY_HASH[..8.min(BINARY_HASH.len())],
         );
 
-        let refs_inserted = sprefa_cache::flush(
-            &self.db,
-            config,
+        // Convert extraction output to Store format and flush
+        let file_results = to_file_results(&extracted);
+        let refs_inserted = self.store.flush_batch(
+            &config.name,
             rev,
-            extracted,
-            self.normalize_config.as_ref(),
-            BINARY_HASH,
+            &file_results,
         ).await?;
-
-        let links_created = sprefa_cache::resolve_match_links(&self.db, &config.name, &self.link_rules).await?;
-
-        tracing::info!(
-            "{} @ {}: {} refs, {} match links",
-            config.name, rev, refs_inserted, links_created,
-        );
 
         Ok(ScanResult {
             repo: config.name.clone(),
@@ -343,7 +342,7 @@ impl Scanner {
             files_deleted: 0,
             files_renamed: 0,
             targets_resolved: 0,
-            links_created,
+            links_created: 0,
             new_git_hash: None,
         })
     }
@@ -351,7 +350,8 @@ impl Scanner {
     /// Re-resolve match links for a repo without re-scanning files.
     /// Used as a second pass after all repos are scanned to pick up
     /// cross-repo links that couldn't resolve due to scan order.
-    pub async fn resolve_links(&self, repo_name: &str) -> Result<usize> {
-        sprefa_cache::resolve_match_links(&self.db, repo_name, &self.link_rules).await
+    /// DEPRECATED: Link rules have been removed.
+    pub async fn resolve_links(&self, _repo_name: &str) -> Result<usize> {
+        Ok(0)
     }
 }

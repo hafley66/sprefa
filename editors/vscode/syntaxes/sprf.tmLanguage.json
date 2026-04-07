@@ -5,7 +5,6 @@
   "patterns": [
     { "include": "#comment" },
     { "include": "#rule-declaration" },
-    { "include": "#query-declaration" },
     { "include": "#link-declaration" },
     { "include": "#rule" }
   ],
@@ -45,53 +44,6 @@
         {
           "match": ",",
           "name": "punctuation.separator.comma.sprf"
-        }
-      ]
-    },
-
-    "query-declaration": {
-      "begin": "\\b(query|check)\\s+([a-z_][a-z0-9_]*)\\s*\\(",
-      "end": ";",
-      "beginCaptures": {
-        "1": { "name": "keyword.control.query.sprf" },
-        "2": { "name": "entity.name.function.query.sprf" }
-      },
-      "endCaptures": {
-        "0": { "name": "punctuation.terminator.sprf" }
-      },
-      "patterns": [
-        { "include": "#comment" },
-        {
-          "match": "\\bnot(?=\\s+[a-z_])",
-          "name": "keyword.operator.negation.sprf"
-        },
-        {
-          "match": "\\$[A-Z_][A-Za-z0-9_]*",
-          "name": "variable.other.capture.sprf"
-        },
-        {
-          "match": "\\$_",
-          "name": "variable.language.wildcard.sprf"
-        },
-        {
-          "match": "\\$\\.[a-z_][a-z0-9_]*(?=\\s*\\()",
-          "name": "support.function.builtin.sprf"
-        },
-        {
-          "match": "\\b[a-z_][a-z0-9_]*(?=\\s*\\()",
-          "name": "entity.name.function.relation.sprf"
-        },
-        {
-          "match": "\"[^\"]*\"",
-          "name": "string.quoted.double.sprf"
-        },
-        {
-          "match": ",",
-          "name": "punctuation.separator.comma.sprf"
-        },
-        {
-          "match": "[()]",
-          "name": "punctuation.bracket.round.sprf"
         }
       ]
     },

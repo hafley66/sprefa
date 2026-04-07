@@ -113,7 +113,7 @@ image:
     let sprf = r#"
         rule(image_refs) {
             fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
-            scan(repo: $REPO, rev: $TAG)
+
         };
         rule(pkg_name) {
             fs(**/package.json) > json({ name: $NAME })
@@ -261,7 +261,7 @@ image:
     let sprf = r#"
         rule(image_refs) {
             fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
-            scan(repo: $REPO, rev: $TAG)
+
         };
     "#;
 
@@ -391,7 +391,7 @@ svc_b:
     let sprf = r#"
         rule(image_refs) {
             fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
-            scan(repo: $REPO, rev: $TAG)
+
         };
     "#;
 
@@ -492,11 +492,11 @@ image:
     let sprf = r#"
         rule(deploy_ref) {
             fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
-            scan(repo: $REPO, rev: $TAG)
+
         };
         rule(lib_dep) {
             fs(**/deps/*.yaml) > json({ dependency: { name: $LIB, version: $VER } })
-            scan(repo: $LIB, rev: $VER)
+
         };
         rule(pkg_name) {
             fs(**/package.json) > json({ name: $NAME })
@@ -620,4 +620,3 @@ image:
     assert!(total_revs >= 4, "at least 4 rev entries, got {}", total_revs);
 }
 
-// NOTE: Query/check tests removed - query system was cut in favor of scoped block syntax

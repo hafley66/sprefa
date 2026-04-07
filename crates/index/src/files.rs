@@ -58,8 +58,14 @@ pub fn diff_files(
                 }
             }
             git2::Delta::Renamed => {
-                let old_rel = delta.old_file().path().map(|p| p.to_string_lossy().to_string());
-                let new_rel = delta.new_file().path().map(|p| p.to_string_lossy().to_string());
+                let old_rel = delta
+                    .old_file()
+                    .path()
+                    .map(|p| p.to_string_lossy().to_string());
+                let new_rel = delta
+                    .new_file()
+                    .path()
+                    .map(|p| p.to_string_lossy().to_string());
                 let same_content = delta.old_file().id() == delta.new_file().id();
 
                 match (old_rel, new_rel) {
@@ -70,8 +76,12 @@ pub fn diff_files(
                             renamed.push((old, new));
                         } else {
                             // Filter mismatch: treat as delete + add independently.
-                            if old_ok { deleted.push(old); }
-                            if new_ok { changed.push(repo_path.join(&new)); }
+                            if old_ok {
+                                deleted.push(old);
+                            }
+                            if new_ok {
+                                changed.push(repo_path.join(&new));
+                            }
                         }
                     }
                     (Some(old), Some(new)) => {
@@ -100,7 +110,12 @@ pub fn diff_files(
         }
     }
 
-    Ok(DiffResult { changed, deleted, renamed, new_sha })
+    Ok(DiffResult {
+        changed,
+        deleted,
+        renamed,
+        new_sha,
+    })
 }
 
 /// List all indexable files under `repo_path`.
@@ -109,13 +124,19 @@ pub fn diff_files(
 /// Applies `filter` if provided.
 pub fn list_files(repo_path: &Path, filter: Option<&CompiledFilter>) -> Result<Vec<PathBuf>> {
     let files = git2_list_files(repo_path).unwrap_or_else(|_| walkdir_files(repo_path));
+    eprintln!("LIST_DEBUG: found {} files in {:?}", files.len(), repo_path);
+    for f in &files {
+        eprintln!("LIST_DEBUG: file {:?}", f);
+    }
 
     let filtered = files
         .into_iter()
         .filter(|p| {
             let rel = p.strip_prefix(repo_path).unwrap_or(p);
             let rel_str = rel.to_string_lossy();
-            filter.map(|f: &CompiledFilter| f.allows(&rel_str)).unwrap_or(true)
+            filter
+                .map(|f: &CompiledFilter| f.allows(&rel_str))
+                .unwrap_or(true)
         })
         .collect();
 
@@ -182,7 +203,11 @@ pub fn read_git_revs(repo_path: &Path) -> Result<Vec<GitRev>> {
             .unwrap_or_default();
 
         if !commit_hash.is_empty() {
-            revs.push(GitRev { name, commit_hash, is_tag });
+            revs.push(GitRev {
+                name,
+                commit_hash,
+                is_tag,
+            });
         }
     }
 
@@ -267,7 +292,8 @@ mod tests {
         let tree_id = repo.index().unwrap().write_tree().unwrap();
         {
             let tree = repo.find_tree(tree_id).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[]).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+                .unwrap();
         }
         repo
     }
@@ -286,7 +312,15 @@ mod tests {
         let tree = repo.find_tree(tree_id).unwrap();
         let sig = Signature::now("test", "test@test.com").unwrap();
         let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, &format!("add {path}"), &tree, &[&parent]).unwrap()
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            &format!("add {path}"),
+            &tree,
+            &[&parent],
+        )
+        .unwrap()
     }
 
     fn delete_file(repo: &Repository, path: &str) -> Oid {
@@ -299,14 +333,28 @@ mod tests {
         let tree = repo.find_tree(tree_id).unwrap();
         let sig = Signature::now("test", "test@test.com").unwrap();
         let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, &format!("rm {path}"), &tree, &[&parent]).unwrap()
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            &format!("rm {path}"),
+            &tree,
+            &[&parent],
+        )
+        .unwrap()
     }
 
     #[test]
     fn diff_detects_added_file() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = make_git_repo(tmp.path());
-        let old_sha = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        let old_sha = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string();
         commit_file(&repo, "src/a.ts", b"hello");
 
         let result = diff_files(tmp.path(), &old_sha, None).unwrap();
@@ -321,7 +369,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = make_git_repo(tmp.path());
         commit_file(&repo, "src/a.ts", b"hello");
-        let old_sha = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        let old_sha = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string();
         delete_file(&repo, "src/a.ts");
 
         let result = diff_files(tmp.path(), &old_sha, None).unwrap();
@@ -334,7 +388,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = make_git_repo(tmp.path());
         commit_file(&repo, "src/a.ts", b"v1");
-        let old_sha = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        let old_sha = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string();
         commit_file(&repo, "src/a.ts", b"v2");
 
         let result = diff_files(tmp.path(), &old_sha, None).unwrap();
@@ -373,11 +433,15 @@ mod tests {
 
         // Create a lightweight tag.
         let head = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.tag_lightweight("v1.0.0", head.as_object(), false).unwrap();
+        repo.tag_lightweight("v1.0.0", head.as_object(), false)
+            .unwrap();
 
         let revs = read_git_revs(tmp.path()).unwrap();
         // Should have the branch (master or main) + the tag
-        let tag = revs.iter().find(|r| r.name == "v1.0.0").expect("tag not found");
+        let tag = revs
+            .iter()
+            .find(|r| r.name == "v1.0.0")
+            .expect("tag not found");
         assert!(tag.is_tag);
         assert!(!tag.commit_hash.is_empty());
         let branch = revs.iter().find(|r| !r.is_tag).expect("branch not found");
@@ -388,9 +452,21 @@ mod tests {
     fn diff_returns_new_sha() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = make_git_repo(tmp.path());
-        let old_sha = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        let old_sha = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string();
         commit_file(&repo, "x.txt", b"data");
-        let expected = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        let expected = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string();
 
         let result = diff_files(tmp.path(), &old_sha, None).unwrap();
         assert_eq!(result.new_sha, expected);
@@ -405,7 +481,8 @@ mod tests {
 
         // Tag current state as v1.0.0
         let v1_commit = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.tag_lightweight("v1.0.0", v1_commit.as_object(), false).unwrap();
+        repo.tag_lightweight("v1.0.0", v1_commit.as_object(), false)
+            .unwrap();
 
         // Modify files at HEAD (after the tag)
         commit_file(&repo, "src/lib.rs", b"fn v2() {}");
@@ -438,7 +515,8 @@ mod tests {
             mode: FilterMode::Include,
             include: Some(vec!["src/**".into()]),
             exclude: None,
-        }).unwrap();
+        })
+        .unwrap();
         let blobs = list_blobs_at_rev(tmp.path(), "HEAD", Some(&filter)).unwrap();
         let paths: Vec<&str> = blobs.iter().map(|(p, _)| p.as_str()).collect();
 

@@ -36,6 +36,7 @@ fn parse_pattern(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>
         b'{' => parse_object(input, pos),
         b'[' => parse_array(input, pos),
         b'$' => parse_capture_or_wildcard(input, pos),
+        b'"' => parse_quoted_value(input, pos),
         _ => parse_value_glob(input, pos),
     }
 }
@@ -92,7 +93,10 @@ fn parse_object(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>>
             return Ok(steps);
         }
 
-        entries.push(ObjectEntry { key, value: value_steps });
+        entries.push(ObjectEntry {
+            key,
+            value: value_steps,
+        });
 
         skip_ws(input, pos);
         match peek_byte(input, *pos) {
@@ -139,8 +143,7 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> anyhow::Result<Vec
     }
 
     if input.as_bytes()[*pos] == b'_'
-        && (*pos + 1 >= input.len()
-            || !input.as_bytes()[*pos + 1].is_ascii_alphanumeric())
+        && (*pos + 1 >= input.len() || !input.as_bytes()[*pos + 1].is_ascii_alphanumeric())
     {
         *pos += 1;
         // Empty steps = "match succeeded here" = any value, any shape.
@@ -150,7 +153,9 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> anyhow::Result<Vec
 
     // Screaming capture: $NAME
     let start = *pos;
-    while *pos < input.len() && (input.as_bytes()[*pos].is_ascii_alphanumeric() || input.as_bytes()[*pos] == b'_') {
+    while *pos < input.len()
+        && (input.as_bytes()[*pos].is_ascii_alphanumeric() || input.as_bytes()[*pos] == b'_')
+    {
         *pos += 1;
     }
     let name = &input[start..*pos];
@@ -160,6 +165,33 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> anyhow::Result<Vec
     Ok(vec![SelectStep::Leaf {
         capture: Some(name.to_string()),
     }])
+}
+
+/// Parse a quoted value pattern: `"$REPO:$TAG"` or `"@$SCOPE/$NAME"`.
+///
+/// If the content contains `$VAR`, compiles to `LeafPattern` (segment capture).
+/// If no captures, compiles to a literal key descent.
+fn parse_quoted_value(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>> {
+    *pos += 1; // skip opening "
+    let start = *pos;
+    while *pos < input.len() && input.as_bytes()[*pos] != b'"' {
+        *pos += 1;
+    }
+    if *pos >= input.len() {
+        anyhow::bail!("unclosed `\"` in json pattern");
+    }
+    let content = input[start..*pos].to_string();
+    *pos += 1; // skip closing "
+
+    if content.contains('$') {
+        Ok(vec![SelectStep::LeafPattern { pattern: content }])
+    } else {
+        // No captures -- literal value match. Treat as key descent.
+        Ok(vec![SelectStep::Key {
+            name: content,
+            capture: None,
+        }])
+    }
 }
 
 /// Parse a value glob: bare string up to `,`, `}`, `]`, or end.
@@ -197,12 +229,29 @@ fn parse_entry(input: &str, pos: &mut usize) -> anyhow::Result<(KeyMatcher, Vec<
     Ok((key, value))
 }
 
-/// Parse a key: `**`, `$CAP`, `$_`, `re:REGEX`, or a bare glob string.
+/// Parse a key: `**`, `$CAP`, `$_`, `re:REGEX`, `"quoted"`, or a bare glob string.
 fn parse_key(input: &str, pos: &mut usize) -> anyhow::Result<KeyMatcher> {
     skip_ws(input, pos);
 
+    // Quoted key: `"@$SCOPE/$NAME"` or `"literal"`
+    if input.as_bytes()[*pos] == b'"' {
+        *pos += 1; // skip opening "
+        let start = *pos;
+        while *pos < input.len() && input.as_bytes()[*pos] != b'"' {
+            *pos += 1;
+        }
+        if *pos >= input.len() {
+            anyhow::bail!("unclosed `\"` in key position");
+        }
+        let content = &input[start..*pos];
+        *pos += 1; // skip closing "
+        return Ok(KeyMatcher::parse(content));
+    }
+
     // ** recursive descent
-    if input[*pos..].starts_with("**") && (*pos + 2 >= input.len() || !input.as_bytes()[*pos + 2].is_ascii_alphanumeric()) {
+    if input[*pos..].starts_with("**")
+        && (*pos + 2 >= input.len() || !input.as_bytes()[*pos + 2].is_ascii_alphanumeric())
+    {
         *pos += 2;
         return Ok(KeyMatcher::Exact("**".to_string()));
     }
@@ -222,7 +271,12 @@ fn parse_key(input: &str, pos: &mut usize) -> anyhow::Result<KeyMatcher> {
         while *pos < input.len() {
             if input.as_bytes()[*pos] == b':' {
                 let after = *pos + 1;
-                if after >= input.len() || matches!(input.as_bytes()[after], b' ' | b'\t' | b'\n' | b'{' | b'[' | b'$') {
+                if after >= input.len()
+                    || matches!(
+                        input.as_bytes()[after],
+                        b' ' | b'\t' | b'\n' | b'{' | b'[' | b'$'
+                    )
+                {
                     break;
                 }
             }
@@ -235,14 +289,17 @@ fn parse_key(input: &str, pos: &mut usize) -> anyhow::Result<KeyMatcher> {
     // $_ wildcard or $CAP capture
     if input.as_bytes()[*pos] == b'$' {
         *pos += 1;
-        if *pos < input.len() && input.as_bytes()[*pos] == b'_'
+        if *pos < input.len()
+            && input.as_bytes()[*pos] == b'_'
             && (*pos + 1 >= input.len() || !input.as_bytes()[*pos + 1].is_ascii_alphanumeric())
         {
             *pos += 1;
             return Ok(KeyMatcher::Wildcard);
         }
         let start = *pos;
-        while *pos < input.len() && (input.as_bytes()[*pos].is_ascii_alphanumeric() || input.as_bytes()[*pos] == b'_') {
+        while *pos < input.len()
+            && (input.as_bytes()[*pos].is_ascii_alphanumeric() || input.as_bytes()[*pos] == b'_')
+        {
             *pos += 1;
         }
         let name = &input[start..*pos];
@@ -297,7 +354,9 @@ mod tests {
             SelectStep::Object { entries } => {
                 assert_eq!(entries.len(), 1);
                 assert!(matches!(&entries[0].key, KeyMatcher::Exact(s) if s == "name"));
-                assert!(matches!(&entries[0].value[0], SelectStep::Leaf { capture: Some(c) } if c == "NAME"));
+                assert!(
+                    matches!(&entries[0].value[0], SelectStep::Leaf { capture: Some(c) } if c == "NAME")
+                );
             }
             _ => panic!("expected Object"),
         }
@@ -339,14 +398,14 @@ mod tests {
     fn array_iteration() {
         let steps = parse_json_body("{ members: [...$MEMBER] }").unwrap();
         match &steps[0] {
-            SelectStep::Object { entries } => {
-                match &entries[0].value[0] {
-                    SelectStep::Array { item } => {
-                        assert!(matches!(&item[0], SelectStep::Leaf { capture: Some(c) } if c == "MEMBER"));
-                    }
-                    _ => panic!("expected Array"),
+            SelectStep::Object { entries } => match &entries[0].value[0] {
+                SelectStep::Array { item } => {
+                    assert!(
+                        matches!(&item[0], SelectStep::Leaf { capture: Some(c) } if c == "MEMBER")
+                    );
                 }
-            }
+                _ => panic!("expected Array"),
+            },
             _ => panic!("expected Object"),
         }
     }
@@ -364,7 +423,9 @@ mod tests {
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Capture(s) if s == "K"));
-                assert!(matches!(&entries[0].value[0], SelectStep::Leaf { capture: Some(c) } if c == "V"));
+                assert!(
+                    matches!(&entries[0].value[0], SelectStep::Leaf { capture: Some(c) } if c == "V")
+                );
             }
             _ => panic!("expected Object"),
         }
@@ -405,6 +466,47 @@ mod tests {
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Glob(s) if s.starts_with("re:")));
+            }
+            _ => panic!("expected Object"),
+        }
+    }
+
+    #[test]
+    fn quoted_value_pattern() {
+        let steps = parse_json_body(r#"{ image: "$REPO:$TAG" }"#).unwrap();
+        match &steps[0] {
+            SelectStep::Object { entries } => {
+                assert!(matches!(&entries[0].key, KeyMatcher::Exact(s) if s == "image"));
+                assert!(
+                    matches!(&entries[0].value[0], SelectStep::LeafPattern { pattern } if pattern == "$REPO:$TAG")
+                );
+            }
+            _ => panic!("expected Object"),
+        }
+    }
+
+    #[test]
+    fn quoted_key_pattern() {
+        let steps = parse_json_body(r#"{ "@$SCOPE/$NAME": $_ }"#).unwrap();
+        match &steps[0] {
+            SelectStep::Object { entries } => {
+                assert!(
+                    matches!(&entries[0].key, KeyMatcher::Glob(s) if s == "@$SCOPE/$NAME")
+                );
+            }
+            _ => panic!("expected Object"),
+        }
+    }
+
+    #[test]
+    fn quoted_literal_value() {
+        // No $VAR -- treated as literal key descent
+        let steps = parse_json_body(r#"{ status: "active" }"#).unwrap();
+        match &steps[0] {
+            SelectStep::Object { entries } => {
+                assert!(
+                    matches!(&entries[0].value[0], SelectStep::Key { name, .. } if name == "active")
+                );
             }
             _ => panic!("expected Object"),
         }

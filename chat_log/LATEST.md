@@ -1,1 +1,1 @@
-20260402.2.sprefa-checks-builtins-scale-addendum.md
+20260407.3.sprefa-remove-scan-query-check.md

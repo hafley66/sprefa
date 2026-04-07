@@ -95,9 +95,6 @@ pub enum Tag {
     Folder,
     File,
     Fs,
-    /// `scan(repo: $VAR, rev: $VAR)` -- marks captures as scan-driving
-    /// without adding context steps. Annotation-only.
-    Scan,
 }
 
 impl Tag {
@@ -111,7 +108,6 @@ impl Tag {
             "folder" => Some(Tag::Folder),
             "file" => Some(Tag::File),
             "fs" => Some(Tag::Fs),
-            "scan" => Some(Tag::Scan),
             _ => None,
         }
     }

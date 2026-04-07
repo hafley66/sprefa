@@ -139,22 +139,6 @@ fn collect_scan_annotations(bodies: &[RuleBody], scan_vars: &mut HashMap<String,
                         scan_vars.insert(var, "rev".to_string());
                     }
                 }
-                Tag::Scan => {
-                    // Parse scan(repo: $VAR, rev: $VAR) bindings
-                    for part in body.split(',') {
-                        let part = part.trim();
-                        if let Some(colon) = part.find(':') {
-                            let kind = part[..colon].trim();
-                            let var_str = part[colon + 1..].trim();
-                            if var_str.starts_with('$') && var_str.len() > 1 {
-                                let var = &var_str[1..];
-                                if matches!(kind, "repo" | "rev") {
-                                    scan_vars.insert(var.to_string(), kind.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
                 _ => {}
             }
         }
@@ -358,10 +342,6 @@ fn convert_slot(
                     })
                 };
             }
-            Tag::Scan => {
-                // Annotation-only, no select step emitted.
-                // Scan annotations are collected separately by collect_scan_annotations.
-            }
         },
     }
 
@@ -563,24 +543,6 @@ mod tests {
         let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
         assert_eq!(repo_match.scan.as_deref(), Some("repo"));
         assert_eq!(tag_match.scan.as_deref(), Some("rev"));
-    }
-
-    #[test]
-    fn lower_scan_tag_annotations() {
-        // scan() tag marks captures as scan-driving without context steps
-        let rules = lower(
-            r#"rule(image_refs) {
-            fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
-            scan(repo: $REPO, rev: $TAG)
-        };"#,
-        );
-        let r = &rules[0];
-        let repo_match = r.create_matches.iter().find(|m| m.capture == "REPO").unwrap();
-        let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
-        assert_eq!(repo_match.scan.as_deref(), Some("repo"));
-        assert_eq!(tag_match.scan.as_deref(), Some("rev"));
-        // scan() should NOT produce any select steps
-        assert!(r.select.iter().all(|s| !matches!(s, SelectStep::Repo { .. })));
     }
 
     #[test]

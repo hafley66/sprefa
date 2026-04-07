@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use sprefa_cache::SqliteStore;
 use sprefa_config::RepoConfig;
 use sprefa_extract::Extractor;
 use sprefa_schema::init_db;
@@ -56,10 +57,9 @@ async fn setup_dual_branch_repo(
 
     let scanner = sprefa_scan::Scanner {
         extractors: extractors.clone(),
-        db: db.clone(),
+        store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
-        link_rules: vec![],
     };
 
     // Scan as committed main
