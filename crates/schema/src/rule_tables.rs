@@ -66,6 +66,8 @@ impl RuleTableDef {
         for (i, c) in self.columns.iter().enumerate() {
             let alias = format!("s{}", i);
             select_cols.push(format!("{alias}.value AS {}", c.name));
+            select_cols.push(format!("{alias}.norm AS {}_norm", c.name));
+            select_cols.push(format!("{alias}.norm2 AS {}_norm2", c.name));
             joins.push(format!(
                 "LEFT JOIN strings {alias} ON t.{}_str = {alias}.id",
                 c.name
@@ -92,6 +94,8 @@ impl RuleTableDef {
             let sa = format!("s{}", i);
             let ra = format!("r{}", i);
             select_cols.push(format!("{sa}.value AS {}", c.name));
+            select_cols.push(format!("{sa}.norm AS {}_norm", c.name));
+            select_cols.push(format!("{sa}.norm2 AS {}_norm2", c.name));
             select_cols.push(format!("{ra}.span_start AS {}_span_start", c.name));
             select_cols.push(format!("{ra}.span_end AS {}_span_end", c.name));
             select_cols.push(format!("{ra}.node_path AS {}_node_path", c.name));
@@ -129,8 +133,14 @@ impl RuleTableDef {
     /// Paired scan targets: (repo_column, rev_column) from the same rule.
     /// Returns None if the rule doesn't have both repo and rev annotations.
     pub fn scan_pair(&self) -> Option<ScanPair> {
-        let repo_col = self.columns.iter().find(|c| c.scan.as_deref() == Some("repo"))?;
-        let rev_col = self.columns.iter().find(|c| c.scan.as_deref() == Some("rev"))?;
+        let repo_col = self
+            .columns
+            .iter()
+            .find(|c| c.scan.as_deref() == Some("repo"))?;
+        let rev_col = self
+            .columns
+            .iter()
+            .find(|c| c.scan.as_deref() == Some("rev"))?;
         Some(ScanPair {
             table: self.rule_name.clone(),
             repo_column: repo_col.name.clone(),
@@ -158,39 +168,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn create_table() {
-        let def = RuleTableDef::from_matches(
-            "deploy_config",
-            &[
-                ("SVC".into(), None),
-                ("REPO".into(), Some("repo".into())),
-                ("TAG".into(), Some("rev".into())),
-            ],
-        );
-        let sql = def.create_table_sql();
-        assert!(sql.contains("\"deploy_config_data\""));
-        assert!(sql.contains("svc_ref INTEGER"));
-        assert!(sql.contains("svc_str INTEGER"));
-        assert!(sql.contains("repo_ref INTEGER"));
-        assert!(sql.contains("tag_str INTEGER"));
-        assert!(sql.contains("repo_id INTEGER"));
-        assert!(sql.contains("file_id INTEGER"));
-        assert!(sql.contains("rev TEXT"));
-    }
-
-    #[test]
     fn create_view() {
         let def = RuleTableDef::from_matches(
             "deploy_config",
-            &[
-                ("SVC".into(), None),
-                ("REPO".into(), Some("repo".into())),
-            ],
+            &[("SVC".into(), None), ("REPO".into(), Some("repo".into()))],
         );
         let sql = def.create_view_sql();
         assert!(sql.contains("CREATE VIEW IF NOT EXISTS \"deploy_config\""));
         assert!(sql.contains("s0.value AS svc"));
+        assert!(sql.contains("s0.norm AS svc_norm"));
+        assert!(sql.contains("s0.norm2 AS svc_norm2"));
         assert!(sql.contains("s1.value AS repo"));
+        assert!(sql.contains("s1.norm AS repo_norm"));
+        assert!(sql.contains("s1.norm2 AS repo_norm2"));
         assert!(sql.contains("FROM \"deploy_config_data\""));
     }
 

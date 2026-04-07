@@ -249,6 +249,27 @@ enum Command {
         files: Vec<PathBuf>,
     },
 
+    /// Run invariant checks from .sprf check blocks
+    ///
+    /// Parses check(name) { SQL } blocks from the rules file, executes each
+    /// SQL query against the index database, and stores any returned rows as
+    /// violations in the invariant_violations table. Rows returned = violations.
+    ///
+    /// With --list, shows stored violations instead of running checks.
+    ///
+    /// Examples:
+    ///   sprefa check                   Run all check blocks
+    ///   sprefa check openapi_drift     Run only the named check
+    ///   sprefa check --list            Show all stored violations
+    ///   sprefa check --list openapi_drift  Show violations for one check
+    Check {
+        /// Only run/list this check (by name)
+        name: Option<String>,
+        /// List stored violations instead of running checks
+        #[arg(long)]
+        list: bool,
+    },
+
     /// All-in-one: scan + watch + serve
     ///
     /// Runs the full pipeline in a single process:
@@ -308,6 +329,7 @@ async fn main() -> anyhow::Result<()> {
             cmd_query(&cli.config, &term, scope.as_deref(), once).await?
         }
         Some(Command::Sql { sql }) => cmd_sql(&cli.config, &sql).await?,
+        Some(Command::Check { name, list }) => cmd_check(&cli.config, name.as_deref(), list).await?,
         Some(Command::Serve) => cmd_serve(&cli.config).await?,
         Some(Command::Watch { repo }) => cmd_watch(&cli.config, repo.as_deref()).await?,
         Some(Command::Daemon { repo, no_scan }) => {
@@ -406,6 +428,9 @@ async fn build_scanner(
     let extractor = RuleExtractor::from_ruleset(&ruleset)?;
     let store = SqliteStore::new(pool);
 
+    // Compute rule hashes for change detection.
+    let hashes = sprefa_sprf::hash::compute_rule_hashes(&ruleset.rules, &dep_edges).unwrap_or_default();
+
     // Create per-rule tables before any scanning.
     let specs: Vec<sprefa_cache::RuleTableSpec> = ruleset
         .rules
@@ -419,7 +444,7 @@ async fn build_scanner(
                 .collect(),
         })
         .collect();
-    store.create_rule_tables(&specs).await?;
+    store.create_rule_tables(&specs, Some(&hashes)).await?;
 
     // Build per-rule scan pairs lookup.
     let rule_scan_pairs: std::collections::HashMap<String, Option<sprefa_schema::rule_tables::ScanPair>> = specs
@@ -718,6 +743,36 @@ async fn cmd_scan(
     }
 
     println!("\ntotal: {} files, {} refs", total_files, total_refs);
+
+    // Run check blocks post-scan (if any exist in the rules file).
+    let rules_path = find_rules_file()?;
+    if rules_path.extension().and_then(|e| e.to_str()) == Some("sprf") {
+        let source = std::fs::read_to_string(&rules_path)?;
+        let (_rs, _edges, checks) = sprefa_sprf::parse_sprf_full(&source)?;
+        if !checks.is_empty() {
+            println!();
+            let mut total_violations = 0usize;
+            for check in &checks {
+                match scanner.store.run_check(&check.name, &check.sql).await {
+                    Ok(count) => {
+                        if count > 0 {
+                            println!("FAIL  {}  ({} violations)", check.name, count);
+                        } else {
+                            println!("OK    {}", check.name);
+                        }
+                        total_violations += count;
+                    }
+                    Err(e) => {
+                        tracing::warn!(check = %check.name, error = %e, "check failed to execute");
+                    }
+                }
+            }
+            if total_violations > 0 {
+                println!("{} total violations", total_violations);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -905,6 +960,98 @@ async fn cmd_sql(config_path: &Option<PathBuf>, sql: &str) -> anyhow::Result<()>
         println!("{}", vals.join("\t"));
     }
     println!("\n({} rows)", rows.len());
+    Ok(())
+}
+
+async fn cmd_check(
+    config_path: &Option<PathBuf>,
+    only_name: Option<&str>,
+    list: bool,
+) -> anyhow::Result<()> {
+    let config = load_cfg(config_path)?;
+    let pool = init_db(&config.db_path()).await?;
+    let store = SqliteStore::new(pool);
+
+    if list {
+        let violations = store.list_violations(only_name).await?;
+        if violations.is_empty() {
+            println!("no violations found");
+            return Ok(());
+        }
+        for v in &violations {
+            println!(
+                "[{}] {} (id={}, created={}{})",
+                v.check_name,
+                v.violation_data,
+                v.id,
+                v.created_at,
+                v.resolved_at
+                    .as_ref()
+                    .map(|r| format!(", resolved={r}"))
+                    .unwrap_or_default(),
+            );
+        }
+        println!("\n{} violations", violations.len());
+        return Ok(());
+    }
+
+    // Parse .sprf to get check blocks.
+    let rules_path = find_rules_file()?;
+    let checks = match rules_path.extension().and_then(|e| e.to_str()) {
+        Some("sprf") => {
+            let source = std::fs::read_to_string(&rules_path)?;
+            let (_ruleset, _edges, checks) = sprefa_sprf::parse_sprf_full(&source)?;
+            checks
+        }
+        _ => {
+            println!("check blocks are only supported in .sprf rule files");
+            return Ok(());
+        }
+    };
+
+    if checks.is_empty() {
+        println!("no check blocks found in {}", rules_path.display());
+        return Ok(());
+    }
+
+    let checks_to_run: Vec<_> = match only_name {
+        Some(name) => {
+            let found: Vec<_> = checks.iter().filter(|c| c.name == name).collect();
+            if found.is_empty() {
+                anyhow::bail!(
+                    "no check named '{}' (available: {})",
+                    name,
+                    checks.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
+                );
+            }
+            found
+        }
+        None => checks.iter().collect(),
+    };
+
+    let mut total_violations = 0usize;
+    for check in &checks_to_run {
+        match store.run_check(&check.name, &check.sql).await {
+            Ok(count) => {
+                if count > 0 {
+                    println!("FAIL  {}  ({} violations)", check.name, count);
+                } else {
+                    println!("OK    {}", check.name);
+                }
+                total_violations += count;
+            }
+            Err(e) => {
+                println!("ERROR {}  {}", check.name, e);
+            }
+        }
+    }
+
+    if total_violations > 0 {
+        println!("\n{} total violations across {} checks", total_violations, checks_to_run.len());
+    } else {
+        println!("\nall {} checks passed", checks_to_run.len());
+    }
+
     Ok(())
 }
 

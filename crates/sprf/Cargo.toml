@@ -11,6 +11,7 @@ sprefa_rules = { path = "../rules" }
 serde_json = { workspace = true }
 globset = { workspace = true }
 regex = { workspace = true }
+sha2 = "0.10"
 
 [dev-dependencies]
 insta = { workspace = true }

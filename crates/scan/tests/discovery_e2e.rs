@@ -77,7 +77,7 @@ async fn make_scanner(db: SqlitePool, sprf_source: &str) -> Scanner<SqliteStore>
                 .collect(),
         })
         .collect();
-    store.create_rule_tables(&specs).await.unwrap();
+    store.create_rule_tables(&specs, None).await.unwrap();
 
     let scan_pairs: Vec<sprefa_schema::rule_tables::ScanPair> = specs
         .iter()

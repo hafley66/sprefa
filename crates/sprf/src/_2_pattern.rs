@@ -464,7 +464,8 @@ mod tests {
 
     #[test]
     fn recursive_descent() {
-        let (steps, _annotations) = parse_json_body("{ **: { image: { repository: $REPO, tag: $TAG } } }").unwrap();
+        let (steps, _annotations) =
+            parse_json_body("{ **: { image: { repository: $REPO, tag: $TAG } } }").unwrap();
         assert!(matches!(&steps[0], SelectStep::Any));
         assert!(matches!(&steps[1], SelectStep::Object { .. }));
     }
@@ -514,7 +515,8 @@ mod tests {
 
     #[test]
     fn regex_key() {
-        let (steps, _annotations) = parse_json_body("{ re:^(dev-)?dependencies: { $NAME: $_ } }").unwrap();
+        let (steps, _annotations) =
+            parse_json_body("{ re:^(dev-)?dependencies: { $NAME: $_ } }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Glob(s) if s.starts_with("re:")));
@@ -542,9 +544,7 @@ mod tests {
         let (steps, _annotations) = parse_json_body(r#"{ "@$SCOPE/$NAME": $_ }"#).unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
-                assert!(
-                    matches!(&entries[0].key, KeyMatcher::Glob(s) if s == "@$SCOPE/$NAME")
-                );
+                assert!(matches!(&entries[0].key, KeyMatcher::Glob(s) if s == "@$SCOPE/$NAME"));
             }
             _ => panic!("expected Object"),
         }
@@ -610,8 +610,7 @@ mod tests {
 
     #[test]
     fn no_annotations_without_wrapper() {
-        let (_, annotations) =
-            parse_json_body("{ repository: $REPO, tag: $TAG }").unwrap();
+        let (_, annotations) = parse_json_body("{ repository: $REPO, tag: $TAG }").unwrap();
         assert!(annotations.is_empty());
     }
 }

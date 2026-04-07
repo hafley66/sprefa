@@ -5,8 +5,8 @@ use sprefa_config::CompiledFilter;
 
 /// Result of diffing two git commits.
 pub struct DiffResult {
-    /// Absolute paths of files added or modified (need extraction).
-    pub changed: Vec<PathBuf>,
+    /// (absolute_path, blob_oid) of files added or modified (need extraction).
+    pub changed: Vec<(PathBuf, String)>,
     /// Relative paths of files deleted (need rev_files cleanup).
     pub deleted: Vec<String>,
     /// Pure renames where content is identical (old_rel_path, new_rel_path).
@@ -45,7 +45,8 @@ pub fn diff_files(
                 if let Some(path) = delta.new_file().path() {
                     let rel = path.to_string_lossy();
                     if filter.map(|f| f.allows(&rel)).unwrap_or(true) {
-                        changed.push(repo_path.join(path));
+                        let oid = delta.new_file().id().to_string();
+                        changed.push((repo_path.join(path), oid));
                     }
                 }
             }
@@ -80,7 +81,8 @@ pub fn diff_files(
                                 deleted.push(old);
                             }
                             if new_ok {
-                                changed.push(repo_path.join(&new));
+                                let oid = delta.new_file().id().to_string();
+                                changed.push((repo_path.join(&new), oid));
                             }
                         }
                     }
@@ -90,7 +92,8 @@ pub fn diff_files(
                             deleted.push(old);
                         }
                         if filter.map(|f| f.allows(&new)).unwrap_or(true) {
-                            changed.push(repo_path.join(&new));
+                            let oid = delta.new_file().id().to_string();
+                            changed.push((repo_path.join(&new), oid));
                         }
                     }
                     (Some(old), None) => {
@@ -100,7 +103,8 @@ pub fn diff_files(
                     }
                     (None, Some(new)) => {
                         if filter.map(|f| f.allows(&new)).unwrap_or(true) {
-                            changed.push(repo_path.join(&new));
+                            let oid = delta.new_file().id().to_string();
+                            changed.push((repo_path.join(&new), oid));
                         }
                     }
                     _ => {}
@@ -119,19 +123,25 @@ pub fn diff_files(
 }
 
 /// List all indexable files under `repo_path`.
-/// Uses git2 to enumerate committed files (respects .gitignore, works on any branch).
-/// Falls back to walkdir if the directory is not a git repo.
+/// Returns (absolute_path, content_hash) pairs. Git repos use blob OIDs (free
+/// from the tree walk). Non-git fallback uses mmap + xxh3.
 /// Applies `filter` if provided.
-pub fn list_files(repo_path: &Path, filter: Option<&CompiledFilter>) -> Result<Vec<PathBuf>> {
-    let files = git2_list_files(repo_path).unwrap_or_else(|_| walkdir_files(repo_path));
-    eprintln!("LIST_DEBUG: found {} files in {:?}", files.len(), repo_path);
-    for f in &files {
-        eprintln!("LIST_DEBUG: file {:?}", f);
-    }
+pub fn list_files(repo_path: &Path, filter: Option<&CompiledFilter>) -> Result<Vec<(PathBuf, String)>> {
+    let files = git2_list_files(repo_path).unwrap_or_else(|_| {
+        walkdir_files(repo_path)
+            .into_iter()
+            .filter_map(|p| {
+                let file = std::fs::File::open(&p).ok()?;
+                let mmap = unsafe { memmap2::Mmap::map(&file).ok()? };
+                let hash = format!("{:x}", xxhash_rust::xxh3::xxh3_128(&mmap));
+                Some((p, hash))
+            })
+            .collect()
+    });
 
     let filtered = files
         .into_iter()
-        .filter(|p| {
+        .filter(|(p, _)| {
             let rel = p.strip_prefix(repo_path).unwrap_or(p);
             let rel_str = rel.to_string_lossy();
             filter
@@ -143,7 +153,7 @@ pub fn list_files(repo_path: &Path, filter: Option<&CompiledFilter>) -> Result<V
     Ok(filtered)
 }
 
-fn git2_list_files(repo_path: &Path) -> Result<Vec<PathBuf>> {
+fn git2_list_files(repo_path: &Path) -> Result<Vec<(PathBuf, String)>> {
     let repo = git2::Repository::open(repo_path)?;
     let head = repo.head()?;
     let commit = head.peel_to_commit()?;
@@ -157,7 +167,8 @@ fn git2_list_files(repo_path: &Path) -> Result<Vec<PathBuf>> {
             } else {
                 PathBuf::from(root).join(entry.name().unwrap_or(""))
             };
-            paths.push(repo_path.join(rel));
+            let oid = entry.id().to_string();
+            paths.push((repo_path.join(rel), oid));
         }
         git2::TreeWalkResult::Ok
     })?;
@@ -225,12 +236,12 @@ pub fn is_semver(name: &str) -> bool {
 }
 
 /// Read file contents from a git tree at an arbitrary revision (tag, branch, sha).
-/// Returns `(relative_path, blob_bytes)` pairs. No checkout needed.
+/// Returns `(relative_path, blob_oid, blob_bytes)` triples. No checkout needed.
 pub fn list_blobs_at_rev(
     repo_path: &Path,
     rev: &str,
     filter: Option<&CompiledFilter>,
-) -> Result<Vec<(String, Vec<u8>)>> {
+) -> Result<Vec<(String, String, Vec<u8>)>> {
     let repo = git2::Repository::open(repo_path)?;
     let obj = repo.revparse_single(rev)?;
     let tree = obj.peel_to_tree()?;
@@ -254,9 +265,10 @@ pub fn list_blobs_at_rev(
                 return git2::TreeWalkResult::Ok;
             }
         }
+        let oid = entry.id().to_string();
         if let Ok(obj) = entry.to_object(&repo) {
             if let Ok(blob) = obj.peel_to_blob() {
-                blobs.push((rel, blob.content().to_vec()));
+                blobs.push((rel, oid, blob.content().to_vec()));
             }
         }
         git2::TreeWalkResult::Ok
@@ -359,7 +371,8 @@ mod tests {
 
         let result = diff_files(tmp.path(), &old_sha, None).unwrap();
         assert_eq!(result.changed.len(), 1);
-        assert!(result.changed[0].ends_with("src/a.ts"));
+        assert!(result.changed[0].0.ends_with("src/a.ts"));
+        assert!(!result.changed[0].1.is_empty()); // blob OID
         assert!(result.deleted.is_empty());
         assert!(result.renamed.is_empty());
     }
@@ -399,7 +412,7 @@ mod tests {
 
         let result = diff_files(tmp.path(), &old_sha, None).unwrap();
         assert_eq!(result.changed.len(), 1);
-        assert!(result.changed[0].ends_with("src/a.ts"));
+        assert!(result.changed[0].0.ends_with("src/a.ts"));
     }
 
     #[test]
@@ -489,7 +502,7 @@ mod tests {
         commit_file(&repo, "src/new.rs", b"// added after tag");
 
         let blobs = list_blobs_at_rev(tmp.path(), "v1.0.0", None).unwrap();
-        let paths: Vec<&str> = blobs.iter().map(|(p, _)| p.as_str()).collect();
+        let paths: Vec<&str> = blobs.iter().map(|(p, _, _)| p.as_str()).collect();
 
         // Should see the files as they were at v1.0.0
         assert!(paths.contains(&"src/lib.rs"));
@@ -498,8 +511,9 @@ mod tests {
         assert!(!paths.contains(&"src/new.rs"));
 
         // Content should be the v1 version
-        let lib_content = blobs.iter().find(|(p, _)| p == "src/lib.rs").unwrap();
-        assert_eq!(lib_content.1, b"fn v1() {}");
+        let lib_content = blobs.iter().find(|(p, _, _)| p == "src/lib.rs").unwrap();
+        assert_eq!(lib_content.2, b"fn v1() {}");
+        assert!(!lib_content.1.is_empty()); // blob OID present
     }
 
     #[test]
@@ -518,7 +532,7 @@ mod tests {
         })
         .unwrap();
         let blobs = list_blobs_at_rev(tmp.path(), "HEAD", Some(&filter)).unwrap();
-        let paths: Vec<&str> = blobs.iter().map(|(p, _)| p.as_str()).collect();
+        let paths: Vec<&str> = blobs.iter().map(|(p, _, _)| p.as_str()).collect();
 
         assert!(paths.contains(&"src/lib.rs"));
         assert!(!paths.contains(&"docs/readme.md"));

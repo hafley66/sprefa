@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use memmap2::Mmap;
 use rayon::prelude::*;
-use xxhash_rust::xxh3::xxh3_128;
 
 use sprefa_config::CompiledFilter;
 use sprefa_extract::{ExtractContext, Extractor, RawRef};
@@ -22,33 +21,28 @@ pub struct ExtractedFile {
     pub was_skipped: bool,
 }
 
-/// Walk `repo_path`, run extractors in parallel, return (total_files_found, extracted).
+/// Run extractors in parallel over `(abs_path, content_hash)` pairs.
 ///
-/// Files in `skip_set` (keyed on `(rel_path, content_hash)`) are returned with
-/// `was_skipped = true` and empty refs -- the caller must not re-insert refs for
-/// them but should still update branch membership.
-///
-/// Files with no matching extractor AND not in the skip set are omitted entirely.
-/// Shared parallel extraction over an explicit file list.
+/// The content_hash is pre-computed (blob OID from git, or xxh3 from walkdir
+/// fallback). Skip check happens BEFORE opening the file -- unchanged files
+/// touch zero filesystem.
 fn extract_from_list(
     repo_path: &Path,
-    files: &[PathBuf],
+    files: &[(PathBuf, String)],
     extractors: &[Box<dyn Extractor>],
     skip_set: &HashSet<(String, String)>,
     ctx: &ExtractContext,
 ) -> Vec<ExtractedFile> {
     files
         .par_iter()
-        .filter_map(|abs_path| {
+        .filter_map(|(abs_path, content_hash)| {
             let rel = abs_path.strip_prefix(repo_path).ok()?.to_str()?;
-            let file = std::fs::File::open(abs_path).ok()?;
-            let mmap = unsafe { Mmap::map(&file).ok()? };
-            let hash = format!("{:x}", xxh3_128(&mmap));
 
-            if skip_set.contains(&(rel.to_string(), hash.clone())) {
+            // Skip check BEFORE any I/O.
+            if skip_set.contains(&(rel.to_string(), content_hash.clone())) {
                 return Some(ExtractedFile {
                     rel_path: rel.to_string(),
-                    content_hash: hash,
+                    content_hash: content_hash.clone(),
                     stem: abs_path
                         .file_stem()
                         .and_then(|s| s.to_str())
@@ -63,27 +57,13 @@ fn extract_from_list(
             }
 
             let ext = abs_path.extension().and_then(|e| e.to_str());
-            eprintln!("INDEX_DEBUG: file='{}' ext={:?}", rel, ext);
             let refs: Vec<RawRef> = match ext {
                 Some(e) => {
-                    eprintln!(
-                        "INDEX_DEBUG: checking {} extractors for ext '{}'",
-                        extractors.len(),
-                        e
-                    );
+                    let file = std::fs::File::open(abs_path).ok()?;
+                    let mmap = unsafe { Mmap::map(&file).ok()? };
                     extractors
                         .iter()
-                        .filter(|ex| {
-                            let exts = ex.extensions();
-                            let has = exts.contains(&e);
-                            eprintln!(
-                                "INDEX_DEBUG: extractor has {} exts, contains '{}': {}",
-                                exts.len(),
-                                e,
-                                has
-                            );
-                            has
-                        })
+                        .filter(|ex| ex.extensions().contains(&e))
                         .flat_map(|ex| ex.extract(&mmap, rel, ctx))
                         .collect()
                 }
@@ -94,7 +74,7 @@ fn extract_from_list(
             }
             Some(ExtractedFile {
                 rel_path: rel.to_string(),
-                content_hash: hash,
+                content_hash: content_hash.clone(),
                 stem: abs_path
                     .file_stem()
                     .and_then(|s| s.to_str())
@@ -120,24 +100,22 @@ pub fn extract(
     Ok((total, extracted))
 }
 
-/// Extract refs from in-memory blobs (git object store content).
-/// Same shape as `extract_from_list` but reads bytes directly instead of mmap.
+/// Extract refs from in-memory blobs with pre-computed content hashes (blob OIDs).
+/// Skip check before extraction -- no hashing needed.
 fn extract_from_blobs(
-    blobs: &[(String, Vec<u8>)],
+    blobs: &[(String, String, Vec<u8>)],
     extractors: &[Box<dyn Extractor>],
     skip_set: &HashSet<(String, String)>,
     ctx: &ExtractContext,
 ) -> Vec<ExtractedFile> {
     blobs
         .par_iter()
-        .filter_map(|(rel_path, content)| {
-            let hash = format!("{:x}", xxh3_128(content));
-
-            if skip_set.contains(&(rel_path.clone(), hash.clone())) {
+        .filter_map(|(rel_path, content_hash, content)| {
+            if skip_set.contains(&(rel_path.clone(), content_hash.clone())) {
                 let p = Path::new(rel_path);
                 return Some(ExtractedFile {
                     rel_path: rel_path.clone(),
-                    content_hash: hash,
+                    content_hash: content_hash.clone(),
                     stem: p.file_stem().and_then(|s| s.to_str()).map(String::from),
                     ext: p.extension().and_then(|e| e.to_str()).map(String::from),
                     refs: vec![],
@@ -160,7 +138,7 @@ fn extract_from_blobs(
             }
             Some(ExtractedFile {
                 rel_path: rel_path.clone(),
-                content_hash: hash,
+                content_hash: content_hash.clone(),
                 stem: p.file_stem().and_then(|s| s.to_str()).map(String::from),
                 ext: ext.map(String::from),
                 refs,
@@ -186,12 +164,12 @@ pub fn extract_rev(
     Ok((total, extracted))
 }
 
-/// Extract refs from a specific set of files (absolute paths).
+/// Extract refs from a specific set of files with pre-computed content hashes.
 /// Same logic as `extract()` but skips the tree walk -- only processes
 /// the provided file list.
 pub fn extract_files(
     repo_path: &Path,
-    files: Vec<PathBuf>,
+    files: Vec<(PathBuf, String)>,
     extractors: &[Box<dyn Extractor>],
     skip_set: &HashSet<(String, String)>,
     ctx: &ExtractContext,

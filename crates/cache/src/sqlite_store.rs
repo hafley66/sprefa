@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
+use sqlx::{Column, Row, SqlitePool};
 
 use sprefa_schema::rule_tables::RuleTableDef;
+use sprefa_sprf::hash::RuleHashes;
 
-use crate::store::{FileResult, RuleTableSpec, ScanContext, Store};
+use crate::store::{FileResult, RuleChangeKind, RuleTableSpec, ScanContext, Store};
 
 /// SQLite's bundled libsqlite3 in sqlx supports up to 32766 bound params.
 const STR_CHUNK: usize = 2000;
@@ -114,43 +115,6 @@ impl SqliteStore {
         Ok(map)
     }
 
-    /// Ensure a file row exists, return file_id.
-    async fn ensure_file(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        repo_id: i64,
-        rel_path: &str,
-        content_hash: &str,
-        stem: Option<&str>,
-        ext: Option<&str>,
-    ) -> Result<i64> {
-        let dir = std::path::Path::new(rel_path)
-            .parent()
-            .and_then(|p| p.to_str())
-            .filter(|s| !s.is_empty());
-
-        sqlx::query(
-            "INSERT INTO files (repo_id, path, content_hash, stem, ext, dir) \
-             VALUES (?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(repo_id, path, content_hash) DO NOTHING",
-        )
-        .bind(repo_id)
-        .bind(rel_path)
-        .bind(content_hash)
-        .bind(stem)
-        .bind(ext)
-        .bind(dir)
-        .execute(&mut **tx)
-        .await?;
-
-        let file_id: i64 =
-            sqlx::query_scalar("SELECT id FROM files WHERE repo_id = ? AND path = ?")
-                .bind(repo_id)
-                .bind(rel_path)
-                .fetch_one(&mut **tx)
-                .await?;
-        Ok(file_id)
-    }
 }
 
 impl Store for SqliteStore {
@@ -191,6 +155,7 @@ impl Store for SqliteStore {
         repo: &str,
         rev: &str,
         files: &[FileResult],
+        scanner_hash: &str,
     ) -> Result<usize> {
         if files.is_empty() {
             return Ok(0);
@@ -223,26 +188,96 @@ impl Store for SqliteStore {
 
         let string_ids = self.intern_strings(&mut tx, &all_values).await?;
 
-        // Process each file.
+        // --- Bulk file upsert (kills N+1) ---
+        // Collect file metadata, then INSERT...ON CONFLICT in chunks.
+        // Read back (path -> file_id) with a single SELECT per chunk.
+        struct FileMeta<'a> {
+            rel_path: &'a str,
+            content_hash: &'a str,
+            stem: Option<&'a str>,
+            ext: Option<&'a str>,
+            dir: Option<String>,
+        }
+        let file_metas: Vec<FileMeta> = files
+            .iter()
+            .map(|f| {
+                let dir = std::path::Path::new(&f.rel_path)
+                    .parent()
+                    .and_then(|p| p.to_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                FileMeta {
+                    rel_path: &f.rel_path,
+                    content_hash: &f.content_hash,
+                    stem: f.stem.as_deref(),
+                    ext: f.ext.as_deref(),
+                    dir,
+                }
+            })
+            .collect();
+
+        let mut file_ids: HashMap<String, i64> = HashMap::with_capacity(files.len());
+
+        for chunk in file_metas.chunks(FILE_CHUNK) {
+            // 7 params per row: repo_id, path, content_hash, stem, ext, dir, scanner_hash
+            let ph = chunk.iter().map(|_| "(?,?,?,?,?,?,?)").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "INSERT INTO files (repo_id, path, content_hash, stem, ext, dir, scanner_hash) \
+                 VALUES {ph} \
+                 ON CONFLICT(repo_id, path, content_hash) DO UPDATE SET \
+                   scanner_hash = excluded.scanner_hash"
+            );
+            let mut q = sqlx::query(&sql);
+            for fm in chunk {
+                q = q
+                    .bind(repo_id)
+                    .bind(fm.rel_path)
+                    .bind(fm.content_hash)
+                    .bind(fm.stem)
+                    .bind(fm.ext)
+                    .bind(fm.dir.as_deref())
+                    .bind(scanner_hash);
+            }
+            q.execute(&mut *tx).await?;
+
+            // Read back IDs (same pattern as intern_strings).
+            let sel_ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sel_sql = format!(
+                "SELECT id, path FROM files WHERE repo_id = ? AND path IN ({sel_ph})"
+            );
+            let mut sq = sqlx::query_as::<_, (i64, String)>(&sel_sql);
+            sq = sq.bind(repo_id);
+            for fm in chunk {
+                sq = sq.bind(fm.rel_path);
+            }
+            for (id, path) in sq.fetch_all(&mut *tx).await? {
+                file_ids.insert(path, id);
+            }
+        }
+
+        // --- Bulk rev_files insert ---
+        let rev_file_pairs: Vec<i64> = files
+            .iter()
+            .filter_map(|f| file_ids.get(&f.rel_path).copied())
+            .collect();
+
+        for chunk in rev_file_pairs.chunks(FILE_CHUNK) {
+            let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
+            let sql = format!("INSERT OR IGNORE INTO rev_files (repo_id, rev, file_id) VALUES {ph}");
+            let mut q = sqlx::query(&sql);
+            for fid in chunk {
+                q = q.bind(repo_id).bind(rev).bind(fid);
+            }
+            q.execute(&mut *tx).await?;
+        }
+
+        // --- Per-file refs + per-rule table rows ---
         let mut total_rows = 0usize;
         for file in files {
-            let file_id = self.ensure_file(
-                &mut tx,
-                repo_id,
-                &file.rel_path,
-                &file.content_hash,
-                file.stem.as_deref(),
-                file.ext.as_deref(),
-            )
-            .await?;
-
-            // Ensure rev_files junction.
-            sqlx::query("INSERT OR IGNORE INTO rev_files (repo_id, rev, file_id) VALUES (?, ?, ?)")
-                .bind(repo_id)
-                .bind(rev)
-                .bind(file_id)
-                .execute(&mut *tx)
-                .await?;
+            let file_id = match file_ids.get(&file.rel_path) {
+                Some(&id) => id,
+                None => continue,
+            };
 
             // Build ref rows for the string index.
             let mut ref_rows: Vec<(i64, i64, i64, i64, bool, Option<i64>, Option<&str>)> =
@@ -342,8 +377,36 @@ impl Store for SqliteStore {
         Ok(total_rows)
     }
 
-    async fn create_rule_tables(&self, tables: &[RuleTableSpec]) -> Result<()> {
+    async fn create_rule_tables(
+        &self,
+        tables: &[RuleTableSpec],
+        hashes: Option<&std::collections::HashMap<String, RuleHashes>>,
+    ) -> Result<()> {
+        use crate::store::RuleChangeKind;
+
         for spec in tables {
+            // Check if we have hash info for this rule
+            let change_kind = if let Some(hash_map) = hashes {
+                if let Some(rule_hashes) = hash_map.get(&spec.rule_name) {
+                    self.check_rule_hashes(
+                        &spec.rule_name,
+                        &rule_hashes.schema_hash,
+                        &rule_hashes.extract_hash,
+                    )
+                    .await
+                    .ok()
+                    .flatten()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Decide action based on change kind
+            let need_drop = matches!(change_kind, Some(RuleChangeKind::SchemaChanged) | None);
+            let need_delete = matches!(change_kind, Some(RuleChangeKind::ExtractChanged));
+
             let def = RuleTableDef::from_matches(
                 &spec.rule_name,
                 &spec
@@ -353,11 +416,28 @@ impl Store for SqliteStore {
                     .collect::<Vec<_>>(),
             );
 
-            sqlx::query(&def.create_table_sql())
-                .execute(&self.pool)
-                .await?;
+            // DROP table if schema changed or never created
+            if need_drop {
+                let table_name = def.data_table_name();
+                let _ = sqlx::query(&format!("DROP TABLE IF EXISTS \"{}\"", table_name))
+                    .execute(&self.pool)
+                    .await;
+                
+                sqlx::query(&def.create_table_sql())
+                    .execute(&self.pool)
+                    .await?;
+            }
 
-            // Views reference the data table -- drop and recreate to pick up schema changes.
+            // DELETE all rows if extract changed (but keep table)
+            if need_delete {
+                let table_name = def.data_table_name();
+                sqlx::query(&format!("DELETE FROM \"{}\"", table_name))
+                    .execute(&self.pool)
+                    .await?;
+                tracing::info!("rule '{}': extract changed, deleted all rows", spec.rule_name);
+            }
+
+            // Views: drop and recreate to pick up any schema changes
             let _ = sqlx::query(&format!("DROP VIEW IF EXISTS \"{}\"", spec.rule_name))
                 .execute(&self.pool)
                 .await;
@@ -371,6 +451,18 @@ impl Store for SqliteStore {
             sqlx::query(&def.create_refs_view_sql())
                 .execute(&self.pool)
                 .await?;
+
+            // Update sprf_meta if we have hashes
+            if let Some(hash_map) = hashes {
+                if let Some(rule_hashes) = hash_map.get(&spec.rule_name) {
+                    let _ = self.update_rule_hashes(
+                        &spec.rule_name,
+                        "rules.sprf", // TODO: pass actual source file path
+                        &rule_hashes.schema_hash,
+                        &rule_hashes.extract_hash,
+                    ).await;
+                }
+            }
         }
         Ok(())
     }
@@ -438,7 +530,7 @@ impl Store for SqliteStore {
         rev: &str,
         paths: &[String],
     ) -> Result<usize> {
-        // Delegate to existing implementation for now.
+        // TODO: migrate to Store trait methods
         crate::flush::delete_rev_files_by_paths(&self.pool, repo, rev, paths).await
     }
 
@@ -447,20 +539,21 @@ impl Store for SqliteStore {
         repo: &str,
         renames: &[(String, String)],
     ) -> Result<usize> {
+        // TODO: migrate to Store trait methods
         crate::flush::rename_file_paths(&self.pool, repo, renames).await
     }
 
-    async fn has_stale_scanner_hash(&self, repo: &str, current_hash: &str) -> Result<bool> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM files f
+    async fn stale_file_paths(&self, repo: &str, current_hash: &str) -> Result<Vec<String>> {
+        let paths: Vec<String> = sqlx::query_scalar(
+            "SELECT f.path FROM files f
              JOIN repos r ON f.repo_id = r.id
              WHERE r.name = ? AND f.scanner_hash IS NOT NULL AND f.scanner_hash != ?",
         )
         .bind(repo)
         .bind(current_hash)
-        .fetch_one(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
-        Ok(count > 0)
+        Ok(paths)
     }
 
     async fn load_scan_context(&self, repo: &str, scanner_hash: &str) -> Result<ScanContext> {
@@ -489,7 +582,135 @@ impl Store for SqliteStore {
         })
     }
 
+    async fn check_rule_hashes(
+        &self,
+        rule_name: &str,
+        schema_hash: &str,
+        extract_hash: &str,
+    ) -> Result<Option<RuleChangeKind>> {
+        // Fail soft: if sprf_meta table doesn't exist, treat as "no history"
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT schema_hash, extract_hash FROM sprf_meta WHERE rule_name = ?",
+        )
+        .bind(rule_name)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten();
+
+        let Some((stored_schema, stored_extract)) = row else {
+            // Rule not in sprf_meta - either new rule or table doesn't exist yet
+            return Ok(None);
+        };
+
+        if stored_schema != schema_hash {
+            return Ok(Some(RuleChangeKind::SchemaChanged));
+        }
+        if stored_extract != extract_hash {
+            return Ok(Some(RuleChangeKind::ExtractChanged));
+        }
+        Ok(Some(RuleChangeKind::Unchanged))
+    }
+
+    async fn update_rule_hashes(
+        &self,
+        rule_name: &str,
+        source_file: &str,
+        schema_hash: &str,
+        extract_hash: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO sprf_meta (rule_name, source_file, schema_hash, extract_hash, last_scanned_at)
+             VALUES (?, ?, ?, ?, datetime('now'))
+             ON CONFLICT(rule_name) DO UPDATE SET
+                source_file = excluded.source_file,
+                schema_hash = excluded.schema_hash,
+                extract_hash = excluded.extract_hash,
+                last_scanned_at = datetime('now')",
+        )
+        .bind(rule_name)
+        .bind(source_file)
+        .bind(schema_hash)
+        .bind(extract_hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     fn sqlite_pool(&self) -> Option<&sqlx::SqlitePool> {
         Some(&self.pool)
+    }
+
+    async fn run_check(&self, check_name: &str, sql: &str) -> Result<usize> {
+        use sqlx::Row;
+
+        let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
+
+        if rows.is_empty() {
+            return Ok(0);
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        for row in &rows {
+            let mut json_map = serde_json::Map::new();
+            for col in row.columns() {
+                let name = col.name().to_string();
+                let value: Option<String> = row.try_get(name.as_str()).ok().flatten();
+                json_map.insert(name, serde_json::Value::String(value.unwrap_or_default()));
+            }
+
+            let violation_data = serde_json::to_string(&json_map)?;
+
+            sqlx::query(
+                "INSERT INTO invariant_violations (check_name, violation_data) VALUES (?, ?)",
+            )
+            .bind(check_name)
+            .bind(&violation_data)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(rows.len())
+    }
+
+    async fn list_violations(
+        &self,
+        check_name: Option<&str>,
+    ) -> Result<Vec<crate::store::ViolationEntry>> {
+        let sql = if check_name.is_some() {
+            "SELECT id, check_name, violation_data, created_at, resolved_at FROM invariant_violations WHERE check_name = ?"
+        } else {
+            "SELECT id, check_name, violation_data, created_at, resolved_at FROM invariant_violations"
+        };
+
+        let mut query = sqlx::query(sql);
+        if let Some(name) = check_name {
+            query = query.bind(name);
+        }
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        let violations = rows
+            .into_iter()
+            .map(|row| {
+                let id: i64 = row.get("id");
+                let check_name: String = row.get("check_name");
+                let violation_data: String = row.get("violation_data");
+                let created_at: String = row.get("created_at");
+                let resolved_at: Option<String> = row.get("resolved_at");
+
+                crate::store::ViolationEntry {
+                    id,
+                    check_name,
+                    violation_data,
+                    created_at,
+                    resolved_at,
+                }
+            })
+            .collect();
+
+        Ok(violations)
     }
 }

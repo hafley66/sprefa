@@ -40,6 +40,9 @@ pub fn lower_program(program: &Program) -> Result<(RuleSet, Vec<DepEdge>)> {
                 collect_dep_edges(&decl.body, &decl.name, &mut edges);
                 rules.push(rule);
             }
+            Statement::Check(_) => {
+                // Check blocks are handled separately by the invariant checker
+            }
         }
     }
 
@@ -52,6 +55,17 @@ pub fn lower_program(program: &Program) -> Result<(RuleSet, Vec<DepEdge>)> {
     ))
 }
 
+/// Extract check declarations from a parsed program.
+pub fn extract_checks(program: &Program) -> Vec<crate::_0_ast::CheckDecl> {
+    program
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Statement::Check(decl) => Some(decl.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Walk rule bodies to find cross-rule references and emit dependency edges.
 fn collect_dep_edges(bodies: &[RuleBody], consumer: &str, edges: &mut Vec<DepEdge>) {
     for body in bodies {
@@ -60,7 +74,10 @@ fn collect_dep_edges(bodies: &[RuleBody], consumer: &str, edges: &mut Vec<DepEdg
             RuleBody::Block { children, .. } => {
                 collect_dep_edges(children, consumer, edges);
             }
-            RuleBody::Ref { cross_ref, children } => {
+            RuleBody::Ref {
+                cross_ref,
+                children,
+            } => {
                 edges.push(DepEdge {
                     producer: cross_ref.rule_name.clone(),
                     consumer: consumer.to_string(),
@@ -202,8 +219,7 @@ fn flatten_body(
             let mut available_vars = parent_vars.clone();
             available_vars.extend(block_vars.iter().cloned());
 
-            let block_scoped =
-                slot_to_scoped_step(slot, depth, parent_vars, json_annotations)?;
+            let block_scoped = slot_to_scoped_step(slot, depth, parent_vars, json_annotations)?;
             result.push(block_scoped);
 
             for child in children {
@@ -212,7 +228,10 @@ fn flatten_body(
                 result.extend(child_scoped);
             }
         }
-        RuleBody::Ref { cross_ref, children } => {
+        RuleBody::Ref {
+            cross_ref,
+            children,
+        } => {
             let mut available_vars = parent_vars.clone();
             for binding in &cross_ref.bindings {
                 available_vars.insert(binding.var.clone());
@@ -350,8 +369,7 @@ fn convert_slot(
                 if ast_selector.is_some() {
                     bail!("multiple ast() slots not supported");
                 }
-                let (pattern, constraints, segment_captures) =
-                    rewrite_ast_braced_captures(body);
+                let (pattern, constraints, segment_captures) = rewrite_ast_braced_captures(body);
                 ast_selector = Some(AstSelector {
                     pattern: Some(pattern),
                     rule: None,
@@ -508,8 +526,7 @@ mod tests {
 
     #[test]
     fn lower_flat_rule() {
-        let rules =
-            lower("rule(pkg) { fs(**/Cargo.toml) > json({ package: { name: $NAME } }) };");
+        let rules = lower("rule(pkg) { fs(**/Cargo.toml) > json({ package: { name: $NAME } }) };");
         assert_eq!(rules.len(), 1);
         let r = &rules[0];
         assert_eq!(r.name, "pkg");
@@ -578,8 +595,16 @@ mod tests {
         };"#,
         );
         let r = &rules[0];
-        let repo_match = r.create_matches.iter().find(|m| m.capture == "REPO").unwrap();
-        let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
+        let repo_match = r
+            .create_matches
+            .iter()
+            .find(|m| m.capture == "REPO")
+            .unwrap();
+        let tag_match = r
+            .create_matches
+            .iter()
+            .find(|m| m.capture == "TAG")
+            .unwrap();
         assert_eq!(repo_match.scan.as_deref(), Some("repo"));
         assert_eq!(tag_match.scan.as_deref(), Some("rev"));
     }
@@ -593,15 +618,25 @@ mod tests {
         };"#,
         );
         let r = &rules[0];
-        let repo_match = r.create_matches.iter().find(|m| m.capture == "REPO").unwrap();
-        let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
+        let repo_match = r
+            .create_matches
+            .iter()
+            .find(|m| m.capture == "REPO")
+            .unwrap();
+        let tag_match = r
+            .create_matches
+            .iter()
+            .find(|m| m.capture == "TAG")
+            .unwrap();
         assert_eq!(repo_match.scan.as_deref(), Some("repo"));
         assert_eq!(tag_match.scan.as_deref(), Some("rev"));
     }
 
     #[test]
     fn lower_ast_with_lang() {
-        let rules = lower("rule(imports) { fs(**/*.config) > ast[typescript](import $NAME from '$PATH') };");
+        let rules = lower(
+            "rule(imports) { fs(**/*.config) > ast[typescript](import $NAME from '$PATH') };",
+        );
         let r = &rules[0];
         let ast = r.select_ast.as_ref().unwrap();
         assert_eq!(ast.language.as_deref(), Some("typescript"));
@@ -645,10 +680,7 @@ mod tests {
         let (pat, constraints, seg) = rewrite_ast_braced_captures("use${ENTITY}Query($$$ARGS)");
         assert_eq!(pat, "$SPREFA0($$$ARGS)");
         let c = constraints.unwrap();
-        assert_eq!(
-            c["SPREFA0"]["regex"].as_str().unwrap(),
-            "^use.+Query$"
-        );
+        assert_eq!(c["SPREFA0"]["regex"].as_str().unwrap(), "^use.+Query$");
         let s = seg.unwrap();
         assert_eq!(s["SPREFA0"], "use${ENTITY}Query");
     }
@@ -670,9 +702,8 @@ mod tests {
 
     #[test]
     fn lower_ast_braced_capture() {
-        let rules = lower(
-            r"rule(hooks) { fs(**/*.ts) > ast[typescript](use${ENTITY}Query($$$ARGS)) };",
-        );
+        let rules =
+            lower(r"rule(hooks) { fs(**/*.ts) > ast[typescript](use${ENTITY}Query($$$ARGS)) };");
         let r = &rules[0];
         let ast = r.select_ast.as_ref().unwrap();
         assert_eq!(ast.pattern.as_deref(), Some("$SPREFA0($$$ARGS)"));
@@ -707,10 +738,13 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].producer, "deploy_config");
         assert_eq!(edges[0].consumer, "svc_version");
-        assert_eq!(edges[0].bindings, vec![
-            ("repo".to_string(), "REPO".to_string()),
-            ("pin".to_string(), "PIN".to_string()),
-        ]);
+        assert_eq!(
+            edges[0].bindings,
+            vec![
+                ("repo".to_string(), "REPO".to_string()),
+                ("pin".to_string(), "PIN".to_string()),
+            ]
+        );
     }
 
     #[test]

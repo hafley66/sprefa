@@ -9,11 +9,13 @@ sprefa_extract = { path = "../extract" }
 sprefa_rules = { path = "../rules" }
 sprefa_schema = { path = "../schema" }
 sprefa_index = { path = "../index" }
+sprefa_sprf = { path = "../sprf" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 oxc_resolver = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 sprefa_extract = { path = "../extract" }

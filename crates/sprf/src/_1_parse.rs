@@ -3,7 +3,7 @@
 /// Parses the outer structure: rule declarations with scoped bodies.
 /// Does NOT parse the inside of json() bodies -- that's _2_pattern.rs.
 use crate::_0_ast::{
-    CrossRef, CrossRefBinding, Program, RuleBody, RuleDecl, Slot, Statement, Tag,
+    CheckDecl, CrossRef, CrossRefBinding, Program, RuleBody, RuleDecl, Slot, Statement, Tag,
 };
 
 pub fn parse_program(input: &str) -> anyhow::Result<Program> {
@@ -38,7 +38,7 @@ fn skip_ws_and_comments(mut input: &str) -> &str {
     }
 }
 
-/// Dispatch: `rule ...` only.
+/// Dispatch: `rule ...` or `check ...`.
 fn parse_statement(input: &str) -> anyhow::Result<(Statement, &str)> {
     let trimmed = skip_ws_and_comments(input);
 
@@ -48,8 +48,14 @@ fn parse_statement(input: &str) -> anyhow::Result<(Statement, &str)> {
         return Ok((Statement::Rule(decl), rest));
     }
 
+    // check(name) { SQL };
+    if let Some(after) = strip_check_keyword(trimmed) {
+        let (decl, rest) = parse_check_decl(after)?;
+        return Ok((Statement::Check(decl), rest));
+    }
+
     anyhow::bail!(
-        "expected `rule`, found {:?}",
+        "expected `rule` or `check`, found {:?}",
         &trimmed[..trimmed.len().min(30)]
     );
 }
@@ -67,6 +73,19 @@ fn strip_rule_keyword(input: &str) -> Option<&str> {
     }
 }
 
+/// Check if input starts with `check(`.
+fn strip_check_keyword(input: &str) -> Option<&str> {
+    if !input.starts_with("check") {
+        return None;
+    }
+    let after = input[5..].trim_start();
+    if after.starts_with('(') {
+        Some(after)
+    } else {
+        None
+    }
+}
+
 /// Parse `rule(name) { body };`
 fn parse_rule_decl(input: &str) -> anyhow::Result<(RuleDecl, &str)> {
     // Input starts after "rule", at the `(name)` part
@@ -75,11 +94,7 @@ fn parse_rule_decl(input: &str) -> anyhow::Result<(RuleDecl, &str)> {
     }
     let (name, rest) = parse_paren_body(&input[1..])?;
     let name = name.trim().to_string();
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         anyhow::bail!("invalid rule name: {:?}", name);
     }
 
@@ -99,6 +114,64 @@ fn parse_rule_decl(input: &str) -> anyhow::Result<(RuleDecl, &str)> {
     let rest = &rest[1..];
 
     Ok((RuleDecl { name, body }, rest))
+}
+
+/// Parse `check(name) { SQL };`
+fn parse_check_decl(input: &str) -> anyhow::Result<(CheckDecl, &str)> {
+    // Input starts after "check", at the `(name)` part
+    if !input.starts_with('(') {
+        anyhow::bail!("expected `(` after `check`");
+    }
+    let (name, rest) = parse_paren_body(&input[1..])?;
+    let name = name.trim().to_string();
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        anyhow::bail!("invalid check name: {:?}", name);
+    }
+
+    let rest = rest.trim_start();
+    if !rest.starts_with('{') {
+        anyhow::bail!("expected `{{` after `check({})`", name);
+    }
+
+    // Parse SQL body inside braces (brace-aware, but not semicolon-aware)
+    let (sql, rest) = parse_check_sql_body(&rest[1..])?;
+
+    // Expect `;` after `}`
+    let rest = rest.trim_start();
+    if !rest.starts_with(';') {
+        anyhow::bail!("expected `;` after `check({}) {{ ... }}`", name);
+    }
+    let rest = &rest[1..];
+
+    Ok((CheckDecl { name, sql }, rest))
+}
+
+/// Parse SQL body inside a check block.
+/// SQL can contain semicolons, so we just match braces.
+fn parse_check_sql_body(input: &str) -> anyhow::Result<(String, &str)> {
+    let mut depth: u32 = 1;
+    let mut pos = 0;
+    let bytes = input.as_bytes();
+
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let sql = input[..pos].trim().to_string();
+                    return Ok((sql, &input[pos + 1..]));
+                }
+            }
+            b'\\' => {
+                pos += 1;
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+
+    anyhow::bail!("unclosed `{{` in check block");
 }
 
 /// Parse a list of rule body items.
@@ -203,9 +276,21 @@ fn try_parse_cross_ref(input: &str) -> anyhow::Result<Option<(RuleBody, &str)>> 
     // Optional block
     if after_paren.starts_with('{') {
         let (children, rest) = parse_block_contents(&after_paren[1..])?;
-        Ok(Some((RuleBody::Ref { cross_ref, children }, rest)))
+        Ok(Some((
+            RuleBody::Ref {
+                cross_ref,
+                children,
+            },
+            rest,
+        )))
     } else {
-        Ok(Some((RuleBody::Ref { cross_ref, children: vec![] }, after_paren)))
+        Ok(Some((
+            RuleBody::Ref {
+                cross_ref,
+                children: vec![],
+            },
+            after_paren,
+        )))
     }
 }
 
@@ -630,10 +715,45 @@ mod tests {
         };
 
         assert_eq!(decl.body.len(), 1);
-        let RuleBody::Ref { cross_ref, children } = &decl.body[0] else {
+        let RuleBody::Ref {
+            cross_ref,
+            children,
+        } = &decl.body[0]
+        else {
             panic!("expected Ref body")
         };
         assert_eq!(cross_ref.rule_name, "helm_charts");
         assert_eq!(children.len(), 1);
+    }
+
+    #[test]
+    fn parse_check_block() {
+        let input = r#"check(openapi_drift) {
+            SELECT m.name, m.version, s.version
+            FROM mono_openapi_data m, sot_openapi_data s
+            WHERE strip_suffixes(m.name, '-service') = s.name
+              AND m.version != s.version
+        };"#;
+        let program = parse_program(input).unwrap();
+        assert_eq!(program.len(), 1);
+        let Statement::Check(decl) = &program[0] else {
+            panic!("expected Check")
+        };
+        assert_eq!(decl.name, "openapi_drift");
+        assert!(decl.sql.contains("SELECT"));
+        assert!(decl.sql.contains("FROM mono_openapi_data"));
+    }
+
+    #[test]
+    fn parse_rule_and_check() {
+        let input = r#"rule(pkg) { fs(**/Cargo.toml) };
+
+check(version_mismatch) {
+    SELECT * FROM packages WHERE version != expected
+};"#;
+        let program = parse_program(input).unwrap();
+        assert_eq!(program.len(), 2);
+        assert!(matches!(program[0], Statement::Rule(_)));
+        assert!(matches!(program[1], Statement::Check(_)));
     }
 }

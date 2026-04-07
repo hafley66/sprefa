@@ -2,6 +2,7 @@ pub mod _0_ast;
 pub mod _1_parse;
 pub mod _2_pattern;
 pub mod _3_lower;
+pub mod hash;
 
 use std::path::Path;
 
@@ -9,16 +10,32 @@ use anyhow::Result;
 use sprefa_rules::graph::DepEdge;
 use sprefa_rules::types::RuleSet;
 
+pub use _0_ast::CheckDecl;
+
 /// Parse a .sprf file and produce extraction rules + dependency edges.
 pub fn parse_sprf(source: &str) -> Result<(RuleSet, Vec<DepEdge>)> {
     let program = _1_parse::parse_program(source)?;
     _3_lower::lower_program(&program)
 }
 
+/// Parse a .sprf file and return rules, dependency edges, and check declarations.
+pub fn parse_sprf_full(source: &str) -> Result<(RuleSet, Vec<DepEdge>, Vec<CheckDecl>)> {
+    let program = _1_parse::parse_program(source)?;
+    let (ruleset, edges) = _3_lower::lower_program(&program)?;
+    let checks = _3_lower::extract_checks(&program);
+    Ok((ruleset, edges, checks))
+}
+
 /// Load a .sprf file from disk and produce extraction rules + dependency edges.
 pub fn load_sprf(path: &Path) -> Result<(RuleSet, Vec<DepEdge>)> {
     let source = std::fs::read_to_string(path)?;
     parse_sprf(&source)
+}
+
+/// Load a .sprf file from disk and return rules, edges, and check declarations.
+pub fn load_sprf_full(path: &Path) -> Result<(RuleSet, Vec<DepEdge>, Vec<CheckDecl>)> {
+    let source = std::fs::read_to_string(path)?;
+    parse_sprf_full(&source)
 }
 
 #[cfg(test)]
@@ -79,7 +96,8 @@ mod integration_tests {
 
     #[test]
     fn cargo_workspace_members() {
-        let sprf = "rule(ws) { fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } }) };";
+        let sprf =
+            "rule(ws) { fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } }) };";
         let toml = br#"
             [workspace]
             members = ["crates/foo", "crates/bar"]
@@ -96,7 +114,8 @@ mod integration_tests {
 
     #[test]
     fn json_nested_deps() {
-        let sprf = "rule(deps) { fs(**/package.json) > json({ dependencies: { $NAME: $VERSION } }) };";
+        let sprf =
+            "rule(deps) { fs(**/package.json) > json({ dependencies: { $NAME: $VERSION } }) };";
         let json = br#"{ "dependencies": { "express": "4.18.2", "lodash": "4.17.21" } }"#;
         let mut results = run_sprf(sprf, json, "json");
         results.sort();
@@ -228,7 +247,8 @@ mod integration_tests {
     fn real_workspace_cargo_toml() {
         let toml_bytes =
             std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml")).unwrap();
-        let sprf = "rule(ws) { fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } }) };";
+        let sprf =
+            "rule(ws) { fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } }) };";
         let results = run_sprf(sprf, &toml_bytes, "toml");
         assert!(
             results.len() > 5,

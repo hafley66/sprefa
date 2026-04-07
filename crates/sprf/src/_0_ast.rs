@@ -9,6 +9,7 @@ pub type Program = Vec<Statement>;
 #[derive(Debug, Clone)]
 pub enum Statement {
     Rule(RuleDecl),
+    Check(CheckDecl),
 }
 
 /// A rule with a name and body in braces.
@@ -29,6 +30,24 @@ pub enum Statement {
 pub struct RuleDecl {
     pub name: String,
     pub body: Vec<RuleBody>,
+}
+
+/// A check block: `check(name) { SQL };`.
+///
+/// ```sprf
+/// check(openapi_drift) {
+///     SELECT m.name, m.version, s.version
+///     FROM mono_openapi_data m, sot_openapi_data s
+///     WHERE strip_suffixes(m.name, '-service') = s.name
+///       AND m.version != s.version
+/// };
+/// ```
+///
+/// Semantics: rows returned = violations to insert into invariant_violations.
+#[derive(Debug, Clone)]
+pub struct CheckDecl {
+    pub name: String,
+    pub sql: String,
 }
 
 /// A cross-rule reference: `rulename(col: $VAR, col: $VAR)`.
@@ -68,7 +87,10 @@ pub enum RuleBody {
     /// Example: `helm_image(repo: $REPO, rev: $TAG) { fs(...) }`
     /// Binds columns from the referenced rule's output, optionally scoping
     /// children under each row.
-    Ref { cross_ref: CrossRef, children: Vec<RuleBody> },
+    Ref {
+        cross_ref: CrossRef,
+        children: Vec<RuleBody>,
+    },
 }
 
 /// One segment of a selector.
@@ -133,7 +155,10 @@ impl RuleBody {
                     child.collect_captures(out);
                 }
             }
-            RuleBody::Ref { cross_ref, children } => {
+            RuleBody::Ref {
+                cross_ref,
+                children,
+            } => {
                 for binding in &cross_ref.bindings {
                     out.push(binding.var.clone());
                 }

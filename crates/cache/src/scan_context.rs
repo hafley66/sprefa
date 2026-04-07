@@ -9,24 +9,23 @@ pub struct ScanContext {
     pub skip_set: HashSet<(String, String)>,
 }
 
-/// Check whether any file in the repo was scanned with a different binary hash.
-/// Returns true if at least one file has `scanner_hash != current_hash`,
-/// meaning a full re-scan is needed to pick up extraction logic changes.
-pub async fn has_stale_scanner_hash(
+/// Return relative paths of files scanned with a different binary hash.
+/// These need re-extraction to pick up extraction logic changes.
+pub async fn stale_file_paths(
     db: &SqlitePool,
     repo_name: &str,
     current_hash: &str,
-) -> Result<bool> {
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM files f
+) -> Result<Vec<String>> {
+    let paths: Vec<String> = sqlx::query_scalar(
+        "SELECT f.path FROM files f
          JOIN repos r ON f.repo_id = r.id
          WHERE r.name = ? AND f.scanner_hash IS NOT NULL AND f.scanner_hash != ?",
     )
     .bind(repo_name)
     .bind(current_hash)
-    .fetch_one(db)
+    .fetch_all(db)
     .await?;
-    Ok(count > 0)
+    Ok(paths)
 }
 
 /// Load the set of files for `repo_name` that were last scanned with
@@ -144,7 +143,7 @@ mod tests {
         assert!(!ctx.skip_set.contains(&("src/a.ts".to_string(), "hash2".to_string())));
     }
 
-    // -- has_stale_scanner_hash tests --
+    // -- stale_file_paths tests --
 
     #[tokio::test]
     async fn no_stale_when_all_match() {
@@ -153,24 +152,27 @@ mod tests {
         insert_file(&db, repo_id, "src/a.ts", "h1", Some("v1")).await;
         insert_file(&db, repo_id, "src/b.ts", "h2", Some("v1")).await;
 
-        assert!(!has_stale_scanner_hash(&db, "myrepo", "v1").await.unwrap());
+        let stale = stale_file_paths(&db, "myrepo", "v1").await.unwrap();
+        assert!(stale.is_empty());
     }
 
     #[tokio::test]
-    async fn stale_when_different_hash() {
+    async fn stale_returns_mismatched_paths() {
         let db = make_db().await;
         let repo_id = insert_repo(&db, "myrepo").await;
         insert_file(&db, repo_id, "src/a.ts", "h1", Some("v1")).await;
         insert_file(&db, repo_id, "src/b.ts", "h2", Some("v2")).await;
 
-        assert!(has_stale_scanner_hash(&db, "myrepo", "v2").await.unwrap());
+        let stale = stale_file_paths(&db, "myrepo", "v2").await.unwrap();
+        assert_eq!(stale, vec!["src/a.ts"]);
     }
 
     #[tokio::test]
     async fn no_stale_when_repo_empty() {
         let db = make_db().await;
         insert_repo(&db, "empty").await;
-        assert!(!has_stale_scanner_hash(&db, "empty", "v1").await.unwrap());
+        let stale = stale_file_paths(&db, "empty", "v1").await.unwrap();
+        assert!(stale.is_empty());
     }
 
     #[tokio::test]
@@ -179,6 +181,7 @@ mod tests {
         let repo_id = insert_repo(&db, "myrepo").await;
         insert_file(&db, repo_id, "src/a.ts", "h1", None).await;
 
-        assert!(!has_stale_scanner_hash(&db, "myrepo", "v1").await.unwrap());
+        let stale = stale_file_paths(&db, "myrepo", "v1").await.unwrap();
+        assert!(stale.is_empty());
     }
 }

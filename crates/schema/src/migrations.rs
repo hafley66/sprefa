@@ -120,65 +120,30 @@ const MIGRATIONS: &[&str] = &[
         UNIQUE(repo_id, package_name, manifest_path)
     )
     "#,
-    // repo_refs: repo-level metadata strings (repo name, git tags, branches).
-    // These participate in the match/link system without a file anchor.
+    // sprf_meta: rule change detection for incremental extraction.
+    // schema_hash = column definitions, extract_hash = pattern AST + producer hashes.
     r#"
-    CREATE TABLE IF NOT EXISTS repo_refs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        string_id INTEGER NOT NULL REFERENCES strings(id),
-        repo_id INTEGER NOT NULL REFERENCES repos(id),
-        kind TEXT NOT NULL,
-        UNIQUE(repo_id, string_id, kind)
+    CREATE TABLE IF NOT EXISTS sprf_meta (
+        rule_name TEXT PRIMARY KEY,
+        source_file TEXT NOT NULL,
+        schema_hash TEXT NOT NULL,
+        extract_hash TEXT NOT NULL,
+        last_scanned_at TEXT
     )
     "#,
-    "CREATE INDEX IF NOT EXISTS idx_repo_refs_string_id ON repo_refs(string_id)",
-    "CREATE INDEX IF NOT EXISTS idx_repo_refs_repo_id ON repo_refs(repo_id)",
-    // matches: semantic interpretation of physical refs or repo-level metadata.
-    // Exactly one of (ref_id, repo_ref_id) is non-null.
-    // kind is a free-text string (no enum), rule_name identifies which rule produced it.
+    // matches: semantic interpretation of refs (kind identifies the match type).
     r#"
     CREATE TABLE IF NOT EXISTS matches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ref_id INTEGER REFERENCES refs(id),
-        repo_ref_id INTEGER REFERENCES repo_refs(id),
         rule_name TEXT NOT NULL,
         kind TEXT NOT NULL,
-        group_id INTEGER,
-        CHECK((ref_id IS NULL) != (repo_ref_id IS NULL))
+        group_id INTEGER
     )
     "#,
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_file_unique ON matches(ref_id, rule_name, kind) WHERE ref_id IS NOT NULL",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_repo_unique ON matches(repo_ref_id, rule_name, kind) WHERE repo_ref_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_matches_ref_id ON matches(ref_id)",
-    "CREATE INDEX IF NOT EXISTS idx_matches_repo_ref_id ON matches(repo_ref_id)",
     "CREATE INDEX IF NOT EXISTS idx_matches_kind ON matches(kind)",
-    "CREATE INDEX IF NOT EXISTS idx_matches_rule_name ON matches(rule_name)",
     "CREATE INDEX IF NOT EXISTS idx_matches_group_id ON matches(group_id)",
-    // match_labels: arbitrary key-value metadata on semantic matches
-    r#"
-    CREATE TABLE IF NOT EXISTS match_labels (
-        match_id INTEGER NOT NULL REFERENCES matches(id),
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        UNIQUE(match_id, key)
-    )
-    "#,
-    "CREATE INDEX IF NOT EXISTS idx_match_labels_match_id ON match_labels(match_id)",
-    // match_links: cross-file semantic links between matches.
-    // e.g. import_name in file A -> export_name in file B.
-    // Additive-only table: can DROP + recreate without touching refs/matches.
-    r#"
-    CREATE TABLE IF NOT EXISTS match_links (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        source_match_id INTEGER NOT NULL REFERENCES matches(id),
-        target_match_id INTEGER NOT NULL REFERENCES matches(id),
-        link_kind TEXT NOT NULL,
-        UNIQUE(source_match_id, target_match_id, link_kind)
-    )
-    "#,
-    "CREATE INDEX IF NOT EXISTS idx_match_links_source ON match_links(source_match_id)",
-    "CREATE INDEX IF NOT EXISTS idx_match_links_target ON match_links(target_match_id)",
-    "CREATE INDEX IF NOT EXISTS idx_match_links_kind ON match_links(link_kind)",
     // discovery_log: records each (repo, rev) target found by tier 2 discovery.
     r#"
     CREATE TABLE IF NOT EXISTS discovery_log (
@@ -193,6 +158,16 @@ const MIGRATIONS: &[&str] = &[
         files_scanned INTEGER,
         refs_inserted INTEGER,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+    "#,
+    // invariant_violations: stores check block violations (one row per violation).
+    r#"
+    CREATE TABLE IF NOT EXISTS invariant_violations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        check_name TEXT NOT NULL,
+        violation_data TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        resolved_at TEXT
     )
     "#,
 ];
@@ -221,37 +196,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     let _ = sqlx::query("ALTER TABLE files ADD COLUMN dir TEXT")
         .execute(pool)
         .await;
-
-    // Add group_id to matches for co-extraction grouping.
-    let _ = sqlx::query("ALTER TABLE matches ADD COLUMN group_id INTEGER")
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_matches_group_id ON matches(group_id)")
-        .execute(pool)
-        .await;
-
-    // If matches table has old shape (ref_id NOT NULL, no repo_ref_id), rebuild it.
-    // The DB is a rebuildable cache so data loss is acceptable.
-    let has_repo_ref_id: i64 = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM pragma_table_info('matches') WHERE name = 'repo_ref_id'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
-    if has_repo_ref_id == 0 {
-        // Old schema -- drop match_links first (FK dependency), then matches,
-        // then let the CREATE TABLE IF NOT EXISTS statements above recreate both.
-        let _ = sqlx::query("DROP TABLE IF EXISTS match_links").execute(pool).await;
-        let _ = sqlx::query("DROP TABLE IF EXISTS match_labels").execute(pool).await;
-        let _ = sqlx::query("DROP TABLE IF EXISTS matches").execute(pool).await;
-        for sql in MIGRATIONS {
-            if sql.contains("matches") || sql.contains("match_links") || sql.contains("match_labels") {
-                let _ = sqlx::query(sql).execute(pool).await;
-            }
-        }
-    }
-
-
 
     tracing::info!("migrations complete ({} statements)", MIGRATIONS.len());
     Ok(())

@@ -90,27 +90,12 @@ impl<S: Store> Scanner<S> {
             &config.name,
             branch,
             &file_results,
+            BINARY_HASH,
         ).await?;
 
-        // Intern repo-level metadata (repo name, git revs) as linkable entities.
-        // TODO: Migrate to Store trait method
-        let (targets_resolved, links_created) = if let Some(pool) = self.store.sqlite_pool() {
-            sprefa_cache::flush_repo_meta(
-                pool,
-                &config.name,
-                None, // org -- not in RepoConfig yet
-                &git_revs,
-            ).await?;
-
-            let targets = sprefa_cache::resolve_import_targets(pool, &config.name).await?;
-            (targets, 0)
-        } else {
-            (0, 0)
-        };
-
         tracing::info!(
-            "{}/{}: {} refs, {} import targets resolved, {} match links",
-            config.name, branch, refs_inserted, targets_resolved, links_created,
+            "{}/{}: {} refs inserted",
+            config.name, branch, refs_inserted,
         );
 
         // Read HEAD sha for callers to persist (only for committed revs).
@@ -133,8 +118,8 @@ impl<S: Store> Scanner<S> {
             files_skipped,
             files_deleted: 0,
             files_renamed: 0,
-            targets_resolved,
-            links_created,
+            targets_resolved: 0,
+            links_created: 0,
             new_git_hash,
         })
     }
@@ -144,15 +129,6 @@ impl<S: Store> Scanner<S> {
     /// (caller should retry with scan_repo).
     #[tracing::instrument(skip(self, config), fields(repo = %config.name, branch = %branch, old_sha = %old_sha))]
     pub async fn scan_diff(&self, config: &RepoConfig, branch: &str, old_sha: &str) -> Result<ScanResult> {
-        // If the binary was rebuilt since last scan, some files have stale extraction
-        // output. Fall back to full scan so every file gets re-extracted.
-        if self.store.has_stale_scanner_hash(&config.name, BINARY_HASH).await? {
-            anyhow::bail!(
-                "binary hash changed ({}), full rescan required",
-                &BINARY_HASH[..8.min(BINARY_HASH.len())],
-            );
-        }
-
         let filter_config = sprefa_config::resolve_filter(self.global_filter.as_ref(), config, branch);
         let compiled_filter = filter_config
             .as_ref()
@@ -161,10 +137,13 @@ impl<S: Store> Scanner<S> {
 
         let scan_ctx = self.store.load_scan_context(&config.name, BINARY_HASH).await?;
 
+        // Fetch stale files (scanned with old binary) for incremental re-extraction.
+        let stale_paths = self.store.stale_file_paths(&config.name, BINARY_HASH).await?;
+
         let repo_path = PathBuf::from(&config.path);
         let old_sha_owned = old_sha.to_string();
 
-        let (diff, git_revs) = tokio::task::spawn_blocking({
+        let (mut diff, git_revs) = tokio::task::spawn_blocking({
             let repo_path = repo_path.clone();
             move || -> Result<_> {
                 let diff = sprefa_index::diff_files(&repo_path, &old_sha_owned, compiled_filter.as_ref())?;
@@ -176,6 +155,64 @@ impl<S: Store> Scanner<S> {
             .filter(|r| r.is_tag)
             .map(|r| r.name.clone())
             .collect();
+
+        // Merge stale files into diff.changed so they get re-extracted.
+        // Resolve blob OIDs from the current HEAD tree.
+        if !stale_paths.is_empty() {
+            let already_changed: std::collections::HashSet<String> = diff.changed
+                .iter()
+                .filter_map(|(p, _)| p.strip_prefix(&repo_path).ok())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+
+            let mut stale_to_add: Vec<String> = stale_paths
+                .into_iter()
+                .filter(|p| !already_changed.contains(p))
+                .collect();
+
+            if !stale_to_add.is_empty() {
+                tracing::info!(
+                    "{}/{}: {} stale files (binary hash changed), merging into diff",
+                    config.name, branch, stale_to_add.len(),
+                );
+                // Get blob OIDs from HEAD tree for stale files.
+                let rp = repo_path.clone();
+                let stale_with_oids = tokio::task::spawn_blocking(move || -> Vec<(PathBuf, String)> {
+                    let repo = match git2::Repository::open(&rp) {
+                        Ok(r) => r,
+                        Err(_) => return vec![],
+                    };
+                    let tree = match repo.head().and_then(|h| h.peel_to_tree()) {
+                        Ok(t) => t,
+                        Err(_) => return vec![],
+                    };
+                    let mut result = Vec::new();
+                    let stale_set: std::collections::HashSet<&str> =
+                        stale_to_add.iter().map(|s| s.as_str()).collect();
+                    tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+                        if entry.kind() != Some(git2::ObjectType::Blob) {
+                            return git2::TreeWalkResult::Ok;
+                        }
+                        let name = match entry.name() {
+                            Some(n) => n,
+                            None => return git2::TreeWalkResult::Ok,
+                        };
+                        let rel = if root.is_empty() {
+                            name.to_string()
+                        } else {
+                            format!("{root}{name}")
+                        };
+                        if stale_set.contains(rel.as_str()) {
+                            let oid = entry.id().to_string();
+                            result.push((rp.join(&rel), oid));
+                        }
+                        git2::TreeWalkResult::Ok
+                    }).ok();
+                    result
+                }).await?;
+                diff.changed.extend(stale_with_oids);
+            }
+        }
 
         let files_deleted = if !diff.deleted.is_empty() {
             tracing::info!(
@@ -247,27 +284,12 @@ impl<S: Store> Scanner<S> {
             &config.name,
             branch,
             &file_results,
+            BINARY_HASH,
         ).await?;
 
-        // Intern repo-level metadata as linkable entities.
-        // TODO: Migrate to Store trait method
-        let (targets_resolved, links_created) = if let Some(pool) = self.store.sqlite_pool() {
-            sprefa_cache::flush_repo_meta(
-                pool,
-                &config.name,
-                None,
-                &git_revs,
-            ).await?;
-
-            let targets = sprefa_cache::resolve_import_targets(pool, &config.name).await?;
-            (targets, 0)
-        } else {
-            (0, 0)
-        };
-
         tracing::info!(
-            "{}/{}: diff scan {} refs, {} targets, {} links",
-            config.name, branch, refs_inserted, targets_resolved, links_created,
+            "{}/{}: diff scan {} refs inserted",
+            config.name, branch, refs_inserted,
         );
 
         Ok(ScanResult {
@@ -278,8 +300,8 @@ impl<S: Store> Scanner<S> {
             files_skipped,
             files_deleted,
             files_renamed,
-            targets_resolved,
-            links_created,
+            targets_resolved: 0,
+            links_created: 0,
             new_git_hash: Some(diff.new_sha),
         })
     }
@@ -334,6 +356,7 @@ impl<S: Store> Scanner<S> {
             &config.name,
             rev,
             &file_results,
+            BINARY_HASH,
         ).await?;
 
         Ok(ScanResult {

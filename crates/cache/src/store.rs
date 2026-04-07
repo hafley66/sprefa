@@ -5,6 +5,7 @@
 /// could write NDJSON. The extraction pipeline and discovery loop never
 /// touch storage directly.
 use anyhow::Result;
+pub use sprefa_sprf::hash::RuleHashes;
 pub use sqlx;
 
 /// One captured value from an extraction event.
@@ -66,6 +67,7 @@ pub trait Store: Send + Sync {
     /// - Ref/span storage (if applicable)
     /// - Per-rule table row insertion
     /// - File registration and rev_files junction
+    /// - Writing `scanner_hash` so the skip set works on subsequent scans
     ///
     /// Returns total row count across all rules.
     fn flush_batch(
@@ -73,13 +75,20 @@ pub trait Store: Send + Sync {
         repo: &str,
         rev: &str,
         files: &[FileResult],
+        scanner_hash: &str,
     ) -> impl std::future::Future<Output = Result<usize>> + Send;
 
     /// Create per-rule tables/structures from rule definitions.
     /// Called at startup after parsing .sprf files.
+    ///
+    /// If `hashes` is provided, checks sprf_meta for changes:
+    /// - SchemaChanged: DROP table + CREATE
+    /// - ExtractChanged: DELETE all rows (keep table)
+    /// - Unchanged: skip (table + data preserved)
     fn create_rule_tables(
         &self,
         tables: &[RuleTableSpec],
+        hashes: Option<&std::collections::HashMap<String, RuleHashes>>,
     ) -> impl std::future::Future<Output = Result<()>> + Send;
 
     /// Find repo names in the given rule table + column that haven't been scanned.
@@ -120,14 +129,14 @@ pub trait Store: Send + Sync {
         renames: &[(String, String)],
     ) -> impl std::future::Future<Output = Result<usize>> + Send;
 
-    /// Check whether any file in the repo was scanned with a different binary hash.
-    /// Returns true if at least one file has `scanner_hash != current_hash`,
-    /// meaning a full re-scan is needed to pick up extraction logic changes.
-    fn has_stale_scanner_hash(
+    /// Return relative paths of files scanned with a different binary hash.
+    /// These need re-extraction to pick up extraction logic changes.
+    /// Empty if no stale files exist.
+    fn stale_file_paths(
         &self,
         repo: &str,
         current_hash: &str,
-    ) -> impl std::future::Future<Output = Result<bool>> + Send;
+    ) -> impl std::future::Future<Output = Result<Vec<String>>> + Send;
 
     /// Load the set of files for `repo_name` that were last scanned with
     /// `scanner_hash`. Returns empty set if the repo does not exist yet.
@@ -137,10 +146,65 @@ pub trait Store: Send + Sync {
         scanner_hash: &str,
     ) -> impl std::future::Future<Output = Result<ScanContext>> + Send;
 
+    /// Check rule hashes for change detection.
+    ///
+    /// Returns `None` if rule not in sprf_meta (new rule) or table doesn't exist.
+    /// Returns `Some` with comparison result for existing rules.
+    fn check_rule_hashes(
+        &self,
+        rule_name: &str,
+        schema_hash: &str,
+        extract_hash: &str,
+    ) -> impl std::future::Future<Output = Result<Option<RuleChangeKind>>> + Send;
+
+    /// Update rule hashes after successful extraction.
+    fn update_rule_hashes(
+        &self,
+        rule_name: &str,
+        source_file: &str,
+        schema_hash: &str,
+        extract_hash: &str,
+    ) -> impl std::future::Future<Output = Result<()>> + Send;
+
     /// TEMPORARY: Access the underlying SQLite pool for legacy modules
     /// that haven't been migrated to the Store trait yet.
     /// This will be removed once all cache modules are behind the Store boundary.
     fn sqlite_pool(&self) -> Option<&sqlx::SqlitePool>;
+
+    /// Run a check block SQL query and store violations.
+    /// Returns the number of violations found.
+    fn run_check(
+        &self,
+        check_name: &str,
+        sql: &str,
+    ) -> impl std::future::Future<Output = Result<usize>> + Send;
+
+    /// Query all stored violations, optionally filtered by check name.
+    fn list_violations(
+        &self,
+        check_name: Option<&str>,
+    ) -> impl std::future::Future<Output = Result<Vec<ViolationEntry>>> + Send;
+}
+
+/// A single violation entry from the invariant_violations table.
+#[derive(Debug, Clone)]
+pub struct ViolationEntry {
+    pub id: i64,
+    pub check_name: String,
+    pub violation_data: String,
+    pub created_at: String,
+    pub resolved_at: Option<String>,
+}
+
+/// Result of rule hash comparison.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuleChangeKind {
+    /// No changes detected - skip extraction.
+    Unchanged,
+    /// Schema changed (columns) - DROP + CREATE table + full extract.
+    SchemaChanged,
+    /// Pattern changed (but not columns) - DELETE rows + re-extract.
+    ExtractChanged,
 }
 
 /// Context for incremental scanning: which files can be skipped.
