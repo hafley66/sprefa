@@ -56,7 +56,7 @@ async fn setup_scanned_repo(
         store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
-        scan_pairs: vec![],
+        scan_pair_levels: vec![],
     };
     scanner.scan_repo(&config, "main").await.unwrap();
 
@@ -274,7 +274,7 @@ async fn wt_scan_captures_uncommitted_files() {
         store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
-        scan_pairs: vec![],
+        scan_pair_levels: vec![],
     };
 
     // Scan committed with only a.ts and b.ts by scanning, then removing c.ts from committed rev_files

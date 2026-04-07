@@ -3,6 +3,7 @@ pub mod emit;
 pub mod extractor;
 pub mod file_match;
 pub mod git_match;
+pub mod graph;
 pub mod pattern;
 pub mod schema;
 pub mod types;

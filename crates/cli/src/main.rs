@@ -402,7 +402,7 @@ async fn build_scanner(
     pool: sqlx::SqlitePool,
 ) -> anyhow::Result<Scanner<SqliteStore>> {
     let rules_path = find_rules_file()?;
-    let ruleset = load_ruleset(&rules_path)?;
+    let (ruleset, dep_edges) = load_ruleset(&rules_path)?;
     let extractor = RuleExtractor::from_ruleset(&ruleset)?;
     let store = SqliteStore::new(pool);
 
@@ -421,17 +421,44 @@ async fn build_scanner(
         .collect();
     store.create_rule_tables(&specs).await?;
 
-    // Derive scan pairs for discovery loop.
-    let scan_pairs: Vec<sprefa_schema::rule_tables::ScanPair> = specs
+    // Build per-rule scan pairs lookup.
+    let rule_scan_pairs: std::collections::HashMap<String, Option<sprefa_schema::rule_tables::ScanPair>> = specs
         .iter()
-        .filter_map(|spec| {
-            sprefa_schema::rule_tables::RuleTableDef::from_matches(
+        .map(|spec| {
+            let pair = sprefa_schema::rule_tables::RuleTableDef::from_matches(
                 &spec.rule_name,
                 &spec.columns.iter().map(|(n, s)| (n.clone(), s.clone())).collect::<Vec<_>>(),
             )
-            .scan_pair()
+            .scan_pair();
+            (spec.rule_name.clone(), pair)
         })
         .collect();
+
+    // Build dependency graph and group scan pairs by level.
+    let rule_names: Vec<String> = ruleset.rules.iter().map(|r| r.name.clone()).collect();
+    let graph = sprefa_rules::graph::build_rule_graph(&rule_names, dep_edges)?;
+
+    let scan_pair_levels: Vec<Vec<sprefa_schema::rule_tables::ScanPair>> = graph
+        .levels
+        .iter()
+        .map(|level| {
+            level
+                .iter()
+                .filter_map(|name| rule_scan_pairs.get(name).and_then(|p| p.clone()))
+                .collect()
+        })
+        .collect();
+
+    if graph.levels.len() > 1 {
+        tracing::info!(
+            "rule DAG: {} levels, {} edges",
+            graph.levels.len(),
+            graph.edges.len(),
+        );
+        for (i, level) in graph.levels.iter().enumerate() {
+            tracing::debug!("  level {}: {:?}", i, level);
+        }
+    }
 
     Ok(Scanner {
         extractors: Arc::new(vec![
@@ -442,7 +469,7 @@ async fn build_scanner(
         store,
         normalize_config: config.scan.as_ref().and_then(|s| s.normalize.clone()),
         global_filter: config.filter.clone(),
-        scan_pairs,
+        scan_pair_levels,
     })
 }
 
@@ -465,7 +492,7 @@ impl RuleFile {
     }
 }
 
-fn load_ruleset(path: &std::path::Path) -> anyhow::Result<sprefa_rules::RuleSet> {
+fn load_ruleset(path: &std::path::Path) -> anyhow::Result<(sprefa_rules::RuleSet, Vec<sprefa_rules::graph::DepEdge>)> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("sprf") => sprefa_sprf::load_sprf(path).map_err(|e| {
             anyhow::anyhow!("failed to parse .sprf rules from {}: {}", path.display(), e)
@@ -475,14 +502,14 @@ fn load_ruleset(path: &std::path::Path) -> anyhow::Result<sprefa_rules::RuleSet>
             let rf: RuleFile = serde_yaml::from_slice(&bytes).map_err(|e| {
                 anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e)
             })?;
-            Ok(rf.into_ruleset())
+            Ok((rf.into_ruleset(), vec![]))
         }
         _ => {
             let bytes = std::fs::read(path)?;
             let rf: RuleFile = serde_json::from_slice(&bytes).map_err(|e| {
                 anyhow::anyhow!("failed to parse rules from {}: {}", path.display(), e)
             })?;
-            Ok(rf.into_ruleset())
+            Ok((rf.into_ruleset(), vec![]))
         }
     }
 }
@@ -588,65 +615,104 @@ async fn cmd_scan(
         }
     }
 
-    // Discovery loop: query per-rule tables for unscanned (repo, rev) pairs,
-    // scan those revs, repeat until stable.
-    if !scanner.scan_pairs.is_empty() {
+    // DAG-guided discovery: walk dependency levels in order.
+    // Level 0 scan_pairs are queried first (rules with no cross-ref deps),
+    // then level 1 (depends on level 0 output), etc. Outer loop catches
+    // cases where higher-level scans produce new rows for lower-level rules.
+    let has_scan_pairs = scanner.scan_pair_levels.iter().any(|level| !level.is_empty());
+    if has_scan_pairs {
         let repo_map: std::collections::HashMap<&str, &sprefa_config::RepoConfig> =
             repos.iter().map(|r| (r.name.as_str(), *r)).collect();
 
-        const MAX_DISCOVERY_ITERATIONS: i32 = 10;
-        for iteration in 1..=MAX_DISCOVERY_ITERATIONS {
-            let mut new_targets: Vec<(String, String, &sprefa_config::RepoConfig)> = Vec::new();
+        const MAX_OUTER_ROUNDS: i32 = 10;
+        const MAX_LEVEL_ITERATIONS: i32 = 10;
 
-            for pair in &scanner.scan_pairs {
-                let pairs = scanner
-                    .store
-                    .unscanned_rev_pairs(&pair.table, &pair.repo_column, &pair.rev_column)
-                    .await?;
-                for (repo_name, rev) in pairs {
-                    let Some(repo_cfg) = repo_map.get(repo_name.as_str()) else {
-                        tracing::debug!("discovery: skipping {repo_name}@{rev} (no local path)");
-                        continue;
-                    };
-                    if repo_cfg.rev_excluded(&rev) {
-                        tracing::debug!("discovery: skipping {repo_name}@{rev} (excluded)");
-                        continue;
+        for round in 1..=MAX_OUTER_ROUNDS {
+            let mut round_had_targets = false;
+
+            for (level_idx, level_pairs) in scanner.scan_pair_levels.iter().enumerate() {
+                if level_pairs.is_empty() {
+                    continue;
+                }
+
+                for iteration in 1..=MAX_LEVEL_ITERATIONS {
+                    let mut new_targets: Vec<(String, String, &sprefa_config::RepoConfig)> =
+                        Vec::new();
+
+                    for pair in level_pairs {
+                        let pairs = scanner
+                            .store
+                            .unscanned_rev_pairs(
+                                &pair.table,
+                                &pair.repo_column,
+                                &pair.rev_column,
+                            )
+                            .await?;
+                        for (repo_name, rev) in pairs {
+                            let Some(repo_cfg) = repo_map.get(repo_name.as_str()) else {
+                                tracing::debug!(
+                                    "discovery: skipping {repo_name}@{rev} (no local path)"
+                                );
+                                continue;
+                            };
+                            if repo_cfg.rev_excluded(&rev) {
+                                tracing::debug!(
+                                    "discovery: skipping {repo_name}@{rev} (excluded)"
+                                );
+                                continue;
+                            }
+                            new_targets.push((repo_name, rev, *repo_cfg));
+                        }
                     }
-                    new_targets.push((repo_name, rev, *repo_cfg));
+
+                    if new_targets.is_empty() {
+                        if iteration > 1 {
+                            tracing::info!(
+                                "discovery level {}: stable after {} iterations",
+                                level_idx,
+                                iteration - 1,
+                            );
+                        }
+                        break;
+                    }
+
+                    round_had_targets = true;
+                    tracing::info!(
+                        "discovery level {} iteration {}: {} new targets",
+                        level_idx,
+                        iteration,
+                        new_targets.len(),
+                    );
+
+                    for (repo_name, rev, repo_cfg) in &new_targets {
+                        match scanner.scan_rev(repo_cfg, rev).await {
+                            Ok(result) => {
+                                println!(
+                                    "discovery L{}/{} @ {}: {} blobs, {} refs",
+                                    level_idx,
+                                    result.repo,
+                                    result.branch,
+                                    result.files_scanned,
+                                    result.refs_inserted,
+                                );
+                                total_files += result.files_scanned;
+                                total_refs += result.refs_inserted;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "discovery {repo_name} @ {rev}: scan failed: {e}"
+                                );
+                            }
+                        }
+                    }
                 }
             }
 
-            if new_targets.is_empty() {
-                if iteration > 1 {
-                    tracing::info!("discovery: stable after {} iterations", iteration - 1);
+            if !round_had_targets {
+                if round > 1 {
+                    tracing::info!("discovery: globally stable after {} rounds", round - 1);
                 }
                 break;
-            }
-
-            tracing::info!(
-                "discovery iteration {}: {} new targets",
-                iteration,
-                new_targets.len(),
-            );
-
-            for (repo_name, rev, repo_cfg) in &new_targets {
-                match scanner.scan_rev(repo_cfg, rev).await {
-                    Ok(result) => {
-                        println!(
-                            "discovery {}/{} @ {}: {} blobs, {} refs",
-                            iteration,
-                            result.repo,
-                            result.branch,
-                            result.files_scanned,
-                            result.refs_inserted,
-                        );
-                        total_files += result.files_scanned;
-                        total_refs += result.refs_inserted;
-                    }
-                    Err(e) => {
-                        tracing::warn!("discovery {repo_name} @ {rev}: scan failed: {e}");
-                    }
-                }
             }
         }
     }
@@ -1146,7 +1212,7 @@ fn cmd_eval(rule_str: &str, files: &[PathBuf]) -> anyhow::Result<()> {
         format!("{};", rule_str)
     };
 
-    let ruleset = sprefa_sprf::parse_sprf(&source)?;
+    let (ruleset, _dep_edges) = sprefa_sprf::parse_sprf(&source)?;
     let has_match_slots = !ruleset.rules.iter().all(|r| r.create_matches.is_empty());
     let extractor = RuleExtractor::from_ruleset(&ruleset)?;
 

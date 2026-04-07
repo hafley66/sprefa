@@ -72,7 +72,7 @@ fn make_scanner(db: SqlitePool) -> Scanner<sprefa_cache::SqliteStore> {
         store: sprefa_cache::SqliteStore::new(db),
         normalize_config: None,
         global_filter: None,
-        scan_pairs: vec![],
+        scan_pair_levels: vec![],
     }
 }
 

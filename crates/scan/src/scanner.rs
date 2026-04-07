@@ -16,8 +16,9 @@ pub struct Scanner<S: Store> {
     pub store: S,
     pub normalize_config: Option<sprefa_config::NormalizeConfig>,
     pub global_filter: Option<sprefa_config::FilterConfig>,
-    /// Paired (repo_column, rev_column) per rule for demand scanning.
-    pub scan_pairs: Vec<sprefa_schema::rule_tables::ScanPair>,
+    /// Scan pairs grouped by dependency level for DAG-ordered discovery.
+    /// Level 0 = rules with no cross-ref deps, level 1 = depends on level 0, etc.
+    pub scan_pair_levels: Vec<Vec<sprefa_schema::rule_tables::ScanPair>>,
 }
 
 pub struct ScanResult {

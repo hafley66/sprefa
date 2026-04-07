@@ -1,1 +1,1 @@
-20260407.3.sprefa-remove-scan-query-check.md
+20260407.6.sprefa-dag-fixpoint-execution.md

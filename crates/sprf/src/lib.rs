@@ -6,16 +6,17 @@ pub mod _3_lower;
 use std::path::Path;
 
 use anyhow::Result;
+use sprefa_rules::graph::DepEdge;
 use sprefa_rules::types::RuleSet;
 
-/// Parse a .sprf file and produce extraction rules.
-pub fn parse_sprf(source: &str) -> Result<RuleSet> {
+/// Parse a .sprf file and produce extraction rules + dependency edges.
+pub fn parse_sprf(source: &str) -> Result<(RuleSet, Vec<DepEdge>)> {
     let program = _1_parse::parse_program(source)?;
     _3_lower::lower_program(&program)
 }
 
-/// Load a .sprf file from disk and produce extraction rules.
-pub fn load_sprf(path: &Path) -> Result<RuleSet> {
+/// Load a .sprf file from disk and produce extraction rules + dependency edges.
+pub fn load_sprf(path: &Path) -> Result<(RuleSet, Vec<DepEdge>)> {
     let source = std::fs::read_to_string(path)?;
     parse_sprf(&source)
 }
@@ -39,7 +40,7 @@ mod integration_tests {
     }
 
     fn run_sprf(sprf_src: &str, data: &[u8], ext: &str) -> Vec<Vec<(String, String)>> {
-        let ruleset = parse_sprf(sprf_src).unwrap();
+        let (ruleset, _edges) = parse_sprf(sprf_src).unwrap();
         let json_val = parse_data(data, ext).unwrap();
         let mut all = vec![];
         for rule in &ruleset.rules {
@@ -156,7 +157,7 @@ mod integration_tests {
             "/../../sprefa-rules.sprf"
         ))
         .unwrap();
-        let ruleset = parse_sprf(&sprf_src).unwrap();
+        let (ruleset, _edges) = parse_sprf(&sprf_src).unwrap();
         assert!(
             ruleset.rules.len() >= 10,
             "expected 10+ rules, got {}",
@@ -180,7 +181,7 @@ mod integration_tests {
             "/../../sprefa-rules.sprf"
         ))
         .unwrap();
-        let ruleset = parse_sprf(&sprf_src).unwrap();
+        let (ruleset, _edges) = parse_sprf(&sprf_src).unwrap();
 
         // Run the cargo-deps rule against the rules crate Cargo.toml
         let cargo_bytes =

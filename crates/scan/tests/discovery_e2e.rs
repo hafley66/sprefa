@@ -61,7 +61,7 @@ async fn make_db() -> SqlitePool {
 }
 
 async fn make_scanner(db: SqlitePool, sprf_source: &str) -> Scanner<SqliteStore> {
-    let ruleset = sprefa_sprf::parse_sprf(sprf_source).unwrap();
+    let (ruleset, _dep_edges) = sprefa_sprf::parse_sprf(sprf_source).unwrap();
     let rule_ext = RuleExtractor::from_ruleset(&ruleset).unwrap();
     let store = SqliteStore::new(db);
 
@@ -95,7 +95,7 @@ async fn make_scanner(db: SqlitePool, sprf_source: &str) -> Scanner<SqliteStore>
         store,
         normalize_config: None,
         global_filter: None,
-        scan_pairs,
+        scan_pair_levels: vec![scan_pairs],
     }
 }
 
@@ -121,7 +121,7 @@ async fn discover_and_scan(
     for _iteration in 1..=max_iterations {
         let mut new_targets: Vec<(String, String, RepoConfig)> = Vec::new();
 
-        for pair in &scanner.scan_pairs {
+        for pair in scanner.scan_pair_levels.iter().flatten() {
             let pairs = scanner
                 .store
                 .unscanned_rev_pairs(&pair.table, &pair.repo_column, &pair.rev_column)

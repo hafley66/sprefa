@@ -20,6 +20,7 @@
 /// Becomes steps: [repo@depth0, rev@depth1, fs@depth2, json@depth2]
 /// Execution order respects scope: repo runs first, then rev, then fs/json
 use anyhow::{bail, Result};
+use sprefa_rules::graph::DepEdge;
 use sprefa_rules::pattern::{parse_segment_pattern, Segment};
 use sprefa_rules::types::{AstSelector, LineMatcher, MatchDef, Rule, RuleSet, SelectStep};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -27,23 +28,52 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::_0_ast::{Program, RuleBody, RuleDecl, Slot, Statement, Tag};
 use crate::_2_pattern::parse_json_body;
 
-/// Lower a parsed program into a RuleSet.
-pub fn lower_program(program: &Program) -> Result<RuleSet> {
+/// Lower a parsed program into a RuleSet and dependency edges.
+pub fn lower_program(program: &Program) -> Result<(RuleSet, Vec<DepEdge>)> {
     let mut rules = vec![];
+    let mut edges = vec![];
 
     for stmt in program {
         match stmt {
             Statement::Rule(decl) => {
                 let rule = lower_rule_decl(decl)?;
+                collect_dep_edges(&decl.body, &decl.name, &mut edges);
                 rules.push(rule);
             }
         }
     }
 
-    Ok(RuleSet {
-        schema: None,
-        rules,
-    })
+    Ok((
+        RuleSet {
+            schema: None,
+            rules,
+        },
+        edges,
+    ))
+}
+
+/// Walk rule bodies to find cross-rule references and emit dependency edges.
+fn collect_dep_edges(bodies: &[RuleBody], consumer: &str, edges: &mut Vec<DepEdge>) {
+    for body in bodies {
+        match body {
+            RuleBody::Step(_) => {}
+            RuleBody::Block { children, .. } => {
+                collect_dep_edges(children, consumer, edges);
+            }
+            RuleBody::Ref { cross_ref, children } => {
+                edges.push(DepEdge {
+                    producer: cross_ref.rule_name.clone(),
+                    consumer: consumer.to_string(),
+                    bindings: cross_ref
+                        .bindings
+                        .iter()
+                        .map(|b| (b.column.clone(), b.var.clone()))
+                        .collect(),
+                });
+                collect_dep_edges(children, consumer, edges);
+            }
+        }
+    }
 }
 
 /// One step in the flattened rule with scope information.
@@ -472,7 +502,8 @@ mod tests {
 
     fn lower(input: &str) -> Vec<Rule> {
         let program = parse_program(input).unwrap();
-        lower_program(&program).unwrap().rules
+        let (ruleset, _edges) = lower_program(&program).unwrap();
+        ruleset.rules
     }
 
     #[test]
@@ -649,5 +680,47 @@ mod tests {
         assert!(ast.segment_captures.is_some());
         let seg = ast.segment_captures.as_ref().unwrap();
         assert_eq!(seg["SPREFA0"], "use${ENTITY}Query");
+    }
+
+    // ── Dependency edge extraction ────────────────────
+
+    fn lower_with_edges(input: &str) -> (Vec<Rule>, Vec<DepEdge>) {
+        let program = parse_program(input).unwrap();
+        let (ruleset, edges) = lower_program(&program).unwrap();
+        (ruleset.rules, edges)
+    }
+
+    #[test]
+    fn cross_ref_produces_dep_edge() {
+        let (rules, edges) = lower_with_edges(
+            r#"
+            rule(deploy_config) {
+                fs(**/services.yaml) > json({ services: { $SVC: { repo: repo($REPO), pin: rev($PIN) } } })
+            };
+            rule(svc_version) {
+                deploy_config(repo: $REPO, pin: $PIN)
+                repo($REPO) > rev($PIN) > fs(**/package.json) > json({ version: $VERSION })
+            };
+            "#,
+        );
+        assert_eq!(rules.len(), 2);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].producer, "deploy_config");
+        assert_eq!(edges[0].consumer, "svc_version");
+        assert_eq!(edges[0].bindings, vec![
+            ("repo".to_string(), "REPO".to_string()),
+            ("pin".to_string(), "PIN".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn no_cross_refs_no_edges() {
+        let (_rules, edges) = lower_with_edges(
+            r#"
+            rule(a) { fs(**/*.yaml) > json({ name: $NAME }) };
+            rule(b) { fs(**/*.json) > json({ version: $VER }) };
+            "#,
+        );
+        assert!(edges.is_empty());
     }
 }
