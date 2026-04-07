@@ -1,1 +1,1 @@
-20260407.6.sprefa-dag-fixpoint-execution.md
+20260407.11.discovery-loop-prolog-analysis.md
