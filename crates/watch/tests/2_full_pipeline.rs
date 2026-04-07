@@ -60,6 +60,7 @@ async fn setup_dual_branch_repo(
         store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
+        scan_pairs: vec![],
     };
 
     // Scan as committed main

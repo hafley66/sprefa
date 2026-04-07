@@ -57,10 +57,11 @@ struct ScopedStep {
 }
 
 fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
-    // Flatten all body items into scoped steps
+    // Flatten all body items into scoped steps, collecting json annotations.
     let mut all_scoped = vec![];
+    let mut json_annotations = vec![];
     for body in &decl.body {
-        let flattened = flatten_body(body, 0, &HashSet::new())?;
+        let flattened = flatten_body(body, 0, &HashSet::new(), &mut json_annotations)?;
         all_scoped.extend(flattened);
     }
 
@@ -84,9 +85,12 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
     }
 
     // Infer create_matches from all $VARs in body.
-    // Detect repo()/rev() tags to set scan annotations.
+    // Detect repo()/rev() tags and inline json annotations to set scan annotations.
     let mut scan_vars: HashMap<String, String> = HashMap::new();
     collect_scan_annotations(&decl.body, &mut scan_vars);
+    for annot in &json_annotations {
+        scan_vars.insert(annot.var.clone(), annot.kind.clone());
+    }
 
     let mut all_vars: Vec<String> = vec![];
     for body in &decl.body {
@@ -154,40 +158,38 @@ fn flatten_body(
     body: &RuleBody,
     depth: usize,
     parent_vars: &HashSet<String>,
+    json_annotations: &mut Vec<crate::_2_pattern::ScanAnnotation>,
 ) -> Result<Vec<ScopedStep>> {
     let mut result = vec![];
 
     match body {
         RuleBody::Step(slot) => {
-            // Convert slot to scoped step
-            let scoped = slot_to_scoped_step(slot, depth, parent_vars)?;
+            let scoped = slot_to_scoped_step(slot, depth, parent_vars, json_annotations)?;
             result.push(scoped);
         }
         RuleBody::Block { slot, children } => {
-            // The block slot captures variables for this scope
             let block_vars = extract_slot_vars(slot);
             let mut available_vars = parent_vars.clone();
             available_vars.extend(block_vars.iter().cloned());
 
-            // Convert block slot to step
-            let block_scoped = slot_to_scoped_step(slot, depth, parent_vars)?;
+            let block_scoped =
+                slot_to_scoped_step(slot, depth, parent_vars, json_annotations)?;
             result.push(block_scoped);
 
-            // Process children at next depth level
             for child in children {
-                let child_scoped = flatten_body(child, depth + 1, &available_vars)?;
+                let child_scoped =
+                    flatten_body(child, depth + 1, &available_vars, json_annotations)?;
                 result.extend(child_scoped);
             }
         }
         RuleBody::Ref { cross_ref, children } => {
-            // Cross-ref bindings introduce variables at this scope
             let mut available_vars = parent_vars.clone();
             for binding in &cross_ref.bindings {
                 available_vars.insert(binding.var.clone());
             }
-            // Process children at next depth level
             for child in children {
-                let child_scoped = flatten_body(child, depth + 1, &available_vars)?;
+                let child_scoped =
+                    flatten_body(child, depth + 1, &available_vars, json_annotations)?;
                 result.extend(child_scoped);
             }
         }
@@ -239,13 +241,12 @@ fn slot_to_scoped_step(
     slot: &Slot,
     depth: usize,
     available_vars: &HashSet<String>,
+    json_annotations: &mut Vec<crate::_2_pattern::ScanAnnotation>,
 ) -> Result<ScopedStep> {
     let scope_vars = extract_slot_vars(slot);
 
-    // Validate that all referenced variables are available
-    // (This would be where we'd check for forward references)
-
-    let (select_steps, ast_selector, line_matcher) = convert_slot(slot)?;
+    let (select_steps, ast_selector, line_matcher, annots) = convert_slot(slot)?;
+    json_annotations.extend(annots);
 
     Ok(ScopedStep {
         depth,
@@ -259,10 +260,16 @@ fn slot_to_scoped_step(
 /// Convert a slot to SelectSteps.
 fn convert_slot(
     slot: &Slot,
-) -> Result<(Vec<SelectStep>, Option<AstSelector>, Option<LineMatcher>)> {
+) -> Result<(
+    Vec<SelectStep>,
+    Option<AstSelector>,
+    Option<LineMatcher>,
+    Vec<crate::_2_pattern::ScanAnnotation>,
+)> {
     let mut select = vec![];
     let mut ast_selector: Option<AstSelector> = None;
     let mut line_matcher: Option<LineMatcher> = None;
+    let mut json_annotations = Vec::new();
 
     match slot {
         Slot::Bare(pattern) => {
@@ -305,7 +312,8 @@ fn convert_slot(
                 });
             }
             Tag::Json => {
-                let steps = parse_json_body(body)?;
+                let (steps, annots) = parse_json_body(body)?;
+                json_annotations.extend(annots);
                 select.extend(steps);
             }
             Tag::Ast => {
@@ -345,7 +353,7 @@ fn convert_slot(
         },
     }
 
-    Ok((select, ast_selector, line_matcher))
+    Ok((select, ast_selector, line_matcher, json_annotations))
 }
 
 /// Rewrite an ast pattern body that contains `${VAR}` braced captures.
@@ -536,6 +544,21 @@ mod tests {
                     fs(**/values.yaml) > json({ image: { repo: $REPO, tag: $TAG } })
                 }
             }
+        };"#,
+        );
+        let r = &rules[0];
+        let repo_match = r.create_matches.iter().find(|m| m.capture == "REPO").unwrap();
+        let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
+        assert_eq!(repo_match.scan.as_deref(), Some("repo"));
+        assert_eq!(tag_match.scan.as_deref(), Some("rev"));
+    }
+
+    #[test]
+    fn lower_with_inline_scan_annotations() {
+        // repo()/rev() wrappers inside json() body set scan annotations
+        let rules = lower(
+            r#"rule(deploy) {
+            fs(**/values.yaml) > json({ image: { repository: repo($REPO), tag: rev($TAG) } })
         };"#,
         );
         let r = &rules[0];

@@ -4,7 +4,8 @@
 /// that the existing walk engine can execute.
 ///
 /// Grammar:
-///   pattern    = object | array | capture | wildcard | value_glob
+///   pattern    = annotation | object | array | capture | wildcard | value_glob
+///   annotation = ("repo" | "rev") "(" pattern ")"
 ///   object     = "{" (entry ("," entry)*)? "}"
 ///   entry      = key ":" pattern
 ///   key        = "**" | "$" SCREAMING | "$_" | "re:" REGEX | glob_str
@@ -14,27 +15,66 @@
 ///   value_glob = (not , } ] )+
 use sprefa_rules::types::{KeyMatcher, ObjectEntry, SelectStep};
 
-pub fn parse_json_body(input: &str) -> anyhow::Result<Vec<SelectStep>> {
+/// A scan annotation discovered during json pattern parsing.
+/// Records that a captured variable drives demand scanning.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScanAnnotation {
+    /// The capture variable name (e.g. "REPO").
+    pub var: String,
+    /// "repo" or "rev".
+    pub kind: String,
+}
+
+pub fn parse_json_body(input: &str) -> anyhow::Result<(Vec<SelectStep>, Vec<ScanAnnotation>)> {
     let mut pos = 0;
-    let steps = parse_pattern(input.trim(), &mut pos)?;
+    let mut annotations = Vec::new();
+    let steps = parse_pattern(input.trim(), &mut pos, &mut annotations)?;
     let remaining = input[pos..].trim();
     if !remaining.is_empty() {
         anyhow::bail!("unexpected trailing content in json body: {:?}", remaining);
     }
-    Ok(steps)
+    Ok((steps, annotations))
 }
 
 /// Parse a pattern, returning a Vec<SelectStep> (the sub-chain for this position).
-fn parse_pattern(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>> {
+fn parse_pattern(
+    input: &str,
+    pos: &mut usize,
+    annotations: &mut Vec<ScanAnnotation>,
+) -> anyhow::Result<Vec<SelectStep>> {
     skip_ws(input, pos);
     if *pos >= input.len() {
         anyhow::bail!("unexpected end of json pattern");
     }
 
+    // Check for repo(...) or rev(...) annotation wrapper in value position.
+    for kind in &["repo", "rev"] {
+        if input[*pos..].starts_with(kind) && input.as_bytes().get(*pos + kind.len()) == Some(&b'(')
+        {
+            *pos += kind.len() + 1; // skip "repo(" or "rev("
+            let inner = parse_pattern(input, pos, annotations)?;
+            skip_ws(input, pos);
+            expect_byte(input, pos, b')')?;
+            // Record annotation for any captures found in the inner pattern.
+            for step in &inner {
+                if let SelectStep::Leaf {
+                    capture: Some(var), ..
+                } = step
+                {
+                    annotations.push(ScanAnnotation {
+                        var: var.clone(),
+                        kind: kind.to_string(),
+                    });
+                }
+            }
+            return Ok(inner);
+        }
+    }
+
     let c = input.as_bytes()[*pos];
     match c {
-        b'{' => parse_object(input, pos),
-        b'[' => parse_array(input, pos),
+        b'{' => parse_object(input, pos, annotations),
+        b'[' => parse_array(input, pos, annotations),
         b'$' => parse_capture_or_wildcard(input, pos),
         b'"' => parse_quoted_value(input, pos),
         _ => parse_value_glob(input, pos),
@@ -44,7 +84,11 @@ fn parse_pattern(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>
 /// Parse `{ entry, entry, ... }`.
 /// Returns the SelectStep tree: may be a single Object step, or
 /// if a `**` key is present, an Any step followed by the sub-pattern.
-fn parse_object(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>> {
+fn parse_object(
+    input: &str,
+    pos: &mut usize,
+    annotations: &mut Vec<ScanAnnotation>,
+) -> anyhow::Result<Vec<SelectStep>> {
     expect_byte(input, pos, b'{')?;
     skip_ws(input, pos);
 
@@ -58,7 +102,7 @@ fn parse_object(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>>
 
     loop {
         skip_ws(input, pos);
-        let (key, value_steps) = parse_entry(input, pos)?;
+        let (key, value_steps) = parse_entry(input, pos, annotations)?;
 
         // ** key means recursive descent: lower to Any + sub-pattern
         if matches!(&key, KeyMatcher::Exact(s) if s == "**") {
@@ -116,7 +160,11 @@ fn parse_object(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>>
 }
 
 /// Parse `[ ... pattern ]` (array iteration).
-fn parse_array(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>> {
+fn parse_array(
+    input: &str,
+    pos: &mut usize,
+    annotations: &mut Vec<ScanAnnotation>,
+) -> anyhow::Result<Vec<SelectStep>> {
     expect_byte(input, pos, b'[')?;
     skip_ws(input, pos);
 
@@ -127,7 +175,7 @@ fn parse_array(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectStep>> 
     *pos += 3;
     skip_ws(input, pos);
 
-    let item_steps = parse_pattern(input, pos)?;
+    let item_steps = parse_pattern(input, pos, annotations)?;
 
     skip_ws(input, pos);
     expect_byte(input, pos, b']')?;
@@ -219,13 +267,17 @@ fn parse_value_glob(input: &str, pos: &mut usize) -> anyhow::Result<Vec<SelectSt
 }
 
 /// Parse one `key: pattern` entry.
-fn parse_entry(input: &str, pos: &mut usize) -> anyhow::Result<(KeyMatcher, Vec<SelectStep>)> {
+fn parse_entry(
+    input: &str,
+    pos: &mut usize,
+    annotations: &mut Vec<ScanAnnotation>,
+) -> anyhow::Result<(KeyMatcher, Vec<SelectStep>)> {
     skip_ws(input, pos);
     let key = parse_key(input, pos)?;
     skip_ws(input, pos);
     expect_byte(input, pos, b':')?;
     skip_ws(input, pos);
-    let value = parse_pattern(input, pos)?;
+    let value = parse_pattern(input, pos, annotations)?;
     Ok((key, value))
 }
 
@@ -348,7 +400,7 @@ mod tests {
 
     #[test]
     fn flat_object_with_captures() {
-        let steps = parse_json_body("{ name: $NAME }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ name: $NAME }").unwrap();
         assert_eq!(steps.len(), 1);
         match &steps[0] {
             SelectStep::Object { entries } => {
@@ -364,7 +416,7 @@ mod tests {
 
     #[test]
     fn nested_object() {
-        let steps = parse_json_body("{ package: { name: $NAME } }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ package: { name: $NAME } }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert_eq!(entries.len(), 1);
@@ -383,7 +435,7 @@ mod tests {
 
     #[test]
     fn multi_entry_object() {
-        let steps = parse_json_body("{ repository: $REPO, tag: $TAG }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ repository: $REPO, tag: $TAG }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert_eq!(entries.len(), 2);
@@ -396,7 +448,7 @@ mod tests {
 
     #[test]
     fn array_iteration() {
-        let steps = parse_json_body("{ members: [...$MEMBER] }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ members: [...$MEMBER] }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => match &entries[0].value[0] {
                 SelectStep::Array { item } => {
@@ -412,14 +464,14 @@ mod tests {
 
     #[test]
     fn recursive_descent() {
-        let steps = parse_json_body("{ **: { image: { repository: $REPO, tag: $TAG } } }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ **: { image: { repository: $REPO, tag: $TAG } } }").unwrap();
         assert!(matches!(&steps[0], SelectStep::Any));
         assert!(matches!(&steps[1], SelectStep::Object { .. }));
     }
 
     #[test]
     fn capture_key() {
-        let steps = parse_json_body("{ $K: $V }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ $K: $V }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Capture(s) if s == "K"));
@@ -433,7 +485,7 @@ mod tests {
 
     #[test]
     fn wildcard_value() {
-        let steps = parse_json_body("{ deps: { $NAME: $_ } }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ deps: { $NAME: $_ } }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 match &entries[0].value[0] {
@@ -451,7 +503,7 @@ mod tests {
 
     #[test]
     fn glob_key() {
-        let steps = parse_json_body("{ dep_*: $V }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ dep_*: $V }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Glob(s) if s == "dep_*"));
@@ -462,7 +514,7 @@ mod tests {
 
     #[test]
     fn regex_key() {
-        let steps = parse_json_body("{ re:^(dev-)?dependencies: { $NAME: $_ } }").unwrap();
+        let (steps, _annotations) = parse_json_body("{ re:^(dev-)?dependencies: { $NAME: $_ } }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Glob(s) if s.starts_with("re:")));
@@ -473,7 +525,7 @@ mod tests {
 
     #[test]
     fn quoted_value_pattern() {
-        let steps = parse_json_body(r#"{ image: "$REPO:$TAG" }"#).unwrap();
+        let (steps, _annotations) = parse_json_body(r#"{ image: "$REPO:$TAG" }"#).unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Exact(s) if s == "image"));
@@ -487,7 +539,7 @@ mod tests {
 
     #[test]
     fn quoted_key_pattern() {
-        let steps = parse_json_body(r#"{ "@$SCOPE/$NAME": $_ }"#).unwrap();
+        let (steps, _annotations) = parse_json_body(r#"{ "@$SCOPE/$NAME": $_ }"#).unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(
@@ -501,7 +553,7 @@ mod tests {
     #[test]
     fn quoted_literal_value() {
         // No $VAR -- treated as literal key descent
-        let steps = parse_json_body(r#"{ status: "active" }"#).unwrap();
+        let (steps, _annotations) = parse_json_body(r#"{ status: "active" }"#).unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(
@@ -510,5 +562,56 @@ mod tests {
             }
             _ => panic!("expected Object"),
         }
+    }
+
+    #[test]
+    fn scan_annotation_repo() {
+        let (steps, annotations) =
+            parse_json_body("{ repository: repo($REPO), tag: rev($TAG) }").unwrap();
+        // Steps should be a normal Object with two Leaf captures.
+        match &steps[0] {
+            SelectStep::Object { entries } => {
+                assert_eq!(entries.len(), 2);
+                assert!(
+                    matches!(&entries[0].value[0], SelectStep::Leaf { capture: Some(c) } if c == "REPO")
+                );
+                assert!(
+                    matches!(&entries[1].value[0], SelectStep::Leaf { capture: Some(c) } if c == "TAG")
+                );
+            }
+            _ => panic!("expected Object"),
+        }
+        // Annotations should record both.
+        assert_eq!(annotations.len(), 2);
+        assert_eq!(
+            annotations[0],
+            ScanAnnotation {
+                var: "REPO".into(),
+                kind: "repo".into()
+            }
+        );
+        assert_eq!(
+            annotations[1],
+            ScanAnnotation {
+                var: "TAG".into(),
+                kind: "rev".into()
+            }
+        );
+    }
+
+    #[test]
+    fn scan_annotation_nested() {
+        let (_, annotations) =
+            parse_json_body("{ image: { repository: repo($REPO), tag: rev($TAG) } }").unwrap();
+        assert_eq!(annotations.len(), 2);
+        assert_eq!(annotations[0].var, "REPO");
+        assert_eq!(annotations[1].var, "TAG");
+    }
+
+    #[test]
+    fn no_annotations_without_wrapper() {
+        let (_, annotations) =
+            parse_json_body("{ repository: $REPO, tag: $TAG }").unwrap();
+        assert!(annotations.is_empty());
     }
 }

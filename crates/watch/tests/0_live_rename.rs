@@ -79,6 +79,7 @@ async fn js_rename_propagates_through_reexport_chain() {
         store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
+        scan_pairs: vec![],
     };
     let result = scanner.scan_repo(&config, "main").await.unwrap();
     assert!(result.refs_inserted > 0, "scan should insert refs");
@@ -189,6 +190,7 @@ edition = "2021"
         store: SqliteStore::new(db.clone()),
         normalize_config: None,
         global_filter: None,
+        scan_pairs: vec![],
     };
     let result = scanner.scan_repo(&config, "main").await.unwrap();
     assert!(result.refs_inserted > 0, "scan should insert Rust refs");

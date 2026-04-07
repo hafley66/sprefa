@@ -397,7 +397,7 @@ async fn cmd_add(
     Ok(())
 }
 
-fn build_scanner(
+async fn build_scanner(
     config: &sprefa_config::Config,
     pool: sqlx::SqlitePool,
 ) -> anyhow::Result<Scanner<SqliteStore>> {
@@ -405,6 +405,34 @@ fn build_scanner(
     let ruleset = load_ruleset(&rules_path)?;
     let extractor = RuleExtractor::from_ruleset(&ruleset)?;
     let store = SqliteStore::new(pool);
+
+    // Create per-rule tables before any scanning.
+    let specs: Vec<sprefa_cache::RuleTableSpec> = ruleset
+        .rules
+        .iter()
+        .map(|r| sprefa_cache::RuleTableSpec {
+            rule_name: r.name.clone(),
+            columns: r
+                .create_matches
+                .iter()
+                .map(|m| (m.kind.to_lowercase(), m.scan.clone()))
+                .collect(),
+        })
+        .collect();
+    store.create_rule_tables(&specs).await?;
+
+    // Derive scan pairs for discovery loop.
+    let scan_pairs: Vec<sprefa_schema::rule_tables::ScanPair> = specs
+        .iter()
+        .filter_map(|spec| {
+            sprefa_schema::rule_tables::RuleTableDef::from_matches(
+                &spec.rule_name,
+                &spec.columns.iter().map(|(n, s)| (n.clone(), s.clone())).collect::<Vec<_>>(),
+            )
+            .scan_pair()
+        })
+        .collect();
+
     Ok(Scanner {
         extractors: Arc::new(vec![
             Box::new(extractor) as Box<dyn sprefa_scan::Extractor>,
@@ -414,6 +442,7 @@ fn build_scanner(
         store,
         normalize_config: config.scan.as_ref().and_then(|s| s.normalize.clone()),
         global_filter: config.filter.clone(),
+        scan_pairs,
     })
 }
 
@@ -492,7 +521,7 @@ async fn cmd_scan(
     }
 
     let pool = init_db(&config.db_path()).await?;
-    let scanner = build_scanner(&config, pool)?;
+    let scanner = build_scanner(&config, pool).await?;
 
     let repos: Vec<_> = config
         .repos
@@ -559,69 +588,33 @@ async fn cmd_scan(
         }
     }
 
-    // Second pass: re-resolve match links for all scanned repos.
-    // DEPRECATED: Link rules have been removed.
-    if repos.len() > 1 {
-        tracing::info!("link resolution skipped: link rules have been removed");
-    }
-
-    // Tier 2: discovery loop. Query match_labels for (repo, rev) pairs
-    // annotated with IS_REPO/IS_REV, scan those revs, repeat until stable.
-    {
+    // Discovery loop: query per-rule tables for unscanned (repo, rev) pairs,
+    // scan those revs, repeat until stable.
+    if !scanner.scan_pairs.is_empty() {
         let repo_map: std::collections::HashMap<&str, &sprefa_config::RepoConfig> =
             repos.iter().map(|r| (r.name.as_str(), *r)).collect();
 
         const MAX_DISCOVERY_ITERATIONS: i32 = 10;
         for iteration in 1..=MAX_DISCOVERY_ITERATIONS {
-            let pool = scanner.store.sqlite_pool().ok_or_else(|| anyhow::anyhow!("discovery requires sqlite store"))?;
-            let targets = sprefa_cache::discovery::discover_scan_targets(pool).await?;
-            let scanned = sprefa_cache::discovery::scanned_revs(pool).await?;
-            let mut new_targets = Vec::new();
-            let mut log_entries = Vec::new();
+            let mut new_targets: Vec<(String, String, &sprefa_config::RepoConfig)> = Vec::new();
 
-            for target in &targets {
-                // Only scan repos we have a local path for.
-                let Some(repo_cfg) = repo_map.get(target.repo_name.as_str()) else {
-                    log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
-                        iteration,
-                        target,
-                        status: "skipped_no_path",
-                        files_scanned: None,
-                        refs_inserted: None,
-                    });
-                    continue;
-                };
-
-                // Skip excluded revs.
-                if repo_cfg.rev_excluded(&target.rev) {
-                    log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
-                        iteration,
-                        target,
-                        status: "skipped_excluded",
-                        files_scanned: None,
-                        refs_inserted: None,
-                    });
-                    continue;
+            for pair in &scanner.scan_pairs {
+                let pairs = scanner
+                    .store
+                    .unscanned_rev_pairs(&pair.table, &pair.repo_column, &pair.rev_column)
+                    .await?;
+                for (repo_name, rev) in pairs {
+                    let Some(repo_cfg) = repo_map.get(repo_name.as_str()) else {
+                        tracing::debug!("discovery: skipping {repo_name}@{rev} (no local path)");
+                        continue;
+                    };
+                    if repo_cfg.rev_excluded(&rev) {
+                        tracing::debug!("discovery: skipping {repo_name}@{rev} (excluded)");
+                        continue;
+                    }
+                    new_targets.push((repo_name, rev, *repo_cfg));
                 }
-
-                // Skip revs already scanned.
-                if scanned.contains(&(target.repo_name.clone(), target.rev.clone())) {
-                    log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
-                        iteration,
-                        target,
-                        status: "skipped_scanned",
-                        files_scanned: None,
-                        refs_inserted: None,
-                    });
-                    continue;
-                }
-
-                new_targets.push((target.clone(), *repo_cfg));
             }
-
-            // Flush skip-phase log entries in one batch.
-            let pool = scanner.store.sqlite_pool().ok_or_else(|| anyhow::anyhow!("discovery requires sqlite store"))?;
-            sprefa_cache::discovery::log_discovery_batch(pool, &log_entries).await?;
 
             if new_targets.is_empty() {
                 if iteration > 1 {
@@ -636,66 +629,24 @@ async fn cmd_scan(
                 new_targets.len(),
             );
 
-            let mut scan_log_entries = Vec::new();
-            for (target, repo_cfg) in &new_targets {
-                match scanner.scan_rev(repo_cfg, &target.rev).await {
+            for (repo_name, rev, repo_cfg) in &new_targets {
+                match scanner.scan_rev(repo_cfg, rev).await {
                     Ok(result) => {
                         println!(
-                            "discovery {}/{} @ {}: {} blobs, {} refs, {} links",
+                            "discovery {}/{} @ {}: {} blobs, {} refs",
                             iteration,
                             result.repo,
                             result.branch,
                             result.files_scanned,
                             result.refs_inserted,
-                            result.links_created,
                         );
-                        scan_log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
-                            iteration,
-                            target,
-                            status: "scanned",
-                            files_scanned: Some(result.files_scanned),
-                            refs_inserted: Some(result.refs_inserted),
-                        });
                         total_files += result.files_scanned;
                         total_refs += result.refs_inserted;
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "discovery {} @ {}: scan failed: {}",
-                            target.repo_name,
-                            target.rev,
-                            e,
-                        );
-                        scan_log_entries.push(sprefa_cache::discovery::DiscoveryLogEntry {
-                            iteration,
-                            target,
-                            status: "failed",
-                            files_scanned: None,
-                            refs_inserted: None,
-                        });
+                        tracing::warn!("discovery {repo_name} @ {rev}: scan failed: {e}");
                     }
                 }
-            }
-            let pool = scanner.store.sqlite_pool().ok_or_else(|| anyhow::anyhow!("discovery requires sqlite store"))?;
-            sprefa_cache::discovery::log_discovery_batch(pool, &scan_log_entries).await?;
-
-            // Re-resolve links for affected repos after discovery scans.
-            let mut discovery_links = 0usize;
-            for (target, _) in &new_targets {
-                match scanner.resolve_links(&target.repo_name).await {
-                    Ok(n) => discovery_links += n,
-                    Err(e) => tracing::warn!(
-                        "discovery {}: link resolution failed: {}",
-                        target.repo_name,
-                        e,
-                    ),
-                }
-            }
-            if discovery_links > 0 {
-                println!(
-                    "discovery iteration {}: {} links resolved",
-                    iteration, discovery_links
-                );
             }
         }
     }
@@ -895,7 +846,7 @@ async fn cmd_serve(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
     let pool = init_db(&config.db_path()).await?;
     let bind = config.daemon_bind().to_string();
-    let scanner = build_scanner(&config, pool.clone()).ok().map(Arc::new);
+    let scanner = build_scanner(&config, pool.clone()).await.ok().map(Arc::new);
     sprefa_server::serve(pool, scanner, config.repos.clone(), &bind).await?;
     Ok(())
 }
@@ -903,7 +854,7 @@ async fn cmd_serve(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
 async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
     let pool = init_db(&config.db_path()).await?;
-    let scanner = build_scanner(&config, pool.clone())?;
+    let scanner = build_scanner(&config, pool.clone()).await?;
 
     let rewriters: Vec<Box<dyn PathRewriter>> =
         vec![Box::new(JsPathRewriter), Box::new(RsPathRewriter)];
@@ -946,7 +897,7 @@ async fn cmd_daemon(
 ) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
     let pool = init_db(&config.db_path()).await?;
-    let scanner = build_scanner(&config, pool.clone())?;
+    let scanner = build_scanner(&config, pool.clone()).await?;
 
     let repos: Vec<_> = config
         .repos

@@ -8,6 +8,7 @@ sprefa_config = { path = "../config" }
 sprefa_extract = { path = "../extract" }
 sprefa_index = { path = "../index" }
 sprefa_cache = { path = "../cache" }
+sprefa_schema = { path = "../schema" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

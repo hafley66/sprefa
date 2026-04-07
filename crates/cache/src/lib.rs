@@ -6,10 +6,10 @@ pub mod scan_context;
 pub mod store;
 pub mod sqlite_store;
 
-pub use flush::{flush, delete_rev_files_by_paths, rename_file_paths};
+pub use flush::{delete_rev_files_by_paths, rename_file_paths};
 pub use meta::flush_repo_meta;
 pub use resolve::resolve_import_targets;
-pub use store::{Store, to_file_results, ScanContext};
+pub use store::{Store, to_file_results, RuleTableSpec, ScanContext};
 pub use sqlite_store::SqliteStore;
 
 /// Return the working-tree rev name for a given base rev.
