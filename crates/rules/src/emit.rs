@@ -3,48 +3,74 @@ use std::collections::HashMap;
 use regex::Regex;
 use sprefa_extract::RawRef;
 
-use crate::types::{MatchDef, ValuePattern};
+use crate::pattern::{match_segments_pub, parse_segment_pattern};
+use crate::types::{LineMatcher, MatchDef};
 use crate::walk::{CapturedValue, MatchResult};
 
-/// Apply a value pattern (regex) to the captures, merging named groups back in.
-pub fn apply_value_pattern(
+/// Apply a line matcher (segment capture or regex) to the captures,
+/// merging extracted groups back in.
+pub fn apply_line_matcher(
     captures: &mut HashMap<String, CapturedValue>,
-    pattern: &ValuePattern,
+    matcher: &LineMatcher,
 ) -> bool {
-    let source_text = match captures.get(&pattern.source) {
-        Some(cv) => cv.text.clone(),
-        None => return false, // source capture doesn't exist, skip
-    };
-
-    let re = match if pattern.full_match {
-        Regex::new(&format!("^(?:{})$", &pattern.pattern))
-    } else {
-        Regex::new(&pattern.pattern)
-    } {
-        Ok(r) => r,
-        Err(_) => return false, // bad regex, skip
-    };
-
-    let re_caps = match re.captures(&source_text) {
-        Some(c) => c,
-        None => return false, // no match, skip this node
-    };
-
-    // Merge named groups into the capture map
-    for name in re.capture_names().flatten() {
-        if let Some(m) = re_caps.name(name) {
-            captures.insert(
-                name.to_string(),
-                CapturedValue {
-                    text: m.as_str().to_string(),
-                    span_start: 0,
-                    span_end: 0,
-                },
-            );
+    let (source, result) = match matcher {
+        LineMatcher::Segments { source, pattern } => {
+            let source_text = match captures.get(source) {
+                Some(cv) => cv.text.clone(),
+                None => return false,
+            };
+            let segments = parse_segment_pattern(pattern);
+            (source, match_segments_pub(&segments, &source_text))
         }
-    }
+        LineMatcher::Regex {
+            source,
+            pattern,
+            full_match,
+        } => {
+            let source_text = match captures.get(source) {
+                Some(cv) => cv.text.clone(),
+                None => return false,
+            };
+            let re = match if *full_match {
+                Regex::new(&format!("^(?:{})$", pattern))
+            } else {
+                Regex::new(pattern)
+            } {
+                Ok(r) => r,
+                Err(_) => return false,
+            };
+            let re_caps = match re.captures(&source_text) {
+                Some(c) => c,
+                None => return false,
+            };
+            let mut map = HashMap::new();
+            for name in re.capture_names().flatten() {
+                if let Some(m) = re_caps.name(name) {
+                    map.insert(name.to_string(), m.as_str().to_string());
+                }
+            }
+            (source, if map.is_empty() { None } else { Some(map) })
+        }
+    };
 
-    true
+    let _ = source; // used above in both arms
+
+    match result {
+        Some(extracted) => {
+            for (name, text) in extracted {
+                captures.insert(
+                    name,
+                    CapturedValue {
+                        text,
+                        span_start: 0,
+                        span_end: 0,
+                    },
+                );
+            }
+            true
+        }
+        None => false,
+    }
 }
 
 /// Turn a match result into RawRefs according to the create_matches list.
@@ -52,16 +78,16 @@ pub fn apply_value_pattern(
 pub fn create_refs(
     result: &MatchResult,
     match_defs: &[MatchDef],
-    value_pattern: Option<&ValuePattern>,
+    line_matcher: Option<&LineMatcher>,
     rule_name: &str,
     group: Option<u32>,
 ) -> Vec<RawRef> {
     let mut captures = result.captures.clone();
 
-    // Apply value pattern if present (regex filter + capture split)
-    if let Some(vp) = value_pattern {
-        if !apply_value_pattern(&mut captures, vp) {
-            return vec![]; // value pattern didn't match, no refs
+    // Apply line matcher if present (segment capture or regex filter + capture split)
+    if let Some(lm) = line_matcher {
+        if !apply_line_matcher(&mut captures, lm) {
+            return vec![]; // line matcher didn't match, no refs
         }
     }
 
@@ -75,14 +101,31 @@ pub fn create_refs(
 
     for def in match_defs {
         if let Some(raw) = create_one(def, rule_name, &captures, node_path.as_deref(), group) {
+            eprintln!(
+                "EMIT_DEBUG: created ref for '{}' with scan={:?}",
+                def.capture, raw.scan
+            );
             refs.push(raw);
+        } else {
+            eprintln!("EMIT_DEBUG: failed to create ref for '{}'", def.capture);
         }
     }
 
     refs
 }
 
-fn create_one(def: &MatchDef, rule_name: &str, captures: &HashMap<String, CapturedValue>, node_path: Option<&str>, group: Option<u32>) -> Option<RawRef> {
+fn create_one(
+    def: &MatchDef,
+    rule_name: &str,
+    captures: &HashMap<String, CapturedValue>,
+    node_path: Option<&str>,
+    group: Option<u32>,
+) -> Option<RawRef> {
+    eprintln!(
+        "EMIT_DEBUG: looking for capture '{}' in {:?}",
+        def.capture,
+        captures.keys().collect::<Vec<_>>()
+    );
     let cv = captures.get(&def.capture)?;
 
     let parent_key = def
@@ -106,10 +149,7 @@ fn create_one(def: &MatchDef, rule_name: &str, captures: &HashMap<String, Captur
 }
 
 /// Expand a template string like `"{repo}"` using captures.
-pub fn expand_template(
-    template: &str,
-    captures: &HashMap<String, CapturedValue>,
-) -> String {
+pub fn expand_template(template: &str, captures: &HashMap<String, CapturedValue>) -> String {
     let mut result = template.to_string();
     for (name, cv) in captures {
         result = result.replace(&format!("{{{}}}", name), &cv.text);

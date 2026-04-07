@@ -304,7 +304,7 @@ fn emit_pnpm_lock_deps_with_regex_split() {
         SelectStep::KeyMatch { pattern: "*".into(), capture: Some("raw".into()) },
     ];
 
-    let value_pattern = ValuePattern {
+    let value_pattern = LineMatcher::Regex {
         source: "raw".into(),
         pattern: r"(?P<name>[^@]+)@(?P<version>.+)".into(),
         full_match: true,
@@ -390,7 +390,7 @@ fn cross_lockfile_same_deps() {
         SelectStep::Key { name: "packages".into(), capture: None },
         SelectStep::KeyMatch { pattern: "*".into(), capture: Some("raw".into()) },
     ];
-    let pnpm_value = ValuePattern {
+    let pnpm_value = LineMatcher::Regex {
         source: "raw".into(),
         pattern: r"(?P<name>[^@]+)@(?P<version>.+)".into(),
         full_match: true,
@@ -637,7 +637,7 @@ fn tsp_pnpm_lock_scoped_packages() {
         SelectStep::KeyMatch { pattern: "*".into(), capture: Some("raw".into()) },
     ];
 
-    let value_pattern = ValuePattern {
+    let value_pattern = LineMatcher::Regex {
         source: "raw".into(),
         pattern: r"(?P<name>@[^@]+)@(?P<version>.+)".into(),
         full_match: true,
@@ -681,7 +681,7 @@ fn tsp_pnpm_lock_mixed_scoped_and_unscoped() {
         SelectStep::KeyMatch { pattern: "*".into(), capture: Some("raw".into()) },
     ];
 
-    let value_pattern = ValuePattern {
+    let value_pattern = LineMatcher::Regex {
         source: "raw".into(),
         pattern: r"(?P<name>.+)@(?P<version>[^@]+)$".into(),
         full_match: true,

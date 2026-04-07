@@ -5,13 +5,13 @@ use anyhow::{bail, Result};
 use sprefa_extract::{ExtractContext, Extractor, RawRef};
 
 use crate::{
-    ast, emit, walk,
+    ast, emit,
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
-    types::{AstSelector, MatchDef, RuleSet, SelectStep, ValuePattern},
+    types::{AstSelector, LineMatcher, MatchDef, RuleSet, SelectStep},
+    walk,
     walk::{CapturedValue, CompiledStep},
 };
-
 
 #[derive(Debug)]
 pub struct CompiledRule {
@@ -22,7 +22,7 @@ pub struct CompiledRule {
     pub context_captures: Vec<(String, ContextCaptureSource)>,
     pub steps: Vec<CompiledStep>,
     pub ast: Option<AstSelector>,
-    pub value_pattern: Option<ValuePattern>,
+    pub line_matcher: Option<LineMatcher>,
     pub create_matches: Vec<MatchDef>,
 }
 
@@ -59,7 +59,10 @@ impl RuleExtractor {
             })
             .map(compile_rule)
             .collect::<Result<Vec<_>>>()?;
-        Ok(Self { rules, config_dir: config_dir.map(|p| p.to_path_buf()) })
+        Ok(Self {
+            rules,
+            config_dir: config_dir.map(|p| p.to_path_buf()),
+        })
     }
 
     pub fn from_json(path: &Path) -> Result<Self> {
@@ -75,15 +78,23 @@ impl RuleExtractor {
     }
 
     /// Filter rules to those whose file selector could match the given path.
-    pub fn rules_for_path<'a>(&'a self, path: &'a str) -> impl Iterator<Item = &'a CompiledRule> + 'a {
-        self.rules.iter().filter(move |r| {
-            r.file.is_empty() || r.file.matches(path)
-        })
+    pub fn rules_for_path<'a>(
+        &'a self,
+        path: &'a str,
+    ) -> impl Iterator<Item = &'a CompiledRule> + 'a {
+        self.rules
+            .iter()
+            .filter(move |r| r.file.is_empty() || r.file.matches(path))
     }
 
     /// Run rules and return raw MatchResults (captures) without going through emit.
     /// Used by `sprefa eval` when no match() slots are present.
-    pub fn eval_raw(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<walk::MatchResult> {
+    pub fn eval_raw(
+        &self,
+        source: &[u8],
+        path: &str,
+        ctx: &ExtractContext,
+    ) -> Vec<walk::MatchResult> {
         let ext = Path::new(path)
             .extension()
             .and_then(|e| e.to_str())
@@ -102,9 +113,8 @@ impl RuleExtractor {
                 None => continue,
             };
 
-            let context_caps = resolve_context_captures(
-                &rule.context_captures, ctx, path, &git_caps, &file_caps,
-            );
+            let context_caps =
+                resolve_context_captures(&rule.context_captures, ctx, path, &git_caps, &file_caps);
 
             let results = if let Some(ast_sel) = &rule.ast {
                 ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
@@ -139,13 +149,8 @@ impl Extractor for RuleExtractor {
         // The run-all dispatch in crates/index means claiming an ext already
         // claimed by JsExtractor/RsExtractor is fine -- refs are merged.
         &[
-            "json", "yaml", "yml", "toml",
-            "js", "jsx", "cjs", "mjs", "ts", "tsx", "cts", "mts",
-            "rs",
-            "py", "py3", "pyi",
-            "go",
-            "kt", "kts",
-            "sh", "bash", "zsh",
+            "json", "yaml", "yml", "toml", "js", "jsx", "cjs", "mjs", "ts", "tsx", "cts", "mts",
+            "rs", "py", "py3", "pyi", "go", "kt", "kts", "sh", "bash", "zsh",
         ]
     }
 
@@ -158,32 +163,60 @@ impl Extractor for RuleExtractor {
         let mut refs = vec![];
         let mut group_counter: u32 = 0;
         for rule in self.rules_for_path(path) {
+            eprintln!(
+                "EXTRACT_DEBUG: rule '{}' matched path '{}'",
+                rule.name, path
+            );
             let repo = ctx.repo.unwrap_or("");
             let git_caps = match rule.git.matches_with_captures(repo, ctx.branch, ctx.tags) {
                 Some(c) => c,
-                None => continue,
+                None => {
+                    eprintln!("EXTRACT_DEBUG: git mismatch for '{}'", rule.name);
+                    continue;
+                }
             };
 
             let file_caps = match rule.file.matches_with_captures(path) {
                 Some(c) => c,
-                None => continue,
+                None => {
+                    eprintln!("EXTRACT_DEBUG: file mismatch for '{}'", rule.name);
+                    continue;
+                }
             };
 
-            let context_caps = resolve_context_captures(
-                &rule.context_captures, ctx, path, &git_caps, &file_caps,
-            );
+            let context_caps =
+                resolve_context_captures(&rule.context_captures, ctx, path, &git_caps, &file_caps);
 
             let results = if let Some(ast_sel) = &rule.ast {
                 ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
             } else {
                 let value = match parse_data(source, ext) {
                     Some(v) => v,
-                    None => continue,
+                    None => {
+                        eprintln!("EXTRACT_DEBUG: parse_data failed for '{}'", path);
+                        continue;
+                    }
                 };
-                walk::walk(&value, &rule.steps)
+                eprintln!(
+                    "EXTRACT_DEBUG: walking {} steps for '{}'",
+                    rule.steps.len(),
+                    rule.name
+                );
+                let res = walk::walk(&value, &rule.steps);
+                eprintln!(
+                    "EXTRACT_DEBUG: got {} results for '{}'",
+                    res.len(),
+                    rule.name
+                );
+                res
             };
 
             let has_matches = !rule.create_matches.is_empty();
+            eprintln!(
+                "EXTRACT_DEBUG: has_matches={}, results={}",
+                has_matches,
+                results.len()
+            );
             for result in results {
                 let merged = if context_caps.is_empty() {
                     result.clone()
@@ -201,7 +234,13 @@ impl Extractor for RuleExtractor {
                 } else {
                     None
                 };
-                refs.extend(emit::create_refs(&merged, &rule.create_matches, rule.value_pattern.as_ref(), &rule.name, group));
+                refs.extend(emit::create_refs(
+                    &merged,
+                    &rule.create_matches,
+                    rule.line_matcher.as_ref(),
+                    &rule.name,
+                    group,
+                ));
             }
         }
         refs
@@ -227,15 +266,14 @@ fn resolve_context_captures(
                 ContextCaptureSource::Repo => ctx.repo?.to_string(),
                 ContextCaptureSource::Rev => {
                     // Prefer branch, fall back to first tag
-                    ctx.branch.map(|b| b.to_string())
+                    ctx.branch
+                        .map(|b| b.to_string())
                         .or_else(|| ctx.tags.first().map(|t| t.to_string()))?
                 }
                 ContextCaptureSource::FileName => {
                     Path::new(path).file_stem()?.to_str()?.to_string()
                 }
-                ContextCaptureSource::FolderPath => {
-                    Path::new(path).parent()?.to_str()?.to_string()
-                }
+                ContextCaptureSource::FolderPath => Path::new(path).parent()?.to_str()?.to_string(),
             };
             Some((
                 name.clone(),
@@ -334,7 +372,7 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
         context_captures,
         steps: compiled_steps,
         ast: r.select_ast.clone(),
-        value_pattern: r.value.clone(),
+        line_matcher: r.value.clone(),
         create_matches: r.create_matches.clone(),
     })
 }
@@ -462,7 +500,10 @@ mod tests {
         let refs = run(&ex, src, "package-lock.json");
         assert!(refs.iter().all(|r| r.node_path.is_some()));
         let version_ref = refs.iter().find(|r| r.value == "4.18.2").unwrap();
-        assert_eq!(version_ref.node_path.as_deref(), Some("dependencies/express/version"));
+        assert_eq!(
+            version_ref.node_path.as_deref(),
+            Some("dependencies/express/version")
+        );
     }
 
     #[test]

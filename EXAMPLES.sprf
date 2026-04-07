@@ -1,0 +1,346 @@
+# EXAMPLES.sprf -- cross-rule ref patterns, not checked in
+#
+# These demonstrate the new rule(name) { body }; syntax
+# with cross-rule references and recursive discovery.
+
+
+# ═══════════════════════════════════════════════════════
+# 1. Helmfile -> package.json -> lock file rev tracking
+# ═══════════════════════════════════════════════════════
+
+# Level 0: extract repo+rev from helmfile/values
+rule(deploy_ref) {
+  fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+  scan(repo: $REPO, rev: $TAG)
+};
+
+# Level 1: in each referenced repo at that rev, find internal deps
+rule(internal_dep) {
+  deploy_ref(repo: $REPO, rev: $TAG) {
+    fs(**/package.json) > json({ dependencies: { $DEP: $SPEC } })
+    scan(repo: $DEP, rev: $SPEC)
+  }
+};
+
+# Level 2: in the lock file, find the resolved rev for that dep
+rule(lock_pin) {
+  internal_dep(dep: $DEP, repo: $REPO) {
+    fs(**/package-lock.json) > line($DEP.*resolved.*#$PINNED_REV)
+  }
+};
+
+# Drift detection: spec vs lock
+check(dep_version_drift) {
+  SELECT id.dep, id.spec, lp.pinned_rev
+  FROM internal_dep id
+  LEFT JOIN lock_pin lp ON id.dep = lp.dep AND id.repo = lp.repo
+  WHERE lp.pinned_rev IS NULL OR lp.pinned_rev != id.spec
+};
+
+
+# ═══════════════════════════════════════════════════════
+# 2. OpenAPI spec -> frontend callsite drift
+# ═══════════════════════════════════════════════════════
+
+# Source of truth: op names + paths from the spec
+rule(api_ops) {
+  repo(api-platform) {
+    fs(**/openapi.json) > json({ paths: { $PATH: { re:^(get|post|put|delete)$: { operationId: $OP } } } })
+  }
+};
+
+# Frontend: callsites referencing those op names
+rule(frontend_op_ref) {
+  api_ops(op: $OP) {
+    repo(web-app) {
+      fs(**/*.ts) > line($OP)
+    }
+  }
+};
+
+# Frontend: hardcoded URL paths from the spec
+rule(hardcoded_url) {
+  api_ops(path: $PATH) {
+    repo(web-app) {
+      fs(**/*.ts) > line(['"`]$PATH['"`])
+    }
+  }
+};
+
+# Ops in spec with zero frontend references
+check(stale_ops) {
+  SELECT o.op, o.path
+  FROM api_ops o
+  LEFT JOIN frontend_op_ref f ON o.op = f.op
+  WHERE f.op IS NULL
+};
+
+# Frontend refs to ops no longer in the spec
+check(dead_refs) {
+  SELECT f.op
+  FROM frontend_op_ref f
+  LEFT JOIN api_ops o ON f.op = o.op
+  WHERE o.op IS NULL
+};
+
+
+# ═══════════════════════════════════════════════════════
+# 3. Cross-repo string sync detection
+# ═══════════════════════════════════════════════════════
+
+rule(source_strings) {
+  repo(service-a) {
+    fs(src/constants.ts) > line(export const $NAME = "$VALUE")
+  }
+};
+
+rule(consumer_strings) {
+  source_strings(name: $NAME) {
+    repo(service-b) {
+      fs(src/config.ts) > line($NAME.*"$VALUE")
+    }
+  }
+};
+
+check(string_drift) {
+  SELECT s.name, s.value as source_val, c.value as consumer_val
+  FROM source_strings s
+  JOIN consumer_strings c ON s.name = c.name
+  WHERE s.value != c.value
+};
+
+
+# ═══════════════════════════════════════════════════════
+# 4. Monorepo workspace internal dep graph
+# ═══════════════════════════════════════════════════════
+
+# All packages in the workspace
+rule(workspace_pkg) {
+  fs(**/package.json) > json({ name: $NAME, workspaces: [...$WS_GLOB] })
+};
+
+# Internal deps: package A depends on package B (both in workspace)
+rule(internal_dep_chain) {
+  workspace_pkg(name: $PKG) {
+    fs(**/package.json) > json({ dependencies: { $DEP: $_ } })
+  }
+};
+
+# Transitive closure query
+query(transitive_deps) {
+  WITH RECURSIVE transitive AS (
+    SELECT pkg, dep FROM internal_dep_chain
+    UNION
+    SELECT t.pkg, ic.dep
+    FROM transitive t
+    JOIN internal_dep_chain ic ON t.dep = ic.pkg
+  )
+  SELECT * FROM transitive
+};
+
+
+# ═══════════════════════════════════════════════════════
+# 5. Terraform module chain (recursive discovery)
+# ═══════════════════════════════════════════════════════
+
+# Root modules reference child modules by path
+rule(tf_module) {
+  fs(**/*.tf) > line(source\s*=\s*"\./$PATH")
+  scan(repo: $PATH)
+};
+
+# Each discovered module path gets scanned,
+# which might find MORE module references.
+# Fixpoint converges when no new paths appear.
+rule(tf_transitive) {
+  tf_module(path: $PARENT) {
+    fs(**/*.tf) > line(source\s*=\s*"\./$CHILD")
+    scan(repo: $CHILD)
+  }
+};
+
+# Full module tree
+query(module_tree) {
+  WITH RECURSIVE tree AS (
+    SELECT path as module, path as root FROM tf_module
+    UNION
+    SELECT t.child, tr.root
+    FROM tf_transitive t
+    JOIN tree tr ON t.parent = tr.module
+  )
+  SELECT * FROM tree
+};
+
+
+# ═══════════════════════════════════════════════════════
+# 6. Docker base image chain
+# ═══════════════════════════════════════════════════════
+
+rule(dockerfile_from) {
+  fs(**/Dockerfile) > line(FROM\s+$IMAGE:$TAG)
+  scan(repo: $IMAGE, rev: $TAG)
+};
+
+# Each base image might have its own Dockerfile with FROM
+rule(base_image_chain) {
+  dockerfile_from(image: $IMAGE, tag: $TAG) {
+    fs(**/Dockerfile) > line(FROM\s+$BASE_IMAGE:$BASE_TAG)
+    scan(repo: $BASE_IMAGE, rev: $BASE_TAG)
+  }
+};
+
+# All images in the transitive base chain
+query(full_image_lineage) {
+  WITH RECURSIVE lineage AS (
+    SELECT image, tag FROM dockerfile_from
+    UNION
+    SELECT b.base_image, b.base_tag
+    FROM base_image_chain b
+    JOIN lineage l ON b.image = l.image AND b.tag = l.tag
+  )
+  SELECT * FROM lineage
+};
+
+
+# ═══════════════════════════════════════════════════════
+# 7. Migration DDL -> ORM cross-language column tracking
+# ═══════════════════════════════════════════════════════
+
+# Source of truth: CREATE/ALTER in the migrations repo
+rule(ddl_table) {
+  repo(db-migrations) {
+    fs(**/migrations/*.sql) > line(CREATE TABLE\s+(\w+\.)?$TABLE)
+  }
+};
+
+rule(ddl_column) {
+  repo(db-migrations) {
+    fs(**/migrations/*.sql) > line(ALTER TABLE\s+(\w+\.)?$TABLE\s+ADD\s+(COLUMN\s+)?$COLUMN)
+  }
+};
+
+rule(ddl_column_create) {
+  repo(db-migrations) {
+    fs(**/migrations/*.sql) > line(CREATE TABLE\s+(\w+\.)?$TABLE\s*\([^)]*\b$COLUMN\b)
+  }
+};
+
+# ── ORM consumers across languages ────────────────
+
+# Python: SQLAlchemy models
+rule(py_orm_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/*.py) > line(__tablename__\s*=\s*['"]$TABLE['"])
+  }
+};
+
+rule(py_column_ref) {
+  ddl_column(table: $TABLE, column: $COLUMN) {
+    fs(**/*.py) > line($COLUMN\s*=\s*Column\()
+  }
+};
+
+# TypeScript: TypeORM / Prisma / Drizzle
+rule(ts_typeorm_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/*.ts) > line(@Entity\(['"]$TABLE['"]\)|table:\s*['"]$TABLE['"])
+  }
+};
+
+rule(ts_prisma_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/schema.prisma) > line(@@map\(['"]$TABLE['"]\)|model\s+\w+)
+  }
+};
+
+rule(ts_drizzle_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/*.ts) > line(pgTable\(['"]$TABLE['"])
+  }
+};
+
+# Go: sqlc / GORM
+rule(go_sqlc_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/*.sql) > line(FROM\s+$TABLE|JOIN\s+$TABLE|INTO\s+$TABLE|UPDATE\s+$TABLE)
+  }
+};
+
+rule(go_gorm_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/*.go) > line(TableName\(\)\s*.*['"]$TABLE['"]|Table\(['"]$TABLE['"]\))
+  }
+};
+
+# Java: JPA / Hibernate
+rule(java_entity_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/*.java) > line(@Table\(name\s*=\s*"$TABLE"\))
+  }
+};
+
+# Rust: Diesel / SeaORM
+rule(rs_diesel_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/*.rs) > line(table!\s*\{\s*$TABLE)
+  }
+};
+
+rule(rs_seaorm_ref) {
+  ddl_table(table: $TABLE) {
+    fs(**/*.rs) > line(TableName\s*=\s*"$TABLE"|table_name\s*=\s*"$TABLE")
+  }
+};
+
+# ── Checks ────────────────────────────────────────
+
+# Tables in DDL with zero ORM references anywhere
+check(orphan_tables) {
+  SELECT t.table
+  FROM ddl_table t
+  LEFT JOIN py_orm_ref py ON t.table = py.table
+  LEFT JOIN ts_typeorm_ref ts ON t.table = ts.table
+  LEFT JOIN ts_prisma_ref pr ON t.table = pr.table
+  LEFT JOIN ts_drizzle_ref dr ON t.table = dr.table
+  LEFT JOIN go_gorm_ref go ON t.table = go.table
+  LEFT JOIN java_entity_ref j ON t.table = j.table
+  LEFT JOIN rs_diesel_ref rd ON t.table = rd.table
+  WHERE py.table IS NULL
+    AND ts.table IS NULL
+    AND pr.table IS NULL
+    AND dr.table IS NULL
+    AND go.table IS NULL
+    AND j.table IS NULL
+    AND rd.table IS NULL
+};
+
+# ORM refs to tables not in any migration
+check(phantom_tables) {
+  WITH all_orm_refs AS (
+    SELECT table FROM py_orm_ref
+    UNION SELECT table FROM ts_typeorm_ref
+    UNION SELECT table FROM ts_prisma_ref
+    UNION SELECT table FROM ts_drizzle_ref
+    UNION SELECT table FROM go_gorm_ref
+    UNION SELECT table FROM java_entity_ref
+    UNION SELECT table FROM rs_diesel_ref
+  )
+  SELECT r.table FROM all_orm_refs r
+  LEFT JOIN ddl_table t ON r.table = t.table
+  WHERE t.table IS NULL
+};
+
+# Column added in migration but missing from ORM model
+check(missing_columns) {
+  WITH all_columns AS (
+    SELECT table, column FROM ddl_column
+    UNION SELECT table, column FROM ddl_column_create
+  ),
+  all_col_refs AS (
+    SELECT table, column FROM py_column_ref
+  )
+  SELECT c.table, c.column
+  FROM all_columns c
+  LEFT JOIN all_col_refs r ON c.table = r.table AND c.column = r.column
+  WHERE r.column IS NULL
+};

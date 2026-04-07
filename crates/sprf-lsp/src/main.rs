@@ -265,7 +265,7 @@ const TAGS: &[(&str, &str)] = &[
     ("fs", "File path glob: fs(**/pattern)"),
     ("json", "JSON/YAML/TOML destructuring: json({ key: $CAP })"),
     ("ast", "ast-grep pattern: ast(pattern) or ast[lang](pattern)"),
-    ("re", "Regex on file content: re(pattern)"),
+    ("line", "Line pattern: line($CAP:$TAG) or line(re:pattern)"),
     ("repo", "Repository glob: repo(org/*)"),
     ("rev", "Rev glob (branch or tag): rev(main|v*)"),
     ("rule", "Rule declaration: rule(name) { selectors };"),

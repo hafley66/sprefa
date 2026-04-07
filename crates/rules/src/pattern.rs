@@ -66,7 +66,11 @@ impl PatternMatcher {
                         map.insert(name.to_string(), m.as_str().to_string());
                     }
                 }
-                if map.is_empty() { None } else { Some(map) }
+                if map.is_empty() {
+                    None
+                } else {
+                    Some(map)
+                }
             }
             Self::SegmentCapture(segs) => match_segments(segs, value),
         }
@@ -75,10 +79,13 @@ impl PatternMatcher {
 
 /// Parse a pattern string containing `$` captures into a Vec<Segment>.
 ///
-/// `$NAME` = single capture (greedy up to next literal or end).
-/// `$$$NAME` = multi capture (greedy across separators).
+/// `$NAME` or `${NAME}` = single capture (greedy up to next literal or end).
+/// `$$$NAME` or `$$${NAME}` = multi capture (greedy across separators).
 /// `$_` = wild (single). `$$$_` = multi wild.
 /// Everything else is literal.
+///
+/// Use `${NAME}` when the capture is adjacent to identifier characters,
+/// e.g. `use${ENTITY}Query` captures `ENTITY` with literal `use` and `Query` around it.
 pub fn parse_segment_pattern(pattern: &str) -> Vec<Segment> {
     let mut segments = Vec::new();
     let mut chars = pattern.chars().peekable();
@@ -92,7 +99,7 @@ pub fn parse_segment_pattern(pattern: &str) -> Vec<Segment> {
             }
 
             chars.next(); // consume first $
-            // check for $$$ (multi)
+                          // check for $$$ (multi)
             let multi = chars.peek() == Some(&'$') && {
                 let mut lookahead = chars.clone();
                 lookahead.next();
@@ -104,16 +111,31 @@ pub fn parse_segment_pattern(pattern: &str) -> Vec<Segment> {
                 chars.next(); // third $
             }
 
-            // read the name
-            let mut name = String::new();
-            while let Some(&nc) = chars.peek() {
-                if nc.is_ascii_alphanumeric() || nc == '_' {
-                    name.push(nc);
+            // read the name: ${NAME} braced or $NAME bare
+            let name = if chars.peek() == Some(&'{') {
+                chars.next(); // consume '{'
+                let mut n = String::new();
+                while let Some(&nc) = chars.peek() {
+                    if nc == '}' {
+                        chars.next(); // consume '}'
+                        break;
+                    }
+                    n.push(nc);
                     chars.next();
-                } else {
-                    break;
                 }
-            }
+                n
+            } else {
+                let mut n = String::new();
+                while let Some(&nc) = chars.peek() {
+                    if nc.is_ascii_alphanumeric() || nc == '_' {
+                        n.push(nc);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                n
+            };
 
             if name == "_" || name.is_empty() {
                 if multi {
@@ -137,6 +159,40 @@ pub fn parse_segment_pattern(pattern: &str) -> Vec<Segment> {
     }
 
     segments
+}
+
+/// Public entry point for walk engine. Matches segments against a value.
+pub fn match_segments_pub(segments: &[Segment], value: &str) -> Option<HashMap<String, String>> {
+    match_segments(segments, value)
+}
+
+/// Compute byte offsets of each named capture within the matched value.
+///
+/// Given segments and the capture map from a successful `match_segments` call,
+/// walks the segments sequentially to determine where each capture starts/ends
+/// within the value string. Returns `(start_byte, end_byte)` pairs.
+///
+/// Stops computing if a Wild/MultiWild is encountered (offset becomes ambiguous).
+pub fn capture_offsets_in_value(
+    segments: &[Segment],
+    captures: &HashMap<String, String>,
+) -> HashMap<String, (u32, u32)> {
+    let mut offsets = HashMap::new();
+    let mut pos: u32 = 0;
+    for seg in segments {
+        match seg {
+            Segment::Literal(s) => pos += s.len() as u32,
+            Segment::Capture(name) | Segment::MultiCapture(name) => {
+                if let Some(text) = captures.get(name) {
+                    let start = pos;
+                    pos += text.len() as u32;
+                    offsets.insert(name.clone(), (start, pos));
+                }
+            }
+            Segment::Wild | Segment::MultiWild => break,
+        }
+    }
+    offsets
 }
 
 /// Match a segment pattern against a value, returning captured bindings.
@@ -284,9 +340,7 @@ pub fn compile_patterns(patterns: &[&str]) -> anyhow::Result<Vec<PatternMatcher>
         } else {
             for segment in p.split('|') {
                 let segment = segment.trim();
-                matchers.push(PatternMatcher::Glob(
-                    Glob::new(segment)?.compile_matcher(),
-                ));
+                matchers.push(PatternMatcher::Glob(Glob::new(segment)?.compile_matcher()));
             }
         }
     }
@@ -335,6 +389,29 @@ mod tests {
         let segs = parse_segment_pattern("$$$_/end");
         assert!(matches!(&segs[0], Segment::MultiWild));
         assert!(matches!(&segs[1], Segment::Literal(s) if s == "/end"));
+    }
+
+    #[test]
+    fn parse_braced_capture() {
+        let segs = parse_segment_pattern("use${ENTITY}Query");
+        assert!(matches!(&segs[0], Segment::Literal(s) if s == "use"));
+        assert!(matches!(&segs[1], Segment::Capture(n) if n == "ENTITY"));
+        assert!(matches!(&segs[2], Segment::Literal(s) if s == "Query"));
+    }
+
+    #[test]
+    fn parse_braced_multi_capture() {
+        let segs = parse_segment_pattern("$$${PATH}/end");
+        assert!(matches!(&segs[0], Segment::MultiCapture(n) if n == "PATH"));
+        assert!(matches!(&segs[1], Segment::Literal(s) if s == "/end"));
+    }
+
+    #[test]
+    fn parse_braced_wild() {
+        let segs = parse_segment_pattern("${_}/$NAME");
+        assert!(matches!(&segs[0], Segment::Wild));
+        assert!(matches!(&segs[1], Segment::Literal(s) if s == "/"));
+        assert!(matches!(&segs[2], Segment::Capture(n) if n == "NAME"));
     }
 
     // ── Match tests ──────────────────────────────────
@@ -410,6 +487,39 @@ mod tests {
         assert!(match_segments(&segs, "a/b/c/end").is_some());
         assert!(match_segments(&segs, "/end").is_some());
         assert!(match_segments(&segs, "a/b/c/nope").is_none());
+    }
+
+    #[test]
+    fn match_braced_capture_adjacent() {
+        let segs = parse_segment_pattern("use${ENTITY}Query");
+        let caps = match_segments(&segs, "useUserQuery").unwrap();
+        assert_eq!(caps["ENTITY"], "User");
+    }
+
+    #[test]
+    fn match_braced_capture_no_match() {
+        let segs = parse_segment_pattern("use${ENTITY}Query");
+        assert!(match_segments(&segs, "useUserMutation").is_none());
+    }
+
+    // ── Offset computation ───────────────────────────
+
+    #[test]
+    fn capture_offsets_braced() {
+        let segs = parse_segment_pattern("use${ENTITY}Query");
+        let caps = match_segments(&segs, "useUserQuery").unwrap();
+        let offsets = capture_offsets_in_value(&segs, &caps);
+        // "use" = 3 bytes, "User" = 4 bytes, "Query" = 5 bytes
+        assert_eq!(offsets["ENTITY"], (3, 7));
+    }
+
+    #[test]
+    fn capture_offsets_multiple() {
+        let segs = parse_segment_pattern("$ORG/$REPO");
+        let caps = match_segments(&segs, "acme/frontend").unwrap();
+        let offsets = capture_offsets_in_value(&segs, &caps);
+        assert_eq!(offsets["ORG"], (0, 4));   // "acme"
+        assert_eq!(offsets["REPO"], (5, 13)); // "frontend"
     }
 
     // ── PatternMatcher integration ───────────────────

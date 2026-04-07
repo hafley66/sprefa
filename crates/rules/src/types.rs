@@ -27,9 +27,15 @@ impl KeyMatcher {
         } else if s.starts_with('$')
             && s.len() > 1
             && s[1..].starts_with(|c: char| c.is_ascii_uppercase())
+            && !s.contains('/')
+            && !s.contains(':')
         {
+            // Pure $NAME capture (whole key). Mixed patterns like $ORG/$REPO
+            // go through Glob → SegmentCapture instead.
             KeyMatcher::Capture(s[1..].to_string())
-        } else if s.contains('*') || s.contains('?') || s.contains('[') {
+        } else if s.contains('*') || s.contains('?') || s.contains('[') || s.contains('$') {
+            // Glob or segment-capture pattern. compile_pattern detects $
+            // and routes to SegmentCapture automatically.
             KeyMatcher::Glob(s.to_string())
         } else {
             KeyMatcher::Exact(s.to_string())
@@ -81,127 +87,12 @@ pub struct ObjectEntry {
     pub value: Vec<SelectStep>,
 }
 
-/// A compiled query rule: Datalog-style horn clause over match_links.
-///
-/// Parsed from `.sprf` syntax:
-/// ```sprf
-/// query all_deps($A, $C) > dep_to_package($A, $B) all_deps($B, $C);
-/// ```
-///
-/// Compiled to SQL CTEs by `query::compile_query()`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct QueryDef {
-    /// Name of this derived relation.
-    pub name: String,
-    /// Number of columns (arity of the head atom).
-    pub arity: usize,
-    /// Head argument names (variable names or "_" for wild).
-    pub head_args: Vec<String>,
-    /// Body atoms: each is (relation_name, args).
-    /// Args are either variable names, literal strings prefixed with `=`,
-    /// or `_` for wildcard.
-    pub body: Vec<QueryAtom>,
-    /// Whether head relation appears in body (requires WITH RECURSIVE).
-    pub is_recursive: bool,
-    /// Check queries assert zero results. They are not materialized as
-    /// relations -- they exist to flag constraint violations.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub is_check: bool,
-}
-
-/// One atom in a query body, as lowered from the parse tree.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct QueryAtom {
-    pub relation: String,
-    /// Each arg is: variable name (e.g. "A"), literal prefixed with `=` (e.g. "=lodash"),
-    /// or "_" for wildcard.
-    pub args: Vec<String>,
-    /// When true, this atom is negated: compiles to NOT EXISTS.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub negated: bool,
-}
-
 /// Top-level rules file: an array of rules plus optional metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RuleSet {
     #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub rules: Vec<Rule>,
-}
-
-/// Derived rules: link + query definitions that operate on extraction output.
-///
-/// These never write to refs/matches/strings. They consume ground truth
-/// to produce edges (match_links) and views (SQL CTEs).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DerivedRules {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub link_rules: Vec<LinkRule>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub query_rules: Vec<QueryDef>,
-}
-
-/// A link rule creates edges in `match_links` between matches.
-///
-/// Exactly one of `sql` or `predicate` must be set. The predicate DSL
-/// covers common patterns (kind checks, norm equality, file scoping).
-/// The raw `sql` escape hatch remains for anything the DSL can't express.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct LinkRule {
-    /// Identifier for this link rule. Written to match_links.link_kind
-    /// and used in log messages.
-    pub kind: String,
-    /// Raw SQL WHERE clause. Plugged into the skeleton as `AND (<sql>)`.
-    /// Available aliases: src_m, src_r, src_s, src_f, src_rp, tgt_m, tgt_r, tgt_s, tgt_f.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sql: Option<String>,
-    /// Structured predicate compiled to SQL at runtime.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub predicate: Option<LinkPredicate>,
-    /// Restrict target matches to these repo names. When set, only matches
-    /// in the listed repos can be link targets. When absent, targets are
-    /// unconstrained (cross-repo by default).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_repos: Option<Vec<String>>,
-}
-
-/// Which side of a link (source or target) a predicate applies to.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Side {
-    Src,
-    Tgt,
-}
-
-/// Structured predicate for link rules, compiled to SQL WHERE fragments.
-///
-/// Each variant maps to a specific SQL condition against the link skeleton's
-/// aliases (src_m, src_r, src_s, src_f, tgt_m, tgt_r, tgt_s, tgt_f).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "op", rename_all = "snake_case")]
-pub enum LinkPredicate {
-    /// Match kind on one side: `{side}_m.kind = '{value}'`
-    KindEq { side: Side, value: String },
-    /// Normalized strings equal: `src_s.norm = tgt_s.norm`
-    NormEq,
-    /// Secondary normalization equal: `src_s.norm2 = tgt_s.norm2`
-    Norm2Eq,
-    /// Source's resolved target file matches target's file: `src_r.target_file_id = tgt_r.file_id`
-    TargetFileEq,
-    /// Same string_id on both sides: `tgt_r.string_id = src_r.string_id`
-    StringEq,
-    /// Both matches in the same repo: `src_f.repo_id = COALESCE(tgt_f.repo_id, tgt_rr.repo_id)`
-    SameRepo,
-    /// Both matches in the same file: `src_r.file_id = tgt_r.file_id`
-    SameFile,
-    /// File stem on {side} matches string norm on other side.
-    StemEq { side: Side },
-    /// File extension on {side} matches string norm on other side.
-    ExtEq { side: Side },
-    /// File dir on {side} matches string norm on other side.
-    DirEq { side: Side },
-    /// All sub-predicates must hold.
-    And { all: Vec<LinkPredicate> },
 }
 
 /// A single extraction rule.
@@ -226,10 +117,10 @@ pub struct Rule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select_ast: Option<AstSelector>,
 
-    /// Regex applied to a named capture to split/filter it.
-    /// Named groups from the regex merge back into the capture map.
+    /// Line matcher: segment capture (default) or regex (re: prefix).
+    /// Runs against a named capture, merges extracted groups back into the capture map.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<ValuePattern>,
+    pub value: Option<LineMatcher>,
 
     /// Each entry turns a named capture into a match row.
     #[serde(alias = "emit")]
@@ -251,7 +142,6 @@ pub struct Rule {
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum SelectStep {
     // ── Context steps ──────────────────────────────
-
     /// Filter by repository name (pipe-delimited glob).
     Repo {
         pattern: String,
@@ -281,7 +171,6 @@ pub enum SelectStep {
     },
 
     // ── Structural steps ───────────────────────────
-
     /// Enter the child with this exact key name.
     Key {
         name: String,
@@ -327,17 +216,19 @@ pub enum SelectStep {
     /// applies its `value` sub-chain to the matched child. All entries
     /// are conjunctive (all must match). Results are cross-producted
     /// across entries for ancestor carry-forward.
-    Object {
-        entries: Vec<ObjectEntry>,
-    },
+    Object { entries: Vec<ObjectEntry> },
 
     /// Iterate array elements, applying the sub-chain to each.
     ///
     /// Captures from the surrounding context carry forward into each
     /// element's sub-chain (ancestor carry-forward).
-    Array {
-        item: Vec<SelectStep>,
-    },
+    Array { item: Vec<SelectStep> },
+
+    /// Match a leaf value against a segment-capture pattern.
+    ///
+    /// Pattern string contains `$VAR` holes compiled to segment captures.
+    /// Example: `"$REPO:$TAG"` matches `"nginx:latest"` → {REPO: "nginx", TAG: "latest"}.
+    LeafPattern { pattern: String },
 }
 
 impl SelectStep {
@@ -416,23 +307,40 @@ pub struct AstSelector {
     /// When set, each listed metavar is extracted as a separate capture.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub captures: Option<std::collections::BTreeMap<String, String>>,
+
+    /// Segment-capture post-processing for synthetic metavars.
+    /// Maps metavar name (without `$`) to a segment pattern string.
+    /// e.g. `"_SPREFA_0" -> "use${ENTITY}Query"`.
+    /// After ast-grep matches, the metavar's text is matched against the segment
+    /// pattern to extract named sub-captures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segment_captures: Option<std::collections::BTreeMap<String, String>>,
 }
 
 fn default_ast_capture() -> String {
     "$NAME".to_string()
 }
 
-/// Regex applied to a named capture. Named groups from the regex
-/// merge into the capture map, enabling split/transform of captured values.
+/// Matcher applied to a named capture's text. Extracts sub-captures
+/// and merges them back into the capture map.
+///
+/// Default mode: segment capture (`$NAME:$TAG` style).
+/// Prefix the pattern with `re:` for raw regex with `(?P<name>...)` groups.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ValuePattern {
-    /// Which capture to run the regex against.
-    pub source: String,
-    /// Regex pattern with named groups via `(?P<name>...)`.
-    pub pattern: String,
-    /// Anchor the regex to the full string. Default: true.
-    #[serde(default = "default_true")]
-    pub full_match: bool,
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum LineMatcher {
+    /// Segment capture: `$ORG/$REPO`, `$NAME:$TAG`, etc.
+    Segments {
+        source: String,
+        pattern: String,
+    },
+    /// Raw regex with named groups via `(?P<name>...)`.
+    Regex {
+        source: String,
+        pattern: String,
+        #[serde(default = "default_true")]
+        full_match: bool,
+    },
 }
 
 fn default_true() -> bool {

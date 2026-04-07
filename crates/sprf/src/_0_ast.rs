@@ -88,7 +88,7 @@ pub enum Slot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tag {
     Json,
-    Re,
+    Line,
     Ast,
     Repo,
     Rev,
@@ -104,7 +104,7 @@ impl Tag {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "json" => Some(Tag::Json),
-            "re" => Some(Tag::Re),
+            "line" => Some(Tag::Line),
             "ast" => Some(Tag::Ast),
             "repo" => Some(Tag::Repo),
             "rev" | "branch" | "tag" => Some(Tag::Rev),

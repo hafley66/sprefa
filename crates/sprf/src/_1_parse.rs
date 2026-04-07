@@ -107,7 +107,7 @@ fn parse_rule_decl(input: &str) -> anyhow::Result<(RuleDecl, &str)> {
 ///
 /// Example flat chain:
 /// ```sprf
-/// fs(**/Cargo.toml) > json({ ... }) > re(...);
+/// fs(**/Cargo.toml) > json({ ... }) > line($REPO:$TAG);
 /// ```
 ///
 /// Example scoped block:

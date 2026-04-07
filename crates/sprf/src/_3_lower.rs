@@ -20,8 +20,9 @@
 /// Becomes steps: [repo@depth0, rev@depth1, fs@depth2, json@depth2]
 /// Execution order respects scope: repo runs first, then rev, then fs/json
 use anyhow::{bail, Result};
-use sprefa_rules::types::{AstSelector, MatchDef, Rule, RuleSet, SelectStep, ValuePattern};
-use std::collections::{HashMap, HashSet};
+use sprefa_rules::pattern::{parse_segment_pattern, Segment};
+use sprefa_rules::types::{AstSelector, LineMatcher, MatchDef, Rule, RuleSet, SelectStep};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::_0_ast::{Program, RuleBody, RuleDecl, Slot, Statement, Tag};
 use crate::_2_pattern::parse_json_body;
@@ -52,7 +53,7 @@ struct ScopedStep {
     scope_vars: HashSet<String>, // Variables captured at this scope level
     select_steps: Vec<SelectStep>,
     ast_selector: Option<AstSelector>,
-    value_pattern: Option<ValuePattern>,
+    line_matcher: Option<LineMatcher>,
 }
 
 fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
@@ -70,15 +71,15 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
     // Collect all select steps in order
     let mut select: Vec<SelectStep> = vec![];
     let mut select_ast: Option<AstSelector> = None;
-    let mut value_pattern: Option<ValuePattern> = None;
+    let mut line_matcher: Option<LineMatcher> = None;
 
     for scoped in &scoped_steps {
         select.extend(scoped.select_steps.clone());
         if let Some(ast) = scoped.ast_selector.clone() {
             select_ast = Some(ast);
         }
-        if let Some(val) = scoped.value_pattern.clone() {
-            value_pattern = Some(val);
+        if let Some(lm) = scoped.line_matcher.clone() {
+            line_matcher = Some(lm);
         }
     }
 
@@ -111,7 +112,7 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
         description: None,
         select,
         select_ast,
-        value: value_pattern,
+        value: line_matcher,
         create_matches,
         confidence: None,
     })
@@ -260,24 +261,24 @@ fn slot_to_scoped_step(
     // Validate that all referenced variables are available
     // (This would be where we'd check for forward references)
 
-    let (select_steps, ast_selector, value_pattern) = convert_slot(slot)?;
+    let (select_steps, ast_selector, line_matcher) = convert_slot(slot)?;
 
     Ok(ScopedStep {
         depth,
         scope_vars,
         select_steps,
         ast_selector,
-        value_pattern,
+        line_matcher,
     })
 }
 
 /// Convert a slot to SelectSteps.
 fn convert_slot(
     slot: &Slot,
-) -> Result<(Vec<SelectStep>, Option<AstSelector>, Option<ValuePattern>)> {
+) -> Result<(Vec<SelectStep>, Option<AstSelector>, Option<LineMatcher>)> {
     let mut select = vec![];
     let mut ast_selector: Option<AstSelector> = None;
-    let mut value_pattern: Option<ValuePattern> = None;
+    let mut line_matcher: Option<LineMatcher> = None;
 
     match slot {
         Slot::Bare(pattern) => {
@@ -327,25 +328,35 @@ fn convert_slot(
                 if ast_selector.is_some() {
                     bail!("multiple ast() slots not supported");
                 }
+                let (pattern, constraints, segment_captures) =
+                    rewrite_ast_braced_captures(body);
                 ast_selector = Some(AstSelector {
-                    pattern: Some(body.clone()),
+                    pattern: Some(pattern),
                     rule: None,
-                    constraints: None,
+                    constraints,
                     rule_file: None,
                     language: arg.clone(),
                     capture: "$NAME".to_string(),
                     captures: None,
+                    segment_captures,
                 });
             }
-            Tag::Re => {
-                if value_pattern.is_some() {
-                    bail!("multiple re() slots not supported");
+            Tag::Line => {
+                if line_matcher.is_some() {
+                    bail!("multiple line() slots not supported");
                 }
-                value_pattern = Some(ValuePattern {
-                    source: String::new(),
-                    pattern: body.clone(),
-                    full_match: true,
-                });
+                line_matcher = if let Some(re_pat) = body.strip_prefix("re:") {
+                    Some(LineMatcher::Regex {
+                        source: String::new(),
+                        pattern: re_pat.to_string(),
+                        full_match: true,
+                    })
+                } else {
+                    Some(LineMatcher::Segments {
+                        source: String::new(),
+                        pattern: body.clone(),
+                    })
+                };
             }
             Tag::Scan => {
                 // Annotation-only, no select step emitted.
@@ -354,7 +365,116 @@ fn convert_slot(
         },
     }
 
-    Ok((select, ast_selector, value_pattern))
+    Ok((select, ast_selector, line_matcher))
+}
+
+/// Rewrite an ast pattern body that contains `${VAR}` braced captures.
+///
+/// Scans for identifier-like tokens containing `${...}`. Each such token
+/// is replaced with a synthetic metavar `$SPREFAN`, a regex constraint
+/// is generated for ast-grep filtering, and the original token is stored
+/// as a segment pattern for post-match extraction.
+///
+/// Returns `(rewritten_pattern, constraints, segment_captures)`.
+/// If no `${` is found, returns the original pattern with None for both maps.
+fn rewrite_ast_braced_captures(
+    body: &str,
+) -> (
+    String,
+    Option<serde_json::Value>,
+    Option<BTreeMap<String, String>>,
+) {
+    if !body.contains("${") {
+        return (body.to_string(), None, None);
+    }
+
+    let mut constraints = serde_json::Map::new();
+    let mut seg_caps = BTreeMap::new();
+    let mut result = String::new();
+    let mut cap_idx = 0u32;
+
+    let bytes = body.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        // Check if we're at the start of a token that might contain ${
+        if is_ast_ident_char(bytes[i]) || (bytes[i] == b'$' && peek_brace(bytes, i)) {
+            // Scan the full token: identifier chars + ${...} sequences
+            let token_start = i;
+            let mut has_brace_cap = false;
+
+            while i < bytes.len() {
+                if bytes[i] == b'$' && peek_brace(bytes, i) {
+                    has_brace_cap = true;
+                    i += 2; // skip ${
+                    while i < bytes.len() && bytes[i] != b'}' {
+                        i += 1;
+                    }
+                    if i < bytes.len() {
+                        i += 1; // skip }
+                    }
+                } else if is_ast_ident_char(bytes[i]) || bytes[i] == b'$' {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+
+            let token = &body[token_start..i];
+
+            if has_brace_cap {
+                let metavar_name = format!("SPREFA{cap_idx}");
+                cap_idx += 1;
+
+                let segments = parse_segment_pattern(token);
+                let regex_str = segments_to_constraint_regex(&segments);
+
+                constraints.insert(
+                    metavar_name.clone(),
+                    serde_json::json!({ "regex": regex_str }),
+                );
+                seg_caps.insert(metavar_name.clone(), token.to_string());
+
+                result.push('$');
+                result.push_str(&metavar_name);
+            } else {
+                result.push_str(token);
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    (
+        result,
+        Some(serde_json::Value::Object(constraints)),
+        Some(seg_caps),
+    )
+}
+
+fn is_ast_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Check if position `i` is `$` followed by `{`.
+fn peek_brace(bytes: &[u8], i: usize) -> bool {
+    bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{'
+}
+
+/// Convert parsed segments into a regex string for ast-grep constraint filtering.
+/// Wraps in `^...$` anchors.
+fn segments_to_constraint_regex(segments: &[Segment]) -> String {
+    let mut regex = String::from("^");
+    for seg in segments {
+        match seg {
+            Segment::Literal(s) => regex.push_str(&regex::escape(s)),
+            Segment::Capture(_) | Segment::Wild => regex.push_str(".+"),
+            Segment::MultiCapture(_) | Segment::MultiWild => regex.push_str(".*"),
+        }
+    }
+    regex.push('$');
+    regex
 }
 
 #[cfg(test)]
@@ -473,15 +593,76 @@ mod tests {
     }
 
     #[test]
-    fn lower_re() {
+    fn lower_line_segments() {
+        let rules = lower(r"rule(img) { fs(deploy/**/*.yaml) > line($REPO:$TAG) };");
+        let r = &rules[0];
+        assert!(matches!(
+            r.value.as_ref().unwrap(),
+            LineMatcher::Segments { pattern, .. } if pattern == "$REPO:$TAG"
+        ));
+    }
+
+    #[test]
+    fn lower_line_regex() {
         let rules = lower(
-            r"rule(img) { fs(deploy/**/*.yaml) > re(image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)) };",
+            r"rule(img) { fs(deploy/**/*.yaml) > line(re:image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)) };",
         );
         let r = &rules[0];
-        assert!(r.value.is_some());
+        assert!(matches!(
+            r.value.as_ref().unwrap(),
+            LineMatcher::Regex { pattern, .. } if pattern == r"image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)"
+        ));
+    }
+
+    // ── ${VAR} braced capture lowering ──────────────
+
+    #[test]
+    fn rewrite_braced_no_captures() {
+        let (pat, constraints, seg) = rewrite_ast_braced_captures("import $NAME from $PATH");
+        assert_eq!(pat, "import $NAME from $PATH");
+        assert!(constraints.is_none());
+        assert!(seg.is_none());
+    }
+
+    #[test]
+    fn rewrite_braced_single_capture() {
+        let (pat, constraints, seg) = rewrite_ast_braced_captures("use${ENTITY}Query($$$ARGS)");
+        assert_eq!(pat, "$SPREFA0($$$ARGS)");
+        let c = constraints.unwrap();
         assert_eq!(
-            r.value.as_ref().unwrap().pattern,
-            r"image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)"
+            c["SPREFA0"]["regex"].as_str().unwrap(),
+            "^use.+Query$"
         );
+        let s = seg.unwrap();
+        assert_eq!(s["SPREFA0"], "use${ENTITY}Query");
+    }
+
+    #[test]
+    fn rewrite_braced_multiple_captures() {
+        let (pat, constraints, seg) =
+            rewrite_ast_braced_captures("${PREFIX}Service.${METHOD}($$$ARGS)");
+        // Two tokens with braces: ${PREFIX}Service and ${METHOD}
+        // ${PREFIX}Service -> $SPREFA0, ${METHOD} -> $SPREFA1
+        assert_eq!(pat, "$SPREFA0.$SPREFA1($$$ARGS)");
+        let c = constraints.unwrap();
+        assert!(c["SPREFA0"]["regex"].as_str().is_some());
+        assert!(c["SPREFA1"]["regex"].as_str().is_some());
+        let s = seg.unwrap();
+        assert_eq!(s["SPREFA0"], "${PREFIX}Service");
+        assert_eq!(s["SPREFA1"], "${METHOD}");
+    }
+
+    #[test]
+    fn lower_ast_braced_capture() {
+        let rules = lower(
+            r"rule(hooks) { fs(**/*.ts) > ast[typescript](use${ENTITY}Query($$$ARGS)) };",
+        );
+        let r = &rules[0];
+        let ast = r.select_ast.as_ref().unwrap();
+        assert_eq!(ast.pattern.as_deref(), Some("$SPREFA0($$$ARGS)"));
+        assert!(ast.constraints.is_some());
+        assert!(ast.segment_captures.is_some());
+        let seg = ast.segment_captures.as_ref().unwrap();
+        assert_eq!(seg["SPREFA0"], "use${ENTITY}Query");
     }
 }

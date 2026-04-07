@@ -168,7 +168,7 @@
       "patterns": [
         { "include": "#json-slot" },
         { "include": "#ast-slot" },
-        { "include": "#re-slot" },
+        { "include": "#line-slot" },
         { "include": "#fs-slot" },
         { "include": "#repo-slot" }
       ]
@@ -331,11 +331,11 @@
       ]
     },
 
-    "re-slot": {
-      "match": "\\b(re)\\s*\\((.+)\\)(?=\\s*[>;#]|\\s*$)",
+    "line-slot": {
+      "match": "\\b(line)\\s*\\((.+)\\)(?=\\s*[>;#]|\\s*$)",
       "captures": {
         "1": { "name": "keyword.control.tag.sprf" },
-        "2": { "name": "string.regexp.sprf" }
+        "2": { "name": "string.unquoted.pattern.sprf" }
       }
     },
 

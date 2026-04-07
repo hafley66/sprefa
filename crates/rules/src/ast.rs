@@ -114,10 +114,7 @@ fn resolve_language(override_lang: Option<&str>, path: Option<&str>) -> Option<S
         .or_else(|| path.and_then(|p| SupportLang::from_path(Path::new(p))))
 }
 
-fn collect_matches<'a, I, D>(
-    iter: I,
-    selector: &AstSelector,
-) -> Vec<MatchResult>
+fn collect_matches<'a, I, D>(iter: I, selector: &AstSelector) -> Vec<MatchResult>
 where
     I: Iterator<Item = ast_grep_core::NodeMatch<'a, D>>,
     D: ast_grep_core::Doc,
@@ -131,11 +128,14 @@ where
                 let var_name = metavar.trim_start_matches('$');
                 if let Some(n) = env.get_match(var_name) {
                     let range = n.range();
-                    captures.insert(capture_name.clone(), CapturedValue {
-                        text: n.text().into_owned(),
-                        span_start: range.start as u32,
-                        span_end: range.end as u32,
-                    });
+                    captures.insert(
+                        capture_name.clone(),
+                        CapturedValue {
+                            text: n.text().into_owned(),
+                            span_start: range.start as u32,
+                            span_end: range.end as u32,
+                        },
+                    );
                 }
             }
             if captures.is_empty() {
@@ -143,14 +143,52 @@ where
             }
         } else {
             let range = m.range();
-            captures.insert(selector.capture.clone(), CapturedValue {
-                text: m.text().into_owned(),
-                span_start: range.start as u32,
-                span_end: range.end as u32,
-            });
+            captures.insert(
+                selector.capture.clone(),
+                CapturedValue {
+                    text: m.text().into_owned(),
+                    span_start: range.start as u32,
+                    span_end: range.end as u32,
+                },
+            );
         }
 
-        Some(MatchResult { captures, path: vec![] })
+        // Post-process segment_captures: extract sub-captures from synthetic metavars.
+        // Computes precise byte spans for each sub-capture within the identifier.
+        if let Some(seg_map) = &selector.segment_captures {
+            for (metavar_name, seg_pattern) in seg_map {
+                if let Some(n) = env.get_match(metavar_name) {
+                    let text = n.text().into_owned();
+                    let metavar_start = n.range().start as u32;
+                    let segments = crate::pattern::parse_segment_pattern(seg_pattern);
+                    if let Some(sub_caps) =
+                        crate::pattern::match_segments_pub(&segments, &text)
+                    {
+                        let offsets =
+                            crate::pattern::capture_offsets_in_value(&segments, &sub_caps);
+                        for (name, value) in sub_caps {
+                            let (local_start, local_end) =
+                                offsets.get(&name).copied().unwrap_or((0, text.len() as u32));
+                            captures.insert(
+                                name,
+                                CapturedValue {
+                                    text: value,
+                                    span_start: metavar_start + local_start,
+                                    span_end: metavar_start + local_end,
+                                },
+                            );
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some(MatchResult {
+            captures,
+            path: vec![],
+        })
     })
     .collect()
 }
@@ -168,6 +206,7 @@ mod tests {
             language: Some(lang.into()),
             capture: "match".into(),
             captures: None,
+            segment_captures: None,
         }
     }
 
@@ -194,6 +233,7 @@ mod tests {
             language: Some("js".into()),
             capture: "unused".into(),
             captures: Some(cap_map),
+            segment_captures: None,
         };
         let results = ast_match(src, "index.js", &sel, None);
         assert_eq!(results.len(), 1);
@@ -217,6 +257,7 @@ mod tests {
             language: Some("py".into()),
             capture: "unused".into(),
             captures: Some(cap_map),
+            segment_captures: None,
         };
         let results = ast_match(src, "script.py", &sel, None);
         assert_eq!(results.len(), 1);
@@ -238,6 +279,7 @@ mod tests {
             language: Some("js".into()),
             capture: "unused".into(),
             captures: Some(cap_map),
+            segment_captures: None,
         };
         let results = ast_match(src, "index.js", &sel, None);
         assert_eq!(results.len(), 1);
@@ -254,8 +296,67 @@ mod tests {
             language: None,
             capture: "name".into(),
             captures: None,
+            segment_captures: None,
         };
         let results = ast_match(b"fn foo() {}", "file.unknown_ext", &sel, None);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn segment_capture_extracts_sub_identifier() {
+        // Simulates lowered output of ast(use${ENTITY}Query($$$ARGS))
+        // Pattern: $SPREFA0($$$ARGS) with constraint + segment_captures
+        let constraints = serde_json::json!({
+            "SPREFA0": { "regex": "^use.+Query$" }
+        });
+        let mut seg_caps = std::collections::BTreeMap::new();
+        seg_caps.insert("SPREFA0".into(), "use${ENTITY}Query".into());
+
+        let sel = AstSelector {
+            pattern: None,
+            rule: Some(serde_json::json!({ "pattern": "$SPREFA0($$$ARGS)" })),
+            constraints: Some(constraints),
+            rule_file: None,
+            language: Some("tsx".into()),
+            capture: "unused".into(),
+            captures: None,
+            segment_captures: Some(seg_caps),
+        };
+
+        //                0         1         2         3
+        //                0123456789012345678901234567890123
+        let src = b"const x = useUserQuery({ id: 1 })";
+        let results = ast_match(src, "App.tsx", &sel, None);
+        assert_eq!(results.len(), 1);
+        let entity = &results[0].captures["ENTITY"];
+        assert_eq!(entity.text, "User");
+        // "useUserQuery" starts at byte 10, "User" starts at 13 (after "use"), ends at 17
+        assert_eq!(entity.span_start, 13);
+        assert_eq!(entity.span_end, 17);
+    }
+
+    #[test]
+    fn segment_capture_filters_non_matching() {
+        let constraints = serde_json::json!({
+            "SPREFA0": { "regex": "^use.+Query$" }
+        });
+        let mut seg_caps = std::collections::BTreeMap::new();
+        seg_caps.insert("SPREFA0".into(), "use${ENTITY}Query".into());
+
+        let sel = AstSelector {
+            pattern: None,
+            rule: Some(serde_json::json!({ "pattern": "$SPREFA0($$$ARGS)" })),
+            constraints: Some(constraints),
+            rule_file: None,
+            language: Some("tsx".into()),
+            capture: "unused".into(),
+            captures: None,
+            segment_captures: Some(seg_caps),
+        };
+
+        // "useState" matches regex ^use.+Query$? No -- it doesn't end with Query
+        let src = b"const [x, setX] = useState(0)";
+        let results = ast_match(src, "App.tsx", &sel, None);
         assert!(results.is_empty());
     }
 }
