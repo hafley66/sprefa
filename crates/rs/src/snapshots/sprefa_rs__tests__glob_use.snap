@@ -6,7 +6,8 @@ expression: refs
   span_start: 4
   span_end: 23
   kind: rs_use
-  rule_name: rs
+  rule_name: rs_use
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 0

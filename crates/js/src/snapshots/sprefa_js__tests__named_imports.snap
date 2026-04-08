@@ -6,39 +6,44 @@ expression: refs
   span_start: 26
   span_end: 33
   kind: import_path
-  rule_name: js
+  rule_name: import_path
   is_path: true
   parent_key: ~
   node_path: ~
+  group: 0
 - value: "../types"
   span_start: 62
   span_end: 70
   kind: import_path
-  rule_name: js
+  rule_name: import_path
   is_path: true
   parent_key: ~
   node_path: ~
+  group: 1
 - value: foo
   span_start: 9
   span_end: 12
   kind: import_name
-  rule_name: js
+  rule_name: import_name
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 2
 - value: bar
   span_start: 14
   span_end: 17
   kind: import_name
-  rule_name: js
+  rule_name: import_name
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 3
 - value: Baz
   span_start: 50
   span_end: 53
   kind: import_name
-  rule_name: js
+  rule_name: import_name
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 4

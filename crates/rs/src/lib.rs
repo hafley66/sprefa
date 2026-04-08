@@ -21,7 +21,8 @@ impl Extractor for RsExtractor {
         };
         let offsets = line_offsets(source_text);
         let mut refs = Vec::new();
-        extract_items(&file.items, &offsets, &mut refs);
+        let mut gc: u32 = 0;
+        extract_items(&file.items, &offsets, &mut refs, &mut gc);
         refs
     }
 }
@@ -49,46 +50,45 @@ fn span_of(offsets: &[usize], span: proc_macro2::Span) -> (u32, u32) {
 
 // ── item extraction ──────────────────────────────────────────────────────────
 
-fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
+fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>, gc: &mut u32) {
     for item in items {
         match item {
             Item::Use(u) => {
-                flatten_use_tree(&u.tree, &String::new(), None, offsets, refs);
+                flatten_use_tree(&u.tree, &String::new(), None, offsets, refs, gc);
             }
             Item::Mod(m) => {
                 let (s, e) = span_of(offsets, m.ident.span());
-                // Extract #[path = "..."] attribute if present.
                 let path_attr = extract_path_attr(&m.attrs);
                 refs.push(RawRef {
                     value: m.ident.to_string(),
                     span_start: s,
                     span_end: e,
                     kind: kind::RS_MOD.into(),
-                    rule_name: "rs".into(),
+                    rule_name: kind::RS_MOD.into(),
                     is_path: false,
                     parent_key: None,
                     node_path: path_attr,
                     scan: None,
-                    group: None,
+                    group: { *gc += 1; Some(*gc - 1) },
                 });
                 if let Some((_, inner)) = &m.content {
-                    extract_items(inner, offsets, refs);
+                    extract_items(inner, offsets, refs, gc);
                 }
             }
-            Item::Fn(f) => push_declare(refs, &f.sig.ident, offsets),
-            Item::Struct(s) => push_declare(refs, &s.ident, offsets),
-            Item::Enum(e) => push_declare(refs, &e.ident, offsets),
-            Item::Union(u) => push_declare(refs, &u.ident, offsets),
-            Item::Type(t) => push_declare(refs, &t.ident, offsets),
-            Item::Const(c) => push_declare(refs, &c.ident, offsets),
-            Item::Static(s) => push_declare(refs, &s.ident, offsets),
+            Item::Fn(f) => push_declare(refs, &f.sig.ident, offsets, gc),
+            Item::Struct(s) => push_declare(refs, &s.ident, offsets, gc),
+            Item::Enum(e) => push_declare(refs, &e.ident, offsets, gc),
+            Item::Union(u) => push_declare(refs, &u.ident, offsets, gc),
+            Item::Type(t) => push_declare(refs, &t.ident, offsets, gc),
+            Item::Const(c) => push_declare(refs, &c.ident, offsets, gc),
+            Item::Static(s) => push_declare(refs, &s.ident, offsets, gc),
             Item::Trait(t) => {
-                push_declare(refs, &t.ident, offsets);
+                push_declare(refs, &t.ident, offsets, gc);
                 for item in &t.items {
                     match item {
-                        syn::TraitItem::Fn(f) => push_declare(refs, &f.sig.ident, offsets),
-                        syn::TraitItem::Type(t) => push_declare(refs, &t.ident, offsets),
-                        syn::TraitItem::Const(c) => push_declare(refs, &c.ident, offsets),
+                        syn::TraitItem::Fn(f) => push_declare(refs, &f.sig.ident, offsets, gc),
+                        syn::TraitItem::Type(t) => push_declare(refs, &t.ident, offsets, gc),
+                        syn::TraitItem::Const(c) => push_declare(refs, &c.ident, offsets, gc),
                         _ => {}
                     }
                 }
@@ -96,9 +96,9 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
             Item::Impl(i) => {
                 for item in &i.items {
                     match item {
-                        syn::ImplItem::Fn(f) => push_declare(refs, &f.sig.ident, offsets),
-                        syn::ImplItem::Type(t) => push_declare(refs, &t.ident, offsets),
-                        syn::ImplItem::Const(c) => push_declare(refs, &c.ident, offsets),
+                        syn::ImplItem::Fn(f) => push_declare(refs, &f.sig.ident, offsets, gc),
+                        syn::ImplItem::Type(t) => push_declare(refs, &t.ident, offsets, gc),
+                        syn::ImplItem::Const(c) => push_declare(refs, &c.ident, offsets, gc),
                         _ => {}
                     }
                 }
@@ -110,12 +110,12 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
                     span_start: s,
                     span_end: end,
                     kind: kind::DEP_NAME.into(),
-                    rule_name: "rs".into(),
+                    rule_name: kind::DEP_NAME.into(),
                     is_path: false,
                     parent_key: None,
                     node_path: None,
                     scan: None,
-                    group: None,
+                    group: { *gc += 1; Some(*gc - 1) },
                 });
             }
             _ => {}
@@ -123,19 +123,19 @@ fn extract_items(items: &[Item], offsets: &[usize], refs: &mut Vec<RawRef>) {
     }
 }
 
-fn push_declare(refs: &mut Vec<RawRef>, ident: &syn::Ident, offsets: &[usize]) {
+fn push_declare(refs: &mut Vec<RawRef>, ident: &syn::Ident, offsets: &[usize], gc: &mut u32) {
     let (s, e) = span_of(offsets, ident.span());
     refs.push(RawRef {
         value: ident.to_string(),
         span_start: s,
         span_end: e,
         kind: kind::RS_DECLARE.into(),
-        rule_name: "rs".into(),
+        rule_name: kind::RS_DECLARE.into(),
         is_path: false,
         parent_key: None,
         node_path: None,
         scan: None,
-                    group: None,
+        group: { *gc += 1; Some(*gc - 1) },
     });
 }
 
@@ -161,6 +161,7 @@ fn flatten_use_tree(
     prefix_start: Option<proc_macro2::Span>,
     offsets: &[usize],
     refs: &mut Vec<RawRef>,
+    gc: &mut u32,
 ) {
     match tree {
         UseTree::Path(p) => {
@@ -170,13 +171,12 @@ fn flatten_use_tree(
                 format!("{}::{}", prefix, p.ident)
             };
             let start = prefix_start.unwrap_or_else(|| p.ident.span());
-            flatten_use_tree(&p.tree, &new_prefix, Some(start), offsets, refs);
+            flatten_use_tree(&p.tree, &new_prefix, Some(start), offsets, refs, gc);
         }
         UseTree::Name(n) => {
             let ident_str = n.ident.to_string();
-            // `use std::io::{self}` -- `self` means import the parent path directly
             let value = if ident_str == "self" {
-                if prefix.is_empty() { return; } // `use self;` alone is meaningless
+                if prefix.is_empty() { return; }
                 prefix.to_string()
             } else if prefix.is_empty() {
                 ident_str
@@ -189,16 +189,15 @@ fn flatten_use_tree(
                 span_start: to_byte(offsets, start.start()),
                 span_end: to_byte(offsets, n.ident.span().end()),
                 kind: kind::RS_USE.into(),
-                rule_name: "rs".into(),
+                rule_name: kind::RS_USE.into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
                 scan: None,
-                    group: None,
+                group: { *gc += 1; Some(*gc - 1) },
             });
         }
         UseTree::Rename(r) => {
-            // use foo::Bar as Baz -- emit the original path, span covers original name
             let value = if prefix.is_empty() {
                 r.ident.to_string()
             } else {
@@ -210,12 +209,12 @@ fn flatten_use_tree(
                 span_start: to_byte(offsets, start.start()),
                 span_end: to_byte(offsets, r.ident.span().end()),
                 kind: kind::RS_USE.into(),
-                rule_name: "rs".into(),
+                rule_name: kind::RS_USE.into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
                 scan: None,
-                    group: None,
+                group: { *gc += 1; Some(*gc - 1) },
             });
         }
         UseTree::Glob(g) => {
@@ -230,17 +229,17 @@ fn flatten_use_tree(
                 span_start: to_byte(offsets, start.start()),
                 span_end: to_byte(offsets, g.star_token.span().end()),
                 kind: kind::RS_USE.into(),
-                rule_name: "rs".into(),
+                rule_name: kind::RS_USE.into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
                 scan: None,
-                    group: None,
+                group: { *gc += 1; Some(*gc - 1) },
             });
         }
         UseTree::Group(g) => {
             for item in &g.items {
-                flatten_use_tree(item, prefix, prefix_start, offsets, refs);
+                flatten_use_tree(item, prefix, prefix_start, offsets, refs, gc);
             }
         }
     }

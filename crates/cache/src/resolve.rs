@@ -70,8 +70,8 @@ pub async fn resolve_import_targets(db: &SqlitePool, repo_name: &str) -> Result<
          FROM refs r
          JOIN files f ON r.file_id = f.id
          JOIN strings s ON r.string_id = s.id
-         JOIN matches m ON m.ref_id = r.id
-         WHERE f.repo_id = ? AND m.kind = 'import_path' AND r.target_file_id IS NULL",
+         JOIN import_path_data d ON d.value_ref = r.id
+         WHERE f.repo_id = ? AND r.target_file_id IS NULL",
     )
     .bind(repo_id)
     .fetch_all(db)
@@ -208,7 +208,13 @@ mod tests {
     use sprefa_schema::init_db;
 
     async fn make_db() -> SqlitePool {
-        init_db(":memory:").await.unwrap()
+        let pool = init_db(":memory:").await.unwrap();
+        for def in sprefa_schema::rule_tables::builtin_rule_table_defs() {
+            sqlx::query(&def.create_table_sql()).execute(&pool).await.unwrap();
+            sqlx::query(&def.create_view_sql()).execute(&pool).await.unwrap();
+            sqlx::query(&def.create_refs_view_sql()).execute(&pool).await.unwrap();
+        }
+        pool
     }
 
     async fn seed_repo(db: &SqlitePool, name: &str, path: &str) -> i64 {
@@ -259,9 +265,13 @@ mod tests {
         .await
         .unwrap();
         sqlx::query(
-            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES (?, 'test', 'import_path')",
+            "INSERT OR IGNORE INTO import_path_data (value_ref, value_str, repo_id, file_id, rev) \
+             VALUES (?, ?, (SELECT repo_id FROM files WHERE id = ?), ?, '')",
         )
         .bind(ref_id)
+        .bind(string_id)
+        .bind(file_id)
+        .bind(file_id)
         .execute(db)
         .await
         .unwrap();

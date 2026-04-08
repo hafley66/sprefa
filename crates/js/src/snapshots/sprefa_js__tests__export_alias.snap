@@ -6,15 +6,17 @@ expression: refs
   span_start: 49
   span_end: 59
   kind: export_name
-  rule_name: js
+  rule_name: export_name
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 0
 - value: internalName
   span_start: 33
   span_end: 45
   kind: export_local_binding
-  rule_name: js
+  rule_name: export_local_binding
   is_path: false
   parent_key: PublicName
   node_path: ~
+  group: 1

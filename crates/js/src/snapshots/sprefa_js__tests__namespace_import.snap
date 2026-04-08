@@ -6,15 +6,17 @@ expression: refs
   span_start: 24
   span_end: 31
   kind: import_path
-  rule_name: js
+  rule_name: import_path
   is_path: true
   parent_key: ~
   node_path: ~
+  group: 0
 - value: utils
   span_start: 12
   span_end: 17
   kind: import_name
-  rule_name: js
+  rule_name: import_name
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 1

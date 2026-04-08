@@ -131,19 +131,8 @@ const MIGRATIONS: &[&str] = &[
         last_scanned_at TEXT
     )
     "#,
-    // matches: semantic interpretation of refs (kind identifies the match type).
-    r#"
-    CREATE TABLE IF NOT EXISTS matches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ref_id INTEGER REFERENCES refs(id),
-        rule_name TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        group_id INTEGER
-    )
-    "#,
-    "CREATE INDEX IF NOT EXISTS idx_matches_ref_id ON matches(ref_id)",
-    "CREATE INDEX IF NOT EXISTS idx_matches_kind ON matches(kind)",
-    "CREATE INDEX IF NOT EXISTS idx_matches_group_id ON matches(group_id)",
+    // Drop legacy matches table (replaced by per-rule _data tables).
+    "DROP TABLE IF EXISTS matches",
     // discovery_log: records each (repo, rev) target found by tier 2 discovery.
     r#"
     CREATE TABLE IF NOT EXISTS discovery_log (

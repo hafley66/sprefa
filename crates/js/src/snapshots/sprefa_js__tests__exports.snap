@@ -6,31 +6,35 @@ expression: refs
   span_start: 13
   span_end: 16
   kind: export_name
-  rule_name: js
+  rule_name: export_name
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 0
 - value: bar
   span_start: 38
   span_end: 41
   kind: export_name
-  rule_name: js
+  rule_name: export_name
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 1
 - value: default
   span_start: 54
   span_end: 61
   kind: export_name
-  rule_name: js
+  rule_name: export_name
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 2
 - value: Baz
   span_start: 68
   span_end: 71
   kind: export_local_binding
-  rule_name: js
+  rule_name: export_local_binding
   is_path: false
   parent_key: default
   node_path: ~
+  group: 3

@@ -565,23 +565,28 @@ async fn extract_and_diff(
 }
 
 /// Load existing refs for a file from the DB, filtered to declaration kinds.
+/// Queries per-rule tables directly via UNION ALL.
 async fn load_decl_refs(
     pool: &SqlitePool,
     file_id: i64,
 ) -> Result<Vec<RawRef>> {
-    let placeholders = DECL_KINDS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-    let sql = format!(
-        "SELECT m.kind, s.value, r.span_start, r.span_end, m.rule_name
-         FROM refs r
-         JOIN strings s ON r.string_id = s.id
-         JOIN matches m ON m.ref_id = r.id
-         WHERE r.file_id = ? AND m.kind IN ({})
-         ORDER BY r.span_start",
-        placeholders
-    );
-    let mut query = sqlx::query_as::<_, (String, String, i64, i64, String)>(&sql).bind(file_id);
-    for kind in DECL_KINDS {
-        query = query.bind(*kind);
+    // UNION ALL across each decl-kind per-rule table.
+    let arms: Vec<String> = DECL_KINDS
+        .iter()
+        .map(|k| {
+            format!(
+                "SELECT '{k}' AS kind, s.value, r.span_start, r.span_end, '{k}' AS rule_name \
+                 FROM refs r \
+                 JOIN strings s ON r.string_id = s.id \
+                 JOIN \"{k}_data\" d ON d.value_ref = r.id \
+                 WHERE r.file_id = ?",
+            )
+        })
+        .collect();
+    let sql = format!("{} ORDER BY span_start", arms.join(" UNION ALL "));
+    let mut query = sqlx::query_as::<_, (String, String, i64, i64, String)>(&sql);
+    for _ in DECL_KINDS {
+        query = query.bind(file_id);
     }
     let rows = query.fetch_all(pool).await?;
 
@@ -617,11 +622,11 @@ async fn replace_file_refs(
     let mut tx = pool.begin().await?;
 
     if new_refs.is_empty() {
-        // No new refs -- prune all existing refs + matches for this file.
-        sqlx::query("DELETE FROM matches WHERE ref_id IN (SELECT id FROM refs WHERE file_id = ?)")
-            .bind(file_id)
-            .execute(&mut *tx)
-            .await?;
+        // No new refs -- prune all existing per-rule rows + refs for this file.
+        for k in sprefa_schema::rule_tables::BUILTIN_KINDS {
+            let sql = format!("DELETE FROM \"{k}_data\" WHERE file_id = ?");
+            let _ = sqlx::query(&sql).bind(file_id).execute(&mut *tx).await;
+        }
         sqlx::query("DELETE FROM refs WHERE file_id = ?")
             .bind(file_id)
             .execute(&mut *tx)
@@ -678,7 +683,6 @@ async fn replace_file_refs(
         parent_key_string_id: Option<i64>,
         node_path: Option<String>,
         kind: &'a str,
-        rule_name: &'a str,
     }
     let resolved: Vec<ResolvedRef<'_>> = new_refs
         .iter()
@@ -692,7 +696,6 @@ async fn replace_file_refs(
                 parent_key_string_id: r.parent_key.as_ref().and_then(|pk| string_ids.get(pk).copied()),
                 node_path: r.node_path.clone(),
                 kind: &r.kind,
-                rule_name: &r.rule_name,
             })
         })
         .collect();
@@ -740,15 +743,10 @@ async fn replace_file_refs(
         .filter(|(_, sid, ss)| !new_keys.contains(&(*sid, *ss)))
         .map(|(id, _, _)| *id)
         .collect();
-    // Delete matches + refs for stale refs (cascading: matches first).
+    // Delete stale refs.
     if !stale_ids.is_empty() {
         for chunk in stale_ids.chunks(500) {
             let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            let sql = format!("DELETE FROM matches WHERE ref_id IN ({ph})");
-            let mut q = sqlx::query(&sql);
-            for id in chunk { q = q.bind(id); }
-            q.execute(&mut *tx).await?;
-
             let sql = format!("DELETE FROM refs WHERE id IN ({ph})");
             let mut q = sqlx::query(&sql);
             for id in chunk { q = q.bind(id); }
@@ -756,68 +754,56 @@ async fn replace_file_refs(
         }
     }
 
-    // Build ref ID map from surviving + new refs.
-    let ref_id_map: HashMap<(i64, i64), i64> = all_refs.iter()
-        .filter(|(_, sid, ss)| new_keys.contains(&(*sid, *ss)))
+    // Re-read all ref IDs for this file after upsert (need current ref_id mapping).
+    let current_refs: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT id, string_id, span_start FROM refs WHERE file_id = ?",
+    )
+    .bind(file_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let ref_id_map: HashMap<(i64, i64), i64> = current_refs.iter()
         .map(|(id, sid, ss)| ((*sid, *ss), *id))
         .collect();
 
-    // Upsert matches: UNIQUE(ref_id, rule_name, kind) is the stable identity.
-    // Matches have no mutable columns beyond the key, so ON CONFLICT is a no-op
-    // update -- the point is to not fail on existing rows.
-    for chunk in resolved.chunks(200) {
-        let ph = chunk.iter().map(|_| "(?,?,?)").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "INSERT INTO matches (ref_id, rule_name, kind) VALUES {ph}
-             ON CONFLICT(ref_id, rule_name, kind) DO NOTHING"
-        );
-        let mut q = sqlx::query(&sql);
-        for r in chunk {
-            let ref_id = ref_id_map.get(&(r.string_id, r.span_start)).copied().unwrap_or(0);
-            q = q.bind(ref_id).bind(r.rule_name).bind(r.kind);
+    // Look up repo_id and rev for per-rule table rows.
+    let file_context: Option<(i64, String)> = sqlx::query_as(
+        "SELECT f.repo_id, COALESCE((SELECT rev FROM rev_files WHERE file_id = f.id LIMIT 1), '') \
+         FROM files f WHERE f.id = ?"
+    )
+    .bind(file_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (repo_id, rev) = file_context.unwrap_or((0, String::new()));
+
+    // Replace per-rule table rows: delete all for this file, re-insert.
+    // Collect which builtin kinds appear in the new refs.
+    let mut by_kind: HashMap<&str, Vec<&ResolvedRef<'_>>> = HashMap::new();
+    for r in &resolved {
+        if sprefa_schema::rule_tables::BUILTIN_KINDS.contains(&r.kind) {
+            by_kind.entry(r.kind).or_default().push(r);
         }
-        q.execute(&mut *tx).await?;
     }
 
-    // Prune stale matches: matches on surviving refs whose (rule_name, kind)
-    // combo is no longer in the new extraction.
-    let surviving_ref_ids: Vec<i64> = all_refs.iter()
-        .filter(|(_, sid, ss)| new_keys.contains(&(*sid, *ss)))
-        .map(|(id, _, _)| *id)
-        .collect();
-    if !surviving_ref_ids.is_empty() {
-        // Build set of (ref_id, rule_name, kind) from new extraction.
-        let new_match_keys: HashSet<(i64, &str, &str)> = resolved.iter()
-            .filter_map(|r| {
-                let ref_id = ref_id_map.get(&(r.string_id, r.span_start))?;
-                Some((*ref_id, r.rule_name, r.kind))
-            })
-            .collect();
+    // Delete old rows for all builtin kinds (even ones not in new refs -- they may have been removed).
+    for k in sprefa_schema::rule_tables::BUILTIN_KINDS {
+        let sql = format!("DELETE FROM \"{k}_data\" WHERE file_id = ?");
+        let _ = sqlx::query(&sql).bind(file_id).execute(&mut *tx).await;
+    }
 
-        // Load existing matches for surviving refs.
-        for chunk in surviving_ref_ids.chunks(500) {
-            let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    // Insert new per-rule rows.
+    for (kind_name, refs_for_kind) in &by_kind {
+        let table = format!("{kind_name}_data");
+        for chunk in refs_for_kind.chunks(200) {
+            let ph = chunk.iter().map(|_| "(?,?,?,?,?)").collect::<Vec<_>>().join(",");
             let sql = format!(
-                "SELECT id, ref_id, rule_name, kind FROM matches WHERE ref_id IN ({ph})"
+                "INSERT INTO \"{table}\" (value_ref, value_str, repo_id, file_id, rev) VALUES {ph}"
             );
-            let mut q = sqlx::query_as::<_, (i64, i64, String, String)>(&sql);
-            for id in chunk { q = q.bind(id); }
-            let existing = q.fetch_all(&mut *tx).await?;
-
-            let stale_match_ids: Vec<i64> = existing.iter()
-                .filter(|(_, rid, rn, k)| {
-                    !new_match_keys.contains(&(*rid, rn.as_str(), k.as_str()))
-                })
-                .map(|(id, _, _, _)| *id)
-                .collect();
-
-            if !stale_match_ids.is_empty() {
-                let ph = stale_match_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                let sql = format!("DELETE FROM matches WHERE id IN ({ph})");
-                let mut q = sqlx::query(&sql);
-                for id in &stale_match_ids { q = q.bind(id); }
-                q.execute(&mut *tx).await?;
+            let mut q = sqlx::query(&sql);
+            for r in chunk {
+                let ref_id = ref_id_map.get(&(r.string_id, r.span_start)).copied().unwrap_or(0);
+                q = q.bind(ref_id).bind(r.string_id).bind(repo_id).bind(file_id).bind(&rev);
             }
+            q.execute(&mut *tx).await?;
         }
     }
 

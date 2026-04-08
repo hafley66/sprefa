@@ -6,23 +6,26 @@ expression: refs
   span_start: 6
   span_end: 13
   kind: rs_declare
-  rule_name: rs
+  rule_name: rs_declare
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 0
 - value: method
   span_start: 23
   span_end: 29
   kind: rs_declare
-  rule_name: rs
+  rule_name: rs_declare
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 1
 - value: Output
   span_start: 47
   span_end: 53
   kind: rs_declare
-  rule_name: rs
+  rule_name: rs_declare
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 2

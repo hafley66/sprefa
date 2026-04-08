@@ -179,33 +179,17 @@ pub async fn search_refs(
         r#"
         SELECT DISTINCT s.id, s.value, s.norm,
                r.span_start, r.span_end,
-               COALESCE(m.kind, ''), COALESCE(m.rule_name, ''),
+               '' AS kind, '' AS rule_name,
                f.path AS file_path,
                repos.name AS repo_name
         FROM strings_fts fts
         JOIN strings s ON s.id = fts.rowid
         JOIN refs r ON r.string_id = s.id
-        LEFT JOIN matches m ON m.ref_id = r.id
         JOIN files f ON r.file_id = f.id
         JOIN repos ON f.repo_id = repos.id
         {rev_join}
         WHERE fts.norm MATCH ?
         {rev_where}
-
-        UNION ALL
-
-        SELECT DISTINCT s.id, s.value, s.norm,
-               0 AS span_start, 0 AS span_end,
-               m.kind, m.rule_name,
-               NULL AS file_path,
-               repos.name AS repo_name
-        FROM strings_fts fts
-        JOIN strings s ON s.id = fts.rowid
-        JOIN repo_refs rr ON rr.string_id = s.id
-        JOIN matches m ON m.repo_ref_id = rr.id
-        JOIN repos ON rr.repo_id = repos.id
-        WHERE fts.norm MATCH ?
-
         ORDER BY repo_name, file_path
         LIMIT 500
         "#,
@@ -213,7 +197,6 @@ pub async fn search_refs(
 
     let phrase = format!("\"{}\"", query);
     let rows: Vec<(i64, String, String, i64, i64, String, String, Option<String>, String)> = sqlx::query_as(&sql)
-        .bind(&phrase)
         .bind(&phrase)
         .fetch_all(pool)
         .await?;

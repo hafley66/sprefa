@@ -4,9 +4,9 @@ use sqlx::SqlitePool;
 const FILE_CHUNK: usize = 2000;
 
 /// Remove files that were deleted in a git diff. Cascades through
-/// rev_files, match_links, matches, refs, and files.
+/// rev_files, matches, refs, and files.
 ///
-/// Uses a temp table to resolve file IDs once, then five non-looping
+/// Uses a temp table to resolve file IDs once, then four non-looping
 /// DELETEs that join against it.
 pub async fn delete_rev_files_by_paths(
     db: &SqlitePool,
@@ -44,15 +44,13 @@ pub async fn delete_rev_files_by_paths(
         q.execute(&mut *tx).await?;
     }
 
-    sqlx::query(
-        "DELETE FROM match_links
-         WHERE source_match_id IN (SELECT m.id FROM matches m JOIN refs r ON m.ref_id = r.id WHERE r.file_id IN (SELECT id FROM _dead_files))
-            OR target_match_id IN (SELECT m.id FROM matches m JOIN refs r ON m.ref_id = r.id WHERE r.file_id IN (SELECT id FROM _dead_files))"
-    ).execute(&mut *tx).await?;
-
-    sqlx::query(
-        "DELETE FROM matches WHERE ref_id IN (SELECT r.id FROM refs r WHERE r.file_id IN (SELECT id FROM _dead_files))"
-    ).execute(&mut *tx).await?;
+    // Delete per-rule table rows for dead files.
+    for k in sprefa_schema::rule_tables::BUILTIN_KINDS {
+        let sql = format!(
+            "DELETE FROM \"{k}_data\" WHERE file_id IN (SELECT id FROM _dead_files)"
+        );
+        let _ = sqlx::query(&sql).execute(&mut *tx).await;
+    }
 
     sqlx::query(
         "DELETE FROM refs WHERE file_id IN (SELECT id FROM _dead_files)"

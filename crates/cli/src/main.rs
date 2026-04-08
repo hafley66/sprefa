@@ -211,7 +211,7 @@ enum Command {
     ///
     /// Examples:
     ///   sprefa sql "SELECT COUNT(*) FROM refs"
-    ///   sprefa sql "SELECT s.value, m.kind FROM strings s JOIN refs r ON r.string_id = s.id JOIN matches m ON m.ref_id = r.id LIMIT 20"
+    ///   sprefa sql "SELECT * FROM import_path LIMIT 20"
     ///   sprefa sql "SELECT s.value, COUNT(*) as cnt FROM strings s JOIN refs r ON r.string_id = s.id GROUP BY s.value ORDER BY cnt DESC LIMIT 10"
     Sql {
         /// SQL SELECT statement to execute
@@ -432,6 +432,17 @@ async fn build_scanner(
     let hashes = sprefa_sprf::hash::compute_rule_hashes(&ruleset.rules, &dep_edges).unwrap_or_default();
 
     // Create per-rule tables before any scanning.
+    // Built-in extractor tables first (no sprf_meta hashing -- they change with the binary).
+    let builtin_specs: Vec<sprefa_cache::RuleTableSpec> = sprefa_schema::rule_tables::builtin_rule_table_defs()
+        .into_iter()
+        .map(|def| sprefa_cache::RuleTableSpec {
+            rule_name: def.rule_name,
+            columns: def.columns.into_iter().map(|c| (c.name, c.scan)).collect(),
+        })
+        .collect();
+    store.create_rule_tables(&builtin_specs, None).await?;
+
+    // Then .sprf rule tables (with hash-based change detection).
     let specs: Vec<sprefa_cache::RuleTableSpec> = ruleset
         .rules
         .iter()

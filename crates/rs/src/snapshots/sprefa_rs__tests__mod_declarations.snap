@@ -6,15 +6,17 @@ expression: refs
   span_start: 4
   span_end: 7
   kind: rs_mod
-  rule_name: rs
+  rule_name: rs_mod
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 0
 - value: bar
   span_start: 13
   span_end: 16
   kind: rs_mod
-  rule_name: rs
+  rule_name: rs_mod
   is_path: false
   parent_key: ~
   node_path: ~
+  group: 1

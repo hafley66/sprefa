@@ -373,11 +373,4 @@ impl<S: Store> Scanner<S> {
         })
     }
 
-    /// Re-resolve match links for a repo without re-scanning files.
-    /// Used as a second pass after all repos are scanned to pick up
-    /// cross-repo links that couldn't resolve due to scan order.
-    /// DEPRECATED: Link rules have been removed.
-    pub async fn resolve_links(&self, _repo_name: &str) -> Result<usize> {
-        Ok(0)
-    }
 }

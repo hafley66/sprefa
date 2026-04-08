@@ -462,7 +462,14 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn make_db() -> SqlitePool {
-        init_db(":memory:").await.unwrap()
+        let pool = init_db(":memory:").await.unwrap();
+        // Create builtin per-rule tables so test seed_ref can insert into them.
+        for def in sprefa_schema::rule_tables::builtin_rule_table_defs() {
+            sqlx::query(&def.create_table_sql()).execute(&pool).await.unwrap();
+            sqlx::query(&def.create_view_sql()).execute(&pool).await.unwrap();
+            sqlx::query(&def.create_refs_view_sql()).execute(&pool).await.unwrap();
+        }
+        pool
     }
 
     async fn seed_repo(db: &SqlitePool, root: &str) -> i64 {
@@ -526,14 +533,20 @@ mod tests {
         .fetch_one(db)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES (?, 'test', ?)",
-        )
-        .bind(ref_id)
-        .bind(kind)
-        .execute(db)
-        .await
-        .unwrap();
+        // Insert into per-rule _data table.
+        let table = format!("{kind}_data");
+        let sql = format!(
+            "INSERT OR IGNORE INTO \"{table}\" (value_ref, value_str, repo_id, file_id, rev) \
+             VALUES (?, ?, (SELECT repo_id FROM files WHERE id = ?), ?, '')"
+        );
+        sqlx::query(&sql)
+            .bind(ref_id)
+            .bind(string_id)
+            .bind(file_id)
+            .bind(file_id)
+            .execute(db)
+            .await
+            .unwrap();
     }
 
     // ── re-export chain tests ───────────────────────────────────────────
@@ -1035,29 +1048,34 @@ mod tests {
                 .fetch_one(&db)
                 .await
                 .unwrap();
-                sqlx::query(
-                    "INSERT OR IGNORE INTO matches (ref_id, rule_name, kind) VALUES (?, ?, ?)",
-                )
-                .bind(ref_id)
-                .bind(&r.rule_name)
-                .bind(&r.kind)
-                .execute(&db)
-                .await
-                .unwrap();
+                // Insert into per-rule _data table.
+                let table = format!("{}_data", r.kind);
+                let sql = format!(
+                    "INSERT OR IGNORE INTO \"{table}\" (value_ref, value_str, repo_id, file_id, rev) \
+                     VALUES (?, ?, (SELECT repo_id FROM files WHERE id = ?), ?, '')"
+                );
+                sqlx::query(&sql)
+                    .bind(ref_id)
+                    .bind(string_id)
+                    .bind(file_id)
+                    .bind(file_id)
+                    .execute(&db)
+                    .await
+                    .unwrap();
             }
         }
 
         // Wire up ImportPath target_file_id links (barrel->utils, consumer->barrel)
         sqlx::query(
-            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN matches m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_path' AND r.string_id IN (SELECT id FROM strings WHERE value = './utils'))"
+            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN import_path_data d ON d.value_ref = r.id WHERE r.file_id = ? AND r.string_id IN (SELECT id FROM strings WHERE value = './utils'))"
         ).bind(utils_id).bind(barrel_id).bind(barrel_id).execute(&db).await.unwrap();
         sqlx::query(
-            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN matches m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_path' AND r.string_id IN (SELECT id FROM strings WHERE value = './barrel'))"
+            "UPDATE refs SET target_file_id = ? WHERE file_id = ? AND id IN (SELECT r.id FROM refs r JOIN import_path_data d ON d.value_ref = r.id WHERE r.file_id = ? AND r.string_id IN (SELECT id FROM strings WHERE value = './barrel'))"
         ).bind(barrel_id).bind(consumer_id).bind(consumer_id).execute(&db).await.unwrap();
 
         // Verify ImportName refs survived insertion
         let barrel_import_count: i64 = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM refs r JOIN matches m ON m.ref_id = r.id WHERE r.file_id = ? AND m.kind = 'import_name'"
+            "SELECT COUNT(*) FROM refs r JOIN import_name_data d ON d.value_ref = r.id WHERE r.file_id = ?"
         ).bind(barrel_id).fetch_one(&db).await.unwrap();
         assert!(barrel_import_count >= 2,
             "barrel.ts should have ImportName refs after INSERT OR IGNORE (got {barrel_import_count})");

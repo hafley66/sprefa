@@ -26,6 +26,7 @@ impl Extractor for JsExtractor {
             .parse();
 
         let mut refs = Vec::new();
+        let mut gc: u32 = 0;
         let mr = &ret.module_record;
 
         // --- ImportPath: all module specifier strings (static, dynamic, re-exports) ---
@@ -38,12 +39,12 @@ impl Extractor for JsExtractor {
                     span_start: req.span.start + 1,
                     span_end: req.span.end - 1,
                     kind: kind::IMPORT_PATH.into(),
-                    rule_name: "js".into(),
+                    rule_name: kind::IMPORT_PATH.into(),
                     is_path: true,
                     parent_key: None,
                     node_path: None,
                     scan: None,
-                    group: None,
+                    group: { gc += 1; Some(gc - 1) },
                 });
             }
         }
@@ -58,12 +59,12 @@ impl Extractor for JsExtractor {
                         span_start: entry.local_name.span.start,
                         span_end: entry.local_name.span.end,
                         kind: kind::IMPORT_NAME.into(),
-                    rule_name: "js".into(),
+                    rule_name: kind::IMPORT_NAME.into(),
                         is_path: false,
                         parent_key: None,
                         node_path: None,
                         scan: None,
-                    group: None,
+                    group: { gc += 1; Some(gc - 1) },
                     });
                 }
                 ImportImportName::Name(ns) => {
@@ -73,12 +74,12 @@ impl Extractor for JsExtractor {
                         span_start: ns.span.start,
                         span_end: ns.span.end,
                         kind: kind::IMPORT_NAME.into(),
-                    rule_name: "js".into(),
+                    rule_name: kind::IMPORT_NAME.into(),
                         is_path: false,
                         parent_key: None,
                         node_path: None,
                         scan: None,
-                    group: None,
+                    group: { gc += 1; Some(gc - 1) },
                     });
                     // Alias only when local name differs from import name
                     let local = entry.local_name.name.as_str();
@@ -88,12 +89,12 @@ impl Extractor for JsExtractor {
                             span_start: entry.local_name.span.start,
                             span_end: entry.local_name.span.end,
                             kind: kind::IMPORT_ALIAS.into(),
-                    rule_name: "js".into(),
+                    rule_name: kind::IMPORT_ALIAS.into(),
                             is_path: false,
                             parent_key: Some(import_str.to_string()),
                             node_path: None,
                             scan: None,
-                    group: None,
+                    group: { gc += 1; Some(gc - 1) },
                         });
                     }
                 }
@@ -107,24 +108,24 @@ impl Extractor for JsExtractor {
                         span_start: stmt_start,
                         span_end: stmt_start,
                         kind: kind::IMPORT_NAME.into(),
-                    rule_name: "js".into(),
+                    rule_name: kind::IMPORT_NAME.into(),
                         is_path: false,
                         parent_key: None,
                         node_path: None,
                         scan: None,
-                    group: None,
+                    group: { gc += 1; Some(gc - 1) },
                     });
                     refs.push(RawRef {
                         value: entry.local_name.name.to_string(),
                         span_start: entry.local_name.span.start,
                         span_end: entry.local_name.span.end,
-                        kind: "import_alias".into(),
-                    rule_name: "js".into(),
+                        kind: kind::IMPORT_ALIAS.into(),
+                    rule_name: kind::IMPORT_ALIAS.into(),
                         is_path: false,
                         parent_key: Some("default".to_string()),
                         node_path: None,
                         scan: None,
-                    group: None,
+                    group: { gc += 1; Some(gc - 1) },
                     });
                 }
             }
@@ -142,12 +143,12 @@ impl Extractor for JsExtractor {
                 span_start: export_span.start,
                 span_end: export_span.end,
                 kind: kind::EXPORT_NAME.into(),
-                rule_name: "js".into(),
+                rule_name: kind::EXPORT_NAME.into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
                 scan: None,
-                group: None,
+                group: { gc += 1; Some(gc - 1) },
             });
             // Emit ExportLocalBinding when internal name differs from exported name
             if let ExportLocalName::Name(local_ns) = &entry.local_name {
@@ -158,12 +159,12 @@ impl Extractor for JsExtractor {
                         span_start: local_ns.span.start,
                         span_end: local_ns.span.end,
                         kind: kind::EXPORT_LOCAL_BINDING.into(),
-                    rule_name: "js".into(),
+                    rule_name: kind::EXPORT_LOCAL_BINDING.into(),
                         is_path: false,
                         parent_key: Some(export_name_str),
                         node_path: None,
                         scan: None,
-                    group: None,
+                    group: { gc += 1; Some(gc - 1) },
                     });
                 }
             }
@@ -193,12 +194,12 @@ impl Extractor for JsExtractor {
                 span_start: export_span.start,
                 span_end: export_span.end,
                 kind: kind::EXPORT_NAME.into(),
-                rule_name: "js".into(),
+                rule_name: kind::EXPORT_NAME.into(),
                 is_path: false,
                 parent_key: None,
                 node_path: None,
                 scan: None,
-                group: None,
+                group: { gc += 1; Some(gc - 1) },
             });
 
             // Emit ImportName for the source-side name of the re-export.
@@ -211,12 +212,12 @@ impl Extractor for JsExtractor {
                     span_start: import_ns.span.start,
                     span_end: import_ns.span.end,
                     kind: kind::IMPORT_NAME.into(),
-                    rule_name: "js".into(),
+                    rule_name: kind::IMPORT_NAME.into(),
                     is_path: false,
                     parent_key: None,
                     node_path: None,
                     scan: None,
-                    group: None,
+                    group: { gc += 1; Some(gc - 1) },
                 });
                 // If the re-export aliases (Foo as Bar), the ImportName "Foo"
                 // differs from ExportName "Bar". No alias ref needed here --
@@ -225,7 +226,7 @@ impl Extractor for JsExtractor {
         }
 
         // --- ImportPath: require() calls (CJS) ---
-        collect_require_calls(&ret.program.body, &mut refs);
+        collect_require_calls(&ret.program.body, &mut refs, &mut gc);
 
         refs
     }
@@ -234,25 +235,25 @@ impl Extractor for JsExtractor {
 /// Walk top-level statements looking for `require('specifier')` calls.
 /// Handles: variable initializers and expression statements.
 /// Nested require() inside callbacks/closures is not extracted.
-fn collect_require_calls<'a>(stmts: &'a [Statement<'a>], refs: &mut Vec<RawRef>) {
+fn collect_require_calls<'a>(stmts: &'a [Statement<'a>], refs: &mut Vec<RawRef>, gc: &mut u32) {
     for stmt in stmts {
         match stmt {
             Statement::VariableDeclaration(decl) => {
                 for d in &decl.declarations {
                     if let Some(init) = &d.init {
-                        collect_require_expr(init, refs);
+                        collect_require_expr(init, refs, gc);
                     }
                 }
             }
             Statement::ExpressionStatement(s) => {
-                collect_require_expr(&s.expression, refs);
+                collect_require_expr(&s.expression, refs, gc);
             }
             _ => {}
         }
     }
 }
 
-fn collect_require_expr<'a>(expr: &'a Expression<'a>, refs: &mut Vec<RawRef>) {
+fn collect_require_expr<'a>(expr: &'a Expression<'a>, refs: &mut Vec<RawRef>, gc: &mut u32) {
     match expr {
         Expression::CallExpression(call) => {
             if let Expression::Identifier(id) = &call.callee {
@@ -263,19 +264,19 @@ fn collect_require_expr<'a>(expr: &'a Expression<'a>, refs: &mut Vec<RawRef>) {
                             span_start: s.span.start + 1,
                             span_end: s.span.end - 1,
                             kind: kind::IMPORT_PATH.into(),
-                    rule_name: "js".into(),
+                            rule_name: kind::IMPORT_PATH.into(),
                             is_path: true,
                             parent_key: None,
                             node_path: None,
                             scan: None,
-                    group: None,
+                            group: { *gc += 1; Some(*gc - 1) },
                         });
                     }
                 }
             }
         }
         Expression::AssignmentExpression(assign) => {
-            collect_require_expr(&assign.right, refs);
+            collect_require_expr(&assign.right, refs, gc);
         }
         _ => {}
     }

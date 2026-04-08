@@ -148,6 +148,17 @@ impl RuleTableDef {
         })
     }
 
+    /// Single-column def for built-in extractors (JS/RS kinds).
+    pub fn builtin(rule_name: &str) -> Self {
+        RuleTableDef {
+            rule_name: rule_name.to_string(),
+            columns: vec![RuleColumn {
+                name: "value".to_string(),
+                scan: None,
+            }],
+        }
+    }
+
     /// Build from a rule's create_matches definitions.
     pub fn from_matches(rule_name: &str, matches: &[(String, Option<String>)]) -> Self {
         RuleTableDef {
@@ -161,6 +172,26 @@ impl RuleTableDef {
                 .collect(),
         }
     }
+}
+
+/// The 10 built-in kind tables for JS/RS extractors.
+pub const BUILTIN_KINDS: &[&str] = &[
+    "import_path",
+    "import_name",
+    "import_alias",
+    "export_name",
+    "export_local_binding",
+    "dep_name",
+    "dep_version",
+    "rs_use",
+    "rs_declare",
+    "rs_mod",
+];
+
+/// Table definitions for all built-in extractor kinds.
+/// Each gets a single "value" column (no scan annotation).
+pub fn builtin_rule_table_defs() -> Vec<RuleTableDef> {
+    BUILTIN_KINDS.iter().map(|k| RuleTableDef::builtin(k)).collect()
 }
 
 #[cfg(test)]
