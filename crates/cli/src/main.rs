@@ -1422,11 +1422,17 @@ fn find_config_file(config_path: &Option<PathBuf>) -> anyhow::Result<PathBuf> {
 fn cmd_eval(rule_str: &str, files: &[PathBuf]) -> anyhow::Result<()> {
     use sprefa_extract::ExtractContext;
 
-    // Ensure the rule ends with a semicolon for the parser.
-    let source = if rule_str.trim_end().ends_with(';') {
-        rule_str.to_string()
+    // If the input doesn't start with `rule` or `check`, wrap it in a synthetic rule.
+    let source = if rule_str.trim_start().starts_with("rule")
+        || rule_str.trim_start().starts_with("check")
+    {
+        if rule_str.trim_end().ends_with(';') {
+            rule_str.to_string()
+        } else {
+            format!("{};", rule_str)
+        }
     } else {
-        format!("{};", rule_str)
+        format!("rule(_eval) {{ {} }};", rule_str)
     };
 
     let (ruleset, _dep_edges) = sprefa_sprf::parse_sprf(&source)?;

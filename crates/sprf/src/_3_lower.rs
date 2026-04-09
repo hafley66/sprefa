@@ -610,19 +610,7 @@ fn rewrite_re_dollar_captures(pattern: &str) -> String {
         match seg {
             Segment::Literal(s) => out.push_str(s),
             Segment::Capture(name) => {
-                let stop = next_literal_first_char(&segments[i + 1..]);
-                match stop {
-                    Some(c) if !c.is_ascii_whitespace() && c != '\\' => {
-                        out.push_str(&format!(
-                            "(?P<{}>[^{}\\s]+)",
-                            name,
-                            regex::escape(&c.to_string())
-                        ));
-                    }
-                    _ => {
-                        out.push_str(&format!("(?P<{}>\\S+)", name));
-                    }
-                }
+                out.push_str(&format!("(?P<{}>[a-zA-Z0-9._/-]+)", name));
             }
             Segment::MultiCapture(name) => {
                 out.push_str(&format!("(?P<{}>.+)", name));
@@ -817,8 +805,8 @@ mod tests {
         let r = &rules[0];
         match r.value.as_ref().unwrap() {
             LineMatcher::Regex { pattern, .. } => {
-                // $IMAGE before `:` -> [^:\s]+, $TAG at end -> \S+
-                assert_eq!(pattern, r"FROM\s+(?P<IMAGE>[^:\s]+):(?P<TAG>\S+)");
+                // $IMAGE and $TAG -> [a-zA-Z0-9._/-]+
+                assert_eq!(pattern, r"FROM\s+(?P<IMAGE>[a-zA-Z0-9._/-]+):(?P<TAG>[a-zA-Z0-9._/-]+)");
             }
             other => panic!("expected Regex, got {:?}", other),
         }

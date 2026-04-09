@@ -60,6 +60,23 @@ rule(openapi_op) {
   fs(**/openapi*.yaml) > json({ paths: { $PATH: { re:^(get|post|put|delete|patch|options|head)$: { operationId: $OP } } } })
 };
 
+# ── Self-checks: README completeness ──────────────
+
+rule(workspace_pkg) {
+  fs(Cargo.toml) > json({ workspace: { members: [..."crates/$PKG"] } })
+};
+
+rule(readme_pkg) {
+  fs(README.md) > line(re:  $PKG/)
+};
+
+check(pkg_in_readme) {
+  SELECT wp.pkg
+  FROM workspace_pkg wp
+  LEFT JOIN readme_pkg rp ON rp.pkg = wp.pkg
+  WHERE rp.pkg IS NULL
+};
+
 # ── Source code (ast-grep) ─────────────────────────
 
 rule(env_var_ref_js) {

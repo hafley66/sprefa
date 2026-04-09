@@ -5,7 +5,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use sprefa_sprf::_0_ast::{RuleBody, Slot, Statement, Tag};
+use sprefa_sprf::_0_ast::{RuleBody, Statement, Tag};
 use sprefa_sprf::_1_parse::parse_program;
 
 struct SprfLsp {
@@ -21,9 +21,11 @@ struct StmtSpan {
 }
 
 /// A parsed rule with its captures and byte span.
+#[allow(dead_code)]
 struct RuleInfo {
+    name: String,
     span: StmtSpan,
-    /// Captures defined in json/ast bodies of this rule.
+    /// Captures defined in json/ast/line bodies of this rule.
     captures: Vec<String>,
 }
 
@@ -35,6 +37,10 @@ struct DocState {
     all_captures: HashSet<String>,
     /// Per-rule capture info with source spans.
     rules: Vec<RuleInfo>,
+    /// All rule names (for cross-ref completions).
+    rule_names: Vec<String>,
+    /// All check names.
+    check_names: Vec<String>,
     /// Diagnostics from validation (not just parse errors).
     diagnostics: Vec<(StmtSpan, String, DiagnosticSeverity)>,
 }
@@ -58,6 +64,8 @@ impl DocState {
 
         self.all_captures.clear();
         self.rules.clear();
+        self.rule_names.clear();
+        self.check_names.clear();
         self.diagnostics.clear();
 
         // Build a map of statement byte ranges by finding ; terminators
@@ -69,46 +77,61 @@ impl DocState {
                 end: text.len(),
             });
 
-            if let Statement::Rule(decl) = stmt {
-                let mut rule_captures = vec![];
+            match stmt {
+                Statement::Rule(decl) => {
+                    self.rule_names.push(decl.name.clone());
+                    let mut rule_captures = vec![];
 
-                // Captures inferred from rule body
-                fn collect_body_captures(body: &RuleBody, all_caps: &mut HashSet<String>, rule_caps: &mut Vec<String>) {
-                    match body {
-                        RuleBody::Step(slot) => {
-                            for cap in slot.captures() {
-                                all_caps.insert(cap.clone());
-                                rule_caps.push(cap);
+                    fn collect_body_captures(
+                        body: &RuleBody,
+                        all_caps: &mut HashSet<String>,
+                        rule_caps: &mut Vec<String>,
+                    ) {
+                        match body {
+                            RuleBody::Step(slot) => {
+                                for cap in slot.captures() {
+                                    all_caps.insert(cap.clone());
+                                    rule_caps.push(cap);
+                                }
                             }
-                        }
-                        RuleBody::Block { slot, children, .. } => {
-                            for cap in slot.captures() {
-                                all_caps.insert(cap.clone());
-                                rule_caps.push(cap);
+                            RuleBody::Block {
+                                slot, children, ..
+                            } => {
+                                for cap in slot.captures() {
+                                    all_caps.insert(cap.clone());
+                                    rule_caps.push(cap);
+                                }
+                                for child in children {
+                                    collect_body_captures(child, all_caps, rule_caps);
+                                }
                             }
-                            for child in children {
-                                collect_body_captures(child, all_caps, rule_caps);
-                            }
-                        }
-                        RuleBody::Ref { cross_ref, children } => {
-                            for binding in &cross_ref.bindings {
-                                all_caps.insert(binding.var.clone());
-                                rule_caps.push(binding.var.clone());
-                            }
-                            for child in children {
-                                collect_body_captures(child, all_caps, rule_caps);
+                            RuleBody::Ref {
+                                cross_ref,
+                                children,
+                            } => {
+                                for binding in &cross_ref.bindings {
+                                    all_caps.insert(binding.var.clone());
+                                    rule_caps.push(binding.var.clone());
+                                }
+                                for child in children {
+                                    collect_body_captures(child, all_caps, rule_caps);
+                                }
                             }
                         }
                     }
-                }
-                for body in &decl.body {
-                    collect_body_captures(body, &mut self.all_captures, &mut rule_captures);
-                }
+                    for body in &decl.body {
+                        collect_body_captures(body, &mut self.all_captures, &mut rule_captures);
+                    }
 
-                self.rules.push(RuleInfo {
-                    span: span.clone(),
-                    captures: rule_captures.clone(),
-                });
+                    self.rules.push(RuleInfo {
+                        name: decl.name.clone(),
+                        span: span.clone(),
+                        captures: rule_captures,
+                    });
+                }
+                Statement::Check(decl) => {
+                    self.check_names.push(decl.name.clone());
+                }
             }
         }
     }
@@ -129,13 +152,16 @@ impl DocState {
 fn find_statement_spans(text: &str) -> Vec<StmtSpan> {
     let mut spans = vec![];
     let mut start = 0;
-    let mut in_paren = 0i32;
+    let mut brace_depth = 0i32;
+    let mut paren_depth = 0i32;
 
     for (i, ch) in text.char_indices() {
         match ch {
-            '(' => in_paren += 1,
-            ')' => in_paren -= 1,
-            ';' if in_paren <= 0 => {
+            '{' => brace_depth += 1,
+            '}' => brace_depth -= 1,
+            '(' => paren_depth += 1,
+            ')' => paren_depth -= 1,
+            ';' if brace_depth <= 0 && paren_depth <= 0 => {
                 spans.push(StmtSpan { start, end: i });
                 start = i + 1;
             }
@@ -145,52 +171,37 @@ fn find_statement_spans(text: &str) -> Vec<StmtSpan> {
     // Trailing statement without semicolon
     let trailing = text[start..].trim();
     if !trailing.is_empty() && !trailing.starts_with('#') {
-        spans.push(StmtSpan { start, end: text.len() });
+        spans.push(StmtSpan {
+            start,
+            end: text.len(),
+        });
     }
     spans
 }
 
-/// Pull $SCREAMING captures out of a string (json body, ast body, etc).
-fn extract_captures(body: &str) -> Vec<String> {
-    let mut caps = vec![];
-    let bytes = body.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'$' {
-            i += 1;
-            if i < bytes.len() && bytes[i] == b'_'
-                && (i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric())
-            {
-                i += 1;
-                continue;
-            }
-            let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            if i > start {
-                let name = &body[start..i];
-                if name.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()) {
-                    caps.push(name.to_string());
-                }
-            }
-        } else {
-            i += 1;
-        }
-    }
-    caps
-}
-
 /// Detect what completion context the cursor is in.
+#[allow(dead_code)]
 enum CompletionContext {
+    /// At a position where a tag keyword is expected (start of slot).
     TagName,
+    /// Inside a json/ast/line body where $CAPTURE is expected.
     Capture,
+    /// After an identifier + `(` that looks like cross-ref binding position.
+    CrossRefBinding,
+    /// At a position that could be a cross-ref rule name or tag.
+    RuleOrTag,
     Unknown,
 }
 
 fn detect_context(text: &str, offset: usize) -> CompletionContext {
     let before = &text[..offset.min(text.len())];
 
+    // Check if we just typed `$` -- capture context
+    if before.ends_with('$') {
+        return CompletionContext::Capture;
+    }
+
+    // Find the innermost unclosed paren
     let mut depth = 0i32;
     let mut last_open = None;
     for (i, b) in before.bytes().enumerate().rev() {
@@ -210,8 +221,30 @@ fn detect_context(text: &str, offset: usize) -> CompletionContext {
     if let Some(paren_pos) = last_open {
         let pre = before[..paren_pos].trim_end();
 
-        if pre.ends_with("json") || pre.ends_with("ast") {
+        // Inside a tag body: json(...), ast(...), line(...)
+        if pre.ends_with("json")
+            || pre.ends_with("ast")
+            || pre.ends_with("line")
+            || pre.ends_with(|c: char| c == ']' && pre.contains("ast["))
+        {
             return CompletionContext::Capture;
+        }
+
+        // Inside something that looks like cross-ref bindings: identifier(col: $VAR, ...)
+        let paren_content = &before[paren_pos + 1..];
+        if paren_content.contains(':') && paren_content.contains('$') {
+            return CompletionContext::CrossRefBinding;
+        }
+
+        // After an identifier that could be cross-ref: `name(`
+        let word_start = pre
+            .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let word = &pre[word_start..];
+        if !word.is_empty() && Tag::from_str(word).is_none() {
+            // Inside parens after a non-tag identifier -- cross-ref binding context
+            return CompletionContext::CrossRefBinding;
         }
     }
 
@@ -219,9 +252,10 @@ fn detect_context(text: &str, offset: usize) -> CompletionContext {
     if trimmed.is_empty()
         || trimmed.ends_with('>')
         || trimmed.ends_with(';')
+        || trimmed.ends_with('{')
         || trimmed.ends_with('\n')
     {
-        return CompletionContext::TagName;
+        return CompletionContext::RuleOrTag;
     }
 
     CompletionContext::Unknown
@@ -263,12 +297,32 @@ fn offset_to_position(text: &str, offset: usize) -> Position {
 
 const TAGS: &[(&str, &str)] = &[
     ("fs", "File path glob: fs(**/pattern)"),
-    ("json", "JSON/YAML/TOML destructuring: json({ key: $CAP })"),
-    ("ast", "ast-grep pattern: ast(pattern) or ast[lang](pattern)"),
-    ("line", "Line pattern: line($CAP:$TAG) or line(re:pattern)"),
+    (
+        "json",
+        "JSON/YAML/TOML destructuring: json({ key: $CAP })",
+    ),
+    (
+        "ast",
+        "ast-grep pattern: ast(pattern) or ast[lang](pattern)",
+    ),
+    (
+        "line",
+        "Line pattern: line($CAP:$TAG) or line(re:pattern)",
+    ),
     ("repo", "Repository glob: repo(org/*)"),
     ("rev", "Rev glob (branch or tag): rev(main|v*)"),
+    ("branch", "Branch glob (alias for rev): branch(main|develop)"),
+    ("tag", "Tag glob (alias for rev): tag(v*)"),
+    ("folder", "Folder path glob: folder(src/components/*)"),
+    ("file", "File path glob: file(**/README.md)"),
+];
+
+const STATEMENT_KEYWORDS: &[(&str, &str)] = &[
     ("rule", "Rule declaration: rule(name) { selectors };"),
+    (
+        "check",
+        "Check declaration: check(name) { SQL query };",
+    ),
 ];
 
 #[tower_lsp::async_trait]
@@ -281,7 +335,12 @@ impl LanguageServer for SprfLsp {
                 )),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![
-                        ",".into(), "(".into(), ">".into(), "$".into(), " ".into(),
+                        ",".into(),
+                        "(".into(),
+                        ">".into(),
+                        "$".into(),
+                        " ".into(),
+                        "{".into(),
                     ]),
                     ..Default::default()
                 }),
@@ -332,8 +391,36 @@ impl LanguageServer for SprfLsp {
                     });
                 }
             }
+            CompletionContext::RuleOrTag => {
+                // Statement keywords at top level
+                for &(kw, detail) in STATEMENT_KEYWORDS {
+                    items.push(CompletionItem {
+                        label: kw.into(),
+                        kind: Some(CompletionItemKind::KEYWORD),
+                        detail: Some(detail.into()),
+                        ..Default::default()
+                    });
+                }
+                // Tags
+                for &(tag, detail) in TAGS {
+                    items.push(CompletionItem {
+                        label: tag.into(),
+                        kind: Some(CompletionItemKind::KEYWORD),
+                        detail: Some(detail.into()),
+                        ..Default::default()
+                    });
+                }
+                // Rule names for cross-refs
+                for name in &state.rule_names {
+                    items.push(CompletionItem {
+                        label: name.clone(),
+                        kind: Some(CompletionItemKind::FUNCTION),
+                        detail: Some("cross-rule reference".into()),
+                        ..Default::default()
+                    });
+                }
+            }
             CompletionContext::Capture => {
-                // Scoped: only captures from the current rule
                 for cap in state.captures_at(offset) {
                     items.push(CompletionItem {
                         label: format!("${}", cap),
@@ -351,12 +438,32 @@ impl LanguageServer for SprfLsp {
                     ..Default::default()
                 });
             }
+            CompletionContext::CrossRefBinding => {
+                // Suggest captures from current rule scope
+                for cap in state.captures_at(offset) {
+                    items.push(CompletionItem {
+                        label: format!("${}", cap),
+                        kind: Some(CompletionItemKind::VARIABLE),
+                        detail: Some("capture".into()),
+                        insert_text: Some(format!("${}", cap)),
+                        ..Default::default()
+                    });
+                }
+            }
             CompletionContext::Unknown => {
                 for &(tag, detail) in TAGS {
                     items.push(CompletionItem {
                         label: tag.into(),
                         kind: Some(CompletionItemKind::KEYWORD),
                         detail: Some(detail.into()),
+                        ..Default::default()
+                    });
+                }
+                for name in &state.rule_names {
+                    items.push(CompletionItem {
+                        label: name.clone(),
+                        kind: Some(CompletionItemKind::FUNCTION),
+                        detail: Some("cross-rule reference".into()),
                         ..Default::default()
                     });
                 }
@@ -380,11 +487,13 @@ impl SprfLsp {
 
         // Parse error diagnostic
         if let Err(e) = parse_program(text) {
-            // Try to extract a useful position from the error message
             let err_msg = e.to_string();
             let (start_pos, end_pos) = guess_error_position(text, &err_msg);
             diags.push(Diagnostic {
-                range: Range { start: start_pos, end: end_pos },
+                range: Range {
+                    start: start_pos,
+                    end: end_pos,
+                },
                 severity: Some(DiagnosticSeverity::ERROR),
                 source: Some("sprf".into()),
                 message: err_msg,
@@ -414,19 +523,21 @@ impl SprfLsp {
 
 /// Heuristic: find the last statement boundary before the error and highlight that line.
 fn guess_error_position(text: &str, _err_msg: &str) -> (Position, Position) {
-    // Find the last incomplete statement (no terminating ;)
     let mut last_semi = 0;
-    let mut in_paren = 0i32;
+    let mut brace_depth = 0i32;
+    let mut paren_depth = 0i32;
+
     for (i, ch) in text.char_indices() {
         match ch {
-            '(' => in_paren += 1,
-            ')' => in_paren -= 1,
-            ';' if in_paren <= 0 => last_semi = i + 1,
+            '{' => brace_depth += 1,
+            '}' => brace_depth -= 1,
+            '(' => paren_depth += 1,
+            ')' => paren_depth -= 1,
+            ';' if brace_depth <= 0 && paren_depth <= 0 => last_semi = i + 1,
             _ => {}
         }
     }
 
-    // The error is likely in the text after the last semicolon
     let error_region = &text[last_semi..];
     let trimmed_start = last_semi + error_region.len() - error_region.trim_start().len();
 

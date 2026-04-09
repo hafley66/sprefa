@@ -61,7 +61,7 @@ Every built-in extractor (JS/TS imports, Rust use paths, declarations) produces 
 
 ## The .sprf language
 
-Three statement types: `rule`, `query`, `check`.
+Two statement types: `rule` and `check`.
 
 ### rule -- extract structured data from files
 
@@ -180,7 +180,7 @@ line(re:FROM\s+$IMAGE:$TAG)
 line(re:FROM\s+(?P<IMAGE>[^:]+):(?P<TAG>.+))
 ```
 
-The `re:` prefix triggers regex mode. In json key matchers, the regex tests the key string. In line matchers with `$NAME` captures, each `$NAME` is rewritten to a `(?P<NAME>...)` group that stops at the next delimiter or whitespace. Raw `(?P<>)` groups are passed through unchanged.
+The `re:` prefix triggers regex mode. In json key matchers, the regex tests the key string. In line matchers with `$NAME` captures, each `$NAME` is rewritten to `(?P<NAME>[a-zA-Z0-9._/-]+)`. Raw `(?P<>)` groups are passed through unchanged for full regex control.
 
 ### 3. Glob patterns (everything else)
 
@@ -302,7 +302,7 @@ rule(semver_pin) {
 | Mode | Trigger | `$NAME` stops at | Regex metacharacters |
 |---|---|---|---|
 | Segment | no `re:` prefix | next literal char or `/` | treated as literal text |
-| `re:` sugar | `re:` prefix + contains `$` | next literal char or whitespace | active (`\s+`, `\d+`, `.+`, etc.) |
+| `re:` sugar | `re:` prefix + contains `$` | `[a-zA-Z0-9._/-]+` | active (`\s+`, `\d+`, `.+`, etc.) |
 | `re:` raw | `re:` prefix + `(?P<>)` groups | defined by group pattern | active |
 
 Line matchers run per-line against plain text files (Dockerfile, go.mod, requirements.txt, Makefile) and against walk captures from structured files. Extensionless files are dispatched to the rule engine automatically.
@@ -403,27 +403,6 @@ Available in `sprefa sql`, `query()`, and `check()` blocks:
 **Built-in views**: `repo_tags` (semver-tagged revisions), `repo_branches` (branch revisions).
 
 ---
-
-## query -- SQL over extracted data
-
-```sprf
-query(transitive_dep) {
-  SELECT a.dep, c.dep
-  FROM dep_to_package_data a
-  JOIN package_has_dep_data b ON a.pkg = b.pkg
-  JOIN dep_to_package_data c ON b.dep = c.dep
-};
-```
-
-Query bodies are raw SQL SELECT statements. They run against the per-rule tables and views. Use UDFs for string manipulation:
-
-```sprf
-query(semver_major) {
-  SELECT value, split_part(value, '.', 1) AS major
-  FROM deploy_image
-  WHERE re_extract(value, 'v(\d+)\.\d+\.\d+', 1) IS NOT NULL
-};
-```
 
 ## check -- CI-friendly invariant verification
 
@@ -548,6 +527,37 @@ db = "~/.ghcache/ghcache.db"
 poll_ms = 500
 ```
 
+## Editor support
+
+### VS Code
+
+`editors/vscode/` contains a VS Code extension providing:
+
+- Syntax highlighting via TextMate grammar (all tags, check blocks with SQL highlighting, cross-refs, captures, re: prefixes)
+- LSP integration via `sprf-lsp` binary (diagnostics, completions)
+
+Setup:
+
+```bash
+cargo build -p sprefa_sprf_lsp          # build the LSP server
+ln -s target/debug/sprf-lsp ~/.local/bin/sprf-lsp   # or add to PATH
+
+cd editors/vscode && npm install && npm run compile  # build extension
+# Then "Install from VSIX" or symlink into ~/.vscode/extensions/
+```
+
+### LSP capabilities
+
+| Feature | Status |
+|---|---|
+| Parse error diagnostics | live, highlights error region |
+| Tag completions | all tags: fs, json, ast, line, repo, rev, branch, tag, folder, file |
+| Statement keyword completions | rule, check |
+| Capture completions | scoped to enclosing rule, triggered by `$` |
+| Cross-ref rule name completions | suggests defined rule names |
+
+---
+
 ## Workspace
 
 ```
@@ -565,9 +575,9 @@ crates/
   watch/      filesystem watcher + rewrite pipeline
   scan/       Scanner coordinator
   server/     axum HTTP server
-  sprf-lsp/   LSP server for .sprf files
+  sprf-lsp/   LSP server: diagnostics, completions (tags, captures, cross-refs)
 editors/
-  vscode/     tmLanguage syntax highlighting
+  vscode/     VS Code extension: TextMate grammar + LSP client
 ```
 
 ---

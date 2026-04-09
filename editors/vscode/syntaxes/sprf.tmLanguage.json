@@ -4,8 +4,8 @@
   "scopeName": "source.sprf",
   "patterns": [
     { "include": "#comment" },
+    { "include": "#check-declaration" },
     { "include": "#rule-declaration" },
-    { "include": "#link-declaration" },
     { "include": "#rule" }
   ],
   "repository": {
@@ -14,43 +14,50 @@
       "name": "comment.line.number-sign.sprf"
     },
 
-    "link-declaration": {
-      "begin": "\\b(link)\\s*\\(",
-      "end": "\\);?",
+    "check-declaration": {
+      "begin": "\\b(check)\\s*\\(\\s*([a-z_][a-z0-9_]*)\\s*\\)\\s*\\{",
+      "end": "\\}\\s*;",
       "beginCaptures": {
-        "1": { "name": "keyword.control.link.sprf" }
+        "1": { "name": "keyword.control.check.sprf" },
+        "2": { "name": "entity.name.function.check.sprf" }
       },
       "endCaptures": {
         "0": { "name": "punctuation.terminator.sprf" }
       },
       "patterns": [
+        { "include": "#sql-body" }
+      ]
+    },
+
+    "sql-body": {
+      "patterns": [
         { "include": "#comment" },
         {
-          "match": "\\b(norm_eq|norm2_eq|string_eq|target_file_eq|same_repo|same_file|stem_eq_src|stem_eq_tgt|ext_eq_src|ext_eq_tgt|dir_eq_src|dir_eq_tgt)\\b",
-          "name": "support.function.predicate.sprf"
+          "match": "\\b(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AND|OR|NOT|IN|IS|NULL|AS|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|UNION|INSERT|INTO|VALUES|UPDATE|SET|DELETE|EXISTS|BETWEEN|LIKE|DISTINCT|COUNT|SUM|AVG|MIN|MAX|CASE|WHEN|THEN|ELSE|END|WITH|RECURSIVE)\\b",
+          "name": "keyword.other.sql.sprf"
         },
         {
-          "match": ">",
-          "name": "keyword.operator.arrow.sprf"
+          "match": "'[^']*'",
+          "name": "string.quoted.single.sql.sprf"
         },
         {
-          "match": "\\$[A-Z_][A-Za-z0-9_]*",
-          "name": "variable.other.capture.sprf"
+          "match": "\\b\\d+\\b",
+          "name": "constant.numeric.sql.sprf"
         },
         {
-          "match": "\\b[a-z_][a-z0-9_]*\\b",
-          "name": "entity.name.type.kind.sprf"
+          "match": "!=|<>|<=|>=|=|<|>",
+          "name": "keyword.operator.comparison.sql.sprf"
         },
         {
-          "match": ",",
-          "name": "punctuation.separator.comma.sprf"
+          "match": "\\b[a-z_][a-z0-9_]*(?=\\s*\\.)",
+          "name": "entity.name.type.table-alias.sql.sprf"
         }
       ]
     },
 
     "rule-declaration": {
-      "begin": "\\b(rule)\\s+([a-z_][a-z0-9_]*)\\s*\\(",
-      "end": ";",
+      "begin": "\\b(rule)\\s*\\(\\s*([a-z_][a-z0-9_]*)\\s*\\)\\s*\\{",
+      "end": "\\}\\s*;",
       "beginCaptures": {
         "1": { "name": "keyword.control.rule.sprf" },
         "2": { "name": "entity.name.function.rule.sprf" }
@@ -59,33 +66,20 @@
         "0": { "name": "punctuation.terminator.sprf" }
       },
       "patterns": [
-        { "include": "#comment" },
-        { "include": "#rule-head-captures" },
-        { "include": "#tagged-slot" },
-        { "include": "#chain-separator" },
-        { "include": "#capture" },
-        { "include": "#bare-glob" }
+        { "include": "#rule-body" }
       ]
     },
 
-    "rule-head-captures": {
+    "rule-body": {
       "patterns": [
-        {
-          "match": "\\b(repo|rev|name|file)(?=\\s*\\(\\s*\\$)",
-          "name": "storage.type.annotation.sprf"
-        },
-        {
-          "match": "\\$[A-Z_][A-Za-z0-9_]*",
-          "name": "variable.other.capture.sprf"
-        },
-        {
-          "match": ",",
-          "name": "punctuation.separator.comma.sprf"
-        },
-        {
-          "match": "[()]",
-          "name": "punctuation.bracket.round.sprf"
-        }
+        { "include": "#comment" },
+        { "include": "#cross-ref" },
+        { "include": "#tagged-slot" },
+        { "include": "#chain-separator" },
+        { "include": "#semicolon" },
+        { "include": "#capture-screaming" },
+        { "include": "#wildcard" },
+        { "include": "#bare-glob" }
       ]
     },
 
@@ -93,11 +87,37 @@
       "patterns": [
         { "include": "#comment" },
         { "include": "#rule-declaration" },
+        { "include": "#check-declaration" },
         { "include": "#tagged-slot" },
         { "include": "#chain-separator" },
         { "include": "#semicolon" },
-        { "include": "#capture" },
+        { "include": "#capture-screaming" },
+        { "include": "#wildcard" },
         { "include": "#bare-glob" }
+      ]
+    },
+
+    "cross-ref": {
+      "begin": "\\b([a-z_][a-z0-9_]*)\\s*\\((?=[^)]*:\\s*\\$)",
+      "end": "\\)",
+      "beginCaptures": {
+        "1": { "name": "entity.name.function.crossref.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.sprf" }
+      },
+      "patterns": [
+        {
+          "match": "\\b([a-z_][a-z0-9_]*)\\s*:",
+          "captures": {
+            "1": { "name": "variable.parameter.column.sprf" }
+          }
+        },
+        { "include": "#capture-screaming" },
+        {
+          "match": ",",
+          "name": "punctuation.separator.comma.sprf"
+        }
       ]
     },
 
@@ -111,8 +131,18 @@
       "name": "punctuation.terminator.sprf"
     },
 
-    "capture": {
-      "match": "\\$_{1}(?![A-Za-z0-9])",
+    "capture-screaming": {
+      "match": "\\$\\$\\$[A-Z][A-Z0-9_]*",
+      "name": "variable.other.capture.multi.sprf"
+    },
+
+    "capture-single": {
+      "match": "\\$[A-Z][A-Z0-9_]*",
+      "name": "variable.other.capture.sprf"
+    },
+
+    "wildcard": {
+      "match": "\\$_(?![A-Za-z0-9])",
       "name": "variable.language.wildcard.sprf"
     },
 
@@ -122,7 +152,10 @@
         { "include": "#ast-slot" },
         { "include": "#line-slot" },
         { "include": "#fs-slot" },
-        { "include": "#repo-slot" }
+        { "include": "#repo-slot" },
+        { "include": "#rev-slot" },
+        { "include": "#folder-slot" },
+        { "include": "#file-slot" }
       ]
     },
 
@@ -145,7 +178,11 @@
           "name": "keyword.operator.glob.sprf"
         },
         {
-          "match": "[^)]+",
+          "match": "\\|",
+          "name": "keyword.operator.alternation.sprf"
+        },
+        {
+          "match": "[^)|*]+",
           "name": "string.unquoted.glob.sprf"
         }
       ]
@@ -161,7 +198,85 @@
         "0": { "name": "punctuation.bracket.round.sprf" }
       },
       "patterns": [
-        { "match": "[^)]+", "name": "string.unquoted.glob.sprf" }
+        { "include": "#capture-screaming" },
+        { "include": "#capture-single" },
+        {
+          "match": "\\*",
+          "name": "keyword.operator.glob.sprf"
+        },
+        { "match": "[^)$*]+", "name": "string.unquoted.glob.sprf" }
+      ]
+    },
+
+    "rev-slot": {
+      "begin": "\\b(rev|branch|tag)\\s*\\(",
+      "end": "\\)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.tag.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.sprf" }
+      },
+      "patterns": [
+        { "include": "#capture-screaming" },
+        { "include": "#capture-single" },
+        {
+          "match": "\\|",
+          "name": "keyword.operator.alternation.sprf"
+        },
+        {
+          "match": "\\*",
+          "name": "keyword.operator.glob.sprf"
+        },
+        { "match": "[^)|$*]+", "name": "string.unquoted.glob.sprf" }
+      ]
+    },
+
+    "folder-slot": {
+      "begin": "\\b(folder)\\s*\\(",
+      "end": "\\)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.tag.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.sprf" }
+      },
+      "patterns": [
+        { "include": "#capture-screaming" },
+        { "include": "#capture-single" },
+        {
+          "match": "\\*\\*",
+          "name": "keyword.operator.globstar.sprf"
+        },
+        {
+          "match": "\\*",
+          "name": "keyword.operator.glob.sprf"
+        },
+        { "match": "[^)$*]+", "name": "string.unquoted.glob.sprf" }
+      ]
+    },
+
+    "file-slot": {
+      "begin": "\\b(file)\\s*\\(",
+      "end": "\\)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.tag.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.sprf" }
+      },
+      "patterns": [
+        { "include": "#capture-screaming" },
+        { "include": "#capture-single" },
+        {
+          "match": "\\*\\*",
+          "name": "keyword.operator.globstar.sprf"
+        },
+        {
+          "match": "\\*",
+          "name": "keyword.operator.glob.sprf"
+        },
+        { "match": "[^)$*]+", "name": "string.unquoted.glob.sprf" }
       ]
     },
 
@@ -184,11 +299,14 @@
         { "include": "#comment" },
         { "include": "#json-object" },
         { "include": "#json-array" },
+        { "include": "#json-quoted-value" },
         { "include": "#capture-screaming" },
+        { "include": "#capture-single" },
         { "include": "#wildcard" },
         { "include": "#recursive-descent" },
         { "include": "#regex-key" },
         { "include": "#json-key" },
+        { "include": "#json-annotation" },
         { "include": "#json-punctuation" }
       ]
     },
@@ -225,28 +343,44 @@
       ]
     },
 
+    "json-quoted-value": {
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.sprf" }
+      },
+      "name": "string.quoted.double.sprf",
+      "patterns": [
+        { "include": "#capture-screaming" },
+        { "include": "#capture-single" },
+        { "include": "#wildcard" },
+        {
+          "match": "\\\\.",
+          "name": "constant.character.escape.sprf"
+        }
+      ]
+    },
+
+    "json-annotation": {
+      "match": "\\b(repo|rev)\\s*(?=\\()",
+      "name": "storage.type.annotation.sprf"
+    },
+
     "recursive-descent": {
       "match": "\\*\\*",
       "name": "keyword.operator.recursive-descent.sprf"
     },
 
-    "capture-screaming": {
-      "match": "\\$[A-Z][A-Z0-9_]*",
-      "name": "variable.other.capture.sprf"
-    },
-
-    "wildcard": {
-      "match": "\\$_\\b",
-      "name": "variable.language.wildcard.sprf"
-    },
-
     "regex-key": {
-      "match": "\\bre:.+?(?=:\\s)",
+      "match": "\\bre:[^:,}\\]]+(?=\\s*:)",
       "name": "string.regexp.key.sprf"
     },
 
     "json-key": {
-      "match": "[a-zA-Z_*?][a-zA-Z0-9_*?.-]*(?=\\s*:)",
+      "match": "[a-zA-Z_*?@][a-zA-Z0-9_*?./-]*(?=\\s*:)",
       "name": "entity.name.tag.key.sprf"
     },
 
@@ -259,7 +393,7 @@
 
     "ast-slot": {
       "begin": "\\b(ast)(?:\\[([a-z]+)\\])?\\s*\\(",
-      "end": "\\)(?=\\s*[>;#]|\\s*$)",
+      "end": "\\)(?=\\s*[>;{}#]|\\s*$)",
       "beginCaptures": {
         "1": { "name": "keyword.control.tag.sprf" },
         "2": { "name": "entity.name.type.language.sprf" }
@@ -273,6 +407,10 @@
           "name": "variable.other.capture.multi.sprf"
         },
         {
+          "match": "\\$\\{[A-Z][A-Z0-9_]*\\}",
+          "name": "variable.other.capture.braced.sprf"
+        },
+        {
           "match": "\\$[A-Z][A-Z0-9_]*",
           "name": "variable.other.capture.sprf"
         },
@@ -284,15 +422,44 @@
     },
 
     "line-slot": {
-      "match": "\\b(line)\\s*\\((.+)\\)(?=\\s*[>;#]|\\s*$)",
-      "captures": {
-        "1": { "name": "keyword.control.tag.sprf" },
-        "2": { "name": "string.unquoted.pattern.sprf" }
-      }
+      "begin": "\\b(line)\\s*\\(",
+      "end": "\\)(?=\\s*[>;{}#]|\\s*$)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.tag.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.sprf" }
+      },
+      "patterns": [
+        {
+          "include": "#line-re-prefix"
+        },
+        {
+          "match": "\\$\\$\\$[A-Z][A-Z0-9_]*",
+          "name": "variable.other.capture.multi.sprf"
+        },
+        {
+          "match": "\\$[A-Z][A-Z0-9_]*",
+          "name": "variable.other.capture.sprf"
+        },
+        {
+          "match": "\\$_(?![A-Za-z0-9])",
+          "name": "variable.language.wildcard.sprf"
+        },
+        {
+          "match": "[^)$]+",
+          "name": "string.unquoted.pattern.sprf"
+        }
+      ]
+    },
+
+    "line-re-prefix": {
+      "match": "\\bre:",
+      "name": "keyword.operator.regex.sprf"
     },
 
     "bare-glob": {
-      "match": "[^>;#\\s][^>;#]*",
+      "match": "[^>;{}#\\s][^>;{}#]*",
       "name": "string.unquoted.glob.sprf"
     }
   }
