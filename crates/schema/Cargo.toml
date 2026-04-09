@@ -9,6 +9,8 @@ serde = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+libsqlite3-sys = "0.30"
+regex = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

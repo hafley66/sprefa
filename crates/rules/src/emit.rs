@@ -74,7 +74,7 @@ pub fn apply_line_matcher(
 }
 
 /// Turn a match result into RawRefs according to the create_matches list.
-/// `group` tags all refs from this extraction site so they share a group_id in the DB.
+/// `group` tags all refs from this extraction site so they form one row in per-rule tables.
 pub fn create_refs(
     result: &MatchResult,
     match_defs: &[MatchDef],
@@ -101,13 +101,7 @@ pub fn create_refs(
 
     for def in match_defs {
         if let Some(raw) = create_one(def, rule_name, &captures, node_path.as_deref(), group) {
-            eprintln!(
-                "EMIT_DEBUG: created ref for '{}' with scan={:?}",
-                def.capture, raw.scan
-            );
             refs.push(raw);
-        } else {
-            eprintln!("EMIT_DEBUG: failed to create ref for '{}'", def.capture);
         }
     }
 
@@ -121,11 +115,6 @@ fn create_one(
     node_path: Option<&str>,
     group: Option<u32>,
 ) -> Option<RawRef> {
-    eprintln!(
-        "EMIT_DEBUG: looking for capture '{}' in {:?}",
-        def.capture,
-        captures.keys().collect::<Vec<_>>()
-    );
     let cv = captures.get(&def.capture)?;
 
     let parent_key = def

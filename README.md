@@ -1,44 +1,47 @@
-`<human-no-llm-kthnx>`
-Hi, the main thesis of this is to ask the question of how far can source strings constants, their import/export identifiers, their filename paths, and their git repo names, take a semantic grep engine that just spits things into prolog aka recursive sqlite queries.
-
-I want to basically allow extremely bespoke pattern chaining of any and all open source tools for parsing. 
-
-Can't believe I'm gonna say this but just imagine html(really xml please), all ast's are representable as a dom tree.
-
-So with that concept, and the filesystem as a tree, we now have a very large shit load of trees.
-
-So this is an attempt at creating a very higher and lower scoped tree query/matching engine that attemps to unify all of that tree into 1 interface.
-
-TLDR; Programmable ripgrep and fzf and ast-grep go BURRRRRR. But also what if ai could trace its steps into a system that allows describing every grep and filesystem find etc. were all encoded into a language that embeds that flow. In order to encode arbitrary filesystem+source AST into prolog for graph algorithms, I wanted to build this.
-
-This system does a whacky refactoring that was the OG idea, that turned into journey studying ast-grep and sqlite and wanting to be able to encode cross filesystem relationships with whatever pattern matching tech I can find open source then make. `ast-grep` hauls ass. json/yaml/toml/xml are all trees already, so thats nice. 
-
-So now you can imagine every tree node as an html element or a div with a classname. Okay now make that work like prolog.
-`</human-no-llm-kthnx>`
-
 # sprefa
 
-Declarative cross-codebase extraction and graph queries. Glob files, walk structured data, match AST patterns, capture strings, link them across repos, run recursive queries over the result.
+You touch 30 repos a week. You `cd` into one, grep for a string, find it references something in another repo, `cd` there, grep again, open a YAML, squint at an image tag, check if that tag exists, open the other repo at that tag, look at its package.json. That loop eats hours every day -- for you, for your teammates, for any LLM agent doing the same thing through tool calls.
+
+sprefa encodes that loop into declarative rules and runs it across all your repos at once. Every captured string lands in a SQLite table. The connections between repos become SQL joins.
 
 ```
-.sprf rules  ->  scan files  ->  extract refs  ->  SQLite index  ->  query / check / link
+deploy values.yaml has    image: backend-api, tag: v2.1.0
+package.json has          name: backend-api, version: 2.1.0
+Cargo.toml has            name: backend-api
+k8s manifest has          env: DATABASE_URL
+.env has                  DATABASE_URL=postgres://...
+```
+
+One `sprefa scan` indexes all of that. One SQL query connects it.
+
+### What if you had something that
+
+- Scans all your repos once and remembers every interesting string, where it lives, and what it means
+- Knows that `image: backend-api` in a deploy config and `name: backend-api` in a package.json are talking about the same thing
+- When it sees `repo: X, tag: v2.1.0` in a config file, automatically checks out repo X at that tag and scans that too
+- Lets you ask "which deploy configs reference a tag that doesn't exist" and get an answer in milliseconds
+- When you move a file or rename a symbol, rewrites every import and use statement that references it
+
+## Quick start
+
+```bash
+sprefa init                          # create config + SQLite DB
+sprefa add ~/repos/my-frontend       # register a repo
+sprefa add ~/repos/my-backend
+sprefa scan                          # index everything
+sprefa sql "SELECT * FROM import_path_data LIMIT 20"
+sprefa eval 'json({ name: $N })' package.json   # one-off extraction, standalone
 ```
 
 ## The .sprf language
 
-Four statement types, one delimiter (`>`), one terminator (`;`).
+Three statement types: `rule`, `query`, `check`.
 
-### rule -- extraction
-
-Name in parens, body in braces, captures inferred from `$VAR` usage in body.
+### rule -- extract structured data from files
 
 ```sprf
 rule(package_name) {
   fs(**/Cargo.toml) > json({ package: { name: $NAME } })
-};
-
-rule(dep_name) {
-  fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } })
 };
 
 rule(deploy_image) {
@@ -50,9 +53,21 @@ rule(env_var_ref_ts) {
 };
 ```
 
-**Scan-driving tags**: `repo($VAR)` and `rev($VAR)` tags in the body trigger demand scanning. Other tags (`fs`, `json`, `ast`, `folder`, `file`) filter and walk trees.
+Each `$VAR` becomes a column in the rule's output table. Co-extracted captures from the same site share a `group_id`, preserving "these values came from the same place."
 
-**Cross-rule references**: `rulename(col: $VAR)` in a rule body binds columns from an upstream rule's output table, creating a dependency edge.
+**Chain with `>`** -- sequential pipeline: glob files, then walk structure, then match AST
+**Branch with `{ }`** -- fork into independent extraction paths
+
+```sprf
+rule(config_value) {
+  fs(**/config.yaml) > json({
+    database: { host: $HOST };
+    database: { port: $PORT };
+  })
+};
+```
+
+**Cross-rule references** -- bind columns from an upstream rule's table, creating a dependency edge:
 
 ```sprf
 rule(svc_version) {
@@ -61,30 +76,28 @@ rule(svc_version) {
 };
 ```
 
-**Rule unions**: multiple rules with the same name and same capture shape produce rows in the same relation.
+**Rule unions** -- same name + same capture shape = rows in the same table:
 
 ```sprf
-rule(dep_source) {
-  fs(**/package.json) > json({ dependencies: { $DEP: $_ } })
-};
-
-rule(dep_source) {
-  fs(**/Cargo.toml) > json({ dependencies: { $DEP: $_ } })
-};
-
-### Selector chain
-
-Each rule body chains slots with `>`. Three slot types:
-
-**`fs(glob)`** -- file matching
-
-```sprf
-fs(**/Cargo.toml)
-fs(**/*.yaml)
-fs(**/docker-compose*.yaml)
+rule(dep_source) { fs(**/package.json) > json({ dependencies: { $DEP: $_ } }) };
+rule(dep_source) { fs(**/Cargo.toml) > json({ dependencies: { $DEP: $_ } }) };
 ```
 
-**`json(pattern)`** -- structural walk on parsed JSON/YAML/TOML
+**Namespaces** -- each `.sprf` file's stem becomes a table prefix. `infra.sprf` containing `rule(image)` produces `infra__image_data`.
+
+### Selector tags
+
+| Tag | What it does |
+|---|---|
+| `fs(glob)` | Match files by path |
+| `json(pattern)` | Walk JSON/YAML/TOML with destructuring, captures, regex keys, recursive descent |
+| `ast(pattern)` or `ast[lang](pattern)` | Structural match via ast-grep (any tree-sitter language) |
+| `line(pattern)` | Line-based regex or segment capture |
+| `repo(pattern)` | Match/capture repo name; triggers demand scanning |
+| `rev(pattern)` / `branch()` / `tag()` | Match/capture git ref; triggers demand scanning |
+| `folder(pattern)` / `file(pattern)` | Match directory or full path |
+
+**json() pattern syntax:**
 
 | Syntax | Meaning |
 |---|---|
@@ -92,180 +105,114 @@ fs(**/docker-compose*.yaml)
 | `{ $KEY: $VAL }` | Iterate all keys, capture each pair |
 | `{ re:^pattern: $V }` | Regex on key name |
 | `{ **: pat }` | Recursive descent (any nesting depth) |
-| `[...$ITEM]` | Array: iterate elements, capture each |
-| `$NAME` | Capture leaf value (SCREAMING_CASE) |
-| `$_` | Match any value, bind nothing |
+| `[...$ITEM]` | Array iteration with capture |
+| `$NAME` | Capture leaf value |
+| `$_` | Wildcard, bind nothing |
 
-**`ast(pattern)`** -- ast-grep structural matching
+**Segment captures** in patterns like repo/rev/file: `$ORG/$REPO` captures both sides of a `/`. `${NAME}` for adjacent captures.
 
-```sprf
-fs(**/*.ts) > ast(process.env.$NAME);
-fs(**/*.rs) > ast[rust](fn $NAME($$$ARGS) -> $RET { $$$BODY });
-```
+**Extract-time constants** -- pre-bound captures for constraining patterns to current context:
 
-Optional `[lang]` suffix overrides language detection. Captures use ast-grep's `$VAR` and `$$$VAR` (multi-node) syntax.
+| Constant | Value |
+|---|---|
+| `$currentRepo` | Current repo name |
+| `$currentRev` | Current branch or tag |
+| `$currentFile` | File path being extracted |
+| `$currentDir` | Parent directory |
+| `$currentStem` | Filename stem (extension stripped) |
+| `$currentExt` | File extension |
 
-### link -- materialized edges
+### query -- SQL over extracted data
 
-Pre-computed joins between rule relations, stored as edges in `match_links`.
-
-```sprf
-link(NAME > NAME, norm_eq) > $dep_to_package;
-link(REPO > NAME, norm_eq) > $image_source;
-link(NAME > KEY, norm_eq) > $env_var_binding;
-```
-
-Source kind `>` target kind, then predicates: `norm_eq`, `string_eq`, `target_file_eq`, `same_repo`, `same_file`, `stem_eq_src`, `ext_eq_src`, `dir_eq_src` (and `_tgt` variants).
-
-### query -- recursive graph traversal
-
-Body atoms are whitespace-delimited (implicit AND). Rule names are queryable relations. Recursive references compile to recursive CTEs.
+Each rule produces a table (`{rule}_data` or `{namespace}__{rule}_data`). Queries are raw SQL against those tables.
 
 ```sprf
 query(transitive_dep) {
   SELECT a.dep, c.dep
-  FROM dep_to_package a
-  JOIN package_has_dep b ON a.pkg = b.pkg
-  JOIN dep_to_package c ON b.dep = c.dep
-};
-
-query(same_ecosystem) {
-  SELECT a.dep, b.dep
-  FROM dep_to_package a
-  JOIN dep_to_package b ON a.pkg = b.pkg
-  WHERE a.dep != b.dep
+  FROM dep_to_package_data a
+  JOIN package_has_dep_data b ON a.pkg = b.pkg
+  JOIN dep_to_package_data c ON b.dep = c.dep
 };
 ```
 
-**Built-in relations** (computed from base tables, no extraction needed):
+**Built-in SQL functions:**
 
-| Relation | Source |
+| Function | What it does |
 |---|---|
-| `$.has_kind($M, "kind")` | matches with this kind |
-| `$.has_norm($M, "val")` | matches whose string normalizes to val |
-| `$.has_value($M, "val")` | matches with exact string value |
-| `$.same_norm($A, $B)` | matches A and B share the same norm |
-| `$.same_norm2($A, $B)` | matches A and B share the same norm2 (suffix-stripped) |
-| `$.same_repo($A, $B)` | matches A and B are in the same repo |
-| `$.same_file($A, $B)` | matches A and B are in the same file |
-| `$.in_repo($M, "name")` | match M is in repo with this name |
-| `$.in_file($M, "path")` | match M is in file matching this path |
-| `$.repo_has_tag($REPO, $TAG)` | repo has this git tag |
-| `$.repo_has_branch($REPO, $BRANCH)` | repo has this branch |
-| `$.repo_has_rev($REPO, $REV)` | repo has this revision (tag or branch) |
+| `re_extract(text, pattern, group)` | Regex capture group extraction |
+| `split_part(text, delim, n)` | Nth part of delimited string |
+| `repo_name(repo_id)` | Repo name lookup |
+| `file_path(file_id)` | File path lookup |
+| `fzy_score(haystack, needle)` | Fuzzy match score (0.0-1.0) |
 
-### check -- invariant verification
+**Built-in views:** `repo_tags` (semver-tagged revisions), `repo_branches` (branch revisions).
 
-Same syntax as query. A check with results means violations. Exit code 1.
+### check -- CI-friendly invariant verification
+
+Same as query. Rows returned = violations. Exit code 1.
 
 ```sprf
 check(missing_tag) {
   SELECT dc.svc, dc.repo, dc.tag
-  FROM deploy_config dc
+  FROM deploy_config_data dc
   LEFT JOIN repo_tags rt ON rt.repo = dc.repo AND rt.tag = dc.tag
   WHERE rt.repo IS NULL
 };
 ```
 
-Non-empty result = violation, exit 1.
-
 ## How it works
-
-Every interesting string in a codebase is a **ref**: a file contains a string at a byte offset. **Matches** give refs semantic labels (rule name + kind). **Links** connect matches across files and repos. **Queries** traverse the resulting graph.
-
-Co-extracted captures share a `group_id` in the matches table, preserving the "these values came from the same extraction site" relationship. Rule names become queryable relations through group_id joins -- a query like `deploy_config($SVC, $REPO, $TAG)` joins three match rows that share a group_id.
-
-```
-repos 1->M files 1->M refs M<-1 strings
-                              |
-                          matches (kind, rule_name, group_id)
-                              |
-                          match_links (source -> target, link_kind)
-```
-
-### Pipeline
 
 ```
 git ls-files
-  -> parallel rayon walk (content hash, skip set)
+  -> parallel rayon walk (content hash dedup, skip set)
   -> per-file extraction (JS/TS via oxc, Rust via syn, structured data via rule engine, AST via ast-grep)
-  -> bulk flush to SQLite (dedup strings, chunked inserts)
-  -> resolve import targets (oxc_resolver with tsconfig support)
-  -> resolve match links (execute link rules)
-  -> demand scanning (repo/rev annotations trigger recursive discovery)
+  -> bulk flush to per-rule SQLite tables (dedup strings, chunked inserts)
+  -> resolve JS/TS import targets (oxc_resolver with tsconfig support)
+  -> demand scanning (repo/rev captures trigger recursive discovery until stable)
 ```
 
 ### Demand scanning
 
-When a rule body contains `repo($REPO)` and `rev($TAG)` tags, the scan pipeline:
-
-1. Extracts string values from captures with repo/rev scan annotations
-2. Pairs them by file (repo + rev from the same source file)
-3. Checks out and scans each discovered (repo, rev) target
-4. Repeats until stable (fixed-point iteration, max 10 rounds)
-
-This lets a deploy values.yaml referencing `repository: myorg/backend, tag: v2.1.0` trigger scanning of `myorg/backend` at tag `v2.1.0`, indexing its contents into the same graph.
+When a rule captures `repo($REPO)` and `rev($TAG)`, the scan pipeline extracts those values, checks out the referenced repo at that tag, scans it, and repeats until all (repo, rev) pairs are scanned. A deploy values.yaml referencing `repository: myorg/backend, tag: v2.1.0` automatically triggers scanning of `myorg/backend@v2.1.0`.
 
 ## CLI
 
 ```
-sprefa init                          # create sprefa.toml + SQLite DB
-sprefa add <path> [--name <name>]    # register a repo
-sprefa daemon [--repo <name>]        # scan + watch + serve
-sprefa scan [--repo <name>]          # index repos
-sprefa watch [--repo <name>]         # filesystem watcher, auto-rewrite
-sprefa serve                         # HTTP server (127.0.0.1:9400)
-sprefa query <term>                  # trigram substring search
-sprefa check                         # run all check rules, exit 1 on violations
-sprefa sql "<SELECT ...>"            # read-only SQL against the index
-sprefa status                        # show indexed repos
+sprefa init                              # create sprefa.toml + SQLite DB
+sprefa add <path> [--name <name>]        # register a repo
+sprefa scan [--repo <name>] [--once]     # index repos
+sprefa daemon [--repo <name>]            # scan + watch + serve (all-in-one)
+sprefa watch [--repo <name>]             # filesystem watcher, auto-rewrite
+sprefa serve                             # HTTP server (127.0.0.1:9400)
+sprefa query <term> [--scope committed|local|all]  # trigram substring search
+sprefa check [name] [--list]             # run/list invariant checks
+sprefa sql "<SELECT ...>"                # read-only SQL against the index
+sprefa eval '<rule>' [files...]          # one-shot extraction, standalone
+sprefa status                            # show indexed repos
+sprefa config                            # print resolved config
+sprefa reset                             # drop + reinit DB
 ```
 
-`sprefa daemon` runs the full pipeline: scan all repos, start filesystem watchers, start ghcache subscriber (if configured), start HTTP server.
+## Built-in extractors
 
-### Direct SQL
-
-```bash
-sprefa sql "SELECT s.value, m.kind, m.rule_name
-            FROM strings s
-            JOIN refs r ON r.string_id = s.id
-            JOIN matches m ON m.ref_id = r.id
-            LIMIT 20"
-```
-
-Read-only (SELECT, WITH, EXPLAIN, PRAGMA). Tab-separated output with header row.
-
-## Extractors
-
-| Extractor | Parser | Languages | Extracts |
+| Extractor | Parser | Files | Extracts |
 |---|---|---|---|
 | JS/TS | oxc | .js .jsx .ts .tsx .mjs .cjs .mts .cts | imports, exports, require(), re-exports |
-| Rust | syn | .rs | use paths, declarations (fn/struct/enum/trait/impl), mod, extern crate |
-| Rule engine | serde | JSON, YAML, TOML | configurable tree walks with captures |
+| Rust | syn | .rs | use paths (crate/self/super), declarations, mod, extern crate |
+| Rule engine | serde | JSON, YAML, TOML | configurable tree walks via .sprf rules |
 | ast-grep | ast-grep-core | anything with a tree-sitter grammar | structural pattern matching |
 
 ## Watch + rewrite
 
-The watcher classifies filesystem events and propagates renames:
+The watcher detects file moves (content hash correlation within 100ms) and declaration renames (span proximity diffing within 64 bytes), then rewrites all affected import/use statements across the index.
 
 | Event | JS/TS | Rust |
 |---|---|---|
-| File move | Rewrite all import/require/export paths targeting the moved file | Rewrite all `use` statements referencing the old module path |
-| Declaration rename | Rewrite `import { OldName }` across consumers | Rewrite `use crate::mod::OldName` across consumers |
+| File move | Rewrite import/require/export paths | Rewrite `use` statements |
+| Declaration rename | Rewrite `import { OldName }` | Rewrite `use crate::mod::OldName` |
 | File delete | Log broken references | Same |
 
-Move detection correlates delete+create pairs by content hash within a 100ms window. Declaration renames are detected by diffing extractions by span proximity (within 64 bytes = same declaration, different name).
-
-### Rust module mapping
-
-```
-src/lib.rs       -> crate
-src/utils.rs     -> crate::utils
-src/foo/mod.rs   -> crate::foo
-src/foo/bar.rs   -> crate::foo::bar
-```
-
-All prefix styles (`crate::`, `self::`, `super::`, chained `super::super::`) resolve to absolute module paths at query time.
+Rust module mapping: `src/lib.rs` -> `crate`, `src/foo/bar.rs` -> `crate::foo::bar`. All prefix styles (`crate::`, `self::`, `super::`, chained `super::super::`) resolve correctly.
 
 ## Config
 
@@ -309,14 +256,14 @@ poll_ms = 500
 
 ```
 crates/
-  cli/        clap CLI
+  cli/        clap CLI, eval subcommand
   config/     TOML loading, filtering, source discovery
-  schema/     SQLite migrations, types, queries
+  schema/     SQLite migrations, per-rule table DDL
   extract/    Extractor trait + RawRef
   index/      parallel file walk, xxh3 hashing
-  cache/      bulk flush, import resolution (oxc_resolver), match links, demand scanning
-  rules/      rule engine: types, tree walker, link compiler, query compiler
-  sprf/       .sprf parser: text -> AST -> RuleSet + DerivedRules
+  cache/      bulk flush, import resolution, demand scanning
+  rules/      rule engine: tree walker, pattern matcher, emitter
+  sprf/       .sprf parser: text -> AST -> RuleSet
   js/         oxc JS/TS extractor
   rs/         syn Rust extractor
   watch/      filesystem watcher + rewrite pipeline

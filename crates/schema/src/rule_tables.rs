@@ -15,6 +15,9 @@ pub struct RuleColumn {
 /// Metadata for a per-rule table.
 pub struct RuleTableDef {
     pub rule_name: String,
+    /// None = default schema (builtins). Some(stem) = namespaced from .sprf filename.
+    /// Table names use double-underscore: `{namespace}__{rule}_data`.
+    pub namespace: Option<String>,
     pub columns: Vec<RuleColumn>,
 }
 
@@ -35,9 +38,34 @@ pub struct ScanPair {
 }
 
 impl RuleTableDef {
-    /// The underlying data table name: `{rule_name}_data`.
+    /// The underlying data table name.
+    /// With namespace: `{namespace}__{rule_name}_data`.
+    /// Without: `{rule_name}_data`.
     pub fn data_table_name(&self) -> String {
-        format!("{}_data", self.rule_name)
+        match &self.namespace {
+            Some(ns) => format!("{ns}__{}_data", self.rule_name),
+            None => format!("{}_data", self.rule_name),
+        }
+    }
+
+    /// The view name (no `_data` suffix, no `_refs` suffix).
+    /// With namespace: `{namespace}__{rule_name}`.
+    /// Without: `{rule_name}`.
+    pub fn view_name(&self) -> String {
+        match &self.namespace {
+            Some(ns) => format!("{ns}__{}", self.rule_name),
+            None => self.rule_name.clone(),
+        }
+    }
+
+    /// The refs view name.
+    /// With namespace: `{namespace}__{rule_name}_refs`.
+    /// Without: `{rule_name}_refs`.
+    pub fn refs_view_name(&self) -> String {
+        match &self.namespace {
+            Some(ns) => format!("{ns}__{}_refs", self.rule_name),
+            None => format!("{}_refs", self.rule_name),
+        }
     }
 
     /// CREATE TABLE IF NOT EXISTS for this rule's data table.
@@ -78,8 +106,9 @@ impl RuleTableDef {
         select_cols.push("t.rev".to_string());
 
         format!(
-            "CREATE VIEW IF NOT EXISTS \"{name}\" AS\nSELECT {cols}\nFROM \"{name}_data\" t\n{joins}",
-            name = self.rule_name,
+            "CREATE VIEW IF NOT EXISTS \"{view}\" AS\nSELECT {cols}\nFROM \"{data}\" t\n{joins}",
+            view = self.view_name(),
+            data = self.data_table_name(),
             cols = select_cols.join(", "),
             joins = joins.join("\n"),
         )
@@ -109,8 +138,9 @@ impl RuleTableDef {
         select_cols.push("t.rev".to_string());
 
         format!(
-            "CREATE VIEW IF NOT EXISTS \"{name}_refs\" AS\nSELECT {cols}\nFROM \"{name}_data\" t\n{joins}",
-            name = self.rule_name,
+            "CREATE VIEW IF NOT EXISTS \"{refs_view}\" AS\nSELECT {cols}\nFROM \"{data}\" t\n{joins}",
+            refs_view = self.refs_view_name(),
+            data = self.data_table_name(),
             cols = select_cols.join(", "),
             joins = joins.join("\n"),
         )
@@ -122,7 +152,7 @@ impl RuleTableDef {
             .iter()
             .filter_map(|c| {
                 c.scan.as_ref().map(|kind| ScanTarget {
-                    table: self.rule_name.clone(),
+                    table: self.data_table_name(),
                     column: c.name.clone(),
                     kind: kind.clone(),
                 })
@@ -142,7 +172,7 @@ impl RuleTableDef {
             .iter()
             .find(|c| c.scan.as_deref() == Some("rev"))?;
         Some(ScanPair {
-            table: self.rule_name.clone(),
+            table: self.data_table_name(),
             repo_column: repo_col.name.clone(),
             rev_column: rev_col.name.clone(),
         })
@@ -152,6 +182,7 @@ impl RuleTableDef {
     pub fn builtin(rule_name: &str) -> Self {
         RuleTableDef {
             rule_name: rule_name.to_string(),
+            namespace: None,
             columns: vec![RuleColumn {
                 name: "value".to_string(),
                 scan: None,
@@ -160,9 +191,10 @@ impl RuleTableDef {
     }
 
     /// Build from a rule's create_matches definitions.
-    pub fn from_matches(rule_name: &str, matches: &[(String, Option<String>)]) -> Self {
+    pub fn from_matches(rule_name: &str, namespace: Option<String>, matches: &[(String, Option<String>)]) -> Self {
         RuleTableDef {
             rule_name: rule_name.to_string(),
+            namespace,
             columns: matches
                 .iter()
                 .map(|(kind, scan)| RuleColumn {
@@ -199,9 +231,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn create_view() {
+    fn create_view_no_namespace() {
         let def = RuleTableDef::from_matches(
             "deploy_config",
+            None,
             &[("SVC".into(), None), ("REPO".into(), Some("repo".into()))],
         );
         let sql = def.create_view_sql();
@@ -216,9 +249,54 @@ mod tests {
     }
 
     #[test]
+    fn create_table_with_namespace() {
+        let def = RuleTableDef::from_matches(
+            "package",
+            Some("frontend".to_string()),
+            &[("NAME".into(), None)],
+        );
+        let sql = def.create_table_sql();
+        assert!(sql.contains("\"frontend__package_data\""), "got: {sql}");
+    }
+
+    #[test]
+    fn create_table_without_namespace() {
+        let def = RuleTableDef::builtin("import_path");
+        let sql = def.create_table_sql();
+        assert!(sql.contains("\"import_path_data\""), "got: {sql}");
+        assert!(!sql.contains("__"), "builtins should have no __ prefix, got: {sql}");
+    }
+
+    #[test]
+    fn create_view_with_namespace() {
+        let def = RuleTableDef::from_matches(
+            "package",
+            Some("frontend".to_string()),
+            &[("NAME".into(), None)],
+        );
+        let sql = def.create_view_sql();
+        assert!(sql.contains("\"frontend__package\""), "got: {sql}");
+        assert!(sql.contains("FROM \"frontend__package_data\""), "got: {sql}");
+    }
+
+    #[test]
+    fn data_table_name_qualified() {
+        let def = RuleTableDef::from_matches(
+            "pkg",
+            Some("infra".to_string()),
+            &[],
+        );
+        assert_eq!(def.data_table_name(), "infra__pkg_data");
+
+        let def2 = RuleTableDef::builtin("rs_use");
+        assert_eq!(def2.data_table_name(), "rs_use_data");
+    }
+
+    #[test]
     fn scan_targets() {
         let def = RuleTableDef::from_matches(
             "deploy_config",
+            None,
             &[
                 ("SVC".into(), None),
                 ("REPO".into(), Some("repo".into())),
@@ -231,5 +309,21 @@ mod tests {
         assert_eq!(targets[0].kind, "repo");
         assert_eq!(targets[1].column, "tag");
         assert_eq!(targets[1].kind, "rev");
+    }
+
+    #[test]
+    fn scan_targets_with_namespace() {
+        let def = RuleTableDef::from_matches(
+            "image_refs",
+            Some("infra".to_string()),
+            &[
+                ("REPO".into(), Some("repo".into())),
+                ("TAG".into(), Some("rev".into())),
+            ],
+        );
+        let pair = def.scan_pair().unwrap();
+        assert_eq!(pair.table, "infra__image_refs_data");
+        assert_eq!(pair.repo_column, "repo");
+        assert_eq!(pair.rev_column, "tag");
     }
 }

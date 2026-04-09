@@ -19,11 +19,17 @@ const REF_CHUNK: usize = 1000;
 /// The refs/strings index stays separate for FTS, refactoring, and LSP provenance.
 pub struct SqliteStore {
     pool: SqlitePool,
+    /// rule_name -> namespace (None for builtins, Some(stem) for .sprf rules).
+    /// Set by create_rule_tables; used by flush_batch to build qualified table names.
+    rule_namespaces: std::sync::RwLock<HashMap<String, Option<String>>>,
 }
 
 impl SqliteStore {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            rule_namespaces: std::sync::RwLock::new(HashMap::new()),
+        }
     }
 
     pub fn pool(&self) -> &SqlitePool {
@@ -332,7 +338,16 @@ impl Store for SqliteStore {
                         .collect::<Vec<_>>()
                         .join(",")
                 );
-                let table_name = format!("{rule_name}_data");
+                let table_name = {
+                    let ns_map = self.rule_namespaces.read().ok();
+                    let ns = ns_map.as_ref()
+                        .and_then(|m| m.get(rule_name.as_str()))
+                        .and_then(|n| n.as_deref());
+                    match ns {
+                        Some(ns) => format!("{ns}__{rule_name}_data"),
+                        None => format!("{rule_name}_data"),
+                    }
+                };
                 let col_list = col_names.join(", ");
                 let chunk_size = (32000 / params_per_row).max(1);
 
@@ -385,11 +400,17 @@ impl Store for SqliteStore {
         use crate::store::RuleChangeKind;
 
         for spec in tables {
+            // Key used in sprf_meta: "{namespace}.{rule}" when namespaced, else plain rule_name.
+            let meta_key = match &spec.namespace {
+                Some(ns) => format!("{}.{}", ns, spec.rule_name),
+                None => spec.rule_name.clone(),
+            };
+
             // Check if we have hash info for this rule
             let change_kind = if let Some(hash_map) = hashes {
                 if let Some(rule_hashes) = hash_map.get(&spec.rule_name) {
                     self.check_rule_hashes(
-                        &spec.rule_name,
+                        &meta_key,
                         &rule_hashes.schema_hash,
                         &rule_hashes.extract_hash,
                     )
@@ -409,6 +430,7 @@ impl Store for SqliteStore {
 
             let def = RuleTableDef::from_matches(
                 &spec.rule_name,
+                spec.namespace.clone(),
                 &spec
                     .columns
                     .iter()
@@ -438,10 +460,10 @@ impl Store for SqliteStore {
             }
 
             // Views: drop and recreate to pick up any schema changes
-            let _ = sqlx::query(&format!("DROP VIEW IF EXISTS \"{}\"", spec.rule_name))
+            let _ = sqlx::query(&format!("DROP VIEW IF EXISTS \"{}\"", def.view_name()))
                 .execute(&self.pool)
                 .await;
-            let _ = sqlx::query(&format!("DROP VIEW IF EXISTS \"{}_refs\"", spec.rule_name))
+            let _ = sqlx::query(&format!("DROP VIEW IF EXISTS \"{}\"", def.refs_view_name()))
                 .execute(&self.pool)
                 .await;
 
@@ -452,25 +474,36 @@ impl Store for SqliteStore {
                 .execute(&self.pool)
                 .await?;
 
-            // Update sprf_meta if we have hashes
+            // Update sprf_meta if we have hashes.
             if let Some(hash_map) = hashes {
                 if let Some(rule_hashes) = hash_map.get(&spec.rule_name) {
+                    let source_file = spec.namespace.as_deref()
+                        .map(|ns| format!("{}.sprf", ns))
+                        .unwrap_or_else(|| "rules.sprf".to_string());
                     let _ = self.update_rule_hashes(
-                        &spec.rule_name,
-                        "rules.sprf", // TODO: pass actual source file path
+                        &meta_key,
+                        &source_file,
                         &rule_hashes.schema_hash,
                         &rule_hashes.extract_hash,
                     ).await;
                 }
             }
         }
+
+        // Populate rule_namespaces for flush_batch lookups.
+        if let Ok(mut map) = self.rule_namespaces.write() {
+            for spec in tables {
+                map.insert(spec.rule_name.clone(), spec.namespace.clone());
+            }
+        }
+
         Ok(())
     }
 
     async fn unscanned_repos(&self, table: &str, column: &str) -> Result<Vec<String>> {
-        // Query the per-rule table for repo values not yet in repos table.
+        // `table` is the fully-qualified data table name (e.g. "frontend__svc_data").
         let sql = format!(
-            "SELECT DISTINCT s.value FROM \"{table}_data\" t \
+            "SELECT DISTINCT s.value FROM \"{table}\" t \
              JOIN strings s ON t.{column}_str = s.id \
              WHERE s.value NOT IN (SELECT name FROM repos)"
         );
@@ -485,12 +518,9 @@ impl Store for SqliteStore {
         table: &str,
         column: &str,
     ) -> Result<Vec<(String, String)>> {
-        // Find (repo_name, rev_value) pairs where the rev hasn't been scanned.
-        // This requires knowing which column is the repo column. For now,
-        // scan targets pair repo+rev columns from the same rule.
-        // This is a simplified version -- Step 4 will refine the query.
+        // `table` is the fully-qualified data table name.
         let sql = format!(
-            "SELECT DISTINCT s.value, '' FROM \"{table}_data\" t \
+            "SELECT DISTINCT s.value, '' FROM \"{table}\" t \
              JOIN strings s ON t.{column}_str = s.id \
              LEFT JOIN repo_revs rr ON rr.rev = s.value \
              WHERE rr.rev IS NULL"
@@ -507,9 +537,10 @@ impl Store for SqliteStore {
         repo_column: &str,
         rev_column: &str,
     ) -> Result<Vec<(String, String)>> {
+        // `table` is the fully-qualified data table name.
         let sql = format!(
             "SELECT DISTINCT repo_s.value, rev_s.value \
-             FROM \"{table}_data\" t \
+             FROM \"{table}\" t \
              JOIN strings repo_s ON t.{repo_column}_str = repo_s.id \
              JOIN strings rev_s ON t.{rev_column}_str = rev_s.id \
              WHERE NOT EXISTS ( \

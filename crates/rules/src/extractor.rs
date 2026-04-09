@@ -116,6 +116,7 @@ impl RuleExtractor {
             let context_caps =
                 resolve_context_captures(&rule.context_captures, ctx, path, &git_caps, &file_caps);
 
+            let seed = build_current_captures(ctx, path);
             let results = if let Some(ast_sel) = &rule.ast {
                 ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
             } else {
@@ -123,7 +124,7 @@ impl RuleExtractor {
                     Some(v) => v,
                     None => continue,
                 };
-                walk::walk(&value, &rule.steps)
+                walk::walk_with_captures(&value, &rule.steps, seed)
             };
 
             for result in results {
@@ -163,60 +164,32 @@ impl Extractor for RuleExtractor {
         let mut refs = vec![];
         let mut group_counter: u32 = 0;
         for rule in self.rules_for_path(path) {
-            eprintln!(
-                "EXTRACT_DEBUG: rule '{}' matched path '{}'",
-                rule.name, path
-            );
             let repo = ctx.repo.unwrap_or("");
             let git_caps = match rule.git.matches_with_captures(repo, ctx.branch, ctx.tags) {
                 Some(c) => c,
-                None => {
-                    eprintln!("EXTRACT_DEBUG: git mismatch for '{}'", rule.name);
-                    continue;
-                }
+                None => continue,
             };
 
             let file_caps = match rule.file.matches_with_captures(path) {
                 Some(c) => c,
-                None => {
-                    eprintln!("EXTRACT_DEBUG: file mismatch for '{}'", rule.name);
-                    continue;
-                }
+                None => continue,
             };
 
             let context_caps =
                 resolve_context_captures(&rule.context_captures, ctx, path, &git_caps, &file_caps);
 
+            let seed = build_current_captures(ctx, path);
             let results = if let Some(ast_sel) = &rule.ast {
                 ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
             } else {
                 let value = match parse_data(source, ext) {
                     Some(v) => v,
-                    None => {
-                        eprintln!("EXTRACT_DEBUG: parse_data failed for '{}'", path);
-                        continue;
-                    }
+                    None => continue,
                 };
-                eprintln!(
-                    "EXTRACT_DEBUG: walking {} steps for '{}'",
-                    rule.steps.len(),
-                    rule.name
-                );
-                let res = walk::walk(&value, &rule.steps);
-                eprintln!(
-                    "EXTRACT_DEBUG: got {} results for '{}'",
-                    res.len(),
-                    rule.name
-                );
-                res
+                walk::walk_with_captures(&value, &rule.steps, seed)
             };
 
             let has_matches = !rule.create_matches.is_empty();
-            eprintln!(
-                "EXTRACT_DEBUG: has_matches={}, results={}",
-                has_matches,
-                results.len()
-            );
             for result in results {
                 let merged = if context_caps.is_empty() {
                     result.clone()
@@ -245,6 +218,35 @@ impl Extractor for RuleExtractor {
         }
         refs
     }
+}
+
+/// Build $current* seed captures from the extract context and file path.
+/// These are pre-seeded into the walk engine so patterns like $currentRepo
+/// act as constraints rather than free captures.
+fn build_current_captures(ctx: &ExtractContext, path: &str) -> HashMap<String, CapturedValue> {
+    let mut seed = HashMap::new();
+    let cv = |text: String| CapturedValue {
+        text,
+        span_start: 0,
+        span_end: 0,
+    };
+    if let Some(repo) = ctx.repo {
+        seed.insert("currentRepo".to_string(), cv(repo.to_string()));
+    }
+    if let Some(branch) = ctx.branch {
+        seed.insert("currentRev".to_string(), cv(branch.to_string()));
+    }
+    seed.insert("currentFile".to_string(), cv(path.to_string()));
+    if let Some(dir) = Path::new(path).parent().and_then(|p| p.to_str()) {
+        seed.insert("currentDir".to_string(), cv(dir.to_string()));
+    }
+    if let Some(stem) = Path::new(path).file_stem().and_then(|s| s.to_str()) {
+        seed.insert("currentStem".to_string(), cv(stem.to_string()));
+    }
+    if let Some(ext) = Path::new(path).extension().and_then(|e| e.to_str()) {
+        seed.insert("currentExt".to_string(), cv(ext.to_string()));
+    }
+    seed
 }
 
 /// Resolve context captures to concrete values for this file/context.
@@ -539,5 +541,77 @@ mod tests {
         let ruleset: RuleSet = serde_json::from_str(json).unwrap();
         let err = RuleExtractor::from_ruleset(&ruleset).unwrap_err();
         assert!(err.to_string().contains("context step"), "{}", err);
+    }
+
+    #[test]
+    fn current_repo_constrains_match() {
+        // Rule: match package.json where name == currentRepo AND extract VER
+        let json = r#"{
+            "rules": [{
+                "name": "self_version",
+                "select": [
+                    { "step": "file", "pattern": "**/package.json" },
+                    { "step": "object", "entries": [
+                        { "key": "name", "value": [{ "step": "leaf_pattern", "pattern": "$currentRepo" }] },
+                        { "key": "version", "value": [{ "step": "leaf", "capture": "VER" }] }
+                    ]}
+                ],
+                "create_matches": [{ "capture": "VER", "kind": "ver" }]
+            }]
+        }"#;
+        let ruleset: RuleSet = serde_json::from_str(json).unwrap();
+        let ex = RuleExtractor::from_ruleset(&ruleset).unwrap();
+
+        let src = br#"{"name": "my-service", "version": "1.0.0"}"#;
+
+        // Matching repo -> VER extracted
+        let ctx_match = ExtractContext {
+            repo: Some("my-service"),
+            branch: Some("main"),
+            tags: &[],
+        };
+        let refs = ex.extract(src, "package.json", &ctx_match);
+        assert!(!refs.is_empty());
+        assert!(refs.iter().any(|r| r.value == "1.0.0"));
+
+        // Non-matching repo -> no refs
+        let ctx_nomatch = ExtractContext {
+            repo: Some("other-service"),
+            branch: Some("main"),
+            tags: &[],
+        };
+        let refs2 = ex.extract(src, "package.json", &ctx_nomatch);
+        assert!(refs2.is_empty());
+    }
+
+    #[test]
+    fn current_stem_constrains_match() {
+        let json = r#"{
+            "rules": [{
+                "name": "config_check",
+                "select": [
+                    { "step": "file", "pattern": "**/*.yaml" },
+                    { "step": "object", "entries": [
+                        { "key": "file", "value": [{ "step": "leaf_pattern", "pattern": "$currentStem" }] },
+                        { "key": "version", "value": [{ "step": "leaf", "capture": "VER" }] }
+                    ]}
+                ],
+                "create_matches": [{ "capture": "VER", "kind": "ver" }]
+            }]
+        }"#;
+        let ruleset: RuleSet = serde_json::from_str(json).unwrap();
+        let ex = RuleExtractor::from_ruleset(&ruleset).unwrap();
+
+        let ctx = ExtractContext { repo: Some("r"), branch: Some("main"), tags: &[] };
+
+        // "file" value matches stem "config" for path "settings/config.yaml"
+        let src_match = br#"{"file": "config", "version": "2"}"#;
+        let refs = ex.extract(src_match, "settings/config.yaml", &ctx);
+        assert!(!refs.is_empty());
+
+        // "file" value does not match stem
+        let src_nomatch = br#"{"file": "other", "version": "2"}"#;
+        let refs2 = ex.extract(src_nomatch, "settings/config.yaml", &ctx);
+        assert!(refs2.is_empty());
     }
 }

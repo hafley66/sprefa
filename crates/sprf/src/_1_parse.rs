@@ -338,10 +338,12 @@ fn try_parse_block(input: &str) -> anyhow::Result<Option<(RuleBody, &str)>> {
     // Parse the block contents
     let (children, rest) = parse_block_contents(&after_slot[1..])?;
 
-    Ok(Some((RuleBody::Block { slot, children }, rest)))
+    Ok(Some((RuleBody::Block { slot, children, is_chain: false }, rest)))
 }
 
 /// Parse contents of a { ... } block.
+/// Children are semicolon-delimited: `{ a > b; c > d; }`
+/// Trailing semicolon before `}` is optional.
 /// Returns list of children and remaining input (after })
 fn parse_block_contents(input: &str) -> anyhow::Result<(Vec<RuleBody>, &str)> {
     let mut children = vec![];
@@ -357,7 +359,6 @@ fn parse_block_contents(input: &str) -> anyhow::Result<(Vec<RuleBody>, &str)> {
         // Check for end of block
         if remaining.starts_with('}') {
             let rest = &remaining[1..];
-            // Don't consume ; here - let caller handle it
             return Ok((children, rest));
         }
 
@@ -365,20 +366,22 @@ fn parse_block_contents(input: &str) -> anyhow::Result<(Vec<RuleBody>, &str)> {
         if let Some((cref, rest)) = try_parse_cross_ref(remaining)? {
             children.push(cref);
             remaining = rest;
-            continue;
-        }
-
-        // Try block
-        if let Some((block, rest)) = try_parse_block(remaining)? {
+        } else if let Some((block, rest)) = try_parse_block(remaining)? {
+            // Try block
             children.push(block);
             remaining = rest;
-            continue;
+        } else {
+            // Otherwise parse as a step chain
+            let (step, rest) = parse_step_chain(remaining)?;
+            children.push(step);
+            remaining = rest;
         }
 
-        // Otherwise parse as a step chain
-        let (step, rest) = parse_step_chain(remaining)?;
-        children.push(step);
-        remaining = rest;
+        // Consume semicolon delimiter between siblings
+        remaining = skip_ws_and_comments(remaining);
+        if remaining.starts_with(';') {
+            remaining = &remaining[1..];
+        }
     }
 }
 
@@ -419,11 +422,13 @@ fn parse_step_chain(input: &str) -> anyhow::Result<(RuleBody, &str)> {
         }
     }
 
-    // Return as a Block - first slot is the "scope", rest are children
+    // Return as a Block - first slot is the "scope", rest are children.
+    // is_chain=true marks these children as sequential pipeline steps, not branches.
     Ok((
         RuleBody::Block {
             slot: first_slot,
             children,
+            is_chain: true,
         },
         rest,
     ))
@@ -612,7 +617,7 @@ mod tests {
 
         // Check that body[0] is a block
         assert_eq!(decl.body.len(), 1);
-        let RuleBody::Block { slot, children } = &decl.body[0] else {
+        let RuleBody::Block { slot, children, .. } = &decl.body[0] else {
             panic!("expected Block body")
         };
         assert!(matches!(slot.tag(), Some(Tag::Repo)));
@@ -641,6 +646,7 @@ mod tests {
         let RuleBody::Block {
             slot: repo_slot,
             children: repo_children,
+            ..
         } = &decl.body[0]
         else {
             panic!("expected outer repo block")
@@ -652,6 +658,7 @@ mod tests {
         let RuleBody::Block {
             slot: rev_slot,
             children: rev_children,
+            ..
         } = &repo_children[0]
         else {
             panic!("expected rev block")

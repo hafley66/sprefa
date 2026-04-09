@@ -36,9 +36,9 @@ pub fn lower_program(program: &Program) -> Result<(RuleSet, Vec<DepEdge>)> {
     for stmt in program {
         match stmt {
             Statement::Rule(decl) => {
-                let rule = lower_rule_decl(decl)?;
+                let decl_rules = lower_rule_decl(decl)?;
                 collect_dep_edges(&decl.body, &decl.name, &mut edges);
-                rules.push(rule);
+                rules.extend(decl_rules);
             }
             Statement::Check(_) => {
                 // Check blocks are handled separately by the invariant checker
@@ -103,40 +103,98 @@ struct ScopedStep {
     line_matcher: Option<LineMatcher>,
 }
 
-fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
-    // Flatten all body items into scoped steps, collecting json annotations.
-    let mut all_scoped = vec![];
-    let mut json_annotations = vec![];
+/// Expand one RuleBody into all its monomorphized variants.
+///
+/// Forking only happens at brace-block levels (`is_chain: false`). Chain-blocks
+/// (`is_chain: true`) have sequential pipeline children that must stay together.
+///
+/// A Block (or Ref) with N brace children becomes N variants, each with one child path.
+/// A leaf (Step, chain-block, or empty Block/Ref) produces one variant unchanged.
+fn monomorphize_one(body: &RuleBody) -> Vec<RuleBody> {
+    match body {
+        RuleBody::Step(_) => vec![body.clone()],
+        RuleBody::Block { is_chain: true, .. } => vec![body.clone()],
+        RuleBody::Block { slot, children, is_chain: false } if children.is_empty() => {
+            vec![body.clone()]
+        }
+        RuleBody::Block { slot, children, is_chain: false } => {
+            let mut result = vec![];
+            for child in children {
+                for variant in monomorphize_one(child) {
+                    result.push(RuleBody::Block {
+                        slot: slot.clone(),
+                        children: vec![variant],
+                        is_chain: false,
+                    });
+                }
+            }
+            result
+        }
+        RuleBody::Ref { cross_ref, children } if children.is_empty() => vec![body.clone()],
+        RuleBody::Ref { cross_ref, children } => {
+            let mut result = vec![];
+            for child in children {
+                for variant in monomorphize_one(child) {
+                    result.push(RuleBody::Ref {
+                        cross_ref: cross_ref.clone(),
+                        children: vec![variant],
+                    });
+                }
+            }
+            result
+        }
+    }
+}
+
+/// Expand a rule body list into all monomorphized paths.
+///
+/// Top-level items in `bodies` are sequential (AND conditions); they are NOT branches.
+/// Branching happens only inside brace-block children. For each top-level item that
+/// expands to N variants, the Cartesian product with other top-level variants is taken.
+///
+/// In practice, branching only occurs at one brace level, so a rule with N branches
+/// in one block produces exactly N paths. A rule with no branches produces 1 path.
+fn monomorphize_bodies(bodies: &[RuleBody]) -> Vec<Vec<RuleBody>> {
+    if bodies.is_empty() {
+        return vec![vec![]];
+    }
+    // Start with one empty path, then extend by each body item's variants.
+    let mut all_paths: Vec<Vec<RuleBody>> = vec![vec![]];
+    for body in bodies {
+        let variants = monomorphize_one(body);
+        if variants.len() == 1 {
+            // Common case: no branching -- append to all existing paths.
+            for path in &mut all_paths {
+                path.push(variants[0].clone());
+            }
+        } else {
+            // Branching: each existing path multiplies by N variants.
+            let prev_paths = std::mem::take(&mut all_paths);
+            for path in prev_paths {
+                for variant in &variants {
+                    let mut new_path = path.clone();
+                    new_path.push(variant.clone());
+                    all_paths.push(new_path);
+                }
+            }
+        }
+    }
+    all_paths
+}
+
+fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
+    // Compute create_matches from ALL captures across ALL branches so that every
+    // monomorphized Rule shares the same table schema.
+    let mut scan_vars_all: HashMap<String, String> = HashMap::new();
+    collect_scan_annotations(&decl.body, &mut scan_vars_all);
+
+    // Collect all json annotations from a full flatten of the original body to seed scan_vars.
+    let mut probe_annots = vec![];
     for body in &decl.body {
-        let flattened = flatten_body(body, 0, &HashSet::new(), &mut json_annotations)?;
-        all_scoped.extend(flattened);
+        let _ = flatten_body(body, 0, &HashSet::new(), &mut probe_annots);
     }
-
-    // Sort by scope depth - outer scopes must execute before inner
-    let mut scoped_steps = all_scoped;
-    scoped_steps.sort_by_key(|s| s.depth);
-
-    // Collect all select steps in order
-    let mut select: Vec<SelectStep> = vec![];
-    let mut select_ast: Option<AstSelector> = None;
-    let mut line_matcher: Option<LineMatcher> = None;
-
-    for scoped in &scoped_steps {
-        select.extend(scoped.select_steps.clone());
-        if let Some(ast) = scoped.ast_selector.clone() {
-            select_ast = Some(ast);
-        }
-        if let Some(lm) = scoped.line_matcher.clone() {
-            line_matcher = Some(lm);
-        }
-    }
-
-    // Infer create_matches from all $VARs in body.
-    // Detect repo()/rev() tags and inline json annotations to set scan annotations.
-    let mut scan_vars: HashMap<String, String> = HashMap::new();
-    collect_scan_annotations(&decl.body, &mut scan_vars);
-    for annot in &json_annotations {
-        scan_vars.insert(annot.var.clone(), annot.kind.clone());
+    for annot in &probe_annots {
+        scan_vars_all.insert(annot.var.clone(), annot.kind.clone());
     }
 
     let mut all_vars: Vec<String> = vec![];
@@ -154,19 +212,50 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Rule> {
             capture: var.clone(),
             kind: var.clone(),
             parent: None,
-            scan: scan_vars.get(var).cloned(),
+            scan: scan_vars_all.get(var).cloned(),
         })
         .collect();
 
-    Ok(Rule {
-        name: decl.name.clone(),
-        description: None,
-        select,
-        select_ast,
-        value: line_matcher,
-        create_matches,
-        confidence: None,
-    })
+    // Monomorphize: expand body tree into all root-to-leaf paths.
+    let paths = monomorphize_bodies(&decl.body);
+
+    let mut rules = vec![];
+    for path_bodies in &paths {
+        let mut all_scoped = vec![];
+        let mut json_annotations = vec![];
+        for body in path_bodies {
+            let flattened = flatten_body(body, 0, &HashSet::new(), &mut json_annotations)?;
+            all_scoped.extend(flattened);
+        }
+
+        all_scoped.sort_by_key(|s| s.depth);
+
+        let mut select: Vec<SelectStep> = vec![];
+        let mut select_ast: Option<AstSelector> = None;
+        let mut line_matcher: Option<LineMatcher> = None;
+
+        for scoped in &all_scoped {
+            select.extend(scoped.select_steps.clone());
+            if let Some(ast) = scoped.ast_selector.clone() {
+                select_ast = Some(ast);
+            }
+            if let Some(lm) = scoped.line_matcher.clone() {
+                line_matcher = Some(lm);
+            }
+        }
+
+        rules.push(Rule {
+            name: decl.name.clone(),
+            description: None,
+            select,
+            select_ast,
+            value: line_matcher,
+            create_matches: create_matches.clone(),
+            confidence: None,
+        });
+    }
+
+    Ok(rules)
 }
 
 /// Walk rule bodies to find repo($VAR)/rev($VAR) tags and record their
@@ -175,7 +264,7 @@ fn collect_scan_annotations(bodies: &[RuleBody], scan_vars: &mut HashMap<String,
     for body in bodies {
         let (slot, children) = match body {
             RuleBody::Step(slot) => (Some(slot), &[][..]),
-            RuleBody::Block { slot, children } => (Some(slot), children.as_slice()),
+            RuleBody::Block { slot, children, .. } => (Some(slot), children.as_slice()),
             RuleBody::Ref { children, .. } => (None, children.as_slice()),
         };
         if let Some(Slot::Tagged { tag, body, .. }) = slot {
@@ -214,7 +303,7 @@ fn flatten_body(
             let scoped = slot_to_scoped_step(slot, depth, parent_vars, json_annotations)?;
             result.push(scoped);
         }
-        RuleBody::Block { slot, children } => {
+        RuleBody::Block { slot, children, .. } => {
             let block_vars = extract_slot_vars(slot);
             let mut available_vars = parent_vars.clone();
             available_vars.extend(block_vars.iter().cloned());
@@ -756,5 +845,131 @@ mod tests {
             "#,
         );
         assert!(edges.is_empty());
+    }
+
+    // ── Monomorphization ─────────────────────────────
+
+    #[test]
+    fn monomorphize_single_path_unchanged() {
+        use crate::_0_ast::{Slot, Tag};
+        let body = vec![RuleBody::Block {
+            slot: Slot::Tagged { tag: Tag::Repo, arg: None, body: "$REPO".into() },
+            is_chain: false,
+            children: vec![RuleBody::Block {
+                slot: Slot::Tagged { tag: Tag::Rev, arg: None, body: "main".into() },
+                is_chain: false,
+                children: vec![RuleBody::Step(Slot::Tagged {
+                    tag: Tag::Fs,
+                    arg: None,
+                    body: "a".into(),
+                })],
+            }],
+        }];
+        let paths = monomorphize_bodies(&body);
+        assert_eq!(paths.len(), 1);
+    }
+
+    #[test]
+    fn monomorphize_two_siblings() {
+        use crate::_0_ast::{Slot, Tag};
+        let body = vec![RuleBody::Block {
+            slot: Slot::Tagged { tag: Tag::Repo, arg: None, body: "$REPO".into() },
+            is_chain: false,
+            children: vec![
+                RuleBody::Block {
+                    slot: Slot::Tagged { tag: Tag::Rev, arg: None, body: "main".into() },
+                    is_chain: false,
+                    children: vec![RuleBody::Step(Slot::Tagged {
+                        tag: Tag::Fs,
+                        arg: None,
+                        body: "a".into(),
+                    })],
+                },
+                RuleBody::Block {
+                    slot: Slot::Tagged { tag: Tag::Rev, arg: None, body: "staging".into() },
+                    is_chain: false,
+                    children: vec![RuleBody::Step(Slot::Tagged {
+                        tag: Tag::Fs,
+                        arg: None,
+                        body: "b".into(),
+                    })],
+                },
+            ],
+        }];
+        let paths = monomorphize_bodies(&body);
+        assert_eq!(paths.len(), 2);
+        // Each path is one top-level Block(repo) with exactly one child.
+        for path in &paths {
+            assert_eq!(path.len(), 1);
+            match &path[0] {
+                RuleBody::Block { slot: Slot::Tagged { tag: Tag::Repo, .. }, children, .. } => {
+                    assert_eq!(children.len(), 1);
+                }
+                _ => panic!("expected repo block"),
+            }
+        }
+    }
+
+    #[test]
+    fn monomorphize_deep_fork() {
+        use crate::_0_ast::{Slot, Tag};
+        // repo($R) { rev(main) { fs(a); fs(b) } } -> 2 paths
+        // is_chain: false because children are brace-level siblings
+        let body = vec![RuleBody::Block {
+            slot: Slot::Tagged { tag: Tag::Repo, arg: None, body: "$R".into() },
+            is_chain: false,
+            children: vec![RuleBody::Block {
+                slot: Slot::Tagged { tag: Tag::Rev, arg: None, body: "main".into() },
+                is_chain: false,
+                children: vec![
+                    RuleBody::Step(Slot::Tagged { tag: Tag::Fs, arg: None, body: "a".into() }),
+                    RuleBody::Step(Slot::Tagged { tag: Tag::Fs, arg: None, body: "b".into() }),
+                ],
+            }],
+        }];
+        let paths = monomorphize_bodies(&body);
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn lower_sibling_revs_produces_two_rules() {
+        let rules = lower(
+            r#"rule(drift) {
+                repo($REPO) {
+                    rev(main) > fs(**/values.yaml) > json({ image: $PROD });
+                    rev(staging) > fs(**/values.yaml) > json({ image: $STAGE })
+                }
+            };"#,
+        );
+        let drift: Vec<_> = rules.iter().filter(|r| r.name == "drift").collect();
+        assert_eq!(drift.len(), 2);
+
+        // Both must have identical create_matches (all captures from all branches).
+        assert_eq!(drift[0].create_matches.len(), drift[1].create_matches.len());
+        let caps_0: Vec<&str> = drift[0].create_matches.iter().map(|m| m.capture.as_str()).collect();
+        let caps_1: Vec<&str> = drift[1].create_matches.iter().map(|m| m.capture.as_str()).collect();
+        assert_eq!(caps_0, caps_1);
+        assert!(caps_0.contains(&"REPO"));
+        assert!(caps_0.contains(&"PROD"));
+        assert!(caps_0.contains(&"STAGE"));
+
+        // Each branch selects a different rev pattern.
+        let has_main = drift[0].select.iter().any(|s| matches!(s, SelectStep::Rev { pattern, .. } if pattern == "main"));
+        let has_staging = drift[1].select.iter().any(|s| matches!(s, SelectStep::Rev { pattern, .. } if pattern == "staging"));
+        assert!(has_main, "branch 0 should select rev(main)");
+        assert!(has_staging, "branch 1 should select rev(staging)");
+    }
+
+    #[test]
+    fn lower_single_branch_still_one_rule() {
+        let rules = lower(
+            r#"rule(pkg) {
+                repo($REPO) {
+                    rev(main) > fs(**/Cargo.toml) > json({ package: { name: $NAME } })
+                }
+            };"#,
+        );
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "pkg");
     }
 }

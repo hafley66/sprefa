@@ -81,7 +81,7 @@ impl DocState {
                                 rule_caps.push(cap);
                             }
                         }
-                        RuleBody::Block { slot, children } => {
+                        RuleBody::Block { slot, children, .. } => {
                             for cap in slot.captures() {
                                 all_caps.insert(cap.clone());
                                 rule_caps.push(cap);

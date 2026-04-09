@@ -70,6 +70,7 @@ async fn make_scanner(db: SqlitePool, sprf_source: &str) -> Scanner<SqliteStore>
         .iter()
         .map(|r| sprefa_cache::RuleTableSpec {
             rule_name: r.name.clone(),
+            namespace: None,
             columns: r
                 .create_matches
                 .iter()
@@ -84,6 +85,7 @@ async fn make_scanner(db: SqlitePool, sprf_source: &str) -> Scanner<SqliteStore>
         .filter_map(|spec| {
             sprefa_schema::rule_tables::RuleTableDef::from_matches(
                 &spec.rule_name,
+                None,
                 &spec.columns.iter().map(|(n, s)| (n.clone(), s.clone())).collect::<Vec<_>>(),
             )
             .scan_pair()
@@ -217,7 +219,7 @@ image:
     assert!(names.contains(&"service-api-v2"), "HEAD should have v2 name, got: {:?}", names);
 
     // Discover targets from per-rule tables.
-    let targets = scanner.store.unscanned_rev_pairs("image_refs", "repo", "tag").await.unwrap();
+    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag").await.unwrap();
     let svc_targets: Vec<_> = targets.iter()
         .filter(|(r, _)| r == "service-api")
         .collect();
@@ -242,7 +244,7 @@ image:
         "v1.0.0 should have 'service-api-v1', got: {:?}", v1_name_vals);
 
     // After scan_rev, unscanned_rev_pairs should return empty (v1.0.0 is now scanned).
-    let targets2 = scanner.store.unscanned_rev_pairs("image_refs", "repo", "tag").await.unwrap();
+    let targets2 = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag").await.unwrap();
     let svc_targets2: Vec<_> = targets2.iter()
         .filter(|(r, _)| r == "service-api")
         .collect();
@@ -305,7 +307,7 @@ image:
     };
 
     // Discovery finds the target via per-rule table...
-    let targets = scanner.store.unscanned_rev_pairs("image_refs", "repo", "tag").await.unwrap();
+    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag").await.unwrap();
     assert!(!targets.is_empty(), "should discover at least one target");
 
     // ...but rev_excluded blocks it.
@@ -418,7 +420,7 @@ svc_b:
     let infra_cfg = repo_config("infra", &infra_path);
     scanner.scan_repo(&infra_cfg, "main").await.unwrap();
 
-    let targets = scanner.store.unscanned_rev_pairs("image_refs", "repo", "tag").await.unwrap();
+    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag").await.unwrap();
 
     let pairs: HashSet<(String, String)> = targets.into_iter().collect();
 

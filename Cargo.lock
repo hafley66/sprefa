@@ -2759,6 +2759,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "insta",
+ "libsqlite3-sys",
+ "regex",
  "serde",
  "sqlx",
  "thiserror",

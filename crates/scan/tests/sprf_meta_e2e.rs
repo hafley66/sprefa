@@ -19,6 +19,7 @@ async fn sprf_meta_caches_unchanged_rules() -> Result<()> {
     // Create rule tables with hashes
     let specs = vec![sprefa_cache::RuleTableSpec {
         rule_name: "test_rule".to_string(),
+        namespace: None,
         columns: vec![("name".to_string(), None)],
     }];
 
@@ -79,6 +80,7 @@ async fn sprf_meta_detects_schema_change() -> Result<()> {
     // Initial schema
     let specs1 = vec![sprefa_cache::RuleTableSpec {
         rule_name: "test_rule".to_string(),
+        namespace: None,
         columns: vec![("name".to_string(), None)],
     }];
 
@@ -131,6 +133,7 @@ async fn sprf_meta_detects_schema_change() -> Result<()> {
     // Simulate schema change
     let specs2 = vec![sprefa_cache::RuleTableSpec {
         rule_name: "test_rule".to_string(),
+        namespace: None,
         columns: vec![("name".to_string(), None), ("version".to_string(), None)],
     }];
 
@@ -164,6 +167,7 @@ async fn sprf_meta_detects_extract_change() -> Result<()> {
 
     let specs = vec![sprefa_cache::RuleTableSpec {
         rule_name: "test_rule".to_string(),
+        namespace: None,
         columns: vec![("name".to_string(), None)],
     }];
 

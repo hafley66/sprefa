@@ -190,6 +190,23 @@ pub fn walk(node: &Value, steps: &[CompiledStep]) -> Vec<MatchResult> {
     walk_inner(node, steps, &state)
 }
 
+/// Walk with pre-seeded captures (e.g. $current* constants).
+/// Pre-seeded captures act as constraints during pattern matching:
+/// if a pattern references $currentRepo, it must match the pre-seeded value.
+pub fn walk_with_captures(
+    node: &Value,
+    steps: &[CompiledStep],
+    seed_captures: HashMap<String, CapturedValue>,
+) -> Vec<MatchResult> {
+    let state = WalkState {
+        depth: 0,
+        parent_key: None,
+        path: vec![],
+        captures: seed_captures,
+    };
+    walk_inner(node, steps, &state)
+}
+
 fn walk_inner(node: &Value, steps: &[CompiledStep], state: &WalkState) -> Vec<MatchResult> {
     if steps.is_empty() {
         return vec![state.clone().into_result()];
@@ -359,7 +376,13 @@ fn walk_inner(node: &Value, steps: &[CompiledStep], state: &WalkState) -> Vec<Ma
                 Value::Bool(b) => b.to_string(),
                 _ => return vec![],
             };
-            match crate::pattern::match_segments_pub(segments, &text) {
+            // Pass pre-seeded captures so $current* names act as constraints.
+            let pre_bound: HashMap<String, String> = state
+                .captures
+                .iter()
+                .map(|(k, cv)| (k.clone(), cv.text.clone()))
+                .collect();
+            match crate::pattern::match_segments_with_bindings(segments, &text, pre_bound) {
                 Some(caps) => {
                     let mut next_state = state.clone();
                     for (name, value) in caps {
@@ -578,5 +601,39 @@ mod tests {
         let names: Vec<&str> = results.iter().map(|r| r.captures["NAME"].text.as_str()).collect();
         assert!(names.contains(&"core"));
         assert!(names.contains(&"forms"));
+    }
+
+    #[test]
+    fn walk_with_current_repo_constraint() {
+        let data = json!({ "name": "myrepo" });
+        let steps = vec![SelectStep::Object {
+            entries: vec![ObjectEntry {
+                key: KeyMatcher::Exact("name".into()),
+                value: vec![SelectStep::LeafPattern {
+                    pattern: "$currentRepo".into(),
+                }],
+            }],
+        }];
+        let compiled = compile_steps(&steps).unwrap();
+
+        // Seed currentRepo = "myrepo" -> should match
+        let mut seed = HashMap::new();
+        seed.insert("currentRepo".to_string(), CapturedValue {
+            text: "myrepo".to_string(),
+            span_start: 0,
+            span_end: 0,
+        });
+        let results = walk_with_captures(&data, &compiled, seed);
+        assert_eq!(results.len(), 1);
+
+        // Seed currentRepo = "other" -> should NOT match
+        let mut seed2 = HashMap::new();
+        seed2.insert("currentRepo".to_string(), CapturedValue {
+            text: "other".to_string(),
+            span_start: 0,
+            span_end: 0,
+        });
+        let results2 = walk_with_captures(&data, &compiled, seed2);
+        assert_eq!(results2.len(), 0);
     }
 }

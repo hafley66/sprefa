@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 const FILE_CHUNK: usize = 2000;
 
 /// Remove files that were deleted in a git diff. Cascades through
-/// rev_files, matches, refs, and files.
+/// rev_files, per-rule _data tables, refs, and files.
 ///
 /// Uses a temp table to resolve file IDs once, then four non-looping
 /// DELETEs that join against it.
@@ -73,7 +73,7 @@ pub async fn delete_rev_files_by_paths(
 }
 
 /// Update file paths for pure renames (same content, different path).
-/// Preserves file_id, refs, and matches -- only the path column changes.
+/// Preserves file_id and refs -- only the path column changes.
 /// Returns the number of files updated.
 ///
 /// Uses a temp table to batch all renames, then a single UPDATE ... FROM join.

@@ -166,6 +166,17 @@ pub fn match_segments_pub(segments: &[Segment], value: &str) -> Option<HashMap<S
     match_segments(segments, value)
 }
 
+/// Match segments with pre-bound captures that act as constraints.
+/// Pre-bound names constrain instead of capture: the value must equal the bound text.
+pub fn match_segments_with_bindings(
+    segments: &[Segment],
+    value: &str,
+    pre_bound: HashMap<String, String>,
+) -> Option<HashMap<String, String>> {
+    let mut captures = pre_bound;
+    match_segments_inner(segments, value, &mut captures).then_some(captures)
+}
+
 /// Compute byte offsets of each named capture within the matched value.
 ///
 /// Given segments and the capture map from a successful `match_segments` call,
@@ -224,6 +235,14 @@ fn match_segments_inner(
         }
 
         Segment::Capture(name) => {
+            // If already bound (e.g. $currentRepo pre-seeded), constrain instead of capture.
+            if let Some(bound) = captures.get(name).cloned() {
+                if let Some(rest_str) = remaining.strip_prefix(bound.as_str()) {
+                    return match_segments_inner(&segments[1..], rest_str, captures);
+                }
+                return false;
+            }
+
             // Find the shortest match that allows the rest to succeed.
             // Don't cross `/` boundaries for single captures.
             let next_lit = find_next_literal(&segments[1..]);
@@ -255,6 +274,14 @@ fn match_segments_inner(
         }
 
         Segment::MultiCapture(name) => {
+            // If already bound, constrain instead of capture.
+            if let Some(bound) = captures.get(name).cloned() {
+                if let Some(rest_str) = remaining.strip_prefix(bound.as_str()) {
+                    return match_segments_inner(&segments[1..], rest_str, captures);
+                }
+                return false;
+            }
+
             // Try all lengths, shortest first
             for end in 0..=remaining.len() {
                 if !remaining.is_char_boundary(end) {
@@ -520,6 +547,41 @@ mod tests {
         let offsets = capture_offsets_in_value(&segs, &caps);
         assert_eq!(offsets["ORG"], (0, 4));   // "acme"
         assert_eq!(offsets["REPO"], (5, 13)); // "frontend"
+    }
+
+    // ── Pre-bound capture constraints ────────────────
+
+    #[test]
+    fn prebound_capture_constrains() {
+        let segs = parse_segment_pattern("$NAME:$TAG");
+
+        // Pre-bound NAME=nginx: should match "nginx:latest"
+        let mut pre = HashMap::new();
+        pre.insert("NAME".to_string(), "nginx".to_string());
+        let result = match_segments_with_bindings(&segs, "nginx:latest", pre);
+        assert!(result.is_some());
+        assert_eq!(result.as_ref().unwrap()["TAG"], "latest");
+
+        // Pre-bound NAME=apache: should NOT match "nginx:latest"
+        let mut pre2 = HashMap::new();
+        pre2.insert("NAME".to_string(), "apache".to_string());
+        let result2 = match_segments_with_bindings(&segs, "nginx:latest", pre2);
+        assert!(result2.is_none());
+    }
+
+    #[test]
+    fn prebound_multi_capture_constrains() {
+        let segs = parse_segment_pattern("$$$PATH/file.txt");
+
+        let mut pre = HashMap::new();
+        pre.insert("PATH".to_string(), "src/lib".to_string());
+        let result = match_segments_with_bindings(&segs, "src/lib/file.txt", pre);
+        assert!(result.is_some());
+
+        let mut pre2 = HashMap::new();
+        pre2.insert("PATH".to_string(), "other".to_string());
+        let result2 = match_segments_with_bindings(&segs, "src/lib/file.txt", pre2);
+        assert!(result2.is_none());
     }
 
     // ── PatternMatcher integration ───────────────────

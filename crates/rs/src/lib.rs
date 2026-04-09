@@ -165,12 +165,18 @@ fn flatten_use_tree(
 ) {
     match tree {
         UseTree::Path(p) => {
-            let new_prefix = if prefix.is_empty() {
-                p.ident.to_string()
+            let ident_str = p.ident.to_string();
+            // `self::` means "this module" -- transparent, keep current prefix.
+            // `super::` means "parent module" -- can't resolve statically, strip it.
+            // Both can repeat: `super::super::foo` strips all leading super:: segments.
+            let (new_prefix, new_start) = if ident_str == "self" || ident_str == "super" {
+                (prefix.to_string(), prefix_start)
+            } else if prefix.is_empty() {
+                (ident_str, Some(p.ident.span()))
             } else {
-                format!("{}::{}", prefix, p.ident)
+                (format!("{}::{}", prefix, p.ident), prefix_start.or_else(|| Some(p.ident.span())))
             };
-            let start = prefix_start.unwrap_or_else(|| p.ident.span());
+            let start = new_start.unwrap_or_else(|| p.ident.span());
             flatten_use_tree(&p.tree, &new_prefix, Some(start), offsets, refs, gc);
         }
         UseTree::Name(n) => {
@@ -554,6 +560,64 @@ mod tests {
         let m = refs.iter().find(|r| r.kind == kind::RS_MOD).unwrap();
         assert_eq!(m.value, "helpers");
         assert_eq!(m.node_path.as_deref(), Some("test_helpers.rs"));
+    }
+
+    // ── super:: / self:: prefix stripping ────────────────────────────────
+
+    #[test]
+    fn use_super_simple() {
+        let refs = extract("use super::foo;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].value, "foo");
+        assert_eq!(refs[0].kind, kind::RS_USE);
+    }
+
+    #[test]
+    fn use_self_simple() {
+        let refs = extract("use self::bar;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].value, "bar");
+        assert_eq!(refs[0].kind, kind::RS_USE);
+    }
+
+    #[test]
+    fn use_super_nested() {
+        let refs = extract("use super::foo::Bar;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].value, "foo::Bar");
+        assert_eq!(refs[0].kind, kind::RS_USE);
+    }
+
+    #[test]
+    fn use_self_nested() {
+        let refs = extract("use self::util::helper;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].value, "util::helper");
+        assert_eq!(refs[0].kind, kind::RS_USE);
+    }
+
+    #[test]
+    fn use_super_super_nested() {
+        let refs = extract("use super::super::common::Shared;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].value, "common::Shared");
+        assert_eq!(refs[0].kind, kind::RS_USE);
+    }
+
+    #[test]
+    fn use_super_in_group() {
+        let refs = extract("use super::{foo, bar::Baz};");
+        let values: Vec<&str> = refs.iter().map(|r| r.value.as_str()).collect();
+        assert!(values.contains(&"foo"));
+        assert!(values.contains(&"bar::Baz"));
+        assert_eq!(refs.len(), 2);
+    }
+
+    #[test]
+    fn use_self_glob() {
+        let refs = extract("use self::module::*;");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].value, "module::*");
     }
 
     #[test]

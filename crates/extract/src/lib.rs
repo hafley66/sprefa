@@ -48,7 +48,7 @@ pub struct RawRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scan: Option<String>,
     /// Group tag: all refs from the same extraction site share the same group
-    /// value. Used to assign group_id on the matches table during flush.
+    /// value. Used to reconstruct extraction tuples in to_file_results().
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<u32>,
 }

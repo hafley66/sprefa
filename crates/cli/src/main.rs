@@ -423,13 +423,48 @@ async fn build_scanner(
     config: &sprefa_config::Config,
     pool: sqlx::SqlitePool,
 ) -> anyhow::Result<Scanner<SqliteStore>> {
-    let rules_path = find_rules_file()?;
-    let (ruleset, dep_edges) = load_ruleset(&rules_path)?;
-    let extractor = RuleExtractor::from_ruleset(&ruleset)?;
+    let rules_paths = find_rules_files()?;
+
+    let mut all_rules: Vec<sprefa_rules::Rule> = vec![];
+    let mut all_dep_edges: Vec<sprefa_rules::graph::DepEdge> = vec![];
+    let mut sprf_specs: Vec<sprefa_cache::RuleTableSpec> = vec![];
+
+    for path in &rules_paths {
+        let namespace = path.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
+        let (ruleset, dep_edges) = load_ruleset(path)?;
+
+        // Deduplicate: monomorphized rules share a name and identical create_matches.
+        // Only one RuleTableSpec per unique rule_name is needed (same schema for all branches).
+        let mut seen_in_file: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for r in &ruleset.rules {
+            if seen_in_file.insert(r.name.clone()) {
+                sprf_specs.push(sprefa_cache::RuleTableSpec {
+                    rule_name: r.name.clone(),
+                    namespace: namespace.clone(),
+                    columns: r
+                        .create_matches
+                        .iter()
+                        .map(|m| (m.kind.to_lowercase(), m.scan.clone()))
+                        .collect(),
+                });
+            }
+        }
+        all_rules.extend(ruleset.rules);
+        all_dep_edges.extend(dep_edges);
+    }
+
+    let merged_ruleset = sprefa_rules::RuleSet {
+        schema: None,
+        rules: all_rules,
+    };
+
+    let extractor = RuleExtractor::from_ruleset(&merged_ruleset)?;
     let store = SqliteStore::new(pool);
 
     // Compute rule hashes for change detection.
-    let hashes = sprefa_sprf::hash::compute_rule_hashes(&ruleset.rules, &dep_edges).unwrap_or_default();
+    let hashes = sprefa_sprf::hash::compute_rule_hashes(&merged_ruleset.rules, &all_dep_edges).unwrap_or_default();
 
     // Create per-rule tables before any scanning.
     // Built-in extractor tables first (no sprf_meta hashing -- they change with the binary).
@@ -437,32 +472,22 @@ async fn build_scanner(
         .into_iter()
         .map(|def| sprefa_cache::RuleTableSpec {
             rule_name: def.rule_name,
+            namespace: None,
             columns: def.columns.into_iter().map(|c| (c.name, c.scan)).collect(),
         })
         .collect();
     store.create_rule_tables(&builtin_specs, None).await?;
 
     // Then .sprf rule tables (with hash-based change detection).
-    let specs: Vec<sprefa_cache::RuleTableSpec> = ruleset
-        .rules
-        .iter()
-        .map(|r| sprefa_cache::RuleTableSpec {
-            rule_name: r.name.clone(),
-            columns: r
-                .create_matches
-                .iter()
-                .map(|m| (m.kind.to_lowercase(), m.scan.clone()))
-                .collect(),
-        })
-        .collect();
-    store.create_rule_tables(&specs, Some(&hashes)).await?;
+    store.create_rule_tables(&sprf_specs, Some(&hashes)).await?;
 
     // Build per-rule scan pairs lookup.
-    let rule_scan_pairs: std::collections::HashMap<String, Option<sprefa_schema::rule_tables::ScanPair>> = specs
+    let rule_scan_pairs: std::collections::HashMap<String, Option<sprefa_schema::rule_tables::ScanPair>> = sprf_specs
         .iter()
         .map(|spec| {
             let pair = sprefa_schema::rule_tables::RuleTableDef::from_matches(
                 &spec.rule_name,
+                spec.namespace.clone(),
                 &spec.columns.iter().map(|(n, s)| (n.clone(), s.clone())).collect::<Vec<_>>(),
             )
             .scan_pair();
@@ -471,8 +496,15 @@ async fn build_scanner(
         .collect();
 
     // Build dependency graph and group scan pairs by level.
-    let rule_names: Vec<String> = ruleset.rules.iter().map(|r| r.name.clone()).collect();
-    let graph = sprefa_rules::graph::build_rule_graph(&rule_names, dep_edges)?;
+    // Deduplicate names: monomorphized branches share a name; the graph needs unique names.
+    let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let rule_names: Vec<String> = merged_ruleset
+        .rules
+        .iter()
+        .filter(|r| seen_names.insert(r.name.clone()))
+        .map(|r| r.name.clone())
+        .collect();
+    let graph = sprefa_rules::graph::build_rule_graph(&rule_names, all_dep_edges)?;
 
     let scan_pair_levels: Vec<Vec<sprefa_schema::rule_tables::ScanPair>> = graph
         .levels
@@ -755,62 +787,93 @@ async fn cmd_scan(
 
     println!("\ntotal: {} files, {} refs", total_files, total_refs);
 
-    // Run check blocks post-scan (if any exist in the rules file).
-    let rules_path = find_rules_file()?;
-    if rules_path.extension().and_then(|e| e.to_str()) == Some("sprf") {
-        let source = std::fs::read_to_string(&rules_path)?;
-        let (_rs, _edges, checks) = sprefa_sprf::parse_sprf_full(&source)?;
-        if !checks.is_empty() {
-            println!();
-            let mut total_violations = 0usize;
-            for check in &checks {
-                match scanner.store.run_check(&check.name, &check.sql).await {
-                    Ok(count) => {
-                        if count > 0 {
-                            println!("FAIL  {}  ({} violations)", check.name, count);
-                        } else {
-                            println!("OK    {}", check.name);
-                        }
-                        total_violations += count;
-                    }
-                    Err(e) => {
-                        tracing::warn!(check = %check.name, error = %e, "check failed to execute");
-                    }
+    // Run check blocks post-scan (if any exist in .sprf rules files).
+    let rules_paths = find_rules_files().unwrap_or_default();
+    let mut all_checks: Vec<sprefa_sprf::CheckDecl> = vec![];
+    for rules_path in &rules_paths {
+        if rules_path.extension().and_then(|e| e.to_str()) == Some("sprf") {
+            if let Ok(source) = std::fs::read_to_string(rules_path) {
+                if let Ok((_rs, _edges, checks)) = sprefa_sprf::parse_sprf_full(&source) {
+                    all_checks.extend(checks);
                 }
             }
-            if total_violations > 0 {
-                println!("{} total violations", total_violations);
+        }
+    }
+    if !all_checks.is_empty() {
+        println!();
+        let mut total_violations = 0usize;
+        for check in &all_checks {
+            match scanner.store.run_check(&check.name, &check.sql).await {
+                Ok(count) => {
+                    if count > 0 {
+                        println!("FAIL  {}  ({} violations)", check.name, count);
+                    } else {
+                        println!("OK    {}", check.name);
+                    }
+                    total_violations += count;
+                }
+                Err(e) => {
+                    tracing::warn!(check = %check.name, error = %e, "check failed to execute");
+                }
             }
+        }
+        if total_violations > 0 {
+            println!("{} total violations", total_violations);
         }
     }
 
     Ok(())
 }
 
-/// Rules file lookup: $SPREFA_RULES > ./sprefa-rules.sprf > ./sprefa-rules.json
-/// > ./sprefa-rules.yaml > ~/.config/sprefa/rules.json > ~/.config/sprefa/rules.yaml
-fn find_rules_file() -> anyhow::Result<PathBuf> {
+/// Rules file discovery: returns all .sprf files that should be loaded.
+///
+/// Search order:
+/// 1. $SPREFA_RULES env var: if a directory, glob *.sprf inside it; if a file, return that file.
+/// 2. *.sprf files in the current directory (sorted).
+/// 3. Legacy single-file candidates: sprefa-rules.json, sprefa-rules.yaml, ~/.config/sprefa/*.
+fn find_rules_files() -> anyhow::Result<Vec<PathBuf>> {
     if let Ok(path) = std::env::var("SPREFA_RULES") {
-        return Ok(PathBuf::from(path));
+        let p = PathBuf::from(&path);
+        if p.is_dir() {
+            let mut files: Vec<PathBuf> = std::fs::read_dir(&p)?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().map_or(false, |e| e == "sprf"))
+                .collect();
+            files.sort();
+            if !files.is_empty() {
+                return Ok(files);
+            }
+            anyhow::bail!("SPREFA_RULES directory '{}' contains no .sprf files", path);
+        }
+        return Ok(vec![p]);
     }
 
+    // Glob *.sprf in current directory.
+    let mut sprf_files: Vec<PathBuf> = std::fs::read_dir(".")
+        .unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map_or(false, |e| e == "sprf"))
+        .collect();
+    sprf_files.sort();
+
+    if !sprf_files.is_empty() {
+        return Ok(sprf_files);
+    }
+
+    // Legacy single-file fallback.
+    let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
-        PathBuf::from("sprefa-rules.sprf"),
         PathBuf::from("sprefa-rules.json"),
         PathBuf::from("sprefa-rules.yaml"),
-        {
-            let home = std::env::var("HOME").unwrap_or_default();
-            PathBuf::from(format!("{}/.config/sprefa/rules.json", home))
-        },
-        {
-            let home = std::env::var("HOME").unwrap_or_default();
-            PathBuf::from(format!("{}/.config/sprefa/rules.yaml", home))
-        },
+        PathBuf::from(format!("{}/.config/sprefa/rules.json", home)),
+        PathBuf::from(format!("{}/.config/sprefa/rules.yaml", home)),
     ];
 
-    candidates.into_iter().find(|p| p.exists()).ok_or_else(|| {
-        anyhow::anyhow!("no rules file found. set $SPREFA_RULES or create sprefa-rules.json")
-    })
+    candidates.into_iter().find(|p| p.exists())
+        .map(|p| vec![p])
+        .ok_or_else(|| anyhow::anyhow!("no rules file found. set $SPREFA_RULES or create a .sprf file"))
 }
 
 async fn cmd_status(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
@@ -1006,22 +1069,19 @@ async fn cmd_check(
         return Ok(());
     }
 
-    // Parse .sprf to get check blocks.
-    let rules_path = find_rules_file()?;
-    let checks = match rules_path.extension().and_then(|e| e.to_str()) {
-        Some("sprf") => {
-            let source = std::fs::read_to_string(&rules_path)?;
-            let (_ruleset, _edges, checks) = sprefa_sprf::parse_sprf_full(&source)?;
-            checks
+    // Parse .sprf files to collect check blocks.
+    let rules_paths = find_rules_files()?;
+    let mut checks: Vec<sprefa_sprf::CheckDecl> = vec![];
+    for rules_path in &rules_paths {
+        if rules_path.extension().and_then(|e| e.to_str()) == Some("sprf") {
+            let source = std::fs::read_to_string(rules_path)?;
+            let (_ruleset, _edges, file_checks) = sprefa_sprf::parse_sprf_full(&source)?;
+            checks.extend(file_checks);
         }
-        _ => {
-            println!("check blocks are only supported in .sprf rule files");
-            return Ok(());
-        }
-    };
+    }
 
     if checks.is_empty() {
-        println!("no check blocks found in {}", rules_path.display());
+        println!("no check blocks found in .sprf files");
         return Ok(());
     }
 

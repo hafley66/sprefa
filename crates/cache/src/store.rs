@@ -219,6 +219,8 @@ pub struct ScanContext {
 #[derive(Debug, Clone)]
 pub struct RuleTableSpec {
     pub rule_name: String,
+    /// None = default schema (builtins). Some(stem) = namespaced from .sprf filename.
+    pub namespace: Option<String>,
     /// (column_name_lowercase, scan_annotation)
     pub columns: Vec<(String, Option<String>)>,
 }
@@ -226,8 +228,7 @@ pub struct RuleTableSpec {
 /// Convert extraction output (Vec<ExtractedFile>) into Store-compatible FileResults.
 ///
 /// Groups RawRefs by (rule_name, group) to reconstruct extraction tuples.
-/// Non-grouped refs (from built-in extractors) are excluded -- they go through
-/// the legacy flush path.
+/// Non-grouped refs are excluded from per-rule table insertion.
 pub fn to_file_results(files: &[sprefa_index::ExtractedFile]) -> Vec<FileResult> {
     files
         .iter()

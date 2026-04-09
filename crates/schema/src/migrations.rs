@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 /// All migrations in order. Each is idempotent (IF NOT EXISTS).
 const MIGRATIONS: &[&str] = &[
@@ -198,7 +198,22 @@ pub async fn init_db(path: &str) -> anyhow::Result<SqlitePool> {
     }
 
     let url = format!("sqlite://{}?mode=rwc", path);
-    let pool = SqlitePool::connect(&url).await?;
+    let pool = SqlitePoolOptions::new()
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                let mut handle = conn.lock_handle().await?;
+                // SAFETY: lock_handle guarantees exclusive access to the sqlite3* for
+                // the duration of the lock, so sqlite3_create_function_v2 is safe here.
+                unsafe {
+                    crate::udfs::register_all(handle.as_raw_handle().as_ptr());
+                }
+                drop(handle);
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await?;
     run_migrations(&pool).await?;
+    crate::udfs::create_views(&pool).await?;
     Ok(pool)
 }

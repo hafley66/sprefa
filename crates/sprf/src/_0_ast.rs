@@ -80,8 +80,10 @@ pub enum RuleBody {
     Step(Slot),
     /// A scoped block: the slot captures variables that flow into children.
     ///
-    /// Example: `repo($REPO) { fs(...) }` - $REPO is available inside.
-    Block { slot: Slot, children: Vec<RuleBody> },
+    /// `is_chain` is true when children came from a `>` pipeline (A > B > C);
+    /// false when they came from a `{ ... }` brace block (A { B; C }).
+    /// Only brace-block children represent alternative branches for monomorphization.
+    Block { slot: Slot, children: Vec<RuleBody>, is_chain: bool },
     /// A cross-rule reference, optionally scoping a block of children.
     ///
     /// Example: `helm_image(repo: $REPO, rev: $TAG) { fs(...) }`
@@ -149,7 +151,7 @@ impl RuleBody {
             RuleBody::Step(slot) => {
                 out.extend(slot.captures());
             }
-            RuleBody::Block { slot, children } => {
+            RuleBody::Block { slot, children, .. } => {
                 out.extend(slot.captures());
                 for child in children {
                     child.collect_captures(out);
@@ -182,7 +184,7 @@ impl RuleBody {
             RuleBody::Step(slot) => {
                 out.push((depth, slot.clone()));
             }
-            RuleBody::Block { slot, children } => {
+            RuleBody::Block { slot, children, .. } => {
                 // The block slot is at current depth
                 out.push((depth, slot.clone()));
                 // Children are at next depth level
