@@ -72,8 +72,8 @@ impl RuleTableDef {
     pub fn create_table_sql(&self) -> String {
         let mut cols = vec!["id INTEGER PRIMARY KEY".to_string()];
         for c in &self.columns {
-            cols.push(format!("{}_ref INTEGER", c.name));
-            cols.push(format!("{}_str INTEGER", c.name));
+            cols.push(format!("\"{}_ref\" INTEGER", c.name));
+            cols.push(format!("\"{}_str\" INTEGER", c.name));
         }
         cols.push("repo_id INTEGER".to_string());
         cols.push("file_id INTEGER".to_string());
@@ -93,11 +93,11 @@ impl RuleTableDef {
 
         for (i, c) in self.columns.iter().enumerate() {
             let alias = format!("s{}", i);
-            select_cols.push(format!("{alias}.value AS {}", c.name));
-            select_cols.push(format!("{alias}.norm AS {}_norm", c.name));
-            select_cols.push(format!("{alias}.norm2 AS {}_norm2", c.name));
+            select_cols.push(format!("{alias}.value AS \"{}\"", c.name));
+            select_cols.push(format!("{alias}.norm AS \"{}_norm\"", c.name));
+            select_cols.push(format!("{alias}.norm2 AS \"{}_norm2\"", c.name));
             joins.push(format!(
-                "LEFT JOIN strings {alias} ON t.{}_str = {alias}.id",
+                "LEFT JOIN strings {alias} ON t.\"{}_str\" = {alias}.id",
                 c.name
             ));
         }
@@ -122,14 +122,14 @@ impl RuleTableDef {
         for (i, c) in self.columns.iter().enumerate() {
             let sa = format!("s{}", i);
             let ra = format!("r{}", i);
-            select_cols.push(format!("{sa}.value AS {}", c.name));
-            select_cols.push(format!("{sa}.norm AS {}_norm", c.name));
-            select_cols.push(format!("{sa}.norm2 AS {}_norm2", c.name));
-            select_cols.push(format!("{ra}.span_start AS {}_span_start", c.name));
-            select_cols.push(format!("{ra}.span_end AS {}_span_end", c.name));
-            select_cols.push(format!("{ra}.node_path AS {}_node_path", c.name));
+            select_cols.push(format!("{sa}.value AS \"{}\"", c.name));
+            select_cols.push(format!("{sa}.norm AS \"{}_norm\"", c.name));
+            select_cols.push(format!("{sa}.norm2 AS \"{}_norm2\"", c.name));
+            select_cols.push(format!("{ra}.span_start AS \"{}_span_start\"", c.name));
+            select_cols.push(format!("{ra}.span_end AS \"{}_span_end\"", c.name));
+            select_cols.push(format!("{ra}.node_path AS \"{}_node_path\"", c.name));
             joins.push(format!(
-                "LEFT JOIN strings {sa} ON t.{col}_str = {sa}.id\nLEFT JOIN refs {ra} ON t.{col}_ref = {ra}.id",
+                "LEFT JOIN strings {sa} ON t.\"{col}_str\" = {sa}.id\nLEFT JOIN refs {ra} ON t.\"{col}_ref\" = {ra}.id",
                 col = c.name,
             ));
         }
@@ -239,12 +239,12 @@ mod tests {
         );
         let sql = def.create_view_sql();
         assert!(sql.contains("CREATE VIEW IF NOT EXISTS \"deploy_config\""));
-        assert!(sql.contains("s0.value AS svc"));
-        assert!(sql.contains("s0.norm AS svc_norm"));
-        assert!(sql.contains("s0.norm2 AS svc_norm2"));
-        assert!(sql.contains("s1.value AS repo"));
-        assert!(sql.contains("s1.norm AS repo_norm"));
-        assert!(sql.contains("s1.norm2 AS repo_norm2"));
+        assert!(sql.contains("s0.value AS \"svc\""));
+        assert!(sql.contains("s0.norm AS \"svc_norm\""));
+        assert!(sql.contains("s0.norm2 AS \"svc_norm2\""));
+        assert!(sql.contains("s1.value AS \"repo\""));
+        assert!(sql.contains("s1.norm AS \"repo_norm\""));
+        assert!(sql.contains("s1.norm2 AS \"repo_norm2\""));
         assert!(sql.contains("FROM \"deploy_config_data\""));
     }
 

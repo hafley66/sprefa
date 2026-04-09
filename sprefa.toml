@@ -40,11 +40,6 @@ exclude = [
 # revs = ["main"]
 
 [[repos]]
-name = "test-fixture"
-path = "/private/tmp/sprefa-test"
-revs = ["main"]
-
-[[repos]]
 name = "sprefa"
 path = "/Users/chrishafley/projects/sprefa"
-revs = ["main"]
+revs = ["master"]

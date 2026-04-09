@@ -246,11 +246,12 @@ pub fn to_file_results(files: &[sprefa_index::ExtractedFile]) -> Vec<FileResult>
             let mut rule_rows: std::collections::HashMap<&str, Vec<ExtractionRow>> =
                 std::collections::HashMap::new();
             for ((rule_name, _), refs) in &groups {
+                let is_builtin = refs.len() == 1 && refs[0].kind.eq_ignore_ascii_case(rule_name);
                 let row = ExtractionRow {
                     captures: refs
                         .iter()
                         .map(|r| CaptureEntry {
-                            column: r.kind.to_lowercase(),
+                            column: if is_builtin { "value".to_string() } else { r.kind.to_lowercase() },
                             value: r.value.clone(),
                             span_start: r.span_start,
                             span_end: r.span_end,

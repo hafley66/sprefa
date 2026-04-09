@@ -326,7 +326,7 @@ impl Store for SqliteStore {
 
                 let mut col_names: Vec<String> = col_order
                     .iter()
-                    .flat_map(|k| [format!("{k}_ref"), format!("{k}_str")])
+                    .flat_map(|k| [format!("\"{k}_ref\""), format!("\"{k}_str\"")])
                     .collect();
                 col_names.extend(["repo_id".into(), "file_id".into(), "rev".into()]);
 
