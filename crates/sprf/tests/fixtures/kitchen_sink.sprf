@@ -1,0 +1,336 @@
+# kitchen_sink.sprf -- exercises every parser feature
+#
+# This file is the test fixture for parse + lower + walk coverage.
+# Every .sprf feature should appear here at least once.
+
+# ════════════════════════════════════════════════════════
+# 1. Basic rule: fs + json, flat chain
+# ════════════════════════════════════════════════════════
+
+rule(package_name) {
+  fs(**/Cargo.toml) > json({ package: { name: $NAME } })
+};
+
+# ════════════════════════════════════════════════════════
+# 2. Regex key in json
+# ════════════════════════════════════════════════════════
+
+rule(dep_name) {
+  fs(**/Cargo.toml) > json({ re:^(dev-)?dependencies: { $NAME: $_ } })
+};
+
+# ════════════════════════════════════════════════════════
+# 3. Array iteration
+# ════════════════════════════════════════════════════════
+
+rule(workspace_member) {
+  fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } })
+};
+
+# ════════════════════════════════════════════════════════
+# 4. Recursive descent (**)
+# ════════════════════════════════════════════════════════
+
+rule(deploy_image) {
+  fs(**/values.yaml) > json({ **: { image: { repository: $REPO, tag: $TAG } } })
+};
+
+# ════════════════════════════════════════════════════════
+# 5. Nested scoped blocks: repo > rev > folder > fs
+# ════════════════════════════════════════════════════════
+
+rule(scoped_deep) {
+  repo($REPO) {
+    rev(main) {
+      folder(packages/$PKG) {
+        fs(values.yaml) > json({ name: $NAME })
+      }
+    }
+  }
+};
+
+# ════════════════════════════════════════════════════════
+# 6. branch() and tag() aliases for rev()
+# ════════════════════════════════════════════════════════
+
+rule(branch_alias) {
+  repo(myorg/*) {
+    branch(main|develop) {
+      fs(**/*.yaml) > json({ version: $VER })
+    }
+  }
+};
+
+rule(tag_alias) {
+  repo(myorg/*) {
+    tag(v*) {
+      fs(**/*.yaml) > json({ version: $VER })
+    }
+  }
+};
+
+# ════════════════════════════════════════════════════════
+# 7. file() tag
+# ════════════════════════════════════════════════════════
+
+rule(file_tag) {
+  file(**/README.md) > json({ title: $TITLE })
+};
+
+# ════════════════════════════════════════════════════════
+# 8. folder() tag standalone
+# ════════════════════════════════════════════════════════
+
+rule(folder_tag) {
+  folder(src/components/*) {
+    fs(index.ts) > json({ name: $NAME })
+  }
+};
+
+# ════════════════════════════════════════════════════════
+# 9. Cross-rule reference (no block)
+# ════════════════════════════════════════════════════════
+
+rule(ref_no_block) {
+  deploy_image(repo: $REPO, tag: $TAG)
+  fs(**/package.json) > json({ version: $VERSION })
+};
+
+# ════════════════════════════════════════════════════════
+# 10. Cross-rule reference with scoped block
+# ════════════════════════════════════════════════════════
+
+rule(ref_with_block) {
+  deploy_image(repo: $REPO, tag: $TAG) {
+    fs(**/package.json) > json({ dependencies: { $DEP: $SPEC } })
+  }
+};
+
+# ════════════════════════════════════════════════════════
+# 11. Monomorphization: semicolon-delimited branches
+# ════════════════════════════════════════════════════════
+
+rule(branched) {
+  repo($REPO) {
+    rev(main) > fs(**/values.yaml) > json({ image: $PROD });
+    rev(staging) > fs(**/values.yaml) > json({ image: $STAGE })
+  }
+};
+
+# ════════════════════════════════════════════════════════
+# 12. Rule union (same name, same capture shape)
+# ════════════════════════════════════════════════════════
+
+rule(dep_source) {
+  fs(**/package.json) > json({ dependencies: { $DEP: $_ } })
+};
+
+rule(dep_source) {
+  fs(**/Cargo.toml) > json({ dependencies: { $DEP: $_ } })
+};
+
+# ════════════════════════════════════════════════════════
+# 13. ast() simple pattern
+# ════════════════════════════════════════════════════════
+
+rule(env_var_ref) {
+  fs(**/*.ts) > ast(process.env.$NAME)
+};
+
+# ════════════════════════════════════════════════════════
+# 14. ast() with language override
+# ════════════════════════════════════════════════════════
+
+rule(rust_fn) {
+  fs(**/*.rs) > ast[rust](fn $NAME($$$ARGS) -> $RET { $$$BODY })
+};
+
+# ════════════════════════════════════════════════════════
+# 15. ast() with braced capture ${VAR}
+# ════════════════════════════════════════════════════════
+
+rule(react_hook) {
+  fs(**/*.tsx) > ast[tsx](use${ENTITY}Query($$$ARGS))
+};
+
+# ════════════════════════════════════════════════════════
+# 16. line() with segment capture
+# ════════════════════════════════════════════════════════
+
+rule(dockerfile_from) {
+  fs(**/Dockerfile) > line(FROM\s+$IMAGE:$TAG)
+};
+
+# ════════════════════════════════════════════════════════
+# 17. line() with re: prefix (regex mode)
+# ════════════════════════════════════════════════════════
+
+rule(line_regex) {
+  fs(**/Dockerfile) > line(re:FROM\s+(?P<IMAGE>[^:]+):(?P<TAG>.+))
+};
+
+# ════════════════════════════════════════════════════════
+# 18. Glob pipe alternation in fs()
+# ════════════════════════════════════════════════════════
+
+rule(ts_files) {
+  fs(**/*.ts|**/*.tsx) > ast(import $NAME from "$PATH")
+};
+
+# ════════════════════════════════════════════════════════
+# 19. Glob pipe alternation in rev()
+# ════════════════════════════════════════════════════════
+
+rule(release_config) {
+  repo(myorg/*) {
+    rev(main|release/*) {
+      fs(**/config.yaml) > json({ version: $VER })
+    }
+  }
+};
+
+# ════════════════════════════════════════════════════════
+# 20. json() scan annotations: repo() and rev() wrappers
+# ════════════════════════════════════════════════════════
+
+rule(inline_scan) {
+  fs(**/services.yaml) > json({ image: { repository: repo($REPO), tag: rev($TAG) } })
+};
+
+# ════════════════════════════════════════════════════════
+# 21. json() quoted value pattern with segment captures
+# ════════════════════════════════════════════════════════
+
+rule(quoted_val) {
+  fs(**/config.json) > json({ endpoint: "$PROTO://$HOST:$PORT" })
+};
+
+# ════════════════════════════════════════════════════════
+# 22. json() quoted key pattern
+# ════════════════════════════════════════════════════════
+
+rule(scoped_pkg) {
+  fs(**/package.json) > json({ dependencies: { "@$SCOPE/$NAME": $_ } })
+};
+
+# ════════════════════════════════════════════════════════
+# 23. json() wildcard key iteration
+# ════════════════════════════════════════════════════════
+
+rule(all_keys) {
+  fs(**/data.json) > json({ $KEY: $VAL })
+};
+
+# ════════════════════════════════════════════════════════
+# 24. Chained cross-ref (3-level DAG)
+# ════════════════════════════════════════════════════════
+
+rule(level0) {
+  fs(**/deploy.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+};
+
+rule(level1) {
+  level0(repo: $REPO, tag: $TAG) {
+    fs(**/package.json) > json({ dependencies: { $DEP: $SPEC } })
+  }
+};
+
+rule(level2) {
+  level1(dep: $DEP, repo: $REPO) {
+    fs(**/package-lock.json) > line($DEP.*resolved.*#$PINNED_REV)
+  }
+};
+
+# ════════════════════════════════════════════════════════
+# 25. check() block with SQL
+# ════════════════════════════════════════════════════════
+
+check(version_drift) {
+  SELECT a.repo, a.tag, b.version
+  FROM deploy_image a
+  LEFT JOIN package_name b ON b.repo_id = a.repo_id
+  WHERE a.tag != b.version
+};
+
+# ════════════════════════════════════════════════════════
+# 26. Multiple check blocks
+# ════════════════════════════════════════════════════════
+
+check(orphan_dep) {
+  SELECT d.dep
+  FROM dep_source d
+  LEFT JOIN package_name p ON p.name = d.dep
+  WHERE p.name IS NULL
+};
+
+# ════════════════════════════════════════════════════════
+# 27. Bare glob (no tag)
+# ════════════════════════════════════════════════════════
+
+rule(bare_glob_rule) {
+  **/Makefile > line(include\s+$INCLUDE)
+};
+
+# ════════════════════════════════════════════════════════
+# 28. Multi-segment capture $$$
+# ════════════════════════════════════════════════════════
+
+rule(multi_seg) {
+  fs(**/Dockerfile) > line(COPY $$$SRC $DEST)
+};
+
+# ════════════════════════════════════════════════════════
+# 29. Empty block body (vacuous object match)
+# ════════════════════════════════════════════════════════
+
+rule(any_object) {
+  fs(**/data.json) > json({ })
+};
+
+# ════════════════════════════════════════════════════════
+# 30. Lockfile: npm package-lock.json resolved URLs
+# ════════════════════════════════════════════════════════
+
+rule(npm_lock_resolved) {
+  fs(**/package-lock.json) > json({ packages: { $PKG_PATH: { version: $VERSION, resolved: $URL } } })
+};
+
+# ════════════════════════════════════════════════════════
+# 31. Lockfile: Cargo.lock package versions
+# ════════════════════════════════════════════════════════
+
+rule(cargo_lock_pkg) {
+  fs(**/Cargo.lock) > json({ package: [...{ name: $NAME, version: $VERSION }] })
+};
+
+# ════════════════════════════════════════════════════════
+# 32. Lockfile: go.mod dependencies (line matcher)
+# ════════════════════════════════════════════════════════
+
+rule(go_mod_dep) {
+  fs(**/go.mod) > line(\t$MODULE $VERSION)
+};
+
+# ════════════════════════════════════════════════════════
+# 33. Lockfile: requirements.txt (line matcher)
+# ════════════════════════════════════════════════════════
+
+rule(py_requirement) {
+  fs(**/requirements.txt) > line($PACKAGE==$VERSION)
+};
+
+# ════════════════════════════════════════════════════════
+# 34. Dockerfile multi-stage FROM extraction
+# ════════════════════════════════════════════════════════
+
+rule(docker_from) {
+  fs(**/Dockerfile) > line(FROM $IMAGE AS $STAGE)
+};
+
+# ════════════════════════════════════════════════════════
+# 35. Deploy manifest: direct yaml extraction
+# ════════════════════════════════════════════════════════
+
+rule(deploy_manifest) {
+  fs(**/deploy.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+};

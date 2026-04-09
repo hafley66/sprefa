@@ -1,0 +1,10 @@
+services:
+  frontend:
+    image:
+      repository: myorg/frontend
+      tag: v1.2.3
+  backend:
+    image:
+      repository: myorg/backend
+      tag: v2.0.1
+version: "3.5.0"

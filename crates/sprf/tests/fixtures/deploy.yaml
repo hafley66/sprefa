@@ -1,0 +1,7 @@
+image:
+  repository: myorg/api-service
+  tag: v3.1.0
+replicas: 3
+resources:
+  limits:
+    memory: 512Mi
