@@ -754,3 +754,98 @@ mod line_extraction {
         assert!(pkgs.contains(&"celery[redis]"), "got {:?}", pkgs);
     }
 }
+
+// ═══════════════════════════════════════════════════════════
+// 36-38. marker() parse + lower tests
+// ═══════════════════════════════════════════════════════════
+
+#[test]
+fn marker_single_arg_lowers_to_marker_scope() {
+    let r = rule("section_fns");
+    let ms = r.marker_scope.as_ref().expect("expected marker_scope");
+    assert_eq!(ms.open, "SECTION:");
+    assert!(ms.close.is_none());
+    // Should also have a line matcher from the > line(...) child
+    assert!(r.value.is_some(), "expected line matcher");
+}
+
+#[test]
+fn marker_two_arg_lowers_to_paired_scope() {
+    let r = rule("region_fns");
+    let ms = r.marker_scope.as_ref().expect("expected marker_scope");
+    assert_eq!(ms.open, "BEGIN:");
+    assert_eq!(ms.close.as_deref(), Some("END:"));
+    assert!(r.value.is_some(), "expected line matcher");
+}
+
+#[test]
+fn marker_block_syntax_lowers() {
+    let r = rule("section_block");
+    let ms = r.marker_scope.as_ref().expect("expected marker_scope");
+    assert_eq!(ms.open, "SECTION:");
+    assert!(ms.close.is_none());
+    assert!(r.value.is_some(), "expected line matcher from nested block");
+}
+
+// ── marker() extraction integration ─────────────────────
+
+mod marker_extraction {
+    use super::*;
+    use sprefa_rules::extractor::RuleExtractor;
+    use std::collections::BTreeMap;
+
+    fn extractor() -> RuleExtractor {
+        let (ruleset, _) = parse_sprf(FIXTURE).unwrap();
+        RuleExtractor::from_ruleset(&ruleset).unwrap()
+    }
+
+    fn ctx() -> ExtractContext<'static> {
+        ExtractContext {
+            repo: None,
+            branch: None,
+            tags: &[],
+        }
+    }
+
+    fn extract_raw(source: &[u8], path: &str) -> Vec<(String, BTreeMap<String, String>)> {
+        let ext = extractor();
+        let refs = ext.extract(source, path, &ctx());
+        let mut grouped: BTreeMap<(String, Option<u32>), BTreeMap<String, String>> = BTreeMap::new();
+        for r in &refs {
+            let key = (r.rule_name.clone(), r.group);
+            grouped
+                .entry(key)
+                .or_default()
+                .insert(r.kind.clone(), r.value.clone());
+        }
+        grouped
+            .into_iter()
+            .map(|((rule, _), caps)| (rule, caps))
+            .collect()
+    }
+
+    #[test]
+    fn marker_scopes_line_matching_to_regions() {
+        let src = b"// SECTION: imports\nfn parse() {}\nfn lex() {}\n// SECTION: eval\nfn evaluate() {}\n";
+        let refs = extract_raw(src, "lib.rs");
+        let section_fns: Vec<_> = refs.iter().filter(|(r, _)| r == "section_fns").collect();
+        let names: Vec<&str> = section_fns.iter().map(|(_, c)| c["NAME"].as_str()).collect();
+        // All three fns should be found across both regions
+        assert!(names.contains(&"parse"), "got {:?}", names);
+        assert!(names.contains(&"lex"), "got {:?}", names);
+        assert!(names.contains(&"evaluate"), "got {:?}", names);
+    }
+
+    #[test]
+    fn marker_paired_scopes_exclude_outside() {
+        let src = b"fn outside() {}\n// BEGIN: auth\nfn login() {}\nfn logout() {}\n// END: auth\nfn also_outside() {}\n";
+        let refs = extract_raw(src, "lib.rs");
+        let region_fns: Vec<_> = refs.iter().filter(|(r, _)| r == "region_fns").collect();
+        let names: Vec<&str> = region_fns.iter().map(|(_, c)| c["NAME"].as_str()).collect();
+        // Only fns inside the BEGIN/END region
+        assert!(names.contains(&"login"), "got {:?}", names);
+        assert!(names.contains(&"logout"), "got {:?}", names);
+        assert!(!names.contains(&"outside"), "should not contain outside, got {:?}", names);
+        assert!(!names.contains(&"also_outside"), "should not contain also_outside, got {:?}", names);
+    }
+}

@@ -155,7 +155,8 @@
         { "include": "#repo-slot" },
         { "include": "#rev-slot" },
         { "include": "#folder-slot" },
-        { "include": "#file-slot" }
+        { "include": "#file-slot" },
+        { "include": "#marker-slot" }
       ]
     },
 
@@ -277,6 +278,26 @@
           "name": "keyword.operator.glob.sprf"
         },
         { "match": "[^)$*]+", "name": "string.unquoted.glob.sprf" }
+      ]
+    },
+
+    "marker-slot": {
+      "begin": "\\b(marker)\\s*\\(",
+      "end": "\\)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.tag.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.sprf" }
+      },
+      "patterns": [
+        {
+          "match": "\"([^\"]+)\"",
+          "captures": {
+            "0": { "name": "string.quoted.double.sprf" }
+          }
+        },
+        { "match": ",", "name": "punctuation.separator.comma.sprf" }
       ]
     },
 

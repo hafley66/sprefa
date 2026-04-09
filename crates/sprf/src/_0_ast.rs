@@ -119,6 +119,8 @@ pub enum Tag {
     Folder,
     File,
     Fs,
+    Marker,
+    Md,
 }
 
 impl Tag {
@@ -132,6 +134,8 @@ impl Tag {
             "folder" => Some(Tag::Folder),
             "file" => Some(Tag::File),
             "fs" => Some(Tag::Fs),
+            "marker" => Some(Tag::Marker),
+            "md" => Some(Tag::Md),
             _ => None,
         }
     }

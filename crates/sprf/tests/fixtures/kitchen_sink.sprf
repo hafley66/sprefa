@@ -334,3 +334,31 @@ rule(docker_from) {
 rule(deploy_manifest) {
   fs(**/deploy.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
 };
+
+# ════════════════════════════════════════════════════════
+# 36. marker() single-arg: sequential comment regions
+# ════════════════════════════════════════════════════════
+
+rule(section_fns) {
+  fs(**/*.rs) > marker("SECTION:") > line(re:fn\s+$NAME)
+};
+
+# ════════════════════════════════════════════════════════
+# 37. marker() two-arg: paired open/close regions
+# ════════════════════════════════════════════════════════
+
+rule(region_fns) {
+  fs(**/*.rs) > marker("BEGIN:", "END:") > line(re:fn\s+$NAME)
+};
+
+# ════════════════════════════════════════════════════════
+# 38. marker() with scoped block syntax
+# ════════════════════════════════════════════════════════
+
+rule(section_block) {
+  fs(**/*.rs) {
+    marker("SECTION:") {
+      line(re:fn\s+$NAME)
+    }
+  }
+};

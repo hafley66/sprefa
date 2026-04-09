@@ -309,6 +309,10 @@ const TAGS: &[(&str, &str)] = &[
         "line",
         "Line pattern: line($CAP:$TAG) or line(re:pattern)",
     ),
+    (
+        "marker",
+        "Comment-bounded region scope: marker(\"open\") or marker(\"open\", \"close\")",
+    ),
     ("repo", "Repository glob: repo(org/*)"),
     ("rev", "Rev glob (branch or tag): rev(main|v*)"),
     ("branch", "Branch glob (alias for rev): branch(main|develop)"),

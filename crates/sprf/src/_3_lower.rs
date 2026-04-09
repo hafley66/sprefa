@@ -22,7 +22,7 @@
 use anyhow::{bail, Result};
 use sprefa_rules::graph::DepEdge;
 use sprefa_rules::pattern::{parse_segment_pattern, Segment};
-use sprefa_rules::types::{AstSelector, LineMatcher, MatchDef, Rule, RuleSet, SelectStep};
+use sprefa_rules::types::{AstSelector, LineMatcher, MarkerScope, MatchDef, Rule, RuleSet, SelectStep};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::_0_ast::{Program, RuleBody, RuleDecl, Slot, Statement, Tag};
@@ -101,6 +101,7 @@ struct ScopedStep {
     select_steps: Vec<SelectStep>,
     ast_selector: Option<AstSelector>,
     line_matcher: Option<LineMatcher>,
+    marker_scope: Option<MarkerScope>,
 }
 
 /// Expand one RuleBody into all its monomorphized variants.
@@ -233,6 +234,7 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
         let mut select: Vec<SelectStep> = vec![];
         let mut select_ast: Option<AstSelector> = None;
         let mut line_matcher: Option<LineMatcher> = None;
+        let mut marker_scope: Option<MarkerScope> = None;
 
         for scoped in &all_scoped {
             select.extend(scoped.select_steps.clone());
@@ -242,6 +244,9 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
             if let Some(lm) = scoped.line_matcher.clone() {
                 line_matcher = Some(lm);
             }
+            if let Some(ms) = scoped.marker_scope.clone() {
+                marker_scope = Some(ms);
+            }
         }
 
         rules.push(Rule {
@@ -250,6 +255,7 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
             select,
             select_ast,
             value: line_matcher,
+            marker_scope,
             create_matches: create_matches.clone(),
             confidence: None,
         });
@@ -383,7 +389,7 @@ fn slot_to_scoped_step(
 ) -> Result<ScopedStep> {
     let scope_vars = extract_slot_vars(slot);
 
-    let (select_steps, ast_selector, line_matcher, annots) = convert_slot(slot)?;
+    let (select_steps, ast_selector, line_matcher, marker_scope, annots) = convert_slot(slot)?;
     json_annotations.extend(annots);
 
     Ok(ScopedStep {
@@ -392,6 +398,7 @@ fn slot_to_scoped_step(
         select_steps,
         ast_selector,
         line_matcher,
+        marker_scope,
     })
 }
 
@@ -402,11 +409,13 @@ fn convert_slot(
     Vec<SelectStep>,
     Option<AstSelector>,
     Option<LineMatcher>,
+    Option<MarkerScope>,
     Vec<crate::_2_pattern::ScanAnnotation>,
 )> {
     let mut select = vec![];
     let mut ast_selector: Option<AstSelector> = None;
     let mut line_matcher: Option<LineMatcher> = None;
+    let mut marker_scope: Option<MarkerScope> = None;
     let mut json_annotations = Vec::new();
 
     match slot {
@@ -495,10 +504,83 @@ fn convert_slot(
                     })
                 };
             }
+            Tag::Marker => {
+                if marker_scope.is_some() {
+                    bail!("multiple marker() slots not supported");
+                }
+                marker_scope = Some(parse_marker_body(body)?);
+            }
+            Tag::Md => {
+                // TODO: md() pattern matching against markdown structure
+                bail!("md() tag not yet implemented");
+            }
         },
     }
 
-    Ok((select, ast_selector, line_matcher, json_annotations))
+    Ok((select, ast_selector, line_matcher, marker_scope, json_annotations))
+}
+
+/// Parse marker() body into a MarkerScope.
+///
+/// One arg: `marker("SECTION:")` -> flat sequential regions.
+/// Two args: `marker("BEGIN:", "END:")` -> paired open/close.
+///
+/// The body string is the raw content inside the parens. Quotes are part of the
+/// body because the parser doesn't strip them (they're inside the tag body).
+/// We strip quotes here and split on `, ` for the two-arg form.
+fn parse_marker_body(body: &str) -> Result<MarkerScope> {
+    let body = body.trim();
+
+    // Try splitting on comma for two-arg form
+    // Each arg may be quoted: "open", "close"
+    let args = split_marker_args(body)?;
+    match args.len() {
+        1 => Ok(MarkerScope {
+            open: args[0].clone(),
+            close: None,
+            capture: None,
+        }),
+        2 => Ok(MarkerScope {
+            open: args[0].clone(),
+            close: Some(args[1].clone()),
+            capture: None,
+        }),
+        _ => bail!("marker() takes 1 or 2 arguments, got {}", args.len()),
+    }
+}
+
+/// Split marker body into 1 or 2 quoted string args.
+fn split_marker_args(body: &str) -> Result<Vec<String>> {
+    let mut args = vec![];
+    let mut rest = body.trim();
+
+    loop {
+        if rest.is_empty() {
+            break;
+        }
+        // Expect a quoted string
+        if rest.starts_with('"') {
+            let end = rest[1..].find('"').ok_or_else(|| anyhow::anyhow!("unterminated string in marker()"))?;
+            args.push(rest[1..=end].to_string());
+            rest = rest[end + 2..].trim();
+            if rest.starts_with(',') {
+                rest = rest[1..].trim();
+            }
+        } else {
+            // Unquoted: take until comma or end
+            let end = rest.find(',').unwrap_or(rest.len());
+            let arg = rest[..end].trim();
+            if !arg.is_empty() {
+                args.push(arg.to_string());
+            }
+            rest = if end < rest.len() { rest[end + 1..].trim() } else { "" };
+        }
+    }
+
+    if args.is_empty() {
+        bail!("marker() requires at least 1 argument");
+    }
+    Ok(args)
 }
 
 /// Rewrite an ast pattern body that contains `${VAR}` braced captures.

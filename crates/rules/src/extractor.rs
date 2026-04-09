@@ -8,7 +8,8 @@ use crate::{
     ast, emit,
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
-    types::{AstSelector, LineMatcher, MatchDef, RuleSet, SelectStep},
+    marker,
+    types::{AstSelector, LineMatcher, MarkerScope, MatchDef, RuleSet, SelectStep},
     walk,
     walk::{CapturedValue, CompiledStep},
 };
@@ -23,6 +24,7 @@ pub struct CompiledRule {
     pub steps: Vec<CompiledStep>,
     pub ast: Option<AstSelector>,
     pub line_matcher: Option<LineMatcher>,
+    pub marker_scope: Option<MarkerScope>,
     pub create_matches: Vec<MatchDef>,
 }
 
@@ -98,11 +100,6 @@ impl RuleExtractor {
         path: &str,
         ctx: &ExtractContext,
     ) -> Vec<walk::MatchResult> {
-        let ext = Path::new(path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-
         let mut all = vec![];
         for rule in self.rules_for_path(path) {
             let repo = ctx.repo.unwrap_or("");
@@ -120,43 +117,25 @@ impl RuleExtractor {
                 resolve_context_captures(&rule.context_captures, ctx, path, &git_caps, &file_caps);
 
             let seed = build_current_captures(ctx, path);
-            let results = if let Some(ast_sel) = &rule.ast {
-                ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
-            } else if rule.steps.is_empty() && rule.line_matcher.is_some() {
-                match std::str::from_utf8(source) {
-                    Ok(text) => text
-                        .lines()
-                        .map(|line| {
-                            let mut captures = seed.clone();
-                            captures.insert(
-                                String::new(),
-                                walk::CapturedValue {
-                                    text: line.to_string(),
-                                    span_start: 0,
-                                    span_end: 0,
-                                },
-                            );
-                            walk::MatchResult {
-                                captures,
-                                path: vec![],
-                            }
-                        })
-                        .collect(),
-                    Err(_) => continue,
-                }
-            } else {
-                let value = match parse_data(source, ext) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                walk::walk_with_captures(&value, &rule.steps, seed)
-            };
+            let regions = resolve_regions(source, path, &rule.marker_scope);
 
-            for result in results {
-                if context_caps.is_empty() {
-                    all.push(result);
-                } else {
+            for region in &regions {
+                let region_source = &source[region.start..region.end];
+                let results = run_matchers(
+                    region_source,
+                    path,
+                    rule,
+                    seed.clone(),
+                    self.config_dir.as_deref(),
+                );
+
+                for result in results {
                     let mut merged = result;
+                    // Merge marker captures
+                    for (name, cv) in &region.captures {
+                        merged.captures.insert(name.clone(), cv.clone());
+                    }
+                    // Merge context captures
                     for (name, cv) in &context_caps {
                         merged.captures.insert(name.clone(), cv.clone());
                     }
@@ -185,11 +164,6 @@ impl Extractor for RuleExtractor {
     }
 
     fn extract(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<RawRef> {
-        let ext = Path::new(path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-
         let mut refs = vec![];
         let mut group_counter: u32 = 0;
         for rule in self.rules_for_path(path) {
@@ -208,69 +182,122 @@ impl Extractor for RuleExtractor {
                 resolve_context_captures(&rule.context_captures, ctx, path, &git_caps, &file_caps);
 
             let seed = build_current_captures(ctx, path);
-            let results = if let Some(ast_sel) = &rule.ast {
-                ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
-            } else if rule.steps.is_empty() && rule.line_matcher.is_some() {
-                // Line-only rule on plain text: each line is a match candidate.
-                // The line matcher (applied later in create_refs) filters and
-                // extracts sub-captures from each line.
-                match std::str::from_utf8(source) {
-                    Ok(text) => text
-                        .lines()
-                        .map(|line| {
-                            let mut captures = seed.clone();
-                            captures.insert(
-                                String::new(),
-                                walk::CapturedValue {
-                                    text: line.to_string(),
-                                    span_start: 0,
-                                    span_end: 0,
-                                },
-                            );
-                            walk::MatchResult {
-                                captures,
-                                path: vec![],
-                            }
-                        })
-                        .collect(),
-                    Err(_) => continue,
-                }
-            } else {
-                let value = match parse_data(source, ext) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                walk::walk_with_captures(&value, &rule.steps, seed)
-            };
+            let regions = resolve_regions(source, path, &rule.marker_scope);
 
             let has_matches = !rule.create_matches.is_empty();
-            for result in results {
-                let merged = if context_caps.is_empty() {
-                    result.clone()
-                } else {
+            for region in &regions {
+                let region_source = &source[region.start..region.end];
+                let results = run_matchers(
+                    region_source,
+                    path,
+                    rule,
+                    seed.clone(),
+                    self.config_dir.as_deref(),
+                );
+
+                for result in results {
                     let mut merged = result.clone();
+                    // Merge marker captures
+                    for (name, cv) in &region.captures {
+                        merged.captures.insert(name.clone(), cv.clone());
+                    }
+                    // Merge context captures
                     for (name, cv) in &context_caps {
                         merged.captures.insert(name.clone(), cv.clone());
                     }
-                    merged
-                };
-                let group = if has_matches {
-                    let g = group_counter;
-                    group_counter += 1;
-                    Some(g)
-                } else {
-                    None
-                };
-                refs.extend(emit::create_refs(
-                    &merged,
-                    &rule.create_matches,
-                    rule.line_matcher.as_ref(),
-                    &rule.name,
-                    group,
-                ));
+                    let group = if has_matches {
+                        let g = group_counter;
+                        group_counter += 1;
+                        Some(g)
+                    } else {
+                        None
+                    };
+                    refs.extend(emit::create_refs(
+                        &merged,
+                        &rule.create_matches,
+                        rule.line_matcher.as_ref(),
+                        &rule.name,
+                        group,
+                    ));
+                }
             }
         }
         refs
+    }
+}
+
+/// Resolve marker regions for a rule. If no marker scope, returns a single region
+/// covering the entire source.
+fn resolve_regions(
+    source: &[u8],
+    path: &str,
+    marker_scope: &Option<MarkerScope>,
+) -> Vec<marker::MarkerRegion> {
+    match marker_scope {
+        Some(scope) => {
+            let regions = marker::find_marker_regions(source, path, scope);
+            if regions.is_empty() {
+                // No markers found -- return whole file so downstream matchers still run
+                vec![marker::MarkerRegion {
+                    start: 0,
+                    end: source.len(),
+                    captures: HashMap::new(),
+                }]
+            } else {
+                regions
+            }
+        }
+        None => vec![marker::MarkerRegion {
+            start: 0,
+            end: source.len(),
+            captures: HashMap::new(),
+        }],
+    }
+}
+
+/// Run the appropriate matcher (ast, line, or structural walk) on a source slice.
+fn run_matchers(
+    source: &[u8],
+    path: &str,
+    rule: &CompiledRule,
+    seed: HashMap<String, CapturedValue>,
+    config_dir: Option<&Path>,
+) -> Vec<walk::MatchResult> {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+
+    if let Some(ast_sel) = &rule.ast {
+        ast::ast_match(source, path, ast_sel, config_dir)
+    } else if rule.steps.is_empty() && rule.line_matcher.is_some() {
+        match std::str::from_utf8(source) {
+            Ok(text) => text
+                .lines()
+                .map(|line| {
+                    let mut captures = seed.clone();
+                    captures.insert(
+                        String::new(),
+                        walk::CapturedValue {
+                            text: line.to_string(),
+                            span_start: 0,
+                            span_end: 0,
+                        },
+                    );
+                    walk::MatchResult {
+                        captures,
+                        path: vec![],
+                    }
+                })
+                .collect(),
+            Err(_) => vec![],
+        }
+    } else {
+        let value = match parse_data(source, ext) {
+            Some(v) => v,
+            None => return vec![],
+        };
+        walk::walk_with_captures(&value, &rule.steps, seed)
     }
 }
 
@@ -429,6 +456,7 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
         steps: compiled_steps,
         ast: r.select_ast.clone(),
         line_matcher: r.value.clone(),
+        marker_scope: r.marker_scope.clone(),
         create_matches: r.create_matches.clone(),
     })
 }

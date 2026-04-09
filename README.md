@@ -142,6 +142,7 @@ rule(dep_source) { fs(**/Cargo.toml) > json({ dependencies: { $DEP: $_ } }) };
 | `json(pattern)` | Walk JSON/YAML/TOML with destructuring and captures |
 | `ast(pattern)` or `ast[lang](pattern)` | Structural match via ast-grep (any tree-sitter language) |
 | `line(pattern)` | Line-based regex or segment capture |
+| `marker(open)` or `marker(open, close)` | Scope downstream matchers to comment-bounded regions |
 | `repo(pattern)` | Match/capture repo name; triggers demand scanning |
 | `rev(pattern)` / `branch()` / `tag()` | Match/capture git ref; triggers demand scanning |
 | `folder(pattern)` / `file(pattern)` | Match directory or full file path |
@@ -306,6 +307,50 @@ rule(semver_pin) {
 | `re:` raw | `re:` prefix + `(?P<>)` groups | defined by group pattern | active |
 
 Line matchers run per-line against plain text files (Dockerfile, go.mod, requirements.txt, Makefile) and against walk captures from structured files. Extensionless files are dispatched to the rule engine automatically.
+
+---
+
+## marker() -- comment-bounded region scoping
+
+Constrains downstream matchers to byte ranges bounded by comment nodes. The regex arguments match against comment node text content, detected via tree-sitter for known languages or line-prefix heuristic (`//`, `#`, `--`, `/*`, `<!--`) as fallback.
+
+```sprf
+# single arg: flat sequential regions (each ends at next marker or EOF)
+rule(section_fns) {
+  fs(**/*.rs) > marker("SECTION:") > line(re:fn\s+$NAME)
+};
+
+# two args: paired open/close (nestable)
+rule(region_fns) {
+  fs(**/*.rs) > marker("BEGIN:", "END:") > line(re:fn\s+$NAME)
+};
+
+# block syntax works too
+rule(section_block) {
+  fs(**/*.rs) {
+    marker("SECTION:") {
+      line(re:fn\s+$NAME)
+    }
+  }
+};
+```
+
+### Region semantics
+
+| Form | Behavior |
+|---|---|
+| `marker("SECTION:")` | Each matching comment starts a region. Ends at next matching comment or EOF. |
+| `marker("BEGIN:", "END:")` | Paired open/close. Nestable. Unpaired opens become point matches. |
+
+A point match is a single comment node with no corresponding close or next marker. Downstream matchers still run against it (the comment line itself is the region).
+
+### Comment detection
+
+marker() operates on comment nodes from whatever parser is active:
+- **Tree-sitter grammars** (Rust, TypeScript, Python, Go, etc.) -- uses AST comment nodes directly
+- **Line-prefix fallback** (unknown file types) -- recognizes `//`, `#`, `--`, `/*`, `<!--`, `*` prefixes
+
+The regex argument matches against the full comment text, including the comment delimiter. `marker("SECTION:")` matches `// SECTION: imports` in Rust, `# SECTION: imports` in Python, `<!-- SECTION: imports -->` in HTML.
 
 ---
 
@@ -551,7 +596,7 @@ cd editors/vscode && npm install && npm run compile  # build extension
 | Feature | Status |
 |---|---|
 | Parse error diagnostics | live, highlights error region |
-| Tag completions | all tags: fs, json, ast, line, repo, rev, branch, tag, folder, file |
+| Tag completions | all tags: fs, json, ast, line, marker, repo, rev, branch, tag, folder, file |
 | Statement keyword completions | rule, check |
 | Capture completions | scoped to enclosing rule, triggered by `$` |
 | Cross-ref rule name completions | suggests defined rule names |

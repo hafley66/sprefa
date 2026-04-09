@@ -126,9 +126,32 @@ pub struct Rule {
     #[serde(alias = "emit")]
     pub create_matches: Vec<MatchDef>,
 
+    /// Marker scope: constrains downstream matchers to byte ranges bounded by
+    /// comment nodes matching the open (and optionally close) pattern.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker_scope: Option<MarkerScope>,
+
     /// Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f64>,
+}
+
+/// Byte-range scoping via comment node matching.
+///
+/// `open` is a regex matched against comment node text content.
+/// If `close` is set, regions are paired open/close (nestable).
+/// If `close` is None, each open starts a region that ends at the next open or EOF.
+/// Unpaired markers (no next open, no close) produce a point match on the comment node itself.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MarkerScope {
+    /// Regex pattern matched against comment node content to find region starts.
+    pub open: String,
+    /// Optional regex for region end markers. When absent, regions are flat sequences.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close: Option<String>,
+    /// Capture name for the region label extracted from the comment text after the matched prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<String>,
 }
 
 /// One step in a selector chain.
