@@ -1265,4 +1265,113 @@ fn inner() {
         assert!(con.contains("use sprefa_rules::_0_types::Rule;"), "fn-body use\n{con}");
         assert!(!con.contains("sprefa_rules::types::"), "all old paths gone\n{con}");
     }
+
+    /// Sequential multi-rename: rename types.rs then walk.rs in two separate
+    /// plan+apply cycles. The second rename must rewrite `crate::walk` refs
+    /// even in files already modified by the first rename.
+    ///
+    /// This reproduces the bug where rapid sequential renames leave stale
+    /// intra-crate refs because the DB isn't re-synced between cycles.
+    #[tokio::test]
+    async fn rust_sequential_multi_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_root = dir.path().to_string_lossy().to_string();
+
+        let rules_dir = dir.path().join("crates/rules/src");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+
+        std::fs::write(dir.path().join("Cargo.toml"), "\
+[workspace]\nmembers = [\"crates/rules\"]\nresolver = \"2\"\n").unwrap();
+        std::fs::write(dir.path().join("crates/rules/Cargo.toml"), "\
+[package]\nname = \"sprefa_rules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+
+        let lib_src = "\
+pub mod types;
+pub mod walk;
+pub mod ast;
+
+pub use types::*;
+";
+        let ast_src = "\
+use crate::types::AstSelector;
+use crate::walk::{CapturedValue, MatchResult};
+";
+        let walk_src = "\
+use crate::types::Rule;
+
+pub struct CapturedValue;
+pub struct MatchResult;
+";
+        std::fs::write(rules_dir.join("lib.rs"), lib_src).unwrap();
+        std::fs::write(rules_dir.join("types.rs"), "pub struct AstSelector;\npub struct Rule;").unwrap();
+        std::fs::write(rules_dir.join("walk.rs"), walk_src).unwrap();
+        std::fs::write(rules_dir.join("ast.rs"), ast_src).unwrap();
+
+        let db = make_db().await;
+        let repo_id = seed_repo(&db, &repo_root).await;
+        let lib_id = seed_file(&db, repo_id, "crates/rules/src/lib.rs").await;
+        let types_id = seed_file(&db, repo_id, "crates/rules/src/types.rs").await;
+        let walk_id = seed_file(&db, repo_id, "crates/rules/src/walk.rs").await;
+        let ast_id = seed_file(&db, repo_id, "crates/rules/src/ast.rs").await;
+
+        // lib.rs refs
+        seed_ref(&db, lib_id, "types", kind::RS_MOD, None).await;
+        seed_ref(&db, lib_id, "walk", kind::RS_MOD, None).await;
+        seed_ref(&db, lib_id, "crate::types", kind::RS_USE, None).await;
+        // ast.rs refs
+        seed_ref(&db, ast_id, "crate::types::AstSelector", kind::RS_USE, None).await;
+        seed_ref(&db, ast_id, "crate::walk::CapturedValue", kind::RS_USE, None).await;
+        seed_ref(&db, ast_id, "crate::walk::MatchResult", kind::RS_USE, None).await;
+        // walk.rs refs
+        seed_ref(&db, walk_id, "crate::types::Rule", kind::RS_USE, None).await;
+
+        // ── Rename 1: types.rs → _0_types.rs ──
+        std::fs::rename(rules_dir.join("types.rs"), rules_dir.join("_0_types.rs")).unwrap();
+        let changes1 = vec![Change::Fs(FsChange::Move {
+            file_id: types_id,
+            old_path: format!("{}/crates/rules/src/types.rs", repo_root),
+            new_path: format!("{}/crates/rules/src/_0_types.rs", repo_root),
+        })];
+        let (edits1, rw1) = plan_rewrites(&db, &changes1, &[]).await.unwrap();
+        let result1 = crate::rewrite::apply(&edits1, &rw1);
+        assert!(result1.rust_failed.is_empty(), "rename 1 failed: {:?}", result1.rust_failed);
+
+        // Verify rename 1 worked
+        let ast_after_1 = std::fs::read_to_string(rules_dir.join("ast.rs")).unwrap();
+        assert!(ast_after_1.contains("crate::_0_types::AstSelector"), "rename 1 should rewrite types ref in ast.rs\n{ast_after_1}");
+        // ast.rs still has crate::walk refs (untouched by rename 1)
+        assert!(ast_after_1.contains("crate::walk::"), "walk refs untouched\n{ast_after_1}");
+
+        // ── Rename 2: walk.rs → _1_walk.rs ──
+        // DB refs for ast.rs are STALE (still say crate::types, not crate::_0_types).
+        // The planner must still find ast.rs as affected and the syn rewriter must
+        // work on the actual file content (which already has _0_types).
+        std::fs::rename(rules_dir.join("walk.rs"), rules_dir.join("_1_walk.rs")).unwrap();
+        let changes2 = vec![Change::Fs(FsChange::Move {
+            file_id: walk_id,
+            old_path: format!("{}/crates/rules/src/walk.rs", repo_root),
+            new_path: format!("{}/crates/rules/src/_1_walk.rs", repo_root),
+        })];
+        let (edits2, rw2) = plan_rewrites(&db, &changes2, &[]).await.unwrap();
+        let result2 = crate::rewrite::apply(&edits2, &rw2);
+        assert!(result2.rust_failed.is_empty(), "rename 2 failed: {:?}", result2.rust_failed);
+
+        // ── Final assertions ──
+        let lib = std::fs::read_to_string(rules_dir.join("lib.rs")).unwrap();
+        assert!(lib.contains("pub mod _0_types;"), "lib: types mod decl\n{lib}");
+        assert!(lib.contains("pub mod _1_walk;"), "lib: walk mod decl\n{lib}");
+        assert!(lib.contains("pub use _0_types::*;"), "lib: re-export\n{lib}");
+        assert!(!lib.contains("pub mod types;"), "lib: old types gone\n{lib}");
+        assert!(!lib.contains("pub mod walk;"), "lib: old walk gone\n{lib}");
+
+        let ast = std::fs::read_to_string(rules_dir.join("ast.rs")).unwrap();
+        assert!(ast.contains("crate::_0_types::AstSelector"), "ast: types rewritten\n{ast}");
+        assert!(ast.contains("crate::_1_walk::"), "ast: walk rewritten\n{ast}");
+        assert!(!ast.contains("crate::walk::"), "ast: old walk refs gone\n{ast}");
+        assert!(!ast.contains("crate::types::"), "ast: old types refs gone\n{ast}");
+
+        let walk = std::fs::read_to_string(rules_dir.join("_1_walk.rs")).unwrap();
+        assert!(walk.contains("crate::_0_types::Rule"), "walk: types rewritten\n{walk}");
+        assert!(!walk.contains("crate::types::"), "walk: old types gone\n{walk}");
+    }
 }
