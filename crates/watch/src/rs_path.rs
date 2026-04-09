@@ -230,7 +230,7 @@ pub(crate) fn filter_rs_glob_uses(
 ///
 /// Returns (mod_stem, Vec<candidate_relative_paths>). The caller queries
 /// each candidate to find which one exists in the DB.
-pub fn mod_parent_candidates(old_file_path: &str) -> Option<(String, Vec<String>)> {
+pub fn mod_parent_candidates(old_file_path: &str, repo_root: &str) -> Option<(String, Vec<String>)> {
     let mod_path = file_to_mod_path(old_file_path)?;
 
     // Extract stem (last segment after crate::)
@@ -240,13 +240,15 @@ pub fn mod_parent_candidates(old_file_path: &str) -> Option<(String, Vec<String>
         return None;
     }
 
-    let path = std::path::Path::new(old_file_path);
-    let components: Vec<&str> = path
+    // Strip repo root to get repo-relative path for DB matching.
+    let rel = old_file_path.strip_prefix(repo_root)?.trim_start_matches('/');
+    let rel_path = Path::new(rel);
+    let rel_components: Vec<&str> = rel_path
         .components()
         .map(|c| c.as_os_str().to_str().unwrap_or(""))
         .collect();
-    let src_idx = components.iter().rposition(|c| *c == "src")?;
-    let filename = *components.last()?;
+    let src_idx = rel_components.iter().rposition(|c| *c == "src")?;
+    let filename = *rel_components.last()?;
     let file_stem = Path::new(filename).file_stem()?.to_str()?;
 
     // For mod.rs, the parent directory IS the module. So the "grandparent" contains
@@ -256,22 +258,34 @@ pub fn mod_parent_candidates(old_file_path: &str) -> Option<(String, Vec<String>
     //   src/foo/bar.rs  -> parent dir = src/foo, look for src/foo/mod.rs or src/foo.rs
     //   src/foo/mod.rs  -> parent dir = src/foo, but mod.rs IS foo, so look in src/lib.rs
     let depth_adjust = if file_stem == "mod" { 2 } else { 1 };
-    let parent_end = components.len().checked_sub(depth_adjust)?;
-    let parent_components = &components[..parent_end];
+    let parent_end = rel_components.len().checked_sub(depth_adjust)?;
     let src_depth = parent_end.saturating_sub(src_idx + 1);
 
-    // Build repo-relative candidates (from src/ onward, matching DB storage).
-    let rel_parent_components = &parent_components[src_idx..];
-    let mut candidates = Vec::new();
+    // Crate prefix: everything before src/ (e.g. "crates/rules")
+    let crate_prefix = if src_idx > 0 {
+        rel_components[..src_idx].join("/")
+    } else {
+        String::new()
+    };
+    let prefix = |suffix: &str| -> String {
+        if crate_prefix.is_empty() {
+            format!("src/{}", suffix)
+        } else {
+            format!("{}/src/{}", crate_prefix, suffix)
+        }
+    };
 
+    let mut candidates = Vec::new();
     if src_depth == 0 {
         // Parent is the crate root
-        candidates.push(format!("src/lib.rs"));
-        candidates.push(format!("src/main.rs"));
+        candidates.push(prefix("lib.rs"));
+        candidates.push(prefix("main.rs"));
     } else {
-        let parent_dir = rel_parent_components.join("/");
-        candidates.push(format!("{}/mod.rs", parent_dir));
-        candidates.push(format!("{}.rs", parent_dir));
+        // Build the subpath within src/
+        let inner_components = &rel_components[src_idx + 1..parent_end];
+        let inner = inner_components.join("/");
+        candidates.push(prefix(&format!("{}/mod.rs", inner)));
+        candidates.push(prefix(&format!("{}.rs", inner)));
     }
 
     Some((stem.to_string(), candidates))
@@ -961,7 +975,7 @@ mod tests {
 
     #[test]
     fn parent_of_crate_root_module() {
-        let result = mod_parent_candidates("/repo/src/types.rs");
+        let result = mod_parent_candidates("/repo/src/types.rs", "/repo");
         let (stem, candidates) = result.unwrap();
         assert_eq!(stem, "types");
         assert!(candidates.contains(&"src/lib.rs".to_string()));
@@ -970,7 +984,7 @@ mod tests {
 
     #[test]
     fn parent_of_nested_module() {
-        let result = mod_parent_candidates("/repo/src/foo/bar.rs");
+        let result = mod_parent_candidates("/repo/src/foo/bar.rs", "/repo");
         let (stem, candidates) = result.unwrap();
         assert_eq!(stem, "bar");
         assert!(candidates.contains(&"src/foo/mod.rs".to_string()));
@@ -979,14 +993,32 @@ mod tests {
 
     #[test]
     fn parent_of_lib_rs_is_none() {
-        assert!(mod_parent_candidates("/repo/src/lib.rs").is_none());
+        assert!(mod_parent_candidates("/repo/src/lib.rs", "/repo").is_none());
     }
 
     #[test]
     fn parent_of_mod_rs() {
-        let result = mod_parent_candidates("/repo/src/foo/mod.rs");
+        let result = mod_parent_candidates("/repo/src/foo/mod.rs", "/repo");
         let (stem, candidates) = result.unwrap();
         assert_eq!(stem, "foo");
         assert!(candidates.contains(&"src/lib.rs".to_string()) || candidates.contains(&"src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn parent_in_workspace_crate() {
+        let result = mod_parent_candidates("/repo/crates/rules/src/types.rs", "/repo");
+        let (stem, candidates) = result.unwrap();
+        assert_eq!(stem, "types");
+        assert!(candidates.contains(&"crates/rules/src/lib.rs".to_string()));
+        assert!(candidates.contains(&"crates/rules/src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn parent_nested_in_workspace_crate() {
+        let result = mod_parent_candidates("/repo/crates/rules/src/foo/bar.rs", "/repo");
+        let (stem, candidates) = result.unwrap();
+        assert_eq!(stem, "bar");
+        assert!(candidates.contains(&"crates/rules/src/foo/mod.rs".to_string()));
+        assert!(candidates.contains(&"crates/rules/src/foo.rs".to_string()));
     }
 }

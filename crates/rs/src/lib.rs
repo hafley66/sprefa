@@ -1,5 +1,6 @@
 use proc_macro2::LineColumn;
 use syn::{Item, UseTree, spanned::Spanned};
+use syn::visit::Visit;
 
 use sprefa_extract::{kind, ExtractContext, Extractor, RawRef};
 
@@ -247,6 +248,317 @@ fn flatten_use_tree(
             for item in &g.items {
                 flatten_use_tree(item, prefix, prefix_start, offsets, refs, gc);
             }
+        }
+    }
+}
+
+// ── syn-based rewriter ──────────────────────────────────────────────────────
+
+/// Rewrite module references in Rust source after a module rename.
+///
+/// Parses source with syn, walks use trees and mod declarations, finds idents
+/// matching `old_stem` in the correct path context, replaces them with `new_stem`.
+///
+/// `use_prefixes`: path segments that must precede `old_stem` in use trees.
+///   e.g. `&["crate"]` matches `use crate::old_stem::Foo`
+///   e.g. `&["sprefa_rules"]` matches `use sprefa_rules::old_stem::Foo`
+///   Empty slice matches bare uses like `use old_stem::*` (relative paths).
+///
+/// `rewrite_mod_decl`: also rewrite `mod old_stem;` declarations.
+///
+/// Returns (rewritten_source, edit_count).
+pub fn rewrite_module_refs(
+    source: &str,
+    old_stem: &str,
+    new_stem: &str,
+    use_prefixes: &[&str],
+    rewrite_mod_decl: bool,
+) -> (String, usize) {
+    let file = match syn::parse_file(source) {
+        Ok(f) => f,
+        Err(_) => return (source.to_string(), 0),
+    };
+    let offsets = line_offsets(source);
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+
+    // When rewriting mod decls, also match bare relative uses (e.g. `pub use types::*`)
+    // since we're in the parent module where relative paths resolve to the child.
+    let mut extended_prefixes: Vec<&str> = use_prefixes.to_vec();
+    if rewrite_mod_decl {
+        extended_prefixes.push("");
+    }
+
+    for item in &file.items {
+        match item {
+            Item::Use(u) => {
+                collect_use_ident_spans(&u.tree, &[], old_stem, &extended_prefixes, &offsets, &mut spans);
+            }
+            Item::Mod(m) if rewrite_mod_decl => {
+                if m.ident == old_stem {
+                    let (s, e) = span_of(&offsets, m.ident.span());
+                    spans.push((s as usize, e as usize));
+                }
+                if let Some((_, inner)) = &m.content {
+                    collect_items_use_spans(inner, old_stem, &extended_prefixes, &offsets, &mut spans);
+                }
+            }
+            Item::Mod(m) => {
+                if let Some((_, inner)) = &m.content {
+                    collect_items_use_spans(inner, old_stem, &extended_prefixes, &offsets, &mut spans);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Walk the entire AST for inline qualified paths (fn sigs, struct fields,
+    // impl blocks, where clauses, etc). Catches `crate::types::Foo` anywhere
+    // that isn't a `use` statement.
+    let mut visitor = PathVisitor {
+        old_stem,
+        use_prefixes: &extended_prefixes,
+        offsets: &offsets,
+        spans: &mut spans,
+    };
+    visitor.visit_file(&file);
+
+    // Macro arguments are opaque TokenStreams to syn. Re-parse them with
+    // proc_macro2 to find qualified paths inside matches!(), vec!(), etc.
+    let mut macro_visitor = MacroTokenVisitor {
+        old_stem,
+        use_prefixes: &extended_prefixes,
+        offsets: &offsets,
+        spans: &mut spans,
+    };
+    macro_visitor.visit_file(&file);
+
+    if spans.is_empty() {
+        return (source.to_string(), 0);
+    }
+
+    // Deduplicate and sort descending so replacements don't shift offsets.
+    spans.sort_unstable();
+    spans.dedup();
+    spans.reverse();
+
+    let count = spans.len();
+    let mut result = source.to_string();
+    for (start, end) in &spans {
+        result.replace_range(*start..*end, new_stem);
+    }
+
+    (result, count)
+}
+
+fn collect_items_use_spans(
+    items: &[Item],
+    old_stem: &str,
+    use_prefixes: &[&str],
+    offsets: &[usize],
+    spans: &mut Vec<(usize, usize)>,
+) {
+    for item in items {
+        match item {
+            Item::Use(u) => {
+                collect_use_ident_spans(&u.tree, &[], old_stem, use_prefixes, offsets, spans);
+            }
+            Item::Mod(m) => {
+                if let Some((_, inner)) = &m.content {
+                    collect_items_use_spans(inner, old_stem, use_prefixes, offsets, spans);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Walk a use tree, tracking the path segments seen so far.
+/// When we find an ident matching `old_stem` whose preceding path matches
+/// one of the `use_prefixes`, record its byte span.
+fn collect_use_ident_spans(
+    tree: &UseTree,
+    path_so_far: &[String],
+    old_stem: &str,
+    use_prefixes: &[&str],
+    offsets: &[usize],
+    spans: &mut Vec<(usize, usize)>,
+) {
+    match tree {
+        UseTree::Path(p) => {
+            let ident_str = p.ident.to_string();
+            if ident_str == old_stem && prefix_matches(path_so_far, use_prefixes) {
+                let (s, e) = span_of(offsets, p.ident.span());
+                spans.push((s as usize, e as usize));
+            }
+            let mut next_path = path_so_far.to_vec();
+            if ident_str != "self" && ident_str != "super" {
+                next_path.push(ident_str);
+            }
+            collect_use_ident_spans(&p.tree, &next_path, old_stem, use_prefixes, offsets, spans);
+        }
+        UseTree::Name(n) => {
+            if n.ident == old_stem && prefix_matches(path_so_far, use_prefixes) {
+                let (s, e) = span_of(offsets, n.ident.span());
+                spans.push((s as usize, e as usize));
+            }
+        }
+        UseTree::Rename(r) => {
+            if r.ident == old_stem && prefix_matches(path_so_far, use_prefixes) {
+                let (s, e) = span_of(offsets, r.ident.span());
+                spans.push((s as usize, e as usize));
+            }
+        }
+        UseTree::Glob(_) => {}
+        UseTree::Group(g) => {
+            for item in &g.items {
+                collect_use_ident_spans(item, path_so_far, old_stem, use_prefixes, offsets, spans);
+            }
+        }
+    }
+}
+
+/// Check if the accumulated path matches any of the required prefixes.
+/// An empty prefix slice means "match any prefix" (bare/relative uses).
+fn prefix_matches(path_so_far: &[String], use_prefixes: &[&str]) -> bool {
+    if use_prefixes.is_empty() {
+        return true;
+    }
+    for pfx in use_prefixes {
+        if pfx.is_empty() {
+            if path_so_far.is_empty() {
+                return true;
+            }
+            continue;
+        }
+        let pfx_segments: Vec<&str> = pfx.split("::").collect();
+        if path_so_far.len() >= pfx_segments.len()
+            && path_so_far[..pfx_segments.len()]
+                .iter()
+                .zip(&pfx_segments)
+                .all(|(a, b)| a == b)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Walks the entire syn AST to find inline qualified paths like
+/// `crate::types::Foo` in fn signatures, struct fields, impl blocks, etc.
+struct PathVisitor<'a> {
+    old_stem: &'a str,
+    use_prefixes: &'a [&'a str],
+    offsets: &'a [usize],
+    spans: &'a mut Vec<(usize, usize)>,
+}
+
+impl<'a, 'ast> Visit<'ast> for PathVisitor<'a> {
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        // Check if any segment matches old_stem with the right prefix.
+        // e.g. for `crate::types::Rule`, segments are [crate, types, Rule].
+        // With prefix ["crate"] and old_stem "types", segment index 1 matches.
+        let segments: Vec<String> = path.segments.iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+
+        for (i, seg) in segments.iter().enumerate() {
+            if seg != self.old_stem {
+                continue;
+            }
+            // Check the prefix: segments before this one must match a use_prefix.
+            let before: Vec<String> = segments[..i].to_vec();
+            if prefix_matches(&before, self.use_prefixes) {
+                let ident = &path.segments[i].ident;
+                let (s, e) = span_of(self.offsets, ident.span());
+                self.spans.push((s as usize, e as usize));
+            }
+        }
+
+        // Continue visiting children (e.g. generic args like Foo<crate::types::Bar>).
+        syn::visit::visit_path(self, path);
+    }
+
+    // For use items, delegate to collect_use_ident_spans which handles
+    // grouped imports correctly. This catches `use` inside function bodies
+    // that the top-level item walk misses. Dedup handles overlap.
+    fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
+        collect_use_ident_spans(&node.tree, &[], self.old_stem, self.use_prefixes, self.offsets, self.spans);
+    }
+}
+
+/// Walks macro invocations, tokenizes their arguments, and finds qualified
+/// paths like `crate::types::Foo` that syn's Visit can't see.
+struct MacroTokenVisitor<'a> {
+    old_stem: &'a str,
+    use_prefixes: &'a [&'a str],
+    offsets: &'a [usize],
+    spans: &'a mut Vec<(usize, usize)>,
+}
+
+impl<'a, 'ast> Visit<'ast> for MacroTokenVisitor<'a> {
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        scan_token_stream(&mac.tokens, self.old_stem, self.use_prefixes, self.offsets, self.spans);
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Scan a proc_macro2 token stream for path-like sequences matching
+/// `prefix::old_stem`. Token streams preserve span info, so we get
+/// exact byte offsets without string guessing.
+fn scan_token_stream(
+    tokens: &proc_macro2::TokenStream,
+    old_stem: &str,
+    use_prefixes: &[&str],
+    offsets: &[usize],
+    spans: &mut Vec<(usize, usize)>,
+) {
+    // Collect tokens into a vec for lookahead.
+    let toks: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
+
+    // Walk looking for ident :: ident :: ident sequences.
+    // Build up path segments, check for prefix::old_stem match.
+    let mut i = 0;
+    while i < toks.len() {
+        // Try to parse a path starting at position i.
+        if let proc_macro2::TokenTree::Ident(first) = &toks[i] {
+            let mut segments: Vec<(String, proc_macro2::Span)> = vec![(first.to_string(), first.span())];
+            let mut j = i + 1;
+            // Consume :: ident pairs
+            while j + 1 < toks.len() {
+                if let proc_macro2::TokenTree::Punct(p) = &toks[j] {
+                    if p.as_char() == ':' && p.spacing() == proc_macro2::Spacing::Joint {
+                        if let Some(proc_macro2::TokenTree::Punct(p2)) = toks.get(j + 1) {
+                            if p2.as_char() == ':' {
+                                if let Some(proc_macro2::TokenTree::Ident(next)) = toks.get(j + 2) {
+                                    segments.push((next.to_string(), next.span()));
+                                    j += 3;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+
+            // Check if any segment is old_stem with correct prefix.
+            for (si, (name, span)) in segments.iter().enumerate() {
+                if name == old_stem {
+                    let before: Vec<String> = segments[..si].iter().map(|(n, _)| n.clone()).collect();
+                    if prefix_matches(&before, use_prefixes) {
+                        let (s, e) = span_of(offsets, *span);
+                        spans.push((s as usize, e as usize));
+                    }
+                }
+            }
+
+            i = j;
+        } else if let proc_macro2::TokenTree::Group(g) = &toks[i] {
+            // Recurse into groups (parens, brackets, braces inside macros).
+            scan_token_stream(&g.stream(), old_stem, use_prefixes, offsets, spans);
+            i += 1;
+        } else {
+            i += 1;
         }
     }
 }
@@ -627,5 +939,182 @@ mod tests {
         assert_eq!(m.node_path.as_deref(), Some("alt"));
         // inner fn still extracted
         assert!(refs.iter().any(|r| r.value == "inner" && r.kind == kind::RS_DECLARE));
+    }
+
+    // ── rewrite_module_refs ──────────────────────────────────────────────
+
+    #[test]
+    fn rewrite_simple_use() {
+        let src = "use crate::types::Foo;";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, "use crate::_0_types::Foo;");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_grouped_use() {
+        let src = "use crate::{types::Foo, ast};";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, "use crate::{_0_types::Foo, ast};");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_multi_item_grouped_use() {
+        let src = "use crate::{\n    ast, emit,\n    types::{AstSelector, LineMatcher, MatchDef, RuleSet, SelectStep},\n    walk,\n};";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert!(out.contains("_0_types::{AstSelector"), "got: {}", out);
+        assert!(out.contains("ast, emit,"), "should not touch other items");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_mod_decl() {
+        let src = "pub mod types;\npub mod ast;";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], true);
+        assert_eq!(out, "pub mod _0_types;\npub mod ast;");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_mod_decl_skipped_when_false() {
+        let src = "pub mod types;";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, "pub mod types;");
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn rewrite_cross_crate() {
+        let src = "use sprefa_rules::types::RuleSet;";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["sprefa_rules"], false);
+        assert_eq!(out, "use sprefa_rules::_0_types::RuleSet;");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_multiple_prefixes() {
+        let src = "use crate::types::Foo;\nuse sprefa_rules::types::Bar;";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate", "sprefa_rules"], false);
+        assert!(out.contains("crate::_0_types::Foo"));
+        assert!(out.contains("sprefa_rules::_0_types::Bar"));
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn rewrite_no_false_positive() {
+        let src = "use other::types::Foo;";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, src, "should not rewrite types under wrong prefix");
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn rewrite_pub_use_glob() {
+        let src = "pub use types::*;";
+        // Relative use (no crate:: prefix) -- empty prefix matches
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &[], false);
+        assert_eq!(out, "pub use _0_types::*;");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_full_lib_rs() {
+        let src = "pub mod ast;\npub mod emit;\npub mod types;\npub mod walk;\n\npub use types::*;";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], true);
+        assert!(out.contains("pub mod _0_types;"), "mod decl rewritten");
+        assert!(out.contains("pub use _0_types::*;"), "pub use rewritten -- got: {}", out);
+        assert_eq!(n, 2);
+    }
+
+    // ── inline path rewriting (syn visitor) ─────────────────────────────
+
+    #[test]
+    fn rewrite_inline_path_in_fn_sig() {
+        let src = "fn compile(r: &crate::types::Rule) -> Result<()> { todo!() }";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, "fn compile(r: &crate::_0_types::Rule) -> Result<()> { todo!() }");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_inline_path_in_struct_field() {
+        let src = "struct Foo { bar: crate::types::Bar }";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, "struct Foo { bar: crate::_0_types::Bar }");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_inline_path_in_impl() {
+        let src = "impl crate::types::Foo { fn new() -> Self { todo!() } }";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, "impl crate::_0_types::Foo { fn new() -> Self { todo!() } }");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_inline_path_in_generic() {
+        let src = "fn f() -> Vec<crate::types::Item> { todo!() }";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, "fn f() -> Vec<crate::_0_types::Item> { todo!() }");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_inline_path_no_false_positive() {
+        let src = "fn f(r: &other::types::Rule) {}";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert_eq!(out, src, "should not touch types under wrong prefix");
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn rewrite_inline_and_use_together() {
+        let src = "use crate::types::Foo;\nfn f(r: &crate::types::Bar) {}";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert!(out.contains("use crate::_0_types::Foo;"), "use rewritten");
+        assert!(out.contains("crate::_0_types::Bar"), "inline path rewritten");
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn rewrite_path_inside_matches_macro() {
+        let src = r#"fn f(s: &Step) -> bool { matches!(s, crate::types::SelectStep::File { .. }) }"#;
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert!(out.contains("crate::_0_types::SelectStep"), "macro path rewritten\n{}", out);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_path_inside_vec_macro() {
+        let src = r#"fn f() -> Vec<Box<dyn Any>> { vec![Box::new(crate::types::Foo)] }"#;
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert!(out.contains("crate::_0_types::Foo"), "vec! macro path rewritten\n{}", out);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_cross_crate_in_matches_macro() {
+        let src = r#"fn f(s: &Step) -> bool { matches!(s, sprefa_rules::types::SelectStep::File { .. }) }"#;
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["sprefa_rules"], false);
+        assert!(out.contains("sprefa_rules::_0_types::SelectStep"), "cross-crate macro\n{}", out);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_where_clause() {
+        let src = "fn f<T>() where T: crate::types::Trait {}";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert!(out.contains("crate::_0_types::Trait"), "where clause rewritten\n{}", out);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn rewrite_use_inside_fn_body() {
+        let src = "fn f() {\n    use crate::types::Foo;\n    let _ = Foo;\n}";
+        let (out, n) = rewrite_module_refs(src, "types", "_0_types", &["crate"], false);
+        assert!(out.contains("use crate::_0_types::Foo;"), "use inside fn rewritten\n{}", out);
+        assert_eq!(n, 1);
     }
 }

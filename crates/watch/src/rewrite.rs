@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::plan::Edit;
+use crate::plan::{Edit, RustRewrite};
 
 /// Result of applying a set of edits.
 #[derive(Debug, Default)]
@@ -10,25 +10,22 @@ pub struct ApplyResult {
     pub rewritten: Vec<String>,
     /// Edits that failed (file not found, IO error, etc).
     pub failed: Vec<(Edit, String)>,
+    /// Rust files rewritten via syn.
+    pub rust_rewritten: Vec<String>,
+    /// Rust rewrites that failed.
+    pub rust_failed: Vec<(RustRewrite, String)>,
 }
 
-/// Apply a sorted edit plan to the filesystem.
-///
-/// Edits MUST be sorted by (file_path asc, span_start desc) so that
-/// splicing earlier spans doesn't invalidate later ones within the same file.
-///
-/// This is a destructive operation -- it modifies source files on disk.
-/// The caller is responsible for confirming with the user if needed.
-#[tracing::instrument(skip(edits), fields(edit_count = edits.len()))]
-pub fn apply(edits: &[Edit]) -> ApplyResult {
+/// Apply span-based edits and syn-based Rust rewrites to the filesystem.
+#[tracing::instrument(skip(edits, rust_rewrites), fields(edit_count = edits.len(), rust_count = rust_rewrites.len()))]
+pub fn apply(edits: &[Edit], rust_rewrites: &[RustRewrite]) -> ApplyResult {
     let mut result = ApplyResult::default();
 
-    // Group edits by file to minimize reads/writes.
+    // Span-based edits (JS/TS).
     let mut by_file: HashMap<&str, Vec<&Edit>> = HashMap::new();
     for edit in edits {
         by_file.entry(&edit.file_path).or_default().push(edit);
     }
-
     for (file_path, file_edits) in &by_file {
         match apply_to_file(file_path, file_edits) {
             Ok(()) => result.rewritten.push(file_path.to_string()),
@@ -40,7 +37,47 @@ pub fn apply(edits: &[Edit]) -> ApplyResult {
         }
     }
 
+    // Syn-based Rust rewrites. Multiple rewrites targeting the same file
+    // are applied sequentially (each parses the result of the previous).
+    let mut rust_by_file: HashMap<&str, Vec<&RustRewrite>> = HashMap::new();
+    for rw in rust_rewrites {
+        rust_by_file.entry(&rw.file_path).or_default().push(rw);
+    }
+    for (file_path, rewrites) in &rust_by_file {
+        match apply_rust_rewrites(file_path, rewrites) {
+            Ok(true) => result.rust_rewritten.push(file_path.to_string()),
+            Ok(false) => {} // no changes needed
+            Err(e) => {
+                for rw in rewrites {
+                    result.rust_failed.push(((*rw).clone(), e.to_string()));
+                }
+            }
+        }
+    }
+
     result
+}
+
+fn apply_rust_rewrites(file_path: &str, rewrites: &[&RustRewrite]) -> anyhow::Result<bool> {
+    let path = Path::new(file_path);
+    let mut content = std::fs::read_to_string(path)?;
+    let mut total_edits = 0;
+
+    for rw in rewrites {
+        let prefixes: Vec<&str> = rw.use_prefixes.iter().map(|s| s.as_str()).collect();
+        let (new_content, n) = sprefa_rs::rewrite_module_refs(
+            &content, &rw.old_stem, &rw.new_stem, &prefixes, rw.rewrite_mod_decl,
+        );
+        content = new_content;
+        total_edits += n;
+    }
+
+    if total_edits > 0 {
+        std::fs::write(path, &content)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// Apply all edits for a single file.
@@ -93,7 +130,7 @@ mod tests {
             },
         }];
 
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 1);
         assert!(result.failed.is_empty());
 
@@ -137,7 +174,7 @@ mod tests {
             },
         ];
 
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 1);
 
         let content = std::fs::read_to_string(&file).unwrap();
@@ -161,7 +198,7 @@ mod tests {
             },
         }];
 
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert!(result.rewritten.is_empty());
         assert_eq!(result.failed.len(), 1);
     }
@@ -192,7 +229,7 @@ mod tests {
             0, 3,  // "use"
             "pub use",
         )];
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 1);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "pub use old::path;");
     }
@@ -210,7 +247,7 @@ mod tests {
             4, 14,  // "crate::foo" starts at byte 4
             "crate::bar",
         )];
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 1);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "use crate::bar");
     }
@@ -230,7 +267,7 @@ mod tests {
             19, 22,
             "./very/long/path",
         )];
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 1);
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
@@ -253,7 +290,7 @@ mod tests {
             19, 40,
             "./u",
         )];
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 1);
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
@@ -273,7 +310,7 @@ mod tests {
             make_edit(&file_a.to_string_lossy(), 8, 13, "./new"),
             make_edit(&file_b.to_string_lossy(), 8, 13, "./new"),
         ];
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 2);
         assert!(result.failed.is_empty());
         assert_eq!(std::fs::read_to_string(&file_a).unwrap(), "import './new';");
@@ -287,7 +324,7 @@ mod tests {
             0, 5,
             "hello",
         )];
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert!(result.rewritten.is_empty());
         assert_eq!(result.failed.len(), 1);
     }
@@ -303,7 +340,7 @@ mod tests {
             0, 0,
             "// inserted",
         )];
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 1);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "// inserted");
     }
@@ -320,7 +357,7 @@ mod tests {
             14, 14,
             "::bar",
         )];
-        let result = apply(&edits);
+        let result = apply(&edits, &[]);
         assert_eq!(result.rewritten.len(), 1);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "use crate::foo::bar;");
     }

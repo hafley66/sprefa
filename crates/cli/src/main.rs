@@ -1366,27 +1366,26 @@ async fn spawn_watchers(
                     tracing::info!(repo = %repo_name, phase = "change_detail", ?change);
                 }
                 match plan::plan_rewrites(&pool, &changes, &rewriters).await {
-                    Ok(edits) if edits.is_empty() => {
+                    Ok((edits, rust_rewrites)) if edits.is_empty() && rust_rewrites.is_empty() => {
                         tracing::info!(repo = %repo_name, phase = "plan_complete", edit_count = 0, "no rewrites needed");
                     }
-                    Ok(edits) => {
-                        tracing::info!(repo = %repo_name, phase = "plan_complete", edit_count = edits.len(), "edits planned");
-                        for edit in &edits {
-                            tracing::info!(
-                                repo = %repo_name, phase = "edit_detail",
-                                file = %edit.file_path,
-                                span_start = edit.span_start, span_end = edit.span_end,
-                                reason = ?edit.reason,
-                            );
-                        }
-                        let result = sprefa_watch::rewrite::apply(&edits);
-                        for path in &result.rewritten {
+                    Ok((edits, rust_rewrites)) => {
+                        tracing::info!(repo = %repo_name, phase = "plan_complete",
+                            edit_count = edits.len() + rust_rewrites.len(), "edits planned");
+                        let result = sprefa_watch::rewrite::apply(&edits, &rust_rewrites);
+                        for path in result.rewritten.iter().chain(&result.rust_rewritten) {
                             tracing::info!(repo = %repo_name, phase = "rewrite_applied", file = %path);
                         }
                         for (edit, err) in &result.failed {
                             tracing::error!(
                                 repo = %repo_name, phase = "rewrite_failed",
                                 file = %edit.file_path, error = %err,
+                            );
+                        }
+                        for (rw, err) in &result.rust_failed {
+                            tracing::error!(
+                                repo = %repo_name, phase = "rust_rewrite_failed",
+                                file = %rw.file_path, error = %err,
                             );
                         }
                     }
