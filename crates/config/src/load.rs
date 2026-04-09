@@ -107,7 +107,7 @@ exclude = [
 # [[repos]]
 # name = "my-repo"
 # path = "/path/to/repo"
-# branches = ["main"]
+# revs = ["main"]
 "#
     .to_string()
 }

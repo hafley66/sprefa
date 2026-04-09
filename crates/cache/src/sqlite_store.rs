@@ -425,7 +425,8 @@ impl Store for SqliteStore {
             };
 
             // Decide action based on change kind
-            let need_drop = matches!(change_kind, Some(RuleChangeKind::SchemaChanged) | None);
+            let need_drop = matches!(change_kind, Some(RuleChangeKind::SchemaChanged));
+            let need_ensure = change_kind.is_none(); // No hash info: ensure table exists, preserve data
             let need_delete = matches!(change_kind, Some(RuleChangeKind::ExtractChanged));
 
             let def = RuleTableDef::from_matches(
@@ -438,13 +439,19 @@ impl Store for SqliteStore {
                     .collect::<Vec<_>>(),
             );
 
-            // DROP table if schema changed or never created
+            // DROP table only when schema actually changed (hash comparison confirmed it).
+            // When no hash info is available (builtins), just ensure the table exists
+            // without dropping -- this preserves data across watcher restarts and daemon startups.
             if need_drop {
                 let table_name = def.data_table_name();
                 let _ = sqlx::query(&format!("DROP TABLE IF EXISTS \"{}\"", table_name))
                     .execute(&self.pool)
                     .await;
-                
+
+                sqlx::query(&def.create_table_sql())
+                    .execute(&self.pool)
+                    .await?;
+            } else if need_ensure {
                 sqlx::query(&def.create_table_sql())
                     .execute(&self.pool)
                     .await?;

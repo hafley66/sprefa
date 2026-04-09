@@ -496,11 +496,23 @@ async fn update_content_hash(pool: &SqlitePool, file_id: i64, new_hash: &str) ->
     Ok(())
 }
 
-/// Hash a file using xxh3_128, matching the index crate's approach.
+/// Hash a file as a git blob object (SHA-1 of "blob {len}\0{content}").
+///
+/// The scanner stores git blob OIDs as content_hash when indexing from git repos.
+/// The watcher must produce identical hashes for move correlation to work.
 fn hash_file(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     let mmap = unsafe { memmap2::Mmap::map(&file).ok()? };
-    Some(format!("{:x}", xxhash_rust::xxh3::xxh3_128(&mmap)))
+    Some(git_blob_hash(&mmap))
+}
+
+/// Compute the git blob hash for in-memory content.
+fn git_blob_hash(content: &[u8]) -> String {
+    use sha1::Digest;
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(format!("blob {}\0", content.len()).as_bytes());
+    hasher.update(content);
+    format!("{:x}", hasher.finalize())
 }
 
 /// Convert absolute path to repo-relative path.

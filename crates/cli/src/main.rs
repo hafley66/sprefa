@@ -409,7 +409,7 @@ async fn cmd_add(
     let config_file = find_config_file(config_path)?;
     let mut content = std::fs::read_to_string(&config_file)?;
     content.push_str(&format!(
-        "\n[[repos]]\nname = \"{}\"\npath = \"{}\"\nbranches = [\"main\"]\n",
+        "\n[[repos]]\nname = \"{}\"\npath = \"{}\"\nrevs = [\"main\"]\n",
         repo_name,
         abs_path.display()
     ));

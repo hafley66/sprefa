@@ -199,6 +199,30 @@ async fn plan_file_move(
             }
         }
 
+        // Mod declaration: rewrite `mod old_stem;` in the parent module file.
+        // The parent file (lib.rs / mod.rs) contains `mod types;` which must become
+        // `mod _0_types;` when src/types.rs moves to src/0_types.rs.
+        if let Some((old_stem, candidates)) = crate::rs_path::mod_parent_candidates(old_path) {
+            let new_mod_stem = new_mod.rsplit("::").next().unwrap_or(&new_mod);
+            if old_stem != new_mod_stem {
+                for candidate in &candidates {
+                    let refs = queries::rs_mod_in_parent(pool, candidate, file_id, &old_stem).await?;
+                    for aref in refs {
+                        edits.push(Edit {
+                            file_path: aref.source_abs_path(),
+                            span_start: aref.span_start,
+                            span_end: aref.span_end,
+                            new_value: new_mod_stem.to_string(),
+                            reason: EditReason::FileMove {
+                                old_target: old_path.to_string(),
+                                new_target: new_path.to_string(),
+                            },
+                        });
+                    }
+                }
+            }
+        }
+
         // Cross-crate: `use crate_name::module::Item` refs from other crates.
         if let Some(crate_name) = workspace.crate_for_file(old_path) {
             let old_cross = old_mod.replacen("crate", crate_name, 1);

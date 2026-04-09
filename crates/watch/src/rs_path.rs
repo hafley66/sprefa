@@ -218,6 +218,65 @@ pub(crate) fn filter_rs_glob_uses(
         .collect()
 }
 
+/// Extract the module stem and parent module's relative file path from a module path.
+///
+/// For `crate::foo::bar` (file `src/foo/bar.rs`):
+///   stem = "bar", parent mod path = "crate::foo"
+///   parent file candidates: `src/foo/mod.rs` or `src/foo.rs`
+///
+/// For `crate::types` (file `src/types.rs`):
+///   stem = "types", parent mod path = "crate"
+///   parent file candidates: `src/lib.rs` or `src/main.rs`
+///
+/// Returns (mod_stem, Vec<candidate_relative_paths>). The caller queries
+/// each candidate to find which one exists in the DB.
+pub fn mod_parent_candidates(old_file_path: &str) -> Option<(String, Vec<String>)> {
+    let mod_path = file_to_mod_path(old_file_path)?;
+
+    // Extract stem (last segment after crate::)
+    let stem = mod_path.rsplit("::").next()?;
+    if stem == "crate" {
+        // lib.rs/main.rs has no parent module
+        return None;
+    }
+
+    let path = std::path::Path::new(old_file_path);
+    let components: Vec<&str> = path
+        .components()
+        .map(|c| c.as_os_str().to_str().unwrap_or(""))
+        .collect();
+    let src_idx = components.iter().rposition(|c| *c == "src")?;
+    let filename = *components.last()?;
+    let file_stem = Path::new(filename).file_stem()?.to_str()?;
+
+    // For mod.rs, the parent directory IS the module. So the "grandparent" contains
+    // the `mod foo;` declaration. For regular files like bar.rs, the parent dir
+    // contains the declaration.
+    //
+    //   src/foo/bar.rs  -> parent dir = src/foo, look for src/foo/mod.rs or src/foo.rs
+    //   src/foo/mod.rs  -> parent dir = src/foo, but mod.rs IS foo, so look in src/lib.rs
+    let depth_adjust = if file_stem == "mod" { 2 } else { 1 };
+    let parent_end = components.len().checked_sub(depth_adjust)?;
+    let parent_components = &components[..parent_end];
+    let src_depth = parent_end.saturating_sub(src_idx + 1);
+
+    // Build repo-relative candidates (from src/ onward, matching DB storage).
+    let rel_parent_components = &parent_components[src_idx..];
+    let mut candidates = Vec::new();
+
+    if src_depth == 0 {
+        // Parent is the crate root
+        candidates.push(format!("src/lib.rs"));
+        candidates.push(format!("src/main.rs"));
+    } else {
+        let parent_dir = rel_parent_components.join("/");
+        candidates.push(format!("{}/mod.rs", parent_dir));
+        candidates.push(format!("{}.rs", parent_dir));
+    }
+
+    Some((stem.to_string(), candidates))
+}
+
 /// Rewrite a use path after a module move.
 ///
 /// Given `use crate::old::path::Item` and old_mod=`crate::old::path`, new_mod=`crate::new::path`,
@@ -896,5 +955,38 @@ mod tests {
         let no = ModOverrides::new();
         let matched2 = filter_rs_uses_by_prefix(&refs2, "crate::foo::bar", &no);
         assert_eq!(matched2.len(), 0);
+    }
+
+    // ── mod_parent_candidates ──────────────────────────────────────────────
+
+    #[test]
+    fn parent_of_crate_root_module() {
+        let result = mod_parent_candidates("/repo/src/types.rs");
+        let (stem, candidates) = result.unwrap();
+        assert_eq!(stem, "types");
+        assert!(candidates.contains(&"src/lib.rs".to_string()));
+        assert!(candidates.contains(&"src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn parent_of_nested_module() {
+        let result = mod_parent_candidates("/repo/src/foo/bar.rs");
+        let (stem, candidates) = result.unwrap();
+        assert_eq!(stem, "bar");
+        assert!(candidates.contains(&"src/foo/mod.rs".to_string()));
+        assert!(candidates.contains(&"src/foo.rs".to_string()));
+    }
+
+    #[test]
+    fn parent_of_lib_rs_is_none() {
+        assert!(mod_parent_candidates("/repo/src/lib.rs").is_none());
+    }
+
+    #[test]
+    fn parent_of_mod_rs() {
+        let result = mod_parent_candidates("/repo/src/foo/mod.rs");
+        let (stem, candidates) = result.unwrap();
+        assert_eq!(stem, "foo");
+        assert!(candidates.contains(&"src/lib.rs".to_string()) || candidates.contains(&"src/main.rs".to_string()));
     }
 }

@@ -2819,6 +2819,7 @@ dependencies = [
  "glob",
  "memmap2",
  "notify",
+ "sha1",
  "sprefa_cache",
  "sprefa_config",
  "sprefa_extract",

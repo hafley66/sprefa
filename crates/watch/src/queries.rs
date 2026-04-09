@@ -315,6 +315,40 @@ pub async fn declarations_in_file(
     Ok(rows.into_iter().map(|(v,)| v).collect())
 }
 
+/// Find the `mod <name>;` declaration ref in the parent module file for a given module.
+///
+/// Given a file's module path (e.g. `crate::utils::types`), finds the RsMod ref
+/// with value = "types" in the file whose module path is `crate::utils`.
+///
+/// `parent_file_rel` is the relative path of the parent module file (lib.rs, mod.rs, or foo.rs).
+/// `mod_name` is the last segment of the moved file's module path.
+pub async fn rs_mod_in_parent(
+    pool: &SqlitePool,
+    parent_file_rel: &str,
+    repo_file_id: i64,
+    mod_name: &str,
+) -> anyhow::Result<Vec<AffectedRef>> {
+    let rows: Vec<(i64, i64, i64, String, String, String)> = sqlx::query_as(
+        r#"
+        SELECT r.id, r.span_start, r.span_end, s.value, f.path, repos.root_path
+        FROM refs r
+        JOIN strings s ON r.string_id = s.id
+        JOIN files f ON r.file_id = f.id
+        JOIN repos ON f.repo_id = repos.id
+        JOIN rs_mod_data d ON d.value_ref = r.id
+        WHERE f.path = ?
+          AND f.repo_id = (SELECT repo_id FROM files WHERE id = ?)
+          AND s.value = ?
+        "#,
+    )
+    .bind(parent_file_rel)
+    .bind(repo_file_id)
+    .bind(mod_name)
+    .fetch_all(pool)
+    .await?;
+    Ok(to_affected(rows))
+}
+
 /// Find the file_id for a given relative path in the same repo.
 pub async fn file_id_by_path(
     pool: &SqlitePool,
