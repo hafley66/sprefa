@@ -553,3 +553,110 @@ crates/
 editors/
   vscode/     tmLanguage syntax highlighting
 ```
+
+---
+
+## Security and I/O boundaries
+
+### What runs where
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Local machine only                                   │
+│                                                      │
+│  sprefa CLI ──▶ SQLite (~/.sprefa/index.db)          │
+│       │                                              │
+│       ├──▶ git2 (read-only repo access)              │
+│       ├──▶ fs notify (file watcher)                  │
+│       └──▶ HTTP 127.0.0.1:9400 (optional daemon)    │
+│                                                      │
+│  No data leaves the machine.                         │
+│  No cloud services. No telemetry. No auth tokens.    │
+└─────────────────────────────────────────────────────┘
+```
+
+sprefa is a local-only tool. All data stays on disk in a SQLite database. The HTTP server binds to loopback (`127.0.0.1`) by default. The CLI talks to the daemon over localhost when configured, otherwise operates directly on the database file.
+
+### Network exposure
+
+| Component | Binds to | Purpose |
+|---|---|---|
+| `sprefa serve` / `sprefa daemon` | `127.0.0.1:9400` (configurable) | JSON API for query, scan, status |
+| `sprefa` CLI (reqwest) | outbound to `127.0.0.1` | POST /scan, GET /query to local daemon |
+| sprf-lsp | stdin/stdout | LSP protocol over pipes, no sockets |
+
+The daemon address is configurable via `[daemon].bind` in `sprefa.toml`. reqwest is compiled without default TLS features (localhost only). No external HTTP requests are made.
+
+### Filesystem access
+
+| Operation | Paths | Read/Write |
+|---|---|---|
+| Config loading | `$SPREFA_CONFIG`, `./sprefa.toml`, `~/.config/sprefa/sprefa.toml` | Read |
+| Database | `~/.sprefa/index.db` (configurable) | Read/Write |
+| Repository indexing | Registered repo paths | Read |
+| File watcher | Registered repo paths | Read (watch), Write (rewrite imports on rename) |
+| Git access | `.git/` in registered repos | Read (via libgit2) |
+
+The watcher writes back to source files only during auto-rewrite of import/use paths after detecting a rename. All other filesystem access is read-only.
+
+### Database
+
+Single SQLite file in WAL mode. Tables store:
+- File paths and content hashes (deduplicated)
+- Extracted string values and byte-level provenance (spans)
+- Per-rule data tables (one per .sprf rule)
+- Rule schema hashes for incremental re-extraction
+
+No PII, credentials, or secrets are stored. The database contains structural metadata about code: import paths, dependency names, config values, and cross-references.
+
+### Unsafe code
+
+Three categories, all confined:
+
+| Where | What | Why |
+|---|---|---|
+| `memmap2::Mmap::map()` (3 sites) | Memory-mapped file reads | Fast content hashing during indexing and move detection |
+| `schema/udfs.rs` | SQLite UDF registration via `libsqlite3_sys` FFI | Custom SQL functions: `re_extract`, `split_part`, `repo_name`, `file_path`, `fzy_score` |
+| `schema/migrations.rs` | `register_all(handle.as_raw_handle().as_ptr())` | Passes raw SQLite handle to UDF registration |
+
+No other unsafe code exists in the codebase.
+
+### Dependency profile
+
+All dependencies are well-known, audited crates from established ecosystems.
+
+**Code analysis** (read-only, no network):
+- `ast-grep-core` / `ast-grep-language` / `ast-grep-config` -- structural pattern matching via tree-sitter
+- `oxc_parser` / `oxc_ast` / `oxc_resolver` -- JS/TS parsing and module resolution
+- `syn` / `proc-macro2` -- Rust syntax parsing
+- `winnow` -- parser combinators for .sprf
+
+**Data handling** (no network):
+- `serde` / `serde_json` / `serde_yaml` / `toml` -- serialization
+- `sqlx` (SQLite runtime) / `libsqlite3-sys` -- database
+- `globset` / `regex` -- pattern matching
+- `xxhash-rust` / `sha2` / `sha1` -- content hashing
+
+**Filesystem** (no network):
+- `walkdir` -- directory traversal
+- `notify` -- filesystem event monitoring
+- `memmap2` -- memory-mapped file reads
+- `git2` (compiled without default features) -- repository access via libgit2
+
+**Runtime + server** (localhost only):
+- `tokio` -- async runtime
+- `axum` -- HTTP framework (loopback binding)
+- `reqwest` (no default TLS) -- HTTP client for localhost daemon communication
+- `tower-lsp` -- LSP server over stdio
+
+**CLI + logging**:
+- `clap` -- argument parsing
+- `tracing` / `tracing-subscriber` -- structured logging to stderr
+- `anyhow` / `thiserror` -- error handling
+
+**Optional**:
+- `ghcache-client` (behind `ghcache` feature flag) -- subscribes to local checkout events from a sibling tool. Reads from a local SQLite database, no network.
+
+### Build-time
+
+One `build.rs` in `crates/scan/`: runs `git rev-parse HEAD` to embed the commit hash for change detection. No other build scripts, proc macros with side effects, or code generation.
