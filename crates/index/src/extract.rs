@@ -57,17 +57,19 @@ fn extract_from_list(
             }
 
             let ext = abs_path.extension().and_then(|e| e.to_str());
+            let file = std::fs::File::open(abs_path).ok()?;
+            let mmap = unsafe { Mmap::map(&file).ok()? };
             let refs: Vec<RawRef> = match ext {
-                Some(e) => {
-                    let file = std::fs::File::open(abs_path).ok()?;
-                    let mmap = unsafe { Mmap::map(&file).ok()? };
-                    extractors
-                        .iter()
-                        .filter(|ex| ex.extensions().contains(&e))
-                        .flat_map(|ex| ex.extract(&mmap, rel, ctx))
-                        .collect()
-                }
-                None => return None,
+                Some(e) => extractors
+                    .iter()
+                    .filter(|ex| ex.extensions().contains(&e))
+                    .flat_map(|ex| ex.extract(&mmap, rel, ctx))
+                    .collect(),
+                None => extractors
+                    .iter()
+                    .filter(|ex| ex.handles_extensionless())
+                    .flat_map(|ex| ex.extract(&mmap, rel, ctx))
+                    .collect(),
             };
             if refs.is_empty() {
                 return None;
@@ -131,7 +133,11 @@ fn extract_from_blobs(
                     .filter(|ex| ex.extensions().contains(&e))
                     .flat_map(|ex| ex.extract(content, rel_path, ctx))
                     .collect(),
-                None => return None,
+                None => extractors
+                    .iter()
+                    .filter(|ex| ex.handles_extensionless())
+                    .flat_map(|ex| ex.extract(content, rel_path, ctx))
+                    .collect(),
             };
             if refs.is_empty() {
                 return None;

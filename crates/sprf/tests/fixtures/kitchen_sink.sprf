@@ -158,7 +158,7 @@ rule(react_hook) {
 # ════════════════════════════════════════════════════════
 
 rule(dockerfile_from) {
-  fs(**/Dockerfile) > line(FROM\s+$IMAGE:$TAG)
+  fs(**/Dockerfile) > line(FROM $IMAGE:$TAG)
 };
 
 # ════════════════════════════════════════════════════════
@@ -166,7 +166,7 @@ rule(dockerfile_from) {
 # ════════════════════════════════════════════════════════
 
 rule(line_regex) {
-  fs(**/Dockerfile) > line(re:FROM\s+(?P<IMAGE>[^:]+):(?P<TAG>.+))
+  fs(**/Dockerfile) > line(re:FROM\s+$IMAGE:$TAG)
 };
 
 # ════════════════════════════════════════════════════════
@@ -308,7 +308,7 @@ rule(cargo_lock_pkg) {
 # ════════════════════════════════════════════════════════
 
 rule(go_mod_dep) {
-  fs(**/go.mod) > line(\t$MODULE $VERSION)
+  fs(**/go.mod) > line(re:\t$MODULE $VERSION)
 };
 
 # ════════════════════════════════════════════════════════

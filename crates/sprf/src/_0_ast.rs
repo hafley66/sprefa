@@ -220,7 +220,7 @@ impl Slot {
     }
 }
 
-/// Extract $SCREAMING variables from a string.
+/// Extract $SCREAMING variables and `(?P<NAME>...)` regex named groups from a string.
 fn extract_captures_from_str(s: &str) -> Vec<String> {
     let mut caps = Vec::new();
     let bytes = s.as_bytes();
@@ -249,6 +249,24 @@ fn extract_captures_from_str(s: &str) -> Vec<String> {
                 {
                     caps.push(name.to_string());
                 }
+            }
+        } else if bytes[i] == b'('
+            && i + 3 < bytes.len()
+            && bytes[i + 1] == b'?'
+            && bytes[i + 2] == b'P'
+            && bytes[i + 3] == b'<'
+        {
+            // (?P<NAME>...) regex named group
+            i += 4; // skip (?P<
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'>' {
+                i += 1;
+            }
+            if i > start {
+                caps.push(s[start..i].to_string());
+            }
+            if i < bytes.len() {
+                i += 1; // skip >
             }
         } else {
             i += 1;

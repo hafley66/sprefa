@@ -58,4 +58,11 @@ pub struct RawRef {
 pub trait Extractor: Send + Sync {
     fn extensions(&self) -> &[&str];
     fn extract(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<RawRef>;
+
+    /// Whether this extractor can handle files with no extension (e.g. Dockerfile, Makefile).
+    /// The extractor's own file matching (rules_for_path, etc.) filters at call time.
+    /// Default: false.
+    fn handles_extensionless(&self) -> bool {
+        false
+    }
 }

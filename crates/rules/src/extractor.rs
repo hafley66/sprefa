@@ -54,8 +54,11 @@ impl RuleExtractor {
             .rules
             .iter()
             .filter(|r| {
-                // Rule is valid if it has structural steps OR an ast selector.
-                r.select.iter().any(|s| !s.is_context_step()) || r.select_ast.is_some()
+                // Rule is valid if it has structural steps, an ast selector,
+                // or a line matcher (line-only rules on plain text files).
+                r.select.iter().any(|s| !s.is_context_step())
+                    || r.select_ast.is_some()
+                    || r.value.is_some()
             })
             .map(compile_rule)
             .collect::<Result<Vec<_>>>()?;
@@ -119,6 +122,28 @@ impl RuleExtractor {
             let seed = build_current_captures(ctx, path);
             let results = if let Some(ast_sel) = &rule.ast {
                 ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
+            } else if rule.steps.is_empty() && rule.line_matcher.is_some() {
+                match std::str::from_utf8(source) {
+                    Ok(text) => text
+                        .lines()
+                        .map(|line| {
+                            let mut captures = seed.clone();
+                            captures.insert(
+                                String::new(),
+                                walk::CapturedValue {
+                                    text: line.to_string(),
+                                    span_start: 0,
+                                    span_end: 0,
+                                },
+                            );
+                            walk::MatchResult {
+                                captures,
+                                path: vec![],
+                            }
+                        })
+                        .collect(),
+                    Err(_) => continue,
+                }
             } else {
                 let value = match parse_data(source, ext) {
                     Some(v) => v,
@@ -155,6 +180,10 @@ impl Extractor for RuleExtractor {
         ]
     }
 
+    fn handles_extensionless(&self) -> bool {
+        true
+    }
+
     fn extract(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<RawRef> {
         let ext = Path::new(path)
             .extension()
@@ -181,6 +210,31 @@ impl Extractor for RuleExtractor {
             let seed = build_current_captures(ctx, path);
             let results = if let Some(ast_sel) = &rule.ast {
                 ast::ast_match(source, path, ast_sel, self.config_dir.as_deref())
+            } else if rule.steps.is_empty() && rule.line_matcher.is_some() {
+                // Line-only rule on plain text: each line is a match candidate.
+                // The line matcher (applied later in create_refs) filters and
+                // extracts sub-captures from each line.
+                match std::str::from_utf8(source) {
+                    Ok(text) => text
+                        .lines()
+                        .map(|line| {
+                            let mut captures = seed.clone();
+                            captures.insert(
+                                String::new(),
+                                walk::CapturedValue {
+                                    text: line.to_string(),
+                                    span_start: 0,
+                                    span_end: 0,
+                                },
+                            );
+                            walk::MatchResult {
+                                captures,
+                                path: vec![],
+                            }
+                        })
+                        .collect(),
+                    Err(_) => continue,
+                }
             } else {
                 let value = match parse_data(source, ext) {
                     Some(v) => v,

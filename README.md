@@ -173,11 +173,14 @@ Segment patterns split strings on natural boundaries (separators like `/`, `.`, 
 # regex on a json key name
 json({ re:^(dev-)?dependencies: { $NAME: $_ } })
 
-# regex in a line matcher
-line(FROM\s+$IMAGE:$TAG)
+# regex in a line matcher with $-capture sugar
+line(re:FROM\s+$IMAGE:$TAG)
+
+# regex in a line matcher with raw named groups
+line(re:FROM\s+(?P<IMAGE>[^:]+):(?P<TAG>.+))
 ```
 
-The `re:` prefix triggers regex mode. Named groups `(?P<name>...)` become captures. In json key matchers, the regex tests the key string. In line matchers, the regex tests each line of the file.
+The `re:` prefix triggers regex mode. In json key matchers, the regex tests the key string. In line matchers with `$NAME` captures, each `$NAME` is rewritten to a `(?P<NAME>...)` group that stops at the next delimiter or whitespace. Raw `(?P<>)` groups are passed through unchanged.
 
 ### 3. Glob patterns (everything else)
 
@@ -197,8 +200,9 @@ In a json() body:
 - Value matchers: `$VAR` -> capture, `$_` -> wildcard, `{ }` -> descend, `[...]` -> iterate
 
 In a line() body:
-- If pattern contains `$` -> segment capture against each line (regex parts still work: `FROM\s+$IMAGE:$TAG` is a hybrid)
-- Pure `re:` prefix -> regex with named groups
+- No `re:` prefix -> segment capture against each line (literal delimiters only)
+- `re:` prefix with `$NAME` -> regex with `$`-capture sugar (auto-rewritten to `(?P<NAME>...)`)
+- `re:` prefix with `(?P<>)` groups -> raw regex with named groups
 
 In fs/repo/rev/folder/file:
 - Glob matching with pipe alternatives
@@ -273,23 +277,35 @@ fs(**/*.ts) > ast(use${ENTITY}Query)
 
 ---
 
-## line() -- regex and segment matching on file lines
+## line() -- line-by-line extraction
+
+Three modes, same `$NAME` capture syntax:
 
 ```sprf
-# segment capture: split on natural boundaries
+# segment mode: literal delimiters, $NAME stops at separator or end-of-line
 rule(dockerfile_from) {
-  fs(**/Dockerfile) > line(FROM\s+$IMAGE:$TAG)
+  fs(**/Dockerfile) > line(FROM $IMAGE:$TAG)
 };
 
-# cross-language column tracking
-rule(py_orm_ref) {
-  ddl_table(table: $TABLE) {
-    fs(**/*.py) > line(__tablename__\s*=\s*['"]$TABLE['"])
-  }
+# re: mode with $-sugar: regex metacharacters + $NAME captures
+# $NAME -> (?P<NAME>[^<next_delim>\s]+), $$$NAME -> (?P<NAME>.+)
+rule(go_mod_dep) {
+  fs(**/go.mod) > line(re:\t$MODULE $VERSION)
+};
+
+# re: mode with raw groups: full regex control
+rule(semver_pin) {
+  fs(**/versions.txt) > line(re:(?P<PKG>[^=]+)==(?P<VER>\d+\.\d+\.\d+))
 };
 ```
 
-Line matchers test each line of the file against the pattern. `$VAR` captures use segment matching (boundary-aware). Regex escapes like `\s+` work alongside segment captures -- the pattern is a hybrid.
+| Mode | Trigger | `$NAME` stops at | Regex metacharacters |
+|---|---|---|---|
+| Segment | no `re:` prefix | next literal char or `/` | treated as literal text |
+| `re:` sugar | `re:` prefix + contains `$` | next literal char or whitespace | active (`\s+`, `\d+`, `.+`, etc.) |
+| `re:` raw | `re:` prefix + `(?P<>)` groups | defined by group pattern | active |
+
+Line matchers run per-line against plain text files (Dockerfile, go.mod, requirements.txt, Makefile) and against walk captures from structured files. Extensionless files are dispatched to the rule engine automatically.
 
 ---
 
@@ -491,7 +507,7 @@ Rust module mapping: `src/lib.rs` -> `crate`, `src/foo/bar.rs` -> `crate::foo::b
 |---|---|---|---|
 | JS/TS | oxc | .js .jsx .ts .tsx .mjs .cjs .mts .cts | imports, exports, require(), re-exports |
 | Rust | syn | .rs | use paths (crate/self/super), declarations, mod, extern crate |
-| Rule engine | serde | JSON, YAML, TOML | configurable tree walks via .sprf rules |
+| Rule engine | serde | JSON, YAML, TOML + extensionless (Dockerfile, Makefile, etc.) | configurable tree walks via .sprf rules, line-by-line extraction |
 | ast-grep | ast-grep-core | anything with a tree-sitter grammar | structural pattern matching |
 
 ## Config

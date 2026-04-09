@@ -475,10 +475,18 @@ fn convert_slot(
                     bail!("multiple line() slots not supported");
                 }
                 line_matcher = if let Some(re_pat) = body.strip_prefix("re:") {
+                    let has_dollar = re_pat.contains('$');
+                    let pattern = if has_dollar {
+                        rewrite_re_dollar_captures(re_pat)
+                    } else {
+                        re_pat.to_string()
+                    };
                     Some(LineMatcher::Regex {
                         source: String::new(),
-                        pattern: re_pat.to_string(),
-                        full_match: true,
+                        pattern,
+                        // Raw (?P<>) patterns: full-match anchored.
+                        // $-sugar patterns: search mode (captures provide boundaries).
+                        full_match: !has_dollar,
                     })
                 } else {
                     Some(LineMatcher::Segments {
@@ -585,6 +593,55 @@ fn is_ast_ident_char(b: u8) -> bool {
 /// Check if position `i` is `$` followed by `{`.
 fn peek_brace(bytes: &[u8], i: usize) -> bool {
     bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{'
+}
+
+/// Rewrite a `re:` line pattern that contains `$NAME` captures into a proper regex.
+///
+/// `$NAME`  -> `(?P<NAME>[^X\s]+)` where X is the first char of the next literal,
+///             or `(?P<NAME>\S+)` at end of pattern / before whitespace literal.
+/// `$$$NAME` -> `(?P<NAME>.+)` (greedy, crosses whitespace).
+/// `$_`     -> `\S+` (unnamed).
+/// `$$$_`   -> `.+` (unnamed).
+/// Literal segments pass through as-is (they're already regex).
+fn rewrite_re_dollar_captures(pattern: &str) -> String {
+    let segments = parse_segment_pattern(pattern);
+    let mut out = String::new();
+    for (i, seg) in segments.iter().enumerate() {
+        match seg {
+            Segment::Literal(s) => out.push_str(s),
+            Segment::Capture(name) => {
+                let stop = next_literal_first_char(&segments[i + 1..]);
+                match stop {
+                    Some(c) if !c.is_ascii_whitespace() && c != '\\' => {
+                        out.push_str(&format!(
+                            "(?P<{}>[^{}\\s]+)",
+                            name,
+                            regex::escape(&c.to_string())
+                        ));
+                    }
+                    _ => {
+                        out.push_str(&format!("(?P<{}>\\S+)", name));
+                    }
+                }
+            }
+            Segment::MultiCapture(name) => {
+                out.push_str(&format!("(?P<{}>.+)", name));
+            }
+            Segment::Wild => out.push_str("\\S+"),
+            Segment::MultiWild => out.push_str(".+"),
+        }
+    }
+    out
+}
+
+/// Find the first raw character of the next Literal segment (skipping captures).
+fn next_literal_first_char(segments: &[Segment]) -> Option<char> {
+    for seg in segments {
+        if let Segment::Literal(s) = seg {
+            return s.chars().next();
+        }
+    }
+    None
 }
 
 /// Convert parsed segments into a regex string for ast-grep constraint filtering.
@@ -752,6 +809,23 @@ mod tests {
             r.value.as_ref().unwrap(),
             LineMatcher::Regex { pattern, .. } if pattern == r"image:\s+(?P<REPO>[^:]+):(?P<TAG>.+)"
         ));
+    }
+
+    #[test]
+    fn lower_line_regex_dollar_sugar() {
+        let rules = lower(r"rule(img) { fs(**/Dockerfile) > line(re:FROM\s+$IMAGE:$TAG) };");
+        let r = &rules[0];
+        match r.value.as_ref().unwrap() {
+            LineMatcher::Regex { pattern, .. } => {
+                // $IMAGE before `:` -> [^:\s]+, $TAG at end -> \S+
+                assert_eq!(pattern, r"FROM\s+(?P<IMAGE>[^:\s]+):(?P<TAG>\S+)");
+            }
+            other => panic!("expected Regex, got {:?}", other),
+        }
+        // create_matches should include IMAGE and TAG
+        let caps: Vec<&str> = r.create_matches.iter().map(|m| m.capture.as_str()).collect();
+        assert!(caps.contains(&"IMAGE"), "got {:?}", caps);
+        assert!(caps.contains(&"TAG"), "got {:?}", caps);
     }
 
     // ── ${VAR} braced capture lowering ──────────────

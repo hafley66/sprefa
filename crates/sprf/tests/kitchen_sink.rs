@@ -3,6 +3,7 @@
 //! Exercises every parser feature against the fixture at tests/fixtures/kitchen_sink.sprf,
 //! then runs selected rules against fixture data files to verify end-to-end extraction.
 
+use sprefa_extract::{ExtractContext, Extractor};
 use sprefa_rules::types::{LineMatcher, SelectStep};
 use sprefa_sprf::{parse_sprf, parse_sprf_full};
 
@@ -55,7 +56,7 @@ fn all_rules_have_create_matches() {
     for r in &rules() {
         // line_regex: (?P<name>...) named groups are lowercase, invisible to SCREAMING_CASE extractor
         // any_object: empty json({ }) has no captures by design
-        if r.name == "line_regex" || r.name == "any_object" {
+        if r.name == "any_object" {
             continue;
         }
         assert!(
@@ -272,7 +273,7 @@ fn line_segment_capture() {
     let r = rule("dockerfile_from");
     match r.value.as_ref().expect("expected line matcher") {
         LineMatcher::Segments { pattern, .. } => {
-            assert_eq!(pattern, r"FROM\s+$IMAGE:$TAG");
+            assert_eq!(pattern, "FROM $IMAGE:$TAG");
         }
         other => panic!("expected Segments, got {:?}", other),
     }
@@ -608,5 +609,148 @@ mod walk_integration {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0]["REPO"], "myorg/api-service");
         assert_eq!(results[0]["TAG"], "v3.1.0");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Line extraction integration tests
+//
+// These test the full line-by-line extraction pipeline for
+// non-structured files (Dockerfile, go.mod, requirements.txt).
+// ═══════════════════════════════════════════════════════════
+
+mod line_extraction {
+    use super::*;
+    use sprefa_rules::extractor::RuleExtractor;
+    use std::collections::BTreeMap;
+
+    const DOCKERFILE: &[u8] = include_bytes!("fixtures/Dockerfile");
+    const GO_MOD: &[u8] = include_bytes!("fixtures/go.mod");
+    const REQUIREMENTS_TXT: &[u8] = include_bytes!("fixtures/requirements.txt");
+
+    fn extractor() -> RuleExtractor {
+        let (ruleset, _) = parse_sprf(FIXTURE).unwrap();
+        RuleExtractor::from_ruleset(&ruleset).unwrap()
+    }
+
+    fn ctx() -> ExtractContext<'static> {
+        ExtractContext {
+            repo: None,
+            branch: None,
+            tags: &[],
+        }
+    }
+
+    /// Extract refs from a file and return them as a vec of (rule_name, captures) tuples.
+    fn extract_refs(source: &[u8], path: &str) -> Vec<(String, BTreeMap<String, String>)> {
+        let ext = extractor();
+        let refs = ext.extract(source, path, &ctx());
+        // Group refs by group_id and rule_name into capture maps
+        let mut grouped: BTreeMap<(String, Option<u32>), BTreeMap<String, String>> = BTreeMap::new();
+        for r in &refs {
+            let key = (r.rule_name.clone(), r.group);
+            grouped
+                .entry(key)
+                .or_default()
+                .insert(r.kind.clone(), r.value.clone());
+        }
+        grouped
+            .into_iter()
+            .map(|((rule, _), caps)| (rule, caps))
+            .collect()
+    }
+
+    // ── Dockerfile ──────────────────────────────────
+
+    #[test]
+    fn dockerfile_segment_from() {
+        let refs = extract_refs(DOCKERFILE, "app/Dockerfile");
+        let docker_from: Vec<_> = refs.iter().filter(|(r, _)| r == "docker_from").collect();
+        // Fixture: FROM node:20-alpine AS builder, FROM nginx:1.25-alpine (no AS)
+        // docker_from pattern: FROM $IMAGE AS $STAGE -- only matches lines with AS
+        assert_eq!(docker_from.len(), 1, "expected 1 docker_from match, got {:?}", docker_from);
+        assert_eq!(docker_from[0].1["IMAGE"], "node:20-alpine");
+        assert_eq!(docker_from[0].1["STAGE"], "builder");
+    }
+
+    #[test]
+    fn dockerfile_segment_colon() {
+        let refs = extract_refs(DOCKERFILE, "app/Dockerfile");
+        let from_colon: Vec<_> = refs.iter().filter(|(r, _)| r == "dockerfile_from").collect();
+        // dockerfile_from pattern: FROM $IMAGE:$TAG
+        // Single-capture $TAG is greedy to end-of-line (no following literal).
+        // FROM node:20-alpine AS builder -> IMAGE=node, TAG=20-alpine AS builder
+        // FROM nginx:1.25-alpine -> IMAGE=nginx, TAG=1.25-alpine
+        assert_eq!(from_colon.len(), 2, "expected 2 dockerfile_from matches, got {:?}", from_colon);
+        let images: Vec<&str> = from_colon.iter().map(|(_, c)| c["IMAGE"].as_str()).collect();
+        assert!(images.contains(&"node"), "expected node image, got {:?}", images);
+        assert!(images.contains(&"nginx"), "expected nginx image, got {:?}", images);
+        let tags: Vec<&str> = from_colon.iter().map(|(_, c)| c["TAG"].as_str()).collect();
+        // Greedy: $TAG captures everything after the colon
+        assert!(tags.contains(&"20-alpine AS builder"), "got {:?}", tags);
+        assert!(tags.contains(&"1.25-alpine"), "got {:?}", tags);
+    }
+
+    #[test]
+    fn dockerfile_regex_from() {
+        let refs = extract_refs(DOCKERFILE, "app/Dockerfile");
+        let regex: Vec<_> = refs.iter().filter(|(r, _)| r == "line_regex").collect();
+        // line_regex pattern: re:FROM\s+$IMAGE:$TAG
+        // Sugar rewrites to: FROM\s+(?P<IMAGE>[^:\s]+):(?P<TAG>\S+)
+        // Word-boundary: $TAG stops at whitespace
+        assert_eq!(regex.len(), 2, "expected 2 line_regex matches, got {:?}", regex);
+        let images: Vec<&str> = regex.iter().map(|(_, c)| c["IMAGE"].as_str()).collect();
+        assert!(images.contains(&"node"));
+        assert!(images.contains(&"nginx"));
+        let tags: Vec<&str> = regex.iter().map(|(_, c)| c["TAG"].as_str()).collect();
+        assert!(tags.contains(&"20-alpine"), "got {:?}", tags);
+        assert!(tags.contains(&"1.25-alpine"), "got {:?}", tags);
+    }
+
+    #[test]
+    fn dockerfile_multi_seg_copy() {
+        let refs = extract_refs(DOCKERFILE, "app/Dockerfile");
+        let copies: Vec<_> = refs.iter().filter(|(r, _)| r == "multi_seg").collect();
+        // multi_seg pattern: COPY $$$SRC $DEST
+        // Single-capture $DEST won't cross `/` boundaries, so only `COPY . .` matches
+        // (COPY package*.json ./ fails: $DEST can't capture "./", COPY --from=... fails: $DEST can't capture /usr/...)
+        assert_eq!(copies.len(), 1, "expected 1 COPY match (only `COPY . .`), got {:?}", copies);
+        assert_eq!(copies[0].1["SRC"], ".");
+        assert_eq!(copies[0].1["DEST"], ".");
+    }
+
+    // ── go.mod ──────────────────────────────────────
+
+    #[test]
+    fn go_mod_deps() {
+        let refs = extract_refs(GO_MOD, "services/api/go.mod");
+        let deps: Vec<_> = refs.iter().filter(|(r, _)| r == "go_mod_dep").collect();
+        // go.mod require block has tab-indented lines: \t$MODULE $VERSION
+        assert_eq!(deps.len(), 3, "expected 3 go.mod deps, got {:?}", deps);
+        let modules: Vec<&str> = deps.iter().map(|(_, c)| c["MODULE"].as_str()).collect();
+        assert!(modules.contains(&"github.com/gin-gonic/gin"));
+        assert!(modules.contains(&"github.com/go-playground/validator/v10"));
+        assert!(modules.contains(&"golang.org/x/net"));
+        let versions: Vec<&str> = deps.iter().map(|(_, c)| c["VERSION"].as_str()).collect();
+        assert!(versions.contains(&"v1.9.1"));
+        assert!(versions.contains(&"v10.14.0"));
+        assert!(versions.contains(&"v0.17.0"));
+    }
+
+    // ── requirements.txt ────────────────────────────
+
+    #[test]
+    fn python_requirements() {
+        let refs = extract_refs(REQUIREMENTS_TXT, "services/api/requirements.txt");
+        let reqs: Vec<_> = refs.iter().filter(|(r, _)| r == "py_requirement").collect();
+        // py_requirement pattern: $PACKAGE==$VERSION
+        // Matches: flask==3.0.2, sqlalchemy==2.0.28, requests==2.31.0, celery[redis]==5.3.6
+        // Does NOT match: pydantic>=2.6.0,<3.0.0 (uses >= not ==)
+        assert_eq!(reqs.len(), 4, "expected 4 pinned requirements, got {:?}", reqs);
+        let pkgs: Vec<&str> = reqs.iter().map(|(_, c)| c["PACKAGE"].as_str()).collect();
+        assert!(pkgs.contains(&"flask"), "got {:?}", pkgs);
+        assert!(pkgs.contains(&"sqlalchemy"), "got {:?}", pkgs);
+        assert!(pkgs.contains(&"requests"), "got {:?}", pkgs);
+        assert!(pkgs.contains(&"celery[redis]"), "got {:?}", pkgs);
     }
 }

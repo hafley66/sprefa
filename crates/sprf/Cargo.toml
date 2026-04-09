@@ -17,3 +17,4 @@ sha2 = "0.10"
 insta = { workspace = true }
 serde_yaml = { workspace = true }
 toml = { workspace = true }
+sprefa_extract = { path = "../extract" }
