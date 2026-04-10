@@ -2798,8 +2798,12 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "sprefa_cache",
  "sprefa_extract",
  "sprefa_rules",
+ "sprefa_schema",
+ "sqlx",
+ "tokio",
  "toml",
  "winnow",
 ]

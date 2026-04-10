@@ -1,5 +1,6 @@
 {
   "alpha": "one",
   "beta": "two",
-  "gamma": "three"
+  "gamma": "three",
+  "empty": {}
 }

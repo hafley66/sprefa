@@ -25,6 +25,14 @@ const CARGO_LOCK: &[u8] = include_bytes!("fixtures/Cargo.lock");
 const DOCKERFILE: &[u8] = include_bytes!("fixtures/Dockerfile");
 const GO_MOD: &[u8] = include_bytes!("fixtures/go.mod");
 const REQUIREMENTS_TXT: &[u8] = include_bytes!("fixtures/requirements.txt");
+const TSCONFIG_JSON: &[u8] = include_bytes!("fixtures/tsconfig.json");
+const PNPM_WORKSPACE_YAML: &[u8] = include_bytes!("fixtures/pnpm-workspace.yaml");
+const DOCKER_COMPOSE_YAML: &[u8] = include_bytes!("fixtures/docker-compose.yaml");
+const CONFIGMAP_YAML: &[u8] = include_bytes!("fixtures/app-configmap.yaml");
+const OPENAPI_YAML: &[u8] = include_bytes!("fixtures/openapi.yaml");
+const RESOLVED_LOCK: &[u8] = include_bytes!("fixtures/resolved.lock");
+const EMPTY_JSON: &[u8] = include_bytes!("fixtures/empty.json");
+const HAS_EMPTY_JSON: &[u8] = include_bytes!("fixtures/has_empty.json");
 
 // Synthetic inline fixtures for files the fixtures/ directory doesn't carry.
 const CONFIG_YAML: &[u8] = b"version: \"3.5.0\"\n";
@@ -107,6 +115,14 @@ fn virtual_files() -> Vec<(&'static str, &'static [u8])> {
         ("src/components/widget/index.ts", INDEX_TS),
         ("src/handlers/api.ts", HANDLERS_TS),
         ("src/hooks/UserPanel.tsx", USER_PANEL_TSX),
+        ("tsconfig.json", TSCONFIG_JSON),
+        ("pnpm-workspace.yaml", PNPM_WORKSPACE_YAML),
+        ("docker-compose.yaml", DOCKER_COMPOSE_YAML),
+        ("k8s/app-configmap.yaml", CONFIGMAP_YAML),
+        ("api/openapi.yaml", OPENAPI_YAML),
+        ("resolved.lock", RESOLVED_LOCK),
+        ("empty.json", EMPTY_JSON),
+        ("has_empty.json", HAS_EMPTY_JSON),
     ]
 }
 

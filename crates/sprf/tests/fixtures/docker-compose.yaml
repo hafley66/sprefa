@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  api:
+    build: ./api
+    ports:
+      - "8080:8080"
+  worker:
+    build: ./worker
+  postgres:
+    image: postgres:16
+  redis:
+    image: redis:7-alpine

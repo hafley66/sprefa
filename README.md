@@ -566,6 +566,11 @@ sprefa eval '<rule>' [files...]          # one-shot extraction, standalone
 sprefa status                            # show indexed repos
 sprefa config                            # print resolved config
 sprefa reset                             # drop + reinit DB
+
+# Global flags (work with any command)
+sprefa --db /path/to/index.db scan       # use custom database path
+SPREFA_DB=/path/to/index.db sprefa scan  # via environment variable
+sprefa --config ./custom.toml scan       # use custom config file
 ```
 
 ## Watch + rewrite
@@ -616,6 +621,11 @@ exclude = ["node_modules/**", "vendor/**", "dist/**", "target/**", ".git/**"]
 ```
 
 Config resolution: `$SPREFA_CONFIG` > `./sprefa.toml` > `~/.config/sprefa/sprefa.toml`.
+
+Database path resolution (in order of priority):
+1. `--db <path>` command line flag
+2. `$SPREFA_DB` environment variable
+3. `[db].path` from config file (default: `~/.sprefa/index.db`)
 
 ## ghcache integration
 

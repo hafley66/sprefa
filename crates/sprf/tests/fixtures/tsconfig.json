@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "baseUrl": ".",
+    "paths": {
+      "@utils/*": ["src/utils/*"],
+      "@components/*": ["src/components/*", "src/shared/components/*"],
+      "@config": ["src/config/index.ts"]
+    },
+    "jsx": "react-jsx",
+    "jsxImportSource": "@alloy-js/core"
+  },
+  "include": ["src/**/*"]
+}

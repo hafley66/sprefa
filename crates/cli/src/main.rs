@@ -99,6 +99,10 @@ struct Cli {
     #[arg(short, long, global = true)]
     config: Option<PathBuf>,
 
+    /// Path to the SQLite database (overrides config file)
+    #[arg(short, long, global = true)]
+    db: Option<PathBuf>,
+
     /// Print the full README documentation and exit
     #[arg(long)]
     readme: bool,
@@ -318,22 +322,24 @@ async fn main() -> anyhow::Result<()> {
     }
 
     match cli.command {
-        Some(Command::Init) => cmd_init().await?,
-        Some(Command::Add { path, name }) => cmd_add(&cli.config, path, name).await?,
-        Some(Command::Reset) => cmd_reset(&cli.config).await?,
+        Some(Command::Init) => cmd_init(cli.db.as_ref()).await?,
+        Some(Command::Add { path, name }) => cmd_add(&cli.config, cli.db.as_ref(), path, name).await?,
+        Some(Command::Reset) => cmd_reset(&cli.config, cli.db.as_ref()).await?,
         Some(Command::Config) => cmd_config(&cli.config)?,
         Some(Command::Eval { rule, files }) => cmd_eval(&rule, &files)?,
-        Some(Command::Scan { repo, once }) => cmd_scan(&cli.config, repo.as_deref(), once).await?,
-        Some(Command::Status) => cmd_status(&cli.config).await?,
+        Some(Command::Scan { repo, once }) => cmd_scan(&cli.config, cli.db.as_ref(), repo.as_deref(), once).await?,
+        Some(Command::Status) => cmd_status(&cli.config, cli.db.as_ref()).await?,
         Some(Command::Query { term, scope, once }) => {
-            cmd_query(&cli.config, &term, scope.as_deref(), once).await?
+            cmd_query(&cli.config, cli.db.as_ref(), &term, scope.as_deref(), once).await?
         }
-        Some(Command::Sql { sql }) => cmd_sql(&cli.config, &sql).await?,
-        Some(Command::Check { name, list }) => cmd_check(&cli.config, name.as_deref(), list).await?,
-        Some(Command::Serve) => cmd_serve(&cli.config).await?,
-        Some(Command::Watch { repo }) => cmd_watch(&cli.config, repo.as_deref()).await?,
+        Some(Command::Sql { sql }) => cmd_sql(&cli.config, cli.db.as_ref(), &sql).await?,
+        Some(Command::Check { name, list }) => {
+            cmd_check(&cli.config, cli.db.as_ref(), name.as_deref(), list).await?
+        }
+        Some(Command::Serve) => cmd_serve(&cli.config, cli.db.as_ref()).await?,
+        Some(Command::Watch { repo }) => cmd_watch(&cli.config, cli.db.as_ref(), repo.as_deref()).await?,
         Some(Command::Daemon { repo, no_scan }) => {
-            cmd_daemon(&cli.config, repo.as_deref(), no_scan).await?
+            cmd_daemon(&cli.config, cli.db.as_ref(), repo.as_deref(), no_scan).await?
         }
         None => {
             // No subcommand: print help
@@ -346,9 +352,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_reset(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
-    let config = load_cfg(config_path)?;
-    let db_path = config.db_path();
+async fn cmd_reset(config_path: &Option<PathBuf>, db_override: Option<&PathBuf>) -> anyhow::Result<()> {
+    let db_path = resolve_db_path(config_path, db_override)?;
     let path = std::path::Path::new(&db_path);
     if path.exists() {
         std::fs::remove_file(path)?;
@@ -364,7 +369,7 @@ async fn cmd_reset(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_init() -> anyhow::Result<()> {
+async fn cmd_init(db_override: Option<&PathBuf>) -> anyhow::Result<()> {
     let config_path = PathBuf::from("sprefa.toml");
     if config_path.exists() {
         println!("sprefa.toml already exists");
@@ -373,8 +378,13 @@ async fn cmd_init() -> anyhow::Result<()> {
         println!("created sprefa.toml");
     }
 
-    let config: Config = toml::from_str(&default_config_toml())?;
-    let db_path = config.db_path();
+    let db_path = match db_override {
+        Some(p) => p.to_string_lossy().to_string(),
+        None => {
+            let config: Config = toml::from_str(&default_config_toml())?;
+            config.db_path()
+        }
+    };
     let _pool = init_db(&db_path).await?;
     println!("initialized database at {}", db_path);
 
@@ -383,11 +393,12 @@ async fn cmd_init() -> anyhow::Result<()> {
 
 async fn cmd_add(
     config_path: &Option<PathBuf>,
+    db_override: Option<&PathBuf>,
     path: PathBuf,
     name: Option<String>,
 ) -> anyhow::Result<()> {
-    let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
+    let db_path = resolve_db_path(config_path, db_override)?;
+    let pool = init_db(&db_path).await?;
 
     let abs_path = std::fs::canonicalize(&path)?;
     let repo_name = name.unwrap_or_else(|| {
@@ -584,10 +595,12 @@ fn load_ruleset(path: &std::path::Path) -> anyhow::Result<(sprefa_rules::RuleSet
 
 async fn cmd_scan(
     config_path: &Option<PathBuf>,
+    db_override: Option<&PathBuf>,
     only_repo: Option<&str>,
     once: bool,
 ) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
+    let db_path = resolve_db_path(config_path, db_override)?;
 
     if !once {
         if let Some(url) = config.daemon_url() {
@@ -615,7 +628,7 @@ async fn cmd_scan(
         }
     }
 
-    let pool = init_db(&config.db_path()).await?;
+    let pool = init_db(&db_path).await?;
     let scanner = build_scanner(&config, pool).await?;
 
     let repos: Vec<_> = config
@@ -878,11 +891,9 @@ fn find_rules_files() -> anyhow::Result<Vec<PathBuf>> {
         .ok_or_else(|| anyhow::anyhow!("no rules file found. set $SPREFA_RULES or create a .sprf file"))
 }
 
-async fn cmd_status(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
-    let config = load_cfg(config_path)?;
-
-    // TODO: if daemon URL is configured, delegate via HTTP client
-    let pool = init_db(&config.db_path()).await?;
+async fn cmd_status(config_path: &Option<PathBuf>, db_override: Option<&PathBuf>) -> anyhow::Result<()> {
+    let db_path = resolve_db_path(config_path, db_override)?;
+    let pool = init_db(&db_path).await?;
     let repos = list_repos(&pool).await?;
 
     if repos.is_empty() {
@@ -917,12 +928,14 @@ fn parse_scope(s: Option<&str>) -> anyhow::Result<Option<BranchScope>> {
 
 async fn cmd_query(
     config_path: &Option<PathBuf>,
+    db_override: Option<&PathBuf>,
     term: &str,
     scope: Option<&str>,
     once: bool,
 ) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
     let scope = parse_scope(scope)?;
+    let db_path = resolve_db_path(config_path, db_override)?;
 
     if !once {
         if let Some(url) = config.daemon_url() {
@@ -949,7 +962,7 @@ async fn cmd_query(
         }
     }
 
-    let pool = init_db(&config.db_path()).await?;
+    let pool = init_db(&db_path).await?;
     let hits = search_refs(&pool, term, scope).await?;
     print_query_hits(&hits, term);
     Ok(())
@@ -970,7 +983,7 @@ fn print_query_hits(hits: &[sprefa_schema::QueryHit], term: &str) {
     println!("\n{} strings matched", hits.len());
 }
 
-async fn cmd_sql(config_path: &Option<PathBuf>, sql: &str) -> anyhow::Result<()> {
+async fn cmd_sql(config_path: &Option<PathBuf>, db_override: Option<&PathBuf>, sql: &str) -> anyhow::Result<()> {
     // Block anything that isn't a SELECT.
     let trimmed = sql.trim();
     let first_word = trimmed.split_whitespace().next().unwrap_or("");
@@ -988,8 +1001,8 @@ async fn cmd_sql(config_path: &Option<PathBuf>, sql: &str) -> anyhow::Result<()>
         anyhow::bail!("multiple statements are not allowed");
     }
 
-    let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
+    let db_path = resolve_db_path(config_path, db_override)?;
+    let pool = init_db(&db_path).await?;
 
     let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(trimmed).fetch_all(&pool).await?;
 
@@ -1041,11 +1054,12 @@ async fn cmd_sql(config_path: &Option<PathBuf>, sql: &str) -> anyhow::Result<()>
 
 async fn cmd_check(
     config_path: &Option<PathBuf>,
+    db_override: Option<&PathBuf>,
     only_name: Option<&str>,
     list: bool,
 ) -> anyhow::Result<()> {
-    let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
+    let db_path = resolve_db_path(config_path, db_override)?;
+    let pool = init_db(&db_path).await?;
     let store = SqliteStore::new(pool);
 
     if list {
@@ -1128,18 +1142,20 @@ async fn cmd_check(
     Ok(())
 }
 
-async fn cmd_serve(config_path: &Option<PathBuf>) -> anyhow::Result<()> {
+async fn cmd_serve(config_path: &Option<PathBuf>, db_override: Option<&PathBuf>) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
+    let db_path = resolve_db_path(config_path, db_override)?;
+    let pool = init_db(&db_path).await?;
     let bind = config.daemon_bind().to_string();
     let scanner = build_scanner(&config, pool.clone()).await.ok().map(Arc::new);
     sprefa_server::serve(pool, scanner, config.repos.clone(), &bind).await?;
     Ok(())
 }
 
-async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> anyhow::Result<()> {
+async fn cmd_watch(config_path: &Option<PathBuf>, db_override: Option<&PathBuf>, only_repo: Option<&str>) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
+    let db_path = resolve_db_path(config_path, db_override)?;
+    let pool = init_db(&db_path).await?;
     let scanner = build_scanner(&config, pool.clone()).await?;
 
     let rewriters: Vec<Box<dyn PathRewriter>> =
@@ -1178,11 +1194,13 @@ async fn cmd_watch(config_path: &Option<PathBuf>, only_repo: Option<&str>) -> an
 
 async fn cmd_daemon(
     config_path: &Option<PathBuf>,
+    db_override: Option<&PathBuf>,
     only_repo: Option<&str>,
     no_scan: bool,
 ) -> anyhow::Result<()> {
     let config = load_cfg(config_path)?;
-    let pool = init_db(&config.db_path()).await?;
+    let db_path = resolve_db_path(config_path, db_override)?;
+    let pool = init_db(&db_path).await?;
     let scanner = build_scanner(&config, pool.clone()).await?;
 
     let repos: Vec<_> = config
@@ -1409,6 +1427,24 @@ fn load_cfg(config_path: &Option<PathBuf>) -> anyhow::Result<Config> {
             Ok(config)
         }
     }
+}
+
+/// Resolve the database path from (in order of priority):
+/// 1. CLI --db flag
+/// 2. SPREFA_DB environment variable
+/// 3. Config file [db].path
+fn resolve_db_path(
+    config_path: &Option<PathBuf>,
+    db_override: Option<&PathBuf>,
+) -> anyhow::Result<String> {
+    if let Some(p) = db_override {
+        return Ok(p.to_string_lossy().to_string());
+    }
+    if let Ok(env_path) = std::env::var("SPREFA_DB") {
+        return Ok(env_path);
+    }
+    let config = load_cfg(config_path)?;
+    Ok(config.db_path())
 }
 
 fn find_config_file(config_path: &Option<PathBuf>) -> anyhow::Result<PathBuf> {
