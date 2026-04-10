@@ -131,6 +131,14 @@ pub struct Rule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub marker_scope: Option<MarkerScope>,
 
+    /// Markdown scope: constrains downstream matchers to byte ranges under a heading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md_scope: Option<MdPattern>,
+
+    /// Markdown leaf matcher: matches markdown elements and produces captures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md_matcher: Option<MdPattern>,
+
     /// Confidence score override (0.0 to 1.0). Default: 0.8 for rule matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f64>,
@@ -372,6 +380,55 @@ fn default_true() -> bool {
 
 fn is_false(v: &bool) -> bool {
     !v
+}
+
+/// Markdown structural pattern for md() tag.
+///
+/// Used in two modes based on chain position:
+/// - **Scoping** (intermediate): heading patterns produce byte ranges
+///   from heading to next same-or-higher level heading.
+/// - **Matching** (terminal): element patterns match and produce captures.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MdPattern {
+    /// Match heading by level (1-6). Captures heading text.
+    /// As scoper: byte range from heading to next heading of same or lower depth.
+    Heading {
+        level: u8,
+        /// Literal text to match, or None to match any heading at this level.
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
+    /// Match list items (- or * or numbered).
+    ListItem {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
+    /// Match markdown links: [text](url).
+    Link {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text_capture: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url_capture: Option<String>,
+    },
+    /// Match fenced code blocks (```lang).
+    CodeBlock {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lang_capture: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body_capture: Option<String>,
+    },
+    /// Match table rows (| col | col |).
+    TableRow {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
+    /// Match blockquotes (> text).
+    Blockquote {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<String>,
+    },
 }
 
 /// One match to create from a captured value.

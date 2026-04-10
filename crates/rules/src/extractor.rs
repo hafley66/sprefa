@@ -8,8 +8,8 @@ use crate::{
     ast, emit,
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
-    marker,
-    types::{AstSelector, LineMatcher, MarkerScope, MatchDef, RuleSet, SelectStep},
+    marker, md,
+    types::{AstSelector, LineMatcher, MarkerScope, MdPattern, MatchDef, RuleSet, SelectStep},
     walk,
     walk::{CapturedValue, CompiledStep},
 };
@@ -25,6 +25,8 @@ pub struct CompiledRule {
     pub ast: Option<AstSelector>,
     pub line_matcher: Option<LineMatcher>,
     pub marker_scope: Option<MarkerScope>,
+    pub md_scope: Option<MdPattern>,
+    pub md_matcher: Option<MdPattern>,
     pub create_matches: Vec<MatchDef>,
 }
 
@@ -57,10 +59,12 @@ impl RuleExtractor {
             .iter()
             .filter(|r| {
                 // Rule is valid if it has structural steps, an ast selector,
-                // or a line matcher (line-only rules on plain text files).
+                // a line matcher, or an md pattern.
                 r.select.iter().any(|s| !s.is_context_step())
                     || r.select_ast.is_some()
                     || r.value.is_some()
+                    || r.md_scope.is_some()
+                    || r.md_matcher.is_some()
             })
             .map(compile_rule)
             .collect::<Result<Vec<_>>>()?;
@@ -100,24 +104,33 @@ impl RuleExtractor {
         path: &str,
         ctx: &ExtractContext,
     ) -> Vec<walk::MatchResult> {
+        tracing::debug!(path, rules_count = self.rules.len(), "eval_raw start");
         let mut all = vec![];
         for rule in self.rules_for_path(path) {
+            tracing::debug!(rule = %rule.name, has_ast = rule.ast.is_some(), has_line = rule.line_matcher.is_some(), steps = rule.steps.len(), has_md_scope = rule.md_scope.is_some(), has_md_matcher = rule.md_matcher.is_some(), "eval_raw: matched rule");
             let repo = ctx.repo.unwrap_or("");
             let git_caps = match rule.git.matches_with_captures(repo, ctx.branch, ctx.tags) {
                 Some(c) => c,
-                None => continue,
+                None => {
+                    tracing::debug!(rule = %rule.name, "eval_raw: git filter rejected");
+                    continue;
+                }
             };
 
             let file_caps = match rule.file.matches_with_captures(path) {
                 Some(c) => c,
-                None => continue,
+                None => {
+                    tracing::debug!(rule = %rule.name, path, "eval_raw: file filter rejected");
+                    continue;
+                }
             };
 
             let context_caps =
                 resolve_context_captures(&rule.context_captures, ctx, path, &git_caps, &file_caps);
 
             let seed = build_current_captures(ctx, path);
-            let regions = resolve_regions(source, path, &rule.marker_scope);
+            let regions = resolve_all_regions(source, path, &rule.marker_scope, &rule.md_scope);
+            tracing::debug!(rule = %rule.name, regions = regions.len(), "eval_raw: resolved regions");
 
             for region in &regions {
                 let region_source = &source[region.start..region.end];
@@ -128,14 +141,13 @@ impl RuleExtractor {
                     seed.clone(),
                     self.config_dir.as_deref(),
                 );
+                tracing::debug!(rule = %rule.name, region_start = region.start, region_end = region.end, matches = results.len(), "eval_raw: run_matchers done");
 
                 for result in results {
                     let mut merged = result;
-                    // Merge marker captures
                     for (name, cv) in &region.captures {
                         merged.captures.insert(name.clone(), cv.clone());
                     }
-                    // Merge context captures
                     for (name, cv) in &context_caps {
                         merged.captures.insert(name.clone(), cv.clone());
                     }
@@ -143,6 +155,7 @@ impl RuleExtractor {
                 }
             }
         }
+        tracing::debug!(path, total = all.len(), "eval_raw done");
         all
     }
 }
@@ -155,7 +168,7 @@ impl Extractor for RuleExtractor {
         // claimed by JsExtractor/RsExtractor is fine -- refs are merged.
         &[
             "json", "yaml", "yml", "toml", "js", "jsx", "cjs", "mjs", "ts", "tsx", "cts", "mts",
-            "rs", "py", "py3", "pyi", "go", "kt", "kts", "sh", "bash", "zsh",
+            "rs", "py", "py3", "pyi", "go", "kt", "kts", "sh", "bash", "zsh", "md",
         ]
     }
 
@@ -164,25 +177,34 @@ impl Extractor for RuleExtractor {
     }
 
     fn extract(&self, source: &[u8], path: &str, ctx: &ExtractContext) -> Vec<RawRef> {
+        tracing::debug!(path, rules_count = self.rules.len(), "extract start");
         let mut refs = vec![];
         let mut group_counter: u32 = 0;
         for rule in self.rules_for_path(path) {
+            tracing::debug!(rule = %rule.name, has_ast = rule.ast.is_some(), has_line = rule.line_matcher.is_some(), steps = rule.steps.len(), "extract: matched rule");
             let repo = ctx.repo.unwrap_or("");
             let git_caps = match rule.git.matches_with_captures(repo, ctx.branch, ctx.tags) {
                 Some(c) => c,
-                None => continue,
+                None => {
+                    tracing::debug!(rule = %rule.name, "extract: git filter rejected");
+                    continue;
+                }
             };
 
             let file_caps = match rule.file.matches_with_captures(path) {
                 Some(c) => c,
-                None => continue,
+                None => {
+                    tracing::debug!(rule = %rule.name, path, "extract: file filter rejected");
+                    continue;
+                }
             };
 
             let context_caps =
                 resolve_context_captures(&rule.context_captures, ctx, path, &git_caps, &file_caps);
 
             let seed = build_current_captures(ctx, path);
-            let regions = resolve_regions(source, path, &rule.marker_scope);
+            let regions = resolve_all_regions(source, path, &rule.marker_scope, &rule.md_scope);
+            tracing::debug!(rule = %rule.name, regions = regions.len(), "extract: resolved regions");
 
             let has_matches = !rule.create_matches.is_empty();
             for region in &regions {
@@ -194,6 +216,7 @@ impl Extractor for RuleExtractor {
                     seed.clone(),
                     self.config_dir.as_deref(),
                 );
+                tracing::debug!(rule = %rule.name, matches = results.len(), "extract: run_matchers done");
 
                 for result in results {
                     let mut merged = result.clone();
@@ -226,18 +249,20 @@ impl Extractor for RuleExtractor {
     }
 }
 
-/// Resolve marker regions for a rule. If no marker scope, returns a single region
+/// Resolve all scoping regions for a rule. Marker scope runs first, then md heading
+/// scope subdivides within each marker region. If neither is set, returns one region
 /// covering the entire source.
-fn resolve_regions(
+fn resolve_all_regions(
     source: &[u8],
     path: &str,
     marker_scope: &Option<MarkerScope>,
+    md_scope: &Option<MdPattern>,
 ) -> Vec<marker::MarkerRegion> {
-    match marker_scope {
+    // Step 1: marker scope
+    let marker_regions = match marker_scope {
         Some(scope) => {
             let regions = marker::find_marker_regions(source, path, scope);
             if regions.is_empty() {
-                // No markers found -- return whole file so downstream matchers still run
                 vec![marker::MarkerRegion {
                     start: 0,
                     end: source.len(),
@@ -252,7 +277,40 @@ fn resolve_regions(
             end: source.len(),
             captures: HashMap::new(),
         }],
+    };
+
+    // Step 2: md heading scope subdivides each marker region
+    let md_pattern = match md_scope {
+        Some(p) => p,
+        None => return marker_regions,
+    };
+
+    let mut result = vec![];
+    for mregion in &marker_regions {
+        let slice = &source[mregion.start..mregion.end];
+        let md_regions = md::find_heading_regions(slice, md_pattern);
+        if md_regions.is_empty() {
+            // No matching headings -> keep the marker region as-is
+            result.push(marker::MarkerRegion {
+                start: mregion.start,
+                end: mregion.end,
+                captures: mregion.captures.clone(),
+            });
+        } else {
+            for md_r in md_regions {
+                let mut caps = mregion.captures.clone();
+                for (k, v) in &md_r.captures {
+                    caps.insert(k.clone(), v.clone());
+                }
+                result.push(marker::MarkerRegion {
+                    start: mregion.start + md_r.start,
+                    end: mregion.start + md_r.end,
+                    captures: caps,
+                });
+            }
+        }
     }
+    result
 }
 
 /// Run the appropriate matcher (ast, line, or structural walk) on a source slice.
@@ -268,9 +326,42 @@ fn run_matchers(
         .and_then(|e| e.to_str())
         .unwrap_or("");
 
-    if let Some(ast_sel) = &rule.ast {
-        ast::ast_match(source, path, ast_sel, config_dir)
+    tracing::debug!(path, has_md_matcher = rule.md_matcher.is_some(), has_ast = rule.ast.is_some(), has_line = rule.line_matcher.is_some(), has_md_scope = rule.md_scope.is_some(), steps = rule.steps.len(), "run_matchers dispatch");
+
+    if let Some(md_pat) = &rule.md_matcher {
+        tracing::debug!("run_matchers: md_matcher branch");
+        md::match_elements(source, md_pat)
+            .into_iter()
+            .map(|m| {
+                let mut captures = seed.clone();
+                for (k, v) in m.captures {
+                    captures.insert(k, v);
+                }
+                walk::MatchResult {
+                    captures,
+                    path: vec![],
+                }
+            })
+            .collect()
+    } else if rule.md_scope.is_some()
+        && rule.ast.is_none()
+        && rule.line_matcher.is_none()
+        && rule.steps.is_empty()
+    {
+        // md() heading-only rule (terminal): the scope regions themselves are the matches.
+        // The captures from the scope regions were already merged upstream, so just
+        // produce one match with the seed captures (which include scope captures).
+        vec![walk::MatchResult {
+            captures: seed,
+            path: vec![],
+        }]
+    } else if let Some(ast_sel) = &rule.ast {
+        tracing::debug!(path, pattern = ?ast_sel.pattern, language = ?ast_sel.language, "run_matchers: ast branch");
+        let ast_results = ast::ast_match(source, path, ast_sel, config_dir);
+        tracing::debug!(path, count = ast_results.len(), "run_matchers: ast_match returned");
+        ast_results
     } else if rule.steps.is_empty() && rule.line_matcher.is_some() {
+        tracing::debug!(path, "run_matchers: line-only branch");
         match std::str::from_utf8(source) {
             Ok(text) => text
                 .lines()
@@ -457,6 +548,8 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
         ast: r.select_ast.clone(),
         line_matcher: r.value.clone(),
         marker_scope: r.marker_scope.clone(),
+        md_scope: r.md_scope.clone(),
+        md_matcher: r.md_matcher.clone(),
         create_matches: r.create_matches.clone(),
     })
 }

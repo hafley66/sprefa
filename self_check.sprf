@@ -1,0 +1,79 @@
+# self_check.sprf -- dogfooding: ensure README stays in sync with source code
+#
+# Sources of truth:
+#   sprf-lsp TAGS constant   ->  which tags the LSP completes (includes aliases)
+#   cli/src/main.rs           ->  which CLI subcommands exist
+#   Cargo.toml workspace      ->  which crates exist
+#   README.md                 ->  what is documented
+#
+# Run: sprefa eval -f self_check.sprf
+
+# ════════════════════════════════════════════════════════
+# 1. Tags the LSP completes (source of truth, includes aliases)
+# ════════════════════════════════════════════════════════
+
+rule(lsp_tag) {
+  fs(crates/sprf-lsp/src/main.rs) > ast[rust](("$TAG", $$$_))
+};
+
+# ════════════════════════════════════════════════════════
+# 2. Tags documented in README selector tags table
+# ════════════════════════════════════════════════════════
+
+rule(readme_tag) {
+  fs(**/README.md) > md(### Selector tags) > line(re:`$TAG\()
+};
+
+# ════════════════════════════════════════════════════════
+# 3. CLI subcommands defined in code
+# ════════════════════════════════════════════════════════
+
+# clap derive enum -- variant names on their own lines, no good ast-grep pattern for enum variants
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:^\s+$CMD\s*[\{,])
+};
+
+# ════════════════════════════════════════════════════════
+# 4. CLI subcommands documented in README
+# ════════════════════════════════════════════════════════
+
+rule(readme_cmd) {
+  fs(**/README.md) > md(## CLI reference) > line(re:sprefa $CMD)
+};
+
+# ════════════════════════════════════════════════════════
+# 5. Workspace crates
+# ════════════════════════════════════════════════════════
+
+rule(workspace_crate) {
+  fs(Cargo.toml) > line(re:crates/$CRATE)
+};
+
+rule(readme_crate) {
+  fs(**/README.md) > md(## Workspace) > line(re:$CRATE/)
+};
+
+# ════════════════════════════════════════════════════════
+# Checks: cross-reference code vs README
+# ════════════════════════════════════════════════════════
+
+check(tag_missing_from_readme) {
+  SELECT lt.tag
+  FROM lsp_tag lt
+  LEFT JOIN readme_tag rt ON rt.tag = lt.tag
+  WHERE rt.tag IS NULL
+};
+
+check(cmd_missing_from_readme) {
+  SELECT cc.cmd
+  FROM code_cmd cc
+  LEFT JOIN readme_cmd rc ON rc.cmd = cc.cmd
+  WHERE rc.cmd IS NULL
+};
+
+check(crate_missing_from_readme) {
+  SELECT wc.crate
+  FROM workspace_crate wc
+  LEFT JOIN readme_crate rc ON rc.crate = wc.crate
+  WHERE rc.crate IS NULL
+};

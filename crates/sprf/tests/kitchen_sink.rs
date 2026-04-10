@@ -787,6 +787,87 @@ fn marker_block_syntax_lowers() {
     assert!(r.value.is_some(), "expected line matcher from nested block");
 }
 
+// ── md() lowering ────────────────────────────────────────
+
+#[test]
+fn md_heading_terminal_lowers_to_md_scope() {
+    let r = rule("readme_sections");
+    assert!(r.md_scope.is_some(), "expected md_scope on heading-only rule");
+    assert!(r.md_matcher.is_none(), "heading-only rule should have no md_matcher");
+    let scope = r.md_scope.unwrap();
+    match scope {
+        sprefa_rules::types::MdPattern::Heading { level, text, capture } => {
+            assert_eq!(level, 2);
+            assert_eq!(text.as_deref(), Some("$SECTION"));
+            assert_eq!(capture.as_deref(), Some("SECTION"));
+        }
+        _ => panic!("expected Heading pattern"),
+    }
+}
+
+#[test]
+fn md_heading_scope_plus_list_matcher() {
+    let r = rule("readme_deps");
+    assert!(r.md_scope.is_some(), "expected md_scope for heading scoper");
+    assert!(r.md_matcher.is_some(), "expected md_matcher for list item");
+    match r.md_scope.unwrap() {
+        sprefa_rules::types::MdPattern::Heading { level, text, .. } => {
+            assert_eq!(level, 2);
+            assert_eq!(text.as_deref(), Some("Dependencies"));
+        }
+        _ => panic!("expected Heading scope"),
+    }
+    match r.md_matcher.unwrap() {
+        sprefa_rules::types::MdPattern::ListItem { capture } => {
+            assert_eq!(capture.as_deref(), Some("ITEM"));
+        }
+        _ => panic!("expected ListItem matcher"),
+    }
+}
+
+#[test]
+fn md_link_lowers_to_matcher() {
+    let r = rule("readme_links");
+    assert!(r.md_scope.is_none());
+    assert!(r.md_matcher.is_some());
+    match r.md_matcher.unwrap() {
+        sprefa_rules::types::MdPattern::Link { text_capture, url_capture } => {
+            assert_eq!(text_capture.as_deref(), Some("TEXT"));
+            assert_eq!(url_capture.as_deref(), Some("URL"));
+        }
+        _ => panic!("expected Link matcher"),
+    }
+}
+
+#[test]
+fn md_code_block_lowering() {
+    let r = rule("readme_code_langs");
+    assert!(r.md_scope.is_none(), "code block pattern should not be md_scope");
+    assert!(r.md_matcher.is_some(), "code block should be md_matcher");
+    match r.md_matcher.unwrap() {
+        sprefa_rules::types::MdPattern::CodeBlock { lang_capture, body_capture } => {
+            assert_eq!(lang_capture.as_deref(), Some("LANG"));
+            assert!(body_capture.is_none());
+        }
+        _ => panic!("expected CodeBlock matcher"),
+    }
+}
+
+#[test]
+fn md_heading_scope_with_line_matcher() {
+    let r = rule("install_cmds");
+    assert!(r.md_scope.is_some(), "expected heading scope");
+    assert!(r.md_matcher.is_none(), "line() should be value, not md_matcher");
+    assert!(r.value.is_some(), "expected line matcher from chain");
+    match r.md_scope.unwrap() {
+        sprefa_rules::types::MdPattern::Heading { level, text, .. } => {
+            assert_eq!(level, 2);
+            assert_eq!(text.as_deref(), Some("Installation"));
+        }
+        _ => panic!("expected Heading scope"),
+    }
+}
+
 // ── marker() extraction integration ─────────────────────
 
 mod marker_extraction {
@@ -847,5 +928,98 @@ mod marker_extraction {
         assert!(names.contains(&"logout"), "got {:?}", names);
         assert!(!names.contains(&"outside"), "should not contain outside, got {:?}", names);
         assert!(!names.contains(&"also_outside"), "should not contain also_outside, got {:?}", names);
+    }
+}
+
+// ── md() extraction integration ───────────────────────────
+
+mod md_extraction {
+    use super::*;
+    use sprefa_rules::extractor::RuleExtractor;
+    use std::collections::BTreeMap;
+
+    fn extractor() -> RuleExtractor {
+        let (ruleset, _) = parse_sprf(FIXTURE).unwrap();
+        RuleExtractor::from_ruleset(&ruleset).unwrap()
+    }
+
+    fn ctx() -> ExtractContext<'static> {
+        ExtractContext {
+            repo: None,
+            branch: None,
+            tags: &[],
+        }
+    }
+
+    fn extract_raw(source: &[u8], path: &str) -> Vec<(String, BTreeMap<String, String>)> {
+        let ext = extractor();
+        let refs = ext.extract(source, path, &ctx());
+        let mut grouped: BTreeMap<(String, Option<u32>), BTreeMap<String, String>> = BTreeMap::new();
+        for r in &refs {
+            let key = (r.rule_name.clone(), r.group);
+            grouped
+                .entry(key)
+                .or_default()
+                .insert(r.kind.clone(), r.value.clone());
+        }
+        grouped
+            .into_iter()
+            .map(|((rule, _), caps)| (rule, caps))
+            .collect()
+    }
+
+    #[test]
+    fn md_heading_captures_section_names() {
+        let src = b"# Title\n## Installation\ncontent\n## Usage\nmore\n## API\nstuff\n";
+        let refs = extract_raw(src, "README.md");
+        let sections: Vec<_> = refs.iter().filter(|(r, _)| r == "readme_sections").collect();
+        let names: Vec<&str> = sections.iter().map(|(_, c)| c["SECTION"].as_str()).collect();
+        assert!(names.contains(&"Installation"), "got {:?}", names);
+        assert!(names.contains(&"Usage"), "got {:?}", names);
+        assert!(names.contains(&"API"), "got {:?}", names);
+    }
+
+    #[test]
+    fn md_heading_scope_narrows_list_items() {
+        let src = b"## Dependencies\n- express\n- lodash\n## Other\n- unrelated\n";
+        let refs = extract_raw(src, "README.md");
+        let deps: Vec<_> = refs.iter().filter(|(r, _)| r == "readme_deps").collect();
+        let items: Vec<&str> = deps.iter().map(|(_, c)| c["ITEM"].as_str()).collect();
+        assert!(items.contains(&"express"), "got {:?}", items);
+        assert!(items.contains(&"lodash"), "got {:?}", items);
+        assert!(!items.contains(&"unrelated"), "should not contain items outside Dependencies, got {:?}", items);
+    }
+
+    #[test]
+    fn md_link_extraction() {
+        let src = b"Check [docs](https://example.com) and [source](https://github.com/x)\n";
+        let refs = extract_raw(src, "README.md");
+        let links: Vec<_> = refs.iter().filter(|(r, _)| r == "readme_links").collect();
+        assert_eq!(links.len(), 2, "expected 2 links, got {:?}", links);
+        let texts: Vec<&str> = links.iter().map(|(_, c)| c["TEXT"].as_str()).collect();
+        assert!(texts.contains(&"docs"));
+        assert!(texts.contains(&"source"));
+    }
+
+    #[test]
+    fn md_code_block_lang_extraction() {
+        let src = b"text\n```rust\nfn main() {}\n```\nmore\n```bash\necho hi\n```\n";
+        let refs = extract_raw(src, "README.md");
+        let blocks: Vec<_> = refs.iter().filter(|(r, _)| r == "readme_code_langs").collect();
+        let langs: Vec<&str> = blocks.iter().map(|(_, c)| c["LANG"].as_str()).collect();
+        assert!(langs.contains(&"rust"), "got {:?}", langs);
+        assert!(langs.contains(&"bash"), "got {:?}", langs);
+    }
+
+    #[test]
+    fn md_heading_scope_with_line_matcher() {
+        let src = b"## Installation\nnpm install express\nnpm install lodash\n## Usage\nnpm install chalk\n";
+        let refs = extract_raw(src, "README.md");
+        let cmds: Vec<_> = refs.iter().filter(|(r, _)| r == "install_cmds").collect();
+        let pkgs: Vec<&str> = cmds.iter().map(|(_, c)| c["PKG"].as_str()).collect();
+        assert!(pkgs.contains(&"express"), "got {:?}", pkgs);
+        assert!(pkgs.contains(&"lodash"), "got {:?}", pkgs);
+        // "chalk" is under Usage, not Installation, so should be excluded
+        assert!(!pkgs.contains(&"chalk"), "should not contain chalk from Usage section, got {:?}", pkgs);
     }
 }

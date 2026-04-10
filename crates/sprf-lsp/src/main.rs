@@ -313,6 +313,10 @@ const TAGS: &[(&str, &str)] = &[
         "marker",
         "Comment-bounded region scope: marker(\"open\") or marker(\"open\", \"close\")",
     ),
+    (
+        "md",
+        "Markdown structural match: md(## $HEADING), md(- $ITEM), md([$TEXT]($URL)), md(```$LANG)",
+    ),
     ("repo", "Repository glob: repo(org/*)"),
     ("rev", "Rev glob (branch or tag): rev(main|v*)"),
     ("branch", "Branch glob (alias for rev): branch(main|develop)"),

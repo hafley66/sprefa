@@ -143,9 +143,11 @@ rule(dep_source) { fs(**/Cargo.toml) > json({ dependencies: { $DEP: $_ } }) };
 | `ast(pattern)` or `ast[lang](pattern)` | Structural match via ast-grep (any tree-sitter language) |
 | `line(pattern)` | Line-based regex or segment capture |
 | `marker(open)` or `marker(open, close)` | Scope downstream matchers to comment-bounded regions |
+| `md(pattern)` | Markdown structural match: headings, lists, links, code blocks, tables, blockquotes |
 | `repo(pattern)` | Match/capture repo name; triggers demand scanning |
 | `rev(pattern)` / `branch()` / `tag()` | Match/capture git ref; triggers demand scanning |
-| `folder(pattern)` / `file(pattern)` | Match directory or full file path |
+| `folder(pattern)` | Match directory path |
+| `file(pattern)` | Match full file path |
 
 ---
 
@@ -351,6 +353,56 @@ marker() operates on comment nodes from whatever parser is active:
 - **Line-prefix fallback** (unknown file types) -- recognizes `//`, `#`, `--`, `/*`, `<!--`, `*` prefixes
 
 The regex argument matches against the full comment text, including the comment delimiter. `marker("SECTION:")` matches `// SECTION: imports` in Rust, `# SECTION: imports` in Python, `<!-- SECTION: imports -->` in HTML.
+
+---
+
+## md() -- markdown structural matching
+
+Matches markdown elements by structural type. Heading patterns scope downstream matchers to the section under that heading (byte range from heading to next heading of same or higher rank). Leaf patterns match specific element types.
+
+```sprf
+# capture all h2 heading titles from markdown files
+rule(readme_sections) {
+  fs(**/*.md) > md(## $SECTION)
+};
+
+# scope to a specific heading, then match list items within
+rule(readme_deps) {
+  fs(**/*.md) > md(## Dependencies) > md(- $ITEM)
+};
+
+# extract links anywhere in markdown
+rule(readme_links) {
+  fs(**/*.md) > md([$TEXT]($URL))
+};
+
+# heading scope + line matcher (non-md downstream matcher)
+rule(install_cmds) {
+  fs(**/*.md) > md(## Installation) > line(re:npm install $PKG)
+};
+```
+
+### Element patterns
+
+| Syntax | Matches | Captures |
+|---|---|---|
+| `md(## $TITLE)` | Heading at level 2 (1-6 `#`'s) | heading text |
+| `md(## Installation)` | Heading with exact text | (scope only, no capture) |
+| `md(- $ITEM)` | List items (`-`, `*`, `+`, `1.`) | item text |
+| `md([$TEXT]($URL))` | Links | text and URL separately |
+| `md(```$LANG)` | Fenced code blocks | language tag |
+| `md(\| $ROW \|)` | Table rows (separator rows skipped) | full row text |
+| `md(> $TEXT)` | Blockquotes | quote text |
+
+### Scoping rules
+
+Heading patterns in chain position act as scopers -- they produce byte ranges that constrain whatever comes after the `>`:
+
+- `md(## X) > md(- $ITEM)` -- list items under heading X only
+- `md(## X) > line(re:pattern)` -- lines under heading X only
+- `md(## X) > ast(pattern)` -- AST matches within heading X section
+
+A heading region extends from the heading line to the next heading of the same or higher level (fewer `#`'s), or EOF. Deeper subheadings are included in the region.
 
 ---
 
@@ -596,7 +648,7 @@ cd editors/vscode && npm install && npm run compile  # build extension
 | Feature | Status |
 |---|---|
 | Parse error diagnostics | live, highlights error region |
-| Tag completions | all tags: fs, json, ast, line, marker, repo, rev, branch, tag, folder, file |
+| Tag completions | all tags: fs, json, ast, line, marker, md, repo, rev, branch, tag, folder, file |
 | Statement keyword completions | rule, check |
 | Capture completions | scoped to enclosing rule, triggered by `$` |
 | Cross-ref rule name completions | suggests defined rule names |

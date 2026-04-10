@@ -23,23 +23,36 @@ pub fn ast_match(
     selector: &AstSelector,
     config_dir: Option<&Path>,
 ) -> Vec<MatchResult> {
+    tracing::debug!(path, pattern = ?selector.pattern, language = ?selector.language, rule = ?selector.rule.is_some(), rule_file = ?selector.rule_file, "ast_match enter");
     let src = match std::str::from_utf8(source) {
         Ok(s) => s,
-        Err(_) => return vec![],
+        Err(_) => {
+            tracing::debug!(path, "ast_match: source is not valid UTF-8");
+            return vec![];
+        }
     };
 
     match resolve_mode(selector, path, config_dir) {
-        Mode::Pattern(pattern, lang) => {
+        Mode::Pattern(ref pattern, lang) => {
+            tracing::debug!(path, %pattern, ?lang, "ast_match: Pattern mode");
             let root = lang.ast_grep(src);
             let node = root.root();
-            collect_matches(node.find_all(pattern.as_str()), selector)
+            let results = collect_matches(node.find_all(pattern.as_str()), selector);
+            tracing::debug!(path, count = results.len(), "ast_match: Pattern results");
+            results
         }
         Mode::Rule(rule_core, lang) => {
+            tracing::debug!(path, ?lang, "ast_match: Rule mode");
             let root = lang.ast_grep(src);
             let node = root.root();
-            collect_matches(node.find_all(rule_core), selector)
+            let results = collect_matches(node.find_all(rule_core), selector);
+            tracing::debug!(path, count = results.len(), "ast_match: Rule results");
+            results
         }
-        Mode::None => vec![],
+        Mode::None => {
+            tracing::debug!(path, "ast_match: resolve_mode returned None");
+            vec![]
+        }
     }
 }
 
@@ -50,13 +63,19 @@ enum Mode {
 }
 
 fn resolve_mode(selector: &AstSelector, path: &str, config_dir: Option<&Path>) -> Mode {
+    tracing::debug!(path, pattern = ?selector.pattern, language = ?selector.language, rule_file = ?selector.rule_file, has_rule = selector.rule.is_some(), "resolve_mode enter");
+
     // --- rule_file ---
     if let Some(rule_file) = &selector.rule_file {
         let base = config_dir.unwrap_or_else(|| Path::new("."));
         let full_path = base.join(rule_file);
+        tracing::debug!(?full_path, "resolve_mode: loading rule_file");
         let yaml = match std::fs::read_to_string(&full_path) {
             Ok(s) => s,
-            Err(_) => return Mode::None,
+            Err(e) => {
+                tracing::debug!(?full_path, %e, "resolve_mode: rule_file read failed");
+                return Mode::None;
+            }
         };
         return build_from_yaml_str(&yaml, selector.language.as_deref());
     }
@@ -64,31 +83,37 @@ fn resolve_mode(selector: &AstSelector, path: &str, config_dir: Option<&Path>) -
     // --- inline rule object ---
     if let Some(rule_val) = &selector.rule {
         let Some(lang) = resolve_language(selector.language.as_deref(), Some(path)) else {
+            tracing::debug!(path, "resolve_mode: inline rule - language resolution failed");
             return Mode::None;
         };
-        // Build a SerializableRuleCore from the inline objects.
-        // Round-trip through serde_json::Value to avoid direct type coupling.
         let core_val = serde_json::json!({
             "rule": rule_val,
             "constraints": selector.constraints,
         });
         let Ok(core) = serde_json::from_value::<SerializableRuleCore>(core_val) else {
+            tracing::debug!(path, "resolve_mode: inline rule - deser failed");
             return Mode::None;
         };
         let env = DeserializeEnv::new(lang);
         let Ok(rule_core) = core.get_matcher(env) else {
+            tracing::debug!(path, "resolve_mode: inline rule - get_matcher failed");
             return Mode::None;
         };
+        tracing::debug!(path, ?lang, "resolve_mode: inline Rule mode");
         return Mode::Rule(rule_core, lang);
     }
 
     // --- simple pattern ---
     if let Some(pattern) = &selector.pattern {
+        tracing::debug!(path, %pattern, "resolve_mode: trying simple pattern");
         if let Some(lang) = resolve_language(selector.language.as_deref(), Some(path)) {
+            tracing::debug!(path, %pattern, ?lang, "resolve_mode: Pattern mode");
             return Mode::Pattern(pattern.clone(), lang);
         }
+        tracing::debug!(path, %pattern, override_lang = ?selector.language, "resolve_mode: language resolution failed for pattern");
     }
 
+    tracing::debug!(path, "resolve_mode: returning None");
     Mode::None
 }
 

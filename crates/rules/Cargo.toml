@@ -13,6 +13,7 @@ schemars = { workspace = true }
 globset = { workspace = true }
 regex = { workspace = true }
 anyhow = { workspace = true }
+tracing = { workspace = true }
 sprefa_schema = { path = "../schema" }
 sprefa_extract = { path = "../extract" }
 ast-grep-core = "0.42"

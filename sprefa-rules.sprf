@@ -11,7 +11,7 @@ rule(dep_name) {
 };
 
 rule(workspace_member) {
-  fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } })
+  rev(main) > fs(**/Cargo.toml) > json({ workspace: { members: [...$MEMBER] } });
 };
 
 # ── Node / package.json ────────────────────────────

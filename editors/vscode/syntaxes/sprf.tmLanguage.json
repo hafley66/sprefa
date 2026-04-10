@@ -73,8 +73,8 @@
     "rule-body": {
       "patterns": [
         { "include": "#comment" },
-        { "include": "#cross-ref" },
         { "include": "#tagged-slot" },
+        { "include": "#cross-ref" },
         { "include": "#chain-separator" },
         { "include": "#semicolon" },
         { "include": "#capture-screaming" },
@@ -156,7 +156,8 @@
         { "include": "#rev-slot" },
         { "include": "#folder-slot" },
         { "include": "#file-slot" },
-        { "include": "#marker-slot" }
+        { "include": "#marker-slot" },
+        { "include": "#md-slot" }
       ]
     },
 
@@ -298,6 +299,35 @@
           }
         },
         { "match": ",", "name": "punctuation.separator.comma.sprf" }
+      ]
+    },
+
+    "md-slot": {
+      "begin": "\\b(md)\\s*\\(",
+      "end": "\\)(?=\\s*[>;{}#]|\\s*$)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.tag.sprf" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.sprf" }
+      },
+      "patterns": [
+        {
+          "match": "\\$\\$\\$[A-Z][A-Z0-9_]*",
+          "name": "variable.other.capture.multi.sprf"
+        },
+        {
+          "match": "\\$[A-Z][A-Z0-9_]*",
+          "name": "variable.other.capture.sprf"
+        },
+        {
+          "match": "\\$_(?![A-Za-z0-9])",
+          "name": "variable.language.wildcard.sprf"
+        },
+        {
+          "match": "[^)$]+",
+          "name": "string.unquoted.pattern.sprf"
+        }
       ]
     },
 

@@ -22,7 +22,7 @@
 use anyhow::{bail, Result};
 use sprefa_rules::graph::DepEdge;
 use sprefa_rules::pattern::{parse_segment_pattern, Segment};
-use sprefa_rules::types::{AstSelector, LineMatcher, MarkerScope, MatchDef, Rule, RuleSet, SelectStep};
+use sprefa_rules::types::{AstSelector, LineMatcher, MarkerScope, MdPattern, MatchDef, Rule, RuleSet, SelectStep};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::_0_ast::{Program, RuleBody, RuleDecl, Slot, Statement, Tag};
@@ -102,6 +102,8 @@ struct ScopedStep {
     ast_selector: Option<AstSelector>,
     line_matcher: Option<LineMatcher>,
     marker_scope: Option<MarkerScope>,
+    md_scope: Option<MdPattern>,
+    md_matcher: Option<MdPattern>,
 }
 
 /// Expand one RuleBody into all its monomorphized variants.
@@ -235,6 +237,8 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
         let mut select_ast: Option<AstSelector> = None;
         let mut line_matcher: Option<LineMatcher> = None;
         let mut marker_scope: Option<MarkerScope> = None;
+        let mut md_scope: Option<MdPattern> = None;
+        let mut md_matcher: Option<MdPattern> = None;
 
         for scoped in &all_scoped {
             select.extend(scoped.select_steps.clone());
@@ -247,6 +251,12 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
             if let Some(ms) = scoped.marker_scope.clone() {
                 marker_scope = Some(ms);
             }
+            if let Some(ms) = scoped.md_scope.clone() {
+                md_scope = Some(ms);
+            }
+            if let Some(mm) = scoped.md_matcher.clone() {
+                md_matcher = Some(mm);
+            }
         }
 
         rules.push(Rule {
@@ -256,6 +266,8 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
             select_ast,
             value: line_matcher,
             marker_scope,
+            md_scope,
+            md_matcher,
             create_matches: create_matches.clone(),
             confidence: None,
         });
@@ -389,33 +401,40 @@ fn slot_to_scoped_step(
 ) -> Result<ScopedStep> {
     let scope_vars = extract_slot_vars(slot);
 
-    let (select_steps, ast_selector, line_matcher, marker_scope, annots) = convert_slot(slot)?;
-    json_annotations.extend(annots);
+    let converted = convert_slot(slot)?;
+    json_annotations.extend(converted.json_annotations);
 
     Ok(ScopedStep {
         depth,
         scope_vars,
-        select_steps,
-        ast_selector,
-        line_matcher,
-        marker_scope,
+        select_steps: converted.select,
+        ast_selector: converted.ast_selector,
+        line_matcher: converted.line_matcher,
+        marker_scope: converted.marker_scope,
+        md_scope: converted.md_scope,
+        md_matcher: converted.md_matcher,
     })
 }
 
+/// Result of converting a slot.
+struct ConvertedSlot {
+    select: Vec<SelectStep>,
+    ast_selector: Option<AstSelector>,
+    line_matcher: Option<LineMatcher>,
+    marker_scope: Option<MarkerScope>,
+    md_scope: Option<MdPattern>,
+    md_matcher: Option<MdPattern>,
+    json_annotations: Vec<crate::_2_pattern::ScanAnnotation>,
+}
+
 /// Convert a slot to SelectSteps.
-fn convert_slot(
-    slot: &Slot,
-) -> Result<(
-    Vec<SelectStep>,
-    Option<AstSelector>,
-    Option<LineMatcher>,
-    Option<MarkerScope>,
-    Vec<crate::_2_pattern::ScanAnnotation>,
-)> {
+fn convert_slot(slot: &Slot) -> Result<ConvertedSlot> {
     let mut select = vec![];
     let mut ast_selector: Option<AstSelector> = None;
     let mut line_matcher: Option<LineMatcher> = None;
     let mut marker_scope: Option<MarkerScope> = None;
+    let mut md_scope: Option<MdPattern> = None;
+    let mut md_matcher: Option<MdPattern> = None;
     let mut json_annotations = Vec::new();
 
     match slot {
@@ -468,6 +487,7 @@ fn convert_slot(
                     bail!("multiple ast() slots not supported");
                 }
                 let (pattern, constraints, segment_captures) = rewrite_ast_braced_captures(body);
+                let ast_captures = build_ast_captures_map(body);
                 ast_selector = Some(AstSelector {
                     pattern: Some(pattern),
                     rule: None,
@@ -475,7 +495,7 @@ fn convert_slot(
                     rule_file: None,
                     language: arg.clone(),
                     capture: "$NAME".to_string(),
-                    captures: None,
+                    captures: if ast_captures.is_empty() { None } else { Some(ast_captures) },
                     segment_captures,
                 });
             }
@@ -511,13 +531,36 @@ fn convert_slot(
                 marker_scope = Some(parse_marker_body(body)?);
             }
             Tag::Md => {
-                // TODO: md() pattern matching against markdown structure
-                bail!("md() tag not yet implemented");
+                let parsed = parse_md_body(body)?;
+                // Heading patterns can be scopers (intermediate in chain) or matchers (terminal).
+                // For now, we store the first heading pattern as md_scope and any subsequent
+                // as md_matcher. The extractor handles the distinction.
+                match &parsed {
+                    MdPattern::Heading { .. } => {
+                        if md_scope.is_some() {
+                            // Second md() heading in same rule -> this one is the matcher
+                            md_matcher = Some(parsed);
+                        } else {
+                            md_scope = Some(parsed);
+                        }
+                    }
+                    _ => {
+                        md_matcher = Some(parsed);
+                    }
+                }
             }
         },
     }
 
-    Ok((select, ast_selector, line_matcher, marker_scope, json_annotations))
+    Ok(ConvertedSlot {
+        select,
+        ast_selector,
+        line_matcher,
+        marker_scope,
+        md_scope,
+        md_matcher,
+        json_annotations,
+    })
 }
 
 /// Parse marker() body into a MarkerScope.
@@ -583,6 +626,142 @@ fn split_marker_args(body: &str) -> Result<Vec<String>> {
     Ok(args)
 }
 
+/// Parse md() body into an MdPattern.
+///
+/// Syntax detection by leading characters:
+///   `# heading`     -> Heading (level by # count)
+///   `- item`        -> ListItem
+///   `[$TEXT]($URL)`  -> Link
+///   `` ```lang ``    -> CodeBlock
+///   `| row |`        -> TableRow
+///   `> quote`        -> Blockquote
+fn parse_md_body(body: &str) -> Result<MdPattern> {
+    let body = body.trim();
+
+    // Heading: starts with one or more #
+    if body.starts_with('#') {
+        let hashes = body.bytes().take_while(|&b| b == b'#').count();
+        if hashes > 6 {
+            bail!("md() heading level must be 1-6, got {}", hashes);
+        }
+        let rest = body[hashes..].trim();
+        let (text, capture) = parse_md_text_and_capture(rest);
+        return Ok(MdPattern::Heading {
+            level: hashes as u8,
+            text,
+            capture,
+        });
+    }
+
+    // List item: starts with - or * or + or digit.
+    if body.starts_with("- ") || body.starts_with("* ") || body.starts_with("+ ") {
+        let rest = body[2..].trim();
+        let capture = extract_sole_capture(rest);
+        return Ok(MdPattern::ListItem { capture });
+    }
+    if body.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        if let Some(idx) = body.find(". ").or_else(|| body.find(") ")) {
+            let rest = body[idx + 2..].trim();
+            let capture = extract_sole_capture(rest);
+            return Ok(MdPattern::ListItem { capture });
+        }
+    }
+
+    // Link: [text](url)
+    if body.starts_with('[') && body.contains("](") && body.ends_with(')') {
+        let bracket_end = body.find("](").unwrap();
+        let text_part = &body[1..bracket_end];
+        let url_part = &body[bracket_end + 2..body.len() - 1];
+        let text_capture = extract_sole_capture(text_part);
+        let url_capture = extract_sole_capture(url_part);
+        return Ok(MdPattern::Link {
+            text_capture,
+            url_capture,
+        });
+    }
+
+    // Code block: ```lang
+    if body.starts_with("```") {
+        let rest = body[3..].trim();
+        let lang_capture = extract_sole_capture(rest);
+        return Ok(MdPattern::CodeBlock {
+            lang_capture,
+            body_capture: None,
+        });
+    }
+
+    // Table row: | ... |
+    if body.starts_with('|') && body.ends_with('|') {
+        let capture = extract_sole_capture(body);
+        return Ok(MdPattern::TableRow { capture });
+    }
+
+    // Blockquote: > text
+    if body.starts_with("> ") || body == ">" {
+        let rest = if body.len() > 2 { body[2..].trim() } else { "" };
+        let capture = extract_sole_capture(rest);
+        return Ok(MdPattern::Blockquote { capture });
+    }
+
+    bail!(
+        "md() pattern not recognized: {:?}. Expected heading (#), list (- ), link ([]()), \
+         code block (```), table (| |), or blockquote (>)",
+        body
+    )
+}
+
+/// Parse heading text into optional text filter and capture name.
+///
+/// `$TITLE` -> (None, Some("TITLE"))  -- capture-only
+/// `Installation` -> (Some("Installation"), None) -- literal only
+/// `$ORG/$REPO` -> (Some("$ORG/$REPO"), None) -- regex extraction handles captures
+fn parse_md_text_and_capture(text: &str) -> (Option<String>, Option<String>) {
+    if text.is_empty() {
+        return (None, None);
+    }
+
+    // If it's a single $VAR with no surrounding text, use as capture name
+    if text.starts_with('$')
+        && !text.starts_with("$$$")
+        && !text.contains('/')
+        && !text.contains(' ')
+    {
+        let var = &text[1..];
+        if !var.is_empty()
+            && var
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+        {
+            return (Some(text.to_string()), Some(var.to_string()));
+        }
+    }
+
+    // If it contains $VAR patterns, it's a text filter with embedded captures
+    if text.contains('$') {
+        return (Some(text.to_string()), None);
+    }
+
+    // Literal text
+    (Some(text.to_string()), None)
+}
+
+/// If `text` is exactly `$VAR`, return Some(var_name). Otherwise None.
+fn extract_sole_capture(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.starts_with('$') && !text.starts_with("$$$") && !text.starts_with("$_") {
+        let var = &text[1..];
+        if !var.is_empty()
+            && !var.contains(' ')
+            && var
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+        {
+            return Some(var.to_string());
+        }
+    }
+    None
+}
+
 /// Rewrite an ast pattern body that contains `${VAR}` braced captures.
 ///
 /// Scans for identifier-like tokens containing `${...}`. Each such token
@@ -592,6 +771,52 @@ fn split_marker_args(body: &str) -> Result<Vec<String>> {
 ///
 /// Returns `(rewritten_pattern, constraints, segment_captures)`.
 /// If no `${` is found, returns the original pattern with None for both maps.
+/// Build a captures map from $VAR and $$$VAR in an ast pattern body.
+/// Maps metavar name (with $) to column name (without $).
+/// e.g. "fn $NAME($$$ARGS)" -> {"$NAME": "NAME", "$$$ARGS": "ARGS"}
+fn build_ast_captures_map(body: &str) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            let dollar_start = i;
+            i += 1;
+            // Count consecutive $ for multi-capture ($$$)
+            while i < bytes.len() && bytes[i] == b'$' {
+                i += 1;
+            }
+            // Skip $_ wildcard
+            if i < bytes.len() && bytes[i] == b'_' && (i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric()) {
+                i += 1;
+                continue;
+            }
+            // Skip ${BRACED} -- handled by segment_captures
+            if i < bytes.len() && bytes[i] == b'{' {
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                if i < bytes.len() { i += 1; }
+                continue;
+            }
+            let name_start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if i > name_start {
+                let name = &body[name_start..i];
+                if name.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()) {
+                    let metavar = body[dollar_start..i].to_string();
+                    map.insert(metavar, name.to_string());
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    map
+}
+
 fn rewrite_ast_braced_captures(
     body: &str,
 ) -> (

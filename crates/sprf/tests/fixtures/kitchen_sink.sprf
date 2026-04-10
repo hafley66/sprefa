@@ -362,3 +362,43 @@ rule(section_block) {
     }
   }
 };
+
+# ════════════════════════════════════════════════════════
+# 39. md() heading capture (terminal -- heading itself is the match)
+# ════════════════════════════════════════════════════════
+
+rule(readme_sections) {
+  fs(**/*.md) > md(## $SECTION)
+};
+
+# ════════════════════════════════════════════════════════
+# 40. md() heading scope + list item matcher
+# ════════════════════════════════════════════════════════
+
+rule(readme_deps) {
+  fs(**/*.md) > md(## Dependencies) > md(- $ITEM)
+};
+
+# ════════════════════════════════════════════════════════
+# 41. md() link extraction
+# ════════════════════════════════════════════════════════
+
+rule(readme_links) {
+  fs(**/*.md) > md([$TEXT]($URL))
+};
+
+# ════════════════════════════════════════════════════════
+# 42. md() code block language detection
+# ════════════════════════════════════════════════════════
+
+rule(readme_code_langs) {
+  fs(**/*.md) > md(```$LANG)
+};
+
+# ════════════════════════════════════════════════════════
+# 43. md() heading scope + line matcher
+# ════════════════════════════════════════════════════════
+
+rule(install_cmds) {
+  fs(**/*.md) > md(## Installation) > line(re:npm install $PKG)
+};
