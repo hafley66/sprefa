@@ -52,7 +52,7 @@ impl SqliteStore {
             let sql = format!("INSERT OR IGNORE INTO strings (value, norm, norm2) VALUES {ph}");
             let mut q = sqlx::query(&sql);
             for v in chunk {
-                let norm = v.trim().to_lowercase();
+                let norm = sprefa_config::normalize(v);
                 q = q.bind(v.as_str()).bind(norm);
             }
             q.execute(&mut **tx).await?;
@@ -507,13 +507,30 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    async fn unscanned_repos(&self, table: &str, column: &str) -> Result<Vec<String>> {
+    async fn unscanned_repos(
+        &self,
+        table: &str,
+        column: &str,
+        norm: bool,
+    ) -> Result<Vec<String>> {
         // `table` is the fully-qualified data table name (e.g. "frontend__svc_data").
-        let sql = format!(
-            "SELECT DISTINCT s.value FROM \"{table}\" t \
-             JOIN strings s ON t.{column}_str = s.id \
-             WHERE s.value NOT IN (SELECT name FROM repos)"
-        );
+        //
+        // Exact mode: capture's raw `value` must not equal any `repos.name`.
+        // Norm mode: capture's `strings.norm` must not equal `sprf_norm(repos.name)`,
+        // so e.g. `Auth-Service` is treated as already-satisfied by `auth_service`.
+        let sql = if norm {
+            format!(
+                "SELECT DISTINCT s.value FROM \"{table}\" t \
+                 JOIN strings s ON t.{column}_str = s.id \
+                 WHERE s.norm NOT IN (SELECT sprf_norm(name) FROM repos)"
+            )
+        } else {
+            format!(
+                "SELECT DISTINCT s.value FROM \"{table}\" t \
+                 JOIN strings s ON t.{column}_str = s.id \
+                 WHERE s.value NOT IN (SELECT name FROM repos)"
+            )
+        };
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .fetch_all(&self.pool)
             .await?;
@@ -524,14 +541,23 @@ impl Store for SqliteStore {
         &self,
         table: &str,
         column: &str,
+        norm: bool,
     ) -> Result<Vec<(String, String)>> {
         // `table` is the fully-qualified data table name.
-        let sql = format!(
-            "SELECT DISTINCT s.value, '' FROM \"{table}\" t \
-             JOIN strings s ON t.{column}_str = s.id \
-             LEFT JOIN repo_revs rr ON rr.rev = s.value \
-             WHERE rr.rev IS NULL"
-        );
+        let sql = if norm {
+            format!(
+                "SELECT DISTINCT s.value, '' FROM \"{table}\" t \
+                 JOIN strings s ON t.{column}_str = s.id \
+                 WHERE s.norm NOT IN (SELECT sprf_norm(rev) FROM repo_revs)"
+            )
+        } else {
+            format!(
+                "SELECT DISTINCT s.value, '' FROM \"{table}\" t \
+                 JOIN strings s ON t.{column}_str = s.id \
+                 LEFT JOIN repo_revs rr ON rr.rev = s.value \
+                 WHERE rr.rev IS NULL"
+            )
+        };
         let rows = sqlx::query_as::<_, (String, String)>(&sql)
             .fetch_all(&self.pool)
             .await?;
@@ -543,8 +569,16 @@ impl Store for SqliteStore {
         table: &str,
         repo_column: &str,
         rev_column: &str,
+        repo_norm: bool,
+        rev_norm: bool,
     ) -> Result<Vec<(String, String)>> {
         // `table` is the fully-qualified data table name.
+        // Each side independently picks exact or normalized comparison.
+        let repo_lhs = if repo_norm { "sprf_norm(r.name)" } else { "r.name" };
+        let repo_rhs = if repo_norm { "repo_s.norm" } else { "repo_s.value" };
+        let rev_lhs = if rev_norm { "sprf_norm(rr.rev)" } else { "rr.rev" };
+        let rev_rhs = if rev_norm { "rev_s.norm" } else { "rev_s.value" };
+
         let sql = format!(
             "SELECT DISTINCT repo_s.value, rev_s.value \
              FROM \"{table}\" t \
@@ -553,7 +587,7 @@ impl Store for SqliteStore {
              WHERE NOT EXISTS ( \
                  SELECT 1 FROM repo_revs rr \
                  JOIN repos r ON rr.repo_id = r.id \
-                 WHERE r.name = repo_s.value AND rr.rev = rev_s.value \
+                 WHERE {repo_lhs} = {repo_rhs} AND {rev_lhs} = {rev_rhs} \
              )"
         );
         let rows = sqlx::query_as::<_, (String, String)>(&sql)

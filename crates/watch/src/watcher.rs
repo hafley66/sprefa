@@ -661,13 +661,13 @@ async fn replace_file_refs(
         }
     }
 
-    // Bulk-insert strings. norm = lowercase(value) matches the index crate.
+    // Bulk-insert strings using the canonical normalize() from sprefa_config.
     for chunk in unique_strings.chunks(500) {
         let ph = chunk.iter().map(|_| "(?,?)").collect::<Vec<_>>().join(",");
         let sql = format!("INSERT OR IGNORE INTO strings (value, norm) VALUES {ph}");
         let mut q = sqlx::query(&sql);
         for v in chunk {
-            q = q.bind(*v).bind(v.trim().to_lowercase());
+            q = q.bind(*v).bind(sprefa_config::normalize(v));
         }
         q.execute(&mut *tx).await?;
     }

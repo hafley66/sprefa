@@ -126,7 +126,13 @@ pub async fn upsert_string(
 }
 
 /// FTS5 trigram substring search on normalized strings.
+/// The query term is normalized the same way as stored values so punctuation
+/// and case differences in user input match the stripped index form.
 pub async fn search_strings(pool: &SqlitePool, query: &str) -> anyhow::Result<Vec<StringRow>> {
+    let normalized_query = sprefa_config::normalize(query);
+    if normalized_query.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows = sqlx::query_as::<_, (i64, String, String, Option<String>)>(
         r#"
         SELECT s.id, s.value, s.norm, s.norm2
@@ -137,7 +143,7 @@ pub async fn search_strings(pool: &SqlitePool, query: &str) -> anyhow::Result<Ve
         LIMIT 100
         "#,
     )
-    .bind(format!("\"{}\"", query))  // trigram requires quoted phrase
+    .bind(format!("\"{}\"", normalized_query))  // trigram requires quoted phrase
     .fetch_all(pool)
     .await?;
 
@@ -195,7 +201,11 @@ pub async fn search_refs(
         "#,
     );
 
-    let phrase = format!("\"{}\"", query);
+    let normalized_query = sprefa_config::normalize(query);
+    if normalized_query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let phrase = format!("\"{}\"", normalized_query);
     let rows: Vec<(i64, String, String, i64, i64, String, String, Option<String>, String)> = sqlx::query_as(&sql)
         .bind(&phrase)
         .fetch_all(pool)

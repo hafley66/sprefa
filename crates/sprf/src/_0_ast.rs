@@ -116,6 +116,10 @@ pub enum Tag {
     Ast,
     Repo,
     Rev,
+    /// `repo.norm(...)` — demand-scan match via sprf_norm(repos.name).
+    RepoNorm,
+    /// `rev.norm(...)` — demand-scan match via sprf_norm(repo_revs.rev).
+    RevNorm,
     Folder,
     File,
     Fs,
@@ -131,6 +135,8 @@ impl Tag {
             "ast" => Some(Tag::Ast),
             "repo" => Some(Tag::Repo),
             "rev" | "branch" | "tag" => Some(Tag::Rev),
+            "repo.norm" => Some(Tag::RepoNorm),
+            "rev.norm" | "branch.norm" | "tag.norm" => Some(Tag::RevNorm),
             "folder" => Some(Tag::Folder),
             "file" => Some(Tag::File),
             "fs" => Some(Tag::Fs),

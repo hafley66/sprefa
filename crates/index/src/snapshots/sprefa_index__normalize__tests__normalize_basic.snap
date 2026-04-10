@@ -1,8 +1,0 @@
----
-source: crates/index/src/normalize.rs
-expression: "vec![normalize(\"Express\"), normalize(\"  LODASH  \"),\nnormalize(\"myOrg/Frontend\"), normalize(\"\"),]"
----
-- express
-- lodash
-- myorg/frontend
-- ""

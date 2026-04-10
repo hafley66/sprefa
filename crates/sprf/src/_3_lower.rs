@@ -197,7 +197,12 @@ fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
         let _ = flatten_body(body, 0, &HashSet::new(), &mut probe_annots);
     }
     for annot in &probe_annots {
-        scan_vars_all.insert(annot.var.clone(), annot.kind.clone());
+        let kind = if annot.norm {
+            format!("{}.norm", annot.kind)
+        } else {
+            annot.kind.clone()
+        };
+        scan_vars_all.insert(annot.var.clone(), kind);
     }
 
     let mut all_vars: Vec<String> = vec![];
@@ -295,6 +300,16 @@ fn collect_scan_annotations(bodies: &[RuleBody], scan_vars: &mut HashMap<String,
                 Tag::Rev => {
                     for var in slot.unwrap().captures() {
                         scan_vars.insert(var, "rev".to_string());
+                    }
+                }
+                Tag::RepoNorm => {
+                    for var in slot.unwrap().captures() {
+                        scan_vars.insert(var, "repo.norm".to_string());
+                    }
+                }
+                Tag::RevNorm => {
+                    for var in slot.unwrap().captures() {
+                        scan_vars.insert(var, "rev.norm".to_string());
                     }
                 }
                 _ => {}
@@ -453,13 +468,13 @@ fn convert_slot(slot: &Slot) -> Result<ConvertedSlot> {
                     capture: None,
                 });
             }
-            Tag::Repo => {
+            Tag::Repo | Tag::RepoNorm => {
                 select.push(SelectStep::Repo {
                     pattern: body.clone(),
                     capture: None,
                 });
             }
-            Tag::Rev => {
+            Tag::Rev | Tag::RevNorm => {
                 select.push(SelectStep::Rev {
                     pattern: body.clone(),
                     capture: None,
@@ -1071,6 +1086,56 @@ mod tests {
             .unwrap();
         assert_eq!(repo_match.scan.as_deref(), Some("repo"));
         assert_eq!(tag_match.scan.as_deref(), Some("rev"));
+    }
+
+    #[test]
+    fn lower_with_norm_scan_annotations_tag_form() {
+        // repo.norm() / rev.norm() as top-level tags.
+        let rules = lower(
+            r#"rule(deploy) {
+            repo.norm($REPO) {
+                rev.norm($TAG) {
+                    fs(**/values.yaml) > json({ image: { repo: $REPO, tag: $TAG } })
+                }
+            }
+        };"#,
+        );
+        let r = &rules[0];
+        let repo_match = r
+            .create_matches
+            .iter()
+            .find(|m| m.capture == "REPO")
+            .unwrap();
+        let tag_match = r
+            .create_matches
+            .iter()
+            .find(|m| m.capture == "TAG")
+            .unwrap();
+        assert_eq!(repo_match.scan.as_deref(), Some("repo.norm"));
+        assert_eq!(tag_match.scan.as_deref(), Some("rev.norm"));
+    }
+
+    #[test]
+    fn lower_with_norm_scan_annotations_inline_form() {
+        // repo.norm() / rev.norm() inside json() body.
+        let rules = lower(
+            r#"rule(deploy) {
+            fs(**/values.yaml) > json({ image: { repository: repo.norm($REPO), tag: rev.norm($TAG) } })
+        };"#,
+        );
+        let r = &rules[0];
+        let repo_match = r
+            .create_matches
+            .iter()
+            .find(|m| m.capture == "REPO")
+            .unwrap();
+        let tag_match = r
+            .create_matches
+            .iter()
+            .find(|m| m.capture == "TAG")
+            .unwrap();
+        assert_eq!(repo_match.scan.as_deref(), Some("repo.norm"));
+        assert_eq!(tag_match.scan.as_deref(), Some("rev.norm"));
     }
 
     #[test]

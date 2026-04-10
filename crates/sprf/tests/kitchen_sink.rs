@@ -329,6 +329,24 @@ fn inline_scan_annotations() {
     assert_eq!(tag_match.scan.as_deref(), Some("rev"));
 }
 
+#[test]
+fn norm_scan_annotations_tag_form() {
+    let r = rule("inline_scan_norm_tag");
+    let repo_match = r.create_matches.iter().find(|m| m.capture == "REPO").unwrap();
+    let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
+    assert_eq!(repo_match.scan.as_deref(), Some("repo.norm"));
+    assert_eq!(tag_match.scan.as_deref(), Some("rev.norm"));
+}
+
+#[test]
+fn norm_scan_annotations_inline_form() {
+    let r = rule("inline_scan_norm_inline");
+    let repo_match = r.create_matches.iter().find(|m| m.capture == "REPO").unwrap();
+    let tag_match = r.create_matches.iter().find(|m| m.capture == "TAG").unwrap();
+    assert_eq!(repo_match.scan.as_deref(), Some("repo.norm"));
+    assert_eq!(tag_match.scan.as_deref(), Some("rev.norm"));
+}
+
 // ── 21. Quoted value pattern ────────────────────────────
 
 #[test]

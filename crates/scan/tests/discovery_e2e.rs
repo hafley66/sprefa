@@ -126,7 +126,13 @@ async fn discover_and_scan(
         for pair in scanner.scan_pair_levels.iter().flatten() {
             let pairs = scanner
                 .store
-                .unscanned_rev_pairs(&pair.table, &pair.repo_column, &pair.rev_column)
+                .unscanned_rev_pairs(
+                    &pair.table,
+                    &pair.repo_column,
+                    &pair.rev_column,
+                    pair.repo_norm,
+                    pair.rev_norm,
+                )
                 .await
                 .unwrap();
             for (repo_name, rev) in pairs {
@@ -219,7 +225,7 @@ image:
     assert!(names.contains(&"service-api-v2"), "HEAD should have v2 name, got: {:?}", names);
 
     // Discover targets from per-rule tables.
-    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag").await.unwrap();
+    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag", false, false).await.unwrap();
     let svc_targets: Vec<_> = targets.iter()
         .filter(|(r, _)| r == "service-api")
         .collect();
@@ -244,7 +250,7 @@ image:
         "v1.0.0 should have 'service-api-v1', got: {:?}", v1_name_vals);
 
     // After scan_rev, unscanned_rev_pairs should return empty (v1.0.0 is now scanned).
-    let targets2 = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag").await.unwrap();
+    let targets2 = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag", false, false).await.unwrap();
     let svc_targets2: Vec<_> = targets2.iter()
         .filter(|(r, _)| r == "service-api")
         .collect();
@@ -307,7 +313,7 @@ image:
     };
 
     // Discovery finds the target via per-rule table...
-    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag").await.unwrap();
+    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag", false, false).await.unwrap();
     assert!(!targets.is_empty(), "should discover at least one target");
 
     // ...but rev_excluded blocks it.
@@ -420,7 +426,7 @@ svc_b:
     let infra_cfg = repo_config("infra", &infra_path);
     scanner.scan_repo(&infra_cfg, "main").await.unwrap();
 
-    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag").await.unwrap();
+    let targets = scanner.store.unscanned_rev_pairs("image_refs_data", "repo", "tag", false, false).await.unwrap();
 
     let pairs: HashSet<(String, String)> = targets.into_iter().collect();
 

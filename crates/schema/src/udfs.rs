@@ -12,6 +12,7 @@ pub unsafe fn register_all(db: *mut ffi::sqlite3) {
     register_repo_name(db);
     register_file_path(db);
     register_fzy_score(db);
+    register_sprf_norm(db);
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +363,51 @@ unsafe fn register_fzy_score(db: *mut ffi::sqlite3) {
         ffi::SQLITE_UTF8 | ffi::SQLITE_DETERMINISTIC,
         std::ptr::null_mut(),
         Some(xfunc_fzy_score),
+        None,
+        None,
+        None,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// sprf_norm(text) -> TEXT
+// Aggressive normalization matching sprefa_config::normalize(): strip every
+// non-ASCII-alphanumeric char and lowercase. Used by demand-scan SQL to
+// compare captured `strings.norm` values against normalized target columns
+// (e.g. `repos.name`, `repo_revs.rev`) for `.norm` scan annotations.
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn xfunc_sprf_norm(
+    ctx: *mut ffi::sqlite3_context,
+    argc: c_int,
+    argv: *mut *mut ffi::sqlite3_value,
+) {
+    if argc != 1 {
+        ffi::sqlite3_result_null(ctx);
+        return;
+    }
+    let text = match sqlite_text(argv, 0) {
+        Some(t) => t,
+        None => { ffi::sqlite3_result_null(ctx); return; }
+    };
+    let normalized = sprefa_config::normalize(text);
+    ffi::sqlite3_result_text(
+        ctx,
+        normalized.as_ptr() as *const c_char,
+        normalized.len() as c_int,
+        ffi::SQLITE_TRANSIENT(),
+    );
+}
+
+unsafe fn register_sprf_norm(db: *mut ffi::sqlite3) {
+    let name = b"sprf_norm\0";
+    ffi::sqlite3_create_function_v2(
+        db,
+        name.as_ptr() as *const c_char,
+        1,
+        ffi::SQLITE_UTF8 | ffi::SQLITE_DETERMINISTIC,
+        std::ptr::null_mut(),
+        Some(xfunc_sprf_norm),
         None,
         None,
         None,

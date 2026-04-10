@@ -2763,6 +2763,7 @@ dependencies = [
  "libsqlite3-sys",
  "regex",
  "serde",
+ "sprefa_config",
  "sqlx",
  "thiserror",
  "tokio",

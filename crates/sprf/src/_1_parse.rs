@@ -472,25 +472,38 @@ fn parse_slot(input: &str) -> anyhow::Result<(Slot, &str)> {
 }
 
 /// If the input starts with a known tag name followed by `(` or `[`, return
-/// the tag and the remaining input after the tag name.
+/// the tag and the remaining input after the tag name. Tags may carry a
+/// `.norm` suffix (e.g. `repo.norm(...)`) for normalized demand-scan matching.
 fn try_parse_tag(input: &str) -> Option<(Tag, &str)> {
-    // Tags are alphabetic, followed by ( or [
+    // Tags are alphabetic, optionally followed by `.norm`.
     let word_end = input
         .find(|c: char| !c.is_ascii_alphabetic())
         .unwrap_or(input.len());
     if word_end == 0 {
         return None;
     }
-    let word = &input[..word_end];
-    let rest = &input[word_end..];
-    let rest_trimmed = rest.trim_start();
 
-    // Only parse as tag if followed by ( or [
+    // Check for `.norm` modifier directly after the alphabetic word.
+    let (tag_str, after_tag): (String, &str) = if input[word_end..].starts_with(".norm") {
+        let after = &input[word_end + 5..];
+        // Guard: `.norm` must be followed by optional whitespace then `(` or `[`,
+        // otherwise it's not part of the tag (could be a glob with a dot).
+        let after_trimmed = after.trim_start();
+        if after_trimmed.starts_with('(') || after_trimmed.starts_with('[') {
+            (format!("{}.norm", &input[..word_end]), after)
+        } else {
+            (input[..word_end].to_string(), &input[word_end..])
+        }
+    } else {
+        (input[..word_end].to_string(), &input[word_end..])
+    };
+
+    let rest_trimmed = after_tag.trim_start();
     if !rest_trimmed.starts_with('(') && !rest_trimmed.starts_with('[') {
         return None;
     }
 
-    Tag::from_str(word).map(|t| (t, rest))
+    Tag::from_str(&tag_str).map(|t| (t, after_tag))
 }
 
 /// Parse content between `[` and `]` (bracket already consumed).

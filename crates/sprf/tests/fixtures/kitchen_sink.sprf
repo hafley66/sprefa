@@ -197,6 +197,24 @@ rule(inline_scan) {
   fs(**/services.yaml) > json({ image: { repository: repo($REPO), tag: rev($TAG) } })
 };
 
+# 20b. Normalized scan annotations: repo.norm() / rev.norm() match
+# captured values via sprf_norm(...) on both sides during demand scanning.
+# Top-level tag form:
+
+rule(inline_scan_norm_tag) {
+  repo.norm($REPO) {
+    rev.norm($TAG) {
+      fs(**/values.yaml) > json({ image: { repo: $REPO, tag: $TAG } })
+    }
+  }
+};
+
+# Inline wrapper form inside json():
+
+rule(inline_scan_norm_inline) {
+  fs(**/services.yaml) > json({ image: { repository: repo.norm($REPO), tag: rev.norm($TAG) } })
+};
+
 # ════════════════════════════════════════════════════════
 # 21. json() quoted value pattern with segment captures
 # ════════════════════════════════════════════════════════

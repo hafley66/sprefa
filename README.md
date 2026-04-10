@@ -146,6 +146,7 @@ rule(dep_source) { fs(**/Cargo.toml) > json({ dependencies: { $DEP: $_ } }) };
 | `md(pattern)` | Markdown structural match: headings, lists, links, code blocks, tables, blockquotes |
 | `repo(pattern)` | Match/capture repo name; triggers demand scanning |
 | `rev(pattern)` / `branch()` / `tag()` | Match/capture git ref; triggers demand scanning |
+| `repo.norm(pattern)` / `rev.norm(pattern)` | Same as above, but demand-scan match is `sprf_norm(...)` on both sides so `Auth-Service` satisfies a known `auth_service` |
 | `folder(pattern)` | Match directory path |
 | `file(pattern)` | Match full file path |
 
@@ -538,6 +539,8 @@ git ls-files
 When a rule captures `repo($REPO)` and `rev($TAG)`, the scan pipeline extracts those values, checks out the referenced repo at that tag, scans it, and repeats until all (repo, rev) pairs are scanned. Fixed-point iteration, max 10 rounds.
 
 A deploy values.yaml referencing `repository: myorg/backend, tag: v2.1.0` automatically triggers scanning of `myorg/backend@v2.1.0`, which might reference more repos, continuing the chain.
+
+**Normalized matching** — use `repo.norm(...)` / `rev.norm(...)` when the captured value may drift from the canonical repo name by casing or punctuation. Both sides are compared via the `sprf_norm(text)` UDF (the same aggressive norm used by `strings.norm`), so a capture of `Auth-Service` counts as already-satisfied when `auth_service` is a known repo. Usable as both a top-level body tag (`repo.norm($R) { rev.norm($T) { ... } }`) and inline inside `json(...)` (`json({ image: { repository: repo.norm($R), tag: rev.norm($T) } })`).
 
 ### Incremental scanning
 

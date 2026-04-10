@@ -5,7 +5,7 @@
 ///
 /// Grammar:
 ///   pattern    = annotation | object | array | capture | wildcard | value_glob
-///   annotation = ("repo" | "rev") "(" pattern ")"
+///   annotation = ("repo" | "rev") (".norm")? "(" pattern ")"
 ///   object     = "{" (entry ("," entry)*)? "}"
 ///   entry      = key ":" pattern
 ///   key        = "**" | "$" SCREAMING | "$_" | "re:" REGEX | glob_str
@@ -23,6 +23,26 @@ pub struct ScanAnnotation {
     pub var: String,
     /// "repo" or "rev".
     pub kind: String,
+    /// Match captured value via its normalized form against `sprf_norm(...)`
+    /// of the target side. Set by `repo.norm(...)` / `rev.norm(...)` wrappers.
+    pub norm: bool,
+}
+
+fn push_scan_annotations(
+    inner: &[SelectStep],
+    annotations: &mut Vec<ScanAnnotation>,
+    kind: &str,
+    norm: bool,
+) {
+    for step in inner {
+        if let SelectStep::Leaf { capture: Some(var), .. } = step {
+            annotations.push(ScanAnnotation {
+                var: var.clone(),
+                kind: kind.to_string(),
+                norm,
+            });
+        }
+    }
 }
 
 pub fn parse_json_body(input: &str) -> anyhow::Result<(Vec<SelectStep>, Vec<ScanAnnotation>)> {
@@ -47,27 +67,32 @@ fn parse_pattern(
         anyhow::bail!("unexpected end of json pattern");
     }
 
-    // Check for repo(...) or rev(...) annotation wrapper in value position.
-    for kind in &["repo", "rev"] {
-        if input[*pos..].starts_with(kind) && input.as_bytes().get(*pos + kind.len()) == Some(&b'(')
-        {
-            *pos += kind.len() + 1; // skip "repo(" or "rev("
-            let inner = parse_pattern(input, pos, annotations)?;
-            skip_ws(input, pos);
-            expect_byte(input, pos, b')')?;
-            // Record annotation for any captures found in the inner pattern.
-            for step in &inner {
-                if let SelectStep::Leaf {
-                    capture: Some(var), ..
-                } = step
-                {
-                    annotations.push(ScanAnnotation {
-                        var: var.clone(),
-                        kind: kind.to_string(),
-                    });
-                }
+    // Check for repo(...) / rev(...) or repo.norm(...) / rev.norm(...) annotation wrapper.
+    // `.norm` variants match the captured value against `sprf_norm(repos.name)` /
+    // `sprf_norm(repo_revs.rev)` during demand scanning instead of exact equality.
+    for base in &["repo", "rev"] {
+        if input[*pos..].starts_with(base) {
+            let after_base = *pos + base.len();
+            // Plain `repo(` / `rev(`
+            if input.as_bytes().get(after_base) == Some(&b'(') {
+                *pos = after_base + 1;
+                let inner = parse_pattern(input, pos, annotations)?;
+                skip_ws(input, pos);
+                expect_byte(input, pos, b')')?;
+                push_scan_annotations(&inner, annotations, base, false);
+                return Ok(inner);
             }
-            return Ok(inner);
+            // `repo.norm(` / `rev.norm(`
+            if input[after_base..].starts_with(".norm")
+                && input.as_bytes().get(after_base + 5) == Some(&b'(')
+            {
+                *pos = after_base + 5 + 1;
+                let inner = parse_pattern(input, pos, annotations)?;
+                skip_ws(input, pos);
+                expect_byte(input, pos, b')')?;
+                push_scan_annotations(&inner, annotations, base, true);
+                return Ok(inner);
+            }
         }
     }
 
@@ -587,16 +612,33 @@ mod tests {
             annotations[0],
             ScanAnnotation {
                 var: "REPO".into(),
-                kind: "repo".into()
+                kind: "repo".into(),
+                norm: false,
             }
         );
         assert_eq!(
             annotations[1],
             ScanAnnotation {
                 var: "TAG".into(),
-                kind: "rev".into()
+                kind: "rev".into(),
+                norm: false,
             }
         );
+    }
+
+    #[test]
+    fn scan_annotation_norm_variants() {
+        let (_, annotations) = parse_json_body(
+            "{ repository: repo.norm($REPO), tag: rev.norm($TAG) }",
+        )
+        .unwrap();
+        assert_eq!(annotations.len(), 2);
+        assert_eq!(annotations[0].var, "REPO");
+        assert_eq!(annotations[0].kind, "repo");
+        assert!(annotations[0].norm);
+        assert_eq!(annotations[1].var, "TAG");
+        assert_eq!(annotations[1].kind, "rev");
+        assert!(annotations[1].norm);
     }
 
     #[test]

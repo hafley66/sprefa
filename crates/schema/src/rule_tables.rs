@@ -8,8 +8,22 @@
 pub struct RuleColumn {
     /// Lowercase variable name (e.g. "svc", "repo", "tag").
     pub name: String,
-    /// "repo" or "rev" if this capture drives demand scanning.
+    /// Demand-scan annotation string. Known values:
+    ///   "repo"       — match captured value exactly against repos.name
+    ///   "rev"        — match captured value exactly against repo_revs.rev
+    ///   "repo.norm"  — match strings.norm against sprf_norm(repos.name)
+    ///   "rev.norm"   — match strings.norm against sprf_norm(repo_revs.rev)
     pub scan: Option<String>,
+}
+
+/// Split a scan annotation string into (kind, norm) where kind is
+/// "repo"/"rev" and norm is true iff the annotation was "<kind>.norm".
+fn split_scan(raw: &str) -> (String, bool) {
+    if let Some(base) = raw.strip_suffix(".norm") {
+        (base.to_string(), true)
+    } else {
+        (raw.to_string(), false)
+    }
 }
 
 /// Metadata for a per-rule table.
@@ -27,6 +41,9 @@ pub struct ScanTarget {
     pub column: String,
     /// "repo" or "rev"
     pub kind: String,
+    /// True if matching uses `sprf_norm(...)` on the target side and
+    /// `strings.norm` on the capture side (from `.norm` annotations).
+    pub norm: bool,
 }
 
 /// Paired repo+rev columns from one rule for demand scanning.
@@ -35,6 +52,10 @@ pub struct ScanPair {
     pub table: String,
     pub repo_column: String,
     pub rev_column: String,
+    /// Whether the repo column uses normalized matching.
+    pub repo_norm: bool,
+    /// Whether the rev column uses normalized matching.
+    pub rev_norm: bool,
 }
 
 impl RuleTableDef {
@@ -151,10 +172,14 @@ impl RuleTableDef {
         self.columns
             .iter()
             .filter_map(|c| {
-                c.scan.as_ref().map(|kind| ScanTarget {
-                    table: self.data_table_name(),
-                    column: c.name.clone(),
-                    kind: kind.clone(),
+                c.scan.as_ref().map(|raw| {
+                    let (kind, norm) = split_scan(raw);
+                    ScanTarget {
+                        table: self.data_table_name(),
+                        column: c.name.clone(),
+                        kind,
+                        norm,
+                    }
                 })
             })
             .collect()
@@ -162,19 +187,28 @@ impl RuleTableDef {
 
     /// Paired scan targets: (repo_column, rev_column) from the same rule.
     /// Returns None if the rule doesn't have both repo and rev annotations.
+    /// Accepts both exact and `.norm` variants on each side independently.
     pub fn scan_pair(&self) -> Option<ScanPair> {
-        let repo_col = self
-            .columns
-            .iter()
-            .find(|c| c.scan.as_deref() == Some("repo"))?;
-        let rev_col = self
-            .columns
-            .iter()
-            .find(|c| c.scan.as_deref() == Some("rev"))?;
+        let repo_col = self.columns.iter().find(|c| {
+            c.scan
+                .as_deref()
+                .map(|s| split_scan(s).0 == "repo")
+                .unwrap_or(false)
+        })?;
+        let rev_col = self.columns.iter().find(|c| {
+            c.scan
+                .as_deref()
+                .map(|s| split_scan(s).0 == "rev")
+                .unwrap_or(false)
+        })?;
+        let repo_norm = split_scan(repo_col.scan.as_deref().unwrap_or("")).1;
+        let rev_norm = split_scan(rev_col.scan.as_deref().unwrap_or("")).1;
         Some(ScanPair {
             table: self.data_table_name(),
             repo_column: repo_col.name.clone(),
             rev_column: rev_col.name.clone(),
+            repo_norm,
+            rev_norm,
         })
     }
 
@@ -309,6 +343,41 @@ mod tests {
         assert_eq!(targets[0].kind, "repo");
         assert_eq!(targets[1].column, "tag");
         assert_eq!(targets[1].kind, "rev");
+    }
+
+    #[test]
+    fn scan_pair_norm_flags() {
+        let def = RuleTableDef::from_matches(
+            "deploy",
+            None,
+            &[
+                ("REPO".into(), Some("repo.norm".into())),
+                ("TAG".into(), Some("rev".into())),
+            ],
+        );
+        let pair = def.scan_pair().unwrap();
+        assert_eq!(pair.repo_column, "repo");
+        assert_eq!(pair.rev_column, "tag");
+        assert!(pair.repo_norm);
+        assert!(!pair.rev_norm);
+    }
+
+    #[test]
+    fn scan_targets_norm_split() {
+        let def = RuleTableDef::from_matches(
+            "deploy",
+            None,
+            &[
+                ("REPO".into(), Some("repo.norm".into())),
+                ("TAG".into(), Some("rev".into())),
+            ],
+        );
+        let targets = def.scan_targets();
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].kind, "repo");
+        assert!(targets[0].norm);
+        assert_eq!(targets[1].kind, "rev");
+        assert!(!targets[1].norm);
     }
 
     #[test]

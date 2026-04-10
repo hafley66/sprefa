@@ -92,10 +92,15 @@ pub trait Store: Send + Sync {
     ) -> impl std::future::Future<Output = Result<()>> + Send;
 
     /// Find repo names in the given rule table + column that haven't been scanned.
+    ///
+    /// When `norm` is true, the captured value is compared via its normalized
+    /// form (`strings.norm`) against `sprf_norm(repos.name)`, letting e.g.
+    /// `Auth-Service` satisfy an already-scanned `auth_service` repo.
     fn unscanned_repos(
         &self,
         table: &str,
         column: &str,
+        norm: bool,
     ) -> impl std::future::Future<Output = Result<Vec<String>>> + Send;
 
     /// Find (repo, rev) pairs in the given rule table + column that haven't been scanned.
@@ -103,15 +108,21 @@ pub trait Store: Send + Sync {
         &self,
         table: &str,
         column: &str,
+        norm: bool,
     ) -> impl std::future::Future<Output = Result<Vec<(String, String)>>> + Send;
 
     /// Find (repo_name, rev) pairs from paired columns that haven't been scanned.
     /// Joins repo_column and rev_column from the same row in the per-rule data table.
+    ///
+    /// `repo_norm` / `rev_norm` independently select normalized comparison
+    /// for each side (the `.norm` scan annotation variants).
     fn unscanned_rev_pairs(
         &self,
         table: &str,
         repo_column: &str,
         rev_column: &str,
+        repo_norm: bool,
+        rev_norm: bool,
     ) -> impl std::future::Future<Output = Result<Vec<(String, String)>>> + Send;
 
     /// Remove files and their associated extraction data.

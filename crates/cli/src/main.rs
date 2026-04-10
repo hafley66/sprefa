@@ -714,6 +714,8 @@ async fn cmd_scan(
                                 &pair.table,
                                 &pair.repo_column,
                                 &pair.rev_column,
+                                pair.repo_norm,
+                                pair.rev_norm,
                             )
                             .await?;
                         for (repo_name, rev) in pairs {
