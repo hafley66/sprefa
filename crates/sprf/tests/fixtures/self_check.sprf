@@ -58,22 +58,22 @@ rule(readme_crate) {
 # ════════════════════════════════════════════════════════
 
 check(tag_missing_from_readme) {
-  SELECT lt.tag
-  FROM lsp_tag lt
-  LEFT JOIN readme_tag rt ON rt.tag = lt.tag
-  WHERE rt.tag IS NULL
+  SELECT lt.tag_ref
+  FROM self_check__lsp_tag_data lt
+  LEFT JOIN self_check__readme_tag_data rt ON rt.tag_ref = lt.tag_ref
+  WHERE rt.tag_ref IS NULL
 };
 
 check(cmd_missing_from_readme) {
-  SELECT cc.cmd
-  FROM code_cmd cc
-  LEFT JOIN readme_cmd rc ON rc.cmd = cc.cmd
-  WHERE rc.cmd IS NULL
+  SELECT cc.cmd_ref
+  FROM self_check__code_cmd_data cc
+  LEFT JOIN self_check__readme_cmd_data rc ON rc.cmd_ref = cc.cmd_ref
+  WHERE rc.cmd_ref IS NULL
 };
 
 check(crate_missing_from_readme) {
-  SELECT wc.crate
-  FROM workspace_crate wc
-  LEFT JOIN readme_crate rc ON rc.crate = wc.crate
-  WHERE rc.crate IS NULL
+  SELECT wc.crate_ref
+  FROM self_check__workspace_crate_data wc
+  LEFT JOIN self_check__readme_crate_data rc ON rc.crate_ref = wc.crate_ref
+  WHERE rc.crate_ref IS NULL
 };
