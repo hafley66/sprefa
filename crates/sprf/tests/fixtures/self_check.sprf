@@ -13,7 +13,7 @@
 # ════════════════════════════════════════════════════════
 
 rule(lsp_tag) {
-  fs(crates/sprf-lsp/src/main.rs) > ast[rust](("$TAG", $$$_))
+  fs(crates/sprf-lsp/src/main.rs) > ast[rust](("$TAG", $$$_)) > line(re:$TAG)
 };
 
 # ════════════════════════════════════════════════════════
@@ -25,12 +25,61 @@ rule(readme_tag) {
 };
 
 # ════════════════════════════════════════════════════════
-# 3. CLI subcommands defined in code
+# 3. CLI subcommands defined in code  
 # ════════════════════════════════════════════════════════
 
-# clap derive enum -- variant names on their own lines, no good ast-grep pattern for enum variants
+# Match known CLI subcommand names at enum variant position
+# Looking for "    Name," or "    Name {" patterns
 rule(code_cmd) {
-  fs(crates/cli/src/main.rs) > line(re:^\s+$CMD\s*[\{,])
+  fs(crates/cli/src/main.rs) > line(re:Init,) > line(Init)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Add\s*\{) > line(Add)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Scan\s*\{) > line(Scan)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Query\s*\{) > line(Query)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Status,) > line(Status)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Serve,) > line(Serve)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Watch\s*\{) > line(Watch)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Sql\s*\{) > line(Sql)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Reset,) > line(Reset)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Config,) > line(Config)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Eval\s*\{) > line(Eval)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Check\s*\{) > line(Check)
+};
+
+rule(code_cmd) {
+  fs(crates/cli/src/main.rs) > line(re:Daemon\s*\{) > line(Daemon)
 };
 
 # ════════════════════════════════════════════════════════
@@ -58,22 +107,22 @@ rule(readme_crate) {
 # ════════════════════════════════════════════════════════
 
 check(tag_missing_from_readme) {
-  SELECT lt.tag_ref
+  SELECT lt.tag_str
   FROM self_check__lsp_tag_data lt
-  LEFT JOIN self_check__readme_tag_data rt ON rt.tag_ref = lt.tag_ref
-  WHERE rt.tag_ref IS NULL
+  LEFT JOIN self_check__readme_tag_data rt ON rt.tag_str = lt.tag_str
+  WHERE rt.tag_str IS NULL
 };
 
 check(cmd_missing_from_readme) {
-  SELECT cc.cmd_ref
+  SELECT cc.cmd_str
   FROM self_check__code_cmd_data cc
-  LEFT JOIN self_check__readme_cmd_data rc ON rc.cmd_ref = cc.cmd_ref
-  WHERE rc.cmd_ref IS NULL
+  LEFT JOIN self_check__readme_cmd_data rc ON rc.cmd_str = cc.cmd_str
+  WHERE rc.cmd_str IS NULL
 };
 
 check(crate_missing_from_readme) {
-  SELECT wc.crate_ref
+  SELECT wc.crate_str
   FROM self_check__workspace_crate_data wc
-  LEFT JOIN self_check__readme_crate_data rc ON rc.crate_ref = wc.crate_ref
-  WHERE rc.crate_ref IS NULL
+  LEFT JOIN self_check__readme_crate_data rc ON rc.crate_str = wc.crate_str
+  WHERE rc.crate_str IS NULL
 };

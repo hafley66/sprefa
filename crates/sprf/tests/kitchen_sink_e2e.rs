@@ -477,6 +477,17 @@ async fn self_check_dogfood_test() -> Result<()> {
         }
     }
     
+    // Debug: print table schemas  
+    println!("\nTable column info:");
+    for table in &["self_check__lsp_tag_data", "self_check__code_cmd_data", "self_check__workspace_crate_data"] {
+        let cols: Vec<(i64, String, String, i64, Option<String>, i64)> = sqlx::query_as(&format!("PRAGMA table_info({})", table))
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+        let col_names: Vec<String> = cols.iter().map(|(_, name, _, _, _, _)| name.clone()).collect();
+        println!("  {} columns: {:?}", table, col_names);
+    }
+    
     // Query what we found
     println!("\nSelf-check summary:");
     let tables: Vec<String> = sqlx::query_scalar(
