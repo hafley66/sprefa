@@ -53,3 +53,8 @@ revs = ["main"]
 name = "sprefa"
 path = "/Users/chrishafley/projects/sprefa"
 revs = ["main"]
+
+[[repos]]
+name = "sprefa"
+path = "/Users/chrishafley/projects/sprefa"
+revs = ["main"]

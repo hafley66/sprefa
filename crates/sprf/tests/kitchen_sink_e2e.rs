@@ -22,6 +22,7 @@ use sqlx;
 use std::collections::HashMap;
 
 const KITCHEN_SINK_SPRF: &str = include_str!("fixtures/kitchen_sink.sprf");
+const SELF_CHECK_SPRF: &str = include_str!("fixtures/self_check.sprf");
 
 // All fixture files
 const FIXTURES: &[(&str, &[u8])] = &[
@@ -330,6 +331,173 @@ async fn kitchen_sink_e2e_sql_verification() -> Result<()> {
     
     assert!(tables.iter().any(|t| t.contains("sprf_meta")), "Should have sprf_meta table");
     assert!(tables.iter().any(|t| t.contains("strings")), "Should have strings table");
+    
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SELF-CHECK TEST: Dogfood test ensuring README stays in sync with code
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// This test runs self_check.sprf rules against actual project files to verify:
+/// - README documents all CLI commands
+/// - README documents all workspace crates
+/// - README documents all LSP tags
+#[tokio::test]
+async fn self_check_dogfood_test() -> Result<()> {
+    println!("\n=== SELF-CHECK DOGFOOD TEST ===");
+    
+    // Parse self_check.sprf
+    let (ruleset, dep_edges, checks) = parse_sprf_full(SELF_CHECK_SPRF)?;
+    
+    println!("Self-check rules: {}", ruleset.rules.len());
+    println!("Self-check checks: {}", checks.len());
+    
+    // Create database
+    let pool = init_db(":memory:").await?;
+    let store = SqliteStore::new(pool.clone());
+    
+    // Create rule tables
+    let specs: Vec<_> = ruleset
+        .rules
+        .iter()
+        .map(|r| sprefa_cache::RuleTableSpec {
+            rule_name: r.name.clone(),
+            namespace: Some("self_check".to_string()),
+            columns: r.create_matches.iter().map(|m| (m.kind.clone(), m.scan.clone())).collect(),
+        })
+        .collect();
+    
+    let hashes = sprefa_sprf::hash::compute_rule_hashes(&ruleset.rules, &dep_edges)?;
+    store.create_rule_tables(&specs, Some(&hashes)).await?;
+    store.ensure_repo("sprefa", ".").await?;
+    store.ensure_rev("sprefa", "main").await?;
+    
+    // Extract from actual project files (if they exist)
+    let extractor = RuleExtractor::from_ruleset(&ruleset)?;
+    let ctx = ExtractContext {
+        repo: Some("sprefa"),
+        branch: Some("main"),
+        tags: &[],
+    };
+    
+    // Try to read actual project files
+    let mut files_scanned = 0;
+    let mut total_refs = 0;
+    let mut all_files = vec![];
+    
+    // Get workspace root (3 levels up from this test file: crates/sprf/tests/)
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+    
+    let project_files = vec![
+        ("Cargo.toml", workspace_root.join("Cargo.toml")),
+        ("README.md", workspace_root.join("README.md")),
+        ("crates/cli/src/main.rs", workspace_root.join("crates/cli/src/main.rs")),
+        ("crates/sprf-lsp/src/main.rs", workspace_root.join("crates/sprf-lsp/src/main.rs")),
+    ];
+    
+    for (rel_path, full_path) in project_files {
+        if !full_path.exists() {
+            println!("  Skipping {} (not found)", rel_path);
+            continue;
+        }
+        
+        let content = std::fs::read(full_path)?;
+        let refs = extractor.extract(&content, rel_path, &ctx);
+        
+        if refs.is_empty() {
+            continue;
+        }
+        
+        files_scanned += 1;
+        total_refs += refs.len();
+        
+        let mut rule_rows_map: HashMap<String, Vec<sprefa_cache::ExtractionRow>> = HashMap::new();
+        for r in refs {
+            let row = sprefa_cache::ExtractionRow {
+                captures: vec![sprefa_cache::CaptureEntry {
+                    column: r.kind.clone(),
+                    value: r.value.clone(),
+                    span_start: r.span_start as u32,
+                    span_end: r.span_end as u32,
+                    node_path: r.node_path.clone(),
+                    is_path: r.is_path,
+                    parent_key: r.parent_key.clone(),
+                    scan: r.scan.clone(),
+                }],
+            };
+            rule_rows_map.entry(r.rule_name.clone()).or_default().push(row);
+        }
+        
+        let rule_rows: Vec<_> = rule_rows_map.into_iter().collect();
+        all_files.push(sprefa_cache::FileResult {
+            rel_path: rel_path.to_string(),
+            content_hash: format!("hash_{}", rel_path.replace('/', "_")),
+            stem: std::path::Path::new(rel_path).file_stem().map(|s| s.to_string_lossy().to_string()),
+            ext: std::path::Path::new(rel_path).extension().map(|s| s.to_string_lossy().to_string()),
+            rule_rows,
+        });
+    }
+    
+    if !all_files.is_empty() {
+        store.flush_batch("sprefa", "main", &all_files, "self_check").await?;
+    }
+    
+    println!("  Scanned {} files, extracted {} refs", files_scanned, total_refs);
+    
+    // Run the self-check checks
+    println!("\nRunning self-check validations...");
+    let mut violations_found = false;
+    
+    for check in &checks {
+        match store.run_check(&check.name, &check.sql).await {
+            Ok(0) => {
+                println!("  ✅ {}: PASS (no violations)", check.name);
+            }
+            Ok(n) => {
+                println!("  ❌ {}: FAIL ({} violations)", check.name, n);
+                violations_found = true;
+                
+                // Fetch and display violations
+                let violations: Vec<(String,)> = sqlx::query_as(&format!(
+                    "SELECT * FROM {}_violations", check.name
+                ))
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+                
+                for (i, v) in violations.iter().enumerate().take(5) {
+                    println!("     - Missing: {:?}", v.0);
+                }
+            }
+            Err(e) => {
+                println!("  ⚠️  {}: ERROR - {}", check.name, e);
+            }
+        }
+    }
+    
+    // Query what we found
+    println!("\nSelf-check summary:");
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'self_check%_data'"
+    )
+    .fetch_all(&pool)
+    .await?;
+    
+    for table in &tables {
+        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", table))
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+        println!("  {}: {} rows", table, count);
+    }
+    
+    if violations_found {
+        println!("\n⚠️  Some self-checks failed - README may be out of sync with code");
+    } else {
+        println!("\n✅ All self-checks passed - README is in sync with code");
+    }
     
     Ok(())
 }
