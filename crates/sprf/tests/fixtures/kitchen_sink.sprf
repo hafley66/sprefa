@@ -74,7 +74,7 @@ rule(tag_alias) {
 # ════════════════════════════════════════════════════════
 
 rule(file_tag) {
-  file(**/README.md) > json({ title: $TITLE })
+  file(**/README.md) > md(# $TITLE)
 };
 
 # ════════════════════════════════════════════════════════
@@ -83,7 +83,7 @@ rule(file_tag) {
 
 rule(folder_tag) {
   folder(src/components/*) {
-    fs(index.ts) > json({ name: $NAME })
+    fs(index.ts) > line(re:export const $NAME = "$VAL")
   }
 };
 
@@ -112,8 +112,8 @@ rule(ref_with_block) {
 
 rule(branched) {
   repo($REPO) {
-    rev(main) > fs(**/values.yaml) > json({ image: $PROD });
-    rev(staging) > fs(**/values.yaml) > json({ image: $STAGE })
+    rev(main) > fs(**/deploy.yaml) > json({ image: { repository: $PROD } });
+    rev(staging) > fs(**/deploy.yaml) > json({ image: { repository: $STAGE } })
   }
 };
 
@@ -204,7 +204,7 @@ rule(inline_scan) {
 rule(inline_scan_norm_tag) {
   repo.norm($REPO) {
     rev.norm($TAG) {
-      fs(**/values.yaml) > json({ image: { repo: $REPO, tag: $TAG } })
+      fs(**/services.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
     }
   }
 };
@@ -286,7 +286,7 @@ check(orphan_dep) {
 # ════════════════════════════════════════════════════════
 
 rule(bare_glob_rule) {
-  **/Makefile > line(include\s+$INCLUDE)
+  **/Makefile > line(re:include\s+$INCLUDE)
 };
 
 # ════════════════════════════════════════════════════════

@@ -1,0 +1,207 @@
+---
+source: crates/sprf/tests/kitchen_sink.rs
+expression: out
+---
+all_keys:
+  data.json :: KEY = alpha
+  data.json :: KEY = beta
+  data.json :: KEY = gamma
+  data.json :: VAL = one
+  data.json :: VAL = three
+  data.json :: VAL = two
+any_object: (no refs)
+bare_glob_rule:
+  Makefile :: INCLUDE = build/rules.mk
+  Makefile :: INCLUDE = common.mk
+branch_alias:
+  charts/app/values.yaml :: VER = 3.5.0
+  deploy/config.yaml :: VER = 3.5.0
+  packages/auth/values.yaml :: VER = 1.0.0
+branched:
+  deploy/deploy.yaml :: PROD = myorg/api-service
+  deploy/deploy.yaml :: REPO = myorg/auth-service scan=repo
+cargo_lock_pkg:
+  Cargo.lock :: NAME = anyhow
+  Cargo.lock :: NAME = fixture-app
+  Cargo.lock :: NAME = pin-project-lite
+  Cargo.lock :: NAME = serde
+  Cargo.lock :: NAME = tokio
+  Cargo.lock :: VERSION = 0.1.0
+  Cargo.lock :: VERSION = 0.2.13
+  Cargo.lock :: VERSION = 1.0.197
+  Cargo.lock :: VERSION = 1.0.81
+  Cargo.lock :: VERSION = 1.36.0
+dep_name:
+  Cargo.toml :: NAME = anyhow
+  Cargo.toml :: NAME = insta
+  Cargo.toml :: NAME = serde
+  Cargo.toml :: NAME = tokio
+dep_source:
+  Cargo.toml :: DEP = anyhow
+  Cargo.toml :: DEP = serde
+  Cargo.toml :: DEP = tokio
+  package.json :: DEP = @myorg/utils
+  package.json :: DEP = express
+  package.json :: DEP = lodash
+deploy_image:
+  charts/app/values.yaml :: REPO = myorg/backend
+  charts/app/values.yaml :: REPO = myorg/frontend
+  charts/app/values.yaml :: TAG = v1.2.3
+  charts/app/values.yaml :: TAG = v2.0.1
+deploy_manifest:
+  deploy/deploy.yaml :: REPO = myorg/api-service
+  deploy/deploy.yaml :: TAG = v3.1.0
+docker_from:
+  app/Dockerfile :: IMAGE = node:20-alpine
+  app/Dockerfile :: STAGE = builder
+dockerfile_from:
+  app/Dockerfile :: IMAGE = nginx
+  app/Dockerfile :: IMAGE = node
+  app/Dockerfile :: TAG = 1.25-alpine
+  app/Dockerfile :: TAG = 20-alpine AS builder
+env_var_ref:
+  src/handlers/api.ts :: NAME = API_KEY
+  src/handlers/api.ts :: NAME = DATABASE_URL
+file_tag:
+  README.md :: TITLE = fixture-app
+folder_tag:
+  src/components/widget/index.ts :: NAME = WIDGET_NAME
+  src/components/widget/index.ts :: VAL = widget
+go_mod_dep:
+  services/api/go.mod :: MODULE = github.com/gin-gonic/gin
+  services/api/go.mod :: MODULE = github.com/go-playground/validator/v10
+  services/api/go.mod :: MODULE = golang.org/x/net
+  services/api/go.mod :: VERSION = v0.17.0
+  services/api/go.mod :: VERSION = v1.9.1
+  services/api/go.mod :: VERSION = v10.14.0
+inline_scan:
+  deploy/services.yaml :: REPO = myorg/auth-service scan=repo
+  deploy/services.yaml :: TAG = v1.2.3 scan=rev
+inline_scan_norm_inline:
+  deploy/services.yaml :: REPO = myorg/auth-service scan=repo.norm
+  deploy/services.yaml :: TAG = v1.2.3 scan=rev.norm
+inline_scan_norm_tag:
+  deploy/services.yaml :: REPO = myorg/auth-service scan=repo.norm
+  deploy/services.yaml :: TAG = v1.2.3 scan=rev.norm
+install_cmds:
+  README.md :: PKG = express
+  README.md :: PKG = lodash
+level0:
+  deploy/deploy.yaml :: REPO = myorg/api-service
+  deploy/deploy.yaml :: TAG = v3.1.0
+level1:
+  package.json :: DEP = @myorg/utils
+  package.json :: DEP = express
+  package.json :: DEP = lodash
+  package.json :: SPEC = 4.17.21
+  package.json :: SPEC = 4.18.2
+  package.json :: SPEC = ^1.0.0
+level2: (no refs)
+line_regex:
+  app/Dockerfile :: IMAGE = nginx
+  app/Dockerfile :: IMAGE = node
+  app/Dockerfile :: TAG = 1.25-alpine
+  app/Dockerfile :: TAG = 20-alpine
+multi_seg:
+  app/Dockerfile :: DEST = .
+  app/Dockerfile :: SRC = .
+npm_lock_resolved:
+  package-lock.json :: PKG_PATH = node_modules/express
+  package-lock.json :: PKG_PATH = node_modules/lodash
+  package-lock.json :: URL = https://registry.npmjs.org/express/-/express-4.18.2.tgz
+  package-lock.json :: URL = https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz
+  package-lock.json :: VERSION = 4.17.21
+  package-lock.json :: VERSION = 4.18.2
+package_name:
+  Cargo.toml :: NAME = fixture-app
+py_requirement:
+  services/api/requirements.txt :: PACKAGE = celery[redis]
+  services/api/requirements.txt :: PACKAGE = flask
+  services/api/requirements.txt :: PACKAGE = requests
+  services/api/requirements.txt :: PACKAGE = sqlalchemy
+  services/api/requirements.txt :: VERSION = 2.0.28
+  services/api/requirements.txt :: VERSION = 2.31.0
+  services/api/requirements.txt :: VERSION = 3.0.2
+  services/api/requirements.txt :: VERSION = 5.3.6
+quoted_val:
+  config.json :: HOST = api.example.com
+  config.json :: PORT = 8443
+  config.json :: PROTO = https
+react_hook:
+  src/hooks/UserPanel.tsx :: ARGS = { id: 1 }
+  src/hooks/UserPanel.tsx :: ENTITY = User
+readme_code_langs:
+  README.md :: LANG = bash
+  README.md :: LANG = rust
+readme_deps:
+  README.md :: ITEM = express
+  README.md :: ITEM = lodash
+readme_links:
+  README.md :: TEXT = docs
+  README.md :: TEXT = source
+  README.md :: URL = https://example.com
+  README.md :: URL = https://github.com/x
+readme_sections:
+  README.md :: SECTION = Dependencies
+  README.md :: SECTION = Installation
+  README.md :: SECTION = Usage
+ref_no_block:
+  package.json :: VERSION = 2.1.0
+ref_with_block:
+  package.json :: DEP = @myorg/utils
+  package.json :: DEP = express
+  package.json :: DEP = lodash
+  package.json :: SPEC = 4.17.21
+  package.json :: SPEC = 4.18.2
+  package.json :: SPEC = ^1.0.0
+region_fns:
+  src/lib.rs :: NAME = login
+  src/lib.rs :: NAME = logout
+release_config:
+  deploy/config.yaml :: VER = 3.5.0
+rust_fn:
+  src/lib.rs :: ARGS = name: &str
+  src/lib.rs :: BODY = 42
+  src/lib.rs :: BODY = format!("hi {}", name)
+  src/lib.rs :: NAME = greet
+  src/lib.rs :: NAME = to_u32
+  src/lib.rs :: RET = String
+  src/lib.rs :: RET = u32
+scoped_deep:
+  packages/auth/values.yaml :: NAME = auth-service
+  packages/auth/values.yaml :: PKG = auth
+  packages/auth/values.yaml :: REPO = myorg/auth-service scan=repo
+scoped_pkg:
+  package.json :: NAME = utils
+  package.json :: SCOPE = myorg
+section_block:
+  src/lib.rs :: NAME = also_outside
+  src/lib.rs :: NAME = evaluate
+  src/lib.rs :: NAME = greet
+  src/lib.rs :: NAME = lex
+  src/lib.rs :: NAME = login
+  src/lib.rs :: NAME = logout
+  src/lib.rs :: NAME = parse
+  src/lib.rs :: NAME = to_u32
+section_fns:
+  src/lib.rs :: NAME = also_outside
+  src/lib.rs :: NAME = evaluate
+  src/lib.rs :: NAME = greet
+  src/lib.rs :: NAME = lex
+  src/lib.rs :: NAME = login
+  src/lib.rs :: NAME = logout
+  src/lib.rs :: NAME = parse
+  src/lib.rs :: NAME = to_u32
+tag_alias:
+  charts/app/values.yaml :: VER = 3.5.0
+  deploy/config.yaml :: VER = 3.5.0
+  packages/auth/values.yaml :: VER = 1.0.0
+ts_files:
+  src/handlers/api.ts :: NAME = express
+  src/handlers/api.ts :: PATH = express
+  src/hooks/UserPanel.tsx :: NAME = { useUserQuery }
+  src/hooks/UserPanel.tsx :: PATH = ./queries
+workspace_member:
+  Cargo.toml :: MEMBER = crates/alpha
+  Cargo.toml :: MEMBER = crates/beta
+  Cargo.toml :: MEMBER = crates/gamma

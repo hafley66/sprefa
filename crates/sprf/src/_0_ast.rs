@@ -247,6 +247,22 @@ fn extract_captures_from_str(s: &str) -> Vec<String> {
                 i += 1;
                 continue;
             }
+            // Check for braced capture ${NAME}
+            if i < bytes.len() && bytes[i] == b'{' {
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                if i > start {
+                    let name = &s[start..i];
+                    if name.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()) {
+                        caps.push(name.to_string());
+                    }
+                }
+                if i < bytes.len() { i += 1; } // skip }
+                continue;
+            }
             let start = i;
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;

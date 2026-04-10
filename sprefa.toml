@@ -43,3 +43,8 @@ exclude = [
 name = "sprefa"
 path = "/Users/chrishafley/projects/sprefa"
 revs = ["master"]
+
+[[repos]]
+name = "sprefa"
+path = "/Users/chrishafley/projects/sprefa"
+revs = ["main"]

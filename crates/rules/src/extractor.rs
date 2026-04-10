@@ -220,13 +220,13 @@ impl Extractor for RuleExtractor {
 
                 for result in results {
                     let mut merged = result.clone();
-                    // Merge marker captures
+                    // Merge marker captures without overwriting values already produced by the walk.
                     for (name, cv) in &region.captures {
-                        merged.captures.insert(name.clone(), cv.clone());
+                        merged.captures.entry(name.clone()).or_insert_with(|| cv.clone());
                     }
-                    // Merge context captures
+                    // Merge context captures without overwriting values already produced by the walk.
                     for (name, cv) in &context_caps {
-                        merged.captures.insert(name.clone(), cv.clone());
+                        merged.captures.entry(name.clone()).or_insert_with(|| cv.clone());
                     }
                     let group = if has_matches {
                         let g = group_counter;
@@ -384,7 +384,7 @@ fn run_matchers(
             Err(_) => vec![],
         }
     } else {
-        let value = match parse_data(source, ext) {
+        let value = match parse_data(source, path) {
             Some(v) => v,
             None => return vec![],
         };
@@ -479,7 +479,13 @@ fn resolve_context_captures(
 fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
     let mut repo_patterns: Vec<&str> = vec![];
     let mut rev_patterns: Vec<&str> = vec![];
-    let mut file_patterns: Vec<&str> = vec![];
+    // Folder + fs patterns are tracked separately so they can be composed as
+    // an AND (folder/fs) rather than a broken OR. Without composition, a
+    // `folder(packages/$PKG) { fs(values.yaml) }` chain would match either a
+    // bare `values.yaml` OR any path under `packages/$PKG`, when the intent
+    // is the intersection.
+    let mut folder_patterns: Vec<String> = vec![];
+    let mut fs_patterns: Vec<String> = vec![];
     let mut context_captures: Vec<(String, ContextCaptureSource)> = vec![];
     let mut structural_steps: Vec<SelectStep> = vec![];
     let mut seen_structural = false;
@@ -508,21 +514,25 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
                     }
                 }
                 SelectStep::Folder { pattern, capture } => {
-                    // Folder pattern matches against directory portion of path.
-                    // We prepend **/ if the pattern doesn't start with ** to allow
-                    // matching at any depth, then append /** to match any files within.
-                    let dir_glob = if pattern.contains('/') || pattern.starts_with("**") {
-                        format!("{}/**", pattern)
+                    // Anchor at any depth only for glob-mode folder patterns.
+                    // Segment-capture patterns (those containing `$`) are
+                    // matched literally from the path start because segment
+                    // parsing treats `**/` as a literal rather than a glob.
+                    let anchored = if pattern.starts_with("**")
+                        || pattern.starts_with('/')
+                        || pattern.contains('$')
+                    {
+                        pattern.clone()
                     } else {
-                        format!("**/{}/**", pattern)
+                        format!("**/{}", pattern)
                     };
-                    file_patterns.push(Box::leak(dir_glob.into_boxed_str()));
+                    folder_patterns.push(anchored);
                     if let Some(c) = capture {
                         context_captures.push((c.clone(), ContextCaptureSource::FolderPath));
                     }
                 }
                 SelectStep::File { pattern, capture } => {
-                    file_patterns.push(pattern);
+                    fs_patterns.push(pattern.clone());
                     if let Some(c) = capture {
                         context_captures.push((c.clone(), ContextCaptureSource::FileName));
                     }
@@ -535,8 +545,21 @@ fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
         }
     }
 
+    // Compose folder + fs into a single flat pattern list.
+    // folder × fs when both present, folder/** when only folder, fs as-is otherwise.
+    let composed_patterns: Vec<String> = match (folder_patterns.is_empty(), fs_patterns.is_empty()) {
+        (true, true) => vec![],
+        (false, true) => folder_patterns.iter().map(|f| format!("{}/**", f)).collect(),
+        (true, false) => fs_patterns.clone(),
+        (false, false) => folder_patterns
+            .iter()
+            .flat_map(|fld| fs_patterns.iter().map(move |fs| format!("{fld}/{fs}")))
+            .collect(),
+    };
+    let file_pattern_refs: Vec<&str> = composed_patterns.iter().map(|s| s.as_str()).collect();
+
     let git = CompiledGitSelector::from_patterns(&repo_patterns, &rev_patterns)?;
-    let file = CompiledFileSelector::from_patterns(&file_patterns)?;
+    let file = CompiledFileSelector::from_patterns(&file_pattern_refs)?;
     let compiled_steps = walk::compile_steps(&structural_steps)?;
 
     Ok(CompiledRule {
@@ -564,15 +587,27 @@ fn step_kind_label(step: &SelectStep) -> &'static str {
     }
 }
 
-fn parse_data(source: &[u8], ext: &str) -> Option<serde_json::Value> {
+fn parse_data(source: &[u8], path: &str) -> Option<serde_json::Value> {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let basename = Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    // Path-based overrides for data files whose extension isn't ".toml" but
+    // whose content is TOML (Cargo.lock, poetry.lock, Pipfile, etc.).
+    let is_toml =
+        ext == "toml" || basename == "Cargo.lock" || basename == "poetry.lock" || basename == "Pipfile";
+    if is_toml {
+        let s = std::str::from_utf8(source).ok()?;
+        let tv: toml::Value = toml::from_str(s).ok()?;
+        return serde_json::to_value(tv).ok();
+    }
     match ext {
         "json" => serde_json::from_slice(source).ok(),
         "yaml" | "yml" => serde_yaml::from_slice(source).ok(),
-        "toml" => {
-            let s = std::str::from_utf8(source).ok()?;
-            let tv: toml::Value = toml::from_str(s).ok()?;
-            serde_json::to_value(tv).ok()
-        }
         _ => None,
     }
 }

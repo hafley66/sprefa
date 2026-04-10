@@ -150,8 +150,24 @@ where
 
         if let Some(cap_map) = &selector.captures {
             for (metavar, capture_name) in cap_map {
+                let is_multi = metavar.starts_with("$$$");
                 let var_name = metavar.trim_start_matches('$');
-                if let Some(n) = env.get_match(var_name) {
+                if is_multi {
+                    let nodes = env.get_multiple_matches(var_name);
+                    if !nodes.is_empty() {
+                        let start = nodes.first().unwrap().range().start as u32;
+                        let end = nodes.last().unwrap().range().end as u32;
+                        let text: String = nodes
+                            .iter()
+                            .map(|n| n.text().into_owned())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        captures.insert(
+                            capture_name.clone(),
+                            CapturedValue { text, span_start: start, span_end: end },
+                        );
+                    }
+                } else if let Some(n) = env.get_match(var_name) {
                     let range = n.range();
                     captures.insert(
                         capture_name.clone(),
@@ -163,7 +179,9 @@ where
                     );
                 }
             }
-            if captures.is_empty() {
+            // Don't require all captures; segment_captures may supply the actual refs.
+            // Only bail if nothing at all was captured AND no segment_captures will run.
+            if captures.is_empty() && selector.segment_captures.is_none() {
                 return None;
             }
         } else {

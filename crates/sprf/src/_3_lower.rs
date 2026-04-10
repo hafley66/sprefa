@@ -470,13 +470,13 @@ fn convert_slot(slot: &Slot) -> Result<ConvertedSlot> {
             }
             Tag::Repo | Tag::RepoNorm => {
                 select.push(SelectStep::Repo {
-                    pattern: body.clone(),
+                    pattern: promote_bare_capture(body),
                     capture: None,
                 });
             }
             Tag::Rev | Tag::RevNorm => {
                 select.push(SelectStep::Rev {
-                    pattern: body.clone(),
+                    pattern: promote_bare_capture(body),
                     capture: None,
                 });
             }
@@ -503,9 +503,17 @@ fn convert_slot(slot: &Slot) -> Result<ConvertedSlot> {
                 }
                 let (pattern, constraints, segment_captures) = rewrite_ast_braced_captures(body);
                 let ast_captures = build_ast_captures_map(body);
+                // When constraints or segment_captures are present, wrap the pattern
+                // into an inline rule so ast-grep's SerializableRuleCore applies the
+                // regex constraints. Mode::Pattern ignores the constraints field.
+                let use_rule_mode = constraints.is_some() || segment_captures.is_some();
                 ast_selector = Some(AstSelector {
-                    pattern: Some(pattern),
-                    rule: None,
+                    pattern: if use_rule_mode { None } else { Some(pattern.clone()) },
+                    rule: if use_rule_mode {
+                        Some(serde_json::json!({ "pattern": pattern }))
+                    } else {
+                        None
+                    },
                     constraints,
                     rule_file: None,
                     language: arg.clone(),
@@ -576,6 +584,29 @@ fn convert_slot(slot: &Slot) -> Result<ConvertedSlot> {
         md_matcher,
         json_annotations,
     })
+}
+
+/// Rewrite a bare `$IDENT` / `$_` body into `$$$IDENT` / `$$$_` so the
+/// underlying segment-capture matcher will cross `/` boundaries. Used for
+/// `repo()`/`rev()`/`branch()`/`tag()` context tags because repo names like
+/// `myorg/auth-service` and release branches like `release/v1.2` contain
+/// `/`, which a default single-segment `$VAR` capture refuses to span.
+/// Leaves multi-segment patterns (`$ORG/$REPO`), globs (`myorg/*`), regex
+/// (`re:...`), and already-multi captures alone.
+fn promote_bare_capture(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed == "$_" {
+        return "$$$_".to_string();
+    }
+    if let Some(name) = trimmed.strip_prefix('$') {
+        if !name.is_empty()
+            && !name.starts_with('$')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return format!("$$${name}");
+        }
+    }
+    body.to_string()
 }
 
 /// Parse marker() body into a MarkerScope.
@@ -1229,7 +1260,11 @@ mod tests {
             lower(r"rule(hooks) { fs(**/*.ts) > ast[typescript](use${ENTITY}Query($$$ARGS)) };");
         let r = &rules[0];
         let ast = r.select_ast.as_ref().unwrap();
-        assert_eq!(ast.pattern.as_deref(), Some("$SPREFA0($$$ARGS)"));
+        // With constraints/segment_captures, the pattern is wrapped into
+        // rule: {"pattern": ...} so Mode::Rule applies the regex constraint.
+        assert!(ast.pattern.is_none());
+        let rule_val = ast.rule.as_ref().unwrap();
+        assert_eq!(rule_val["pattern"].as_str(), Some("$SPREFA0($$$ARGS)"));
         assert!(ast.constraints.is_some());
         assert!(ast.segment_captures.is_some());
         let seg = ast.segment_captures.as_ref().unwrap();
