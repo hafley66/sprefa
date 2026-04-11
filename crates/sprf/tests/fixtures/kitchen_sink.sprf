@@ -235,9 +235,8 @@ check(version_drift) {
 };
 
 check(has_dependencies) {
-  SELECT COUNT(*) as dep_count
-  FROM dep_source ds
-  HAVING dep_count < 1
+  SELECT 'no_dependencies_found' as violation
+  WHERE (SELECT COUNT(*) FROM dep_source) = 0
 };
 
 # ════════════════════════════════════════════════════════
