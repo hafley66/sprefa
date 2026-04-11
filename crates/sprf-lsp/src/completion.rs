@@ -11,8 +11,9 @@ use tower_lsp::lsp_types::{Range, TextEdit, CompletionTextEdit};
 
 /// Complete file paths using ripgrep, with find as fallback.
 pub async fn complete_files(root: &Path, partial: &str, replace_range: Range) -> Vec<CompletionItem> {
-    // Require 2+ chars before searching (user preference)
-    if partial.len() < 2 {
+    // Empty partial = list all files (no filtering)
+    // Short partials (< 2 chars) without glob chars = wait for more input
+    if partial.len() > 0 && partial.len() < 2 && !partial.contains('*') && !partial.contains('?') {
         return vec![];
     }
 
