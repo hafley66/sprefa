@@ -26,6 +26,18 @@ pub fn parse_sprf_full(source: &str) -> Result<(RuleSet, Vec<DepEdge>, Vec<Check
     Ok((ruleset, edges, checks))
 }
 
+/// Parse a .sprf file with namespace-prefixed check table references.
+/// 
+/// Check SQL is rewritten so bare table names become `namespace__tablename_data`:
+///   - `FROM tablename` → `FROM namespace__tablename_data`
+///   - `JOIN tablename` → `JOIN namespace__tablename_data`
+pub fn parse_sprf_full_namespaced(source: &str, namespace: &str) -> Result<(RuleSet, Vec<DepEdge>, Vec<CheckDecl>)> {
+    let program = _1_parse::parse_program(source)?;
+    let (ruleset, edges) = _3_lower::lower_program(&program)?;
+    let checks = _3_lower::extract_and_rewrite_checks(&program, namespace);
+    Ok((ruleset, edges, checks))
+}
+
 /// Load a .sprf file from disk and produce extraction rules + dependency edges.
 pub fn load_sprf(path: &Path) -> Result<(RuleSet, Vec<DepEdge>)> {
     let source = std::fs::read_to_string(path)?;

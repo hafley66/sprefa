@@ -66,6 +66,59 @@ pub fn extract_checks(program: &Program) -> Vec<crate::_0_ast::CheckDecl> {
         .collect()
 }
 
+/// Rewrite check SQL to add namespace prefixes to table references.
+/// 
+/// Transforms bare rule names to fully qualified table names:
+///   - `FROM tablename` → `FROM namespace__tablename_data`
+///   - `JOIN tablename` → `JOIN namespace__tablename_data`
+pub fn rewrite_check_sql(sql: &str, namespace: &str, rule_names: &[String]) -> String {
+    use regex::Regex;
+    
+    let mut result = sql.to_string();
+    
+    // Sort by length descending to avoid partial matches (e.g., "dep" matching "deploy_image")
+    let mut sorted_names: Vec<_> = rule_names.iter().collect();
+    sorted_names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    
+    for name in sorted_names {
+        let escaped = regex::escape(name);
+        
+        // FROM tablename → FROM namespace__tablename_data
+        let from_re = Regex::new(&format!(r"(?i)\bFROM\s+({})\b", escaped)).unwrap();
+        result = from_re.replace_all(&result, format!("FROM {}__${{1}}_data", namespace)).to_string();
+        
+        // JOIN tablename → JOIN namespace__tablename_data
+        let join_re = Regex::new(&format!(r"(?i)\bJOIN\s+({})\b", escaped)).unwrap();
+        result = join_re.replace_all(&result, format!("JOIN {}__${{1}}_data", namespace)).to_string();
+    }
+    
+    result
+}
+
+/// Extract and rewrite checks with namespace-prefixed table names.
+pub fn extract_and_rewrite_checks(program: &Program, namespace: &str) -> Vec<crate::_0_ast::CheckDecl> {
+    // Collect all rule names first
+    let rule_names: Vec<String> = program
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Statement::Rule(decl) => Some(decl.name.clone()),
+            _ => None,
+        })
+        .collect();
+    
+    program
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Statement::Check(decl) => {
+                let mut rewritten = decl.clone();
+                rewritten.sql = rewrite_check_sql(&decl.sql, namespace, &rule_names);
+                Some(rewritten)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// Walk rule bodies to find cross-rule references and emit dependency edges.
 fn collect_dep_edges(bodies: &[RuleBody], consumer: &str, edges: &mut Vec<DepEdge>) {
     for body in bodies {

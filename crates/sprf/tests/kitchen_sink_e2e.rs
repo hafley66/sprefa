@@ -17,7 +17,7 @@ use sprefa_cache::{SqliteStore, Store};
 use sprefa_extract::{ExtractContext, Extractor};
 use sprefa_rules::extractor::RuleExtractor;
 use sprefa_schema::init_db;
-use sprefa_sprf::parse_sprf_full;
+use sprefa_sprf::{parse_sprf_full, parse_sprf_full_namespaced};
 use sqlx;
 use std::collections::HashMap;
 
@@ -87,7 +87,7 @@ async fn kitchen_sink_e2e_full_pipeline() -> Result<()> {
     
     // Step 1: Parse SPRF
     println!("1. Parsing kitchen_sink.sprf...");
-    let (ruleset, dep_edges, checks) = parse_sprf_full(KITCHEN_SINK_SPRF)?;
+    let (ruleset, dep_edges, checks) = parse_sprf_full_namespaced(KITCHEN_SINK_SPRF, "kitchen_sink")?;
     
     let rule_count = ruleset.rules.len();
     let check_count = checks.len();

@@ -227,17 +227,19 @@ rule(level2) {
 # ════════════════════════════════════════════════════════
 
 check(version_drift) {
-  SELECT a.repo, a.tag, b.version
-  FROM deploy_image a
-  LEFT JOIN package_name b ON b.repo_id = a.repo_id
-  WHERE a.tag != b.version
+  SELECT s_repo.value as repo, s_tag.value as tag
+  FROM deploy_image ds
+  JOIN strings s_repo ON s_repo.id = ds.repo_ref
+  JOIN strings s_tag ON s_tag.id = ds.tag_ref
+  WHERE s_tag.value LIKE 'latest%'
 };
 
 check(orphan_dep) {
-  SELECT d.dep
-  FROM dep_source d
-  LEFT JOIN package_name p ON p.name = d.dep
-  WHERE p.name IS NULL
+  SELECT s.value as dep
+  FROM dep_source ds
+  JOIN strings s ON s.id = ds.dep_ref
+  LEFT JOIN package_name pn ON pn.name_ref = ds.dep_ref
+  WHERE pn.name_ref IS NULL
 };
 
 # ════════════════════════════════════════════════════════
