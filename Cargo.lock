@@ -2927,6 +2927,7 @@ dependencies = [
  "anyhow",
  "env_logger",
  "log",
+ "regex",
  "rusqlite",
  "serde_json",
  "sprefa_config",

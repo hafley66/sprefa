@@ -231,6 +231,111 @@ def test_hover_falls_back_to_db():
         finally:
             client.shutdown()
 
+def test_folder_completion_text_edit():
+    """Test folder completion has textEdit that replaces partial (no double-pump)."""
+    print(f"{YELLOW}TEST: folder() textEdit (no double-pump){NC}")
+    
+    lsp_path = find_lsp_binary()
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create directory structure
+        os.makedirs(Path(tmpdir, "src"), exist_ok=True)
+        os.makedirs(Path(tmpdir, "tests"), exist_ok=True)
+        
+        client = LspClient(lsp_path, cwd=tmpdir)
+        try:
+            client.initialize(f"file://{tmpdir}")
+            
+            uri = f"file://{tmpdir}/test.sprf"
+            # User types: folder(s) - simple prefix to test textEdit
+            client.open_doc(uri, "rule(test) { folder(s) }")
+            
+            # Cursor at position 23 (after 's')
+            items = client.complete(uri, line=0, character=23)
+            
+            # Find an item that starts with 's'
+            found = False
+            for item in items:
+                label = item.get("label", "")
+                if label.startswith("s"):
+                    text_edit = item.get("textEdit", {})
+                    if text_edit:
+                        new_text = text_edit.get("newText", "")
+                        range_obj = text_edit.get("range", {})
+                        
+                        # Verify new_text is the full replacement, not just insertion
+                        assert len(new_text) > 1, \
+                            f"Expected replacement text, got '{new_text}'"
+                        
+                        # Verify range exists (start != end means replacement)
+                        start = range_obj.get("start", {})
+                        end = range_obj.get("end", {})
+                        assert "start" in range_obj and "end" in range_obj, \
+                            f"Missing range in textEdit: {text_edit}"
+                        
+                        found = True
+                        print(f"{GREEN}  ✓ textEdit correctly replaces partial{NC}")
+                        print(f"    Label: {label}")
+                        print(f"    newText: {new_text}")
+                        print(f"    Range: {start.get('character')} -> {end.get('character')}")
+                        return True
+            
+            if not found:
+                print(f"{RED}  ✗ No completion with proper textEdit found{NC}")
+                print(f"    Items: {[i.get('label') for i in items[:5]]}")
+                return False
+                
+        finally:
+            client.shutdown()
+
+def test_fs_completion_text_edit():
+    """Test fs completion has textEdit that replaces partial."""
+    print(f"{YELLOW}TEST: fs() textEdit (no double-pump){NC}")
+    
+    lsp_path = find_lsp_binary()
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create test files
+        os.makedirs(Path(tmpdir, "src"), exist_ok=True)
+        Path(tmpdir, "src", "main.rs").touch()
+        Path(tmpdir, "src", "lib.rs").touch()
+        
+        client = LspClient(lsp_path, cwd=tmpdir)
+        try:
+            client.initialize(f"file://{tmpdir}")
+            
+            uri = f"file://{tmpdir}/test.sprf"
+            # User types: fs(src/*)
+            client.open_doc(uri, "rule(test) { fs(src/*) }")
+            
+            items = client.complete(uri, line=0, character=22)
+            
+            # Check at least one item has proper textEdit
+            has_text_edit = False
+            for item in items:
+                text_edit = item.get("textEdit", {})
+                if text_edit:
+                    new_text = text_edit.get("newText", "")
+                    range_obj = text_edit.get("range", {})
+                    
+                    # Verify range exists and new_text is a replacement
+                    if "start" in range_obj and "end" in range_obj:
+                        has_text_edit = True
+                        print(f"{GREEN}  ✓ Found completion with textEdit{NC}")
+                        print(f"    Label: {item.get('label')}")
+                        print(f"    newText: {new_text}")
+                        break
+            
+            if not has_text_edit:
+                print(f"{RED}  ✗ No completion with textEdit found{NC}")
+                print(f"    Items: {items[:3]}")
+                return False
+            
+            return True
+                
+        finally:
+            client.shutdown()
+
 def main():
     """Run all tests."""
     print("═══════════════════════════════════════════════════════")
@@ -244,6 +349,8 @@ def main():
         test_tag_completion,
         test_in_memory_scan_and_hover,
         test_hover_falls_back_to_db,
+        test_folder_completion_text_edit,
+        test_fs_completion_text_edit,
     ]
     
     passed = 0

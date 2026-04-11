@@ -12,8 +12,7 @@ rule(file_complete) {
 };
 
 rule(folder_complete) {
-  folder(src/*) {
-    fs(index.ts) > line(re:export const $NAME)
+  file(./) {
   }
 };
 

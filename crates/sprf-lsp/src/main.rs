@@ -374,6 +374,17 @@ fn offset_to_position(text: &str, offset: usize) -> Position {
     Position::new(line, col)
 }
 
+/// Calculate range to replace for partial text completion.
+/// Returns range from (cursor - partial.len()) to cursor.
+fn calculate_partial_range(cursor: Position, partial: &str) -> Range {
+    let partial_len = partial.chars().count() as u32;
+    let start_char = cursor.character.saturating_sub(partial_len);
+    Range {
+        start: Position::new(cursor.line, start_char),
+        end: cursor,
+    }
+}
+
 const TAGS: &[(&str, &str)] = &[
     ("fs", "File path glob: fs(**/pattern)"),
     (
@@ -622,12 +633,15 @@ impl LanguageServer for SprfLsp {
                     }
                 };
                 
+                // Calculate range to replace (from start of partial to cursor)
+                let replace_range = calculate_partial_range(pos, partial);
+                
                 match tag.as_str() {
                     "fs" | "file" => {
                         // File path completions
                         if let Some(root) = root {
                             log::debug!("completing files in '{}' with partial='{}'", root.display(), partial);
-                            let completions = completion::complete_files(&root, partial).await;
+                            let completions = completion::complete_files(&root, partial, replace_range).await;
                             log::info!("file completion returned {} items", completions.len());
                             items.extend(completions);
                         } else {
@@ -638,7 +652,7 @@ impl LanguageServer for SprfLsp {
                         // Directory completions
                         if let Some(root) = root {
                             log::debug!("completing folders in '{}' with partial='{}'", root.display(), partial);
-                            let completions = completion::complete_dirs(&root, partial).await;
+                            let completions = completion::complete_dirs(&root, partial, replace_range).await;
                             log::info!("folder completion returned {} items", completions.len());
                             items.extend(completions);
                         } else {

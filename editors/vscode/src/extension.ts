@@ -18,6 +18,9 @@ export function activate(context: ExtensionContext) {
 
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "sprf" }],
+    synchronize: {
+      fileEvents: workspace.createFileSystemWatcher("**/*.sprf"),
+    },
   };
 
   client = new LanguageClient(

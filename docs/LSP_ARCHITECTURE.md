@@ -328,3 +328,107 @@ PHASE 3: HOVER
 | **Namespace** | Auto-detect | Manual config | Zero config for user |
 | **Git refs** | Current repo only | All repos | Focused, less noise |
 ```
+
+
+## Appendix: Future Ideas & Unsolved Problems
+
+### JSON Path Completion from Live Files
+
+**The Idea:**
+Use the JSON matcher to enumerate all JSON paths from actual files in the workspace, then use those paths to suggest completions for JSON/YAML/TOML patterns.
+
+**Example:**
+```
+User types:                    Suggested completions:
+json({ name: $                json({ name: $NAME })     ← from package.json
+                              json({ name: $N })         ← from Cargo.toml
+                              json({ name: $title })     ← from some.yaml
+```
+
+**The Challenge:**
+JSON Path distinguishes between key-position matching and value-position matching:
+- `$.name` matches the key `"name"`
+- `$.name` also matches the value at that key
+- But capturing is value-oriented: `json({ name: $CAP })` captures the value
+
+**Unsolved Questions:**
+1. How do we capture keys vs values distinctly?
+2. Should `$KEY` capture the key name and `$VAL` capture the value?
+3. What about nested paths like `dependencies.$PKG.$VERSION`?
+4. How do we handle arrays: `scripts[$INDEX]`?
+
+**Implementation Sketch:**
+```rust
+// 1. Enumerate all paths from a sample of JSON files
+fn enumerate_json_paths(file: &Path) -> Vec<JsonPath> {
+    // Walk the JSON tree, build paths like:
+    // - $.name
+    // - $.dependencies.lodash
+    // - $.scripts.build
+}
+
+// 2. Suggest completions based on common patterns
+fn suggest_json_patterns(paths: &[JsonPath]) -> Vec<CompletionItem> {
+    // Group by similarity, suggest patterns like:
+    // "json({ name: $NAME })"
+    // "json({ dependencies: { $PKG: $VERSION } })"
+}
+```
+
+**Status:** Interesting but unsolved. The capture semantics for key vs value positions need design work.
+
+---
+
+### Simpler Approach: Declarative JSON Path → Pattern
+
+**Pragmatic Design:**
+Skip the key/value capture complexity. Just:
+1. Enumerate JSON paths from real files
+2. Convert paths to declarative patterns
+3. **Auto-place capture at value position**
+
+**Example:**
+```
+Discovered path:          Suggested pattern:
+$.name                    json({ name: $NAME })
+$.version                 json({ version: $VERSION })
+$.dependencies.lodash     json({ dependencies: { lodash: $LODASH } })
+$.scripts.build           json({ scripts: { build: $BUILD } })
+```
+
+**Key insight:** The capture is *always* at the leaf value. User can rename `$NAME` to whatever.
+
+**Implementation:**
+```rust
+fn path_to_pattern(path: &JsonPath) -> String {
+    // $.dependencies.lodash → json({ dependencies: { lodash: $LODASH } })
+    let parts = path.segments();
+    let leaf = parts.last().unwrap().to_uppercase();
+    build_nested_json(parts, &format!("${}", leaf))
+}
+```
+
+**Trade-off:** Can't match on dynamic keys (e.g., "find all dependency names"), but covers 80% of use cases.
+
+**Next Steps:**
+- [ ] Enumerate paths from `package.json`, `Cargo.toml`
+- [ ] Build frequency map (common paths = higher priority)
+- [ ] Suggest top 10 patterns as completions
+
+---
+
+### TOML/YAML/JSON Unified Completion
+
+**The Idea:**
+Extend the JSON matcher concept to TOML and YAML with unified syntax:
+```
+# All three match the same conceptual pattern
+toml([package] name = $NAME)
+yaml(package: name: $NAME)
+json({ name: $NAME })
+```
+
+**Challenge:** Different nesting syntax (tables vs objects) makes unification tricky.
+
+**Status:** Would be fun to implement after JSON path completion is solved.
+
