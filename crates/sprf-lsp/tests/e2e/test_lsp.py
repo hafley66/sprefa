@@ -4,6 +4,7 @@
 import sys
 import tempfile
 import os
+import json
 from pathlib import Path
 
 # Add parent dir to path for importing lsp_client
@@ -52,7 +53,7 @@ def test_initialize():
             client.shutdown()
 
 def test_fs_completion():
-    """Test fs(**/car completes to Cargo.toml."""
+    """Test fs(**/car completes to **/Cargo.toml (star preserved)."""
     print(f"{YELLOW}TEST: fs() completion{NC}")
     
     lsp_path = find_lsp_binary()
@@ -74,9 +75,10 @@ def test_fs_completion():
             items = client.complete(uri, line=0, character=20)
             
             labels = [i.get("label", "") for i in items]
-            assert "Cargo.toml" in labels, f"Cargo.toml not in: {labels}"
+            # With star preservation, label is now "**/Cargo.toml" not "Cargo.toml"
+            assert "**/Cargo.toml" in labels, f"**/Cargo.toml not in: {labels}"
             
-            print(f"{GREEN}  ✓ Found Cargo.toml in completions{NC}")
+            print(f"{GREEN}  ✓ Found **/Cargo.toml (star preserved) in completions{NC}")
             print(f"    Items: {labels[:3]}")
             return True
         finally:
@@ -288,6 +290,55 @@ def test_folder_completion_text_edit():
         finally:
             client.shutdown()
 
+def test_folder_completion_full_response():
+    """Test folder completion returns expected full response structure (snapshot-style)."""
+    print(f"{YELLOW}TEST: folder() full response structure{NC}")
+    
+    lsp_path = find_lsp_binary()
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create simple structure
+        os.makedirs(Path(tmpdir, "src"), exist_ok=True)
+        
+        client = LspClient(lsp_path, cwd=tmpdir)
+        try:
+            client.initialize(f"file://{tmpdir}")
+            
+            uri = f"file://{tmpdir}/test.sprf"
+            client.open_doc(uri, "rule(test) { folder(s) }")
+            
+            items = client.complete(uri, line=0, character=23)
+            
+            # SNAPSHOT: This is the exact expected response
+            expected = [
+                {
+                    "detail": "folder",
+                    "filterText": "src/",
+                    "kind": 19,
+                    "label": "src/",
+                    "textEdit": {
+                        "newText": "src/",
+                        "range": {
+                            "end": {"character": 23, "line": 0},
+                            "start": {"character": 22, "line": 0}
+                        }
+                    }
+                }
+            ]
+            
+            # Compare actual to expected
+            if items != expected:
+                print(f"{RED}  ✗ Response mismatch{NC}")
+                print(f"    Expected: {json.dumps(expected, indent=2)}")
+                print(f"    Actual:   {json.dumps(items, indent=2)}")
+                return False
+            
+            print(f"{GREEN}  ✓ Full response matches snapshot{NC}")
+            return True
+            
+        finally:
+            client.shutdown()
+
 def test_fs_completion_text_edit():
     """Test fs completion has textEdit that replaces partial."""
     print(f"{YELLOW}TEST: fs() textEdit (no double-pump){NC}")
@@ -336,6 +387,40 @@ def test_fs_completion_text_edit():
         finally:
             client.shutdown()
 
+def test_fs_completion_full_response():
+    """Test fs completion returns expected full response with star preservation (snapshot)."""
+    print(f"{YELLOW}TEST: fs() full response snapshot{NC}")
+    
+    # Import snapshot
+    sys.path.insert(0, str(Path(__file__).parent / "snapshots"))
+    from fs_crates_star import FS_CRATES_STAR_SNAPSHOT
+    
+    lsp_path = find_lsp_binary()
+    project_root = Path(__file__).parent.parent.parent.parent.parent
+    
+    client = LspClient(lsp_path, cwd=str(project_root))
+    try:
+        client.initialize(f"file://{project_root}")
+        uri = f"file://{project_root}/crates/sprf-lsp/tests/e2e/fixtures/kitchen_sink.sprf"
+        client.open_doc(uri, "rule(test) { fs(crates/*/) }")
+        items = client.complete(uri, line=0, character=26)
+        
+        # Compare first 3 items to snapshot
+        actual = items[:3] if len(items) >= 3 else items
+        expected = FS_CRATES_STAR_SNAPSHOT[:3]
+        
+        if actual != expected:
+            print(f"{RED}  ✗ SNAPSHOT MISMATCH{NC}")
+            print(f"    Expected: {json.dumps(expected, indent=2)}")
+            print(f"    Actual:   {json.dumps(actual, indent=2)}")
+            return False
+        
+        print(f"{GREEN}  ✓ Snapshot matches{NC}")
+        return True
+        
+    finally:
+        client.shutdown()
+
 def main():
     """Run all tests."""
     print("═══════════════════════════════════════════════════════")
@@ -351,6 +436,8 @@ def main():
         test_hover_falls_back_to_db,
         test_folder_completion_text_edit,
         test_fs_completion_text_edit,
+        test_folder_completion_full_response,
+        test_fs_completion_full_response,
     ]
     
     passed = 0
