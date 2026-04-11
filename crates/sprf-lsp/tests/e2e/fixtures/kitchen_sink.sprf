@@ -1,0 +1,56 @@
+# Kitchen Sink - E2E Test Fixture
+# Tests all completion contexts
+
+# ── File completions ──────────────────────────
+
+rule(fs_complete) {
+  fs(**/Cargo.toml) > json({ package: { name: $NAME } })
+};
+
+rule(file_complete) {
+  file(**/*.md) > md(# $TITLE)
+};
+
+rule(folder_complete) {
+  folder(src/*) {
+    fs(index.ts) > line(re:export const $NAME)
+  }
+};
+
+# ── Repo/Rev completions ──────────────────────
+
+rule(repo_complete) {
+  repo(myorg/*) {
+    rev(main|develop) {
+      fs(**/package.json) > json({ version: $VER })
+    }
+  }
+};
+
+rule(inline_repo) {
+  fs(**/services.yaml) > json({ image: { repository: repo($REPO) } })
+};
+
+# ── Capture variables (for hover) ─────────────
+
+rule(capture_test) {
+  fs(**/Cargo.toml) > json({ 
+    package: { 
+      name: $PKG_NAME,
+      version: $PKG_VERSION
+    },
+    dependencies: { $DEP: $DEP_VER }
+  })
+};
+
+# ── Cross-rule refs ───────────────────────────
+
+rule(base_rule) {
+  fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+};
+
+rule(derived_rule) {
+  base_rule(repo: $REPO, tag: $TAG) {
+    fs(**/deploy.yaml) > json({ app: $APP })
+  }
+};

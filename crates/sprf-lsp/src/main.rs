@@ -8,9 +8,17 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 use sprefa_sprf::_0_ast::{RuleBody, Statement, Tag};
 use sprefa_sprf::_1_parse::parse_program;
 
+mod completion;
+mod context;
+mod db;
+mod hover;
+mod workspace;
+
 struct SprfLsp {
     client: Client,
     state: Mutex<DocState>,
+    workspace: Mutex<Option<workspace::Workspace>>,
+    hover_provider: Mutex<hover::HoverProvider>,
 }
 
 /// Byte range of a statement in the source text.
@@ -146,6 +154,16 @@ impl DocState {
         // Fallback: all captures
         self.all_captures.iter().cloned().collect()
     }
+
+    /// Find the rule name that contains the given offset.
+    fn rule_at(&self, offset: usize) -> Option<&str> {
+        for rule in &self.rules {
+            if offset >= rule.span.start && offset <= rule.span.end {
+                return Some(&rule.name);
+            }
+        }
+        None
+    }
 }
 
 /// Find byte ranges for each statement by scanning for `;` terminators.
@@ -190,6 +208,10 @@ enum CompletionContext {
     CrossRefBinding,
     /// At a position that could be a cross-ref rule name or tag.
     RuleOrTag,
+    /// Inside a tag body with a specific tag type.
+    InsideTag { tag: String, partial: String },
+    /// Inside a repo/rev scoped block.
+    InsideRepoRev { repo: String, partial: String },
     Unknown,
 }
 
@@ -220,6 +242,22 @@ fn detect_context(text: &str, offset: usize) -> CompletionContext {
 
     if let Some(paren_pos) = last_open {
         let pre = before[..paren_pos].trim_end();
+
+        // Check for tag name before the paren
+        let tag_start = pre
+            .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let tag_name = &pre[tag_start..];
+
+        // Inside a tag body: fs(...), file(...), folder(...), repo(...), rev(...)
+        if !tag_name.is_empty() && Tag::from_str(tag_name).is_some() {
+            let paren_content = &before[paren_pos + 1..];
+            return CompletionContext::InsideTag {
+                tag: tag_name.to_string(),
+                partial: paren_content.to_string(),
+            };
+        }
 
         // Inside a tag body: json(...), ast(...), line(...)
         if pre.ends_with("json")
@@ -259,6 +297,40 @@ fn detect_context(text: &str, offset: usize) -> CompletionContext {
     }
 
     CompletionContext::Unknown
+}
+
+/// Detect context using tokenization (fallback when parsing fails).
+fn detect_context_tokenized(text: &str) -> CompletionContext {
+    let tokens = context::tokenize(text);
+    
+    log::debug!("tokenized {} chars into {} tokens", text.len(), tokens.len());
+    if log::log_enabled!(log::Level::Debug) {
+        for (i, t) in tokens.iter().take(20).enumerate() {
+            log::debug!("  token[{}]: {} @ {}-{} ", i, t.token, t.start, t.end);
+        }
+        if tokens.len() > 20 {
+            log::debug!("  ... {} more tokens", tokens.len() - 20);
+        }
+    }
+    
+    match context::detect_context(&tokens) {
+        context::Context::InsideTag { tag, partial } => {
+            log::debug!("detected context: InsideTag(tag='{}', partial='{}')", tag, partial);
+            CompletionContext::InsideTag { tag, partial }
+        }
+        context::Context::InsideRepoRev { repo, partial } => {
+            log::debug!("detected context: InsideRepoRev(repo='{}', partial='{}')", repo, partial);
+            CompletionContext::InsideRepoRev { repo, partial }
+        }
+        context::Context::InsideCapture => {
+            log::debug!("detected context: InsideCapture");
+            CompletionContext::Capture
+        }
+        context::Context::Unknown => {
+            log::debug!("detected context: Unknown");
+            CompletionContext::Unknown
+        }
+    }
 }
 
 fn position_to_offset(text: &str, pos: Position) -> usize {
@@ -335,7 +407,49 @@ const STATEMENT_KEYWORDS: &[(&str, &str)] = &[
 
 #[tower_lsp::async_trait]
 impl LanguageServer for SprfLsp {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        log::info!("LSP initialize request received");
+        
+        // Use rootUri from initialize params as workspace root
+        let root_path = params.root_uri.as_ref().and_then(|uri| {
+            uri.to_file_path().ok()
+        });
+        
+        // Load workspace, preferring rootUri location
+        let ws = if let Some(root) = root_path {
+            // Try loading from specified root first
+            let config_path = root.join("sprefa.toml");
+            if config_path.exists() {
+                workspace::Workspace::from_path(&config_path).ok()
+            } else {
+                // Create minimal workspace from root
+                Some(workspace::Workspace::from_directory(root))
+            }
+        } else {
+            workspace::Workspace::load()
+        };
+        let db_path = ws.as_ref().and_then(|w| w.db_path.clone());
+        
+        if let Some(ref workspace) = ws {
+            log::info!("workspace loaded: root='{}', repos={}, db_path={}",
+                workspace.root.display(),
+                workspace.repo_names().len(),
+                workspace.db_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".to_string())
+            );
+        } else {
+            log::info!("no workspace loaded (not in a sprefa project)");
+        }
+        
+        {
+            let mut workspace = self.workspace.lock().unwrap();
+            *workspace = ws;
+        }
+        
+        {
+            let mut hover_provider = self.hover_provider.lock().unwrap();
+            *hover_provider = hover::HoverProvider::new(db_path.as_deref());
+        }
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -352,6 +466,7 @@ impl LanguageServer for SprfLsp {
                     ]),
                     ..Default::default()
                 }),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..Default::default()
             },
             ..Default::default()
@@ -359,21 +474,25 @@ impl LanguageServer for SprfLsp {
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        log::info!("LSP initialized");
         self.client
             .log_message(MessageType::INFO, "sprf-lsp initialized")
             .await;
     }
 
     async fn shutdown(&self) -> Result<()> {
+        log::info!("LSP shutdown request received");
         Ok(())
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        log::info!("document opened: {}", params.text_document.uri);
         self.on_change(&params.text_document.uri, &params.text_document.text)
             .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        log::debug!("document changed: {}", params.text_document.uri);
         if let Some(change) = params.content_changes.into_iter().last() {
             self.on_change(&params.text_document.uri, &change.text)
                 .await;
@@ -381,15 +500,37 @@ impl LanguageServer for SprfLsp {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let state = self.state.lock().unwrap();
+        let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
-        let offset = position_to_offset(&state.text, pos);
-        let ctx = detect_context(&state.text, offset);
+        log::info!("completion request: {} at line {} col {}", uri, pos.line, pos.character);
+        
+        // Extract all data we need from state before any awaits
+        let (text, offset, captures, rule_names, ctx) = {
+            let state = self.state.lock().unwrap();
+            let offset = position_to_offset(&state.text, pos);
+            
+            // Try full parse first, fall back to tokenization if it fails
+            let ctx = if parse_program(&state.text).is_ok() {
+                log::debug!("using parser-based context detection");
+                detect_context(&state.text, offset)
+            } else {
+                // Use tokenization-based context detection
+                log::debug!("using tokenization-based context detection (parse failed)");
+                detect_context_tokenized(&state.text[..offset])
+            };
+            
+            let captures: Vec<String> = state.captures_at(offset);
+            let rule_names: Vec<String> = state.rule_names.clone();
+            let text = state.text.clone();
+            
+            (text, offset, captures, rule_names, ctx)
+        };
 
         let mut items = vec![];
 
-        match ctx {
+        match &ctx {
             CompletionContext::TagName => {
+                log::info!("completion context: TagName, providing {} tags", TAGS.len());
                 for &(tag, detail) in TAGS {
                     items.push(CompletionItem {
                         label: tag.into(),
@@ -400,6 +541,8 @@ impl LanguageServer for SprfLsp {
                 }
             }
             CompletionContext::RuleOrTag => {
+                log::info!("completion context: RuleOrTag, {} keywords, {} tags, {} rules", 
+                    STATEMENT_KEYWORDS.len(), TAGS.len(), rule_names.len());
                 // Statement keywords at top level
                 for &(kw, detail) in STATEMENT_KEYWORDS {
                     items.push(CompletionItem {
@@ -419,7 +562,7 @@ impl LanguageServer for SprfLsp {
                     });
                 }
                 // Rule names for cross-refs
-                for name in &state.rule_names {
+                for name in &rule_names {
                     items.push(CompletionItem {
                         label: name.clone(),
                         kind: Some(CompletionItemKind::FUNCTION),
@@ -429,12 +572,13 @@ impl LanguageServer for SprfLsp {
                 }
             }
             CompletionContext::Capture => {
-                for cap in state.captures_at(offset) {
+                log::info!("completion context: Capture, {} captures available", captures.len());
+                for cap in &captures {
                     items.push(CompletionItem {
                         label: format!("${}", cap),
                         kind: Some(CompletionItemKind::VARIABLE),
                         detail: Some("capture".into()),
-                        insert_text: Some(cap),
+                        insert_text: Some(cap.clone()),
                         ..Default::default()
                     });
                 }
@@ -447,8 +591,9 @@ impl LanguageServer for SprfLsp {
                 });
             }
             CompletionContext::CrossRefBinding => {
+                log::info!("completion context: CrossRefBinding, {} captures available", captures.len());
                 // Suggest captures from current rule scope
-                for cap in state.captures_at(offset) {
+                for cap in &captures {
                     items.push(CompletionItem {
                         label: format!("${}", cap),
                         kind: Some(CompletionItemKind::VARIABLE),
@@ -458,7 +603,110 @@ impl LanguageServer for SprfLsp {
                     });
                 }
             }
+            CompletionContext::InsideTag { tag, partial } => {
+                log::info!("completion context: InsideTag(tag='{}', partial='{}')", tag, partial);
+                
+                // Extract workspace data before await
+                let (root, repo_names) = {
+                    let ws_guard = self.workspace.lock().unwrap();
+                    match *ws_guard {
+                        Some(ref ws) => (Some(ws.root.clone()), Some(ws.repo_names())),
+                        None => (None, None),
+                    }
+                };
+                
+                match tag.as_str() {
+                    "fs" | "file" => {
+                        // File path completions
+                        if let Some(root) = root {
+                            log::debug!("completing files in '{}' with partial='{}'", root.display(), partial);
+                            let completions = completion::complete_files(&root, partial).await;
+                            log::info!("file completion returned {} items", completions.len());
+                            items.extend(completions);
+                        } else {
+                            log::debug!("no workspace root, skipping file completion");
+                        }
+                    }
+                    "folder" => {
+                        // Directory completions
+                        if let Some(root) = root {
+                            log::debug!("completing folders in '{}' with partial='{}'", root.display(), partial);
+                            let completions = completion::complete_dirs(&root, partial).await;
+                            log::info!("folder completion returned {} items", completions.len());
+                            items.extend(completions);
+                        } else {
+                            log::debug!("no workspace root, skipping folder completion");
+                        }
+                    }
+                    "repo" => {
+                        // Repository name completions
+                        if let Some(names) = repo_names {
+                            log::debug!("completing repo names from {} repos with partial='{}'", names.len(), partial);
+                            let completions = completion::complete_repo_names(&names, partial);
+                            log::info!("repo completion returned {} items", completions.len());
+                            items.extend(completions);
+                        } else {
+                            log::debug!("no workspace repos, skipping repo completion");
+                        }
+                    }
+                    "rev" | "branch" | "tag" => {
+                        // Git ref completions
+                        if let Some(root) = root {
+                            // Find the repo context
+                            let repo = find_repo_context(&text, offset);
+                            log::debug!("completing git refs: repo_context={:?}, partial='{}'", repo, partial);
+                            
+                            // Get the repo path - for now use root
+                            let repo_path = root;
+                            
+                            let completions = completion::complete_git_refs(&repo_path, partial).await;
+                            log::info!("git ref completion returned {} items", completions.len());
+                            items.extend(completions);
+                        } else {
+                            log::debug!("no workspace root, skipping git ref completion");
+                        }
+                    }
+                    _ => {
+                        log::debug!("no special completion for tag '{}'", tag);
+                    }
+                }
+                
+                // Also include capture completions when inside tag bodies that might have captures
+                if matches!(tag.as_str(), "json" | "ast" | "line") {
+                    log::debug!("adding capture completions for {} tag", tag);
+                    for cap in &captures {
+                        items.push(CompletionItem {
+                            label: format!("${}", cap),
+                            kind: Some(CompletionItemKind::VARIABLE),
+                            detail: Some("capture".into()),
+                            insert_text: Some(cap.clone()),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            CompletionContext::InsideRepoRev { repo, partial } => {
+                log::info!("completion context: InsideRepoRev(repo='{}', partial='{}')", repo, partial);
+                
+                // Extract workspace data before await
+                let root = {
+                    let ws_guard = self.workspace.lock().unwrap();
+                    ws_guard.as_ref().map(|ws| ws.root.clone())
+                };
+                
+                // Similar to "rev" tag but with known repo context
+                if let Some(root) = root {
+                    let _repo = repo; // repo context available if needed
+                    let completions = completion::complete_git_refs(&root, partial).await;
+                    log::info!("repo/rev completion returned {} items", completions.len());
+                    items.extend(completions);
+                } else {
+                    log::debug!("no workspace root, skipping repo/rev completion");
+                }
+            }
             CompletionContext::Unknown => {
+                log::info!("completion context: Unknown, providing default completions ({} tags, {} rules)",
+                    TAGS.len(), rule_names.len());
                 for &(tag, detail) in TAGS {
                     items.push(CompletionItem {
                         label: tag.into(),
@@ -467,7 +715,7 @@ impl LanguageServer for SprfLsp {
                         ..Default::default()
                     });
                 }
-                for name in &state.rule_names {
+                for name in &rule_names {
                     items.push(CompletionItem {
                         label: name.clone(),
                         kind: Some(CompletionItemKind::FUNCTION),
@@ -478,8 +726,110 @@ impl LanguageServer for SprfLsp {
             }
         }
 
+        log::info!("completion request completed: {} items total", items.len());
         Ok(Some(CompletionResponse::Array(items)))
     }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        log::info!("hover request: {} at line {} col {}", uri, pos.line, pos.character);
+        
+        let state = self.state.lock().unwrap();
+        let offset = position_to_offset(&state.text, pos);
+        
+        // Find capture at position in AST
+        if let Some((var, rule_name)) = find_capture_at_position(&state, offset) {
+            log::info!("hover: found capture var='{}' in rule='{}'", var, rule_name);
+            
+            let hover_provider = self.hover_provider.lock().unwrap();
+            if let Some(hover) = hover_provider.hover(&var, &rule_name) {
+                log::info!("hover: provider returned result for ${}", var);
+                return Ok(Some(hover));
+            } else {
+                log::info!("hover: provider returned no result for ${} in {}", var, rule_name);
+            }
+        } else {
+            log::debug!("hover: no capture found at offset {}", offset);
+        }
+        
+        Ok(None)
+    }
+}
+
+/// Find the repo context at a given offset by looking for repo(...) patterns.
+fn find_repo_context(text: &str, offset: usize) -> Option<String> {
+    let before = &text[..offset.min(text.len())];
+    
+    // Look for the most recent repo(...) pattern before this position
+    let mut depth = 0i32;
+    let mut last_repo: Option<String> = None;
+    
+    for (i, ch) in before.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    // We've exited the current scope, reset
+                    depth = 0;
+                    last_repo = None;
+                }
+            }
+            _ => {}
+        }
+        
+        // Look for repo( pattern
+        if ch == '(' && i >= 4 {
+            let before_paren = &before[..i];
+            if before_paren.ends_with("repo") {
+                // Extract the repo name from inside the parens
+                let after_paren = &before[i + 1..];
+                if let Some(close_idx) = after_paren.find(')') {
+                    let repo_content = &after_paren[..close_idx];
+                    last_repo = Some(repo_content.trim().to_string());
+                }
+            }
+        }
+    }
+    
+    last_repo
+}
+
+/// Find capture variable and rule name at a given position.
+fn find_capture_at_position(state: &DocState, offset: usize) -> Option<(String, String)> {
+    // Find which rule we're in
+    let rule_name = state.rule_at(offset)?;
+    
+    // Look for $VAR pattern around the offset
+    let text = &state.text;
+    
+    // Find the word at the current position
+    let before = &text[..offset.min(text.len())];
+    let after = &text[offset.min(text.len())..];
+    
+    // Find start of current word
+    let word_start = before
+        .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    
+    // Find end of current word
+    let word_end = offset + after
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .unwrap_or(after.len());
+    
+    let word = &text[word_start..word_end];
+    
+    // Check if it's a capture variable (starts with $)
+    if word.starts_with('$') {
+        let var_name = &word[1..]; // Remove the $
+        if !var_name.is_empty() {
+            return Some((var_name.to_string(), rule_name.to_string()));
+        }
+    }
+    
+    None
 }
 
 impl SprfLsp {
@@ -496,6 +846,7 @@ impl SprfLsp {
         // Parse error diagnostic
         if let Err(e) = parse_program(text) {
             let err_msg = e.to_string();
+            log::debug!("parse error in {}: {}", uri, err_msg);
             let (start_pos, end_pos) = guess_error_position(text, &err_msg);
             diags.push(Diagnostic {
                 range: Range {
@@ -523,6 +874,7 @@ impl SprfLsp {
             });
         }
 
+        log::debug!("publishing {} diagnostics for {}", diags.len(), uri);
         self.client
             .publish_diagnostics(uri.clone(), diags, None)
             .await;
@@ -556,13 +908,24 @@ fn guess_error_position(text: &str, _err_msg: &str) -> (Position, Position) {
 
 #[tokio::main]
 async fn main() {
+    // Initialize env_logger for configurable logging
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
+    
+    log::info!("sprf-lsp starting up");
+    
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
     let (service, socket) = LspService::new(|client| SprfLsp {
         client,
         state: Mutex::new(DocState::default()),
+        workspace: Mutex::new(None),
+        hover_provider: Mutex::new(hover::HoverProvider::empty()),
     });
 
+    log::info!("LSP service created, starting server");
     Server::new(stdin, stdout, socket).serve(service).await;
+    log::info!("sprf-lsp shutting down");
 }
