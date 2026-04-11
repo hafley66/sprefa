@@ -320,7 +320,7 @@ fn detect_context_tokenized(text: &str) -> CompletionContext {
         }
     }
     
-    match context::detect_context(&tokens) {
+    match context::detect_context(&tokens, tokens.last().map(|t| t.end).unwrap_or(0)) {
         context::Context::InsideTag { tag, partial } => {
             log::debug!("detected context: InsideTag(tag='{}', partial='{}')", tag, partial);
             CompletionContext::InsideTag { tag, partial }

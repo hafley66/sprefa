@@ -302,14 +302,38 @@ pub fn scan_backwards(tokens: &[TokenSpan], cursor_pos: usize) -> Vec<&TokenSpan
 /// Detect context from token stream for autocomplete.
 ///
 /// Uses heuristics to handle incomplete syntax like `fs(**/car` (no closing paren).
-pub fn detect_context(tokens: &[TokenSpan]) -> Context {
+/// 
+/// The cursor_pos indicates where the cursor is, which helps detect when we're
+/// right after content inside parens (e.g., `fs(**/|)` should still be InsideTag).
+pub fn detect_context(tokens: &[TokenSpan], cursor_pos: usize) -> Context {
     if tokens.is_empty() {
         return Context::Unknown;
     }
 
     // First pass: check for InsideRepoRev (highest priority for scoped contexts)
-    if let Some(ctx) = detect_repo_rev_context(tokens) {
+    if let Some(ctx) = detect_repo_rev_context(tokens, cursor_pos) {
         return ctx;
+    }
+
+    // Check if cursor is immediately after a Raw token inside parens
+    // This handles `fs(**/|)` where cursor is after the raw content
+    for (i, token) in tokens.iter().enumerate() {
+        if let Token::Raw(content) = &token.token {
+            // Cursor is right after this raw token
+            if token.end == cursor_pos {
+                // Look back for LParen then Tag
+                if i >= 2 {
+                    if let Token::LParen = tokens[i-1].token {
+                        if let Token::Tag(tag_name) = &tokens[i-2].token {
+                            return Context::InsideTag {
+                                tag: tag_name.clone(),
+                                partial: content.clone(),
+                            };
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Second pass: check for other contexts
@@ -372,7 +396,7 @@ pub fn detect_context(tokens: &[TokenSpan]) -> Context {
 }
 
 /// Detect InsideRepoRev context by looking for repo/rev patterns.
-fn detect_repo_rev_context(tokens: &[TokenSpan]) -> Option<Context> {
+fn detect_repo_rev_context(tokens: &[TokenSpan], _cursor_pos: usize) -> Option<Context> {
     // Look for pattern: repo(X) { ... rev(Y
     // We need to find a rev/branch/tag tag that has a repo ancestor
 
@@ -504,7 +528,7 @@ fn find_enclosing_repo(tokens: &[TokenSpan], before_idx: usize) -> Option<String
 /// Convenience: tokenize and detect context at cursor position.
 pub fn analyze_at_position(input: &str, cursor_pos: usize) -> (Vec<TokenSpan>, Context) {
     let tokens = tokenize(input);
-    let context = detect_context(&tokens);
+    let context = detect_context(&tokens, tokens.last().map(|t| t.end).unwrap_or(0));
     (tokens, context)
 }
 
@@ -592,7 +616,7 @@ rule(pkg) { fs(**/Cargo.toml) }
     fn test_detect_inside_tag() {
         let input = r#"fs(**/car"#;
         let tokens = tokenize(input);
-        let context = detect_context(&tokens);
+        let context = detect_context(&tokens, tokens.last().map(|t| t.end).unwrap_or(0));
 
         assert_eq!(
             context,
@@ -607,7 +631,7 @@ rule(pkg) { fs(**/Cargo.toml) }
     fn test_detect_inside_capture() {
         let input = r#"rule(pkg) { fs($"#;
         let tokens = tokenize(input);
-        let context = detect_context(&tokens);
+        let context = detect_context(&tokens, tokens.last().map(|t| t.end).unwrap_or(0));
 
         assert_eq!(context, Context::InsideCapture);
     }
@@ -616,7 +640,7 @@ rule(pkg) { fs(**/Cargo.toml) }
     fn test_detect_inside_repo_rev() {
         let input = r#"repo(myrepo) { rev(main"#;
         let tokens = tokenize(input);
-        let context = detect_context(&tokens);
+        let context = detect_context(&tokens, tokens.last().map(|t| t.end).unwrap_or(0));
 
         assert_eq!(
             context,
@@ -631,7 +655,7 @@ rule(pkg) { fs(**/Cargo.toml) }
     fn test_detect_inside_repo_rev_with_capture() {
         let input = r#"repo($REPO) { rev($BRANCH"#;
         let tokens = tokenize(input);
-        let context = detect_context(&tokens);
+        let context = detect_context(&tokens, tokens.last().map(|t| t.end).unwrap_or(0));
 
         assert_eq!(
             context,
@@ -653,7 +677,7 @@ rule(pkg) { fs(**/Cargo.toml) }
     fn test_partial_with_special_chars() {
         let input = r#"fs(**/src/*.rs"#;
         let tokens = tokenize(input);
-        let context = detect_context(&tokens);
+        let context = detect_context(&tokens, tokens.last().map(|t| t.end).unwrap_or(0));
 
         assert!(
             matches!(context, Context::InsideTag { tag, partial } if tag == "fs" && partial.contains("**/src/*.rs"))
