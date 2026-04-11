@@ -234,12 +234,10 @@ check(version_drift) {
   WHERE s_tag.value LIKE 'latest%'
 };
 
-check(orphan_dep) {
-  SELECT s.value as dep
+check(has_dependencies) {
+  SELECT COUNT(*) as dep_count
   FROM dep_source ds
-  JOIN strings s ON s.id = ds.dep_ref
-  LEFT JOIN package_name pn ON pn.name_ref = ds.dep_ref
-  WHERE pn.name_ref IS NULL
+  HAVING dep_count < 1
 };
 
 # ════════════════════════════════════════════════════════
