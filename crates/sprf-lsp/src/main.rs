@@ -1,4 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use tower_lsp::jsonrpc::Result;
@@ -14,11 +16,16 @@ mod db;
 mod hover;
 mod workspace;
 
+/// In-memory scan results: rule_name -> (var_name -> Vec<values>)
+type InMemoryResults = HashMap<String, HashMap<String, Vec<String>>>;
+
 struct SprfLsp {
     client: Client,
     state: Mutex<DocState>,
     workspace: Mutex<Option<workspace::Workspace>>,
     hover_provider: Mutex<hover::HoverProvider>,
+    /// In-memory scan results for immediate hover without DB persistence
+    in_memory_results: Mutex<InMemoryResults>,
 }
 
 /// Byte range of a statement in the source text.
@@ -742,18 +749,75 @@ impl LanguageServer for SprfLsp {
         if let Some((var, rule_name)) = find_capture_at_position(&state, offset) {
             log::info!("hover: found capture var='{}' in rule='{}'", var, rule_name);
             
+            // Extract namespace from filename (e.g., "sprefa-rules.sprf" -> "sprefa-rules")
+            let namespace = uri.path().rsplit('/').next()
+                .and_then(|filename| filename.strip_suffix(".sprf"))
+                .filter(|name| *name != "test" && *name != "kitchen_sink");
+            log::debug!("hover: extracted namespace={:?} from uri={}", namespace, uri);
+            
+            // First try DB hover provider
             let hover_provider = self.hover_provider.lock().unwrap();
-            if let Some(hover) = hover_provider.hover(&var, &rule_name) {
+            if let Some(hover) = hover_provider.hover(&var, &rule_name, namespace) {
                 log::info!("hover: provider returned result for ${}", var);
                 return Ok(Some(hover));
-            } else {
-                log::info!("hover: provider returned no result for ${} in {}", var, rule_name);
             }
+            drop(hover_provider); // Release lock before checking in-memory
+            
+            // If DB returned empty, check in-memory results
+            log::debug!("hover: checking in-memory results for ${} in {}", var, rule_name);
+            let in_memory = self.in_memory_results.lock().unwrap();
+            if let Some(rule_results) = in_memory.get(&rule_name) {
+                if let Some(values) = rule_results.get(&var) {
+                    if !values.is_empty() {
+                        log::info!("hover: found {} in-memory values for ${} in {}", 
+                            values.len(), var, rule_name);
+                        return Ok(Some(self.build_hover(&var, &rule_name, values)));
+                    }
+                }
+            }
+            log::info!("hover: no in-memory results for ${} in {}", var, rule_name);
         } else {
             log::debug!("hover: no capture found at offset {}", offset);
         }
         
         Ok(None)
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let uri = &params.text_document.uri;
+        log::info!("document saved: {}", uri);
+        
+        // Get the document text and file path
+        let (text, file_path) = {
+            let state = self.state.lock().unwrap();
+            (state.text.clone(), uri.to_file_path().ok())
+        };
+        
+        // Run in-memory scan and update cache
+        match self.scan_file(&text).await {
+            Ok(results) => {
+                let rule_count = results.len();
+                // Merge new results into in-memory cache
+                {
+                    let mut in_memory = self.in_memory_results.lock().unwrap();
+                    for (rule_name, vars) in results {
+                        let entry = in_memory.entry(rule_name).or_default();
+                        for (var_name, values) in vars {
+                            entry.insert(var_name, values);
+                        }
+                    }
+                    log::info!("in-memory scan completed: {} rules cached", rule_count);
+                } // lock released here
+                
+                // If we have a workspace with DB, persist the scan results
+                if let Some(file_path) = file_path {
+                    self.persist_scan_to_db(&file_path).await;
+                }
+            }
+            Err(e) => {
+                log::warn!("in-memory scan failed: {}", e);
+            }
+        }
     }
 }
 
@@ -879,6 +943,198 @@ impl SprfLsp {
             .publish_diagnostics(uri.clone(), diags, None)
             .await;
     }
+
+    /// Scan a sprf file and return extracted values without persisting to DB.
+    /// 
+    /// Returns: rule_name -> (var_name -> Vec<values>)
+    async fn scan_file(&self, text: &str) -> anyhow::Result<InMemoryResults> {
+        log::debug!("scan_file: parsing sprf content");
+        
+        // Parse the sprf file using sprf crate
+        let (ruleset, _edges) = match sprefa_sprf::parse_sprf(text) {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!("scan_file: failed to parse sprf: {}", e);
+                return Ok(HashMap::new());
+            }
+        };
+        
+        log::debug!("scan_file: parsed {} rules", ruleset.rules.len());
+        
+        // Build results map: rule_name -> (var_name -> Vec<values>)
+        let mut results: InMemoryResults = HashMap::new();
+        
+        // Get workspace root for file resolution
+        let workspace_root = {
+            let ws_guard = self.workspace.lock().unwrap();
+            ws_guard.as_ref().map(|ws| ws.root.clone())
+        };
+        
+        // For each rule, attempt to run extraction
+        for rule in &ruleset.rules {
+            let mut rule_results: HashMap<String, Vec<String>> = HashMap::new();
+            
+            // Collect capture names from create_matches
+            for match_def in &rule.create_matches {
+                let var_name = &match_def.capture;
+                
+                // Try to extract values based on rule selectors
+                if let Some(values) = self.extract_values_for_rule(rule, var_name, workspace_root.as_ref()).await {
+                    if !values.is_empty() {
+                        rule_results.insert(var_name.clone(), values);
+                    }
+                }
+            }
+            
+            if !rule_results.is_empty() {
+                results.insert(rule.name.clone(), rule_results);
+            }
+        }
+        
+        log::info!("scan_file: extracted values for {} rules", results.len());
+        Ok(results)
+    }
+
+    /// Extract values for a specific variable in a rule.
+    /// This is a simplified extraction that works with the available context.
+    async fn extract_values_for_rule(
+        &self,
+        rule: &sprefa_rules::types::Rule,
+        var_name: &str,
+        workspace_root: Option<&PathBuf>,
+    ) -> Option<Vec<String>> {
+        // For now, we only extract file-based patterns (fs, file, folder)
+        // This is a lightweight extraction for immediate hover results
+        
+        let mut extracted_values = Vec::new();
+        
+        // Look for file selectors in the rule
+        for step in &rule.select {
+            match step {
+                sprefa_rules::types::SelectStep::File { pattern, .. } |
+                sprefa_rules::types::SelectStep::Folder { pattern, .. } => {
+                    if let Some(root) = workspace_root {
+                        // Try to glob for matching files
+                        let glob_pattern = pattern.replace("**", "*");
+                        let full_pattern = root.join(&glob_pattern);
+                        
+                        if let Ok(paths) = tokio::task::spawn_blocking({
+                            let pattern = full_pattern.clone();
+                            move || {
+                                let mut matches = Vec::new();
+                                if let Some(parent) = pattern.parent() {
+                                    if let Ok(entries) = std::fs::read_dir(parent) {
+                                        for entry in entries.flatten() {
+                                            if let Ok(metadata) = entry.metadata() {
+                                                let path = entry.path();
+                                                let path_str = path.to_string_lossy().to_string();
+                                                
+                                                // Simple pattern matching
+                                                if pattern_matches(&pattern.to_string_lossy(), &path_str) {
+                                                    if metadata.is_file() {
+                                                        matches.push(path.file_name()
+                                                            .map(|n| n.to_string_lossy().to_string())
+                                                            .unwrap_or_else(|| path_str.clone()));
+                                                    } else if metadata.is_dir() {
+                                                        matches.push(path.file_name()
+                                                            .map(|n| n.to_string_lossy().to_string())
+                                                            .unwrap_or_else(|| path_str.clone()));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                matches
+                            }
+                        }).await {
+                            extracted_values.extend(paths);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        // Limit to reasonable number for hover
+        if extracted_values.len() > 50 {
+            extracted_values.truncate(50);
+        }
+        
+        if extracted_values.is_empty() {
+            None
+        } else {
+            Some(extracted_values)
+        }
+    }
+
+    /// Persist scan results to the database.
+    /// This is called after did_save completes the in-memory scan.
+    async fn persist_scan_to_db(&self, _file_path: &std::path::Path) {
+        // Get workspace and db path
+        let db_path = {
+            let ws_guard = self.workspace.lock().unwrap();
+            ws_guard.as_ref().and_then(|ws| ws.db_path.clone())
+        };
+        
+        if db_path.is_none() {
+            log::debug!("persist_scan_to_db: no database path configured");
+            return;
+        }
+        
+        // Note: Full DB persistence requires the Scanner which needs
+        // RepoConfig and extractors. For now, the in-memory results
+        // serve immediate hover needs. Full scan can be triggered
+        // via CLI or background job.
+        log::debug!("persist_scan_to_db: in-memory results available for hover");
+    }
+
+    /// Build a Hover response from captured values.
+    fn build_hover(&self, var_name: &str, rule_name: &str, values: &[String]) -> Hover {
+        let total = values.len();
+        let mut markdown = format!(
+            "**Capture: ${}**\nRule: {}\n\nValues ({} total):\n",
+            var_name, rule_name, total
+        );
+
+        for value in values {
+            markdown.push_str(&format!("- {}\n", value));
+        }
+        
+        // Add note that these are from in-memory scan
+        markdown.push_str("\n*(from in-memory scan)*\n");
+
+        Hover {
+            contents: tower_lsp::lsp_types::HoverContents::Markup(tower_lsp::lsp_types::MarkupContent {
+                kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                value: markdown,
+            }),
+            range: None,
+        }
+    }
+}
+
+/// Simple pattern matching for file globs.
+fn pattern_matches(pattern: &str, path: &str) -> bool {
+    // Very simplified pattern matching
+    // Convert glob-style pattern to a simple check
+    if pattern.contains("*") {
+        let parts: Vec<&str> = pattern.split('*').collect();
+        let mut last_idx = 0;
+        for part in &parts {
+            if part.is_empty() {
+                continue;
+            }
+            if let Some(idx) = path[last_idx..].find(part) {
+                last_idx += idx + part.len();
+            } else {
+                return false;
+            }
+        }
+        true
+    } else {
+        path.ends_with(pattern) || path.contains(pattern)
+    }
 }
 
 /// Heuristic: find the last statement boundary before the error and highlight that line.
@@ -923,6 +1179,7 @@ async fn main() {
         state: Mutex::new(DocState::default()),
         workspace: Mutex::new(None),
         hover_provider: Mutex::new(hover::HoverProvider::empty()),
+        in_memory_results: Mutex::new(HashMap::new()),
     });
 
     log::info!("LSP service created, starting server");

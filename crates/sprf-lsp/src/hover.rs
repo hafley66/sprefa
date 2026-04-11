@@ -40,14 +40,14 @@ impl HoverProvider {
     /// Get hover information for a variable in a rule.
     ///
     /// Returns `None` if no values are found or the database is unavailable.
-    pub fn hover(&self, var_name: &str, rule_name: &str) -> Option<Hover> {
-        log::info!("hover: querying for var='{}' in rule='{}'", var_name, rule_name);
+    pub fn hover(&self, var_name: &str, rule_name: &str, namespace: Option<&str>) -> Option<Hover> {
+        log::info!("hover: querying for var='{}' in rule='{}' (namespace={:?})", var_name, rule_name, namespace);
         
         let db = self.db.as_ref()?;
 
-        // Query for values (namespace is None for now)
+        // Query for values
         log::debug!("hover: executing database query");
-        let values = db.query_values(rule_name, var_name, None);
+        let values = db.query_values(rule_name, var_name, namespace);
 
         if values.is_empty() {
             log::info!("hover: no values found for ${} in {}", var_name, rule_name);

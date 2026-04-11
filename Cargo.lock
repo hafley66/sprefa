@@ -2930,6 +2930,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "sprefa_config",
+ "sprefa_rules",
  "sprefa_sprf",
  "tempfile",
  "tokio",
