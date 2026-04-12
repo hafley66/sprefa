@@ -310,6 +310,7 @@ def test_folder_completion_full_response():
             items = client.complete(uri, line=0, character=23)
             
             # SNAPSHOT: This is the exact expected response
+            # Range covers partial text from start of partial to boundary
             expected = [
                 {
                     "detail": "folder",
@@ -319,7 +320,7 @@ def test_folder_completion_full_response():
                     "textEdit": {
                         "newText": "src/",
                         "range": {
-                            "end": {"character": 23, "line": 0},
+                            "end": {"character": 24, "line": 0},
                             "start": {"character": 22, "line": 0}
                         }
                     }

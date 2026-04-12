@@ -1,5 +1,6 @@
 //! Completion providers that use external tools (ripgrep, git, find).
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -9,8 +10,45 @@ use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
 
 use tower_lsp::lsp_types::{Range, TextEdit, CompletionTextEdit};
 
+/// Max items to show per folder before showing "+N more" option (folders only)
+const MAX_PER_FOLDER: usize = 3;
+/// Max items to show per folder for files (no drill-down, just show more)
+const MAX_FILES_PER_FOLDER: usize = 10;
+
+/// Group files by parent folder and limit items per folder.
+/// Returns (folder_path, items_in_folder, total_in_folder)
+fn group_by_folder(files: Vec<String>) -> Vec<(String, Vec<String>, usize)> {
+    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    
+    for file in files {
+        let folder = file.rfind('/')
+            .map(|i| file[..i].to_string())
+            .unwrap_or_default();
+        groups.entry(folder).or_default().push(file);
+    }
+    
+    // Sort folders (root first, then alphabetically)
+    let mut folders: Vec<String> = groups.keys().cloned().collect();
+    folders.sort_by(|a, b| {
+        if a.is_empty() { return std::cmp::Ordering::Less; }
+        if b.is_empty() { return std::cmp::Ordering::Greater; }
+        a.cmp(b)
+    });
+    
+    folders.into_iter()
+        .map(|folder| {
+            let items = groups.get(&folder).cloned().unwrap_or_default();
+            let total = items.len();
+            (folder, items, total)
+        })
+        .collect()
+}
+
 /// Complete file paths using ripgrep, with find as fallback.
 pub async fn complete_files(root: &Path, partial: &str, replace_range: Range) -> Vec<CompletionItem> {
+    // Normalize partial: treat "./" as empty (list all files)
+    let partial = partial.strip_prefix("./").unwrap_or(partial);
+    
     // Empty partial = list all files (no filtering)
     // Short partials (< 2 chars) without glob chars = wait for more input
     if partial.len() > 0 && partial.len() < 2 && !partial.contains('*') && !partial.contains('?') {
@@ -49,23 +87,35 @@ pub async fn complete_files(root: &Path, partial: &str, replace_range: Range) ->
         ""
     };
 
-    String::from_utf8_lossy(&output.stdout)
+    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
-        .take(100)
-        .map(|matched_path| {
-            // Build breadcrumb (parent directory)
+        .map(|s| s.to_string())
+        .collect();
+    
+    let grouped = group_by_folder(files);
+    let mut items = Vec::new();
+    
+    for (folder, files_in_folder, total) in grouped {
+        let limit = MAX_FILES_PER_FOLDER.min(total);
+        
+        // Add file items (up to limit per folder)
+        for matched_path in files_in_folder.iter().take(limit) {
             let breadcrumb = matched_path.rfind('/')
                 .map(|i| matched_path[..i].to_string())
                 .unwrap_or_default();
             
-            let (label, new_text, filter_text) = if is_glob {
-                // Preserve star: show "*/Cargo.toml" with breadcrumb showing full path
+            let (label, new_text, filter_text) = if is_glob && !glob_prefix.is_empty() {
                 let filename = matched_path.rfind('/')
                     .map(|i| &matched_path[i+1..])
                     .unwrap_or(matched_path);
-                let pattern_label = format!("{}/{}", glob_prefix.trim_end_matches('/'), filename);
+                let prefix = glob_prefix.trim_end_matches('/');
+                let pattern_label = if prefix.is_empty() {
+                    filename.to_string()
+                } else {
+                    format!("{}/{}", prefix, filename)
+                };
                 (
                     pattern_label.clone(),
                     pattern_label,
@@ -79,7 +129,7 @@ pub async fn complete_files(root: &Path, partial: &str, replace_range: Range) ->
                 )
             };
             
-            CompletionItem {
+            items.push(CompletionItem {
                 label,
                 kind: Some(CompletionItemKind::FILE),
                 detail: Some(if breadcrumb.is_empty() { "file".to_string() } else { breadcrumb }),
@@ -89,9 +139,29 @@ pub async fn complete_files(root: &Path, partial: &str, replace_range: Range) ->
                     new_text,
                 })),
                 ..Default::default()
-            }
-        })
-        .collect()
+            });
+        }
+        
+        // Show "+N more" hint as a disabled item (informational only, no insertion)
+        if total > MAX_FILES_PER_FOLDER {
+            let remaining = total - MAX_FILES_PER_FOLDER;
+            let folder_name = if folder.is_empty() { "root" } else { folder.split('/').last().unwrap_or(&folder) };
+            
+            items.push(CompletionItem {
+                label: format!("+{} more files in {}/", remaining, folder_name),
+                kind: Some(CompletionItemKind::FILE),
+                detail: Some(format!("{} total files, type more specific pattern", total)),
+                filter_text: Some("zzz".to_string()), // Sort to end
+                text_edit: None, // No insertion
+                insert_text: None,
+                ..Default::default()
+            });
+        }
+    }
+    
+    // Overall limit to prevent overwhelming the UI
+    items.truncate(100);
+    items
 }
 
 /// Convert a simple glob pattern to regex.
@@ -128,11 +198,29 @@ fn glob_to_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
     regex::Regex::new(&regex_str)
 }
 
+/// Filter directories to only show top-level ones (depth <= 2 from root)
+/// and limit total results.
+fn filter_top_level_dirs(dirs: Vec<String>) -> Vec<String> {
+    // Only show directories that are:
+    // 1. Top-level (no slash): "src/", "crates/"
+    // 2. One level deep (one slash): "crates/cache/", ".git/objects/"
+    // Skip deeply nested ones like ".git/objects/61/"
+    dirs.into_iter()
+        .filter(|d| {
+            let clean = d.trim_end_matches('/');
+            clean.matches('/').count() <= 1
+        })
+        .collect()
+}
+
 /// Complete directory paths using find.
 /// 
 /// The `replace_range` is used to set text_edit on each item so the partial text
 /// is properly replaced instead of appended.
 pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> Vec<CompletionItem> {
+    // Normalize partial: treat "./" as empty (list all dirs)
+    let partial = partial.strip_prefix("./").unwrap_or(partial);
+    
     log::debug!("completing dirs in {} with partial='{}'", root.display(), partial);
 
     // Check if this is a glob pattern (contains * or ?)
@@ -218,6 +306,7 @@ pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> 
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .filter(|line| *line != ".")
+        .filter(|line| !line.contains("/.git/") && !line.starts_with(".git/") && *line != ".git")
         .map(|path| path.strip_prefix("./").unwrap_or(path).to_string())
         .collect();
 
@@ -243,7 +332,8 @@ pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> 
                 if let Ok(Ok(output)) = timeout(Duration::from_millis(200), child_cmd).await {
                     for line in String::from_utf8_lossy(&output.stdout).lines() {
                         let clean = line.trim().strip_prefix("./").unwrap_or(line.trim());
-                        if !clean.is_empty() && clean != "." && clean != parent {
+                        if !clean.is_empty() && clean != "." && clean != parent
+                            && !clean.contains("/.git/") && !clean.starts_with(".git/") && clean != ".git" {
                             children.push(format!("{}/", clean));
                         }
                     }
@@ -276,38 +366,19 @@ pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> 
             .collect()
     };
 
-    // Build completion items with nesting support
-    let mut items = Vec::new();
-    let include_children = is_glob && partial_ends_with_slash;
+    // Filter to top-level dirs only (avoid overwhelming nested .git/ structure)
+    let filtered_dirs = filter_top_level_dirs(filtered_dirs);
     
-    for dir_path in filtered_dirs.into_iter().take(50) {
+    // Build completion items
+    let mut items = Vec::new();
+    let total = filtered_dirs.len();
+    let show_more = total > MAX_PER_FOLDER;
+    let limit = MAX_PER_FOLDER.min(total);
+    
+    for dir_path in filtered_dirs.iter().take(limit) {
         let clean_path = dir_path.trim_end_matches('/');
         let basename = clean_path.rsplit_once('/').map(|(_, n)| n).unwrap_or(clean_path);
         
-        // Get children
-        let children = if clean_path.len() > 50 {
-            Vec::new()
-        } else {
-            let child_cmd = Command::new("find")
-                .arg(clean_path)
-                .args(["-maxdepth", "1", "-type", "d"])
-                .current_dir(root)
-                .output();
-            
-            match timeout(Duration::from_millis(100), child_cmd).await {
-                Ok(Ok(output)) if output.status.success() => {
-                    String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .map(|l| l.trim().strip_prefix("./").unwrap_or(l.trim()).to_string())
-                        .filter(|l| !l.is_empty() && l != "." && l != clean_path)
-                        .take(10)
-                        .collect()
-                }
-                _ => Vec::new()
-            }
-        };
-
-        // Parent item with breadcrumb detail
         let breadcrumb = if clean_path.contains('/') {
             clean_path.rsplit_once('/').map(|(p, _)| p.to_string()).unwrap_or_default()
         } else {
@@ -319,40 +390,34 @@ pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> 
         } else {
             Some(dir_path.clone())
         };
-
-        // Parent folder (with / commit character to expand)
+        
         items.push(CompletionItem {
             label: format!("{}/", basename),
             kind: Some(CompletionItemKind::FOLDER),
             detail: Some(if breadcrumb.is_empty() { "folder".to_string() } else { breadcrumb }),
-            filter_text: filter_text.clone(),
+            filter_text,
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 range: replace_range,
                 new_text: dir_path.clone(),
             })),
             ..Default::default()
         });
-
-        // Indented children for glob patterns
-        if include_children {
-            for child in &children {
-                let child_basename = child.rsplit_once('/').map(|(_, n)| n).unwrap_or(child);
-                items.push(CompletionItem {
-                    label: format!("  ↳ {}/", child_basename),
-                    kind: Some(CompletionItemKind::FOLDER),
-                    detail: Some(format!("in {}", basename)),
-                    filter_text: Some(format!("{} {}", partial, child)),
-                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                        range: replace_range,
-                        new_text: format!("{}/", child),
-                    })),
-                    ..Default::default()
-                });
-            }
-        }
+    }
+    
+    // Add "+N more" hint if there are more folders
+    if show_more {
+        let remaining = total - MAX_PER_FOLDER;
+        items.push(CompletionItem {
+            label: format!("+{} more folders", remaining),
+            kind: Some(CompletionItemKind::FOLDER),
+            detail: Some("type to filter or navigate deeper".to_string()),
+            filter_text: Some("zzz".to_string()), // Sort to end
+            text_edit: None,
+            ..Default::default()
+        });
     }
 
-    log::debug!("folder completion returned {} items", items.len());
+    log::debug!("folder completion returned {} items (from {} total)", items.len(), total);
     items
 }
 
@@ -432,6 +497,33 @@ pub fn complete_repo_names(names: &[String], partial: &str) -> Vec<CompletionIte
         .collect()
 }
 
+// Group files by folder for find fallback
+fn group_files_by_folder_find(files: Vec<String>) -> Vec<(String, Vec<String>, usize)> {
+    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    
+    for file in files {
+        let folder = file.rfind('/')
+            .map(|i| file[..i].to_string())
+            .unwrap_or_default();
+        groups.entry(folder).or_default().push(file);
+    }
+    
+    let mut folders: Vec<String> = groups.keys().cloned().collect();
+    folders.sort_by(|a, b| {
+        if a.is_empty() { return std::cmp::Ordering::Less; }
+        if b.is_empty() { return std::cmp::Ordering::Greater; }
+        a.cmp(b)
+    });
+    
+    folders.into_iter()
+        .map(|folder| {
+            let items = groups.get(&folder).cloned().unwrap_or_default();
+            let total = items.len();
+            (folder, items, total)
+        })
+        .collect()
+}
+
 // Fallback file completion using find
 async fn complete_files_find(root: &Path, partial: &str, replace_range: Range) -> Vec<CompletionItem> {
     let pattern = format!("{}*", partial);
@@ -450,19 +542,29 @@ async fn complete_files_find(root: &Path, partial: &str, replace_range: Range) -
 
     let is_glob = partial.contains('*') || partial.contains('?');
 
-    String::from_utf8_lossy(&output.stdout)
+    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| line.trim().strip_prefix("./").unwrap_or(line.trim()))
         .filter(|line| !line.is_empty())
-        .take(100)
-        .map(|path| {
+        .filter(|line| !line.contains("/.git/") && !line.starts_with(".git/"))
+        .map(|s| s.to_string())
+        .collect();
+    
+    let grouped = group_files_by_folder_find(files);
+    let mut items = Vec::new();
+    
+    for (folder, files_in_folder, total) in grouped {
+        let show_more = total > MAX_PER_FOLDER;
+        let limit = if show_more { MAX_PER_FOLDER } else { total };
+        
+        for path in files_in_folder.iter().take(limit) {
             let filter_text = if is_glob {
                 Some(format!("{} {}", partial, path))
             } else {
                 Some(path.to_string())
             };
             
-            CompletionItem {
+            items.push(CompletionItem {
                 label: path.to_string(),
                 kind: Some(CompletionItemKind::FILE),
                 filter_text,
@@ -471,7 +573,26 @@ async fn complete_files_find(root: &Path, partial: &str, replace_range: Range) -
                     new_text: path.to_string(),
                 })),
                 ..Default::default()
-            }
-        })
-        .collect()
+            });
+        }
+        
+        if show_more {
+            let remaining = total - MAX_PER_FOLDER;
+            let drill_path = if folder.is_empty() { "/".to_string() } else { format!("{}/", folder) };
+            
+            items.push(CompletionItem {
+                label: format!("+{} more in {}/", remaining, folder.split('/').last().unwrap_or(&folder)),
+                kind: Some(CompletionItemKind::FOLDER),
+                detail: Some(format!("{} total files", total)),
+                filter_text: Some(drill_path.clone()),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: replace_range,
+                    new_text: drill_path,
+                })),
+                ..Default::default()
+            });
+        }
+    }
+    
+    items
 }

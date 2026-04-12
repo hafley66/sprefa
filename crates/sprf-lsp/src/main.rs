@@ -13,6 +13,7 @@ use sprefa_sprf::_1_parse::parse_program;
 mod completion;
 mod context;
 mod db;
+mod diagnostics;
 mod hover;
 mod workspace;
 
@@ -376,14 +377,29 @@ fn offset_to_position(text: &str, offset: usize) -> Position {
 
 /// Calculate range to replace for partial text completion.
 /// Returns range from (cursor - partial.len()) to cursor.
-fn calculate_partial_range(cursor: Position, partial: &str) -> Range {
+fn calculate_partial_range(cursor: Position, partial: &str, text: &str, offset: usize) -> Range {
     let partial_len = partial.chars().count() as u32;
     let start_char = cursor.character.saturating_sub(partial_len);
+    
+    // Find where the partial actually ends in the text (look for ) or whitespace)
+    let mut end_offset = offset;
+    for ch in text[offset..].chars() {
+        if ch == ')' || ch == ' ' || ch == '\t' || ch == '\n' {
+            break;
+        }
+        end_offset += ch.len_utf8();
+    }
+    
+    // Convert end_offset to Position
+    let end_pos = offset_to_position(text, end_offset);
+    
     Range {
         start: Position::new(cursor.line, start_char),
-        end: cursor,
+        end: end_pos,
     }
 }
+
+
 
 const TAGS: &[(&str, &str)] = &[
     ("fs", "File path glob: fs(**/pattern)"),
@@ -633,8 +649,8 @@ impl LanguageServer for SprfLsp {
                     }
                 };
                 
-                // Calculate range to replace (from start of partial to cursor)
-                let replace_range = calculate_partial_range(pos, partial);
+                // Calculate range to replace (from start of partial to end of partial text)
+                let replace_range = calculate_partial_range(pos, partial, &text, offset);
                 
                 match tag.as_str() {
                     "fs" | "file" => {
@@ -832,6 +848,29 @@ impl LanguageServer for SprfLsp {
                 log::warn!("in-memory scan failed: {}", e);
             }
         }
+        
+        // Validate fs() patterns and publish diagnostics
+        let workspace_root = self.workspace.lock().unwrap().as_ref().map(|w| w.root.clone());
+        if let Some(root) = workspace_root {
+            match parse_program(&text) {
+                Ok(statements) => {
+                    let patterns = diagnostics::extract_patterns(&statements, &text);
+                    log::info!("extracted {} patterns for validation", patterns.len());
+                    if !patterns.is_empty() {
+                        let diagnostics = diagnostics::generate_diagnostics(patterns, &root).await;
+                        let count = diagnostics.len();
+                        log::info!("publishing {} diagnostics", count);
+                        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
+                    } else {
+                        // Clear diagnostics if no patterns to validate
+                        self.client.publish_diagnostics(uri.clone(), vec![], None).await;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("parse failed for diagnostics: {}", e);
+                }
+            }
+        }
     }
 }
 
@@ -882,22 +921,41 @@ fn find_capture_at_position(state: &DocState, offset: usize) -> Option<(String, 
     // Look for $VAR pattern around the offset
     let text = &state.text;
     
-    // Find the word at the current position
-    let before = &text[..offset.min(text.len())];
-    let after = &text[offset.min(text.len())..];
+    // Find the word at the current position using char_indices for UTF-8 safety
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
     
-    // Find start of current word
-    let word_start = before
-        .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$')
-        .map(|i| i + 1)
-        .unwrap_or(0);
+    // Find position in char_indices array
+    let pos_idx = chars.binary_search_by(|(i, _)| i.cmp(&offset))
+        .unwrap_or_else(|i| i);
     
-    // Find end of current word
-    let word_end = offset + after
-        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .unwrap_or(after.len());
+    // Scan backwards for word start
+    let mut word_start = offset;
+    for i in (0..pos_idx).rev() {
+        let (_, c) = chars[i];
+        if !c.is_ascii_alphanumeric() && c != '_' && c != '$' {
+            word_start = chars[i + 1].0;
+            break;
+        }
+        if i == 0 {
+            word_start = chars[0].0;
+        }
+    }
     
-    let word = &text[word_start..word_end];
+    // Scan forwards for word end
+    let mut word_end = offset;
+    for i in pos_idx..chars.len() {
+        let (idx, c) = chars[i];
+        if !c.is_ascii_alphanumeric() && c != '_' {
+            word_end = idx;
+            break;
+        }
+        if i == chars.len() - 1 {
+            word_end = text.len();
+        }
+    }
+    
+    // Ensure we're at char boundaries
+    let word = text.get(word_start..word_end)?;
     
     // Check if it's a capture variable (starts with $)
     if word.starts_with('$') {
