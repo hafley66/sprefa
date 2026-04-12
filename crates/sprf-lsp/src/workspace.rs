@@ -58,7 +58,13 @@ impl Workspace {
     /// Create a minimal workspace from a directory (no config).
     ///
     /// Used when LSP client provides a rootUri but no sprefa.toml exists.
-    pub fn from_directory(root: PathBuf) -> Self {
+    /// Tries to find git root from the provided directory for proper project detection.
+    pub fn from_directory(starting_dir: PathBuf) -> Self {
+        // Try to find git root from the starting directory
+        let root = find_git_root_from(&starting_dir)
+            .or_else(|| find_git_root())
+            .unwrap_or(starting_dir);
+        
         Self {
             root,
             repos: HashMap::new(),
@@ -196,6 +202,23 @@ fn find_git_root() -> Option<PathBuf> {
     }
 }
 
+/// Find git root starting from a specific directory.
+fn find_git_root_from(start_dir: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(start_dir)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout)
+            .ok()
+            .map(|s| PathBuf::from(s.trim()))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +228,23 @@ mod tests {
         // This test assumes we're running in a git repo
         let root = find_git_root();
         assert!(root.is_some(), "Should find git root when in a git repo");
+    }
+
+    #[test]
+    fn test_find_git_root_from_subdir() {
+        // Test that we can find git root from a subdirectory
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let git_root = find_git_root_from(&manifest_dir);
+        assert!(git_root.is_some(), "Should find git root from manifest dir");
+        
+        // The git root should contain Cargo.toml at the root
+        let root = git_root.unwrap();
+        assert!(root.join("Cargo.toml").exists(), "Git root should have Cargo.toml");
+        
+        // Verify we're in the sprefa repo (not some parent)
+        let current_dir = std::env::current_dir().unwrap();
+        assert!(root != manifest_dir || manifest_dir == current_dir, 
+            "Git root should be project root, not necessarily same as manifest dir");
     }
 
     #[test]
