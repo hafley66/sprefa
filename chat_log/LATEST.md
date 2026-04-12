@@ -1,1 +1,1 @@
-20260412.11.lsp-unification-complete.md
+20260412.12.diagnostic-redesign-plan.md
