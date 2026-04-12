@@ -14,6 +14,16 @@ pub struct Config {
     #[serde(default)]
     pub repos: Vec<RepoConfig>,
     pub filter: Option<FilterConfig>,
+    /// .sprf language settings.
+    pub sprf: Option<SprfConfig>,
+}
+
+/// Settings for the .sprf rule language.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SprfConfig {
+    /// .sprf files to load on startup. Paths are relative to the config file.
+    #[serde(default)]
+    pub init: Vec<String>,
 }
 
 /// Points to a directory tree of git checkouts managed by an external tool.
@@ -147,6 +157,17 @@ impl RepoConfig {
 impl Config {
     pub fn db_path(&self) -> String {
         expand_tilde(&self.db.path)
+    }
+
+    /// Resolves `sprf.init` paths to absolute paths given the config file's parent directory.
+    pub fn sprf_init_paths(&self, config_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let Some(sprf) = &self.sprf else {
+            return vec![];
+        };
+        sprf.init
+            .iter()
+            .map(|p| config_dir.join(p))
+            .collect()
     }
 
     pub fn daemon_url(&self) -> Option<&str> {

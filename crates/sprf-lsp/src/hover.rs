@@ -126,7 +126,7 @@ mod tests {
         let (db, _tmp) = setup_test_db();
         let provider = HoverProvider::with_db(db);
 
-        let hover = provider.hover("myvar", "myrule").expect("should have hover");
+        let hover = provider.hover("myvar", "myrule", None).expect("should have hover");
 
         let HoverContents::Markup(content) = hover.contents else {
             panic!("expected markup content");
@@ -147,7 +147,7 @@ mod tests {
         let provider = HoverProvider::with_db(db);
 
         // Non-existent variable
-        let hover = provider.hover("nonexistent", "myrule");
+        let hover = provider.hover("nonexistent", "myrule", None);
         assert!(hover.is_none());
     }
 
@@ -155,7 +155,7 @@ mod tests {
     fn test_hover_empty_provider() {
         let provider = HoverProvider::empty();
 
-        let hover = provider.hover("myvar", "myrule");
+        let hover = provider.hover("myvar", "myrule", None);
         assert!(hover.is_none());
     }
 
@@ -183,14 +183,14 @@ mod tests {
         drop(conn);
 
         let provider = HoverProvider::new(Some(&db_path));
-        let hover = provider.hover("myvar", "myrule");
+        let hover = provider.hover("myvar", "myrule", None);
         assert!(hover.is_some());
     }
 
     #[test]
     fn test_hover_new_with_none_path() {
         let provider = HoverProvider::new(None::<&'_ std::path::Path>);
-        let hover = provider.hover("myvar", "myrule");
+        let hover = provider.hover("myvar", "myrule", None);
         assert!(hover.is_none());
     }
 }

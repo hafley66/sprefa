@@ -432,9 +432,10 @@ async fn cmd_add(
 
 async fn build_scanner(
     config: &sprefa_config::Config,
+    config_dir: &std::path::Path,
     pool: sqlx::SqlitePool,
 ) -> anyhow::Result<Scanner<SqliteStore>> {
-    let rules_paths = find_rules_files()?;
+    let rules_paths = find_rules_files_with_config(config, config_dir)?;
 
     let mut all_rules: Vec<sprefa_rules::Rule> = vec![];
     let mut all_dep_edges: Vec<sprefa_rules::graph::DepEdge> = vec![];
@@ -629,7 +630,8 @@ async fn cmd_scan(
     }
 
     let pool = init_db(&db_path).await?;
-    let scanner = build_scanner(&config, pool).await?;
+    let config_dir = resolve_config_dir(config_path);
+    let scanner = build_scanner(&config, &config_dir, pool).await?;
 
     let repos: Vec<_> = config
         .repos
@@ -803,7 +805,7 @@ async fn cmd_scan(
     println!("\ntotal: {} files, {} refs", total_files, total_refs);
 
     // Run check blocks post-scan (if any exist in .sprf rules files).
-    let rules_paths = find_rules_files().unwrap_or_default();
+    let rules_paths = find_rules_files_with_config(&config, &config_dir).unwrap_or_default();
     let mut all_checks: Vec<sprefa_sprf::CheckDecl> = vec![];
     for rules_path in &rules_paths {
         if rules_path.extension().and_then(|e| e.to_str()) == Some("sprf") {
@@ -843,9 +845,30 @@ async fn cmd_scan(
 /// Rules file discovery: returns all .sprf files that should be loaded.
 ///
 /// Search order:
+/// 0. `[sprf].init` paths from config (relative to config file directory).
 /// 1. $SPREFA_RULES env var: if a directory, glob *.sprf inside it; if a file, return that file.
 /// 2. *.sprf files in the current directory (sorted).
 /// 3. Legacy single-file candidates: sprefa-rules.json, sprefa-rules.yaml, ~/.config/sprefa/*.
+///
+/// Init paths are prepended and deduplicated against discovered paths.
+fn find_rules_files_with_config(config: &Config, config_dir: &std::path::Path) -> anyhow::Result<Vec<PathBuf>> {
+    let init_paths = config.sprf_init_paths(config_dir);
+    let mut discovered = find_rules_files()?;
+    // Prepend init paths, dedup by canonicalizing
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for p in init_paths.into_iter().chain(discovered.drain(..)) {
+        let key = p.canonicalize().unwrap_or_else(|_| p.clone());
+        if seen.insert(key) {
+            result.push(p);
+        }
+    }
+    if result.is_empty() {
+        return find_rules_files(); // fall through to error message
+    }
+    Ok(result)
+}
+
 fn find_rules_files() -> anyhow::Result<Vec<PathBuf>> {
     if let Ok(path) = std::env::var("SPREFA_RULES") {
         let p = PathBuf::from(&path);
@@ -1086,7 +1109,9 @@ async fn cmd_check(
     }
 
     // Parse .sprf files to collect check blocks.
-    let rules_paths = find_rules_files()?;
+    let config = load_cfg(config_path)?;
+    let config_dir = resolve_config_dir(config_path);
+    let rules_paths = find_rules_files_with_config(&config, &config_dir)?;
     let mut checks: Vec<sprefa_sprf::CheckDecl> = vec![];
     for rules_path in &rules_paths {
         if rules_path.extension().and_then(|e| e.to_str()) == Some("sprf") {
@@ -1147,7 +1172,8 @@ async fn cmd_serve(config_path: &Option<PathBuf>, db_override: Option<&PathBuf>)
     let db_path = resolve_db_path(config_path, db_override)?;
     let pool = init_db(&db_path).await?;
     let bind = config.daemon_bind().to_string();
-    let scanner = build_scanner(&config, pool.clone()).await.ok().map(Arc::new);
+    let config_dir = resolve_config_dir(config_path);
+    let scanner = build_scanner(&config, &config_dir, pool.clone()).await.ok().map(Arc::new);
     sprefa_server::serve(pool, scanner, config.repos.clone(), &bind).await?;
     Ok(())
 }
@@ -1156,7 +1182,8 @@ async fn cmd_watch(config_path: &Option<PathBuf>, db_override: Option<&PathBuf>,
     let config = load_cfg(config_path)?;
     let db_path = resolve_db_path(config_path, db_override)?;
     let pool = init_db(&db_path).await?;
-    let scanner = build_scanner(&config, pool.clone()).await?;
+    let config_dir = resolve_config_dir(config_path);
+    let scanner = build_scanner(&config, &config_dir, pool.clone()).await?;
 
     let rewriters: Vec<Box<dyn PathRewriter>> =
         vec![Box::new(JsPathRewriter), Box::new(RsPathRewriter)];
@@ -1201,7 +1228,8 @@ async fn cmd_daemon(
     let config = load_cfg(config_path)?;
     let db_path = resolve_db_path(config_path, db_override)?;
     let pool = init_db(&db_path).await?;
-    let scanner = build_scanner(&config, pool.clone()).await?;
+    let config_dir = resolve_config_dir(config_path);
+    let scanner = build_scanner(&config, &config_dir, pool.clone()).await?;
 
     let repos: Vec<_> = config
         .repos
@@ -1427,6 +1455,17 @@ fn load_cfg(config_path: &Option<PathBuf>) -> anyhow::Result<Config> {
             Ok(config)
         }
     }
+}
+
+fn resolve_config_dir(config_path: &Option<PathBuf>) -> PathBuf {
+    config_path
+        .as_ref()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| {
+            load_config().ok()
+                .map(|(_, p)| p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."))
+        })
 }
 
 /// Resolve the database path from (in order of priority):

@@ -97,6 +97,7 @@ fn is_known_tag(word: &str) -> bool {
             | "folder"
             | "file"
             | "fs"
+            | "comment"
             | "marker"
             | "md"
     )

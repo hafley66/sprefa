@@ -123,7 +123,7 @@ pub enum Tag {
     Folder,
     File,
     Fs,
-    Marker,
+    Comment,
     Md,
 }
 
@@ -140,7 +140,7 @@ impl Tag {
             "folder" => Some(Tag::Folder),
             "file" => Some(Tag::File),
             "fs" => Some(Tag::Fs),
-            "marker" => Some(Tag::Marker),
+            "comment" | "marker" => Some(Tag::Comment),
             "md" => Some(Tag::Md),
             _ => None,
         }

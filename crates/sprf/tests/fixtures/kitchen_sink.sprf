@@ -276,20 +276,20 @@ rule(py_requirement) {
 };
 
 # ════════════════════════════════════════════════════════
-# SECTION 18: marker() regions
+# SECTION 18: comment() regions
 # ════════════════════════════════════════════════════════
 
 rule(section_fns) {
-  fs(**/*.rs) > marker("SECTION:") > line(re:fn\s+$NAME)
+  fs(**/*.rs) > comment("SECTION:") > line(re:fn\s+$NAME)
 };
 
 rule(region_fns) {
-  fs(**/*.rs) > marker("BEGIN:", "END:") > line(re:fn\s+$NAME)
+  fs(**/*.rs) > comment("BEGIN:", "END:") > line(re:fn\s+$NAME)
 };
 
 rule(section_block) {
   fs(**/*.rs) {
-    marker("SECTION:") {
+    comment("SECTION:") {
       line(re:fn\s+$NAME)
     }
   }

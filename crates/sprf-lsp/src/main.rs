@@ -416,8 +416,8 @@ const TAGS: &[(&str, &str)] = &[
         "Line pattern: line($CAP:$TAG) or line(re:pattern)",
     ),
     (
-        "marker",
-        "Comment-bounded region scope: marker(\"open\") or marker(\"open\", \"close\")",
+        "comment",
+        "Comment-bounded region scope: comment(\"open\") or comment(\"open\", \"close\")",
     ),
     (
         "md",

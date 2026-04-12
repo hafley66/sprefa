@@ -600,11 +600,11 @@ fn convert_slot(slot: &Slot) -> Result<ConvertedSlot> {
                     })
                 };
             }
-            Tag::Marker => {
+            Tag::Comment => {
                 if marker_scope.is_some() {
-                    bail!("multiple marker() slots not supported");
+                    bail!("multiple comment() slots not supported");
                 }
-                marker_scope = Some(parse_marker_body(body)?);
+                marker_scope = Some(parse_comment_body(body)?);
             }
             Tag::Md => {
                 let parsed = parse_md_body(body)?;
@@ -662,20 +662,20 @@ fn promote_bare_capture(body: &str) -> String {
     body.to_string()
 }
 
-/// Parse marker() body into a MarkerScope.
+/// Parse comment() body into a MarkerScope.
 ///
-/// One arg: `marker("SECTION:")` -> flat sequential regions.
-/// Two args: `marker("BEGIN:", "END:")` -> paired open/close.
+/// One arg: `comment("SECTION:")` -> flat sequential regions.
+/// Two args: `comment("BEGIN:", "END:")` -> paired open/close.
 ///
 /// The body string is the raw content inside the parens. Quotes are part of the
 /// body because the parser doesn't strip them (they're inside the tag body).
 /// We strip quotes here and split on `, ` for the two-arg form.
-fn parse_marker_body(body: &str) -> Result<MarkerScope> {
+fn parse_comment_body(body: &str) -> Result<MarkerScope> {
     let body = body.trim();
 
     // Try splitting on comma for two-arg form
     // Each arg may be quoted: "open", "close"
-    let args = split_marker_args(body)?;
+    let args = split_comment_args(body)?;
     match args.len() {
         1 => Ok(MarkerScope {
             open: args[0].clone(),
@@ -687,12 +687,12 @@ fn parse_marker_body(body: &str) -> Result<MarkerScope> {
             close: Some(args[1].clone()),
             capture: None,
         }),
-        _ => bail!("marker() takes 1 or 2 arguments, got {}", args.len()),
+        _ => bail!("comment() takes 1 or 2 arguments, got {}", args.len()),
     }
 }
 
-/// Split marker body into 1 or 2 quoted string args.
-fn split_marker_args(body: &str) -> Result<Vec<String>> {
+/// Split comment() body into 1 or 2 quoted string args.
+fn split_comment_args(body: &str) -> Result<Vec<String>> {
     let mut args = vec![];
     let mut rest = body.trim();
 
@@ -702,7 +702,7 @@ fn split_marker_args(body: &str) -> Result<Vec<String>> {
         }
         // Expect a quoted string
         if rest.starts_with('"') {
-            let end = rest[1..].find('"').ok_or_else(|| anyhow::anyhow!("unterminated string in marker()"))?;
+            let end = rest[1..].find('"').ok_or_else(|| anyhow::anyhow!("unterminated string in comment()"))?;
             args.push(rest[1..=end].to_string());
             rest = rest[end + 2..].trim();
             if rest.starts_with(',') {
@@ -720,7 +720,7 @@ fn split_marker_args(body: &str) -> Result<Vec<String>> {
     }
 
     if args.is_empty() {
-        bail!("marker() requires at least 1 argument");
+        bail!("comment() requires at least 1 argument");
     }
     Ok(args)
 }
