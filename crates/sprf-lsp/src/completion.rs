@@ -101,12 +101,19 @@ pub async fn complete_files(root: &Path, partial: &str, replace_range: Range, ma
         ""
     };
 
-    String::from_utf8_lossy(&output.stdout)
+    // Collect and sort paths
+    let mut paths: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .map(|line| line.trim())
+        .map(|line| line.trim().to_string())
         .filter(|line| !line.is_empty())
         .filter(|line| !is_ignored(Path::new(line), root))
         .take(MAX_ITEMS)
+        .collect();
+    
+    // Sort alphabetically by path for consistent ordering
+    paths.sort();
+
+    paths.into_iter()
         .map(|matched_path| {
             let breadcrumb = matched_path.rfind('/')
                 .map(|i| matched_path[..i].to_string())
@@ -115,7 +122,7 @@ pub async fn complete_files(root: &Path, partial: &str, replace_range: Range, ma
             let (label, new_text, filter_text) = if is_glob && !glob_prefix.is_empty() {
                 let filename = matched_path.rfind('/')
                     .map(|i| &matched_path[i+1..])
-                    .unwrap_or(matched_path);
+                    .unwrap_or(&matched_path);
                 let prefix = glob_prefix.trim_end_matches('/');
                 let pattern_label = if prefix.is_empty() {
                     filename.to_string()
@@ -129,9 +136,9 @@ pub async fn complete_files(root: &Path, partial: &str, replace_range: Range, ma
                 )
             } else {
                 (
-                    matched_path.to_string(),
-                    matched_path.to_string(),
-                    matched_path.to_string()
+                    matched_path.clone(),
+                    matched_path.clone(),
+                    matched_path
                 )
             };
             
@@ -206,7 +213,7 @@ async fn complete_files_depth1(root: &Path, partial: &str, replace_range: Range)
         }
     };
     
-    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+    let mut files: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
@@ -225,6 +232,9 @@ async fn complete_files_depth1(root: &Path, partial: &str, replace_range: Range)
         })
         .take(MAX_ITEMS)
         .collect();
+    
+    // Sort alphabetically for consistent ordering
+    files.sort();
     
     // Build completion items
     let mut items = Vec::new();
@@ -347,7 +357,7 @@ pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> 
         }
     };
 
-    let dirs: Vec<String> = String::from_utf8_lossy(&output.stdout)
+    let mut dirs: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
@@ -356,6 +366,9 @@ pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> 
         .filter(|line| !is_ignored(Path::new(line), root))
         .map(|path| path.strip_prefix("./").unwrap_or(path).to_string())
         .collect();
+    
+    // Sort alphabetically for consistent ordering
+    dirs.sort();
 
     // Build completion items from collected dirs
     let mut items = Vec::new();
@@ -483,26 +496,32 @@ async fn complete_files_find(root: &Path, partial: &str, replace_range: Range) -
 
     let is_glob = partial.contains('*') || partial.contains('?');
 
-    String::from_utf8_lossy(&output.stdout)
+    let mut paths: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .map(|line| line.trim().strip_prefix("./").unwrap_or(line.trim()))
+        .map(|line| line.trim().strip_prefix("./").unwrap_or(line.trim()).to_string())
         .filter(|line| !line.is_empty())
         .filter(|line| !is_ignored(Path::new(line), root))
         .take(MAX_ITEMS)
+        .collect();
+    
+    // Sort alphabetically for consistent ordering
+    paths.sort();
+
+    paths.into_iter()
         .map(|path| {
             let filter_text = if is_glob {
                 Some(format!("{} {}", partial, path))
             } else {
-                Some(path.to_string())
+                Some(path.clone())
             };
             
             CompletionItem {
-                label: path.to_string(),
+                label: path.clone(),
                 kind: Some(CompletionItemKind::FILE),
                 filter_text,
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: replace_range,
-                    new_text: path.to_string(),
+                    new_text: path,
                 })),
                 ..Default::default()
             }
