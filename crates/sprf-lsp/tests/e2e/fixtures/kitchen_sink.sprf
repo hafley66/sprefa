@@ -12,7 +12,7 @@ rule(file_complete) {
 };
 
 rule(folder_complete) {
-  file() {
+  folder() {
   }
 };
 
