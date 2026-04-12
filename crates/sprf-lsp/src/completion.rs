@@ -52,8 +52,9 @@ fn is_ignored(path: &Path, root: &Path) -> bool {
     false
 }
 
-/// Complete file paths using ripgrep, with find as fallback.
-pub async fn complete_files(root: &Path, partial: &str, replace_range: Range) -> Vec<CompletionItem> {
+/// Complete file paths with depth limit (1 = top-level only, 0 = unlimited/recursive).
+/// Uses ripgrep for recursive search and find for depth-limited search.
+pub async fn complete_files(root: &Path, partial: &str, replace_range: Range, max_depth: usize) -> Vec<CompletionItem> {
     // Normalize partial: treat "./" as empty (list all files)
     let partial = partial.strip_prefix("./").unwrap_or(partial);
     
@@ -61,6 +62,11 @@ pub async fn complete_files(root: &Path, partial: &str, replace_range: Range) ->
     // Short partials (< 2 chars) without glob chars = wait for more input
     if partial.len() > 0 && partial.len() < 2 && !partial.contains('*') && !partial.contains('?') {
         return vec![];
+    }
+
+    // For depth 1, use find which supports -maxdepth natively
+    if max_depth == 1 {
+        return complete_files_depth1(root, partial, replace_range).await;
     }
 
     // Convert sprf-style glob to regex-ish pattern for ripgrep
@@ -144,6 +150,106 @@ pub async fn complete_files(root: &Path, partial: &str, replace_range: Range) ->
         .collect()
 }
 
+/// Complete top-level files only (depth 1) using find.
+async fn complete_files_depth1(root: &Path, partial: &str, replace_range: Range) -> Vec<CompletionItem> {
+    log::debug!("completing files depth 1 in {} with partial='{}'", root.display(), partial);
+    
+    let partial_ends_with_slash = partial.ends_with('/');
+    
+    // Determine start dir based on partial
+    let (start_dir, prefix_filter) = if partial.is_empty() {
+        (".", "")
+    } else if partial_ends_with_slash {
+        // List files in this dir
+        let dir = partial.trim_end_matches('/');
+        if dir.is_empty() || dir == "." {
+            (".", "")
+        } else {
+            (dir, "")
+        }
+    } else if partial.contains('/') {
+        // Has path separator - filter within that dir
+        let parent = partial.rfind('/').map(|i| &partial[..i]).unwrap_or(".");
+        let name = &partial[partial.rfind('/').map(|i| i + 1).unwrap_or(0)..];
+        if parent.is_empty() || parent == "." {
+            (".", name)
+        } else {
+            (parent, name)
+        }
+    } else {
+        // Simple name - filter top-level files
+        (".", partial)
+    };
+    
+    // Build find command for files at depth 1
+    let mut cmd = Command::new("find");
+    cmd.current_dir(root)
+        .args([start_dir, "-maxdepth", "1", "-type", "f"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    
+    log::debug!("find files command: {:?}", cmd);
+    
+    let output = match timeout(Duration::from_millis(500), cmd.output()).await {
+        Ok(Ok(output)) if output.status.success() => output,
+        Ok(Ok(output)) => {
+            log::debug!("find files failed: {}", String::from_utf8_lossy(&output.stderr));
+            return vec![];
+        }
+        Ok(Err(e)) => {
+            log::debug!("find files error: {}", e);
+            return vec![];
+        }
+        Err(_) => {
+            log::debug!("find files timed out");
+            return vec![];
+        }
+    };
+    
+    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .filter(|line| *line != start_dir)
+        .filter(|line| !is_ignored(Path::new(line), root))
+        .map(|path| path.strip_prefix("./").unwrap_or(path).to_string())
+        .filter(|path| {
+            // Apply prefix filter if any
+            if prefix_filter.is_empty() {
+                true
+            } else {
+                path.rfind('/')
+                    .map(|i| path[i+1..].starts_with(prefix_filter))
+                    .unwrap_or(path.starts_with(prefix_filter))
+            }
+        })
+        .take(MAX_ITEMS)
+        .collect();
+    
+    // Build completion items
+    let mut items = Vec::new();
+    for file_path in files {
+        let breadcrumb = file_path.rfind('/')
+            .map(|i| file_path[..i].to_string())
+            .unwrap_or_default();
+        
+        items.push(CompletionItem {
+            label: file_path.clone(),
+            kind: Some(CompletionItemKind::FILE),
+            detail: Some(if breadcrumb.is_empty() { "file".to_string() } else { breadcrumb }),
+            filter_text: Some(file_path.clone()),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: replace_range,
+                new_text: file_path,
+            })),
+            ..Default::default()
+        });
+    }
+    
+    log::debug!("depth1 file completion returned {} items", items.len());
+    items
+}
+
 /// Convert a simple glob pattern to regex.
 /// Handles: * (any chars), ? (single char), ** (recursive - treated as *)
 fn glob_to_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
@@ -179,69 +285,49 @@ fn glob_to_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
 }
 
 /// Complete directory paths using find.
+/// Shows only one level at a time - no child expansion.
 pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> Vec<CompletionItem> {
-    // Normalize partial: treat "./" as empty (list all files)
+    // Normalize partial: treat "./" as empty
     let partial = partial.strip_prefix("./").unwrap_or(partial);
     
     log::debug!("completing dirs in {} with partial='{}'", root.display(), partial);
 
-    // Check if this is a glob pattern (contains * or ?)
-    let is_glob = partial.contains('*') || partial.contains('?');
     let partial_ends_with_slash = partial.ends_with('/');
 
-    // For glob patterns with trailing slash (e.g., "*/" or "src/*/"), 
-    // we want to find directories that match the parent pattern and show their children
-    let (find_start_dir, glob_regex, list_children) = if is_glob {
-        if partial_ends_with_slash {
-            let pattern = partial.trim_end_matches('/');
-            let regex = match glob_to_regex(pattern) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::debug!("invalid glob pattern: {}", e);
-                    return vec![];
-                }
-            };
-            (".", Some(regex), true)
-        } else {
-            let regex = match glob_to_regex(partial) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::debug!("invalid glob pattern: {}", e);
-                    return vec![];
-                }
-            };
-            (".", Some(regex), false)
-        }
+    // Determine what to list:
+    // - Empty partial: list top-level dirs only
+    // - Ends with /: list that dir's children
+    // - Has / but no trailing: filter dirs at that level
+    // - Simple name: filter top-level dirs
+    let (start_dir, max_depth) = if partial.is_empty() {
+        (".", 1) // Top-level only
     } else if partial_ends_with_slash {
-        // Specific directory - list its contents
+        // List children of this dir
         let dir = partial.trim_end_matches('/');
         if dir.is_empty() || dir == "." {
-            (".", None, true)
+            (".", 1)
         } else {
-            (dir, None, true)
+            (dir, 1)
         }
     } else if partial.contains('/') {
-        // Path prefix - use it as starting point
+        // Has path separator - we're completing within that hierarchy
         let parent = partial.rfind('/').map(|i| &partial[..i]).unwrap_or(".");
-        (parent, None, false)
+        if parent.is_empty() || parent == "." {
+            (".", 1)
+        } else {
+            (parent, 1)
+        }
     } else {
-        // Just a basename - search from root
-        (".", None, false)
+        // Simple name - search top-level
+        (".", 1)
     };
 
-    // Build find command
+    // Build find command with maxdepth
     let mut cmd = Command::new("find");
     cmd.current_dir(root)
+        .args([start_dir, "-maxdepth", &max_depth.to_string(), "-type", "d"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    if list_children && !is_glob {
-        // List contents of specific directory
-        cmd.args([find_start_dir, "-maxdepth", "1", "-type", "d"]);
-    } else {
-        // Find all directories (for glob matching)
-        cmd.args([find_start_dir, "-type", "d"]);
-    }
 
     log::debug!("find command: {:?}", cmd);
 
@@ -266,65 +352,15 @@ pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> 
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .filter(|line| *line != ".")
+        .filter(|line| *line != start_dir) // Don't include the start dir itself
         .filter(|line| !is_ignored(Path::new(line), root))
         .map(|path| path.strip_prefix("./").unwrap_or(path).to_string())
-        .filter(|path| path.matches('/').count() <= 1) // Only 1 level deep max
         .collect();
 
-    // Apply glob filtering if needed
-    let filtered_dirs: Vec<String> = if let Some(ref regex) = glob_regex {
-        if list_children {
-            let matching_dirs: Vec<String> = dirs.iter()
-                .filter(|d| regex.is_match(d))
-                .cloned()
-                .collect();
-            
-            // Get children of matching directories
-            let mut children = Vec::new();
-            for parent in matching_dirs {
-                let child_cmd = Command::new("find")
-                    .arg(&parent)
-                    .args(["-maxdepth", "1", "-type", "d"])
-                    .current_dir(root)
-                    .output();
-                
-                if let Ok(Ok(output)) = timeout(Duration::from_millis(200), child_cmd).await {
-                    for line in String::from_utf8_lossy(&output.stdout).lines() {
-                        let clean = line.trim().strip_prefix("./").unwrap_or(line.trim());
-                        if !clean.is_empty() && clean != "." && clean != parent
-                            && !is_ignored(Path::new(clean), root) {
-                            children.push(format!("{}/", clean));
-                        }
-                    }
-                }
-            }
-            children
-        } else {
-            dirs.into_iter()
-                .filter(|d| regex.is_match(d))
-                .map(|d| format!("{}/", d))
-                .collect()
-        }
-    } else if partial.contains('/') && !partial_ends_with_slash && !is_glob {
-        dirs.into_iter()
-            .filter(|d| d.starts_with(partial))
-            .map(|d| format!("{}/", d))
-            .collect()
-    } else if !partial.is_empty() && !partial_ends_with_slash && !is_glob {
-        dirs.into_iter()
-            .filter(|d| d.starts_with(partial))
-            .map(|d| format!("{}/", d))
-            .collect()
-    } else {
-        dirs.into_iter()
-            .map(|d| format!("{}/", d))
-            .collect()
-    };
-
-    // Build completion items - simple, no grouping
+    // Build completion items from collected dirs
     let mut items = Vec::new();
     
-    for dir_path in filtered_dirs.into_iter().take(MAX_ITEMS) {
+    for dir_path in dirs.into_iter().take(MAX_ITEMS) {
         let clean_path = dir_path.trim_end_matches('/');
         let basename = clean_path.rsplit_once('/').map(|(_, n)| n).unwrap_or(clean_path);
         
@@ -334,20 +370,16 @@ pub async fn complete_dirs(root: &Path, partial: &str, replace_range: Range) -> 
             String::new()
         };
         
-        let filter_text = if is_glob {
-            Some(format!("{} {}", partial, dir_path))
-        } else {
-            Some(dir_path.clone())
-        };
+        let filter_text = Some(dir_path.clone());
         
         items.push(CompletionItem {
             label: format!("{}/", basename),
             kind: Some(CompletionItemKind::FOLDER),
             detail: Some(if breadcrumb.is_empty() { "folder".to_string() } else { breadcrumb }),
-            filter_text,
+            filter_text: Some(format!("{}/", dir_path)),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 range: replace_range,
-                new_text: dir_path.clone(),
+                new_text: format!("{}/", dir_path),
             })),
             ..Default::default()
         });

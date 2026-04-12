@@ -653,11 +653,22 @@ impl LanguageServer for SprfLsp {
                 let replace_range = calculate_partial_range(pos, partial, &text, offset);
                 
                 match tag.as_str() {
-                    "fs" | "file" => {
-                        // File path completions
+                    "fs" => {
+                        // File path completions - recursive (unlimited depth)
                         if let Some(root) = root {
-                            log::debug!("completing files in '{}' with partial='{}'", root.display(), partial);
-                            let completions = completion::complete_files(&root, partial, replace_range).await;
+                            log::debug!("completing files (recursive) in '{}' with partial='{}'", root.display(), partial);
+                            let completions = completion::complete_files(&root, partial, replace_range, 0).await;
+                            log::info!("fs completion returned {} items", completions.len());
+                            items.extend(completions);
+                        } else {
+                            log::debug!("no workspace root, skipping fs completion");
+                        }
+                    }
+                    "file" => {
+                        // File path completions - depth 1 (top-level only, no children)
+                        if let Some(root) = root {
+                            log::debug!("completing files (depth 1) in '{}' with partial='{}'", root.display(), partial);
+                            let completions = completion::complete_files(&root, partial, replace_range, 1).await;
                             log::info!("file completion returned {} items", completions.len());
                             items.extend(completions);
                         } else {

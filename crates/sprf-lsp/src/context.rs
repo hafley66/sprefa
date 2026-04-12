@@ -78,7 +78,8 @@ pub enum Context {
     Unknown,
 }
 
-/// Check if a word is a known tag.
+/// Check if a word is a known tag (for completion inside rule bodies).
+/// Note: "rule" and "check" are NOT tags - they're declaration keywords.
 fn is_known_tag(word: &str) -> bool {
     matches!(
         word,
@@ -98,8 +99,6 @@ fn is_known_tag(word: &str) -> bool {
             | "fs"
             | "marker"
             | "md"
-            | "rule"
-            | "check"
     )
 }
 
@@ -335,16 +334,41 @@ pub fn detect_context(tokens: &[TokenSpan], cursor_pos: usize) -> Context {
             }
         }
     }
+    
+    // Check if cursor is immediately after RParen (for empty parens like `folder(|)`)
+    // VS Code often sends cursor position right after the closing paren
+    for (i, token) in tokens.iter().enumerate() {
+        if matches!(token.token, Token::RParen) {
+            // Cursor is right after this RParen
+            if token.end == cursor_pos || token.end + 1 == cursor_pos {
+                // Look back for LParen then Tag (empty parens case)
+                if i >= 2 {
+                    if let Token::LParen = tokens[i-1].token {
+                        if let Token::Tag(tag_name) = &tokens[i-2].token {
+                            return Context::InsideTag {
+                                tag: tag_name.clone(),
+                                partial: String::new(),
+                            };
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Second pass: check for other contexts
     let mut iter = tokens.iter().rev();
-    let mut found_lbrace = false;
+    let mut brace_depth = 0i32; // Track nested braces, only skip when depth > 0
 
     while let Some(token) = iter.next() {
         match &token.token {
-            // Scope boundaries - if we hit these, we're inside a block body
-            Token::LBrace | Token::RBrace => {
-                found_lbrace = true;
+            // Track brace nesting - we only skip contexts from OUTSIDE our scope
+            Token::RBrace => {
+                brace_depth += 1;
+                continue;
+            }
+            Token::LBrace => {
+                brace_depth -= 1;
                 continue;
             }
 
@@ -354,8 +378,8 @@ pub fn detect_context(tokens: &[TokenSpan], cursor_pos: usize) -> Context {
             }
 
             // Check for raw content after LParen following a tag
-            // Only match if we haven't crossed a scope boundary
-            Token::Raw(content) if !found_lbrace => {
+            // Only skip if we're inside a nested scope
+            Token::Raw(content) if brace_depth <= 0 => {
                 // Check if this is a capture after $
                 if content == "$" {
                     return Context::InsideCapture;
@@ -376,7 +400,7 @@ pub fn detect_context(tokens: &[TokenSpan], cursor_pos: usize) -> Context {
             }
 
             // Check for tag followed by LParen with no content (empty parens)
-            Token::LParen if !found_lbrace => {
+            Token::LParen if brace_depth <= 0 => {
                 // Look back for a tag
                 if let Some(prev) = iter.next() {
                     if let Token::Tag(tag_name) = &prev.token {
