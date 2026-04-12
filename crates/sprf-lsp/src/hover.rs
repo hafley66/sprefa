@@ -74,6 +74,23 @@ impl HoverProvider {
             range: None,
         })
     }
+
+    /// Get raw values for a variable from the database.
+    /// Returns empty vector if no DB or no values found.
+    pub fn get_values(&self, key: &str, namespace: Option<&str>) -> Vec<String> {
+        let db = match self.db.as_ref() {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+
+        // Parse key as "rule.var" or just "var"
+        let (rule_name, var_name) = match key.find('.') {
+            Some(idx) => (&key[..idx], &key[idx + 1..]),
+            None => ("", key),
+        };
+
+        db.query_values(rule_name, var_name, namespace)
+    }
 }
 
 #[cfg(test)]

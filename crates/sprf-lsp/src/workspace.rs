@@ -141,7 +141,7 @@ fn collect_repos(config: &Config, _root: &Path) -> HashMap<String, RepoInfo> {
             }
             Err(e) => {
                 // Log discovery errors but continue with other sources
-                eprintln!("Failed to discover repos from source '{}': {}", source.root, e);
+                log::warn!("Failed to discover repos from source '{}': {}", source.root, e);
             }
         }
     }

@@ -8,15 +8,21 @@ license.workspace = true
 winnow = "0.7"
 anyhow = { workspace = true }
 sprefa_rules = { path = "../rules" }
+sprefa_extract = { path = "../extract" }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
 globset = { workspace = true }
+walkdir = { workspace = true }
 regex = { workspace = true }
 sha2 = "0.10"
+log = "0.4"
 
 [dev-dependencies]
 insta = { workspace = true }
 serde_yaml = { workspace = true }
 toml = { workspace = true }
+tempfile = { workspace = true }
 sprefa_extract = { path = "../extract" }
 sprefa_cache = { path = "../cache" }
 sprefa_schema = { path = "../schema" }

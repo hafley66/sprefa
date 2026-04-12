@@ -2906,6 +2906,7 @@ dependencies = [
  "anyhow",
  "globset",
  "insta",
+ "log",
  "regex",
  "serde_json",
  "serde_yaml",
@@ -2915,8 +2916,10 @@ dependencies = [
  "sprefa_rules",
  "sprefa_schema",
  "sqlx",
+ "tempfile",
  "tokio",
  "toml",
+ "walkdir",
  "winnow",
 ]
 
@@ -2931,11 +2934,13 @@ dependencies = [
  "regex",
  "rusqlite",
  "serde_json",
+ "serde_yaml",
  "sprefa_config",
  "sprefa_rules",
  "sprefa_sprf",
  "tempfile",
  "tokio",
+ "toml",
  "tower-lsp",
 ]
 

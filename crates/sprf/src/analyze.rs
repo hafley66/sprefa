@@ -146,6 +146,8 @@ pub struct AnalysisDiagnostic {
     pub message: String,
     /// Severity
     pub severity: Severity,
+    /// Source location of the issue (e.g., json pattern)
+    pub location: Option<SourceRange>,
 }
 
 /// Options for analysis.
@@ -181,7 +183,7 @@ pub fn analyze_partial(source: &str, options: AnalyzeOptions) -> PartialAnalysis
 
     // Phase 3: Extract with per-rule error recovery (optional)
     let (extractions, extract_diagnostics) = if options.run_extraction {
-        extract_phase(&rules, &options)
+        extract_phase(&rules, &options, source, &stmt_spans, &stmts)
     } else {
         (vec![], vec![])
     };
@@ -383,11 +385,17 @@ fn collect_cross_refs_from_body(
 fn extract_phase(
     rules: &[Rule],
     options: &AnalyzeOptions,
+    source: &str,
+    stmt_spans: &[SourceRange],
+    stmts: &[Statement],
 ) -> (Vec<RuleExtraction>, Vec<AnalysisDiagnostic>) {
     let mut extractions = vec![];
     let mut diagnostics = vec![];
 
     for rule in rules {
+        // Find the rule's location in source
+        let rule_location = find_rule_location(rule, source, stmt_spans, stmts);
+        
         // Find matching files
         let files = crate::_4_extract::find_matching_files(rule, &options.workspace_root);
 
@@ -396,6 +404,7 @@ fn extract_phase(
                 rule: rule.name.clone(),
                 message: format!("Rule '{}' matched 0 files - check file pattern", rule.name),
                 severity: Severity::Error,
+                location: rule_location.clone(),
             });
             continue;
         }
@@ -429,18 +438,22 @@ fn extract_phase(
         }
 
         if total_captures == 0 {
-            // Check if it's a JSON path issue
-            let path_issue = check_json_path_mismatch(rule, &files[0], options);
+            // Check if it's a JSON/YAML/TOML path issue by sampling files
+            let path_issue = check_json_path_mismatch(rule, &files, options);
 
+            // Find pattern location for better diagnostic
+            let pattern_location = find_json_pattern_location(rule, source, &rule_location);
+            
             if path_issue {
                 diagnostics.push(AnalysisDiagnostic {
                     rule: rule.name.clone(),
                     message: format!(
-                        "Rule '{}' found {} files but JSON/YAML path doesn't match file structure",
+                        "Rule '{}' found {} files but JSON/YAML/TOML path doesn't match file structure",
                         rule.name,
                         files.len()
                     ),
                     severity: Severity::Error,
+                    location: pattern_location.clone(),
                 });
             } else {
                 diagnostics.push(AnalysisDiagnostic {
@@ -451,6 +464,7 @@ fn extract_phase(
                         files.len()
                     ),
                     severity: Severity::Warning,
+                    location: pattern_location.clone(),
                 });
             }
         }
@@ -465,33 +479,54 @@ fn extract_phase(
     (extractions, diagnostics)
 }
 
-/// Check if JSON/YAML path in rule doesn't match actual file structure.
-fn check_json_path_mismatch(rule: &Rule, sample_file: &Path, options: &AnalyzeOptions) -> bool {
-    // Get content
-    let content = std::fs::read_to_string(sample_file).ok();
-    let Some(content) = content else {
+/// Check if JSON/YAML/TOML path in rule doesn't match actual file structure.
+/// 
+/// Returns true only if:
+/// 1. Multiple files were found
+/// 2. All sampled files parse successfully as the expected format
+/// 3. None of them would match the structural pattern (we know this because total_captures == 0)
+/// 
+/// This prevents false positives where some files match and some don't (e.g., workspace vs crate Cargo.toml).
+fn check_json_path_mismatch(rule: &Rule, files: &[PathBuf], _options: &AnalyzeOptions) -> bool {
+    if files.is_empty() {
         return false;
-    };
+    }
 
-    // Try to parse based on extension
-    let ext = sample_file
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    // Sample up to 5 files to verify the structure
+    let sample_size = files.len().min(5);
+    let mut parsed_count = 0;
 
-    let parsed: Option<serde_json::Value> = match ext {
-        "json" => serde_json::from_str(&content).ok(),
-        "yaml" | "yml" => serde_yaml::from_str::<serde_yaml::Value>(&content)
-            .ok()
-            .and_then(|v| serde_json::to_value(v).ok()),
-        "toml" => toml::from_str::<toml::Value>(&content)
-            .ok()
-            .and_then(|v| serde_json::to_value(v).ok()),
-        _ => None,
-    };
+    for file_path in files.iter().take(sample_size) {
+        let content = match std::fs::read_to_string(file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
 
-    // If file parses but has no captures, it's likely a path mismatch
-    parsed.is_some()
+        let ext = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let parsed: Option<serde_json::Value> = match ext {
+            "json" => serde_json::from_str(&content).ok(),
+            "yaml" | "yml" => serde_yaml::from_str::<serde_yaml::Value>(&content)
+                .ok()
+                .and_then(|v| serde_json::to_value(v).ok()),
+            "toml" => toml::from_str::<toml::Value>(&content)
+                .ok()
+                .and_then(|v| serde_json::to_value(v).ok()),
+            _ => None,
+        };
+
+        if parsed.is_some() {
+            parsed_count += 1;
+        }
+    }
+
+    // Only report as "path mismatch" if at least half of sampled files parse successfully.
+    // This indicates the files are valid but the structural pattern is wrong.
+    // If files don't parse, it's likely a format/syntax issue, not a path issue.
+    parsed_count > 0 && parsed_count >= sample_size / 2
 }
 
 /// Extract values from content for a rule variable.
@@ -681,6 +716,66 @@ fn file_path_to_uri(path: &Path) -> String {
         std::env::current_dir().unwrap_or_default().join(path)
     };
     format!("file://{}", absolute.display())
+}
+
+/// Find the source location of a rule declaration.
+fn find_rule_location(
+    rule: &Rule,
+    source: &str,
+    stmt_spans: &[SourceRange],
+    stmts: &[Statement],
+) -> Option<SourceRange> {
+    for (idx, stmt) in stmts.iter().enumerate() {
+        if let Statement::Rule(decl) = stmt {
+            if decl.name == rule.name {
+                return stmt_spans.get(idx).cloned();
+            }
+        }
+    }
+    None
+}
+
+/// Find the source location of a json pattern within a rule.
+fn find_json_pattern_location(
+    rule: &Rule,
+    source: &str,
+    rule_location: &Option<SourceRange>,
+) -> Option<SourceRange> {
+    // Start searching from the rule location
+    let start = rule_location.as_ref()?.start;
+    let rule_end = rule_location.as_ref()?.end;
+    
+    // Find "json(" within the rule body
+    let rule_text = &source[start..rule_end];
+    if let Some(json_pos) = rule_text.find("json(") {
+        let json_start = start + json_pos;
+        // Find the matching paren
+        let after_json = &source[json_start + 5..]; // Skip "json("
+        let mut depth = 1;
+        let mut json_len = 5;
+        for ch in after_json.chars() {
+            json_len += ch.len_utf8();
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        return Some(SourceRange {
+            start: json_start,
+            end: json_start + json_len,
+            line: line_number(source, json_start),
+            column: column_number(source, json_start),
+        });
+    }
+    
+    // Fallback to rule location if no json pattern found
+    rule_location.clone()
 }
 
 #[cfg(test)]

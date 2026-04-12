@@ -12,15 +12,14 @@ rule(file_complete) {
 };
 
 rule(folder_complete) {
-  folder() {
-  }
+  fs()
 };
 
 # ── Repo/Rev completions ──────────────────────
 
 rule(repo_complete) {
-  repo(myorg/*) {
-    rev(main|develop) {
+  repo(*) {
+    rev(*) {
       fs(**/package.json) > json({ version: $VER })
     }
   }
@@ -45,11 +44,11 @@ rule(capture_test) {
 # ── Cross-rule refs ───────────────────────────
 
 rule(base_rule) {
-  fs(**/values.yaml) > json({ image: { repository: $REPO, tag: $TAG } })
+  fs(**/values.yaml) > json({ services: { **: {image: { repository: $REPO, tag: $TAG } }}})
 };
 
 rule(derived_rule) {
   base_rule(repo: $REPO, tag: $TAG) {
-    fs(**/deploy.yaml) > json({ app: $APP })
+    fs(**/deploy.yaml) > json({ image: { tag: $APP } })
   }
 };

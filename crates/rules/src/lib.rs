@@ -8,7 +8,10 @@ pub mod marker;
 pub mod md;
 pub mod pattern;
 pub mod schema;
+pub mod span_fallback;
 pub mod types;
 pub mod walk;
 
 pub use types::*;
+pub use walk::{enhance_with_spans, CapturedValue, MatchResult};
+pub use span_fallback::{SourceSpan, find_path_span};

@@ -15,6 +15,7 @@ mod context;
 mod db;
 mod diagnostics;
 mod hover;
+mod snapshot;
 mod state;
 mod workspace;
 
@@ -31,8 +32,12 @@ struct SprfLsp {
     doc_state: Mutex<DocState>,
     /// Unified analysis state
     analysis_state: state::LspState,
+    /// Workspace configuration
     workspace: Mutex<Option<workspace::Workspace>>,
+    /// Hover provider for DB lookups
     hover_provider: Mutex<hover::HoverProvider>,
+    /// Document snapshots for fast hover/completion (uri -> snapshot)
+    snapshots: Mutex<HashMap<String, snapshot::DocumentSnapshot>>,
 }
 
 /// Byte range of a statement in the source text.
@@ -556,9 +561,13 @@ impl LanguageServer for SprfLsp {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         log::info!("document closed: {}", params.text_document.uri);
+        let uri_str = params.text_document.uri.to_string();
         // Remove from document store and invalidate cache
-        self.analysis_state.remove_document(&params.text_document.uri.to_string());
-        self.analysis_state.invalidate(&params.text_document.uri.to_string());
+        self.analysis_state.remove_document(&uri_str);
+        self.analysis_state.invalidate(&uri_str);
+        // Also remove snapshot
+        let mut snapshots = self.snapshots.lock().unwrap();
+        snapshots.remove(&uri_str);
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -811,75 +820,134 @@ impl LanguageServer for SprfLsp {
         let pos = params.text_document_position_params.position;
         log::info!("hover request: {} at line {} col {}", uri, pos.line, pos.character);
         
-        // Get analysis for this document
-        let analysis = match self.analysis_state.get_analysis(&uri.to_string()) {
-            Some(a) => a,
+        // === FAST PATH: Use pre-computed snapshot ===
+        // Extract all data we need in one lock acquisition
+        let (snapshot_data, available_uris) = {
+            let snapshots = self.snapshots.lock().unwrap();
+            let uri_str = uri.to_string();
+            let data = snapshots.get(&uri_str).cloned();
+            let keys: Vec<String> = snapshots.keys().cloned().collect();
+            (data, keys)
+        };
+        
+        let snapshot = match snapshot_data {
+            Some(s) => {
+                log::debug!("hover: found snapshot with {} captures", s.captures.len());
+                s
+            }
             None => {
-                log::debug!("hover: no analysis cached for {}", uri);
-                return Ok(None);
+                log::warn!("hover: no snapshot for {}. Available URIs: {:?}", uri, available_uris);
+                // Get text from doc_state as fallback
+                let text = {
+                    let doc_state = self.doc_state.lock().unwrap();
+                    doc_state.text.clone()
+                };
+                if text.is_empty() {
+                    log::warn!("hover: no text available, returning None");
+                    return Ok(None);
+                }
+                // Compute snapshot now (blocking but we have no choice)
+                snapshot::DocumentSnapshot::compute(&uri.to_string(), &text, 0)
             }
         };
-
-        let offset = state::position_to_offset(&analysis.source, pos);
         
-        // Find symbol at position
-        if let Some(symbol) = sprefa_sprf::analyze::find_symbol_at_position(&analysis, offset) {
-            match symbol.kind {
-                sprefa_sprf::analyze::CursorSymbolKind::CaptureReference => {
-                    // Extract var name from "rule.var" format or just "var"
-                    let var_name = symbol.name.split('.').last().unwrap_or(&symbol.name);
-                    let rule_name = find_rule_at_offset(&analysis, offset).unwrap_or_default();
-                    
-                    log::info!("hover: found capture var='{}' in rule='{}'", var_name, rule_name);
-                    
-                    // Extract namespace from filename
-                    let namespace = uri.path().rsplit('/').next()
-                        .and_then(|filename| filename.strip_suffix(".sprf"))
-                        .filter(|name| *name != "test" && *name != "kitchen_sink");
-                    log::debug!("hover: extracted namespace={:?} from uri={}", namespace, uri);
-                    
-                    // First try DB hover provider
-                    let hover_provider = self.hover_provider.lock().unwrap();
-                    if let Some(hover) = hover_provider.hover(var_name, &rule_name, namespace) {
-                        log::info!("hover: provider returned result for ${}", var_name);
-                        return Ok(Some(hover));
+        let offset = position_to_offset(&snapshot.text, pos);
+        log::debug!("hover: position {:?} -> offset {} in text of length {}", pos, offset, snapshot.text.len());
+        
+        // === Capture Variable Hover (FAST) ===
+        if let Some(capture) = snapshot.capture_at(offset) {
+            let var_name = &capture.name;
+            let rule_name = &capture.rule_name;
+            
+            log::info!("hover: capture '${}' at offset {} in rule '{}' (kind: {:?})", 
+                var_name, offset, rule_name, capture.kind);
+            
+            // Build hover content with markdown
+            let hover_content = self.build_capture_hover(&snapshot, capture, uri).await;
+            
+            return Ok(Some(Hover {
+                contents: tower_lsp::lsp_types::HoverContents::Markup(
+                    tower_lsp::lsp_types::MarkupContent {
+                        kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                        value: hover_content,
                     }
-                    drop(hover_provider);
-                    
-                    // Fallback: check in-memory extraction results from unified analysis
-                    if let Some(extraction) = analysis.extractions.iter().find(|e| e.rule_name == rule_name) {
-                        // Find values for this variable
-                        let values: Vec<String> = extraction.results.iter()
-                            .filter(|(_, var, _)| var == var_name)
-                            .flat_map(|(_, _, vals)| vals.clone())
-                            .collect();
-                        
-                        if !values.is_empty() {
-                            log::info!("hover: found {} in-memory values for ${} in {}", 
-                                values.len(), var_name, rule_name);
-                            return Ok(Some(self.build_hover(var_name, &rule_name, &values)));
+                ),
+                range: Some(tower_lsp::lsp_types::Range {
+                    start: state::offset_to_position(&snapshot.text, capture.range.start),
+                    end: state::offset_to_position(&snapshot.text, capture.range.end),
+                }),
+            }));
+        }
+        
+        // === Cross-Ref Rule Name Hover ===
+        if let Some(cross_ref) = snapshot.cross_ref_at(offset) {
+            // Check if hovering over the target rule name (not a capture)
+            let target_start = snapshot.text[cross_ref.span.start..].find(&cross_ref.target_rule)
+                .map(|i| cross_ref.span.start + i)
+                .unwrap_or(cross_ref.span.start);
+            let target_end = target_start + cross_ref.target_rule.len();
+            
+            if offset >= target_start && offset <= target_end {
+                log::info!("hover: cross-ref to rule '{}'", cross_ref.target_rule);
+                
+                let hover_content = self.build_cross_ref_hover(&snapshot, cross_ref).await;
+                
+                return Ok(Some(Hover {
+                    contents: tower_lsp::lsp_types::HoverContents::Markup(
+                        tower_lsp::lsp_types::MarkupContent {
+                            kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                            value: hover_content,
                         }
-                    }
-                }
-                sprefa_sprf::analyze::CursorSymbolKind::RuleReference => {
-                    // Cross-reference hover
-                    log::info!("hover: found cross-ref to rule '{}'", symbol.name);
-                    return Ok(Some(Hover {
-                        contents: tower_lsp::lsp_types::HoverContents::Markup(
-                            tower_lsp::lsp_types::MarkupContent {
-                                kind: tower_lsp::lsp_types::MarkupKind::Markdown,
-                                value: format!("**Cross-reference**\\nRule: `{}`\\n\\nClick to go to definition", symbol.name),
-                            }
-                        ),
-                        range: None,
-                    }));
-                }
-                _ => {}
+                    ),
+                    range: Some(tower_lsp::lsp_types::Range {
+                        start: state::offset_to_position(&snapshot.text, target_start),
+                        end: state::offset_to_position(&snapshot.text, target_end),
+                    }),
+                }));
             }
         }
         
-        // Check if hovering over a file pattern (fs, file, folder)
-        // Use legacy state for this (will be migrated)
+        // === Rule Name Hover (goto def hint) ===
+        if let Some(rule) = snapshot.rule_at(offset) {
+            // Check if we're on the rule name itself (not inside the body)
+            let rule_decl_end = snapshot.text[rule.span.start..].find('{')
+                .map(|i| rule.span.start + i)
+                .unwrap_or(rule.span.end);
+            
+            if offset < rule_decl_end {
+                log::info!("hover: rule declaration '{}'", rule.name);
+                
+                let caps_list = if rule.captures.is_empty() {
+                    "None".to_string()
+                } else {
+                    rule.captures.iter().map(|c| format!("`${}`", c)).collect::<Vec<_>>().join(", ")
+                };
+                
+                let cross_refs_list = if rule.cross_refs.is_empty() {
+                    "".to_string()
+                } else {
+                    let refs = rule.cross_refs.iter()
+                        .map(|cr| format!("- `{}`", cr.target_rule))
+                        .collect::<Vec<_>>().join("\n");
+                    format!("\n\n**Cross-references:**\n{}", refs)
+                };
+                
+                return Ok(Some(Hover {
+                    contents: tower_lsp::lsp_types::HoverContents::Markup(
+                        tower_lsp::lsp_types::MarkupContent {
+                            kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                            value: format!(
+                                "**Rule: `{}`**\n\nCaptures: {}\n{}\n\n*Click to see definition*",
+                                rule.name, caps_list, cross_refs_list
+                            ),
+                        }
+                    ),
+                    range: None,
+                }));
+            }
+        }
+        
+        // === File Pattern Hover (fs, file, folder) ===
         let pattern_result = {
             let doc_state = self.doc_state.lock().unwrap();
             let offset = position_to_offset(&doc_state.text, pos);
@@ -896,13 +964,11 @@ impl LanguageServer for SprfLsp {
                     return Ok(Some(self.build_file_hover(&tag, &pattern, &matches, &root)));
                 }
             }
-        } else {
-            log::debug!("hover: no pattern or capture found");
         }
         
+        log::debug!("hover: no symbol found at offset {}", offset);
         Ok(None)
     }
-
     async fn goto_definition(
         &self,
         params: tower_lsp::lsp_types::GotoDefinitionParams,
@@ -982,7 +1048,7 @@ impl LanguageServer for SprfLsp {
         let rule_count = analysis.rules.len();
         let diag_count = analysis.diagnostics.len();
         
-        self.analysis_state.cache_analysis(&uri.to_string(), analysis, 0);
+        self.analysis_state.cache_analysis(&uri.to_string(), analysis.clone(), 0);
         
         log::info!("did_save: cached analysis with {} rules, {} diagnostics", rule_count, diag_count);
         
@@ -991,28 +1057,56 @@ impl LanguageServer for SprfLsp {
             self.persist_scan_to_db(&file_path).await;
         }
         
-        // Validate fs() patterns and publish diagnostics
-        let workspace_root = self.workspace.lock().unwrap().as_ref().map(|w| w.root.clone());
-        if let Some(root) = workspace_root {
-            match parse_program(&text) {
-                Ok(statements) => {
-                    let patterns = diagnostics::extract_patterns(&statements, &text);
-                    log::info!("extracted {} patterns for validation", patterns.len());
-                    if !patterns.is_empty() {
-                        let diagnostics = diagnostics::generate_diagnostics(patterns, &root).await;
-                        let count = diagnostics.len();
-                        log::info!("publishing {} diagnostics", count);
-                        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
-                    } else {
-                        // Clear diagnostics if no patterns to validate
-                        self.client.publish_diagnostics(uri.clone(), vec![], None).await;
-                    }
-                }
-                Err(e) => {
-                    log::warn!("parse failed for diagnostics: {}", e);
-                }
-            }
+        // Publish unified analysis diagnostics (same as on_change)
+        let mut diags: Vec<Diagnostic> = vec![];
+        
+        // Phase errors (parse, lower)
+        for err in &analysis.errors {
+            let range = state::source_range_to_lsp(&text, &err.location);
+            let severity = Some(match err.severity {
+                sprefa_sprf::analyze::Severity::Error => DiagnosticSeverity::ERROR,
+                sprefa_sprf::analyze::Severity::Warning => DiagnosticSeverity::WARNING,
+                sprefa_sprf::analyze::Severity::Info => DiagnosticSeverity::INFORMATION,
+            });
+            diags.push(Diagnostic {
+                range,
+                severity,
+                source: Some(format!("sprf-{:?}", err.phase).to_lowercase()),
+                message: err.message.clone(),
+                ..Default::default()
+            });
         }
+
+        // Extraction diagnostics
+        for diag in &analysis.diagnostics {
+            let (start_pos, end_pos) = if let Some(loc) = &diag.location {
+                let start = state::offset_to_position(&text, loc.start);
+                let end = state::offset_to_position(&text, loc.end);
+                (start, end)
+            } else {
+                let (start, end) = find_rule_name_range(&text, &diag.rule);
+                let start_pos = state::offset_to_position(&text, start);
+                let end_pos = state::offset_to_position(&text, end);
+                (start_pos, end_pos)
+            };
+
+            let severity = Some(match diag.severity {
+                sprefa_sprf::analyze::Severity::Error => DiagnosticSeverity::ERROR,
+                sprefa_sprf::analyze::Severity::Warning => DiagnosticSeverity::WARNING,
+                sprefa_sprf::analyze::Severity::Info => DiagnosticSeverity::INFORMATION,
+            });
+
+            diags.push(Diagnostic {
+                range: Range { start: start_pos, end: end_pos },
+                severity,
+                source: Some("sprf-extract".into()),
+                message: format!("[{}] {}", diag.rule, diag.message),
+                ..Default::default()
+            });
+        }
+        
+        log::info!("did_save: publishing {} diagnostics", diags.len());
+        self.client.publish_diagnostics(uri.clone(), diags, None).await;
     }
 }
 
@@ -1235,10 +1329,18 @@ impl SprfLsp {
 
         // Extraction diagnostics
         for diag in &analysis.diagnostics {
-            // Find the exact position of the rule name in the source
-            let (start, end) = find_rule_name_range(text, &diag.rule);
-            let start_pos = state::offset_to_position(text, start);
-            let end_pos = state::offset_to_position(text, end);
+            // Use the diagnostic location if available, otherwise find rule name
+            let (start_pos, end_pos) = if let Some(loc) = &diag.location {
+                let start = state::offset_to_position(text, loc.start);
+                let end = state::offset_to_position(text, loc.end);
+                (start, end)
+            } else {
+                // Fallback to rule name range
+                let (start, end) = find_rule_name_range(text, &diag.rule);
+                let start_pos = state::offset_to_position(text, start);
+                let end_pos = state::offset_to_position(text, end);
+                (start_pos, end_pos)
+            };
 
             let severity = Some(match diag.severity {
                 sprefa_sprf::analyze::Severity::Error => DiagnosticSeverity::ERROR,
@@ -1253,6 +1355,20 @@ impl SprfLsp {
                 message: format!("[{}] {}", diag.rule, diag.message),
                 ..Default::default()
             });
+        }
+
+        // Compute document snapshot for fast hover/completion
+        {
+            let snapshot = snapshot::DocumentSnapshot::compute(&uri.to_string(), text, version);
+            log::debug!(
+                "on_change: computed snapshot with {} captures, {} rules, {} cross_refs for {}",
+                snapshot.captures.len(),
+                snapshot.rules.len(),
+                snapshot.cross_refs.len(),
+                uri
+            );
+            let mut snapshots = self.snapshots.lock().unwrap();
+            snapshots.insert(uri.to_string(), snapshot);
         }
 
         log::info!(
@@ -1330,12 +1446,12 @@ impl SprfLsp {
                 };
 
                 if files_found > 0 {
-                    // Check if it's a JSON/YAML path issue by sampling a file
+                    // Check if it's a JSON/YAML/TOML path issue by sampling files
                     let path_issue = Self::check_pattern_path_issue(rule, workspace_root.as_ref().unwrap(), &documents);
                     if path_issue {
                         diagnostics.push((
                             rule.name.clone(),
-                            format!("Rule `{}` found {} files but JSON/YAML path doesn't match file structure",
+                            format!("Rule `{}` found {} files but JSON/YAML/TOML path doesn't match file structure",
                                     rule.name, files_found),
                             DiagnosticSeverity::ERROR,
                         ));
@@ -1436,7 +1552,7 @@ async fn scan_file(&self, text: &str) -> anyhow::Result<ScanResult> {
                     if path_issue {
                         diagnostics.push((
                             rule.name.clone(),
-                            format!("Rule `{}` found {} files but JSON/YAML path doesn't match file structure", 
+                            format!("Rule `{}` found {} files but JSON/YAML/TOML path doesn't match file structure", 
                                     rule.name, files_found),
                             DiagnosticSeverity::ERROR,
                         ));
@@ -1466,54 +1582,60 @@ async fn scan_file(&self, text: &str) -> anyhow::Result<ScanResult> {
         Ok(ScanResult { values: results, diagnostics })
     }
 
-    /// Check if a rule's JSON/YAML pattern doesn't match the actual file structure.
-    /// Samples the first matching file to validate the pattern path.
+    /// Check if JSON/YAML/TOML path in rule doesn't match actual file structure.
+    /// Check if JSON/YAML/TOML path in rule doesn't match actual file structure.
+    /// 
+    /// Returns true only if multiple files were found and they all parse successfully
+    /// as the expected format. This indicates the structural pattern is wrong,
+    /// not that the files have syntax errors.
     fn check_pattern_path_issue(
         rule: &sprefa_rules::types::Rule,
         workspace_root: &Path,
         documents: &HashMap<String, String>,
     ) -> bool {
-        // Get the structural steps (json patterns)
-        let has_json_pattern = rule.select.iter().any(|s| {
-            matches!(s, sprefa_rules::types::SelectStep::File { .. })
-        });
-        
-        if !has_json_pattern {
-            return false;
-        }
-        
-        // Find first matching file
+        // Find matching files
         let files = sprefa_sprf::_4_extract::find_matching_files(rule, workspace_root);
-        if files.is_empty() {
+        if files.len() < 2 {
+            // Not enough files to determine if it's a pattern issue
             return false;
         }
         
-        // Sample the first file
-        let sample_file = &files[0];
-        let uri = Url::from_file_path(sample_file).map(|u| u.to_string()).ok();
+        // Sample up to 5 files to verify structure
+        let sample_size = files.len().min(5);
+        let mut parsed_count = 0;
         
-        // Get content (unsaved or from disk)
-        let content = uri.as_ref()
-            .and_then(|u| documents.get(u))
-            .cloned()
-            .or_else(|| std::fs::read_to_string(sample_file).ok());
+        for sample_file in files.iter().take(sample_size) {
+            let uri = Url::from_file_path(sample_file).map(|u| u.to_string()).ok();
+            
+            // Get content (unsaved or from disk)
+            let content = uri.as_ref()
+                .and_then(|u| documents.get(u))
+                .cloned()
+                .or_else(|| std::fs::read_to_string(sample_file).ok());
+            
+            let Some(content) = content else {
+                continue;
+            };
+            
+            // Try to parse based on extension
+            let ext = sample_file.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let parsed: Option<serde_json::Value> = match ext {
+                "json" => serde_json::from_str(&content).ok(),
+                "yaml" | "yml" => serde_yaml::from_str::<serde_yaml::Value>(&content)
+                    .ok().and_then(|v| serde_json::to_value(v).ok()),
+                "toml" => toml::from_str::<toml::Value>(&content)
+                    .ok().and_then(|v| serde_json::to_value(v).ok()),
+                _ => None,
+            };
+            
+            if parsed.is_some() {
+                parsed_count += 1;
+            }
+        }
         
-        let Some(content) = content else {
-            return false;
-        };
-        
-        // Try to parse based on extension
-        let ext = sample_file.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let parsed: Option<serde_json::Value> = match ext {
-            "json" => serde_json::from_str(&content).ok(),
-            "yaml" | "yml" => serde_yaml::from_str::<serde_yaml::Value>(&content)
-                .ok().and_then(|v| serde_json::to_value(v).ok()),
-            "toml" => toml::from_str::<toml::Value>(&content)
-                .ok().and_then(|v| serde_json::to_value(v).ok()),
-            _ => None,
-        };
-        
-        parsed.is_none()
+        // Only report as "path mismatch" if at least half of sampled files parse successfully.
+        // This indicates the files are valid but the structural pattern doesn't match.
+        parsed_count > 0 && parsed_count >= sample_size / 2
     }
 
     /// Extract values for a specific variable in a rule.
@@ -1734,6 +1856,173 @@ async fn scan_file(&self, text: &str) -> anyhow::Result<ScanResult> {
             range: None,
         }
     }
+
+    /// Build hover content for a capture variable.
+    /// Looks up values from DB, analysis results, or cross-references.
+    async fn build_capture_hover(
+        &self,
+        snapshot: &snapshot::DocumentSnapshot,
+        capture: &snapshot::CaptureInfo,
+        uri: &Url,
+    ) -> String {
+        let var_name = &capture.name;
+        let rule_name = &capture.rule_name;
+        
+        // Extract namespace from filename
+        let namespace = uri.path().rsplit('/').next()
+            .and_then(|filename| filename.strip_suffix(".sprf"))
+            .filter(|name| *name != "test" && *name != "kitchen_sink");
+        
+        // === Try DB first (with timeout to avoid blocking) ===
+        let db_values = {
+            let hp = self.hover_provider.lock().unwrap();
+            // Get values from DB - try rule.var format
+            let key = if rule_name.is_empty() {
+                var_name.to_string()
+            } else {
+                format!("{}.{}", rule_name, var_name)
+            };
+            hp.get_values(&key, namespace)
+        };
+        
+        if !db_values.is_empty() {
+            return format_capture_hover(var_name, rule_name, &db_values, "database");
+        }
+        
+        // === Try in-memory analysis results ===
+        let analysis = self.analysis_state.get_analysis(&snapshot.uri);
+        if let Some(ref analysis) = analysis {
+            // Direct extraction results for this rule
+            if let Some(extraction) = analysis.extractions.iter().find(|e| e.rule_name == *rule_name) {
+                let values: Vec<String> = extraction.results.iter()
+                    .filter(|(_, var, _)| var == var_name)
+                    .flat_map(|(_, _, vals)| vals.clone())
+                    .take(20) // Limit for hover
+                    .collect();
+                
+                if !values.is_empty() {
+                    return format_capture_hover(var_name, rule_name, &values, "extracted");
+                }
+            }
+            
+            // === Cross-reference resolution ===
+            // If this is a cross-ref binding (e.g., base_rule(repo: $REPO)), 
+            // look up values from the target rule
+            if capture.kind == snapshot::CaptureKind::CrossRefBinding {
+                if let Some(cross_ref) = snapshot.cross_refs.iter()
+                    .find(|cr| cr.containing_rule == *rule_name 
+                        && cr.bindings.iter().any(|(_, v)| v == var_name))
+                {
+                    // Find what parameter this capture maps to
+                    let param = cross_ref.bindings.iter()
+                        .find(|(_, v)| v == var_name)
+                        .map(|(p, _)| p.clone())
+                        .unwrap_or_default();
+                    
+                    // Look up values from the target rule's extraction
+                    if let Some(target_extraction) = analysis.extractions.iter()
+                        .find(|e| e.rule_name == cross_ref.target_rule)
+                    {
+                        let values: Vec<String> = target_extraction.results.iter()
+                            .filter(|(_, var, _)| var == &param)
+                            .flat_map(|(_, _, vals)| vals.clone())
+                            .take(20)
+                            .collect();
+                        
+                        if !values.is_empty() {
+                            return format!(
+                                "**Capture: `${}`**\nRule: `{}`\nFrom: `{}`\n\n**Values ({} from cross-ref):**\n{}",
+                                var_name,
+                                rule_name,
+                                cross_ref.target_rule,
+                                values.len(),
+                                values.iter().map(|v| format!("- `{}`", v)).collect::<Vec<_>>().join("\n")
+                            );
+                        }
+                    }
+                    
+                    // Try DB for cross-ref target
+                    let cross_ref_db_values = {
+                        let hp = self.hover_provider.lock().unwrap();
+                        hp.get_values(&format!("{}.{}", cross_ref.target_rule, param), namespace)
+                    };
+                    
+                    if !cross_ref_db_values.is_empty() {
+                        return format!(
+                            "**Capture: `${}`**\nRule: `{}`\nFrom: `{}`\n\n**Values ({} from DB):**\n{}",
+                            var_name,
+                            rule_name,
+                            cross_ref.target_rule,
+                            cross_ref_db_values.len(),
+                            cross_ref_db_values.iter().map(|v| format!("- `{}`", v)).take(20).collect::<Vec<_>>().join("\n")
+                        );
+                    }
+                }
+            }
+        }
+        
+        // === Static info fallback ===
+        format!(
+            "**Capture: `${}`**\nRule: `{}`\n\n*No values available*\n\nRun a scan to extract values.",
+            var_name,
+            rule_name
+        )
+    }
+
+    /// Build hover content for a cross-reference.
+    async fn build_cross_ref_hover(
+        &self,
+        snapshot: &snapshot::DocumentSnapshot,
+        cross_ref: &snapshot::CrossRefInfo,
+    ) -> String {
+        // Look up the target rule to show its captures
+        let target = snapshot.find_rule(&cross_ref.target_rule);
+        
+        let target_info = if let Some(rule) = target {
+            let caps = if rule.captures.is_empty() {
+                "No captures".to_string()
+            } else {
+                rule.captures.iter().map(|c| format!("`${}`", c)).collect::<Vec<_>>().join(", ")
+            };
+            format!("\n\nTarget captures: {}", caps)
+        } else {
+            String::new()
+        };
+        
+        let bindings = cross_ref.bindings.iter()
+            .map(|(p, v)| format!("- `{}` ← `${}`", p, v))
+            .collect::<Vec<_>>().join("\n");
+        
+        format!(
+            "**Cross-reference: `{}`**\n\n**Parameter bindings:**\n{}\n{}\n\n*Click to go to definition*",
+            cross_ref.target_rule,
+            bindings,
+            target_info
+        )
+    }
+}
+
+fn format_capture_hover(var_name: &str, rule_name: &str, values: &[String], source: &str) -> String {
+    let display_values: Vec<String> = values.iter()
+        .take(20)
+        .map(|v| format!("- `{}`", v))
+        .collect();
+    
+    let more_info = if values.len() > 20 {
+        format!("\n\n*... and {} more*", values.len() - 20)
+    } else {
+        String::new()
+    };
+    
+    format!(
+        "**Capture: `${}`**\nRule: `{}`\n\n**Values ({} from {}):**\n{}{}",
+        var_name,
+        rule_name,
+        values.len(),
+        source,
+        display_values.join("\n"),
+        more_info
+    )
 }
 
 /// Recursive directory walk fallback for file matching.
@@ -1856,6 +2145,7 @@ async fn main() {
         analysis_state: state::LspState::new(),
         workspace: Mutex::new(None),
         hover_provider: Mutex::new(hover::HoverProvider::empty()),
+        snapshots: Mutex::new(HashMap::new()),
     });
 
     log::info!("LSP service created, starting server");

@@ -90,8 +90,10 @@ DATABASE:
   enabled for concurrent reads.
 
 VERBOSITY:
-  Set RUST_LOG=sprefa=debug or RUST_LOG=sprefa=trace for detailed output \
-  during watch and scan. Default level is info.",
+  Use -v/--verbose for debug output, -vv for trace level.
+  Use -q/--quiet to suppress non-error output.
+  Or set RUST_LOG=sprefa=debug environment variable.
+  Default level is info.",
     after_help = "Use --readme to print the full project documentation."
 )]
 struct Cli {
@@ -112,6 +114,16 @@ struct Cli {
     /// and fields. Useful for piping into jq, datadog, or log aggregators.
     #[arg(long, global = true)]
     json: bool,
+
+    /// Increase verbosity (-v for debug, -vv for trace)
+    /// Can also use RUST_LOG=sprefa=debug environment variable
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    verbose: u8,
+
+    /// Suppress non-error output (overrides --verbose)
+    /// Can also use RUST_LOG=error environment variable
+    #[arg(short, long, global = true)]
+    quiet: bool,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -303,8 +315,18 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "sprefa=info".into());
+    // Determine log level from flags or environment
+    let env_filter = if cli.quiet {
+        tracing_subscriber::EnvFilter::new("error")
+    } else {
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            match cli.verbose {
+                0 => "sprefa=info".into(),
+                1 => "sprefa=debug".into(),
+                _ => "sprefa=trace".into(),
+            }
+        })
+    };
 
     if cli.json {
         tracing_subscriber::fmt()

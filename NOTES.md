@@ -48,10 +48,126 @@ allow = [
 
 Or pattern-based: `allow = ["jq **", "protoc **"]`. Anything not matching gets rejected at parse time or scan time.
 
-**Open questions:**
-- Does sh() run once per matched file (like a transform) or once globally (like a source)?
-- Caching: same input file + same command = skip? Content hash of stdout?
-- Security: even with allowlist, shell injection via captured variables is a risk. Maybe captured vars get shell-escaped automatically.
+### Feature 1b: sh() refined — cuts, phases, cross-rule refs
+
+**Four forms:**
+
+| Form | Reads | Writes FS | Per-row or batch |
+|------|-------|-----------|-----------------|
+| `sh()` | stdout → downstream | no | per-file or per-row |
+| `sh_mut()` | stdout logged | yes | per-file or per-row |
+| `sh_batch()` | stdout → downstream | no | 1 call, all values |
+| `sh_mut_batch()` | stdout logged | yes | 1 call, all values |
+
+**Cross-rule variable refs in shell commands:**
+
+```sprf
+# per-row: runs once per dep_source row
+rule(dep_versions) {
+  sh(npm view ${dep_source.DEP} version --json) > json($VERSION)
+};
+
+# batch: collects all values, runs once
+rule(tag_check) {
+  sh_batch(git tag -l $$${deploy_img.TAG}) > line($FOUND)
+};
+```
+
+`${rule.VAR}` — single value, iterates per row (like existing cross-ref).
+`$$${rule.VAR}` — all values collected, space-separated (one call).
+`$$${rule.VAR:,}` — comma-separated. `$$${rule.VAR:\n}` — newline-separated. `$$${rule.VAR:"}` — JSON-quoted array.
+
+Dot syntax chosen because bash does not allow dots in variable names (function names yes, but those don't expand). No collision.
+
+**Pending cuts — not error, not warning, side channel:**
+
+sh rules whose command pattern is not in `[shell].allow` do not execute. Instead they collect into a `pending_cuts` side channel with the resolved command and all input values.
+
+```
+sprefa scan
+✓ 47 rules extracted
+⧖ 3 shell cuts pending (need approval):
+  npm_versions: npm view * (3 inputs)
+  proto_fields: protoc * (12 inputs)
+  db_tables: psql * (1 input)
+
+sprefa cuts              # list pending
+sprefa cuts --approve npm  # add "npm view *" to [shell].allow
+sprefa cuts --run npm      # one-shot execute without persisting to allow
+```
+
+LSP hover on sh() body shows:
+
+```
+⧖ Shell cut: not in allow list
+
+Would run 3 commands:
+  npm view express version --json
+  npm view lodash version --json
+  npm view @myorg/utils version --json
+
+[Run now]  [Add to allow]  [Skip]
+```
+
+**Three-phase scan architecture:**
+
+```
+phase 1: pure extraction (fs/json/ast/line/comment)
+  → all rule tables populated
+  → zero side effects, always runs
+
+phase 2: shell cuts (sh/sh_mut)
+  → reads from phase 1 tables for ${rule.VAR} expansion
+  → allowed cuts → execute, capture stdout, populate tables
+  → disallowed cuts → pending_cuts collection
+  → never blocks phase 1
+
+phase 3: checks + codegen
+  → runs on whatever tables are populated
+  → missing sh-rule tables → check reports incomplete
+  → codegen targets from sh rules → skipped if pending
+```
+
+**Sanitization per `${rule.VAR}` expansion:**
+
+1. Shell-escape value (`shlex::quote`)
+2. Reject if value contains: `; | & \` $( ${ \n`
+3. Reject if value length > 4096 bytes
+4. Log every expansion at trace level
+
+**Permission config:**
+
+```toml
+[shell]
+allow = ["jq *", "git tag *", "npm view *"]
+allow_mut = ["sed -i *", "prettier --write *"]
+timeout_ms = 10000
+max_batch = 500
+```
+
+**Dependency order:** `sh_batch($$${rule.VAR})` creates implicit dep edge. Same DAG machinery as existing cross-rule refs. sh_batch adds "collect all rows" semantics vs cross-ref "iterate per row."
+
+**Example data flow:**
+
+```sprf
+# phase 1
+rule(dep_source) {
+  fs(**/package.json) > json({ dependencies: { $DEP: $_ } })
+};
+
+# phase 2 (gated by allow list)
+rule(dep_versions) {
+  sh(npm view ${dep_source.DEP} version --json) > json($VERSION)
+};
+
+# phase 3
+check(outdated_deps) {
+  SELECT d.dep, d.version, dv.version
+  FROM dep_source d
+  LEFT JOIN dep_versions dv ON dv.dep = d.dep
+  WHERE d.version != dv.version
+};
+```
 
 ### Feature 2: codegen validation — enum/union exhaustiveness across files
 
@@ -158,3 +274,243 @@ rule(targeted_scan) {
 3. Actually shell out to `bash -c 'echo "expanded"'` for full bashism support (heaviest, most correct)
 
 For let-bindings in .sprf, option 1 (`shellexpand`-style) is probably sufficient. The capture variable syntax already handles `$SCREAMING` and `${BRACED}`. Adding `${VAR:-default}` and `${VAR:+alt}` covers the useful bash-isms without needing a full bash interpreter.
+
+### Feature 5: reactive execution model (rxjs mental model)
+
+The rule chain is a reactive pipeline. Every tag is an operator. Cursor is accumulated state. Everything is strings.
+
+```coffeescript
+# ── cursor: the reactive state threaded through every operator ──
+
+# there are no "types" of data (files vs content vs rows vs captures)
+# there is cursor. cursor has strings. operators read/write cursor fields.
+
+Cursor =
+  repo: null        # string
+  rev: null          # string
+  folder: null       # string
+  file: null         # string
+  byteRange: null    # [start, end]
+  line: null         # number
+  content: null      # string (file content, sh stdout, whatever)
+  captures: {}       # Record<string, string>
+
+
+# ── every tag is the same shape: cursor in, cursors out ──
+
+# creation operators (start a stream)
+#   fs(), repo(), sh() at chain start
+#
+# pipeline operators (narrow/enrich cursor)
+#   json(), line(), ast(), comment(), sh() mid-chain
+#
+# no distinction needed. operator reads what it needs from cursor.
+# if cursor.content is null and operator needs content, it creates content.
+# if cursor.content exists, it transforms content.
+
+Operator = (input$, args, side) -> Observable<Cursor>
+
+
+# ── chain composition: just reduce ──
+
+# fs(**/values.yaml) > json({ image: { repo: $REPO } }) > line(re:tag:\s+$TAG)
+#
+# cursor flows:
+# {} → {file, content} → {file, content, captures:{REPO}} → {+captures:{TAG}, +line}
+
+compileChain = (nodes) -> (input$, _, side) ->
+  nodes.reduce(
+    (stream$, node) ->
+      registry.get(node.name)(stream$, node.body, side)
+    input$
+  )
+
+
+# ── scope blocks: mergeMap (switchMap in spirit) ──
+
+# repo($R) { rev(main) { fs(values.yaml) > json({name: $N}) } }
+
+compileTree = (body) -> (input$, _, side) ->
+  switch body.kind
+    when "step"
+      registry.get(body.tag.name)(input$, body.tag.body, side)
+
+    when "block"
+      scopeOp = registry.get(body.tag.name)
+      scopeOp(input$, body.tag.body, side).pipe(
+        mergeMap (scopedCursor) ->
+          merge(body.children.map (child) ->
+            compileTree(child)(of(scopedCursor), "", side)
+          ...)
+      )
+
+    when "ref"
+      # REACTIVE cross-rule ref: subscribe to upstream rule's stream
+      # not "query table" — mergeWith on live stream
+      input$.pipe(
+        mergeWith(
+          ruleStreams.get(body.ref.rule).pipe(
+            map (outerCursor) ->
+              type: "outer"
+              cursor: bindColumns(outerCursor, body.ref.bindings)
+          )
+        )
+        scan (state, event) ->
+          if event.type is "outer"
+            { ...state, cursor: { ...state.cursor, captures: { ...state.cursor.captures, ...event.cursor.captures } }, dirty: true }
+          else
+            { ...state, cursor: event, dirty: true }
+        , { cursor: emptyCursor(), dirty: false }
+
+        filter (state) -> state.dirty
+        mergeMap (state) ->
+          merge(body.children.map (child) ->
+            compileTree(child)(of(state.cursor), "", side)
+          ...)
+      )
+
+
+# ── individual operators ──
+
+fs_op = makeOperator "fs", (cursor, side) ->
+  files = globMatch(cursor, pattern)
+  from(files).pipe(
+    map (f) ->
+      { ...cursor, file: f.path, folder: dirname(f.path), content: readFileSync(f.path), byteRange: null }
+  )
+
+json_op = makeOperator "json", (cursor, side) ->
+  doc = parseStructured(cursor.content)
+  matches = walkPattern(doc, pattern)
+  from(matches).pipe(
+    map (m) ->
+      { ...cursor, captures: { ...cursor.captures, ...m.bindings }, byteRange: m.span }
+  )
+
+sh_op = makeOperator "sh", (cursor, side) ->
+  cmd = expandVars(pattern, cursor)
+  unless allowed(cmd, config)
+    side.cuts.next { cmd, cursor, pattern: inferPattern(cmd) }
+    return EMPTY
+  stdout = execSync(cmd)
+  of { ...cursor, content: stdout, byteRange: null }
+
+comment_op = makeOperator "comment", (cursor, side) ->
+  regions = findCommentRegions(cursor.content, pattern)
+  from(regions).pipe(
+    map (r) ->
+      { ...cursor, byteRange: [r.start, r.end] }
+  )
+
+line_op = makeOperator "line", (cursor, side) ->
+  slice = if cursor.byteRange
+    cursor.content[cursor.byteRange[0]...cursor.byteRange[1]]
+  else
+    cursor.content
+  from(slice.split('\n')).pipe(
+    filter (line) -> matchLine(line, pattern)
+    map (line, i) ->
+      { ...cursor, line: i, captures: { ...cursor.captures, ...extractCaptures(line, pattern) } }
+  )
+
+
+# ── rule streams are subjects ──
+
+ruleStreams = new Map()
+
+compileRule = (rule) ->
+  output$ = new ReplaySubject()
+  ruleStreams.set(rule.name, output$)
+
+  chain$ = compileTree(rule.body)(of(emptyCursor()), "", side)
+  chain$.subscribe (cursor) -> output$.next(cursor)
+  output$
+
+
+# ── full pipeline: topo sort, then everything reacts ──
+
+reactivePipeline = (rules) ->
+  sorted = topoSort(rules)
+  compiled = sorted.map(compileRule)
+  merge(compiled...).pipe(
+    tap (cursor) -> emitRow(cursor._ruleName, cursor.captures)
+  )
+
+# daemon mode: rule streams never complete
+# file change → fs_op re-emits → downstream reacts
+# demand scan → repo_op re-emits → downstream reacts
+# codegen → subscribes to rule streams → re-renders on change
+```
+
+**Key reactive properties:**
+- Cross-rule refs are `mergeWith` + `scan` on upstream rule's output stream, not table queries
+- Each rule is a `ReplaySubject` -- late subscribers get all prior emissions
+- Daemon/watcher: streams stay hot, file changes push new cursors, everything downstream reacts
+- Three-phase scan maps to: phase 1 streams complete → phase 2 (sh) subscribes → phase 3 (check/codegen) subscribes
+- No distinction between "batch mode" and "live mode" -- batch is just "all streams complete"
+
+### Feature 6: self-rendering codegen via comment scopes
+
+Codegen can target comment scopes in any file. Combined with rules that extract errors/violations/state, a .sprf file can declare "this region of this file is rendered from this data" and the daemon keeps it live.
+
+**Error dashboard:**
+
+```sprf
+rule(all_violations) {
+  check_violations(check: $CHECK, data: $DATA)
+};
+
+rule(pending_sh) {
+  pending_cuts(cmd: $CMD, rule: $RULE, inputs: $INPUTS)
+};
+
+rule(parse_errors) {
+  parse_diagnostics(file: $FILE, line: $LINE, msg: $MSG)
+};
+
+codegen(error_report) {
+  source: all_violations | pending_sh | parse_errors
+  target: fs(STATUS.md) > comment("sprf:codegen error_report")
+  template: "- [$CHECK]($FILE:$LINE): $DATA"
+};
+```
+
+Produces in STATUS.md:
+
+```markdown
+## Current Errors
+
+<!-- sprf:codegen error_report -->
+- [version_drift](values.yaml:12): tag=latest
+- [missing_dep](package.json:4): lodash unpin
+- ⧖ npm_versions: `npm view *` (3 pending)
+- ⚠ rules/ci.sprf:7: unexpected token
+<!-- sprf:codegen-end -->
+```
+
+**Other self-rendering patterns:**
+
+```sprf
+# dependency table in README
+codegen(dep_table) {
+  source: dep_source(dep: $D, spec: $S)
+  target: fs(README.md) > comment("sprf:codegen dep_table")
+  template: "| $D | $S |"
+};
+
+# API route docs from openapi
+codegen(api_docs) {
+  source: openapi_operations(path: $P, method: $M, op: $OP)
+  target: fs(docs/api.md) > comment("sprf:codegen api_docs")
+  template: "### $M $P\nHandler: `$OP`"
+};
+
+# env var inventory from k8s configmaps
+codegen(env_inventory) {
+  source: k8s_configmap_envs(key: $K, val: $V)
+  target: fs(.env.example) > comment("sprf:codegen env")
+  template: "$K=$V"
+};
+```
+
+**The loop:** extract → check → codegen → file changes → re-extract. Comment scopes are write targets. Daemon mode keeps it live. `sprefa codegen --check` in CI catches drift.

@@ -293,6 +293,103 @@ async fn kitchen_sink_e2e_full_pipeline() -> Result<()> {
     Ok(())
 }
 
+/// KITCHEN SINK: Test in-memory extraction (LSP path)
+/// 
+/// This validates that extract_in_memory() works correctly for LSP hover.
+#[tokio::test]
+async fn kitchen_sink_in_memory_extraction() {
+    use sprefa_sprf::{parse_sprf, extract_in_memory};
+    
+    // Create temp workspace with actual files
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let workspace = tmp_dir.path();
+    
+    // Create test Cargo.toml files with package names
+    let cargo1 = workspace.join("Cargo.toml");
+    std::fs::write(&cargo1, r#"
+[package]
+name = "test_crate_alpha"
+version = "0.1.0"
+"#).unwrap();
+    
+    let subdir = workspace.join("crates");
+    std::fs::create_dir(&subdir).unwrap();
+    let cargo2 = subdir.join("Cargo.toml");
+    std::fs::write(&cargo2, r#"
+[package]
+name = "test_crate_beta"
+version = "0.2.0"
+"#).unwrap();
+    
+    // Parse sprf rule
+    let sprf = r#"rule(pkg_names) { fs(**/Cargo.toml) > json({ package: { name: $NAME } }) };"#;
+    let (ruleset, _edges) = parse_sprf(sprf).unwrap();
+    assert_eq!(ruleset.rules.len(), 1);
+    
+    let rule = &ruleset.rules[0];
+    
+    // Extract in-memory (LSP path)
+    let extracted = extract_in_memory(rule, workspace, "NAME");
+    
+    println!("Extracted values: {:?}", extracted);
+    
+    // Should find both crate names
+    assert!(!extracted.is_empty(), "Should extract at least one value");
+    
+    let names: Vec<_> = extracted.iter().map(|e| e.value.clone()).collect();
+    assert!(names.contains(&"test_crate_alpha".to_string()), "Missing alpha crate");
+    assert!(names.contains(&"test_crate_beta".to_string()), "Missing beta crate");
+    
+    // Verify file paths are tracked
+    for e in &extracted {
+        assert!(e.file_path.contains("Cargo.toml"), "File path should reference Cargo.toml");
+    }
+}
+
+/// KITCHEN SINK: Test markdown extraction (LSP path)
+#[tokio::test]
+async fn kitchen_sink_markdown_extraction() {
+    use sprefa_sprf::{parse_sprf, extract_in_memory};
+    
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let workspace = tmp_dir.path();
+    
+    // Create markdown files with headings
+    let md1 = workspace.join("README.md");
+    std::fs::write(&md1, r#"# Introduction
+This is the intro.
+
+# Getting Started
+Some content here.
+"#).unwrap();
+    
+    let docs = workspace.join("docs");
+    std::fs::create_dir(&docs).unwrap();
+    let md2 = docs.join("guide.md");
+    std::fs::write(&md2, r#"# Installation
+Steps to install.
+
+# Configuration
+Config options.
+"#).unwrap();
+    
+    // Parse sprf rule with md() matcher
+    let sprf = r#"rule(headings) { file(**/*.md) > md(# $TITLE) };"#;
+    let (ruleset, _edges) = parse_sprf(sprf).unwrap();
+    
+    let rule = &ruleset.rules[0];
+    let extracted = extract_in_memory(rule, workspace, "TITLE");
+    
+    println!("Extracted markdown headings: {:?}", extracted);
+    
+    // Should find headings
+    assert!(!extracted.is_empty(), "Should extract headings from markdown");
+    
+    let titles: Vec<_> = extracted.iter().map(|e| e.value.clone()).collect();
+    assert!(titles.contains(&"Introduction".to_string()) || titles.contains(&"Getting Started".to_string()),
+            "Missing expected headings: got {:?}", titles);
+}
+
 #[tokio::test]
 async fn kitchen_sink_e2e_sql_verification() -> Result<()> {
     // Simpler test focused on SQL verification

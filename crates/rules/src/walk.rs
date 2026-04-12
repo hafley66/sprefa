@@ -509,6 +509,42 @@ fn compiled_key_matches<'a>(
     }
 }
 
+/// Enhance walk results with approximate span information from source text.
+///
+/// This uses text search heuristics to find the likely position of captured values
+/// in the original source. It's not exact (hence "fallback") but provides useful
+/// positions for LSP diagnostics when precise CST parsing isn't available.
+///
+/// # Arguments
+/// * `results` - The MatchResults from walk() which have span_start=0, span_end=0
+/// * `source` - The original source text (JSON/YAML/TOML)
+/// * `extension` - File extension for format detection ("json", "yaml", "toml")
+pub fn enhance_with_spans(
+    results: &mut [MatchResult],
+    source: &str,
+    extension: &str,
+) {
+    for result in results.iter_mut() {
+        // Convert path Vec<String> to Vec<&str> for the span finder
+        let path_refs: Vec<&str> = result.path.iter().map(|s| s.as_str()).collect();
+        
+        for (_capture_name, captured) in result.captures.iter_mut() {
+            // Only try to find spans if they're currently zero/unknown
+            if captured.span_start == 0 && captured.span_end == 0 {
+                if let Some(span) = crate::span_fallback::find_path_span(
+                    source,
+                    &path_refs,
+                    &captured.text,
+                    extension,
+                ) {
+                    captured.span_start = span.start as u32;
+                    captured.span_end = span.end as u32;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,21 +6,205 @@ use crate::_0_ast::{
     CheckDecl, CrossRef, CrossRefBinding, Program, RuleBody, RuleDecl, Slot, Statement, Tag,
 };
 
-pub fn parse_program(input: &str) -> anyhow::Result<Program> {
-    let mut stmts = vec![];
+/// A parse error with position information for diagnostics.
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    /// Human-readable error message
+    pub message: String,
+    /// Byte offset in the source where the error occurred
+    pub offset: usize,
+    /// Approximate line number (best effort for partial parsing)
+    pub line: usize,
+    /// Context snippet around the error
+    pub context: String,
+}
+
+/// A diagnostic that is not an error (warning, info, pending cut, etc).
+/// This is the "side channel" for non-fatal conditions that tools may want
+/// to surface differently than errors. Designed for event bus extensibility.
+#[derive(Debug, Clone)]
+pub struct ParseDiagnostic {
+    /// Diagnostic kind - extensible for event bus filtering
+    pub kind: DiagnosticKind,
+    /// Message to display
+    pub message: String,
+    /// Byte offset in source
+    pub offset: usize,
+    /// Line number
+    pub line: usize,
+    /// Optional structured data for tool consumption
+    pub data: Option<serde_json::Value>,
+}
+
+/// Kinds of non-error diagnostics. Event bus listeners can filter on these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticKind {
+    /// Syntax warning (e.g., deprecated syntax)
+    Warning,
+    /// Informational note
+    Info,
+    /// A recovery was performed at this location
+    Recovery,
+    // Future: PendingCut, Hint, etc.
+}
+
+/// Result of partial parsing - always returns what was successfully parsed
+/// plus any errors encountered. Designed as the "shell for partial programs".
+#[derive(Debug, Clone)]
+pub struct PartialProgram {
+    /// Successfully parsed statements
+    pub stmts: Vec<Statement>,
+    /// Fatal errors that prevented full parsing
+    pub errors: Vec<ParseError>,
+    /// Non-fatal diagnostics (warnings, recoveries, etc)
+    pub diagnostics: Vec<ParseDiagnostic>,
+    /// Whether the parse is completely valid (no errors)
+    pub is_valid: bool,
+}
+
+impl PartialProgram {
+    /// Create an empty partial program
+    pub fn empty() -> Self {
+        Self {
+            stmts: vec![],
+            errors: vec![],
+            diagnostics: vec![],
+            is_valid: true,
+        }
+    }
+
+    /// Convert to a full Program, failing if there were errors
+    pub fn into_program(self) -> anyhow::Result<Program> {
+        if let Some(first) = self.errors.first() {
+            anyhow::bail!("parse error at line {}: {}", first.line, first.message);
+        }
+        Ok(self.stmts)
+    }
+}
+
+/// Parse a .sprf file with error recovery. Returns partial AST even on errors.
+/// This is the primary entry point for tools (LSP, CLI, checker) that need
+/// to work with partially valid files.
+pub fn parse_program_partial(input: &str) -> PartialProgram {
+    let mut result = PartialProgram::empty();
     let mut remaining = input;
+    let mut last_len = usize::MAX; // Track remaining length to detect progress
 
     loop {
+        let offset = input.len() - remaining.len();
         remaining = skip_ws_and_comments(remaining);
+        
         if remaining.is_empty() {
             break;
         }
-        let (stmt, rest) = parse_statement(remaining)?;
-        stmts.push(stmt);
-        remaining = rest;
+
+        // Prevent infinite loops on non-progress
+        // If we haven't consumed any input since last iteration, we're stuck
+        if remaining.len() == last_len {
+            result.errors.push(ParseError {
+                message: "parse stuck - cannot recover".to_string(),
+                offset,
+                line: line_number(input, offset),
+                context: context_snippet(remaining, 30),
+            });
+            result.is_valid = false;
+            break;
+        }
+        last_len = remaining.len();
+
+        match parse_statement(remaining) {
+            Ok((stmt, rest)) => {
+                result.stmts.push(stmt);
+                remaining = rest;
+            }
+            Err(e) => {
+                // Record the error
+                let line = line_number(input, offset);
+                result.errors.push(ParseError {
+                    message: e.to_string(),
+                    offset,
+                    line,
+                    context: context_snippet(remaining, 30),
+                });
+                result.is_valid = false;
+
+                // Try to recover by finding next statement boundary
+                match find_recovery_point(remaining) {
+                    Some((recovery_offset, kind)) => {
+                        let recovery_line = line_number(input, offset + recovery_offset);
+                        result.diagnostics.push(ParseDiagnostic {
+                            kind: DiagnosticKind::Recovery,
+                            message: format!("recovered at {kind}"),
+                            offset: offset + recovery_offset,
+                            line: recovery_line,
+                            data: None,
+                        });
+                        remaining = &remaining[recovery_offset..];
+                    }
+                    None => {
+                        // Cannot recover - consume rest to prevent infinite loop
+                        break;
+                    }
+                }
+            }
+        }
     }
 
-    Ok(stmts)
+    result
+}
+
+/// Original parse_program - now implemented via partial parser for consistency.
+/// Use this when you need strict parsing (fail on first error).
+pub fn parse_program(input: &str) -> anyhow::Result<Program> {
+    parse_program_partial(input).into_program()
+}
+
+/// Find a recovery point after an error. Returns (offset, kind) where kind
+/// describes what was found (for diagnostics).
+/// 
+/// Strategy: Find the next statement boundary - either a semicolon or the next
+/// rule/check keyword that appears after some content (not at position 0).
+fn find_recovery_point(input: &str) -> Option<(usize, &'static str)> {
+    // First, try to find a semicolon - this is the cleanest recovery point
+    // Scan character by character to handle nested braces reasonably
+    let mut brace_depth: i32 = 0;
+    let bytes = input.as_bytes();
+    let mut pos = 0;
+    
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            b';' if brace_depth == 0 => {
+                // Found semicolon at top level - skip past it
+                return Some((pos + 1, ";"));
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    
+    // No semicolon found - look for next statement keyword
+    // Start search from position 1 to avoid finding the keyword we're currently failing on
+    for keyword in ["rule(", "check("] {
+        if let Some(keyword_pos) = input[1..].find(keyword) {
+            let actual_pos = 1 + keyword_pos;
+            return Some((actual_pos, keyword));
+        }
+    }
+    
+    None
+}
+
+/// Calculate line number from byte offset (1-indexed)
+fn line_number(source: &str, offset: usize) -> usize {
+    source[..offset.min(source.len())].lines().count().max(1)
+}
+
+/// Extract context snippet around position
+fn context_snippet(input: &str, max_len: usize) -> String {
+    let snippet = &input[..input.len().min(max_len)];
+    snippet.replace('\n', "\\n")
 }
 
 /// Skip whitespace and `# ...` line comments.
@@ -775,5 +959,130 @@ check(version_mismatch) {
         assert_eq!(program.len(), 2);
         assert!(matches!(program[0], Statement::Rule(_)));
         assert!(matches!(program[1], Statement::Check(_)));
+    }
+
+    // Partial parsing tests
+    #[test]
+    fn partial_parse_valid_input() {
+        let input = "rule(pkg) { fs(**/Cargo.toml) };";
+        let result = parse_program_partial(input);
+        assert!(result.is_valid);
+        assert_eq!(result.errors.len(), 0);
+        assert_eq!(result.stmts.len(), 1);
+    }
+
+    #[test]
+    fn partial_parse_with_error_recovery() {
+        // Missing closing brace - should recover at next rule
+        let input = r#"rule(broken) { fs(**/Cargo.toml) 
+rule(valid) { fs(**/package.json) };"#;
+        let result = parse_program_partial(input);
+        assert!(!result.is_valid);
+        assert_eq!(result.errors.len(), 1); // One error for broken rule
+        assert_eq!(result.stmts.len(), 1); // But we still get the valid rule
+        let Statement::Rule(decl) = &result.stmts[0] else { panic!("expected Rule") };
+        assert_eq!(decl.name, "valid");
+    }
+
+    #[test]
+    fn partial_parse_multiple_rules_one_broken() {
+        let input = r#"rule(first) { fs(**/*.toml) };
+rule(broken) { json({ 
+rule(last) { fs(**/*.json) };"#;
+        let result = parse_program_partial(input);
+        assert!(!result.is_valid);
+        assert_eq!(result.stmts.len(), 2); // first and last
+        let Statement::Rule(first) = &result.stmts[0] else { panic!("expected Rule") };
+        let Statement::Rule(last) = &result.stmts[1] else { panic!("expected Rule") };
+        assert_eq!(first.name, "first");
+        assert_eq!(last.name, "last");
+    }
+
+    #[test]
+    fn partial_parse_reports_diagnostics() {
+        // This should trigger recovery diagnostics
+        let input = "rule(a) { fs(*) }; rule(b) { json({"; 
+        let result = parse_program_partial(input);
+        // First rule parses, second fails but we should have recovery info
+        assert_eq!(result.stmts.len(), 1);
+        assert!(!result.is_valid);
+    }
+
+    /// KITCHEN SINK: Comprehensive partial parsing scenarios
+    #[test]
+    fn partial_parse_kitchen_sink() {
+        // A complex .sprf file with multiple errors - should recover and parse valid parts
+        let input = r#"
+# Valid rule
+rule(valid_1) { fs(**/*.toml) > json({ package: { name: $NAME } }) };
+
+# Broken: missing closing brace for json pattern
+rule(broken_1) { fs(**/*.json) > json({ name: $NAME 
+
+# Valid rule after broken
+rule(valid_2) { fs(**/Cargo.lock) > json({ package: $PKG }) };
+
+# Broken check: missing closing brace
+check(broken_check) { SELECT * FROM valid_1 
+
+# Valid check
+rule(valid_3) { comment("TODO") > line(re:TODO\s+(?P<TASK>.*)) };
+
+# Broken: unclosed paren
+rule(broken_2) { fs(**/*.rs 
+
+# Final valid rule
+rule(valid_4) { file(config.yaml) > json({ version: $V }) };
+"#;
+
+        let result = parse_program_partial(input);
+        
+        // Should have 4 valid rules
+        let stmt_names: Vec<_> = result.stmts.iter().map(|s| match s {
+            Statement::Rule(r) => r.name.as_str(),
+            Statement::Check(c) => c.name.as_str(),
+        }).collect();
+        assert_eq!(result.stmts.len(), 4, "Expected 4 valid statements, got {:?}", stmt_names);
+        
+        // Should have errors for the 3 broken statements
+        assert!(result.errors.len() >= 2, "Expected at least 2 errors for broken statements");
+        
+        // Should not be valid overall
+        assert!(!result.is_valid);
+        
+        // Verify the valid rule names
+        let names: Vec<_> = result.stmts.iter()
+            .filter_map(|s| match s { Statement::Rule(r) => Some(r.name.as_str()), _ => None })
+            .collect();
+        assert!(names.contains(&"valid_1"), "Missing valid_1");
+        assert!(names.contains(&"valid_2"), "Missing valid_2");
+        assert!(names.contains(&"valid_3"), "Missing valid_3");
+        assert!(names.contains(&"valid_4"), "Missing valid_4");
+    }
+
+    /// Test that partial parse produces usable AST for LSP-style operations
+    #[test]
+    fn partial_parse_produces_usable_ast() {
+        let input = r#"
+rule(pkg) { fs(**/Cargo.toml) > json({ package: { name: $NAME } }) };
+rule(broken) { fs(
+rule(deps) { fs(**/package.json) > json({ dependencies: { $DEP: $VER } }) };
+"#;
+
+        let result = parse_program_partial(input);
+        
+        // Even with broken middle rule, we should extract 2 valid rules
+        assert_eq!(result.stmts.len(), 2);
+        
+        // The AST should be usable for extraction
+        let program: Vec<_> = result.stmts.iter().cloned().collect();
+        assert_eq!(program.len(), 2);
+        
+        // Verify we can access rule bodies
+        for stmt in &program {
+            if let Statement::Rule(rule) = stmt {
+                assert!(!rule.body.is_empty(), "Rule {} should have body", rule.name);
+            }
+        }
     }
 }

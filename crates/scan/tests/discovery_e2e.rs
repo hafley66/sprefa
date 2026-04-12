@@ -154,7 +154,7 @@ async fn discover_and_scan(
         for (repo_name, rev, cfg) in &new_targets {
             match scanner.scan_rev(cfg, rev).await {
                 Ok(_) => this_round.push((repo_name.clone(), rev.clone())),
-                Err(e) => eprintln!("scan {repo_name}@{rev} failed: {e}"),
+                Err(e) => tracing::warn!("scan {repo_name}@{rev} failed: {e}"),
             }
         }
         if !this_round.is_empty() {

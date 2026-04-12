@@ -15,6 +15,8 @@ sprefa_sprf = { path = "../sprf" }
 sprefa_rules = { path = "../rules" }
 sprefa_config = { path = "../config" }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
 anyhow = { workspace = true }
 rusqlite = { version = "0.32", features = ["bundled"] }
 env_logger = "0.11"
