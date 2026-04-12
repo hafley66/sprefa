@@ -9,6 +9,7 @@ use std::ops::Range;
 
 use sprefa_sprf::_0_ast::{RuleBody, Statement, Tag};
 use sprefa_sprf::_1_parse::parse_program;
+use sprefa_sprf::ops::{FsOperator, JsonOperator};
 
 /// A pre-computed snapshot of a document's structure.
 /// Computed once on document change, used for fast read-only operations.
@@ -27,6 +28,10 @@ pub struct DocumentSnapshot {
     pub rules: Vec<RuleSnapshot>,
     /// Cross-references (derived_rule -> base_rule)
     pub cross_refs: Vec<CrossRefInfo>,
+    /// File system operators (fs, file, folder)
+    pub fs_ops: Vec<FsOperator>,
+    /// JSON operators
+    pub json_ops: Vec<JsonOperator>,
     /// All capture names (for completion)
     pub all_capture_names: HashSet<String>,
     /// All rule names (for completion)
@@ -107,6 +112,8 @@ impl DocumentSnapshot {
         let mut captures = Vec::new();
         let mut rules = Vec::new();
         let mut cross_refs = Vec::new();
+        let mut fs_ops = Vec::new();
+        let mut json_ops = Vec::new();
         let mut all_capture_names = HashSet::new();
         let mut all_rule_names = Vec::new();
         let mut check_names = Vec::new();
@@ -134,6 +141,8 @@ impl DocumentSnapshot {
                             &mut captures,
                             &mut rule_captures,
                             &mut rule_cross_refs,
+                            &mut fs_ops,
+                            &mut json_ops,
                             &mut all_capture_names,
                         );
                     }
@@ -161,6 +170,8 @@ impl DocumentSnapshot {
             captures,
             rules,
             cross_refs,
+            fs_ops,
+            json_ops,
             all_capture_names,
             all_rule_names,
             check_names,
@@ -174,6 +185,8 @@ impl DocumentSnapshot {
         let mut captures = Vec::new();
         let mut rules = Vec::new();
         let mut cross_refs = Vec::new();
+        let mut fs_ops = Vec::new();
+        let mut json_ops = Vec::new();
         let mut all_capture_names = HashSet::new();
         let mut all_rule_names = Vec::new();
         let mut check_names = Vec::new();
@@ -235,6 +248,8 @@ impl DocumentSnapshot {
             captures,
             rules,
             cross_refs,
+            fs_ops,
+            json_ops,
             all_capture_names,
             all_rule_names,
             check_names,
@@ -329,6 +344,20 @@ impl DocumentSnapshot {
             .iter()
             .find(|cr| cr.span.start <= offset && offset <= cr.span.end)
     }
+    
+    /// Find file system operator at a given offset.
+    pub fn fs_op_at(&self, offset: usize) -> Option<&FsOperator> {
+        self.fs_ops
+            .iter()
+            .find(|op| op.span.start <= offset && offset <= op.span.end)
+    }
+    
+    /// Find JSON operator at a given offset.
+    pub fn json_op_at(&self, offset: usize) -> Option<&JsonOperator> {
+        self.json_ops
+            .iter()
+            .find(|op| op.span.start <= offset && offset <= op.span.end)
+    }
 }
 
 /// Collect information from a rule body.
@@ -340,10 +369,22 @@ fn collect_body_info(
     captures: &mut Vec<CaptureInfo>,
     rule_captures: &mut Vec<String>,
     rule_cross_refs: &mut Vec<CrossRefInfo>,
+    fs_ops: &mut Vec<FsOperator>,
+    json_ops: &mut Vec<JsonOperator>,
     all_capture_names: &mut HashSet<String>,
 ) {
     match body {
         RuleBody::Step(slot) => {
+            // Try to create operators from this slot
+            if let Some(span) = find_slot_span(text, rule_offset, slot) {
+                if let Some(op) = FsOperator::from_slot(slot, span.clone(), rule_name) {
+                    fs_ops.push(op);
+                }
+                if let Some(op) = JsonOperator::from_slot(slot, span, rule_name) {
+                    json_ops.push(op);
+                }
+            }
+            
             for cap in slot.captures() {
                 // Find the range of this capture in the text
                 if let Some(range) = find_capture_range(text, rule_offset, &cap) {
@@ -362,6 +403,16 @@ fn collect_body_info(
         RuleBody::Block {
             slot, children, ..
         } => {
+            // Try to create operators from this slot
+            if let Some(span) = find_slot_span(text, rule_offset, slot) {
+                if let Some(op) = FsOperator::from_slot(slot, span.clone(), rule_name) {
+                    fs_ops.push(op);
+                }
+                if let Some(op) = JsonOperator::from_slot(slot, span, rule_name) {
+                    json_ops.push(op);
+                }
+            }
+            
             for cap in slot.captures() {
                 if let Some(range) = find_capture_range(text, rule_offset, &cap) {
                     all_capture_names.insert(cap.clone());
@@ -384,6 +435,8 @@ fn collect_body_info(
                     captures,
                     rule_captures,
                     rule_cross_refs,
+                    fs_ops,
+                    json_ops,
                     all_capture_names,
                 );
             }
@@ -431,11 +484,94 @@ fn collect_body_info(
                     captures,
                     rule_captures,
                     rule_cross_refs,
+                    fs_ops,
+                    json_ops,
                     all_capture_names,
                 );
             }
         }
     }
+}
+
+/// Convert a Tag to its string representation.
+fn tag_to_str(tag: &Tag) -> &'static str {
+    match tag {
+        Tag::Json => "json",
+        Tag::Line => "line",
+        Tag::Ast => "ast",
+        Tag::Repo => "repo",
+        Tag::Rev => "rev",
+        Tag::RepoNorm => "repo.norm",
+        Tag::RevNorm => "rev.norm",
+        Tag::Folder => "folder",
+        Tag::File => "file",
+        Tag::Fs => "fs",
+        Tag::Comment => "comment",
+        Tag::Md => "md",
+    }
+}
+
+/// Find the source span of a slot in the text.
+fn find_slot_span(
+    text: &str,
+    rule_offset: usize,
+    slot: &sprefa_sprf::_0_ast::Slot,
+) -> Option<sprefa_sprf::analyze::SourceRange> {
+    use sprefa_sprf::_0_ast::Slot;
+    use sprefa_sprf::analyze::SourceRange;
+    
+    let search_text = &text[rule_offset..];
+    
+    match slot {
+        Slot::Bare(pattern) => {
+            // Find bare pattern (just a string in the rule body)
+            if let Some(pos) = search_text.find(pattern) {
+                let start = rule_offset + pos;
+                return Some(SourceRange {
+                    start,
+                    end: start + pattern.len(),
+                    line: 0,
+                    column: 0,
+                });
+            }
+        }
+        Slot::Tagged { tag, body, .. } => {
+            // Find tag(body) pattern
+            let tag_name = tag_to_str(tag);
+            let search_pattern = format!("{}(", tag_name);
+            
+            if let Some(tag_pos) = search_text.find(&search_pattern) {
+                let span_start = rule_offset + tag_pos;
+                let after_tag = &search_text[tag_pos + search_pattern.len()..];
+                
+                // Find matching closing paren
+                let mut depth = 1;
+                let mut span_len = search_pattern.len();
+                for ch in after_tag.chars() {
+                    span_len += ch.len_utf8();
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                
+                return Some(SourceRange {
+                    start: span_start,
+                    end: span_start + span_len,
+                    line: 0,
+                    column: 0,
+                });
+            }
+        }
+    }
+    
+    None
 }
 
 /// Find the byte range of a capture in the text.

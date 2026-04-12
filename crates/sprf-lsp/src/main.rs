@@ -948,22 +948,31 @@ impl LanguageServer for SprfLsp {
         }
         
         // === File Pattern Hover (fs, file, folder) ===
-        let pattern_result = {
-            let doc_state = self.doc_state.lock().unwrap();
-            let offset = position_to_offset(&doc_state.text, pos);
-            find_pattern_at_position(&doc_state, offset)
-        };
-        
-        if let Some((tag, pattern)) = pattern_result {
-            log::info!("hover: found pattern {}('{}')", tag, pattern);
+        if let Some(fs_op) = snapshot.fs_op_at(offset) {
+            log::info!("hover: found {} operator with pattern '{}'", fs_op.tag, fs_op.pattern);
             
             let workspace_root = self.workspace.lock().unwrap().as_ref().map(|w| w.root.clone());
             if let Some(root) = workspace_root {
-                let matches = self.find_matching_files(&tag, &pattern, &root).await;
+                let matches = self.find_matching_files(&fs_op.tag, &fs_op.pattern, &root).await;
                 if !matches.is_empty() {
-                    return Ok(Some(self.build_file_hover(&tag, &pattern, &matches, &root)));
+                    return Ok(Some(self.build_file_hover(&fs_op.tag, &fs_op.pattern, &matches, &root)));
                 }
             }
+        }
+        
+        // === JSON Pattern Hover ===
+        if let Some(json_op) = snapshot.json_op_at(offset) {
+            log::info!("hover: found json operator with pattern '{}'", json_op.pattern);
+            
+            return Ok(Some(Hover {
+                contents: tower_lsp::lsp_types::HoverContents::Markup(
+                    tower_lsp::lsp_types::MarkupContent {
+                        kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                        value: format!("**JSON Pattern**\n\n`{}`\n\n*Click to see available paths*", json_op.pattern),
+                    }
+                ),
+                range: None,
+            }));
         }
         
         log::debug!("hover: no symbol found at offset {}", offset);
@@ -1049,6 +1058,20 @@ impl LanguageServer for SprfLsp {
         let diag_count = analysis.diagnostics.len();
         
         self.analysis_state.cache_analysis(&uri.to_string(), analysis.clone(), 0);
+        
+        // Recompute snapshot for hover (CRITICAL: hover uses snapshots!)
+        {
+            let snapshot = snapshot::DocumentSnapshot::compute(&uri.to_string(), &text, 0);
+            log::debug!(
+                "did_save: recomputed snapshot with {} captures, {} rules, {} fs_ops, {} json_ops",
+                snapshot.captures.len(),
+                snapshot.rules.len(),
+                snapshot.fs_ops.len(),
+                snapshot.json_ops.len(),
+            );
+            let mut snapshots = self.snapshots.lock().unwrap();
+            snapshots.insert(uri.to_string(), snapshot);
+        }
         
         log::info!("did_save: cached analysis with {} rules, {} diagnostics", rule_count, diag_count);
         
@@ -1220,57 +1243,6 @@ fn find_rule_at_offset(analysis: &sprefa_sprf::analyze::PartialAnalysis, offset:
     None
 }
 
-/// Find file pattern (fs/file/folder) at cursor position.
-/// Returns (tag_name, pattern_content) if cursor is inside a tag's parens.
-fn find_pattern_at_position(state: &DocState, offset: usize) -> Option<(String, String)> {
-    let text = &state.text;
-    let before = &text[..offset.min(text.len())];
-    
-    // Find the innermost unclosed paren before cursor
-    let mut depth = 0i32;
-    let mut last_open = None;
-    for (i, b) in before.bytes().enumerate().rev() {
-        match b {
-            b')' => depth += 1,
-            b'(' => {
-                depth -= 1;
-                if depth < 0 {
-                    last_open = Some(i);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    
-    let paren_pos = last_open?;
-    let pre = before[..paren_pos].trim_end();
-    
-    // Extract tag name before paren
-    let tag_start = pre.rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .map(|i| i + 1).unwrap_or(0);
-    let tag_name = &pre[tag_start..];
-    
-    // Check if it's a file-related tag
-    if !matches!(tag_name, "fs" | "file" | "folder") {
-        return None;
-    }
-    
-    // Extract pattern content (everything after '(' until ')' or cursor)
-    let after_paren = &text[paren_pos + 1..];
-    let pattern_end = after_paren.find(')').unwrap_or(after_paren.len());
-    let pattern = &after_paren[..pattern_end];
-    
-    // Check if cursor is actually inside the pattern (not after the closing paren)
-    let pattern_start_offset = paren_pos + 1;
-    let pattern_end_offset = pattern_start_offset + pattern.len();
-    if offset > pattern_end_offset {
-        return None;
-    }
-    
-    Some((tag_name.to_string(), pattern.to_string()))
-}
-
 /// Extraction result with diagnostics for rules that don't match.
 #[derive(Debug)]
 struct ScanResult {
@@ -1329,8 +1301,12 @@ impl SprfLsp {
 
         // Extraction diagnostics
         for diag in &analysis.diagnostics {
-            // Use the diagnostic location if available, otherwise find rule name
-            let (start_pos, end_pos) = if let Some(loc) = &diag.location {
+            // Prioritize element_location (specific pattern) over location (rule)
+            let (start_pos, end_pos) = if let Some(el_loc) = &diag.element_location {
+                let start = state::offset_to_position(text, el_loc.start);
+                let end = state::offset_to_position(text, el_loc.end);
+                (start, end)
+            } else if let Some(loc) = &diag.location {
                 let start = state::offset_to_position(text, loc.start);
                 let end = state::offset_to_position(text, loc.end);
                 (start, end)
@@ -1348,11 +1324,23 @@ impl SprfLsp {
                 sprefa_sprf::analyze::Severity::Info => DiagnosticSeverity::INFORMATION,
             });
 
+            // Add diagnostic code based on element type for client-side styling
+            let code = Some(match diag.element_type {
+                sprefa_sprf::analyze::DiagnosticElementType::FilePattern => "file-pattern".to_string(),
+                sprefa_sprf::analyze::DiagnosticElementType::JsonPath => "json-path".to_string(),
+                sprefa_sprf::analyze::DiagnosticElementType::AstPattern => "ast-pattern".to_string(),
+                sprefa_sprf::analyze::DiagnosticElementType::LinePattern => "line-pattern".to_string(),
+                sprefa_sprf::analyze::DiagnosticElementType::CrossRefBinding => "cross-ref".to_string(),
+                sprefa_sprf::analyze::DiagnosticElementType::CaptureVar => "capture-var".to_string(),
+                sprefa_sprf::analyze::DiagnosticElementType::Rule => "rule".to_string(),
+            });
+
             diags.push(Diagnostic {
                 range: Range { start: start_pos, end: end_pos },
                 severity,
                 source: Some("sprf-extract".into()),
-                message: format!("[{}] {}", diag.rule, diag.message),
+                message: diag.message.clone(),
+                code: code.map(tower_lsp::lsp_types::NumberOrString::String),
                 ..Default::default()
             });
         }

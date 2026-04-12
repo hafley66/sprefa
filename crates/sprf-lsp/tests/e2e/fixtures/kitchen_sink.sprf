@@ -11,9 +11,6 @@ rule(file_complete) {
   file(**/*.md) > md(# $TITLE)
 };
 
-rule(folder_complete) {
-  fs()
-};
 
 # ── Repo/Rev completions ──────────────────────
 
@@ -49,6 +46,6 @@ rule(base_rule) {
 
 rule(derived_rule) {
   base_rule(repo: $REPO, tag: $TAG) {
-    fs(**/deploy.yaml) > json({ image: { tag: $APP } })
+    fs(**/deploy.yaml) > json({ image: { tag: $TAG } })
   }
 };

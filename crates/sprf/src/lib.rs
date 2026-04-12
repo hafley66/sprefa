@@ -5,6 +5,7 @@ pub mod _3_lower;
 pub mod _4_extract;
 pub mod analyze;
 pub mod hash;
+pub mod ops;
 
 use std::path::Path;
 
@@ -20,6 +21,7 @@ pub use analyze::{
     PartialAnalysis, AnalyzeOptions, AnalysisError, AnalysisDiagnostic,
     SourceRange, SymbolTable, SymbolLocation, SymbolKind, SymbolAtCursor,
     CursorSymbolKind, Phase, Severity, RuleExtraction, ExtractedValue as AnalysisExtractedValue,
+    DiagnosticElementType,
 };
 
 /// Parse a .sprf file and produce extraction rules + dependency edges.

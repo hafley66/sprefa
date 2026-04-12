@@ -148,6 +148,29 @@ pub struct AnalysisDiagnostic {
     pub severity: Severity,
     /// Source location of the issue (e.g., json pattern)
     pub location: Option<SourceRange>,
+    /// Specific location of the problematic element (e.g., file pattern, json path)
+    pub element_location: Option<SourceRange>,
+    /// Type of element that caused the diagnostic (for styling)
+    pub element_type: DiagnosticElementType,
+}
+
+/// Type of diagnostic element for styling in LSP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticElementType {
+    /// File pattern (fs, file, folder)
+    FilePattern,
+    /// JSON/YAML/TOML path pattern
+    JsonPath,
+    /// AST pattern
+    AstPattern,
+    /// Line pattern
+    LinePattern,
+    /// Cross-reference binding
+    CrossRefBinding,
+    /// Capture variable
+    CaptureVar,
+    /// General rule element
+    Rule,
 }
 
 /// Options for analysis.
@@ -400,11 +423,16 @@ fn extract_phase(
         let files = crate::_4_extract::find_matching_files(rule, &options.workspace_root);
 
         if files.is_empty() {
+            // Find the file pattern location for better diagnostic
+            let file_pattern_location = find_file_pattern_location(rule, source, &rule_location);
+            
             diagnostics.push(AnalysisDiagnostic {
                 rule: rule.name.clone(),
                 message: format!("Rule '{}' matched 0 files - check file pattern", rule.name),
                 severity: Severity::Error,
                 location: rule_location.clone(),
+                element_location: file_pattern_location.clone(),
+                element_type: DiagnosticElementType::FilePattern,
             });
             continue;
         }
@@ -454,6 +482,8 @@ fn extract_phase(
                     ),
                     severity: Severity::Error,
                     location: pattern_location.clone(),
+                    element_location: pattern_location.clone(),
+                    element_type: DiagnosticElementType::JsonPath,
                 });
             } else {
                 diagnostics.push(AnalysisDiagnostic {
@@ -465,6 +495,8 @@ fn extract_phase(
                     ),
                     severity: Severity::Warning,
                     location: pattern_location.clone(),
+                    element_location: pattern_location.clone(),
+                    element_type: DiagnosticElementType::CaptureVar,
                 });
             }
         }
@@ -775,6 +807,50 @@ fn find_json_pattern_location(
     }
     
     // Fallback to rule location if no json pattern found
+    rule_location.clone()
+}
+
+/// Find the source location of a file pattern (fs, file, folder) within a rule.
+fn find_file_pattern_location(
+    rule: &Rule,
+    source: &str,
+    rule_location: &Option<SourceRange>,
+) -> Option<SourceRange> {
+    let start = rule_location.as_ref()?.start;
+    let rule_end = rule_location.as_ref()?.end;
+    let rule_text = &source[start..rule_end];
+    
+    // Try to find fs(, file(, or folder( within the rule body
+    for tag in ["fs(", "file(", "folder("] {
+        if let Some(pos) = rule_text.find(tag) {
+            let pattern_start = start + pos;
+            // Find the matching paren
+            let after_tag = &source[pattern_start + tag.len()..];
+            let mut depth = 1;
+            let mut pattern_len = tag.len();
+            for ch in after_tag.chars() {
+                pattern_len += ch.len_utf8();
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return Some(SourceRange {
+                start: pattern_start,
+                end: pattern_start + pattern_len,
+                line: line_number(source, pattern_start),
+                column: column_number(source, pattern_start),
+            });
+        }
+    }
+    
+    // Fallback to rule location
     rule_location.clone()
 }
 
