@@ -566,7 +566,8 @@ mod tests {
         let input = r#"rule(pkg) { fs(**/Cargo.toml) }"#;
         let tokens = tokenize(input);
 
-        assert!(tokens.iter().any(|t| matches!(&t.token, Token::Tag(s) if s == "rule")));
+        // "rule" is now an Ident (keyword), not a Tag
+        assert!(tokens.iter().any(|t| matches!(&t.token, Token::Ident(s) if s == "rule")));
         assert!(tokens.iter().any(|t| matches!(&t.token, Token::Tag(s) if s == "fs")));
         assert!(tokens.iter().any(|t| matches!(&t.token, Token::LParen)));
         assert!(tokens.iter().any(|t| matches!(&t.token, Token::RParen)));
@@ -634,7 +635,8 @@ rule(pkg) { fs(**/Cargo.toml) }
 
         let backwards = scan_backwards(&tokens, 15);
         assert!(!backwards.is_empty());
-        assert!(backwards.iter().any(|t| matches!(&t.token, Token::Tag(s) if s == "rule")));
+        // "rule" is now an Ident (keyword), not a Tag
+        assert!(backwards.iter().any(|t| matches!(&t.token, Token::Ident(s) if s == "rule")));
     }
 
     #[test]
@@ -654,11 +656,19 @@ rule(pkg) { fs(**/Cargo.toml) }
 
     #[test]
     fn test_detect_inside_capture() {
+        // After typing `fs($`, we're inside the fs tag with "$" as partial content
+        // The tokenizer captures "$" as Raw content when inside parens
         let input = r#"rule(pkg) { fs($"#;
         let tokens = tokenize(input);
         let context = detect_context(&tokens, tokens.last().map(|t| t.end).unwrap_or(0));
 
-        assert_eq!(context, Context::InsideCapture);
+        assert_eq!(
+            context,
+            Context::InsideTag {
+                tag: "fs".to_string(),
+                partial: "$".to_string(),
+            }
+        );
     }
 
     #[test]

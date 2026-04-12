@@ -1,1 +1,1 @@
-20260411.20.lsp-completion-diagnostics-final.md
+20260412.0.research-matrix-sem-integration.md
