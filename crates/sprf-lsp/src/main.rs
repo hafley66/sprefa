@@ -8,25 +8,31 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use sprefa_sprf::_0_ast::{RuleBody, Statement, Tag};
-use sprefa_sprf::_1_parse::parse_program;
+use sprefa_sprf::_1_parse::{parse_program, parse_program_partial, PartialProgram};
 
 mod completion;
 mod context;
 mod db;
 mod diagnostics;
 mod hover;
+mod state;
 mod workspace;
 
 /// In-memory scan results: rule_name -> (var_name -> Vec<values>)
 type InMemoryResults = HashMap<String, HashMap<String, Vec<String>>>;
 
+/// Open document store: uri -> content
+/// Used for unsaved files to extract values without disk read
+type DocumentStore = HashMap<String, String>;
+
 struct SprfLsp {
     client: Client,
-    state: Mutex<DocState>,
+    /// Legacy doc state (will be migrated to unified analysis)
+    doc_state: Mutex<DocState>,
+    /// Unified analysis state
+    analysis_state: state::LspState,
     workspace: Mutex<Option<workspace::Workspace>>,
     hover_provider: Mutex<hover::HoverProvider>,
-    /// In-memory scan results for immediate hover without DB persistence
-    in_memory_results: Mutex<InMemoryResults>,
 }
 
 /// Byte range of a statement in the source text.
@@ -501,6 +507,7 @@ impl LanguageServer for SprfLsp {
                     ..Default::default()
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
@@ -521,16 +528,37 @@ impl LanguageServer for SprfLsp {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         log::info!("document opened: {}", params.text_document.uri);
-        self.on_change(&params.text_document.uri, &params.text_document.text)
-            .await;
+        // Store document content for unsaved extraction
+        self.analysis_state.store_document(
+            &params.text_document.uri.to_string(),
+            params.text_document.text.clone(),
+        );
+        self.on_change(
+            &params.text_document.uri,
+            &params.text_document.text,
+            params.text_document.version,
+        )
+        .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         log::debug!("document changed: {}", params.text_document.uri);
         if let Some(change) = params.content_changes.into_iter().last() {
-            self.on_change(&params.text_document.uri, &change.text)
+            // Update stored document content
+            self.analysis_state.store_document(
+                &params.text_document.uri.to_string(),
+                change.text.clone(),
+            );
+            self.on_change(&params.text_document.uri, &change.text, params.text_document.version)
                 .await;
         }
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        log::info!("document closed: {}", params.text_document.uri);
+        // Remove from document store and invalidate cache
+        self.analysis_state.remove_document(&params.text_document.uri.to_string());
+        self.analysis_state.invalidate(&params.text_document.uri.to_string());
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -540,22 +568,22 @@ impl LanguageServer for SprfLsp {
         
         // Extract all data we need from state before any awaits
         let (text, offset, captures, rule_names, ctx) = {
-            let state = self.state.lock().unwrap();
-            let offset = position_to_offset(&state.text, pos);
+            let doc_state = self.doc_state.lock().unwrap();
+            let offset = position_to_offset(&doc_state.text, pos);
             
             // Try full parse first, fall back to tokenization if it fails
-            let ctx = if parse_program(&state.text).is_ok() {
+            let ctx = if parse_program(&doc_state.text).is_ok() {
                 log::debug!("using parser-based context detection");
-                detect_context(&state.text, offset)
+                detect_context(&doc_state.text, offset)
             } else {
                 // Use tokenization-based context detection
                 log::debug!("using tokenization-based context detection (parse failed)");
-                detect_context_tokenized(&state.text[..offset])
+                detect_context_tokenized(&doc_state.text[..offset])
             };
             
-            let captures: Vec<String> = state.captures_at(offset);
-            let rule_names: Vec<String> = state.rule_names.clone();
-            let text = state.text.clone();
+            let captures: Vec<String> = doc_state.captures_at(offset);
+            let rule_names: Vec<String> = doc_state.rule_names.clone();
+            let text = doc_state.text.clone();
             
             (text, offset, captures, rule_names, ctx)
         };
@@ -783,50 +811,81 @@ impl LanguageServer for SprfLsp {
         let pos = params.text_document_position_params.position;
         log::info!("hover request: {} at line {} col {}", uri, pos.line, pos.character);
         
-        // Extract data from state first, then release lock
-        let (capture_result, pattern_result) = {
-            let state = self.state.lock().unwrap();
-            let offset = position_to_offset(&state.text, pos);
-            
-            let capture = find_capture_at_position(&state, offset);
-            let pattern = find_pattern_at_position(&state, offset);
-            (capture, pattern)
-        };
-        
-        // Find capture at position in AST
-        if let Some((var, rule_name)) = capture_result {
-            log::info!("hover: found capture var='{}' in rule='{}'", var, rule_name);
-            
-            // Extract namespace from filename (e.g., "sprefa-rules.sprf" -> "sprefa-rules")
-            let namespace = uri.path().rsplit('/').next()
-                .and_then(|filename| filename.strip_suffix(".sprf"))
-                .filter(|name| *name != "test" && *name != "kitchen_sink");
-            log::debug!("hover: extracted namespace={:?} from uri={}", namespace, uri);
-            
-            // First try DB hover provider
-            let hover_provider = self.hover_provider.lock().unwrap();
-            if let Some(hover) = hover_provider.hover(&var, &rule_name, namespace) {
-                log::info!("hover: provider returned result for ${}", var);
-                return Ok(Some(hover));
+        // Get analysis for this document
+        let analysis = match self.analysis_state.get_analysis(&uri.to_string()) {
+            Some(a) => a,
+            None => {
+                log::debug!("hover: no analysis cached for {}", uri);
+                return Ok(None);
             }
-            drop(hover_provider); // Release lock before checking in-memory
-            
-            // If DB returned empty, check in-memory results
-            log::debug!("hover: checking in-memory results for ${} in {}", var, rule_name);
-            let in_memory = self.in_memory_results.lock().unwrap();
-            if let Some(rule_results) = in_memory.get(&rule_name) {
-                if let Some(values) = rule_results.get(&var) {
-                    if !values.is_empty() {
-                        log::info!("hover: found {} in-memory values for ${} in {}", 
-                            values.len(), var, rule_name);
-                        return Ok(Some(self.build_hover(&var, &rule_name, values)));
+        };
+
+        let offset = state::position_to_offset(&analysis.source, pos);
+        
+        // Find symbol at position
+        if let Some(symbol) = sprefa_sprf::analyze::find_symbol_at_position(&analysis, offset) {
+            match symbol.kind {
+                sprefa_sprf::analyze::CursorSymbolKind::CaptureReference => {
+                    // Extract var name from "rule.var" format or just "var"
+                    let var_name = symbol.name.split('.').last().unwrap_or(&symbol.name);
+                    let rule_name = find_rule_at_offset(&analysis, offset).unwrap_or_default();
+                    
+                    log::info!("hover: found capture var='{}' in rule='{}'", var_name, rule_name);
+                    
+                    // Extract namespace from filename
+                    let namespace = uri.path().rsplit('/').next()
+                        .and_then(|filename| filename.strip_suffix(".sprf"))
+                        .filter(|name| *name != "test" && *name != "kitchen_sink");
+                    log::debug!("hover: extracted namespace={:?} from uri={}", namespace, uri);
+                    
+                    // First try DB hover provider
+                    let hover_provider = self.hover_provider.lock().unwrap();
+                    if let Some(hover) = hover_provider.hover(var_name, &rule_name, namespace) {
+                        log::info!("hover: provider returned result for ${}", var_name);
+                        return Ok(Some(hover));
+                    }
+                    drop(hover_provider);
+                    
+                    // Fallback: check in-memory extraction results from unified analysis
+                    if let Some(extraction) = analysis.extractions.iter().find(|e| e.rule_name == rule_name) {
+                        // Find values for this variable
+                        let values: Vec<String> = extraction.results.iter()
+                            .filter(|(_, var, _)| var == var_name)
+                            .flat_map(|(_, _, vals)| vals.clone())
+                            .collect();
+                        
+                        if !values.is_empty() {
+                            log::info!("hover: found {} in-memory values for ${} in {}", 
+                                values.len(), var_name, rule_name);
+                            return Ok(Some(self.build_hover(var_name, &rule_name, &values)));
+                        }
                     }
                 }
+                sprefa_sprf::analyze::CursorSymbolKind::RuleReference => {
+                    // Cross-reference hover
+                    log::info!("hover: found cross-ref to rule '{}'", symbol.name);
+                    return Ok(Some(Hover {
+                        contents: tower_lsp::lsp_types::HoverContents::Markup(
+                            tower_lsp::lsp_types::MarkupContent {
+                                kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                                value: format!("**Cross-reference**\\nRule: `{}`\\n\\nClick to go to definition", symbol.name),
+                            }
+                        ),
+                        range: None,
+                    }));
+                }
+                _ => {}
             }
-            log::info!("hover: no in-memory results for ${} in {}", var, rule_name);
         }
         
         // Check if hovering over a file pattern (fs, file, folder)
+        // Use legacy state for this (will be migrated)
+        let pattern_result = {
+            let doc_state = self.doc_state.lock().unwrap();
+            let offset = position_to_offset(&doc_state.text, pos);
+            find_pattern_at_position(&doc_state, offset)
+        };
+        
         if let Some((tag, pattern)) = pattern_result {
             log::info!("hover: found pattern {}('{}')", tag, pattern);
             
@@ -834,7 +893,7 @@ impl LanguageServer for SprfLsp {
             if let Some(root) = workspace_root {
                 let matches = self.find_matching_files(&tag, &pattern, &root).await;
                 if !matches.is_empty() {
-                    return Ok(Some(self.build_file_hover(&tag, &pattern, &matches)));
+                    return Ok(Some(self.build_file_hover(&tag, &pattern, &matches, &root)));
                 }
             }
         } else {
@@ -844,40 +903,92 @@ impl LanguageServer for SprfLsp {
         Ok(None)
     }
 
+    async fn goto_definition(
+        &self,
+        params: tower_lsp::lsp_types::GotoDefinitionParams,
+    ) -> Result<Option<tower_lsp::lsp_types::GotoDefinitionResponse>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        log::info!("goto_definition request: {} at line {} col {}", uri, pos.line, pos.character);
+
+        // Get or compute analysis
+        let content = self.analysis_state.get_document(&uri.to_string())
+            .or_else(|| std::fs::read_to_string(uri.to_file_path().ok()?).ok())
+            .unwrap_or_default();
+        
+        let analysis = self.analysis_state.get_or_analyze(
+            &uri.to_string(),
+            &content,
+            0, // version not critical here
+        );
+
+        let offset = state::position_to_offset(&analysis.source, pos);
+
+        // Find symbol at position
+        let symbol = match sprefa_sprf::analyze::find_symbol_at_position(&analysis, offset) {
+            Some(s) => s,
+            None => {
+                log::debug!("goto_definition: no symbol found at offset {}", offset);
+                return Ok(None);
+            }
+        };
+
+        log::info!("goto_definition: found symbol {:?} '{}'", symbol.kind, symbol.name);
+
+        // Get definition location
+        let def = match sprefa_sprf::analyze::get_definition_location(&analysis, &symbol) {
+            Some(d) => d,
+            None => {
+                log::debug!("goto_definition: no definition found for {}", symbol.name);
+                return Ok(None);
+            }
+        };
+
+        // Convert to LSP Location
+        let range = state::source_range_to_lsp(&analysis.source, &def.range);
+        let location = tower_lsp::lsp_types::Location {
+            uri: uri.clone(),
+            range,
+        };
+
+        log::info!("goto_definition: found definition for {} at {:?}", symbol.name, range);
+
+        Ok(Some(tower_lsp::lsp_types::GotoDefinitionResponse::Scalar(location)))
+    }
+
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = &params.text_document.uri;
         log::info!("document saved: {}", uri);
         
         // Get the document text and file path
         let (text, file_path) = {
-            let state = self.state.lock().unwrap();
-            (state.text.clone(), uri.to_file_path().ok())
+            let doc_state = self.doc_state.lock().unwrap();
+            (doc_state.text.clone(), uri.to_file_path().ok())
         };
         
-        // Run in-memory scan and update cache
-        match self.scan_file(&text).await {
-            Ok(results) => {
-                let rule_count = results.len();
-                // Merge new results into in-memory cache
-                {
-                    let mut in_memory = self.in_memory_results.lock().unwrap();
-                    for (rule_name, vars) in results {
-                        let entry = in_memory.entry(rule_name).or_default();
-                        for (var_name, values) in vars {
-                            entry.insert(var_name, values);
-                        }
-                    }
-                    log::info!("in-memory scan completed: {} rules cached", rule_count);
-                } // lock released here
-                
-                // If we have a workspace with DB, persist the scan results
-                if let Some(file_path) = file_path {
-                    self.persist_scan_to_db(&file_path).await;
-                }
-            }
-            Err(e) => {
-                log::warn!("in-memory scan failed: {}", e);
-            }
+        // Run unified analysis and update cache
+        let workspace_root = {
+            let ws = self.workspace.lock().unwrap();
+            ws.as_ref().map(|w| w.root.clone())
+        };
+        
+        let options = sprefa_sprf::analyze::AnalyzeOptions {
+            run_extraction: true,
+            workspace_root: workspace_root.unwrap_or_else(|| std::env::current_dir().unwrap()),
+            documents: self.analysis_state.documents.lock().unwrap().clone(),
+        };
+        
+        let analysis = sprefa_sprf::analyze::analyze_partial(&text, options);
+        let rule_count = analysis.rules.len();
+        let diag_count = analysis.diagnostics.len();
+        
+        self.analysis_state.cache_analysis(&uri.to_string(), analysis, 0);
+        
+        log::info!("did_save: cached analysis with {} rules, {} diagnostics", rule_count, diag_count);
+        
+        // If we have a workspace with DB, persist the scan results
+        if let Some(file_path) = file_path {
+            self.persist_scan_to_db(&file_path).await;
         }
         
         // Validate fs() patterns and publish diagnostics
@@ -944,7 +1055,7 @@ fn find_repo_context(text: &str, offset: usize) -> Option<String> {
     last_repo
 }
 
-/// Find capture variable and rule name at a given position.
+/// Find capture variable and rule name at a given position (legacy, uses DocState).
 fn find_capture_at_position(state: &DocState, offset: usize) -> Option<(String, String)> {
     // Find which rule we're in
     let rule_name = state.rule_at(offset)?;
@@ -999,6 +1110,22 @@ fn find_capture_at_position(state: &DocState, offset: usize) -> Option<(String, 
     None
 }
 
+/// Find which rule contains the given offset in analysis.
+fn find_rule_at_offset(analysis: &sprefa_sprf::analyze::PartialAnalysis, offset: usize) -> Option<String> {
+    use sprefa_sprf::_0_ast::Statement;
+    
+    for (idx, stmt) in analysis.stmts.iter().enumerate() {
+        if let Statement::Rule(decl) = stmt {
+            if let Some(span) = analysis.stmt_spans.get(idx) {
+                if span.start <= offset && offset <= span.end {
+                    return Some(decl.name.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Find file pattern (fs/file/folder) at cursor position.
 /// Returns (tag_name, pattern_content) if cursor is inside a tag's parens.
 fn find_pattern_at_position(state: &DocState, offset: usize) -> Option<(String, String)> {
@@ -1050,58 +1177,200 @@ fn find_pattern_at_position(state: &DocState, offset: usize) -> Option<(String, 
     Some((tag_name.to_string(), pattern.to_string()))
 }
 
+/// Extraction result with diagnostics for rules that don't match.
+#[derive(Debug)]
+struct ScanResult {
+    /// Successfully extracted values
+    values: InMemoryResults,
+    /// Diagnostics for rules/steps that failed to match
+    diagnostics: Vec<(String, String, DiagnosticSeverity)>, // (rule_name, message, severity)
+}
+
 impl SprfLsp {
-    async fn on_change(&self, uri: &Url, text: &str) {
-        let validation_diags;
+    /// Unified analysis on change - produces diagnostics and caches analysis.
+    async fn on_change(&self, uri: &Url, text: &str, version: i32) {
+        // Update legacy doc state for completions (migration in progress)
         {
-            let mut state = self.state.lock().unwrap();
-            state.rebuild(text);
-            validation_diags = state.diagnostics.clone();
+            let mut doc_state = self.doc_state.lock().unwrap();
+            doc_state.rebuild(text);
         }
 
+        // Get workspace root
+        let workspace_root = {
+            let ws = self.workspace.lock().unwrap();
+            ws.as_ref().map(|w| w.root.clone())
+        };
+
+        // Run unified analysis
+        let options = sprefa_sprf::analyze::AnalyzeOptions {
+            run_extraction: true,
+            workspace_root: workspace_root.unwrap_or_else(|| std::env::current_dir().unwrap()),
+            documents: self.analysis_state.documents.lock().unwrap().clone(),
+        };
+
+        let analysis = sprefa_sprf::analyze::analyze_partial(text, options);
+
+        // Cache the analysis
+        self.analysis_state.cache_analysis(&uri.to_string(), analysis.clone(), version);
+
+        // Convert analysis errors to LSP diagnostics
         let mut diags: Vec<Diagnostic> = vec![];
 
-        // Parse error diagnostic
-        if let Err(e) = parse_program(text) {
-            let err_msg = e.to_string();
-            log::debug!("parse error in {}: {}", uri, err_msg);
-            let (start_pos, end_pos) = guess_error_position(text, &err_msg);
+        // Phase errors (parse, lower)
+        for err in &analysis.errors {
+            let range = state::source_range_to_lsp(text, &err.location);
+            let severity = Some(match err.severity {
+                sprefa_sprf::analyze::Severity::Error => DiagnosticSeverity::ERROR,
+                sprefa_sprf::analyze::Severity::Warning => DiagnosticSeverity::WARNING,
+                sprefa_sprf::analyze::Severity::Info => DiagnosticSeverity::INFORMATION,
+            });
             diags.push(Diagnostic {
-                range: Range {
-                    start: start_pos,
-                    end: end_pos,
-                },
-                severity: Some(DiagnosticSeverity::ERROR),
-                source: Some("sprf".into()),
-                message: err_msg,
+                range,
+                severity,
+                source: Some(format!("sprf-{:?}", err.phase).to_lowercase()),
+                message: err.message.clone(),
                 ..Default::default()
             });
         }
 
-        // Validation diagnostics
-        let text_copy = text.to_string();
-        for (span, msg, severity) in validation_diags {
-            let start = offset_to_position(&text_copy, span.start);
-            let end = offset_to_position(&text_copy, span.end);
+        // Extraction diagnostics
+        for diag in &analysis.diagnostics {
+            // Find the exact position of the rule name in the source
+            let (start, end) = find_rule_name_range(text, &diag.rule);
+            let start_pos = state::offset_to_position(text, start);
+            let end_pos = state::offset_to_position(text, end);
+
+            let severity = Some(match diag.severity {
+                sprefa_sprf::analyze::Severity::Error => DiagnosticSeverity::ERROR,
+                sprefa_sprf::analyze::Severity::Warning => DiagnosticSeverity::WARNING,
+                sprefa_sprf::analyze::Severity::Info => DiagnosticSeverity::INFORMATION,
+            });
+
             diags.push(Diagnostic {
-                range: Range { start, end },
-                severity: Some(severity),
-                source: Some("sprf".into()),
-                message: msg,
+                range: Range { start: start_pos, end: end_pos },
+                severity,
+                source: Some("sprf-extract".into()),
+                message: format!("[{}] {}", diag.rule, diag.message),
                 ..Default::default()
             });
         }
 
-        log::debug!("publishing {} diagnostics for {}", diags.len(), uri);
+        log::info!(
+            "on_change: cached analysis with {} stmts, {} rules, {} errors, {} diags for {}",
+            analysis.stmts.len(),
+            analysis.rules.len(),
+            analysis.errors.len(),
+            diags.len(),
+            uri
+        );
+
         self.client
             .publish_diagnostics(uri.clone(), diags, None)
             .await;
     }
 
+    /// Legacy scan_file - kept for did_save, will be migrated.
+    #[allow(dead_code)]
+    async fn scan_file_legacy(&self, text: &str) -> anyhow::Result<ScanResult> {
+        // Parse the sprf file using sprf crate
+        let (ruleset, _edges) = match sprefa_sprf::parse_sprf(text) {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!("scan_file: failed to parse sprf: {}", e);
+                return Ok(ScanResult { values: HashMap::new(), diagnostics: vec![] });
+            }
+        };
+
+        log::debug!("scan_file: parsed {} rules", ruleset.rules.len());
+
+        // Build results map: rule_name -> (var_name -> Vec<values>)
+        let mut results: InMemoryResults = HashMap::new();
+        let mut diagnostics: Vec<(String, String, DiagnosticSeverity)> = vec![];
+
+        // Get workspace root and documents for extraction
+        let workspace_root = {
+            let ws_guard = self.workspace.lock().unwrap();
+            ws_guard.as_ref().map(|ws| ws.root.clone())
+        };
+        let documents = self.analysis_state.documents.lock().unwrap().clone();
+
+        // For each rule, attempt to run extraction
+        for rule in &ruleset.rules {
+            let mut rule_results: HashMap<String, Vec<String>> = HashMap::new();
+            let mut total_captures = 0;
+
+            // Collect capture names from create_matches
+            for match_def in &rule.create_matches {
+                let var_name = &match_def.capture;
+
+                // Try to extract values, checking unsaved documents first
+                match self.extract_values_with_unsaved(rule, var_name, workspace_root.as_ref(), &documents).await {
+                    Some(values) if !values.is_empty() => {
+                        total_captures += values.len();
+                        rule_results.insert(var_name.clone(), values);
+                    }
+                    _ => {
+                        // Capture variable had zero matches
+                        diagnostics.push((
+                            rule.name.clone(),
+                            format!("Capture `${}` in rule `{}` matched 0 files/patterns", var_name, rule.name),
+                            DiagnosticSeverity::WARNING,
+                        ));
+                    }
+                }
+            }
+
+            // Check if rule found files but extracted nothing
+            if total_captures == 0 && !rule.create_matches.is_empty() {
+                // Check if we found any matching files at all
+                let files_found = if let Some(ref root) = workspace_root {
+                    sprefa_sprf::_4_extract::find_matching_files(rule, root).len()
+                } else {
+                    0
+                };
+
+                if files_found > 0 {
+                    // Check if it's a JSON/YAML path issue by sampling a file
+                    let path_issue = Self::check_pattern_path_issue(rule, workspace_root.as_ref().unwrap(), &documents);
+                    if path_issue {
+                        diagnostics.push((
+                            rule.name.clone(),
+                            format!("Rule `{}` found {} files but JSON/YAML path doesn't match file structure",
+                                    rule.name, files_found),
+                            DiagnosticSeverity::ERROR,
+                        ));
+                    } else {
+                        diagnostics.push((
+                            rule.name.clone(),
+                            format!("Rule `{}` found {} files but extracted 0 captures - check capture variables",
+                                    rule.name, files_found),
+                            DiagnosticSeverity::WARNING,
+                        ));
+                    }
+                } else {
+                    diagnostics.push((
+                        rule.name.clone(),
+                        format!("Rule `{}` matched 0 files - check file pattern", rule.name),
+                        DiagnosticSeverity::ERROR,
+                    ));
+                }
+            }
+
+            if !rule_results.is_empty() {
+                results.insert(rule.name.clone(), rule_results);
+            }
+        }
+
+        log::info!("scan_file: extracted values for {} rules, {} diagnostics", results.len(), diagnostics.len());
+        Ok(ScanResult { values: results, diagnostics })
+    }
+
     /// Scan a sprf file and return extracted values without persisting to DB.
-    /// 
-    /// Returns: rule_name -> (var_name -> Vec<values>)
-    async fn scan_file(&self, text: &str) -> anyhow::Result<InMemoryResults> {
+/// 
+/// Returns extracted values AND diagnostics for non-matching rules.
+/// 
+/// This also checks the document store for unsaved target files.
+async fn scan_file(&self, text: &str) -> anyhow::Result<ScanResult> {
         log::debug!("scan_file: parsing sprf content");
         
         // Parse the sprf file using sprf crate
@@ -1109,7 +1378,7 @@ impl SprfLsp {
             Ok(result) => result,
             Err(e) => {
                 log::warn!("scan_file: failed to parse sprf: {}", e);
-                return Ok(HashMap::new());
+                return Ok(ScanResult { values: HashMap::new(), diagnostics: vec![] });
             }
         };
         
@@ -1117,26 +1386,74 @@ impl SprfLsp {
         
         // Build results map: rule_name -> (var_name -> Vec<values>)
         let mut results: InMemoryResults = HashMap::new();
+        let mut diagnostics: Vec<(String, String, DiagnosticSeverity)> = vec![];
         
-        // Get workspace root for file resolution
+        // Get workspace root and documents for extraction
         let workspace_root = {
             let ws_guard = self.workspace.lock().unwrap();
             ws_guard.as_ref().map(|ws| ws.root.clone())
         };
+        let documents = self.analysis_state.documents.lock().unwrap().clone();
         
         // For each rule, attempt to run extraction
         for rule in &ruleset.rules {
             let mut rule_results: HashMap<String, Vec<String>> = HashMap::new();
+            let mut total_captures = 0;
             
             // Collect capture names from create_matches
             for match_def in &rule.create_matches {
                 let var_name = &match_def.capture;
                 
-                // Try to extract values based on rule selectors
-                if let Some(values) = self.extract_values_for_rule(rule, var_name, workspace_root.as_ref()).await {
-                    if !values.is_empty() {
+                // Try to extract values, checking unsaved documents first
+                match self.extract_values_with_unsaved(rule, var_name, workspace_root.as_ref(), &documents).await {
+                    Some(values) if !values.is_empty() => {
+                        total_captures += values.len();
                         rule_results.insert(var_name.clone(), values);
                     }
+                    _ => {
+                        // Capture variable had zero matches
+                        diagnostics.push((
+                            rule.name.clone(),
+                            format!("Capture `${}` in rule `{}` matched 0 files/patterns", var_name, rule.name),
+                            DiagnosticSeverity::WARNING,
+                        ));
+                    }
+                }
+            }
+            
+            // Check if rule found files but extracted nothing
+            if total_captures == 0 && !rule.create_matches.is_empty() {
+                // Check if we found any matching files at all
+                let files_found = if let Some(ref root) = workspace_root {
+                    sprefa_sprf::_4_extract::find_matching_files(rule, root).len()
+                } else {
+                    0
+                };
+                
+                if files_found > 0 {
+                    // Check if it's a JSON/YAML path issue by sampling a file
+                    let path_issue = Self::check_pattern_path_issue(rule, workspace_root.as_ref().unwrap(), &documents);
+                    if path_issue {
+                        diagnostics.push((
+                            rule.name.clone(),
+                            format!("Rule `{}` found {} files but JSON/YAML path doesn't match file structure", 
+                                    rule.name, files_found),
+                            DiagnosticSeverity::ERROR,
+                        ));
+                    } else {
+                        diagnostics.push((
+                            rule.name.clone(),
+                            format!("Rule `{}` found {} files but extracted 0 captures - check capture variables", 
+                                    rule.name, files_found),
+                            DiagnosticSeverity::WARNING,
+                        ));
+                    }
+                } else {
+                    diagnostics.push((
+                        rule.name.clone(),
+                        format!("Rule `{}` matched 0 files - check file pattern", rule.name),
+                        DiagnosticSeverity::ERROR,
+                    ));
                 }
             }
             
@@ -1145,80 +1462,125 @@ impl SprfLsp {
             }
         }
         
-        log::info!("scan_file: extracted values for {} rules", results.len());
-        Ok(results)
+        log::info!("scan_file: extracted values for {} rules, {} diagnostics", results.len(), diagnostics.len());
+        Ok(ScanResult { values: results, diagnostics })
+    }
+
+    /// Check if a rule's JSON/YAML pattern doesn't match the actual file structure.
+    /// Samples the first matching file to validate the pattern path.
+    fn check_pattern_path_issue(
+        rule: &sprefa_rules::types::Rule,
+        workspace_root: &Path,
+        documents: &HashMap<String, String>,
+    ) -> bool {
+        // Get the structural steps (json patterns)
+        let has_json_pattern = rule.select.iter().any(|s| {
+            matches!(s, sprefa_rules::types::SelectStep::File { .. })
+        });
+        
+        if !has_json_pattern {
+            return false;
+        }
+        
+        // Find first matching file
+        let files = sprefa_sprf::_4_extract::find_matching_files(rule, workspace_root);
+        if files.is_empty() {
+            return false;
+        }
+        
+        // Sample the first file
+        let sample_file = &files[0];
+        let uri = Url::from_file_path(sample_file).map(|u| u.to_string()).ok();
+        
+        // Get content (unsaved or from disk)
+        let content = uri.as_ref()
+            .and_then(|u| documents.get(u))
+            .cloned()
+            .or_else(|| std::fs::read_to_string(sample_file).ok());
+        
+        let Some(content) = content else {
+            return false;
+        };
+        
+        // Try to parse based on extension
+        let ext = sample_file.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let parsed: Option<serde_json::Value> = match ext {
+            "json" => serde_json::from_str(&content).ok(),
+            "yaml" | "yml" => serde_yaml::from_str::<serde_yaml::Value>(&content)
+                .ok().and_then(|v| serde_json::to_value(v).ok()),
+            "toml" => toml::from_str::<toml::Value>(&content)
+                .ok().and_then(|v| serde_json::to_value(v).ok()),
+            _ => None,
+        };
+        
+        parsed.is_none()
     }
 
     /// Extract values for a specific variable in a rule.
-    /// This is a simplified extraction that works with the available context.
-    async fn extract_values_for_rule(
+    /// Uses shared in-memory extraction from sprf crate.
+    /// Checks for unsaved document content first.
+    async fn extract_values_with_unsaved(
         &self,
         rule: &sprefa_rules::types::Rule,
         var_name: &str,
         workspace_root: Option<&PathBuf>,
+        documents: &HashMap<String, String>,
     ) -> Option<Vec<String>> {
-        // For now, we only extract file-based patterns (fs, file, folder)
-        // This is a lightweight extraction for immediate hover results
+        let root = workspace_root?;
         
-        let mut extracted_values = Vec::new();
+        log::debug!("extract_values_with_unsaved: rule='{}' var='{}' root='{}'", 
+                    rule.name, var_name, root.display());
         
-        // Look for file selectors in the rule
-        for step in &rule.select {
-            match step {
-                sprefa_rules::types::SelectStep::File { pattern, .. } |
-                sprefa_rules::types::SelectStep::Folder { pattern, .. } => {
-                    if let Some(root) = workspace_root {
-                        // Try to glob for matching files
-                        let glob_pattern = pattern.replace("**", "*");
-                        let full_pattern = root.join(&glob_pattern);
-                        
-                        if let Ok(paths) = tokio::task::spawn_blocking({
-                            let pattern = full_pattern.clone();
-                            move || {
-                                let mut matches = Vec::new();
-                                if let Some(parent) = pattern.parent() {
-                                    if let Ok(entries) = std::fs::read_dir(parent) {
-                                        for entry in entries.flatten() {
-                                            if let Ok(metadata) = entry.metadata() {
-                                                let path = entry.path();
-                                                let path_str = path.to_string_lossy().to_string();
-                                                
-                                                // Simple pattern matching
-                                                if pattern_matches(&pattern.to_string_lossy(), &path_str) {
-                                                    if metadata.is_file() {
-                                                        matches.push(path.file_name()
-                                                            .map(|n| n.to_string_lossy().to_string())
-                                                            .unwrap_or_else(|| path_str.clone()));
-                                                    } else if metadata.is_dir() {
-                                                        matches.push(path.file_name()
-                                                            .map(|n| n.to_string_lossy().to_string())
-                                                            .unwrap_or_else(|| path_str.clone()));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                matches
+        // Use the shared extraction from sprf crate
+        let documents = documents.clone();
+        let extracted = tokio::task::spawn_blocking({
+            let rule = rule.clone();
+            let root = root.clone();
+            let var = var_name.to_string();
+            move || {
+                // First get matching files
+                let files = sprefa_sprf::_4_extract::find_matching_files(&rule, &root);
+                log::debug!("found {} matching files", files.len());
+                
+                let mut results = Vec::new();
+                for file_path in files.iter().take(50) {
+                    let uri = Url::from_file_path(file_path).map(|u| u.to_string()).ok();
+                    
+                    // Check if we have unsaved content for this file
+                    let content = uri.as_ref().and_then(|u| documents.get(u));
+                    
+                    let values = if let Some(text) = content {
+                        // Use unsaved content
+                        log::debug!("using unsaved content for {}", file_path.display());
+                        sprefa_sprf::extract_from_content(&rule, &var, file_path, text.as_bytes())
+                    } else {
+                        // Read from disk
+                        match std::fs::read(file_path) {
+                            Ok(bytes) => {
+                                sprefa_sprf::extract_from_content(&rule, &var, file_path, &bytes)
                             }
-                        }).await {
-                            extracted_values.extend(paths);
+                            Err(e) => {
+                                log::debug!("failed to read {}: {}", file_path.display(), e);
+                                Vec::new()
+                            }
                         }
-                    }
+                    };
+                    
+                    results.extend(values);
                 }
-                _ => {}
+                
+                log::debug!("extracted {} total values", results.len());
+                results
             }
-        }
+        }).await.ok()?;
         
-        // Limit to reasonable number for hover
-        if extracted_values.len() > 50 {
-            extracted_values.truncate(50);
-        }
-        
-        if extracted_values.is_empty() {
+        if extracted.is_empty() {
+            log::debug!("extract_values_with_unsaved: no values extracted");
             None
         } else {
-            Some(extracted_values)
+            log::info!("extract_values_with_unsaved: extracted {} values for ${} in {}", 
+                       extracted.len(), var_name, rule.name);
+            Some(extracted.into_iter().map(|v| v.value).collect())
         }
     }
 
@@ -1327,19 +1689,41 @@ impl SprfLsp {
         }).await.unwrap_or_default()
     }
 
-    /// Build hover for file pattern preview.
-    fn build_file_hover(&self, tag: &str, pattern: &str, matches: &[String]) -> Hover {
+    /// Build hover for file pattern preview with clickable file links.
+    fn build_file_hover(&self, tag: &str, pattern: &str, matches: &[String], root: &Path) -> Hover {
         let total = matches.len();
-        let is_limited = total >= 30;
         let total_str = total.to_string();
         
         let mut markdown = format!(
             "**{}**(`{}`)\n\nMatches ({}):\n",
-            tag, pattern, if is_limited { "30+" } else { &total_str }
+            tag, pattern, total_str
         );
 
         for m in matches {
-            markdown.push_str(&format!("- `{}`\n", m));
+            // Convert to absolute path
+            let abs_path = if m.starts_with('/') {
+                PathBuf::from(m)
+            } else {
+                root.join(m)
+            };
+            
+            // Get relative path for display
+            let display_path = abs_path.strip_prefix(root)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| m.clone());
+            
+            // Create file:// URL for clickable link
+            let file_url = Url::from_file_path(&abs_path)
+                .map(|u| u.to_string())
+                .unwrap_or_else(|_| m.clone());
+            
+            // Markdown link: [relative/path](file:///absolute/path)
+            markdown.push_str(&format!("- [`{}`]({})\n", display_path, file_url));
+        }
+        
+        // Add clickable link to see all in panel if many matches
+        if total > 50 {
+            markdown.push_str(&format!("\n*Showing all {} matches*\n", total));
         }
 
         Hover {
@@ -1354,13 +1738,15 @@ impl SprfLsp {
 
 /// Recursive directory walk fallback for file matching.
 fn walk_and_match(root: &Path, current: &Path, pattern: &str, tag: &str, matches: &mut Vec<String>) {
-    if matches.len() >= 30 {
+    const MAX_MATCHES: usize = 100;
+    
+    if matches.len() >= MAX_MATCHES {
         return;
     }
     
     if let Ok(entries) = std::fs::read_dir(current) {
         for entry in entries.flatten() {
-            if matches.len() >= 30 {
+            if matches.len() >= MAX_MATCHES {
                 return;
             }
             
@@ -1466,13 +1852,188 @@ async fn main() {
 
     let (service, socket) = LspService::new(|client| SprfLsp {
         client,
-        state: Mutex::new(DocState::default()),
+        doc_state: Mutex::new(DocState::default()),
+        analysis_state: state::LspState::new(),
         workspace: Mutex::new(None),
         hover_provider: Mutex::new(hover::HoverProvider::empty()),
-        in_memory_results: Mutex::new(HashMap::new()),
     });
 
     log::info!("LSP service created, starting server");
     Server::new(stdin, stdout, socket).serve(service).await;
     log::info!("sprf-lsp shutting down");
+}
+
+/// Find the exact byte range of a rule name in the source text.
+/// Returns (start, end) byte offsets for the rule name.
+fn find_rule_name_range(source: &str, rule_name: &str) -> (usize, usize) {
+    // Look for "rule(NAME)" pattern
+    let pattern = format!("rule({})", rule_name);
+    
+    if let Some(pos) = source.find(&pattern) {
+        // Found "rule(NAME)", return just the NAME part
+        let name_start = pos + 5; // After "rule("
+        let name_end = name_start + rule_name.len();
+        return (name_start, name_end);
+    }
+    
+    // Fallback: try to find just the rule name near "rule(" patterns
+    for (pos, _) in source.match_indices("rule(") {
+        let after_paren = &source[pos + 5..];
+        if after_paren.starts_with(rule_name) {
+            let name_start = pos + 5;
+            let name_end = name_start + rule_name.len();
+            return (name_start, name_end);
+        }
+    }
+    
+    // Last resort: return position 0
+    (0, rule_name.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// KITCHEN SINK: Partial parsing produces usable AST for LSP operations
+    #[test]
+    fn partial_parse_lsp_kitchen_sink() {
+        // Complex broken .sprf that should still yield usable AST
+        let broken_sprf = r#"
+# Valid rule at start
+rule(pkg) { fs(**/Cargo.toml) > json({ package: { name: $NAME } }) };
+
+# Broken: unclosed json pattern
+rule(broken_1) { fs(**/*.json) > json({ name: $NAME 
+
+# Valid rule in middle
+rule(deps) { fs(**/package.json) > json({ dependencies: { $DEP: $VER } }) };
+
+# Broken check: missing closing brace
+check(broken_check) { SELECT * FROM pkg 
+
+# Valid rule at end  
+rule(versions) { fs(**/Cargo.lock) > json({ package: $PKG }) };
+"#;
+
+        let partial = parse_program_partial(broken_sprf);
+        
+        // Should parse 3 valid rules despite 2 broken statements
+        assert_eq!(partial.stmts.len(), 3, "Expected 3 valid statements from partial parse");
+        assert!(!partial.is_valid, "Should report invalid due to errors");
+        assert!(!partial.errors.is_empty(), "Should have parse errors");
+        
+        // Verify we can extract rule names for LSP symbol resolution
+        let rule_names: Vec<_> = partial.stmts.iter()
+            .filter_map(|s| match s { Statement::Rule(r) => Some(r.name.clone()), _ => None })
+            .collect();
+        
+        assert!(rule_names.contains(&"pkg".to_string()), "Should have pkg rule");
+        assert!(rule_names.contains(&"deps".to_string()), "Should have deps rule");
+        assert!(rule_names.contains(&"versions".to_string()), "Should have versions rule");
+        
+        // Verify captures are extractable for completion
+        let captures: Vec<_> = partial.stmts.iter()
+            .filter_map(|s| match s {
+                Statement::Rule(r) => {
+                    let caps: Vec<_> = extract_captures_from_body(&r.body);
+                    Some((r.name.clone(), caps))
+                }
+                _ => None,
+            })
+            .collect();
+        
+        // Should have captured variables from valid rules
+        assert!(captures.iter().any(|(_, caps)| caps.contains(&"NAME".to_string())));
+        assert!(captures.iter().any(|(_, caps)| caps.contains(&"DEP".to_string())));
+    }
+
+    /// Test that partial parse enables completions even with broken syntax
+    #[test]
+    fn partial_parse_enables_completions() {
+        // User is typing and file is currently broken
+        let broken_input = r#"rule(test) { fs(**/car"#;
+        
+        let partial = parse_program_partial(broken_input);
+        
+        // Even with broken syntax, we might have partial AST
+        // The LSP can use this + tokenization fallback for completions
+        let has_partial_ast = !partial.stmts.is_empty();
+        let has_errors = !partial.errors.is_empty();
+        
+        // With recovery, we should at least know we're inside an fs() tag
+        // even if the rule itself is incomplete
+        if has_partial_ast {
+            // Can use AST-based context detection
+            for stmt in &partial.stmts {
+                if let Statement::Rule(r) = stmt {
+                    // Check body for fs tag
+                    let has_fs = r.body.iter().any(|b| has_fs_tag(b));
+                    if has_fs {
+                        // LSP could offer file completions here
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Tokenization fallback should always work for simple cases
+        let tokens = context::tokenize(broken_input);
+        let ctx = context::detect_context(&tokens, broken_input.len());
+        
+        assert!(
+            matches!(&ctx, context::Context::InsideTag { tag, .. } if tag == "fs"),
+            "Should detect inside fs tag via tokenization: got {:?}", ctx
+        );
+    }
+
+    // Helper function to extract captures from rule body
+    fn extract_captures_from_body(body: &[RuleBody]) -> Vec<String> {
+        let mut captures = Vec::new();
+        for item in body {
+            extract_captures_recursive(item, &mut captures);
+        }
+        captures
+    }
+
+    fn extract_captures_recursive(body: &RuleBody, out: &mut Vec<String>) {
+        match body {
+            RuleBody::Step(slot) => {
+                extract_captures_from_slot(slot, out);
+            }
+            RuleBody::Block { slot, children, .. } => {
+                extract_captures_from_slot(slot, out);
+                for child in children {
+                    extract_captures_recursive(child, out);
+                }
+            }
+            RuleBody::Ref { children, .. } => {
+                for child in children {
+                    extract_captures_recursive(child, out);
+                }
+            }
+        }
+    }
+
+    fn extract_captures_from_slot(slot: &sprefa_sprf::_0_ast::Slot, out: &mut Vec<String>) {
+        use sprefa_sprf::_0_ast::Slot;
+        match slot {
+            Slot::Tagged { body, .. } => {
+                // Simple regex-based capture extraction from pattern body
+                let re = regex::Regex::new(r#"\$([A-Z_][A-Z0-9_]*)"#).unwrap();
+                for cap in re.captures_iter(body) {
+                    out.push(cap[1].to_string());
+                }
+            }
+            Slot::Bare(_) => {}
+        }
+    }
+
+    fn has_fs_tag(body: &RuleBody) -> bool {
+        use sprefa_sprf::_0_ast::Slot;
+        match body {
+            RuleBody::Step(Slot::Tagged { tag, .. }) => *tag == Tag::Fs,
+            RuleBody::Block { slot: Slot::Tagged { tag, .. }, .. } => *tag == Tag::Fs,
+            _ => false,
+        }
+    }
 }

@@ -238,7 +238,8 @@ fn monomorphize_bodies(bodies: &[RuleBody]) -> Vec<Vec<RuleBody>> {
     all_paths
 }
 
-fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
+/// Lower a single rule declaration to one or more Rules.
+pub fn lower_rule_decl(decl: &RuleDecl) -> Result<Vec<Rule>> {
     // Compute create_matches from ALL captures across ALL branches so that every
     // monomorphized Rule shares the same table schema.
     let mut scan_vars_all: HashMap<String, String> = HashMap::new();

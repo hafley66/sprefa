@@ -2,6 +2,8 @@ pub mod _0_ast;
 pub mod _1_parse;
 pub mod _2_pattern;
 pub mod _3_lower;
+pub mod _4_extract;
+pub mod analyze;
 pub mod hash;
 
 use std::path::Path;
@@ -11,6 +13,14 @@ use sprefa_rules::graph::DepEdge;
 use sprefa_rules::types::RuleSet;
 
 pub use _0_ast::CheckDecl;
+pub use _1_parse::{parse_program_partial, PartialProgram, ParseError, ParseDiagnostic, DiagnosticKind};
+pub use _4_extract::{extract_in_memory, extract_from_content, ExtractedValue};
+pub use analyze::{
+    analyze_partial, find_symbol_at_position, get_definition_location,
+    PartialAnalysis, AnalyzeOptions, AnalysisError, AnalysisDiagnostic,
+    SourceRange, SymbolTable, SymbolLocation, SymbolKind, SymbolAtCursor,
+    CursorSymbolKind, Phase, Severity, RuleExtraction, ExtractedValue as AnalysisExtractedValue,
+};
 
 /// Parse a .sprf file and produce extraction rules + dependency edges.
 pub fn parse_sprf(source: &str) -> Result<(RuleSet, Vec<DepEdge>)> {
