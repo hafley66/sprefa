@@ -445,14 +445,18 @@ fn collect_body_info(
             cross_ref,
             children,
         } => {
+            // Find span of the cross-ref FIRST (so we can find captures inside it)
+            let span = find_cross_ref_span(text, rule_offset, &cross_ref.rule_name);
+            
             // Record cross-reference
             let mut bindings = Vec::new();
             for binding in &cross_ref.bindings {
                 all_capture_names.insert(binding.var.clone());
                 bindings.push((binding.column.clone(), binding.var.clone()));
                 
-                // Find range of this binding's capture
-                if let Some(range) = find_capture_range(text, rule_offset, &binding.var) {
+                // Find range of this binding's capture INSIDE the cross-ref span
+                // (not from rule start, which might find a different occurrence)
+                if let Some(range) = find_capture_range_in_span(text, span.start, span.end, &binding.var) {
                     captures.push(CaptureInfo {
                         name: binding.var.clone(),
                         rule_name: rule_name.to_string(),
@@ -462,9 +466,6 @@ fn collect_body_info(
                     });
                 }
             }
-
-            // Find span of the cross-ref
-            let span = find_cross_ref_span(text, rule_offset, &cross_ref.rule_name);
             
             let cross_ref_info = CrossRefInfo {
                 target_rule: cross_ref.rule_name.clone(),
@@ -581,6 +582,18 @@ fn find_capture_range(text: &str, start_offset: usize, cap_name: &str) -> Option
     let pattern = format!("${}", cap_name);
     search_text.find(&pattern).map(|pos| {
         let start = start_offset + pos;
+        let end = start + pattern.len();
+        start..end
+    })
+}
+
+/// Find the byte range of a capture within a specific span.
+/// Used for cross-ref bindings to find captures inside the cross-ref call.
+fn find_capture_range_in_span(text: &str, span_start: usize, span_end: usize, cap_name: &str) -> Option<Range<usize>> {
+    let search_text = &text[span_start..span_end.min(text.len())];
+    let pattern = format!("${}", cap_name);
+    search_text.find(&pattern).map(|pos| {
+        let start = span_start + pos;
         let end = start + pattern.len();
         start..end
     })
