@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -783,11 +783,18 @@ impl LanguageServer for SprfLsp {
         let pos = params.text_document_position_params.position;
         log::info!("hover request: {} at line {} col {}", uri, pos.line, pos.character);
         
-        let state = self.state.lock().unwrap();
-        let offset = position_to_offset(&state.text, pos);
+        // Extract data from state first, then release lock
+        let (capture_result, pattern_result) = {
+            let state = self.state.lock().unwrap();
+            let offset = position_to_offset(&state.text, pos);
+            
+            let capture = find_capture_at_position(&state, offset);
+            let pattern = find_pattern_at_position(&state, offset);
+            (capture, pattern)
+        };
         
         // Find capture at position in AST
-        if let Some((var, rule_name)) = find_capture_at_position(&state, offset) {
+        if let Some((var, rule_name)) = capture_result {
             log::info!("hover: found capture var='{}' in rule='{}'", var, rule_name);
             
             // Extract namespace from filename (e.g., "sprefa-rules.sprf" -> "sprefa-rules")
@@ -817,8 +824,21 @@ impl LanguageServer for SprfLsp {
                 }
             }
             log::info!("hover: no in-memory results for ${} in {}", var, rule_name);
+        }
+        
+        // Check if hovering over a file pattern (fs, file, folder)
+        if let Some((tag, pattern)) = pattern_result {
+            log::info!("hover: found pattern {}('{}')", tag, pattern);
+            
+            let workspace_root = self.workspace.lock().unwrap().as_ref().map(|w| w.root.clone());
+            if let Some(root) = workspace_root {
+                let matches = self.find_matching_files(&tag, &pattern, &root).await;
+                if !matches.is_empty() {
+                    return Ok(Some(self.build_file_hover(&tag, &pattern, &matches)));
+                }
+            }
         } else {
-            log::debug!("hover: no capture found at offset {}", offset);
+            log::debug!("hover: no pattern or capture found");
         }
         
         Ok(None)
@@ -977,6 +997,57 @@ fn find_capture_at_position(state: &DocState, offset: usize) -> Option<(String, 
     }
     
     None
+}
+
+/// Find file pattern (fs/file/folder) at cursor position.
+/// Returns (tag_name, pattern_content) if cursor is inside a tag's parens.
+fn find_pattern_at_position(state: &DocState, offset: usize) -> Option<(String, String)> {
+    let text = &state.text;
+    let before = &text[..offset.min(text.len())];
+    
+    // Find the innermost unclosed paren before cursor
+    let mut depth = 0i32;
+    let mut last_open = None;
+    for (i, b) in before.bytes().enumerate().rev() {
+        match b {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth < 0 {
+                    last_open = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    let paren_pos = last_open?;
+    let pre = before[..paren_pos].trim_end();
+    
+    // Extract tag name before paren
+    let tag_start = pre.rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .map(|i| i + 1).unwrap_or(0);
+    let tag_name = &pre[tag_start..];
+    
+    // Check if it's a file-related tag
+    if !matches!(tag_name, "fs" | "file" | "folder") {
+        return None;
+    }
+    
+    // Extract pattern content (everything after '(' until ')' or cursor)
+    let after_paren = &text[paren_pos + 1..];
+    let pattern_end = after_paren.find(')').unwrap_or(after_paren.len());
+    let pattern = &after_paren[..pattern_end];
+    
+    // Check if cursor is actually inside the pattern (not after the closing paren)
+    let pattern_start_offset = paren_pos + 1;
+    let pattern_end_offset = pattern_start_offset + pattern.len();
+    if offset > pattern_end_offset {
+        return None;
+    }
+    
+    Some((tag_name.to_string(), pattern.to_string()))
 }
 
 impl SprfLsp {
@@ -1186,6 +1257,80 @@ impl SprfLsp {
         
         // Add note that these are from in-memory scan
         markdown.push_str("\n*(from in-memory scan)*\n");
+
+        Hover {
+            contents: tower_lsp::lsp_types::HoverContents::Markup(tower_lsp::lsp_types::MarkupContent {
+                kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                value: markdown,
+            }),
+            range: None,
+        }
+    }
+
+    /// Find files matching a pattern (for hover preview).
+    async fn find_matching_files(&self, tag: &str, pattern: &str, root: &Path) -> Vec<String> {
+        if pattern.is_empty() {
+            return vec![];
+        }
+        
+        let glob_pattern = pattern.replace("**", "*");
+        let full_pattern = root.join(&glob_pattern);
+        let tag = tag.to_string(); // Clone for move into closure
+        
+        tokio::task::spawn_blocking({
+            let pattern = full_pattern.clone();
+            let root = root.to_path_buf();
+            move || {
+                let mut matches = Vec::new();
+                
+                // Use glob or walk directory
+                if let Some(parent) = pattern.parent() {
+                    if let Ok(entries) = std::fs::read_dir(parent) {
+                        for entry in entries.flatten() {
+                            if let Ok(metadata) = entry.metadata() {
+                                let path = entry.path();
+                                let path_str = path.to_string_lossy().to_string();
+                                
+                                // Check file type matches tag
+                                let is_match = match tag.as_str() {
+                                    "folder" => metadata.is_dir(),
+                                    "file" | "fs" => metadata.is_file(),
+                                    _ => true,
+                                };
+                                
+                                if is_match && pattern_matches(&pattern.to_string_lossy(), &path_str) {
+                                    // Get relative path from root
+                                    let rel_path = path.strip_prefix(&root)
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_else(|_| path_str.clone());
+                                    matches.push(rel_path);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                matches.sort();
+                matches.truncate(30); // Limit for hover
+                matches
+            }
+        }).await.unwrap_or_default()
+    }
+
+    /// Build hover for file pattern preview.
+    fn build_file_hover(&self, tag: &str, pattern: &str, matches: &[String]) -> Hover {
+        let total = matches.len();
+        let is_limited = total >= 30;
+        let total_str = total.to_string();
+        
+        let mut markdown = format!(
+            "**{}**(`{}`)\n\nMatches ({}):\n",
+            tag, pattern, if is_limited { "30+" } else { &total_str }
+        );
+
+        for m in matches {
+            markdown.push_str(&format!("- `{}`\n", m));
+        }
 
         Hover {
             contents: tower_lsp::lsp_types::HoverContents::Markup(tower_lsp::lsp_types::MarkupContent {
