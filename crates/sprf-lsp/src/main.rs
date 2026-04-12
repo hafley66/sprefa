@@ -1268,52 +1268,62 @@ impl SprfLsp {
     }
 
     /// Find files matching a pattern (for hover preview).
+    /// Uses ripgrep for efficient recursive glob matching.
     async fn find_matching_files(&self, tag: &str, pattern: &str, root: &Path) -> Vec<String> {
         if pattern.is_empty() {
             return vec![];
         }
         
-        let glob_pattern = pattern.replace("**", "*");
-        let full_pattern = root.join(&glob_pattern);
-        let tag = tag.to_string(); // Clone for move into closure
+        let tag = tag.to_string();
+        let pattern = pattern.to_string();
+        let root = root.to_path_buf();
         
-        tokio::task::spawn_blocking({
-            let pattern = full_pattern.clone();
-            let root = root.to_path_buf();
-            move || {
-                let mut matches = Vec::new();
-                
-                // Use glob or walk directory
-                if let Some(parent) = pattern.parent() {
-                    if let Ok(entries) = std::fs::read_dir(parent) {
-                        for entry in entries.flatten() {
-                            if let Ok(metadata) = entry.metadata() {
-                                let path = entry.path();
-                                let path_str = path.to_string_lossy().to_string();
-                                
-                                // Check file type matches tag
-                                let is_match = match tag.as_str() {
-                                    "folder" => metadata.is_dir(),
-                                    "file" | "fs" => metadata.is_file(),
-                                    _ => true,
-                                };
-                                
-                                if is_match && pattern_matches(&pattern.to_string_lossy(), &path_str) {
-                                    // Get relative path from root
-                                    let rel_path = path.strip_prefix(&root)
-                                        .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_else(|_| path_str.clone());
-                                    matches.push(rel_path);
-                                }
+        tokio::task::spawn_blocking(move || {
+            let mut matches = Vec::new();
+            
+            // Convert sprf glob to ripgrep glob pattern
+            let rg_pattern = if pattern.contains("/") {
+                // Pattern like **/package.json - use as-is for ripgrep
+                pattern.clone()
+            } else {
+                // Simple pattern like *.json - prepend **/
+                format!("**/ {}", pattern)
+            };
+            
+            // Use ripgrep to find matching files
+            let output = std::process::Command::new("rg")
+                .args(["--files", "--iglob", &rg_pattern])
+                .current_dir(&root)
+                .output();
+            
+            if let Ok(output) = output {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    for line in stdout.lines() {
+                        let path = Path::new(line.trim());
+                        if let Ok(metadata) = std::fs::metadata(root.join(path)) {
+                            // Check file type matches tag
+                            let is_match = match tag.as_str() {
+                                "folder" => metadata.is_dir(),
+                                "file" | "fs" => metadata.is_file(),
+                                _ => true,
+                            };
+                            if is_match {
+                                matches.push(line.trim().to_string());
                             }
                         }
                     }
                 }
-                
-                matches.sort();
-                matches.truncate(30); // Limit for hover
-                matches
             }
+            
+            // Fallback: if ripgrep fails or no matches, try simple directory walk
+            if matches.is_empty() {
+                walk_and_match(&root, &root, &pattern, &tag, &mut matches);
+            }
+            
+            matches.sort();
+            matches.truncate(30); // Limit for hover
+            matches
         }).await.unwrap_or_default()
     }
 
@@ -1338,6 +1348,58 @@ impl SprfLsp {
                 value: markdown,
             }),
             range: None,
+        }
+    }
+}
+
+/// Recursive directory walk fallback for file matching.
+fn walk_and_match(root: &Path, current: &Path, pattern: &str, tag: &str, matches: &mut Vec<String>) {
+    if matches.len() >= 30 {
+        return;
+    }
+    
+    if let Ok(entries) = std::fs::read_dir(current) {
+        for entry in entries.flatten() {
+            if matches.len() >= 30 {
+                return;
+            }
+            
+            let path = entry.path();
+            let rel_path = path.strip_prefix(root)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| path.to_string_lossy().to_string());
+            
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_dir() {
+                    // Recurse into subdirectories (but skip .git)
+                    if !rel_path.starts_with(".git") {
+                        walk_and_match(root, &path, pattern, tag, matches);
+                    }
+                } else if metadata.is_file() {
+                    // Check if file matches pattern
+                    let is_match = match tag {
+                        "folder" => false, // files don't match folder
+                        "file" | "fs" | _ => {
+                            // Match filename against pattern
+                            let filename = path.file_name()
+                                .map(|n| n.to_string_lossy())
+                                .unwrap_or_default();
+                            
+                            if pattern.contains("/") {
+                                // Full path pattern like **/package.json
+                                pattern_matches(pattern, &rel_path)
+                            } else {
+                                // Just filename pattern like *.json
+                                pattern_matches(pattern, &filename)
+                            }
+                        }
+                    };
+                    
+                    if is_match {
+                        matches.push(rel_path);
+                    }
+                }
+            }
         }
     }
 }
