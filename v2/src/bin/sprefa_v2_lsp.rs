@@ -83,6 +83,7 @@ fn make_config_from_locator(loc: &dyn CheckoutLocator) -> Arc<Config> {
             buffer_size:       256,
             flush_interval_ms: 100,
             collect_witnesses: true,
+            xref_cartesian_limit: 10_000,
         },
         content_hash: 0,
     })
@@ -184,6 +185,7 @@ fn resolve_reader(uri: &Url) -> (Arc<BufferOverlay>, Arc<Config>, Option<PathBuf
             buffer_size:       256,
             flush_interval_ms: 100,
             collect_witnesses: true,
+            xref_cartesian_limit: 10_000,
         },
         content_hash: 0,
     });

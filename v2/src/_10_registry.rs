@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::_0_types::{ParseSite, Severity};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
-use crate::_5_op::{BraceMode, ForkBranch, Operator, OpInvocation, Pipeline, ProgramCtx};
+use crate::_5_op::{BraceMode, ForkBranch, LoweredOp, Operator, OpInvocation, Pipeline, ProgramCtx};
 use crate::_8_parse::{host_parse_arm_brace, Pipe};
 
 pub struct OperatorRegistry {
@@ -75,7 +75,16 @@ pub fn lower_chain(
         let Some(op) = registry.resolve(&inv.name) else { continue; };
         match op.parse(inv, pctx) {
             Err(mut ds) => diags.append(&mut ds),
-            Ok(p) => {
+            Ok(mut p) => {
+                // Attach xrefs scanned at host-parse time to the lowered op so
+                // expand_xrefs can seed cursors at runtime. Only single-op
+                // results carry the inv's crossrefs; nested shapes (Seq/Fork
+                // produced by an Operator) leave the xref slice empty.
+                if let Pipeline::Op(ref mut lop) = p {
+                    if !inv.crossrefs.is_empty() {
+                        lop.xrefs = Arc::from(inv.crossrefs.clone().into_boxed_slice());
+                    }
+                }
                 if op.brace_mode() == BraceMode::DefaultFork {
                     if let Some(brace) = &inv.brace_src {
                         match crate::_8_parse::host_parse_arm_brace_abs(

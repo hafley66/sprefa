@@ -123,6 +123,7 @@ fn main() {
                     buffer_size:       256,
                     flush_interval_ms: 100,
                     collect_witnesses: true,
+            xref_cartesian_limit: 10_000,
                 },
                 content_hash: 0,
             });
@@ -166,6 +167,7 @@ fn main() {
 
             // Run each pipeline
             for (pipeline, rule_name) in outcome.pipelines.iter().zip(rule_names.iter()) {
+                let (result_store, xref_seen) = OpCtx::fresh_xref_state();
                 let ctx = OpCtx {
                     run_id: RunId(1),
                     op_id:  OpId(0),
@@ -174,6 +176,8 @@ fn main() {
                     config: cfg.clone(),
                     diags:  DiagSink(Arc::new(|_| {})),
                     events: EventSink(Arc::new(|_| {})),
+                    result_store,
+                    xref_seen,
                 };
 
                 let empty: futures_core::stream::BoxStream<'static, Cursor> =

@@ -153,6 +153,7 @@ impl DocSession {
                 buffer_size:       256,
                 flush_interval_ms: 100,
                 collect_witnesses: true,
+            xref_cartesian_limit: 10_000,
             },
             content_hash: 0,
         });
@@ -166,6 +167,7 @@ impl DocSession {
                 Arc::new(std::sync::Mutex::new(Vec::new()));
             let diags_ref = captured_diags.clone();
 
+            let (result_store, xref_seen) = OpCtx::fresh_xref_state();
             let ctx = OpCtx {
                 run_id: RunId(1),
                 op_id:  OpId(0),
@@ -176,6 +178,8 @@ impl DocSession {
                     diags_ref.lock().unwrap().push(d);
                 })),
                 events: EventSink(Arc::new(|_| {})),
+                result_store,
+                xref_seen,
             };
 
             let empty: futures_core::stream::BoxStream<'static, Cursor> =
@@ -309,6 +313,7 @@ impl DocSession {
                 buffer_size:       256,
                 flush_interval_ms: 100,
                 collect_witnesses: true,
+            xref_cartesian_limit: 10_000,
             },
             content_hash: 0,
         });
@@ -331,6 +336,24 @@ impl DocSession {
         let outcome = lower_rules(pipes.clone(), pctx);
         for d in outcome.diags {
             self.parse_diags.push(d);
+        }
+
+        // Rule DAG: Kahn topo-sort over RuleHandle.depends_on. On cycle, emit
+        // `xref/cycle` anchored at the first rule in the recovered loop.
+        if let crate::_11_dag::RuleDag::Cycle { path } =
+            crate::_11_dag::build(&outcome.pctx.rules)
+        {
+            let first = path.first().cloned();
+            let site  = first
+                .as_ref()
+                .and_then(|n| outcome.pctx.rules.get(n))
+                .map(|h| (*h.parse_site).clone())
+                .unwrap_or_else(|| ParseSite {
+                    file:       file_for_xref.clone(),
+                    path:       Arc::from(Vec::new().into_boxed_slice()),
+                    byte_range: 0..0,
+                });
+            self.parse_diags.push(Box::new(XRefDiag::Cycle { site, path }));
         }
 
         // Build pipelines and span index.
@@ -631,10 +654,10 @@ fn resolve_op_in_rule(
     //   [_, 0]           → return the RuleOp
     //   [_, 0, fi, oi]   → reach into body: fork arm fi, op oi
     match pipeline {
-        Pipeline::Op(arc) => {
-            if op_path.len() == 2 { return Some(arc.clone()); }
+        Pipeline::Op(lop) => {
+            if op_path.len() == 2 { return Some(lop.op.clone()); }
             if op_path.len() < 4 || op_path.len() % 2 != 0 { return None; }
-            let body = arc.body_pipeline()?;
+            let body = lop.op.body_pipeline()?;
             resolve_body_op(body, &op_path[2..])
         }
         _ => resolve_op(pipeline, op_path),
@@ -659,7 +682,7 @@ fn resolve_body_op(body: &Pipeline, path: &[usize]) -> Option<Arc<dyn Op>> {
     let (selected, subbody): (Arc<dyn Op>, Option<&Pipeline>) = match arm_pipeline {
         Pipeline::Seq(children) => {
             let op = match children.get(op_idx)? {
-                Pipeline::Op(arc) => arc.clone(),
+                Pipeline::Op(lop) => lop.op.clone(),
                 _ => return None,
             };
             // T6 framework-fork convention: Op is followed by a Fork sibling in the Seq
@@ -671,7 +694,7 @@ fn resolve_body_op(body: &Pipeline, path: &[usize]) -> Option<Arc<dyn Op>> {
             };
             (op, subbody)
         }
-        Pipeline::Op(arc) if op_idx == 0 => (arc.clone(), None),
+        Pipeline::Op(lop) if op_idx == 0 => (lop.op.clone(), None),
         _ => return None,
     };
     if path.len() == 2 {
@@ -683,8 +706,8 @@ fn resolve_body_op(body: &Pipeline, path: &[usize]) -> Option<Arc<dyn Op>> {
 /// General pipeline tree walk for non-rule pipelines (Switch etc.).
 fn resolve_op(pipeline: &Pipeline, path: &[usize]) -> Option<Arc<dyn Op>> {
     match pipeline {
-        Pipeline::Op(arc) => {
-            if path.is_empty() { Some(arc.clone()) } else { None }
+        Pipeline::Op(lop) => {
+            if path.is_empty() { Some(lop.op.clone()) } else { None }
         }
         Pipeline::Seq(children) => {
             let child = children.get(*path.first()?)?;
@@ -712,7 +735,7 @@ fn resolve_first_op_of_rule(
 
 fn first_op(pipeline: &Pipeline) -> Option<Arc<dyn Op>> {
     match pipeline {
-        Pipeline::Op(arc) => Some(arc.clone()),
+        Pipeline::Op(lop) => Some(lop.op.clone()),
         Pipeline::Seq(children) => children.first().and_then(first_op),
         Pipeline::Fork(arms) => arms.first().and_then(|a| first_op(&a.pipeline)),
         Pipeline::Switch { arms, .. } => arms.first().and_then(|(_, p)| first_op(p)),
@@ -772,6 +795,10 @@ enum XRefDiag {
         var:    Arc<str>,
         known:  Vec<Arc<str>>,
     },
+    Cycle {
+        site: ParseSite,
+        path: Vec<Arc<str>>,
+    },
 }
 
 impl Diagnostic for XRefDiag {
@@ -779,6 +806,7 @@ impl Diagnostic for XRefDiag {
         match self {
             XRefDiag::UnknownRule    { .. } => "xref/unknown-rule",
             XRefDiag::UnknownCapture { .. } => "xref/unknown-capture",
+            XRefDiag::Cycle          { .. } => "xref/cycle",
         }
     }
     fn severity(&self) -> crate::_0_types::Severity { crate::_0_types::Severity::Error }
@@ -786,6 +814,7 @@ impl Diagnostic for XRefDiag {
         match self {
             XRefDiag::UnknownRule    { site, .. } => site,
             XRefDiag::UnknownCapture { site, .. } => site,
+            XRefDiag::Cycle          { site, .. } => site,
         }
     }
     fn render(&self, out: &mut dyn crate::_1_diagnostic::Renderer) {
@@ -807,6 +836,12 @@ impl Diagnostic for XRefDiag {
                     "rule `{target}` does not declare capture `${var}` (available: {})",
                     if names.is_empty() { "<none>".to_string() } else { names.join(", ") },
                 );
+                out.header(self.code(), self.severity(), &msg);
+                out.primary(site);
+            }
+            XRefDiag::Cycle { site, path } => {
+                let joined = path.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join(" -> ");
+                let msg = format!("rule cross-ref cycle: {joined}");
                 out.header(self.code(), self.severity(), &msg);
                 out.primary(site);
             }
@@ -838,6 +873,7 @@ mod tests {
             runtime: RuntimeConfig {
                 worker_threads: 1, buffer_size: 256,
                 flush_interval_ms: 100, collect_witnesses: false,
+            xref_cartesian_limit: 10_000,
             },
             content_hash: 0,
         });
@@ -887,6 +923,27 @@ rule(b) { > json({ v: ${a.$MISSING} }) }"#.to_string();
         let session = DocSession::new(source, empty_reader(), make_registry());
         let codes: Vec<&str> = session.parse_diagnostics().iter().map(|d| d.code()).collect();
         assert!(codes.contains(&"xref/unknown-capture"), "got: {:?}", codes);
+    }
+
+    // Two rules cross-referencing each other through walker patterns form a
+    // cycle. Rule DAG detects it and emits `xref/cycle`.
+    #[test]
+    fn xref_cycle_diag() {
+        let source = r#"rule(a) { > json({ v: ${b.$T}, tag: $T }) }
+rule(b) { > json({ v: ${a.$T}, tag: $T }) }"#.to_string();
+        let session = DocSession::new(source, empty_reader(), make_registry());
+        let codes: Vec<&str> = session.parse_diagnostics().iter().map(|d| d.code()).collect();
+        assert!(codes.contains(&"xref/cycle"), "got: {:?}", codes);
+    }
+
+    // A valid DAG (a → b) must not fire `xref/cycle`.
+    #[test]
+    fn xref_cycle_no_false_positive() {
+        let source = r#"rule(a) { > json({ tag: $T }) }
+rule(b) { > json({ v: ${a.$T}, tag: $T }) }"#.to_string();
+        let session = DocSession::new(source, empty_reader(), make_registry());
+        let codes: Vec<&str> = session.parse_diagnostics().iter().map(|d| d.code()).collect();
+        assert!(!codes.contains(&"xref/cycle"), "got: {:?}", codes);
     }
 
     #[test]

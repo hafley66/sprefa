@@ -65,6 +65,7 @@ fn make_config() -> Arc<v2::Config> {
             buffer_size:       256,
             flush_interval_ms: 100,
             collect_witnesses: true,
+            xref_cartesian_limit: 10_000,
         },
         content_hash: 0,
     })
@@ -104,7 +105,7 @@ fn parse_single_op(src: &str) -> Arc<dyn Op> {
     let chain = v2::lower_chain(&pipes[0].ops, &mut pctx, &mut diags);
     assert!(diags.is_empty(), "diags: {:?}", diags.iter().map(|d| d.code()).collect::<Vec<_>>());
     match chain.into_iter().next().expect("empty chain") {
-        Pipeline::Op(arc) => arc,
+        Pipeline::Op(lop) => lop.op,
         other => panic!("expected Pipeline::Op, got {:?}", std::mem::discriminant(&other)),
     }
 }
@@ -125,7 +126,7 @@ fn parse_rule_op(src: &str) -> Arc<dyn Op> {
         "diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>()
     );
     match &outcome.pipelines[0] {
-        Pipeline::Op(arc) => arc.clone(),
+        Pipeline::Op(lop) => lop.op.clone(),
         _ => panic!("expected Pipeline::Op for rule"),
     }
 }
@@ -347,7 +348,7 @@ fn every_op_hover_self_is_non_empty() {
             let chain = v2::lower_chain(&pipes[0].ops, &mut pctx, &mut diags);
             assert!(diags.is_empty());
             match chain.into_iter().nth(1).unwrap() {
-                Pipeline::Op(arc) => arc,
+                Pipeline::Op(lop) => lop.op,
                 _ => panic!("expected Pipeline::Op for read"),
             }
         },

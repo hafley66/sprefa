@@ -44,7 +44,7 @@ impl Operator for ReadFactory {
                 site: (*inv.parse_site).clone(),
             }) as _]);
         }
-        Ok(Pipeline::Op(Arc::new(ReadOp { parse_site: inv.parse_site.clone() })))
+        Ok(Pipeline::Op(Arc::new(ReadOp { parse_site: inv.parse_site.clone() }).into()))
     }
 }
 

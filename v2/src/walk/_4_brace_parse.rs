@@ -214,6 +214,50 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> anyhow::Result<Vec
         anyhow::bail!("unexpected end after `$`");
     }
 
+    // Braced form: ${...}. Two cases distinguished by presence of `.`:
+    //   ${VAR}         → plain capture synonym of $VAR
+    //   ${rule.$VAR}   → cross-ref. Lowered to a Leaf that captures under
+    //                    `VAR`. At runtime, `expand_xrefs` (Layer 2) seeds
+    //                    `VAR` on the cursor from the target rule's source
+    //                    rows. The walker's Leaf step then constrains against
+    //                    the seeded value (constrain-when-prebound), filtering
+    //                    branches whose leaf text doesn't match. The `rule`
+    //                    component is purely declarative here — the seed
+    //                    machinery upstream is what wires it to source data.
+    if input.as_bytes()[*pos] == b'{' {
+        let inner_start = *pos + 1;
+        let mut depth = 1usize;
+        *pos += 1;
+        while *pos < input.len() && depth > 0 {
+            match input.as_bytes()[*pos] {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            *pos += 1;
+        }
+        if depth != 0 {
+            anyhow::bail!("unclosed `${{` in json pattern");
+        }
+        let inner = &input[inner_start..*pos - 1];
+        let name = if let Some((_rule, rest)) = inner.split_once('.') {
+            rest.strip_prefix('$').ok_or_else(|| {
+                anyhow::anyhow!("malformed cross-ref `${{{}}}` (expected `${{rule.$VAR}}`)", inner)
+            })?
+        } else {
+            inner
+        };
+        if name.is_empty()
+            || !(name.as_bytes()[0].is_ascii_alphabetic() || name.as_bytes()[0] == b'_')
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            anyhow::bail!("invalid capture name `${{{}}}`", inner);
+        }
+        return Ok(vec![SelectStep::Leaf {
+            capture: Some(name.to_string()),
+        }]);
+    }
+
     if input.as_bytes()[*pos] == b'_'
         && (*pos + 1 >= input.len() || !input.as_bytes()[*pos + 1].is_ascii_alphanumeric())
     {
@@ -634,6 +678,23 @@ mod tests {
     }
 
     #[test]
+    fn cross_ref_token_parses_as_capture_leaf() {
+        // ${rule.$VAR} lowers to a Leaf that captures under VAR. Runtime
+        // seed comes from `expand_xrefs`; walker constrains-when-prebound.
+        let (steps, _) = parse_body("{ tag: ${base_rule.$TAG} }").unwrap();
+        match &steps[0] {
+            SelectStep::Object { entries } => {
+                assert_eq!(entries.len(), 1);
+                match entries[0].value.as_slice() {
+                    [SelectStep::Leaf { capture: Some(c) }] if c == "TAG" => {}
+                    other => panic!("expected Leaf capturing TAG, got {other:?}"),
+                }
+            }
+            other => panic!("expected Object, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn annotation_rejects_wildcard_inner() {
         let err = parse_body("{ x: $$rev($_) }").unwrap_err();
         assert!(
@@ -672,5 +733,32 @@ mod tests {
         assert!(!annotations[0].norm);
         assert_eq!(annotations[1].kind, ScanKind::Rev);
         assert!(annotations[1].norm);
+    }
+
+    // `${VAR}` is a synonym of `$VAR` — both lower to the same Leaf capture.
+    #[test]
+    fn braced_capture_synonym() {
+        let (bare, _)   = parse_body("{ name: $NAME }").unwrap();
+        let (braced, _) = parse_body("{ name: ${NAME} }").unwrap();
+        assert_eq!(format!("{bare:?}"), format!("{braced:?}"));
+    }
+
+    // `${rule.$VAR}` lowers to a Leaf capturing under `VAR`. At runtime
+    // `expand_xrefs` seeds `VAR` from the target rule, and the walker's
+    // constrain-when-prebound logic filters non-matching branches. The
+    // `rule` component is informational at parse time (drives the DAG) and
+    // doesn't appear in the lowered SelectStep.
+    #[test]
+    fn braced_crossref_lowers_to_leaf_capture() {
+        let (steps, _) = parse_body("{ name: ${other.$TAG} }").unwrap();
+        match &steps[0] {
+            SelectStep::Object { entries } => {
+                assert!(matches!(
+                    &entries[0].value[0],
+                    SelectStep::Leaf { capture: Some(c) } if c == "TAG"
+                ));
+            }
+            _ => panic!("expected Object"),
+        }
     }
 }

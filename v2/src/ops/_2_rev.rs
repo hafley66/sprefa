@@ -49,7 +49,7 @@ impl Operator for RevFactory {
                 got:  Arc::from(arg),
             }) as _]),
         };
-        Ok(Pipeline::Op(Arc::new(RevOp { mode, parse_site: inv.parse_site.clone() })))
+        Ok(Pipeline::Op(Arc::new(RevOp { mode, parse_site: inv.parse_site.clone() }).into()))
     }
 }
 
@@ -203,6 +203,7 @@ mod tests {
                 buffer_size:       64,
                 flush_interval_ms: 100,
                 collect_witnesses: false,
+            xref_cartesian_limit: 10_000,
             },
             content_hash: 0,
         };
@@ -222,6 +223,7 @@ mod tests {
             paren_src:  Some(ParenSlot { src: Arc::from("*"), byte_range: 0..1 }),
             brace_src:  None,
             parse_site: dummy_site(),
+            crossrefs:  vec![],
         };
         let result = RevFactory.parse(&inv, &mut dummy_pctx());
         assert!(result.is_err(), "expected parse to fail for rev(*)");

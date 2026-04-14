@@ -80,7 +80,7 @@ impl Operator for JsonFactory {
             compiled:    Arc::from(compiled.into_boxed_slice()),
             annotations: Arc::from(annotations.into_boxed_slice()),
             parse_site:  inv.parse_site.clone(),
-        })))
+        }).into()))
     }
 }
 

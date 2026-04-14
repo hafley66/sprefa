@@ -15,6 +15,8 @@ pub mod _7_runner;
 pub mod _8_parse;
 pub mod _9_hash;
 pub mod _10_registry;
+pub mod _11_dag;
+pub mod _12_result_store;
 
 pub mod readers;
 pub mod writers;
@@ -36,12 +38,14 @@ pub use _4_writer::{
     EffectStatus, FileEdit, ShellCall, ShellReply,
 };
 pub use _5_op::{
-    Op, Operator, OpCtx, OpInvocation, BracketSlot, ParenSlot, BraceSlot,
-    BraceMode, GrammarRef, Pipeline, ForkBranch, ChannelSelector,
+    Op, Operator, OpCtx, OpInvocation, BracketSlot, ParenSlot, BraceSlot, CrossRefOccurrence,
+    BraceMode, GrammarRef, Pipeline, LoweredOp, ForkBranch, ChannelSelector,
     ProgramCtx, RuleHandle,
     DiagSink, EventSink, TokenSpan, TokenKind, HoverInfo,
     CompletionItem,
+    XrefEmptyJoin, XrefCartesianLimit,
 };
+pub use _12_result_store::{ResultStore, RuleResult, CaptureMap};
 pub use _6_extractor::{Extractor, ExtractorKind};
 pub use _7_runner::Runner;
 pub use _8_parse::{
@@ -52,3 +56,5 @@ pub use _8_parse::{
 };
 pub use _9_hash::{content_hash, path_hash_static, cursor_hash};
 pub use _10_registry::{OperatorRegistry, LowerOutcome, lower_rules, lower_chain};
+pub use _11_dag::{RuleDag, build as build_rule_dag};
+

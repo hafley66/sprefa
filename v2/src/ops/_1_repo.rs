@@ -65,7 +65,7 @@ impl Operator for RepoFactory {
         Ok(Pipeline::Op(Arc::new(RepoOp {
             mode,
             parse_site: inv.parse_site.clone(),
-        })))
+        }).into()))
     }
 }
 

@@ -234,16 +234,28 @@ fn walk_inner<N: DataNode>(
             };
             let mut next_caps = caps.clone();
             if let Some(cap) = capture {
-                let (bs, be) = node.byte_range();
-                next_caps.insert(
-                    Arc::from(cap.as_str()),
-                    WalkCapture {
-                        text: Arc::from(text.as_ref()),
-                        path: Arc::from(ctx.path.as_str()),
-                        byte_start: bs,
-                        byte_end:   be,
-                    },
-                );
+                // Constrain-when-prebound: if `cap` is already in `caps`
+                // (typically seeded by `expand_xrefs` from a `${rule.$VAR}`
+                // cross-ref, or carried from an earlier walk step), the
+                // leaf text must equal the bound value or this branch is
+                // pruned. Matches the existing LeafPattern contract so
+                // every capture form gates uniformly.
+                if let Some(existing) = caps.get(cap.as_str()) {
+                    if existing.text.as_ref() != text.as_ref() {
+                        return vec![];
+                    }
+                } else {
+                    let (bs, be) = node.byte_range();
+                    next_caps.insert(
+                        Arc::from(cap.as_str()),
+                        WalkCapture {
+                            text: Arc::from(text.as_ref()),
+                            path: Arc::from(ctx.path.as_str()),
+                            byte_start: bs,
+                            byte_end:   be,
+                        },
+                    );
+                }
             }
             walk_inner(node, rest, ctx, &next_caps)
         }
@@ -632,6 +644,39 @@ mod tests {
             ("alice".to_string(), "30".to_string()),
             ("bob".to_string(),   "25".to_string()),
         ]);
+    }
+
+    // Plain `Leaf { capture: Some(VAR) }` constrains when VAR is pre-bound.
+    // This is the runtime hook for cross-refs: `expand_xrefs` seeds VAR from
+    // the source row, and a non-matching leaf prunes the branch instead of
+    // overwriting the seed.
+    #[test]
+    fn leaf_capture_constrains_when_prebound_match() {
+        let src = r#""v1""#;
+        let root = parse_json(src);
+        let steps = vec![CompiledStep::Leaf { capture: Some("TAG".to_string()) }];
+        let mut seed: Captures = FxHashMap::default();
+        seed.insert(
+            Arc::from("TAG"),
+            WalkCapture { text: Arc::from("v1"), path: Arc::from(""), byte_start: 0, byte_end: 0 },
+        );
+        let out = walk_with_captures(&root, &steps, seed);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["TAG"].text, "v1");
+    }
+
+    #[test]
+    fn leaf_capture_constrains_when_prebound_mismatch() {
+        let src = r#""v2""#;
+        let root = parse_json(src);
+        let steps = vec![CompiledStep::Leaf { capture: Some("TAG".to_string()) }];
+        let mut seed: Captures = FxHashMap::default();
+        seed.insert(
+            Arc::from("TAG"),
+            WalkCapture { text: Arc::from("v1"), path: Arc::from(""), byte_start: 0, byte_end: 0 },
+        );
+        let out = walk_with_captures(&root, &steps, seed);
+        assert_eq!(out.rows.len(), 0, "leaf 'v2' should be pruned by prebound TAG=v1");
     }
 
     #[test]

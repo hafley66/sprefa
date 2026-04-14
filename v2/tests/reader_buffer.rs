@@ -23,6 +23,7 @@ fn cfg() -> Arc<Config> {
             buffer_size: 256,
             flush_interval_ms: 100,
             collect_witnesses: false,
+            xref_cartesian_limit: 10_000,
         },
         content_hash: 0,
     })

@@ -22,6 +22,10 @@ pub struct RuntimeConfig {
     /// it flows through ops that implement `Op::witness`. LSP needs it; CLI
     /// runs can disable for zero overhead.
     pub collect_witnesses:  bool,
+    /// Soft cap on distinct cross-ref tuples per cursor expansion.
+    /// Hitting it drops the cursor + emits `xref/cartesian-limit` once
+    /// per op. Default 10_000.
+    pub xref_cartesian_limit: usize,
 }
 
 #[derive(Debug, Clone)]

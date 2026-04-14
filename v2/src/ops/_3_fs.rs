@@ -61,7 +61,7 @@ impl Operator for FsFactory {
                 got:  Arc::from(arg),
             }) as _]),
         };
-        Ok(Pipeline::Op(Arc::new(FsOp { mode, parse_site: inv.parse_site.clone() })))
+        Ok(Pipeline::Op(Arc::new(FsOp { mode, parse_site: inv.parse_site.clone() }).into()))
     }
 }
 
@@ -277,6 +277,7 @@ mod tests {
             runtime: RuntimeConfig {
                 worker_threads: 1, buffer_size: 64,
                 flush_interval_ms: 100, collect_witnesses: false,
+            xref_cartesian_limit: 10_000,
             },
             content_hash: 0,
         })
@@ -299,6 +300,7 @@ mod tests {
         }));
         let events = EventSink(Arc::new(|_| {}));
 
+        let (result_store, xref_seen) = OpCtx::fresh_xref_state();
         let ctx = OpCtx {
             run_id: RunId(0),
             op_id:  OpId(0),
@@ -307,6 +309,8 @@ mod tests {
             config,
             diags,
             events,
+            result_store,
+            xref_seen,
         };
 
         let op = FsOp {

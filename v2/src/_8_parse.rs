@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::path::Path;
 
 use crate::_0_types::{ParseSeg, ParseSite};
-use crate::_5_op::{BraceSlot, BracketSlot, OpInvocation, ParenSlot};
+use crate::_5_op::{BraceSlot, BracketSlot, CrossRefOccurrence, OpInvocation, ParenSlot};
 
 // ---------------------------------------------------------------------------
 // Token classification
@@ -39,10 +39,16 @@ pub struct CrossRefRef {
 
 pub fn parse_capture(s: &str) -> Option<CaptureRef> {
     let rest = s.strip_prefix('$')?;
-    if rest.starts_with('$') || rest.starts_with('{') { return None; }
-    if rest.is_empty() || !is_ident_start(rest.as_bytes()[0]) { return None; }
-    if !rest.bytes().all(is_ident_byte) { return None; }
-    Some(CaptureRef { name: Arc::from(rest) })
+    if rest.starts_with('$') { return None; }
+    let name = if let Some(inner) = rest.strip_prefix('{').and_then(|r| r.strip_suffix('}')) {
+        if inner.contains('.') { return None; }
+        inner
+    } else {
+        rest
+    };
+    if name.is_empty() || !is_ident_start(name.as_bytes()[0]) { return None; }
+    if !name.bytes().all(is_ident_byte) { return None; }
+    Some(CaptureRef { name: Arc::from(name) })
 }
 
 pub fn parse_provenance(s: &str) -> Option<ProvRef> {
@@ -315,7 +321,48 @@ fn parse_op(
         byte_range: (inv_start + base_offset)..(*i + base_offset),
     });
 
-    Ok(OpInvocation { name, brackets, paren_src, brace_src, parse_site })
+    let mut crossrefs = Vec::new();
+    if let Some(p) = &paren_src { scan_slot_crossrefs(&p.src, p.byte_range.start, &mut crossrefs); }
+    for b in &brackets          { scan_slot_crossrefs(&b.src, b.byte_range.start, &mut crossrefs); }
+    if let Some(br) = &brace_src { scan_slot_crossrefs(&br.src, br.byte_range.start, &mut crossrefs); }
+
+    Ok(OpInvocation { name, brackets, paren_src, brace_src, parse_site, crossrefs })
+}
+
+/// Scan arbitrary slot text for `${rule.$VAR}` occurrences. Works uniformly
+/// across paren args, bracket args, and brace bodies (including walker
+/// patterns like `{ tag: ${base.$T} }`). Scans raw text for `${` openers and
+/// picks up the matching `}` through brace-depth; inner with a `.` separator
+/// classifies as cross-ref, plain `${VAR}` is the capture synonym and is
+/// ignored here.
+/// `abs_base` = absolute byte offset of `src[0]` in the original source.
+fn scan_slot_crossrefs(src: &str, abs_base: usize, out: &mut Vec<CrossRefOccurrence>) {
+    let b = src.as_bytes();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] != b'$' || b[i+1] != b'{' { i += 1; continue; }
+        let start = i;
+        let mut depth = 0usize;
+        let mut j = i + 1;
+        while j < b.len() {
+            match b[j] {
+                b'{' => depth += 1,
+                b'}' => { depth -= 1; if depth == 0 { j += 1; break; } }
+                _ => {}
+            }
+            j += 1;
+        }
+        if depth != 0 { break; }
+        let tok = &src[start..j];
+        if let Some(r) = parse_cross_ref(tok) {
+            out.push(CrossRefOccurrence {
+                rule:       r.rule,
+                var:        r.var,
+                byte_range: (abs_base + start)..(abs_base + j),
+            });
+        }
+        i = j;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +492,55 @@ mod tests {
         let src = "   foo";
         let errs = host_parse_arm_brace(src, fake_file(), &[]).unwrap_err();
         assert_eq!(errs[0].offset, 3);
+    }
+
+    // `${VAR}` classifies identically to `$VAR`.
+    #[test]
+    fn braced_capture_synonym() {
+        let bare   = classify_token("$FOO");
+        let braced = classify_token("${FOO}");
+        assert_eq!(bare, braced);
+        assert!(matches!(bare, TokenClass::Capture(ref c) if &*c.name == "FOO"));
+    }
+
+    // `${rule.$VAR}` remains the cross-ref form (dot disambiguates).
+    #[test]
+    fn braced_crossref_unchanged() {
+        let c = classify_token("${other.$TAG}");
+        match c {
+            TokenClass::CrossRef(ref r) => {
+                assert_eq!(&*r.rule, "other");
+                assert_eq!(&*r.var,  "TAG");
+            }
+            _ => panic!("expected CrossRef"),
+        }
+    }
+
+    // `$$repo` remains provenance (two `$` prefix takes precedence).
+    #[test]
+    fn double_dollar_still_provenance() {
+        assert!(matches!(classify_token("$$repo"), TokenClass::Provenance(_)));
+    }
+
+    // crossrefs populated from paren tokens with absolute byte ranges.
+    #[test]
+    fn crossrefs_collected_from_paren() {
+        let src = "foo($plain, ${other.$TAG}, ${more.$V})";
+        let pipes = host_parse(src, fake_file()).unwrap();
+        let inv = &pipes[0].ops[0];
+        assert_eq!(inv.crossrefs.len(), 2);
+        assert_eq!(&*inv.crossrefs[0].rule, "other");
+        assert_eq!(&*inv.crossrefs[0].var,  "TAG");
+        assert_eq!(&src[inv.crossrefs[0].byte_range.clone()], "${other.$TAG}");
+        assert_eq!(&*inv.crossrefs[1].rule, "more");
+        assert_eq!(&src[inv.crossrefs[1].byte_range.clone()], "${more.$V}");
+    }
+
+    // No crossrefs for ops without `${rule.$VAR}` tokens.
+    #[test]
+    fn crossrefs_empty_when_absent() {
+        let pipes = host_parse("foo($bar, $$repo)", fake_file()).unwrap();
+        assert!(pipes[0].ops[0].crossrefs.is_empty());
     }
 
     // T10: host_parse and host_parse_brace are unaffected (no leading `>` required)

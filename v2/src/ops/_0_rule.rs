@@ -54,6 +54,7 @@ impl Operator for RuleFactory {
             name,
             parse_site: inv.parse_site.clone(),
             captures:   vec![],
+            depends_on: vec![],
         });
         Ok(())
     }
@@ -112,9 +113,22 @@ impl Operator for RuleFactory {
         }
         if !all_diags.is_empty() { return Err(all_diags); }
 
-        // Update handle captures now that we know them.
+        // Collect cross-ref targets across body invocations (paren/bracket slots).
+        // De-dup and drop self-refs. Walker-embedded xrefs are not yet surfaced.
+        let mut depends_on: Vec<Arc<str>> = Vec::new();
+        for b_inv in &all_invs {
+            for xr in &b_inv.crossrefs {
+                if xr.rule == name { continue; }
+                if !depends_on.iter().any(|r| r == &xr.rule) {
+                    depends_on.push(xr.rule.clone());
+                }
+            }
+        }
+
+        // Update handle captures + deps now that we know them.
         if let Some(h) = pctx.rules.get_mut(&name) {
-            h.captures = captures.clone();
+            h.captures   = captures.clone();
+            h.depends_on = depends_on;
         }
 
         // Build table spec.
@@ -153,7 +167,7 @@ impl Operator for RuleFactory {
             captures,
             body,
             parse_site: inv.parse_site.clone(),
-        })))
+        }).into()))
     }
 }
 
@@ -183,7 +197,24 @@ impl Op for RuleOp {
         } else {
             cols.join("\n")
         };
-        format!("# rule: {}\n\n{}", self.name, body)
+        format!(
+            "# rule: {}\n\n{}\n\n\
+             <details><summary>pipeline shape</summary>\n\n\
+             ```mermaid\n\
+             flowchart LR\n\
+             repo --> rev --> fs --> json\n\
+             ```\n\n\
+             </details>\n\n\
+             <details><summary>columns</summary>\n\n\
+             | col | kind |\n| --- | --- |\n{}\n\n\
+             </details>",
+            self.name,
+            body,
+            self.captures.iter()
+                .map(|c| format!("| `${}` | Both |", c))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
     }
 
     fn body_pipeline(&self) -> Option<&crate::_5_op::Pipeline> { Some(&self.body) }
@@ -429,6 +460,7 @@ mod tests {
             runtime: RuntimeConfig {
                 worker_threads: 1, buffer_size: 256,
                 flush_interval_ms: 100, collect_witnesses: false,
+            xref_cartesian_limit: 10_000,
             },
             content_hash: 0,
         })
