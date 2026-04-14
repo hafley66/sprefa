@@ -21,7 +21,8 @@ use futures_util::stream::{self, StreamExt};
 use crate::_0_types::{Capture, Cursor, FilePath, ParseSite};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
-    BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation, Operator, Pipeline, ProgramCtx,
+    hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
+    Operator, Pipeline, ProgramCtx,
 };
 use crate::_8_parse::{classify_token, TokenClass};
 
@@ -116,58 +117,67 @@ impl Op for FsOp {
     }
 
     fn hover_capture(&self, cap: &str, cursors: &[Cursor]) -> Option<String> {
-        let mut vals: Vec<String> = Vec::new();
-        for c in cursors {
-            if let Some(capture) = c.captures.get(cap) {
-                let v = capture.value.as_ref().to_string();
-                if !vals.contains(&v) {
-                    vals.push(v);
-                    if vals.len() >= 20 { break; }
-                }
-            }
-        }
-        if vals.is_empty() { return None; }
-        let lines: Vec<String> = vals.iter().map(|v| fs_path_md(v)).collect();
-        Some(format!("**`${cap}`** paths:\n\n{}", lines.join("\n")))
+        let header = format!("**`${cap}`** paths:");
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .filter_map(|c| {
+                c.captures.get(cap).map(|capture| (
+                    c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned()),
+                    c.rev.to_string(),
+                    capture.value.to_string(),
+                ))
+            })
+            .collect();
+        hover_render_grouped(&header, &entries)
     }
 
     fn hover_match(&self, site: &crate::_0_types::ParseSite, cursors: &[Cursor]) -> Option<String> {
         let pattern = self.mode.pattern();
-        let mut vals: Vec<String> = Vec::new();
-        for c in cursors {
-            let touched = c.evidence.iter().any(|ev|
+        let header = format!("**fs** glob: `{pattern}`");
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .filter(|c| c.evidence.iter().any(|ev|
                 ev.op_name == "fs" && ev.parse_site.as_ref() == site
-            );
-            if !touched { continue; }
-            if let Some(fp) = &c.fs {
-                let v = fp.0.to_string_lossy().into_owned();
-                if !vals.contains(&v) {
-                    vals.push(v);
-                    if vals.len() >= 20 { break; }
-                }
-            }
+            ))
+            .filter_map(|c| {
+                c.fs.as_ref().map(|fp| (
+                    Some(fp.0.to_string_lossy().into_owned()),
+                    c.rev.to_string(),
+                    fp.0.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect();
+        if entries.is_empty() {
+            return Some(format!("{header}\n\n(no matches yet)"));
         }
-        if vals.is_empty() {
-            return Some(format!("**fs** glob: `{pattern}`\n\n(no matches yet)"));
-        }
-        let lines: Vec<String> = vals.iter().map(|v| fs_path_md(v)).collect();
-        Some(format!("**fs** glob: `{pattern}`\n\n{} matches:\n\n{}", vals.len(), lines.join("\n")))
+        hover_render_grouped(&header, &entries)
     }
 
     fn pipe(&self, input: BoxStream<'static, Cursor>, ctx: OpCtx)
         -> BoxStream<'static, Cursor>
     {
-        let reader    = ctx.reader.clone();
-        let pattern   = self.mode.pattern();
-        let bind_name = self.mode.bind_name();
+        let reader     = ctx.reader.clone();
+        let pattern    = self.mode.pattern();
+        let bind_name  = self.mode.bind_name();
+        let parse_site = self.parse_site.clone();
+        let diags      = ctx.diags.clone();
 
         input.then(move |c| {
-            let reader    = reader.clone();
-            let pattern   = pattern.clone();
-            let bind_name = bind_name.clone();
+            let reader     = reader.clone();
+            let pattern    = pattern.clone();
+            let bind_name  = bind_name.clone();
+            let parse_site = parse_site.clone();
+            let diags      = diags.clone();
             async move {
                 let mut s = reader.files(&c.repo, &c.rev, &pattern);
                 let files: Vec<FilePath> = s.next().await.unwrap_or_default();
+                if files.is_empty() {
+                    diags.0(Box::new(FsDiag::NoMatch {
+                        site:    (*parse_site).clone(),
+                        pattern: pattern.clone(),
+                        repo:    c.repo.clone(),
+                        rev:     c.rev.clone(),
+                    }));
+                    return stream::iter(vec![]);
+                }
                 let items: Vec<Cursor> = files.into_iter().map(|fp| {
                     let mut c2 = c.clone();
                     let v: Arc<str> = Arc::from(fp.0.to_string_lossy().as_ref());
@@ -191,6 +201,7 @@ impl Op for FsOp {
 enum FsDiag {
     MissingArg { site: ParseSite },
     BadArg     { site: ParseSite, got: Arc<str> },
+    NoMatch    { site: ParseSite, pattern: Arc<str>, repo: Arc<str>, rev: Arc<str> },
 }
 
 impl Diagnostic for FsDiag {
@@ -198,13 +209,20 @@ impl Diagnostic for FsDiag {
         match self {
             FsDiag::MissingArg { .. } => "fs/missing-arg",
             FsDiag::BadArg     { .. } => "fs/bad-arg",
+            FsDiag::NoMatch    { .. } => "fs/no-match",
         }
     }
-    fn severity(&self) -> crate::_0_types::Severity { crate::_0_types::Severity::Error }
+    fn severity(&self) -> crate::_0_types::Severity {
+        match self {
+            FsDiag::NoMatch { .. } => crate::_0_types::Severity::Warn,
+            _                      => crate::_0_types::Severity::Error,
+        }
+    }
     fn primary(&self) -> &ParseSite {
         match self {
             FsDiag::MissingArg { site }        => site,
             FsDiag::BadArg     { site, .. }    => site,
+            FsDiag::NoMatch    { site, .. }    => site,
         }
     }
     fn render(&self, out: &mut dyn Renderer) {
@@ -219,6 +237,101 @@ impl Diagnostic for FsDiag {
                     &format!("fs argument `{got}` is not a glob or capture"));
                 out.primary(site);
             }
+            FsDiag::NoMatch { site, pattern, repo, rev } => {
+                out.header(self.code(), self.severity(),
+                    &format!("fs glob `{pattern}` matched no files in {repo}@{rev}"));
+                out.primary(site);
+            }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use std::sync::Mutex;
+    use futures_util::stream;
+    use crate::_0_types::{OpId, RunId};
+    use crate::_5_op::{DiagSink, EventSink, OpCtx};
+    use crate::readers::MemReader;
+    use crate::writers::MemWriter;
+    use crate::{Config, RuntimeConfig};
+
+    fn dummy_site() -> Arc<ParseSite> {
+        Arc::new(ParseSite {
+            file:       Arc::from(Path::new("test.sprf")),
+            path:       Arc::from(vec![].into_boxed_slice()),
+            byte_range: 0..1,
+        })
+    }
+
+    fn make_config() -> Arc<Config> {
+        Arc::new(Config {
+            repos: vec![], revs: vec![], fs_exclude: vec![],
+            sprf_files: vec![], shell_allow: vec![],
+            runtime: RuntimeConfig {
+                worker_threads: 1, buffer_size: 64,
+                flush_interval_ms: 100, collect_witnesses: false,
+            },
+            content_hash: 0,
+        })
+    }
+
+    #[tokio::test]
+    async fn no_match_emits_warn_diag() {
+        let config  = make_config();
+        // MemReader with the repo/rev registered but no files — glob will match nothing.
+        let reader: Arc<dyn crate::_3_reader::Reader + Send + Sync> = Arc::new(
+            MemReader::new(config.clone()).with_repo("myrepo", &["HEAD"])
+        );
+        let writer: Arc<dyn crate::_4_writer::Writer + Send + Sync> =
+            Arc::new(MemWriter::new());
+
+        let fired: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let fired2 = fired.clone();
+        let diags = DiagSink(Arc::new(move |d: Box<dyn crate::_1_diagnostic::Diagnostic>| {
+            fired2.lock().unwrap().push(d.code().to_string());
+        }));
+        let events = EventSink(Arc::new(|_| {}));
+
+        let ctx = OpCtx {
+            run_id: RunId(0),
+            op_id:  OpId(0),
+            reader,
+            writer,
+            config,
+            diags,
+            events,
+        };
+
+        let op = FsOp {
+            mode:       FsMode::Filter(Arc::from("src/**/*.rs")),
+            parse_site: dummy_site(),
+        };
+
+        let cursor = Cursor {
+            run_id:   RunId(0),
+            path:     crate::_0_types::SprfPath(Arc::from(vec![].into_boxed_slice())),
+            repo:     Arc::from("myrepo"),
+            rev:      Arc::from("HEAD"),
+            fs:       None,
+            captures: Default::default(),
+            fks:      Default::default(),
+            evidence: vec![],
+            content:  None,
+        };
+
+        let input: BoxStream<'static, Cursor> = Box::pin(stream::iter(vec![cursor]));
+        let mut out = op.pipe(input, ctx);
+        use futures_util::StreamExt;
+        while out.next().await.is_some() {}
+
+        let codes = fired.lock().unwrap().clone();
+        assert_eq!(codes, vec!["fs/no-match"], "expected exactly one fs/no-match diag, got {codes:?}");
     }
 }
