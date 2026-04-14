@@ -219,6 +219,11 @@ pub struct ProgramCtx {
     pub constants: HashMap<Arc<str>, Capture>,
     pub config:    Arc<Config>,
     pub registry:  Arc<crate::_10_registry::OperatorRegistry>,
+    /// Out-of-band diagnostic channel. Operators whose `parse` returns Ok but
+    /// still has soft errors (e.g. RuleFactory emitting per-body-op errors
+    /// while keeping a partial RuleOp around for hover/LSP) push into this.
+    /// `lower_rules` drains it into the final outcome diags.
+    pub diags:     Vec<Box<dyn crate::_1_diagnostic::Diagnostic>>,
 }
 
 #[derive(Clone)]

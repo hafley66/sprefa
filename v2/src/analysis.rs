@@ -137,12 +137,17 @@ impl DocSession {
     // Ensure run
     // -----------------------------------------------------------------------
 
-    /// If stale, run all pipelines (read-only; no flush phase in v2).
-    /// Results cached in `last_run`.
+    /// If stale, run all pipelines under the scan-check demand loop
+    /// (read-only; no flush phase in v2). Results cached in `last_run`.
+    ///
+    /// The loop re-runs every pipeline against a single shared `ResultStore`
+    /// and grows `Config.repos`/`Config.revs` from content-side scan-pointer
+    /// claims until the config stops growing or `DEFAULT_DEPTH` passes run.
+    /// Only the final pass's cursors + diags land in `RunReport`.
     pub fn ensure_run(&mut self) {
         if !self.stale { return; }
 
-        let config = Arc::new(Config {
+        let initial_config = Arc::new(Config {
             repos:        vec![],
             revs:         vec![],
             fs_exclude:   vec![],
@@ -159,40 +164,63 @@ impl DocSession {
         });
 
         let writer = Arc::new(MemWriter::new());
-        let mut diags: Vec<Box<dyn Diagnostic>> = Vec::new();
-        let mut cursors_by_rule: HashMap<Arc<str>, Vec<Cursor>> = HashMap::new();
+        let store  = Arc::new(crate::_12_result_store::ResultStore::new());
+        // Scratch cursor map rewritten each pass; final pass wins.
+        let cursors_scratch: Arc<std::sync::Mutex<HashMap<Arc<str>, Vec<Cursor>>>> =
+            Arc::new(std::sync::Mutex::new(HashMap::new()));
 
-        for (rule_name, pipeline) in &self.pipelines {
-            let captured_diags: Arc<std::sync::Mutex<Vec<Box<dyn Diagnostic>>>> =
-                Arc::new(std::sync::Mutex::new(Vec::new()));
-            let diags_ref = captured_diags.clone();
+        let pipelines = &self.pipelines;
+        let reader    = self.reader.clone();
+        let writer_ref = writer.clone();
+        let cs        = cursors_scratch.clone();
 
-            let (result_store, xref_seen) = OpCtx::fresh_xref_state();
-            let ctx = OpCtx {
-                run_id: RunId(1),
-                op_id:  OpId(0),
-                reader: self.reader.clone(),
-                writer: writer.clone(),
-                config: config.clone(),
-                diags:  DiagSink(Arc::new(move |d| {
-                    diags_ref.lock().unwrap().push(d);
-                })),
-                events: EventSink(Arc::new(|_| {})),
-                result_store,
-                xref_seen,
-            };
+        let result = crate::_14_scan_loop::run_scan_loop(
+            store.clone(),
+            initial_config,
+            crate::_14_scan_loop::DEFAULT_DEPTH,
+            |config, shared_store| {
+                let mut pipe_diags: Vec<Box<dyn Diagnostic>> = Vec::new();
+                let mut local: HashMap<Arc<str>, Vec<Cursor>> = HashMap::new();
 
-            let empty: futures_core::stream::BoxStream<'static, Cursor> =
-                futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
+                for (rule_name, pipeline) in pipelines {
+                    let captured_diags: Arc<std::sync::Mutex<Vec<Box<dyn Diagnostic>>>> =
+                        Arc::new(std::sync::Mutex::new(Vec::new()));
+                    let diags_ref = captured_diags.clone();
 
-            let cursors: Vec<Cursor> = block_on(pipeline.run(empty, ctx).collect());
-            cursors_by_rule.insert(rule_name.clone(), cursors);
+                    let (_fresh_store, xref_seen) = OpCtx::fresh_xref_state();
+                    let _ = _fresh_store; // shared_store supersedes; keep xref_seen fresh per pass.
 
-            let mut rule_diags = captured_diags.lock().unwrap();
-            diags.append(&mut rule_diags);
-        }
+                    let ctx = OpCtx {
+                        run_id: RunId(1),
+                        op_id:  OpId(0),
+                        reader: reader.clone(),
+                        writer: writer_ref.clone(),
+                        config: config.clone(),
+                        diags:  DiagSink(Arc::new(move |d| {
+                            diags_ref.lock().unwrap().push(d);
+                        })),
+                        events: EventSink(Arc::new(|_| {})),
+                        result_store: shared_store.clone(),
+                        xref_seen,
+                    };
 
-        self.last_run = Some(RunReport { cursors_by_rule, diags });
+                    let empty: futures_core::stream::BoxStream<'static, Cursor> =
+                        futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
+
+                    let cursors: Vec<Cursor> = block_on(pipeline.run(empty, ctx).collect());
+                    local.insert(rule_name.clone(), cursors);
+
+                    let mut rd = captured_diags.lock().unwrap();
+                    pipe_diags.append(&mut rd);
+                }
+
+                *cs.lock().unwrap() = local;
+                pipe_diags
+            },
+        );
+
+        let cursors_by_rule = std::mem::take(&mut *cursors_scratch.lock().unwrap());
+        self.last_run = Some(RunReport { cursors_by_rule, diags: result.diags });
         self.stale = false;
     }
 
@@ -237,8 +265,14 @@ impl DocSession {
             }
             SpanKind::MatchSite { op_path, parse_site } => {
                 let cursors: Vec<Cursor> = cursors_for(&entry.rule).to_vec();
-                let op = resolve_op_in_rule(&entry.rule, &self.pipelines, op_path)?;
-                op.hover_match(parse_site, &cursors)
+                eprintln!("HOVER_DBG MatchSite op_path={:?} cursors={}", op_path, cursors.len());
+                let op = resolve_op_in_rule(&entry.rule, &self.pipelines, op_path);
+                eprintln!("HOVER_DBG resolve_op_in_rule -> is_some={}", op.is_some());
+                let op = op?;
+                eprintln!("HOVER_DBG op.name={}", op.name());
+                let r = op.hover_match(parse_site, &cursors);
+                eprintln!("HOVER_DBG hover_match -> is_some={}", r.is_some());
+                r
             }
         }
     }
@@ -334,6 +368,20 @@ impl DocSession {
         };
 
         let outcome = lower_rules(pipes.clone(), pctx);
+        eprintln!("REPARSE_DBG pipes={} outcome_pipelines={} diags={}",
+            pipes.len(), outcome.pipelines.len(), outcome.diags.len());
+        for (i, p) in outcome.pipelines.iter().enumerate() {
+            let k = match p {
+                Pipeline::Op(lop) => format!("Op({})", lop.op.name()),
+                Pipeline::Seq(c) => format!("Seq({})", c.len()),
+                Pipeline::Fork(a) => format!("Fork({})", a.len()),
+                Pipeline::Switch{..} => "Switch".into(),
+            };
+            eprintln!("  [{}] {}", i, k);
+        }
+        for d in &outcome.diags {
+            eprintln!("  DIAG {}: {:?}", d.code(), d.primary().byte_range);
+        }
         for d in outcome.diags {
             self.parse_diags.push(d);
         }
@@ -650,17 +698,27 @@ fn resolve_op_in_rule(
     op_path:   &[usize],
 ) -> Option<Arc<dyn Op>> {
     let (_, pipeline) = pipelines.iter().find(|(r, _)| r == rule)?;
-    // Top-level pipeline is Pipeline::Op(RuleOp). Path has at least 2 elements:
-    //   [_, 0]           → return the RuleOp
-    //   [_, 0, fi, oi]   → reach into body: fork arm fi, op oi
-    match pipeline {
+    // Top-level pipeline is a Seq wrapping a single `Pipeline::Op(RuleOp)`
+    // (lower_rules emits each top-level rule as a one-element Seq). Unwrap
+    // the Seq to land on the RuleOp, then follow op_path into its body.
+    let rule_op_pipeline = match pipeline {
+        Pipeline::Seq(children) if children.len() == 1 => &children[0],
+        _ => pipeline,
+    };
+    let k = match rule_op_pipeline {
+        Pipeline::Op(_) => "Op", Pipeline::Seq(c) => { eprintln!("UNWRAP_Seq children={}", c.len()); "Seq" },
+        Pipeline::Fork(a) => { eprintln!("UNWRAP_Fork arms={}", a.len()); "Fork" },
+        Pipeline::Switch{..} => "Switch",
+    };
+    eprintln!("UNWRAP rule_op_pipeline kind={}", k);
+    match rule_op_pipeline {
         Pipeline::Op(lop) => {
             if op_path.len() == 2 { return Some(lop.op.clone()); }
             if op_path.len() < 4 || op_path.len() % 2 != 0 { return None; }
             let body = lop.op.body_pipeline()?;
             resolve_body_op(body, &op_path[2..])
         }
-        _ => resolve_op(pipeline, op_path),
+        _ => resolve_op(rule_op_pipeline, op_path),
     }
 }
 
@@ -671,6 +729,13 @@ fn resolve_op_in_rule(
 ///   Pipeline::Seq(ops)    — single-pipe multi-op; fork_idx must be 0
 ///   Pipeline::Op(arc)     — single-pipe single-op; fork_idx and op_idx must be 0
 fn resolve_body_op(body: &Pipeline, path: &[usize]) -> Option<Arc<dyn Op>> {
+    let kind = match body {
+        Pipeline::Op(_)      => "Op".to_string(),
+        Pipeline::Seq(c)     => format!("Seq({})", c.len()),
+        Pipeline::Fork(a)    => format!("Fork({})", a.len()),
+        Pipeline::Switch{..} => "Switch".to_string(),
+    };
+    eprintln!("BODY kind={} path={:?}", kind, path);
     if path.len() < 2 || path.len() % 2 != 0 { return None; }
     let fork_idx = path[0];
     let op_idx   = path[1];

@@ -121,6 +121,14 @@ impl ResultStore {
         entry.state.store(COMPLETE, Ordering::Release);
     }
 
+    /// Drop every rule's rows + state. Used by the scan-check loop between
+    /// passes: each pass rebuilds the full result set under a new config so
+    /// walker stamps reflect the latest `Config.repos`/`Config.revs`.
+    pub fn clear(&self) {
+        let mut map = self.by_rule.lock().unwrap();
+        map.clear();
+    }
+
     /// Returns a clone of all rows for `rule` once the producer has marked
     /// it complete. `None` if the rule is unknown or still pending.
     pub fn rows_of(&self, rule: &Arc<str>) -> Option<Vec<CaptureMap>> {
@@ -131,6 +139,35 @@ impl ResultStore {
         if entry.state.load(Ordering::Acquire) != COMPLETE { return None; }
         let rows = entry.rows.lock().unwrap().clone();
         Some(rows)
+    }
+}
+
+impl ResultStore {
+    /// Returns the deduped set of `(scan_pointer, value)` pairs for every
+    /// Capture in the store whose `verified == Tri::Missing`. Used by the
+    /// runner to drive demand-scanning: every pair here is a value the
+    /// checker could not verify against the static config (repo/rev) or
+    /// against the git-tree probe (fs). A subsequent scan pass may flip
+    /// some to Verified; what's still Missing after that is a real Warn.
+    pub fn unscanned(&self) -> Vec<(Arc<str>, Arc<str>)> {
+        use std::collections::BTreeSet;
+        let mut out: BTreeSet<(String, String)> = BTreeSet::new();
+        let map = self.by_rule.lock().unwrap();
+        for rr in map.values() {
+            let rows = rr.rows.lock().unwrap();
+            for row in rows.iter() {
+                for cap in row.values() {
+                    if cap.verified == Tri::Missing {
+                        if let Some(sigil) = &cap.scan_pointer {
+                            out.insert((sigil.to_string(), cap.value.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        out.into_iter()
+            .map(|(s, v)| (Arc::<str>::from(s.as_str()), Arc::<str>::from(v.as_str())))
+            .collect()
     }
 }
 

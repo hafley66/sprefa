@@ -10,6 +10,8 @@ use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::stream::StreamExt;
 
+use rustc_hash::FxHashMap;
+
 use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
@@ -156,16 +158,32 @@ impl Op for JsonOp {
     fn pipe(&self, input: BoxStream<'static, Cursor>, ctx: OpCtx)
         -> BoxStream<'static, Cursor>
     {
-        let compiled   = self.compiled.clone();
-        let parse_site = self.parse_site.clone();
-        let reader     = ctx.reader.clone();
-        let diags      = ctx.diags.clone();
+        let compiled    = self.compiled.clone();
+        let annotations = self.annotations.clone();
+        let parse_site  = self.parse_site.clone();
+        let reader      = ctx.reader.clone();
+        let diags       = ctx.diags.clone();
+
+        // Content-side stamping map: capture var -> sigil. Used to stamp
+        // walker-extracted Captures with scan_pointer + Tri::Claimed. This
+        // is the scout half of the claim/verify pair; a separate checker
+        // pass downgrades unverified claims.
+        // TODO: when line()/ast-grep land, hoist this stamping into a shared
+        // walker-driver helper so it isn't re-implemented per op.
+        let stamp_map: Arc<FxHashMap<Arc<str>, Arc<str>>> = {
+            let mut m: FxHashMap<Arc<str>, Arc<str>> = FxHashMap::default();
+            for ann in annotations.iter() {
+                m.insert(Arc::<str>::from(ann.var.as_str()), ann.sigil.clone());
+            }
+            Arc::new(m)
+        };
 
         input.then(move |c| {
-            let compiled   = compiled.clone();
-            let parse_site = parse_site.clone();
-            let reader     = reader.clone();
-            let diags      = diags.clone();
+            let compiled    = compiled.clone();
+            let parse_site  = parse_site.clone();
+            let reader      = reader.clone();
+            let diags       = diags.clone();
+            let stamp_map   = stamp_map.clone();
             async move {
                 // Collect (FilePath, Bytes) candidates
                 let candidates: Vec<(FilePath, Bytes)> = match &c.fs {
@@ -252,9 +270,16 @@ impl Op for JsonOp {
                     for row in rows {
                         let mut c2 = c.clone();
                         c2.fs = Some(fp.clone());
-                        // Merge walk captures into cursor captures
+                        // Merge walk captures into cursor captures.
+                        // If the capture var has a scan annotation, stamp
+                        // scan_pointer + Tri::Claimed (content-side claim).
                         for (name, wc) in row.captures {
-                            c2.captures.insert(name, Capture::new(wc.text.clone()));
+                            let cap = match stamp_map.get(&name) {
+                                Some(sigil) => Capture::new(wc.text.clone())
+                                    .with_scan(sigil.clone(), Tri::Claimed),
+                                None => Capture::new(wc.text.clone()),
+                            };
+                            c2.captures.insert(name, cap);
                         }
                         out_cursors.push(c2);
                     }

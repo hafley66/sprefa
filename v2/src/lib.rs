@@ -17,6 +17,8 @@ pub mod _9_hash;
 pub mod _10_registry;
 pub mod _11_dag;
 pub mod _12_result_store;
+pub mod _13_scan_check;
+pub mod _14_scan_loop;
 
 pub mod readers;
 pub mod writers;
@@ -28,7 +30,9 @@ pub use readers::{MemReader, CheckoutLocator, ConfigLocator, InMemoryLocator, Gi
 pub use writers::MemWriter;
 
 pub use _0_types::*;
-pub use _1_diagnostic::{Diagnostic, Renderer};
+pub use _1_diagnostic::{Diagnostic, Renderer, ScanPointerUnverified, ScanPointerDepthExhausted};
+pub use _13_scan_check::{check_scan_pointers, fs_path_in_tree};
+pub use _14_scan_loop::{run_scan_loop, ScanLoopResult, DEFAULT_DEPTH};
 pub use _2_config::{Config, ConfigDiff, RuntimeConfig};
 pub use _3_reader::{Reader, ParserKind, ParsedTree, ScanKind, ScanCombo, CrossRefHit, ViolationEntry};
 pub use _4_writer::{
