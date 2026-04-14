@@ -4,7 +4,7 @@ use std::path::Path;
 use ast_grep_config::{DeserializeEnv, SerializableRuleCore};
 use ast_grep_language::{Language, LanguageExt, SupportLang};
 
-use crate::types::AstSelector;
+use crate::_0_types::AstSelector;
 use crate::walk::{CapturedValue, MatchResult};
 
 /// Run an ast-grep selector against source code, returning capture maps.

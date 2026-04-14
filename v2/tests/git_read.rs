@@ -118,6 +118,7 @@ fn git_blob_reader_read_op() {
     assert!(outcome.diags.is_empty(),
         "diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
 
+    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
     let ctx = OpCtx {
         run_id: RunId(1),
         op_id:  OpId(0),
@@ -126,6 +127,8 @@ fn git_blob_reader_read_op() {
         config: cfg.clone(),
         diags:  DiagSink(Arc::new(|d| panic!("unexpected diag: {}", d.code()))),
         events: EventSink(Arc::new(|_| {})),
+        result_store,
+        xref_seen,
     };
 
     let empty: futures_core::stream::BoxStream<'static, Cursor> =

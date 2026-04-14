@@ -238,7 +238,7 @@ Three classes of variable, framework-classified at parse time:
 | syntax | kind | storage |
 |---|---|---|
 | `$NAME` | output capture | column `NAME_str` + `NAME_ref` in rule table |
-| `$$repo` / `$$repo.norm` / `$$rev` / `$$rev.norm` / `$$fs` | scan / provenance capture | reserved columns; drive discovery queue |
+| `$$repo` / `$$repo_norm` / `$$rev` / `$$rev_norm` / `$$fs` / `$$fs_norm` | scan-pointer capture | reserved columns; drive discovery queue |
 | `${other_rule.$VAR}` | cross-ref FK | column `other_rule_id` FK to other's `_data` table |
 
 - `$$` prefix is reserved vocabulary (inner composition, not pipe

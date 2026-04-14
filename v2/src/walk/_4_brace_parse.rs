@@ -5,7 +5,8 @@
 ///
 /// Grammar:
 ///   pattern    = annotation | object | array | capture | wildcard | value_glob
-///   annotation = "$$" ("repo"|"rev") (".norm")? "(" "$" SCREAMING ")"
+///   annotation = "$$" IDENT "(" "$" SCREAMING ")"
+///   IDENT      = [a-zA-Z_][a-zA-Z0-9_]*         # op-declared sigil; validated at lower time
 ///   SCREAMING  = [A-Z][A-Z0-9_]*
 ///   object     = "{" (entry ("," entry)*)? "}"
 ///   entry      = key ":" pattern
@@ -14,20 +15,18 @@
 ///   capture    = "$" SCREAMING
 ///   wildcard   = "$_"
 ///   value_glob = (not , } ] )+
+use std::sync::Arc;
+
 use super::_2_compile::{KeyMatcher, ObjectEntry, SelectStep};
 
-/// A scan annotation discovered during json pattern parsing.
+/// A scan annotation discovered during json pattern parsing. `sigil` names
+/// the op-declared `ScanPointer` (e.g. "repo", "repo_norm", "rev_norm", or
+/// a sigil from a newly registered op). Unknown sigils are diagnosed at
+/// lower time, not here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScanAnnotation {
-    pub var:  String,
-    pub kind: ScanKind,
-    pub norm: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScanKind {
-    Repo,
-    Rev,
+    pub var:   String,
+    pub sigil: Arc<str>,
 }
 
 pub fn parse_body(src: &str) -> anyhow::Result<(Vec<SelectStep>, Vec<ScanAnnotation>)> {
@@ -51,67 +50,52 @@ fn parse_pattern(
         anyhow::bail!("unexpected end of json pattern");
     }
 
-    // Check for $$repo / $$rev annotation sigil.
+    // Check for `$$<sigil>(<$VAR>)` annotation. Sigil is any identifier;
+    // validation against registered `ScanPointer`s happens at lower time.
     if input[*pos..].starts_with("$$") {
-        let after_sigil = *pos + 2;
-        for (base_str, kind) in &[("repo", ScanKind::Repo), ("rev", ScanKind::Rev)] {
-            if input[after_sigil..].starts_with(base_str) {
-                let after_base = after_sigil + base_str.len();
-                // Check for .norm
-                let (norm, after_norm) = if input[after_base..].starts_with(".norm") {
-                    (true, after_base + 5)
-                } else {
-                    (false, after_base)
+        let sigil_start = *pos + 2;
+        let mut p = sigil_start;
+        let b = input.as_bytes();
+        if p < b.len() && (b[p].is_ascii_alphabetic() || b[p] == b'_') {
+            p += 1;
+            while p < b.len() && (b[p].is_ascii_alphanumeric() || b[p] == b'_') { p += 1; }
+            if p > sigil_start && b.get(p) == Some(&b'(') {
+                let sigil = Arc::<str>::from(&input[sigil_start..p]);
+                *pos = p + 1;
+                skip_ws(input, pos);
+
+                let inner_start = *pos;
+                let inner_end = {
+                    let mut q = inner_start;
+                    while q < input.len() && input.as_bytes()[q] != b')' { q += 1; }
+                    q
                 };
-                if input.as_bytes().get(after_norm) == Some(&b'(') {
-                    *pos = after_norm + 1;
-                    skip_ws(input, pos);
+                let inner_raw = input[inner_start..inner_end].trim();
 
-                    // Inner must be a bare capture: $NAME (SCREAMING only)
-                    // Peek at what's inside before consuming.
-                    let inner_start = *pos;
-                    let inner_end = {
-                        let mut p = inner_start;
-                        while p < input.len() && input.as_bytes()[p] != b')' {
-                            p += 1;
-                        }
-                        p
-                    };
-                    let inner_raw = input[inner_start..inner_end].trim();
+                let is_bare_capture = inner_raw.starts_with('$')
+                    && inner_raw.len() > 1
+                    && inner_raw[1..].chars().next().map_or(false, |c| c.is_ascii_uppercase())
+                    && inner_raw[1..].chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
 
-                    // Validate: must match `$[A-Z][A-Z0-9_]*` exactly.
-                    let is_bare_capture = inner_raw.starts_with('$')
-                        && inner_raw.len() > 1
-                        && inner_raw[1..].chars().next().map_or(false, |c| c.is_ascii_uppercase())
-                        && inner_raw[1..].chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-
-                    if !is_bare_capture {
-                        let kind_str = if norm {
-                            format!("{}.norm", base_str)
-                        } else {
-                            base_str.to_string()
-                        };
-                        anyhow::bail!(
-                            "annotation $${} requires a bare capture var ($NAME), got: {{{}}}",
-                            kind_str,
-                            inner_raw
-                        );
-                    }
-
-                    let var_name = inner_raw[1..].to_string();
-                    *pos = inner_end;
-                    expect_byte(input, pos, b')')?;
-
-                    annotations.push(ScanAnnotation {
-                        var:  var_name.clone(),
-                        kind: *kind,
-                        norm,
-                    });
-
-                    return Ok(vec![SelectStep::Leaf {
-                        capture: Some(var_name),
-                    }]);
+                if !is_bare_capture {
+                    anyhow::bail!(
+                        "annotation $${} requires a bare capture var ($NAME), got: {{{}}}",
+                        sigil, inner_raw
+                    );
                 }
+
+                let var_name = inner_raw[1..].to_string();
+                *pos = inner_end;
+                expect_byte(input, pos, b')')?;
+
+                annotations.push(ScanAnnotation {
+                    var:   var_name.clone(),
+                    sigil: sigil.clone(),
+                });
+
+                return Ok(vec![SelectStep::Leaf {
+                    capture: Some(var_name),
+                }]);
             }
         }
     }
@@ -639,27 +623,30 @@ mod tests {
             _ => panic!("expected Object"),
         }
         assert_eq!(annotations.len(), 2);
-        assert_eq!(
-            annotations[0],
-            ScanAnnotation { var: "REPO".into(), kind: ScanKind::Repo, norm: false }
-        );
-        assert_eq!(
-            annotations[1],
-            ScanAnnotation { var: "TAG".into(), kind: ScanKind::Rev, norm: false }
-        );
+        assert_eq!(annotations[0].var, "REPO");
+        assert_eq!(&*annotations[0].sigil, "repo");
+        assert_eq!(annotations[1].var, "TAG");
+        assert_eq!(&*annotations[1].sigil, "rev");
     }
 
     #[test]
     fn scan_annotation_norm_variants() {
         let (_, annotations) =
-            parse_body("{ repository: $$repo.norm($REPO), tag: $$rev.norm($TAG) }").unwrap();
+            parse_body("{ repository: $$repo_norm($REPO), tag: $$rev_norm($TAG) }").unwrap();
         assert_eq!(annotations.len(), 2);
         assert_eq!(annotations[0].var, "REPO");
-        assert_eq!(annotations[0].kind, ScanKind::Repo);
-        assert!(annotations[0].norm);
+        assert_eq!(&*annotations[0].sigil, "repo_norm");
         assert_eq!(annotations[1].var, "TAG");
-        assert_eq!(annotations[1].kind, ScanKind::Rev);
-        assert!(annotations[1].norm);
+        assert_eq!(&*annotations[1].sigil, "rev_norm");
+    }
+
+    #[test]
+    fn scan_annotation_accepts_unknown_sigil() {
+        // Walker is permissive; lower-time validates against the registry.
+        let (_, annotations) = parse_body("{ x: $$totally_bogus($X) }").unwrap();
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(&*annotations[0].sigil, "totally_bogus");
+        assert_eq!(annotations[0].var, "X");
     }
 
     #[test]
@@ -715,7 +702,7 @@ mod tests {
     #[test]
     fn annotation_multi_in_object() {
         let (steps, annotations) =
-            parse_body("{ a: $$repo($R), b: $$rev.norm($V) }").unwrap();
+            parse_body("{ a: $$repo($R), b: $$rev_norm($V) }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert_eq!(entries.len(), 2);
@@ -729,10 +716,8 @@ mod tests {
             _ => panic!("expected Object"),
         }
         assert_eq!(annotations.len(), 2);
-        assert_eq!(annotations[0].kind, ScanKind::Repo);
-        assert!(!annotations[0].norm);
-        assert_eq!(annotations[1].kind, ScanKind::Rev);
-        assert!(annotations[1].norm);
+        assert_eq!(&*annotations[0].sigil, "repo");
+        assert_eq!(&*annotations[1].sigil, "rev_norm");
     }
 
     // `${VAR}` is a synonym of `$VAR` — both lower to the same Leaf capture.

@@ -4,7 +4,7 @@ use regex::Regex;
 use sprefa_extract::RawRef;
 
 use crate::pattern::{match_segments_pub, parse_segment_pattern};
-use crate::types::{LineMatcher, MatchDef};
+use crate::_0_types::{LineMatcher, MatchDef};
 use crate::walk::{CapturedValue, MatchResult};
 
 /// Apply a line matcher (segment capture or regex) to the captures,

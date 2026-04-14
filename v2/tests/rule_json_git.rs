@@ -85,6 +85,7 @@ fn run_rule_git(
         outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
 
     let writer = Arc::new(MemWriter::new());
+    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
     let ctx = OpCtx {
         run_id: RunId(1),
         op_id:  OpId(0),
@@ -93,6 +94,8 @@ fn run_rule_git(
         config: cfg.clone(),
         diags:  diag_sink,
         events: EventSink(Arc::new(|_| {})),
+        result_store,
+        xref_seen,
     };
     let empty: futures_core::stream::BoxStream<'static, Cursor> =
         futures_util::stream::iter(Vec::<Cursor>::new()).boxed();

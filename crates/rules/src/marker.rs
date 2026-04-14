@@ -10,7 +10,7 @@ use ast_grep_core::Language;
 use ast_grep_language::{LanguageExt, SupportLang};
 use regex::Regex;
 
-use crate::types::MarkerScope;
+use crate::_0_types::MarkerScope;
 use crate::walk::CapturedValue;
 
 /// A matched region produced by marker scoping.

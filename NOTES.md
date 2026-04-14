@@ -1,5 +1,47 @@
 # NOTES
 
+## 2026-04-14: Scan-pointer runtime (LOOSE — forward pass + tri-state verified)
+
+Phase 0 landed: `ScanPointer` trait slot owns `$$sigil` dispatch; `provenance`/`ProvKind`/`ProvRef` terminology is dead. Next: runtime stamping.
+
+**Thesis.** User programs a customizable rule-set of import/export relationships across repos. Runtime sics the whole crate tree on the fleet and records sigil'd pointers across repo boundaries. Mermaid/dot visualizations are projections over the store, composed in the DSL via `render` + `sh` — not first-class features. The store is the thing.
+
+**Capture carries three facts**, not one:
+- `value: Arc<str>` — matched string (today)
+- `scan_sigil: Option<Arc<str>>` — user's type claim ("this string is a repo slug", or any op-declared sigil)
+- `verified: Tri` — `Claimed` / `Verified` / `Missing`. Tri-state because streaming means the scan set is still growing when captures get stamped.
+
+**Two populators write the same slot:**
+- **Command side** — `repo($R)` binds `$R` from outer-pipe blast radius. Stamp `scan_sigil="repo"`, `verified=Verified` (value came from a real scan by construction).
+- **Content side** — walker `$$sigil($VAR)` inside `json(...)`, and any future op that embeds scan pointers in content extraction. Stamp `scan_sigil`, `verified=Claimed`. Later pass cross-checks against the scan set; flips to `Verified` or `Missing`.
+
+**Assumption checker is a pre-filter that does NOT filter.** Unverified captures stay in the row set. `Missing` emits `scan-pointer/unverified` Warn anchored at the capture's parse site. Rationale: streaming invalidates drop-on-miss; recording the claim is the right move; the Warn surfaces uncertainty.
+
+**Forward-pass stamping is the shape.** Stamping happens as values stream through the pipeline, not as a post-hoc pass. `verified` is tri-state so a capture can stamp `Claimed` immediately and upgrade to `Verified`/`Missing` when the scan set becomes knowable (end-of-pass, or incrementally via reactive subscription to the scan registry).
+
+**Column widening (later).** Rule table schema is per-capture. `$X` with `scan_sigil="repo"` → columns `X_str`, `X_repo_id` (FK to `repos` dimension table), `X_verified`. No sigil → plain `X_str`. Lands after runtime stamping works.
+
+**Cross-repo edges.** Sigil'd captures across rules form a graph: `rule_a.X (sigil=repo)` → `repos.slug`; `rule_b.Y (sigil=rev)` → `revs.rev` scoped by `rule_b.R`. This graph is the output artifact — scanning, diagnostics, and rendering all project from it.
+
+**Open tension.** Scan pointers are genericized (any op's sigil), but full generality without tying cursor keys 1:1 to ops is unclear. Command-side stamping is clean because cursor already has `repo`/`rev`/`fs` fields. Content-side is clean because walker annotations already carry a sigil. The gap is the register of "what scan sets exist to verify against" — currently `Config.repos` / `Config.revs` / `Config.fs_exclude` are hardcoded names, not sigil-indexed. Deferred.
+
+**Naming hygiene.**
+- `scan_sigil` = field on Capture. `ScanPointer` = trait-side op declaration. `ScanPointerRef` = parsed `$$sigil` token. `ScanAnnotation` = walker's internal record.
+- Diag codes: `scan-pointer/…`.
+- `provenance`, `Prov*`, `parse_provenance`: never.
+
+## 2026-04-14: Op trait family (LOOSE design direction)
+
+Session exploring a unified op trait family: state + reducer + pipe + effects + schema + projections, all dyn-safe, all op-owned. Core shrinks to a thin spine (registry, scheduler, effect bus, parser, DAG, path tagging). Three sub-ideas:
+
+1. Op-owned annotations — core grammar must not hardcode op-specific sigils (`$$repo`/`$$rev`/`$$fs`); ops register their own projections.
+2. Op-owned cursor/config slots via sprf codegen — aggregate Cursor/Config generated from per-op declarations using marker()/render(), not composed at Rust trait level.
+3. DOM-validator grammar — ops declare `schema { allowed_parents, allowed_children, arity }`; parse-time validation anchored at child parse_site.
+
+Captured in memory (private, not in repo): `project_op_trait_family.md`, `feedback_op_owned_annotations.md`, `project_op_owned_cursor_slots.md`, `project_dogfood_vision.md`.
+
+Blocking dependencies: marker() + render() + Layer 5 effect bus + runner write path.
+
 ## 2026-04-12: Feature ambitions dump
 
 ### Verbatim from session
@@ -563,11 +605,15 @@ Makes forward-binding ergonomic. Enables users to discover the cross-ref sigil w
 
 `${rule_a.$X}` referenced in rule_b means rule_b depends on rule_a's output. Parse-time build the rule dependency DAG, topologically order rules for runtime so forward-bound captures are already populated. v1 had this; v2 hasn't reimplemented yet. Blocker for cross-rule walker semantics (the commented `derived_rule` in `kitchen_sink_v2.sprf`).
 
+**Landed 2026-04-14 (commit f6b8008, layers 0–2.5):** parse-time crossref collection on `OpInvocation.crossrefs`, `RuleHandle.depends_on`, Kahn topo + DFS cycle recovery in `_11_dag.rs`, `xref/cycle` diag, `LoweredOp` wrapper, `ResultStore` per-rule row store with Pending/Complete gating, `expand_xrefs` adapter spliced into `Pipeline::run_with_step`, walker constrain-when-prebound on Leaf so seeded captures filter downstream. Runner write path (cursor → `ResultStore.append`, stream end → `mark_complete`, level-barrier scheduling) is **Layer 5, still pending** — adapter exercises through unit tests with mock stores. End-to-end execution of `derived_rule` blocked on Layer 5.
+
 ### 4. `$$repo` / `$$rev` provenance (with `.norm` variants)
 
 Principal feature for high-scale gitops. Captures a cursor's originating repo/rev tagged alongside every walker match, so a `json({ ** : { image: $I, $$repo($R), $$rev($V) } })` binds the full provenance chain at scan time, independent of whether the pipeline has an explicit `repo()`/`rev()`. `.norm` variants normalize semver tags or slug forms (v1 had this).
 
 This is how reports tie back to "which commit in which repo produced this match" — the point of the whole system at scale.
+
+**Implementation hook (post-2026-04-14):** reuse the Layer 2 `expand_xrefs` adapter pattern in `_5_op.rs`. Provenance values come from `cursor.repo` / `cursor.rev` instead of `ResultStore`. Same pre-seed semantics, same constrain-when-prebound walker behavior. Decision still open: if N input cursors have M distinct repos, does an op with `$$repo($R)` cartesian-expand or stay 1:1 with each cursor's own repo? Probably 1:1 (provenance is inherent to the cursor, not joined).
 
 ### 5. Path resolution: inside-repo vs outside-repo `.sprf` files
 

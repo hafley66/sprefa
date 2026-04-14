@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::pattern::{compile_pattern, parse_segment_pattern, PatternMatcher, Segment};
-use crate::types::{KeyMatcher, ObjectEntry, SelectStep};
+use crate::_0_types::{KeyMatcher, ObjectEntry, SelectStep};
 
 /// A value captured during a walk, with its position in the source.
 #[derive(Debug, Clone)]

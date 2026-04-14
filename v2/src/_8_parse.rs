@@ -14,7 +14,7 @@ use crate::_5_op::{BraceSlot, BracketSlot, CrossRefOccurrence, OpInvocation, Par
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenClass {
     Capture(CaptureRef),
-    Provenance(ProvRef),
+    ScanPointer(ScanPointerRef),
     CrossRef(CrossRefRef),
     Literal,
 }
@@ -22,14 +22,10 @@ pub enum TokenClass {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureRef { pub name: Arc<str> }
 
+/// Parsed `$$sigil` token. Whether the sigil is owned by a registered op is
+/// validated at lower time against `OperatorRegistry::lookup_scan_pointer`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProvRef {
-    pub kind: ProvKind,
-    pub norm: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProvKind { Repo, Rev, Fs }
+pub struct ScanPointerRef { pub sigil: Arc<str> }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrossRefRef {
@@ -51,19 +47,16 @@ pub fn parse_capture(s: &str) -> Option<CaptureRef> {
     Some(CaptureRef { name: Arc::from(name) })
 }
 
-pub fn parse_provenance(s: &str) -> Option<ProvRef> {
+pub fn parse_scan_pointer(s: &str) -> Option<ScanPointerRef> {
     let rest = s.strip_prefix("$$")?;
-    let (name, norm) = match rest.strip_suffix(".norm") {
-        Some(n) => (n, true),
-        None    => (rest, false),
-    };
-    let kind = match name {
-        "repo" => ProvKind::Repo,
-        "rev"  => ProvKind::Rev,
-        "fs"   => ProvKind::Fs,
-        _      => return None,
-    };
-    Some(ProvRef { kind, norm })
+    let name = rest
+        .strip_prefix('{')
+        .and_then(|r| r.strip_suffix('}'))
+        .unwrap_or(rest);
+    if name.is_empty() { return None; }
+    if !is_ident_start(name.as_bytes()[0]) { return None; }
+    if !name.bytes().all(is_ident_byte) { return None; }
+    Some(ScanPointerRef { sigil: Arc::from(name) })
 }
 
 pub fn parse_cross_ref(s: &str) -> Option<CrossRefRef> {
@@ -76,9 +69,9 @@ pub fn parse_cross_ref(s: &str) -> Option<CrossRefRef> {
 }
 
 pub fn classify_token(s: &str) -> TokenClass {
-    if let Some(c) = parse_cross_ref(s)   { return TokenClass::CrossRef(c); }
-    if let Some(p) = parse_provenance(s)  { return TokenClass::Provenance(p); }
-    if let Some(c) = parse_capture(s)     { return TokenClass::Capture(c); }
+    if let Some(c) = parse_cross_ref(s)    { return TokenClass::CrossRef(c); }
+    if let Some(p) = parse_scan_pointer(s) { return TokenClass::ScanPointer(p); }
+    if let Some(c) = parse_capture(s)      { return TokenClass::Capture(c); }
     TokenClass::Literal
 }
 
@@ -115,8 +108,10 @@ pub fn scan_balanced(src: &str, open: u8, close: u8) -> Option<Range<usize>> {
 //   op       := IDENT ('[' bracket ']')? ('(' paren ')')? ('{' brace '}')?
 //
 // Line comments: `#` to end of line.
-// `$NAME`, `$$prov`, `${rule.$V}` are leaf-level tokens classified by ops at
-// parse time; the host parser does not look at them.
+// `$NAME`, `$$sigil`, `${rule.$V}` are leaf-level tokens classified by ops at
+// parse time; the host parser does not look at them. Known `$$sigil` values
+// come from `Operator::scan_pointers()` registrations; unknown sigils emit a
+// diag at lower time.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -365,6 +360,48 @@ fn scan_slot_crossrefs(src: &str, abs_base: usize, out: &mut Vec<CrossRefOccurre
     }
 }
 
+/// Discovered `$$sigil` occurrence in a slot. `abs_base` + range points at
+/// the `$$` so diag anchors land on the sigil.
+#[derive(Debug, Clone)]
+pub struct ScanPointerOccurrence {
+    pub sigil:      Arc<str>,
+    pub byte_range: Range<usize>,
+}
+
+/// Scan arbitrary slot text for `$$<ident>` tokens. Used at lower time to
+/// validate that each sigil is owned by a registered op.
+pub fn scan_slot_scan_pointers(src: &str, abs_base: usize, out: &mut Vec<ScanPointerOccurrence>) {
+    let b = src.as_bytes();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] != b'$' || b[i+1] != b'$' { i += 1; continue; }
+        let start = i;
+        let mut j = i + 2;
+        let braced = b.get(j) == Some(&b'{');
+        if braced { j += 1; }
+        let name_start = j;
+        if j < b.len() && is_ident_start(b[j]) {
+            j += 1;
+            while j < b.len() && is_ident_byte(b[j]) { j += 1; }
+        }
+        let name_end = j;
+        if braced {
+            if b.get(j) != Some(&b'}') { i += 1; continue; }
+            j += 1;
+        }
+        if name_end > name_start {
+            let sigil = Arc::<str>::from(&src[name_start..name_end]);
+            out.push(ScanPointerOccurrence {
+                sigil,
+                byte_range: (abs_base + start)..(abs_base + j),
+            });
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Small helpers, kept from prior pass
 // ---------------------------------------------------------------------------
@@ -516,10 +553,25 @@ mod tests {
         }
     }
 
-    // `$$repo` remains provenance (two `$` prefix takes precedence).
+    // `$$repo` remains a ScanPointer (two `$` prefix takes precedence).
     #[test]
-    fn double_dollar_still_provenance() {
-        assert!(matches!(classify_token("$$repo"), TokenClass::Provenance(_)));
+    fn double_dollar_still_scan_pointer() {
+        assert!(matches!(classify_token("$$repo"), TokenClass::ScanPointer(_)));
+    }
+
+    // Task 6: parse_scan_pointer is permissive; validation of unknown sigils
+    // happens at lower time against the registry, not here.
+    #[test]
+    fn parse_scan_pointer_sigils() {
+        let g = |s: &str| parse_scan_pointer(s).map(|r| r.sigil.to_string());
+        assert_eq!(g("$$repo"),        Some("repo".to_string()));
+        assert_eq!(g("$$repo_norm"),   Some("repo_norm".to_string()));
+        assert_eq!(g("$${repo}"),      Some("repo".to_string()));
+        assert_eq!(g("$$rev_norm"),    Some("rev_norm".to_string()));
+        assert_eq!(g("$$bogus_sigil"), Some("bogus_sigil".to_string()));
+        assert_eq!(g("$$"),            None);
+        assert_eq!(g("$$1invalid"),    None);
+        assert_eq!(g("$R"),            None);
     }
 
     // crossrefs populated from paren tokens with absolute byte ranges.
@@ -534,6 +586,17 @@ mod tests {
         assert_eq!(&src[inv.crossrefs[0].byte_range.clone()], "${other.$TAG}");
         assert_eq!(&*inv.crossrefs[1].rule, "more");
         assert_eq!(&src[inv.crossrefs[1].byte_range.clone()], "${more.$V}");
+    }
+
+    #[test]
+    fn scan_slot_scan_pointers_finds_bare_and_braced() {
+        let src = "foo($$repo, $${rev_norm}, $$bogus, $R, ${rule.$X})";
+        let mut out = Vec::new();
+        scan_slot_scan_pointers(src, 1000, &mut out);
+        let sigils: Vec<&str> = out.iter().map(|o| &*o.sigil).collect();
+        assert_eq!(sigils, vec!["repo", "rev_norm", "bogus"]);
+        // Offsets preserve abs_base.
+        assert_eq!(out[0].byte_range.start, 1000 + src.find("$$repo").unwrap());
     }
 
     // No crossrefs for ops without `${rule.$VAR}` tokens.

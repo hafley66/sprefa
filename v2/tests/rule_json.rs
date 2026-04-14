@@ -8,7 +8,7 @@
 //!   - row-split: sibling-capture object → one row per capture
 //!   - joined row: array of structs → one row per item w/ all fields
 //!   - yaml + toml parity via AnyDataNode dispatch
-//!   - $$ annotation syntax: $$repo.norm($R) = capture $R + ScanAnnotation
+//!   - $$ annotation syntax: $$repo_norm($R) = capture $R + ScanAnnotation
 //!   - annotation-requires-capture diag when inner is not bare $NAME
 //!
 //! Prereq TODOs sonnet must also add:
@@ -76,6 +76,7 @@ fn run_rule(src: &str, reader: Arc<MemReader>) -> (Vec<Cursor>, Arc<MemWriter>) 
         outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
 
     let writer = Arc::new(MemWriter::new());
+    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
     let ctx = OpCtx {
         run_id: RunId(1),
         op_id:  OpId(0),
@@ -84,6 +85,8 @@ fn run_rule(src: &str, reader: Arc<MemReader>) -> (Vec<Cursor>, Arc<MemWriter>) 
         config: cfg.clone(),
         diags:  DiagSink(Arc::new(|_| {})),
         events: EventSink(Arc::new(|_| {})),
+        result_store,
+        xref_seen,
     };
     let empty: futures_core::stream::BoxStream<'static, Cursor> =
         futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
@@ -261,7 +264,7 @@ fn json_toml_parity() {
 
 #[test]
 fn json_dollar_dollar_annotation_captures_and_tags() {
-    // $$repo.norm($R) = bind $R from leaf AND tag it scan=repo.norm.
+    // $$repo_norm($R) = bind $R from leaf AND tag it with scan-pointer sigil `repo_norm`.
     // Scan discovery not wired yet, but capture value must appear and
     // the op must retain the annotation for later Pass A consumption.
     let cfg = make_config();
@@ -275,7 +278,7 @@ fn json_dollar_dollar_annotation_captures_and_tags() {
     let src = r#"
         rule(svc) {
             > repo(consumer) > rev(main) > fs(**/services.yaml)
-              > json({ image: { repository: $$repo.norm($REPO), tag: $$rev.norm($TAG) } })
+              > json({ image: { repository: $$repo_norm($REPO), tag: $$rev_norm($TAG) } })
         };
     "#;
     let (out, _w) = run_rule(src, reader);
@@ -283,7 +286,7 @@ fn json_dollar_dollar_annotation_captures_and_tags() {
     assert_eq!(out[0].captures.get("REPO").unwrap().value.as_ref(), "myorg/auth-service");
     assert_eq!(out[0].captures.get("TAG").unwrap().value.as_ref(), "v1.2.3");
     // TODO when JsonOp exposes annotations: assert ScanAnnotation
-    // { var:"REPO", kind: Repo, norm: true } and { var:"TAG", kind: Rev, norm: true }
+    // { var:"REPO", sigil:"repo_norm" } and { var:"TAG", sigil:"rev_norm" }
     // are present on the op-level metadata. Interface TBD when discovery lands.
 }
 

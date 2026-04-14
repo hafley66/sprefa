@@ -1,6 +1,6 @@
 use schemars::schema_for;
 
-use crate::types::RuleSet;
+use crate::_0_types::RuleSet;
 
 /// Generate the JSON Schema for the sprefa rules format.
 pub fn generate_schema() -> serde_json::Value {

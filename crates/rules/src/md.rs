@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use regex::Regex;
 
-use crate::types::MdPattern;
+use crate::_0_types::MdPattern;
 use crate::walk::CapturedValue;
 
 /// A byte range produced by heading scoping, with optional captures.

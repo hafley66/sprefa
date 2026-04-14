@@ -35,7 +35,7 @@ rule(package_entry) {
 # ── pnpm ───────────────────────────────────────────
 
 rule(pnpm_workspace) {
-  fs(npm-workpa) > json({ packages: [...$MEMBER] })
+  fs(pnpm) > json({ packages: [...$MEMBER] })
 };
 
 # ── Deploy / k8s ──────────────────────────────────

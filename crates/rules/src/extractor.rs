@@ -9,7 +9,7 @@ use crate::{
     file_match::CompiledFileSelector,
     git_match::CompiledGitSelector,
     marker, md,
-    types::{AstSelector, LineMatcher, MarkerScope, MdPattern, MatchDef, RuleSet, SelectStep},
+    _0_types::{AstSelector, LineMatcher, MarkerScope, MdPattern, MatchDef, RuleSet, SelectStep},
     walk,
     walk::{CapturedValue, CompiledStep},
 };
@@ -476,7 +476,7 @@ fn resolve_context_captures(
 }
 
 /// Compile a Rule into a CompiledRule, partitioning context and structural steps.
-fn compile_rule(r: &crate::types::Rule) -> Result<CompiledRule> {
+fn compile_rule(r: &crate::_0_types::Rule) -> Result<CompiledRule> {
     let mut repo_patterns: Vec<&str> = vec![];
     let mut rev_patterns: Vec<&str> = vec![];
     // Folder + fs patterns are tracked separately so they can be composed as

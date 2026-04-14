@@ -49,8 +49,8 @@ pub use _12_result_store::{ResultStore, RuleResult, CaptureMap};
 pub use _6_extractor::{Extractor, ExtractorKind};
 pub use _7_runner::Runner;
 pub use _8_parse::{
-    TokenClass, CaptureRef, ProvRef, ProvKind, CrossRefRef,
-    parse_capture, parse_provenance, parse_cross_ref, classify_token,
+    TokenClass, CaptureRef, ScanPointerRef, CrossRefRef,
+    parse_capture, parse_scan_pointer, parse_cross_ref, classify_token,
     scan_balanced, host_parse, host_parse_brace, host_parse_arm_brace, ChildKind,
     ParseError, Pipe, glob_match, levenshtein,
 };

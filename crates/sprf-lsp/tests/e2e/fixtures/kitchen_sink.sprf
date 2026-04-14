@@ -1,18 +1,17 @@
-# Kitchen Sink - E2E Test Fixture
+# Kitchen Sink E2E Test Fixture
 # Tests all completion contexts
-
-# ── File completions ──────────────────────────
+# File completions
 
 rule(fs_complete) {
   fs(**/Cargo.toml) > json({ package: { name: $NAME } })
 };
 
-rule(file_complete) {
-  file(**/*.md) > md(# $TITLE)
-};
+# rule(file_complete) {
+#   file(**/*.md) > md(## $TITLE)
+# };
 
 
-# ── Repo/Rev completions ──────────────────────
+#  Repo/Rev completions 
 
 rule(repo_complete) {
   repo(*) {
@@ -23,10 +22,10 @@ rule(repo_complete) {
 };
 
 rule(inline_repo) {
-  fs(**/services.yaml) > json({ image: { repository: repo($REPO) } })
+  fs(**/services.yaml) > json({ image: { repository: $$repo($REPO) } })
 };
 
-# ── Capture variables (for hover) ─────────────
+#  Capture variables (for hover) 
 
 rule(capture_test) {
   fs(**/Cargo.toml) > json({ 
@@ -38,14 +37,12 @@ rule(capture_test) {
   })
 };
 
-# ── Cross-rule refs ───────────────────────────
+# Cross rule refs 
 
-rule(base_rule) {
-  fs(**/values.yaml) > json({ services: { **: {image: { repository: $REPO, tag: $TAG } }}})
-};
+# rule(base_rule) {
+#   fs(**/values.yaml) > json({ services: { **: {image: { repository: $REPO, tag: $TAG } }}})
+# };
 
-rule(derived_rule) {
-  base_rule(repo: $REPO, tag: $TAG) {
-    fs(**/deploy.yaml) > json({ image: { tag: $TAG } })
-  }
-};
+# rule(derived_rule) {
+#   fs(**/deploy.yaml) > json({ image: { tag: ${base_rule.$TAG} } })
+# };

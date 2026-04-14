@@ -73,6 +73,7 @@ fn rule_repo_rev_end_to_end() {
     assert!(outcome.diags.is_empty(), "lower diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
     assert_eq!(outcome.pipelines.len(), 1);
 
+    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
     let ctx = OpCtx {
         run_id: RunId(1),
         op_id:  OpId(0),
@@ -81,6 +82,8 @@ fn rule_repo_rev_end_to_end() {
         config: cfg.clone(),
         diags:  DiagSink(Arc::new(|_| {})),
         events: EventSink(Arc::new(|_| {})),
+        result_store,
+        xref_seen,
     };
 
     // Drive the top pipeline with an empty seed; rule is a source and ignores input.
@@ -175,6 +178,7 @@ fn fs_fanout_and_evidence() {
         "lower diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
     assert_eq!(outcome.pipelines.len(), 2);
 
+    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
     let ctx = OpCtx {
         run_id: RunId(1),
         op_id:  OpId(0),
@@ -183,6 +187,8 @@ fn fs_fanout_and_evidence() {
         config: cfg.clone(),
         diags:  DiagSink(Arc::new(|_| {})),
         events: EventSink(Arc::new(|_| {})),
+        result_store,
+        xref_seen,
     };
 
     // Drive files_demo.

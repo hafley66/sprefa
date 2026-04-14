@@ -5,7 +5,7 @@ rule(fs_complete) {
 # Nested fork arms: repo scope, then rev scope, then a pipe inside.
 rule(repo_complete) {
     > rev(HEAD) {
-      > fs(**/package.json) > json({ verssion: $VER });
+      > fs(**/package.json) > json({ version: $VER });
     };
 };
 
@@ -35,24 +35,20 @@ rule(base_rule) {
   > fs(**/values.yaml) > json({ services: { **: { image: { repository: $REPO, tag: $TAG } } } });
 };
 
-# rule(derived_rule) {
-#   > fs(**/deploy.yaml) > json({ image: { tag: ${base_rule.$TAG} } });
-# };
+rule(derived_rule) {
+  > fs(**/deploy.yaml) > json({ image: { tag: ${base_rule.$TAG} } });
+};
 
-# Diagnostic trigger: rev(*) is a no-op.
-# Uncomment to see `rev/no-op-glob` squiggly.
-# rule(bad_rev) {
-#   > repo(*) {
-#     > rev(*) {
-#       > fs(**/x.yaml);
-#     };
-#   };
-# };
+rule(bad_rev) {
+  > repo($R) {
+    > rev(HEAD) {
+      > fs(**/x.yaml);
+    };
+  };
+};
 
-# Diagnostic trigger: missing leading `>` in arm brace.
-# Uncomment to see `parse/arm-brace` squiggly.
-# rule(bad_arm) {
-#   > repo(*) {
-#     rev(main);
-#   };
-# };
+rule(bad_arm) {
+  > repo(*) {
+    rev(main);
+  };
+};
