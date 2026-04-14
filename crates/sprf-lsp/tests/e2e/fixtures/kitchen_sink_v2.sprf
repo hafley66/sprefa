@@ -1,0 +1,58 @@
+rule(fs_complete) {
+  > fs(**/Cargo.toml) > json({ package: { name: $NAME } });
+};
+
+# Nested fork arms: repo scope, then rev scope, then a pipe inside.
+rule(repo_complete) {
+    > rev(HEAD) {
+      > fs(**/package.json) > json({ verssion: $VER });
+    };
+};
+
+# Multiple arms at rev level to exercise Fork fan-out.
+rule(multi_rev) {
+    > rev(HEAD) {
+      > fs(**/package.json) > json({ version: $VER });
+    };
+    > rev(test/*) {
+      > fs(**/deploy.yaml) > json({ image: { tag: $TAG } });
+    };
+};
+
+# Captures across nested scopes.
+rule(capture_test) {
+  > fs(**/Cargo.toml) > json({
+    package: {
+      name: $PKG_NAME,
+      version: $PKG_VERSION
+    },
+    dependencies: { $DEP: $DEP_VER }
+  });
+};
+
+# Cross-rule ref source (walker semantic binding pending).
+rule(base_rule) {
+  > fs(**/values.yaml) > json({ services: { **: { image: { repository: $REPO, tag: $TAG } } } });
+};
+
+# rule(derived_rule) {
+#   > fs(**/deploy.yaml) > json({ image: { tag: ${base_rule.$TAG} } });
+# };
+
+# Diagnostic trigger: rev(*) is a no-op.
+# Uncomment to see `rev/no-op-glob` squiggly.
+# rule(bad_rev) {
+#   > repo(*) {
+#     > rev(*) {
+#       > fs(**/x.yaml);
+#     };
+#   };
+# };
+
+# Diagnostic trigger: missing leading `>` in arm brace.
+# Uncomment to see `parse/arm-brace` squiggly.
+# rule(bad_arm) {
+#   > repo(*) {
+#     rev(main);
+#   };
+# };

@@ -1,0 +1,38 @@
+[package]
+name = "v2"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sprefa-v2"
+path = "src/bin/sprefa_v2.rs"
+
+[[bin]]
+name = "sprefa-v2-lsp"
+path = "src/bin/sprefa_v2_lsp.rs"
+
+[dependencies]
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
+futures-core = "0.3"
+futures-util = "0.3"
+bytes = "1"
+rustc-hash = "2"
+globset = "0.4"
+regex = "1"
+anyhow = "1"
+git2 = "0.19"
+toml = "0.8"
+tree-sitter = "0.24"
+tree-sitter-json = "0.24"
+tree-sitter-yaml = "0.7"
+tree-sitter-toml-ng = "0.7"
+
+[dev-dependencies]
+tempfile = "3"
+
+[workspace]

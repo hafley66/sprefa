@@ -1,0 +1,423 @@
+//! json — walk structured data files (JSON / YAML / TOML) using brace patterns.
+//!
+//! Usage:
+//!   fs(**/package.json) > json({ name: $N, version: $V })
+//!   repo(r) > rev(main) > json({ ** : { image: $I } })   ← self-enumerates
+
+use std::sync::Arc;
+
+use bytes::Bytes;
+use futures_core::stream::BoxStream;
+use futures_util::stream::StreamExt;
+
+use crate::_0_types::{Capture, Cursor, FilePath, ParseSite};
+use crate::_1_diagnostic::{Diagnostic, Renderer};
+use crate::_5_op::{
+    BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation, Operator, Pipeline, ProgramCtx,
+};
+use crate::data::{parse_by_ext, DataKind, DataNode, AnyDataNode};
+use crate::jq_path;
+use crate::walk::_2_compile::compile_steps;
+use crate::walk::_1_compiled::CompiledStep;
+use crate::walk::_3_walker::{walk, MatchResult};
+use crate::walk::_4_brace_parse::{parse_body, ScanAnnotation};
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+pub struct JsonFactory;
+
+impl Operator for JsonFactory {
+    fn name(&self) -> &'static str { "json" }
+    fn paren_grammar(&self) -> GrammarRef { GrammarRef(Arc::from("json-none")) }
+    fn brace_mode(&self) -> BraceMode { BraceMode::WalkerPattern }
+
+    fn completion_item(&self) -> CompletionItem {
+        CompletionItem {
+            label:  "json".to_string(),
+            detail: "json({ key: $CAP })".to_string(),
+            doc:    "# json\n\nWalk JSON/YAML/TOML files with a brace pattern. Binds captures from matching keys.".to_string(),
+        }
+    }
+
+    fn parse(&self, inv: &OpInvocation, _pctx: &mut ProgramCtx)
+        -> Result<Pipeline, Vec<Box<dyn Diagnostic>>>
+    {
+        // json({ pattern }) — body lives in the paren slot since {..} is inside (..),
+        // so paren_src.src = "{ version: $VER }".
+        let paren = inv.paren_src.as_ref().ok_or_else(|| {
+            vec![Box::new(JsonDiag::ParseBody {
+                site: (*inv.parse_site).clone(),
+                msg:  Arc::from("json requires a pattern argument (e.g. json({ key: $V }))"),
+            }) as Box<dyn Diagnostic>]
+        })?;
+
+        let src = paren.src.trim();
+        let (steps, annotations) = parse_body(src).map_err(|e| {
+            let msg = e.to_string();
+            let code = if msg.contains("requires a bare capture var") {
+                "json/annotation-requires-capture"
+            } else {
+                "json/parse-body"
+            };
+            vec![Box::new(JsonDiag::ParseBodyCode {
+                site: (*inv.parse_site).clone(),
+                msg:  Arc::from(msg.as_str()),
+                code: Arc::from(code),
+            }) as Box<dyn Diagnostic>]
+        })?;
+
+        let compiled = compile_steps(&steps).map_err(|e| {
+            vec![Box::new(JsonDiag::ParseBody {
+                site: (*inv.parse_site).clone(),
+                msg:  Arc::from(e.to_string().as_str()),
+            }) as Box<dyn Diagnostic>]
+        })?;
+
+        Ok(Pipeline::Op(Arc::new(JsonOp {
+            compiled:    Arc::from(compiled.into_boxed_slice()),
+            annotations: Arc::from(annotations.into_boxed_slice()),
+            parse_site:  inv.parse_site.clone(),
+        })))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Op
+// ---------------------------------------------------------------------------
+
+pub struct JsonOp {
+    compiled:    Arc<[CompiledStep]>,
+    annotations: Arc<[ScanAnnotation]>,
+    parse_site:  Arc<ParseSite>,
+}
+
+const JSON_EXTS: &[&str] = &["json", "yaml", "yml", "toml"];
+
+fn file_ext(fp: &FilePath) -> Option<String> {
+    fp.0.extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+}
+
+impl Op for JsonOp {
+    fn name(&self) -> &'static str { "json" }
+    fn step(&self) -> u16 { 0 }
+    fn parse_site(&self) -> &Arc<ParseSite> { &self.parse_site }
+
+    fn witness(&self, c: &Cursor) -> Option<Arc<str>> {
+        c.fs.as_ref().map(|fp| Arc::from(fp.0.to_string_lossy().as_ref()))
+    }
+
+    fn hover_self(&self) -> String {
+        "# json\n\nWalk JSON/YAML/TOML files with a brace pattern. Binds captures from matching keys.".to_string()
+    }
+
+    fn hover_capture(&self, cap: &str, cursors: &[Cursor]) -> Option<String> {
+        let site = self.parse_site.as_ref();
+        let mut vals: Vec<&str> = Vec::new();
+        for c in cursors {
+            let touched = c.evidence.iter().any(|ev|
+                ev.op_name == "json" && ev.parse_site.as_ref() == site
+            );
+            if !touched { continue; }
+            if let Some(capture) = c.captures.get(cap) {
+                let v = capture.value.as_ref();
+                if !vals.contains(&v) {
+                    vals.push(v);
+                    if vals.len() >= 20 { break; }
+                }
+            }
+        }
+        if vals.is_empty() { return None; }
+        let lines: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
+        Some(format!("**`${cap}`** values:\n\n{}", lines.join("\n")))
+    }
+
+    fn hover_match(&self, site: &crate::_0_types::ParseSite, cursors: &[Cursor]) -> Option<String> {
+        let mut vals: Vec<&str> = Vec::new();
+        for c in cursors {
+            for ev in &c.evidence {
+                if ev.op_name == "json"
+                    && ev.parse_site.as_ref() == site
+                {
+                    let v = ev.matched.as_ref();
+                    if !vals.contains(&v) {
+                        vals.push(v);
+                        if vals.len() >= 20 { break; }
+                    }
+                }
+            }
+        }
+        if vals.is_empty() {
+            return Some("**json** pattern site\n\n(no matches yet)".to_string());
+        }
+        let lines: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
+        Some(format!("**json** pattern site\n\n{} matches:\n\n{}", vals.len(), lines.join("\n")))
+    }
+
+    fn pipe(&self, input: BoxStream<'static, Cursor>, ctx: OpCtx)
+        -> BoxStream<'static, Cursor>
+    {
+        let compiled   = self.compiled.clone();
+        let parse_site = self.parse_site.clone();
+        let reader     = ctx.reader.clone();
+        let diags      = ctx.diags.clone();
+
+        input.then(move |c| {
+            let compiled   = compiled.clone();
+            let parse_site = parse_site.clone();
+            let reader     = reader.clone();
+            let diags      = diags.clone();
+            async move {
+                // Collect (FilePath, Bytes) candidates
+                let candidates: Vec<(FilePath, Bytes)> = match &c.fs {
+                    Some(fp) => {
+                        // Single-file branch: skip if extension not in accepted set
+                        match file_ext(fp) {
+                            Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
+                            _ => return vec![],
+                        }
+                        let mut s = reader.bytes(&c.repo, &c.rev, fp);
+                        let raw = s.next().await.unwrap_or_default();
+                        vec![(fp.clone(), raw)]
+                    }
+                    None => {
+                        // Self-enumerate via reader.files("**"), filter by ext
+                        let mut s = reader.files(&c.repo, &c.rev, "**");
+                        let files = s.next().await.unwrap_or_default();
+                        let mut out = vec![];
+                        for fp in files {
+                            match file_ext(&fp) {
+                                Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
+                                _ => continue,
+                            }
+                            let mut s2 = reader.bytes(&c.repo, &c.rev, &fp);
+                            let raw = s2.next().await.unwrap_or_default();
+                            out.push((fp, raw));
+                        }
+                        out
+                    }
+                };
+
+                // json/no-candidates: self-enum mode with zero json/yaml/yml/toml files
+                if c.fs.is_none() && candidates.is_empty() {
+                    diags.0(Box::new(JsonDiag::NoCandidates {
+                        site: (*parse_site).clone(),
+                        msg:  Arc::from(format!(
+                            "json() found no .json/.yaml/.yml/.toml files in {}@{}",
+                            c.repo, c.rev
+                        )),
+                    }));
+                }
+
+                let mut out_cursors: Vec<Cursor> = vec![];
+
+                for (fp, raw) in candidates {
+                    let ext = match file_ext(&fp) {
+                        Some(e) => e,
+                        None => continue,
+                    };
+                    let arc_bytes = Arc::new(raw.clone());
+                    let tree = match parse_by_ext(&ext, arc_bytes) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            diags.0(Box::new(JsonDiag::ParseError {
+                                site: (*parse_site).clone(),
+                                msg:  Arc::from(e.to_string().as_str()),
+                            }));
+                            continue;
+                        }
+                    };
+
+                    let rows: Vec<MatchResult> = walk(&tree, &compiled);
+
+                    // json/no-match: file walked but zero rows returned
+                    if rows.is_empty() {
+                        let dump = tree_dump(&tree, 4, 200);
+                        diags.0(Box::new(JsonDiag::NoMatch {
+                            site: (*parse_site).clone(),
+                            file: Arc::from(fp.0.to_string_lossy().as_ref()),
+                            dump: Arc::from(dump.as_str()),
+                        }));
+                        continue;
+                    }
+
+                    for row in rows {
+                        let mut c2 = c.clone();
+                        c2.fs = Some(fp.clone());
+                        // Merge walk captures into cursor captures
+                        for (name, wc) in row.captures {
+                            c2.captures.insert(name, Capture {
+                                value:  wc.text.clone(),
+                                ref_id: None,
+                            });
+                        }
+                        out_cursors.push(c2);
+                    }
+                }
+
+                out_cursors
+            }
+        })
+        .flat_map(|v| futures_util::stream::iter(v))
+        .boxed()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tree dump helper (file-private)
+// ---------------------------------------------------------------------------
+
+/// Render a depth-limited jq-path listing of `node` up to `max_depth` levels.
+/// Each line is one leaf or container header. Truncated at `max_lines` with
+/// "...(more)" appended if the tree exceeds the cap.
+fn tree_dump(node: &AnyDataNode, max_depth: u32, max_lines: usize) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    dump_node(node, &mut String::new(), 0, max_depth, &mut lines, max_lines);
+    if lines.len() > max_lines {
+        lines.truncate(max_lines);
+        lines.push("...(more)".to_owned());
+    }
+    lines.join("\n")
+}
+
+fn dump_node(
+    node:      &AnyDataNode,
+    path:      &mut String,
+    depth:     u32,
+    max_depth: u32,
+    lines:     &mut Vec<String>,
+    max_lines: usize,
+) {
+    if lines.len() >= max_lines { return; }
+    match node.kind() {
+        DataKind::Object => {
+            let label = if path.is_empty() { ".".to_owned() } else { path.clone() };
+            lines.push(format!("{label}: {{}}"));
+            if depth < max_depth {
+                for (k, v) in node.entries() {
+                    if lines.len() >= max_lines { return; }
+                    let key_text = k.as_scalar_text()
+                        .map(|s| s.into_owned())
+                        .unwrap_or_default();
+                    let mut child_path = path.clone();
+                    jq_path::push_key(&mut child_path, &key_text);
+                    dump_node(&v, &mut child_path, depth + 1, max_depth, lines, max_lines);
+                }
+            }
+        }
+        DataKind::Array => {
+            let label = if path.is_empty() { ".".to_owned() } else { path.clone() };
+            lines.push(format!("{label}: []"));
+            if depth < max_depth {
+                for (i, item) in node.items().enumerate() {
+                    if lines.len() >= max_lines { return; }
+                    let mut child_path = path.clone();
+                    jq_path::push_index(&mut child_path, i as u32);
+                    dump_node(&item, &mut child_path, depth + 1, max_depth, lines, max_lines);
+                }
+            }
+        }
+        DataKind::Scalar => {
+            let val = node.as_scalar_text()
+                .map(|s| s.into_owned())
+                .unwrap_or_default();
+            let label = if path.is_empty() { ".".to_owned() } else { path.clone() };
+            // Truncate long scalar values for readability
+            let display = if val.len() > 60 { format!("{}...", &val[..60]) } else { val };
+            lines.push(format!("{label}: {display}"));
+        }
+        DataKind::Null => {
+            let label = if path.is_empty() { ".".to_owned() } else { path.clone() };
+            lines.push(format!("{label}: null"));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+enum JsonDiag {
+    ParseBody {
+        site: crate::_0_types::ParseSite,
+        msg:  Arc<str>,
+    },
+    ParseBodyCode {
+        site: crate::_0_types::ParseSite,
+        msg:  Arc<str>,
+        code: Arc<str>,
+    },
+    ParseError {
+        site: crate::_0_types::ParseSite,
+        msg:  Arc<str>,
+    },
+    NoCandidates {
+        site: crate::_0_types::ParseSite,
+        msg:  Arc<str>,
+    },
+    NoMatch {
+        site: crate::_0_types::ParseSite,
+        file: Arc<str>,
+        dump: Arc<str>,
+    },
+}
+
+impl Diagnostic for JsonDiag {
+    fn code(&self) -> &str {
+        match self {
+            JsonDiag::ParseBody      { .. }       => "json/parse-body",
+            JsonDiag::ParseBodyCode  { code, .. } => code,
+            JsonDiag::ParseError     { .. }       => "json/parse-error",
+            JsonDiag::NoCandidates   { .. }       => "json/no-candidates",
+            JsonDiag::NoMatch        { .. }       => "json/no-match",
+        }
+    }
+    fn severity(&self) -> crate::_0_types::Severity {
+        match self {
+            JsonDiag::ParseBody     { .. }
+            | JsonDiag::ParseBodyCode { .. }
+            | JsonDiag::ParseError  { .. } => crate::_0_types::Severity::Error,
+            JsonDiag::NoCandidates  { .. } => crate::_0_types::Severity::Warn,
+            JsonDiag::NoMatch       { .. } => crate::_0_types::Severity::Hint,
+        }
+    }
+    fn primary(&self) -> &crate::_0_types::ParseSite {
+        match self {
+            JsonDiag::ParseBody      { site, .. } => site,
+            JsonDiag::ParseBodyCode  { site, .. } => site,
+            JsonDiag::ParseError     { site, .. } => site,
+            JsonDiag::NoCandidates   { site, .. } => site,
+            JsonDiag::NoMatch        { site, .. } => site,
+        }
+    }
+    fn render(&self, out: &mut dyn Renderer) {
+        match self {
+            JsonDiag::ParseBody { site, msg } => {
+                out.header(self.code(), self.severity(), msg);
+                out.primary(site);
+            }
+            JsonDiag::ParseBodyCode { site, msg, .. } => {
+                out.header(self.code(), self.severity(), msg);
+                out.primary(site);
+            }
+            JsonDiag::ParseError { site, msg } => {
+                out.header(self.code(), self.severity(), msg);
+                out.primary(site);
+            }
+            JsonDiag::NoCandidates { site, msg } => {
+                out.header(self.code(), self.severity(), msg);
+                out.primary(site);
+            }
+            JsonDiag::NoMatch { site, file, dump } => {
+                let msg = format!("pattern found no matches in {file} (file parsed OK; keys/shape differ)");
+                out.header(self.code(), self.severity(), &msg);
+                out.primary(site);
+                out.note(dump);
+            }
+        }
+    }
+}

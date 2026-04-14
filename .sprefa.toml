@@ -1,0 +1,4 @@
+[[repo]]
+slug = "sprefa"
+path = "/Users/chrishafley/projects/sprefa"
+revs = ["HEAD", "test/1", "test/2", "test/3"]
