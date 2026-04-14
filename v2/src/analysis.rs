@@ -365,6 +365,7 @@ impl DocSession {
             constants: Default::default(),
             config:    config.clone(),
             registry:  self.factory_registry.clone(),
+            diags:     Vec::new(),
         };
 
         let outcome = lower_rules(pipes.clone(), pctx);

@@ -228,7 +228,7 @@ fn doc_session_hover_outside_any_span_returns_none() {
 
 #[test]
 fn doc_session_hover_on_deeply_nested_ops_resolves() {
-    let src = r#"rule(foo) { > repo(*) { > rev(HEAD) { > fs(**/x.yaml); }; }; };"#;
+    let src = r#"rule(foo) { > repo($R) { > rev(HEAD) { > fs(**/x.yaml); }; }; };"#;
     let mut s = session(src);
     s.ensure_run();
     let rev_pos = src.find("HEAD").unwrap() + 1;

@@ -155,6 +155,7 @@ fn main() {
                 constants: Default::default(),
                 config:    cfg.clone(),
                 registry:  make_registry(),
+                diags:     Vec::new(),
             };
             let outcome = lower_rules(invs, pctx);
 
