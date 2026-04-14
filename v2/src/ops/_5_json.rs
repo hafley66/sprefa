@@ -13,13 +13,14 @@ use futures_util::stream::StreamExt;
 use crate::_0_types::{Capture, Cursor, FilePath, ParseSite};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
-    BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation, Operator, Pipeline, ProgramCtx,
+    hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
+    Operator, Pipeline, ProgramCtx,
 };
 use crate::data::{parse_by_ext, DataKind, DataNode, AnyDataNode};
 use crate::jq_path;
 use crate::walk::_2_compile::compile_steps;
 use crate::walk::_1_compiled::CompiledStep;
-use crate::walk::_3_walker::{walk, MatchResult};
+use crate::walk::_3_walker::walk;
 use crate::walk::_4_brace_parse::{parse_body, ScanAnnotation};
 
 // ---------------------------------------------------------------------------
@@ -116,45 +117,40 @@ impl Op for JsonOp {
 
     fn hover_capture(&self, cap: &str, cursors: &[Cursor]) -> Option<String> {
         let site = self.parse_site.as_ref();
-        let mut vals: Vec<&str> = Vec::new();
-        for c in cursors {
-            let touched = c.evidence.iter().any(|ev|
+        let header = format!("**`${cap}`** values:");
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .filter(|c| c.evidence.iter().any(|ev|
                 ev.op_name == "json" && ev.parse_site.as_ref() == site
-            );
-            if !touched { continue; }
-            if let Some(capture) = c.captures.get(cap) {
-                let v = capture.value.as_ref();
-                if !vals.contains(&v) {
-                    vals.push(v);
-                    if vals.len() >= 20 { break; }
-                }
-            }
-        }
-        if vals.is_empty() { return None; }
-        let lines: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
-        Some(format!("**`${cap}`** values:\n\n{}", lines.join("\n")))
+            ))
+            .filter_map(|c| {
+                c.captures.get(cap).map(|capture| (
+                    c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned()),
+                    c.rev.to_string(),
+                    capture.value.to_string(),
+                ))
+            })
+            .collect();
+        hover_render_grouped(&header, &entries)
     }
 
     fn hover_match(&self, site: &crate::_0_types::ParseSite, cursors: &[Cursor]) -> Option<String> {
-        let mut vals: Vec<&str> = Vec::new();
-        for c in cursors {
-            for ev in &c.evidence {
-                if ev.op_name == "json"
-                    && ev.parse_site.as_ref() == site
-                {
-                    let v = ev.matched.as_ref();
-                    if !vals.contains(&v) {
-                        vals.push(v);
-                        if vals.len() >= 20 { break; }
-                    }
-                }
-            }
+        let header = "**json** pattern site";
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .flat_map(|c| {
+                c.evidence.iter()
+                    .filter(|ev| ev.op_name == "json" && ev.parse_site.as_ref() == site)
+                    .map(move |ev| (
+                        c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned()),
+                        c.rev.to_string(),
+                        ev.matched.to_string(),
+                    ))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if entries.is_empty() {
+            return Some(format!("{header}\n\n(no matches yet)"));
         }
-        if vals.is_empty() {
-            return Some("**json** pattern site\n\n(no matches yet)".to_string());
-        }
-        let lines: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
-        Some(format!("**json** pattern site\n\n{} matches:\n\n{}", vals.len(), lines.join("\n")))
+        hover_render_grouped(header, &entries)
     }
 
     fn pipe(&self, input: BoxStream<'static, Cursor>, ctx: OpCtx)
@@ -231,7 +227,8 @@ impl Op for JsonOp {
                         }
                     };
 
-                    let rows: Vec<MatchResult> = walk(&tree, &compiled);
+                    let outcome = walk(&tree, &compiled);
+                    let rows = outcome.rows;
 
                     // json/no-match: file walked but zero rows returned
                     if rows.is_empty() {
@@ -242,6 +239,14 @@ impl Op for JsonOp {
                             dump: Arc::from(dump.as_str()),
                         }));
                         continue;
+                    }
+
+                    if !outcome.missed_keys.is_empty() {
+                        diags.0(Box::new(JsonDiag::PartialMatch {
+                            site:   (*parse_site).clone(),
+                            file:   Arc::from(fp.0.to_string_lossy().as_ref()),
+                            missed: outcome.missed_keys.clone(),
+                        }));
                     }
 
                     for row in rows {
@@ -364,6 +369,11 @@ enum JsonDiag {
         file: Arc<str>,
         dump: Arc<str>,
     },
+    PartialMatch {
+        site:   crate::_0_types::ParseSite,
+        file:   Arc<str>,
+        missed: Vec<Arc<str>>,
+    },
 }
 
 impl Diagnostic for JsonDiag {
@@ -374,6 +384,7 @@ impl Diagnostic for JsonDiag {
             JsonDiag::ParseError     { .. }       => "json/parse-error",
             JsonDiag::NoCandidates   { .. }       => "json/no-candidates",
             JsonDiag::NoMatch        { .. }       => "json/no-match",
+            JsonDiag::PartialMatch   { .. }       => "json/partial-match",
         }
     }
     fn severity(&self) -> crate::_0_types::Severity {
@@ -383,6 +394,7 @@ impl Diagnostic for JsonDiag {
             | JsonDiag::ParseError  { .. } => crate::_0_types::Severity::Error,
             JsonDiag::NoCandidates  { .. } => crate::_0_types::Severity::Warn,
             JsonDiag::NoMatch       { .. } => crate::_0_types::Severity::Hint,
+            JsonDiag::PartialMatch  { .. } => crate::_0_types::Severity::Hint,
         }
     }
     fn primary(&self) -> &crate::_0_types::ParseSite {
@@ -392,6 +404,7 @@ impl Diagnostic for JsonDiag {
             JsonDiag::ParseError     { site, .. } => site,
             JsonDiag::NoCandidates   { site, .. } => site,
             JsonDiag::NoMatch        { site, .. } => site,
+            JsonDiag::PartialMatch   { site, .. } => site,
         }
     }
     fn render(&self, out: &mut dyn Renderer) {
@@ -418,6 +431,126 @@ impl Diagnostic for JsonDiag {
                 out.primary(site);
                 out.note(dump);
             }
+            JsonDiag::PartialMatch { site, file, missed } => {
+                let joined = missed.iter().map(|k| k.as_ref()).collect::<Vec<_>>().join(", ");
+                let msg = format!("pattern partially matched in {file}; missing keys: {joined}");
+                out.header(self.code(), self.severity(), &msg);
+                out.primary(site);
+            }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use crate::_0_types::{Capture, FilePath, OpEvidence, RunId, SprfPath};
+
+    fn dummy_site() -> Arc<ParseSite> {
+        Arc::new(ParseSite {
+            file:       Arc::from(Path::new("test.sprf")),
+            path:       Arc::from(vec![].into_boxed_slice()),
+            byte_range: 0..1,
+        })
+    }
+
+    fn base_cursor(rev: &str, fs: Option<&str>) -> Cursor {
+        Cursor {
+            run_id:   RunId(0),
+            repo:     Arc::from("org/repo"),
+            rev:      Arc::from(rev),
+            fs:       fs.map(|p| FilePath(Arc::from(Path::new(p)))),
+            captures: Default::default(),
+            fks:      Default::default(),
+            path:     SprfPath(Arc::from(vec![].into_boxed_slice())),
+            evidence: vec![],
+            content:  None,
+        }
+    }
+
+    fn make_op(site: &Arc<ParseSite>) -> JsonOp {
+        use crate::walk::_4_brace_parse::parse_body;
+        use crate::walk::_2_compile::compile_steps;
+        let (steps, anns) = parse_body("{ name: $N }").unwrap();
+        let compiled = compile_steps(&steps).unwrap();
+        JsonOp {
+            compiled:    Arc::from(compiled.into_boxed_slice()),
+            annotations: Arc::from(anns.into_boxed_slice()),
+            parse_site:  site.clone(),
+        }
+    }
+
+    #[test]
+    fn hover_capture_groups_by_file_rev() {
+        let site = dummy_site();
+        let op = make_op(&site);
+
+        let mut c1 = base_cursor("main", Some("crates/a/Cargo.toml"));
+        c1.evidence.push(OpEvidence {
+            op_name:    "json",
+            parse_site: site.clone(),
+            matched:    Arc::from("alpha"),
+            capture:    None,
+        });
+        c1.captures.insert(Arc::from("N"), Capture { value: Arc::from("alpha"), ref_id: None });
+
+        let mut c2 = base_cursor("main", Some("crates/b/Cargo.toml"));
+        c2.evidence.push(OpEvidence {
+            op_name:    "json",
+            parse_site: site.clone(),
+            matched:    Arc::from("beta"),
+            capture:    None,
+        });
+        c2.captures.insert(Arc::from("N"), Capture { value: Arc::from("beta"), ref_id: None });
+
+        let mut c3 = base_cursor("v2", Some("crates/a/Cargo.toml"));
+        c3.evidence.push(OpEvidence {
+            op_name:    "json",
+            parse_site: site.clone(),
+            matched:    Arc::from("gamma"),
+            capture:    None,
+        });
+        c3.captures.insert(Arc::from("N"), Capture { value: Arc::from("gamma"), ref_id: None });
+
+        let md = op.hover_capture("N", &[c1, c2, c3]).unwrap();
+
+        assert!(md.contains("### `crates/a/Cargo.toml`"), "missing a/ heading: {md}");
+        assert!(md.contains("- `alpha`"), "missing alpha: {md}");
+        assert!(md.contains("### `crates/b/Cargo.toml`"), "missing b/ heading: {md}");
+        assert!(md.contains("- `beta`"), "missing beta: {md}");
+        assert!(md.contains("- `gamma`"), "missing gamma: {md}");
+    }
+
+    #[test]
+    fn hover_match_groups_by_file_rev() {
+        let site = dummy_site();
+        let op = make_op(&site);
+
+        let mut c1 = base_cursor("main", Some("package.json"));
+        c1.evidence.push(OpEvidence {
+            op_name:    "json",
+            parse_site: site.clone(),
+            matched:    Arc::from("foo"),
+            capture:    None,
+        });
+        let mut c2 = base_cursor("main", Some("sub/package.json"));
+        c2.evidence.push(OpEvidence {
+            op_name:    "json",
+            parse_site: site.clone(),
+            matched:    Arc::from("bar"),
+            capture:    None,
+        });
+
+        let md = op.hover_match(site.as_ref(), &[c1, c2]).unwrap();
+
+        assert!(md.contains("### `package.json`"), "missing package.json heading: {md}");
+        assert!(md.contains("- `foo`"), "missing foo: {md}");
+        assert!(md.contains("### `sub/package.json`"), "missing sub/package.json heading: {md}");
+        assert!(md.contains("- `bar`"), "missing bar: {md}");
     }
 }

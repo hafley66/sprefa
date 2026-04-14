@@ -31,6 +31,12 @@ pub struct MatchResult {
     pub captures: Captures,
 }
 
+#[derive(Debug, Clone)]
+pub struct WalkOutcome {
+    pub rows:        Vec<MatchResult>,
+    pub missed_keys: Vec<Arc<str>>,
+}
+
 #[derive(Clone)]
 struct Ctx {
     depth: u32,
@@ -56,7 +62,7 @@ impl Ctx {
     }
 }
 
-pub fn walk<N: DataNode>(root: &N, steps: &[CompiledStep]) -> Vec<MatchResult> {
+pub fn walk<N: DataNode>(root: &N, steps: &[CompiledStep]) -> WalkOutcome {
     walk_with_captures(root, steps, FxHashMap::default())
 }
 
@@ -64,8 +70,43 @@ pub fn walk_with_captures<N: DataNode>(
     root: &N,
     steps: &[CompiledStep],
     seed: Captures,
-) -> Vec<MatchResult> {
-    walk_inner(root, steps, &Ctx::new(), &seed)
+) -> WalkOutcome {
+    // Collect missed keys from the top-level Object step only.
+    let missed_keys = collect_top_level_missed_keys(root, steps);
+    let rows = walk_inner(root, steps, &Ctx::new(), &seed);
+    WalkOutcome { rows, missed_keys }
+}
+
+/// Pre-scan the top-level step: if it's Object{entries}, return the display
+/// names of any Exact/Glob entries whose key resolves to zero hits.
+/// Capture/Wildcard matchers always match something, so they are skipped.
+fn collect_top_level_missed_keys<N: DataNode>(
+    root: &N,
+    steps: &[CompiledStep],
+) -> Vec<Arc<str>> {
+    let Some(CompiledStep::Object { entries }) = steps.first() else {
+        return vec![];
+    };
+    if root.kind() != DataKind::Object {
+        return vec![];
+    }
+    let mut missed = vec![];
+    for entry in entries {
+        match &entry.key {
+            CompiledKeyMatcher::Exact(name) => {
+                if resolve_keys(root, &entry.key).is_empty() {
+                    missed.push(Arc::from(name.as_str()));
+                }
+            }
+            CompiledKeyMatcher::Glob(_) => {
+                if resolve_keys(root, &entry.key).is_empty() {
+                    missed.push(Arc::from("<glob>"));
+                }
+            }
+            CompiledKeyMatcher::Capture(_) | CompiledKeyMatcher::Wildcard => {}
+        }
+    }
+    missed
 }
 
 fn walk_inner<N: DataNode>(
@@ -459,8 +500,8 @@ mod tests {
         let root = parse_json(src);
         let steps = vec![obj(vec![entry(key_exact("x"), leaf_cap("V"))])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1);
-        let cap = &out[0].captures["V"];
+        assert_eq!(out.rows.len(), 1);
+        let cap = &out.rows[0].captures["V"];
         assert_eq!(&*cap.text, "hello");
         // "hello" in source is at bytes 7..14 (including quotes)
         let slice = &src.as_bytes()[cap.byte_start as usize..cap.byte_end as usize];
@@ -478,9 +519,9 @@ mod tests {
             }],
         )])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1);
-        assert_eq!(&*out[0].captures["N"].path, ".users[0].name");
-        assert_eq!(&*out[0].captures["N"].text, "alice");
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["N"].path, ".users[0].name");
+        assert_eq!(&*out.rows[0].captures["N"].text, "alice");
     }
 
     #[test]
@@ -499,11 +540,11 @@ mod tests {
             ),
         ])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 2, "expected 2 row-split results, got {}", out.len());
+        assert_eq!(out.rows.len(), 2, "expected 2 row-split results, got {}", out.rows.len());
 
         // One row binds A only, the other B only.
-        let names_0 = sorted_cap_names(&out[0]);
-        let names_1 = sorted_cap_names(&out[1]);
+        let names_0 = sorted_cap_names(&out.rows[0]);
+        let names_1 = sorted_cap_names(&out.rows[1]);
         let mut all = [names_0, names_1];
         all.sort();
         assert_eq!(all, [vec!["A".to_string()], vec!["B".to_string()]]);
@@ -513,7 +554,7 @@ mod tests {
     fn object_partial_match_missing_descent_still_emits() {
         // Pattern wants both `a: {x: $A}` and `b: {y: $B}`, but input only has `a`.
         // Partial semantics: emit one row binding $A only; missing `b` entry is
-        // tolerated (surfaced as a diagnostic elsewhere, not here).
+        // tolerated; missed_keys surfaces the gap.
         let src = r#"{"a":{"x":"foo"}}"#;
         let root = parse_json(src);
         let steps = vec![obj(vec![
@@ -527,15 +568,16 @@ mod tests {
             ),
         ])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1, "partial match must emit 1 row, got {}", out.len());
-        assert_eq!(&*out[0].captures["A"].text, "foo");
-        assert!(!out[0].captures.contains_key("B"), "B should be unbound on partial");
+        assert_eq!(out.rows.len(), 1, "partial match must emit 1 row, got {}", out.rows.len());
+        assert_eq!(&*out.rows[0].captures["A"].text, "foo");
+        assert!(!out.rows[0].captures.contains_key("B"), "B should be unbound on partial");
+        assert!(out.missed_keys.iter().any(|k| k.as_ref() == "b"), "missed_keys must contain \"b\"");
     }
 
     #[test]
     fn object_partial_match_missing_row_field_still_emits() {
         // Row-field version: one row_field key is missing. Other row_fields
-        // should still produce a row.
+        // should still produce a row; missed_keys surfaces the gap.
         let src = r#"{"name":"alice"}"#;
         let root = parse_json(src);
         let steps = vec![obj(vec![
@@ -543,9 +585,10 @@ mod tests {
             entry(key_exact("age"),  leaf_cap("AGE")),
         ])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1, "partial row_field match must emit 1 row, got {}", out.len());
-        assert_eq!(&*out[0].captures["N"].text, "alice");
-        assert!(!out[0].captures.contains_key("AGE"));
+        assert_eq!(out.rows.len(), 1, "partial row_field match must emit 1 row, got {}", out.rows.len());
+        assert_eq!(&*out.rows[0].captures["N"].text, "alice");
+        assert!(!out.rows[0].captures.contains_key("AGE"));
+        assert!(out.missed_keys.iter().any(|k| k.as_ref() == "age"), "missed_keys must contain \"age\"");
     }
 
     #[test]
@@ -558,9 +601,10 @@ mod tests {
             entry(key_exact("age"),  leaf_cap("AGE")),
         ])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1);
-        assert_eq!(&*out[0].captures["N"].text, "alice");
-        assert_eq!(&*out[0].captures["AGE"].text, "30");
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["N"].text, "alice");
+        assert_eq!(&*out.rows[0].captures["AGE"].text, "30");
+        assert!(out.missed_keys.is_empty());
     }
 
     #[test]
@@ -578,9 +622,9 @@ mod tests {
             }],
         )])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 2);
+        assert_eq!(out.rows.len(), 2);
 
-        let mut pairs: Vec<_> = out.iter().map(|r| {
+        let mut pairs: Vec<_> = out.rows.iter().map(|r| {
             (r.captures["N"].text.to_string(), r.captures["AGE"].text.to_string())
         }).collect();
         pairs.sort();
@@ -604,9 +648,9 @@ mod tests {
             WalkCapture { text: Arc::from("foo"), path: Arc::from(""), byte_start: 0, byte_end: 0 },
         );
         let out = walk_with_captures(&root, &steps, seed);
-        assert_eq!(out.len(), 1);
-        assert_eq!(&*out[0].captures["NAME"].text, "bar");
-        assert_eq!(&*out[0].captures["SCOPE"].text, "foo");
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["NAME"].text, "bar");
+        assert_eq!(&*out.rows[0].captures["SCOPE"].text, "foo");
     }
 
     #[test]
@@ -620,9 +664,9 @@ mod tests {
             entry(key_exact("missing"), leaf_cap("X")),
         ])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1);
-        assert_eq!(&*out[0].captures["A"].text, "foo");
-        assert!(!out[0].captures.contains_key("X"));
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["A"].text, "foo");
+        assert!(!out.rows[0].captures.contains_key("X"));
     }
 
     #[test]
@@ -641,8 +685,8 @@ mod tests {
             ),
         ])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 2);
-        let mut pairs: Vec<_> = out.iter().map(|r| (
+        assert_eq!(out.rows.len(), 2);
+        let mut pairs: Vec<_> = out.rows.iter().map(|r| (
             r.captures["TAG"].text.to_string(),
             r.captures["ID"].text.to_string(),
         )).collect();
@@ -665,10 +709,10 @@ mod tests {
             leaf_cap("VER"),
         )])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1);
-        assert_eq!(&*out[0].captures["VER"].text, "1.0");
-        assert_eq!(&*out[0].captures["SCOPE"].text, "angular");
-        assert_eq!(&*out[0].captures["PKG"].text, "core");
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["VER"].text, "1.0");
+        assert_eq!(&*out.rows[0].captures["SCOPE"].text, "angular");
+        assert_eq!(&*out.rows[0].captures["PKG"].text, "core");
     }
 
     #[test]
@@ -681,9 +725,9 @@ mod tests {
             entry(key_exact("age"),  leaf_cap("AGE")),
         ])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1);
-        assert_eq!(&*out[0].captures["N"].text, "alice");
-        assert_eq!(&*out[0].captures["AGE"].text, "30");
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["N"].text, "alice");
+        assert_eq!(&*out.rows[0].captures["AGE"].text, "30");
     }
 
     #[test]
@@ -695,8 +739,8 @@ mod tests {
             entry(key_exact("age"),  leaf_cap("AGE")),
         ])];
         let out = walk(&root, &steps);
-        assert_eq!(out.len(), 1);
-        assert_eq!(&*out[0].captures["N"].text, "alice");
-        assert_eq!(&*out[0].captures["AGE"].text, "30");
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["N"].text, "alice");
+        assert_eq!(&*out.rows[0].captures["AGE"].text, "30");
     }
 }

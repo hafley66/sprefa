@@ -334,4 +334,62 @@ mod tests {
         let codes = fired.lock().unwrap().clone();
         assert_eq!(codes, vec!["fs/no-match"], "expected exactly one fs/no-match diag, got {codes:?}");
     }
+
+    // -----------------------------------------------------------------------
+    // Hover grouping tests
+    // -----------------------------------------------------------------------
+
+    fn base_cursor_hover(rev: &str, fs: Option<&str>) -> Cursor {
+        Cursor {
+            run_id:   crate::_0_types::RunId(0),
+            repo:     Arc::from("org/repo"),
+            rev:      Arc::from(rev),
+            fs:       fs.map(|p| crate::_0_types::FilePath(Arc::from(Path::new(p)))),
+            captures: Default::default(),
+            fks:      Default::default(),
+            path:     crate::_0_types::SprfPath(Arc::from(vec![].into_boxed_slice())),
+            evidence: vec![],
+            content:  None,
+        }
+    }
+
+    #[test]
+    fn hover_match_groups_by_file_rev() {
+        use crate::_0_types::OpEvidence;
+        let site = dummy_site();
+        let op = FsOp {
+            mode:       FsMode::Filter(Arc::from("**/Cargo.toml")),
+            parse_site: site.clone(),
+        };
+
+        let mut c1 = base_cursor_hover("main", Some("crates/a/Cargo.toml"));
+        c1.evidence.push(OpEvidence {
+            op_name:    "fs",
+            parse_site: site.clone(),
+            matched:    Arc::from("crates/a/Cargo.toml"),
+            capture:    None,
+        });
+        let mut c2 = base_cursor_hover("main", Some("crates/b/Cargo.toml"));
+        c2.evidence.push(OpEvidence {
+            op_name:    "fs",
+            parse_site: site.clone(),
+            matched:    Arc::from("crates/b/Cargo.toml"),
+            capture:    None,
+        });
+        let mut c3 = base_cursor_hover("v2", Some("crates/a/Cargo.toml"));
+        c3.evidence.push(OpEvidence {
+            op_name:    "fs",
+            parse_site: site.clone(),
+            matched:    Arc::from("crates/a/Cargo.toml"),
+            capture:    None,
+        });
+
+        let md = op.hover_match(site.as_ref(), &[c1, c2, c3]).unwrap();
+
+        assert!(md.contains("### `crates/a/Cargo.toml`"), "missing a/Cargo heading: {md}");
+        assert!(md.contains("### `crates/b/Cargo.toml`"), "missing b/Cargo heading: {md}");
+        // c3 is rev=v2 so the rev suffix must appear
+        assert!(md.contains("(rev: v2)") || md.contains("(rev: main)"),
+            "expected rev suffix for multi-rev groups: {md}");
+    }
 }

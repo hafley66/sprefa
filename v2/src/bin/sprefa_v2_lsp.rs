@@ -18,7 +18,30 @@ use v2::ops::{FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, Rule
 use v2::readers::{
     BufferOverlay, CheckoutLocator, ConfigLocator, GitBlobReader, InMemoryLocator, MemReader,
 };
-use v2::{Config, OperatorRegistry, Reader, RuntimeConfig, Severity};
+use v2::{Config, OperatorRegistry, ParseSite, Reader, Renderer, RuntimeConfig, Severity};
+
+// ---------------------------------------------------------------------------
+// CapturingRenderer — collects render() output into strings for LSP messages.
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct CapturingRenderer {
+    header_msg: String,
+    notes:      Vec<String>,
+}
+
+impl Renderer for CapturingRenderer {
+    fn header(&mut self, _code: &str, _sev: Severity, message: &str) {
+        self.header_msg = message.to_string();
+    }
+    fn primary(&mut self, _site: &ParseSite) {}
+    fn related(&mut self, _site: &ParseSite, message: &str) {
+        self.notes.push(message.to_string());
+    }
+    fn note(&mut self, message: &str) {
+        self.notes.push(message.to_string());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Backend
@@ -345,23 +368,30 @@ impl Backend {
         // but LSP users want one marker per source site, with a hit count suffix.
         type DKey = (String, usize, usize);
         let mut counts: std::collections::HashMap<DKey, usize> = std::collections::HashMap::new();
-        let mut firsts: Vec<(DKey, Severity)> = Vec::new();
+        let mut firsts: Vec<(DKey, Severity, String)> = Vec::new();
         for d in entry.session.parse_diagnostics().iter().chain(entry.session.diagnostics().iter()) {
             let site = d.primary();
             let key = (d.code().to_string(), site.byte_range.start, site.byte_range.end);
             let n = counts.entry(key.clone()).or_insert(0);
             *n += 1;
             if *n == 1 {
-                firsts.push((key, d.severity()));
+                let mut cap = CapturingRenderer::default();
+                d.render(&mut cap);
+                let body = if cap.notes.is_empty() {
+                    cap.header_msg
+                } else {
+                    format!("{}\n\n{}", cap.header_msg, cap.notes.join("\n\n"))
+                };
+                firsts.push((key, d.severity(), body));
             }
         }
         let mut diags: Vec<Diagnostic> = Vec::new();
-        for (key, sev) in firsts {
+        for (key, sev, body) in firsts {
             let (code, byte_start, byte_end) = key.clone();
             let n = counts.get(&key).copied().unwrap_or(1);
             let start = offset_to_position(&entry.source, byte_start);
             let end   = offset_to_position(&entry.source, byte_end);
-            let msg = if n > 1 { format!("{code} (×{n})") } else { code.clone() };
+            let msg = if n > 1 { format!("{body} (×{n})") } else { body };
             diags.push(Diagnostic {
                 range:    Range { start, end },
                 severity: Some(severity_to_lsp(sev)),

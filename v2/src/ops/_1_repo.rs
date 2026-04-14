@@ -14,7 +14,8 @@ use futures_core::stream::BoxStream;
 use crate::_0_types::{Capture, Cursor, ParseSite};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
-    BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation, Operator, Pipeline, ProgramCtx,
+    hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
+    Operator, Pipeline, ProgramCtx,
 };
 use crate::_8_parse::{classify_token, glob_match, TokenClass};
 
@@ -102,37 +103,31 @@ impl Op for RepoOp {
     }
 
     fn hover_capture(&self, cap: &str, cursors: &[Cursor]) -> Option<String> {
-        let mut vals: Vec<&str> = Vec::new();
-        for c in cursors {
-            if let Some(capture) = c.captures.get(cap) {
-                let v = capture.value.as_ref();
-                if !vals.contains(&v) {
-                    vals.push(v);
-                    if vals.len() >= 20 { break; }
-                }
-            }
-        }
-        if vals.is_empty() { return None; }
-        let lines: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
-        Some(format!("**`${cap}`** repos:\n\n{}", lines.join("\n")))
+        let header = format!("**`${cap}`** repos:");
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .filter_map(|c| {
+                c.captures.get(cap).map(|capture| (
+                    c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned()),
+                    c.rev.to_string(),
+                    capture.value.to_string(),
+                ))
+            })
+            .collect();
+        hover_render_grouped(&header, &entries)
     }
 
     fn hover_match(&self, site: &crate::_0_types::ParseSite, cursors: &[Cursor]) -> Option<String> {
-        let mut vals: Vec<&str> = Vec::new();
-        for c in cursors {
-            let touched = c.evidence.iter().any(|ev|
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .filter(|c| c.evidence.iter().any(|ev|
                 ev.op_name == "repo" && ev.parse_site.as_ref() == site
-            );
-            if !touched { continue; }
-            let v = c.repo.as_ref();
-            if !vals.contains(&v) {
-                vals.push(v);
-                if vals.len() >= 20 { break; }
-            }
-        }
-        if vals.is_empty() { return None; }
-        let lines: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
-        Some(format!("matches:\n\n{}", lines.join("\n")))
+            ))
+            .map(|c| (
+                c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned()),
+                c.rev.to_string(),
+                c.repo.to_string(),
+            ))
+            .collect();
+        hover_render_grouped("matches:", &entries)
     }
 
     fn pipe(&self, input: BoxStream<'static, Cursor>, _ctx: OpCtx)
@@ -203,5 +198,89 @@ impl Diagnostic for RepoDiag {
                 out.primary(site);
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use crate::_0_types::{Capture, FilePath, OpEvidence, RunId, SprfPath};
+
+    fn dummy_site() -> Arc<ParseSite> {
+        Arc::new(ParseSite {
+            file:       Arc::from(Path::new("test.sprf")),
+            path:       Arc::from(vec![].into_boxed_slice()),
+            byte_range: 0..1,
+        })
+    }
+
+    fn base_cursor(repo: &str, rev: &str, fs: Option<&str>) -> Cursor {
+        Cursor {
+            run_id:   RunId(0),
+            repo:     Arc::from(repo),
+            rev:      Arc::from(rev),
+            fs:       fs.map(|p| FilePath(Arc::from(Path::new(p)))),
+            captures: Default::default(),
+            fks:      Default::default(),
+            path:     SprfPath(Arc::from(vec![].into_boxed_slice())),
+            evidence: vec![],
+            content:  None,
+        }
+    }
+
+    #[test]
+    fn hover_capture_groups_by_file_rev() {
+        let site = dummy_site();
+        let op = RepoOp { mode: RepoMode::Bind(Arc::from("R")), parse_site: site.clone() };
+
+        let mut c1 = base_cursor("org/alpha", "main", Some("Cargo.toml"));
+        c1.captures.insert(Arc::from("R"), Capture { value: Arc::from("org/alpha"), ref_id: None });
+
+        let mut c2 = base_cursor("org/beta", "main", Some("Cargo.toml"));
+        c2.captures.insert(Arc::from("R"), Capture { value: Arc::from("org/beta"), ref_id: None });
+
+        let mut c3 = base_cursor("org/gamma", "v2", Some("other/Cargo.toml"));
+        c3.captures.insert(Arc::from("R"), Capture { value: Arc::from("org/gamma"), ref_id: None });
+
+        let md = op.hover_capture("R", &[c1, c2, c3]).unwrap();
+
+        assert!(md.contains("### `Cargo.toml`"), "missing file heading: {md}");
+        assert!(md.contains("- `org/alpha`"), "missing alpha: {md}");
+        assert!(md.contains("- `org/beta`"), "missing beta: {md}");
+        assert!(md.contains("### `other/Cargo.toml`"), "missing other heading: {md}");
+        assert!(md.contains("- `org/gamma`"), "missing gamma: {md}");
+    }
+
+    #[test]
+    fn hover_match_flat_when_no_fs() {
+        // Cursors without fs (repo-only context) → flat bullet list.
+        let site = dummy_site();
+        let op = RepoOp { mode: RepoMode::Filter(Arc::from("org/*")), parse_site: site.clone() };
+
+        let mut c1 = base_cursor("org/alpha", "main", None);
+        c1.evidence.push(OpEvidence {
+            op_name:    "repo",
+            parse_site: site.clone(),
+            matched:    Arc::from("org/alpha"),
+            capture:    None,
+        });
+        let mut c2 = base_cursor("org/beta", "main", None);
+        c2.evidence.push(OpEvidence {
+            op_name:    "repo",
+            parse_site: site.clone(),
+            matched:    Arc::from("org/beta"),
+            capture:    None,
+        });
+
+        let md = op.hover_match(site.as_ref(), &[c1, c2]).unwrap();
+
+        assert!(!md.contains("###"), "unexpected heading in flat mode: {md}");
+        assert!(md.contains("- `org/alpha`"), "missing alpha: {md}");
+        assert!(md.contains("- `org/beta`"), "missing beta: {md}");
     }
 }

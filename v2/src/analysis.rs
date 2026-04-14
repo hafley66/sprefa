@@ -283,6 +283,7 @@ impl DocSession {
         self.stale = true;
 
         let file: Arc<std::path::Path> = Arc::from(std::path::Path::new("<lsp>"));
+        let file_for_xref = file.clone();
         let pipes: Vec<Pipe> = match host_parse(&self.source, file.clone()) {
             Ok(p) => p,
             Err(errs) => {
@@ -341,6 +342,54 @@ impl DocSession {
             self.build_spans_for_pipe(pipe, rule_name, &[i], 0);
             self.pipelines.push((rule_name.clone(), pipeline));
         }
+
+        self.validate_cross_refs(file_for_xref);
+    }
+
+    /// After span_ix is fully built, walk CrossRef entries and emit diagnostics
+    /// for unknown target rules or unknown target captures. Target rule captures
+    /// are derived from SpanKind::Capture entries indexed by rule name.
+    fn validate_cross_refs(&mut self, file: Arc<std::path::Path>) {
+        use std::collections::{HashMap, HashSet};
+        let mut caps_by_rule: HashMap<Arc<str>, HashSet<Arc<str>>> = HashMap::new();
+        for e in &self.span_ix {
+            if let SpanKind::Capture { var, .. } = &e.kind {
+                caps_by_rule
+                    .entry(e.rule.clone())
+                    .or_default()
+                    .insert(var.clone());
+            }
+        }
+        let known_rules: HashSet<Arc<str>> =
+            self.pipelines.iter().map(|(n, _)| n.clone()).collect();
+        let mut out: Vec<Box<dyn Diagnostic>> = Vec::new();
+        for e in &self.span_ix {
+            let SpanKind::CrossRef { target_rule, var, .. } = &e.kind else { continue; };
+            let site = ParseSite {
+                file:       file.clone(),
+                path:       Arc::from(vec![].into_boxed_slice()),
+                byte_range: e.range.clone(),
+            };
+            if !known_rules.contains(target_rule) {
+                out.push(Box::new(XRefDiag::UnknownRule {
+                    site,
+                    target: target_rule.clone(),
+                    known:  known_rules.iter().cloned().collect(),
+                }));
+                continue;
+            }
+            let empty: HashSet<Arc<str>> = HashSet::new();
+            let caps = caps_by_rule.get(target_rule).unwrap_or(&empty);
+            if !caps.contains(var) {
+                out.push(Box::new(XRefDiag::UnknownCapture {
+                    site,
+                    target: target_rule.clone(),
+                    var:    var.clone(),
+                    known:  caps.iter().cloned().collect(),
+                }));
+            }
+        }
+        self.parse_diags.extend(out);
     }
 
     /// Walk `pipe.ops` and emit SpanEntry records.
@@ -706,6 +755,65 @@ impl std::fmt::Debug for ParseDiagWrapper {
     }
 }
 
+// ---------------------------------------------------------------------------
+// XRefDiag — cross-ref validation diagnostics
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+enum XRefDiag {
+    UnknownRule {
+        site:   ParseSite,
+        target: Arc<str>,
+        known:  Vec<Arc<str>>,
+    },
+    UnknownCapture {
+        site:   ParseSite,
+        target: Arc<str>,
+        var:    Arc<str>,
+        known:  Vec<Arc<str>>,
+    },
+}
+
+impl Diagnostic for XRefDiag {
+    fn code(&self) -> &str {
+        match self {
+            XRefDiag::UnknownRule    { .. } => "xref/unknown-rule",
+            XRefDiag::UnknownCapture { .. } => "xref/unknown-capture",
+        }
+    }
+    fn severity(&self) -> crate::_0_types::Severity { crate::_0_types::Severity::Error }
+    fn primary(&self) -> &ParseSite {
+        match self {
+            XRefDiag::UnknownRule    { site, .. } => site,
+            XRefDiag::UnknownCapture { site, .. } => site,
+        }
+    }
+    fn render(&self, out: &mut dyn crate::_1_diagnostic::Renderer) {
+        match self {
+            XRefDiag::UnknownRule { site, target, known } => {
+                let mut names: Vec<&str> = known.iter().map(|n| n.as_ref()).collect();
+                names.sort();
+                let msg = format!(
+                    "cross-ref target rule `{target}` does not exist (known rules: {})",
+                    if names.is_empty() { "<none>".to_string() } else { names.join(", ") },
+                );
+                out.header(self.code(), self.severity(), &msg);
+                out.primary(site);
+            }
+            XRefDiag::UnknownCapture { site, target, var, known } => {
+                let mut names: Vec<&str> = known.iter().map(|n| n.as_ref()).collect();
+                names.sort();
+                let msg = format!(
+                    "rule `{target}` does not declare capture `${var}` (available: {})",
+                    if names.is_empty() { "<none>".to_string() } else { names.join(", ") },
+                );
+                out.header(self.code(), self.severity(), &msg);
+                out.primary(site);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -761,5 +869,32 @@ mod tests {
 
         let entry = capture.unwrap();
         assert_eq!(entry.range.start, tag_pos, "capture range start should point at $TAG");
+    }
+
+    #[test]
+    fn xref_unknown_rule_diag() {
+        let source = r#"rule(a) { > json({ tag: $T }) }
+rule(b) { > json({ v: ${nope.$T} }) }"#.to_string();
+        let session = DocSession::new(source, empty_reader(), make_registry());
+        let codes: Vec<&str> = session.parse_diagnostics().iter().map(|d| d.code()).collect();
+        assert!(codes.contains(&"xref/unknown-rule"), "got: {:?}", codes);
+    }
+
+    #[test]
+    fn xref_unknown_capture_diag() {
+        let source = r#"rule(a) { > json({ tag: $T }) }
+rule(b) { > json({ v: ${a.$MISSING} }) }"#.to_string();
+        let session = DocSession::new(source, empty_reader(), make_registry());
+        let codes: Vec<&str> = session.parse_diagnostics().iter().map(|d| d.code()).collect();
+        assert!(codes.contains(&"xref/unknown-capture"), "got: {:?}", codes);
+    }
+
+    #[test]
+    fn xref_valid_no_diag() {
+        let source = r#"rule(a) { > json({ tag: $T }) }
+rule(b) { > json({ v: ${a.$T} }) }"#.to_string();
+        let session = DocSession::new(source, empty_reader(), make_registry());
+        let codes: Vec<&str> = session.parse_diagnostics().iter().map(|d| d.code()).collect();
+        assert!(!codes.iter().any(|c| c.starts_with("xref/")), "got: {:?}", codes);
     }
 }

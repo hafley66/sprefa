@@ -8,7 +8,8 @@ use futures_core::stream::BoxStream;
 use crate::_0_types::{Capture, Cursor, ParseSite};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
-    BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation, Operator, Pipeline, ProgramCtx,
+    hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
+    Operator, Pipeline, ProgramCtx,
 };
 use crate::_8_parse::{classify_token, glob_match, TokenClass};
 
@@ -75,19 +76,17 @@ impl Op for RevOp {
     }
 
     fn hover_capture(&self, cap: &str, cursors: &[Cursor]) -> Option<String> {
-        let mut vals: Vec<&str> = Vec::new();
-        for c in cursors {
-            if let Some(capture) = c.captures.get(cap) {
-                let v = capture.value.as_ref();
-                if !vals.contains(&v) {
-                    vals.push(v);
-                    if vals.len() >= 20 { break; }
-                }
-            }
-        }
-        if vals.is_empty() { return None; }
-        let lines: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
-        Some(format!("**`${cap}`** revisions:\n\n{}", lines.join("\n")))
+        let header = format!("**`${cap}`** revisions:");
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .filter_map(|c| {
+                c.captures.get(cap).map(|capture| (
+                    c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned()),
+                    c.rev.to_string(),
+                    capture.value.to_string(),
+                ))
+            })
+            .collect();
+        hover_render_grouped(&header, &entries)
     }
 
     fn hover_match(&self, site: &crate::_0_types::ParseSite, cursors: &[Cursor]) -> Option<String> {
@@ -95,23 +94,21 @@ impl Op for RevOp {
             RevMode::Filter(g) => g.as_ref().to_string(),
             RevMode::Bind(n)   => format!("${}", n),
         };
-        let mut vals: Vec<&str> = Vec::new();
-        for c in cursors {
-            let touched = c.evidence.iter().any(|ev|
+        let header = format!("**rev** glob: `{glob}`");
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .filter(|c| c.evidence.iter().any(|ev|
                 ev.op_name == "rev" && ev.parse_site.as_ref() == site
-            );
-            if !touched { continue; }
-            let v = c.rev.as_ref();
-            if !vals.contains(&v) {
-                vals.push(v);
-                if vals.len() >= 20 { break; }
-            }
+            ))
+            .map(|c| (
+                c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned()),
+                c.rev.to_string(),
+                c.rev.to_string(),
+            ))
+            .collect();
+        if entries.is_empty() {
+            return Some(format!("{header}\n\n(no matches yet)"));
         }
-        if vals.is_empty() {
-            return Some(format!("**rev** glob: `{glob}`\n\n(no matches yet)"));
-        }
-        let lines: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
-        Some(format!("**rev** glob: `{glob}`\n\n{} matches:\n\n{}", vals.len(), lines.join("\n")))
+        hover_render_grouped(&header, &entries)
     }
 
     fn pipe(&self, input: BoxStream<'static, Cursor>, _ctx: OpCtx)
@@ -231,5 +228,76 @@ mod tests {
         let err = result.err().unwrap();
         assert_eq!(err.len(), 1);
         assert_eq!(err[0].code(), "rev/no-op-glob");
+    }
+
+    // -----------------------------------------------------------------------
+    // Hover grouping tests
+    // -----------------------------------------------------------------------
+
+    fn base_cursor(rev: &str, fs: Option<&str>) -> Cursor {
+        use crate::_0_types::{FilePath, RunId, SprfPath};
+        use std::path::Path;
+        Cursor {
+            run_id:   RunId(0),
+            repo:     Arc::from("org/repo"),
+            rev:      Arc::from(rev),
+            fs:       fs.map(|p| FilePath(Arc::from(Path::new(p)))),
+            captures: Default::default(),
+            fks:      Default::default(),
+            path:     SprfPath(Arc::from(vec![].into_boxed_slice())),
+            evidence: vec![],
+            content:  None,
+        }
+    }
+
+    #[test]
+    fn hover_capture_groups_by_file_rev() {
+        use crate::_0_types::Capture;
+        let site = dummy_site();
+        let op = RevOp { mode: RevMode::Bind(Arc::from("V")), parse_site: site.clone() };
+
+        let mut c1 = base_cursor("main", Some("go.mod"));
+        c1.captures.insert(Arc::from("V"), Capture { value: Arc::from("main"), ref_id: None });
+
+        let mut c2 = base_cursor("v2", Some("go.mod"));
+        c2.captures.insert(Arc::from("V"), Capture { value: Arc::from("v2"), ref_id: None });
+
+        let mut c3 = base_cursor("main", Some("sub/go.mod"));
+        c3.captures.insert(Arc::from("V"), Capture { value: Arc::from("main"), ref_id: None });
+
+        let md = op.hover_capture("V", &[c1, c2, c3]).unwrap();
+
+        assert!(md.contains("### `go.mod`"), "missing go.mod heading: {md}");
+        assert!(md.contains("- `main`"), "missing main: {md}");
+        assert!(md.contains("- `v2`"), "missing v2: {md}");
+        assert!(md.contains("### `sub/go.mod`"), "missing sub/go.mod heading: {md}");
+    }
+
+    #[test]
+    fn hover_match_flat_when_no_fs() {
+        use crate::_0_types::OpEvidence;
+        let site = dummy_site();
+        let op = RevOp { mode: RevMode::Filter(Arc::from("main")), parse_site: site.clone() };
+
+        let mut c1 = base_cursor("main", None);
+        c1.evidence.push(OpEvidence {
+            op_name:    "rev",
+            parse_site: site.clone(),
+            matched:    Arc::from("main"),
+            capture:    None,
+        });
+        let mut c2 = base_cursor("develop", None);
+        c2.evidence.push(OpEvidence {
+            op_name:    "rev",
+            parse_site: site.clone(),
+            matched:    Arc::from("develop"),
+            capture:    None,
+        });
+
+        let md = op.hover_match(site.as_ref(), &[c1, c2]).unwrap();
+
+        assert!(!md.contains("###"), "unexpected heading in flat mode: {md}");
+        assert!(md.contains("- `main`"), "missing main: {md}");
+        assert!(md.contains("- `develop`"), "missing develop: {md}");
     }
 }

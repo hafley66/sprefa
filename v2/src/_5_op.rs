@@ -280,3 +280,107 @@ pub struct HoverInfo {
     pub markdown: Arc<str>,
     pub range:    Range<u32>,
 }
+
+// ---------------------------------------------------------------------------
+// Hover grouping utility
+// ---------------------------------------------------------------------------
+
+/// Group `(fs_path, rev, value)` tuples into grouped markdown under `header`.
+///
+/// Rules:
+/// - If all `fs_path` are `None`, returns a flat bullet list (no `###` headings).
+/// - Otherwise groups by `(fs_path, rev)` with `### \`path\`  (rev: rev)` headings.
+///   If all tuples share one rev, the `(rev: …)` suffix is omitted.
+/// - Deduplicates `(fs_path, rev, value)` tuples.
+/// - Caps total values at 20 across all groups.
+///
+/// `header` is rendered verbatim as the first line if provided (non-empty).
+/// Returns `None` if `entries` is empty.
+///
+/// # TODO: reference tail needs rule name threaded from DocSession
+pub fn hover_render_grouped(
+    header:  &str,
+    entries: &[(Option<String>, String, String)],  // (fs, rev, value)
+) -> Option<String> {
+    if entries.is_empty() { return None; }
+
+    let all_fs_none = entries.iter().all(|(fs, _, _)| fs.is_none());
+
+    if all_fs_none {
+        // Flat bullet list — original behavior.
+        let mut seen: Vec<&str> = Vec::new();
+        let mut lines: Vec<String> = Vec::new();
+        for (_, _, val) in entries {
+            let v = val.as_str();
+            if seen.contains(&v) { continue; }
+            seen.push(v);
+            lines.push(format!("- `{}`", v));
+            if lines.len() >= 20 { break; }
+        }
+        if lines.is_empty() { return None; }
+        let body = lines.join("\n");
+        return Some(if header.is_empty() {
+            body
+        } else {
+            format!("{}\n\n{}", header, body)
+        });
+    }
+
+    // Determine if all revs are the same → omit (rev: …) suffix.
+    let single_rev = {
+        let mut it = entries.iter().map(|(_, rev, _)| rev.as_str());
+        let first = it.next().unwrap();
+        if it.all(|r| r == first) { Some(first) } else { None }
+    };
+
+    // Build ordered group key list + value sets, respecting 20-value cap.
+    let mut order: Vec<(Option<String>, String)> = Vec::new();  // (fs, rev)
+    let mut groups: std::collections::HashMap<(Option<String>, String), Vec<String>> =
+        std::collections::HashMap::new();
+    let mut total = 0usize;
+
+    'outer: for (fs, rev, val) in entries {
+        let key = (fs.clone(), rev.clone());
+        let bucket = groups.entry(key.clone()).or_insert_with(|| {
+            order.push(key.clone());
+            Vec::new()
+        });
+        let v = val.as_str();
+        if bucket.iter().any(|s| s.as_str() == v) { continue; }
+        bucket.push(val.clone());
+        total += 1;
+        if total >= 20 { break 'outer; }
+    }
+
+    let mut sections: Vec<String> = Vec::new();
+    for key in &order {
+        let vals = &groups[key];
+        let (fs_opt, rev) = key;
+        let heading = match fs_opt {
+            Some(path) => {
+                if single_rev.is_some() {
+                    format!("### `{}`", path)
+                } else {
+                    format!("### `{}`  (rev: {})", path, rev)
+                }
+            }
+            None => {
+                // Mixed: some cursors have fs, some don't. Group under rev.
+                if single_rev.is_some() {
+                    format!("### (no file)")
+                } else {
+                    format!("### (no file, rev: {})", rev)
+                }
+            }
+        };
+        let bullets: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
+        sections.push(format!("{}\n{}", heading, bullets.join("\n")));
+    }
+
+    let body = sections.join("\n\n");
+    Some(if header.is_empty() {
+        body
+    } else {
+        format!("{}\n\n{}", header, body)
+    })
+}

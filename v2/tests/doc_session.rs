@@ -171,7 +171,7 @@ fn doc_session_rerun_picks_up_source_change() {
 #[test]
 fn doc_session_diagnostics_surface_from_run() {
     // Runtime diagnostic: json op runs against a package.json that has no
-    // `dependencies` key, produces zero rows, emits `json/no-match` (warn).
+    // `dependencies` key; partial-match semantics emit `json/partial-match` (hint).
     // Asserts on s.diagnostics() (run-time surface), not parse_diagnostics.
     let src = r#"rule(r){ > repo(acme) > rev(main) > json({ dependencies: { $DEP: $_ } }) }"#;
     let mem = Arc::new(
@@ -186,8 +186,8 @@ fn doc_session_diagnostics_surface_from_run() {
 
     let codes: Vec<&str> = s.diagnostics().iter().map(|d| d.code()).collect();
     assert!(
-        codes.iter().any(|c| *c == "json/no-match"),
-        "expected json/no-match in run diagnostics, got: {:?}",
+        codes.iter().any(|c| *c == "json/partial-match"),
+        "expected json/partial-match in run diagnostics, got: {:?}",
         codes,
     );
 }

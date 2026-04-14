@@ -22,4 +22,4 @@ pub use _2_compile::{
     compile_steps, compile_one_step, compile_object_entry, compile_key_matcher,
     compiled_key_matches,
 };
-pub use _3_walker::{walk, walk_with_captures, MatchResult, Captures};
+pub use _3_walker::{walk, walk_with_captures, MatchResult, WalkOutcome, Captures};
