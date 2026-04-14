@@ -63,12 +63,7 @@ fn rule_repo_rev_end_to_end() {
     "#;
 
     let invs = host_parse(src, Arc::from(PathBuf::from("<test>").as_path())).unwrap();
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    cfg.clone(),
-        registry:  make_registry(),
-    };
+    let pctx = ProgramCtx::new(cfg.clone(), make_registry());
     let outcome = lower_rules(invs, pctx);
     assert!(outcome.diags.is_empty(), "lower diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
     assert_eq!(outcome.pipelines.len(), 1);
@@ -167,12 +162,7 @@ fn fs_fanout_and_evidence() {
     "#;
 
     let invs = host_parse(src, Arc::from(PathBuf::from("<test>").as_path())).unwrap();
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    cfg.clone(),
-        registry:  make_registry(),
-    };
+    let pctx = ProgramCtx::new(cfg.clone(), make_registry());
     let outcome = lower_rules(invs, pctx);
     assert!(outcome.diags.is_empty(),
         "lower diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());

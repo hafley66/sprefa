@@ -39,19 +39,14 @@ fn make_registry() -> Arc<OperatorRegistry> {
 fn lower(src: &str) -> v2::LowerOutcome {
     let file = Arc::from(PathBuf::from("<test>").as_path());
     let pipes = host_parse(src, file).unwrap();
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    make_config(),
-        registry:  make_registry(),
-    };
+    let pctx = ProgramCtx::new(make_config(), make_registry());
     lower_rules(pipes, pctx)
 }
 
-// repo(*) { > rev(*); } — rev(*) produces rev/no-op-glob from within the arm.
+// repo($R) { > rev(*); } — rev(*) produces rev/no-op-glob from within the arm.
 #[test]
 fn fork_arm_rev_star_diag() {
-    let src = r#"rule(foo) { > repo(*) { > rev(*); }; };"#;
+    let src = r#"rule(foo) { > repo($R) { > rev(*); }; };"#;
     let outcome = lower(src);
     let codes: Vec<&str> = outcome.diags.iter().map(|d| d.code()).collect();
     assert!(
@@ -60,10 +55,10 @@ fn fork_arm_rev_star_diag() {
     );
 }
 
-// repo(*) { > rev(main); } — clean, no diags.
+// repo($R) { > rev(main); } — clean, no diags.
 #[test]
 fn fork_arm_rev_main_clean() {
-    let src = r#"rule(foo) { > repo(*) { > rev(main); }; };"#;
+    let src = r#"rule(foo) { > repo($R) { > rev(main); }; };"#;
     let outcome = lower(src);
     assert!(
         outcome.diags.is_empty(),
@@ -72,10 +67,10 @@ fn fork_arm_rev_main_clean() {
     );
 }
 
-// repo(*) { rev(main); } — missing arm `>` → parse/arm-brace diag.
+// repo($R) { rev(main); } — missing arm `>` → parse/arm-brace diag.
 #[test]
 fn fork_arm_missing_arrow_diag() {
-    let src = r#"rule(foo) { > repo(*) { rev(main); }; };"#;
+    let src = r#"rule(foo) { > repo($R) { rev(main); }; };"#;
     let outcome = lower(src);
     let codes: Vec<&str> = outcome.diags.iter().map(|d| d.code()).collect();
     assert!(

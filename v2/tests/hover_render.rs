@@ -95,12 +95,7 @@ fn parse_single_op(src: &str) -> Arc<dyn Op> {
         &Arc::from(vec![ParseSeg::Top { index: 0 }].into_boxed_slice()),
     ).expect("parse_single_op: parse failed");
 
-    let mut pctx = v2::ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    make_config(),
-        registry:  make_registry(),
-    };
+    let mut pctx = v2::ProgramCtx::new(make_config(), make_registry());
     let mut diags: Vec<Box<dyn v2::Diagnostic>> = Vec::new();
     let chain = v2::lower_chain(&pipes[0].ops, &mut pctx, &mut diags);
     assert!(diags.is_empty(), "diags: {:?}", diags.iter().map(|d| d.code()).collect::<Vec<_>>());
@@ -114,12 +109,7 @@ fn parse_single_op(src: &str) -> Arc<dyn Op> {
 fn parse_rule_op(src: &str) -> Arc<dyn Op> {
     let invs = v2::host_parse(src, Arc::from(PathBuf::from("<test>").as_path()))
         .expect("host_parse failed");
-    let pctx = v2::ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    make_config(),
-        registry:  make_registry(),
-    };
+    let pctx = v2::ProgramCtx::new(make_config(), make_registry());
     let outcome = v2::lower_rules(invs, pctx);
     assert!(
         outcome.diags.is_empty(),
@@ -338,12 +328,7 @@ fn every_op_hover_self_is_non_empty() {
                 Arc::from(PathBuf::from("<test>").as_path()),
                 &Arc::from(vec![ParseSeg::Top { index: 0 }].into_boxed_slice()),
             ).unwrap();
-            let mut pctx = v2::ProgramCtx {
-                rules:     Default::default(),
-                constants: Default::default(),
-                config:    make_config(),
-                registry:  make_registry(),
-            };
+            let mut pctx = v2::ProgramCtx::new(make_config(), make_registry());
             let mut diags: Vec<Box<dyn v2::Diagnostic>> = Vec::new();
             let chain = v2::lower_chain(&pipes[0].ops, &mut pctx, &mut diags);
             assert!(diags.is_empty());

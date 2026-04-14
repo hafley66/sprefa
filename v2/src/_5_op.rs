@@ -226,6 +226,26 @@ pub struct ProgramCtx {
     pub diags:     Vec<Box<dyn crate::_1_diagnostic::Diagnostic>>,
 }
 
+impl ProgramCtx {
+    /// Fresh ctx with empty rules/constants/diags. Use setters for non-defaults.
+    pub fn new(config: Arc<Config>, registry: Arc<crate::_10_registry::OperatorRegistry>) -> Self {
+        Self {
+            rules:     HashMap::new(),
+            constants: HashMap::new(),
+            config,
+            registry,
+            diags:     Vec::new(),
+        }
+    }
+
+    pub fn with_rules(mut self, rules: HashMap<Arc<str>, RuleHandle>) -> Self {
+        self.rules = rules; self
+    }
+    pub fn with_constants(mut self, constants: HashMap<Arc<str>, Capture>) -> Self {
+        self.constants = constants; self
+    }
+}
+
 #[derive(Clone)]
 pub struct RuleHandle {
     pub name:       Arc<str>,

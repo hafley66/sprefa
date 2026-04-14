@@ -150,13 +150,7 @@ fn main() {
             }).collect();
 
             // Lower
-            let pctx = ProgramCtx {
-                rules:     Default::default(),
-                constants: Default::default(),
-                config:    cfg.clone(),
-                registry:  make_registry(),
-                diags:     Vec::new(),
-            };
+            let pctx = ProgramCtx::new(cfg.clone(), make_registry());
             let outcome = lower_rules(invs, pctx);
 
             if !outcome.diags.is_empty() {

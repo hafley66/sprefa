@@ -477,10 +477,7 @@ mod tests {
     fn lower(src: &str) -> crate::LowerOutcome {
         let file = Arc::from(PathBuf::from("<test>").as_path());
         let invs = host_parse(src, file).unwrap();
-        let pctx = ProgramCtx {
-            rules: Default::default(), constants: Default::default(),
-            config: make_config(), registry: make_registry(),
-        };
+        let pctx = ProgramCtx::new(make_config(), make_registry());
         lower_rules(invs, pctx)
     }
 

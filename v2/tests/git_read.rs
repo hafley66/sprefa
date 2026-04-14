@@ -108,12 +108,7 @@ fn git_blob_reader_read_op() {
     registry.register(Arc::new(FsFactory));
     registry.register(Arc::new(ReadFactory));
 
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    cfg.clone(),
-        registry:  Arc::new(registry),
-    };
+    let pctx = ProgramCtx::new(cfg.clone(), Arc::new(registry));
     let outcome = lower_rules(invs, pctx);
     assert!(outcome.diags.is_empty(),
         "diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());

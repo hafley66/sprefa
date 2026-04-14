@@ -360,13 +360,7 @@ impl DocSession {
                 .unwrap_or_else(|| Arc::from(format!("rule_{i}").as_str()))
         }).collect();
 
-        let pctx = ProgramCtx {
-            rules:     Default::default(),
-            constants: Default::default(),
-            config:    config.clone(),
-            registry:  self.factory_registry.clone(),
-            diags:     Vec::new(),
-        };
+        let pctx = ProgramCtx::new(config.clone(), self.factory_registry.clone());
 
         let outcome = lower_rules(pipes.clone(), pctx);
         eprintln!("REPARSE_DBG pipes={} outcome_pipelines={} diags={}",

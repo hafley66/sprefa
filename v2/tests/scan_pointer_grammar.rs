@@ -87,12 +87,7 @@ fn make_pctx(extra: Option<Arc<dyn Operator>>) -> ProgramCtx {
         },
         content_hash: 0,
     };
-    ProgramCtx {
-        rules: Default::default(),
-        constants: Default::default(),
-        config: Arc::new(config),
-        registry: Arc::new(reg),
-    }
+    ProgramCtx::new(Arc::new(config), Arc::new(reg))
 }
 
 fn fake_file() -> Arc<Path> {

@@ -49,12 +49,7 @@ fn make_registry() -> Arc<OperatorRegistry> {
 fn run_rule(src: &str, reader: Arc<MemReader>) -> Vec<Cursor> {
     let cfg = reader.config.clone();
     let invs = host_parse(src, Arc::from(PathBuf::from("<test>").as_path())).unwrap();
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    cfg.clone(),
-        registry:  make_registry(),
-    };
+    let pctx = ProgramCtx::new(cfg.clone(), make_registry());
     let outcome = lower_rules(invs, pctx);
     assert!(
         outcome.diags.is_empty(),

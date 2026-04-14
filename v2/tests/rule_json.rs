@@ -64,12 +64,7 @@ fn make_registry() -> Arc<OperatorRegistry> {
 fn run_rule(src: &str, reader: Arc<MemReader>) -> (Vec<Cursor>, Arc<MemWriter>) {
     let cfg = reader.config.clone();
     let invs = host_parse(src, Arc::from(PathBuf::from("<test>").as_path())).unwrap();
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    cfg.clone(),
-        registry:  make_registry(),
-    };
+    let pctx = ProgramCtx::new(cfg.clone(), make_registry());
     let outcome = lower_rules(invs, pctx);
     assert!(outcome.diags.is_empty(),
         "lower diags: {:?}",
@@ -308,12 +303,7 @@ fn json_annotation_rejects_pattern_inner() {
         };
     "#;
     let invs = host_parse(src, Arc::from(PathBuf::from("<test>").as_path())).unwrap();
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    reader.config.clone(),
-        registry:  make_registry(),
-    };
+    let pctx = ProgramCtx::new(reader.config.clone(), make_registry());
     let outcome = lower_rules(invs, pctx);
     let codes: Vec<&str> = outcome.diags.iter().map(|d| d.code()).collect();
     assert!(
@@ -332,12 +322,7 @@ fn json_annotation_rejects_wildcard_inner() {
         };
     "#;
     let invs = host_parse(src, Arc::from(PathBuf::from("<test>").as_path())).unwrap();
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    reader.config.clone(),
-        registry:  make_registry(),
-    };
+    let pctx = ProgramCtx::new(reader.config.clone(), make_registry());
     let outcome = lower_rules(invs, pctx);
     let codes: Vec<&str> = outcome.diags.iter().map(|d| d.code()).collect();
     assert!(codes.iter().any(|c| *c == "json/annotation-requires-capture"),

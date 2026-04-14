@@ -73,12 +73,7 @@ fn run_rule_git(
     diag_sink: DiagSink,
 ) -> Vec<Cursor> {
     let invs = host_parse(src, Arc::from(PathBuf::from("<test>").as_path())).unwrap();
-    let pctx = ProgramCtx {
-        rules:     Default::default(),
-        constants: Default::default(),
-        config:    cfg.clone(),
-        registry:  make_registry(),
-    };
+    let pctx = ProgramCtx::new(cfg.clone(), make_registry());
     let outcome = lower_rules(invs, pctx);
     assert!(outcome.diags.is_empty(),
         "lower diags: {:?}",

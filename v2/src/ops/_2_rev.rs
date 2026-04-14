@@ -215,12 +215,7 @@ mod tests {
             },
             content_hash: 0,
         };
-        ProgramCtx {
-            rules:     Default::default(),
-            constants: Default::default(),
-            config:    Arc::new(config),
-            registry:  Arc::new(OperatorRegistry::new()),
-        }
+        ProgramCtx::new(Arc::new(config), Arc::new(OperatorRegistry::new()))
     }
 
     #[test]
