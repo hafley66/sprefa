@@ -11,11 +11,11 @@ use std::sync::Arc;
 use futures_util::stream::StreamExt;
 use futures_core::stream::BoxStream;
 
-use crate::_0_types::{Capture, Cursor, ParseSite};
+use crate::_0_types::{Capture, Cursor, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
     hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
-    Operator, Pipeline, ProgramCtx,
+    Operator, Pipeline, ProgramCtx, ScanPointer,
 };
 use crate::_8_parse::{classify_token, glob_match, TokenClass};
 
@@ -29,6 +29,14 @@ impl Operator for RepoFactory {
     fn name(&self) -> &'static str { "repo" }
     fn paren_grammar(&self) -> GrammarRef { GrammarRef(Arc::from("repo-arg")) }
     fn brace_mode(&self) -> BraceMode { BraceMode::DefaultFork }
+
+    fn scan_pointers(&self) -> &'static [ScanPointer] {
+        static P: &[ScanPointer] = &[
+            ScanPointer { sigil: "repo",      read: |c| Some(c.repo.clone()) },
+            ScanPointer { sigil: "repo_norm", read: |c| Some(c.repo.clone()) },
+        ];
+        P
+    }
 
     fn completion_item(&self) -> CompletionItem {
         CompletionItem {
@@ -54,7 +62,7 @@ impl Operator for RepoFactory {
                 }) as _]);
             }
             TokenClass::Literal        => RepoMode::Filter(Arc::from(arg)),
-            TokenClass::Provenance(_)
+            TokenClass::ScanPointer(_)
           | TokenClass::CrossRef(_)    => {
                 return Err(vec![Box::new(RepoDiag::BadArg {
                     site: (*inv.parse_site).clone(),
@@ -145,7 +153,7 @@ impl Op for RepoOp {
                 let name = name.clone();
                 input.map(move |mut c| {
                     let v = c.repo.clone();
-                    c.captures.insert(name.clone(), Capture { value: v, ref_id: None });
+                    c.captures.insert(name.clone(), Capture::new(v).with_scan(Arc::from("repo"), Tri::Verified));
                     c
                 }).boxed()
             }
@@ -234,18 +242,29 @@ mod tests {
     }
 
     #[test]
+    fn scan_pointers_expose_repo_and_repo_norm() {
+        let f = RepoFactory;
+        let ps = Operator::scan_pointers(&f);
+        let sigils: Vec<&str> = ps.iter().map(|p| p.sigil).collect();
+        assert_eq!(sigils, vec!["repo", "repo_norm"]);
+        let c = base_cursor("org/alpha", "main", None);
+        assert_eq!(&*(ps[0].read)(&c).unwrap(), "org/alpha");
+        assert_eq!(&*(ps[1].read)(&c).unwrap(), "org/alpha");
+    }
+
+    #[test]
     fn hover_capture_groups_by_file_rev() {
         let site = dummy_site();
         let op = RepoOp { mode: RepoMode::Bind(Arc::from("R")), parse_site: site.clone() };
 
         let mut c1 = base_cursor("org/alpha", "main", Some("Cargo.toml"));
-        c1.captures.insert(Arc::from("R"), Capture { value: Arc::from("org/alpha"), ref_id: None });
+        c1.captures.insert(Arc::from("R"), Capture::new(Arc::from("org/alpha")));
 
         let mut c2 = base_cursor("org/beta", "main", Some("Cargo.toml"));
-        c2.captures.insert(Arc::from("R"), Capture { value: Arc::from("org/beta"), ref_id: None });
+        c2.captures.insert(Arc::from("R"), Capture::new(Arc::from("org/beta")));
 
         let mut c3 = base_cursor("org/gamma", "v2", Some("other/Cargo.toml"));
-        c3.captures.insert(Arc::from("R"), Capture { value: Arc::from("org/gamma"), ref_id: None });
+        c3.captures.insert(Arc::from("R"), Capture::new(Arc::from("org/gamma")));
 
         let md = op.hover_capture("R", &[c1, c2, c3]).unwrap();
 

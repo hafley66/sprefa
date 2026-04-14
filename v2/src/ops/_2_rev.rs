@@ -5,11 +5,11 @@ use std::sync::Arc;
 use futures_util::stream::StreamExt;
 use futures_core::stream::BoxStream;
 
-use crate::_0_types::{Capture, Cursor, ParseSite};
+use crate::_0_types::{Capture, Cursor, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
     hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
-    Operator, Pipeline, ProgramCtx,
+    Operator, Pipeline, ProgramCtx, ScanPointer,
 };
 use crate::_8_parse::{classify_token, glob_match, TokenClass};
 
@@ -19,6 +19,14 @@ impl Operator for RevFactory {
     fn name(&self) -> &'static str { "rev" }
     fn paren_grammar(&self) -> GrammarRef { GrammarRef(Arc::from("rev-arg")) }
     fn brace_mode(&self) -> BraceMode { BraceMode::DefaultFork }
+
+    fn scan_pointers(&self) -> &'static [ScanPointer] {
+        static P: &[ScanPointer] = &[
+            ScanPointer { sigil: "rev",      read: |c| Some(c.rev.clone()) },
+            ScanPointer { sigil: "rev_norm", read: |c| Some(c.rev.clone()) },
+        ];
+        P
+    }
 
     fn completion_item(&self) -> CompletionItem {
         CompletionItem {
@@ -123,7 +131,7 @@ impl Op for RevOp {
                 let name = name.clone();
                 input.map(move |mut c| {
                     let v = c.rev.clone();
-                    c.captures.insert(name.clone(), Capture { value: v, ref_id: None });
+                    c.captures.insert(name.clone(), Capture::new(v).with_scan(Arc::from("rev"), Tri::Verified));
                     c
                 }).boxed()
             }
@@ -216,6 +224,17 @@ mod tests {
     }
 
     #[test]
+    fn scan_pointers_expose_rev_and_rev_norm() {
+        let f = RevFactory;
+        let ps = Operator::scan_pointers(&f);
+        let sigils: Vec<&str> = ps.iter().map(|p| p.sigil).collect();
+        assert_eq!(sigils, vec!["rev", "rev_norm"]);
+        let c = base_cursor("v1.2.3", None);
+        assert_eq!(&*(ps[0].read)(&c).unwrap(), "v1.2.3");
+        assert_eq!(&*(ps[1].read)(&c).unwrap(), "v1.2.3");
+    }
+
+    #[test]
     fn star_glob_is_no_op_diag() {
         let inv = OpInvocation {
             name:       Arc::from("rev"),
@@ -259,13 +278,13 @@ mod tests {
         let op = RevOp { mode: RevMode::Bind(Arc::from("V")), parse_site: site.clone() };
 
         let mut c1 = base_cursor("main", Some("go.mod"));
-        c1.captures.insert(Arc::from("V"), Capture { value: Arc::from("main"), ref_id: None });
+        c1.captures.insert(Arc::from("V"), Capture::new(Arc::from("main")));
 
         let mut c2 = base_cursor("v2", Some("go.mod"));
-        c2.captures.insert(Arc::from("V"), Capture { value: Arc::from("v2"), ref_id: None });
+        c2.captures.insert(Arc::from("V"), Capture::new(Arc::from("v2")));
 
         let mut c3 = base_cursor("main", Some("sub/go.mod"));
-        c3.captures.insert(Arc::from("V"), Capture { value: Arc::from("main"), ref_id: None });
+        c3.captures.insert(Arc::from("V"), Capture::new(Arc::from("main")));
 
         let md = op.hover_capture("V", &[c1, c2, c3]).unwrap();
 

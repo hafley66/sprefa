@@ -50,7 +50,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::_0_types::Capture;
+use crate::_0_types::{Capture, Tri};
 
 /// Snapshot of a single cursor's captures (`var → Capture`). One per row
 /// in `RuleResult.rows`. Cloned out of `Cursor.captures` at emit time so
@@ -147,7 +147,7 @@ mod tests {
     use super::*;
 
     fn cap(v: &str) -> Capture {
-        Capture { value: Arc::from(v), ref_id: None }
+        Capture::new(Arc::from(v))
     }
 
     fn row(pairs: &[(&str, &str)]) -> CaptureMap {

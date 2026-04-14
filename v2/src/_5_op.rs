@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_core::stream::BoxStream;
 
-use crate::_0_types::{Capture, Cursor, OpEvidence, OpId, ParseSite, PathSeg, RunEvent, RunId, Severity, SprfPath};
+use crate::_0_types::{Capture, Cursor, OpEvidence, OpId, ParseSite, PathSeg, RunEvent, RunId, Severity, SprfPath, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_2_config::Config;
 use crate::_3_reader::Reader;
@@ -335,6 +335,15 @@ pub struct CompletionItem {
     pub doc:    String,
 }
 
+// ---------------------------------------------------------------------------
+// ScanPointer — op-declared `$$sigil` provenance token
+// ---------------------------------------------------------------------------
+
+pub struct ScanPointer {
+    pub sigil: &'static str,
+    pub read:  fn(&Cursor) -> Option<Arc<str>>,
+}
+
 pub trait Operator: Send + Sync {
     fn name(&self) -> &'static str;
     fn aliases(&self) -> &[&'static str] { &[] }
@@ -348,6 +357,10 @@ pub trait Operator: Send + Sync {
 
     fn parse(&self, inv: &OpInvocation, pctx: &mut ProgramCtx)
         -> Result<Pipeline, Vec<Box<dyn Diagnostic>>>;
+
+    /// `$$sigil` tokens this op owns. Registry folds them into a dispatch
+    /// map at `register()` time. Defaults to empty; ops opt in.
+    fn scan_pointers(&self) -> &'static [ScanPointer] { &[] }
 
     /// One-line completion entry for this operator.
     fn completion_item(&self) -> CompletionItem {
@@ -745,7 +758,7 @@ mod xref_tests {
         })
     }
 
-    fn cap(v: &str) -> Capture { Capture { value: Arc::from(v), ref_id: None } }
+    fn cap(v: &str) -> Capture { Capture::new(Arc::from(v)) }
 
     fn row(pairs: &[(&str, &str)]) -> CaptureMap {
         pairs.iter().map(|(k, v)| (Arc::<str>::from(*k), cap(v))).collect()
@@ -1021,4 +1034,13 @@ mod xref_tests {
     // Suppress unused-import warnings for FileId.
     #[allow(dead_code)]
     fn _silence_unused(_: FileId) {}
+
+    // Task 1: default scan_pointers() is empty for any Operator that has not
+    // opted in. Updated in Task 3 when RepoFactory registers repo/repo_norm.
+    #[test]
+    fn default_scan_pointers_is_empty() {
+        // RuleFactory declares none; verifies the trait default stays empty.
+        let factory = crate::ops::RuleFactory;
+        assert!(Operator::scan_pointers(&factory).is_empty());
+    }
 }

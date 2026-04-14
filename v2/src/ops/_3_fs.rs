@@ -18,11 +18,11 @@ use std::sync::Arc;
 use futures_core::stream::BoxStream;
 use futures_util::stream::{self, StreamExt};
 
-use crate::_0_types::{Capture, Cursor, FilePath, ParseSite};
+use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
     hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
-    Operator, Pipeline, ProgramCtx,
+    Operator, Pipeline, ProgramCtx, ScanPointer,
 };
 use crate::_8_parse::{classify_token, TokenClass};
 
@@ -36,6 +36,20 @@ impl Operator for FsFactory {
     fn name(&self) -> &'static str { "fs" }
     fn paren_grammar(&self) -> GrammarRef { GrammarRef(Arc::from("fs-arg")) }
     fn brace_mode(&self) -> BraceMode { BraceMode::DefaultFork }
+
+    fn scan_pointers(&self) -> &'static [ScanPointer] {
+        static P: &[ScanPointer] = &[
+            ScanPointer {
+                sigil: "fs",
+                read:  |c| c.fs.as_ref().map(|fp| Arc::from(fp.0.to_string_lossy().as_ref())),
+            },
+            ScanPointer {
+                sigil: "fs_norm",
+                read:  |c| c.fs.as_ref().map(|fp| Arc::from(fp.0.to_string_lossy().as_ref())),
+            },
+        ];
+        P
+    }
 
     fn completion_item(&self) -> CompletionItem {
         CompletionItem {
@@ -183,7 +197,7 @@ impl Op for FsOp {
                     let v: Arc<str> = Arc::from(fp.0.to_string_lossy().as_ref());
                     c2.fs = Some(fp);
                     if let Some(name) = bind_name.as_ref() {
-                        c2.captures.insert(name.clone(), Capture { value: v, ref_id: None });
+                        c2.captures.insert(name.clone(), Capture::new(v).with_scan(Arc::from("fs"), Tri::Verified));
                     }
                     c2
                 }).collect();
@@ -337,6 +351,20 @@ mod tests {
 
         let codes = fired.lock().unwrap().clone();
         assert_eq!(codes, vec!["fs/no-match"], "expected exactly one fs/no-match diag, got {codes:?}");
+    }
+
+    #[test]
+    fn scan_pointers_fs_present_and_absent() {
+        let f = FsFactory;
+        let ps = Operator::scan_pointers(&f);
+        let sigils: Vec<&str> = ps.iter().map(|p| p.sigil).collect();
+        assert_eq!(sigils, vec!["fs", "fs_norm"]);
+        let present = base_cursor_hover("main", Some("src/lib.rs"));
+        let absent  = base_cursor_hover("main", None);
+        assert_eq!(&*(ps[0].read)(&present).unwrap(), "src/lib.rs");
+        assert_eq!(&*(ps[1].read)(&present).unwrap(), "src/lib.rs");
+        assert!((ps[0].read)(&absent).is_none());
+        assert!((ps[1].read)(&absent).is_none());
     }
 
     // -----------------------------------------------------------------------

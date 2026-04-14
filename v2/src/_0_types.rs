@@ -88,10 +88,30 @@ pub enum PathSeg {
 // Capture + Cursor
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tri { Claimed, Verified, Missing }
+
 #[derive(Debug, Clone)]
 pub struct Capture {
-    pub value:  Arc<str>,
-    pub ref_id: Option<RefId>,
+    pub value:        Arc<str>,
+    pub ref_id:       Option<RefId>,
+    pub scan_pointer: Option<Arc<str>>,
+    pub verified:     Tri,
+}
+
+impl Capture {
+    pub fn new(value: Arc<str>) -> Self {
+        Self { value, ref_id: None, scan_pointer: None, verified: Tri::Claimed }
+    }
+    pub fn with_ref_id(mut self, r: RefId) -> Self {
+        self.ref_id = Some(r);
+        self
+    }
+    pub fn with_scan(mut self, p: Arc<str>, v: Tri) -> Self {
+        self.scan_pointer = Some(p);
+        self.verified = v;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]

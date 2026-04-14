@@ -10,7 +10,7 @@ use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::stream::StreamExt;
 
-use crate::_0_types::{Capture, Cursor, FilePath, ParseSite};
+use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
     hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
@@ -254,10 +254,7 @@ impl Op for JsonOp {
                         c2.fs = Some(fp.clone());
                         // Merge walk captures into cursor captures
                         for (name, wc) in row.captures {
-                            c2.captures.insert(name, Capture {
-                                value:  wc.text.clone(),
-                                ref_id: None,
-                            });
+                            c2.captures.insert(name, Capture::new(wc.text.clone()));
                         }
                         out_cursors.push(c2);
                     }
@@ -497,7 +494,7 @@ mod tests {
             matched:    Arc::from("alpha"),
             capture:    None,
         });
-        c1.captures.insert(Arc::from("N"), Capture { value: Arc::from("alpha"), ref_id: None });
+        c1.captures.insert(Arc::from("N"), Capture::new(Arc::from("alpha")));
 
         let mut c2 = base_cursor("main", Some("crates/b/Cargo.toml"));
         c2.evidence.push(OpEvidence {
@@ -506,7 +503,7 @@ mod tests {
             matched:    Arc::from("beta"),
             capture:    None,
         });
-        c2.captures.insert(Arc::from("N"), Capture { value: Arc::from("beta"), ref_id: None });
+        c2.captures.insert(Arc::from("N"), Capture::new(Arc::from("beta")));
 
         let mut c3 = base_cursor("v2", Some("crates/a/Cargo.toml"));
         c3.evidence.push(OpEvidence {
@@ -515,7 +512,7 @@ mod tests {
             matched:    Arc::from("gamma"),
             capture:    None,
         });
-        c3.captures.insert(Arc::from("N"), Capture { value: Arc::from("gamma"), ref_id: None });
+        c3.captures.insert(Arc::from("N"), Capture::new(Arc::from("gamma")));
 
         let md = op.hover_capture("N", &[c1, c2, c3]).unwrap();
 

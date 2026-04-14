@@ -40,7 +40,7 @@ fn cursor(repo: &str, rev: &str) -> Cursor {
 }
 
 fn with_capture(mut c: Cursor, name: &str, val: &str) -> Cursor {
-    c.captures.insert(Arc::from(name), Capture { value: Arc::from(val), ref_id: None });
+    c.captures.insert(Arc::from(name), Capture::new(Arc::from(val)));
     c
 }
 
