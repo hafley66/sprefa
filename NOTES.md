@@ -514,3 +514,76 @@ codegen(env_inventory) {
 ```
 
 **The loop:** extract → check → codegen → file changes → re-extract. Comment scopes are write targets. Daemon mode keeps it live. `sprefa codegen --check` in CI catches drift.
+
+---
+
+## 2026-04-14: v2 LSP foundations landed — future features
+
+After the arm-syntax + absolute-offset + evidence-site-filter + partial-match pass, the LSP surface finally reflects real semantics. Foundations feel sound: arm-braced fork grammar, op ownership of diagnostics/hover, reader layers (git + buffer overlay), evidence-driven scope filtering, partial walker matches. SQLite sink is abstracted behind Writer — can slot in anytime. Other ops (`sh`, `line`, `marker`, `md`, `render`) can now parallelize because the op surface has been stress-tested through this shakedown.
+
+### 1. Hover: group matches by file/rev
+
+Current shape for capture hover:
+```
+**$VER** values:
+- 2.1.0
+- 0.1.0
+```
+
+Target: SQLite-row-like grouping. Each row = one cursor's witness tuple. Group cursors by `(file, rev)` (file primary, rev secondary when multiple revs present), then list capture values under each.
+
+```
+**$VER** values:
+
+### crates/sprf-lsp/package.json
+- `main`: 2.1.0
+- `test/1`: 2.0.0
+
+### crates/sprf/package.json
+- `main`: 0.1.0
+```
+
+This is the wide-table projection rendered as markdown. Requires hover_capture to pass cursor identity (fs + rev at minimum) alongside the capture value — today it deduplicates raw value strings only.
+
+### 2. Hover: show the cross-ref form `${rule.$VAR}` for any capture
+
+On hovering `$PKG_NAME` inside `rule(capture_test)`, append a copy-paste line:
+
+```
+**$PKG_NAME** values:
+- foo
+- bar
+
+*reference as:* `${capture_test.$PKG_NAME}`
+```
+
+Makes forward-binding ergonomic. Enables users to discover the cross-ref sigil without reading docs.
+
+### 3. DAG forward-binding at parse time (v1 parity)
+
+`${rule_a.$X}` referenced in rule_b means rule_b depends on rule_a's output. Parse-time build the rule dependency DAG, topologically order rules for runtime so forward-bound captures are already populated. v1 had this; v2 hasn't reimplemented yet. Blocker for cross-rule walker semantics (the commented `derived_rule` in `kitchen_sink_v2.sprf`).
+
+### 4. `$$repo` / `$$rev` provenance (with `.norm` variants)
+
+Principal feature for high-scale gitops. Captures a cursor's originating repo/rev tagged alongside every walker match, so a `json({ ** : { image: $I, $$repo($R), $$rev($V) } })` binds the full provenance chain at scan time, independent of whether the pipeline has an explicit `repo()`/`rev()`. `.norm` variants normalize semver tags or slug forms (v1 had this).
+
+This is how reports tie back to "which commit in which repo produced this match" — the point of the whole system at scale.
+
+### 5. Path resolution: inside-repo vs outside-repo `.sprf` files
+
+Currently the LSP walks up from the `.sprf` file looking for `.sprefa.toml`, else for a `.git/` ancestor (auto git root + `HEAD`). Two distinct orchestration modes want to coexist:
+
+- **In-repo `.sprf`**: references its own repo implicitly; can also cross-ref other repos if the ancestor config declares them. `.sprefa.toml` lives in the repo.
+- **Outside-repo `.sprf`** (orchestration dir): holds cross-repo rules spanning many ghcacher-managed checkouts. `.sprefa.toml` at that dir declares all relevant `[[repo]]` entries.
+
+Both modes must coexist: a folder containing per-repo `.sprf` plus cross-repo orchestration `.sprf`. Ancestor resolution handles this — first `.sprefa.toml` wins. **Repo provenance in rules then drives ghcacher to ensure the referenced checkout exists** — ghcacher pulls/updates; sprefa reads. Division of responsibility is clean.
+
+### 6. Parallel op expansion now unblocked
+
+Op trait has survived the shakedown: parse/pipe/hover_self/hover_capture/hover_match/witness/capture_name plus framework-owned evidence + fork lowering. Time to grow the op surface without fearing trait churn.
+
+Priority targets: `sh()` (sandboxed shell with allow-list from Config.shell_allow), `line()` (regex over raw text), `marker()` (comment-bounded span extraction for codegen), `md()` (markdown AST walker reusing brace-pattern language), `render()` (codegen sink).
+
+### 7. Missing-entry diagnostics for partial walker matches
+
+Partial semantics landed — now emit a hint-level diagnostic per cursor/file listing which object entries failed to bind. Surface in hover dump under the json match site. Gives the user a "why didn't `$PKG_NAME` bind?" answer without adding a walker debugger.
