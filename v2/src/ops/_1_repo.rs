@@ -237,15 +237,11 @@ mod tests {
 
     fn base_cursor(repo: &str, rev: &str, fs: Option<&str>) -> Cursor {
         Cursor {
-            run_id:   RunId(0),
-            repo:     Arc::from(repo),
-            rev:      Arc::from(rev),
-            fs:       fs.map(|p| FilePath(Arc::from(Path::new(p)))),
-            captures: Default::default(),
-            fks:      Default::default(),
-            path:     SprfPath(Arc::from(vec![].into_boxed_slice())),
-            evidence: vec![],
-            content:  None,
+            run_id: RunId(0),
+            repo:   Arc::from(repo),
+            rev:    Arc::from(rev),
+            fs:     fs.map(|p| FilePath(Arc::from(Path::new(p)))),
+            ..Default::default()
         }
     }
 

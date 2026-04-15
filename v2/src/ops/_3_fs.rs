@@ -386,15 +386,10 @@ mod tests {
         };
 
         let cursor = Cursor {
-            run_id:   RunId(0),
-            path:     crate::_0_types::SprfPath(Arc::from(vec![].into_boxed_slice())),
-            repo:     Arc::from("myrepo"),
-            rev:      Arc::from("HEAD"),
-            fs:       None,
-            captures: Default::default(),
-            fks:      Default::default(),
-            evidence: vec![],
-            content:  None,
+            run_id: RunId(0),
+            repo:   Arc::from("myrepo"),
+            rev:    Arc::from("HEAD"),
+            ..Default::default()
         };
 
         let input: BoxStream<'static, Arc<[Cursor]>> = Box::pin(stream::iter(
@@ -428,15 +423,11 @@ mod tests {
 
     fn base_cursor_hover(rev: &str, fs: Option<&str>) -> Cursor {
         Cursor {
-            run_id:   crate::_0_types::RunId(0),
-            repo:     Arc::from("org/repo"),
-            rev:      Arc::from(rev),
-            fs:       fs.map(|p| crate::_0_types::FilePath(Arc::from(Path::new(p)))),
-            captures: Default::default(),
-            fks:      Default::default(),
-            path:     crate::_0_types::SprfPath(Arc::from(vec![].into_boxed_slice())),
-            evidence: vec![],
-            content:  None,
+            run_id: crate::_0_types::RunId(0),
+            repo:   Arc::from("org/repo"),
+            rev:    Arc::from(rev),
+            fs:     fs.map(|p| crate::_0_types::FilePath(Arc::from(Path::new(p)))),
+            ..Default::default()
         }
     }
 
@@ -507,15 +498,10 @@ mod tests {
             reader, writer, config, diags, events, result_store, xref_seen,
         };
         let cursor = Cursor {
-            run_id:   RunId(0),
-            path:     crate::_0_types::SprfPath(Arc::from(vec![].into_boxed_slice())),
-            repo:     Arc::from("r"),
-            rev:      Arc::from("main"),
-            fs:       None,
-            captures: Default::default(),
-            fks:      Default::default(),
-            evidence: vec![],
-            content:  None,
+            run_id: RunId(0),
+            repo:   Arc::from("r"),
+            rev:    Arc::from("main"),
+            ..Default::default()
         };
         let input: BoxStream<'static, Arc<[Cursor]>> = Box::pin(stream::iter(
             vec![Arc::<[Cursor]>::from(vec![cursor].into_boxed_slice())]

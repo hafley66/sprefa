@@ -262,15 +262,11 @@ mod tests {
         use crate::_0_types::{FilePath, RunId, SprfPath};
         use std::path::Path;
         Cursor {
-            run_id:   RunId(0),
-            repo:     Arc::from("org/repo"),
-            rev:      Arc::from(rev),
-            fs:       fs.map(|p| FilePath(Arc::from(Path::new(p)))),
-            captures: Default::default(),
-            fks:      Default::default(),
-            path:     SprfPath(Arc::from(vec![].into_boxed_slice())),
-            evidence: vec![],
-            content:  None,
+            run_id: RunId(0),
+            repo:   Arc::from("org/repo"),
+            rev:    Arc::from(rev),
+            fs:     fs.map(|p| FilePath(Arc::from(Path::new(p)))),
+            ..Default::default()
         }
     }
 

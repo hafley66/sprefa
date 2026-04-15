@@ -966,15 +966,10 @@ mod xref_tests {
 
     fn cursor() -> Cursor {
         Cursor {
-            run_id:   RunId(0),
-            repo:     Arc::from("repo"),
-            rev:      Arc::from("HEAD"),
-            fs:       None,
-            captures: std::collections::HashMap::new(),
-            fks:      std::collections::HashMap::new(),
-            path:     SprfPath(Arc::from(Vec::<crate::_0_types::PathSeg>::new().into_boxed_slice())),
-            evidence: Vec::new(),
-            content:  None,
+            run_id: RunId(0),
+            repo:   Arc::from("repo"),
+            rev:    Arc::from("HEAD"),
+            ..Default::default()
         }
     }
 

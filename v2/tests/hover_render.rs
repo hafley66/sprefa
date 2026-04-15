@@ -27,15 +27,10 @@ fn make_parse_site() -> Arc<ParseSite> {
 
 fn cursor(repo: &str, rev: &str) -> Cursor {
     Cursor {
-        run_id:   RunId(0),
-        repo:     Arc::from(repo),
-        rev:      Arc::from(rev),
-        fs:       None,
-        captures: HashMap::new(),
-        fks:      HashMap::new(),
-        path:     empty_path(),
-        evidence: Vec::new(),
-        content:  None,
+        run_id: RunId(0),
+        repo:   Arc::from(repo),
+        rev:    Arc::from(rev),
+        ..Default::default()
     }
 }
 

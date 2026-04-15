@@ -1,6 +1,8 @@
 //! Root static types. No I/O, no traits, no behavior.
 
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
@@ -9,7 +11,7 @@ use std::sync::Arc;
 // IDs
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct RunId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,6 +76,12 @@ pub enum ParseSeg {
 #[derive(Debug, Clone)]
 pub struct SprfPath(pub Arc<[PathSeg]>);
 
+impl Default for SprfPath {
+    fn default() -> Self {
+        SprfPath(Arc::from(Vec::<PathSeg>::new().into_boxed_slice()))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PathSeg {
     Op       { name: Arc<str>, parse_site: Arc<ParseSite>, step: u16 },
@@ -82,6 +90,71 @@ pub enum PathSeg {
     SwitchArm{ pat: Arc<str>, parse_site: Arc<ParseSite> },
     LeafArm  { key: Arc<str>, parse_site: Arc<ParseSite> },
     Iter     { index: u64 },
+}
+
+// ---------------------------------------------------------------------------
+// SlotKey<T> + Slots — typed, type-erased per-cursor payload store
+// ---------------------------------------------------------------------------
+
+/// Typed handle to a slot. Zero-sized; the `T` lives in the phantom.
+///
+/// Uses `PhantomData<fn() -> T>` so the key is invariant in `T` but does not
+/// inherit `T`'s auto-traits (the key contains no `T`).
+pub struct SlotKey<T: 'static + Send + Sync> {
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T: 'static + Send + Sync> SlotKey<T> {
+    /// Const ctor so ops can declare e.g.
+    /// `pub const JSON_TREE: SlotKey<JsonTree> = SlotKey::new();`
+    pub const fn new() -> Self {
+        Self { _marker: PhantomData }
+    }
+}
+
+impl<T: 'static + Send + Sync> Copy for SlotKey<T> {}
+impl<T: 'static + Send + Sync> Clone for SlotKey<T> {
+    fn clone(&self) -> Self { *self }
+}
+
+/// Typed, type-erased slot store keyed by `TypeId::of::<T>()`.
+///
+/// Payload is `Arc<dyn Any + Send + Sync>`. Cheap to clone.
+#[derive(Debug, Default, Clone)]
+pub struct Slots {
+    map: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+}
+
+impl Slots {
+    pub fn is_empty(&self) -> bool { self.map.is_empty() }
+    pub fn len(&self) -> usize { self.map.len() }
+
+    /// Insert / replace. Returns the prior value if one existed.
+    /// Last-write-wins.
+    pub fn set<T: 'static + Send + Sync>(&mut self, _k: SlotKey<T>, v: T) -> Option<Arc<T>> {
+        let prior = self.map.insert(TypeId::of::<T>(), Arc::new(v));
+        prior.and_then(|a| Arc::downcast::<T>(a).ok())
+    }
+
+    /// Insert pre-shared Arc. Common when upstream already holds `Arc<T>`.
+    pub fn set_arc<T: 'static + Send + Sync>(&mut self, _k: SlotKey<T>, v: Arc<T>) -> Option<Arc<T>> {
+        let prior = self.map.insert(TypeId::of::<T>(), v);
+        prior.and_then(|a| Arc::downcast::<T>(a).ok())
+    }
+
+    pub fn get<T: 'static + Send + Sync>(&self, _k: SlotKey<T>) -> Option<Arc<T>> {
+        self.map.get(&TypeId::of::<T>())
+            .and_then(|a| Arc::downcast::<T>(a.clone()).ok())
+    }
+
+    pub fn contains<T: 'static + Send + Sync>(&self, _k: SlotKey<T>) -> bool {
+        self.map.contains_key(&TypeId::of::<T>())
+    }
+
+    pub fn remove<T: 'static + Send + Sync>(&mut self, _k: SlotKey<T>) -> Option<Arc<T>> {
+        self.map.remove(&TypeId::of::<T>())
+            .and_then(|a| Arc::downcast::<T>(a).ok())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -116,15 +189,62 @@ impl Capture {
 
 #[derive(Debug, Clone)]
 pub struct Cursor {
-    pub run_id:   RunId,
-    pub repo:     Arc<str>,
-    pub rev:      Arc<str>,
-    pub fs:       Option<FilePath>,
-    pub captures: HashMap<Arc<str>, Capture>,
-    pub fks:      HashMap<Arc<str>, RowId>,
-    pub path:     SprfPath,
-    pub evidence: Vec<OpEvidence>,
-    pub content:  Option<Arc<bytes::Bytes>>,
+    pub run_id:     RunId,
+    pub repo:       Arc<str>,
+    pub rev:        Arc<str>,
+    pub fs:         Option<FilePath>,
+    pub captures:   HashMap<Arc<str>, Capture>,
+    pub fks:        HashMap<Arc<str>, RowId>,
+    pub path:       SprfPath,
+    pub evidence:   Vec<OpEvidence>,
+    pub content:    Option<Arc<bytes::Bytes>>,
+    /// Runtime byte window into `content`. When `Some`, byte-oriented
+    /// downstream ops restrict scan to this range. When `None`, the cursor
+    /// addresses the whole file.
+    pub byte_range: Option<Range<usize>>,
+    /// Typed per-cursor payload store (parse trees, etc.). See `Slots`.
+    pub slots:      Slots,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            run_id:     RunId::default(),
+            repo:       Arc::from(""),
+            rev:        Arc::from(""),
+            fs:         None,
+            captures:   HashMap::new(),
+            fks:        HashMap::new(),
+            path:       SprfPath::default(),
+            evidence:   Vec::new(),
+            content:    None,
+            byte_range: None,
+            slots:      Slots::default(),
+        }
+    }
+}
+
+impl Cursor {
+    /// Bytes addressed by this cursor. Returns the `byte_range` slice of
+    /// `content` when both are set, the whole `content` when `byte_range`
+    /// is `None`, and an empty slice when `content` is absent.
+    pub fn active_bytes(&self) -> &[u8] {
+        match (&self.content, &self.byte_range) {
+            (Some(bs), Some(r)) => &bs[r.clone()],
+            (Some(bs), None)    => &bs[..],
+            (None, _)           => &[],
+        }
+    }
+
+    /// Shortcut for `self.slots.get(k)`.
+    pub fn get_slot<T: 'static + Send + Sync>(&self, k: SlotKey<T>) -> Option<Arc<T>> {
+        self.slots.get(k)
+    }
+
+    /// Shortcut for `self.slots.set(k, v)`.
+    pub fn set_slot<T: 'static + Send + Sync>(&mut self, k: SlotKey<T>, v: T) -> Option<Arc<T>> {
+        self.slots.set(k, v)
+    }
 }
 
 /// Per-op match record on a cursor. Framework-appended telemetry for LSP;

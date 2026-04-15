@@ -283,13 +283,8 @@ impl Op for RuleOp {
                         run_id,
                         repo: repo.clone(),
                         rev,
-                        fs: None,
-                        captures: HashMap::new(),
-                        fks: HashMap::new(),
                         // Empty path; outer Pipeline::Op tags us with PathSeg::Op{rule}.
-                        path: SprfPath(Arc::from(Vec::<crate::_0_types::PathSeg>::new().into_boxed_slice())),
-                        evidence: Vec::new(),
-                        content: None,
+                        ..Default::default()
                     });
                 }
             }
