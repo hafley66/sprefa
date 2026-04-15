@@ -349,6 +349,13 @@ pub trait Op: Send + Sync {
     /// inner ops without re-lowering.
     fn body_pipeline(&self) -> Option<&Pipeline> { None }
 
+    /// Rebuild this op with `new_body` swapped in for its sub-pipeline.
+    /// Used by LSP completion so the outer op (e.g. RuleOp) still runs
+    /// its seeding/sink behavior while the inner body has a wildcard
+    /// spliced in place of the target slot. Default `None` = opt out;
+    /// only ops that own a body override.
+    fn with_body(&self, _new_body: Pipeline) -> Option<Arc<dyn Op>> { None }
+
     /// Capture names this op contributes to its downstream scope. Default
     /// falls back to `capture_name()` for single-binding ops. Ops that bind
     /// several captures (walker patterns) override.

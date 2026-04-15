@@ -29,7 +29,7 @@ use crate::_5_op::{
     Pipeline, ProgramCtx,
 };
 use crate::_5_op::OpInvocation;
-use crate::_8_parse::{host_parse, host_parse_arm_brace, parse_capture, parse_cross_ref, Pipe};
+use crate::_8_parse::{host_parse_tolerant, host_parse_arm_brace, parse_capture, parse_cross_ref, Pipe};
 use crate::_10_registry::{lower_rules, OperatorRegistry};
 use crate::readers::BufferOverlay;
 use crate::writers::MemWriter;
@@ -45,10 +45,13 @@ use crate::{Config, RuntimeConfig};
 /// `prefix` (other content left of partial inside the paren), and
 /// `suffix` (content right of cursor inside the paren, if any).
 pub struct ParenLocation {
-    pub op_name: String,
-    pub partial: String,
-    pub prefix:  String,
-    pub suffix:  String,
+    pub op_name:    String,
+    pub partial:    String,
+    pub prefix:     String,
+    pub suffix:     String,
+    /// Byte offset of the enclosing `(`. Used by `complete_in_paren` to
+    /// match the OpName span whose identifier ends just before this paren.
+    pub open_paren: usize,
 }
 
 /// Walk bytes from `pos` backward to find an unclosed `(`, then walk
@@ -123,9 +126,10 @@ pub fn locate_paren_op(source: &str, pos: usize) -> Option<ParenLocation> {
 
     Some(ParenLocation {
         op_name,
-        partial: partial.to_string(),
-        prefix:  prefix.to_string(),
-        suffix:  right.to_string(),
+        partial:    partial.to_string(),
+        prefix:     prefix.to_string(),
+        suffix:     right.to_string(),
+        open_paren: open_paren_idx,
     })
 }
 
@@ -250,7 +254,24 @@ impl DocSession {
     /// Only the final pass's cursors + diags land in `RunReport`.
     pub fn ensure_run(&mut self) {
         if !self.stale { return; }
+        let report = self.run_pipelines(&self.pipelines);
+        self.last_run = Some(report);
+        self.stale = false;
+    }
 
+    /// Core runner: drive an explicit pipeline list through the scan-check
+    /// demand loop, producing a `RunReport` (cursors per rule + aggregated
+    /// diagnostics). Pure of `self.pipelines` / `self.last_run` / `self.stale`
+    /// so LSP autocomplete can call it with a truncated+substituted pipeline
+    /// without touching the cached document run.
+    ///
+    /// Wiring (ctx, config, MemWriter, ResultStore, scan-loop) is identical
+    /// to the prior inlined body; the `cursors_scratch` mutex plumbing is
+    /// preserved verbatim — "final pass wins" semantics.
+    pub fn run_pipelines(
+        &self,
+        pipelines: &[(Arc<str>, Pipeline)],
+    ) -> RunReport {
         let initial_config = Arc::new(Config {
             repos:        vec![],
             revs:         vec![],
@@ -273,7 +294,6 @@ impl DocSession {
         let cursors_scratch: Arc<std::sync::Mutex<HashMap<Arc<str>, Vec<Cursor>>>> =
             Arc::new(std::sync::Mutex::new(HashMap::new()));
 
-        let pipelines = &self.pipelines;
         let reader    = self.reader.clone();
         let writer_ref = writer.clone();
         let cs        = cursors_scratch.clone();
@@ -324,8 +344,7 @@ impl DocSession {
         );
 
         let cursors_by_rule = std::mem::take(&mut *cursors_scratch.lock().unwrap());
-        self.last_run = Some(RunReport { cursors_by_rule, diags: result.diags });
-        self.stale = false;
+        RunReport { cursors_by_rule, diags: result.diags }
     }
 
     // -----------------------------------------------------------------------
@@ -385,15 +404,17 @@ impl DocSession {
     ///
     /// DocSession is a read-mostly cache/client. Completion dispatches:
     /// - Inside `opname(...)` paren → synthesize a wildcard op via
-    ///   `Operator::wildcard_instance`, call `Runner::scan_partial` to
-    ///   run the pipeline up to that splice point, harvest witnesses from
-    ///   output cursors via `Op::witness`, dedup, filter by partial.
+    ///   `Operator::wildcard_instance`, rewrite the enclosing rule's body
+    ///   to splice in that wildcard (truncating downstream), run the
+    ///   resulting pipeline through `run_pipelines` — the same runner
+    ///   `ensure_run` uses — then harvest witnesses from output cursors
+    ///   via `Op::witness`, dedup, filter by partial.
     /// - Otherwise (pipe-head or unknown) → union `head_suggestions` from
     ///   every registered operator.
     ///
     /// Uses the textual locator `locate_paren_op` so completion works even
     /// when the document doesn't parse (mid-edit state). When a daemon
-    /// backs Runner, the `scan_partial` call becomes RPC; this function
+    /// backs Runner, `run_pipelines` becomes an RPC call; this function
     /// stays unchanged.
     pub fn completions_at(&mut self, pos: usize) -> Vec<CompletionSuggestion> {
         let rule_names: Arc<[Arc<str>]> = self.pipelines.iter()
@@ -449,43 +470,108 @@ impl DocSession {
         out
     }
 
-    /// Partial-eval completion inside an `opname(...)` slot. The op being
-    /// typed may not parse; we synthesize a wildcard instance from its
-    /// factory and run the upstream pipeline terminating in that wildcard.
-    /// Each output cursor's witness feeds one suggestion. Framework stays
-    /// out of per-op knowledge about what a "candidate" looks like; the
-    /// op already knows how to emit witnesses.
+    /// Partial-eval completion inside an `opname(...)` slot.
+    ///
+    /// Strategy: locate the OpName span whose identifier ends just before
+    /// `loc.open_paren`, read its `op_path`, pull the enclosing rule's
+    /// body pipeline, rewrite that body via `truncate_and_substitute` so
+    /// the target op becomes a `wildcard_instance` (and everything
+    /// sequenced after it is dropped), then drive the rewritten body
+    /// through `run_pipelines` — the same runner `ensure_run` uses.
+    /// Output cursors feed `wildcard.witness()` → suggestions.
     fn complete_in_paren(
         &mut self,
         loc: ParenLocation,
-        config: Arc<Config>,
-        reader: Arc<dyn crate::_3_reader::Reader>,
+        _config: Arc<Config>,
+        _reader: Arc<dyn crate::_3_reader::Reader>,
         _rule_names: Arc<[Arc<str>]>,
     ) -> Vec<CompletionSuggestion> {
         let Some(factory) = self.factory_registry.resolve(&loc.op_name) else {
             return Vec::new();
         };
-        // Synthetic parse_site at the cursor location. Not used for hover;
-        // only as the wildcard op's identity for path-tagging.
+
+        // Locate the OpName span whose identifier sits immediately before
+        // the open paren. Tolerant parse guarantees an entry even when the
+        // op body is mid-edit (`rev(ma|`).
+        let Some((rule_name, op_path)) =
+            resolve_op_name_span(&self.source, &self.span_ix, &loc)
+        else {
+            return Vec::new();
+        };
+
+        // Only body-inner ops are completable. A 2-segment path (`[i, 0]`)
+        // points at the RuleOp itself; rule names are user-authored
+        // literals and have no enumerable witnesses.
+        if op_path.len() < 4 {
+            return Vec::new();
+        }
+
+        // Synthetic parse_site at the open paren for wildcard op identity.
         let synth_site = Arc::new(ParseSite {
             file:       Arc::from(std::path::Path::new("<completion-wildcard>")),
             path:       Arc::from(Vec::new().into_boxed_slice()),
-            byte_range: 0..0,
+            byte_range: loc.open_paren..loc.open_paren,
         });
         let Some(wildcard_op) = factory.wildcard_instance(synth_site) else {
             return Vec::new();
         };
 
-        // Run partial pipeline. For MVP: drive the wildcard op with empty
-        // input seeded from config (no upstream splicing yet — that's the
-        // next iteration). Runner::scan_partial handles the seed.
-        let cursors = crate::_14_scan_loop::scan_partial(
+        // Pull the rule's body pipeline (RuleOp owns it; Pipeline::Seq
+        // wrapper is unwrapped). Body-relative path drops the rule prefix.
+        let Some((_, rule_pipeline)) =
+            self.pipelines.iter().find(|(n, _)| n == &rule_name)
+        else {
+            return Vec::new();
+        };
+        let rule_op_pipeline = match rule_pipeline {
+            Pipeline::Seq(children) if children.len() == 1 => &children[0],
+            other => other,
+        };
+        let Pipeline::Op(lop) = rule_op_pipeline else {
+            return Vec::new();
+        };
+        let Some(body) = lop.op.body_pipeline() else {
+            return Vec::new();
+        };
+
+        // Adapt op_path tail to the actual body shape. The span_ix encoding
+        // `[i, 0, fork_idx, op_idx]` assumes Fork-of-Seq; real bodies may
+        // collapse to `Seq(ops)` (single arm) or `Op(one)` (single op).
+        // Mirrors `resolve_body_op`.
+        let body_path_tail = &op_path[2..];
+        let fork_idx = body_path_tail[0];
+        let op_idx   = body_path_tail[1];
+        let adapted_path: Vec<usize> = match body {
+            Pipeline::Fork(_) => vec![fork_idx, op_idx],
+            Pipeline::Seq(_) if fork_idx == 0 => vec![op_idx],
+            Pipeline::Op(_)   if fork_idx == 0 && op_idx == 0 => vec![],
+            _ => return Vec::new(),
+        };
+        let rewritten_body = crate::_15_pipeline_rewrite::truncate_and_substitute(
+            body,
+            &adapted_path,
             wildcard_op.clone(),
-            reader,
-            config,
         );
 
-        // Harvest witnesses, dedup, filter by partial, cap.
+        // Rebuild the RuleOp around the rewritten body so it keeps seeding
+        // cursors from the reader. Running the body standalone would skip
+        // that seed and yield nothing.
+        let Some(new_rule_op) = lop.op.with_body(rewritten_body) else {
+            return Vec::new();
+        };
+        let rewritten_pipeline = Pipeline::Op(
+            crate::_5_op::LoweredOp::bare(new_rule_op),
+        );
+
+        // Run through the shared runner. Keys cursors under the rule name.
+        let pipelines_vec = vec![(rule_name.clone(), rewritten_pipeline)];
+        let report = self.run_pipelines(&pipelines_vec);
+        let cursors = report.cursors_by_rule
+            .get(&rule_name)
+            .cloned()
+            .unwrap_or_default();
+
+        // Harvest witnesses, dedup, filter by partial, cap at 1000.
         let partial = loc.partial.as_str();
         let mut seen: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
         let mut out = Vec::new();
@@ -536,19 +622,18 @@ impl DocSession {
 
         let file: Arc<std::path::Path> = Arc::from(std::path::Path::new("<lsp>"));
         let file_for_xref = file.clone();
-        let pipes: Vec<Pipe> = match host_parse(&self.source, file.clone()) {
-            Ok(p) => p,
-            Err(errs) => {
-                for e in errs {
-                    self.parse_diags.push(Box::new(ParseDiagWrapper {
-                        code:    Arc::from("parse/syntax"),
-                        message: e.message.clone(),
-                        offset:  e.offset,
-                    }));
-                }
-                return;
-            }
-        };
+        // LSP is read-only: use tolerant parse so mid-typing syntax like
+        // `rev(ma|` still produces a Pipeline + span_ix with a fragment op
+        // entry at the cursor. Errors surface as parse_diags but don't abort.
+        let (pipes, parse_errs): (Vec<Pipe>, Vec<_>) =
+            host_parse_tolerant(&self.source, file.clone());
+        for e in parse_errs {
+            self.parse_diags.push(Box::new(ParseDiagWrapper {
+                code:    Arc::from("parse/syntax"),
+                message: e.message.clone(),
+                offset:  e.offset,
+            }));
+        }
 
         let config = Arc::new(Config {
             repos:        vec![],
@@ -892,6 +977,39 @@ impl DocSession {
 // ---------------------------------------------------------------------------
 // Pipeline tree walk
 // ---------------------------------------------------------------------------
+
+/// Find the OpName span whose identifier matches `loc.op_name` and ends
+/// immediately before `loc.open_paren` (allowing whitespace between the
+/// identifier and the paren). Returns `(rule_name, op_path)`.
+///
+/// Ties are broken by picking the entry with the largest `range.end`
+/// (nearest to the paren), which handles nested ops like
+/// `foo(bar(|))` correctly because `locate_paren_op` already identified
+/// the innermost op as `loc.op_name`.
+fn resolve_op_name_span(
+    source:  &str,
+    span_ix: &[SpanEntry],
+    loc:     &ParenLocation,
+) -> Option<(Arc<str>, Box<[usize]>)> {
+    let mut best: Option<&SpanEntry> = None;
+    for entry in span_ix {
+        let SpanKind::OpName { .. } = &entry.kind else { continue };
+        if entry.range.end > loc.open_paren { continue }
+        // Identifier must sit within a few whitespace chars of the paren.
+        let gap = loc.open_paren - entry.range.end;
+        if gap > 8 { continue }
+        let Some(text) = source.get(entry.range.clone()) else { continue };
+        if text != loc.op_name { continue }
+        match best {
+            None => best = Some(entry),
+            Some(b) if entry.range.end > b.range.end => best = Some(entry),
+            _ => {}
+        }
+    }
+    let entry = best?;
+    let SpanKind::OpName { op_path } = &entry.kind else { return None };
+    Some((entry.rule.clone(), op_path.clone()))
+}
 
 /// Resolve an op by span_ix path within a named rule.
 ///

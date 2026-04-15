@@ -131,7 +131,7 @@ fn doc_session_hover_on_crossref_delegates_to_target() {
 #[test]
 fn doc_session_completions_at_top_of_line_lists_ops() {
     let src = "rule(demo){ > repo(*) }";
-    let s = session(src);
+    let mut s = session(src);
 
     let items = s.completions_at(0);
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
@@ -235,4 +235,103 @@ fn doc_session_hover_on_deeply_nested_ops_resolves() {
     let fs_pos  = src.find("**/x.yaml").unwrap() + 1;
     assert!(s.hover_at(rev_pos).is_some(), "depth-3 rev hover must resolve");
     assert!(s.hover_at(fs_pos).is_some(), "depth-4 fs hover must resolve");
+}
+
+// ---------------------------------------------------------------------------
+// Completion — in-paren partial evaluation
+// ---------------------------------------------------------------------------
+//
+// Exercise the DocSession::complete_in_paren boundary with no tower-lsp.
+// The pipeline for each case is truncated+substituted with the op's
+// wildcard_instance, run through run_pipelines, and witnesses are
+// harvested into CompletionSuggestion.
+
+fn session_with_files(source: &str) -> DocSession {
+    let mem = Arc::new(
+        MemReader::new(make_config())
+            .with_repo("acme", &["main"])
+            .with_files("acme", "main", &["src/lib.rs", "src/main.rs", "README.md"]),
+    );
+    let overlay = Arc::new(BufferOverlay::new(mem));
+    DocSession::new(source.to_string(), overlay, make_registry())
+}
+
+#[test]
+fn doc_session_completion_repo_paren_lists_repos() {
+    let src = "rule(r){ > repo() }";
+    let mut s = session_with_repo(src);
+
+    // Cursor inside `repo(|)`.
+    let pos = pos_of(src, "repo(") + "repo(".len();
+    let items = s.completions_at(pos);
+
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.contains(&"acme"),
+        "expected 'acme' in repo completions; got {:?}", labels,
+    );
+}
+
+#[test]
+fn doc_session_completion_rev_paren_lists_revs() {
+    let src = "rule(r){ > repo(acme) > rev() }";
+    let mut s = session_with_repo(src);
+
+    let pos = pos_of(src, "rev(") + "rev(".len();
+    let items = s.completions_at(pos);
+
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.contains(&"main"),
+        "expected 'main' in rev completions; got {:?}", labels,
+    );
+}
+
+#[test]
+fn doc_session_completion_fs_paren_lists_paths() {
+    let src = "rule(r){ > repo(acme) > rev(main) > fs() }";
+    let mut s = session_with_files(src);
+
+    let pos = pos_of(src, "fs(") + "fs(".len();
+    let items = s.completions_at(pos);
+
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    for expected in &["src/lib.rs", "src/main.rs", "README.md"] {
+        assert!(
+            labels.iter().any(|l| l == expected),
+            "expected {expected:?} in fs completions; got {:?}", labels,
+        );
+    }
+}
+
+#[test]
+#[ignore = "tolerant parse at top level works, but RuleFactory::parse still uses strict \
+            host_parse_arm_brace for rule bodies — completion inside a mid-edit rule \
+            body needs ProgramCtx.parse_mode plumbing through op-owned parse. \
+            Closed-paren cases (repo/rev/fs above) cover the runner integration."]
+fn doc_session_completion_rev_partial_mid_typing_tolerant_parse() {
+    let src = "rule(r){ > repo(acme) > rev(ma";
+    let mut s = session_with_repo(src);
+
+    let pos = src.len();
+    let items = s.completions_at(pos);
+
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.contains(&"main"),
+        "expected 'main' in tolerant-parse rev completions; got {:?}", labels,
+    );
+}
+
+#[test]
+fn doc_session_completion_kind_hint_matches_op_name() {
+    let src = "rule(r){ > repo() }";
+    let mut s = session_with_repo(src);
+
+    let pos = pos_of(src, "repo(") + "repo(".len();
+    let items = s.completions_at(pos);
+
+    let acme = items.iter().find(|i| i.label == "acme")
+        .expect("expected 'acme' suggestion");
+    assert_eq!(acme.kind_hint.as_deref(), Some("repo"));
 }

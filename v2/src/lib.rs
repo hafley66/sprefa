@@ -19,6 +19,7 @@ pub mod _11_dag;
 pub mod _12_result_store;
 pub mod _13_scan_check;
 pub mod _14_scan_loop;
+pub mod _15_pipeline_rewrite;
 
 pub mod readers;
 pub mod writers;
@@ -55,7 +56,9 @@ pub use _7_runner::Runner;
 pub use _8_parse::{
     TokenClass, CaptureRef, ScanPointerRef, CrossRefRef,
     parse_capture, parse_scan_pointer, parse_cross_ref, classify_token,
-    scan_balanced, host_parse, host_parse_brace, host_parse_arm_brace, ChildKind,
+    scan_balanced, host_parse, host_parse_brace, host_parse_arm_brace,
+    host_parse_tolerant, host_parse_arm_brace_abs_tolerant,
+    ChildKind, ParseMode,
     ParseError, Pipe, glob_match, levenshtein,
 };
 pub use _9_hash::{content_hash, path_hash_static, cursor_hash};

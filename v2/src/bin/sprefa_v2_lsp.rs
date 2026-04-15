@@ -51,6 +51,10 @@ struct Backend {
     client:   Client,
     sessions: Arc<Mutex<HashMap<Url, SessionEntry>>>,
     registry: Arc<OperatorRegistry>,
+    /// Workspace root captured from `initialize` params (`root_uri`, or
+    /// `root_path` fallback). `None` under single-file mode; per-document
+    /// auto-detection in `resolve_reader` is the fallback.
+    init_root: Arc<Mutex<Option<PathBuf>>>,
 }
 
 struct SessionEntry {
@@ -257,7 +261,27 @@ fn severity_to_lsp(s: Severity) -> DiagnosticSeverity {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _p: InitializeParams) -> RpcResult<InitializeResult> {
+    async fn initialize(&self, p: InitializeParams) -> RpcResult<InitializeResult> {
+        // Capture workspace root from LSP client. Prefer `root_uri` (URL),
+        // fall back to deprecated `root_path` (already a filesystem path).
+        // Both may be absent in single-file mode — leave `None` and let
+        // `resolve_reader` auto-detect per-document.
+        #[allow(deprecated)]
+        let root_path: Option<PathBuf> = p
+            .root_uri
+            .as_ref()
+            .and_then(|u| match u.to_file_path() {
+                Ok(pb) => Some(pb),
+                Err(()) => {
+                    eprintln!("[sprefa-v2-lsp] initialize: root_uri {u} not a file:// path; ignoring");
+                    None
+                }
+            })
+            .or_else(|| p.root_path.clone().map(PathBuf::from));
+        if let Some(rp) = &root_path {
+            eprintln!("[sprefa-v2-lsp] initialize: workspace root = {}", rp.display());
+        }
+        *self.init_root.lock().await = root_path;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -367,14 +391,26 @@ fn kind_from_hint(hint: &str) -> Option<CompletionItemKind> {
 
 impl Backend {
     async fn open_or_replace(&self, uri: &Url, source: String) {
-        let (overlay, _cfg, workspace_root) = resolve_reader(uri);
+        let (overlay, _cfg, auto_root) = resolve_reader(uri);
+        // Resolution priority for workspace_root:
+        //   1. resolve_reader auto-detection (`.sprefa.toml` first repo, else
+        //      walked `.git` root) — closest to the file, most precise.
+        //   2. initialize params `root_uri` / `root_path` — LSP client's
+        //      workspace folder. Fallback when no git root is reachable.
+        let init_root = self.init_root.lock().await.clone();
+        let workspace_root = auto_root.or(init_root);
+        let root_arc: Option<Arc<std::path::Path>> =
+            workspace_root.as_ref().map(|p| Arc::from(p.as_path()));
         let mut guard = self.sessions.lock().await;
         if let Some(entry) = guard.get_mut(uri) {
             entry.session.on_source_change(source.clone());
+            entry.session.set_workspace_root(root_arc);
             entry.source = source;
+            entry.workspace_root = workspace_root;
             entry.session.ensure_run();
         } else {
             let mut session = DocSession::new(source.clone(), overlay, self.registry.clone());
+            session.set_workspace_root(root_arc);
             session.ensure_run();
             guard.insert(uri.clone(), SessionEntry { session, source, workspace_root });
         }
@@ -440,6 +476,7 @@ async fn main() {
         client,
         sessions: Arc::new(Mutex::new(HashMap::new())),
         registry,
+        init_root: Arc::new(Mutex::new(None)),
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }

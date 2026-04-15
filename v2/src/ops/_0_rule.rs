@@ -183,6 +183,7 @@ pub struct RuleOp {
     pub parse_site: Arc<ParseSite>,
 }
 
+
 impl Op for RuleOp {
     fn name(&self) -> &'static str { "rule" }
     fn step(&self) -> u16 { 0 }
@@ -218,6 +219,16 @@ impl Op for RuleOp {
     }
 
     fn body_pipeline(&self) -> Option<&crate::_5_op::Pipeline> { Some(&self.body) }
+
+    fn with_body(&self, new_body: Pipeline) -> Option<Arc<dyn Op>> {
+        Some(Arc::new(RuleOp {
+            name:       self.name.clone(),
+            spec:       self.spec.clone(),
+            captures:   self.captures.clone(),
+            body:       new_body,
+            parse_site: self.parse_site.clone(),
+        }))
+    }
 
     fn hover_capture(&self, cap: &str, cursors: &[crate::_0_types::Cursor]) -> Option<String> {
         let mut vals: Vec<&str> = Vec::new();
