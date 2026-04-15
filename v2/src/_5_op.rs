@@ -348,6 +348,13 @@ pub trait Op: Send + Sync {
     /// reference to it. Used by tree-walk resolution in DocSession to reach
     /// inner ops without re-lowering.
     fn body_pipeline(&self) -> Option<&Pipeline> { None }
+
+    /// Capture names this op contributes to its downstream scope. Default
+    /// falls back to `capture_name()` for single-binding ops. Ops that bind
+    /// several captures (walker patterns) override.
+    fn binds_captures(&self) -> Vec<Arc<str>> {
+        self.capture_name().map(|n| vec![n]).unwrap_or_default()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +365,100 @@ pub struct CompletionItem {
     pub label:  String,
     pub detail: String,
     pub doc:    String,
+}
+
+// ---------------------------------------------------------------------------
+// Completion — op-owned LSP suggestion surface
+// ---------------------------------------------------------------------------
+
+/// Where the cursor sits relative to an op's slot.
+///
+/// Framework `locate(pos)` (Layer 3) produces this. Ops read `partial` to
+/// filter their candidate list, and `prefix`/`suffix` to disambiguate
+/// multi-arg parens (e.g. `json(foo, |, bar)` where the active slot is
+/// the second arg).
+#[derive(Debug, Clone)]
+pub enum ParenRole {
+    /// Cursor is inside `op(...)` paren.
+    Paren   { partial: Arc<str>, prefix: Arc<str>, suffix: Arc<str> },
+    /// Cursor is inside `op{ ... }` brace (walker pattern body).
+    Brace   { partial: Arc<str>, prefix: Arc<str>, suffix: Arc<str> },
+    /// Cursor is inside `op[ ... ]` bracket (bracket_grammar slot).
+    Bracket { partial: Arc<str>, prefix: Arc<str>, suffix: Arc<str> },
+    /// Cursor is on the op-name token itself.
+    OpName  { partial: Arc<str> },
+}
+
+impl ParenRole {
+    /// The partial token under the cursor, regardless of slot kind.
+    pub fn partial(&self) -> &str {
+        match self {
+            ParenRole::Paren   { partial, .. }
+          | ParenRole::Brace   { partial, .. }
+          | ParenRole::Bracket { partial, .. }
+          | ParenRole::OpName  { partial }      => partial,
+        }
+    }
+}
+
+/// Per-request context handed to `Op::complete_sync` / `complete_async` /
+/// `Operator::head_suggestions`. All fields are snapshots; the op must not
+/// mutate them. Carries enough to answer completion without reaching back
+/// into the runtime (no ResultStore write path, no re-parse).
+#[derive(Clone)]
+pub struct CompletionCtx {
+    /// Where the cursor sits (paren / brace / bracket / op-name).
+    pub role:      ParenRole,
+    /// Program config snapshot. Ops with config-backed options (e.g.
+    /// `repo` over `config.repos`) read from here.
+    pub config:    Arc<Config>,
+    /// Reader stack (blob / WT / buffer overlay). Ops that need file-system
+    /// truth (e.g. `fs` glob enumeration) query this rather than shelling out.
+    pub reader:    Arc<dyn Reader>,
+    /// Capture names in scope at the cursor position (no `$` prefix).
+    /// Built by unioning `binds_captures()` across upstream ops.
+    pub captures:  Arc<[Arc<str>]>,
+    /// Upstream ops in this pipe, closest first. Used by downstream ops
+    /// to look up concrete narrowing inputs (e.g. `rev` locates its
+    /// upstream `repo` here).
+    pub upstream:  Arc<[Arc<dyn Op>]>,
+    /// Known rule names in the document (for cross-ref completion inside
+    /// `${rule.$VAR}` tokens).
+    pub rules:     Arc<[Arc<str>]>,
+    /// Workspace root if resolvable, used for I/O-bound completions that
+    /// need a concrete filesystem anchor (git refs, disk walks).
+    pub root:      Option<Arc<std::path::Path>>,
+}
+
+/// One completion entry contributed by an op.
+///
+/// `insert` is the text that replaces `role.partial()` when accepted; if
+/// `None`, the LSP bin uses `label` as insert text. `filter_text` lets the
+/// client fuzzy-match against a different string than the label. `kind_hint`
+/// is a free-form op-authored tag (e.g. `"branch"`, `"repo"`, `"file"`)
+/// that the LSP bin may map to a client icon; unknown tags fall back to a
+/// generic icon. No central enum: adding a new op never edits a shared list.
+#[derive(Debug, Clone)]
+pub struct CompletionSuggestion {
+    pub label:       String,
+    pub detail:      String,
+    pub doc:         String,
+    pub kind_hint:   Option<Arc<str>>,
+    pub insert:      Option<Arc<str>>,
+    pub filter_text: Option<Arc<str>>,
+}
+
+impl From<CompletionItem> for CompletionSuggestion {
+    fn from(c: CompletionItem) -> Self {
+        CompletionSuggestion {
+            label:       c.label,
+            detail:      c.detail,
+            doc:         c.doc,
+            kind_hint:   Some(Arc::from("op")),
+            insert:      None,
+            filter_text: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +495,31 @@ pub trait Operator: Send + Sync {
             detail: self.paren_grammar().0.to_string(),
             doc:    self.name().to_string(),
         }
+    }
+
+    /// Is this op valid at the current pipe-head position? Default yes.
+    /// Ops that only make sense downstream (e.g. json needs fs upstream)
+    /// can return false given the upstream pipe shape to suppress the
+    /// suggestion until prerequisites exist.
+    fn valid_at_head(&self, _upstream: &[Arc<dyn Op>]) -> bool { true }
+
+    /// Suggestions when no op is under cursor yet (pipe-head position).
+    /// Default: one entry derived from `completion_item()`. Operators can
+    /// override to return templates (e.g. `rule(name) { ... }`) or
+    /// multi-variant starters.
+    fn head_suggestions(&self, _ctx: &CompletionCtx) -> Vec<CompletionSuggestion> {
+        vec![self.completion_item().into()]
+    }
+
+    /// Wildcard/neutral instance of this op for partial-eval completion.
+    /// Framework splices this at the cursor position, runs the pipeline up
+    /// to and including it, and harvests witnesses from output cursors to
+    /// produce completion suggestions. Default returns None: ops that do
+    /// not participate in pipeline-driven completion (e.g. rule itself) opt
+    /// out. Ops that do participate return a "matches everything" instance
+    /// (e.g. `RepoOp { mode: Filter("*") }`).
+    fn wildcard_instance(&self, _parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        None
     }
 }
 

@@ -330,13 +330,16 @@ impl LanguageServer for Backend {
     async fn completion(&self, p: CompletionParams) -> RpcResult<Option<CompletionResponse>> {
         let uri = p.text_document_position.text_document.uri.clone();
         let pos = p.text_document_position.position;
-        let guard = self.sessions.lock().await;
-        let Some(entry) = guard.get(&uri) else { return Ok(None); };
+        let mut guard = self.sessions.lock().await;
+        let Some(entry) = guard.get_mut(&uri) else { return Ok(None); };
         let offset = position_to_offset(&entry.source, pos);
         let items = entry.session.completions_at(offset);
         let lsp_items: Vec<CompletionItem> = items.into_iter().map(|c| CompletionItem {
-            label:  c.label,
-            detail: Some(c.detail),
+            label:         c.label,
+            detail:        Some(c.detail),
+            insert_text:   c.insert.map(|s| s.to_string()),
+            filter_text:   c.filter_text.map(|s| s.to_string()),
+            kind:          c.kind_hint.as_deref().and_then(kind_from_hint),
             documentation: Some(Documentation::MarkupContent(MarkupContent {
                 kind:  MarkupKind::Markdown,
                 value: c.doc,
@@ -344,6 +347,21 @@ impl LanguageServer for Backend {
             ..Default::default()
         }).collect();
         Ok(Some(CompletionResponse::Array(lsp_items)))
+    }
+}
+
+/// Best-effort mapping from op-authored kind hints (free-form strings) to
+/// LSP `CompletionItemKind` icons. Unknown hints fall back to `None`, which
+/// clients render as a generic bullet.
+fn kind_from_hint(hint: &str) -> Option<CompletionItemKind> {
+    match hint {
+        "op"     => Some(CompletionItemKind::FUNCTION),
+        "repo"   => Some(CompletionItemKind::MODULE),
+        "rev"    => Some(CompletionItemKind::REFERENCE),
+        "fs"     => Some(CompletionItemKind::FILE),
+        "branch" => Some(CompletionItemKind::REFERENCE),
+        "tag"    => Some(CompletionItemKind::REFERENCE),
+        _        => None,
     }
 }
 

@@ -49,6 +49,9 @@ rule(bad_rev) {
 
 rule(bad_arm) {
   > repo(HEAD) {
-    > rev(main);
+    > rev(main) {
+
+      > fs() > json({$A: $HMM});
+    }
   };
 };

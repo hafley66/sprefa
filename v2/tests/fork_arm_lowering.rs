@@ -43,15 +43,15 @@ fn lower(src: &str) -> v2::LowerOutcome {
     lower_rules(pipes, pctx)
 }
 
-// repo($R) { > rev(*); } — rev(*) produces rev/no-op-glob from within the arm.
+// repo($R) { > rev(*); } — wildcard is legal; arm lowers cleanly.
 #[test]
-fn fork_arm_rev_star_diag() {
+fn fork_arm_rev_star_clean() {
     let src = r#"rule(foo) { > repo($R) { > rev(*); }; };"#;
     let outcome = lower(src);
     let codes: Vec<&str> = outcome.diags.iter().map(|d| d.code()).collect();
     assert!(
-        codes.contains(&"rev/no-op-glob"),
-        "expected rev/no-op-glob in diags, got {codes:?}"
+        codes.is_empty(),
+        "expected no diags for rev(*), got {codes:?}"
     );
 }
 

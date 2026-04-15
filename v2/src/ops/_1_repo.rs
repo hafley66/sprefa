@@ -46,6 +46,13 @@ impl Operator for RepoFactory {
         }
     }
 
+    fn wildcard_instance(&self, parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        Some(Arc::new(RepoOp {
+            mode: RepoMode::Filter(Arc::from("*")),
+            parse_site,
+        }))
+    }
+
     fn parse(&self, inv: &OpInvocation, _pctx: &mut ProgramCtx)
         -> Result<Pipeline, Vec<Box<dyn Diagnostic>>>
     {
@@ -56,11 +63,6 @@ impl Operator for RepoFactory {
         let arg = paren.src.trim();
         let mode = match classify_token(arg) {
             TokenClass::Capture(c)     => RepoMode::Bind(c.name),
-            TokenClass::Literal if arg == "*" => {
-                return Err(vec![Box::new(RepoDiag::NoOp {
-                    site: (*inv.parse_site).clone(),
-                }) as _]);
-            }
             TokenClass::Literal        => RepoMode::Filter(Arc::from(arg)),
             TokenClass::ScanPointer(_)
           | TokenClass::CrossRef(_)    => {
@@ -169,7 +171,6 @@ impl Op for RepoOp {
 enum RepoDiag {
     MissingArg { site: ParseSite },
     BadArg     { site: ParseSite, got: Arc<str> },
-    NoOp       { site: ParseSite },
 }
 
 impl Diagnostic for RepoDiag {
@@ -177,7 +178,6 @@ impl Diagnostic for RepoDiag {
         match self {
             RepoDiag::MissingArg { .. } => "repo/missing-arg",
             RepoDiag::BadArg     { .. } => "repo/bad-arg",
-            RepoDiag::NoOp       { .. } => "repo/no-op-glob",
         }
     }
     fn severity(&self) -> crate::_0_types::Severity { crate::_0_types::Severity::Error }
@@ -185,7 +185,6 @@ impl Diagnostic for RepoDiag {
         match self {
             RepoDiag::MissingArg { site } => site,
             RepoDiag::BadArg     { site, .. } => site,
-            RepoDiag::NoOp       { site } => site,
         }
     }
     fn render(&self, out: &mut dyn Renderer) {
@@ -198,11 +197,6 @@ impl Diagnostic for RepoDiag {
             RepoDiag::BadArg { site, got } => {
                 out.header(self.code(), self.severity(),
                     &format!("repo argument `{got}` is not a glob or capture"));
-                out.primary(site);
-            }
-            RepoDiag::NoOp { site } => {
-                out.header(self.code(), self.severity(),
-                    "repo(*) matches every repo — it's a no-op. Omit it (seeding uses all configured repos), or bind with repo($R).");
                 out.primary(site);
             }
         }

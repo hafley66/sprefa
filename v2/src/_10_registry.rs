@@ -45,6 +45,14 @@ impl OperatorRegistry {
         self.by_name.get(name).cloned()
     }
 
+    /// Iterate registered operators. Aliases surface as repeated entries
+    /// (same `Arc`, different key); callers that want each op once should
+    /// dedup by `Arc::as_ptr`. Used by the LSP completion driver to
+    /// enumerate head-position suggestions.
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<dyn Operator>> {
+        self.by_name.values()
+    }
+
     pub fn lookup_scan_pointer(&self, sigil: &str) -> Option<ScanPointerFn> {
         self.scan_pointers.get(sigil).map(|(_, f)| *f)
     }

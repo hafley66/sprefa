@@ -36,6 +36,13 @@ impl Operator for RevFactory {
         }
     }
 
+    fn wildcard_instance(&self, parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        Some(Arc::new(RevOp {
+            mode: RevMode::Filter(Arc::from("*")),
+            parse_site,
+        }))
+    }
+
     fn parse(&self, inv: &OpInvocation, _pctx: &mut ProgramCtx)
         -> Result<Pipeline, Vec<Box<dyn Diagnostic>>>
     {
@@ -46,11 +53,6 @@ impl Operator for RevFactory {
         let arg = paren.src.trim();
         let mode = match classify_token(arg) {
             TokenClass::Capture(c)  => RevMode::Bind(c.name),
-            TokenClass::Literal if arg == "*" => {
-                return Err(vec![Box::new(RevDiag::NoOp {
-                    site: (*inv.parse_site).clone(),
-                }) as _]);
-            }
             TokenClass::Literal     => RevMode::Filter(Arc::from(arg)),
             _ => return Err(vec![Box::new(RevDiag::BadArg {
                 site: (*inv.parse_site).clone(),
@@ -143,7 +145,6 @@ impl Op for RevOp {
 enum RevDiag {
     MissingArg { site: ParseSite },
     BadArg     { site: ParseSite, got: Arc<str> },
-    NoOp       { site: ParseSite },
 }
 
 impl Diagnostic for RevDiag {
@@ -151,7 +152,6 @@ impl Diagnostic for RevDiag {
         match self {
             RevDiag::MissingArg { .. } => "rev/missing-arg",
             RevDiag::BadArg     { .. } => "rev/bad-arg",
-            RevDiag::NoOp       { .. } => "rev/no-op-glob",
         }
     }
     fn severity(&self) -> crate::_0_types::Severity { crate::_0_types::Severity::Error }
@@ -159,7 +159,6 @@ impl Diagnostic for RevDiag {
         match self {
             RevDiag::MissingArg { site }    => site,
             RevDiag::BadArg     { site, .. } => site,
-            RevDiag::NoOp       { site }    => site,
         }
     }
     fn render(&self, out: &mut dyn Renderer) {
@@ -172,11 +171,6 @@ impl Diagnostic for RevDiag {
             RevDiag::BadArg { site, got } => {
                 out.header(self.code(), self.severity(),
                     &format!("rev argument `{got}` is not a glob or capture"));
-                out.primary(site);
-            }
-            RevDiag::NoOp { site } => {
-                out.header(self.code(), self.severity(),
-                    "rev(*) matches every revision — it's a no-op. Use rev(HEAD) to mean \"current revision\" (resolves to current branch name in reports).");
                 out.primary(site);
             }
         }
@@ -230,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn star_glob_is_no_op_diag() {
+    fn star_glob_parses_as_filter() {
         let inv = OpInvocation {
             name:       Arc::from("rev"),
             brackets:   vec![],
@@ -240,10 +234,7 @@ mod tests {
             crossrefs:  vec![],
         };
         let result = RevFactory.parse(&inv, &mut dummy_pctx());
-        assert!(result.is_err(), "expected parse to fail for rev(*)");
-        let err = result.err().unwrap();
-        assert_eq!(err.len(), 1);
-        assert_eq!(err[0].code(), "rev/no-op-glob");
+        assert!(result.is_ok(), "expected rev(*) to parse (wildcard is legal)");
     }
 
     // -----------------------------------------------------------------------

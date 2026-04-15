@@ -59,6 +59,13 @@ impl Operator for FsFactory {
         }
     }
 
+    fn wildcard_instance(&self, parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        Some(Arc::new(FsOp {
+            mode: FsMode::Filter(Arc::from("**")),
+            parse_site,
+        }))
+    }
+
     fn parse(&self, inv: &OpInvocation, _pctx: &mut ProgramCtx)
         -> Result<Pipeline, Vec<Box<dyn Diagnostic>>>
     {

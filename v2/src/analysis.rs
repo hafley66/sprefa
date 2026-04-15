@@ -25,7 +25,8 @@ use futures_util::stream::StreamExt;
 use crate::_0_types::{Cursor, OpId, ParseSite, RunId};
 use crate::_1_diagnostic::Diagnostic;
 use crate::_5_op::{
-    CompletionItem, DiagSink, EventSink, Op, OpCtx, Pipeline, ProgramCtx,
+    CompletionCtx, CompletionSuggestion, DiagSink, EventSink, Op, OpCtx, ParenRole,
+    Pipeline, ProgramCtx,
 };
 use crate::_5_op::OpInvocation;
 use crate::_8_parse::{host_parse, host_parse_arm_brace, parse_capture, parse_cross_ref, Pipe};
@@ -33,6 +34,100 @@ use crate::_10_registry::{lower_rules, OperatorRegistry};
 use crate::readers::BufferOverlay;
 use crate::writers::MemWriter;
 use crate::{Config, RuntimeConfig};
+
+// ---------------------------------------------------------------------------
+// Textual paren locator for completion
+// ---------------------------------------------------------------------------
+
+/// Result of `locate_paren_op`. Describes a cursor position inside an
+/// `opname(...)` paren slot: the op name, plus the text around the cursor
+/// split into a `partial` token (what's currently under the caret),
+/// `prefix` (other content left of partial inside the paren), and
+/// `suffix` (content right of cursor inside the paren, if any).
+pub struct ParenLocation {
+    pub op_name: String,
+    pub partial: String,
+    pub prefix:  String,
+    pub suffix:  String,
+}
+
+/// Walk bytes from `pos` backward to find an unclosed `(`, then walk
+/// further back to extract the preceding identifier (the op name).
+/// Returns `None` when the cursor is not inside an op paren slot.
+///
+/// Balances nested parens so `foo(bar(|))` correctly identifies `bar` (the
+/// innermost unclosed op), not `foo`. Bails on `{` / `}` / `[` / `]` since
+/// those delimit brace/bracket slots, not paren slots.
+pub fn locate_paren_op(source: &str, pos: usize) -> Option<ParenLocation> {
+    let pos = pos.min(source.len());
+    let bytes = source.as_bytes();
+
+    let mut depth: i32 = 0;
+    let mut open_paren_idx: Option<usize> = None;
+    let mut i = pos;
+    while i > 0 {
+        i -= 1;
+        let b = bytes[i];
+        match b {
+            b')' => depth += 1,
+            b'(' => {
+                if depth == 0 { open_paren_idx = Some(i); break; }
+                depth -= 1;
+            }
+            b'{' | b'}' | b'[' | b']' => return None,
+            _ => {}
+        }
+    }
+    let open_paren_idx = open_paren_idx?;
+
+    // Identifier ends at open_paren_idx; walk back over whitespace then idents.
+    let mut end = open_paren_idx;
+    while end > 0 && matches!(bytes[end - 1], b' ' | b'\t') { end -= 1; }
+    let mut start = end;
+    while start > 0 {
+        let c = bytes[start - 1];
+        let is_ident = c == b'_' || (c as char).is_ascii_alphanumeric();
+        if !is_ident { break; }
+        start -= 1;
+    }
+    if start == end { return None; }
+    let op_name = std::str::from_utf8(&bytes[start..end]).ok()?.to_string();
+
+    // Slot content: everything between open_paren_idx+1 and the matching close
+    // paren (or end of source if unclosed). Cursor splits it into prefix | suffix.
+    let slot_start = open_paren_idx + 1;
+    let mut j = pos;
+    let mut d: i32 = 0;
+    let mut close: Option<usize> = None;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'(' => d += 1,
+            b')' => {
+                if d == 0 { close = Some(j); break; }
+                d -= 1;
+            }
+            b'{' | b'}' | b'[' | b']' => break,
+            _ => {}
+        }
+        j += 1;
+    }
+    let slot_end = close.unwrap_or(bytes.len()).min(bytes.len());
+    let left  = std::str::from_utf8(&bytes[slot_start..pos.min(slot_end)]).ok()?;
+    let right = std::str::from_utf8(&bytes[pos.min(slot_end)..slot_end]).ok()?;
+
+    // Split `left` into prefix + partial at the last comma/whitespace boundary.
+    let split = left.rfind(|c: char| c == ',' || c.is_whitespace())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let (prefix, partial) = left.split_at(split);
+
+    Some(ParenLocation {
+        op_name,
+        partial: partial.to_string(),
+        prefix:  prefix.to_string(),
+        suffix:  right.to_string(),
+    })
+}
 
 // ---------------------------------------------------------------------------
 // SpanIndex
@@ -91,6 +186,9 @@ pub struct DocSession {
     // --- runtime ---
     reader:   Arc<BufferOverlay>,
     factory_registry: Arc<OperatorRegistry>,
+    /// Workspace root for I/O-bound completions (git ref enumeration, disk
+    /// walks). `None` when the LSP couldn't locate a git root for this uri.
+    workspace_root: Option<Arc<std::path::Path>>,
 
     // --- report cache ---
     last_run: Option<RunReport>,
@@ -110,11 +208,17 @@ impl DocSession {
             parse_diags:      Vec::new(),
             reader,
             factory_registry: registry,
+            workspace_root:   None,
             last_run:         None,
             stale:            true,
         };
         session.reparse(source);
         session
+    }
+
+    /// Set the workspace root (git root) for I/O-bound completions.
+    pub fn set_workspace_root(&mut self, root: Option<Arc<std::path::Path>>) {
+        self.workspace_root = root;
     }
 
     // -----------------------------------------------------------------------
@@ -277,19 +381,129 @@ impl DocSession {
         }
     }
 
-    /// Completion items for the operator at `pos`. Returns all registered ops
-    /// when pos is at/near the start of a new pipeline segment.
-    pub fn completions_at(&self, _pos: usize) -> Vec<CompletionItem> {
-        // Walk all registered operators and collect their completion items.
-        // Position-sensitivity (e.g. inside a paren arg vs. op name position)
-        // is a Layer 4 concern; here we always return the full op list.
-        let registry = &self.factory_registry;
-        // OperatorRegistry exposes only `resolve` by name; iterate known names.
-        let op_names = ["rule", "repo", "rev", "fs", "read", "json"];
-        op_names.iter()
-            .filter_map(|name| registry.resolve(name))
-            .map(|op| op.completion_item())
-            .collect()
+    /// Completion suggestions at `pos` (byte offset into source).
+    ///
+    /// DocSession is a read-mostly cache/client. Completion dispatches:
+    /// - Inside `opname(...)` paren → synthesize a wildcard op via
+    ///   `Operator::wildcard_instance`, call `Runner::scan_partial` to
+    ///   run the pipeline up to that splice point, harvest witnesses from
+    ///   output cursors via `Op::witness`, dedup, filter by partial.
+    /// - Otherwise (pipe-head or unknown) → union `head_suggestions` from
+    ///   every registered operator.
+    ///
+    /// Uses the textual locator `locate_paren_op` so completion works even
+    /// when the document doesn't parse (mid-edit state). When a daemon
+    /// backs Runner, the `scan_partial` call becomes RPC; this function
+    /// stays unchanged.
+    pub fn completions_at(&mut self, pos: usize) -> Vec<CompletionSuggestion> {
+        let rule_names: Arc<[Arc<str>]> = self.pipelines.iter()
+            .map(|(n, _)| n.clone())
+            .collect::<Vec<_>>()
+            .into();
+
+        let reader: Arc<dyn crate::_3_reader::Reader> = self.reader.clone();
+        let config = Arc::new(Config {
+            repos:        vec![],
+            revs:         vec![],
+            fs_exclude:   vec![],
+            sprf_files:   vec![],
+            shell_allow:  vec![],
+            runtime: RuntimeConfig {
+                worker_threads:      1,
+                buffer_size:         256,
+                flush_interval_ms:   100,
+                collect_witnesses:   true,
+                xref_cartesian_limit: 10_000,
+            },
+            content_hash: 0,
+        });
+
+        match locate_paren_op(&self.source, pos) {
+            Some(loc) => self.complete_in_paren(loc, config, reader, rule_names),
+            None      => self.complete_head(config, reader, rule_names),
+        }
+    }
+
+    fn complete_head(
+        &self,
+        config: Arc<Config>,
+        reader: Arc<dyn crate::_3_reader::Reader>,
+        rule_names: Arc<[Arc<str>]>,
+    ) -> Vec<CompletionSuggestion> {
+        let ctx = CompletionCtx {
+            role:     ParenRole::OpName { partial: Arc::from("") },
+            config,
+            reader,
+            captures: Arc::from(Vec::<Arc<str>>::new().into_boxed_slice()),
+            upstream: Arc::from(Vec::<Arc<dyn Op>>::new().into_boxed_slice()),
+            rules:    rule_names,
+            root:     self.workspace_root.clone(),
+        };
+        let mut seen: std::collections::HashSet<*const ()> = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for factory in self.factory_registry.iter() {
+            let key = Arc::as_ptr(factory) as *const ();
+            if !seen.insert(key) { continue; }
+            out.extend(factory.head_suggestions(&ctx));
+        }
+        out
+    }
+
+    /// Partial-eval completion inside an `opname(...)` slot. The op being
+    /// typed may not parse; we synthesize a wildcard instance from its
+    /// factory and run the upstream pipeline terminating in that wildcard.
+    /// Each output cursor's witness feeds one suggestion. Framework stays
+    /// out of per-op knowledge about what a "candidate" looks like; the
+    /// op already knows how to emit witnesses.
+    fn complete_in_paren(
+        &mut self,
+        loc: ParenLocation,
+        config: Arc<Config>,
+        reader: Arc<dyn crate::_3_reader::Reader>,
+        _rule_names: Arc<[Arc<str>]>,
+    ) -> Vec<CompletionSuggestion> {
+        let Some(factory) = self.factory_registry.resolve(&loc.op_name) else {
+            return Vec::new();
+        };
+        // Synthetic parse_site at the cursor location. Not used for hover;
+        // only as the wildcard op's identity for path-tagging.
+        let synth_site = Arc::new(ParseSite {
+            file:       Arc::from(std::path::Path::new("<completion-wildcard>")),
+            path:       Arc::from(Vec::new().into_boxed_slice()),
+            byte_range: 0..0,
+        });
+        let Some(wildcard_op) = factory.wildcard_instance(synth_site) else {
+            return Vec::new();
+        };
+
+        // Run partial pipeline. For MVP: drive the wildcard op with empty
+        // input seeded from config (no upstream splicing yet — that's the
+        // next iteration). Runner::scan_partial handles the seed.
+        let cursors = crate::_14_scan_loop::scan_partial(
+            wildcard_op.clone(),
+            reader,
+            config,
+        );
+
+        // Harvest witnesses, dedup, filter by partial, cap.
+        let partial = loc.partial.as_str();
+        let mut seen: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for c in &cursors {
+            let Some(v) = wildcard_op.witness(c) else { continue; };
+            if !partial.is_empty() && !v.contains(partial) { continue; }
+            if !seen.insert(v.clone()) { continue; }
+            out.push(CompletionSuggestion {
+                label:       v.to_string(),
+                detail:      wildcard_op.name().to_string(),
+                doc:         String::new(),
+                kind_hint:   Some(Arc::from(wildcard_op.name())),
+                insert:      Some(v.clone()),
+                filter_text: None,
+            });
+            if out.len() >= 1000 { break; }
+        }
+        out
     }
 
     /// Diagnostics from the last run plus any parse-time diagnostics.
