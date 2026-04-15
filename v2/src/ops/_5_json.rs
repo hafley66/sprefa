@@ -22,7 +22,7 @@ use crate::_5_op::{
 use crate::data::{parse_by_ext, DataKind, DataNode, AnyDataNode};
 use crate::jq_path;
 use crate::walk::_2_compile::compile_steps;
-use crate::walk::_1_compiled::CompiledStep;
+use crate::walk::_1_compiled::{CompiledKeyMatcher, CompiledStep};
 use crate::walk::_3_walker::{walk, Captures};
 use crate::walk::_4_brace_parse::{parse_body, ScanAnnotation};
 
@@ -140,6 +140,35 @@ pub enum JsonMode {
 
 const JSON_EXTS: &[&str] = &["json", "yaml", "yml", "toml"];
 
+fn collect_pattern_captures(steps: &[CompiledStep]) -> Vec<Arc<str>> {
+    let mut seen: Vec<Arc<str>> = Vec::new();
+    fn push(seen: &mut Vec<Arc<str>>, name: &str) {
+        if !seen.iter().any(|s| s.as_ref() == name) {
+            seen.push(Arc::from(name));
+        }
+    }
+    fn walk(seen: &mut Vec<Arc<str>>, steps: &[CompiledStep]) {
+        for s in steps {
+            match s {
+                CompiledStep::Key { capture: Some(n), .. }
+                | CompiledStep::KeyMatch { capture: Some(n), .. }
+                | CompiledStep::Leaf { capture: Some(n) }
+                | CompiledStep::CaptureAny { capture: Some(n) } => push(seen, n),
+                CompiledStep::Object { entries } => {
+                    for e in entries {
+                        if let CompiledKeyMatcher::Capture(n) = &e.key { push(seen, n); }
+                        walk(seen, &e.value);
+                    }
+                }
+                CompiledStep::Array { item } => walk(seen, item),
+                _ => {}
+            }
+        }
+    }
+    walk(&mut seen, steps);
+    seen
+}
+
 fn file_ext(fp: &FilePath) -> Option<String> {
     fp.0.extension()
         .and_then(|e| e.to_str())
@@ -181,6 +210,13 @@ impl Op for JsonOp {
 
     fn hover_self(&self) -> String {
         "# json\n\nWalk JSON/YAML/TOML files with a brace pattern. Binds captures from matching keys.".to_string()
+    }
+
+    fn binds_captures(&self) -> Vec<Arc<str>> {
+        match &self.mode {
+            JsonMode::Pattern(ps) => collect_pattern_captures(&ps.compiled),
+            JsonMode::Wildcard    => vec![],
+        }
     }
 
     fn hover_capture(&self, cap: &str, cursors: &[Cursor]) -> Option<String> {
@@ -308,15 +344,27 @@ impl Op for JsonOp {
                                 // Captures already index into the full file bytes
                                 // (walker sees the whole parsed tree), so no
                                 // offset translation is needed here.
+                                let raw_bytes_opt = c.content.as_ref().cloned();
                                 let file_batch: Vec<Cursor> = rows.into_iter().map(|row| {
                                     let span = row_byte_span(&row.captures);
                                     let mut c2 = c.clone();
                                     c2.fs = Some(fp.clone());
                                     for (name, wc) in row.captures {
-                                        let cap = match stamp_map.get(&name) {
-                                            Some(sigil) => Capture::new(wc.text.clone())
-                                                .with_scan(sigil.clone(), Tri::Claimed),
-                                            None => Capture::new(wc.text.clone()),
+                                        let kind = raw_bytes_opt.as_ref()
+                                            .map(|b| classify_capture(b, wc.byte_start, wc.byte_end))
+                                            .unwrap_or(crate::_0_types::CaptureKind::Synthesized);
+                                        let cap = {
+                                            use crate::_0_types::CaptureKind;
+                                            let base = match kind {
+                                                CaptureKind::SpanBacked { span } =>
+                                                    Capture::span_backed(wc.text.clone(), span),
+                                                CaptureKind::Synthesized =>
+                                                    Capture::new(wc.text.clone()),
+                                            };
+                                            match stamp_map.get(&name) {
+                                                Some(sigil) => base.with_scan(sigil.clone(), Tri::Claimed),
+                                                None => base,
+                                            }
                                         };
                                         c2.captures.insert(name, cap);
                                     }
@@ -329,32 +377,48 @@ impl Op for JsonOp {
                                 return vec![Arc::<[Cursor]>::from(file_batch.into_boxed_slice())];
                             }
 
-                            let candidates: Vec<(FilePath, Bytes)> = match &c.fs {
-                                Some(fp) => {
-                                    match file_ext(fp) {
-                                        Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
-                                        _ => return Vec::<Arc<[Cursor]>>::new(),
-                                    }
-                                    let mut s = reader.bytes(&c.repo, &c.rev, fp);
-                                    let raw = s.next().await.unwrap_or_default();
-                                    vec![(fp.clone(), raw)]
-                                }
-                                None => {
-                                    let all = CompiledPattern::compile("**")
-                                        .expect("'**' is a valid glob");
-                                    let mut s = reader.files(&c.repo, &c.rev, &all);
-                                    let files = s.next().await.unwrap_or_default();
-                                    let mut out = vec![];
-                                    for fp in files {
-                                        match file_ext(&fp) {
+                            // Source-of-truth contract: cursor.content (sliced by
+                                                        // byte_range) is authoritative when set. Reader is the
+                                                        // populate path used only when content is empty. This is
+                                                        // what makes `… > &.$STR > json(…)` parse the rebased
+                                                        // bytes instead of re-fetching the outer file.
+                            let candidates: Vec<(FilePath, Bytes)> = if let Some(content) = c.content.as_ref() {
+                                let bytes = match &c.byte_range {
+                                    Some(r) => content.slice(r.clone()),
+                                    None    => content.as_ref().clone(),
+                                };
+                                let fp = c.fs.clone().unwrap_or_else(|| {
+                                    FilePath(Arc::from(std::path::Path::new("<rebased>")))
+                                });
+                                vec![(fp, bytes)]
+                            } else {
+                                match &c.fs {
+                                    Some(fp) => {
+                                        match file_ext(fp) {
                                             Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
-                                            _ => continue,
+                                            _ => return Vec::<Arc<[Cursor]>>::new(),
                                         }
-                                        let mut s2 = reader.bytes(&c.repo, &c.rev, &fp);
-                                        let raw = s2.next().await.unwrap_or_default();
-                                        out.push((fp, raw));
+                                        let mut s = reader.bytes(&c.repo, &c.rev, fp);
+                                        let raw = s.next().await.unwrap_or_default();
+                                        vec![(fp.clone(), raw)]
                                     }
-                                    out
+                                    None => {
+                                        let all = CompiledPattern::compile("**")
+                                            .expect("'**' is a valid glob");
+                                        let mut s = reader.files(&c.repo, &c.rev, &all);
+                                        let files = s.next().await.unwrap_or_default();
+                                        let mut out = vec![];
+                                        for fp in files {
+                                            match file_ext(&fp) {
+                                                Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
+                                                _ => continue,
+                                            }
+                                            let mut s2 = reader.bytes(&c.repo, &c.rev, &fp);
+                                            let raw = s2.next().await.unwrap_or_default();
+                                            out.push((fp, raw));
+                                        }
+                                        out
+                                    }
                                 }
                             };
 
@@ -370,10 +434,12 @@ impl Op for JsonOp {
 
                             let mut batches: Vec<Arc<[Cursor]>> = Vec::new();
                             for (fp, raw) in candidates {
-                                let ext = match file_ext(&fp) {
-                                    Some(e) => e,
-                                    None => continue,
-                                };
+                                // Default to "json" when fs has no recognized json/yaml/toml ext
+                                                                // (e.g. synthesized "<rebased>" path from the
+                                                                // content-priority branch above).
+                                let ext = file_ext(&fp)
+                                    .filter(|e| JSON_EXTS.contains(&e.as_str()))
+                                    .unwrap_or_else(|| "json".to_string());
                                 let arc_bytes = Arc::new(raw.clone());
                                 let tree = match parse_by_ext(&ext, arc_bytes) {
                                     Ok(t) => t,
@@ -413,15 +479,26 @@ impl Op for JsonOp {
                                 // row cursor shares the same Arc<AnyDataNode>
                                 // via JSON_TREE — downstream json > json reuses
                                 // without re-parsing.
+                                let content_arc = Arc::new(raw.clone());
                                 let file_batch: Vec<Cursor> = rows.into_iter().map(|row| {
                                     let span = row_byte_span(&row.captures);
                                     let mut c2 = c.clone();
                                     c2.fs = Some(fp.clone());
+                                    c2.content = Some(content_arc.clone());
                                     for (name, wc) in row.captures {
-                                        let cap = match stamp_map.get(&name) {
-                                            Some(sigil) => Capture::new(wc.text.clone())
-                                                .with_scan(sigil.clone(), Tri::Claimed),
-                                            None => Capture::new(wc.text.clone()),
+                                        let kind = classify_capture(&raw, wc.byte_start, wc.byte_end);
+                                        let cap = {
+                                            use crate::_0_types::CaptureKind;
+                                            let base = match kind {
+                                                CaptureKind::SpanBacked { span } =>
+                                                    Capture::span_backed(wc.text.clone(), span),
+                                                CaptureKind::Synthesized =>
+                                                    Capture::new(wc.text.clone()),
+                                            };
+                                            match stamp_map.get(&name) {
+                                                Some(sigil) => base.with_scan(sigil.clone(), Tri::Claimed),
+                                                None => base,
+                                            }
                                         };
                                         c2.captures.insert(name, cap);
                                     }
@@ -694,6 +771,33 @@ fn parse_jq_path(path: &str) -> Option<Vec<Segment>> {
 /// equals the value's own span (matches the design memo §4.1 `r_a`), and for
 /// multi-capture rows it bounds the captured data. A later walker touch can
 /// tighten this to the true subtree root span.
+/// Classify a walker capture by its raw bytes in the source file.
+///
+/// JSON objects `{...}` and arrays `[...]` are span-backed: the raw bytes
+/// are valid JSON and can be re-parsed or narrowed by CursorRef. Everything
+/// else (strings — already unescaped in `wc.text` — numbers, booleans,
+/// null) is synthesized: the raw span includes quotes or differs in encoding
+/// from the logical value.
+///
+/// Falls back to `Synthesized` when `bs == be` (empty range) or when
+/// `bytes` is shorter than the span (shouldn't happen; defensive).
+fn classify_capture(bytes: &[u8], bs: u32, be: u32) -> crate::_0_types::CaptureKind {
+    use crate::_0_types::CaptureKind;
+    let bs = bs as usize;
+    let be = be as usize;
+    if be <= bs || be > bytes.len() {
+        return CaptureKind::Synthesized;
+    }
+    let first = bytes[bs..be]
+        .iter()
+        .copied()
+        .find(|b| !b.is_ascii_whitespace());
+    match first {
+        Some(b'{') | Some(b'[') => CaptureKind::SpanBacked { span: bs..be },
+        _                       => CaptureKind::Synthesized,
+    }
+}
+
 fn row_byte_span(caps: &Captures) -> Option<std::ops::Range<usize>> {
     let mut iter = caps.values();
     let first = iter.next()?;

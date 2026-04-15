@@ -432,7 +432,13 @@ impl DocSession {
             }
             SpanKind::Capture { op_path, var } => {
                 let cursors: Vec<Cursor> = cursors_for(&entry.rule).to_vec();
-                let op = resolve_op_in_rule(&entry.rule, &self.pipelines, op_path)?;
+                let site_op = resolve_op_in_rule(&entry.rule, &self.pipelines, op_path)?;
+                let op = if site_op.binds_captures().iter().any(|n| n.as_ref() == var.as_ref()) {
+                    site_op
+                } else {
+                    find_binding_op_in_rule(&entry.rule, &self.pipelines, op_path, var)
+                        .unwrap_or(site_op)
+                };
                 op.hover_capture(var, &cursors)
             }
             SpanKind::CrossRef { target_rule, var, op_path: _ } => {
@@ -1145,6 +1151,74 @@ fn resolve_op_in_rule(
     }
 }
 
+/// Walk a rule's pipeline lexically upstream of `op_path` and return the
+/// most recent op whose `binds_captures()` contains `var`. Mirrors the
+/// path-encoding used by `resolve_op_in_rule` / `resolve_body_op`.
+fn find_binding_op_in_rule(
+    rule:      &Arc<str>,
+    pipelines: &[(Arc<str>, Pipeline)],
+    op_path:   &[usize],
+    var:       &str,
+) -> Option<Arc<dyn Op>> {
+    let (_, pipeline) = pipelines.iter().find(|(r, _)| r == rule)?;
+    let rule_op_pipeline = match pipeline {
+        Pipeline::Seq(children) if children.len() == 1 => &children[0],
+        _ => pipeline,
+    };
+    if op_path.len() < 4 || op_path.len() % 2 != 0 { return None; }
+    let lop = match rule_op_pipeline {
+        Pipeline::Op(lop) => lop,
+        _ => return None,
+    };
+    let body = lop.op.body_pipeline()?;
+    find_binding_in_body(body, &op_path[2..], var)
+}
+
+fn find_binding_in_body(body: &Pipeline, path: &[usize], var: &str) -> Option<Arc<dyn Op>> {
+    if path.len() < 2 || path.len() % 2 != 0 { return None; }
+    let fork_idx = path[0];
+    let op_idx   = path[1];
+    let arm_pipeline: &Pipeline = match body {
+        Pipeline::Fork(arms) => &arms.get(fork_idx)?.pipeline,
+        _ if fork_idx == 0   => body,
+        _                    => return None,
+    };
+
+    let mut latest: Option<Arc<dyn Op>> = None;
+    let (selected, subbody): (Arc<dyn Op>, Option<&Pipeline>) = match arm_pipeline {
+        Pipeline::Seq(children) => {
+            // Scan strictly-earlier siblings (Op variants only) for the latest
+            // binder of `var`. Skip Fork siblings (they are framework brace
+            // bodies attached to the prior Op, descended via subbody).
+            for child in children.iter().take(op_idx) {
+                if let Pipeline::Op(c_lop) = child {
+                    if c_lop.op.binds_captures().iter().any(|n| n.as_ref() == var) {
+                        latest = Some(c_lop.op.clone());
+                    }
+                }
+            }
+            let op = match children.get(op_idx)? {
+                Pipeline::Op(lop) => lop.op.clone(),
+                _ => return latest,
+            };
+            let next = children.get(op_idx + 1);
+            let subbody = match next {
+                Some(p @ Pipeline::Fork(_)) => Some(p),
+                _ => None,
+            };
+            (op, subbody)
+        }
+        Pipeline::Op(lop) if op_idx == 0 => (lop.op.clone(), None),
+        _ => return latest,
+    };
+    if path.len() == 2 {
+        return latest;
+    }
+    // Descend; deeper match (closer lexically to the cursor target) wins.
+    let _ = selected;
+    find_binding_in_body(subbody?, &path[2..], var).or(latest)
+}
+
 /// Reach an op inside a rule body pipeline using (fork_idx, op_idx).
 ///
 /// body may be:
@@ -1340,18 +1414,10 @@ impl Diagnostic for XRefDiag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::{RuleFactory, JsonFactory, FsFactory, RepoFactory, RevFactory, ReadFactory};
     use crate::readers::{BufferOverlay, MemReader};
 
     fn make_registry() -> Arc<OperatorRegistry> {
-        let mut r = OperatorRegistry::new();
-        r.register(Arc::new(RuleFactory));
-        r.register(Arc::new(RepoFactory));
-        r.register(Arc::new(RevFactory));
-        r.register(Arc::new(FsFactory));
-        r.register(Arc::new(ReadFactory));
-        r.register(Arc::new(JsonFactory));
-        Arc::new(r)
+        Arc::new(crate::ops::default_registry())
     }
 
     fn empty_reader() -> Arc<BufferOverlay> {

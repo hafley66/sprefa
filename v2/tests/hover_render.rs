@@ -1,12 +1,17 @@
 //! LSP hover/completion surface tests.
 //! Cursor values are built inline. Op instances extracted via lower_chain.
 
+use v2::ops::{
+    default_registry, FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory,
+};
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use v2::analysis::DocSession;
+use v2::readers::{BufferOverlay, MemReader};
 use v2::_0_types::{Capture, Cursor, FilePath, OpEvidence, ParseSeg, ParseSite, RunId, SprfPath};
-use v2::ops::{FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory};
 use v2::{Op, Operator, Pipeline};
 
 // ---------------------------------------------------------------------------
@@ -77,14 +82,7 @@ fn make_config() -> Arc<v2::Config> {
 }
 
 fn make_registry() -> Arc<v2::OperatorRegistry> {
-    let mut r = v2::OperatorRegistry::new();
-    r.register(Arc::new(RuleFactory));
-    r.register(Arc::new(RepoFactory));
-    r.register(Arc::new(RevFactory));
-    r.register(Arc::new(FsFactory));
-    r.register(Arc::new(ReadFactory));
-    r.register(Arc::new(JsonFactory));
-    Arc::new(r)
+    Arc::new(default_registry())
 }
 
 /// Lower `src` (a single op expression, e.g. `repo($R)`) and return the first
@@ -438,6 +436,59 @@ fn rule_hover_self_lists_captures_from_nested_json_with_multiple_ops() {
 // ---------------------------------------------------------------------------
 // Fix 2 regression — ParseSite structural equality in hover_match
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// cursor_ref hover delegation + field-segment hover
+// ---------------------------------------------------------------------------
+
+fn session_with_json_file(source: &str, repo: &str, rev: &str, path: &str, body: &[u8]) -> DocSession {
+    let mem = Arc::new(
+        MemReader::new(make_config())
+            .with_repo(repo, &[rev])
+            .with_files(repo, rev, &[path])
+            .with_content(repo, rev, path, body),
+    );
+    let overlay = Arc::new(BufferOverlay::new(mem));
+    DocSession::new(source.to_string(), overlay, make_registry())
+}
+
+#[test]
+fn hover_delegates_capture_to_binding_op() {
+    let src = r#"rule(R){ > repo(acme) > rev(main) > fs(**/x.json) > json({pkg:$PKG}) > &.$PKG }"#;
+    let mut s = session_with_json_file(
+        src, "acme", "main", "x.json", br#"{"pkg":"alpha"}"#,
+    );
+    s.ensure_run();
+
+    // First $PKG occurrence is inside json({pkg:$PKG}); the second is inside &.$PKG.
+    let first  = src.find("$PKG").unwrap();
+    let second = src.rfind("$PKG").unwrap();
+    assert_ne!(first, second, "test must hit two distinct sites");
+
+    let upstream  = s.hover_at(first  + 1).expect("hover on json $PKG");
+    let delegated = s.hover_at(second + 1).expect("hover on &.$PKG must delegate");
+    assert_eq!(upstream, delegated,
+        "hover on $PKG inside &.$PKG must equal upstream binder hover");
+}
+
+#[test]
+fn hover_cursor_ref_field_fs() {
+    let src = r#"rule(R){ > repo(acme) > rev(main) > fs(**/x.json) > &.fs }"#;
+    let mut s = session_with_json_file(
+        src, "acme", "main", "x.json", br#"{"k":1}"#,
+    );
+    s.ensure_run();
+
+    // Hover inside the `fs` token of `&.fs` — second occurrence of "fs" in src.
+    let first_fs  = src.find("fs(").unwrap();
+    let second_fs = src[first_fs + 1..].find("fs").unwrap() + first_fs + 1;
+    let md = s.hover_at(second_fs + 1).expect("hover on &.fs returns markdown");
+    assert!(md.contains("x.json"),
+        "expected resolved fs path in hover: {md}");
+    assert!(md.contains("### "),
+        "expected grouped header in hover: {md}");
+    eprintln!("FIELD_FS_HOVER:\n{md}");
+}
 
 #[test]
 fn json_hover_match_structural_eq() {
