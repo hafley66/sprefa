@@ -1,1 +1,1 @@
-20260414.13.lsp-autocomplete-rx-lane-plan.md
+20260415.7.cursorref-as-op-slot.md
