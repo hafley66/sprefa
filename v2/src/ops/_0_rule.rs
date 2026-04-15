@@ -246,8 +246,8 @@ impl Op for RuleOp {
         Some(format!("**`${cap}`** values:\n\n{}", lines.join("\n")))
     }
 
-    fn pipe(&self, _input: BoxStream<'static, Cursor>, ctx: OpCtx)
-        -> BoxStream<'static, Cursor>
+    fn pipe(&self, _input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
+        -> BoxStream<'static, Arc<[Cursor]>>
     {
         // Seed: cartesian of all repos × their revs. Runner-fed input ignored;
         // $rule is a source. Later, input could narrow the seed.
@@ -296,8 +296,13 @@ impl Op for RuleOp {
             out
         };
 
-        let seed_stream: BoxStream<'static, Cursor> =
-            stream::iter(seed).boxed();
+        // Seed is a single batch of length N (one cursor per repo×rev combo).
+        // Keeping it as one batch mirrors "upstream decides batch meaning":
+        // the rule emits one logical seed group and body ops decide what to
+        // fan out from there.
+        let seed_batch: Arc<[Cursor]> = Arc::from(seed.into_boxed_slice());
+        let seed_stream: BoxStream<'static, Arc<[Cursor]>> =
+            stream::iter(vec![seed_batch]).boxed();
 
         // Run body.
         let after_body = self.body.run(seed_stream, ctx.clone());
@@ -320,11 +325,13 @@ impl Op for RuleOp {
         };
 
         after_body
-            .map(move |c| {
-                let row = cursor_to_row(&c, &captures);
-                let _ = writer.write_rows(&spec, std::slice::from_ref(&row));
-                store.append(&rule_name, c.captures.clone());
-                Some(c)
+            .map(move |batch| {
+                for c in batch.iter() {
+                    let row = cursor_to_row(c, &captures);
+                    let _ = writer.write_rows(&spec, std::slice::from_ref(&row));
+                    store.append(&rule_name, c.captures.clone());
+                }
+                Some(batch)
             })
             .chain(futures_util::stream::once(mark_tail).map(|()| None))
             .filter_map(|x| async move { x })

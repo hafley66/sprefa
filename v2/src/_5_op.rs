@@ -130,18 +130,18 @@ impl Pipeline {
     ///   - Fork→ push `PathSeg::ForkArm { index, parse_site }` per arm's output
     pub fn run(
         &self,
-        input: BoxStream<'static, Cursor>,
+        input: BoxStream<'static, Arc<[Cursor]>>,
         ctx:   OpCtx,
-    ) -> BoxStream<'static, Cursor> {
+    ) -> BoxStream<'static, Arc<[Cursor]>> {
         self.run_with_step(input, ctx, 0)
     }
 
     fn run_with_step(
         &self,
-        input: BoxStream<'static, Cursor>,
+        input: BoxStream<'static, Arc<[Cursor]>>,
         ctx:   OpCtx,
         step:  u16,
-    ) -> BoxStream<'static, Cursor> {
+    ) -> BoxStream<'static, Arc<[Cursor]>> {
         use futures_util::stream::{self, StreamExt};
         match self {
             Pipeline::Op(lop) => {
@@ -152,22 +152,26 @@ impl Pipeline {
                 let op2 = op.clone();
                 let limit = ctx.config.runtime.xref_cartesian_limit;
                 let input = expand_xrefs(input, lop.xrefs.clone(), ps.clone(), ctx.clone(), limit);
-                op.pipe(input, ctx).map(move |mut c| {
-                    if collect {
-                        if let Some(v) = op2.witness(&c) {
-                            c.evidence.push(OpEvidence {
-                                op_name:    op2.name(),
-                                parse_site: op2.parse_site().clone(),
-                                matched:    v,
-                                capture:    op2.capture_name(),
-                            });
+                op.pipe(input, ctx).map(move |batch| {
+                    let out: Vec<Cursor> = batch.iter().map(|c| {
+                        let mut c = c.clone();
+                        if collect {
+                            if let Some(v) = op2.witness(&c) {
+                                c.evidence.push(OpEvidence {
+                                    op_name:    op2.name(),
+                                    parse_site: op2.parse_site().clone(),
+                                    matched:    v,
+                                    capture:    op2.capture_name(),
+                                });
+                            }
                         }
-                    }
-                    push_path(c, PathSeg::Op {
-                        name:       name.clone(),
-                        parse_site: ps.clone(),
-                        step,
-                    })
+                        push_path(c, PathSeg::Op {
+                            name:       name.clone(),
+                            parse_site: ps.clone(),
+                            step,
+                        })
+                    }).collect();
+                    Arc::<[Cursor]>::from(out.into_boxed_slice())
                 }).boxed()
             }
             Pipeline::Seq(children) => children
@@ -178,16 +182,19 @@ impl Pipeline {
                 // Distribute parent: buffer, replay to each arm, tag with ForkArm, union.
                 // TODO: real shareReplay(1) for daemon mode.
                 use futures::executor::block_on;
-                let buffered: Vec<Cursor> = block_on(input.collect());
-                let mut merged: Vec<Cursor> = Vec::new();
+                let buffered: Vec<Arc<[Cursor]>> = block_on(input.collect());
+                let mut merged: Vec<Arc<[Cursor]>> = Vec::new();
                 for (i, arm) in arms.iter().enumerate() {
                     let s = stream::iter(buffered.clone()).boxed();
-                    let out: Vec<Cursor> = block_on(arm.pipeline.run(s, ctx.clone()).collect());
+                    let out: Vec<Arc<[Cursor]>> = block_on(arm.pipeline.run(s, ctx.clone()).collect());
                     let ps = arm.parse_site.clone();
                     let idx = i as u16;
-                    merged.extend(out.into_iter().map(|c| {
-                        push_path(c, PathSeg::ForkArm { index: idx, parse_site: ps.clone() })
-                    }));
+                    for batch in out {
+                        let tagged: Vec<Cursor> = batch.iter().map(|c| {
+                            push_path(c.clone(), PathSeg::ForkArm { index: idx, parse_site: ps.clone() })
+                        }).collect();
+                        merged.push(Arc::<[Cursor]>::from(tagged.into_boxed_slice()));
+                    }
                 }
                 stream::iter(merged).boxed()
             }
@@ -309,9 +316,9 @@ pub struct EventSink(pub Arc<dyn Fn(RunEvent) + Send + Sync>);
 pub trait Op: Send + Sync {
     fn pipe(
         &self,
-        input: BoxStream<'static, Cursor>,
+        input: BoxStream<'static, Arc<[Cursor]>>,
         ctx:   OpCtx,
-    ) -> BoxStream<'static, Cursor>;
+    ) -> BoxStream<'static, Arc<[Cursor]>>;
 
     fn name(&self) -> &'static str;
     fn step(&self) -> u16;
@@ -323,6 +330,13 @@ pub trait Op: Send + Sync {
     /// Framework calls on every cursor the op emits and pushes the result
     /// into `cursor.evidence` for LSP telemetry. Default `None` = opt out.
     fn witness(&self, _c: &Cursor) -> Option<Arc<str>> { None }
+
+    /// Text to insert on completion accept. Default echoes `witness(c)` —
+    /// override when the completion label differs from the source-side
+    /// insert (json() uses a jq-path label but inserts a sprf pattern).
+    fn witness_insert(&self, c: &Cursor) -> Option<Arc<str>> {
+        self.witness(c)
+    }
 
     /// If this op is binding a capture, its name. Paired with `witness`
     /// in the evidence record. Default `None` = filter / non-binding mode.
@@ -447,23 +461,30 @@ pub struct CompletionCtx {
 /// generic icon. No central enum: adding a new op never edits a shared list.
 #[derive(Debug, Clone)]
 pub struct CompletionSuggestion {
-    pub label:       String,
-    pub detail:      String,
-    pub doc:         String,
-    pub kind_hint:   Option<Arc<str>>,
-    pub insert:      Option<Arc<str>>,
-    pub filter_text: Option<Arc<str>>,
+    pub label:         String,
+    pub detail:        String,
+    pub doc:           String,
+    pub kind_hint:     Option<Arc<str>>,
+    pub insert:        Option<Arc<str>>,
+    pub filter_text:   Option<Arc<str>>,
+    /// Source byte range the client should replace with `label`. Set by
+    /// paren-internal completion where partial boundaries are known so
+    /// VS Code doesn't default to word-boundary replacement (which breaks
+    /// when partials contain `/`, `.`, etc.). `None` for op-name completions
+    /// at head of line where `insert_text` is fine.
+    pub replace_range: Option<std::ops::Range<usize>>,
 }
 
 impl From<CompletionItem> for CompletionSuggestion {
     fn from(c: CompletionItem) -> Self {
         CompletionSuggestion {
-            label:       c.label,
-            detail:      c.detail,
-            doc:         c.doc,
-            kind_hint:   Some(Arc::from("op")),
-            insert:      None,
-            filter_text: None,
+            label:         c.label,
+            detail:        c.detail,
+            doc:           c.doc,
+            kind_hint:     Some(Arc::from("op")),
+            insert:        None,
+            filter_text:   None,
+            replace_range: None,
         }
     }
 }
@@ -680,12 +701,12 @@ pub fn hover_render_grouped(
 /// - Per-input dedup: tuples of `(var, value)` in xref declaration order
 ///   are hashed so duplicate target rows collapse.
 pub(crate) fn expand_xrefs(
-    input:   BoxStream<'static, Cursor>,
+    input:   BoxStream<'static, Arc<[Cursor]>>,
     xrefs:   Arc<[CrossRefOccurrence]>,
     op_site: Arc<ParseSite>,
     ctx:     OpCtx,
     limit:   usize,
-) -> BoxStream<'static, Cursor> {
+) -> BoxStream<'static, Arc<[Cursor]>> {
     use futures_util::stream::{self, StreamExt};
 
     if xrefs.is_empty() {
@@ -693,8 +714,18 @@ pub(crate) fn expand_xrefs(
     }
 
     input
-        .flat_map(move |cursor| {
-            let outs = expand_one(&cursor, &xrefs, &op_site, &ctx, limit);
+        .flat_map(move |batch| {
+            // Each input cursor expands into its own output batch (the cartesian
+            // fan-out of that cursor over source rows). An input cursor that
+            // produces zero expansions still emits an empty Arc<[]> so the
+            // batch shape stays 1:1 with input cursors.
+            let xrefs = xrefs.clone();
+            let op_site = op_site.clone();
+            let ctx = ctx.clone();
+            let outs: Vec<Arc<[Cursor]>> = batch.iter().map(|c| {
+                let v = expand_one(c, &xrefs, &op_site, &ctx, limit);
+                Arc::<[Cursor]>::from(v.into_boxed_slice())
+            }).collect();
             stream::iter(outs)
         })
         .boxed()
@@ -993,14 +1024,20 @@ mod xref_tests {
         }
     }
 
-    fn drain(s: BoxStream<'static, Cursor>) -> Vec<Cursor> {
-        futures::executor::block_on(s.collect())
+    fn drain(s: BoxStream<'static, Arc<[Cursor]>>) -> Vec<Cursor> {
+        let batches: Vec<Arc<[Cursor]>> = futures::executor::block_on(s.collect());
+        batches.into_iter().flat_map(|b| b.iter().cloned().collect::<Vec<_>>()).collect()
     }
 
     fn run(xrefs: Vec<CrossRefOccurrence>, inputs: Vec<Cursor>, tctx: &TestCtx, limit: usize)
         -> Vec<Cursor>
     {
-        let s = stream::iter(inputs).boxed();
+        // Wrap each input cursor as a singleton batch so the fan-out semantics
+        // under test match the trait's per-cursor expansion contract.
+        let batches: Vec<Arc<[Cursor]>> = inputs.into_iter()
+            .map(|c| Arc::<[Cursor]>::from(vec![c].into_boxed_slice()))
+            .collect();
+        let s = stream::iter(batches).boxed();
         let arc: Arc<[CrossRefOccurrence]> = Arc::from(xrefs.into_boxed_slice());
         drain(expand_xrefs(s, arc, site(), tctx.ctx.clone(), limit))
     }

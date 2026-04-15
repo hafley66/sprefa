@@ -83,9 +83,13 @@ fn run_rule(src: &str, reader: Arc<MemReader>) -> (Vec<Cursor>, Arc<MemWriter>) 
         result_store,
         xref_seen,
     };
-    let empty: futures_core::stream::BoxStream<'static, Cursor> =
-        futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
-    let out: Vec<Cursor> = block_on(outcome.pipelines[0].run(empty, ctx).collect());
+    let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
+    let batches: Vec<Arc<[Cursor]>> =
+        block_on(outcome.pipelines[0].run(empty, ctx).collect());
+    let out: Vec<Cursor> = batches.into_iter()
+        .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
+        .collect();
     (out, writer)
 }
 

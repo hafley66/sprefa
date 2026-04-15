@@ -358,17 +358,36 @@ impl LanguageServer for Backend {
         let Some(entry) = guard.get_mut(&uri) else { return Ok(None); };
         let offset = position_to_offset(&entry.source, pos);
         let items = entry.session.completions_at(offset);
-        let lsp_items: Vec<CompletionItem> = items.into_iter().map(|c| CompletionItem {
-            label:         c.label,
-            detail:        Some(c.detail),
-            insert_text:   c.insert.map(|s| s.to_string()),
-            filter_text:   c.filter_text.map(|s| s.to_string()),
-            kind:          c.kind_hint.as_deref().and_then(kind_from_hint),
-            documentation: Some(Documentation::MarkupContent(MarkupContent {
-                kind:  MarkupKind::Markdown,
-                value: c.doc,
-            })),
-            ..Default::default()
+        let source = entry.source.clone();
+        let lsp_items: Vec<CompletionItem> = items.into_iter().map(|c| {
+            let text_edit = c.replace_range.as_ref().map(|r| {
+                let start = offset_to_position(&source, r.start);
+                let end   = offset_to_position(&source, r.end);
+                CompletionTextEdit::Edit(TextEdit {
+                    range:    Range { start, end },
+                    new_text: c.label.clone(),
+                })
+            });
+            // When text_edit is set, insert_text is ignored — skip it to avoid
+            // client confusion.
+            let insert_text = if text_edit.is_some() {
+                None
+            } else {
+                c.insert.map(|s| s.to_string())
+            };
+            CompletionItem {
+                label:         c.label,
+                detail:        Some(c.detail),
+                insert_text,
+                text_edit,
+                filter_text:   c.filter_text.map(|s| s.to_string()),
+                kind:          c.kind_hint.as_deref().and_then(kind_from_hint),
+                documentation: Some(Documentation::MarkupContent(MarkupContent {
+                    kind:  MarkupKind::Markdown,
+                    value: c.doc,
+                })),
+                ..Default::default()
+            }
         }).collect();
         Ok(Some(CompletionResponse::Array(lsp_items)))
     }
@@ -422,7 +441,11 @@ impl Backend {
         // Collect parse diags + run diags, deduplicated by (code, byte range).
         // Run diags can fire per-cursor (e.g. json/no-match across N files × M revs)
         // but LSP users want one marker per source site, with a hit count suffix.
+        // When the same parse_site produced a successful match for *some* cursor,
+        // demote per-cursor `no-match` / `partial-match` to Hint — the user gets
+        // hover-time detail without an Error/Warn squiggle drowning everything.
         type DKey = (String, usize, usize);
+        let success_sites = entry.session.successful_sites();
         let mut counts: std::collections::HashMap<DKey, usize> = std::collections::HashMap::new();
         let mut firsts: Vec<(DKey, Severity, String)> = Vec::new();
         for d in entry.session.parse_diagnostics().iter().chain(entry.session.diagnostics().iter()) {
@@ -438,7 +461,14 @@ impl Backend {
                 } else {
                     format!("{}\n\n{}", cap.header_msg, cap.notes.join("\n\n"))
                 };
-                firsts.push((key, d.severity(), body));
+                let sev = if matches!(d.code(), c if c.ends_with("/no-match") || c.ends_with("/partial-match"))
+                    && success_sites.contains(&(site.file.clone(), site.byte_range.clone()))
+                {
+                    Severity::Hint
+                } else {
+                    d.severity()
+                };
+                firsts.push((key, sev, body));
             }
         }
         let mut diags: Vec<Diagnostic> = Vec::new();

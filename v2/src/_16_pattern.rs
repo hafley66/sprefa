@@ -203,6 +203,29 @@ impl CompiledPattern {
     }
 }
 
+/// Normalize a glob segment so trailing `/` behaves like v1's `folder(...)` step:
+/// `v2/` → `**/v2/**`, `**/foo/` → `**/foo/**`, `/abs/` → `/abs/**`.
+/// Patterns with `**`-prefix, absolute `/`-prefix, or `$` segment captures
+/// skip the `**/` anchoring. No trailing slash → passthrough.
+pub fn normalize_folder_glob(segment: &str) -> std::borrow::Cow<'_, str> {
+    if segment == "/" || !segment.ends_with('/') {
+        return std::borrow::Cow::Borrowed(segment);
+    }
+    let stripped = &segment[..segment.len() - 1];
+    let anchored_owned;
+    let anchored: &str = if stripped.starts_with("**")
+        || stripped.starts_with('/')
+        || stripped.contains('$')
+    {
+        stripped
+    } else {
+        anchored_owned = format!("**/{stripped}");
+        // Return a new String so the borrow lives through the final format.
+        return std::borrow::Cow::Owned(format!("{anchored_owned}/**"));
+    };
+    std::borrow::Cow::Owned(format!("{anchored}/**"))
+}
+
 /// Compile a slice of pattern strings into matchers.
 pub fn compile_patterns(patterns: &[&str]) -> anyhow::Result<Vec<PatternMatcher>> {
     let mut matchers = Vec::new();
@@ -214,7 +237,8 @@ pub fn compile_patterns(patterns: &[&str]) -> anyhow::Result<Vec<PatternMatcher>
         } else {
             for segment in p.split('|') {
                 let segment = segment.trim();
-                matchers.push(PatternMatcher::Glob(Glob::new(segment)?.compile_matcher()));
+                let normalized = normalize_folder_glob(segment);
+                matchers.push(PatternMatcher::Glob(Glob::new(&normalized)?.compile_matcher()));
             }
         }
     }

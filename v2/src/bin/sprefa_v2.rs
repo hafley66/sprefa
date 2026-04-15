@@ -175,10 +175,14 @@ fn main() {
                     xref_seen,
                 };
 
-                let empty: futures_core::stream::BoxStream<'static, Cursor> =
-                    futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
+                let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+                    futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
 
-                let cursors: Vec<Cursor> = block_on(pipeline.run(empty, ctx).collect());
+                let batches: Vec<Arc<[Cursor]>> =
+                    block_on(pipeline.run(empty, ctx).collect());
+                let cursors: Vec<Cursor> = batches.into_iter()
+                    .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
+                    .collect();
 
                 println!("rule {rule_name} — {} rows", cursors.len());
                 for c in &cursors {

@@ -82,10 +82,13 @@ fn rule_repo_rev_end_to_end() {
     };
 
     // Drive the top pipeline with an empty seed; rule is a source and ignores input.
-    let empty: futures_core::stream::BoxStream<'static, Cursor> =
-        futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
+    let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
     let out_stream = outcome.pipelines[0].run(empty, ctx);
-    let out: Vec<Cursor> = block_on(out_stream.collect());
+    let batches: Vec<Arc<[Cursor]>> = block_on(out_stream.collect());
+    let out: Vec<Cursor> = batches.into_iter()
+        .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
+        .collect();
 
     let repos: Vec<&str> = out.iter().map(|c| c.repo.as_ref()).collect();
     let revs:  Vec<&str> = out.iter().map(|c| c.rev.as_ref()).collect();
@@ -182,9 +185,13 @@ fn fs_fanout_and_evidence() {
     };
 
     // Drive files_demo.
-    let empty: futures_core::stream::BoxStream<'static, Cursor> =
-        futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
-    let out: Vec<Cursor> = block_on(outcome.pipelines[0].run(empty, ctx.clone()).collect());
+    let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
+    let batches: Vec<Arc<[Cursor]>> =
+        block_on(outcome.pipelines[0].run(empty, ctx.clone()).collect());
+    let out: Vec<Cursor> = batches.into_iter()
+        .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
+        .collect();
 
     // (alpha,main)×2 + (alpha,v1)×1 + (beta,main)×1 = 4.
     assert_eq!(out.len(), 4);
@@ -208,9 +215,13 @@ fn fs_fanout_and_evidence() {
     }
 
     // Drive bind_demo — fs($F) captures filename.
-    let empty: futures_core::stream::BoxStream<'static, Cursor> =
-        futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
-    let out2: Vec<Cursor> = block_on(outcome.pipelines[1].run(empty, ctx).collect());
+    let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
+    let batches2: Vec<Arc<[Cursor]>> =
+        block_on(outcome.pipelines[1].run(empty, ctx).collect());
+    let out2: Vec<Cursor> = batches2.into_iter()
+        .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
+        .collect();
     assert_eq!(out2.len(), 1);
     let c = &out2[0];
     assert_eq!(c.captures.get("F").map(|cap| cap.value.as_ref()), Some("src/c.rs"));

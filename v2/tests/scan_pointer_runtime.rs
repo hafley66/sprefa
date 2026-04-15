@@ -72,9 +72,13 @@ fn run_rule(src: &str, reader: Arc<MemReader>) -> Vec<Cursor> {
         result_store,
         xref_seen,
     };
-    let empty: futures_core::stream::BoxStream<'static, Cursor> =
-        futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
-    block_on(outcome.pipelines[0].run(empty, ctx).collect())
+    let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
+    let batches: Vec<Arc<[Cursor]>> =
+        block_on(outcome.pipelines[0].run(empty, ctx).collect());
+    batches.into_iter()
+        .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
+        .collect()
 }
 
 #[test]
@@ -331,9 +335,9 @@ fn scan_loop_depth_4_diamond_converges_and_records_edges() {
             result_store: shared_store.clone(),
             xref_seen,
         };
-        let empty: futures_core::stream::BoxStream<'static, Cursor> =
-            futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
-        let _: Vec<Cursor> = block_on(pipeline_r.run(empty, ctx).collect());
+        let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+            futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
+        let _: Vec<Arc<[Cursor]>> = block_on(pipeline_r.run(empty, ctx).collect());
         let _ = shared_store;
         Vec::<Box<dyn Diagnostic>>::new()
     };

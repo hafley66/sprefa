@@ -67,36 +67,40 @@ impl Op for ReadOp {
         "# read\n\nLoad file bytes into `cursor.content`. Requires an upstream `fs` op.".to_string()
     }
 
-    fn pipe(&self, input: BoxStream<'static, Cursor>, ctx: OpCtx)
-        -> BoxStream<'static, Cursor>
+    fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
+        -> BoxStream<'static, Arc<[Cursor]>>
     {
         let reader    = ctx.reader.clone();
         let diags     = ctx.diags.clone();
         let parse_site = self.parse_site.clone();
 
-        input.then(move |mut c| {
+        input.then(move |batch| {
             let reader     = reader.clone();
             let diags      = diags.clone();
             let parse_site = parse_site.clone();
             async move {
-                match &c.fs {
-                    None => {
-                        diags.0(Box::new(ReadDiag::NoFile { site: (*parse_site).clone() }));
-                        // Pass cursor through unchanged — callers may handle
-                        // missing content defensively.
-                        vec![c]
-                    }
-                    Some(fp) => {
-                        let mut s = reader.bytes(&c.repo, &c.rev, fp);
-                        let raw: Bytes = s.next().await.unwrap_or_default();
-                        if !raw.is_empty() {
-                            c.content = Some(Arc::new(raw));
+                let mut out: Vec<Cursor> = Vec::with_capacity(batch.len());
+                for c in batch.iter() {
+                    let mut c = c.clone();
+                    match &c.fs {
+                        None => {
+                            diags.0(Box::new(ReadDiag::NoFile { site: (*parse_site).clone() }));
+                            // Pass cursor through unchanged — callers may handle
+                            // missing content defensively.
                         }
-                        vec![c]
+                        Some(fp) => {
+                            let mut s = reader.bytes(&c.repo, &c.rev, fp);
+                            let raw: Bytes = s.next().await.unwrap_or_default();
+                            if !raw.is_empty() {
+                                c.content = Some(Arc::new(raw));
+                            }
+                        }
                     }
+                    out.push(c);
                 }
+                Arc::<[Cursor]>::from(out.into_boxed_slice())
             }
-        }).flat_map(|v| futures_util::stream::iter(v)).boxed()
+        }).boxed()
     }
 }
 

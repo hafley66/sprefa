@@ -80,10 +80,23 @@ impl Operator for JsonFactory {
         })?;
 
         Ok(Pipeline::Op(Arc::new(JsonOp {
-            compiled:    Arc::from(compiled.into_boxed_slice()),
-            annotations: Arc::from(annotations.into_boxed_slice()),
+            mode: JsonMode::Pattern(PatternState {
+                compiled:    Arc::from(compiled.into_boxed_slice()),
+                annotations: Arc::from(annotations.into_boxed_slice()),
+            }),
             parse_site:  inv.parse_site.clone(),
         }).into()))
+    }
+
+    // Wildcard op: used by LSP partial-eval completion. Enumerates every
+    // jq-path reachable in upstream JSON/YAML/TOML files, emits one
+    // cursor per unique path. witness() returns the jq-path for labelling,
+    // witness_insert() returns a sprf pattern for source insertion.
+    fn wildcard_instance(&self, parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        Some(Arc::new(JsonOp {
+            mode: JsonMode::Wildcard,
+            parse_site,
+        }))
     }
 }
 
@@ -92,9 +105,18 @@ impl Operator for JsonFactory {
 // ---------------------------------------------------------------------------
 
 pub struct JsonOp {
+    mode:       JsonMode,
+    parse_site: Arc<ParseSite>,
+}
+
+pub struct PatternState {
     compiled:    Arc<[CompiledStep]>,
     annotations: Arc<[ScanAnnotation]>,
-    parse_site:  Arc<ParseSite>,
+}
+
+pub enum JsonMode {
+    Pattern(PatternState),
+    Wildcard,
 }
 
 const JSON_EXTS: &[&str] = &["json", "yaml", "yml", "toml"];
@@ -111,7 +133,31 @@ impl Op for JsonOp {
     fn parse_site(&self) -> &Arc<ParseSite> { &self.parse_site }
 
     fn witness(&self, c: &Cursor) -> Option<Arc<str>> {
-        c.fs.as_ref().map(|fp| Arc::from(fp.0.to_string_lossy().as_ref()))
+        match &self.mode {
+            // Pattern mode: fs path is the witness (one cursor per matched file).
+            JsonMode::Pattern(_) => {
+                c.fs.as_ref().map(|fp| Arc::from(fp.0.to_string_lossy().as_ref()))
+            }
+            // Wildcard mode: pull latest json-evidence entry whose parse_site
+            // matches — its `matched` slot holds the jq-path we stamped in pipe.
+            JsonMode::Wildcard => {
+                let site = self.parse_site.as_ref();
+                c.evidence.iter().rev()
+                    .find(|ev| ev.op_name == "json" && ev.parse_site.as_ref() == site)
+                    .map(|ev| ev.matched.clone())
+            }
+        }
+    }
+
+    fn witness_insert(&self, c: &Cursor) -> Option<Arc<str>> {
+        match &self.mode {
+            JsonMode::Pattern(_) => self.witness(c),
+            JsonMode::Wildcard => {
+                let jq = self.witness(c)?;
+                let sprf = jq_path_to_sprf_pattern(&jq)?;
+                Some(Arc::from(sprf))
+            }
+        }
     }
 
     fn hover_self(&self) -> String {
@@ -156,11 +202,15 @@ impl Op for JsonOp {
         hover_render_grouped(header, &entries)
     }
 
-    fn pipe(&self, input: BoxStream<'static, Cursor>, ctx: OpCtx)
-        -> BoxStream<'static, Cursor>
+    fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
+        -> BoxStream<'static, Arc<[Cursor]>>
     {
-        let compiled    = self.compiled.clone();
-        let annotations = self.annotations.clone();
+        let ps = match &self.mode {
+            JsonMode::Pattern(ps) => ps,
+            JsonMode::Wildcard    => return wildcard_pipe(self.parse_site.clone(), input, ctx),
+        };
+        let compiled    = ps.compiled.clone();
+        let annotations = ps.annotations.clone();
         let parse_site  = self.parse_site.clone();
         let reader      = ctx.reader.clone();
         let diags       = ctx.diags.clone();
@@ -179,121 +229,369 @@ impl Op for JsonOp {
             Arc::new(m)
         };
 
-        input.then(move |c| {
-            let compiled    = compiled.clone();
-            let parse_site  = parse_site.clone();
-            let reader      = reader.clone();
-            let diags       = diags.clone();
-            let stamp_map   = stamp_map.clone();
-            async move {
-                // Collect (FilePath, Bytes) candidates
-                let candidates: Vec<(FilePath, Bytes)> = match &c.fs {
-                    Some(fp) => {
-                        // Single-file branch: skip if extension not in accepted set
-                        match file_ext(fp) {
-                            Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
-                            _ => return vec![],
-                        }
-                        let mut s = reader.bytes(&c.repo, &c.rev, fp);
-                        let raw = s.next().await.unwrap_or_default();
-                        vec![(fp.clone(), raw)]
-                    }
-                    None => {
-                        // Self-enumerate via reader.files("**"), filter by ext
-                        let all = CompiledPattern::compile("**")
-                            .expect("'**' is a valid glob");
-                        let mut s = reader.files(&c.repo, &c.rev, &all);
-                        let files = s.next().await.unwrap_or_default();
-                        let mut out = vec![];
-                        for fp in files {
-                            match file_ext(&fp) {
-                                Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
-                                _ => continue,
+        // Per-file walk outcome = one output batch. A single input cursor may
+        // enumerate multiple candidate files and therefore emit several batches.
+        // Rows from one walk form a coherent sibling group (rule 4), so they
+        // stay together in one Arc<[Cursor]>.
+        input
+            .flat_map(move |batch| {
+                let cursors: Vec<Cursor> = batch.iter().cloned().collect();
+                let compiled    = compiled.clone();
+                let parse_site  = parse_site.clone();
+                let reader      = reader.clone();
+                let diags       = diags.clone();
+                let stamp_map   = stamp_map.clone();
+                futures_util::stream::iter(cursors)
+                    .flat_map(move |c| {
+                        let compiled    = compiled.clone();
+                        let parse_site  = parse_site.clone();
+                        let reader      = reader.clone();
+                        let diags       = diags.clone();
+                        let stamp_map   = stamp_map.clone();
+                        // Compute per-file batches inside an async block, then
+                        // emit each as its own stream item.
+                        let per_cursor = async move {
+                            let candidates: Vec<(FilePath, Bytes)> = match &c.fs {
+                                Some(fp) => {
+                                    match file_ext(fp) {
+                                        Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
+                                        _ => return Vec::<Arc<[Cursor]>>::new(),
+                                    }
+                                    let mut s = reader.bytes(&c.repo, &c.rev, fp);
+                                    let raw = s.next().await.unwrap_or_default();
+                                    vec![(fp.clone(), raw)]
+                                }
+                                None => {
+                                    let all = CompiledPattern::compile("**")
+                                        .expect("'**' is a valid glob");
+                                    let mut s = reader.files(&c.repo, &c.rev, &all);
+                                    let files = s.next().await.unwrap_or_default();
+                                    let mut out = vec![];
+                                    for fp in files {
+                                        match file_ext(&fp) {
+                                            Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
+                                            _ => continue,
+                                        }
+                                        let mut s2 = reader.bytes(&c.repo, &c.rev, &fp);
+                                        let raw = s2.next().await.unwrap_or_default();
+                                        out.push((fp, raw));
+                                    }
+                                    out
+                                }
+                            };
+
+                            if c.fs.is_none() && candidates.is_empty() {
+                                diags.0(Box::new(JsonDiag::NoCandidates {
+                                    site: (*parse_site).clone(),
+                                    msg:  Arc::from(format!(
+                                        "json() found no .json/.yaml/.yml/.toml files in {}@{}",
+                                        c.repo, c.rev
+                                    )),
+                                }));
                             }
-                            let mut s2 = reader.bytes(&c.repo, &c.rev, &fp);
-                            let raw = s2.next().await.unwrap_or_default();
-                            out.push((fp, raw));
-                        }
-                        out
+
+                            let mut batches: Vec<Arc<[Cursor]>> = Vec::new();
+                            for (fp, raw) in candidates {
+                                let ext = match file_ext(&fp) {
+                                    Some(e) => e,
+                                    None => continue,
+                                };
+                                let arc_bytes = Arc::new(raw.clone());
+                                let tree = match parse_by_ext(&ext, arc_bytes) {
+                                    Ok(t) => t,
+                                    Err(e) => {
+                                        diags.0(Box::new(JsonDiag::ParseError {
+                                            site: (*parse_site).clone(),
+                                            msg:  Arc::from(e.to_string().as_str()),
+                                        }));
+                                        continue;
+                                    }
+                                };
+
+                                let outcome = walk(&tree, &compiled);
+                                let rows = outcome.rows;
+
+                                if rows.is_empty() {
+                                    let dump = tree_dump(&tree, 4, 200);
+                                    diags.0(Box::new(JsonDiag::NoMatch {
+                                        site: (*parse_site).clone(),
+                                        file: Arc::from(fp.0.to_string_lossy().as_ref()),
+                                        dump: Arc::from(dump.as_str()),
+                                    }));
+                                    continue;
+                                }
+
+                                if !outcome.missed_keys.is_empty() {
+                                    diags.0(Box::new(JsonDiag::PartialMatch {
+                                        site:   (*parse_site).clone(),
+                                        file:   Arc::from(fp.0.to_string_lossy().as_ref()),
+                                        missed: outcome.missed_keys.clone(),
+                                    }));
+                                }
+
+                                // Rows from one file = one output batch (the
+                                // grouped sibling set from that walk).
+                                let file_batch: Vec<Cursor> = rows.into_iter().map(|row| {
+                                    let mut c2 = c.clone();
+                                    c2.fs = Some(fp.clone());
+                                    for (name, wc) in row.captures {
+                                        let cap = match stamp_map.get(&name) {
+                                            Some(sigil) => Capture::new(wc.text.clone())
+                                                .with_scan(sigil.clone(), Tri::Claimed),
+                                            None => Capture::new(wc.text.clone()),
+                                        };
+                                        c2.captures.insert(name, cap);
+                                    }
+                                    c2
+                                }).collect();
+                                batches.push(Arc::<[Cursor]>::from(file_batch.into_boxed_slice()));
+                            }
+                            batches
+                        };
+                        futures_util::stream::once(per_cursor)
+                            .flat_map(|batches| futures_util::stream::iter(batches))
+                    })
+            })
+            .boxed()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wildcard-mode pipe: enumerate jq-paths over upstream data files
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+enum Segment {
+    Key(String),
+    ArrayHop,
+}
+
+fn wildcard_pipe(
+    parse_site: Arc<ParseSite>,
+    input:      BoxStream<'static, Arc<[Cursor]>>,
+    ctx:        OpCtx,
+) -> BoxStream<'static, Arc<[Cursor]>> {
+    let reader = ctx.reader.clone();
+    input
+        .flat_map(move |batch| {
+            let cursors: Vec<Cursor> = batch.iter().cloned().collect();
+            let parse_site = parse_site.clone();
+            let reader     = reader.clone();
+            futures_util::stream::iter(cursors)
+                .then(move |c| {
+        let parse_site = parse_site.clone();
+        let reader     = reader.clone();
+        async move {
+            let candidates: Vec<(FilePath, Bytes)> = match &c.fs {
+                Some(fp) => {
+                    match file_ext(fp) {
+                        Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
+                        _ => return Arc::<[Cursor]>::from(Vec::<Cursor>::new().into_boxed_slice()),
                     }
+                    let mut s = reader.bytes(&c.repo, &c.rev, fp);
+                    let raw = s.next().await.unwrap_or_default();
+                    vec![(fp.clone(), raw)]
+                }
+                None => {
+                    let all = CompiledPattern::compile("**").expect("'**' is a valid glob");
+                    let mut s = reader.files(&c.repo, &c.rev, &all);
+                    let files = s.next().await.unwrap_or_default();
+                    let mut out = vec![];
+                    for fp in files {
+                        match file_ext(&fp) {
+                            Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
+                            _ => continue,
+                        }
+                        let mut s2 = reader.bytes(&c.repo, &c.rev, &fp);
+                        let raw = s2.next().await.unwrap_or_default();
+                        out.push((fp, raw));
+                    }
+                    out
+                }
+            };
+
+            let mut seen: std::collections::HashSet<String> = Default::default();
+            let mut out_cursors: Vec<Cursor> = vec![];
+
+            'files: for (fp, raw) in candidates {
+                let ext = match file_ext(&fp) { Some(e) => e, None => continue };
+                let arc_bytes = Arc::new(raw);
+                let tree = match parse_by_ext(&ext, arc_bytes) {
+                    Ok(t)  => t,
+                    Err(_) => continue, // wildcard mode silent — diagnostics are for real runs
                 };
 
-                // json/no-candidates: self-enum mode with zero json/yaml/yml/toml files
-                if c.fs.is_none() && candidates.is_empty() {
-                    diags.0(Box::new(JsonDiag::NoCandidates {
-                        site: (*parse_site).clone(),
-                        msg:  Arc::from(format!(
-                            "json() found no .json/.yaml/.yml/.toml files in {}@{}",
-                            c.repo, c.rev
-                        )),
-                    }));
+                let mut paths: Vec<String> = Vec::new();
+                enumerate_paths(&tree, &mut Vec::new(), 0, &mut paths);
+
+                for p in paths {
+                    if !seen.insert(p.clone()) { continue; }
+                    let mut c2 = c.clone();
+                    c2.fs = Some(fp.clone());
+                    c2.evidence.push(crate::_0_types::OpEvidence {
+                        op_name:    "json",
+                        parse_site: parse_site.clone(),
+                        matched:    Arc::from(p.as_str()),
+                        capture:    None,
+                    });
+                    out_cursors.push(c2);
+                    if seen.len() >= 1000 { break 'files; }
                 }
-
-                let mut out_cursors: Vec<Cursor> = vec![];
-
-                for (fp, raw) in candidates {
-                    let ext = match file_ext(&fp) {
-                        Some(e) => e,
-                        None => continue,
-                    };
-                    let arc_bytes = Arc::new(raw.clone());
-                    let tree = match parse_by_ext(&ext, arc_bytes) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            diags.0(Box::new(JsonDiag::ParseError {
-                                site: (*parse_site).clone(),
-                                msg:  Arc::from(e.to_string().as_str()),
-                            }));
-                            continue;
-                        }
-                    };
-
-                    let outcome = walk(&tree, &compiled);
-                    let rows = outcome.rows;
-
-                    // json/no-match: file walked but zero rows returned
-                    if rows.is_empty() {
-                        let dump = tree_dump(&tree, 4, 200);
-                        diags.0(Box::new(JsonDiag::NoMatch {
-                            site: (*parse_site).clone(),
-                            file: Arc::from(fp.0.to_string_lossy().as_ref()),
-                            dump: Arc::from(dump.as_str()),
-                        }));
-                        continue;
-                    }
-
-                    if !outcome.missed_keys.is_empty() {
-                        diags.0(Box::new(JsonDiag::PartialMatch {
-                            site:   (*parse_site).clone(),
-                            file:   Arc::from(fp.0.to_string_lossy().as_ref()),
-                            missed: outcome.missed_keys.clone(),
-                        }));
-                    }
-
-                    for row in rows {
-                        let mut c2 = c.clone();
-                        c2.fs = Some(fp.clone());
-                        // Merge walk captures into cursor captures.
-                        // If the capture var has a scan annotation, stamp
-                        // scan_pointer + Tri::Claimed (content-side claim).
-                        for (name, wc) in row.captures {
-                            let cap = match stamp_map.get(&name) {
-                                Some(sigil) => Capture::new(wc.text.clone())
-                                    .with_scan(sigil.clone(), Tri::Claimed),
-                                None => Capture::new(wc.text.clone()),
-                            };
-                            c2.captures.insert(name, cap);
-                        }
-                        out_cursors.push(c2);
-                    }
-                }
-
-                out_cursors
             }
+
+            // Wildcard mode is per-cursor fan-out; one input cursor = one
+            // output batch containing every unique jq-path discovered.
+            Arc::<[Cursor]>::from(out_cursors.into_boxed_slice())
+        }
+                })
         })
-        .flat_map(|v| futures_util::stream::iter(v))
         .boxed()
+}
+
+const WILDCARD_DEPTH_CAP: usize = 8;
+
+fn enumerate_paths(
+    node:  &AnyDataNode,
+    segs:  &mut Vec<Segment>,
+    depth: usize,
+    out:   &mut Vec<String>,
+) {
+    if depth > WILDCARD_DEPTH_CAP { return; }
+    match node.kind() {
+        DataKind::Object => {
+            for (k, v) in node.entries() {
+                let key = k.as_scalar_text().map(|s| s.into_owned()).unwrap_or_default();
+                segs.push(Segment::Key(key));
+                enumerate_paths(&v, segs, depth + 1, out);
+                segs.pop();
+            }
+        }
+        DataKind::Array => {
+            // Single representative shape per array (items[0]); the emitted
+            // jq-path form is `.…[]`, matching the [...$CAP] walker grammar.
+            if let Some(first) = node.items().next() {
+                segs.push(Segment::ArrayHop);
+                enumerate_paths(&first, segs, depth + 1, out);
+                segs.pop();
+            } else {
+                segs.push(Segment::ArrayHop);
+                out.push(segs_to_jq(segs));
+                segs.pop();
+            }
+        }
+        DataKind::Scalar | DataKind::Null => {
+            if !segs.is_empty() {
+                out.push(segs_to_jq(segs));
+            }
+        }
     }
+}
+
+fn segs_to_jq(segs: &[Segment]) -> String {
+    let mut s = String::new();
+    for seg in segs {
+        match seg {
+            Segment::Key(k)   => { s.push('.'); s.push_str(k); }
+            Segment::ArrayHop => { s.push_str("[]"); }
+        }
+    }
+    s
+}
+
+// ---------------------------------------------------------------------------
+// jq-path → sprf pattern lowering
+// ---------------------------------------------------------------------------
+
+fn is_ident_safe(k: &str) -> bool {
+    let mut it = k.chars();
+    match it.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    it.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn cap_name_from_key(k: &str) -> String {
+    k.replace('-', "_").to_ascii_uppercase()
+}
+
+/// Lower a jq-path like `.a.b[].c` into a sprf brace pattern.
+/// Empty / root paths return None so callers skip the suggestion.
+fn jq_path_to_sprf_pattern(path: &str) -> Option<String> {
+    // Parse into segments.
+    let segs = parse_jq_path(path)?;
+    if segs.is_empty() { return None; }
+
+    // Find last non-array key for capture name.
+    let last_key = segs.iter().rev().find_map(|s| match s {
+        Segment::Key(k) => Some(k.as_str()),
+        _ => None,
+    })?;
+    let cap = cap_name_from_key(last_key);
+
+    // Build from innermost outward.
+    let n = segs.len();
+    let trailing_array = matches!(segs.last(), Some(Segment::ArrayHop));
+
+    // Inner starts as either leaf-capture `$CAP` or a leaf-final array
+    // collector `[...$CAP]` wrapping nothing else.
+    let mut inner: String;
+    let start_ix: usize;
+    if trailing_array {
+        inner = format!("[...${}]", cap);
+        start_ix = n - 1;
+    } else {
+        inner = format!("${}", cap);
+        start_ix = n;
+    }
+
+    // Walk remaining segments right-to-left, wrapping.
+    for i in (0..start_ix).rev() {
+        match &segs[i] {
+            Segment::Key(k) => {
+                let key_tok = if is_ident_safe(k) { k.clone() } else { format!("\"{}\"", k) };
+                inner = format!("{{ {}: {} }}", key_tok, inner);
+            }
+            Segment::ArrayHop => {
+                // Non-leaf array: wildcard iterator.
+                inner = format!("[...$_] {}", inner);
+            }
+        }
+    }
+    Some(inner)
+}
+
+fn parse_jq_path(path: &str) -> Option<Vec<Segment>> {
+    let s = path.trim();
+    if s.is_empty() || s == "." { return None; }
+    let mut segs = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'.' => {
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'.' && bytes[i] != b'[' { i += 1; }
+                if start == i { return None; }
+                segs.push(Segment::Key(s[start..i].to_string()));
+            }
+            b'[' => {
+                // Accept only `[]` for now; indexed forms collapse to []
+                if bytes.get(i+1) == Some(&b']') {
+                    segs.push(Segment::ArrayHop);
+                    i += 2;
+                } else {
+                    // Skip to ] (indexed subscripts from jq get flattened).
+                    while i < bytes.len() && bytes[i] != b']' { i += 1; }
+                    if i < bytes.len() { i += 1; }
+                    segs.push(Segment::ArrayHop);
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(segs)
 }
 
 // ---------------------------------------------------------------------------
@@ -418,8 +716,8 @@ impl Diagnostic for JsonDiag {
             | JsonDiag::ParseBodyCode { .. }
             | JsonDiag::ParseError  { .. } => crate::_0_types::Severity::Error,
             JsonDiag::NoCandidates  { .. } => crate::_0_types::Severity::Warn,
-            JsonDiag::NoMatch       { .. } => crate::_0_types::Severity::Hint,
-            JsonDiag::PartialMatch  { .. } => crate::_0_types::Severity::Hint,
+            JsonDiag::NoMatch       { .. } => crate::_0_types::Severity::Error,
+            JsonDiag::PartialMatch  { .. } => crate::_0_types::Severity::Warn,
         }
     }
     fn primary(&self) -> &crate::_0_types::ParseSite {
@@ -504,8 +802,10 @@ mod tests {
         let (steps, anns) = parse_body("{ name: $N }").unwrap();
         let compiled = compile_steps(&steps).unwrap();
         JsonOp {
-            compiled:    Arc::from(compiled.into_boxed_slice()),
-            annotations: Arc::from(anns.into_boxed_slice()),
+            mode: JsonMode::Pattern(PatternState {
+                compiled:    Arc::from(compiled.into_boxed_slice()),
+                annotations: Arc::from(anns.into_boxed_slice()),
+            }),
             parse_site:  site.clone(),
         }
     }

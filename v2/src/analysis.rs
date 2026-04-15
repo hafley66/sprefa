@@ -22,8 +22,8 @@ use std::sync::Arc;
 use futures::executor::block_on;
 use futures_util::stream::StreamExt;
 
-use crate::_0_types::{Cursor, OpId, ParseSite, RunId};
-use crate::_1_diagnostic::Diagnostic;
+use crate::_0_types::{Cursor, OpId, ParseSite, RunId, Severity};
+use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
     CompletionCtx, CompletionSuggestion, DiagSink, EventSink, Op, OpCtx, ParenRole,
     Pipeline, ProgramCtx,
@@ -131,6 +131,56 @@ pub fn locate_paren_op(source: &str, pos: usize) -> Option<ParenLocation> {
         suffix:     right.to_string(),
         open_paren: open_paren_idx,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Hover non-match rendering
+// ---------------------------------------------------------------------------
+
+/// Capture diagnostic text into a string for hover markdown. Header line
+/// becomes a bullet; notes/related are nested. Used to enumerate
+/// `*/no-match` and `*/partial-match` diags whose primary site equals the
+/// hovered span — the user sees which (repo, rev, file) failed without
+/// having to chase yellow markers across the buffer.
+#[derive(Default)]
+struct HoverDiagRenderer {
+    header: String,
+    notes:  Vec<String>,
+}
+
+impl Renderer for HoverDiagRenderer {
+    fn header(&mut self, _code: &str, _sev: Severity, message: &str) {
+        self.header = message.to_string();
+    }
+    fn primary(&mut self, _site: &ParseSite) {}
+    fn related(&mut self, _site: &ParseSite, message: &str) {
+        self.notes.push(message.to_string());
+    }
+    fn note(&mut self, message: &str) { self.notes.push(message.to_string()); }
+}
+
+fn render_non_matches_for_site(
+    diags: &[Box<dyn Diagnostic>],
+    site:  &ParseSite,
+) -> String {
+    let mut out = String::new();
+    for d in diags {
+        let code = d.code();
+        if !(code.ends_with("/no-match") || code.ends_with("/partial-match")) { continue; }
+        let p = d.primary();
+        if p.byte_range != site.byte_range || p.file != site.file { continue; }
+        let mut r = HoverDiagRenderer::default();
+        d.render(&mut r);
+        out.push_str("- ");
+        out.push_str(&r.header);
+        out.push('\n');
+        for n in r.notes {
+            out.push_str("  - ");
+            out.push_str(&n);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -328,10 +378,17 @@ impl DocSession {
                         xref_seen,
                     };
 
-                    let empty: futures_core::stream::BoxStream<'static, Cursor> =
-                        futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
+                    let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+                        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
 
-                    let cursors: Vec<Cursor> = block_on(pipeline.run(empty, ctx).collect());
+                    // Collect batches, then flatten to scalar cursors at the
+                    // analysis boundary — downstream consumers (hover, completion,
+                    // successful_sites) read a `Vec<Cursor>`.
+                    let batches: Vec<Arc<[Cursor]>> =
+                        block_on(pipeline.run(empty, ctx).collect());
+                    let cursors: Vec<Cursor> = batches.into_iter()
+                        .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
+                        .collect();
                     local.insert(rule_name.clone(), cursors);
 
                     let mut rd = captured_diags.lock().unwrap();
@@ -388,14 +445,15 @@ impl DocSession {
             }
             SpanKind::MatchSite { op_path, parse_site } => {
                 let cursors: Vec<Cursor> = cursors_for(&entry.rule).to_vec();
-                eprintln!("HOVER_DBG MatchSite op_path={:?} cursors={}", op_path, cursors.len());
-                let op = resolve_op_in_rule(&entry.rule, &self.pipelines, op_path);
-                eprintln!("HOVER_DBG resolve_op_in_rule -> is_some={}", op.is_some());
-                let op = op?;
-                eprintln!("HOVER_DBG op.name={}", op.name());
-                let r = op.hover_match(parse_site, &cursors);
-                eprintln!("HOVER_DBG hover_match -> is_some={}", r.is_some());
-                r
+                let op = resolve_op_in_rule(&entry.rule, &self.pipelines, op_path)?;
+                let mut md = op.hover_match(parse_site, &cursors).unwrap_or_default();
+                let non_matches = render_non_matches_for_site(self.diagnostics(), parse_site);
+                if !non_matches.is_empty() {
+                    if !md.is_empty() { md.push_str("\n\n"); }
+                    md.push_str("**Non-matches:**\n\n");
+                    md.push_str(&non_matches);
+                }
+                if md.is_empty() { None } else { Some(md) }
             }
         }
     }
@@ -440,7 +498,7 @@ impl DocSession {
         });
 
         match locate_paren_op(&self.source, pos) {
-            Some(loc) => self.complete_in_paren(loc, config, reader, rule_names),
+            Some(loc) => self.complete_in_paren(loc, pos, config, reader, rule_names),
             None      => self.complete_head(config, reader, rule_names),
         }
     }
@@ -482,6 +540,7 @@ impl DocSession {
     fn complete_in_paren(
         &mut self,
         loc: ParenLocation,
+        pos: usize,
         _config: Arc<Config>,
         _reader: Arc<dyn crate::_3_reader::Reader>,
         _rule_names: Arc<[Arc<str>]>,
@@ -572,35 +631,38 @@ impl DocSession {
             .unwrap_or_default();
 
         // Harvest witnesses, dedup, filter by partial, cap at 1000.
-        // Partial compiled as a CompiledPattern when possible — this is the
-        // same matcher ops use at runtime (`re:` / segment-capture / `|`
-        // alternation / globset all work). On compile error (mid-typing
-        // garbage like `re:foo[`), fall back to substring match.
+        // Filter is plain substring match — partial is literal mid-typing
+        // text, not a pattern. Glob compile of `v2/Cargo.` would match
+        // nothing and the list would be empty (VS Code then falls back to
+        // word-soup completions). Runtime pattern matching still happens
+        // on the closed `fs(...)` slot via CompiledPattern.
         let partial = loc.partial.as_str();
-        let compiled_partial = if partial.is_empty() {
-            None
-        } else {
-            crate::_16_pattern::CompiledPattern::compile(partial).ok()
-        };
+        // Byte range of the *whole* partial token, even when the cursor is
+        // mid-word. `loc.partial` is the left-of-cursor slice; the right
+        // half lives at the start of `loc.suffix` until the next comma /
+        // whitespace separator. Without extending past `pos`, accepting a
+        // suggestion mid-word leaves the right half stranded → garbled
+        // text like `v2/Cargo.toml.t` after picking `v2/Cargo.toml`.
+        let partial_start = loc.open_paren + 1 + loc.prefix.len();
+        let right_partial_len = loc.suffix
+            .find(|c: char| c == ',' || c.is_whitespace())
+            .unwrap_or(loc.suffix.len());
+        let replace_range = partial_start..(pos + right_partial_len);
+
         let mut seen: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
         let mut out = Vec::new();
         for c in &cursors {
             let Some(v) = wildcard_op.witness(c) else { continue; };
-            if !partial.is_empty() {
-                let keep = match &compiled_partial {
-                    Some(p) => p.is_match(&v),
-                    None    => v.contains(partial),
-                };
-                if !keep { continue; }
-            }
+            if !partial.is_empty() && !v.contains(partial) { continue; }
             if !seen.insert(v.clone()) { continue; }
             out.push(CompletionSuggestion {
-                label:       v.to_string(),
-                detail:      wildcard_op.name().to_string(),
-                doc:         String::new(),
-                kind_hint:   Some(Arc::from(wildcard_op.name())),
-                insert:      Some(v.clone()),
-                filter_text: None,
+                label:         v.to_string(),
+                detail:        wildcard_op.name().to_string(),
+                doc:           String::new(),
+                kind_hint:     Some(Arc::from(wildcard_op.name())),
+                insert:        wildcard_op.witness_insert(c).or_else(|| Some(v.clone())),
+                filter_text:   None,
+                replace_range: Some(replace_range.clone()),
             });
             if out.len() >= 1000 { break; }
         }
@@ -621,6 +683,25 @@ impl DocSession {
     /// Parse-time diagnostics (available even before ensure_run).
     pub fn parse_diagnostics(&self) -> &[Box<dyn Diagnostic>] {
         &self.parse_diags
+    }
+
+    /// Set of `(file, byte_range)` for every parse_site that produced *any*
+    /// successful match in the last run. Read from cursor evidence.
+    /// Used by the LSP layer to downgrade `*/no-match` and `*/partial-match`
+    /// diagnostics from per-cursor failures when the same site succeeded
+    /// elsewhere — e.g. `repo(*) > rev(*)` where 1 of 4 revs has the file.
+    pub fn successful_sites(&self) -> std::collections::HashSet<(Arc<std::path::Path>, std::ops::Range<usize>)> {
+        let mut out = std::collections::HashSet::new();
+        if let Some(report) = &self.last_run {
+            for cursors in report.cursors_by_rule.values() {
+                for c in cursors {
+                    for ev in &c.evidence {
+                        out.insert((ev.parse_site.file.clone(), ev.parse_site.byte_range.clone()));
+                    }
+                }
+            }
+        }
+        out
     }
 
     // -----------------------------------------------------------------------

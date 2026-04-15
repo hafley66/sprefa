@@ -183,8 +183,8 @@ mod tests {
     }
 
     impl Op for StubOp {
-        fn pipe(&self, input: BoxStream<'static, Cursor>, _ctx: OpCtx)
-            -> BoxStream<'static, Cursor> { input }
+        fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, _ctx: OpCtx)
+            -> BoxStream<'static, Arc<[Cursor]>> { input }
         fn name(&self) -> &'static str { self.name }
         fn step(&self) -> u16 { self.step }
         fn parse_site(&self) -> &Arc<ParseSite> { &self.parse_site }

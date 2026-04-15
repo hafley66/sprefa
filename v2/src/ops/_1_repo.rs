@@ -147,23 +147,30 @@ impl Op for RepoOp {
         hover_render_grouped("matches:", &entries)
     }
 
-    fn pipe(&self, input: BoxStream<'static, Cursor>, _ctx: OpCtx)
-        -> BoxStream<'static, Cursor>
+    fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, _ctx: OpCtx)
+        -> BoxStream<'static, Arc<[Cursor]>>
     {
         match &self.mode {
             RepoMode::Filter(pat) => {
                 let pat = pat.clone();
-                input.filter(move |c| {
-                    let keep = pat.is_match(&c.repo);
-                    async move { keep }
+                input.map(move |batch| {
+                    let kept: Vec<Cursor> = batch.iter()
+                        .filter(|c| pat.is_match(&c.repo))
+                        .cloned()
+                        .collect();
+                    Arc::<[Cursor]>::from(kept.into_boxed_slice())
                 }).boxed()
             }
             RepoMode::Bind(name) => {
                 let name = name.clone();
-                input.map(move |mut c| {
-                    let v = c.repo.clone();
-                    c.captures.insert(name.clone(), Capture::new(v).with_scan(Arc::from("repo"), Tri::Verified));
-                    c
+                input.map(move |batch| {
+                    let mapped: Vec<Cursor> = batch.iter().map(|c| {
+                        let mut c = c.clone();
+                        let v = c.repo.clone();
+                        c.captures.insert(name.clone(), Capture::new(v).with_scan(Arc::from("repo"), Tri::Verified));
+                        c
+                    }).collect();
+                    Arc::<[Cursor]>::from(mapped.into_boxed_slice())
                 }).boxed()
             }
         }

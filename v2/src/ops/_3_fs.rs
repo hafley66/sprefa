@@ -201,8 +201,8 @@ impl Op for FsOp {
         Some(format!("{}\n\n{}", header, lines.join("\n")))
     }
 
-    fn pipe(&self, input: BoxStream<'static, Cursor>, ctx: OpCtx)
-        -> BoxStream<'static, Cursor>
+    fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
+        -> BoxStream<'static, Arc<[Cursor]>>
     {
         let reader     = ctx.reader.clone();
         let pattern    = self.mode.pattern();
@@ -210,36 +210,51 @@ impl Op for FsOp {
         let parse_site = self.parse_site.clone();
         let diags      = ctx.diags.clone();
 
-        input.then(move |c| {
-            let reader     = reader.clone();
-            let pattern    = pattern.clone();
-            let bind_name  = bind_name.clone();
-            let parse_site = parse_site.clone();
-            let diags      = diags.clone();
-            async move {
-                let mut s = reader.files(&c.repo, &c.rev, &pattern);
-                let files: Vec<FilePath> = s.next().await.unwrap_or_default();
-                if files.is_empty() {
-                    diags.0(Box::new(FsDiag::NoMatch {
-                        site:    (*parse_site).clone(),
-                        pattern: pattern.src.clone(),
-                        repo:    c.repo.clone(),
-                        rev:     c.rev.clone(),
-                    }));
-                    return stream::iter(vec![]);
-                }
-                let items: Vec<Cursor> = files.into_iter().map(|fp| {
-                    let mut c2 = c.clone();
-                    let v: Arc<str> = Arc::from(fp.0.to_string_lossy().as_ref());
-                    c2.fs = Some(fp);
-                    if let Some(name) = bind_name.as_ref() {
-                        c2.captures.insert(name.clone(), Capture::new(v).with_scan(Arc::from("fs"), Tri::Verified));
-                    }
-                    c2
-                }).collect();
+        // Fan-out shape: each input cursor produces its own output batch of
+        // matched paths. An input batch of N cursors flows out as N output
+        // batches, independent of the upstream grouping. Empty matches emit
+        // `Arc<[]>` AND the fs/no-match diagnostic, mirroring prior per-cursor
+        // semantics — downstream sees the empty batch to drive aggregation.
+        input
+            .flat_map(move |batch| {
+                let items: Vec<Cursor> = batch.iter().cloned().collect();
+                let reader     = reader.clone();
+                let pattern    = pattern.clone();
+                let bind_name  = bind_name.clone();
+                let parse_site = parse_site.clone();
+                let diags      = diags.clone();
                 stream::iter(items)
-            }
-        }).flatten().boxed()
+                    .then(move |c| {
+                        let reader     = reader.clone();
+                        let pattern    = pattern.clone();
+                        let bind_name  = bind_name.clone();
+                        let parse_site = parse_site.clone();
+                        let diags      = diags.clone();
+                        async move {
+                            let mut s = reader.files(&c.repo, &c.rev, &pattern);
+                            let files: Vec<FilePath> = s.next().await.unwrap_or_default();
+                            let out: Vec<Cursor> = files.into_iter().map(|fp| {
+                                let mut c2 = c.clone();
+                                let v: Arc<str> = Arc::from(fp.0.to_string_lossy().as_ref());
+                                c2.fs = Some(fp);
+                                if let Some(name) = bind_name.as_ref() {
+                                    c2.captures.insert(name.clone(), Capture::new(v).with_scan(Arc::from("fs"), Tri::Verified));
+                                }
+                                c2
+                            }).collect();
+                            if out.is_empty() {
+                                diags.0(Box::new(FsDiag::NoMatch {
+                                    site:    (*parse_site).clone(),
+                                    pattern: pattern.src.clone(),
+                                    repo:    c.repo.clone(),
+                                    rev:     c.rev.clone(),
+                                }));
+                            }
+                            Arc::<[Cursor]>::from(out.into_boxed_slice())
+                        }
+                    })
+            })
+            .boxed()
     }
 }
 
@@ -382,7 +397,9 @@ mod tests {
             content:  None,
         };
 
-        let input: BoxStream<'static, Cursor> = Box::pin(stream::iter(vec![cursor]));
+        let input: BoxStream<'static, Arc<[Cursor]>> = Box::pin(stream::iter(
+            vec![Arc::<[Cursor]>::from(vec![cursor].into_boxed_slice())]
+        ));
         let mut out = op.pipe(input, ctx);
         use futures_util::StreamExt;
         while out.next().await.is_some() {}
@@ -500,9 +517,12 @@ mod tests {
             evidence: vec![],
             content:  None,
         };
-        let input: BoxStream<'static, Cursor> = Box::pin(stream::iter(vec![cursor]));
+        let input: BoxStream<'static, Arc<[Cursor]>> = Box::pin(stream::iter(
+            vec![Arc::<[Cursor]>::from(vec![cursor].into_boxed_slice())]
+        ));
         use futures_util::StreamExt;
         op.pipe(input, ctx)
+            .flat_map(|batch| stream::iter(batch.iter().cloned().collect::<Vec<_>>()))
             .filter_map(|c| async move {
                 c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned())
             })

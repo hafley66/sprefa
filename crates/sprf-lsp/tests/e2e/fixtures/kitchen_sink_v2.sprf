@@ -42,16 +42,15 @@ rule(derived_rule) {
 rule(bad_rev) {
   > repo($R) {
     > rev(HEAD) {
-      > fs(*/);
+      > fs(v2/Cargo.toml) > json({$X: $Y});
     };
   };
 };
 
 rule(bad_arm) {
-  > repo(HEAD) {
-    > rev(main) {
-
-      > fs(**/v2/Cargo.toml) > json({$A: $HMM});
+  > repo(*) {
+    > rev(*) {
+      > fs(v2/**/Cargo.toml) > json({$A: $HMM});
     }
   };
 };

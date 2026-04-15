@@ -126,9 +126,13 @@ fn git_blob_reader_read_op() {
         xref_seen,
     };
 
-    let empty: futures_core::stream::BoxStream<'static, Cursor> =
-        futures_util::stream::iter(Vec::<Cursor>::new()).boxed();
-    let out: Vec<Cursor> = block_on(outcome.pipelines[0].run(empty, ctx).collect());
+    let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
+        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
+    let batches: Vec<Arc<[Cursor]>> =
+        block_on(outcome.pipelines[0].run(empty, ctx).collect());
+    let out: Vec<Cursor> = batches.into_iter()
+        .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
+        .collect();
 
     // Two branches × one file each = 2 cursors.
     assert_eq!(out.len(), 2, "expected one cursor per rev");
