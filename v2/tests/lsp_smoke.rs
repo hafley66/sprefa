@@ -60,9 +60,9 @@ fn lsp_bin_hover_smoke() {
     stdin.write_all(framed(initd).as_bytes()).unwrap();
 
     // --- didOpen ---
-    // Source: `rule(test_rule){ > repo(*) > rev(main) }`
+    // Source: `rule(test_rule){ > repo($R) > rev(main) }`
     // Hover at offset of the `repo` op name.
-    let source = "rule(test_rule){ > repo(*) > rev(main) }";
+    let source = "rule(test_rule){ > repo($R) > rev(main) }";
     let repo_offset = source.find("repo").unwrap();
     // character offset on line 0 (ASCII, so byte == char).
     let did_open = format!(
@@ -100,7 +100,7 @@ fn lsp_bin_hover_smoke() {
     let _ = child.wait_timeout_or_kill(Duration::from_secs(5));
 
     let msg = found.expect("no hover response with id=2");
-    // RepoOp.hover_self() returns "# repo(*)" for glob literal "*".
+    // RepoOp.hover_self() returns "# repo($R)" for capture binding.
     assert!(msg.contains("repo"), "hover response missing `repo`: {msg}");
 }
 

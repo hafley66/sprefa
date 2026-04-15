@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use v2::_0_types::{Capture, Cursor, FilePath, ParseSeg, ParseSite, RunId, SprfPath};
+use v2::_0_types::{Capture, Cursor, FilePath, OpEvidence, ParseSeg, ParseSite, RunId, SprfPath};
 use v2::ops::{FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory};
 use v2::{Op, Operator, Pipeline};
 
@@ -46,6 +46,16 @@ fn with_capture(mut c: Cursor, name: &str, val: &str) -> Cursor {
 
 fn with_fs(mut c: Cursor, path: &str) -> Cursor {
     c.fs = Some(FilePath(Arc::from(PathBuf::from(path).as_path())));
+    c
+}
+
+fn with_evidence(mut c: Cursor, op_name: &'static str, site: &Arc<ParseSite>, matched: &str) -> Cursor {
+    c.evidence.push(OpEvidence {
+        op_name,
+        parse_site: site.clone(),
+        matched:    Arc::from(matched),
+        capture:    None,
+    });
     c
 }
 
@@ -151,14 +161,15 @@ fn repo_hover_self_contains_src() {
 
 #[test]
 fn repo_hover_match_lists_repos() {
-    let cursors: Vec<Cursor> = vec![
-        cursor("myorg/alpha", "main"),
-        cursor("myorg/beta",  "main"),
-        cursor("myorg/alpha", "main"), // duplicate
-    ];
     let op = parse_single_op("repo(myorg/*)");
-    let site = make_parse_site();
-    let result = op.hover_match(&site, &cursors);
+    let site = op.parse_site().clone();
+    let cursors: Vec<Cursor> = vec![
+        with_evidence(cursor("myorg/alpha", "main"), "repo", &site, "myorg/alpha"),
+        with_evidence(cursor("myorg/beta",  "main"), "repo", &site, "myorg/beta"),
+        with_evidence(cursor("myorg/alpha", "main"), "repo", &site, "myorg/alpha"), // duplicate
+    ];
+    let result = op.hover_match(site.as_ref(), &cursors);
+    // No cursor has fs → grouped helper takes the flat branch.
     assert_eq!(
         result,
         Some("matches:\n\n- `myorg/alpha`\n- `myorg/beta`".to_string())
@@ -186,16 +197,17 @@ fn rev_hover_capture_lists_revs() {
 
 #[test]
 fn rev_hover_match_lists_revs() {
-    let cursors: Vec<Cursor> = vec![
-        cursor("r", "main"),
-        cursor("r", "next"),
-    ];
     let op = parse_single_op("rev(main)");
-    let site = make_parse_site();
-    let result = op.hover_match(&site, &cursors);
+    let site = op.parse_site().clone();
+    let cursors: Vec<Cursor> = vec![
+        with_evidence(cursor("r", "main"), "rev", &site, "main"),
+        with_evidence(cursor("r", "next"), "rev", &site, "next"),
+    ];
+    let result = op.hover_match(site.as_ref(), &cursors);
+    // No cursor has fs → flat branch.
     assert_eq!(
         result,
-        Some("**rev** glob: `main`\n\n2 matches:\n\n- `main`\n- `next`".to_string())
+        Some("**rev** glob: `main`\n\n- `main`\n- `next`".to_string())
     );
 }
 
@@ -224,27 +236,37 @@ fn fs_hover_capture_makes_md_links_when_file_exists() {
 
     let op = parse_single_op("fs($F)");
     let result = op.hover_capture("F", &cursors).unwrap();
+    // Grouped by (fs, rev). For fs-op the capture value == path, so heading
+    // and bullet reference the same path. Existing absolute path → file://
+    // link, missing path → inline code.
     assert_eq!(
         result,
         format!(
-            "**`$F`** paths:\n\n- [{real_str}](file://{real_str})\n- {fake_str}"
+            "**`$F`** paths:\n\n\
+             ### [{real_str}](file://{real_str})\n- [{real_str}](file://{real_str})\n\n\
+             ### `{fake_str}`\n- `{fake_str}`"
         )
     );
 }
 
 #[test]
 fn fs_hover_match_lists_paths_bare_when_not_on_disk() {
-    let cursors: Vec<Cursor> = vec![
-        with_fs(cursor("r", "main"), "src/a.rs"),
-        with_fs(cursor("r", "main"), "src/b.rs"),
-        with_fs(cursor("r", "main"), "src/a.rs"), // duplicate
-    ];
     let op = parse_single_op("fs(**)");
-    let site = make_parse_site();
-    let result = op.hover_match(&site, &cursors);
+    let site = op.parse_site().clone();
+    let cursors: Vec<Cursor> = vec![
+        with_evidence(with_fs(cursor("r", "main"), "src/a.rs"), "fs", &site, "src/a.rs"),
+        with_evidence(with_fs(cursor("r", "main"), "src/b.rs"), "fs", &site, "src/b.rs"),
+        with_evidence(with_fs(cursor("r", "main"), "src/a.rs"), "fs", &site, "src/a.rs"), // dup
+    ];
+    let result = op.hover_match(site.as_ref(), &cursors);
+    // Cursors carry fs → grouped path; paths are relative (not on disk) → inline code.
     assert_eq!(
         result,
-        Some("**fs** glob: `**`\n\n2 matches:\n\n- src/a.rs\n- src/b.rs".to_string())
+        Some(
+            "**fs** glob: `**`\n\n\
+             ### `src/a.rs`\n- `src/a.rs`\n\n\
+             ### `src/b.rs`\n- `src/b.rs`".to_string()
+        )
     );
 }
 
@@ -254,12 +276,13 @@ fn fs_hover_match_lists_paths_bare_when_not_on_disk() {
 
 #[test]
 fn json_hover_capture_lists_values() {
-    let cursors: Vec<Cursor> = vec![
-        with_capture(cursor("r", "main"), "N", "alpha"),
-        with_capture(cursor("r", "main"), "N", "beta"),
-        with_capture(cursor("r", "main"), "N", "alpha"), // duplicate
-    ];
     let op = parse_single_op("json({ name: $N })");
+    let site = op.parse_site().clone();
+    let cursors: Vec<Cursor> = vec![
+        with_capture(with_evidence(cursor("r", "main"), "json", &site, "alpha"), "N", "alpha"),
+        with_capture(with_evidence(cursor("r", "main"), "json", &site, "beta"),  "N", "beta"),
+        with_capture(with_evidence(cursor("r", "main"), "json", &site, "alpha"), "N", "alpha"), // dup
+    ];
     let result = op.hover_capture("N", &cursors);
     assert_eq!(
         result,
@@ -286,14 +309,40 @@ fn rule_hover_self_has_rule_name_header() {
     // rule(demo){ rev($N) > rev($V) } → captures = [N, V] (both bare paren captures).
     let op = parse_rule_op("rule(demo){ > rev($N) > rev($V) }");
     let hover = op.hover_self();
-    assert_eq!(hover, "# rule: demo\n\n- `$N`\n- `$V`");
+    assert_eq!(
+        hover,
+        "# rule: demo\n\n- `$N`\n- `$V`\n\n\
+         <details><summary>pipeline shape</summary>\n\n\
+         ```mermaid\n\
+         flowchart LR\n\
+         repo --> rev --> fs --> json\n\
+         ```\n\n\
+         </details>\n\n\
+         <details><summary>columns</summary>\n\n\
+         | col | kind |\n| --- | --- |\n\
+         | `$N` | Both |\n\
+         | `$V` | Both |\n\n\
+         </details>"
+    );
 }
 
 #[test]
 fn rule_hover_self_no_captures_shows_placeholder() {
     let op = parse_rule_op("rule(empty){ > repo(myorg/*) }");
     let hover = op.hover_self();
-    assert_eq!(hover, "# rule: empty\n\n_(no captures)_");
+    assert_eq!(
+        hover,
+        "# rule: empty\n\n_(no captures)_\n\n\
+         <details><summary>pipeline shape</summary>\n\n\
+         ```mermaid\n\
+         flowchart LR\n\
+         repo --> rev --> fs --> json\n\
+         ```\n\n\
+         </details>\n\n\
+         <details><summary>columns</summary>\n\n\
+         | col | kind |\n| --- | --- |\n\n\n\
+         </details>"
+    );
 }
 
 #[test]
@@ -398,17 +447,12 @@ fn rule_hover_self_lists_captures_from_nested_json_with_multiple_ops() {
 
 #[test]
 fn json_hover_match_structural_eq() {
-    use v2::_0_types::{OpEvidence, ParseSeg, ParseSite};
-
     let op = parse_single_op("json({ name: $N })");
 
     // Build a ParseSite value-equal to the op's parse_site, but via a fresh Arc.
     // With Arc::ptr_eq this would never match; with structural eq it must.
-    let site_value = ParseSite {
-        file:       Arc::from(PathBuf::from("<test>").as_path()),
-        path:       Arc::from(vec![ParseSeg::Top { index: 0 }].into_boxed_slice()),
-        byte_range: 0..1,
-    };
+    let op_site: &ParseSite = op.parse_site().as_ref();
+    let site_value = op_site.clone();
     let site_arc_fresh = Arc::new(site_value.clone());
 
     // Build a cursor carrying evidence from "json" at that site.
@@ -420,10 +464,11 @@ fn json_hover_match_structural_eq() {
         capture:    None,
     });
 
+    // No fs on cursor → grouped helper takes the flat branch.
     let result = op.hover_match(&site_value, &[c]);
     assert_eq!(
         result,
-        Some("**json** pattern site\n\n1 matches:\n\n- `hello`".to_string()),
+        Some("**json** pattern site\n\n- `hello`".to_string()),
         "hover_match must use structural eq, not pointer eq"
     );
 }

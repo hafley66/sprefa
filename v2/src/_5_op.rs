@@ -434,6 +434,15 @@ pub struct HoverInfo {
 /// Returns `None` if `entries` is empty.
 ///
 /// # TODO: reference tail needs rule name threaded from DocSession
+pub fn path_link_or_code(value: &str) -> String {
+    let p = std::path::Path::new(value);
+    if p.is_absolute() && p.is_file() {
+        format!("[{value}](file://{value})")
+    } else {
+        format!("`{value}`")
+    }
+}
+
 pub fn hover_render_grouped(
     header:  &str,
     entries: &[(Option<String>, String, String)],  // (fs, rev, value)
@@ -494,22 +503,24 @@ pub fn hover_render_grouped(
         let (fs_opt, rev) = key;
         let heading = match fs_opt {
             Some(path) => {
+                let label = path_link_or_code(path);
                 if single_rev.is_some() {
-                    format!("### `{}`", path)
+                    format!("### {label}")
                 } else {
-                    format!("### `{}`  (rev: {})", path, rev)
+                    format!("### {label}  (rev: {rev})")
                 }
             }
             None => {
-                // Mixed: some cursors have fs, some don't. Group under rev.
                 if single_rev.is_some() {
                     format!("### (no file)")
                 } else {
-                    format!("### (no file, rev: {})", rev)
+                    format!("### (no file, rev: {rev})")
                 }
             }
         };
-        let bullets: Vec<String> = vals.iter().map(|v| format!("- `{}`", v)).collect();
+        let bullets: Vec<String> = vals.iter()
+            .map(|v| format!("- {}", path_link_or_code(v)))
+            .collect();
         sections.push(format!("{}\n{}", heading, bullets.join("\n")));
     }
 

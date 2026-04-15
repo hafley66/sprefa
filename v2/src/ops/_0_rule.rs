@@ -245,15 +245,27 @@ impl Op for RuleOp {
         let parse_site = self.parse_site.clone();
 
         let seed: Vec<Cursor> = {
-            let repos_vec: Vec<Arc<str>> = match block_on(reader.repos().next()) {
-                Some(v) => v,
-                None    => vec![],
+            // cfg.repos is the source of truth when non-empty; reader.repos() is
+            // the catalog fallback (used before any scan-loop growth or when the
+            // caller passes an empty Config on purpose). Mirror for revs: per-repo
+            // reader lookup, filtered by cfg.revs when non-empty.
+            let cfg = &ctx.config;
+            let repos_vec: Vec<Arc<str>> = if !cfg.repos.is_empty() {
+                cfg.repos.clone()
+            } else {
+                block_on(reader.repos().next()).unwrap_or_default()
             };
+            let cfg_revs_filter: Option<&[Arc<str>]> =
+                if cfg.revs.is_empty() { None } else { Some(&cfg.revs) };
             let mut out = Vec::new();
             for repo in &repos_vec {
-                let revs_vec: Vec<Arc<str>> = match block_on(reader.revs(repo).next()) {
-                    Some(v) => v,
-                    None    => vec![],
+                let reader_revs: Vec<Arc<str>> =
+                    block_on(reader.revs(repo).next()).unwrap_or_default();
+                let revs_vec: Vec<Arc<str>> = match cfg_revs_filter {
+                    None    => reader_revs,
+                    Some(f) => reader_revs.into_iter()
+                        .filter(|rv| f.iter().any(|w| w.as_ref() == rv.as_ref()))
+                        .collect(),
                 };
                 for rev in revs_vec {
                     out.push(Cursor {
@@ -279,18 +291,32 @@ impl Op for RuleOp {
         // Run body.
         let after_body = self.body.run(seed_stream, ctx.clone());
 
-        // Sink: write one row per cursor, emit cursors forward.
-        let writer   = ctx.writer.clone();
-        let spec     = self.spec.clone();
-        let captures = self.captures.clone();
-        let _        = writer.create_rule_table(&spec);
+        // Sink: write one row per cursor to both the writer (SQL-bound rows)
+        // and the ResultStore (live Captures w/ scan_pointer + Tri). The store
+        // is what the scan-loop demand-walks between passes, so every cursor's
+        // captures must land there keyed by rule name.
+        let writer     = ctx.writer.clone();
+        let spec       = self.spec.clone();
+        let captures   = self.captures.clone();
+        let rule_name  = self.name.clone();
+        let store      = ctx.result_store.clone();
+        let store_tail = store.clone();
+        let rule_tail  = rule_name.clone();
+        let _          = writer.create_rule_table(&spec);
+
+        let mark_tail = async move {
+            store_tail.mark_complete(&rule_tail);
+        };
 
         after_body
             .map(move |c| {
                 let row = cursor_to_row(&c, &captures);
                 let _ = writer.write_rows(&spec, std::slice::from_ref(&row));
-                c
+                store.append(&rule_name, c.captures.clone());
+                Some(c)
             })
+            .chain(futures_util::stream::once(mark_tail).map(|()| None))
+            .filter_map(|x| async move { x })
             .boxed()
     }
 }

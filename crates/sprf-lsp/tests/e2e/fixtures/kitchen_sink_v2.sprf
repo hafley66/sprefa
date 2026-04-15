@@ -42,13 +42,13 @@ rule(derived_rule) {
 rule(bad_rev) {
   > repo($R) {
     > rev(HEAD) {
-      > fs(**/x.yaml);
+      > fs(**/);
     };
   };
 };
 
 rule(bad_arm) {
-  > repo(*) {
-    rev(main);
+  > repo(HEAD) {
+    > rev(main);
   };
 };

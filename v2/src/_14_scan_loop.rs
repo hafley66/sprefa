@@ -58,6 +58,24 @@ pub struct ScanLoopResult {
 /// `store` under `config`" function; it returns pipeline-side diags (parse,
 /// xref, op-local warns) from that pass. The checker + extension logic
 /// lives here.
+/// Per-pass outcome emitted by the scan-loop stream.
+struct Pass {
+    config:          Arc<Config>,
+    diags:           Vec<Box<dyn Diagnostic>>,
+    passes:          usize,
+    depth_exhausted: bool,
+    fixed_point:     bool,
+}
+
+/// Drive the demand loop. `run_pass` is the caller's "run all pipelines into
+/// `store` under `config`" function; it returns pipeline-side diags (parse,
+/// xref, op-local warns) from that pass. The checker + extension logic
+/// lives here.
+///
+/// Shape: `std::iter::from_fn` — the sync-Rust analog of `Rx.expand`. Each
+/// call to `next()` yields one `Pass`; state (cfg, pass index, stop flag) is
+/// threaded via captured locals. When `run_pass` turns async end-to-end, swap
+/// this for `futures::stream::unfold` with the same body.
 pub fn run_scan_loop<F>(
     store:          Arc<ResultStore>,
     initial_config: Arc<Config>,
@@ -67,63 +85,78 @@ pub fn run_scan_loop<F>(
 where
     F: FnMut(Arc<Config>, Arc<ResultStore>) -> Vec<Box<dyn Diagnostic>>,
 {
-    let mut config = initial_config;
-    let mut passes = 0;
-    let mut final_diags: Vec<Box<dyn Diagnostic>> = Vec::new();
-    let mut depth_exhausted = false;
+    let mut i        = 0usize;
+    let mut cfg      = initial_config.clone();
+    let mut stop     = false;
+    let store_ref    = store.clone();
 
-    for i in 0..depth {
-        passes = i + 1;
+    let passes_iter = std::iter::from_fn(move || {
+        if stop || i >= depth { return None; }
 
-        store.clear();
-        let pipe_diags  = run_pass(config.clone(), store.clone());
-        let check_diags = check_scan_pointers(&store, &config);
+        store_ref.clear();
+        let pipe_diags  = run_pass(cfg.clone(), store_ref.clone());
+        let check_diags = check_scan_pointers(&store_ref, &cfg);
 
-        let unscanned = store.unscanned();
-
-        let mut next = (*config).clone();
-        let mut grew = false;
-        for (sigil, value) in &unscanned {
-            match sigil.as_ref() {
-                "repo" => {
-                    if !next.repos.iter().any(|r| r.as_ref() == value.as_ref()) {
-                        next.repos.push(value.clone());
-                        grew = true;
-                    }
-                }
-                "rev" => {
-                    if !next.revs.iter().any(|r| r.as_ref() == value.as_ref()) {
-                        next.revs.push(value.clone());
-                        grew = true;
-                    }
-                }
-                // fs + custom sigils: runner doesn't extend config for these;
-                // their Missing stays Missing and the Warn sticks.
-                _ => {}
-            }
-        }
+        let (next_cfg, grew) = grow_from_unscanned(&cfg, &store_ref.unscanned());
 
         let mut diags = pipe_diags;
         diags.extend(check_diags);
 
-        if !grew {
-            final_diags = diags;
-            break;
-        }
-
-        config = Arc::new(next);
-
-        if i == depth - 1 {
-            depth_exhausted = true;
-            final_diags = diags;
-            final_diags.push(Box::new(ScanPointerDepthExhausted {
+        let reached_depth   = i + 1 == depth;
+        let depth_exhausted = grew && reached_depth;
+        if depth_exhausted {
+            diags.push(Box::new(ScanPointerDepthExhausted {
                 site:  synthetic_site(),
                 depth,
             }));
         }
-    }
 
-    ScanLoopResult { config, diags: final_diags, passes, depth_exhausted }
+        let fixed_point = !grew;
+        let pass = Pass {
+            // Emit post-growth cfg so the final outcome reflects every
+            // discovered name. For fixed_point, next_cfg == cfg anyway.
+            config:          next_cfg.clone(),
+            diags,
+            passes:          i + 1,
+            depth_exhausted,
+            fixed_point,
+        };
+
+        i    += 1;
+        cfg   = next_cfg;
+        stop  = fixed_point || depth_exhausted;
+        Some(pass)
+    });
+
+    let final_pass = passes_iter.last().expect("run_scan_loop: depth must be >= 1");
+
+    ScanLoopResult {
+        config:          final_pass.config,
+        diags:           final_pass.diags,
+        passes:          final_pass.passes,
+        depth_exhausted: final_pass.depth_exhausted,
+    }
+}
+
+/// Pure: (cfg, unscanned claims) -> (next_cfg, grew?).
+fn grow_from_unscanned(
+    cfg:       &Arc<Config>,
+    unscanned: &[(Arc<str>, Arc<str>)],
+) -> (Arc<Config>, bool) {
+    let mut next = (**cfg).clone();
+    let mut grew = false;
+    for (sigil, value) in unscanned {
+        let bucket = match sigil.as_ref() {
+            "repo" => &mut next.repos,
+            "rev"  => &mut next.revs,
+            _      => continue, // fs + custom: Missing stays Missing.
+        };
+        if !bucket.iter().any(|r| r.as_ref() == value.as_ref()) {
+            bucket.push(value.clone());
+            grew = true;
+        }
+    }
+    if grew { (Arc::new(next), true) } else { (cfg.clone(), false) }
 }
 
 fn synthetic_site() -> ParseSite {
