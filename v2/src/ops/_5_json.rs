@@ -12,7 +12,7 @@ use futures_util::stream::StreamExt;
 
 use rustc_hash::FxHashMap;
 
-use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, Tri};
+use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, SlotKey, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_16_pattern::CompiledPattern;
 use crate::_5_op::{
@@ -23,8 +23,27 @@ use crate::data::{parse_by_ext, DataKind, DataNode, AnyDataNode};
 use crate::jq_path;
 use crate::walk::_2_compile::compile_steps;
 use crate::walk::_1_compiled::CompiledStep;
-use crate::walk::_3_walker::walk;
+use crate::walk::_3_walker::{walk, Captures};
 use crate::walk::_4_brace_parse::{parse_body, ScanAnnotation};
+
+// ---------------------------------------------------------------------------
+// JSON_TREE slot
+// ---------------------------------------------------------------------------
+
+/// Newtype wrapping the parsed JSON/YAML/TOML tree. Keeps `SlotKey<JsonTree>`
+/// distinct from any naive `SlotKey<AnyDataNode>` an unrelated op might declare.
+pub struct JsonTree(pub Arc<AnyDataNode>);
+
+impl std::fmt::Debug for JsonTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JsonTree(<{:?}>)", self.0.kind())
+    }
+}
+
+/// Published by the json op on every emitted output cursor. Downstream ops
+/// that want to walk the same tree without re-parsing read this slot via
+/// `cursor.get_slot(JSON_TREE)`.
+pub const JSON_TREE: SlotKey<JsonTree> = SlotKey::new();
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -251,6 +270,65 @@ impl Op for JsonOp {
                         // Compute per-file batches inside an async block, then
                         // emit each as its own stream item.
                         let per_cursor = async move {
+                            // Slot-reuse fast path: upstream already parsed this
+                            // file. Skip reader fetch + parse; drive walker
+                            // directly on the Arc-shared tree. Only safe when
+                            // `c.fs` is bound (single-file focus) — self-enum
+                            // (`c.fs == None`) enumerates candidates and the
+                            // stored tree addresses only one of them.
+                            if let (Some(fp), Some(tree_arc)) =
+                                (c.fs.as_ref(), c.get_slot(JSON_TREE))
+                            {
+                                match file_ext(fp) {
+                                    Some(ref e) if JSON_EXTS.contains(&e.as_str()) => {}
+                                    _ => return Vec::<Arc<[Cursor]>>::new(),
+                                }
+                                // tree_arc: Arc<JsonTree>; inner: Arc<AnyDataNode>.
+                                let inner: Arc<AnyDataNode> = tree_arc.0.clone();
+                                let outcome = walk(inner.as_ref(), &compiled);
+                                let rows = outcome.rows;
+
+                                if rows.is_empty() {
+                                    let dump = tree_dump(inner.as_ref(), 4, 200);
+                                    diags.0(Box::new(JsonDiag::NoMatch {
+                                        site: (*parse_site).clone(),
+                                        file: Arc::from(fp.0.to_string_lossy().as_ref()),
+                                        dump: Arc::from(dump.as_str()),
+                                    }));
+                                    return Vec::<Arc<[Cursor]>>::new();
+                                }
+                                if !outcome.missed_keys.is_empty() {
+                                    diags.0(Box::new(JsonDiag::PartialMatch {
+                                        site:   (*parse_site).clone(),
+                                        file:   Arc::from(fp.0.to_string_lossy().as_ref()),
+                                        missed: outcome.missed_keys.clone(),
+                                    }));
+                                }
+                                // Translate capture spans → cursor.byte_range.
+                                // Captures already index into the full file bytes
+                                // (walker sees the whole parsed tree), so no
+                                // offset translation is needed here.
+                                let file_batch: Vec<Cursor> = rows.into_iter().map(|row| {
+                                    let span = row_byte_span(&row.captures);
+                                    let mut c2 = c.clone();
+                                    c2.fs = Some(fp.clone());
+                                    for (name, wc) in row.captures {
+                                        let cap = match stamp_map.get(&name) {
+                                            Some(sigil) => Capture::new(wc.text.clone())
+                                                .with_scan(sigil.clone(), Tri::Claimed),
+                                            None => Capture::new(wc.text.clone()),
+                                        };
+                                        c2.captures.insert(name, cap);
+                                    }
+                                    c2.set_slot(JSON_TREE, JsonTree(Arc::clone(&inner)));
+                                    if let Some(r) = span {
+                                        c2.byte_range = Some(r);
+                                    }
+                                    c2
+                                }).collect();
+                                return vec![Arc::<[Cursor]>::from(file_batch.into_boxed_slice())];
+                            }
+
                             let candidates: Vec<(FilePath, Bytes)> = match &c.fs {
                                 Some(fp) => {
                                     match file_ext(fp) {
@@ -308,11 +386,12 @@ impl Op for JsonOp {
                                     }
                                 };
 
-                                let outcome = walk(&tree, &compiled);
+                                let tree_arc = Arc::new(tree);
+                                let outcome = walk(tree_arc.as_ref(), &compiled);
                                 let rows = outcome.rows;
 
                                 if rows.is_empty() {
-                                    let dump = tree_dump(&tree, 4, 200);
+                                    let dump = tree_dump(tree_arc.as_ref(), 4, 200);
                                     diags.0(Box::new(JsonDiag::NoMatch {
                                         site: (*parse_site).clone(),
                                         file: Arc::from(fp.0.to_string_lossy().as_ref()),
@@ -330,8 +409,12 @@ impl Op for JsonOp {
                                 }
 
                                 // Rows from one file = one output batch (the
-                                // grouped sibling set from that walk).
+                                // grouped sibling set from that walk). Every
+                                // row cursor shares the same Arc<AnyDataNode>
+                                // via JSON_TREE — downstream json > json reuses
+                                // without re-parsing.
                                 let file_batch: Vec<Cursor> = rows.into_iter().map(|row| {
+                                    let span = row_byte_span(&row.captures);
                                     let mut c2 = c.clone();
                                     c2.fs = Some(fp.clone());
                                     for (name, wc) in row.captures {
@@ -341,6 +424,10 @@ impl Op for JsonOp {
                                             None => Capture::new(wc.text.clone()),
                                         };
                                         c2.captures.insert(name, cap);
+                                    }
+                                    c2.set_slot(JSON_TREE, JsonTree(Arc::clone(&tree_arc)));
+                                    if let Some(r) = span {
+                                        c2.byte_range = Some(r);
                                     }
                                     c2
                                 }).collect();
@@ -592,6 +679,31 @@ fn parse_jq_path(path: &str) -> Option<Vec<Segment>> {
         }
     }
     Some(segs)
+}
+
+// ---------------------------------------------------------------------------
+// byte_range narrowing helper
+// ---------------------------------------------------------------------------
+
+/// Compute a byte window covering every capture in a walker row. Returns
+/// `Some(start..end)` when at least one capture is present, `None` otherwise.
+///
+/// The walker surfaces per-capture byte ranges (scalar leaves and keys); it
+/// does not track the "matched subtree root" span per row. The union of
+/// capture spans is a cheap, correct proxy: for a single-capture pattern it
+/// equals the value's own span (matches the design memo §4.1 `r_a`), and for
+/// multi-capture rows it bounds the captured data. A later walker touch can
+/// tighten this to the true subtree root span.
+fn row_byte_span(caps: &Captures) -> Option<std::ops::Range<usize>> {
+    let mut iter = caps.values();
+    let first = iter.next()?;
+    let mut lo = first.byte_start;
+    let mut hi = first.byte_end;
+    for wc in iter {
+        if wc.byte_start < lo { lo = wc.byte_start; }
+        if wc.byte_end   > hi { hi = wc.byte_end;   }
+    }
+    Some((lo as usize)..(hi as usize))
 }
 
 // ---------------------------------------------------------------------------

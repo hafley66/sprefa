@@ -10,4 +10,4 @@ pub use _1_repo::RepoFactory;
 pub use _2_rev::RevFactory;
 pub use _3_fs::FsFactory;
 pub use _4_read::ReadFactory;
-pub use _5_json::JsonFactory;
+pub use _5_json::{JsonFactory, JsonTree, JSON_TREE};
