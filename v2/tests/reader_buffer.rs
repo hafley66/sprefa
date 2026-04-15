@@ -7,6 +7,7 @@ use futures::executor::block_on;
 use futures_util::StreamExt;
 
 use v2::readers::{BufferKey, BufferOverlay, MemReader};
+use v2::CompiledPattern;
 use v2::_0_types::FilePath;
 use v2::_2_config::{Config, RuntimeConfig};
 use v2::Reader;
@@ -89,7 +90,8 @@ fn buffer_overlay_unions_files_list() {
         Arc::new(Bytes::from_static(b"draft")),
     );
 
-    let mut files = block_on(overlay.files("r", "main", "**/*.ts").next()).unwrap();
+    let pat = CompiledPattern::compile("**/*.ts").unwrap();
+    let mut files = block_on(overlay.files("r", "main", &pat).next()).unwrap();
     files.sort_by(|a, b| a.0.to_string_lossy().cmp(&b.0.to_string_lossy()));
 
     assert_eq!(files.len(), 2);

@@ -15,7 +15,7 @@ use crate::_2_config::Config;
 use crate::_3_reader::{
     CrossRefHit, ParsedTree, ParserKind, Reader, ScanCombo, ScanKind, ViolationEntry,
 };
-use crate::_8_parse::glob_match;
+use crate::_16_pattern::CompiledPattern;
 
 pub struct MemReader {
     pub repos:   Vec<Arc<str>>,
@@ -67,13 +67,13 @@ fn once<T: Send + 'static>(v: T) -> BoxStream<'static, T> {
 }
 
 impl Reader for MemReader {
-    fn files(&self, repo: &str, rev: &str, pattern: &str)
+    fn files(&self, repo: &str, rev: &str, pattern: &CompiledPattern)
         -> BoxStream<'static, Vec<FilePath>>
     {
         let key = (Arc::<str>::from(repo), Arc::<str>::from(rev));
         let all = self.files.get(&key).cloned().unwrap_or_default();
         let filtered = all.into_iter()
-            .filter(|fp| glob_match(pattern, &fp.0.to_string_lossy()))
+            .filter(|fp| pattern.is_match(&fp.0.to_string_lossy()))
             .collect();
         once(filtered)
     }

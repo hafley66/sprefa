@@ -259,13 +259,12 @@ fn fs_hover_match_lists_paths_bare_when_not_on_disk() {
         with_evidence(with_fs(cursor("r", "main"), "src/a.rs"), "fs", &site, "src/a.rs"), // dup
     ];
     let result = op.hover_match(site.as_ref(), &cursors);
-    // Cursors carry fs → grouped path; paths are relative (not on disk) → inline code.
+    // Flat list of paths; paths are relative (not on disk) → inline code.
+    // Previous rendering nested the same path as both heading and bullet.
     assert_eq!(
         result,
         Some(
-            "**fs** glob: `**`\n\n\
-             ### `src/a.rs`\n- `src/a.rs`\n\n\
-             ### `src/b.rs`\n- `src/b.rs`".to_string()
+            "**fs** glob: `**`\n\n- `src/a.rs`\n- `src/b.rs`".to_string()
         )
     );
 }

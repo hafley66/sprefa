@@ -701,26 +701,6 @@ pub fn scan_slot_scan_pointers(src: &str, abs_base: usize, out: &mut Vec<ScanPoi
 // Small helpers, kept from prior pass
 // ---------------------------------------------------------------------------
 
-pub fn glob_match(pattern: &str, s: &str) -> bool {
-    // Normalize: **/foo should also match foo at the root (zero dir components).
-    // Strip any leading **/ and recursively try the suffix.
-    if let Some(rest) = pattern.strip_prefix("**/") {
-        if glob_match(rest, s) { return true; }
-    }
-    let pb = pattern.as_bytes();
-    let sb = s.as_bytes();
-    glob_rec(pb, 0, sb, 0)
-}
-
-fn glob_rec(p: &[u8], pi: usize, s: &[u8], si: usize) -> bool {
-    if pi == p.len() { return si == s.len(); }
-    match p[pi] {
-        b'*' => (si..=s.len()).any(|k| glob_rec(p, pi + 1, s, k)),
-        b'?' => si < s.len() && glob_rec(p, pi + 1, s, si + 1),
-        c    => si < s.len() && s[si] == c && glob_rec(p, pi + 1, s, si + 1),
-    }
-}
-
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     let mut prev: Vec<usize> = (0..=b.len()).collect();

@@ -15,7 +15,7 @@ use crate::_2_config::Config;
 use crate::_3_reader::{
     CrossRefHit, ParsedTree, ParserKind, Reader, ScanCombo, ScanKind, ViolationEntry,
 };
-use crate::_8_parse::glob_match;
+use crate::_16_pattern::CompiledPattern;
 
 // ---------------------------------------------------------------------------
 // Key
@@ -63,7 +63,7 @@ fn once<T: Send + 'static>(v: T) -> BoxStream<'static, T> {
 }
 
 impl Reader for BufferOverlay {
-    fn files(&self, repo: &str, rev: &str, pattern: &str) -> BoxStream<'static, Vec<FilePath>> {
+    fn files(&self, repo: &str, rev: &str, pattern: &CompiledPattern) -> BoxStream<'static, Vec<FilePath>> {
         // Pre-collect buffer paths that match this (repo, rev, pattern). The
         // buffer map is tiny; snapshot sync, then union async with inner.
         let extra: Vec<FilePath> = {
@@ -71,7 +71,7 @@ impl Reader for BufferOverlay {
             guard
                 .keys()
                 .filter(|k| k.repo.as_ref() == repo && k.rev.as_ref() == rev)
-                .filter(|k| glob_match(pattern, k.path.as_ref()))
+                .filter(|k| pattern.is_match(k.path.as_ref()))
                 .map(|k| FilePath(Arc::from(std::path::Path::new(k.path.as_ref()))))
                 .collect()
         };

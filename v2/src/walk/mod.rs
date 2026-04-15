@@ -1,15 +1,16 @@
-//! Data walker: pattern matching and compiled step types.
+//! Data walker: compiled step types and select/walk machinery.
 //!
-//! `walk_inner` (task #6) is not yet ported; this module provides the
-//! compilation and pattern infrastructure only.
+//! Pattern matching types (`PatternMatcher`, `Segment`, `compile_patterns`,
+//! etc.) now live at the crate root (`_16_pattern`) so top-level ops
+//! (`repo`, `rev`, `fs`) share the same matcher the walker uses. Re-exports
+//! below preserve backwards compatibility for existing `walk::` imports.
 
-pub mod _0_pattern;
 pub mod _1_compiled;
 pub mod _2_compile;
 pub mod _3_walker;
 pub mod _4_brace_parse;
 
-pub use _0_pattern::{
+pub use crate::_16_pattern::{
     Segment, PatternMatcher,
     parse_segment_pattern, match_segments_with_bindings,
     compile_pattern, compile_patterns,

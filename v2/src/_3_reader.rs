@@ -7,6 +7,7 @@ use bytes::Bytes;
 use futures_core::stream::BoxStream;
 
 use crate::_0_types::{FileId, FilePath};
+use crate::_16_pattern::CompiledPattern;
 use crate::_2_config::Config;
 
 // ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ pub struct ViolationEntry {
 // ---------------------------------------------------------------------------
 
 pub trait Reader: Send + Sync {
-    fn files(&self, repo: &str, rev: &str, pattern: &str)
+    fn files(&self, repo: &str, rev: &str, pattern: &CompiledPattern)
         -> BoxStream<'static, Vec<FilePath>>;
 
     fn bytes(&self, repo: &str, rev: &str, fs: &FilePath)

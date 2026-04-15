@@ -5,7 +5,7 @@
 //! key_segment_captures, scoped_npm_deps, walk_with_current_repo_constraint) require
 //! DataNode and are deferred to task #6.
 
-use super::_0_pattern::compile_pattern;
+use crate::_16_pattern::compile_pattern;
 use super::_1_compiled::{
     CompiledKeyMatcher, CompiledObjectEntry, CompiledStep,
 };
@@ -83,7 +83,7 @@ pub fn compile_one_step(step: &SelectStep) -> anyhow::Result<CompiledStep> {
             capture: capture.clone(),
         },
         SelectStep::LeafPattern { pattern } => CompiledStep::LeafPattern {
-            segments: super::_0_pattern::parse_segment_pattern(pattern),
+            segments: crate::_16_pattern::parse_segment_pattern(pattern),
         },
         SelectStep::Object { entries } => CompiledStep::Object {
             entries: entries
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn compiled_key_matches_glob_pattern() {
-        use super::super::_0_pattern::compile_pattern;
+        use crate::_16_pattern::compile_pattern;
         let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
             r#"{"@angular/core": "1", "@angular/forms": "2", "lodash": "3"}"#,
         )

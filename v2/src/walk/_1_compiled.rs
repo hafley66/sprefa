@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use super::_0_pattern::{PatternMatcher, Segment};
+use crate::_16_pattern::{PatternMatcher, Segment};
 
 /// A value captured during a walk, with its byte position in the source.
 ///

@@ -572,12 +572,27 @@ impl DocSession {
             .unwrap_or_default();
 
         // Harvest witnesses, dedup, filter by partial, cap at 1000.
+        // Partial compiled as a CompiledPattern when possible — this is the
+        // same matcher ops use at runtime (`re:` / segment-capture / `|`
+        // alternation / globset all work). On compile error (mid-typing
+        // garbage like `re:foo[`), fall back to substring match.
         let partial = loc.partial.as_str();
+        let compiled_partial = if partial.is_empty() {
+            None
+        } else {
+            crate::_16_pattern::CompiledPattern::compile(partial).ok()
+        };
         let mut seen: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
         let mut out = Vec::new();
         for c in &cursors {
             let Some(v) = wildcard_op.witness(c) else { continue; };
-            if !partial.is_empty() && !v.contains(partial) { continue; }
+            if !partial.is_empty() {
+                let keep = match &compiled_partial {
+                    Some(p) => p.is_match(&v),
+                    None    => v.contains(partial),
+                };
+                if !keep { continue; }
+            }
             if !seen.insert(v.clone()) { continue; }
             out.push(CompletionSuggestion {
                 label:       v.to_string(),

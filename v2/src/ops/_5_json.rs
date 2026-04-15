@@ -14,6 +14,7 @@ use rustc_hash::FxHashMap;
 
 use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
+use crate::_16_pattern::CompiledPattern;
 use crate::_5_op::{
     hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
     Operator, Pipeline, ProgramCtx,
@@ -199,7 +200,9 @@ impl Op for JsonOp {
                     }
                     None => {
                         // Self-enumerate via reader.files("**"), filter by ext
-                        let mut s = reader.files(&c.repo, &c.rev, "**");
+                        let all = CompiledPattern::compile("**")
+                            .expect("'**' is a valid glob");
+                        let mut s = reader.files(&c.repo, &c.rev, &all);
                         let files = s.next().await.unwrap_or_default();
                         let mut out = vec![];
                         for fp in files {

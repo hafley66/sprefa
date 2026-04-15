@@ -17,7 +17,8 @@ use crate::_5_op::{
     hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
     Operator, Pipeline, ProgramCtx, ScanPointer,
 };
-use crate::_8_parse::{classify_token, glob_match, TokenClass};
+use crate::_8_parse::{classify_token, TokenClass};
+use crate::_16_pattern::CompiledPattern;
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -47,8 +48,9 @@ impl Operator for RepoFactory {
     }
 
     fn wildcard_instance(&self, parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        let pat = CompiledPattern::compile("*").ok()?;
         Some(Arc::new(RepoOp {
-            mode: RepoMode::Filter(Arc::from("*")),
+            mode: RepoMode::Filter(Arc::new(pat)),
             parse_site,
         }))
     }
@@ -61,15 +63,20 @@ impl Operator for RepoFactory {
                 as Box<dyn Diagnostic>]
         })?;
         let arg = paren.src.trim();
+        let bad_arg = |site: &ParseSite| Box::new(RepoDiag::BadArg {
+            site: site.clone(),
+            got:  Arc::from(arg),
+        }) as Box<dyn Diagnostic>;
         let mode = match classify_token(arg) {
             TokenClass::Capture(c)     => RepoMode::Bind(c.name),
-            TokenClass::Literal        => RepoMode::Filter(Arc::from(arg)),
+            TokenClass::Literal        => {
+                let pat = CompiledPattern::compile(arg)
+                    .map_err(|_| vec![bad_arg(&inv.parse_site)])?;
+                RepoMode::Filter(Arc::new(pat))
+            }
             TokenClass::ScanPointer(_)
           | TokenClass::CrossRef(_)    => {
-                return Err(vec![Box::new(RepoDiag::BadArg {
-                    site: (*inv.parse_site).clone(),
-                    got:  Arc::from(arg),
-                }) as _]);
+                return Err(vec![bad_arg(&inv.parse_site)]);
             }
         };
         Ok(Pipeline::Op(Arc::new(RepoOp {
@@ -89,8 +96,8 @@ pub struct RepoOp {
 }
 
 enum RepoMode {
-    Filter(Arc<str>),   // glob
-    Bind(Arc<str>),     // capture name
+    Filter(Arc<CompiledPattern>),   // shared matcher — glob/regex/segment
+    Bind(Arc<str>),                 // capture name
 }
 
 impl Op for RepoOp {
@@ -106,7 +113,7 @@ impl Op for RepoOp {
 
     fn hover_self(&self) -> String {
         let src = match &self.mode {
-            RepoMode::Filter(g) => g.as_ref().to_string(),
+            RepoMode::Filter(p) => p.src.as_ref().to_string(),
             RepoMode::Bind(n)   => format!("${}", n),
         };
         format!("# repo({})", src)
@@ -144,10 +151,10 @@ impl Op for RepoOp {
         -> BoxStream<'static, Cursor>
     {
         match &self.mode {
-            RepoMode::Filter(glob) => {
-                let glob = glob.clone();
+            RepoMode::Filter(pat) => {
+                let pat = pat.clone();
                 input.filter(move |c| {
-                    let keep = glob_match(&glob, &c.repo);
+                    let keep = pat.is_match(&c.repo);
                     async move { keep }
                 }).boxed()
             }
@@ -273,7 +280,12 @@ mod tests {
     fn hover_match_flat_when_no_fs() {
         // Cursors without fs (repo-only context) → flat bullet list.
         let site = dummy_site();
-        let op = RepoOp { mode: RepoMode::Filter(Arc::from("org/*")), parse_site: site.clone() };
+        let op = RepoOp {
+            mode: RepoMode::Filter(Arc::new(
+                crate::_16_pattern::CompiledPattern::compile("org/*").unwrap()
+            )),
+            parse_site: site.clone(),
+        };
 
         let mut c1 = base_cursor("org/alpha", "main", None);
         c1.evidence.push(OpEvidence {

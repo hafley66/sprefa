@@ -16,7 +16,7 @@ use crate::_2_config::Config;
 use crate::_3_reader::{
     CrossRefHit, ParsedTree, ParserKind, Reader, ScanCombo, ScanKind, ViolationEntry,
 };
-use crate::_8_parse::glob_match;
+use crate::_16_pattern::CompiledPattern;
 use super::_1_locator::CheckoutLocator;
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ impl GitBlobReader {
         commit.tree()
     }
 
-    fn walk_tree(tree: &git2::Tree, repo: &git2::Repository, pattern: &str) -> Vec<FilePath> {
+    fn walk_tree(tree: &git2::Tree, repo: &git2::Repository, pattern: &CompiledPattern) -> Vec<FilePath> {
         let mut paths = Vec::new();
         let _ = tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
             if entry.kind() == Some(git2::ObjectType::Blob) {
@@ -68,7 +68,7 @@ impl GitBlobReader {
                 } else {
                     format!("{}{}", root, name)
                 };
-                if glob_match(pattern, &full) {
+                if pattern.is_match(&full) {
                     paths.push(FilePath(Arc::from(Path::new(&full))));
                 }
             }
@@ -84,16 +84,15 @@ fn once_val<T: Send + 'static>(v: T) -> BoxStream<'static, T> {
 }
 
 impl Reader for GitBlobReader {
-    fn files(&self, repo: &str, rev: &str, pattern: &str) -> BoxStream<'static, Vec<FilePath>> {
+    fn files(&self, repo: &str, rev: &str, pattern: &CompiledPattern) -> BoxStream<'static, Vec<FilePath>> {
         let Some(repo_arc) = self.open_repo(repo) else {
             return once_val(vec![]);
         };
         let rev = rev.to_owned();
-        let pattern = pattern.to_owned();
         let result = {
             let guard = repo_arc.lock().unwrap();
             Self::resolve_tree(&guard, &rev)
-                .map(|tree| Self::walk_tree(&tree, &guard, &pattern))
+                .map(|tree| Self::walk_tree(&tree, &guard, pattern))
                 .unwrap_or_default()
         };
         once_val(result)

@@ -20,6 +20,7 @@ use futures_util::stream::{self, StreamExt};
 
 use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
+use crate::_16_pattern::CompiledPattern;
 use crate::_5_op::{
     hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
     Operator, Pipeline, ProgramCtx, ScanPointer,
@@ -60,8 +61,9 @@ impl Operator for FsFactory {
     }
 
     fn wildcard_instance(&self, parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        let pat = CompiledPattern::compile("**").expect("'**' is a valid glob");
         Some(Arc::new(FsOp {
-            mode: FsMode::Filter(Arc::from("**")),
+            mode: FsMode::Filter(Arc::new(pat)),
             parse_site,
         }))
     }
@@ -75,8 +77,18 @@ impl Operator for FsFactory {
         })?;
         let arg = paren.src.trim();
         let mode = match classify_token(arg) {
-            TokenClass::Capture(c)  => FsMode::Bind(c.name, Arc::from("**")),
-            TokenClass::Literal     => FsMode::Filter(Arc::from(arg)),
+            TokenClass::Capture(c)  => {
+                let pat = CompiledPattern::compile("**")
+                    .expect("'**' is a valid glob");
+                FsMode::Bind(c.name, Arc::new(pat))
+            }
+            TokenClass::Literal => match CompiledPattern::compile(arg) {
+                Ok(pat) => FsMode::Filter(Arc::new(pat)),
+                Err(_)  => return Err(vec![Box::new(FsDiag::BadArg {
+                    site: (*inv.parse_site).clone(),
+                    got:  Arc::from(arg),
+                }) as _]),
+            },
             _ => return Err(vec![Box::new(FsDiag::BadArg {
                 site: (*inv.parse_site).clone(),
                 got:  Arc::from(arg),
@@ -96,12 +108,12 @@ pub struct FsOp {
 }
 
 enum FsMode {
-    Filter(Arc<str>),             // glob pattern handed to Reader.files
-    Bind(Arc<str>, Arc<str>),     // (capture name, pattern = "**")
+    Filter(Arc<CompiledPattern>),              // pattern handed to Reader.files
+    Bind(Arc<str>, Arc<CompiledPattern>),      // (capture name, pattern = "**")
 }
 
 impl FsMode {
-    fn pattern(&self) -> Arc<str> {
+    fn pattern(&self) -> Arc<CompiledPattern> {
         match self {
             FsMode::Filter(p) | FsMode::Bind(_, p) => p.clone(),
         }
@@ -131,7 +143,7 @@ impl Op for FsOp {
 
     fn hover_self(&self) -> String {
         let src = match &self.mode {
-            FsMode::Filter(p)    => p.as_ref().to_string(),
+            FsMode::Filter(p)    => p.src.as_ref().to_string(),
             FsMode::Bind(n, _)   => format!("${}", n),
         };
         format!("# fs({})", src)
@@ -153,23 +165,40 @@ impl Op for FsOp {
 
     fn hover_match(&self, site: &crate::_0_types::ParseSite, cursors: &[Cursor]) -> Option<String> {
         let pattern = self.mode.pattern();
-        let header = format!("**fs** glob: `{pattern}`");
-        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
-            .filter(|c| c.evidence.iter().any(|ev|
-                ev.op_name == "fs" && ev.parse_site.as_ref() == site
-            ))
-            .filter_map(|c| {
-                c.fs.as_ref().map(|fp| (
-                    Some(fp.0.to_string_lossy().into_owned()),
-                    c.rev.to_string(),
-                    fp.0.to_string_lossy().into_owned(),
+        let header = format!("**fs** glob: `{}`", pattern.src);
+        // Flat list: one line per matched path. For fs the path IS the content;
+        // nesting it as both heading and bullet reads as a duplicate.
+        let mut seen: Vec<String> = Vec::new();
+        let mut lines: Vec<String> = Vec::new();
+        let single_rev = {
+            let revs: std::collections::HashSet<Arc<str>> = cursors.iter()
+                .filter(|c| c.evidence.iter().any(|ev|
+                    ev.op_name == "fs" && ev.parse_site.as_ref() == site
                 ))
-            })
-            .collect();
-        if entries.is_empty() {
+                .map(|c| c.rev.clone())
+                .collect();
+            revs.len() == 1
+        };
+        for c in cursors {
+            if !c.evidence.iter().any(|ev|
+                ev.op_name == "fs" && ev.parse_site.as_ref() == site
+            ) { continue }
+            let Some(fp) = c.fs.as_ref() else { continue };
+            let path = fp.0.to_string_lossy().into_owned();
+            if seen.iter().any(|s| s == &path) { continue }
+            seen.push(path.clone());
+            let line = if single_rev {
+                format!("- {}", crate::_5_op::path_link_or_code(&path))
+            } else {
+                format!("- {} (rev: {})", crate::_5_op::path_link_or_code(&path), c.rev)
+            };
+            lines.push(line);
+            if lines.len() >= 20 { break }
+        }
+        if lines.is_empty() {
             return Some(format!("{header}\n\n(no matches yet)"));
         }
-        hover_render_grouped(&header, &entries)
+        Some(format!("{}\n\n{}", header, lines.join("\n")))
     }
 
     fn pipe(&self, input: BoxStream<'static, Cursor>, ctx: OpCtx)
@@ -193,7 +222,7 @@ impl Op for FsOp {
                 if files.is_empty() {
                     diags.0(Box::new(FsDiag::NoMatch {
                         site:    (*parse_site).clone(),
-                        pattern: pattern.clone(),
+                        pattern: pattern.src.clone(),
                         repo:    c.repo.clone(),
                         rev:     c.rev.clone(),
                     }));
@@ -335,7 +364,9 @@ mod tests {
         };
 
         let op = FsOp {
-            mode:       FsMode::Filter(Arc::from("src/**/*.rs")),
+            mode:       FsMode::Filter(Arc::new(
+                CompiledPattern::compile("src/**/*.rs").unwrap()
+            )),
             parse_site: dummy_site(),
         };
 
@@ -397,7 +428,9 @@ mod tests {
         use crate::_0_types::OpEvidence;
         let site = dummy_site();
         let op = FsOp {
-            mode:       FsMode::Filter(Arc::from("**/Cargo.toml")),
+            mode:       FsMode::Filter(Arc::new(
+                CompiledPattern::compile("**/Cargo.toml").unwrap()
+            )),
             parse_site: site.clone(),
         };
 
@@ -425,10 +458,130 @@ mod tests {
 
         let md = op.hover_match(site.as_ref(), &[c1, c2, c3]).unwrap();
 
-        assert!(md.contains("### `crates/a/Cargo.toml`"), "missing a/Cargo heading: {md}");
-        assert!(md.contains("### `crates/b/Cargo.toml`"), "missing b/Cargo heading: {md}");
-        // c3 is rev=v2 so the rev suffix must appear
+        // fs hover_match is a flat bullet list — path is both heading and
+        // content. Each unique path appears once, with rev suffix when the
+        // cursor set spans multiple revs.
+        assert!(md.contains("crates/a/Cargo.toml"), "missing a/Cargo path: {md}");
+        assert!(md.contains("crates/b/Cargo.toml"), "missing b/Cargo path: {md}");
         assert!(md.contains("(rev: v2)") || md.contains("(rev: main)"),
-            "expected rev suffix for multi-rev groups: {md}");
+            "expected rev suffix for multi-rev cursor set: {md}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Pattern parity with v1: re:, segment capture, | alternation, braces.
+    // These ran green in v1 via `compile_patterns` inside file_match. v2
+    // regressed when Reader carried its own hand-rolled `glob_match`. This
+    // test locks in the promoted CompiledPattern path end-to-end through
+    // the Reader so the regression stays buried.
+    // -----------------------------------------------------------------------
+
+    async fn collect_paths(
+        op: FsOp,
+        reader: Arc<dyn crate::_3_reader::Reader + Send + Sync>,
+    ) -> Vec<String> {
+        let config = make_config();
+        let writer: Arc<dyn crate::_4_writer::Writer + Send + Sync> =
+            Arc::new(MemWriter::new());
+        let diags = DiagSink(Arc::new(|_d| {}));
+        let events = EventSink(Arc::new(|_| {}));
+        let (result_store, xref_seen) = OpCtx::fresh_xref_state();
+        let ctx = OpCtx {
+            run_id: RunId(0), op_id: OpId(0),
+            reader, writer, config, diags, events, result_store, xref_seen,
+        };
+        let cursor = Cursor {
+            run_id:   RunId(0),
+            path:     crate::_0_types::SprfPath(Arc::from(vec![].into_boxed_slice())),
+            repo:     Arc::from("r"),
+            rev:      Arc::from("main"),
+            fs:       None,
+            captures: Default::default(),
+            fks:      Default::default(),
+            evidence: vec![],
+            content:  None,
+        };
+        let input: BoxStream<'static, Cursor> = Box::pin(stream::iter(vec![cursor]));
+        use futures_util::StreamExt;
+        op.pipe(input, ctx)
+            .filter_map(|c| async move {
+                c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned())
+            })
+            .collect::<Vec<_>>()
+            .await
+    }
+
+    fn mem_reader_with_files(paths: &[&str])
+        -> Arc<dyn crate::_3_reader::Reader + Send + Sync>
+    {
+        let config = make_config();
+        Arc::new(
+            MemReader::new(config)
+                .with_repo("r", &["main"])
+                .with_files("r", "main", paths)
+        )
+    }
+
+    fn fs_op(pattern: &str) -> FsOp {
+        FsOp {
+            mode: FsMode::Filter(Arc::new(CompiledPattern::compile(pattern).unwrap())),
+            parse_site: dummy_site(),
+        }
+    }
+
+    #[tokio::test]
+    async fn pattern_parity_regex_prefix() {
+        // `re:` prefix routes through PatternMatcher::Regex, NOT glob_match.
+        // Pre-regression this returned zero.
+        let reader = mem_reader_with_files(&[
+            "src/foo.rs", "src/bar.rs", "tests/baz.rs", "docs/readme.md",
+        ]);
+        let op = fs_op(r"re:^src/.*\.rs$");
+        let mut got = collect_paths(op, reader).await;
+        got.sort();
+        assert_eq!(got, vec!["src/bar.rs".to_string(), "src/foo.rs".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn pattern_parity_segment_capture() {
+        // `$ORG/$REPO`-style patterns route through SegmentCapture. Using
+        // filename segments here because MemReader treats FS paths verbatim.
+        let reader = mem_reader_with_files(&[
+            "acme/frontend", "acme/backend", "other/frontend",
+        ]);
+        let op = fs_op("$ORG/frontend");
+        let mut got = collect_paths(op, reader).await;
+        got.sort();
+        assert_eq!(got, vec!["acme/frontend".to_string(), "other/frontend".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn pattern_parity_pipe_alternation() {
+        // `a|b` splits into two Glob matchers — OR semantics.
+        let reader = mem_reader_with_files(&[
+            "values.yaml", "config.yml", "main.rs", "lib.rs",
+        ]);
+        let op = fs_op("*.yaml|*.yml");
+        let mut got = collect_paths(op, reader).await;
+        got.sort();
+        assert_eq!(got, vec!["config.yml".to_string(), "values.yaml".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn pattern_parity_char_class_and_braces() {
+        // `[abc]` and `{a,b}` are globset features — would be invisible to
+        // the hand-rolled glob_match.
+        let reader = mem_reader_with_files(&[
+            "a.rs", "b.rs", "c.rs", "d.rs",
+        ]);
+        let op = fs_op("[ab].rs");
+        let mut got = collect_paths(op, reader).await;
+        got.sort();
+        assert_eq!(got, vec!["a.rs".to_string(), "b.rs".to_string()]);
+
+        let reader2 = mem_reader_with_files(&["x.rs", "y.rs", "z.rs"]);
+        let op2 = fs_op("{x,z}.rs");
+        let mut got2 = collect_paths(op2, reader2).await;
+        got2.sort();
+        assert_eq!(got2, vec!["x.rs".to_string(), "z.rs".to_string()]);
     }
 }

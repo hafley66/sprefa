@@ -42,7 +42,7 @@ rule(derived_rule) {
 rule(bad_rev) {
   > repo($R) {
     > rev(HEAD) {
-      > fs(**/);
+      > fs(*/);
     };
   };
 };
@@ -51,7 +51,7 @@ rule(bad_arm) {
   > repo(HEAD) {
     > rev(main) {
 
-      > fs() > json({$A: $HMM});
+      > fs(**/v2/Cargo.toml) > json({$A: $HMM});
     }
   };
 };

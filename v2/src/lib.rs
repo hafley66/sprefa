@@ -20,6 +20,8 @@ pub mod _12_result_store;
 pub mod _13_scan_check;
 pub mod _14_scan_loop;
 pub mod _15_pipeline_rewrite;
+pub mod _16_pattern;
+pub use _16_pattern::{CompiledPattern, PatternMatcher, Segment, compile_pattern, compile_patterns};
 
 pub mod readers;
 pub mod writers;
@@ -59,7 +61,7 @@ pub use _8_parse::{
     scan_balanced, host_parse, host_parse_brace, host_parse_arm_brace,
     host_parse_tolerant, host_parse_arm_brace_abs_tolerant,
     ChildKind, ParseMode,
-    ParseError, Pipe, glob_match, levenshtein,
+    ParseError, Pipe, levenshtein,
 };
 pub use _9_hash::{content_hash, path_hash_static, cursor_hash};
 pub use _10_registry::{OperatorRegistry, LowerOutcome, lower_rules, lower_chain};

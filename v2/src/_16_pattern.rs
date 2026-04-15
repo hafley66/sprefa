@@ -3,8 +3,14 @@
 //! Ported from v1 `crates/rules/src/pattern.rs`.
 //! Logic is identical to v1. Internal `HashMap` uses std here because
 //! these are short-lived scratch maps inside the recursive matcher.
+//!
+//! Shared by the walker (`walk::`) and top-level ops (`repo`, `rev`, `fs`)
+//! so every pattern slot in the language uses one matcher: `re:` regex,
+//! `$NAME` segment capture, glob with `|` alternation, `**` recursive,
+//! `?`, `[abc]`, `{a,b}` (all via `globset`).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use globset::{Glob, GlobMatcher};
 use regex::Regex;
@@ -164,6 +170,37 @@ pub fn match_segments_with_bindings(
 /// Compile a single pipe-delimited pattern string into matchers.
 pub fn compile_pattern(pattern: &str) -> anyhow::Result<Vec<PatternMatcher>> {
     compile_patterns(&[pattern])
+}
+
+/// A parsed pattern plus its source text. Source is kept so ops can
+/// render the original string in hovers / diagnostics without losing it.
+///
+/// `is_match` succeeds when *any* compiled matcher matches — this is how
+/// `|` alternation falls out of `compile_pattern`.
+pub struct CompiledPattern {
+    pub src:      Arc<str>,
+    pub matchers: Vec<PatternMatcher>,
+}
+
+impl std::fmt::Debug for CompiledPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompiledPattern")
+            .field("src", &self.src)
+            .field("matchers", &self.matchers)
+            .finish()
+    }
+}
+
+impl CompiledPattern {
+    pub fn compile(src: &str) -> anyhow::Result<Self> {
+        Ok(Self {
+            src:      Arc::from(src),
+            matchers: compile_pattern(src)?,
+        })
+    }
+    pub fn is_match(&self, s: &str) -> bool {
+        self.matchers.iter().any(|m| m.is_match(s))
+    }
 }
 
 /// Compile a slice of pattern strings into matchers.

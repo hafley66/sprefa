@@ -323,6 +323,57 @@ fn doc_session_completion_rev_partial_mid_typing_tolerant_parse() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Completion — pattern filter parity
+// ---------------------------------------------------------------------------
+//
+// These exercise the completion filter path where the partial typed inside
+// the paren is itself a pattern. Before the CompiledPattern promotion the
+// completion filter used either `contains` or a hand-rolled glob_match, so
+// `re:` regex, `{a,b}` braces, and `|` alternation all silently returned
+// nothing. With CompiledPattern wired end-to-end the filter must honor
+// every shape the fs op honors at runtime.
+//
+// No tower-lsp in this path: DocSession::completions_at drives
+// analysis::complete_in_paren directly against MemReader.
+
+#[test]
+fn doc_session_completion_fs_filter_glob_double_star() {
+    // Cursor is positioned at END of the typed partial so loc.partial is
+    // `src/**/*.rs`. The filter must recognize the glob and exclude
+    // non-matching files (pre-regression the filter was substring-only).
+    let partial = "src/**/*.rs";
+    let src = format!("rule(r){{ > repo(acme) > rev(main) > fs({partial}) }}");
+    let mem = Arc::new(
+        MemReader::new(make_config())
+            .with_repo("acme", &["main"])
+            .with_files("acme", "main", &["src/lib.rs", "src/main.rs", "README.md"]),
+    );
+    let overlay = Arc::new(BufferOverlay::new(mem));
+    let mut s = DocSession::new(src.clone(), overlay, make_registry());
+    let pos = pos_of(&src, "fs(") + "fs(".len() + partial.len();
+    let items = s.completions_at(pos);
+
+    let labels: Vec<String> = items.iter().map(|i| i.label.clone()).collect();
+    assert!(
+        labels.iter().any(|l| l == "src/lib.rs")
+            && labels.iter().any(|l| l == "src/main.rs"),
+        "expected src/lib.rs and src/main.rs; got {:?}", labels,
+    );
+    assert!(
+        !labels.iter().any(|l| l == "README.md"),
+        "README.md must be filtered out; got {:?}", labels,
+    );
+}
+
+// `|` alternation, `re:` regex, unclosed char class `[`, and segment-capture
+// `$NAME` partials interact with the top-level sprf tokenizer in ways that
+// can wedge mid-typing parses (those chars have meaning outside the paren).
+// Op-runtime parity for `re:` / `$NAME` / `{a,b}` / `[abc]` is pinned by the
+// fs-op unit tests in ops/_3_fs.rs; the LSP integration layer here asserts
+// the completion filter honors the shapes safe in mid-typing source: plain
+// globs with `*`/`**`.
+
 #[test]
 fn doc_session_completion_kind_hint_matches_op_name() {
     let src = "rule(r){ > repo() }";

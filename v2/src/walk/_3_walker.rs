@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use super::_0_pattern::match_segments_with_bindings;
+use crate::_16_pattern::match_segments_with_bindings;
 use super::_1_compiled::{
     CompiledKeyMatcher, CompiledObjectEntry, CompiledStep, WalkCapture,
 };
@@ -480,7 +480,7 @@ fn bind_key_captures(
 mod tests {
     use super::*;
     use crate::data::{parse_by_ext, AnyDataNode};
-    use crate::walk::_0_pattern::parse_segment_pattern;
+    use crate::_16_pattern::parse_segment_pattern;
     use bytes::Bytes;
 
     fn parse_json(src: &str) -> AnyDataNode {
@@ -747,7 +747,7 @@ mod tests {
         // {"@$SCOPE/$PKG": $VER}  over {"@angular/core": "1.0", "lodash": "2.0"}
         let src = r#"{"@angular/core":"1.0","lodash":"2.0"}"#;
         let root = parse_json(src);
-        use crate::walk::_0_pattern::compile_pattern;
+        use crate::_16_pattern::compile_pattern;
         let matchers = compile_pattern("@$SCOPE/$PKG").unwrap();
         let steps = vec![obj(vec![entry(
             CompiledKeyMatcher::Glob(matchers),

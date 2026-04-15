@@ -11,7 +11,8 @@ use crate::_5_op::{
     hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
     Operator, Pipeline, ProgramCtx, ScanPointer,
 };
-use crate::_8_parse::{classify_token, glob_match, TokenClass};
+use crate::_8_parse::{classify_token, TokenClass};
+use crate::_16_pattern::CompiledPattern;
 
 pub struct RevFactory;
 
@@ -37,8 +38,9 @@ impl Operator for RevFactory {
     }
 
     fn wildcard_instance(&self, parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        let pat = CompiledPattern::compile("*").ok()?;
         Some(Arc::new(RevOp {
-            mode: RevMode::Filter(Arc::from("*")),
+            mode: RevMode::Filter(Arc::new(pat)),
             parse_site,
         }))
     }
@@ -51,20 +53,25 @@ impl Operator for RevFactory {
                 as Box<dyn Diagnostic>]
         })?;
         let arg = paren.src.trim();
+        let bad_arg = |site: &ParseSite| Box::new(RevDiag::BadArg {
+            site: site.clone(),
+            got:  Arc::from(arg),
+        }) as Box<dyn Diagnostic>;
         let mode = match classify_token(arg) {
             TokenClass::Capture(c)  => RevMode::Bind(c.name),
-            TokenClass::Literal     => RevMode::Filter(Arc::from(arg)),
-            _ => return Err(vec![Box::new(RevDiag::BadArg {
-                site: (*inv.parse_site).clone(),
-                got:  Arc::from(arg),
-            }) as _]),
+            TokenClass::Literal     => {
+                let pat = CompiledPattern::compile(arg)
+                    .map_err(|_| vec![bad_arg(&inv.parse_site)])?;
+                RevMode::Filter(Arc::new(pat))
+            }
+            _ => return Err(vec![bad_arg(&inv.parse_site)]),
         };
         Ok(Pipeline::Op(Arc::new(RevOp { mode, parse_site: inv.parse_site.clone() }).into()))
     }
 }
 
 pub struct RevOp { mode: RevMode, parse_site: Arc<ParseSite> }
-enum RevMode { Filter(Arc<str>), Bind(Arc<str>) }
+enum RevMode { Filter(Arc<CompiledPattern>), Bind(Arc<str>) }
 
 impl Op for RevOp {
     fn name(&self) -> &'static str { "rev" }
@@ -79,7 +86,7 @@ impl Op for RevOp {
 
     fn hover_self(&self) -> String {
         let src = match &self.mode {
-            RevMode::Filter(g) => g.as_ref().to_string(),
+            RevMode::Filter(p) => p.src.as_ref().to_string(),
             RevMode::Bind(n)   => format!("${}", n),
         };
         format!("# rev({})", src)
@@ -101,7 +108,7 @@ impl Op for RevOp {
 
     fn hover_match(&self, site: &crate::_0_types::ParseSite, cursors: &[Cursor]) -> Option<String> {
         let glob = match &self.mode {
-            RevMode::Filter(g) => g.as_ref().to_string(),
+            RevMode::Filter(p) => p.src.as_ref().to_string(),
             RevMode::Bind(n)   => format!("${}", n),
         };
         let header = format!("**rev** glob: `{glob}`");
@@ -125,9 +132,9 @@ impl Op for RevOp {
         -> BoxStream<'static, Cursor>
     {
         match &self.mode {
-            RevMode::Filter(glob) => {
-                let g = glob.clone();
-                input.filter(move |c| { let k = glob_match(&g, &c.rev); async move { k } }).boxed()
+            RevMode::Filter(pat) => {
+                let pat = pat.clone();
+                input.filter(move |c| { let k = pat.is_match(&c.rev); async move { k } }).boxed()
             }
             RevMode::Bind(name) => {
                 let name = name.clone();
@@ -284,7 +291,12 @@ mod tests {
     fn hover_match_flat_when_no_fs() {
         use crate::_0_types::OpEvidence;
         let site = dummy_site();
-        let op = RevOp { mode: RevMode::Filter(Arc::from("main")), parse_site: site.clone() };
+        let op = RevOp {
+            mode: RevMode::Filter(Arc::new(
+                crate::_16_pattern::CompiledPattern::compile("main").unwrap()
+            )),
+            parse_site: site.clone(),
+        };
 
         let mut c1 = base_cursor("main", None);
         c1.evidence.push(OpEvidence {
