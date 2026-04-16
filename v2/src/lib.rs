@@ -12,6 +12,7 @@ pub mod _4_writer;
 pub mod _5_op;
 pub mod _6_extractor;
 pub mod _7_runner;
+pub mod _7_init_cursors;
 pub mod _8_parse;
 pub mod _9_hash;
 pub mod _10_registry;

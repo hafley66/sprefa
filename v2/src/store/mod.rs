@@ -21,6 +21,11 @@
 
 pub mod _0_types;
 pub mod _1_trait;
+pub mod _2_sqlite;
+pub mod _3_ddl;
+pub mod _4_udfs;
+pub mod _5_migrations;
 
 pub use _0_types::*;
 pub use _1_trait::*;
+pub use _2_sqlite::SqliteStore;
