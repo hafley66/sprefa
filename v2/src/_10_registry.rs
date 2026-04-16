@@ -6,8 +6,8 @@ use std::sync::Arc;
 use crate::_0_types::{ParseSite, Severity};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_0_types::Cursor;
-use crate::_5_op::{BraceMode, ForkBranch, LoweredOp, Operator, OpInvocation, Pipeline, ProgramCtx};
-use crate::_8_parse::{host_parse_arm_brace, scan_slot_scan_pointers, Pipe, ScanPointerOccurrence};
+use crate::_5_op::{BraceMode, ForkBranch, Operator, OpInvocation, Pipeline, ProgramCtx};
+use crate::_8_parse::{scan_slot_scan_pointers, Pipe, ScanPointerOccurrence};
 
 pub type ScanPointerFn = fn(&Cursor) -> Option<Arc<str>>;
 

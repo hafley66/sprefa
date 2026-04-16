@@ -4,27 +4,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use v2::{
-    Config, OperatorRegistry, ProgramCtx, RuntimeConfig,
+    Config, OperatorRegistry, ProgramCtx,
     host_parse, lower_rules,
 };
 use v2::ops::{FsFactory, RepoFactory, RevFactory, RuleFactory};
 
 fn make_config() -> Arc<Config> {
-    Arc::new(Config {
-        repos:        vec![],
-        revs:         vec![],
-        fs_exclude:   vec![],
-        sprf_files:   vec![],
-        shell_allow:  vec![],
-        runtime: RuntimeConfig {
-            worker_threads:    1,
-            buffer_size:       256,
-            flush_interval_ms: 100,
-            collect_witnesses: true,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    })
+    Arc::new(Config::test_default())
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {

@@ -9,25 +9,11 @@ use futures_util::StreamExt;
 use v2::readers::{BufferKey, BufferOverlay, MemReader};
 use v2::CompiledPattern;
 use v2::_0_types::FilePath;
-use v2::_2_config::{Config, RuntimeConfig};
+use v2::_2_config::Config;
 use v2::Reader;
 
 fn cfg() -> Arc<Config> {
-    Arc::new(Config {
-        repos: vec![],
-        revs: vec![],
-        fs_exclude: vec![],
-        sprf_files: vec![],
-        shell_allow: vec![],
-        runtime: RuntimeConfig {
-            worker_threads: 1,
-            buffer_size: 256,
-            flush_interval_ms: 100,
-            collect_witnesses: false,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    })
+    Arc::new(Config::test_default())
 }
 
 fn fp(s: &str) -> FilePath {

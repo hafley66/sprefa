@@ -330,30 +330,20 @@ pub struct RunCtx {
 // ---------------------------------------------------------------------------
 
 pub enum RunEvent {
-    RunStarted    { run_id: RunId, config_hash: u64 },
-    RuleSkipped   { rule: Arc<str>, reason: SkipReason },
-    RuleStarted   { rule: Arc<str>, parse_site: Arc<ParseSite> },
-    CursorIn      { rule: Arc<str>, cursor_hash: u64 },
-    CursorOut     { rule: Arc<str>, cursor_hash: u64, rows_written: u32 },
-    DiagBatch     { diagnostics: Vec<Box<dyn crate::Diagnostic>> },
-    FlushStarted  { run_id: RunId, table_count: u32 },
-    FlushCompleted{ run_id: RunId, rows: u64, bytes: u64, elapsed_ms: u32 },
-    Backpressure  { rule: Arc<str>, lagged: u32 },
-    RunCompleted  { run_id: RunId, status: RunStatus },
+    Cursor         { expr_name: Option<Arc<str>>, cursor: Cursor },
+    ExprDone       { expr_name: Option<Arc<str>> },
+    Diag           { diag: Box<dyn crate::Diagnostic> },
+    MutationPrompt {
+        effect: Arc<dyn crate::mutations::MutationEffect>,
+        ack:    tokio::sync::oneshot::Sender<crate::mutations::Approve>,
+    },
+    Done,
 }
 
-#[derive(Debug, Clone)]
-pub enum SkipReason {
-    CacheHit,
-    ConfigFilter,
-    UpstreamEmpty,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunStatus {
-    Ok,
-    HadErrors,
-    Aborted,
+#[derive(Clone)]
+pub struct CursorExpr {
+    pub name:     Option<Arc<str>>,
+    pub pipeline: crate::_5_op::Pipeline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

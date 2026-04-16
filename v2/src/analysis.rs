@@ -334,6 +334,9 @@ impl DocSession {
                 flush_interval_ms: 100,
                 collect_witnesses: true,
             xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
             },
             content_hash: 0,
         });
@@ -364,6 +367,8 @@ impl DocSession {
                     let (_fresh_store, xref_seen) = OpCtx::fresh_xref_state();
                     let _ = _fresh_store; // shared_store supersedes; keep xref_seen fresh per pass.
 
+                    let (__mtx, __mrx) = tokio::sync::mpsc::channel::<crate::mutations::MutationRequest>(32);
+                    std::mem::drop(__mrx);
                     let ctx = OpCtx {
                         run_id: RunId(1),
                         op_id:  OpId(0),
@@ -376,6 +381,16 @@ impl DocSession {
                         events: EventSink(Arc::new(|_| {})),
                         result_store: shared_store.clone(),
                         xref_seen,
+                        store:        std::sync::Arc::new(crate::store::NoopStore::new())
+                                      as std::sync::Arc<dyn crate::store::Store>,
+                        mutations:    __mtx,
+                        cancel:       tokio_util::sync::CancellationToken::new(),
+                        expr_name:    None,
+                        current_site: std::sync::Arc::new(crate::_0_types::ParseSite {
+                            file:       std::sync::Arc::from(std::path::Path::new("")),
+                            path:       std::sync::Arc::from(Vec::<crate::_0_types::ParseSeg>::new().into_boxed_slice()),
+                            byte_range: 0..0,
+                        }),
                     };
 
                     let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
@@ -499,6 +514,9 @@ impl DocSession {
                 flush_interval_ms:   100,
                 collect_witnesses:   true,
                 xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
             },
             content_hash: 0,
         });
@@ -749,6 +767,9 @@ impl DocSession {
                 flush_interval_ms: 100,
                 collect_witnesses: true,
             xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
             },
             content_hash: 0,
         });
@@ -1428,6 +1449,9 @@ mod tests {
                 worker_threads: 1, buffer_size: 256,
                 flush_interval_ms: 100, collect_witnesses: false,
             xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
             },
             content_hash: 0,
         });

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_core::stream::BoxStream;
 
-use crate::_0_types::{Capture, Cursor, OpEvidence, OpId, ParseSite, PathSeg, RunEvent, RunId, Severity, SprfPath, Tri};
+use crate::_0_types::{Capture, Cursor, OpEvidence, OpId, ParseSite, PathSeg, RunEvent, RunId, Severity, SprfPath};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_2_config::Config;
 use crate::_3_reader::Reader;
@@ -65,6 +65,7 @@ pub struct GrammarRef(pub Arc<str>);
 // Pipeline
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub enum Pipeline {
     Op     (LoweredOp),
     Seq    (Vec<Pipeline>),
@@ -118,6 +119,7 @@ impl From<Arc<dyn Op>> for LoweredOp {
 
 /// One arm of a Fork. Carries its parse_site so framework path-tagging can
 /// emit `PathSeg::ForkArm { index, parse_site }` per cursor that flows through.
+#[derive(Clone)]
 pub struct ForkBranch {
     pub parse_site: Arc<ParseSite>,
     pub pipeline:   Pipeline,
@@ -293,6 +295,11 @@ pub struct OpCtx {
     ///   - `(op_id, usize::MAX)`       for a once-per-op cartesian-limit Warn
     /// Shared with the same lifetime as `result_store`.
     pub xref_seen: Arc<Mutex<HashSet<(OpId, usize)>>>,
+    pub store:        std::sync::Arc<dyn crate::store::Store>,
+    pub mutations:    tokio::sync::mpsc::Sender<crate::mutations::MutationRequest>,
+    pub cancel:       tokio_util::sync::CancellationToken,
+    pub expr_name:    Option<Arc<str>>,
+    pub current_site: Arc<ParseSite>,
 }
 
 impl OpCtx {
@@ -300,6 +307,44 @@ impl OpCtx {
     /// sites that don't need cross-rule plumbing.
     pub fn fresh_xref_state() -> (Arc<ResultStore>, Arc<Mutex<HashSet<(OpId, usize)>>>) {
         (Arc::new(ResultStore::new()), Arc::new(Mutex::new(HashSet::new())))
+    }
+
+    /// Fully-assembled OpCtx with stub plumbing (no-op diags/events,
+    /// NoopStore, closed mutation channel, fresh cancel token, empty
+    /// ParseSite). Tests override what they care about via struct-update:
+    ///
+    /// ```ignore
+    /// let ctx = OpCtx {
+    ///     diags: my_sink,
+    ///     ..OpCtx::for_test(cfg, reader, writer)
+    /// };
+    /// ```
+    ///
+    /// New OpCtx fields land here so test sites never need to change.
+    pub fn for_test(
+        config: Arc<Config>,
+        reader: Arc<dyn Reader>,
+        writer: Arc<dyn Writer>,
+    ) -> OpCtx {
+        let (result_store, xref_seen) = Self::fresh_xref_state();
+        OpCtx {
+            run_id: RunId(0),
+            op_id:  OpId(0),
+            reader, writer, config,
+            diags:  DiagSink(Arc::new(|_| {})),
+            events: EventSink(Arc::new(|_| {})),
+            result_store, xref_seen,
+            store:        Arc::new(crate::store::NoopStore::new())
+                          as Arc<dyn crate::store::Store>,
+            mutations:    tokio::sync::mpsc::channel::<crate::mutations::MutationRequest>(32).0,
+            cancel:       tokio_util::sync::CancellationToken::new(),
+            expr_name:    None,
+            current_site: Arc::new(ParseSite {
+                file:       Arc::from(std::path::Path::new("")),
+                path:       Arc::from(Vec::<crate::_0_types::ParseSeg>::new().into_boxed_slice()),
+                byte_range: 0..0,
+            }),
+        }
     }
 }
 
@@ -376,7 +421,12 @@ pub trait Op: Send + Sync {
     fn binds_captures(&self) -> Vec<Arc<str>> {
         self.capture_name().map(|n| vec![n]).unwrap_or_default()
     }
+
+    fn expansion_mode(&self) -> ExpansionMode { ExpansionMode::Exhaustive }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpansionMode { Exhaustive, Demand }
 
 // ---------------------------------------------------------------------------
 // CompletionItem
@@ -927,7 +977,7 @@ impl Diagnostic for XrefCartesianLimit {
 #[cfg(test)]
 mod xref_tests {
     use super::*;
-    use crate::_0_types::{Capture, Cursor, FileId, OpId, ParseSite, RunId, SprfPath};
+    use crate::_0_types::{Capture, Cursor, FileId, OpId, ParseSite, RunId};
     use crate::_1_diagnostic::Diagnostic;
     use crate::_12_result_store::{CaptureMap, ResultStore};
     use crate::{Config, RuntimeConfig};
@@ -953,6 +1003,9 @@ mod xref_tests {
                 worker_threads: 1, buffer_size: 64,
                 flush_interval_ms: 100, collect_witnesses: false,
                 xref_cartesian_limit: 10_000,
+                max_passes:           8,
+                max_claims_per_pass:  10_000,
+                max_cursors_per_root: 1_000_000,
             },
             content_hash: 0,
         })
@@ -1001,12 +1054,24 @@ mod xref_tests {
         let events = EventSink(Arc::new(|_| {}));
         let store = Arc::new(ResultStore::new());
         let xref_seen = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let (__mtx, __mrx) = tokio::sync::mpsc::channel::<crate::mutations::MutationRequest>(32);
+        std::mem::drop(__mrx);
         let ctx = OpCtx {
             run_id: RunId(0),
             op_id:  OpId(42),
             reader, writer, config, diags, events,
             result_store: store.clone(),
             xref_seen,
+            store:        std::sync::Arc::new(crate::store::NoopStore::new())
+                          as std::sync::Arc<dyn crate::store::Store>,
+            mutations:    __mtx,
+            cancel:       tokio_util::sync::CancellationToken::new(),
+            expr_name:    None,
+            current_site: std::sync::Arc::new(crate::_0_types::ParseSite {
+                file:       std::sync::Arc::from(std::path::Path::new("")),
+                path:       std::sync::Arc::from(Vec::<crate::_0_types::ParseSeg>::new().into_boxed_slice()),
+                byte_range: 0..0,
+            }),
         };
         TestCtx { ctx, store, diags: fired }
     }

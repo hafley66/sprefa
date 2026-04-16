@@ -27,3 +27,16 @@ Known pre-existing failure: `doc_session_completion_fs_filter_glob_double_star` 
 - `Op::pipe()` streams `BoxStream<Arc<[Cursor]>>`. Cursors carry content, captures, slots, byte_range.
 - Content contract: every byte-reading op parses `cursor.content[byte_range]` first, falls back to `reader.bytes()` only when content is None.
 - Walker `Leaf` = scalar match. `CaptureAny` = any node kind. Cross-refs keep `Leaf` for constraint matching.
+
+## Test scaffolding — do not inline fixtures
+
+New knobs on `OpCtx` or `RuntimeConfig` must not force a fan-out edit across every test. The scaffold absorbs growth:
+
+- `RuntimeConfig::test_default()` — canonical runtime knobs. One literal.
+- `Config::test_default()` — empty config. Override with struct-update: `Config { repos: vec![...], ..Config::test_default() }`.
+- `OpCtx::for_test(config, reader, writer)` — full plumbing (no-op diags/events, NoopStore, closed mutation channel, fresh cancel, empty ParseSite). Tests override via struct-update: `OpCtx { diags: my_sink, ..OpCtx::for_test(cfg, reader, writer) }`.
+
+Rules:
+- Adding a field to `OpCtx` or `RuntimeConfig` means updating `for_test` / `test_default`. Never patch test-sites. If the compiler points at a test file, the helper is where the fix goes.
+- Do not hand-write `RuntimeConfig { ... }` or the full 14-field `OpCtx { ... }` literal in a test. If the existing helper does not fit, extend the helper.
+- `cargo fix --tests --allow-dirty` auto-removes imports that go stale when a literal collapses.

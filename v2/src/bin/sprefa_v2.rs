@@ -117,6 +117,9 @@ fn main() {
                     flush_interval_ms: 100,
                     collect_witnesses: true,
             xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
                 },
                 content_hash: 0,
             });
@@ -156,6 +159,8 @@ fn main() {
             // Run each pipeline
             for (pipeline, rule_name) in outcome.pipelines.iter().zip(rule_names.iter()) {
                 let (result_store, xref_seen) = OpCtx::fresh_xref_state();
+                let (__mtx, __mrx) = tokio::sync::mpsc::channel::<v2::mutations::MutationRequest>(32);
+                std::mem::drop(__mrx);
                 let ctx = OpCtx {
                     run_id: RunId(1),
                     op_id:  OpId(0),
@@ -166,6 +171,16 @@ fn main() {
                     events: EventSink(Arc::new(|_| {})),
                     result_store,
                     xref_seen,
+                    store:        std::sync::Arc::new(v2::store::NoopStore::new())
+                                  as std::sync::Arc<dyn v2::store::Store>,
+                    mutations:    __mtx,
+                    cancel:       tokio_util::sync::CancellationToken::new(),
+                    expr_name:    None,
+                    current_site: std::sync::Arc::new(v2::ParseSite {
+                        file:       std::sync::Arc::from(std::path::Path::new("")),
+                        path:       std::sync::Arc::from(Vec::<v2::ParseSeg>::new().into_boxed_slice()),
+                        byte_range: 0..0,
+                    }),
                 };
 
                 let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =

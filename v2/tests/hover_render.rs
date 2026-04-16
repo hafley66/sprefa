@@ -6,7 +6,6 @@ use v2::ops::{
     RevFactory, RuleFactory,
 };
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -65,21 +64,7 @@ fn with_evidence(mut c: Cursor, op_name: &'static str, site: &Arc<ParseSite>, ma
 // ---------------------------------------------------------------------------
 
 fn make_config() -> Arc<v2::Config> {
-    Arc::new(v2::Config {
-        repos:        vec![],
-        revs:         vec![],
-        fs_exclude:   vec![],
-        sprf_files:   vec![],
-        shell_allow:  vec![],
-        runtime: v2::RuntimeConfig {
-            worker_threads:    1,
-            buffer_size:       256,
-            flush_interval_ms: 100,
-            collect_witnesses: true,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    })
+    Arc::new(v2::Config::test_default())
 }
 
 fn make_registry() -> Arc<v2::OperatorRegistry> {

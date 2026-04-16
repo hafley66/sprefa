@@ -88,6 +88,9 @@ fn make_config_from_locator(loc: &dyn CheckoutLocator) -> Arc<Config> {
             flush_interval_ms: 100,
             collect_witnesses: true,
             xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
         },
         content_hash: 0,
     })
@@ -190,6 +193,9 @@ fn resolve_reader(uri: &Url) -> (Arc<BufferOverlay>, Arc<Config>, Option<PathBuf
             flush_interval_ms: 100,
             collect_witnesses: true,
             xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
         },
         content_hash: 0,
     });

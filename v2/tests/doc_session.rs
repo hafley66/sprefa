@@ -9,28 +9,14 @@ use std::sync::Arc;
 
 use v2::analysis::DocSession;
 use v2::readers::{BufferOverlay, MemReader};
-use v2::{Config, OperatorRegistry, RuntimeConfig};
+use v2::{Config, OperatorRegistry};
 
 // ---------------------------------------------------------------------------
 // Shared setup
 // ---------------------------------------------------------------------------
 
 fn make_config() -> Arc<Config> {
-    Arc::new(Config {
-        repos:        vec![],
-        revs:         vec![],
-        fs_exclude:   vec![],
-        sprf_files:   vec![],
-        shell_allow:  vec![],
-        runtime: RuntimeConfig {
-            worker_threads:    1,
-            buffer_size:       256,
-            flush_interval_ms: 100,
-            collect_witnesses: true,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    })
+    Arc::new(Config::test_default())
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {

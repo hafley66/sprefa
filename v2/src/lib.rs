@@ -30,6 +30,10 @@ pub mod ops;
 pub mod analysis;
 pub mod position;
 
+pub mod _task_guard;
+pub mod store;
+pub mod mutations;
+
 pub use readers::{MemReader, CheckoutLocator, ConfigLocator, InMemoryLocator, GitBlobReader};
 pub use writers::MemWriter;
 
@@ -52,6 +56,7 @@ pub use _5_op::{
     DiagSink, EventSink, TokenSpan, TokenKind, HoverInfo,
     CompletionItem,
     XrefEmptyJoin, XrefCartesianLimit,
+    ExpansionMode,
 };
 pub use _12_result_store::{ResultStore, RuleResult, CaptureMap};
 pub use _6_extractor::{Extractor, ExtractorKind};

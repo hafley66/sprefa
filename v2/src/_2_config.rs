@@ -26,6 +26,9 @@ pub struct RuntimeConfig {
     /// Hitting it drops the cursor + emits `xref/cartesian-limit` once
     /// per op. Default 10_000.
     pub xref_cartesian_limit: usize,
+    pub max_passes:           usize,
+    pub max_claims_per_pass:  usize,
+    pub max_cursors_per_root: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -38,4 +41,35 @@ pub struct ConfigDiff {
 impl Config {
     /// Compute content hash. Impl lives in a later tier; signature fixed here.
     pub fn recompute_hash(&mut self) { /* impl pending */ }
+
+    /// Fully-populated empty config for tests, bins, and smoke runs. Override
+    /// fields via struct-update: `Config { repos, ..Config::test_default() }`.
+    pub fn test_default() -> Config {
+        Config {
+            repos:        vec![],
+            revs:         vec![],
+            fs_exclude:   vec![],
+            sprf_files:   vec![],
+            shell_allow:  vec![],
+            runtime:      RuntimeConfig::test_default(),
+            content_hash: 0,
+        }
+    }
+}
+
+impl RuntimeConfig {
+    /// Canonical runtime knobs for tests. Keep in sync with field adds so
+    /// callsites never need to care.
+    pub fn test_default() -> RuntimeConfig {
+        RuntimeConfig {
+            worker_threads:       1,
+            buffer_size:          256,
+            flush_interval_ms:    100,
+            collect_witnesses:    true,
+            xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
+        }
+    }
 }

@@ -9,14 +9,13 @@
 //!
 //! Seed: one empty-capture cursor per (repo, rev) combo.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::executor::block_on;
 use futures_core::stream::BoxStream;
 use futures_util::stream::{self, StreamExt};
 
-use crate::_0_types::{Cursor, ParseSeg, ParseSite, SprfPath};
+use crate::_0_types::{Cursor, ParseSeg, ParseSite};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_4_writer::{ColumnKind, ColumnSpec, ExtractionRow, RuleTableSpec};
 use crate::_5_op::{
@@ -24,7 +23,7 @@ use crate::_5_op::{
     ProgramCtx, RuleHandle,
 };
 use crate::_5_op::ForkBranch;
-use crate::_8_parse::{host_parse_arm_brace, Pipe};
+use crate::_8_parse::Pipe;
 use crate::_10_registry::lower_chain;
 
 // ---------------------------------------------------------------------------
@@ -253,7 +252,7 @@ impl Op for RuleOp {
         // $rule is a source. Later, input could narrow the seed.
         let reader = ctx.reader.clone();
         let run_id = ctx.run_id;
-        let parse_site = self.parse_site.clone();
+        let _parse_site = self.parse_site.clone();
 
         let seed: Vec<Cursor> = {
             // cfg.repos is the source of truth when non-empty; reader.repos() is
@@ -500,6 +499,9 @@ mod tests {
                 worker_threads: 1, buffer_size: 256,
                 flush_interval_ms: 100, collect_witnesses: false,
             xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
             },
             content_hash: 0,
         })

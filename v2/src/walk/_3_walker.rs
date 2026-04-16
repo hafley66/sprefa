@@ -12,7 +12,6 @@
 //!   - entry.value = [Leaf{..}] | [LeafPattern{..}]  -> row field (joins)
 //!   - everything else                               -> descent (concat)
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;

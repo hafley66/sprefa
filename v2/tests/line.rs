@@ -9,28 +9,13 @@ use futures::executor::block_on;
 use futures_util::stream::StreamExt;
 
 use v2::{
-    Config, DiagSink, EventSink, MemReader, MemWriter,
-    OpCtx, OpId, OperatorRegistry, ProgramCtx, RunId,
-    RuntimeConfig, host_parse, lower_rules,
+    Config, DiagSink, MemReader, MemWriter,
+    OpCtx, OperatorRegistry, ProgramCtx, host_parse, lower_rules,
 };
 use v2::_0_types::Cursor;
 
 fn make_config() -> Arc<Config> {
-    Arc::new(Config {
-        repos:        vec![],
-        revs:         vec![],
-        fs_exclude:   vec![],
-        sprf_files:   vec![],
-        shell_allow:  vec![],
-        runtime: RuntimeConfig {
-            worker_threads:       1,
-            buffer_size:          256,
-            flush_interval_ms:    100,
-            collect_witnesses:    true,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    })
+    Arc::new(Config::test_default())
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
@@ -52,19 +37,11 @@ fn run_rule(src: &str, reader: Arc<MemReader>) -> (Vec<Cursor>, Vec<String>) {
     let collected_sink = collected.clone();
 
     let writer = Arc::new(MemWriter::new());
-    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
     let ctx = OpCtx {
-        run_id: RunId(1),
-        op_id:  OpId(0),
-        reader: reader.clone(),
-        writer,
-        config: cfg.clone(),
-        diags:  DiagSink(Arc::new(move |d| {
+        diags: DiagSink(Arc::new(move |d| {
             collected_sink.lock().unwrap().push(d.code().to_owned());
         })),
-        events: EventSink(Arc::new(|_| {})),
-        result_store,
-        xref_seen,
+        ..OpCtx::for_test(cfg.clone(), reader.clone(), writer)
     };
     let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
         futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();

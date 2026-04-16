@@ -10,7 +10,7 @@ use futures_util::stream;
 
 use crate::_0_types::{FileId, RefId, RowId, StringId};
 use crate::_4_writer::{
-    ColumnSpec, EffectLogRow, ExtractionRow, FileEdit, ProvenanceRow,
+    EffectLogRow, ExtractionRow, FileEdit, ProvenanceRow,
     RefEntry, RuleTableSpec, RunVisit, ShellCall, ShellReply, ViolationRow,
     WResult, Writer,
 };

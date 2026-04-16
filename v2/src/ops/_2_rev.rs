@@ -223,6 +223,9 @@ mod tests {
                 flush_interval_ms: 100,
                 collect_witnesses: false,
             xref_cartesian_limit: 10_000,
+            max_passes:           8,
+            max_claims_per_pass:  10_000,
+            max_cursors_per_root: 1_000_000,
             },
             content_hash: 0,
         };
@@ -259,7 +262,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn base_cursor(rev: &str, fs: Option<&str>) -> Cursor {
-        use crate::_0_types::{FilePath, RunId, SprfPath};
+        use crate::_0_types::{FilePath, RunId};
         use std::path::Path;
         Cursor {
             run_id: RunId(0),

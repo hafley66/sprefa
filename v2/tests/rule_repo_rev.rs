@@ -7,29 +7,14 @@ use futures::executor::block_on;
 use futures_util::stream::StreamExt;
 
 use v2::{
-    Config, DiagSink, EventSink, MemReader, MemWriter,
-    OpCtx, OpId, OperatorRegistry, ProgramCtx, RunId,
-    RuntimeConfig, host_parse, lower_rules,
+    Config, MemReader, MemWriter,
+    OpCtx, OperatorRegistry, ProgramCtx, host_parse, lower_rules,
 };
 use v2::ops::{FsFactory, RepoFactory, RevFactory, RuleFactory};
 use v2::_0_types::Cursor;
 
 fn make_config() -> Arc<Config> {
-    Arc::new(Config {
-        repos:        vec![],
-        revs:         vec![],
-        fs_exclude:   vec![],
-        sprf_files:   vec![],
-        shell_allow:  vec![],
-        runtime: RuntimeConfig {
-            worker_threads: 1,
-            buffer_size:    256,
-            flush_interval_ms: 100,
-            collect_witnesses: true,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    })
+    Arc::new(Config::test_default())
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
@@ -67,19 +52,7 @@ fn rule_repo_rev_end_to_end() {
     let outcome = lower_rules(invs, pctx);
     assert!(outcome.diags.is_empty(), "lower diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
     assert_eq!(outcome.pipelines.len(), 1);
-
-    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
-    let ctx = OpCtx {
-        run_id: RunId(1),
-        op_id:  OpId(0),
-        reader: reader.clone(),
-        writer: writer.clone(),
-        config: cfg.clone(),
-        diags:  DiagSink(Arc::new(|_| {})),
-        events: EventSink(Arc::new(|_| {})),
-        result_store,
-        xref_seen,
-    };
+    let ctx = OpCtx::for_test(cfg.clone(), reader.clone(), writer.clone());
 
     // Drive the top pipeline with an empty seed; rule is a source and ignores input.
     let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
@@ -170,19 +143,7 @@ fn fs_fanout_and_evidence() {
     assert!(outcome.diags.is_empty(),
         "lower diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
     assert_eq!(outcome.pipelines.len(), 2);
-
-    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
-    let ctx = OpCtx {
-        run_id: RunId(1),
-        op_id:  OpId(0),
-        reader: reader.clone(),
-        writer: writer.clone(),
-        config: cfg.clone(),
-        diags:  DiagSink(Arc::new(|_| {})),
-        events: EventSink(Arc::new(|_| {})),
-        result_store,
-        xref_seen,
-    };
+    let ctx = OpCtx::for_test(cfg.clone(), reader.clone(), writer.clone());
 
     // Drive files_demo.
     let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =

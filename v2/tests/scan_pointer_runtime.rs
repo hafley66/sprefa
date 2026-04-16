@@ -15,27 +15,13 @@ use futures_util::stream::StreamExt;
 
 use v2::_0_types::{Cursor, Tri};
 use v2::{
-    host_parse, lower_rules, run_scan_loop, Config, Diagnostic, DiagSink, EventSink, MemReader,
-    MemWriter, OpCtx, OpId, OperatorRegistry, ProgramCtx, ResultStore, RunId, RuntimeConfig,
+    host_parse, lower_rules, run_scan_loop, Config, Diagnostic, MemReader,
+    MemWriter, OpCtx, OperatorRegistry, ProgramCtx, ResultStore,
     DEFAULT_DEPTH,
 };
 
 fn make_config() -> Arc<Config> {
-    Arc::new(Config {
-        repos:        vec![],
-        revs:         vec![],
-        fs_exclude:   vec![],
-        sprf_files:   vec![],
-        shell_allow:  vec![],
-        runtime: RuntimeConfig {
-            worker_threads:       1,
-            buffer_size:          256,
-            flush_interval_ms:    100,
-            collect_witnesses:    true,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    })
+    Arc::new(Config::test_default())
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
@@ -54,18 +40,7 @@ fn run_rule(src: &str, reader: Arc<MemReader>) -> Vec<Cursor> {
     );
 
     let writer = Arc::new(MemWriter::new());
-    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
-    let ctx = OpCtx {
-        run_id: RunId(1),
-        op_id:  OpId(0),
-        reader: reader.clone(),
-        writer: writer.clone(),
-        config: cfg.clone(),
-        diags:  DiagSink(Arc::new(|_| {})),
-        events: EventSink(Arc::new(|_| {})),
-        result_store,
-        xref_seen,
-    };
+    let ctx = OpCtx::for_test(cfg.clone(), reader.clone(), writer.clone());
     let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
         futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
     let batches: Vec<Arc<[Cursor]>> =
@@ -130,23 +105,13 @@ mod checker {
 
     use v2::_0_types::{Capture, Tri};
     use v2::_12_result_store::{CaptureMap, ResultStore};
-    use v2::{check_scan_pointers, Config, RuntimeConfig};
+    use v2::{check_scan_pointers, Config};
 
     fn mk_config(repos: &[&str], revs: &[&str]) -> Config {
         Config {
             repos: repos.iter().map(|s| Arc::<str>::from(*s)).collect(),
             revs:  revs.iter().map(|s| Arc::<str>::from(*s)).collect(),
-            fs_exclude:  vec![],
-            sprf_files:  vec![],
-            shell_allow: vec![],
-            runtime: RuntimeConfig {
-                worker_threads:       1,
-                buffer_size:          64,
-                flush_interval_ms:    100,
-                collect_witnesses:    false,
-                xref_cartesian_limit: 10_000,
-            },
-            content_hash: 0,
+            ..Config::test_default()
         }
     }
 
@@ -238,22 +203,8 @@ mod checker {
 // (R, DEP) edge so a downstream consumer can reconstruct the graph.
 // ---------------------------------------------------------------------------
 
-fn mk_cfg(repos: &[&str]) -> Arc<Config> {
-    Arc::new(Config {
-        repos:        repos.iter().map(|s| Arc::<str>::from(*s)).collect(),
-        revs:         vec![],
-        fs_exclude:   vec![],
-        sprf_files:   vec![],
-        shell_allow:  vec![],
-        runtime: RuntimeConfig {
-            worker_threads:       1,
-            buffer_size:          256,
-            flush_interval_ms:    100,
-            collect_witnesses:    true,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    })
+fn mk_cfg(_repos: &[&str]) -> Arc<Config> {
+    Arc::new(Config::test_default())
 }
 
 fn dep_doc(dep: &str) -> String {
@@ -317,17 +268,9 @@ fn scan_loop_depth_4_diamond_converges_and_records_edges() {
     let writer_r   = writer.clone();
     let reader_r   = reader.clone();
     let run_pass = move |cfg: Arc<Config>, shared_store: Arc<ResultStore>| {
-        let (_fresh, xref_seen) = OpCtx::fresh_xref_state();
         let ctx = OpCtx {
-            run_id: RunId(1),
-            op_id:  OpId(0),
-            reader: reader_r.clone(),
-            writer: writer_r.clone(),
-            config: cfg,
-            diags:  DiagSink(Arc::new(|_| {})),
-            events: EventSink(Arc::new(|_| {})),
             result_store: shared_store.clone(),
-            xref_seen,
+            ..OpCtx::for_test(cfg, reader_r.clone(), writer_r.clone())
         };
         let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
             futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();

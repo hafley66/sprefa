@@ -33,6 +33,9 @@ tree-sitter-yaml = "0.7"
 tree-sitter-toml-ng = "0.7"
 ast-grep-core = "0.36"
 ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust", "tree-sitter-typescript"] }
+async-trait = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
+chrono = { version = "0.4", features = ["clock"] }
 
 [dev-dependencies]
 tempfile = "3"

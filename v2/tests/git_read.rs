@@ -9,9 +9,8 @@ use futures::executor::block_on;
 use futures_util::stream::StreamExt;
 
 use v2::{
-    Config, DiagSink, EventSink, GitBlobReader, InMemoryLocator,
-    MemWriter, OpCtx, OpId, OperatorRegistry, ProgramCtx, RunId,
-    RuntimeConfig, host_parse, lower_rules,
+    Config, DiagSink, GitBlobReader, InMemoryLocator,
+    MemWriter, OpCtx, OperatorRegistry, ProgramCtx, host_parse, lower_rules,
 };
 use v2::ops::{FsFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory};
 use v2::_0_types::Cursor;
@@ -74,21 +73,7 @@ fn git_blob_reader_read_op() {
             .with_repo(repo_slug, tmp.path().to_path_buf(), &["main", "next"])
     );
 
-    let cfg = Arc::new(Config {
-        repos:        vec![],
-        revs:         vec![],
-        fs_exclude:   vec![],
-        sprf_files:   vec![],
-        shell_allow:  vec![],
-        runtime: RuntimeConfig {
-            worker_threads:    1,
-            buffer_size:       256,
-            flush_interval_ms: 100,
-            collect_witnesses: true,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    });
+    let cfg = Arc::new(Config::test_default());
 
     let reader = Arc::new(GitBlobReader::new(locator, cfg.clone()));
     let writer = Arc::new(MemWriter::new());
@@ -112,18 +97,9 @@ fn git_blob_reader_read_op() {
     let outcome = lower_rules(invs, pctx);
     assert!(outcome.diags.is_empty(),
         "diags: {:?}", outcome.diags.iter().map(|d| d.code()).collect::<Vec<_>>());
-
-    let (result_store, xref_seen) = OpCtx::fresh_xref_state();
     let ctx = OpCtx {
-        run_id: RunId(1),
-        op_id:  OpId(0),
-        reader: reader.clone(),
-        writer: writer.clone(),
-        config: cfg.clone(),
-        diags:  DiagSink(Arc::new(|d| panic!("unexpected diag: {}", d.code()))),
-        events: EventSink(Arc::new(|_| {})),
-        result_store,
-        xref_seen,
+        diags: DiagSink(Arc::new(|d| panic!("unexpected diag: {}", d.code()))),
+        ..OpCtx::for_test(cfg.clone(), reader.clone(), writer.clone())
     };
 
     let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =

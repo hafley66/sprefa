@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use v2::_5_op::{BraceMode, CompletionItem, GrammarRef, Operator, ScanPointer};
 use v2::{
-    host_parse, lower_rules, Config, Diagnostic, OpInvocation, OperatorRegistry, Pipeline,
-    ProgramCtx, RuntimeConfig,
+    host_parse, lower_rules, Config, Diagnostic, OpInvocation, Pipeline,
+    ProgramCtx,
 };
 
 // Throwaway factory adding `$$foo` / `$$foo_norm`. Proves Phase 0 success
@@ -66,22 +66,7 @@ fn make_pctx(extra: Option<Arc<dyn Operator>>) -> ProgramCtx {
     if let Some(op) = extra {
         reg.register(op);
     }
-    let config = Config {
-        repos: vec![],
-        revs: vec![],
-        fs_exclude: vec![],
-        sprf_files: vec![],
-        shell_allow: vec![],
-        runtime: RuntimeConfig {
-            worker_threads: 1,
-            buffer_size: 64,
-            flush_interval_ms: 100,
-            collect_witnesses: false,
-            xref_cartesian_limit: 10_000,
-        },
-        content_hash: 0,
-    };
-    ProgramCtx::new(Arc::new(config), Arc::new(reg))
+    ProgramCtx::new(Arc::new(Config::test_default()), Arc::new(reg))
 }
 
 fn fake_file() -> Arc<Path> {

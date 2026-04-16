@@ -225,7 +225,7 @@ impl Diagnostic for RepoDiag {
 mod tests {
     use super::*;
     use std::path::Path;
-    use crate::_0_types::{Capture, FilePath, OpEvidence, RunId, SprfPath};
+    use crate::_0_types::{Capture, FilePath, OpEvidence, RunId};
 
     fn dummy_site() -> Arc<ParseSite> {
         Arc::new(ParseSite {
