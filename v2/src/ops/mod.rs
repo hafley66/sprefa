@@ -8,6 +8,7 @@ pub mod _6_cursor_ref;
 pub mod _7_line;
 pub mod _8_md;
 pub mod _9_ast_grep;
+pub mod _10_marker;
 
 pub use _0_rule::RuleFactory;
 pub use _1_repo::RepoFactory;
@@ -19,6 +20,7 @@ pub use _6_cursor_ref::CursorRefFactory;
 pub use _7_line::LineFactory;
 pub use _8_md::MdFactory;
 pub use _9_ast_grep::AstGrepFactory;
+pub use _10_marker::MarkerFactory;
 
 /// Build a registry with all standard ops registered. Use this everywhere
 /// instead of manually listing factories — adding a new op only requires
@@ -35,5 +37,6 @@ pub fn default_registry() -> crate::_10_registry::OperatorRegistry {
     r.register(std::sync::Arc::new(LineFactory));
     r.register(std::sync::Arc::new(MdFactory));
     r.register(std::sync::Arc::new(AstGrepFactory));
+    r.register(std::sync::Arc::new(MarkerFactory));
     r
 }

@@ -564,6 +564,74 @@ fn md_hover_capture_grouped_markdown() {
     assert!(result.contains("### "),         "hover must be grouped by file: {result}");
 }
 
+// ---------------------------------------------------------------------------
+// ast hover — motivating shape: use${NAME}Query() sub-token capture
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ast_hover_capture_grouped_sugar_binding() {
+    let op = parse_single_op("ast[typescript](use${NAME}Query())");
+    let site = op.parse_site().clone();
+
+    let mut c1 = with_fs(cursor("r", "main"), "src/user.ts");
+    c1.captures.insert(Arc::from("NAME"), v2::_0_types::Capture::new(Arc::from("User")));
+    c1.evidence.push(OpEvidence {
+        op_name:    "ast",
+        parse_site: site.clone(),
+        matched:    Arc::from("useUserQuery()"),
+        capture:    None,
+    });
+
+    let mut c2 = with_fs(cursor("r", "main"), "src/repo.ts");
+    c2.captures.insert(Arc::from("NAME"), v2::_0_types::Capture::new(Arc::from("Repo")));
+    c2.evidence.push(OpEvidence {
+        op_name:    "ast",
+        parse_site: site.clone(),
+        matched:    Arc::from("useRepoQuery()"),
+        capture:    None,
+    });
+
+    let result = op.hover_capture("NAME", &[c1, c2])
+        .expect("hover_capture must return Some for sugar-bound NAME");
+    assert!(!result.is_empty());
+    assert!(result.contains("NAME"),    "hover must reference capture name: {result}");
+    assert!(result.contains("(from ast)"), "hover header must name the binding op: {result}");
+    assert!(result.contains("User"),    "hover must include first value: {result}");
+    assert!(result.contains("Repo"),    "hover must include second value: {result}");
+    assert!(result.contains("### "),    "hover must be grouped by file: {result}");
+}
+
+#[test]
+fn ast_hover_capture_grouped_native_binding() {
+    let op = parse_single_op("ast[rust](fn $NAME() { $$$B })");
+    let site = op.parse_site().clone();
+
+    let mut c1 = with_fs(cursor("r", "main"), "src/a.rs");
+    c1.captures.insert(Arc::from("NAME"), v2::_0_types::Capture::new(Arc::from("alpha")));
+    c1.evidence.push(OpEvidence {
+        op_name:    "ast",
+        parse_site: site.clone(),
+        matched:    Arc::from("fn alpha() { let x = 1; }"),
+        capture:    None,
+    });
+
+    let mut c2 = with_fs(cursor("r", "main"), "src/b.rs");
+    c2.captures.insert(Arc::from("NAME"), v2::_0_types::Capture::new(Arc::from("beta")));
+    c2.evidence.push(OpEvidence {
+        op_name:    "ast",
+        parse_site: site.clone(),
+        matched:    Arc::from("fn beta() { let y = 2; }"),
+        capture:    None,
+    });
+
+    let result = op.hover_capture("NAME", &[c1, c2])
+        .expect("hover_capture must return Some for native NAME binding");
+    assert!(result.contains("NAME"));
+    assert!(result.contains("alpha"));
+    assert!(result.contains("beta"));
+    assert!(result.contains("### "));
+}
+
 #[test]
 fn json_hover_match_structural_eq() {
     let op = parse_single_op("json({ name: $N })");
