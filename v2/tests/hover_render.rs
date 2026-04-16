@@ -2,8 +2,8 @@
 //! Cursor values are built inline. Op instances extracted via lower_chain.
 
 use v2::ops::{
-    default_registry, FsFactory, JsonFactory, LineFactory, ReadFactory, RepoFactory, RevFactory,
-    RuleFactory,
+    default_registry, FsFactory, JsonFactory, LineFactory, MdFactory, ReadFactory, RepoFactory,
+    RevFactory, RuleFactory,
 };
 
 use std::collections::HashMap;
@@ -401,6 +401,7 @@ fn completion_item_labels_match_op_names() {
         (&ReadFactory,  "read"),
         (&JsonFactory,  "json"),
         (&LineFactory,  "line"),
+        (&MdFactory,    "md"),
     ];
     for (factory, expected_label) in pairs {
         let ci = factory.completion_item();
@@ -524,6 +525,43 @@ fn line_hover_capture_delegates_to_line_binding() {
     assert!(result.contains("finish port"), "hover must include capture value: {result}");
     assert!(result.contains("fix login"), "hover must include capture value: {result}");
     assert!(result.contains("### "), "hover must be grouped by file: {result}");
+}
+
+// ---------------------------------------------------------------------------
+// md hover
+// ---------------------------------------------------------------------------
+
+#[test]
+fn md_hover_capture_grouped_markdown() {
+    // hover on $SECTION inside md(## $SECTION) must return non-empty grouped markdown.
+    let op = parse_single_op("md(## $SECTION)");
+    let site = op.parse_site().clone();
+
+    let mut c1 = with_fs(cursor("r", "main"), "docs/a.md");
+    c1.captures.insert(Arc::from("SECTION"), v2::_0_types::Capture::new(Arc::from("Installation")));
+    c1.evidence.push(OpEvidence {
+        op_name:    "md",
+        parse_site: site.clone(),
+        matched:    Arc::from("## Installation"),
+        capture:    None,
+    });
+
+    let mut c2 = with_fs(cursor("r", "main"), "docs/b.md");
+    c2.captures.insert(Arc::from("SECTION"), v2::_0_types::Capture::new(Arc::from("Usage")));
+    c2.evidence.push(OpEvidence {
+        op_name:    "md",
+        parse_site: site.clone(),
+        matched:    Arc::from("## Usage"),
+        capture:    None,
+    });
+
+    let result = op.hover_capture("SECTION", &[c1, c2])
+        .expect("hover_capture must return Some for bound SECTION capture");
+    assert!(!result.is_empty(), "hover must be non-empty");
+    assert!(result.contains("SECTION"),       "hover must reference capture name: {result}");
+    assert!(result.contains("Installation"), "hover must include first value: {result}");
+    assert!(result.contains("Usage"),        "hover must include second value: {result}");
+    assert!(result.contains("### "),         "hover must be grouped by file: {result}");
 }
 
 #[test]

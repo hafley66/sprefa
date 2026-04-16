@@ -1,0 +1,471 @@
+//! ast — AST pattern matching via ast-grep-core.
+//!
+//! Examples:
+//!   ast[rust](fn $NAME($$$ARGS) { $$$BODY })
+//!   ast[typescript](let $X: ${TY}Error = $V)
+//!
+//! `$VAR` / `$$$VAR` are ast-grep native metavars and pass through. `${VAR}`
+//! is sprefa sugar: the surrounding token run collapses to a synthetic
+//! `$SPRFSLOTN` metavar and a named regex runs over the slot's matched text to
+//! extract the sub-token capture.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use futures_core::stream::BoxStream;
+use futures_util::stream::{self, StreamExt};
+
+use ast_grep_core::{AstGrep, Language, Pattern, source::StrDoc};
+use ast_grep_language::SupportLang;
+use regex::Regex;
+
+use crate::_0_types::{Capture, Cursor, FilePath, OpEvidence, ParseSite, Severity};
+use crate::_1_diagnostic::{Diagnostic, Renderer};
+use crate::_5_op::{
+    hover_render_grouped, BraceMode, CompletionItem, GrammarRef, Op, OpCtx, OpInvocation,
+    Operator, Pipeline, ProgramCtx,
+};
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+pub struct AstGrepFactory;
+
+impl Operator for AstGrepFactory {
+    fn name(&self) -> &'static str { "ast" }
+    fn paren_grammar(&self) -> GrammarRef { GrammarRef(Arc::from("ast-grep-pattern")) }
+    fn brace_mode(&self) -> BraceMode { BraceMode::DefaultFork }
+
+    fn completion_item(&self) -> CompletionItem {
+        CompletionItem {
+            label:  "ast".to_string(),
+            detail: "ast[lang](pattern)".to_string(),
+            doc:    "# ast\n\nMatch an ast-grep pattern against cursor content. `lang` is `rust` or `typescript`. `$VAR` / `$$$VAR` are native ast-grep metavars. `${VAR}` is sprefa sugar for sub-token capture.".to_string(),
+        }
+    }
+
+    fn parse(&self, inv: &OpInvocation, _pctx: &mut ProgramCtx)
+        -> Result<Pipeline, Vec<Box<dyn Diagnostic>>>
+    {
+        let bracket = inv.brackets.get(0).ok_or_else(|| {
+            vec![Box::new(AstDiag::MissingLang { site: (*inv.parse_site).clone() })
+                as Box<dyn Diagnostic>]
+        })?;
+        let lang_name = bracket.src.trim();
+        let lang = parse_lang(lang_name).ok_or_else(|| {
+            vec![Box::new(AstDiag::UnknownLang {
+                site: (*inv.parse_site).clone(),
+                got:  Arc::from(lang_name),
+            }) as Box<dyn Diagnostic>]
+        })?;
+        let paren = inv.paren_src.as_ref().ok_or_else(|| {
+            vec![Box::new(AstDiag::BadPattern {
+                site: (*inv.parse_site).clone(),
+                got:  Arc::from(""),
+                msg:  Arc::from("missing pattern body"),
+            }) as Box<dyn Diagnostic>]
+        })?;
+        let raw = paren.src.trim();
+        if raw.is_empty() {
+            return Err(vec![Box::new(AstDiag::BadPattern {
+                site: (*inv.parse_site).clone(),
+                got:  Arc::from(raw),
+                msg:  Arc::from("empty pattern"),
+            }) as Box<dyn Diagnostic>]);
+        }
+
+        let (rewritten, slot_res, sugar_caps) = lower_sugar(raw);
+        let native_caps = scan_metavars(raw);
+
+        let pattern = Pattern::try_new(&rewritten, lang).map_err(|e| {
+            vec![Box::new(AstDiag::BadPattern {
+                site: (*inv.parse_site).clone(),
+                got:  Arc::from(raw),
+                msg:  Arc::from(e.to_string().as_str()),
+            }) as Box<dyn Diagnostic>]
+        })?;
+
+        let mut bound: Vec<Arc<str>> = Vec::new();
+        for n in native_caps.into_iter().chain(sugar_caps.into_iter()) {
+            if !bound.iter().any(|s| s.as_ref() == n.as_ref()) {
+                bound.push(n);
+            }
+        }
+
+        Ok(Pipeline::Op(Arc::new(AstGrepOp {
+            lang,
+            pattern:        Arc::new(pattern),
+            slot_regexes:   slot_res,
+            bound_captures: bound,
+            src:            Arc::from(raw),
+            parse_site:     inv.parse_site.clone(),
+        }).into()))
+    }
+}
+
+fn parse_lang(s: &str) -> Option<SupportLang> {
+    match s {
+        "rust" | "rs"          => Some(SupportLang::Rust),
+        "typescript" | "ts"    => Some(SupportLang::TypeScript),
+        _ => None,
+    }
+}
+
+// Scan a pattern string for native ast-grep metavars (`$NAME` / `$$$NAME`),
+// skipping `${…}` sugar tokens. First-seen order, no duplicates.
+fn scan_metavars(pat: &str) -> Vec<Arc<str>> {
+    let b = pat.as_bytes();
+    let mut out: Vec<Arc<str>> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'$' {
+            if i + 1 < b.len() && b[i + 1] == b'{' {
+                i += 2;
+                while i < b.len() && b[i] != b'}' { i += 1; }
+                if i < b.len() { i += 1; }
+                continue;
+            }
+            let mut j = i + 1;
+            if j + 1 < b.len() && b[j] == b'$' && b[j + 1] == b'$' { j += 2; }
+            let start = j;
+            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') { j += 1; }
+            if j > start {
+                let name = &pat[start..j];
+                let a: Arc<str> = Arc::from(name);
+                if !out.iter().any(|s| s.as_ref() == a.as_ref()) { out.push(a); }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+// Rewrite each `${VAR}` / `${$$$VAR}` plus its surrounding identifier-like
+// token run into `$SPRFSLOTN`, emitting a named regex that recovers VAR from
+// the slot's matched text.
+fn lower_sugar(src: &str) -> (String, Vec<(String, Regex)>, Vec<Arc<str>>) {
+    let bytes = src.as_bytes();
+    let mut out = String::new();
+    let mut regexes: Vec<(String, Regex)> = Vec::new();
+    let mut captures: Vec<Arc<str>> = Vec::new();
+    let mut slot_idx = 0usize;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            let inner_start = i + 2;
+            let mut j = inner_start;
+            while j < bytes.len() && bytes[j] != b'}' { j += 1; }
+            if j >= bytes.len() {
+                out.push('$');
+                i += 1;
+                continue;
+            }
+            let inner = &src[inner_start..j];
+            let inner_trimmed = inner.trim();
+            let (multi, name) = if let Some(rest) = inner_trimmed.strip_prefix("$$$") {
+                (true, rest.trim())
+            } else {
+                (false, inner_trimmed)
+            };
+            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                out.push_str(&src[i..j + 1]);
+                i = j + 1;
+                continue;
+            }
+
+            // Pull adjacent token-char run from the already-written output as prefix.
+            let mut prefix_bytes = 0usize;
+            {
+                let ob = out.as_bytes();
+                let mut k = ob.len();
+                while k > 0 {
+                    let c = ob[k - 1];
+                    if c.is_ascii_alphanumeric() || c == b'_' {
+                        k -= 1;
+                        prefix_bytes += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let prefix: String = out[out.len() - prefix_bytes..].to_string();
+            out.truncate(out.len() - prefix_bytes);
+
+            let after_brace = j + 1;
+            let mut k = after_brace;
+            while k < bytes.len() && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_') {
+                k += 1;
+            }
+            let suffix: String = src[after_brace..k].to_string();
+
+            let slot_name = format!("SPRFSLOT{}", slot_idx);
+            slot_idx += 1;
+            out.push('$');
+            out.push_str(&slot_name);
+
+            let inner_re = if multi { ".+" } else { "\\S+" };
+            let re_src = format!(
+                "^{}(?P<{}>{}){}$",
+                regex::escape(&prefix),
+                name,
+                inner_re,
+                regex::escape(&suffix),
+            );
+            if let Ok(re) = Regex::new(&re_src) {
+                regexes.push((slot_name, re));
+            }
+            let cap_arc: Arc<str> = Arc::from(name);
+            if !captures.iter().any(|s| s.as_ref() == cap_arc.as_ref()) {
+                captures.push(cap_arc);
+            }
+            i = k;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    (out, regexes, captures)
+}
+
+// ---------------------------------------------------------------------------
+// Op
+// ---------------------------------------------------------------------------
+
+pub struct AstGrepOp {
+    lang:           SupportLang,
+    pattern:        Arc<Pattern<SupportLang>>,
+    slot_regexes:   Vec<(String, Regex)>,
+    bound_captures: Vec<Arc<str>>,
+    src:            Arc<str>,
+    parse_site:     Arc<ParseSite>,
+}
+
+impl Op for AstGrepOp {
+    fn name(&self) -> &'static str { "ast" }
+    fn step(&self) -> u16 { 0 }
+    fn parse_site(&self) -> &Arc<ParseSite> { &self.parse_site }
+
+    fn binds_captures(&self) -> Vec<Arc<str>> { self.bound_captures.clone() }
+
+    fn hover_capture(&self, cap: &str, cursors: &[Cursor]) -> Option<String> {
+        if !self.bound_captures.iter().any(|n| n.as_ref() == cap) { return None; }
+        let entries: Vec<(Option<String>, String, String)> = cursors.iter()
+            .filter_map(|c| c.captures.get(cap).map(|cv| (
+                c.fs.as_ref().map(|fp| fp.0.to_string_lossy().into_owned()),
+                c.rev.to_string(),
+                cv.value.to_string(),
+            )))
+            .collect();
+        let header = format!("`${}` (from ast)", cap);
+        hover_render_grouped(&header, &entries)
+    }
+
+    fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
+        -> BoxStream<'static, Arc<[Cursor]>>
+    {
+        let lang     = self.lang;
+        let pattern  = self.pattern.clone();
+        let slot_res = self.slot_regexes.clone();
+        let bound    = self.bound_captures.clone();
+        let src      = self.src.clone();
+        let site     = self.parse_site.clone();
+        let reader   = ctx.reader.clone();
+        let diags    = ctx.diags.clone();
+
+        input.flat_map(move |batch| {
+            let pattern  = pattern.clone();
+            let slot_res = slot_res.clone();
+            let bound    = bound.clone();
+            let src      = src.clone();
+            let site     = site.clone();
+            let reader   = reader.clone();
+            let diags    = diags.clone();
+
+            let per_batch = async move {
+                let mut out: Vec<Arc<[Cursor]>> = Vec::new();
+                for c in batch.iter() {
+                    // PATH B — content priority
+                    let (content_arc, base_offset, fp) = if let Some(content) = c.content.as_ref() {
+                        let base = c.byte_range.as_ref().map(|r| r.start).unwrap_or(0);
+                        let fp = c.fs.clone().unwrap_or_else(|| {
+                            FilePath(Arc::from(std::path::Path::new("<rebased>")))
+                        });
+                        (content.clone(), base, fp)
+                    } else if let Some(fp) = c.fs.as_ref() {
+                        // PATH C — reader fallback
+                        let mut s = reader.bytes(&c.repo, &c.rev, fp);
+                        let raw = match s.next().await {
+                            Some(b) => b,
+                            None    => {
+                                diags.0(Box::new(AstDiag::ReadFailed {
+                                    site: (*site).clone(),
+                                    path: fp.0.to_string_lossy().into_owned(),
+                                }));
+                                continue;
+                            }
+                        };
+                        (Arc::new(raw), 0usize, fp.clone())
+                    } else {
+                        continue;
+                    };
+
+                    let sliced: &[u8] = match &c.byte_range {
+                        Some(r) if c.content.is_some() => &content_arc[r.clone()],
+                        _                              => &content_arc[..],
+                    };
+                    let src_str = match std::str::from_utf8(sliced) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+
+                    let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(src_str);
+                    let mut per_cursor: Vec<Cursor> = Vec::new();
+
+                    for nm in grep.root().find_all(&*pattern) {
+                        let env = nm.get_env();
+                        let mut cap_values: HashMap<Arc<str>, Arc<str>> = HashMap::new();
+
+                        // Native $VAR / $$$VAR
+                        for name in bound.iter() {
+                            if let Some(node) = env.get_match(name.as_ref()) {
+                                cap_values.insert(name.clone(), Arc::from(node.text().as_ref()));
+                            } else {
+                                let nodes = env.get_multiple_matches(name.as_ref());
+                                if !nodes.is_empty() {
+                                    let joined: String = nodes.iter()
+                                        .map(|n| n.text().to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
+                                    cap_values.insert(name.clone(), Arc::from(joined.as_str()));
+                                }
+                            }
+                        }
+
+                        // Sugar slots — extract named groups from slot text via regex.
+                        let mut slot_ok = true;
+                        for (slot_name, re) in slot_res.iter() {
+                            let node = match env.get_match(slot_name) {
+                                Some(n) => n,
+                                None    => { slot_ok = false; break; }
+                            };
+                            let text = node.text();
+                            let caps = match re.captures(text.as_ref()) {
+                                Some(c) => c,
+                                None    => { slot_ok = false; break; }
+                            };
+                            for cap_name in re.capture_names().flatten() {
+                                if let Some(v) = caps.name(cap_name) {
+                                    cap_values.insert(
+                                        Arc::from(cap_name),
+                                        Arc::from(v.as_str()),
+                                    );
+                                }
+                            }
+                        }
+                        if !slot_ok { continue; }
+
+                        let range = nm.range();
+                        let matched_text: Arc<str> = Arc::from(&src_str[range.clone()]);
+                        let mut c2 = c.clone();
+                        c2.content    = Some(content_arc.clone());
+                        c2.fs         = Some(fp.clone());
+                        c2.byte_range = Some(
+                            (base_offset + range.start)..(base_offset + range.end)
+                        );
+                        for (k, v) in cap_values {
+                            c2.captures.insert(k, Capture::new(v));
+                        }
+                        c2.evidence.push(OpEvidence {
+                            op_name:    "ast",
+                            parse_site: site.clone(),
+                            matched:    matched_text,
+                            capture:    None,
+                        });
+                        per_cursor.push(c2);
+                    }
+
+                    if per_cursor.is_empty() {
+                        diags.0(Box::new(AstDiag::NoMatch {
+                            site:    (*site).clone(),
+                            path:    fp.0.to_string_lossy().into_owned(),
+                            pattern: src.to_string(),
+                        }));
+                    } else {
+                        out.push(Arc::from(per_cursor.into_boxed_slice()));
+                    }
+                }
+                out
+            };
+            stream::once(per_batch).flat_map(|bs| stream::iter(bs))
+        }).boxed()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+enum AstDiag {
+    MissingLang { site: ParseSite },
+    UnknownLang { site: ParseSite, got: Arc<str> },
+    BadPattern  { site: ParseSite, got: Arc<str>, msg: Arc<str> },
+    ReadFailed  { site: ParseSite, path: String },
+    NoMatch     { site: ParseSite, path: String, pattern: String },
+}
+
+impl Diagnostic for AstDiag {
+    fn code(&self) -> &str {
+        match self {
+            AstDiag::MissingLang { .. } => "ast/missing-lang",
+            AstDiag::UnknownLang { .. } => "ast/unknown-lang",
+            AstDiag::BadPattern  { .. } => "ast/bad-pattern",
+            AstDiag::ReadFailed  { .. } => "ast/read-failed",
+            AstDiag::NoMatch     { .. } => "ast/no-match",
+        }
+    }
+    fn severity(&self) -> Severity { Severity::Error }
+    fn primary(&self) -> &ParseSite {
+        match self {
+            AstDiag::MissingLang { site }     => site,
+            AstDiag::UnknownLang { site, .. } => site,
+            AstDiag::BadPattern  { site, .. } => site,
+            AstDiag::ReadFailed  { site, .. } => site,
+            AstDiag::NoMatch     { site, .. } => site,
+        }
+    }
+    fn render(&self, out: &mut dyn Renderer) {
+        match self {
+            AstDiag::MissingLang { site } => {
+                out.header(self.code(), self.severity(),
+                    "ast requires a language bracket, e.g. ast[rust](fn $N() {})");
+                out.primary(site);
+            }
+            AstDiag::UnknownLang { site, got } => {
+                out.header(self.code(), self.severity(),
+                    &format!("ast language `{got}` unknown; supported: rust, typescript"));
+                out.primary(site);
+            }
+            AstDiag::BadPattern { site, got, msg } => {
+                out.header(self.code(), self.severity(),
+                    &format!("ast pattern `{got}` is invalid: {msg}"));
+                out.primary(site);
+            }
+            AstDiag::ReadFailed { site, path } => {
+                out.header(self.code(), self.severity(),
+                    &format!("ast failed to read `{path}`"));
+                out.primary(site);
+            }
+            AstDiag::NoMatch { site, path, pattern } => {
+                out.header(self.code(), self.severity(),
+                    &format!("ast(`{pattern}`) matched nothing in `{path}`"));
+                out.primary(site);
+            }
+        }
+    }
+}

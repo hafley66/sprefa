@@ -741,6 +741,15 @@ pub fn scan_slot_scan_pointers(src: &str, abs_base: usize, out: &mut Vec<ScanPoi
     let mut i = 0;
     while i + 1 < b.len() {
         if b[i] != b'$' || b[i+1] != b'$' { i += 1; continue; }
+        // `$$$ident` is an ast-grep ellipsis metavar, not a scan pointer. Skip
+        // the entire token so the following `$$ident` substring is not misread
+        // as a bare scan sigil.
+        if b.get(i + 2) == Some(&b'$') {
+            let mut j = i + 3;
+            while j < b.len() && is_ident_byte(b[j]) { j += 1; }
+            i = j;
+            continue;
+        }
         let start = i;
         let mut j = i + 2;
         let braced = b.get(j) == Some(&b'{');

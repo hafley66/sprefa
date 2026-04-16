@@ -6,6 +6,8 @@ pub mod _4_read;
 pub mod _5_json;
 pub mod _6_cursor_ref;
 pub mod _7_line;
+pub mod _8_md;
+pub mod _9_ast_grep;
 
 pub use _0_rule::RuleFactory;
 pub use _1_repo::RepoFactory;
@@ -15,6 +17,8 @@ pub use _4_read::ReadFactory;
 pub use _5_json::{JsonFactory, JsonTree, JSON_TREE};
 pub use _6_cursor_ref::CursorRefFactory;
 pub use _7_line::LineFactory;
+pub use _8_md::MdFactory;
+pub use _9_ast_grep::AstGrepFactory;
 
 /// Build a registry with all standard ops registered. Use this everywhere
 /// instead of manually listing factories — adding a new op only requires
@@ -29,5 +33,7 @@ pub fn default_registry() -> crate::_10_registry::OperatorRegistry {
     r.register(std::sync::Arc::new(JsonFactory));
     r.register(std::sync::Arc::new(CursorRefFactory));
     r.register(std::sync::Arc::new(LineFactory));
+    r.register(std::sync::Arc::new(MdFactory));
+    r.register(std::sync::Arc::new(AstGrepFactory));
     r
 }
