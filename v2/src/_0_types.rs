@@ -164,17 +164,46 @@ impl Slots {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tri { Claimed, Verified, Missing }
 
+/// Encodes whether a capture's text value is backed by a byte span in the
+/// owning content buffer (object/array sub-documents) or was synthesized
+/// (JSON strings — unescaped by walker — primitives, computed values).
+///
+/// CursorRef keys off this to choose rebase behavior:
+///   SpanBacked  → narrow byte_range, content unchanged
+///   Synthesized → materialize new content bytes from value
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaptureKind {
+    /// Raw bytes at `span` in `cursor.content` are valid source bytes for
+    /// this capture (e.g. a JSON object or array sub-document).
+    SpanBacked { span: Range<usize> },
+    /// Value was synthesized: a JSON string (unescaped), a primitive repr,
+    /// or a computed value (filepath, repo name, etc.). Raw span is not
+    /// meaningful source bytes for downstream parsers.
+    Synthesized,
+}
+
 #[derive(Debug, Clone)]
 pub struct Capture {
     pub value:        Arc<str>,
+    pub kind:         CaptureKind,
     pub ref_id:       Option<RefId>,
     pub scan_pointer: Option<Arc<str>>,
     pub verified:     Tri,
 }
 
 impl Capture {
+    /// Default ctor — Synthesized. All existing callers (repo/rev/fs/rule
+    /// ops) produce non-rebaseable scalar values; this preserves their
+    /// behavior without modification.
     pub fn new(value: Arc<str>) -> Self {
-        Self { value, ref_id: None, scan_pointer: None, verified: Tri::Claimed }
+        Self { value, kind: CaptureKind::Synthesized, ref_id: None,
+               scan_pointer: None, verified: Tri::Claimed }
+    }
+    /// Span-backed ctor — for JSON object/array sub-documents where the
+    /// raw bytes at `span` in the file buffer are valid source bytes.
+    pub fn span_backed(value: Arc<str>, span: Range<usize>) -> Self {
+        Self { value, kind: CaptureKind::SpanBacked { span },
+               ref_id: None, scan_pointer: None, verified: Tri::Claimed }
     }
     pub fn with_ref_id(mut self, r: RefId) -> Self {
         self.ref_id = Some(r);
@@ -244,6 +273,33 @@ impl Cursor {
     /// Shortcut for `self.slots.set(k, v)`.
     pub fn set_slot<T: 'static + Send + Sync>(&mut self, k: SlotKey<T>, v: T) -> Option<Arc<T>> {
         self.slots.set(k, v)
+    }
+
+    /// Rebase this cursor onto `cap`. Two-path per `CaptureKind`:
+    ///
+    /// - `SpanBacked`: narrow `byte_range` to the capture's span; content
+    ///   is unchanged. Parse trees in slots are cleared because they were
+    ///   rooted at the whole-file content, not the sub-range.
+    /// - `Synthesized`: materialize new `content` bytes from `cap.value`;
+    ///   clear `byte_range` and slots.
+    ///
+    /// All other cursor fields (repo, rev, fs, captures, path, evidence)
+    /// are preserved. Path tagging is handled by the pipeline runner.
+    pub fn rebase(&self, cap: &Capture) -> Cursor {
+        let mut out = self.clone();
+        out.slots = Slots::default();
+        match &cap.kind {
+            CaptureKind::SpanBacked { span } => {
+                out.byte_range = Some(span.clone());
+            }
+            CaptureKind::Synthesized => {
+                out.content    = Some(Arc::new(bytes::Bytes::copy_from_slice(
+                    cap.value.as_bytes()
+                )));
+                out.byte_range = None;
+            }
+        }
+        out
     }
 }
 

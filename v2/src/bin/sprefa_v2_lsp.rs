@@ -14,7 +14,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use v2::analysis::DocSession;
-use v2::ops::{FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory};
+use v2::ops::default_registry;
 use v2::readers::{
     BufferOverlay, CheckoutLocator, ConfigLocator, GitBlobReader, InMemoryLocator, MemReader,
 };
@@ -223,14 +223,7 @@ fn rewrite_hover_paths(md: &str, workspace_root: &Path) -> String {
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
-    let mut r = OperatorRegistry::new();
-    r.register(Arc::new(RuleFactory));
-    r.register(Arc::new(RepoFactory));
-    r.register(Arc::new(RevFactory));
-    r.register(Arc::new(FsFactory));
-    r.register(Arc::new(ReadFactory));
-    r.register(Arc::new(JsonFactory));
-    Arc::new(r)
+    Arc::new(default_registry())
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,8 @@
 //! Cursor values are built inline. Op instances extracted via lower_chain.
 
 use v2::ops::{
-    default_registry, FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory,
+    default_registry, FsFactory, JsonFactory, LineFactory, ReadFactory, RepoFactory, RevFactory,
+    RuleFactory,
 };
 
 use std::collections::HashMap;
@@ -399,6 +400,7 @@ fn completion_item_labels_match_op_names() {
         (&FsFactory,    "fs"),
         (&ReadFactory,  "read"),
         (&JsonFactory,  "json"),
+        (&LineFactory,  "line"),
     ];
     for (factory, expected_label) in pairs {
         let ci = factory.completion_item();
@@ -488,6 +490,40 @@ fn hover_cursor_ref_field_fs() {
     assert!(md.contains("### "),
         "expected grouped header in hover: {md}");
     eprintln!("FIELD_FS_HOVER:\n{md}");
+}
+
+// ---------------------------------------------------------------------------
+// line hover
+// ---------------------------------------------------------------------------
+
+#[test]
+fn line_hover_capture_delegates_to_line_binding() {
+    let op = parse_single_op("line(re:TODO (?P<MSG>.*))");
+    let site = op.parse_site().clone();
+
+    let mut c1 = with_fs(cursor("r", "main"), "src/a.txt");
+    c1.captures.insert(Arc::from("MSG"), v2::_0_types::Capture::new(Arc::from("finish port")));
+    c1.evidence.push(OpEvidence {
+        op_name:    "line",
+        parse_site: site.clone(),
+        matched:    Arc::from("TODO finish port"),
+        capture:    None,
+    });
+
+    let mut c2 = with_fs(cursor("r", "main"), "src/b.txt");
+    c2.captures.insert(Arc::from("MSG"), v2::_0_types::Capture::new(Arc::from("fix login")));
+    c2.evidence.push(OpEvidence {
+        op_name:    "line",
+        parse_site: site.clone(),
+        matched:    Arc::from("TODO fix login"),
+        capture:    None,
+    });
+
+    let result = op.hover_capture("MSG", &[c1, c2]).expect("hover_capture must return Some for bound capture");
+    assert!(result.contains("MSG"), "hover must mention the capture name: {result}");
+    assert!(result.contains("finish port"), "hover must include capture value: {result}");
+    assert!(result.contains("fix login"), "hover must include capture value: {result}");
+    assert!(result.contains("### "), "hover must be grouped by file: {result}");
 }
 
 #[test]

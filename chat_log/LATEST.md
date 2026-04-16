@@ -1,1 +1,1 @@
-20260415.7.cursorref-as-op-slot.md
+20260415.8.cursorref-content-contract.md

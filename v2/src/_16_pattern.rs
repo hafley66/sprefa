@@ -231,7 +231,14 @@ pub fn compile_patterns(patterns: &[&str]) -> anyhow::Result<Vec<PatternMatcher>
     let mut matchers = Vec::new();
     for p in patterns {
         if let Some(re_pattern) = p.strip_prefix("re:") {
-            matchers.push(PatternMatcher::Regex(Regex::new(re_pattern)?));
+            // `re:$NAME-$TAG` sugar: expand $-captures to named regex groups.
+            // Trailing `$` (regex end-anchor) and `\$` (escaped) are left alone.
+            let src = if has_dollar_capture(re_pattern) {
+                std::borrow::Cow::Owned(rewrite_re_dollar_captures(re_pattern))
+            } else {
+                std::borrow::Cow::Borrowed(re_pattern)
+            };
+            matchers.push(PatternMatcher::Regex(Regex::new(&src)?));
         } else if p.contains('$') {
             matchers.push(PatternMatcher::SegmentCapture(parse_segment_pattern(p)));
         } else {
@@ -361,6 +368,46 @@ fn find_next_literal(segments: &[Segment]) -> Option<String> {
     None
 }
 
+/// True when the pattern contains a `$`-capture token (not a regex end-anchor
+/// or an escaped `\$`). Conservative: requires the `$` to be followed by an
+/// identifier char, `_`, `{`, or another `$` (multi-capture).
+fn has_dollar_capture(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] != b'$' { continue; }
+        if i > 0 && bytes[i - 1] == b'\\' { continue; }
+        let Some(&c) = bytes.get(i + 1) else { continue; };
+        if c.is_ascii_alphanumeric() || c == b'_' || c == b'{' || c == b'$' {
+            return true;
+        }
+    }
+    false
+}
+
+/// Rewrite a `re:`-style pattern containing `$NAME` captures into a full regex.
+///
+/// `$NAME`   → `(?P<NAME>[a-zA-Z0-9._/-]+)`
+/// `$$$NAME` → `(?P<NAME>.+)`
+/// `$_`      → `\S+`
+/// `$$$_`    → `.+`
+/// Literal segments pass through unchanged (they're already regex).
+///
+/// Caller strips the `re:` prefix first and prepends it back after.
+pub fn rewrite_re_dollar_captures(pattern: &str) -> String {
+    let segments = parse_segment_pattern(pattern);
+    let mut out = String::new();
+    for seg in &segments {
+        match seg {
+            Segment::Literal(s)          => out.push_str(s),
+            Segment::Capture(name)       => out.push_str(&format!("(?P<{}>[a-zA-Z0-9._/-]+)", name)),
+            Segment::MultiCapture(name)  => out.push_str(&format!("(?P<{}>.+)", name)),
+            Segment::Wild                => out.push_str("\\S+"),
+            Segment::MultiWild           => out.push_str(".+"),
+        }
+    }
+    out
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -373,6 +420,58 @@ mod tests {
         assert!(matches!(&segs[0], Segment::Capture(n) if n == "ORG"));
         assert!(matches!(&segs[1], Segment::Literal(s) if s == "/"));
         assert!(matches!(&segs[2], Segment::Capture(n) if n == "REPO"));
+    }
+
+    #[test]
+    fn re_sugar_single_captures_to_named_groups() {
+        assert_eq!(
+            rewrite_re_dollar_captures("$VER-$SHA"),
+            "(?P<VER>[a-zA-Z0-9._/-]+)-(?P<SHA>[a-zA-Z0-9._/-]+)",
+        );
+    }
+
+    #[test]
+    fn re_sugar_multi_capture_expands_to_greedy() {
+        assert_eq!(rewrite_re_dollar_captures("prefix $$$REST"), "prefix (?P<REST>.+)");
+    }
+
+    #[test]
+    fn re_sugar_wild_and_multiwild() {
+        assert_eq!(rewrite_re_dollar_captures("$_/$NAME"),
+            "\\S+/(?P<NAME>[a-zA-Z0-9._/-]+)");
+        assert_eq!(rewrite_re_dollar_captures("$$$_/end"), ".+/end");
+    }
+
+    #[test]
+    fn re_sugar_compiled_captures_real_input() {
+        let rewritten = rewrite_re_dollar_captures("$VER-$SHA");
+        let re = regex::Regex::new(&rewritten).unwrap();
+        let caps = re.captures("v1.2.3-abc").unwrap();
+        assert_eq!(caps.name("VER").unwrap().as_str(), "v1.2.3");
+        assert_eq!(caps.name("SHA").unwrap().as_str(), "abc");
+    }
+
+    #[test]
+    fn re_anchor_dollar_is_not_a_capture() {
+        // `$` at end of regex is the end-anchor, not sugar. Must pass through.
+        assert!(!has_dollar_capture(r"^src/.*\.rs$"));
+        let ms = compile_patterns(&[r"re:^src/.*\.rs$"]).unwrap();
+        assert!(matches!(&ms[0], PatternMatcher::Regex(_)));
+        assert!(ms[0].is_match("src/foo.rs"));
+        assert!(!ms[0].is_match("docs/readme.md"));
+    }
+
+    #[test]
+    fn re_escaped_dollar_is_not_a_capture() {
+        assert!(!has_dollar_capture(r"price: \$100"));
+    }
+
+    #[test]
+    fn re_dollar_capture_detection_triggers_on_identifier() {
+        assert!(has_dollar_capture("$VER"));
+        assert!(has_dollar_capture("$$$REST"));
+        assert!(has_dollar_capture("${ENTITY}"));
+        assert!(has_dollar_capture("$_"));
     }
 
     #[test]

@@ -43,7 +43,9 @@ pub enum SelectStep {
     DepthEq  { n: u32 },
     ParentKey { pattern: String },
     ArrayItem,
-    Leaf   { capture: Option<String> },
+    Leaf       { capture: Option<String> },
+    /// Matches any JSON value (scalar, object, or array).
+    CaptureAny { capture: Option<String> },
     LeafPattern { pattern: String },
     Object { entries: Vec<ObjectEntry> },
     Array  { item: Vec<SelectStep> },
@@ -80,6 +82,9 @@ pub fn compile_one_step(step: &SelectStep) -> anyhow::Result<CompiledStep> {
         },
         SelectStep::ArrayItem => CompiledStep::ArrayItem,
         SelectStep::Leaf { capture } => CompiledStep::Leaf {
+            capture: capture.clone(),
+        },
+        SelectStep::CaptureAny { capture } => CompiledStep::CaptureAny {
             capture: capture.clone(),
         },
         SelectStep::LeafPattern { pattern } => CompiledStep::LeafPattern {

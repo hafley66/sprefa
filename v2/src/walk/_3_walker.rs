@@ -260,6 +260,33 @@ fn walk_inner<N: DataNode>(
             walk_inner(node, rest, ctx, &next_caps)
         }
 
+        CompiledStep::CaptureAny { capture } => {
+            let (bs, be) = node.byte_range();
+            let text: Arc<str> = node.as_scalar_text()
+                .map(|t| Arc::from(t.as_ref()))
+                .unwrap_or_else(|| Arc::from(""));
+            let mut next_caps = caps.clone();
+            if let Some(cap) = capture {
+                if let Some(existing) = caps.get(cap.as_str()) {
+                    // Only constrain for scalar nodes where text comparison is meaningful.
+                    if node.as_scalar_text().is_some() && existing.text.as_ref() != text.as_ref() {
+                        return vec![];
+                    }
+                } else {
+                    next_caps.insert(
+                        Arc::from(cap.as_str()),
+                        WalkCapture {
+                            text,
+                            path: Arc::from(ctx.path.as_str()),
+                            byte_start: bs,
+                            byte_end:   be,
+                        },
+                    );
+                }
+            }
+            walk_inner(node, rest, ctx, &next_caps)
+        }
+
         CompiledStep::LeafPattern { segments } => {
             let Some(text) = node.as_scalar_text() else {
                 return vec![];
@@ -322,7 +349,7 @@ fn walk_inner<N: DataNode>(
 fn is_row_field(entry: &CompiledObjectEntry) -> bool {
     entry.value.len() == 1 && matches!(
         entry.value[0],
-        CompiledStep::Leaf { .. } | CompiledStep::LeafPattern { .. }
+        CompiledStep::Leaf { .. } | CompiledStep::LeafPattern { .. } | CompiledStep::CaptureAny { .. }
     )
 }
 

@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use v2::_5_op::{BraceMode, CompletionItem, GrammarRef, Operator, ScanPointer};
-use v2::ops::{FsFactory, JsonFactory, RepoFactory, RevFactory, RuleFactory};
 use v2::{
     host_parse, lower_rules, Config, Diagnostic, OpInvocation, OperatorRegistry, Pipeline,
     ProgramCtx, RuntimeConfig,
@@ -63,12 +62,7 @@ impl Operator for FooFactory {
 }
 
 fn make_pctx(extra: Option<Arc<dyn Operator>>) -> ProgramCtx {
-    let mut reg = OperatorRegistry::new();
-    reg.register(Arc::new(RuleFactory));
-    reg.register(Arc::new(RepoFactory));
-    reg.register(Arc::new(RevFactory));
-    reg.register(Arc::new(FsFactory));
-    reg.register(Arc::new(JsonFactory));
+    let mut reg = v2::ops::default_registry();
     if let Some(op) = extra {
         reg.register(op);
     }

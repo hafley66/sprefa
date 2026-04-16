@@ -2,6 +2,8 @@
 //! Fixture setup mirrors git_read.rs: shell out to `git`, use tempfile::TempDir,
 //! wire GitBlobReader via InMemoryLocator.
 
+use v2::ops::default_registry;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -13,8 +15,6 @@ use v2::{
     MemWriter, OpCtx, OpId, OperatorRegistry, ProgramCtx, RunId,
     RuntimeConfig, host_parse, lower_rules,
 };
-use v2::ops::{FsFactory, RepoFactory, RevFactory, RuleFactory, ReadFactory};
-use v2::ops::JsonFactory;
 use v2::_0_types::Cursor;
 
 // ---------------------------------------------------------------------------
@@ -56,14 +56,7 @@ fn make_config() -> Arc<Config> {
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
-    let mut r = OperatorRegistry::new();
-    r.register(Arc::new(RuleFactory));
-    r.register(Arc::new(RepoFactory));
-    r.register(Arc::new(RevFactory));
-    r.register(Arc::new(FsFactory));
-    r.register(Arc::new(ReadFactory));
-    r.register(Arc::new(JsonFactory));
-    Arc::new(r)
+    Arc::new(default_registry())
 }
 
 fn run_rule_git(

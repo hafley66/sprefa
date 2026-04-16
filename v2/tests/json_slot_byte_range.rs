@@ -2,6 +2,8 @@
 //! cursor, narrows `cursor.byte_range` to the matched row's capture span,
 //! and reuses an upstream `JSON_TREE` slot when already present.
 
+use v2::ops::{default_registry, JsonFactory, JsonTree, JSON_TREE};
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -17,7 +19,6 @@ use v2::{
 use v2::_0_types::{Cursor, FilePath, ParseSeg, ParseSite, SprfPath};
 use v2::_5_op::Operator;
 use v2::data::parse_by_ext;
-use v2::ops::{FsFactory, JsonFactory, JsonTree, JSON_TREE, ReadFactory, RepoFactory, RevFactory, RuleFactory};
 
 fn make_config() -> Arc<Config> {
     Arc::new(Config {
@@ -38,14 +39,7 @@ fn make_config() -> Arc<Config> {
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
-    let mut r = OperatorRegistry::new();
-    r.register(Arc::new(RuleFactory));
-    r.register(Arc::new(RepoFactory));
-    r.register(Arc::new(RevFactory));
-    r.register(Arc::new(FsFactory));
-    r.register(Arc::new(ReadFactory));
-    r.register(Arc::new(JsonFactory));
-    Arc::new(r)
+    Arc::new(default_registry())
 }
 
 fn run_rule(src: &str, reader: Arc<MemReader>) -> Vec<Cursor> {

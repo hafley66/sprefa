@@ -224,12 +224,13 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> anyhow::Result<Vec
             anyhow::bail!("unclosed `${{` in json pattern");
         }
         let inner = &input[inner_start..*pos - 1];
-        let name = if let Some((_rule, rest)) = inner.split_once('.') {
-            rest.strip_prefix('$').ok_or_else(|| {
+        let (name, is_crossref) = if let Some((_rule, rest)) = inner.split_once('.') {
+            let n = rest.strip_prefix('$').ok_or_else(|| {
                 anyhow::anyhow!("malformed cross-ref `${{{}}}` (expected `${{rule.$VAR}}`)", inner)
-            })?
+            })?;
+            (n, true)
         } else {
-            inner
+            (inner, false)
         };
         if name.is_empty()
             || !(name.as_bytes()[0].is_ascii_alphabetic() || name.as_bytes()[0] == b'_')
@@ -237,9 +238,13 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> anyhow::Result<Vec
         {
             anyhow::bail!("invalid capture name `${{{}}}`", inner);
         }
-        return Ok(vec![SelectStep::Leaf {
-            capture: Some(name.to_string()),
-        }]);
+        // Cross-refs use Leaf for constraint-matching against pre-seeded scalar values.
+        // Plain ${VAR} is equivalent to $VAR and uses CaptureAny to match any value kind.
+        return if is_crossref {
+            Ok(vec![SelectStep::Leaf { capture: Some(name.to_string()) }])
+        } else {
+            Ok(vec![SelectStep::CaptureAny { capture: Some(name.to_string()) }])
+        };
     }
 
     if input.as_bytes()[*pos] == b'_'
@@ -259,7 +264,7 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> anyhow::Result<Vec
     if name.is_empty() {
         anyhow::bail!("empty capture name after `$`");
     }
-    Ok(vec![SelectStep::Leaf {
+    Ok(vec![SelectStep::CaptureAny {
         capture: Some(name.to_string()),
     }])
 }
@@ -449,7 +454,7 @@ mod tests {
                 assert_eq!(entries.len(), 1);
                 assert!(matches!(&entries[0].key, KeyMatcher::Exact(s) if s == "name"));
                 assert!(
-                    matches!(&entries[0].value[0], SelectStep::Leaf { capture: Some(c) } if c == "NAME")
+                    matches!(&entries[0].value[0], SelectStep::CaptureAny { capture: Some(c) } if c == "NAME")
                 );
             }
             _ => panic!("expected Object"),
@@ -495,7 +500,7 @@ mod tests {
             SelectStep::Object { entries } => match &entries[0].value[0] {
                 SelectStep::Array { item } => {
                     assert!(
-                        matches!(&item[0], SelectStep::Leaf { capture: Some(c) } if c == "MEMBER")
+                        matches!(&item[0], SelectStep::CaptureAny { capture: Some(c) } if c == "MEMBER")
                     );
                 }
                 _ => panic!("expected Array"),
@@ -519,7 +524,7 @@ mod tests {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Capture(s) if s == "K"));
                 assert!(
-                    matches!(&entries[0].value[0], SelectStep::Leaf { capture: Some(c) } if c == "V")
+                    matches!(&entries[0].value[0], SelectStep::CaptureAny { capture: Some(c) } if c == "V")
                 );
             }
             _ => panic!("expected Object"),

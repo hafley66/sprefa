@@ -4,6 +4,8 @@
 //! This is the scout half. A separate checker pass downgrades unverified
 //! claims. Non-annotated captures stay `scan_pointer: None`, default Tri.
 
+use v2::ops::default_registry;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +14,6 @@ use futures::executor::block_on;
 use futures_util::stream::StreamExt;
 
 use v2::_0_types::{Cursor, Tri};
-use v2::ops::{FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory};
 use v2::{
     host_parse, lower_rules, run_scan_loop, Config, Diagnostic, DiagSink, EventSink, MemReader,
     MemWriter, OpCtx, OpId, OperatorRegistry, ProgramCtx, ResultStore, RunId, RuntimeConfig,
@@ -38,14 +39,7 @@ fn make_config() -> Arc<Config> {
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
-    let mut r = OperatorRegistry::new();
-    r.register(Arc::new(RuleFactory));
-    r.register(Arc::new(RepoFactory));
-    r.register(Arc::new(RevFactory));
-    r.register(Arc::new(FsFactory));
-    r.register(Arc::new(ReadFactory));
-    r.register(Arc::new(JsonFactory));
-    Arc::new(r)
+    Arc::new(default_registry())
 }
 
 fn run_rule(src: &str, reader: Arc<MemReader>) -> Vec<Cursor> {

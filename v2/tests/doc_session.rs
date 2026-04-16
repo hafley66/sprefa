@@ -3,10 +3,11 @@
 //! Uses MemReader as inner, wrapped in BufferOverlay, driven from inline .sprf strings.
 //! Positions are byte offsets into the source string.
 
+use v2::ops::default_registry;
+
 use std::sync::Arc;
 
 use v2::analysis::DocSession;
-use v2::ops::{FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory};
 use v2::readers::{BufferOverlay, MemReader};
 use v2::{Config, OperatorRegistry, RuntimeConfig};
 
@@ -33,14 +34,7 @@ fn make_config() -> Arc<Config> {
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
-    let mut r = OperatorRegistry::new();
-    r.register(Arc::new(RuleFactory));
-    r.register(Arc::new(RepoFactory));
-    r.register(Arc::new(RevFactory));
-    r.register(Arc::new(FsFactory));
-    r.register(Arc::new(ReadFactory));
-    r.register(Arc::new(JsonFactory));
-    Arc::new(r)
+    Arc::new(default_registry())
 }
 
 /// Build a DocSession with a bare MemReader (no repos), wrapping in BufferOverlay.

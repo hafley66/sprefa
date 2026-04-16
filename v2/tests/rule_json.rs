@@ -16,6 +16,8 @@
 //!   - MemReader::bytes impl reading from that map (stop `unimplemented!()`)
 //!   - JsonFactory, ext filter, parse_by_ext, walk drive, row emit
 
+use v2::ops::default_registry;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -27,9 +29,7 @@ use v2::{
     OpCtx, OpId, OperatorRegistry, ProgramCtx, RunId,
     RuntimeConfig, host_parse, lower_rules,
 };
-use v2::ops::{FsFactory, RepoFactory, RevFactory, RuleFactory, ReadFactory};
 // Does not exist yet:
-use v2::ops::JsonFactory;
 use v2::_0_types::Cursor;
 
 fn make_config() -> Arc<Config> {
@@ -51,14 +51,7 @@ fn make_config() -> Arc<Config> {
 }
 
 fn make_registry() -> Arc<OperatorRegistry> {
-    let mut r = OperatorRegistry::new();
-    r.register(Arc::new(RuleFactory));
-    r.register(Arc::new(RepoFactory));
-    r.register(Arc::new(RevFactory));
-    r.register(Arc::new(FsFactory));
-    r.register(Arc::new(ReadFactory));
-    r.register(Arc::new(JsonFactory));
-    Arc::new(r)
+    Arc::new(default_registry())
 }
 
 fn run_rule(src: &str, reader: Arc<MemReader>) -> (Vec<Cursor>, Arc<MemWriter>) {

@@ -44,6 +44,11 @@ pub enum CompiledStep {
     Leaf {
         capture: Option<String>,
     },
+    /// Matches any JSON value (scalar, object, or array) and captures it.
+    /// Use for bare `$VAR` in value position so object subtrees can be captured.
+    CaptureAny {
+        capture: Option<String>,
+    },
     LeafPattern {
         segments: Vec<Segment>,
     },

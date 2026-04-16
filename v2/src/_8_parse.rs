@@ -287,6 +287,77 @@ fn host_parse_inner(
 
         let mut ops = Vec::new();
         loop {
+            i = skip_trivia(bytes, i);
+
+            // &.$PATH desugar — cursor-ref pipe step.
+            // Translates `&.ident`, `&.$NAME` → OpInvocation { name: "cursor_ref",
+            // paren_src: ".<path>" }. Runs before parse_op so the `&` byte never
+            // reaches the ident-start check.
+            if i < bytes.len() && bytes[i] == b'&' {
+                let step_start = i;
+                i += 1; // consume '&'
+                // Path body starts at the next '.'; collect until whitespace / delimiter.
+                let path_start = i;
+                while i < bytes.len()
+                    && !matches!(bytes[i], b'>' | b';' | b'{' | b'}')
+                    && !bytes[i].is_ascii_whitespace()
+                {
+                    i += 1;
+                }
+                let path_src = &src[path_start..i];
+
+                let leaf_seg = match kind {
+                    ChildKind::Top        => ParseSeg::Top        { index: child_ix },
+                    ChildKind::BraceChild => ParseSeg::BraceChild { index: child_ix },
+                    ChildKind::ParenChild => ParseSeg::ParenChild { index: child_ix },
+                };
+                let mut seg_path: Vec<ParseSeg> = parent_path.to_vec();
+                seg_path.push(leaf_seg);
+                let abs_start  = base_offset + step_start;
+                let abs_end    = base_offset + i;
+                let parse_site = Arc::new(ParseSite {
+                    file:       file.clone(),
+                    path:       Arc::from(seg_path.into_boxed_slice()),
+                    byte_range: abs_start..abs_end,
+                });
+                let inv = OpInvocation {
+                    name:       Arc::from("cursor_ref"),
+                    brackets:   Vec::new(),
+                    paren_src:  Some(ParenSlot {
+                        src:        Arc::from(path_src),
+                        byte_range: (base_offset + path_start)..abs_end,
+                    }),
+                    brace_src:  None,
+                    parse_site,
+                    crossrefs:  Vec::new(),
+                };
+                child_ix += 1;
+                ops.push(inv);
+
+                // Mirror the normal post-op flow: consume `>` if present and
+                // continue to the next op; otherwise break this pipe arm.
+                i = skip_trivia(bytes, i);
+                if i < bytes.len() && bytes[i] == b'>' {
+                    i += 1;
+                    i = skip_trivia(bytes, i);
+                    if mode == ParseMode::Tolerant
+                        && (i >= bytes.len() || (!is_ident_start(bytes[i]) && bytes[i] != b';' && bytes[i] != b'&'))
+                    {
+                        let anchor = i;
+                        let inv = synth_fragment_op(
+                            src, bytes, &mut i, &file, parent_path, kind, child_ix, base_offset, anchor,
+                        ).unwrap_or_else(|| synth_empty_fragment(
+                            &file, parent_path, kind, child_ix, base_offset, anchor,
+                        ));
+                        child_ix += 1;
+                        ops.push(inv);
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+
             let op_start = i;
             match parse_op(src, bytes, &mut i, &file, parent_path, kind, child_ix, base_offset, mode, &mut errs) {
                 Ok(inv) => {
@@ -323,7 +394,7 @@ fn host_parse_inner(
                 // synthesize an empty fragment so the cursor site after the
                 // pipe still has a slot to resolve against.
                 if mode == ParseMode::Tolerant
-                    && (i >= bytes.len() || (!is_ident_start(bytes[i]) && bytes[i] != b';'))
+                    && (i >= bytes.len() || (!is_ident_start(bytes[i]) && bytes[i] != b';' && bytes[i] != b'&'))
                 {
                     let anchor = i;
                     let inv = synth_fragment_op(

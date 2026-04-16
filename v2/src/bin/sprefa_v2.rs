@@ -10,7 +10,7 @@ use v2::{
     MemWriter, OpCtx, OpId, OperatorRegistry, ProgramCtx, RunId,
     RuntimeConfig, host_parse, lower_rules,
 };
-use v2::ops::{FsFactory, JsonFactory, ReadFactory, RepoFactory, RevFactory, RuleFactory};
+use v2::ops::default_registry;
 use v2::_0_types::Cursor;
 
 // ---------------------------------------------------------------------------
@@ -69,14 +69,7 @@ fn discover_repos(root: &std::path::Path) -> Vec<(String, PathBuf)> {
 // ---------------------------------------------------------------------------
 
 fn make_registry() -> Arc<OperatorRegistry> {
-    let mut r = OperatorRegistry::new();
-    r.register(Arc::new(RuleFactory));
-    r.register(Arc::new(RepoFactory));
-    r.register(Arc::new(RevFactory));
-    r.register(Arc::new(FsFactory));
-    r.register(Arc::new(ReadFactory));
-    r.register(Arc::new(JsonFactory));
-    Arc::new(r)
+    Arc::new(default_registry())
 }
 
 // ---------------------------------------------------------------------------
