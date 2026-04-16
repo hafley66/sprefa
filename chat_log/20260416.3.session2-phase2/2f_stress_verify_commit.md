@@ -1,4 +1,31 @@
-# 2f — stress tests, verify, commit
+# 2f — invariant tests, verify, commit
+
+## Revision (2026-04-16)
+
+Stress tests recast as **invariant tests** — small N that prove the guard works
+per cycle. If N=3 reparses reap cleanly, N=1000 follows by induction on the
+cancel discipline. No feature gate; ungated in the regular `tests/` dir.
+
+Four tests in `v2/tests/invariants.rs`:
+
+1. `reparse_3x_task_count_returns_to_baseline` — record
+   `Handle::current().metrics().num_alive_tasks()` before; call
+   `DocSession::on_source_change(src)` three times with a yield after each;
+   assert count returns to baseline (proves cancel→drop→abort per cycle).
+2. `dropped_stream_aborts_inner_tasks` — start `init_cursors(...)`, drop the
+   returned `BoxStream` mid-drain, poll task count until it drops or timeout
+   at ~100ms.
+3. `mutation_await_errs_on_cancel` — `await_approval` on a token that's been
+   cancelled returns `Err(Cancelled)`, no hang.
+4. `mutation_await_errs_on_handler_drop` — drop the handler before it acks;
+   `await_approval` returns `Err(Cancelled)`.
+
+Delete `[features] stress = []` from Cargo.toml (unnecessary now).
+
+---
+
+# Original (superseded)
+
 
 Land the three stress scenarios from Z3. Hand-verify G1–G10. One commit
 covers the entire Phase 2.

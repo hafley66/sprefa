@@ -19,16 +19,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures::executor::block_on;
-use futures_util::stream::StreamExt;
 
-use crate::_0_types::{Cursor, OpId, ParseSite, RunId, Severity};
+use crate::_0_types::{Cursor, CursorExpr, ParseSite, RunId, Severity};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
-    CompletionCtx, CompletionSuggestion, DiagSink, EventSink, Op, OpCtx, ParenRole,
+    CompletionCtx, CompletionSuggestion, Op, ParenRole,
     Pipeline, ProgramCtx,
 };
 use crate::_5_op::OpInvocation;
+use crate::_7_init_cursors::{collect_run_report, init_cursors, InitInputs};
 use crate::_8_parse::{host_parse_tolerant, host_parse_arm_brace, parse_capture, parse_cross_ref, Pipe};
 use crate::_10_registry::{lower_rules, OperatorRegistry};
 use crate::readers::BufferOverlay;
@@ -217,6 +216,32 @@ pub enum SpanKind {
 }
 
 // ---------------------------------------------------------------------------
+// run_sync — bridge between sync DocSession surface and async init_cursors
+// ---------------------------------------------------------------------------
+
+/// Drive an async future to completion from a sync caller.
+///
+/// - Inside a tokio multi-thread runtime (LSP bin): `block_in_place` yields the
+///   worker so other tasks keep running, then `handle.block_on` drains the
+///   future on that worker thread.
+/// - Outside any runtime (plain `#[test]`): build a throwaway current-thread
+///   runtime and drive the future directly.
+///
+/// Constraint: `init_cursors` uses `tokio::spawn` + `tokio::sync::mpsc`, so it
+/// requires *some* runtime. This helper is the single async/sync boundary on
+/// the DocSession side.
+fn run_sync<F: std::future::Future>(fut: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+        Err(_) => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("run_sync: failed to build current-thread runtime")
+            .block_on(fut),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // RunReport
 // ---------------------------------------------------------------------------
 
@@ -315,9 +340,11 @@ impl DocSession {
     /// so LSP autocomplete can call it with a truncated+substituted pipeline
     /// without touching the cached document run.
     ///
-    /// Wiring (ctx, config, MemWriter, ResultStore, scan-loop) is identical
-    /// to the prior inlined body; the `cursors_scratch` mutex plumbing is
-    /// preserved verbatim — "final pass wins" semantics.
+    /// Each scan-loop pass hands its pipelines to `init_cursors`, drains the
+    /// resulting `RunEvent` stream via `collect_run_report`, and feeds that
+    /// pass's cursor set into `cursors_scratch` (final pass wins). A shared
+    /// `ResultStore` threads through every pass so `check_scan_pointers` sees
+    /// the claims stamped by this pass's ops.
     pub fn run_pipelines(
         &self,
         pipelines: &[(Arc<str>, Pipeline)],
@@ -341,77 +368,52 @@ impl DocSession {
             content_hash: 0,
         });
 
-        let writer = Arc::new(MemWriter::new());
-        let store  = Arc::new(crate::_12_result_store::ResultStore::new());
+        let writer: Arc<dyn crate::_4_writer::Writer> = Arc::new(MemWriter::new());
+        let store:  Arc<dyn crate::store::Store>      = Arc::new(crate::store::NoopStore::new());
+        let shared_result_store = Arc::new(crate::_12_result_store::ResultStore::new());
         // Scratch cursor map rewritten each pass; final pass wins.
         let cursors_scratch: Arc<std::sync::Mutex<HashMap<Arc<str>, Vec<Cursor>>>> =
             Arc::new(std::sync::Mutex::new(HashMap::new()));
 
-        let reader    = self.reader.clone();
-        let writer_ref = writer.clone();
-        let cs        = cursors_scratch.clone();
+        let reader_dyn: Arc<dyn crate::_3_reader::Reader> = self.reader.clone();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let (mtx, _mrx) = tokio::sync::mpsc::channel::<crate::mutations::MutationRequest>(32);
 
         let result = crate::_14_scan_loop::run_scan_loop(
-            store.clone(),
+            shared_result_store.clone(),
             initial_config,
             crate::_14_scan_loop::DEFAULT_DEPTH,
             |config, shared_store| {
-                let mut pipe_diags: Vec<Box<dyn Diagnostic>> = Vec::new();
+                let exprs: Vec<CursorExpr> = pipelines
+                    .iter()
+                    .cloned()
+                    .map(|(n, p)| CursorExpr { name: Some(n), pipeline: p })
+                    .collect();
+
+                let inputs = InitInputs {
+                    exprs,
+                    config,
+                    store:        store.clone(),
+                    reader:       reader_dyn.clone(),
+                    writer:       writer.clone(),
+                    mutations_tx: mtx.clone(),
+                    cancel:       cancel.clone(),
+                    run_id:       RunId(1),
+                    scanner_hash: Arc::from(""),
+                    result_store: Some(shared_store.clone()),
+                };
+
+                let report = run_sync(async move {
+                    collect_run_report(init_cursors(inputs)).await
+                });
+
                 let mut local: HashMap<Arc<str>, Vec<Cursor>> = HashMap::new();
-
-                for (rule_name, pipeline) in pipelines {
-                    let captured_diags: Arc<std::sync::Mutex<Vec<Box<dyn Diagnostic>>>> =
-                        Arc::new(std::sync::Mutex::new(Vec::new()));
-                    let diags_ref = captured_diags.clone();
-
-                    let (_fresh_store, xref_seen) = OpCtx::fresh_xref_state();
-                    let _ = _fresh_store; // shared_store supersedes; keep xref_seen fresh per pass.
-
-                    let (__mtx, __mrx) = tokio::sync::mpsc::channel::<crate::mutations::MutationRequest>(32);
-                    std::mem::drop(__mrx);
-                    let ctx = OpCtx {
-                        run_id: RunId(1),
-                        op_id:  OpId(0),
-                        reader: reader.clone(),
-                        writer: writer_ref.clone(),
-                        config: config.clone(),
-                        diags:  DiagSink(Arc::new(move |d| {
-                            diags_ref.lock().unwrap().push(d);
-                        })),
-                        events: EventSink(Arc::new(|_| {})),
-                        result_store: shared_store.clone(),
-                        xref_seen,
-                        store:        std::sync::Arc::new(crate::store::NoopStore::new())
-                                      as std::sync::Arc<dyn crate::store::Store>,
-                        mutations:    __mtx,
-                        cancel:       tokio_util::sync::CancellationToken::new(),
-                        expr_name:    None,
-                        current_site: std::sync::Arc::new(crate::_0_types::ParseSite {
-                            file:       std::sync::Arc::from(std::path::Path::new("")),
-                            path:       std::sync::Arc::from(Vec::<crate::_0_types::ParseSeg>::new().into_boxed_slice()),
-                            byte_range: 0..0,
-                        }),
-                    };
-
-                    let empty: futures_core::stream::BoxStream<'static, Arc<[Cursor]>> =
-                        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
-
-                    // Collect batches, then flatten to scalar cursors at the
-                    // analysis boundary — downstream consumers (hover, completion,
-                    // successful_sites) read a `Vec<Cursor>`.
-                    let batches: Vec<Arc<[Cursor]>> =
-                        block_on(pipeline.run(empty, ctx).collect());
-                    let cursors: Vec<Cursor> = batches.into_iter()
-                        .flat_map(|b| b.iter().cloned().collect::<Vec<_>>())
-                        .collect();
-                    local.insert(rule_name.clone(), cursors);
-
-                    let mut rd = captured_diags.lock().unwrap();
-                    pipe_diags.append(&mut rd);
+                for (name, cursors) in report.cursors_by_expr {
+                    if name.as_ref().is_empty() { continue; }
+                    local.insert(name, cursors);
                 }
-
-                *cs.lock().unwrap() = local;
-                pipe_diags
+                *cursors_scratch.lock().unwrap() = local;
+                report.diags
             },
         );
 
@@ -1029,6 +1031,24 @@ impl DocSession {
                                 var:         xref.var,
                             },
                         });
+                    } else {
+                        // Plain ${IDENT} brace-metavar (sub-token capture).
+                        // Same semantics as $IDENT — hover delegates to the
+                        // binding op's hover_capture.
+                        let inner = &text[start + 2..j];
+                        let ok = !inner.is_empty()
+                            && inner.bytes().next().map(|b| b.is_ascii_alphabetic() || b == b'_').unwrap_or(false)
+                            && inner.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+                        if ok {
+                            self.span_ix.push(SpanEntry {
+                                range: (base + start)..(base + j + 1),
+                                rule:  rule.clone(),
+                                kind:  SpanKind::Capture {
+                                    op_path: op_path.clone(),
+                                    var:     Arc::<str>::from(inner),
+                                },
+                            });
+                        }
                     }
                     i = j + 1;
                     continue;

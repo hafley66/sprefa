@@ -49,6 +49,7 @@ async fn empty_exprs_yields_only_done() {
         cancel:       tokio_util::sync::CancellationToken::new(),
         run_id:       v2::RunId(1),
         scanner_hash: Arc::from(""),
+        result_store: None,
     });
 
     let first = tokio::time::timeout(Duration::from_secs(2), s.next()).await.unwrap();
@@ -77,6 +78,7 @@ async fn cancel_yields_done_without_hanging() {
         cancel:       cancel.clone(),
         run_id:       v2::RunId(1),
         scanner_hash: Arc::from(""),
+        result_store: None,
     });
 
     let ev = tokio::time::timeout(Duration::from_secs(2), s.next()).await.unwrap();

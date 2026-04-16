@@ -38,6 +38,7 @@ use crate::_2_config::Config;
 use crate::_3_reader::Reader;
 use crate::_4_writer::Writer;
 use crate::_5_op::{DiagSink, EventSink, OpCtx};
+use crate::_12_result_store::ResultStore;
 use crate::mutations::MutationRequest;
 use crate::store::{
     Batch, CaptureColumn, ExprBatch, ExprTableSpec, RowInsert, Store,
@@ -54,6 +55,10 @@ pub struct InitInputs {
     pub cancel:       tokio_util::sync::CancellationToken,
     pub run_id:       RunId,
     pub scanner_hash: Arc<str>,
+    /// Optional shared row store. `Some` when the caller is a scan-loop
+    /// driver that needs check_scan_pointers to see the same rows after
+    /// init_cursors drains. `None` falls back to a fresh store per run.
+    pub result_store: Option<Arc<ResultStore>>,
 }
 
 /// Collected outcome of a run for in-process consumers (DocSession, tests).
@@ -89,8 +94,9 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
     tokio::spawn(async move {
         let InitInputs {
             exprs, config: _config, store, reader, writer,
-            mutations_tx, cancel, run_id, scanner_hash,
+            mutations_tx, cancel, run_id, scanner_hash, result_store,
         } = inp;
+        let shared_result_store = result_store;
 
         // Register schemas for every named expr up front.
         let mut spec_by_name: HashMap<Arc<str>, ExprTableSpec> = HashMap::new();
@@ -113,7 +119,8 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
                 Arc::new(Mutex::new(Vec::new()));
             let sink_bucket = diag_bucket.clone();
 
-            let (result_store, xref_seen) = OpCtx::fresh_xref_state();
+            let (fresh_store, xref_seen) = OpCtx::fresh_xref_state();
+            let result_store = shared_result_store.clone().unwrap_or(fresh_store);
             let ctx = OpCtx {
                 run_id,
                 op_id:  OpId(0),

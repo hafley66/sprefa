@@ -60,9 +60,9 @@ pub struct CaptureColumn {
     pub scan_pointer: Option<Arc<str>>,
 }
 
-/// Placeholder `Store` impl for Phase 1. Every method panics. Consumed by
-/// the `OpCtx` stub-field pattern at every construction site so the surface
-/// compiles before the SqliteStore impl lands in Phase 2.
+/// `Store` impl that persists nothing. Every write is a no-op; every read
+/// returns empty. Used by DocSession (LSP + hover tests) where per-keystroke
+/// SQLite flushes would add I/O with no payoff. SqliteStore backs the CLI.
 pub struct NoopStore;
 
 impl NoopStore {
@@ -75,17 +75,11 @@ impl Default for NoopStore {
 
 #[async_trait]
 impl Store for NoopStore {
-    async fn init(&self) -> Result<(), StoreErr> {
-        unimplemented!("NoopStore: Phase 2");
-    }
-    async fn register_expr_schema(&self, _spec: ExprTableSpec) -> Result<(), StoreErr> {
-        unimplemented!("NoopStore: Phase 2");
-    }
-    async fn flush_batch(&self, _b: Batch) -> Result<(), StoreErr> {
-        unimplemented!("NoopStore: Phase 2");
-    }
+    async fn init(&self) -> Result<(), StoreErr> { Ok(()) }
+    async fn register_expr_schema(&self, _spec: ExprTableSpec) -> Result<(), StoreErr> { Ok(()) }
+    async fn flush_batch(&self, _b: Batch) -> Result<(), StoreErr> { Ok(()) }
     async fn query_expr(&self, _expr_name: &str, _w: Where) -> Result<Vec<Row>, StoreErr> {
-        unimplemented!("NoopStore: Phase 2");
+        Ok(Vec::new())
     }
     async fn files_scanned(
         &self,
@@ -93,16 +87,14 @@ impl Store for NoopStore {
         _rev:          &str,
         _scanner_hash: &str,
     ) -> Result<HashSet<(FilePath, ContentHash)>, StoreErr> {
-        unimplemented!("NoopStore: Phase 2");
+        Ok(HashSet::new())
     }
     async fn effect_status(&self, _e: &dyn MutationEffect) -> Result<EffectStatus, StoreErr> {
-        unimplemented!("NoopStore: Phase 2");
+        Ok(EffectStatus::Emit)
     }
     async fn record_effect(
         &self,
         _e: &dyn MutationEffect,
         _o: EffectOutcome,
-    ) -> Result<(), StoreErr> {
-        unimplemented!("NoopStore: Phase 2");
-    }
+    ) -> Result<(), StoreErr> { Ok(()) }
 }

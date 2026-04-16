@@ -11,7 +11,6 @@ pub mod _3_reader;
 pub mod _4_writer;
 pub mod _5_op;
 pub mod _6_extractor;
-pub mod _7_runner;
 pub mod _7_init_cursors;
 pub mod _8_parse;
 pub mod _9_hash;
@@ -61,7 +60,6 @@ pub use _5_op::{
 };
 pub use _12_result_store::{ResultStore, RuleResult, CaptureMap};
 pub use _6_extractor::{Extractor, ExtractorKind};
-pub use _7_runner::Runner;
 pub use _8_parse::{
     TokenClass, CaptureRef, ScanPointerRef, CrossRefRef,
     parse_capture, parse_scan_pointer, parse_cross_ref, classify_token,
