@@ -10,6 +10,8 @@
 pub mod _0_state;
 pub mod _1_workspace;
 pub mod _2_lsp_layer;
+pub mod _3_run;
+pub mod _4_transport_lsp;
 pub mod _5_transport_http;
 
 pub use _0_state::{
@@ -18,4 +20,5 @@ pub use _0_state::{
 };
 pub use _1_workspace::{WorkspaceCtx, WorkspaceRegistry};
 pub use _2_lsp_layer::{LspLayer, LspOutbound, LspSession};
+pub use _3_run::{run_pipeline, RunRequest, RunStart};
 pub use _5_transport_http::{serve_http, HttpOpts, StatusDto};

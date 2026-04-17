@@ -11,6 +11,14 @@ path = "src/bin/sprefa_server.rs"
 name = "sprefa-v2-lsp"
 path = "src/bin/sprefa_v2_lsp.rs"
 
+[[bin]]
+name = "sprefa"
+path = "src/bin/sprefa.rs"
+
+[[bin]]
+name = "sprefa-lsp"
+path = "src/bin/sprefa_lsp.rs"
+
 [dependencies]
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "net", "signal", "fs"] }
@@ -40,8 +48,10 @@ async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 chrono = { version = "0.4", features = ["clock"] }
-axum = "0.8"
-hyper = "1"
+axum = { version = "0.8", features = ["ws"] }
+tokio-tungstenite = "0.29"
+hyper = { version = "1", features = ["client", "http1"] }
+http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "service"] }
 tower = "0.5"
 tower-service = "0.3"

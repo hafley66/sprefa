@@ -230,4 +230,54 @@ v2/tests/
   json_slot_byte_range.rs    slot/byte_range narrowing
   scan_pointer_grammar.rs    $$annotation parsing
   scan_pointer_runtime.rs    demand scanning loop
+  lsp_smoke.rs               stdio LSP binary round-trip
+  smoke/                     bash HTTP/SSE smoke scripts (dogfooded vs sprefa repo)
+    _0_status.sh             GET /status
+    _1_run.sh                POST /run vs examples/g1_fns.sprf
+    _9_all.sh                driver
+```
+
+## Binaries + HTTP surface
+
+```
+bin/
+  sprefa-server         long-lived HTTP daemon. Owns tokio runtime, SQLite
+                        store, ResultStore, LspLayer, workspaces. Listens
+                        on unix socket (preferred) + TCP (escape hatch).
+                        Writes server.json (pid, transports, paths) on
+                        startup. Catches SIGINT + SIGTERM; in-band
+                        shutdown via POST /shutdown.
+
+  sprefa                thin HTTP CLI. Reads server.json, dials unix first,
+                        POSTs /run, streams SSE. Subcommands: run, status,
+                        stop.
+
+  sprefa-lsp            thin stdio ↔ /lsp WebSocket proxy. Editors spawn
+                        it like a normal stdio LSP; bytes shuttle verbatim
+                        onto the WS channel; server reassembles into one
+                        stream and feeds tower-lsp's Content-Length framer.
+
+  sprefa-v2-lsp         legacy stdio LSP (pre-daemon). Kept while
+                        lsp_smoke.rs depends on it; removed when D5 lands
+                        auto-spawn + a daemon-backed smoke.
+```
+
+HTTP routes:
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/status` | GET | version + lsp_doc_count + workspaces |
+| `/run` | POST | streamed SSE of run events (meta, cursor, expr_done, diag, done) |
+| `/lsp` | GET | WebSocket upgrade — LSP byte channel |
+| `/shutdown` | POST | trip cancel_root + return |
+
+Server state modules (`src/server/`):
+
+```
+_0_state.rs          ServerState, ServerOpts, ServerInfo, default paths
+_1_workspace.rs      WorkspaceRegistry — path hint → WorkspaceCtx cache
+_2_lsp_layer.rs      LspLayer: per-URI session, subscriber fan-out
+_3_run.rs            run_pipeline: workspace → parse → lower → init_cursors
+_4_transport_lsp.rs  /lsp WS upgrade + Backend (hover, completion, diags)
+_5_transport_http.rs axum Router, SSE encoder, unix + TCP listen loops
 ```

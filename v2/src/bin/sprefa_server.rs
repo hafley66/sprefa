@@ -113,6 +113,9 @@ async fn main() -> Result<()> {
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("sigint received; shutting down");
         }
+        _ = wait_sigterm() => {
+            tracing::info!("sigterm received; shutting down");
+        }
         _ = state.cancel_root.cancelled() => {
             tracing::info!("cancel_root tripped; shutting down");
         }
@@ -125,6 +128,15 @@ async fn main() -> Result<()> {
 // ---------------------------------------------------------------------------
 // Tracing
 // ---------------------------------------------------------------------------
+
+async fn wait_sigterm() {
+    use tokio::signal::unix::{signal, SignalKind};
+    if let Ok(mut s) = signal(SignalKind::terminate()) {
+        s.recv().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
 
 fn init_tracing(foreground: bool) {
     use tracing_subscriber::{fmt, EnvFilter};
