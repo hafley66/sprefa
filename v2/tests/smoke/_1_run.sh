@@ -16,7 +16,10 @@ SLUG="$(basename "$REPO_ROOT")"
 
 start_server
 
+t0="$(now_ms)"
 out="$("$SPREFA_CLI_BIN" run "$V2_DIR/examples/g1_fns.sprf" --root "$REPO_ROOT" 2>/dev/null)"
+t1="$(now_ms)"
+printf '  [%-24s] %5d ms\n' "sprefa run" "$((t1 - t0))" >&2
 echo "$out" | tail -20
 
 echo "$out" | grep -qE '^rule pub_fn — [0-9]+ rows$' \

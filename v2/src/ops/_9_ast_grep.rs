@@ -10,10 +10,13 @@
 //! extract the sub-token capture.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use futures_core::stream::BoxStream;
-use futures_util::stream::{self, StreamExt};
+use futures_util::stream::StreamExt;
+use futures::future::join_all;
+use rayon::prelude::*;
 
 use ast_grep_core::{AstGrep, Language, Pattern, source::StrDoc};
 use ast_grep_language::SupportLang;
@@ -268,16 +271,20 @@ impl Op for AstGrepOp {
     fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
         -> BoxStream<'static, Arc<[Cursor]>>
     {
+        // Captured per-op state. All Send+Sync — cross into rayon below.
         let lang     = self.lang;
         let pattern  = self.pattern.clone();
-        let slot_res = self.slot_regexes.clone();
-        let bound    = self.bound_captures.clone();
+        let slot_res = Arc::new(self.slot_regexes.clone());
+        let bound    = Arc::new(self.bound_captures.clone());
         let src      = self.src.clone();
         let site     = self.parse_site.clone();
         let reader   = ctx.reader.clone();
         let diags    = ctx.diags.clone();
 
-        input.flat_map(move |batch| {
+        // Per batch:
+        //   [03] async prefetch — join_all the reader.bytes() fan-out
+        //   [06] CPU work       — rayon::spawn + par_iter, oneshot back into async
+        input.then(move |batch| {
             let pattern  = pattern.clone();
             let slot_res = slot_res.clone();
             let bound    = bound.clone();
@@ -286,123 +293,213 @@ impl Op for AstGrepOp {
             let reader   = reader.clone();
             let diags    = diags.clone();
 
-            let per_batch = async move {
-                let mut out: Vec<Arc<[Cursor]>> = Vec::new();
-                for c in batch.iter() {
-                    // PATH B — content priority
-                    let (content_arc, base_offset, fp) = if let Some(content) = c.content.as_ref() {
-                        let base = c.byte_range.as_ref().map(|r| r.start).unwrap_or(0);
-                        let fp = c.fs.clone().unwrap_or_else(|| {
-                            FilePath(Arc::from(std::path::Path::new("<rebased>")))
-                        });
-                        (content.clone(), base, fp)
-                    } else if let Some(fp) = c.fs.as_ref() {
-                        // PATH C — reader fallback
-                        let mut s = reader.bytes(&c.repo, &c.rev, fp);
-                        let raw = match s.next().await {
-                            Some(b) => b,
-                            None    => {
-                                diags.0(Box::new(AstDiag::ReadFailed {
-                                    site: (*site).clone(),
-                                    path: fp.0.to_string_lossy().into_owned(),
-                                }));
-                                continue;
-                            }
-                        };
-                        (Arc::new(raw), 0usize, fp.clone())
-                    } else {
-                        continue;
-                    };
+            async move {
+                // [03] Phase 1 — async I/O fan-out. PATH B (content in cursor)
+                // is pure sync; PATH C (reader fallback) awaits. join_all drives
+                // all reads concurrently on the tokio runtime.
+                let preps: Vec<Prep> = join_all(
+                    batch.iter().cloned().map(|c| {
+                        let reader = reader.clone();
+                        async move { prep_cursor(c, &*reader).await }
+                    })
+                ).await.into_iter().flatten().collect();
 
-                    let sliced: &[u8] = match &c.byte_range {
-                        Some(r) if c.content.is_some() => &content_arc[r.clone()],
-                        _                              => &content_arc[..],
-                    };
-                    let src_str = match std::str::from_utf8(sliced) {
-                        Ok(s) => s,
-                        Err(_) => continue,
-                    };
+                // [06] Phase 2 — CPU work on rayon pool. oneshot bridges back
+                // into the async runtime. Pattern/regex/metadata are Arc'd and
+                // cheap to clone into the rayon closure.
+                let (tx, rx) = tokio::sync::oneshot::channel::<Vec<PerFile>>();
+                let site_r    = site.clone();
+                rayon::spawn(move || {
+                    let results: Vec<PerFile> = preps.into_par_iter()
+                        .map(move |p| process_one(p, lang, &pattern, &slot_res, &bound, &site_r))
+                        .collect();
+                    let _ = tx.send(results);
+                });
+                let results = rx.await.unwrap_or_default();
 
-                    let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(src_str);
-                    let mut per_cursor: Vec<Cursor> = Vec::new();
-
-                    for nm in grep.root().find_all(&*pattern) {
-                        let env = nm.get_env();
-                        let mut cap_values: HashMap<Arc<str>, Arc<str>> = HashMap::new();
-
-                        // Native $VAR / $$$VAR
-                        for name in bound.iter() {
-                            if let Some(node) = env.get_match(name.as_ref()) {
-                                cap_values.insert(name.clone(), Arc::from(node.text().as_ref()));
-                            } else {
-                                let nodes = env.get_multiple_matches(name.as_ref());
-                                if !nodes.is_empty() {
-                                    let joined: String = nodes.iter()
-                                        .map(|n| n.text().to_string())
-                                        .collect::<Vec<_>>()
-                                        .join(" ");
-                                    cap_values.insert(name.clone(), Arc::from(joined.as_str()));
-                                }
-                            }
+                // Diags re-enter the async runtime — DiagSink routes onto the
+                // per-expr collector.
+                let mut out_cursors: Vec<Cursor> = Vec::new();
+                for r in results {
+                    match r {
+                        PerFile::Matches(v) => out_cursors.extend(v),
+                        PerFile::NoMatch { path } => {
+                            (diags.0)(Box::new(AstDiag::NoMatch {
+                                site:    (*site).clone(),
+                                path,
+                                pattern: src.to_string(),
+                            }));
                         }
-
-                        // Sugar slots — extract named groups from slot text via regex.
-                        let mut slot_ok = true;
-                        for (slot_name, re) in slot_res.iter() {
-                            let node = match env.get_match(slot_name) {
-                                Some(n) => n,
-                                None    => { slot_ok = false; break; }
-                            };
-                            let text = node.text();
-                            let caps = match re.captures(text.as_ref()) {
-                                Some(c) => c,
-                                None    => { slot_ok = false; break; }
-                            };
-                            for cap_name in re.capture_names().flatten() {
-                                if let Some(v) = caps.name(cap_name) {
-                                    cap_values.insert(
-                                        Arc::from(cap_name),
-                                        Arc::from(v.as_str()),
-                                    );
-                                }
-                            }
+                        PerFile::ReadFailed { path } => {
+                            (diags.0)(Box::new(AstDiag::ReadFailed {
+                                site: (*site).clone(),
+                                path,
+                            }));
                         }
-                        if !slot_ok { continue; }
-
-                        let range = nm.range();
-                        let matched_text: Arc<str> = Arc::from(&src_str[range.clone()]);
-                        let mut c2 = c.clone();
-                        c2.content    = Some(content_arc.clone());
-                        c2.fs         = Some(fp.clone());
-                        c2.byte_range = Some(
-                            (base_offset + range.start)..(base_offset + range.end)
-                        );
-                        for (k, v) in cap_values {
-                            c2.captures.insert(k, Capture::new(v));
-                        }
-                        c2.evidence.push(OpEvidence {
-                            op_name:    "ast",
-                            parse_site: site.clone(),
-                            matched:    matched_text,
-                            capture:    None,
-                        });
-                        per_cursor.push(c2);
-                    }
-
-                    if per_cursor.is_empty() {
-                        diags.0(Box::new(AstDiag::NoMatch {
-                            site:    (*site).clone(),
-                            path:    fp.0.to_string_lossy().into_owned(),
-                            pattern: src.to_string(),
-                        }));
-                    } else {
-                        out.push(Arc::from(per_cursor.into_boxed_slice()));
                     }
                 }
-                out
-            };
-            stream::once(per_batch).flat_map(|bs| stream::iter(bs))
+
+                Arc::<[Cursor]>::from(out_cursors.into_boxed_slice())
+            }
         }).boxed()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-cursor prep + rayon worker — isolated so rayon's Send bounds are local
+// ---------------------------------------------------------------------------
+
+struct Prep {
+    cursor:       Cursor,
+    content:      Arc<bytes::Bytes>,
+    base_offset:  usize,
+    fp:           FilePath,
+    /// True when PATH C read returned nothing — signals ReadFailed downstream.
+    read_failed:  bool,
+    /// Byte range inside `content` to feed into the parser. Equal to
+    /// `cursor.byte_range` on PATH B, `0..content.len()` on PATH C.
+    slice_start:  usize,
+    slice_end:    usize,
+}
+
+enum PerFile {
+    Matches(Vec<Cursor>),
+    NoMatch   { path: String },
+    ReadFailed { path: String },
+}
+
+async fn prep_cursor(c: Cursor, reader: &dyn crate::_3_reader::Reader) -> Option<Prep> {
+    // PATH B — content already in cursor.
+    if let Some(content) = c.content.as_ref() {
+        let base = c.byte_range.as_ref().map(|r| r.start).unwrap_or(0);
+        let fp = c.fs.clone().unwrap_or_else(|| {
+            FilePath(Arc::from(Path::new("<rebased>")))
+        });
+        let (start, end) = match &c.byte_range {
+            Some(r) => (r.start, r.end),
+            None    => (0, content.len()),
+        };
+        return Some(Prep {
+            content:     content.clone(),
+            base_offset: base,
+            fp,
+            read_failed: false,
+            slice_start: start,
+            slice_end:   end,
+            cursor:      c,
+        });
+    }
+    // PATH C — reader fallback.
+    let fp = c.fs.clone()?;
+    let mut s = reader.bytes(&c.repo, &c.rev, &fp);
+    match s.next().await {
+        Some(raw) => {
+            let len = raw.len();
+            Some(Prep {
+                content:     Arc::new(raw),
+                // (raw: bytes::Bytes — see Reader::bytes)
+                base_offset: 0,
+                fp,
+                read_failed: false,
+                slice_start: 0,
+                slice_end:   len,
+                cursor:      c,
+            })
+        }
+        None => Some(Prep {
+            content:     Arc::new(bytes::Bytes::new()),
+            base_offset: 0,
+            fp,
+            read_failed: true,
+            slice_start: 0,
+            slice_end:   0,
+            cursor:      c,
+        }),
+    }
+}
+
+fn process_one(
+    p:        Prep,
+    lang:     SupportLang,
+    pattern:  &Arc<Pattern<SupportLang>>,
+    slot_res: &[(String, Regex)],
+    bound:    &[Arc<str>],
+    site:     &Arc<ParseSite>,
+) -> PerFile {
+    if p.read_failed {
+        return PerFile::ReadFailed { path: p.fp.0.to_string_lossy().into_owned() };
+    }
+    let sliced: &[u8] = &p.content[p.slice_start..p.slice_end];
+    let src_str = match std::str::from_utf8(sliced) {
+        Ok(s)  => s,
+        Err(_) => return PerFile::NoMatch { path: p.fp.0.to_string_lossy().into_owned() },
+    };
+
+    let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(src_str);
+    let mut per_cursor: Vec<Cursor> = Vec::new();
+
+    for nm in grep.root().find_all(&**pattern) {
+        let env = nm.get_env();
+        let mut cap_values: HashMap<Arc<str>, Arc<str>> = HashMap::new();
+
+        for name in bound.iter() {
+            if let Some(node) = env.get_match(name.as_ref()) {
+                cap_values.insert(name.clone(), Arc::from(node.text().as_ref()));
+            } else {
+                let nodes = env.get_multiple_matches(name.as_ref());
+                if !nodes.is_empty() {
+                    let joined: String = nodes.iter()
+                        .map(|n| n.text().to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    cap_values.insert(name.clone(), Arc::from(joined.as_str()));
+                }
+            }
+        }
+
+        let mut slot_ok = true;
+        for (slot_name, re) in slot_res.iter() {
+            let node = match env.get_match(slot_name) {
+                Some(n) => n,
+                None    => { slot_ok = false; break; }
+            };
+            let text = node.text();
+            let caps = match re.captures(text.as_ref()) {
+                Some(c) => c,
+                None    => { slot_ok = false; break; }
+            };
+            for cap_name in re.capture_names().flatten() {
+                if let Some(v) = caps.name(cap_name) {
+                    cap_values.insert(Arc::from(cap_name), Arc::from(v.as_str()));
+                }
+            }
+        }
+        if !slot_ok { continue; }
+
+        let range = nm.range();
+        let matched_text: Arc<str> = Arc::from(&src_str[range.clone()]);
+        let mut c2 = p.cursor.clone();
+        c2.content    = Some(p.content.clone());
+        c2.fs         = Some(p.fp.clone());
+        c2.byte_range = Some(
+            (p.base_offset + range.start)..(p.base_offset + range.end)
+        );
+        for (k, v) in cap_values {
+            c2.captures.insert(k, Capture::new(v));
+        }
+        c2.evidence.push(OpEvidence {
+            op_name:    "ast",
+            parse_site: site.clone(),
+            matched:    matched_text,
+            capture:    None,
+        });
+        per_cursor.push(c2);
+    }
+
+    if per_cursor.is_empty() {
+        PerFile::NoMatch { path: p.fp.0.to_string_lossy().into_owned() }
+    } else {
+        PerFile::Matches(per_cursor)
     }
 }
 

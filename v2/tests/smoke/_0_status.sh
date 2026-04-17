@@ -8,7 +8,10 @@ require_bins
 reset_state
 start_server
 
+t0="$(now_ms)"
 out="$("$SPREFA_CLI_BIN" status)"
+t1="$(now_ms)"
+printf '  [%-24s] %5d ms\n' "sprefa status" "$((t1 - t0))" >&2
 echo "status: $out"
 
 # Shape assertion.

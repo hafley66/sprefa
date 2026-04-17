@@ -57,8 +57,37 @@ tower = "0.5"
 tower-service = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rayon = "1"
 
 [dev-dependencies]
 tempfile = "3"
 
 [workspace]
+
+[profile.dev]
+opt-level = 0
+debug = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.tree-sitter]
+opt-level = 3
+[profile.dev.package.tree-sitter-rust]
+opt-level = 3
+[profile.dev.package.tree-sitter-typescript]
+opt-level = 3
+[profile.dev.package.tree-sitter-json]
+opt-level = 3
+[profile.dev.package.tree-sitter-yaml]
+opt-level = 3
+[profile.dev.package.tree-sitter-toml-ng]
+opt-level = 3
+[profile.dev.package.ast-grep-core]
+opt-level = 3
+[profile.dev.package.ast-grep-language]
+opt-level = 3
+[profile.dev.package.regex]
+opt-level = 3
+[profile.dev.package.regex-automata]
+opt-level = 3

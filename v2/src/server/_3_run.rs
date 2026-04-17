@@ -15,6 +15,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use futures_core::stream::BoxStream;
 use futures_util::{stream, StreamExt};
@@ -49,18 +50,28 @@ pub struct RunStart {
 // ---------------------------------------------------------------------------
 
 pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart {
+    let timing = std::env::var_os("SPREFA_TIMING").is_some();
+    let t_total = Instant::now();
+
     // 1. Resolve workspace.
+    let t0 = Instant::now();
     let hint: PathBuf = req.workspace_hint.clone()
         .or_else(|| req.source_path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf)))
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
     let workspace = state.workspaces.write().await.resolve(&hint);
+    if timing { eprintln!("[timing] resolve_workspace      {:>6} ms (hint={:?}, repos={}, revs={})",
+        t0.elapsed().as_millis(), hint,
+        workspace.config.repos.len(),
+        workspace.config.revs.len(),
+    ); }
 
     // 2. Parse.
     let file_path: Arc<Path> = req.source_path
         .map(|p| Arc::from(p.as_path()))
         .unwrap_or_else(|| Arc::from(Path::new("<memory>")));
 
+    let t0 = Instant::now();
     let invs = match host_parse(&req.source, file_path) {
         Ok(i) => i,
         Err(errs) => {
@@ -74,6 +85,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
             };
         }
     };
+    if timing { eprintln!("[timing] host_parse             {:>6} ms ({} invs)", t0.elapsed().as_millis(), invs.len()); }
 
     // 3. Top-level rule-name extraction — same heuristic as old CLI: first
     //    op's paren_src, trimmed. Empty → unnamed.
@@ -85,8 +97,11 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     }).collect();
 
     // 4. Lower.
+    let t0 = Instant::now();
     let pctx = ProgramCtx::new(workspace.config.clone(), state.registry.clone());
     let outcome = lower_rules(invs, pctx);
+    if timing { eprintln!("[timing] lower_rules            {:>6} ms ({} pipelines, {} diags)",
+        t0.elapsed().as_millis(), outcome.pipelines.len(), outcome.diags.len()); }
 
     if !outcome.diags.is_empty() {
         let diags: Vec<RunEvent> = outcome.diags.into_iter()
@@ -127,7 +142,34 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     // Keep the handler alive for the lifetime of the stream.
     let stream = WithHandler { inner: stream, _guard: handler_guard, _cancel: cancel };
 
-    RunStart { rule_names, stream: stream.boxed() }
+    let stream: BoxStream<'static, RunEvent> = if timing {
+        let t_stream_start = Instant::now();
+        let mut t_expr = Instant::now();
+        let mut cur_count: u64 = 0;
+        let mut expr_count: u64 = 0;
+        let mut diag_count: u64 = 0;
+        stream.inspect(move |ev| match ev {
+            RunEvent::Cursor { .. } => { cur_count += 1; }
+            RunEvent::Diag { .. }   => { diag_count += 1; }
+            RunEvent::ExprDone { expr_name } => {
+                expr_count += 1;
+                let name: &str = expr_name.as_ref().map(|s| s.as_ref()).unwrap_or("<unnamed>");
+                eprintln!("[timing]   expr {:<20}  {:>6} ms  ({} cursors so far)",
+                    name, t_expr.elapsed().as_millis(), cur_count);
+                t_expr = Instant::now();
+            }
+            RunEvent::Done => {
+                eprintln!("[timing] stream_total           {:>6} ms  ({} exprs, {} cursors, {} diags)",
+                    t_stream_start.elapsed().as_millis(), expr_count, cur_count, diag_count);
+                eprintln!("[timing] run_pipeline TOTAL     {:>6} ms", t_total.elapsed().as_millis());
+            }
+            _ => {}
+        }).boxed()
+    } else {
+        stream.boxed()
+    };
+
+    RunStart { rule_names, stream }
 }
 
 // Monotonic run-id (per process). Only used as a tag on diagnostics; not

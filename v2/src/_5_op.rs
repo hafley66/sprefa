@@ -154,7 +154,41 @@ impl Pipeline {
                 let op2 = op.clone();
                 let limit = ctx.config.runtime.xref_cartesian_limit;
                 let input = expand_xrefs(input, lop.xrefs.clone(), ps.clone(), ctx.clone(), limit);
-                op.pipe(input, ctx).map(move |batch| {
+                let piped = op.pipe(input, ctx);
+                // Optional per-op timing (SPREFA_TIMING env). Tracks wall time
+                // from first poll to stream end + batch/cursor counts.
+                let piped: BoxStream<'static, Arc<[Cursor]>> =
+                    if std::env::var_os("SPREFA_TIMING").is_some() {
+                        use std::sync::atomic::{AtomicU64, Ordering};
+                        use std::sync::Mutex;
+                        use std::time::Instant;
+                        let name_t   = name.clone();
+                        let t0       = Arc::new(Mutex::new(None::<Instant>));
+                        let batches  = Arc::new(AtomicU64::new(0));
+                        let cursors  = Arc::new(AtomicU64::new(0));
+                        let t0_i     = t0.clone();
+                        let batches_i = batches.clone();
+                        let cursors_i = cursors.clone();
+                        piped.inspect(move |b| {
+                            let mut g = t0_i.lock().unwrap();
+                            if g.is_none() { *g = Some(Instant::now()); }
+                            batches_i.fetch_add(1, Ordering::Relaxed);
+                            cursors_i.fetch_add(b.len() as u64, Ordering::Relaxed);
+                        }).chain(futures_util::stream::once(async move {
+                            let ms = t0.lock().unwrap().map(|t| t.elapsed().as_millis()).unwrap_or(0);
+                            eprintln!("[timing]     op {:<16} {:>6} ms  ({} batches, {} cursors)",
+                                name_t, ms,
+                                batches.load(Ordering::Relaxed),
+                                cursors.load(Ordering::Relaxed));
+                            Arc::<[Cursor]>::from(Vec::<Cursor>::new().into_boxed_slice())
+                        }).filter(|b| {
+                            let keep = !b.is_empty();
+                            async move { keep }
+                        })).boxed()
+                    } else {
+                        piped.boxed()
+                    };
+                piped.map(move |batch| {
                     let out: Vec<Cursor> = batch.iter().map(|c| {
                         let mut c = c.clone();
                         if collect {

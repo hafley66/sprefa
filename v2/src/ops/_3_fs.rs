@@ -15,8 +15,10 @@
 
 use std::sync::Arc;
 
+use futures::future::join_all;
 use futures_core::stream::BoxStream;
 use futures_util::stream::{self, StreamExt};
+use rayon::prelude::*;
 
 use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
@@ -215,6 +217,14 @@ impl Op for FsOp {
         // batches, independent of the upstream grouping. Empty matches emit
         // `Arc<[]>` AND the fs/no-match diagnostic, mirroring prior per-cursor
         // semantics — downstream sees the empty batch to drive aggregation.
+        //
+        // Per batch:
+        //   Phase 1 (async) — join_all reader.files() across the batch. Under the
+        //     hood GitBlobReader grabs a per-repo mutex and tree-walks; concurrent
+        //     cursors on distinct (repo, rev) pairs can proceed in parallel.
+        //   Phase 2 (rayon) — par_iter expands (cursor, files) pairs into output
+        //     cursors. Cursor clone + Arc<str> coercion + HashMap insert. oneshot
+        //     bridges back into async.
         input
             .flat_map(move |batch| {
                 let items: Vec<Cursor> = batch.iter().cloned().collect();
@@ -223,36 +233,61 @@ impl Op for FsOp {
                 let bind_name  = bind_name.clone();
                 let parse_site = parse_site.clone();
                 let diags      = diags.clone();
-                stream::iter(items)
-                    .then(move |c| {
-                        let reader     = reader.clone();
-                        let pattern    = pattern.clone();
-                        let bind_name  = bind_name.clone();
-                        let parse_site = parse_site.clone();
-                        let diags      = diags.clone();
-                        async move {
-                            let mut s = reader.files(&c.repo, &c.rev, &pattern);
-                            let files: Vec<FilePath> = s.next().await.unwrap_or_default();
-                            let out: Vec<Cursor> = files.into_iter().map(|fp| {
-                                let mut c2 = c.clone();
-                                let v: Arc<str> = Arc::from(fp.0.to_string_lossy().as_ref());
-                                c2.fs = Some(fp);
-                                if let Some(name) = bind_name.as_ref() {
-                                    c2.captures.insert(name.clone(), Capture::new(v).with_scan(Arc::from("fs"), Tri::Verified));
-                                }
-                                c2
-                            }).collect();
-                            if out.is_empty() {
-                                diags.0(Box::new(FsDiag::NoMatch {
-                                    site:    (*parse_site).clone(),
-                                    pattern: pattern.src.clone(),
-                                    repo:    c.repo.clone(),
-                                    rev:     c.rev.clone(),
-                                }));
+                let fut = async move {
+                    // Phase 1 — concurrent I/O fan-out
+                    let pairs: Vec<(Cursor, Vec<FilePath>)> = join_all(
+                        items.into_iter().map(|c| {
+                            let reader  = reader.clone();
+                            let pattern = pattern.clone();
+                            async move {
+                                let mut s = reader.files(&c.repo, &c.rev, &pattern);
+                                let files = s.next().await.unwrap_or_default();
+                                (c, files)
                             }
-                            Arc::<[Cursor]>::from(out.into_boxed_slice())
+                        })
+                    ).await;
+
+                    // Phase 2 — CPU expansion on rayon pool
+                    let bind_name_r = bind_name.clone();
+                    let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(Cursor, Vec<Cursor>)>>();
+                    rayon::spawn(move || {
+                        let out: Vec<(Cursor, Vec<Cursor>)> = pairs.into_par_iter()
+                            .map(|(c, files)| {
+                                let expanded: Vec<Cursor> = files.into_iter().map(|fp| {
+                                    let mut c2 = c.clone();
+                                    let v: Arc<str> = Arc::from(fp.0.to_string_lossy().as_ref());
+                                    c2.fs = Some(fp);
+                                    if let Some(name) = bind_name_r.as_ref() {
+                                        c2.captures.insert(
+                                            name.clone(),
+                                            Capture::new(v).with_scan(Arc::from("fs"), Tri::Verified),
+                                        );
+                                    }
+                                    c2
+                                }).collect();
+                                (c, expanded)
+                            })
+                            .collect();
+                        let _ = tx.send(out);
+                    });
+                    let results = rx.await.unwrap_or_default();
+
+                    // Diags on the async side; emit one Arc<[Cursor]> per input cursor.
+                    let batches: Vec<Arc<[Cursor]>> = results.into_iter().map(|(c, expanded)| {
+                        if expanded.is_empty() {
+                            diags.0(Box::new(FsDiag::NoMatch {
+                                site:    (*parse_site).clone(),
+                                pattern: pattern.src.clone(),
+                                repo:    c.repo.clone(),
+                                rev:     c.rev.clone(),
+                            }));
                         }
-                    })
+                        Arc::<[Cursor]>::from(expanded.into_boxed_slice())
+                    }).collect();
+
+                    stream::iter(batches)
+                };
+                stream::once(fut).flatten()
             })
             .boxed()
     }
