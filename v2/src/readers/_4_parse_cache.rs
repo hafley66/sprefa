@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
@@ -77,17 +78,77 @@ pub struct ParseCacheReader {
     /// tree. Costs a blake3 pass per first-read but orthogonal to the
     /// oid fast path.
     by_hash:   Arc<RwLock<HashMap<HashKey, Slot>>>,
+    /// Optional on-disk cache of raw blob bytes keyed by (oid, kind).
+    /// Only populated on the oid fast path — blake3 path does not
+    /// persist because content hash lookups need the bytes in hand
+    /// anyway. Layout: `$dir/<xx>/<rest>.<ext>` where `xx` = first two
+    /// hex chars of oid for directory fanout, `rest` = remaining 38
+    /// hex chars, `ext` = kind tag (`rs`, `ts`, etc). Disk miss falls
+    /// through to `inner.bytes()`; disk hit skips the blob read and the
+    /// git-repo mutex entirely.
+    ///
+    /// Opt-in via `SPREFA_PARSE_CACHE_DIR`. Default off because on small
+    /// fixtures (g4/sprefa-self) a `tokio::fs::read` costs more than a
+    /// git2 blob read from a warm packfile mmap (~400 us vs ~300 us) —
+    /// net ~20 ms regression on 200-file runs. Designed for the
+    /// workloads where it inverts:
+    ///   1. Mutex-saturated git blob reads (500-repo scan; the single
+    ///      `Mutex<Repository>` in GitBlobReader caps K=1 throughput
+    ///      until the handle pool lands)
+    ///   2. LSP reparses (same files touched 50x/day across process
+    ///      restarts; in-mem `by_oid` dies on restart, disk survives)
+    ///   3. Multi-process — concurrent CLI + LSP share one cache
+    /// Leave enabled for those; disable for small-fixture benchmarking.
+    disk_dir:  Option<Arc<Path>>,
 }
 
 impl ParseCacheReader {
     pub fn new(inner: Arc<dyn Reader + Send + Sync>) -> Self {
         Self {
             inner,
-            cache:   Arc::new(RwLock::new(HashMap::new())),
-            by_oid:  Arc::new(RwLock::new(HashMap::new())),
-            by_hash: Arc::new(RwLock::new(HashMap::new())),
+            cache:    Arc::new(RwLock::new(HashMap::new())),
+            by_oid:   Arc::new(RwLock::new(HashMap::new())),
+            by_hash:  Arc::new(RwLock::new(HashMap::new())),
+            disk_dir: None,
         }
     }
+
+    pub fn with_disk(
+        inner: Arc<dyn Reader + Send + Sync>,
+        dir:   PathBuf,
+    ) -> Self {
+        Self {
+            inner,
+            cache:    Arc::new(RwLock::new(HashMap::new())),
+            by_oid:   Arc::new(RwLock::new(HashMap::new())),
+            by_hash:  Arc::new(RwLock::new(HashMap::new())),
+            disk_dir: Some(Arc::from(dir.as_path())),
+        }
+    }
+}
+
+fn kind_ext(kind: ParserKind) -> &'static str {
+    match kind {
+        ParserKind::RsAst => "rs",
+        ParserKind::TsAst => "ts",
+        ParserKind::Json  => "json",
+        ParserKind::Toml  => "toml",
+        ParserKind::Yaml  => "yaml",
+    }
+}
+
+fn disk_path(dir: &Path, oid: &[u8; 20], kind: ParserKind) -> PathBuf {
+    let hex = hex_lower(oid);
+    let (xx, rest) = hex.split_at(2);
+    dir.join(xx).join(format!("{}.{}", rest, kind_ext(kind)))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
 }
 
 fn once<T: Send + 'static>(v: T) -> BoxStream<'static, T> {
@@ -133,12 +194,13 @@ impl Reader for ParseCacheReader {
             m.entry(key.clone()).or_insert_with(|| Arc::new(OnceCell::new())).clone()
         };
 
-        let inner   = self.inner.clone();
-        let by_oid  = self.by_oid.clone();
-        let by_hash = self.by_hash.clone();
-        let repo_s  = key.0.clone();
-        let rev_s   = key.1.clone();
-        let fp_cl   = fp.clone();
+        let inner    = self.inner.clone();
+        let by_oid   = self.by_oid.clone();
+        let by_hash  = self.by_hash.clone();
+        let disk_dir = self.disk_dir.clone();
+        let repo_s   = key.0.clone();
+        let rev_s    = key.1.clone();
+        let fp_cl    = fp.clone();
 
         let fut = async move {
             let tree = slot.get_or_init(|| async move {
@@ -156,13 +218,47 @@ impl Reader for ParseCacheReader {
                         let mut m = by_oid.write().unwrap();
                         m.entry(oid_key).or_insert_with(|| Arc::new(OnceCell::new())).clone()
                     };
-                    let inner2 = inner.clone();
-                    let repo2  = repo_s.clone();
-                    let rev2   = rev_s.clone();
-                    let fp2    = fp_cl.clone();
+                    let inner2    = inner.clone();
+                    let repo2     = repo_s.clone();
+                    let rev2      = rev_s.clone();
+                    let fp2       = fp_cl.clone();
+                    let disk_dir2 = disk_dir.clone();
                     let tree = oid_slot.get_or_init(|| async move {
-                        let mut s = inner2.bytes(&repo2, &rev2, &fp2);
-                        let bytes = s.next().await.unwrap_or_default();
+                        // Disk cache first when configured. A hit skips
+                        // the blob read (and the git-repo mutex), which
+                        // is the dominant cost on cold-run LSP reparse.
+                        let disk_path_opt = disk_dir2.as_ref()
+                            .map(|d| disk_path(d, &oid_bytes, kind));
+                        let mut from_disk = false;
+                        let bytes: Bytes = if let Some(p) = disk_path_opt.as_ref() {
+                            match tokio::fs::read(p).await {
+                                Ok(v) => { from_disk = true; Bytes::from(v) }
+                                Err(_) => {
+                                    let mut s = inner2.bytes(&repo2, &rev2, &fp2);
+                                    s.next().await.unwrap_or_default()
+                                }
+                            }
+                        } else {
+                            let mut s = inner2.bytes(&repo2, &rev2, &fp2);
+                            s.next().await.unwrap_or_default()
+                        };
+
+                        // On miss, fire-and-forget the disk write so the
+                        // next run (or LSP reparse) hits the fast path.
+                        // Swallow write failures — worst case is a future
+                        // miss, never a wrong answer.
+                        if !from_disk {
+                            if let (Some(p), true) = (disk_path_opt, !bytes.is_empty()) {
+                                let payload = bytes.clone();
+                                tokio::spawn(async move {
+                                    if let Some(parent) = p.parent() {
+                                        let _ = tokio::fs::create_dir_all(parent).await;
+                                    }
+                                    let _ = tokio::fs::write(&p, &payload).await;
+                                });
+                            }
+                        }
+
                         let bytes_for_init = bytes.clone();
                         let payload = crate::_17_parallel::rayon_one(move || {
                             parse_payload_sync(kind, &bytes)

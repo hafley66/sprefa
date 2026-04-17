@@ -118,10 +118,25 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
 
     // 6. init_cursors. Wrap the workspace reader in ParseCacheReader so
     //    ast rules sharing (repo, rev, path) dedup parse work across the
-    //    dag level. Fresh cache per run — no invalidation story yet.
-    let reader: Arc<dyn crate::_3_reader::Reader> = Arc::new(
-        crate::readers::ParseCacheReader::new(workspace.reader.clone()),
-    );
+    //    dag level. Fresh in-mem cache per run. Disk layer (if enabled
+    //    via SPREFA_PARSE_CACHE_DIR) persists blob bytes keyed by oid
+    //    across runs and LSP reparses; oid is immutable so no
+    //    invalidation story. Unset or empty → in-mem only.
+    let reader: Arc<dyn crate::_3_reader::Reader> = {
+        let disk_dir = std::env::var_os("SPREFA_PARSE_CACHE_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty());
+        match disk_dir {
+            Some(d) => Arc::new(
+                crate::readers::ParseCacheReader::with_disk(
+                    workspace.reader.clone(), d,
+                ),
+            ),
+            None => Arc::new(
+                crate::readers::ParseCacheReader::new(workspace.reader.clone()),
+            ),
+        }
+    };
     let writer = Arc::new(MemWriter::new());
     let exprs: Vec<CursorExpr> = outcome.pipelines.into_iter()
         .zip(rule_names.iter().cloned())
