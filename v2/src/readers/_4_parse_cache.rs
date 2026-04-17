@@ -57,6 +57,7 @@ pub fn record_parse(bytes_len: usize, t0: std::time::Instant) {
 type CacheKey     = (Arc<str>, Arc<str>, Arc<std::path::Path>, ParserKind);
 type Slot         = Arc<OnceCell<Arc<ParsedTree>>>;
 type HashKey      = ([u8; 32], ParserKind);
+type OidKey       = ([u8; 20], ParserKind);
 
 pub struct ParseCacheReader {
     pub inner: Arc<dyn Reader + Send + Sync>,
@@ -64,11 +65,17 @@ pub struct ParseCacheReader {
     /// computes hash; later concurrent callers await the same future.
     /// Handles the dag-level concurrent ast-op case within one run.
     cache:     Arc<RwLock<HashMap<CacheKey, Slot>>>,
-    /// Secondary cache keyed by content hash. Two different
-    /// (repo, rev, path) triples with identical bytes (common across
-    /// revs or after a merge) share one parsed tree. Coalesced via
-    /// OnceCell so only one of the concurrent first-hitters actually
-    /// parses.
+    /// Content-addressed secondary cache by git blob oid. Populated when
+    /// the underlying reader can name the blob without reading it
+    /// (GitBlobReader). Fast path: duplicate oid across revs skips bytes
+    /// read entirely. Collision-free by construction (oid is sha1 of
+    /// blob content).
+    by_oid:    Arc<RwLock<HashMap<OidKey, Slot>>>,
+    /// Hash-addressed secondary cache for readers that cannot supply an
+    /// oid (MemReader, buffered BufferOverlay). Two different
+    /// (repo, rev, path) triples with identical bytes share one parsed
+    /// tree. Costs a blake3 pass per first-read but orthogonal to the
+    /// oid fast path.
     by_hash:   Arc<RwLock<HashMap<HashKey, Slot>>>,
 }
 
@@ -77,6 +84,7 @@ impl ParseCacheReader {
         Self {
             inner,
             cache:   Arc::new(RwLock::new(HashMap::new())),
+            by_oid:  Arc::new(RwLock::new(HashMap::new())),
             by_hash: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -125,6 +133,7 @@ impl Reader for ParseCacheReader {
         };
 
         let inner   = self.inner.clone();
+        let by_oid  = self.by_oid.clone();
         let by_hash = self.by_hash.clone();
         let repo_s  = key.0.clone();
         let rev_s   = key.1.clone();
@@ -132,14 +141,41 @@ impl Reader for ParseCacheReader {
 
         let fut = async move {
             let tree = slot.get_or_init(|| async move {
-                // Read bytes once per (repo, rev, path). If another path
-                // in the run already parsed identical bytes (same blob
-                // across revs), the by-hash slot returns the cached tree
-                // without reparse.
+                // Try oid fast path first. Reader default returns None so
+                // MemReader / dirty BufferOverlay skip this without a
+                // spurious roundtrip; only GitBlobReader answers with a
+                // real oid. Duplicate blob across revs is then a pure
+                // hashmap lookup — no bytes read, no blake3.
+                let mut oid_s = inner.blob_oid(&repo_s, &rev_s, &fp_cl);
+                let oid = oid_s.next().await.flatten();
+
+                if let Some(oid_bytes) = oid {
+                    let oid_key: OidKey = (oid_bytes, kind);
+                    let oid_slot: Slot = {
+                        let mut m = by_oid.write().unwrap();
+                        m.entry(oid_key).or_insert_with(|| Arc::new(OnceCell::new())).clone()
+                    };
+                    let inner2 = inner.clone();
+                    let repo2  = repo_s.clone();
+                    let rev2   = rev_s.clone();
+                    let fp2    = fp_cl.clone();
+                    let tree = oid_slot.get_or_init(|| async move {
+                        let mut s = inner2.bytes(&repo2, &rev2, &fp2);
+                        let bytes = s.next().await.unwrap_or_default();
+                        let bytes_for_init = bytes.clone();
+                        let payload = tokio::task::spawn_blocking(move || {
+                            parse_payload_sync(kind, &bytes)
+                        }).await.unwrap_or_else(|_| Arc::new(()) as _);
+                        Arc::new(ParsedTree { kind, bytes: bytes_for_init, payload })
+                    }).await;
+                    return tree.clone();
+                }
+
+                // Fallback: no oid available. Read bytes, hash, dedup by
+                // content hash. Covers MemReader and dirty buffers.
                 let mut s = inner.bytes(&repo_s, &rev_s, &fp_cl);
                 let bytes = s.next().await.unwrap_or_default();
 
-                // blake3 of bytes — ~GB/s, cheaper than even a tiny parse.
                 let hash_bytes: [u8; 32] = blake3::hash(&bytes).into();
                 let hash_key: HashKey = (hash_bytes, kind);
 
@@ -162,6 +198,10 @@ impl Reader for ParseCacheReader {
         };
         Box::pin(stream::once(fut))
     }
+
+    fn blob_oid(&self, repo: &str, rev: &str, fp: &FilePath)
+        -> BoxStream<'static, Option<[u8; 20]>>
+    { self.inner.blob_oid(repo, rev, fp) }
 
     // ----------------------------- forwards -------------------------------
 

@@ -161,6 +161,28 @@ impl Reader for GitBlobReader {
         once_val(result)
     }
 
+    fn blob_oid(&self, repo: &str, rev: &str, fs: &FilePath)
+        -> BoxStream<'static, Option<[u8; 20]>>
+    {
+        let Some(repo_arc) = self.open_repo(repo) else {
+            return once_val(None);
+        };
+        let rel = fs.0.to_string_lossy().into_owned();
+        let result = {
+            let guard = repo_arc.lock().unwrap();
+            (|| -> Option<[u8; 20]> {
+                let oid = self.tree_oid(repo, rev, &guard).ok()?;
+                let tree = guard.find_tree(oid).ok()?;
+                let entry = tree.get_path(Path::new(&rel)).ok()?;
+                let id = entry.id();
+                let mut out = [0u8; 20];
+                out.copy_from_slice(id.as_bytes());
+                Some(out)
+            })()
+        };
+        once_val(result)
+    }
+
     fn repos(&self) -> BoxStream<'static, Vec<Arc<str>>> {
         once_val(self.locator.repos())
     }

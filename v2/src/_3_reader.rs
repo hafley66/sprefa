@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
+use futures_util::stream;
 
 use crate::_0_types::{FileId, FilePath};
 use crate::_16_pattern::CompiledPattern;
@@ -61,6 +62,16 @@ pub trait Reader: Send + Sync {
 
     fn bytes_range(&self, repo: &str, rev: &str, fs: &FilePath, range: Range<usize>)
         -> BoxStream<'static, Bytes>;
+
+    /// Content-addressed identity for `(repo, rev, fs)`. `Some(oid)` means
+    /// the reader can name the blob without reading it; the parse cache
+    /// uses this to skip bytes+hash for duplicates across revs. `None` is
+    /// the default and makes callers fall back to bytes+hash. Readers that
+    /// cannot answer (dirty buffer, in-memory, worktree overlay) return
+    /// `None` so the fallback path stays correct.
+    fn blob_oid(&self, _repo: &str, _rev: &str, _fs: &FilePath)
+        -> BoxStream<'static, Option<[u8; 20]>>
+    { Box::pin(stream::once(async { None })) }
 
     fn parsed(&self, repo: &str, rev: &str, fs: &FilePath, kind: ParserKind)
         -> BoxStream<'static, Arc<ParsedTree>>;

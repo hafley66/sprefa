@@ -134,6 +134,24 @@ impl Reader for BufferOverlay {
         self.inner.parsed(repo, rev, fp, kind)
     }
 
+    fn blob_oid(&self, repo: &str, rev: &str, fp: &FilePath)
+        -> BoxStream<'static, Option<[u8; 20]>>
+    {
+        // Dirty buffer shadows the blob; the git oid no longer names the
+        // actual content. Force the parse cache onto its bytes+hash path
+        // by returning None while buffered, else delegate.
+        let path_str = fp.0.to_string_lossy();
+        let key = BufferKey {
+            repo: Arc::from(repo),
+            rev:  Arc::from(rev),
+            path: Arc::from(path_str.as_ref()),
+        };
+        if self.buffers.read().unwrap().contains_key(&key) {
+            return once(None);
+        }
+        self.inner.blob_oid(repo, rev, fp)
+    }
+
     fn repos(&self) -> BoxStream<'static, Vec<Arc<str>>> {
         self.inner.repos()
     }
