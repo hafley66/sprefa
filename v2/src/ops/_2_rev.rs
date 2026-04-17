@@ -62,6 +62,12 @@ impl Operator for RevFactory {
             TokenClass::Literal     => {
                 let pat = CompiledPattern::compile(arg)
                     .map_err(|_| vec![bad_arg(&inv.parse_site)])?;
+                if matches!(pat.src.as_ref(), "*" | "**" | "**/*" | "*/*") {
+                    return Err(vec![Box::new(RevDiag::UnboundedWildcard {
+                        site:    (*inv.parse_site).clone(),
+                        pattern: pat.src.clone(),
+                    }) as Box<dyn Diagnostic>]);
+                }
                 RevMode::Filter(Arc::new(pat))
             }
             _ => return Err(vec![bad_arg(&inv.parse_site)]),
@@ -160,22 +166,25 @@ impl Op for RevOp {
 
 #[derive(Debug)]
 enum RevDiag {
-    MissingArg { site: ParseSite },
-    BadArg     { site: ParseSite, got: Arc<str> },
+    MissingArg         { site: ParseSite },
+    BadArg             { site: ParseSite, got: Arc<str> },
+    UnboundedWildcard  { site: ParseSite, pattern: Arc<str> },
 }
 
 impl Diagnostic for RevDiag {
     fn code(&self) -> &str {
         match self {
-            RevDiag::MissingArg { .. } => "rev/missing-arg",
-            RevDiag::BadArg     { .. } => "rev/bad-arg",
+            RevDiag::MissingArg        { .. } => "rev/missing-arg",
+            RevDiag::BadArg            { .. } => "rev/bad-arg",
+            RevDiag::UnboundedWildcard { .. } => "rev/unbounded-wildcard",
         }
     }
     fn severity(&self) -> crate::_0_types::Severity { crate::_0_types::Severity::Error }
     fn primary(&self) -> &ParseSite {
         match self {
-            RevDiag::MissingArg { site }    => site,
-            RevDiag::BadArg     { site, .. } => site,
+            RevDiag::MissingArg        { site }    => site,
+            RevDiag::BadArg            { site, .. } => site,
+            RevDiag::UnboundedWildcard { site, .. } => site,
         }
     }
     fn render(&self, out: &mut dyn Renderer) {
@@ -188,6 +197,16 @@ impl Diagnostic for RevDiag {
             RevDiag::BadArg { site, got } => {
                 out.header(self.code(), self.severity(),
                     &format!("rev argument `{got}` is not a glob or capture"));
+                out.primary(site);
+            }
+            RevDiag::UnboundedWildcard { site, pattern } => {
+                out.header(self.code(), self.severity(),
+                    &format!(
+                        "rev pattern `{pattern}` matches every rev unconditionally. \
+Each rev materializes a git worktree on first query. Narrow with a prefix/suffix \
+so the set is bounded:\n    rev(v1.*)      # tags starting with v1.\n    \
+rev(*-stable)  # tags ending in -stable\n    rev(main)      # literal"
+                    ));
                 out.primary(site);
             }
         }
@@ -244,17 +263,37 @@ mod tests {
     }
 
     #[test]
-    fn star_glob_parses_as_filter() {
+    fn prefixed_wildcard_parses_as_filter() {
         let inv = OpInvocation {
             name:       Arc::from("rev"),
             brackets:   vec![],
-            paren_src:  Some(ParenSlot { src: Arc::from("*"), byte_range: 0..1 }),
+            paren_src:  Some(ParenSlot { src: Arc::from("v1.*"), byte_range: 0..4 }),
             brace_src:  None,
             parse_site: dummy_site(),
             crossrefs:  vec![],
         };
         let result = RevFactory.parse(&inv, &mut dummy_pctx());
-        assert!(result.is_ok(), "expected rev(*) to parse (wildcard is legal)");
+        assert!(result.is_ok(), "expected rev(v1.*) to parse — bounded prefix wildcard");
+    }
+
+    #[test]
+    fn unbounded_wildcard_emits_diag_and_errors() {
+        for bare in &["*", "**", "**/*", "*/*"] {
+            let inv = OpInvocation {
+                name:       Arc::from("rev"),
+                brackets:   vec![],
+                paren_src:  Some(ParenSlot { src: Arc::from(*bare), byte_range: 0..bare.len() }),
+                brace_src:  None,
+                parse_site: dummy_site(),
+                crossrefs:  vec![],
+            };
+            let result = RevFactory.parse(&inv, &mut dummy_pctx());
+            assert!(result.is_err(), "expected rev({bare}) to be rejected as unbounded");
+            let diags = match result { Err(d) => d, Ok(_) => unreachable!() };
+            assert_eq!(diags.len(), 1, "expected exactly one diag for `{bare}`");
+            assert_eq!(diags[0].code(), "rev/unbounded-wildcard",
+                "wrong diag code for pattern `{bare}`");
+        }
     }
 
     // -----------------------------------------------------------------------

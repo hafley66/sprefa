@@ -38,6 +38,7 @@ pub enum Segment {
 /// - `re:` prefix -> Regex
 /// - contains `$` -> SegmentCapture
 /// - otherwise -> Glob (pipe `|` splits into multiple globs)
+#[derive(Clone)]
 pub enum PatternMatcher {
     Glob(GlobMatcher),
     Regex(Regex),
@@ -177,6 +178,7 @@ pub fn compile_pattern(pattern: &str) -> anyhow::Result<Vec<PatternMatcher>> {
 ///
 /// `is_match` succeeds when *any* compiled matcher matches — this is how
 /// `|` alternation falls out of `compile_pattern`.
+#[derive(Clone)]
 pub struct CompiledPattern {
     pub src:      Arc<str>,
     pub matchers: Vec<PatternMatcher>,
