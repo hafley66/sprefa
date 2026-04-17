@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "sprefa-v2"
-path = "src/bin/sprefa_v2.rs"
+name = "sprefa-server"
+path = "src/bin/sprefa_server.rs"
 
 [[bin]]
 name = "sprefa-v2-lsp"
@@ -13,7 +13,7 @@ path = "src/bin/sprefa_v2_lsp.rs"
 
 [dependencies]
 tower-lsp = "0.20"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "net", "signal", "fs"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 libsqlite3-sys = "0.30"
 blake3 = "1"
@@ -40,6 +40,13 @@ async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 chrono = { version = "0.4", features = ["clock"] }
+axum = "0.8"
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "service"] }
+tower = "0.5"
+tower-service = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"

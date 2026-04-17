@@ -1,1 +1,1 @@
-20260416.4.phase2-cli-rewire-golden-walk-daemon-shape.md
+20260416.7.daemon-collapse-d1-d2-landed.md

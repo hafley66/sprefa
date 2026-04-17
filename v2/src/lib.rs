@@ -33,6 +33,7 @@ pub mod position;
 pub mod _task_guard;
 pub mod store;
 pub mod mutations;
+pub mod server;
 
 pub use readers::{MemReader, CheckoutLocator, ConfigLocator, InMemoryLocator, GitBlobReader};
 pub use writers::MemWriter;
