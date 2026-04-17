@@ -177,6 +177,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         let mut cur_count: u64 = 0;
         let mut expr_count: u64 = 0;
         let mut diag_count: u64 = 0;
+        let intern_for_timing = workspace.intern.clone();
         stream.inspect(move |ev| match ev {
             RunEvent::Cursor { .. } => { cur_count += 1; }
             RunEvent::Diag { .. }   => { diag_count += 1; }
@@ -193,6 +194,11 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 let p_avg_us = if pn > 0 { pns / pn / 1_000 } else { 0 };
                 eprintln!("[timing] parses                {:>6} ms  ({} files, avg {} us/parse, {} KB)",
                     pms, pn, p_avg_us, pb / 1024);
+                let (ih, im, iu) = intern_for_timing.stats_snapshot();
+                let total_calls = ih + im;
+                let hit_pct = if total_calls > 0 { ih * 100 / total_calls } else { 0 };
+                eprintln!("[timing] intern               {} calls, {} hits ({} %), {} unique",
+                    total_calls, ih, hit_pct, iu);
                 eprintln!("[timing] stream_total           {:>6} ms  ({} exprs, {} cursors, {} diags)",
                     t_stream_start.elapsed().as_millis(), expr_count, cur_count, diag_count);
                 eprintln!("[timing] run_pipeline TOTAL     {:>6} ms", t_total.elapsed().as_millis());
