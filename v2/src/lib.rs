@@ -22,6 +22,7 @@ pub mod _14_scan_loop;
 pub mod _15_pipeline_rewrite;
 pub mod _16_pattern;
 pub mod _17_parallel;
+pub mod _18_str_intern;
 pub mod path_expr;
 pub use _16_pattern::{CompiledPattern, PatternMatcher, Segment, compile_pattern, compile_patterns};
 

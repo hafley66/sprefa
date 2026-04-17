@@ -129,11 +129,16 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         match disk_dir {
             Some(d) => Arc::new(
                 crate::readers::ParseCacheReader::with_disk(
-                    workspace.reader.clone(), d,
+                    workspace.reader.clone(),
+                    workspace.intern.clone(),
+                    d,
                 ),
             ),
             None => Arc::new(
-                crate::readers::ParseCacheReader::new(workspace.reader.clone()),
+                crate::readers::ParseCacheReader::new(
+                    workspace.reader.clone(),
+                    workspace.intern.clone(),
+                ),
             ),
         }
     };

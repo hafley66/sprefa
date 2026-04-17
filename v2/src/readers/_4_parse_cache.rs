@@ -100,22 +100,30 @@ pub struct ParseCacheReader {
     ///   3. Multi-process — concurrent CLI + LSP share one cache
     /// Leave enabled for those; disable for small-fixture benchmarking.
     disk_dir:  Option<Arc<Path>>,
+    /// Shared interner — used to build cache keys without allocating a
+    /// fresh `Arc<str>` per `parsed()` call.
+    intern:    Arc<crate::_18_str_intern::StrInterner>,
 }
 
 impl ParseCacheReader {
-    pub fn new(inner: Arc<dyn Reader + Send + Sync>) -> Self {
+    pub fn new(
+        inner:  Arc<dyn Reader + Send + Sync>,
+        intern: Arc<crate::_18_str_intern::StrInterner>,
+    ) -> Self {
         Self {
             inner,
             cache:    Arc::new(RwLock::new(HashMap::new())),
             by_oid:   Arc::new(RwLock::new(HashMap::new())),
             by_hash:  Arc::new(RwLock::new(HashMap::new())),
             disk_dir: None,
+            intern,
         }
     }
 
     pub fn with_disk(
-        inner: Arc<dyn Reader + Send + Sync>,
-        dir:   PathBuf,
+        inner:  Arc<dyn Reader + Send + Sync>,
+        intern: Arc<crate::_18_str_intern::StrInterner>,
+        dir:    PathBuf,
     ) -> Self {
         Self {
             inner,
@@ -123,6 +131,7 @@ impl ParseCacheReader {
             by_oid:   Arc::new(RwLock::new(HashMap::new())),
             by_hash:  Arc::new(RwLock::new(HashMap::new())),
             disk_dir: Some(Arc::from(dir.as_path())),
+            intern,
         }
     }
 }
@@ -182,8 +191,8 @@ impl Reader for ParseCacheReader {
         -> BoxStream<'static, Arc<ParsedTree>>
     {
         let key: CacheKey = (
-            Arc::from(repo),
-            Arc::from(rev),
+            self.intern.get(repo),
+            self.intern.get(rev),
             fp.0.clone(),
             kind,
         );

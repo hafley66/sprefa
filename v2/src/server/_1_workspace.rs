@@ -22,6 +22,11 @@ pub struct WorkspaceCtx {
     pub config:  Arc<Config>,
     pub locator: Arc<dyn CheckoutLocator>,
     pub reader:  Arc<BufferOverlay>,
+    /// Per-workspace string interner. Readers and ops look up repo /
+    /// rev / path strings here; repeat lookups return the same
+    /// `Arc<str>` so cursor clones only bump refcounts. Scoped to
+    /// workspace reload; drops with `WorkspaceCtx`.
+    pub intern:  Arc<crate::_18_str_intern::StrInterner>,
 }
 
 impl WorkspaceCtx {
@@ -123,7 +128,8 @@ fn build_workspace_ctx(root: &Path) -> Arc<WorkspaceCtx> {
             let cfg = make_config_from_locator(&*loc_arc);
             let inner: Arc<dyn Reader + Send + Sync> =
                 Arc::new(GitBlobReader::new(loc_arc.clone(), cfg.clone()));
-            let overlay = Arc::new(BufferOverlay::new(inner));
+            let intern = Arc::new(crate::_18_str_intern::StrInterner::new());
+            let overlay = Arc::new(BufferOverlay::with_intern(inner, intern.clone()));
             let actual_root: Arc<Path> = loc_arc
                 .repos()
                 .first()
@@ -135,6 +141,7 @@ fn build_workspace_ctx(root: &Path) -> Arc<WorkspaceCtx> {
                 config:  cfg,
                 locator: loc_arc,
                 reader:  overlay,
+                intern,
             });
         }
     }
@@ -151,19 +158,22 @@ fn build_workspace_ctx(root: &Path) -> Arc<WorkspaceCtx> {
         let cfg = make_config_from_locator(&*loc_arc);
         let inner: Arc<dyn Reader + Send + Sync> =
             Arc::new(GitBlobReader::new(loc_arc.clone(), cfg.clone()));
-        let overlay = Arc::new(BufferOverlay::new(inner));
+        let intern = Arc::new(crate::_18_str_intern::StrInterner::new());
+        let overlay = Arc::new(BufferOverlay::with_intern(inner, intern.clone()));
         return Arc::new(WorkspaceCtx {
             root:    Arc::from(git_root.as_path()),
             config:  cfg,
             locator: loc_arc,
             reader:  overlay,
+            intern,
         });
     }
 
     // Branch 3 — fallback
     let cfg = empty_config();
     let inner: Arc<dyn Reader + Send + Sync> = Arc::new(MemReader::new(cfg.clone()));
-    let overlay = Arc::new(BufferOverlay::new(inner));
+    let intern = Arc::new(crate::_18_str_intern::StrInterner::new());
+    let overlay = Arc::new(BufferOverlay::with_intern(inner, intern.clone()));
     // Empty locator; any Op that needs one will short-circuit on the empty repos list.
     let loc: Arc<dyn CheckoutLocator> = Arc::new(InMemoryLocator::new());
     Arc::new(WorkspaceCtx {
@@ -171,6 +181,7 @@ fn build_workspace_ctx(root: &Path) -> Arc<WorkspaceCtx> {
         config:  cfg,
         locator: loc,
         reader:  overlay,
+        intern,
     })
 }
 

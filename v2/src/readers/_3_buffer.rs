@@ -35,13 +35,28 @@ pub struct BufferKey {
 pub struct BufferOverlay {
     pub inner:   Arc<dyn Reader + Send + Sync>,
     pub buffers: Arc<RwLock<HashMap<BufferKey, Arc<Bytes>>>>,
+    pub intern:  Arc<crate::_18_str_intern::StrInterner>,
 }
 
 impl BufferOverlay {
+    /// Default constructor — self-owns a fresh interner. Use for tests
+    /// and one-off reader stacks. Workspace builds should prefer
+    /// `with_intern` to share the workspace-level table.
     pub fn new(inner: Arc<dyn Reader + Send + Sync>) -> Self {
+        Self::with_intern(
+            inner,
+            Arc::new(crate::_18_str_intern::StrInterner::new()),
+        )
+    }
+
+    pub fn with_intern(
+        inner:  Arc<dyn Reader + Send + Sync>,
+        intern: Arc<crate::_18_str_intern::StrInterner>,
+    ) -> Self {
         Self {
             inner,
             buffers: Arc::new(RwLock::new(HashMap::new())),
+            intern,
         }
     }
 
@@ -93,9 +108,9 @@ impl Reader for BufferOverlay {
     fn bytes(&self, repo: &str, rev: &str, fp: &FilePath) -> BoxStream<'static, Bytes> {
         let path_str = fp.0.to_string_lossy();
         let key = BufferKey {
-            repo: Arc::from(repo),
-            rev:  Arc::from(rev),
-            path: Arc::from(path_str.as_ref()),
+            repo: self.intern.get(repo),
+            rev:  self.intern.get(rev),
+            path: self.intern.get(path_str.as_ref()),
         };
         if let Some(arc_bytes) = self.buffers.read().unwrap().get(&key).cloned() {
             return once((*arc_bytes).clone());
@@ -112,9 +127,9 @@ impl Reader for BufferOverlay {
     ) -> BoxStream<'static, Bytes> {
         let path_str = fp.0.to_string_lossy();
         let key = BufferKey {
-            repo: Arc::from(repo),
-            rev:  Arc::from(rev),
-            path: Arc::from(path_str.as_ref()),
+            repo: self.intern.get(repo),
+            rev:  self.intern.get(rev),
+            path: self.intern.get(path_str.as_ref()),
         };
         if let Some(arc_bytes) = self.buffers.read().unwrap().get(&key).cloned() {
             let sliced = arc_bytes.slice(range);
@@ -142,9 +157,9 @@ impl Reader for BufferOverlay {
         // by returning None while buffered, else delegate.
         let path_str = fp.0.to_string_lossy();
         let key = BufferKey {
-            repo: Arc::from(repo),
-            rev:  Arc::from(rev),
-            path: Arc::from(path_str.as_ref()),
+            repo: self.intern.get(repo),
+            rev:  self.intern.get(rev),
+            path: self.intern.get(path_str.as_ref()),
         };
         if self.buffers.read().unwrap().contains_key(&key) {
             return once(None);
