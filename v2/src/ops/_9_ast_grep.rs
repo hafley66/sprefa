@@ -16,7 +16,8 @@ use std::sync::Arc;
 use futures_core::stream::BoxStream;
 use futures_util::stream::StreamExt;
 use futures::future::join_all;
-use rayon::prelude::*;
+
+use crate::_17_parallel::rayon_map;
 
 use ast_grep_core::{AstGrep, Language, Pattern, source::StrDoc};
 use ast_grep_language::SupportLang;
@@ -304,18 +305,13 @@ impl Op for AstGrepOp {
                     })
                 ).await.into_iter().flatten().collect();
 
-                // [06] Phase 2 — CPU work on rayon pool. oneshot bridges back
-                // into the async runtime. Pattern/regex/metadata are Arc'd and
-                // cheap to clone into the rayon closure.
-                let (tx, rx) = tokio::sync::oneshot::channel::<Vec<PerFile>>();
-                let site_r    = site.clone();
-                rayon::spawn(move || {
-                    let results: Vec<PerFile> = preps.into_par_iter()
-                        .map(move |p| process_one(p, lang, &pattern, &slot_res, &bound, &site_r))
-                        .collect();
-                    let _ = tx.send(results);
-                });
-                let results = rx.await.unwrap_or_default();
+                // [06] Phase 2 — CPU work on rayon pool via rayon_map helper.
+                // Pattern/regex/metadata are Arc'd and cheap to clone into the
+                // rayon closure.
+                let site_r = site.clone();
+                let results: Vec<PerFile> = rayon_map(preps, move |p| {
+                    process_one(p, lang, &pattern, &slot_res, &bound, &site_r)
+                }).await;
 
                 // Diags re-enter the async runtime — DiagSink routes onto the
                 // per-expr collector.

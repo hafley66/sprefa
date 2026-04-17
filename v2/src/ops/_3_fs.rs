@@ -18,7 +18,8 @@ use std::sync::Arc;
 use futures::future::join_all;
 use futures_core::stream::BoxStream;
 use futures_util::stream::{self, StreamExt};
-use rayon::prelude::*;
+
+use crate::_17_parallel::rayon_map;
 
 use crate::_0_types::{Capture, Cursor, FilePath, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
@@ -249,28 +250,21 @@ impl Op for FsOp {
 
                     // Phase 2 — CPU expansion on rayon pool
                     let bind_name_r = bind_name.clone();
-                    let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(Cursor, Vec<Cursor>)>>();
-                    rayon::spawn(move || {
-                        let out: Vec<(Cursor, Vec<Cursor>)> = pairs.into_par_iter()
-                            .map(|(c, files)| {
-                                let expanded: Vec<Cursor> = files.into_iter().map(|fp| {
-                                    let mut c2 = c.clone();
-                                    let v: Arc<str> = Arc::from(fp.0.to_string_lossy().as_ref());
-                                    c2.fs = Some(fp);
-                                    if let Some(name) = bind_name_r.as_ref() {
-                                        c2.captures.insert(
-                                            name.clone(),
-                                            Capture::new(v).with_scan(Arc::from("fs"), Tri::Verified),
-                                        );
-                                    }
-                                    c2
-                                }).collect();
-                                (c, expanded)
-                            })
-                            .collect();
-                        let _ = tx.send(out);
-                    });
-                    let results = rx.await.unwrap_or_default();
+                    let results: Vec<(Cursor, Vec<Cursor>)> = rayon_map(pairs, move |(c, files)| {
+                        let expanded: Vec<Cursor> = files.into_iter().map(|fp| {
+                            let mut c2 = c.clone();
+                            let v: Arc<str> = Arc::from(fp.0.to_string_lossy().as_ref());
+                            c2.fs = Some(fp);
+                            if let Some(name) = bind_name_r.as_ref() {
+                                c2.captures.insert(
+                                    name.clone(),
+                                    Capture::new(v).with_scan(Arc::from("fs"), Tri::Verified),
+                                );
+                            }
+                            c2
+                        }).collect();
+                        (c, expanded)
+                    }).await;
 
                     // Diags on the async side; emit one Arc<[Cursor]> per input cursor.
                     let batches: Vec<Arc<[Cursor]>> = results.into_iter().map(|(c, expanded)| {
