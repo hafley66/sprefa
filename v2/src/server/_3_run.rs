@@ -116,7 +116,12 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     let (mtx, mrx) = tokio::sync::mpsc::channel(64);
     let handler_guard = spawn_handler(Arc::new(AutoApprove), mrx, cancel.clone());
 
-    // 6. init_cursors.
+    // 6. init_cursors. Wrap the workspace reader in ParseCacheReader so
+    //    ast rules sharing (repo, rev, path) dedup parse work across the
+    //    dag level. Fresh cache per run — no invalidation story yet.
+    let reader: Arc<dyn crate::_3_reader::Reader> = Arc::new(
+        crate::readers::ParseCacheReader::new(workspace.reader.clone()),
+    );
     let writer = Arc::new(MemWriter::new());
     let exprs: Vec<CursorExpr> = outcome.pipelines.into_iter()
         .zip(rule_names.iter().cloned())
@@ -126,11 +131,15 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         })
         .collect();
 
+    // DAG → level indices. Unnamed/unmapped exprs join level 0.
+    let expr_levels = build_expr_levels(&exprs, &outcome.pctx.rules);
+
     let stream = init_cursors(InitInputs {
         exprs,
+        expr_levels: Some(expr_levels),
         config:       workspace.config.clone(),
         store:        state.store.clone(),
-        reader:       workspace.reader.clone(),
+        reader,
         writer,
         mutations_tx: mtx,
         cancel:       cancel.clone(),
@@ -159,6 +168,11 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 t_expr = Instant::now();
             }
             RunEvent::Done => {
+                let (pn, pns, pb) = crate::readers::_4_parse_cache::parse_stats_snapshot();
+                let pms = pns / 1_000_000;
+                let p_avg_us = if pn > 0 { pns / pn / 1_000 } else { 0 };
+                eprintln!("[timing] parses                {:>6} ms  ({} files, avg {} us/parse, {} KB)",
+                    pms, pn, p_avg_us, pb / 1024);
                 eprintln!("[timing] stream_total           {:>6} ms  ({} exprs, {} cursors, {} diags)",
                     t_stream_start.elapsed().as_millis(), expr_count, cur_count, diag_count);
                 eprintln!("[timing] run_pipeline TOTAL     {:>6} ms", t_total.elapsed().as_millis());
@@ -170,6 +184,58 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     };
 
     RunStart { rule_names, stream }
+}
+
+// ---------------------------------------------------------------------------
+// Expr DAG levels
+// ---------------------------------------------------------------------------
+
+/// Build `Vec<Vec<usize>>` expr-index level groups from the rule DAG.
+///
+/// - Named expr indices follow `RuleDag::Ordered.levels`.
+/// - Unnamed/unmapped exprs fold into level 0 (no deps to satisfy).
+/// - On cycle we fall back to one-per-level (sequential) so the cycle
+///   diagnostic surfaced by analysis.rs is the only visible signal.
+fn build_expr_levels(
+    exprs: &[CursorExpr],
+    rules: &std::collections::HashMap<Arc<str>, crate::_5_op::RuleHandle>,
+) -> Vec<Vec<usize>> {
+    use crate::_11_dag;
+
+    let name_to_idx: std::collections::HashMap<Arc<str>, usize> = exprs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| e.name.clone().map(|n| (n, i)))
+        .collect();
+
+    match _11_dag::build(rules) {
+        _11_dag::RuleDag::Cycle { .. } => {
+            (0..exprs.len()).map(|i| vec![i]).collect()
+        }
+        _11_dag::RuleDag::Ordered { mut levels } => {
+            let mut out: Vec<Vec<usize>> = levels
+                .drain(..)
+                .map(|names| {
+                    names.into_iter()
+                        .filter_map(|n| name_to_idx.get(&n).copied())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+
+            // Fold unmapped exprs (unnamed or not in rules map) into level 0.
+            let placed: std::collections::HashSet<usize> =
+                out.iter().flat_map(|l| l.iter().copied()).collect();
+            let unplaced: Vec<usize> = (0..exprs.len())
+                .filter(|i| !placed.contains(i))
+                .collect();
+            if !unplaced.is_empty() {
+                if out.is_empty() { out.push(Vec::new()); }
+                out[0].extend(unplaced);
+            }
+            out.retain(|l| !l.is_empty());
+            out
+        }
+    }
 }
 
 // Monotonic run-id (per process). Only used as a tag on diagnostics; not

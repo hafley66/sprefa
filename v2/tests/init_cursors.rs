@@ -41,6 +41,7 @@ async fn empty_exprs_yields_only_done() {
 
     let mut s = init_cursors(InitInputs {
         exprs:        vec![],
+        expr_levels:  None,
         config:       cfg,
         store:        store.clone(),
         reader,
@@ -70,6 +71,7 @@ async fn cancel_yields_done_without_hanging() {
 
     let mut s = init_cursors(InitInputs {
         exprs:        vec![],
+        expr_levels:  None,
         config:       cfg,
         store:        store.clone(),
         reader,

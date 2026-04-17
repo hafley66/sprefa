@@ -182,7 +182,7 @@ impl Store for SqliteStore {
         let specs = self.specs.read().await;
         let mut tx = self.pool.begin().await.map_err(|e| StoreErr::Sql(e.to_string()))?;
 
-        // 1. Intern strings (scan every capture value).
+        // ---------- 1. Strings: bulk INSERT OR IGNORE + one SELECT.
         let mut strings_to_intern: HashSet<Arc<str>> = HashSet::new();
         for eb in &b.per_expr {
             for row in &eb.rows {
@@ -192,119 +192,184 @@ impl Store for SqliteStore {
             }
         }
         let mut string_ids: HashMap<Arc<str>, i64> = HashMap::new();
-        for s in &strings_to_intern {
-            let norm = super::_4_udfs::normalize(s);
-            sqlx::query(
-                "INSERT OR IGNORE INTO strings (value, norm, norm2) VALUES (?, ?, NULL)",
-            )
-            .bind(s.as_ref())
-            .bind(&norm)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| StoreErr::Sql(e.to_string()))?;
-            let id: i64 = sqlx::query_scalar("SELECT id FROM strings WHERE value = ?")
-                .bind(s.as_ref())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| StoreErr::Sql(e.to_string()))?;
-            string_ids.insert(s.clone(), id);
-        }
+        if !strings_to_intern.is_empty() {
+            // SQLite bound-variable limit is 32766 in modern builds but 999
+            // on older ones — chunk defensively. Each string binds 2 params
+            // on insert; SELECT binds 1 per value.
+            let strings_vec: Vec<Arc<str>> = strings_to_intern.iter().cloned().collect();
+            for chunk in strings_vec.chunks(400) {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    "INSERT INTO strings (value, norm, norm2) ",
+                );
+                qb.push_values(chunk.iter(), |mut b, s| {
+                    b.push_bind(s.as_ref())
+                     .push_bind(super::_4_udfs::normalize(s))
+                     .push_bind::<Option<String>>(None);
+                });
+                qb.push(" ON CONFLICT(value) DO NOTHING");
+                qb.build().execute(&mut *tx).await
+                    .map_err(|e| StoreErr::Sql(e.to_string()))?;
 
-        // 2. Upsert repos / files.
-        let mut repo_ids: HashMap<Arc<str>, i64> = HashMap::new();
-        let mut file_ids: HashMap<(i64, FilePath), i64> = HashMap::new();
-        for eb in &b.per_expr {
-            for row in &eb.rows {
-                let repo_id = if let Some(id) = repo_ids.get(&row.repo) {
-                    *id
-                } else {
-                    sqlx::query("INSERT OR IGNORE INTO repos (name, root_path) VALUES (?, '')")
-                        .bind(row.repo.as_ref())
-                        .execute(&mut *tx)
-                        .await
-                        .map_err(|e| StoreErr::Sql(e.to_string()))?;
-                    let id: i64 = sqlx::query_scalar("SELECT id FROM repos WHERE name = ?")
-                        .bind(row.repo.as_ref())
-                        .fetch_one(&mut *tx)
-                        .await
-                        .map_err(|e| StoreErr::Sql(e.to_string()))?;
-                    repo_ids.insert(row.repo.clone(), id);
-                    id
-                };
-                let key = (repo_id, row.file.clone());
-                if !file_ids.contains_key(&key) {
-                    let path_str = row.file.0.to_string_lossy().to_string();
-                    sqlx::query(
-                        "INSERT OR IGNORE INTO files (repo_id, path, content_hash, scanner_hash) \
-                         VALUES (?, ?, ?, ?)",
-                    )
-                    .bind(repo_id)
-                    .bind(&path_str)
-                    .bind("")
-                    .bind(b.scanner_hash.as_ref())
-                    .execute(&mut *tx)
-                    .await
+                let mut qs = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    "SELECT id, value FROM strings WHERE value IN (",
+                );
+                let mut sep = qs.separated(", ");
+                for s in chunk { sep.push_bind(s.as_ref()); }
+                qs.push(")");
+                let rows = qs.build().fetch_all(&mut *tx).await
                     .map_err(|e| StoreErr::Sql(e.to_string()))?;
-                    let id: i64 = sqlx::query_scalar(
-                        "SELECT id FROM files WHERE repo_id = ? AND path = ? LIMIT 1",
-                    )
-                    .bind(repo_id)
-                    .bind(&path_str)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(|e| StoreErr::Sql(e.to_string()))?;
-                    file_ids.insert(key, id);
+                for r in rows {
+                    let id: i64 = r.try_get::<i64, _>("id").map_err(|e| StoreErr::Sql(e.to_string()))?;
+                    let val: String = r.try_get::<String, _>("value").map_err(|e| StoreErr::Sql(e.to_string()))?;
+                    // Match back to the original Arc<str> key without a
+                    // fresh allocation when we can; fallback re-interns.
+                    let key: Arc<str> = chunk.iter()
+                        .find(|s| s.as_ref() == val.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| Arc::<str>::from(val.as_str()));
+                    string_ids.insert(key, id);
                 }
             }
         }
 
-        // 3. Per-expr row insert.
+        // ---------- 2. Repos: bulk INSERT OR IGNORE + one SELECT.
+        let repo_set: HashSet<Arc<str>> = b.per_expr.iter()
+            .flat_map(|eb| eb.rows.iter().map(|r| r.repo.clone()))
+            .collect();
+        let mut repo_ids: HashMap<Arc<str>, i64> = HashMap::new();
+        if !repo_set.is_empty() {
+            let repo_vec: Vec<Arc<str>> = repo_set.iter().cloned().collect();
+            let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "INSERT INTO repos (name, root_path) ",
+            );
+            qb.push_values(repo_vec.iter(), |mut b, name| {
+                b.push_bind(name.as_ref()).push_bind("");
+            });
+            qb.push(" ON CONFLICT(name) DO NOTHING");
+            qb.build().execute(&mut *tx).await
+                .map_err(|e| StoreErr::Sql(e.to_string()))?;
+
+            let mut qs = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "SELECT id, name FROM repos WHERE name IN (",
+            );
+            let mut sep = qs.separated(", ");
+            for n in &repo_vec { sep.push_bind(n.as_ref()); }
+            qs.push(")");
+            let rows = qs.build().fetch_all(&mut *tx).await
+                .map_err(|e| StoreErr::Sql(e.to_string()))?;
+            for r in rows {
+                let id: i64 = r.try_get("id").map_err(|e| StoreErr::Sql(e.to_string()))?;
+                let name: String = r.try_get("name").map_err(|e| StoreErr::Sql(e.to_string()))?;
+                let key: Arc<str> = repo_vec.iter()
+                    .find(|s| s.as_ref() == name.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| Arc::<str>::from(name.as_str()));
+                repo_ids.insert(key, id);
+            }
+        }
+
+        // ---------- 3. Files: bulk INSERT OR IGNORE + one SELECT.
+        let mut file_set: HashSet<(i64, String)> = HashSet::new();
         for eb in &b.per_expr {
+            for row in &eb.rows {
+                if let Some(&rid) = repo_ids.get(&row.repo) {
+                    file_set.insert((rid, row.file.0.to_string_lossy().into_owned()));
+                }
+            }
+        }
+        let mut file_ids: HashMap<(i64, String), i64> = HashMap::new();
+        let scanner_hash_str: String = b.scanner_hash.as_ref().to_string();
+        if !file_set.is_empty() {
+            let file_vec: Vec<(i64, String)> = file_set.into_iter().collect();
+            for chunk in file_vec.chunks(200) {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    "INSERT INTO files (repo_id, path, content_hash, scanner_hash) ",
+                );
+                let scanner_hash_ref = scanner_hash_str.clone();
+                qb.push_values(chunk.iter(), |mut b, (rid, path)| {
+                    b.push_bind(*rid)
+                     .push_bind(path.as_str())
+                     .push_bind("")
+                     .push_bind(scanner_hash_ref.clone());
+                });
+                qb.push(" ON CONFLICT(repo_id, path, content_hash) DO NOTHING");
+                qb.build().execute(&mut *tx).await
+                    .map_err(|e| StoreErr::Sql(e.to_string()))?;
+
+                // One SELECT per chunk keyed by (repo_id, path). Use a
+                // values table join to stay in a single roundtrip.
+                let mut qs = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    "SELECT id, repo_id, path FROM files WHERE (repo_id, path) IN (",
+                );
+                let mut first = true;
+                for (rid, path) in chunk {
+                    if !first { qs.push(", "); }
+                    qs.push("(").push_bind(*rid).push(", ").push_bind(path.as_str()).push(")");
+                    first = false;
+                }
+                qs.push(")");
+                let rows = qs.build().fetch_all(&mut *tx).await
+                    .map_err(|e| StoreErr::Sql(e.to_string()))?;
+                for r in rows {
+                    let id: i64 = r.try_get("id").map_err(|e| StoreErr::Sql(e.to_string()))?;
+                    let rid: i64 = r.try_get("repo_id").map_err(|e| StoreErr::Sql(e.to_string()))?;
+                    let path: String = r.try_get("path").map_err(|e| StoreErr::Sql(e.to_string()))?;
+                    file_ids.insert((rid, path), id);
+                }
+            }
+        }
+
+        // ---------- 4. Rows: per-expr multi-VALUES INSERT, chunked.
+        for eb in &b.per_expr {
+            if eb.rows.is_empty() { continue; }
             let spec = specs.get(&eb.expr_name).ok_or(StoreErr::UnknownExpr)?;
             let table = data_table_name(spec);
             let mut col_names: Vec<String> = Vec::new();
+            let mut cols_per_row = 0usize;
             for c in &spec.captures {
                 col_names.push(format!("\"{}_ref\"", c.name));
                 col_names.push(format!("\"{}_str\"", c.name));
+                cols_per_row += 2;
                 if c.scan_pointer.is_some() {
                     col_names.push(format!("\"{}_repo_id\"", c.name));
                     col_names.push(format!("\"{}_rev_id\"",  c.name));
                     col_names.push(format!("\"{}_file_id\"", c.name));
+                    cols_per_row += 3;
                 }
             }
             col_names.push("repo_id".to_string());
             col_names.push("file_id".to_string());
             col_names.push("rev".to_string());
-            let placeholders = vec!["?"; col_names.len()].join(", ");
-            let stmt = format!(
-                "INSERT INTO \"{table}\" ({}) VALUES ({placeholders})",
-                col_names.join(", ")
-            );
+            cols_per_row += 3;
 
-            for row in &eb.rows {
-                let repo_id = *repo_ids.get(&row.repo).ok_or_else(|| StoreErr::Sql(
-                    format!("missing repo_id for {}", row.repo),
-                ))?;
-                let file_id = *file_ids.get(&(repo_id, row.file.clone())).ok_or_else(|| StoreErr::Sql(
-                    format!("missing file_id for {}", row.file.0.display()),
-                ))?;
-                let mut q = sqlx::query(&stmt);
-                for c in &spec.captures {
-                    let cap = row.captures.get(&c.name);
-                    let sid = cap.and_then(|cap| string_ids.get(&cap.value).copied());
-                    q = q.bind(Option::<i64>::None);        // _ref
-                    q = q.bind(sid);                        // _str
-                    if c.scan_pointer.is_some() {
-                        q = q.bind(Option::<i64>::None);    // _repo_id
-                        q = q.bind(Option::<String>::None); // _rev_id
-                        q = q.bind(Option::<i64>::None);    // _file_id
+            let rows_per_chunk = (30_000 / cols_per_row.max(1)).max(1).min(1000);
+            for chunk in eb.rows.chunks(rows_per_chunk) {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
+                    "INSERT INTO \"{table}\" ({}) ",
+                    col_names.join(", ")
+                ));
+                qb.push_values(chunk.iter(), |mut b, row| {
+                    let rid = repo_ids.get(&row.repo).copied().unwrap_or(0);
+                    let fid = file_ids
+                        .get(&(rid, row.file.0.to_string_lossy().into_owned()))
+                        .copied()
+                        .unwrap_or(0);
+                    for c in &spec.captures {
+                        let sid = row.captures.get(&c.name)
+                            .and_then(|cap| string_ids.get(&cap.value).copied());
+                        b.push_bind(Option::<i64>::None);        // _ref
+                        b.push_bind(sid);                        // _str
+                        if c.scan_pointer.is_some() {
+                            b.push_bind(Option::<i64>::None);    // _repo_id
+                            b.push_bind(Option::<String>::None); // _rev_id
+                            b.push_bind(Option::<i64>::None);    // _file_id
+                        }
                     }
-                }
-                q = q.bind(repo_id);
-                q = q.bind(file_id);
-                q = q.bind(row.rev.as_ref());
-                q.execute(&mut *tx)
-                    .await
+                    b.push_bind(rid);
+                    b.push_bind(fid);
+                    b.push_bind(row.rev.as_ref().to_string());
+                });
+                qb.build().execute(&mut *tx).await
                     .map_err(|e| StoreErr::Sql(e.to_string()))?;
             }
         }

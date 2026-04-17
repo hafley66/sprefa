@@ -47,6 +47,12 @@ use crate::store::{
 /// Full plumbing bundle for a single evaluator run.
 pub struct InitInputs {
     pub exprs:        Vec<CursorExpr>,
+    /// Optional dependency-ordered level assignment. `levels[i]` is a
+    /// list of indices into `exprs`. Exprs within a level run
+    /// concurrently; level N+1 starts only after level N drains. `None`
+    /// falls back to sequential (one expr per level) so callers without
+    /// DAG info keep today's semantics.
+    pub expr_levels: Option<Vec<Vec<usize>>>,
     pub config:       Arc<Config>,
     pub store:        Arc<dyn Store>,
     pub reader:       Arc<dyn Reader>,
@@ -93,7 +99,7 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
 
     tokio::spawn(async move {
         let InitInputs {
-            exprs, config: _config, store, reader, writer,
+            exprs, expr_levels, config: _config, store, reader, writer,
             mutations_tx, cancel, run_id, scanner_hash, result_store,
         } = inp;
         let shared_result_store = result_store;
@@ -110,76 +116,64 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
             }
         }
 
-        let mut all_cursors: HashMap<Arc<str>, Vec<Cursor>> = HashMap::new();
+        // Default sequential schedule when caller did not supply a DAG.
+        let levels: Vec<Vec<usize>> = expr_levels
+            .unwrap_or_else(|| (0..exprs.len()).map(|i| vec![i]).collect());
 
-        'expr_loop: for expr in exprs.into_iter() {
+        let exprs_arc: Vec<Arc<CursorExpr>> =
+            exprs.into_iter().map(Arc::new).collect();
+
+        let all_cursors: Arc<Mutex<HashMap<Arc<str>, Vec<Cursor>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        'level_loop: for level in levels {
             if cancel.is_cancelled() { break; }
 
-            let diag_bucket: Arc<Mutex<Vec<Box<dyn Diagnostic>>>> =
-                Arc::new(Mutex::new(Vec::new()));
-            let sink_bucket = diag_bucket.clone();
+            let mut handles: Vec<tokio::task::JoinHandle<()>> =
+                Vec::with_capacity(level.len());
+            for idx in level {
+                let Some(expr) = exprs_arc.get(idx).cloned() else { continue };
 
-            let (fresh_store, xref_seen) = OpCtx::fresh_xref_state();
-            let result_store = shared_result_store.clone().unwrap_or(fresh_store);
-            let ctx = OpCtx {
-                run_id,
-                op_id:  OpId(0),
-                reader: reader.clone(),
-                writer: writer.clone(),
-                config: _config.clone(),
-                diags:  DiagSink(Arc::new(move |d| {
-                    sink_bucket.lock().unwrap().push(d);
-                })),
-                events: EventSink(Arc::new(|_| {})),
-                result_store,
-                xref_seen,
-                store:        store.clone(),
-                mutations:    mutations_tx.clone(),
-                cancel:       cancel.clone(),
-                expr_name:    expr.name.clone(),
-                current_site: synthetic_site(),
-            };
+                let tx            = tx.clone();
+                let reader        = reader.clone();
+                let writer        = writer.clone();
+                let config        = _config.clone();
+                let store         = store.clone();
+                let mutations_tx  = mutations_tx.clone();
+                let cancel        = cancel.clone();
+                let shared_rs     = shared_result_store.clone();
+                let all_cursors   = all_cursors.clone();
 
-            let empty: BoxStream<'static, Arc<[Cursor]>> =
-                futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
-
-            let mut batches = expr.pipeline.run(empty, ctx);
-            let expr_name_key = expr.name.clone().unwrap_or_else(|| Arc::from(""));
-
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => break 'expr_loop,
-                    next = batches.next() => match next {
-                        Some(batch) => {
-                            for c in batch.iter() {
-                                all_cursors.entry(expr_name_key.clone())
-                                    .or_default()
-                                    .push(c.clone());
-                                if tx.send(RunEvent::Cursor {
-                                    expr_name: expr.name.clone(),
-                                    cursor:    c.clone(),
-                                }).await.is_err() { break 'expr_loop; }
-                            }
-                        }
-                        None => break,
-                    }
-                }
+                handles.push(tokio::spawn(async move {
+                    drain_one_expr(
+                        expr, tx, reader, writer, config, store,
+                        mutations_tx, cancel, run_id, shared_rs, all_cursors,
+                    ).await;
+                }));
             }
-
-            let drained: Vec<Box<dyn Diagnostic>> =
-                diag_bucket.lock().unwrap().drain(..).collect();
-            for d in drained {
-                let _ = tx.send(RunEvent::Diag { diag: d }).await;
+            for h in handles {
+                let _ = h.await;
             }
-            let _ = tx.send(RunEvent::ExprDone { expr_name: expr.name.clone() }).await;
+            if cancel.is_cancelled() { break 'level_loop; }
         }
 
         if !cancel.is_cancelled() {
-            let batch = build_batch(&all_cursors, &spec_by_name, &scanner_hash);
+            let all = all_cursors.lock().unwrap().clone();
+            let batch = build_batch(&all, &spec_by_name, &scanner_hash);
             if !batch.per_expr.is_empty() {
+                let timing = std::env::var_os("SPREFA_TIMING").is_some();
+                let t0 = std::time::Instant::now();
+                let row_count: usize = batch.per_expr.iter().map(|e| e.rows.len()).sum();
                 if let Err(e) = store.flush_batch(batch).await {
                     let _ = tx.send(RunEvent::Diag { diag: Box::new(e) }).await;
+                }
+                if timing {
+                    eprintln!(
+                        "[timing] flush_batch             {:>6} ms ({} rows across {} exprs)",
+                        t0.elapsed().as_millis(),
+                        row_count,
+                        spec_by_name.len(),
+                    );
                 }
             }
         }
@@ -188,6 +182,89 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
     });
 
     Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
+}
+
+// ---------------------------------------------------------------------------
+// Per-expr drain
+// ---------------------------------------------------------------------------
+
+/// Drive one expr's pipeline to completion. Emits Cursor / Diag / ExprDone
+/// events on `tx`. Runs in its own spawned task so sibling exprs inside
+/// the same DAG level can race without blocking each other on io.
+async fn drain_one_expr(
+    expr:          Arc<CursorExpr>,
+    tx:            tokio::sync::mpsc::Sender<RunEvent>,
+    reader:        Arc<dyn Reader>,
+    writer:        Arc<dyn Writer>,
+    config:        Arc<Config>,
+    store:         Arc<dyn Store>,
+    mutations_tx:  tokio::sync::mpsc::Sender<MutationRequest>,
+    cancel:        tokio_util::sync::CancellationToken,
+    run_id:        RunId,
+    shared_rs:     Option<Arc<ResultStore>>,
+    all_cursors:   Arc<Mutex<HashMap<Arc<str>, Vec<Cursor>>>>,
+) {
+    if cancel.is_cancelled() { return; }
+
+    let diag_bucket: Arc<Mutex<Vec<Box<dyn Diagnostic>>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let sink_bucket = diag_bucket.clone();
+
+    let (fresh_store, xref_seen) = OpCtx::fresh_xref_state();
+    let result_store = shared_rs.unwrap_or(fresh_store);
+    let ctx = OpCtx {
+        run_id,
+        op_id:  OpId(0),
+        reader,
+        writer,
+        config,
+        diags: DiagSink(Arc::new(move |d| {
+            sink_bucket.lock().unwrap().push(d);
+        })),
+        events: EventSink(Arc::new(|_| {})),
+        result_store,
+        xref_seen,
+        store,
+        mutations:    mutations_tx,
+        cancel:       cancel.clone(),
+        expr_name:    expr.name.clone(),
+        current_site: synthetic_site(),
+    };
+
+    let empty: BoxStream<'static, Arc<[Cursor]>> =
+        futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
+
+    let mut batches = expr.pipeline.run(empty, ctx);
+    let expr_name_key = expr.name.clone().unwrap_or_else(|| Arc::from(""));
+
+    'drain: loop {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => break 'drain,
+            next = batches.next() => match next {
+                Some(batch) => {
+                    for c in batch.iter() {
+                        all_cursors.lock().unwrap()
+                            .entry(expr_name_key.clone())
+                            .or_default()
+                            .push(c.clone());
+                        if tx.send(RunEvent::Cursor {
+                            expr_name: expr.name.clone(),
+                            cursor:    c.clone(),
+                        }).await.is_err() { break 'drain; }
+                    }
+                }
+                None => break,
+            }
+        }
+    }
+
+    let drained: Vec<Box<dyn Diagnostic>> =
+        diag_bucket.lock().unwrap().drain(..).collect();
+    for d in drained {
+        let _ = tx.send(RunEvent::Diag { diag: d }).await;
+    }
+    let _ = tx.send(RunEvent::ExprDone { expr_name: expr.name.clone() }).await;
 }
 
 // ---------------------------------------------------------------------------

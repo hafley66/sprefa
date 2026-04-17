@@ -392,6 +392,7 @@ impl DocSession {
 
                 let inputs = InitInputs {
                     exprs,
+                    expr_levels: None,
                     config,
                     store:        store.clone(),
                     reader:       reader_dyn.clone(),

@@ -23,6 +23,9 @@ use ast_grep_core::{AstGrep, Language, Pattern, source::StrDoc};
 use ast_grep_language::SupportLang;
 use regex::Regex;
 
+use crate::_3_reader::ParserKind;
+use crate::readers::RsAstPayload;
+
 use crate::_0_types::{Capture, Cursor, FilePath, OpEvidence, ParseSite, Severity};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_5_op::{
@@ -301,7 +304,7 @@ impl Op for AstGrepOp {
                 let preps: Vec<Prep> = join_all(
                     batch.iter().cloned().map(|c| {
                         let reader = reader.clone();
-                        async move { prep_cursor(c, &*reader).await }
+                        async move { prep_cursor(c, lang, &*reader).await }
                     })
                 ).await.into_iter().flatten().collect();
 
@@ -356,6 +359,10 @@ struct Prep {
     /// `cursor.byte_range` on PATH B, `0..content.len()` on PATH C.
     slice_start:  usize,
     slice_end:    usize,
+    /// Cached full-file ast-grep tree. `Some` only on PATH C whole-file
+    /// reads via `reader.parsed()` — rayon workers skip the local parse
+    /// and `find_all` directly on the cached tree.
+    cached_grep:  Option<Arc<RsAstPayload>>,
 }
 
 enum PerFile {
@@ -364,8 +371,14 @@ enum PerFile {
     ReadFailed { path: String },
 }
 
-async fn prep_cursor(c: Cursor, reader: &dyn crate::_3_reader::Reader) -> Option<Prep> {
-    // PATH B — content already in cursor.
+async fn prep_cursor(
+    c:      Cursor,
+    lang:   SupportLang,
+    reader: &dyn crate::_3_reader::Reader,
+) -> Option<Prep> {
+    // PATH B — content already in cursor. Parse locally in rayon; the
+    // slice may be a partial view of the file and the cache keys on full
+    // files only.
     if let Some(content) = c.content.as_ref() {
         let base = c.byte_range.as_ref().map(|r| r.start).unwrap_or(0);
         let fp = c.fs.clone().unwrap_or_else(|| {
@@ -383,23 +396,32 @@ async fn prep_cursor(c: Cursor, reader: &dyn crate::_3_reader::Reader) -> Option
             slice_start: start,
             slice_end:   end,
             cursor:      c,
+            cached_grep: None,
         });
     }
-    // PATH C — reader fallback.
+    // PATH C — reader.parsed() for whole-file reads. ParseCacheReader
+    // dedups across ops in the same run; process_one skips reparse.
     let fp = c.fs.clone()?;
-    let mut s = reader.bytes(&c.repo, &c.rev, &fp);
+    let kind = lang_to_kind(lang);
+    let mut s = reader.parsed(&c.repo, &c.rev, &fp, kind);
     match s.next().await {
-        Some(raw) => {
-            let len = raw.len();
+        Some(tree) => {
+            let len = tree.bytes.len();
+            let cached: Option<Arc<RsAstPayload>> = tree
+                .payload
+                .clone()
+                .downcast::<RsAstPayload>()
+                .ok();
+            let read_failed = len == 0 && cached.is_none();
             Some(Prep {
-                content:     Arc::new(raw),
-                // (raw: bytes::Bytes — see Reader::bytes)
+                content:     Arc::new(tree.bytes.clone()),
                 base_offset: 0,
                 fp,
-                read_failed: false,
+                read_failed,
                 slice_start: 0,
                 slice_end:   len,
                 cursor:      c,
+                cached_grep: cached,
             })
         }
         None => Some(Prep {
@@ -410,7 +432,16 @@ async fn prep_cursor(c: Cursor, reader: &dyn crate::_3_reader::Reader) -> Option
             slice_start: 0,
             slice_end:   0,
             cursor:      c,
+            cached_grep: None,
         }),
+    }
+}
+
+fn lang_to_kind(lang: SupportLang) -> ParserKind {
+    match lang {
+        SupportLang::Rust       => ParserKind::RsAst,
+        SupportLang::TypeScript => ParserKind::TsAst,
+        _                       => ParserKind::RsAst, // unreachable; ast op gates on Rust/TS.
     }
 }
 
@@ -431,10 +462,24 @@ fn process_one(
         Err(_) => return PerFile::NoMatch { path: p.fp.0.to_string_lossy().into_owned() },
     };
 
-    let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(src_str);
+    // PATH C whole-file reads land here with a cached tree — find_all on
+    // it directly. PATH B (slice) always reparses locally.
+    let local_grep: Option<AstGrep<StrDoc<SupportLang>>> = if p.cached_grep.is_some() {
+        None
+    } else {
+        let t0 = std::time::Instant::now();
+        let g = lang.ast_grep(src_str);
+        crate::readers::_4_parse_cache::record_parse(src_str.len(), t0);
+        Some(g)
+    };
+    let grep_ref: &AstGrep<StrDoc<SupportLang>> = match (&p.cached_grep, &local_grep) {
+        (Some(c), _)      => c.as_ref(),
+        (None,    Some(g)) => g,
+        _ => unreachable!(),
+    };
     let mut per_cursor: Vec<Cursor> = Vec::new();
 
-    for nm in grep.root().find_all(&**pattern) {
+    for nm in grep_ref.root().find_all(&**pattern) {
         let env = nm.get_env();
         let mut cap_values: HashMap<Arc<str>, Arc<str>> = HashMap::new();
 

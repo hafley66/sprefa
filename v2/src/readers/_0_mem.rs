@@ -92,9 +92,14 @@ impl Reader for MemReader {
         -> BoxStream<'static, Bytes>
     { unimplemented!() }
 
-    fn parsed(&self, _: &str, _: &str, _: &FilePath, _: ParserKind)
+    fn parsed(&self, repo: &str, rev: &str, fp: &FilePath, kind: ParserKind)
         -> BoxStream<'static, Arc<ParsedTree>>
-    { unimplemented!() }
+    {
+        let key = (Arc::<str>::from(repo), Arc::<str>::from(rev), fp.0.clone());
+        let bytes = self.content.get(&key).cloned().unwrap_or_default();
+        let payload = crate::readers::_4_parse_cache::parse_payload_sync(kind, &bytes);
+        once(Arc::new(ParsedTree { kind, bytes, payload }))
+    }
 
     fn repos(&self) -> BoxStream<'static, Vec<Arc<str>>> {
         once(self.repos.clone())

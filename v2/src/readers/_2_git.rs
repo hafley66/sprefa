@@ -27,35 +27,53 @@ pub struct GitBlobReader {
     locator: Arc<dyn CheckoutLocator>,
     /// Lazily opened repo handles. git2::Repository is Send but not Sync;
     /// each entry is behind its own Mutex for &self method access.
-    repos:   Mutex<HashMap<Arc<str>, Arc<Mutex<git2::Repository>>>>,
+    repos:   Mutex<HashMap<String, Arc<Mutex<git2::Repository>>>>,
+    /// Tree-oid cache per (repo, rev). Without this, every bytes() call
+    /// reruns `revparse_single` + `peel_to_commit` — N-files sequential
+    /// revparses on a single repo. With it, one revparse per (repo,rev);
+    /// later calls take `find_tree(oid)` directly.
+    trees:   Mutex<HashMap<(String, String), git2::Oid>>,
     config:  Arc<Config>,
 }
 
 impl GitBlobReader {
     pub fn new(locator: Arc<dyn CheckoutLocator>, config: Arc<Config>) -> Self {
-        Self { locator, repos: Mutex::new(HashMap::new()), config }
+        Self {
+            locator,
+            repos:  Mutex::new(HashMap::new()),
+            trees:  Mutex::new(HashMap::new()),
+            config,
+        }
     }
 
     fn open_repo(&self, slug: &str) -> Option<Arc<Mutex<git2::Repository>>> {
         let mut cache = self.repos.lock().unwrap();
-        let slug_arc: Arc<str> = Arc::from(slug);
-        if let Some(r) = cache.get(&slug_arc) {
+        if let Some(r) = cache.get(slug) {
             return Some(r.clone());
         }
         let path = self.locator.locate(slug, "")?;
         let repo = git2::Repository::open(&path).ok()?;
         let entry = Arc::new(Mutex::new(repo));
-        cache.insert(slug_arc, entry.clone());
+        cache.insert(slug.to_string(), entry.clone());
         Some(entry)
     }
 
-    fn resolve_tree<'repo>(
-        repo:  &'repo git2::Repository,
-        rev:   &str,
-    ) -> Result<git2::Tree<'repo>, git2::Error> {
+    /// Tree Oid for (repo, rev). Cached after first revparse.
+    fn tree_oid(&self, repo_slug: &str, rev: &str, repo: &git2::Repository)
+        -> Result<git2::Oid, git2::Error>
+    {
+        {
+            let g = self.trees.lock().unwrap();
+            if let Some(oid) = g.get(&(repo_slug.to_string(), rev.to_string())) {
+                return Ok(*oid);
+            }
+        }
         let obj = repo.revparse_single(rev)?;
         let commit = obj.peel_to_commit()?;
-        commit.tree()
+        let oid = commit.tree_id();
+        self.trees.lock().unwrap()
+            .insert((repo_slug.to_string(), rev.to_string()), oid);
+        Ok(oid)
     }
 
     fn walk_tree(tree: &git2::Tree, repo: &git2::Repository, pattern: &CompiledPattern) -> Vec<FilePath> {
@@ -88,12 +106,14 @@ impl Reader for GitBlobReader {
         let Some(repo_arc) = self.open_repo(repo) else {
             return once_val(vec![]);
         };
-        let rev = rev.to_owned();
         let result = {
             let guard = repo_arc.lock().unwrap();
-            Self::resolve_tree(&guard, &rev)
-                .map(|tree| Self::walk_tree(&tree, &guard, pattern))
-                .unwrap_or_default()
+            match self.tree_oid(repo, rev, &guard) {
+                Ok(oid) => guard.find_tree(oid)
+                    .map(|tree| Self::walk_tree(&tree, &guard, pattern))
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            }
         };
         once_val(result)
     }
@@ -102,12 +122,12 @@ impl Reader for GitBlobReader {
         let Some(repo_arc) = self.open_repo(repo) else {
             return once_val(Bytes::new());
         };
-        let rev = rev.to_owned();
         let rel = fs.0.to_string_lossy().into_owned();
         let result = {
             let guard = repo_arc.lock().unwrap();
             (|| -> Option<Bytes> {
-                let tree = Self::resolve_tree(&guard, &rev).ok()?;
+                let oid = self.tree_oid(repo, rev, &guard).ok()?;
+                let tree = guard.find_tree(oid).ok()?;
                 let entry = tree.get_path(Path::new(&rel)).ok()?;
                 let obj = entry.to_object(&guard).ok()?;
                 let blob = obj.peel_to_blob().ok()?;
@@ -123,12 +143,12 @@ impl Reader for GitBlobReader {
         let Some(repo_arc) = self.open_repo(repo) else {
             return once_val(Bytes::new());
         };
-        let rev = rev.to_owned();
         let rel = fs.0.to_string_lossy().into_owned();
         let result = {
             let guard = repo_arc.lock().unwrap();
             (|| -> Option<Bytes> {
-                let tree = Self::resolve_tree(&guard, &rev).ok()?;
+                let oid = self.tree_oid(repo, rev, &guard).ok()?;
+                let tree = guard.find_tree(oid).ok()?;
                 let entry = tree.get_path(Path::new(&rel)).ok()?;
                 let obj = entry.to_object(&guard).ok()?;
                 let blob = obj.peel_to_blob().ok()?;
