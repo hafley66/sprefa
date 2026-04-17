@@ -24,3 +24,19 @@ where
     });
     rx.await.unwrap_or_default()
 }
+
+/// Single-item variant — dispatch one CPU unit onto the rayon pool and
+/// await the result. Used when the caller already has per-item async
+/// plumbing (e.g. OnceCell init inside ParseCacheReader) and only needs
+/// the CPU off tokio's blocking pool.
+pub async fn rayon_one<U, F>(f: F) -> Option<U>
+where
+    U: Send + 'static,
+    F: FnOnce() -> U + Send + 'static,
+{
+    let (tx, rx) = tokio::sync::oneshot::channel::<U>();
+    rayon::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.await.ok()
+}

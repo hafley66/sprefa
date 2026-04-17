@@ -95,9 +95,10 @@ fn once<T: Send + 'static>(v: T) -> BoxStream<'static, T> {
 }
 
 /// Parse raw bytes into a kind-specific payload. Runs synchronously —
-/// always called inside `spawn_blocking` so the tokio worker thread is
-/// free. Returns `()` payload for kinds outside RsAst/TsAst so the
-/// caller can still read `tree.bytes`.
+/// always called on the rayon pool via `rayon_one` so neither the tokio
+/// async worker nor the tokio blocking pool is tied up by parse CPU.
+/// Returns `()` payload for kinds outside RsAst/TsAst so the caller can
+/// still read `tree.bytes`.
 pub(crate) fn parse_payload_sync(kind: ParserKind, bytes: &Bytes)
     -> Arc<dyn std::any::Any + Send + Sync>
 {
@@ -163,9 +164,9 @@ impl Reader for ParseCacheReader {
                         let mut s = inner2.bytes(&repo2, &rev2, &fp2);
                         let bytes = s.next().await.unwrap_or_default();
                         let bytes_for_init = bytes.clone();
-                        let payload = tokio::task::spawn_blocking(move || {
+                        let payload = crate::_17_parallel::rayon_one(move || {
                             parse_payload_sync(kind, &bytes)
-                        }).await.unwrap_or_else(|_| Arc::new(()) as _);
+                        }).await.unwrap_or_else(|| Arc::new(()) as _);
                         Arc::new(ParsedTree { kind, bytes: bytes_for_init, payload })
                     }).await;
                     return tree.clone();
@@ -187,9 +188,9 @@ impl Reader for ParseCacheReader {
                 let bytes_for_init = bytes.clone();
                 let tree = hash_slot.get_or_init(|| async move {
                     let bytes_for_parse = bytes_for_init.clone();
-                    let payload = tokio::task::spawn_blocking(move || {
+                    let payload = crate::_17_parallel::rayon_one(move || {
                         parse_payload_sync(kind, &bytes_for_parse)
-                    }).await.unwrap_or_else(|_| Arc::new(()) as _);
+                    }).await.unwrap_or_else(|| Arc::new(()) as _);
                     Arc::new(ParsedTree { kind, bytes: bytes_for_init, payload })
                 }).await;
                 tree.clone()
