@@ -33,6 +33,7 @@ pub mod analysis;
 pub mod position;
 
 pub mod _task_guard;
+pub mod _telemetry;
 pub mod store;
 pub mod mutations;
 pub mod server;

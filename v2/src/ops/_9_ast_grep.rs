@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use futures_core::stream::BoxStream;
 use futures_util::stream::StreamExt;
+use tracing::Instrument;
 use futures::future::join_all;
 
 use crate::_17_parallel::rayon_map;
@@ -297,24 +298,34 @@ impl Op for AstGrepOp {
             let reader   = reader.clone();
             let diags    = diags.clone();
 
+            let batch_span = tracing::info_span!("op.ast.batch", n = batch.len());
+
             async move {
                 // [03] Phase 1 — async I/O fan-out. PATH B (content in cursor)
                 // is pure sync; PATH C (reader fallback) awaits. join_all drives
                 // all reads concurrently on the tokio runtime.
-                let preps: Vec<Prep> = join_all(
-                    batch.iter().cloned().map(|c| {
-                        let reader = reader.clone();
-                        async move { prep_cursor(c, lang, &*reader).await }
-                    })
+                let prefetch_span = tracing::info_span!("op.ast.prefetch", n = batch.len());
+                let preps: Vec<Prep> = tracing::Instrument::instrument(
+                    join_all(
+                        batch.iter().cloned().map(|c| {
+                            let reader = reader.clone();
+                            async move { prep_cursor(c, lang, &*reader).await }
+                        })
+                    ),
+                    prefetch_span,
                 ).await.into_iter().flatten().collect();
 
                 // [06] Phase 2 — CPU work on rayon pool via rayon_map helper.
                 // Pattern/regex/metadata are Arc'd and cheap to clone into the
                 // rayon closure.
+                let cpu_span = tracing::info_span!("op.ast.parse_and_match", n = preps.len());
                 let site_r = site.clone();
-                let results: Vec<PerFile> = rayon_map(preps, move |p| {
-                    process_one(p, lang, &pattern, &slot_res, &bound, &site_r)
-                }).await;
+                let results: Vec<PerFile> = tracing::Instrument::instrument(
+                    rayon_map(preps, move |p| {
+                        process_one(p, lang, &pattern, &slot_res, &bound, &site_r)
+                    }),
+                    cpu_span,
+                ).await;
 
                 // Diags re-enter the async runtime — DiagSink routes onto the
                 // per-expr collector.
@@ -339,7 +350,7 @@ impl Op for AstGrepOp {
                 }
 
                 Arc::<[Cursor]>::from(out_cursors.into_boxed_slice())
-            }
+            }.instrument(batch_span)
         }).boxed()
     }
 }
@@ -380,6 +391,7 @@ async fn prep_cursor(
     // slice may be a partial view of the file and the cache keys on full
     // files only.
     if let Some(content) = c.content.as_ref() {
+        let _s = tracing::info_span!("op.ast.prep.path_b", bytes_len = content.len()).entered();
         let base = c.byte_range.as_ref().map(|r| r.start).unwrap_or(0);
         let fp = c.fs.clone().unwrap_or_else(|| {
             FilePath(Arc::from(Path::new("<rebased>")))
@@ -404,7 +416,8 @@ async fn prep_cursor(
     let fp = c.fs.clone()?;
     let kind = lang_to_kind(lang);
     let mut s = reader.parsed(&c.repo, &c.rev, &fp, kind);
-    match s.next().await {
+    let first = Instrument::instrument(s.next(), tracing::info_span!("op.ast.prep.path_c")).await;
+    match first {
         Some(tree) => {
             let len = tree.bytes.len();
             let cached: Option<Arc<RsAstPayload>> = tree
@@ -456,10 +469,19 @@ fn process_one(
     if p.read_failed {
         return PerFile::ReadFailed { path: p.fp.0.to_string_lossy().into_owned() };
     }
+    let bytes_len = p.slice_end.saturating_sub(p.slice_start);
+    let _proc_span = tracing::info_span!(
+        "op.ast.process_one",
+        bytes_len = bytes_len,
+        cached    = p.cached_grep.is_some(),
+    ).entered();
     let sliced: &[u8] = &p.content[p.slice_start..p.slice_end];
-    let src_str = match std::str::from_utf8(sliced) {
-        Ok(s)  => s,
-        Err(_) => return PerFile::NoMatch { path: p.fp.0.to_string_lossy().into_owned() },
+    let src_str = {
+        let _s = tracing::info_span!("op.ast.utf8_check", bytes_len = bytes_len).entered();
+        match std::str::from_utf8(sliced) {
+            Ok(s)  => s,
+            Err(_) => return PerFile::NoMatch { path: p.fp.0.to_string_lossy().into_owned() },
+        }
     };
 
     // PATH C whole-file reads land here with a cached tree — find_all on
@@ -467,6 +489,7 @@ fn process_one(
     let local_grep: Option<AstGrep<StrDoc<SupportLang>>> = if p.cached_grep.is_some() {
         None
     } else {
+        let _s = tracing::info_span!("op.ast.local_parse", bytes_len = bytes_len).entered();
         let t0 = std::time::Instant::now();
         let g = lang.ast_grep(src_str);
         crate::readers::_4_parse_cache::record_parse(src_str.len(), t0);
@@ -479,7 +502,16 @@ fn process_one(
     };
     let mut per_cursor: Vec<Cursor> = Vec::new();
 
+    // Covers the whole find_all iteration + all per-match work. One span
+    // for the loop, not per-iter — patterns may match thousands of nodes
+    // in a large file and per-iter spans would dwarf the work.
+    let _match_span = tracing::info_span!(
+        "op.ast.find_all_and_build",
+        match_count = tracing::field::Empty,
+    ).entered();
+    let mut match_count: u64 = 0;
     for nm in grep_ref.root().find_all(&**pattern) {
+        match_count += 1;
         let env = nm.get_env();
         let mut cap_values: HashMap<Arc<str>, Arc<str>> = HashMap::new();
 
@@ -536,6 +568,7 @@ fn process_one(
         });
         per_cursor.push(c2);
     }
+    _match_span.record("match_count", match_count);
 
     if per_cursor.is_empty() {
         PerFile::NoMatch { path: p.fp.0.to_string_lossy().into_owned() }

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use futures::executor::block_on;
 use futures_core::stream::BoxStream;
 use futures_util::stream::{self, StreamExt};
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::{Cursor, ParseSeg, ParseSite};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
@@ -248,6 +249,7 @@ impl Op for RuleOp {
     fn pipe(&self, _input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
         -> BoxStream<'static, Arc<[Cursor]>>
     {
+        let _pipe_span = info_span!("op.rule.pipe").entered();
         // Seed: cartesian of all repos × their revs. Runner-fed input ignored;
         // $rule is a source. Later, input could narrow the seed.
         let reader = ctx.reader.clone();
@@ -320,6 +322,7 @@ impl Op for RuleOp {
 
         after_body
             .map(move |batch| {
+                let _batch_span = info_span!("op.rule.batch", n = batch.len()).entered();
                 for c in batch.iter() {
                     let row = cursor_to_row(c, &captures);
                     let _ = writer.write_rows(&spec, std::slice::from_ref(&row));

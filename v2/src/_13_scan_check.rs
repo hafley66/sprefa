@@ -87,6 +87,7 @@ fn sibling_verified(row_captures: &std::collections::HashMap<Arc<str>, Capture>,
 pub fn check_scan_pointers(store: &ResultStore, config: &Config)
     -> Vec<Box<dyn Diagnostic>>
 {
+    let _s = tracing::info_span!("scan_check.check_scan_pointers").entered();
     let mut diags: Vec<Box<dyn Diagnostic>> = Vec::new();
 
     let entries: Vec<_> = {

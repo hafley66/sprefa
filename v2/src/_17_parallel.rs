@@ -8,6 +8,7 @@
 //! tokio worker.
 
 use rayon::prelude::*;
+use tracing::{info_span, Instrument};
 
 /// Run `f` over `items` on the rayon pool, bridging back into async via a
 /// oneshot channel. Order-preserving (`into_par_iter().map().collect()`).
@@ -17,12 +18,17 @@ where
     U: Send + 'static,
     F: Fn(T) -> U + Send + Sync + 'static,
 {
-    let (tx, rx) = tokio::sync::oneshot::channel::<Vec<U>>();
-    rayon::spawn(move || {
-        let out: Vec<U> = items.into_par_iter().map(f).collect();
-        let _ = tx.send(out);
-    });
-    rx.await.unwrap_or_default()
+    let n = items.len();
+    let span = info_span!("rayon.map", n = n);
+    async move {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<U>>();
+        rayon::spawn(move || {
+            let _s = info_span!("rayon.map.pool", n = n).entered();
+            let out: Vec<U> = items.into_par_iter().map(f).collect();
+            let _ = tx.send(out);
+        });
+        rx.await.unwrap_or_default()
+    }.instrument(span).await
 }
 
 /// Single-item variant — dispatch one CPU unit onto the rayon pool and
@@ -34,9 +40,13 @@ where
     U: Send + 'static,
     F: FnOnce() -> U + Send + 'static,
 {
-    let (tx, rx) = tokio::sync::oneshot::channel::<U>();
-    rayon::spawn(move || {
-        let _ = tx.send(f());
-    });
-    rx.await.ok()
+    let span = info_span!("rayon.one");
+    async move {
+        let (tx, rx) = tokio::sync::oneshot::channel::<U>();
+        rayon::spawn(move || {
+            let _s = info_span!("rayon.one.pool").entered();
+            let _ = tx.send(f());
+        });
+        rx.await.ok()
+    }.instrument(span).await
 }

@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::stream;
+use tracing::info_span;
 
 use crate::_0_types::{FileId, RefId, RowId, StringId};
 use crate::_4_writer::{
@@ -57,6 +58,7 @@ fn qualified(spec: &RuleTableSpec) -> Arc<str> {
 
 impl Writer for MemWriter {
     fn create_rule_table(&self, spec: &RuleTableSpec) -> WResult<()> {
+        let _s = info_span!("writer.mem.create_rule_table", rule = %spec.rule).entered();
         let mut g = self.inner.lock().unwrap();
         g.tables.entry(qualified(spec))
             .or_insert_with(|| TableState { spec: spec.clone(), rows: vec![] });
@@ -64,6 +66,7 @@ impl Writer for MemWriter {
     }
 
     fn write_strings(&self, values: &[&str]) -> WResult<Vec<StringId>> {
+        let _s = info_span!("writer.mem.write_strings", n = values.len()).entered();
         let mut g = self.inner.lock().unwrap();
         let mut out = Vec::with_capacity(values.len());
         for v in values {
@@ -89,6 +92,7 @@ impl Writer for MemWriter {
     fn write_rows(&self, spec: &RuleTableSpec, rows: &[ExtractionRow])
         -> WResult<Vec<RowId>>
     {
+        let _s = info_span!("writer.mem.write_rows", rule = %spec.rule, n = rows.len()).entered();
         let mut g = self.inner.lock().unwrap();
         let qname = qualified(spec);
         let t = g.tables.entry(qname).or_insert_with(|| TableState {

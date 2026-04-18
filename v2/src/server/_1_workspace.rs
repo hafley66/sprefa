@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tracing::{info_span, Instrument};
+
 use crate::readers::{
     build_index_stack, BufferOverlay, CheckoutLocator, ConfigLocator, GitBlobReader,
     InMemoryLocator, MemReader,
@@ -50,11 +52,14 @@ pub struct WorkspaceRegistry {
 
 impl WorkspaceRegistry {
     pub async fn resolve(&mut self, hint: &Path) -> Arc<WorkspaceCtx> {
-        let root = resolve_root(hint);
+        let root = info_span!("workspace.resolve_root")
+            .in_scope(|| resolve_root(hint));
         if let Some(ws) = self.by_root.get(&root) {
             return ws.clone();
         }
-        let ws = build_workspace_ctx(&root).await;
+        let ws = build_workspace_ctx(&root)
+            .instrument(info_span!("workspace.build_ctx", root = ?root))
+            .await;
         self.by_root.insert(root, ws.clone());
         ws
     }

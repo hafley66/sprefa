@@ -19,6 +19,7 @@ use std::time::Instant;
 
 use futures_core::stream::BoxStream;
 use futures_util::{stream, StreamExt};
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::{CursorExpr, RunEvent, RunId};
 use crate::_7_init_cursors::{init_cursors, InitInputs};
@@ -49,6 +50,11 @@ pub struct RunStart {
 // run_pipeline
 // ---------------------------------------------------------------------------
 
+#[tracing::instrument(
+    name = "run_pipeline",
+    skip_all,
+    fields(source = ?req.source_path),
+)]
 pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart {
     let timing = std::env::var_os("SPREFA_TIMING").is_some();
     let t_total = Instant::now();
@@ -59,7 +65,9 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         .or_else(|| req.source_path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf)))
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
-    let workspace = state.workspaces.write().await.resolve(&hint).await;
+    let workspace = async {
+        state.workspaces.write().await.resolve(&hint).await
+    }.instrument(info_span!("workspace.resolve", hint = ?hint)).await;
     if timing { eprintln!("[timing] resolve_workspace      {:>6} ms (hint={:?}, repos={}, revs={})",
         t0.elapsed().as_millis(), hint,
         workspace.config.repos.len(),
@@ -72,6 +80,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         .unwrap_or_else(|| Arc::from(Path::new("<memory>")));
 
     let t0 = Instant::now();
+    let _parse_s = info_span!("host_parse").entered();
     let invs = match host_parse(&req.source, file_path) {
         Ok(i) => i,
         Err(errs) => {
@@ -86,6 +95,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         }
     };
     if timing { eprintln!("[timing] host_parse             {:>6} ms ({} invs)", t0.elapsed().as_millis(), invs.len()); }
+    drop(_parse_s);
 
     // 3. Top-level rule-name extraction — same heuristic as old CLI: first
     //    op's paren_src, trimmed. Empty → unnamed.
@@ -98,8 +108,10 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
 
     // 4. Lower.
     let t0 = Instant::now();
+    let _lower_s = info_span!("lower_rules", n_invs = invs.len()).entered();
     let pctx = ProgramCtx::new(workspace.config.clone(), state.registry.clone());
     let outcome = lower_rules(invs, pctx);
+    drop(_lower_s);
     if timing { eprintln!("[timing] lower_rules            {:>6} ms ({} pipelines, {} diags)",
         t0.elapsed().as_millis(), outcome.pipelines.len(), outcome.diags.len()); }
 
@@ -154,6 +166,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     // DAG → level indices. Unnamed/unmapped exprs join level 0.
     let expr_levels = build_expr_levels(&exprs, &outcome.pctx.rules);
 
+    let _init_s = info_span!("init_cursors.setup", n_exprs = exprs.len()).entered();
     let stream = init_cursors(InitInputs {
         exprs,
         expr_levels: Some(expr_levels),
@@ -168,6 +181,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         result_store: Some(state.results.clone()),
     });
 
+    drop(_init_s);
     // Keep the handler alive for the lifetime of the stream.
     let stream = WithHandler { inner: stream, _guard: handler_guard, _cancel: cancel };
 
@@ -178,7 +192,9 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         let mut expr_count: u64 = 0;
         let mut diag_count: u64 = 0;
         let intern_for_timing = workspace.intern.clone();
-        stream.inspect(move |ev| match ev {
+        stream.inspect(move |ev| {
+            let _s = info_span!("run_event.inspect").entered();
+            match ev {
             RunEvent::Cursor { .. } => { cur_count += 1; }
             RunEvent::Diag { .. }   => { diag_count += 1; }
             RunEvent::ExprDone { expr_name } => {
@@ -204,6 +220,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 eprintln!("[timing] run_pipeline TOTAL     {:>6} ms", t_total.elapsed().as_millis());
             }
             _ => {}
+            }
         }).boxed()
     } else {
         stream.boxed()

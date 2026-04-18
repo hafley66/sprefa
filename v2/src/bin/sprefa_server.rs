@@ -65,7 +65,8 @@ const DEFAULT_TCP: &str = "127.0.0.1:7417";
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    init_tracing(cli.foreground);
+    let _periscope = v2::_telemetry::init();
+    let _ = cli.foreground;
 
     let opts = ServerOpts {
         store_path: cli.store_path.clone().or_else(|| Some(default_store_path())),
@@ -138,11 +139,3 @@ async fn wait_sigterm() {
     }
 }
 
-fn init_tracing(foreground: bool) {
-    use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,hyper=warn,axum=info"));
-    // D2: stderr only. File logging lands in a later slice alongside rotation.
-    let _ = foreground;
-    fmt().with_env_filter(filter).with_writer(std::io::stderr).try_init().ok();
-}

@@ -18,6 +18,7 @@ use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::stream::{self, StreamExt};
 use regex::Regex;
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::{Capture, Cursor, FilePath, OpEvidence, ParseSite, Severity};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
@@ -173,12 +174,14 @@ impl Op for MarkerOp {
     fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
         -> BoxStream<'static, Arc<[Cursor]>>
     {
+        let _pipe_span = info_span!("op.marker.pipe").entered();
         let scope  = self.scope.clone();
         let site   = self.parse_site.clone();
         let reader = ctx.reader.clone();
         let diags  = ctx.diags.clone();
 
         input.flat_map(move |batch| {
+            let batch_span = info_span!("op.marker.batch", n = batch.len());
             let scope  = scope.clone();
             let site   = site.clone();
             let reader = reader.clone();
@@ -233,7 +236,7 @@ impl Op for MarkerOp {
                 }
                 out
             };
-            stream::once(per_batch).flat_map(|bs| stream::iter(bs))
+            stream::once(per_batch.instrument(batch_span)).flat_map(|bs| stream::iter(bs))
         }).boxed()
     }
 }

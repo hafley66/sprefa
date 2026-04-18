@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use futures_core::stream::BoxStream;
 use futures_util::stream::StreamExt;
+use tracing::info_span;
 
 use crate::_0_types::{Capture, Cursor, ParseSite, Severity};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
@@ -108,12 +109,14 @@ impl Op for CursorRefOp {
         input: BoxStream<'static, Arc<[Cursor]>>,
         ctx:   OpCtx,
     ) -> BoxStream<'static, Arc<[Cursor]>> {
+        let _pipe_span = info_span!("op.cursor_ref.pipe").entered();
         let path  = self.path.clone();
         let diags = ctx.diags.clone();
         let site  = self.parse_site.clone();
 
         input
             .map(move |batch| {
+                let _batch_span = info_span!("op.cursor_ref.batch", n = batch.len()).entered();
                 let path  = path.clone();
                 let diags = diags.clone();
                 let site  = site.clone();

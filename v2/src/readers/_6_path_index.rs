@@ -10,6 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{ConnectOptions as _, SqlitePool};
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::FilePath;
 use crate::_16_pattern::CompiledPattern;
@@ -113,12 +114,14 @@ impl SqlxPathIndex {
         let pool = SqlitePoolOptions::new()
             .max_connections(max)
             .connect_with(opts)
+            .instrument(info_span!("path_index.pool_connect"))
             .await
             .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
 
         // Apply DDL inline — no migrations table needed.
         sqlx::query(SCHEMA_SQL)
             .execute(&pool)
+            .instrument(info_span!("path_index.schema_ddl"))
             .await
             .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
 
@@ -147,13 +150,16 @@ impl PathIndex for SqlxPathIndex {
         .bind(rev)
         .bind(pattern.src.as_ref())
         .fetch_all(&self.pool)
+        .instrument(info_span!("path_index.files_at.glob_query"))
         .await
         .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
 
         // Hot path: non-empty result is authoritative — one round-trip.
         // Cold path (empty): disambiguate not-indexed vs indexed-but-no-match.
         if rows.is_empty() {
-            if !self.has_rev(repo, rev).await? {
+            if !self.has_rev(repo, rev)
+                .instrument(info_span!("path_index.files_at.has_rev_fallback"))
+                .await? {
                 return Ok(None);
             }
             return Ok(Some(Vec::new()));
@@ -175,6 +181,7 @@ impl PathIndex for SqlxPathIndex {
         let mut tx = self
             .pool
             .begin()
+            .instrument(info_span!("path_index.upsert_rev.tx_begin"))
             .await
             .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
 
@@ -182,6 +189,7 @@ impl PathIndex for SqlxPathIndex {
             .bind(repo)
             .bind(rev)
             .execute(&mut *tx)
+            .instrument(info_span!("path_index.upsert_rev.delete"))
             .await
             .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
 
@@ -202,11 +210,13 @@ impl PathIndex for SqlxPathIndex {
             });
             qb.build()
                 .execute(&mut *tx)
+                .instrument(info_span!("path_index.upsert_rev.insert_chunk", n = chunk.len()))
                 .await
                 .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
         }
 
         tx.commit()
+            .instrument(info_span!("path_index.upsert_rev.commit"))
             .await
             .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
 
@@ -218,6 +228,7 @@ impl PathIndex for SqlxPathIndex {
             .bind(repo)
             .bind(rev)
             .execute(&self.pool)
+            .instrument(info_span!("path_index.drop_rev", repo = %repo, rev = %rev))
             .await
             .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
         Ok(())
@@ -229,6 +240,7 @@ impl PathIndex for SqlxPathIndex {
                 .bind(repo)
                 .bind(rev)
                 .fetch_optional(&self.pool)
+                .instrument(info_span!("path_index.has_rev"))
                 .await
                 .map_err(|e| PathIndexErr::Sql(e.to_string()))?;
         Ok(row.is_some())

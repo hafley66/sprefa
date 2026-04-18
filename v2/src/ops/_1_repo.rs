@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use futures_util::stream::StreamExt;
 use futures_core::stream::BoxStream;
+use tracing::info_span;
 
 use crate::_0_types::{Capture, Cursor, ParseSite, Tri};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
@@ -150,10 +151,12 @@ impl Op for RepoOp {
     fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, _ctx: OpCtx)
         -> BoxStream<'static, Arc<[Cursor]>>
     {
+        let _pipe_span = info_span!("op.repo.pipe").entered();
         match &self.mode {
             RepoMode::Filter(pat) => {
                 let pat = pat.clone();
                 input.map(move |batch| {
+                    let _batch_span = info_span!("op.repo.batch", n = batch.len()).entered();
                     let kept: Vec<Cursor> = batch.iter()
                         .filter(|c| pat.is_match(&c.repo))
                         .cloned()
@@ -164,6 +167,7 @@ impl Op for RepoOp {
             RepoMode::Bind(name) => {
                 let name = name.clone();
                 input.map(move |batch| {
+                    let _batch_span = info_span!("op.repo.batch", n = batch.len()).entered();
                     let mapped: Vec<Cursor> = batch.iter().map(|c| {
                         let mut c = c.clone();
                         let v = c.repo.clone();

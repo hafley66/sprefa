@@ -27,6 +27,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{Row as _, SqlitePool};
 use tokio::sync::RwLock;
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::FilePath;
 use crate::mutations::MutationEffect;
@@ -89,6 +90,8 @@ impl Store for SqliteStore {
     }
 
     async fn register_expr_schema(&self, spec: ExprTableSpec) -> Result<(), StoreErr> {
+        let span = info_span!("store.sqlite.register_expr_schema", expr = %spec.expr_name);
+        async move {
         let row: Option<(String, String)> = sqlx::query_as(
             "SELECT schema_hash, extract_hash FROM sprf_meta WHERE expr_name = ?",
         )
@@ -176,9 +179,14 @@ impl Store for SqliteStore {
 
         self.specs.write().await.insert(spec.expr_name.clone(), spec);
         Ok(())
+        }.instrument(span).await
     }
 
     async fn flush_batch(&self, b: Batch) -> Result<(), StoreErr> {
+        let n_exprs = b.per_expr.len();
+        let n_rows: usize = b.per_expr.iter().map(|e| e.rows.len()).sum();
+        let span = info_span!("store.sqlite.flush_batch", n_exprs = n_exprs, n_rows = n_rows);
+        async move {
         let specs = self.specs.read().await;
         let mut tx = self.pool.begin().await.map_err(|e| StoreErr::Sql(e.to_string()))?;
 
@@ -374,11 +382,15 @@ impl Store for SqliteStore {
             }
         }
 
-        tx.commit().await.map_err(|e| StoreErr::Sql(e.to_string()))?;
+        let commit_fut = tx.commit().instrument(info_span!("store.sqlite.flush_batch.commit"));
+        commit_fut.await.map_err(|e| StoreErr::Sql(e.to_string()))?;
         Ok(())
+        }.instrument(span).await
     }
 
     async fn query_expr(&self, expr_name: &str, w: Where) -> Result<Vec<Row>, StoreErr> {
+        let span = info_span!("store.sqlite.query_expr", expr = %expr_name);
+        async move {
         let specs = self.specs.read().await;
         let spec  = specs.get(expr_name).ok_or(StoreErr::UnknownExpr)?;
         let view  = view_name(spec);
@@ -423,6 +435,7 @@ impl Store for SqliteStore {
             });
         }
         Ok(out)
+        }.instrument(span).await
     }
 
     async fn files_scanned(
@@ -431,6 +444,8 @@ impl Store for SqliteStore {
         rev:          &str,
         scanner_hash: &str,
     ) -> Result<HashSet<(FilePath, ContentHash)>, StoreErr> {
+        let span = info_span!("store.sqlite.files_scanned", repo = %repo, rev = %rev);
+        async move {
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT f.path, f.content_hash \
              FROM files f \
@@ -448,9 +463,12 @@ impl Store for SqliteStore {
             .into_iter()
             .map(|(p, h)| (FilePath(Arc::from(std::path::Path::new(&p))), ContentHash(Arc::from(h))))
             .collect())
+        }.instrument(span).await
     }
 
     async fn effect_status(&self, e: &dyn MutationEffect) -> Result<EffectStatus, StoreErr> {
+        let span = info_span!("store.sqlite.effect_status", kind = e.kind_sigil());
+        async move {
         let fp = e.fingerprint();
         let row: Option<(String, String, String, String)> = sqlx::query_as(
             "SELECT outcome, when_utc, effect_hash, fingerprint \
@@ -477,6 +495,7 @@ impl Store for SqliteStore {
         } else {
             Ok(EffectStatus::Stale(outcome))
         }
+        }.instrument(span).await
     }
 
     async fn record_effect(
@@ -484,6 +503,8 @@ impl Store for SqliteStore {
         e: &dyn MutationEffect,
         o: EffectOutcome,
     ) -> Result<(), StoreErr> {
+        let span = info_span!("store.sqlite.record_effect", kind = e.kind_sigil());
+        async move {
         sqlx::query(
             "INSERT INTO mutations (kind_sigil, fingerprint, effect_hash, outcome, when_utc) \
              VALUES (?, ?, ?, ?, ?) \
@@ -501,6 +522,7 @@ impl Store for SqliteStore {
         .await
         .map_err(|e| StoreErr::Sql(e.to_string()))?;
         Ok(())
+        }.instrument(span).await
     }
 }
 

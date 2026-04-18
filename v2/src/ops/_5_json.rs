@@ -9,6 +9,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::stream::StreamExt;
+use tracing::{info_span, Instrument};
 
 use rustc_hash::FxHashMap;
 
@@ -260,6 +261,7 @@ impl Op for JsonOp {
     fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
         -> BoxStream<'static, Arc<[Cursor]>>
     {
+        let _pipe_span = info_span!("op.json.pipe").entered();
         let ps = match &self.mode {
             JsonMode::Pattern(ps) => ps,
             JsonMode::Wildcard    => return wildcard_pipe(self.parse_site.clone(), input, ctx),
@@ -290,6 +292,7 @@ impl Op for JsonOp {
         // stay together in one Arc<[Cursor]>.
         input
             .flat_map(move |batch| {
+                let _batch_span = info_span!("op.json.batch", n = batch.len()).entered();
                 let cursors: Vec<Cursor> = batch.iter().cloned().collect();
                 let compiled    = compiled.clone();
                 let parse_site  = parse_site.clone();
@@ -538,6 +541,7 @@ fn wildcard_pipe(
     let reader = ctx.reader.clone();
     input
         .flat_map(move |batch| {
+            let _batch_span = info_span!("op.json.batch", n = batch.len()).entered();
             let cursors: Vec<Cursor> = batch.iter().cloned().collect();
             let parse_site = parse_site.clone();
             let reader     = reader.clone();

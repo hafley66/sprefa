@@ -29,6 +29,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_core::stream::BoxStream;
 use futures_util::stream::StreamExt;
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::{
     Capture, Cursor, CursorExpr, OpId, ParseSeg, ParseSite, RunEvent, RunId,
@@ -106,15 +107,19 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
 
         // Register schemas for every named expr up front.
         let mut spec_by_name: HashMap<Arc<str>, ExprTableSpec> = HashMap::new();
-        for expr in &exprs {
-            let Some(name) = expr.name.clone() else { continue };
-            let spec = build_expr_table_spec(name.clone(), expr);
-            if let Err(e) = store.register_expr_schema(clone_spec(&spec)).await {
-                let _ = tx.send(RunEvent::Diag { diag: Box::new(e) }).await;
-            } else {
-                spec_by_name.insert(name, spec);
+        async {
+            for expr in &exprs {
+                let Some(name) = expr.name.clone() else { continue };
+                let spec = build_expr_table_spec(name.clone(), expr);
+                let reg_fut = store.register_expr_schema(clone_spec(&spec))
+                    .instrument(info_span!("store.register_expr_schema", expr = %name));
+                if let Err(e) = reg_fut.await {
+                    let _ = tx.send(RunEvent::Diag { diag: Box::new(e) }).await;
+                } else {
+                    spec_by_name.insert(name, spec);
+                }
             }
-        }
+        }.instrument(info_span!("runner.register_schemas", n_exprs = exprs.len())).await;
 
         // Default sequential schedule when caller did not supply a DAG.
         let levels: Vec<Vec<usize>> = expr_levels
@@ -126,7 +131,8 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
         let all_cursors: Arc<Mutex<HashMap<Arc<str>, Vec<Cursor>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
-        'level_loop: for level in levels {
+        let n_levels = levels.len();
+        'level_loop: for (level_ix, level) in levels.into_iter().enumerate() {
             if cancel.is_cancelled() { break; }
 
             let mut handles: Vec<tokio::task::JoinHandle<()>> =
@@ -143,13 +149,19 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
                 let cancel        = cancel.clone();
                 let shared_rs     = shared_result_store.clone();
                 let all_cursors   = all_cursors.clone();
+                let expr_name_dbg: Arc<str> = expr.name.clone().unwrap_or_else(|| Arc::from(""));
 
+                let drain_span = info_span!(
+                    "runner.drain_expr.spawn",
+                    expr = %expr_name_dbg,
+                    level = level_ix,
+                );
                 handles.push(tokio::spawn(async move {
                     drain_one_expr(
                         expr, tx, reader, writer, config, store,
                         mutations_tx, cancel, run_id, shared_rs, all_cursors,
                     ).await;
-                }));
+                }.instrument(drain_span)));
             }
             for h in handles {
                 let _ = h.await;
@@ -158,13 +170,24 @@ pub fn init_cursors(inp: InitInputs) -> BoxStream<'static, RunEvent> {
         }
 
         if !cancel.is_cancelled() {
-            let all = all_cursors.lock().unwrap().clone();
-            let batch = build_batch(&all, &spec_by_name, &scanner_hash);
+            let all = {
+                let _s = info_span!("runner.build_batch.snapshot").entered();
+                all_cursors.lock().unwrap().clone()
+            };
+            let batch = {
+                let _s = info_span!("runner.build_batch", n_exprs = all.len()).entered();
+                build_batch(&all, &spec_by_name, &scanner_hash)
+            };
             if !batch.per_expr.is_empty() {
                 let timing = std::env::var_os("SPREFA_TIMING").is_some();
                 let t0 = std::time::Instant::now();
                 let row_count: usize = batch.per_expr.iter().map(|e| e.rows.len()).sum();
-                if let Err(e) = store.flush_batch(batch).await {
+                let flush_fut = store.flush_batch(batch).instrument(info_span!(
+                    "store.flush_batch",
+                    n_rows = row_count,
+                    n_exprs = spec_by_name.len(),
+                ));
+                if let Err(e) = flush_fut.await {
                     let _ = tx.send(RunEvent::Diag { diag: Box::new(e) }).await;
                 }
                 if timing {
@@ -234,8 +257,14 @@ async fn drain_one_expr(
     let empty: BoxStream<'static, Arc<[Cursor]>> =
         futures_util::stream::iter(Vec::<Arc<[Cursor]>>::new()).boxed();
 
-    let mut batches = expr.pipeline.run(empty, ctx);
+    let expr_name_dbg: Arc<str> = expr.name.clone().unwrap_or_else(|| Arc::from(""));
+
+    let mut batches = info_span!("runner.pipeline_run", expr = %expr_name_dbg)
+        .in_scope(|| expr.pipeline.run(empty, ctx));
     let expr_name_key = expr.name.clone().unwrap_or_else(|| Arc::from(""));
+
+    let mut n_batches: u64 = 0;
+    let mut n_cursors: u64 = 0;
 
     'drain: loop {
         tokio::select! {
@@ -243,7 +272,9 @@ async fn drain_one_expr(
             _ = cancel.cancelled() => break 'drain,
             next = batches.next() => match next {
                 Some(batch) => {
+                    n_batches += 1;
                     for c in batch.iter() {
+                        n_cursors += 1;
                         all_cursors.lock().unwrap()
                             .entry(expr_name_key.clone())
                             .or_default()

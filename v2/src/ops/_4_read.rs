@@ -10,6 +10,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::stream::StreamExt;
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::{Cursor, ParseSite};
 use crate::_1_diagnostic::{Diagnostic, Renderer};
@@ -70,11 +71,13 @@ impl Op for ReadOp {
     fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
         -> BoxStream<'static, Arc<[Cursor]>>
     {
+        let _pipe_span = info_span!("op.read.pipe").entered();
         let reader    = ctx.reader.clone();
         let diags     = ctx.diags.clone();
         let parse_site = self.parse_site.clone();
 
         input.then(move |batch| {
+            let batch_span = info_span!("op.read.batch", n = batch.len());
             let reader     = reader.clone();
             let diags      = diags.clone();
             let parse_site = parse_site.clone();
@@ -99,7 +102,7 @@ impl Op for ReadOp {
                     out.push(c);
                 }
                 Arc::<[Cursor]>::from(out.into_boxed_slice())
-            }
+            }.instrument(batch_span)
         }).boxed()
     }
 }

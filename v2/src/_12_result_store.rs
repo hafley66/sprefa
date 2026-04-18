@@ -50,6 +50,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
+use tracing::info_span;
+
 use crate::_0_types::{Capture, Tri};
 
 /// Snapshot of a single cursor's captures (`var → Capture`). One per row
@@ -95,6 +97,7 @@ impl ResultStore {
     /// Thread-safe; producer side is single-rule-single-thread in the
     /// current design but the inner mutex tolerates concurrent appends.
     pub fn append(&self, rule: &Arc<str>, row: CaptureMap) {
+        let _s = info_span!("result_store.append", rule = %rule).entered();
         let entry = {
             let mut map = self.by_rule.lock().unwrap();
             map.entry(rule.clone())
@@ -112,6 +115,7 @@ impl ResultStore {
     /// zero rows still gets marked Complete (consumers will see the
     /// empty Vec rather than the Pending sentinel).
     pub fn mark_complete(&self, rule: &Arc<str>) {
+        let _s = info_span!("result_store.mark_complete", rule = %rule).entered();
         let entry = {
             let mut map = self.by_rule.lock().unwrap();
             map.entry(rule.clone())
@@ -125,6 +129,7 @@ impl ResultStore {
     /// passes: each pass rebuilds the full result set under a new config so
     /// walker stamps reflect the latest `Config.repos`/`Config.revs`.
     pub fn clear(&self) {
+        let _s = info_span!("result_store.clear").entered();
         let mut map = self.by_rule.lock().unwrap();
         map.clear();
     }
@@ -132,6 +137,7 @@ impl ResultStore {
     /// Returns a clone of all rows for `rule` once the producer has marked
     /// it complete. `None` if the rule is unknown or still pending.
     pub fn rows_of(&self, rule: &Arc<str>) -> Option<Vec<CaptureMap>> {
+        let _s = info_span!("result_store.rows_of", rule = %rule).entered();
         let entry = {
             let map = self.by_rule.lock().unwrap();
             map.get(rule).cloned()
@@ -150,6 +156,7 @@ impl ResultStore {
     /// against the git-tree probe (fs). A subsequent scan pass may flip
     /// some to Verified; what's still Missing after that is a real Warn.
     pub fn unscanned(&self) -> Vec<(Arc<str>, Arc<str>)> {
+        let _s = info_span!("result_store.unscanned").entered();
         use std::collections::BTreeSet;
         let mut out: BTreeSet<(String, String)> = BTreeSet::new();
         let map = self.by_rule.lock().unwrap();

@@ -27,6 +27,8 @@ use std::sync::Arc;
 pub async fn build_index_stack()
     -> (Option<Arc<WorktreeProvisioner>>, Option<Arc<dyn PathIndex>>)
 {
+    use tracing::{info_span, Instrument};
+    let _s = info_span!("build_index_stack").entered();
     let wt_dir = std::env::var_os("SPREFA_WT_CACHE_DIR")
         .map(PathBuf::from)
         .filter(|p| !p.as_os_str().is_empty());
@@ -36,8 +38,13 @@ pub async fn build_index_stack()
 
     let provisioner = wt_dir.map(|dir| Arc::new(WorktreeProvisioner::new(dir)));
 
+    // Drop non-async guard before the .await below; a sync entered() guard
+    // held across await would be incorrect.
+    drop(_s);
     let path_index: Option<Arc<dyn PathIndex>> = match pi_db {
-        Some(p) => match SqlxPathIndex::open(&p).await {
+        Some(p) => match SqlxPathIndex::open(&p)
+            .instrument(info_span!("build_index_stack.sqlx_open"))
+            .await {
             Ok(idx) => Some(idx as Arc<dyn PathIndex>),
             Err(e)  => {
                 eprintln!("[sprefa] path_index open {} failed: {e}; disabling", p.display());

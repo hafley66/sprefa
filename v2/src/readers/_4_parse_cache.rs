@@ -16,6 +16,7 @@ use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::{stream, StreamExt};
 use tokio::sync::OnceCell;
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::FilePath;
 use crate::_2_config::Config;
@@ -211,6 +212,10 @@ impl Reader for ParseCacheReader {
         let rev_s    = key.1.clone();
         let fp_cl    = fp.clone();
 
+        let span = info_span!(
+            "parse_cache.parsed",
+            repo = %repo_s, rev = %rev_s, fp = %fp_cl.0.display(),
+        );
         let fut = async move {
             let tree = slot.get_or_init(|| async move {
                 // Try oid fast path first. Reader default returns None so
@@ -219,7 +224,9 @@ impl Reader for ParseCacheReader {
                 // real oid. Duplicate blob across revs is then a pure
                 // hashmap lookup — no bytes read, no blake3.
                 let mut oid_s = inner.blob_oid(&repo_s, &rev_s, &fp_cl);
-                let oid = oid_s.next().await.flatten();
+                let oid = async {
+                    oid_s.next().await.flatten()
+                }.instrument(info_span!("parse_cache.oid_probe")).await;
 
                 if let Some(oid_bytes) = oid {
                     let oid_key: OidKey = (oid_bytes, kind);
@@ -240,16 +247,22 @@ impl Reader for ParseCacheReader {
                             .map(|d| disk_path(d, &oid_bytes, kind));
                         let mut from_disk = false;
                         let bytes: Bytes = if let Some(p) = disk_path_opt.as_ref() {
-                            match tokio::fs::read(p).await {
+                            match tokio::fs::read(p)
+                                .instrument(info_span!("parse_cache.disk.read"))
+                                .await {
                                 Ok(v) => { from_disk = true; Bytes::from(v) }
                                 Err(_) => {
                                     let mut s = inner2.bytes(&repo2, &rev2, &fp2);
-                                    s.next().await.unwrap_or_default()
+                                    async { s.next().await.unwrap_or_default() }
+                                        .instrument(info_span!("parse_cache.bytes_read"))
+                                        .await
                                 }
                             }
                         } else {
                             let mut s = inner2.bytes(&repo2, &rev2, &fp2);
-                            s.next().await.unwrap_or_default()
+                            async { s.next().await.unwrap_or_default() }
+                                .instrument(info_span!("parse_cache.bytes_read"))
+                                .await
                         };
 
                         // On miss, fire-and-forget the disk write so the
@@ -264,25 +277,34 @@ impl Reader for ParseCacheReader {
                                         let _ = tokio::fs::create_dir_all(parent).await;
                                     }
                                     let _ = tokio::fs::write(&p, &payload).await;
-                                });
+                                }.instrument(info_span!("parse_cache.disk.write_bg")));
                             }
                         }
 
                         let bytes_for_init = bytes.clone();
                         let payload = crate::_17_parallel::rayon_one(move || {
+                            let _s = info_span!("parse_cache.parse_payload_sync", bytes = bytes.len()).entered();
                             parse_payload_sync(kind, &bytes)
-                        }).await.unwrap_or_else(|| Arc::new(()) as _);
+                        })
+                        .instrument(info_span!("parse_cache.rayon_one.oid"))
+                        .await
+                        .unwrap_or_else(|| Arc::new(()) as _);
                         Arc::new(ParsedTree { kind, bytes: bytes_for_init, payload })
-                    }).await;
+                    }.instrument(info_span!("parse_cache.by_oid.init"))).await;
                     return tree.clone();
                 }
 
                 // Fallback: no oid available. Read bytes, hash, dedup by
                 // content hash. Covers MemReader and dirty buffers.
                 let mut s = inner.bytes(&repo_s, &rev_s, &fp_cl);
-                let bytes = s.next().await.unwrap_or_default();
+                let bytes = async { s.next().await.unwrap_or_default() }
+                    .instrument(info_span!("parse_cache.bytes_read.hash_path"))
+                    .await;
 
-                let hash_bytes: [u8; 32] = blake3::hash(&bytes).into();
+                let hash_bytes: [u8; 32] = {
+                    let _s = info_span!("parse_cache.blake3", bytes = bytes.len()).entered();
+                    blake3::hash(&bytes).into()
+                };
                 let hash_key: HashKey = (hash_bytes, kind);
 
                 let hash_slot: Slot = {
@@ -294,15 +316,19 @@ impl Reader for ParseCacheReader {
                 let tree = hash_slot.get_or_init(|| async move {
                     let bytes_for_parse = bytes_for_init.clone();
                     let payload = crate::_17_parallel::rayon_one(move || {
+                        let _s = info_span!("parse_cache.parse_payload_sync", bytes = bytes_for_parse.len()).entered();
                         parse_payload_sync(kind, &bytes_for_parse)
-                    }).await.unwrap_or_else(|| Arc::new(()) as _);
+                    })
+                    .instrument(info_span!("parse_cache.rayon_one.hash"))
+                    .await
+                    .unwrap_or_else(|| Arc::new(()) as _);
                     Arc::new(ParsedTree { kind, bytes: bytes_for_init, payload })
-                }).await;
+                }.instrument(info_span!("parse_cache.by_hash.init"))).await;
                 tree.clone()
             }).await;
             tree.clone()
         };
-        Box::pin(stream::once(fut))
+        Box::pin(stream::once(fut.instrument(span)))
     }
 
     fn blob_oid(&self, repo: &str, rev: &str, fp: &FilePath)

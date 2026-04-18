@@ -18,6 +18,7 @@ use std::sync::Arc;
 use futures::future::join_all;
 use futures_core::stream::BoxStream;
 use futures_util::stream::{self, StreamExt};
+use tracing::{info_span, Instrument};
 
 use crate::_17_parallel::rayon_map;
 
@@ -207,6 +208,7 @@ impl Op for FsOp {
     fn pipe(&self, input: BoxStream<'static, Arc<[Cursor]>>, ctx: OpCtx)
         -> BoxStream<'static, Arc<[Cursor]>>
     {
+        let _pipe_span = info_span!("op.fs.pipe").entered();
         let reader     = ctx.reader.clone();
         let pattern    = self.mode.pattern();
         let bind_name  = self.mode.bind_name();
@@ -228,6 +230,7 @@ impl Op for FsOp {
         //     bridges back into async.
         input
             .flat_map(move |batch| {
+                let batch_span = info_span!("op.fs.batch", n = batch.len());
                 let items: Vec<Cursor> = batch.iter().cloned().collect();
                 let reader     = reader.clone();
                 let pattern    = pattern.clone();
@@ -280,7 +283,7 @@ impl Op for FsOp {
                     }).collect();
 
                     stream::iter(batches)
-                };
+                }.instrument(batch_span);
                 stream::once(fut).flatten()
             })
             .boxed()

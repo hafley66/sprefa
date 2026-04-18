@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::stream;
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::FilePath;
 use crate::_2_config::Config;
@@ -84,21 +85,25 @@ impl GitBlobReader {
     fn tree_oid(&self, repo_slug: &str, rev: &str, repo: &git2::Repository)
         -> Result<git2::Oid, git2::Error>
     {
+        let _s = info_span!("reader.git.tree_oid", repo = %repo_slug, rev = %rev).entered();
         {
             let g = self.trees.lock().unwrap();
             if let Some(oid) = g.get(&(repo_slug.to_string(), rev.to_string())) {
                 return Ok(*oid);
             }
         }
+        let _revparse = info_span!("reader.git.revparse").entered();
         let obj = repo.revparse_single(rev)?;
         let commit = obj.peel_to_commit()?;
         let oid = commit.tree_id();
+        drop(_revparse);
         self.trees.lock().unwrap()
             .insert((repo_slug.to_string(), rev.to_string()), oid);
         Ok(oid)
     }
 
     fn walk_tree(tree: &git2::Tree, repo: &git2::Repository, pattern: &CompiledPattern) -> Vec<FilePath> {
+        let _s = info_span!("reader.git.tree_walk").entered();
         let mut paths = Vec::new();
         let _ = tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
             if entry.kind() == Some(git2::ObjectType::Blob) {
@@ -120,14 +125,18 @@ impl GitBlobReader {
 
     /// Phase 3 fallback: libgit2 tree walk. Returns empty on any git error.
     fn files_libgit2(&self, repo: &str, rev: &str, pattern: &CompiledPattern) -> Vec<FilePath> {
+        let _s = info_span!("reader.git.files_libgit2", repo = %repo, rev = %rev).entered();
         let Some(repo_arc) = self.open_repo(repo) else {
             return vec![];
         };
         let guard = repo_arc.lock().unwrap();
         match self.tree_oid(repo, rev, &guard) {
-            Ok(oid) => guard.find_tree(oid)
-                .map(|tree| Self::walk_tree(&tree, &guard, pattern))
-                .unwrap_or_default(),
+            Ok(oid) => {
+                let _s2 = info_span!("reader.git.find_tree").entered();
+                guard.find_tree(oid)
+                    .map(|tree| { drop(_s2); Self::walk_tree(&tree, &guard, pattern) })
+                    .unwrap_or_default()
+            }
             Err(_) => Vec::new(),
         }
     }
@@ -145,8 +154,10 @@ fn walk_wt_with_ls_tree(
     checkout_path: std::path::PathBuf,
     rev: String,
 ) -> Vec<(FilePath, [u8; 20])> {
+    let _s = info_span!("reader.git.ls_tree", rev = %rev).entered();
     // Output format per entry (null-delimited with -z):
     //   "<mode> <type> <oid>\t<path>\0"
+    let _sp = info_span!("reader.git.ls_tree.spawn").entered();
     let out = match std::process::Command::new("git")
         .args(["ls-tree", "-r", "-z", &rev])
         .current_dir(&checkout_path)
@@ -155,7 +166,9 @@ fn walk_wt_with_ls_tree(
         Ok(o) if o.status.success() => o.stdout,
         _ => return vec![],
     };
+    drop(_sp);
 
+    let _pp = info_span!("reader.git.ls_tree.parse", bytes = out.len()).entered();
     let mut result = Vec::new();
     // Split on NUL bytes; each element is one entry (may be empty at end).
     for entry in out.split(|&b| b == 0) {
@@ -205,6 +218,7 @@ impl Reader for GitBlobReader {
         // Without this, the async block below rebuilds a fresh GitBlobReader
         // per call with empty caches, redoing revparse on every files() call.
         if self.path_index.is_none() {
+            let _s = info_span!("reader.files", repo = %repo, rev = %rev, path = "libgit2").entered();
             let hits = self.files_libgit2(repo, rev, pattern);
             return once_val(hits);
         }
@@ -220,6 +234,7 @@ impl Reader for GitBlobReader {
 
         // Phases 1 and 2 require .await (PathIndex is async_trait).
         // Wrap in stream::once so the Reader trait signature is unchanged.
+        let outer_span = info_span!("reader.files", repo = %repo_s, rev = %rev_s);
         Box::pin(stream::once(async move {
             let timing = std::env::var_os("SPREFA_TIMING").is_some();
             // ---------------------------------------------------------------
@@ -227,11 +242,35 @@ impl Reader for GitBlobReader {
             // ---------------------------------------------------------------
             if let Some(ref idx) = path_index {
                 let t0 = std::time::Instant::now();
-                match idx.files_at(&repo_s, &rev_s, &pattern).await {
+                match idx.files_at(&repo_s, &rev_s, &pattern)
+                    .instrument(info_span!("reader.files.phase1.files_at"))
+                    .await {
                     Ok(Some(hits)) => {
                         if timing { eprintln!(
                             "[timing] path_index.hit {:>5}ms repo={} rev={} n={}",
                             t0.elapsed().as_millis(), repo_s, rev_s, hits.len()); }
+                        // Adopt on-disk WT into the provisioner's in-mem map so
+                        // bytes() can take the filesystem fast path. ensure()
+                        // is idempotent: if the WT dir exists, it skips the
+                        // shell call and just registers the handle.
+                        if let Some(ref prov) = provisioner {
+                            let checkout = locator.locate(&repo_s, &rev_s)
+                                .or_else(|| locator.locate(&repo_s, "HEAD"));
+                            if let Some(cp) = checkout {
+                                let t_adopt = std::time::Instant::now();
+                                let repo_arc: Arc<str> = Arc::from(repo_s.as_str());
+                                let rev_arc:  Arc<str> = Arc::from(rev_s.as_str());
+                                if let Err(e) = prov.ensure(repo_arc, rev_arc, &cp)
+                                    .instrument(info_span!("reader.files.phase1.adopt_ensure"))
+                                    .await {
+                                    eprintln!("[worktree] adopt error: {e}");
+                                } else if timing {
+                                    eprintln!(
+                                        "[timing] wt.adopt      {:>5}ms repo={} rev={}",
+                                        t_adopt.elapsed().as_millis(), repo_s, rev_s);
+                                }
+                            }
+                        }
                         return hits;
                     }
                     Ok(None)       => {
@@ -263,7 +302,9 @@ impl Reader for GitBlobReader {
                     let rev_arc:  Arc<str> = Arc::from(rev_s.as_str());
 
                     let t_ensure = std::time::Instant::now();
-                    match prov.ensure(repo_arc, rev_arc, &checkout_path).await {
+                    match prov.ensure(repo_arc, rev_arc, &checkout_path)
+                        .instrument(info_span!("reader.files.phase2.ensure"))
+                        .await {
                         Ok(_wt) => {
                             let d_ensure = t_ensure.elapsed();
                             // Walk via ls-tree: one subprocess, oids alongside paths.
@@ -274,13 +315,16 @@ impl Reader for GitBlobReader {
                                 tokio::task::spawn_blocking(move || {
                                     walk_wt_with_ls_tree(cp2, rev2)
                                 })
+                                .instrument(info_span!("reader.files.phase2.ls_tree_join"))
                                 .await
                                 .unwrap_or_default();
                             let d_ls = t_ls.elapsed();
 
                             // Bulk upsert — one transaction for all entries.
                             let t_up = std::time::Instant::now();
-                            if let Err(e) = idx.upsert_rev(&repo_s, &rev_s, &entries).await {
+                            if let Err(e) = idx.upsert_rev(&repo_s, &rev_s, &entries)
+                                .instrument(info_span!("reader.files.phase2.upsert_rev", n = entries.len()))
+                                .await {
                                 eprintln!("[path_index] upsert_rev error: {e}");
                             }
                             let d_up = t_up.elapsed();
@@ -291,7 +335,9 @@ impl Reader for GitBlobReader {
                                 entries.len()); }
 
                             // Re-query index: exactly one files_at call.
-                            match idx.files_at(&repo_s, &rev_s, &pattern).await {
+                            match idx.files_at(&repo_s, &rev_s, &pattern)
+                                .instrument(info_span!("reader.files.phase2.requery_files_at"))
+                                .await {
                                 Ok(Some(hits)) => return hits,
                                 Ok(None) => {
                                     // Pattern matched nothing; filter in-process.
@@ -327,15 +373,37 @@ impl Reader for GitBlobReader {
                 "[timing] phase3.libgit2 {:>5}ms repo={} rev={} n={}",
                 t3.elapsed().as_millis(), repo_s, rev_s, hits.len()); }
             hits
-        }))
+        }.instrument(outer_span)))
     }
 
     fn bytes(&self, repo: &str, rev: &str, fs: &FilePath) -> BoxStream<'static, Bytes> {
+        let _span = info_span!(
+            "reader.bytes",
+            repo = %repo, rev = %rev,
+            fp = %fs.0.display(),
+            path = tracing::field::Empty,
+        ).entered();
+
+        // Fast path: if a worktree is already provisioned for (repo, rev),
+        // read the file from disk. files() ensured this before any bytes()
+        // call, so on warm paths we never touch libgit2 for content reads.
+        if let Some(prov) = self.provisioner.as_ref() {
+            if let Some(wt) = prov.get(repo, rev) {
+                let full = wt.path.join(fs.0.as_ref());
+                if let Ok(data) = std::fs::read(&full) {
+                    _span.record("path", "wt");
+                    return once_val(Bytes::from(data));
+                }
+            }
+        }
+        _span.record("path", "libgit2");
+
         let Some(repo_arc) = self.open_repo(repo) else {
             return once_val(Bytes::new());
         };
         let rel = fs.0.to_string_lossy().into_owned();
         let result = {
+            let _lg = info_span!("reader.git.bytes.peel").entered();
             let guard = repo_arc.lock().unwrap();
             (|| -> Option<Bytes> {
                 let oid = self.tree_oid(repo, rev, &guard).ok()?;
@@ -352,11 +420,32 @@ impl Reader for GitBlobReader {
     fn bytes_range(&self, repo: &str, rev: &str, fs: &FilePath, range: Range<usize>)
         -> BoxStream<'static, Bytes>
     {
+        let _span = info_span!(
+            "reader.bytes_range",
+            repo = %repo, rev = %rev,
+            fp = %fs.0.display(),
+            start = range.start, end = range.end,
+            path = tracing::field::Empty,
+        ).entered();
+        if let Some(prov) = self.provisioner.as_ref() {
+            if let Some(wt) = prov.get(repo, rev) {
+                let full = wt.path.join(fs.0.as_ref());
+                if let Ok(data) = std::fs::read(&full) {
+                    _span.record("path", "wt");
+                    let start = range.start.min(data.len());
+                    let end   = range.end.min(data.len());
+                    return once_val(Bytes::copy_from_slice(&data[start..end]));
+                }
+            }
+        }
+        _span.record("path", "libgit2");
+
         let Some(repo_arc) = self.open_repo(repo) else {
             return once_val(Bytes::new());
         };
         let rel = fs.0.to_string_lossy().into_owned();
         let result = {
+            let _lg = info_span!("reader.git.bytes_range.peel").entered();
             let guard = repo_arc.lock().unwrap();
             (|| -> Option<Bytes> {
                 let oid = self.tree_oid(repo, rev, &guard).ok()?;
@@ -376,11 +465,13 @@ impl Reader for GitBlobReader {
     fn blob_oid(&self, repo: &str, rev: &str, fs: &FilePath)
         -> BoxStream<'static, Option<[u8; 20]>>
     {
+        let _span = info_span!("reader.blob_oid", repo = %repo, rev = %rev, fp = %fs.0.display()).entered();
         let Some(repo_arc) = self.open_repo(repo) else {
             return once_val(None);
         };
         let rel = fs.0.to_string_lossy().into_owned();
         let result = {
+            let _lg = info_span!("reader.git.blob_oid.peel").entered();
             let guard = repo_arc.lock().unwrap();
             (|| -> Option<[u8; 20]> {
                 let oid = self.tree_oid(repo, rev, &guard).ok()?;

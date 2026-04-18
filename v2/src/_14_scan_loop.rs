@@ -92,9 +92,13 @@ where
 
     let passes_iter = std::iter::from_fn(move || {
         if stop || i >= depth { return None; }
+        let _s = tracing::info_span!("scan_loop.pass", ix = i).entered();
 
         store_ref.clear();
-        let pipe_diags  = run_pass(cfg.clone(), store_ref.clone());
+        let pipe_diags  = {
+            let _s = tracing::info_span!("scan_loop.pass.run_pass", ix = i).entered();
+            run_pass(cfg.clone(), store_ref.clone())
+        };
         let check_diags = check_scan_pointers(&store_ref, &cfg);
 
         let (next_cfg, grew) = grow_from_unscanned(&cfg, &store_ref.unscanned());

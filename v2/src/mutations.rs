@@ -31,6 +31,7 @@ use async_trait::async_trait;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
+use tracing::{info_span, Instrument};
 
 use crate::_0_types::{ParseSite, RunEvent};
 use crate::_5_op::OpCtx;
@@ -82,6 +83,7 @@ pub struct AutoApprove;
 #[async_trait]
 impl MutationHandler for AutoApprove {
     async fn handle(&self, req: MutationRequest) {
+        let _s = info_span!("mutations.auto_approve.handle", kind = req.effect.kind_sigil()).entered();
         let _ = req.ack.send(Approve::Yes);
     }
 }
@@ -124,12 +126,15 @@ impl Default for InteractiveCli {
 #[async_trait]
 impl MutationHandler for InteractiveCli {
     async fn handle(&self, req: MutationRequest) {
-        let ans = tokio::select! {
-            biased;
-            _ = req.cancel.cancelled() => return,
-            ans = self.prompt(&req)    => ans,
-        };
-        let _ = req.ack.send(ans);
+        let span = info_span!("mutations.interactive_cli.handle", kind = req.effect.kind_sigil());
+        async move {
+            let ans = tokio::select! {
+                biased;
+                _ = req.cancel.cancelled() => return,
+                ans = self.prompt(&req)    => ans,
+            };
+            let _ = req.ack.send(ans);
+        }.instrument(span).await
     }
 }
 
@@ -152,10 +157,13 @@ impl LspPromptBridge {
 #[async_trait]
 impl MutationHandler for LspPromptBridge {
     async fn handle(&self, req: MutationRequest) {
-        let _ = self.events_tx.send(RunEvent::MutationPrompt {
-            effect: req.effect,
-            ack:    req.ack,
-        }).await;
+        let span = info_span!("mutations.lsp_bridge.handle", kind = req.effect.kind_sigil());
+        async move {
+            let _ = self.events_tx.send(RunEvent::MutationPrompt {
+                effect: req.effect,
+                ack:    req.ack,
+            }).await;
+        }.instrument(span).await
     }
 }
 
@@ -163,7 +171,12 @@ pub async fn await_approval(
     ctx:    &OpCtx,
     effect: Arc<dyn MutationEffect>,
 ) -> Result<Approve, Cancelled> {
-    let status = ctx.store.effect_status(&*effect).await.unwrap_or(EffectStatus::Emit);
+    let span = info_span!("mutations.await_approval", kind = effect.kind_sigil());
+    async move {
+    let status = ctx.store.effect_status(&*effect)
+        .instrument(info_span!("mutations.await_approval.effect_status"))
+        .await
+        .unwrap_or(EffectStatus::Emit);
     if matches!(status, EffectStatus::Skip) {
         return Ok(Approve::Yes);
     }
@@ -185,6 +198,7 @@ pub async fn await_approval(
         _   = ctx.cancel.cancelled() => Err(Cancelled),
         ack = ack_rx                 => ack.map_err(|_| Cancelled),
     }
+    }.instrument(span).await
 }
 
 pub fn spawn_handler<H: MutationHandler + 'static>(
@@ -198,12 +212,16 @@ pub fn spawn_handler<H: MutationHandler + 'static>(
                 biased;
                 _ = cancel.cancelled() => break,
                 msg = rx.recv() => match msg {
-                    Some(req) => h.handle(req).await,
+                    Some(req) => {
+                        h.handle(req)
+                            .instrument(info_span!("mutations.spawn_handler.dispatch"))
+                            .await
+                    }
                     None      => break,
                 }
             }
         }
-    })
+    }.instrument(info_span!("mutations.spawn_handler.loop")))
 }
 
 /// Silence unused-import lint until bodies land upstream.

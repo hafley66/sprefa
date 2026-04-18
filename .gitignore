@@ -7,3 +7,5 @@ target/
 
 .DS_Store
 .ext-survey
+**/.path_index_cache/
+**/.fixtures/

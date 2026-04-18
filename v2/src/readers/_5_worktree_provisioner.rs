@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::OnceCell;
+use tracing::{info_span, Instrument};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -113,6 +114,7 @@ impl WorktreeProvisioner {
             .join(sanitize_slug(&rev));
         let git_dir = repo_git_dir.to_path_buf();
 
+        let span = info_span!("wt.ensure", repo = %repo, rev = %rev);
         // `get_or_try_init` runs its future exactly once; concurrent callers
         // await the winner. On init error the cell stays empty and the next
         // caller retries.
@@ -127,8 +129,10 @@ impl WorktreeProvisioner {
                     let git_dir_s = git_dir.clone();
                     let rev_s     = rev.clone();
                     tokio::task::spawn_blocking(move || {
+                        let _s = info_span!("wt.add_sync").entered();
                         run_worktree_add_sync(&git_dir_s, &wt_dir_s, &rev_s)
                     })
+                    .instrument(info_span!("wt.add_join"))
                     .await??;
                     Ok::<Arc<WtHandle>, ProvErr>(Arc::new(WtHandle {
                         path: wt_dir,
@@ -136,8 +140,9 @@ impl WorktreeProvisioner {
                         rev,
                         git_dir,
                     }))
-                }
+                }.instrument(info_span!("wt.init"))
             })
+            .instrument(span)
             .await?;
 
         Ok(handle.clone())
@@ -155,12 +160,23 @@ impl WorktreeProvisioner {
                 let wt_path = handle.path.clone();
                 let git_dir = handle.git_dir.clone();
                 tokio::task::spawn_blocking(move || {
+                    let _s = info_span!("wt.remove_sync").entered();
                     run_worktree_remove_sync(&git_dir, &wt_path)
                 })
+                .instrument(info_span!("wt.remove_join"))
                 .await??;
             }
         }
         Ok(())
+    }
+
+    /// Sync peek. Returns the handle iff `(repo, rev)` has already been
+    /// provisioned and the init future succeeded. No I/O, no await.
+    /// Used by the bytes() fast path: files() ensures the WT; bytes() reads
+    /// from it without re-entering async.
+    pub fn get(&self, repo: &str, rev: &str) -> Option<Arc<WtHandle>> {
+        let key: (Arc<str>, Arc<str>) = (Arc::from(repo), Arc::from(rev));
+        self.live.get(&key).and_then(|cell| cell.get().cloned())
     }
 
     /// Snapshot of all successfully-provisioned handles. Skips in-flight or
@@ -187,6 +203,12 @@ fn run_worktree_add_sync(
     wt_dir: &Path,
     rev: &str,
 ) -> Result<(), ProvErr> {
+    // Idempotent adoption across process restarts: if the WT dir was
+    // provisioned by a prior run, its .git pointer file still resolves and
+    // the contents on disk match the requested rev. Skip the shell call.
+    if wt_dir.join(".git").exists() {
+        return Ok(());
+    }
     let out = std::process::Command::new("git")
         .args(["worktree", "add", "--detach", "--quiet"])
         .arg(wt_dir)
