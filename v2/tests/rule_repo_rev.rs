@@ -40,10 +40,11 @@ fn rule_repo_rev_end_to_end() {
 
     let src = r#"
         # `;` distributes the parent — both pipes run against the rule's seed,
-        # results unioned into the demo table.
+        # results unioned into the demo table. rev($V) bind was banned as
+        # unbounded-capture; fork over concrete revs instead.
         rule(demo) {
-            > repo(myorg/*) > rev($V);
-            > repo(other/*) > rev($V);
+            > repo(myorg/*) { > rev(main); > rev(next); };
+            > repo(other/*) > rev(main);
         };
     "#;
 
@@ -65,21 +66,15 @@ fn rule_repo_rev_end_to_end() {
 
     let repos: Vec<&str> = out.iter().map(|c| c.repo.as_ref()).collect();
     let revs:  Vec<&str> = out.iter().map(|c| c.rev.as_ref()).collect();
-    let bound_v: Vec<Option<&str>> = out.iter()
-        .map(|c| c.captures.get("V").map(|cap| cap.value.as_ref()))
-        .collect();
 
     // Fork: pipe1 → 3 myorg cursors, pipe2 → 1 other cursor, unioned = 4.
     assert_eq!(out.len(), 4, "repos={repos:?} revs={revs:?}");
-    assert!(bound_v.iter().all(|v| v.is_some()));
     assert_eq!(repos.iter().filter(|r| r.starts_with("myorg/")).count(), 3);
     assert_eq!(repos.iter().filter(|r| r.starts_with("other/")).count(), 1);
 
     let rows = writer.snapshot_rows();
     let demo = rows.get::<Arc<str>>(&Arc::from("__demo")).expect("demo table");
     assert_eq!(demo.len(), 4);
-    let sample_cap_names: Vec<&str> = demo[0].captures.iter().map(|(n, _, _)| n.as_ref()).collect();
-    assert_eq!(sample_cap_names, vec!["V"]);
 
     println!("rows: {}", demo.len());
     for r in demo {
@@ -105,9 +100,9 @@ fn rule_repo_rev_end_to_end() {
     for c in &out {
         let ops: Vec<&str> = c.evidence.iter().map(|e| e.op_name).collect();
         assert_eq!(ops, vec!["repo", "rev"], "evidence ops for cursor {}", c.repo);
-        // Filter-mode repo has capture=None; bind-mode rev has Some("V").
+        // Both filter-mode now — rev bind was banned.
         assert_eq!(c.evidence[0].capture, None);
-        assert_eq!(c.evidence[1].capture.as_ref().map(|a| a.as_ref()), Some("V"));
+        assert_eq!(c.evidence[1].capture, None);
         assert_eq!(c.evidence[0].matched.as_ref(), c.repo.as_ref());
         assert_eq!(c.evidence[1].matched.as_ref(), c.rev.as_ref());
     }
@@ -129,8 +124,13 @@ fn fs_fanout_and_evidence() {
     let writer = Arc::new(MemWriter::new());
 
     let src = r#"
+        # rev($V) is banned; fork over concrete revs (main, v1) instead.
+        # Rule body is a fork: each arm is a full pipe ending in fs(**).
         rule(files_demo) {
-            > repo(myorg/*) > rev($V) > fs(**)
+            > repo(myorg/*) {
+                > rev(main) > fs(**);
+                > rev(v1)   > fs(**);
+            }
         };
         rule(bind_demo) {
             > repo(myorg/beta) > rev(main) > fs($F)
@@ -171,8 +171,8 @@ fn fs_fanout_and_evidence() {
         let fs_ev = &c.evidence[2];
         assert_eq!(fs_ev.capture, None);
         assert_eq!(fs_ev.matched.as_ref(), c.fs.as_ref().unwrap().0.to_string_lossy());
-        // Mid-chain bind: rev($V) binds, so capture is Some("V").
-        assert_eq!(c.evidence[1].capture.as_ref().map(|a| a.as_ref()), Some("V"));
+        // Concrete rev filter — capture is None.
+        assert_eq!(c.evidence[1].capture, None);
     }
 
     // Drive bind_demo — fs($F) captures filename.

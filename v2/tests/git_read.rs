@@ -78,9 +78,14 @@ fn git_blob_reader_read_op() {
     let reader = Arc::new(GitBlobReader::new(locator, cfg.clone()));
     let writer = Arc::new(MemWriter::new());
 
+    // Fork over the two revs explicitly — `rev($V)` is banned (unbounded bind)
+    // so each rev is an arm of the repo brace with the tail pipe inlined.
     let src = r#"
         rule(code) {
-            > repo(myorg/demo) > rev($V) > fs(src/*.rs) > read
+            > repo(myorg/demo) {
+                > rev(main) > fs(src/*.rs) > read;
+                > rev(next) > fs(src/*.rs) > read;
+            };
         };
     "#;
 

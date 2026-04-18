@@ -159,20 +159,9 @@ fn repo_hover_match_lists_repos() {
 // rev
 // ---------------------------------------------------------------------------
 
-#[test]
-fn rev_hover_capture_lists_revs() {
-    let cursors: Vec<Cursor> = vec![
-        with_capture(cursor("r", "main"),   "V", "main"),
-        with_capture(cursor("r", "next"),   "V", "next"),
-        with_capture(cursor("r", "main"),   "V", "main"), // duplicate
-    ];
-    let op = parse_single_op("rev($V)");
-    let result = op.hover_capture("V", &cursors);
-    assert_eq!(
-        result,
-        Some("**`$V`** revisions:\n\n- `main`\n- `next`".to_string())
-    );
-}
+// rev($V) bind is banned by the 6a guardrail (rev/unbounded-capture), so the
+// parse path can no longer produce a RevOp in Bind mode. RevMode::Bind still
+// exists internally and its hover_capture is covered in src/ops/_2_rev.rs.
 
 #[test]
 fn rev_hover_match_lists_revs() {
@@ -285,7 +274,7 @@ fn rule_hover_self_has_rule_name_header() {
     // collect_captures only picks up bare $CAP paren slots; json({ .. }) brace-pattern
     // captures are embedded in the brace src and are not bare paren captures.
     // rule(demo){ rev($N) > rev($V) } → captures = [N, V] (both bare paren captures).
-    let op = parse_rule_op("rule(demo){ > rev($N) > rev($V) }");
+    let op = parse_rule_op("rule(demo){ > repo($N) > fs($V) }");
     let hover = op.hover_self();
     assert_eq!(
         hover,
@@ -329,7 +318,7 @@ fn rule_hover_capture_renders_var_name() {
         with_capture(cursor("r", "main"), "N", "sprefa"),
         with_capture(cursor("r", "main"), "N", "v2"),
     ];
-    let op = parse_rule_op("rule(demo){ > rev($N) > rev($V) }");
+    let op = parse_rule_op("rule(demo){ > repo($N) > fs($V) }");
     let result = op.hover_capture("N", &cursors);
     assert_eq!(
         result,
@@ -345,7 +334,7 @@ fn rule_hover_capture_renders_var_name() {
 fn every_op_hover_self_is_non_empty() {
     let ops: Vec<Arc<dyn Op>> = vec![
         parse_single_op("repo($R)"),
-        parse_single_op("rev($V)"),
+        parse_single_op("rev(main)"),
         parse_single_op("fs(**)"),
         parse_single_op("json({ name: $N })"),
         // read is in a seq — parse separately via a two-op chain
@@ -364,7 +353,7 @@ fn every_op_hover_self_is_non_empty() {
                 _ => panic!("expected Pipeline::Op for read"),
             }
         },
-        parse_rule_op("rule(demo){ > repo(myorg/*) > rev($N) }"),
+        parse_rule_op("rule(demo){ > repo(myorg/*) > fs($N) }"),
     ];
     for op in &ops {
         let s = op.hover_self();
@@ -412,9 +401,9 @@ fn rule_hover_self_lists_captures_from_nested_json_body() {
 
 #[test]
 fn rule_hover_self_lists_captures_from_nested_json_with_multiple_ops() {
-    // Mix of bare paren capture (rev($V)) and json brace captures ($PKG, $VER).
+    // Mix of bare paren capture (fs($V)) and json brace captures ($PKG, $VER).
     // All three must appear in the output.
-    let op = parse_rule_op("rule(pkgs){ > rev($V) > json({ name: $PKG, version: $VER }) }");
+    let op = parse_rule_op("rule(pkgs){ > fs($V) > json({ name: $PKG, version: $VER }) }");
     let hover = op.hover_self();
     assert!(hover.contains("$V"),   "expected $V in: {hover}");
     assert!(hover.contains("$PKG"), "expected $PKG in: {hover}");

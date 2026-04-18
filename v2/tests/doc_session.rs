@@ -69,7 +69,7 @@ fn doc_session_hover_on_op_name_returns_op_hover_self() {
 
 #[test]
 fn doc_session_hover_on_capture_returns_op_hover_capture() {
-    let src = "rule(test_rule){ > repo($REPO) > rev($REV) }";
+    let src = "rule(test_rule){ > repo($REPO) > rev(main) }";
     let mut s = session_with_repo(src);
 
     s.ensure_run();

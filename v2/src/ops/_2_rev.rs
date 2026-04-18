@@ -58,7 +58,10 @@ impl Operator for RevFactory {
             got:  Arc::from(arg),
         }) as Box<dyn Diagnostic>;
         let mode = match classify_token(arg) {
-            TokenClass::Capture(c)  => RevMode::Bind(c.name),
+            TokenClass::Capture(c)  => return Err(vec![Box::new(RevDiag::UnboundedCapture {
+                site:    (*inv.parse_site).clone(),
+                capture: c.name,
+            }) as Box<dyn Diagnostic>]),
             TokenClass::Literal     => {
                 let pat = CompiledPattern::compile(arg)
                     .map_err(|_| vec![bad_arg(&inv.parse_site)])?;
@@ -169,6 +172,7 @@ enum RevDiag {
     MissingArg         { site: ParseSite },
     BadArg             { site: ParseSite, got: Arc<str> },
     UnboundedWildcard  { site: ParseSite, pattern: Arc<str> },
+    UnboundedCapture   { site: ParseSite, capture: Arc<str> },
 }
 
 impl Diagnostic for RevDiag {
@@ -177,6 +181,7 @@ impl Diagnostic for RevDiag {
             RevDiag::MissingArg        { .. } => "rev/missing-arg",
             RevDiag::BadArg            { .. } => "rev/bad-arg",
             RevDiag::UnboundedWildcard { .. } => "rev/unbounded-wildcard",
+            RevDiag::UnboundedCapture  { .. } => "rev/unbounded-capture",
         }
     }
     fn severity(&self) -> crate::_0_types::Severity { crate::_0_types::Severity::Error }
@@ -185,6 +190,7 @@ impl Diagnostic for RevDiag {
             RevDiag::MissingArg        { site }    => site,
             RevDiag::BadArg            { site, .. } => site,
             RevDiag::UnboundedWildcard { site, .. } => site,
+            RevDiag::UnboundedCapture  { site, .. } => site,
         }
     }
     fn render(&self, out: &mut dyn Renderer) {
@@ -206,6 +212,16 @@ impl Diagnostic for RevDiag {
 Each rev materializes a git worktree on first query. Narrow with a prefix/suffix \
 so the set is bounded:\n    rev(v1.*)      # tags starting with v1.\n    \
 rev(*-stable)  # tags ending in -stable\n    rev(main)      # literal"
+                    ));
+                out.primary(site);
+            }
+            RevDiag::UnboundedCapture { site, capture } => {
+                out.header(self.code(), self.severity(),
+                    &format!(
+                        "rev(${capture}) binds every rev unconditionally — same \
+materialization explosion as rev(*). Bind against a bounded filter upstream \
+or inline, e.g.:\n    rev(v1.*) > rev(${capture})   # capture within a glob\n    \
+rev({capture}=v1.*)           # bound capture (future syntax)"
                     ));
                 out.primary(site);
             }
@@ -274,6 +290,23 @@ mod tests {
         };
         let result = RevFactory.parse(&inv, &mut dummy_pctx());
         assert!(result.is_ok(), "expected rev(v1.*) to parse — bounded prefix wildcard");
+    }
+
+    #[test]
+    fn unbounded_capture_emits_diag_and_errors() {
+        let inv = OpInvocation {
+            name:       Arc::from("rev"),
+            brackets:   vec![],
+            paren_src:  Some(ParenSlot { src: Arc::from("$V"), byte_range: 0..2 }),
+            brace_src:  None,
+            parse_site: dummy_site(),
+            crossrefs:  vec![],
+        };
+        let result = RevFactory.parse(&inv, &mut dummy_pctx());
+        assert!(result.is_err(), "expected rev($V) to be rejected as unbounded");
+        let diags = match result { Err(d) => d, Ok(_) => unreachable!() };
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code(), "rev/unbounded-capture");
     }
 
     #[test]
