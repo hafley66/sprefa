@@ -59,7 +59,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         .or_else(|| req.source_path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf)))
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
-    let workspace = state.workspaces.write().await.resolve(&hint);
+    let workspace = state.workspaces.write().await.resolve(&hint).await;
     if timing { eprintln!("[timing] resolve_workspace      {:>6} ms (hint={:?}, repos={}, revs={})",
         t0.elapsed().as_millis(), hint,
         workspace.config.repos.len(),

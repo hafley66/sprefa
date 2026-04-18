@@ -221,13 +221,24 @@ impl Reader for GitBlobReader {
         // Phases 1 and 2 require .await (PathIndex is async_trait).
         // Wrap in stream::once so the Reader trait signature is unchanged.
         Box::pin(stream::once(async move {
+            let timing = std::env::var_os("SPREFA_TIMING").is_some();
             // ---------------------------------------------------------------
             // Phase 1 — PathIndex hit: exactly one files_at call.
             // ---------------------------------------------------------------
             if let Some(ref idx) = path_index {
+                let t0 = std::time::Instant::now();
                 match idx.files_at(&repo_s, &rev_s, &pattern).await {
-                    Ok(Some(hits)) => return hits,
-                    Ok(None)       => {} // rev not indexed — fall through to phase 2
+                    Ok(Some(hits)) => {
+                        if timing { eprintln!(
+                            "[timing] path_index.hit {:>5}ms repo={} rev={} n={}",
+                            t0.elapsed().as_millis(), repo_s, rev_s, hits.len()); }
+                        return hits;
+                    }
+                    Ok(None)       => {
+                        if timing { eprintln!(
+                            "[timing] path_index.miss {:>5}ms repo={} rev={}",
+                            t0.elapsed().as_millis(), repo_s, rev_s); }
+                    }
                     Err(e)         => {
                         // index error — skip phases 1+2, fall straight to phase 3
                         eprintln!("[path_index] files_at error: {e}");
@@ -251,22 +262,33 @@ impl Reader for GitBlobReader {
                     let repo_arc: Arc<str> = Arc::from(repo_s.as_str());
                     let rev_arc:  Arc<str> = Arc::from(rev_s.as_str());
 
+                    let t_ensure = std::time::Instant::now();
                     match prov.ensure(repo_arc, rev_arc, &checkout_path).await {
                         Ok(_wt) => {
+                            let d_ensure = t_ensure.elapsed();
                             // Walk via ls-tree: one subprocess, oids alongside paths.
                             let cp2  = checkout_path.clone();
                             let rev2 = rev_s.clone();
+                            let t_ls = std::time::Instant::now();
                             let entries: Vec<(FilePath, [u8; 20])> =
                                 tokio::task::spawn_blocking(move || {
                                     walk_wt_with_ls_tree(cp2, rev2)
                                 })
                                 .await
                                 .unwrap_or_default();
+                            let d_ls = t_ls.elapsed();
 
                             // Bulk upsert — one transaction for all entries.
+                            let t_up = std::time::Instant::now();
                             if let Err(e) = idx.upsert_rev(&repo_s, &rev_s, &entries).await {
                                 eprintln!("[path_index] upsert_rev error: {e}");
                             }
+                            let d_up = t_up.elapsed();
+                            if timing { eprintln!(
+                                "[timing] phase2 repo={} rev={} ensure={}ms ls-tree={}ms upsert={}ms rows={}",
+                                repo_s, rev_s,
+                                d_ensure.as_millis(), d_ls.as_millis(), d_up.as_millis(),
+                                entries.len()); }
 
                             // Re-query index: exactly one files_at call.
                             match idx.files_at(&repo_s, &rev_s, &pattern).await {
@@ -298,8 +320,13 @@ impl Reader for GitBlobReader {
             // Phase 3 — libgit2 tree walk (unchanged from original).
             //   Runs when path_index/provisioner are None, or phases 1/2 fail.
             // ---------------------------------------------------------------
+            let t3 = std::time::Instant::now();
             let reader = GitBlobReader::new(locator, config);
-            reader.files_libgit2(&repo_s, &rev_s, &pattern)
+            let hits = reader.files_libgit2(&repo_s, &rev_s, &pattern);
+            if timing { eprintln!(
+                "[timing] phase3.libgit2 {:>5}ms repo={} rev={} n={}",
+                t3.elapsed().as_millis(), repo_s, rev_s, hits.len()); }
+            hits
         }))
     }
 

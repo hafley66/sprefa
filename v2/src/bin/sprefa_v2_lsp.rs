@@ -16,7 +16,8 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 use v2::analysis::DocSession;
 use v2::ops::default_registry;
 use v2::readers::{
-    BufferOverlay, CheckoutLocator, ConfigLocator, GitBlobReader, InMemoryLocator, MemReader,
+    build_index_stack, BufferOverlay, CheckoutLocator, ConfigLocator, GitBlobReader,
+    InMemoryLocator, MemReader,
 };
 use v2::{Config, OperatorRegistry, ParseSite, Reader, Renderer, RuntimeConfig, Severity};
 
@@ -125,7 +126,7 @@ fn walk_up_for_git_root(start: &Path) -> Option<PathBuf> {
 /// 1. `.sprefa.toml` walking up from the file → `ConfigLocator` + `GitBlobReader`
 /// 2. `.git` walking up from the file → auto single-repo `InMemoryLocator` (slug = git-root basename, revs = ["HEAD"]) + `GitBlobReader`
 /// 3. Fallback: empty `MemReader` (no repos, no revs — captures stay empty)
-fn resolve_reader(uri: &Url) -> (Arc<BufferOverlay>, Arc<Config>, Option<PathBuf>) {
+async fn resolve_reader(uri: &Url) -> (Arc<BufferOverlay>, Arc<Config>, Option<PathBuf>) {
     let file_path = uri.to_file_path().ok();
     let start_dir = file_path
         .as_ref()
@@ -134,28 +135,26 @@ fn resolve_reader(uri: &Url) -> (Arc<BufferOverlay>, Arc<Config>, Option<PathBuf
 
     if let Some(d) = &start_dir {
         if let Some(toml) = walk_up_for_file(d, ".sprefa.toml") {
-            match ConfigLocator::from_toml_file(&toml) {
-                Ok(loc) => {
-                    let loc_arc: Arc<dyn CheckoutLocator> = Arc::new(loc);
-                    let cfg = make_config_from_locator(&*loc_arc);
-                    // First repo's path is the workspace root for hover link rewriting.
-                    let workspace_root = loc_arc.repos().first()
-                        .and_then(|slug| loc_arc.locate(slug, "HEAD"));
-                    let git: Arc<dyn Reader + Send + Sync> =
-                        Arc::new(GitBlobReader::new(loc_arc, cfg.clone()));
-                    let overlay = Arc::new(BufferOverlay::new(git));
-                    eprintln!(
-                        "[sprefa-v2-lsp] reader: ConfigLocator from {}",
-                        toml.display()
-                    );
-                    return (overlay, cfg, workspace_root);
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[sprefa-v2-lsp] .sprefa.toml at {} failed to parse: {e}; falling back",
-                        toml.display()
-                    );
-                }
+            let parsed = ConfigLocator::from_toml_file(&toml).map_err(|e| {
+                eprintln!(
+                    "[sprefa-v2-lsp] .sprefa.toml at {} failed to parse: {e}; falling back",
+                    toml.display()
+                );
+            }).ok();
+            if let Some(loc) = parsed {
+                let loc_arc: Arc<dyn CheckoutLocator> = Arc::new(loc);
+                let cfg = make_config_from_locator(&*loc_arc);
+                let workspace_root = loc_arc.repos().first()
+                    .and_then(|slug| loc_arc.locate(slug, "HEAD"));
+                let (prov, idx) = build_index_stack().await;
+                let git: Arc<dyn Reader + Send + Sync> =
+                    Arc::new(GitBlobReader::new_with_index(loc_arc, cfg.clone(), prov, idx));
+                let overlay = Arc::new(BufferOverlay::new(git));
+                eprintln!(
+                    "[sprefa-v2-lsp] reader: ConfigLocator from {}",
+                    toml.display()
+                );
+                return (overlay, cfg, workspace_root);
             }
         }
     }
@@ -170,8 +169,9 @@ fn resolve_reader(uri: &Url) -> (Arc<BufferOverlay>, Arc<Config>, Option<PathBuf
             let loc = InMemoryLocator::new().with_repo(&slug, root.clone(), &["HEAD"]);
             let loc_arc: Arc<dyn CheckoutLocator> = Arc::new(loc);
             let cfg = make_config_from_locator(&*loc_arc);
+            let (prov, idx) = build_index_stack().await;
             let git: Arc<dyn Reader + Send + Sync> =
-                Arc::new(GitBlobReader::new(loc_arc, cfg.clone()));
+                Arc::new(GitBlobReader::new_with_index(loc_arc, cfg.clone(), prov, idx));
             let overlay = Arc::new(BufferOverlay::new(git));
             eprintln!(
                 "[sprefa-v2-lsp] reader: auto git-root {} (slug={slug}, revs=[HEAD])",
@@ -409,7 +409,7 @@ fn kind_from_hint(hint: &str) -> Option<CompletionItemKind> {
 
 impl Backend {
     async fn open_or_replace(&self, uri: &Url, source: String) {
-        let (overlay, _cfg, auto_root) = resolve_reader(uri);
+        let (overlay, _cfg, auto_root) = resolve_reader(uri).await;
         // Resolution priority for workspace_root:
         //   1. resolve_reader auto-detection (`.sprefa.toml` first repo, else
         //      walked `.git` root) — closest to the file, most precise.

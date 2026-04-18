@@ -29,15 +29,16 @@ fn lower(src: &str) -> v2::LowerOutcome {
     lower_rules(pipes, pctx)
 }
 
-// repo($R) { > rev(*); } — wildcard is legal; arm lowers cleanly.
+// repo($R) { > rev(*); } — wildcard rev is banned (6a guardrail) to keep
+// the worktree materialization set bounded. Arm lowers but surfaces the diag.
 #[test]
-fn fork_arm_rev_star_clean() {
+fn fork_arm_rev_star_banned() {
     let src = r#"rule(foo) { > repo($R) { > rev(*); }; };"#;
     let outcome = lower(src);
     let codes: Vec<&str> = outcome.diags.iter().map(|d| d.code()).collect();
     assert!(
-        codes.is_empty(),
-        "expected no diags for rev(*), got {codes:?}"
+        codes.contains(&"rev/unbounded-wildcard"),
+        "expected rev/unbounded-wildcard, got {codes:?}"
     );
 }
 

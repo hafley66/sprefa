@@ -108,7 +108,7 @@ struct SessionEntry {
 impl Backend {
     async fn open_or_replace(&self, uri: &Url, source: String) {
         let hint = uri_to_hint(uri);
-        let workspace = self.state.workspaces.write().await.resolve(&hint);
+        let workspace = self.state.workspaces.write().await.resolve(&hint).await;
         let init_root = self.init_root.lock().await.clone();
         let workspace_root = Some(workspace.root.to_path_buf()).or(init_root);
         let root_arc: Option<Arc<Path>> = workspace_root.as_ref().map(|p| Arc::from(p.as_path()));

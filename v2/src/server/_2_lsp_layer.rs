@@ -62,7 +62,7 @@ impl LspLayer {
         source: String,
     ) {
         let hint = uri_to_hint(uri);
-        let workspace = state.workspaces.write().await.resolve(&hint);
+        let workspace = state.workspaces.write().await.resolve(&hint).await;
 
         let overlay_keys = shadow_into_overlay(&workspace, &source);
 

@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::readers::{
-    BufferOverlay, CheckoutLocator, ConfigLocator, GitBlobReader, InMemoryLocator, MemReader,
+    build_index_stack, BufferOverlay, CheckoutLocator, ConfigLocator, GitBlobReader,
+    InMemoryLocator, MemReader,
 };
 use crate::{Config, Reader};
 
@@ -48,12 +49,14 @@ pub struct WorkspaceRegistry {
 }
 
 impl WorkspaceRegistry {
-    pub fn resolve(&mut self, hint: &Path) -> Arc<WorkspaceCtx> {
+    pub async fn resolve(&mut self, hint: &Path) -> Arc<WorkspaceCtx> {
         let root = resolve_root(hint);
-        self.by_root
-            .entry(root.clone())
-            .or_insert_with(|| build_workspace_ctx(&root))
-            .clone()
+        if let Some(ws) = self.by_root.get(&root) {
+            return ws.clone();
+        }
+        let ws = build_workspace_ctx(&root).await;
+        self.by_root.insert(root, ws.clone());
+        ws
     }
 
     pub fn get(&self, root: &Path) -> Option<Arc<WorkspaceCtx>> {
@@ -120,14 +123,15 @@ pub fn walk_up_for_git_root(start: &Path) -> Option<PathBuf> {
 ///
 /// Every branch wraps the inner reader in a `BufferOverlay` so LSP edits
 /// shadow on-disk bytes transparently.
-fn build_workspace_ctx(root: &Path) -> Arc<WorkspaceCtx> {
+async fn build_workspace_ctx(root: &Path) -> Arc<WorkspaceCtx> {
     // Branch 1 — .sprefa.toml at or under root
     if let Some(toml) = walk_up_for_file(root, ".sprefa.toml") {
-        if let Ok(loc) = ConfigLocator::from_toml_file(&toml) {
+        if let Some(loc) = ConfigLocator::from_toml_file(&toml).ok() {
             let loc_arc: Arc<dyn CheckoutLocator> = Arc::new(loc);
             let cfg = make_config_from_locator(&*loc_arc);
+            let (prov, idx) = build_index_stack().await;
             let inner: Arc<dyn Reader + Send + Sync> =
-                Arc::new(GitBlobReader::new(loc_arc.clone(), cfg.clone()));
+                Arc::new(GitBlobReader::new_with_index(loc_arc.clone(), cfg.clone(), prov, idx));
             let intern = Arc::new(crate::_18_str_intern::StrInterner::new());
             let overlay = Arc::new(BufferOverlay::with_intern(inner, intern.clone()));
             let actual_root: Arc<Path> = loc_arc
@@ -156,8 +160,9 @@ fn build_workspace_ctx(root: &Path) -> Arc<WorkspaceCtx> {
         let loc = InMemoryLocator::new().with_repo(&slug, git_root.clone(), &["HEAD"]);
         let loc_arc: Arc<dyn CheckoutLocator> = Arc::new(loc);
         let cfg = make_config_from_locator(&*loc_arc);
+        let (prov, idx) = build_index_stack().await;
         let inner: Arc<dyn Reader + Send + Sync> =
-            Arc::new(GitBlobReader::new(loc_arc.clone(), cfg.clone()));
+            Arc::new(GitBlobReader::new_with_index(loc_arc.clone(), cfg.clone(), prov, idx));
         let intern = Arc::new(crate::_18_str_intern::StrInterner::new());
         let overlay = Arc::new(BufferOverlay::with_intern(inner, intern.clone()));
         return Arc::new(WorkspaceCtx {
