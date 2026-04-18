@@ -26,6 +26,7 @@ fn test_config() -> Arc<Config> {
             max_passes:           1,
             max_claims_per_pass:  1,
             max_cursors_per_root: 1,
+            max_file_bytes:       1_048_576,
         },
         content_hash: 0,
     })

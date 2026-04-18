@@ -29,6 +29,12 @@ pub struct RuntimeConfig {
     pub max_passes:           usize,
     pub max_claims_per_pass:  usize,
     pub max_cursors_per_root: usize,
+    /// Per-file byte cap for byte-reading ops (ast, json, md, line).
+    /// Files over this size are skipped with a `file/size-cap` diagnostic
+    /// so the user sees which files were dropped and what the cap was.
+    /// Default 1 MiB — picks off generated visitor files (e.g. swc_visit)
+    /// that drown debug-mode ast-grep walks.
+    pub max_file_bytes:       u64,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +76,7 @@ impl RuntimeConfig {
             max_passes:           8,
             max_claims_per_pass:  10_000,
             max_cursors_per_root: 1_000_000,
+            max_file_bytes:       1_048_576,
         }
     }
 }

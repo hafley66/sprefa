@@ -92,6 +92,7 @@ fn make_config_from_locator(loc: &dyn CheckoutLocator) -> Arc<Config> {
             max_passes:           8,
             max_claims_per_pass:  10_000,
             max_cursors_per_root: 1_000_000,
+            max_file_bytes:       1_048_576,
         },
         content_hash: 0,
     })
@@ -196,6 +197,7 @@ async fn resolve_reader(uri: &Url) -> (Arc<BufferOverlay>, Arc<Config>, Option<P
             max_passes:           8,
             max_claims_per_pass:  10_000,
             max_cursors_per_root: 1_000_000,
+            max_file_bytes:       1_048_576,
         },
         content_hash: 0,
     });

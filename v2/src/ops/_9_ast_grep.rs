@@ -285,6 +285,7 @@ impl Op for AstGrepOp {
         let site     = self.parse_site.clone();
         let reader   = ctx.reader.clone();
         let diags    = ctx.diags.clone();
+        let size_cap = ctx.config.runtime.max_file_bytes;
 
         // Per batch:
         //   [03] async prefetch — join_all the reader.bytes() fan-out
@@ -322,7 +323,7 @@ impl Op for AstGrepOp {
                 let site_r = site.clone();
                 let results: Vec<PerFile> = tracing::Instrument::instrument(
                     rayon_map(preps, move |p| {
-                        process_one(p, lang, &pattern, &slot_res, &bound, &site_r)
+                        process_one(p, lang, &pattern, &slot_res, &bound, &site_r, size_cap)
                     }),
                     cpu_span,
                 ).await;
@@ -344,6 +345,14 @@ impl Op for AstGrepOp {
                             (diags.0)(Box::new(AstDiag::ReadFailed {
                                 site: (*site).clone(),
                                 path,
+                            }));
+                        }
+                        PerFile::SizeCap { path, bytes, cap } => {
+                            (diags.0)(Box::new(AstDiag::SizeCap {
+                                site: (*site).clone(),
+                                path,
+                                bytes,
+                                cap,
                             }));
                         }
                     }
@@ -380,6 +389,7 @@ enum PerFile {
     Matches(Vec<Cursor>),
     NoMatch   { path: String },
     ReadFailed { path: String },
+    SizeCap   { path: String, bytes: u64, cap: u64 },
 }
 
 async fn prep_cursor(
@@ -465,11 +475,19 @@ fn process_one(
     slot_res: &[(String, Regex)],
     bound:    &[Arc<str>],
     site:     &Arc<ParseSite>,
+    size_cap: u64,
 ) -> PerFile {
     if p.read_failed {
         return PerFile::ReadFailed { path: p.fp.0.to_string_lossy().into_owned() };
     }
     let bytes_len = p.slice_end.saturating_sub(p.slice_start);
+    if size_cap > 0 && (bytes_len as u64) > size_cap {
+        return PerFile::SizeCap {
+            path:  p.fp.0.to_string_lossy().into_owned(),
+            bytes: bytes_len as u64,
+            cap:   size_cap,
+        };
+    }
     let _proc_span = tracing::info_span!(
         "op.ast.process_one",
         bytes_len = bytes_len,
@@ -588,6 +606,7 @@ enum AstDiag {
     BadPattern  { site: ParseSite, got: Arc<str>, msg: Arc<str> },
     ReadFailed  { site: ParseSite, path: String },
     NoMatch     { site: ParseSite, path: String, pattern: String },
+    SizeCap     { site: ParseSite, path: String, bytes: u64, cap: u64 },
 }
 
 impl Diagnostic for AstDiag {
@@ -598,9 +617,15 @@ impl Diagnostic for AstDiag {
             AstDiag::BadPattern  { .. } => "ast/bad-pattern",
             AstDiag::ReadFailed  { .. } => "ast/read-failed",
             AstDiag::NoMatch     { .. } => "ast/no-match",
+            AstDiag::SizeCap     { .. } => "file/size-cap",
         }
     }
-    fn severity(&self) -> Severity { Severity::Error }
+    fn severity(&self) -> Severity {
+        match self {
+            AstDiag::SizeCap { .. } => Severity::Warn,
+            _                        => Severity::Error,
+        }
+    }
     fn primary(&self) -> &ParseSite {
         match self {
             AstDiag::MissingLang { site }     => site,
@@ -608,6 +633,7 @@ impl Diagnostic for AstDiag {
             AstDiag::BadPattern  { site, .. } => site,
             AstDiag::ReadFailed  { site, .. } => site,
             AstDiag::NoMatch     { site, .. } => site,
+            AstDiag::SizeCap     { site, .. } => site,
         }
     }
     fn render(&self, out: &mut dyn Renderer) {
@@ -635,6 +661,14 @@ impl Diagnostic for AstDiag {
             AstDiag::NoMatch { site, path, pattern } => {
                 out.header(self.code(), self.severity(),
                     &format!("ast(`{pattern}`) matched nothing in `{path}`"));
+                out.primary(site);
+            }
+            AstDiag::SizeCap { site, path, bytes, cap } => {
+                out.header(self.code(), self.severity(),
+                    &format!(
+                        "skipped `{path}` — {bytes} bytes exceeds runtime.max_file_bytes={cap} \
+                         (raise the cap or exclude this path to include it)",
+                    ));
                 out.primary(site);
             }
         }
