@@ -2,31 +2,8 @@
 
 Pipeline engine for `.sprf` files. Parses declarative rules into op pipelines, runs them against repos/revisions/files, produces cursors with typed captures and slots.
 
----
-
-## Read this before writing code — LAWS OF MIN
-
-The system's performance ceiling is the trait boundary, not the hot loop.
-Every N+1 in this codebase traces to a trait that exposed a scalar method.
-Singletons on `Reader` / `Store` / `MutationHandler` invited per-item
-futures, per-item locks, per-item SQL, per-item arcs. 1067 files became
-1067 mutex acquisitions because the Reader trait let a caller ask for one.
-
-**Min everything. Not a style preference — a structural constraint.**
-
-- min calls, min generics, min locks, min clones, min copies
-- min allocs, min arcs, min heaps, min stacks
-- min for-loops that hide per-item await/lock/alloc
-- min blocking, min yolo, min guessing without instrumentation
-
-The traits take slices and return slices. The scalar call must not be
-typeable. See `CLAUDE.md` for the exact trait shapes and acceptance
-checklist. Any PR that re-introduces a per-item method on a
-cross-cutting trait is a regression regardless of how clean the body
-looks.
-
-Historical evidence of drift lives in `CLAUDE.md` under "Evidence of
-drift". Do not re-commit those shapes.
+Hot-path rules and the measured Reader/Store drift live in `CLAUDE.md`.
+Read that before editing reader/store/op code.
 
 ---
 

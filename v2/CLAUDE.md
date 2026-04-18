@@ -2,198 +2,121 @@
 
 Cursor-pipeline evaluator for `.sprf` files.
 
-Read `README.md` first. Then read `## LAWS OF MIN` below. Do not skip.
+Read `README.md` first.
 
-## LAWS OF MIN (non-negotiable, apply before writing any code)
+## The rule
 
-The architectural boundary got destroyed once already. Reader, Store, and
-MutationHandler grew per-item methods, per-item sub-traits, dispersed SQL,
-three-tier RwLocks, mutex-serialized git calls, per-file futures, per-file
-Arcs, per-file OnceCells. 1067 files = 1067 mutex acquisitions because the
-trait *permitted* a scalar call. Every N+1 regression in this repo was
-enabled by a singleton method on a trait that should have only taken
-slices. LLMs cannot count — don't trust yourself to "remember to batch".
-Make the scalar call un-typeable.
+**A loop of N iterations should do O(1) expensive work, not O(N).**
 
-The constraint is min *everything*:
+Expensive = lock acquire, heap alloc, `.await`, SQL roundtrip, subprocess
+spawn, git2 call, regex compile. Those happen once, outside. Inside the
+loop is pointer math, slice index, HashMap probe, comparison, arithmetic.
 
-- min calls           — one method per cross-cutting trait
-- min generics        — concrete types; no associated-type soup
-- min locks           — one per wave, not per item
-- min clone / copy    — batches own their bytes; clone at boundaries only
-- min allocs          — `Box<[T]>`, not `Vec<T>`; pre-sized, no growth
-- min arcs            — wave owns data; no per-item `Arc<OnceCell<Arc<_>>>`
-- min heaps / stacks  — avoid futures-per-item; one future per wave
-- min for loops       — prefer batch ops over per-item iteration where lock/alloc hops live inside
-- min parens          — write plainly; no cathedrals
-- min blocking        — one await per wave, not N
-- min yolo            — instrument before claiming; stop guessing
+The enforcement trick is **list programming at stage boundaries**: op
+inputs and outputs are slices; per-item scalar methods don't exist on
+the boundary, so N+1 is untypeable. Inside a stage, a worker loops
+scalar over its slice — that's fine, the expensive resource is held
+once per worker.
 
-### Trait shape the rules demand
+### Thread model (what fast tools actually do)
 
+biome, ripgrep, swc, ast-grep all use **rayon work-stealing, not tokio**
+on the scan hot path. Each worker holds its own per-thread state
+(parser, file handle, scratch buffer); no shared locks inside the loop.
+Tokio stays at the outer boundary (LSP stdio, cancellation, reparse
+debounce) — one `spawn_blocking` opens a rayon scope, the scope does
+all the per-file work, one oneshot returns results.
+
+Shape:
 ```rust
-trait Reader {
-    fn read(&self, req: &ReadBatch) -> ReadResult;          // ONLY method
-}
-trait Store {
-    fn apply(&self, batch: &WriteBatch) -> ApplyResult;     // ONLY method
-}
-trait MutationHandler {
-    fn decide(&self, effects: &[Effect]) -> Box<[Decision]>; // ONLY method
+// stage boundary: slice in, slice out
+fn pipe(input: Box<[Cursor]>, ctx: &OpCtx) -> Box<[Cursor]> {
+    input.par_iter()
+        .map_init(
+            || ctx.repo_pool.get(),        // one Repository per worker
+            |repo, c| run_one(repo, c),    // full per-item work, sync
+        )
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
 }
 ```
 
-- No `bytes()`, no `blob_oid()`, no scalar overloads.
-- No `flush_batch` + `register_expr_schema` + `effect_cache` separation.
-- A scalar caller constructs a length-1 batch. The type system enforces
-  the wave model. N+1 becomes a compile error, not a performance footgun.
-- SQL lives in exactly one module: inside the single `Store::apply` impl.
-- Sub-traits are the smell. If a "per-item helper" is needed, it lives
-  as a private free function inside the batch impl — never on the trait.
+Scalar `run_one` lives *inside* the rayon closure, which is fine. The
+point is no op exposes a `pipe_one(cursor)` method, so stage-to-stage
+wiring cannot accidentally do N+1.
 
-### Evidence of drift (do not re-commit these)
+### Measured violations in this repo (2026-04-17, swc smoke)
 
-- `Reader::bytes(FilePath)` + `Reader::blob_oid(FilePath)` singletons →
-  1067× `Mutex<git2::Repository>` acquisitions per scan (agent-verified
-  2026-04-17, restart-warm debug run).
-- `ParseCacheReader` holds THREE `RwLock<HashMap>` — primary + by_oid +
-  by_hash — because per-item lookups each landed in their own lock.
-- `Store` grew `register_expr_schema`, `flush_batch`, effect cache,
-  scanner-hash set, DDL migration — five responsibilities, sqlx imports
-  in multiple modules.
-- `op.ast.prefetch` uses `join_all` over 1067 `prep_cursor` futures —
-  a 1067-wide `FuturesUnordered` polled round-robin. Each future does
-  6+ lock hops. Wave-batched `parsed_many` would collapse this to 4
-  lock acquisitions total — but only if the underlying Reader is
-  batch-shaped, otherwise the rewrite is cosmetic.
+- `src/readers/_2_git.rs:407, 475` — `Mutex<git2::Repository>` acquired
+  inside `bytes()` and `blob_oid()`, called 1067× per scan. Note:
+  `git2::Repository` is `!Sync`, so the Mutex is mandatory under the
+  current "one shared handle" design. Fix direction: per-worker
+  handles (cheap; libgit2 mwindow cache is process-global), not
+  "remove the Mutex".
+- `src/readers/_4_parse_cache.rs:203, 234, 311` — three
+  `RwLock<HashMap>` write-locks per cache miss, each slot an
+  `Arc<OnceCell<Arc<ParsedTree>>>`. Tree-sitter parse is idempotent;
+  the OnceCell race protection is unjustified. Replace with `moka` or
+  `quick_cache` keyed by oid.
+- `src/ops/_9_ast_grep.rs:310` — `join_all` over 1067 per-cursor
+  futures. Replace with rayon `par_iter` over the batch.
+- `src/ops/_5_json.rs:414-422, 568-575` — `reader.bytes(...).await`
+  inside `for fp in files`.
 
-### Acceptance
+### Fast fixes before refactor (try these first)
 
-A PR violates the LAWS if it:
+- **`git_libgit2_opts(GIT_OPT_SET_CACHE_OBJECT_LIMIT, ...)`** at
+  startup. libgit2's blob cache defaults to 0 bytes — every blob read
+  pays full decode. A one-line config change may erase the
+  "blob-read is slow" symptom without any architectural change.
+- **Raise `GIT_OPT_SET_MWINDOW_FILE_LIMIT`** for repos with many
+  packfiles.
+- **Profile before refactoring**: 1067 files × 0.85ms release = 907ms
+  total. Uncontended mutex acquisition is 50-200ns. The span log
+  claims contention but arithmetic suggests the residual lives in
+  `join_all`-quadratic-poll + parse-cache indirection, not the Mutex
+  itself.
 
-1. Adds any scalar method to `Reader`, `Store`, or `MutationHandler`.
-2. Uses `join_all` / `FuturesUnordered` / `buffer_unordered` over
-   per-file futures.
-3. Introduces `Arc<RwLock<HashMap<_, Arc<OnceCell<Arc<_>>>>>>` or any
-   near-variant of that shape.
-4. Adds `.await` inside a `for file in batch { ... }` loop. Use a bulk
-   call.
-5. Introduces sqlx usage outside the single `Store::apply` module.
-6. Holds `Mutex<Repository>` inside a per-item call path.
+### Future moves (out of scope for immediate refactor)
 
-If a proposed change conflicts with the LAWS, stop and rewrite the
-trait first. The trait is the fix site; the caller is not.
+- **gix migration**: `gix::ThreadSafeRepository` is `Send + Sync`;
+  `.to_thread_local()` gives each worker a cheap handle. GitButler
+  saw 2.6x from git2 → gix. Larger rewrite — revisit if git2
+  per-worker-handles still bottleneck.
+- **ast-grep `BitSet potential_kinds`**: ast-grep's own 10x speedup
+  came from pre-filter-by-node-kind + multi-rule dedup traversal, not
+  IO refactoring. Check whether sprefa matches multiple patterns per
+  file and whether those coalesce into one tree walk.
 
----
+### Reject in PRs
 
-## TYPE TECHNIQUES (practical, already in the codebase)
+- `Mutex<Repository>` acquired inside a per-item call path.
+- `.await` inside `for file in batch { ... }`.
+- `join_all` / `FuturesUnordered` over per-file futures.
+- `Arc<RwLock<HashMap<_, Arc<OnceCell<Arc<_>>>>>>` in new code.
+- `sqlx` imports outside `src/store/`.
+- Scalar `pipe_one(cursor)` style methods on op stage boundaries.
+  Ops take slices.
 
-Get-shit-done mode. No grand unification. These techniques exist in the
-codebase somewhere; the drift happened where they were abandoned. Fix
-the shapes that violate the list, leave everything else alone.
+### Patterns already in the codebase — keep using
 
-### Techniques that work — keep doing them
-
-- **Concrete enums over trait objects when variants are bounded.**
-  `Pipeline::{Op, Seq, Fork, Switch}`, `RunEvent::{Cursor, ExprDone,
-  Diag, MutationPrompt, Done}`. Named variants, no generics, exhaustive
-  match. Right shape when the full set is known.
-
-- **Newtype wrappers over raw primitives.** `FilePath(Arc<Path>)`,
-  `ParseSite`, `Capture`. Domain names that can't be swapped by
-  accident. Resist `Path<K>`-style generics.
-
-- **`Arc<[T]>` over `Vec<Arc<T>>`.** Already used for cursor batches.
-  One heap alloc, one refcount, slice semantics for free. Compare to
-  `Vec<Arc<Cursor>>` = N+1 allocations. Op pipeline already does this;
-  reader/store need to catch up.
-
-- **One-owner batches.** Rayon side of `op.ast` owns `Vec<Prep>` outright,
-  no per-item Arc. That's the pattern. Failure was the async prefetch
-  side — `Arc<OnceCell<Arc<ParsedTree>>>` per slot — where ownership
-  got smeared across tasks instead of pinned to the wave.
-
-- **Ops own their diagnostics.** No central `Diagnostic` enum. Each op
-  file owns its `*Diag` type, implements the trait, done. Extend the
-  same discipline to any future per-op concern (patterns, hover, effects).
-
-### Techniques that were abandoned — reintroduce
-
-- **`Box<[T]>` for fixed-size owned data.** Currently almost everything
-  is `Vec<T>`. `Vec` invites growth, reallocation, capacity games. For
-  batch inputs/outputs where size is known at construction, `Box<[T]>`
-  is one alloc, no growth machinery, no `capacity` field, same indexing.
-  Shape: `fn read(keys: &[K]) -> Box<[V]>`, not `-> Vec<V>`.
-
-- **Private functions beat sub-trait methods.** `Store` grew
-  `register_expr_schema`, `flush_batch`, effect cache, scanner-hash set
-  — four public methods because each new need added a trait method. If
-  those had been private `fn` inside one impl of a one-method `Store`,
-  the surface would have stayed flat. "Sub-trait" is almost always a
-  code smell for "private helper that leaked".
-
-- **Enum over trait when impls share shape.** `MutationHandler` has
-  three impls: `AutoApprove`, `InteractiveCli`, `LspPromptBridge`. They
-  differ in how they get a yes/no. That's a config, not a polymorphism
-  axis. Collapse to `enum ApprovalPolicy { Auto, Cli, Lsp }` as a plan
-  field. Three files become one match arm each.
-
-- **`&[T]` in, owned out.** Shape that prevents N+1. Caller keeps the
-  input; callee returns new data. No `&mut Vec<T>` output param games.
-  `fn apply(&self, batch: &[Effect]) -> Box<[Outcome]>` is honest;
-  `fn apply(&self, item: &Effect) -> Outcome` hides iteration from the
-  callee and breeds locks-per-item.
-
-### Techniques that are junior-generic crackhead shit — reject on sight
-
-- **`Arc<RwLock<HashMap<K, Arc<OnceCell<Arc<V>>>>>>`.** Three layers of
-  indirection to memoize one computation. If the computation is per-wave,
-  the wave owns the result. If it's cross-wave, the cache is
-  `RwLock<HashMap<K, V>>` — one layer, not three. `OnceCell` is for
-  "exactly once across tasks"; when the caller already has the batch in
-  hand, there are no other tasks racing.
-
-- **Generic `Storage<K, V>` / `Repository<T>` traits.** K/V soup. Zero
-  domain meaning, every caller reconstructs intent. Name the thing:
-  `GitBlobs`, `SqliteRows`, `ParseTrees`. Concrete storage types with
-  concrete methods. No shared parent trait.
-
-- **Dual-trait pairs (`Reader`/`Writer`, `Source`/`Sink`,
-  `Query`/`Mutation`).** The pair-up move. Every time one is added, the
-  other appears to "balance" it, and both end up with scalar methods
-  because symmetry feels clean. Don't pre-pair. Build the specific
-  intent surfaces that exist.
-
-- **`async fn` on every trait method.** Pollutes callers with `.await`,
-  hides sync work behind futures. If a batch impl internally does
-  `spawn_blocking` or rayon, outer `async fn` can stay. But wrapping a
-  sync probe in `async fn` just spreads awaits without parallelism.
-
-- **`dyn Trait` when there is one impl.** Erases concrete type for no
-  runtime benefit. Known single impl → use the concrete type. Known
-  bounded impls → use an enum. `dyn` is for genuinely open extension
-  and nothing else.
-
-### Rules of thumb — the short list
-
-1. If a method takes a single item, it should probably take a slice.
-2. If a trait has three impls with the same shape, it should be an enum.
-3. If a type has `Arc<X<Arc<Y>>>`, delete layers until one remains.
-4. If a "Reader" and "Writer" both exist for the same domain, check
-   whether you just invented two traits for one thing.
-5. `Box<[T]>` for owned immutable. `Vec<T>` only during construction.
-6. Private helpers stay private — never promote to trait method.
-7. Domain names over generic parameters.
-8. Named enum variants over trait-object polymorphism where the set is
-   bounded.
+- `Arc<[T]>` for cursor batches (one alloc, slice semantics).
+- `Box<[T]>` for known-size owned immutable output. `Vec<T>` during
+  growth only.
+- Concrete enums when variants are bounded (`Pipeline`, `RunEvent`).
+- Newtype wrappers over domain strings (`FilePath`, `ParseSite`,
+  `Capture`).
+- Ops own their diagnostics; each op file owns its `*Diag` type.
+- One-owner batches on the rayon side of `op.ast` (`Vec<Prep>`, no
+  per-item Arc).
 
 ---
 
 Read `../chat_log/20260416.2.system-zoom-1-plus-golden-tests.md` for the
 outer system (Reader / Store / MutationHandler / reparse) and the 10
 golden tests that define acceptance. Note: the zoom-1 doc predates the
-LAWS above — where it shows per-item methods, treat them as ghosts to
-exorcise, not specs to implement.
+rules above — where it shows per-item methods on Reader/Store, treat
+them as ghosts to exorcise, not specs to implement.
 
 This file is the minimum coherence surface for driving work in `v2/`.
 
