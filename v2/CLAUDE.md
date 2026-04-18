@@ -86,6 +86,109 @@ trait first. The trait is the fix site; the caller is not.
 
 ---
 
+## TYPE TECHNIQUES (practical, already in the codebase)
+
+Get-shit-done mode. No grand unification. These techniques exist in the
+codebase somewhere; the drift happened where they were abandoned. Fix
+the shapes that violate the list, leave everything else alone.
+
+### Techniques that work — keep doing them
+
+- **Concrete enums over trait objects when variants are bounded.**
+  `Pipeline::{Op, Seq, Fork, Switch}`, `RunEvent::{Cursor, ExprDone,
+  Diag, MutationPrompt, Done}`. Named variants, no generics, exhaustive
+  match. Right shape when the full set is known.
+
+- **Newtype wrappers over raw primitives.** `FilePath(Arc<Path>)`,
+  `ParseSite`, `Capture`. Domain names that can't be swapped by
+  accident. Resist `Path<K>`-style generics.
+
+- **`Arc<[T]>` over `Vec<Arc<T>>`.** Already used for cursor batches.
+  One heap alloc, one refcount, slice semantics for free. Compare to
+  `Vec<Arc<Cursor>>` = N+1 allocations. Op pipeline already does this;
+  reader/store need to catch up.
+
+- **One-owner batches.** Rayon side of `op.ast` owns `Vec<Prep>` outright,
+  no per-item Arc. That's the pattern. Failure was the async prefetch
+  side — `Arc<OnceCell<Arc<ParsedTree>>>` per slot — where ownership
+  got smeared across tasks instead of pinned to the wave.
+
+- **Ops own their diagnostics.** No central `Diagnostic` enum. Each op
+  file owns its `*Diag` type, implements the trait, done. Extend the
+  same discipline to any future per-op concern (patterns, hover, effects).
+
+### Techniques that were abandoned — reintroduce
+
+- **`Box<[T]>` for fixed-size owned data.** Currently almost everything
+  is `Vec<T>`. `Vec` invites growth, reallocation, capacity games. For
+  batch inputs/outputs where size is known at construction, `Box<[T]>`
+  is one alloc, no growth machinery, no `capacity` field, same indexing.
+  Shape: `fn read(keys: &[K]) -> Box<[V]>`, not `-> Vec<V>`.
+
+- **Private functions beat sub-trait methods.** `Store` grew
+  `register_expr_schema`, `flush_batch`, effect cache, scanner-hash set
+  — four public methods because each new need added a trait method. If
+  those had been private `fn` inside one impl of a one-method `Store`,
+  the surface would have stayed flat. "Sub-trait" is almost always a
+  code smell for "private helper that leaked".
+
+- **Enum over trait when impls share shape.** `MutationHandler` has
+  three impls: `AutoApprove`, `InteractiveCli`, `LspPromptBridge`. They
+  differ in how they get a yes/no. That's a config, not a polymorphism
+  axis. Collapse to `enum ApprovalPolicy { Auto, Cli, Lsp }` as a plan
+  field. Three files become one match arm each.
+
+- **`&[T]` in, owned out.** Shape that prevents N+1. Caller keeps the
+  input; callee returns new data. No `&mut Vec<T>` output param games.
+  `fn apply(&self, batch: &[Effect]) -> Box<[Outcome]>` is honest;
+  `fn apply(&self, item: &Effect) -> Outcome` hides iteration from the
+  callee and breeds locks-per-item.
+
+### Techniques that are junior-generic crackhead shit — reject on sight
+
+- **`Arc<RwLock<HashMap<K, Arc<OnceCell<Arc<V>>>>>>`.** Three layers of
+  indirection to memoize one computation. If the computation is per-wave,
+  the wave owns the result. If it's cross-wave, the cache is
+  `RwLock<HashMap<K, V>>` — one layer, not three. `OnceCell` is for
+  "exactly once across tasks"; when the caller already has the batch in
+  hand, there are no other tasks racing.
+
+- **Generic `Storage<K, V>` / `Repository<T>` traits.** K/V soup. Zero
+  domain meaning, every caller reconstructs intent. Name the thing:
+  `GitBlobs`, `SqliteRows`, `ParseTrees`. Concrete storage types with
+  concrete methods. No shared parent trait.
+
+- **Dual-trait pairs (`Reader`/`Writer`, `Source`/`Sink`,
+  `Query`/`Mutation`).** The pair-up move. Every time one is added, the
+  other appears to "balance" it, and both end up with scalar methods
+  because symmetry feels clean. Don't pre-pair. Build the specific
+  intent surfaces that exist.
+
+- **`async fn` on every trait method.** Pollutes callers with `.await`,
+  hides sync work behind futures. If a batch impl internally does
+  `spawn_blocking` or rayon, outer `async fn` can stay. But wrapping a
+  sync probe in `async fn` just spreads awaits without parallelism.
+
+- **`dyn Trait` when there is one impl.** Erases concrete type for no
+  runtime benefit. Known single impl → use the concrete type. Known
+  bounded impls → use an enum. `dyn` is for genuinely open extension
+  and nothing else.
+
+### Rules of thumb — the short list
+
+1. If a method takes a single item, it should probably take a slice.
+2. If a trait has three impls with the same shape, it should be an enum.
+3. If a type has `Arc<X<Arc<Y>>>`, delete layers until one remains.
+4. If a "Reader" and "Writer" both exist for the same domain, check
+   whether you just invented two traits for one thing.
+5. `Box<[T]>` for owned immutable. `Vec<T>` only during construction.
+6. Private helpers stay private — never promote to trait method.
+7. Domain names over generic parameters.
+8. Named enum variants over trait-object polymorphism where the set is
+   bounded.
+
+---
+
 Read `../chat_log/20260416.2.system-zoom-1-plus-golden-tests.md` for the
 outer system (Reader / Store / MutationHandler / reparse) and the 10
 golden tests that define acceptance. Note: the zoom-1 doc predates the
