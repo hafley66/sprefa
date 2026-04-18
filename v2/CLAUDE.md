@@ -2,7 +2,95 @@
 
 Cursor-pipeline evaluator for `.sprf` files.
 
-Read `README.md` first for grammar, op registry, walker DSL, cursor lifecycle, content contract. Read `../chat_log/20260416.2.system-zoom-1-plus-golden-tests.md` for the outer system (Reader / Store / MutationHandler / reparse) and the 10 golden tests that define acceptance.
+Read `README.md` first. Then read `## LAWS OF MIN` below. Do not skip.
+
+## LAWS OF MIN (non-negotiable, apply before writing any code)
+
+The architectural boundary got destroyed once already. Reader, Store, and
+MutationHandler grew per-item methods, per-item sub-traits, dispersed SQL,
+three-tier RwLocks, mutex-serialized git calls, per-file futures, per-file
+Arcs, per-file OnceCells. 1067 files = 1067 mutex acquisitions because the
+trait *permitted* a scalar call. Every N+1 regression in this repo was
+enabled by a singleton method on a trait that should have only taken
+slices. LLMs cannot count — don't trust yourself to "remember to batch".
+Make the scalar call un-typeable.
+
+The constraint is min *everything*:
+
+- min calls           — one method per cross-cutting trait
+- min generics        — concrete types; no associated-type soup
+- min locks           — one per wave, not per item
+- min clone / copy    — batches own their bytes; clone at boundaries only
+- min allocs          — `Box<[T]>`, not `Vec<T>`; pre-sized, no growth
+- min arcs            — wave owns data; no per-item `Arc<OnceCell<Arc<_>>>`
+- min heaps / stacks  — avoid futures-per-item; one future per wave
+- min for loops       — prefer batch ops over per-item iteration where lock/alloc hops live inside
+- min parens          — write plainly; no cathedrals
+- min blocking        — one await per wave, not N
+- min yolo            — instrument before claiming; stop guessing
+
+### Trait shape the rules demand
+
+```rust
+trait Reader {
+    fn read(&self, req: &ReadBatch) -> ReadResult;          // ONLY method
+}
+trait Store {
+    fn apply(&self, batch: &WriteBatch) -> ApplyResult;     // ONLY method
+}
+trait MutationHandler {
+    fn decide(&self, effects: &[Effect]) -> Box<[Decision]>; // ONLY method
+}
+```
+
+- No `bytes()`, no `blob_oid()`, no scalar overloads.
+- No `flush_batch` + `register_expr_schema` + `effect_cache` separation.
+- A scalar caller constructs a length-1 batch. The type system enforces
+  the wave model. N+1 becomes a compile error, not a performance footgun.
+- SQL lives in exactly one module: inside the single `Store::apply` impl.
+- Sub-traits are the smell. If a "per-item helper" is needed, it lives
+  as a private free function inside the batch impl — never on the trait.
+
+### Evidence of drift (do not re-commit these)
+
+- `Reader::bytes(FilePath)` + `Reader::blob_oid(FilePath)` singletons →
+  1067× `Mutex<git2::Repository>` acquisitions per scan (agent-verified
+  2026-04-17, restart-warm debug run).
+- `ParseCacheReader` holds THREE `RwLock<HashMap>` — primary + by_oid +
+  by_hash — because per-item lookups each landed in their own lock.
+- `Store` grew `register_expr_schema`, `flush_batch`, effect cache,
+  scanner-hash set, DDL migration — five responsibilities, sqlx imports
+  in multiple modules.
+- `op.ast.prefetch` uses `join_all` over 1067 `prep_cursor` futures —
+  a 1067-wide `FuturesUnordered` polled round-robin. Each future does
+  6+ lock hops. Wave-batched `parsed_many` would collapse this to 4
+  lock acquisitions total — but only if the underlying Reader is
+  batch-shaped, otherwise the rewrite is cosmetic.
+
+### Acceptance
+
+A PR violates the LAWS if it:
+
+1. Adds any scalar method to `Reader`, `Store`, or `MutationHandler`.
+2. Uses `join_all` / `FuturesUnordered` / `buffer_unordered` over
+   per-file futures.
+3. Introduces `Arc<RwLock<HashMap<_, Arc<OnceCell<Arc<_>>>>>>` or any
+   near-variant of that shape.
+4. Adds `.await` inside a `for file in batch { ... }` loop. Use a bulk
+   call.
+5. Introduces sqlx usage outside the single `Store::apply` module.
+6. Holds `Mutex<Repository>` inside a per-item call path.
+
+If a proposed change conflicts with the LAWS, stop and rewrite the
+trait first. The trait is the fix site; the caller is not.
+
+---
+
+Read `../chat_log/20260416.2.system-zoom-1-plus-golden-tests.md` for the
+outer system (Reader / Store / MutationHandler / reparse) and the 10
+golden tests that define acceptance. Note: the zoom-1 doc predates the
+LAWS above — where it shows per-item methods, treat them as ghosts to
+exorcise, not specs to implement.
 
 This file is the minimum coherence surface for driving work in `v2/`.
 
