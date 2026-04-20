@@ -24,12 +24,22 @@ blob-walk baseline (git2 vs shell-out), and the cross-reference with
 ## What this deliberately skips
 
 - Cursors, pipeline grammar, LSP, diagnostics, mutations.
-- Opportunistic batching (passthrough only here; policy layer is a
-  followup that lives inside `impl Batcher::run`).
 - Full `Op` / `CaptureKind` / `DiagnosticKind` traits. Those are
   scaffolding built atop this foundation; effect dispatch is the
   novel v3 thing and the one worth proving first.
-- Cancellation, tracing, stores.
+- Tracing sinks, persistent stores.
+
+## What now exists alongside the minimal surface
+
+- Four batcher topologies (`Passthrough`, `WorkSteal`,
+  `BoundedWorkSteal`, `BoundedBatched`) plus `CacheLayer`.
+- `PureEffect` subtrait (`type Key`, `const DOMAIN`, `cache_key()`).
+- Cancellation: `CancellationToken` on `Batcher::run`, root token on
+  `RtCtx` with `cancel_all()`.
+- `ArcSwap`-backed registry with `ctx.rebind::<E>()` for hot handler
+  swaps and `ctx.invalidate_domain(d)` for cache bucket clears.
+- `RtCtxBuilder::register_pure::<E, _>(cap, inner)` sugar that wraps
+  an inner batcher in `CacheLayer` automatically.
 
 See `../../docs/appendix/v3-plugin-author-surface.md` for the full
 authoring surface map this prototype is a slice of.
@@ -41,7 +51,10 @@ cd v3/experiments/effect_proof
 cargo test
 ```
 
-Four tests green = associated-type + TypeId registry surface holds.
+16 tests across `tests/surface.rs`, `tests/topology_choice.rs`,
+`tests/cache_and_rebind.rs`, and `pipeline` integration = associated-
+type + TypeId registry surface holds, cache + rebind + cancel + sugar
+all verified.
 
 ## Bash drill helpers
 
@@ -67,6 +80,7 @@ _.sprfv3.bench.build-probe                  # v2 throughput probe
 _.sprfv3.bench.probe-no-prefilter 8 3       # demonstrate the 6x lever
 _.sprfv3.bench.head-to-head-ast-grep 8      # probe vs ctx.put parity
 _.sprfv3.bench.three-domains                # ast-grep + sqlite + git
+_.sprfv3.bench.cache-ab                     # A/B: cache off vs on, same workload
 ```
 
 ---
@@ -116,6 +130,7 @@ holds for that effect.
 | `src/batchers/work_steal.rs` | rayon per-item spawn, no queue |
 | `src/batchers/bounded_work_steal.rs` | bounded tokio mpsc → rayon pool — the v3 default for CPU effects |
 | `src/batchers/bounded_batched.rs` | crossbeam bounded + W workers + max_batch coalesce — for amortizing I/O (sqlite, git writes) |
+| `src/batchers/cache.rs` | moka-backed `CacheLayer<E: PureEffect>`; exposes `stats()` (hits/misses/entries) and participates in `ctx.invalidate_domain()` |
 | `src/effects/read_bytes.rs` | original surface test: path → `Vec<u8>` |
 | `src/effects/count_lines.rs` | original surface test: bytes → usize |
 | `src/effects/scan_one.rs` | toy effect used by topology tests |
@@ -124,6 +139,8 @@ holds for that effect.
 | `src/bin/ast_grep_v3_bench.rs` | plugin-arch perf affirmation against walk-parallel baseline (per-file vs batch emission) |
 | `src/bin/sqlite_v3_bench.rs` | sqlite write-leg baseline (extract + batched insert pipeline; `--scan-only`, `--skip-insert` isolate stages) |
 | `src/bin/git_tree_bench.rs` | git2 vs shell-out baseline for HEAD blob walk |
+| `src/bin/cache_ab_bench.rs` | synthetic `PureEffect` run with `--cache on|off` to measure wall / RSS / hit-ratio deltas |
+| `tests/cache_and_rebind.rs` | `CacheLayer` hits+misses, domain invalidation, `rebind`, `cancel_all`, `register_pure` sugar |
 | `FINDINGS.md` | teaching document (lives in `v3/docs/`) |
 | `PRIOR_ART.md` | survey of 10 typed-effect-dispatcher projects (lives in `v3/docs/`) |
 | `helpers.bash` | bench + harness-comparison functions under `_.sprfv3.bench.*` |

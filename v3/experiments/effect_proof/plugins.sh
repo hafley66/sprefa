@@ -93,7 +93,7 @@ _.sprfv2.expr.plugins.add() {
 //!
 //! Scaffold. Fill in request fields, Response type, and Batcher::run.
 
-use crate::{Batcher, BoxFuture, EffectKind};
+use crate::{Batcher, BoxFuture, CancellationToken, EffectKind};
 
 pub struct ${pascal} {
     // TODO: request fields
@@ -106,7 +106,7 @@ impl EffectKind for ${pascal} {
 pub struct Default${pascal}Batcher;
 
 impl Batcher<${pascal}> for Default${pascal}Batcher {
-    fn run(&self, _req: ${pascal}) -> BoxFuture<'static, ()> {
+    fn run(&self, _req: ${pascal}, _cancel: CancellationToken) -> BoxFuture<'static, ()> {
         Box::pin(async move { /* TODO */ })
     }
 }

@@ -9,9 +9,12 @@ crate in the sibling `v2/` directory remains the running system.
 v3/
 ├── Cargo.toml                           workspace root
 ├── crates/
-│   └── effect_runtime/                  framework: EffectKind, Batcher,
-│                                        RtCtx, four topology batchers,
-│                                        core telemetry
+│   └── effect_runtime/                  framework: EffectKind + PureEffect,
+│                                        Batcher (CancellationToken),
+│                                        RtCtx (ArcSwap registry,
+│                                        rebind, invalidate_domain,
+│                                        cancel_all), five batchers
+│                                        incl. CacheLayer, core telemetry
 ├── experiments/
 │   ├── effect_proof/                    consumer: demo effects + 3 benches
 │   │                                    (ast-grep parity, sqlite batched
@@ -41,11 +44,13 @@ v3/
    Start here.
 2. `docs/PRIOR_ART.md` — survey of the Rust + adjacent ecosystem,
    ranked by shape-match.
-3. `crates/effect_runtime/src/lib.rs` — framework, ~140 LoC.
-4. `crates/effect_runtime/src/batchers/` — four topologies.
-5. `experiments/effect_proof/src/bin/` — three benches that run
-   against `v2/tests/smoke/.fixtures/linux` and report per-effect
-   throughput via core telemetry.
+3. `crates/effect_runtime/src/lib.rs` — framework, ~240 LoC.
+4. `crates/effect_runtime/src/batchers/` — four topologies +
+   `CacheLayer` (moka-backed, keyed on `PureEffect::Key`, domain
+   invalidation via `ctx.invalidate_domain(d)`).
+5. `experiments/effect_proof/src/bin/` — four benches that run
+   against `v2/tests/smoke/.fixtures/linux` (+ an in-memory cache A/B
+   harness) and report per-effect throughput via core telemetry.
 
 ## Build and test
 
@@ -81,12 +86,16 @@ ScanBatch                   1     3.75s     3.75s     3.75s    3.75s    1342.2 M
 
 ## Status
 
-- Framework surface locked (`EffectKind`, `Batcher<E>`, `RtCtx`,
-  `RtCtxBuilder`, four batchers, telemetry).
-- Three benches affirm plugin-arch parity with raw probe baselines
-  (ast-grep 3.65s batch, 4.17s per-file; sqlite 5M rows/sec isolated;
-  shell-out git walk 2.1× git2).
-- Ten tests green.
+- Framework surface: `EffectKind`, `PureEffect`, `Batcher<E>` (with
+  `CancellationToken`), `RtCtx`/`RtCtxBuilder`, five batchers
+  (`Passthrough`, `WorkSteal`, `BoundedWorkSteal`, `BoundedBatched`,
+  `CacheLayer`), telemetry.
+- Four benches: ast-grep batch/per-file (3.69s / 4.17s), sqlite
+  extract+insert (2.07s / 746k rows/s), git walk (git2 4.13s vs
+  shell-out 1.92s ≈ 2.14×), cache A/B (~4.3× warm-pass speedup).
+- 19 tests green. Cancellation, ArcSwap-backed handler rebinding,
+  domain-bucketed cache invalidation, and jemalloc pinning landed
+  against the same measured perf numbers.
 
 ## Crate boundary intent
 
@@ -95,9 +104,10 @@ else. Anything domain-specific (ast-grep, sqlite, git, regex, specific
 format) lives in the consumer (`effect_proof` today, `sprefa-v3`
 later).
 
-Once sprefa v3 exercises the surface end-to-end and cancellation is
-decided, `effect_runtime` is a cratesio publication candidate. Names
-floated: `hopp`, `taxon`, `fable`, `kit`, `effect-dispatch`.
+Cancellation is decided (token on `Batcher::run`, root token on `RtCtx`
+with `cancel_all`). Once sprefa v3 exercises the surface end-to-end,
+`effect_runtime` is a cratesio publication candidate. Names floated:
+`hopp`, `taxon`, `fable`, `kit`, `effect-dispatch`.
 
 ## Related
 

@@ -11,4 +11,6 @@ pub mod effects;
 // Re-export the framework entry points so demo tests can say
 // `effect_proof::RtCtxBuilder` if they choose, or reach directly for
 // `effect_runtime::RtCtxBuilder`. Both compile.
-pub use effect_runtime::{EffectKind, RtCtx, RtCtxBuilder};
+pub use effect_runtime::{
+    Batcher, BoxFuture, CancellationToken, EffectKind, PureEffect, RtCtx, RtCtxBuilder,
+};

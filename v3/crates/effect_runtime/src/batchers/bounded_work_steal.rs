@@ -21,7 +21,7 @@
 //!   ops emitting at unknown rate.
 //! - `BoundedBatched` adds a coalesce step for amortizing effects.
 
-use crate::{Batcher, BoxFuture, EffectKind};
+use crate::{Batcher, BoxFuture, CancellationToken, EffectKind};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
@@ -77,7 +77,7 @@ impl<E: EffectKind> BoundedWorkSteal<E> {
 }
 
 impl<E: EffectKind> Batcher<E> for BoundedWorkSteal<E> {
-    fn run(&self, req: E) -> BoxFuture<'static, E::Response> {
+    fn run(&self, req: E, _cancel: CancellationToken) -> BoxFuture<'static, E::Response> {
         let tx = self.tx.clone();
         let (rtx, rrx) = oneshot::channel::<E::Response>();
         Box::pin(async move {

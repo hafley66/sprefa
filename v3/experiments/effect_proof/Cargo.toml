@@ -40,3 +40,7 @@ path = "src/bin/sqlite_v3_bench.rs"
 [[bin]]
 name = "git_tree_bench"
 path = "src/bin/git_tree_bench.rs"
+
+[[bin]]
+name = "cache_ab_bench"
+path = "src/bin/cache_ab_bench.rs"

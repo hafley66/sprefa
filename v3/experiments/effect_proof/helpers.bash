@@ -35,7 +35,8 @@ _.sprfv3.bench.build() {
     _sprfv3_echo_run cargo build --release \
       --bin ast_grep_v3_bench \
       --bin sqlite_v3_bench \
-      --bin git_tree_bench )
+      --bin git_tree_bench \
+      --bin cache_ab_bench )
 }
 
 # Build the v2 throughput probe (the baseline harness used by
@@ -258,6 +259,28 @@ _.sprfv3.bench.three-domains() {
 }
 
 # --------------------------------------------------------------------
+# Cache A/B (CacheLayer wins + memory cost)
+# --------------------------------------------------------------------
+
+# Single run of the cache A/B bench. Pass extra flags through.
+#   _.sprfv3.bench.cache-ab-once off
+#   _.sprfv3.bench.cache-ab-once on --blobs 4000 --size 32768
+_.sprfv3.bench.cache-ab-once() {
+  local mode="${1:-off}"; shift || true
+  _sprfv3_echo_run "$_SPRFV3_BENCH_ROOT/target/release/cache_ab_bench" \
+    --blobs 2000 --size 16384 --passes 5 --workers 8 --cap 4096 \
+    --cache "$mode" "$@"
+}
+
+# A/B pair. Diff the two outputs to see wall, RSS, hit ratio deltas.
+_.sprfv3.bench.cache-ab() {
+  echo "==== cache=off (baseline) ===="
+  _.sprfv3.bench.cache-ab-once off "$@"
+  echo; echo "==== cache=on ===="
+  _.sprfv3.bench.cache-ab-once on  "$@"
+}
+
+# --------------------------------------------------------------------
 # Meta
 # --------------------------------------------------------------------
 
@@ -303,6 +326,10 @@ Sweeps:
 Head-to-head:
   _.sprfv3.bench.head-to-head-ast-grep W    probe vs ctx.put, 5 trials
   _.sprfv3.bench.three-domains              ast-grep + sqlite + git via telemetry
+
+Cache A/B:
+  _.sprfv3.bench.cache-ab-once off|on       one run with cache off or on
+  _.sprfv3.bench.cache-ab                   both runs, back-to-back (diff them)
 
 Typical drill after build:
   _.sprfv3.bench.build

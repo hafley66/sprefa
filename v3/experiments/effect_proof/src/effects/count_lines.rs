@@ -3,7 +3,7 @@
 //! Second effect. Its existence proves: adding more effects only
 //! adds files; it does not edit `src/lib.rs` or any other effect file.
 
-use effect_runtime::{Batcher, BoxFuture, EffectKind};
+use effect_runtime::{Batcher, BoxFuture, CancellationToken, EffectKind};
 
 pub struct CountLines {
     pub content: Vec<u8>,
@@ -16,7 +16,7 @@ impl EffectKind for CountLines {
 pub struct SimpleLineCounter;
 
 impl Batcher<CountLines> for SimpleLineCounter {
-    fn run(&self, req: CountLines) -> BoxFuture<'static, usize> {
+    fn run(&self, req: CountLines, _cancel: CancellationToken) -> BoxFuture<'static, usize> {
         Box::pin(async move {
             let nl = req.content.iter().filter(|&&b| b == b'\n').count();
             // count newlines + 1 for content that does not end in newline

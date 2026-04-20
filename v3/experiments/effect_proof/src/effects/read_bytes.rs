@@ -5,7 +5,7 @@
 //! - src/effects/mod.rs (one line)
 //! Zero framework edits.
 
-use effect_runtime::{Batcher, BoxFuture, EffectKind};
+use effect_runtime::{Batcher, BoxFuture, CancellationToken, EffectKind};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -29,7 +29,7 @@ impl InMemReader {
 }
 
 impl Batcher<ReadBytes> for InMemReader {
-    fn run(&self, req: ReadBytes) -> BoxFuture<'static, Vec<u8>> {
+    fn run(&self, req: ReadBytes, _cancel: CancellationToken) -> BoxFuture<'static, Vec<u8>> {
         let files = self.files.clone();
         Box::pin(async move { files.get(&req.path).cloned().unwrap_or_default() })
     }

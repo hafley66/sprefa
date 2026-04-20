@@ -9,8 +9,11 @@ publish.workspace = true
 # in this one.
 [dependencies]
 tokio             = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
+tokio-util        = "0.7"
 rayon             = "1"
 crossbeam-channel = "0.5"
+arc-swap          = "1"
+moka              = { version = "0.12", features = ["future"] }
 
 # Intentionally absent: no jemalloc pin, no tracing, no serde. This
 # crate stays neutral so consumers pick their own stack.

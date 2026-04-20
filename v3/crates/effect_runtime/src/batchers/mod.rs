@@ -22,10 +22,12 @@
 
 pub mod bounded_batched;
 pub mod bounded_work_steal;
+pub mod cache;
 pub mod passthrough;
 pub mod work_steal;
 
 pub use bounded_batched::BoundedBatched;
 pub use bounded_work_steal::BoundedWorkSteal;
+pub use cache::CacheLayer;
 pub use passthrough::Passthrough;
 pub use work_steal::WorkSteal;

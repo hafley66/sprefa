@@ -15,7 +15,7 @@
 //! runs `handler(batch)` → fires all oneshots with the corresponding
 //! responses in order.
 
-use crate::{Batcher, BoxFuture, EffectKind};
+use crate::{Batcher, BoxFuture, CancellationToken, EffectKind};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 
@@ -90,7 +90,7 @@ impl<E: EffectKind> BoundedBatched<E> {
 }
 
 impl<E: EffectKind> Batcher<E> for BoundedBatched<E> {
-    fn run(&self, req: E) -> BoxFuture<'static, E::Response> {
+    fn run(&self, req: E, _cancel: CancellationToken) -> BoxFuture<'static, E::Response> {
         let (rtx, rrx) = oneshot::channel::<E::Response>();
         // Send on a blocking crossbeam channel from inside an async
         // context. For the prototype this is fine; real code would use

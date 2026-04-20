@@ -9,7 +9,7 @@
 //! scan, hash). The throughput probe's `walk-parallel` topology is this
 //! shape, and measured within 5% of ast-grep CLI on the linux kernel.
 
-use crate::{Batcher, BoxFuture, EffectKind};
+use crate::{Batcher, BoxFuture, CancellationToken, EffectKind};
 use std::sync::Arc;
 
 pub struct WorkSteal<E, F>
@@ -47,7 +47,11 @@ where
     E: EffectKind,
     F: Fn(E) -> E::Response + Send + Sync + 'static,
 {
-    fn run(&self, req: E) -> BoxFuture<'static, E::Response> {
+    fn run(&self, req: E, _cancel: CancellationToken) -> BoxFuture<'static, E::Response> {
+        // CPU work is best interrupted by the caller dropping the
+        // future — rayon will still finish the item, but the oneshot
+        // rx drops and the reply is no-op. Use a work function that
+        // periodically checks a clone of the token to hard-interrupt.
         let pool = self.pool.clone();
         let f = self.f.clone();
         let (tx, rx) = tokio::sync::oneshot::channel::<E::Response>();
