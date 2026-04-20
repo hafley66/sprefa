@@ -67,8 +67,42 @@ rayon = "1"
 
 [dev-dependencies]
 tempfile = "3"
+ignore = "0.4"
+crossbeam-channel = "0.5"
+rxrust = "1.0.0-rc.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
+libc = "0.2"
+tree-sitter-cpp = "0.23"
+tikv-jemallocator = "0.6"
+
+[[example]]
+name = "throughput_probe"
+path = "examples/throughput_probe.rs"
+
+[[example]]
+name = "throughput_probe_v2"
+path = "examples/throughput_probe_v2.rs"
 
 [workspace]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+debug = false
+incremental = false
+overflow-checks = false
+
+# `bench` profile inherits from release and is what `cargo bench` + the
+# throughput probe examples use. Kept identical to release for bench
+# reproducibility.
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = false
+incremental = false
 
 [profile.dev]
 opt-level = 0

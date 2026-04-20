@@ -21,6 +21,8 @@ use crate::_16_pattern::CompiledPattern;
 // Key
 // ---------------------------------------------------------------------------
 
+/// Cache key for a live editor buffer: `(repo, rev, path)` triple.
+/// LSP uses `rev = "$wt"` to denote working-tree dirty state.
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 pub struct BufferKey {
     pub repo: Arc<str>,
@@ -32,6 +34,12 @@ pub struct BufferKey {
 // Overlay
 // ---------------------------------------------------------------------------
 
+/// Layer-3 `Reader` that overlays dirty editor buffers on top of an
+/// inner reader (git blob / in-memory). A matching `BufferKey` shadows
+/// inner bytes; non-matching triples delegate unchanged.
+///
+/// Writes to `buffers` happen through `set_buffer` / `clear_buffer`,
+/// driven by LSP didChange / didClose notifications.
 pub struct BufferOverlay {
     pub inner:   Arc<dyn Reader + Send + Sync>,
     pub buffers: Arc<RwLock<HashMap<BufferKey, Arc<Bytes>>>>,
@@ -49,6 +57,7 @@ impl BufferOverlay {
         )
     }
 
+    /// Constructor that shares an existing interner with the workspace.
     pub fn with_intern(
         inner:  Arc<dyn Reader + Send + Sync>,
         intern: Arc<crate::_18_str_intern::StrInterner>,
@@ -60,14 +69,17 @@ impl BufferOverlay {
         }
     }
 
+    /// Install or replace the buffer at `key`. Called on LSP didChange.
     pub fn set_buffer(&self, key: BufferKey, bytes: Arc<Bytes>) {
         self.buffers.write().unwrap().insert(key, bytes);
     }
 
+    /// Drop the buffer at `key`. Called on LSP didClose.
     pub fn clear_buffer(&self, key: &BufferKey) {
         self.buffers.write().unwrap().remove(key);
     }
 
+    /// `true` iff a buffer is currently installed for `key`.
     pub fn has_buffer(&self, key: &BufferKey) -> bool {
         self.buffers.read().unwrap().contains_key(key)
     }

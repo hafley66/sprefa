@@ -47,6 +47,10 @@ pub trait Store: Send + Sync {
     ) -> Result<(), StoreErr>;
 }
 
+/// Schema declaration for one named cursor-expr's output table.
+/// `schema_hash` pins the column shape; `extract_hash` pins the
+/// extraction logic (rule body + ops used). A drift in either forces
+/// a DROP + rebuild at register time.
 pub struct ExprTableSpec {
     pub expr_name:    Arc<str>,
     pub namespace:    Option<Arc<str>>,
@@ -55,6 +59,8 @@ pub struct ExprTableSpec {
     pub extract_hash: Arc<str>,
 }
 
+/// One column of an `ExprTableSpec`. `scan_pointer` names the column
+/// class for cross-rule joins — see `_scan_pointer_runtime` notes.
 pub struct CaptureColumn {
     pub name:         Arc<str>,
     pub scan_pointer: Option<Arc<str>>,

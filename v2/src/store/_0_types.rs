@@ -26,21 +26,30 @@ use crate::_0_types::Severity;
 use crate::_1_diagnostic::{Diagnostic, Renderer};
 use crate::_0_types::ParseSite;
 
+/// Stable hash of a blob's content. Used by `files_scanned` to decide
+/// whether a (repo, rev, fs) triple needs re-scanning.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContentHash(pub Arc<str>);
 
+/// Top-level unit passed to `Store::flush_batch` at end-of-run.
+/// `scanner_hash` identifies the rule set; `per_expr` holds one batch
+/// per named cursor-expr that ran.
 #[derive(Debug, Clone)]
 pub struct Batch {
     pub scanner_hash: Arc<str>,
     pub per_expr:     Vec<ExprBatch>,
 }
 
+/// Rows produced by one named cursor-expr in a run.
 #[derive(Debug, Clone)]
 pub struct ExprBatch {
     pub expr_name: Arc<str>,
     pub rows:      Vec<RowInsert>,
 }
 
+/// One cursor-level row ready to persist. `captures` holds the raw
+/// `Capture` values (with scan pointers); `evidence` holds the op
+/// sequence that produced the row.
 #[derive(Debug, Clone)]
 pub struct RowInsert {
     pub repo:     Arc<str>,
@@ -50,6 +59,8 @@ pub struct RowInsert {
     pub evidence: Arc<[OpEvidence]>,
 }
 
+/// Query filter for `Store::query_expr`. `captures` is a set of
+/// (name, value) equality predicates ANDed together; `limit` caps rows.
 #[derive(Debug, Clone)]
 pub struct Where {
     pub repo:     Option<Arc<str>>,
@@ -58,6 +69,8 @@ pub struct Where {
     pub limit:    usize,
 }
 
+/// One row returned by `Store::query_expr`. Captures map name → value
+/// string; `file` + `span` pin the row's primary anchor.
 #[derive(Debug, Clone)]
 pub struct Row {
     pub captures: std::collections::HashMap<Arc<str>, Arc<str>>,
@@ -65,6 +78,10 @@ pub struct Row {
     pub span:     Range<usize>,
 }
 
+/// Outcome of `Store::effect_status`. Drives the mutation cache:
+/// `Skip` = identical effect already applied, no prompt; `Emit` = new
+/// effect, prompt the handler; `Stale(outcome)` = prior outcome exists
+/// but content changed, prompt with the stale context attached.
 #[derive(Debug, Clone)]
 pub enum EffectStatus {
     Skip,
@@ -72,6 +89,8 @@ pub enum EffectStatus {
     Stale(EffectOutcome),
 }
 
+/// Persisted record of what happened when an effect was applied (or
+/// why it was not). `effect_hash` pins the exact effect that ran.
 #[derive(Debug, Clone)]
 pub struct EffectOutcome {
     pub result:      EffectResult,
@@ -79,6 +98,8 @@ pub struct EffectOutcome {
     pub effect_hash: Arc<str>,
 }
 
+/// Terminal disposition of an effect. `Superseded` = a later run
+/// already reapplied the same logical effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectResult {
     Applied,
@@ -86,6 +107,7 @@ pub enum EffectResult {
     Superseded,
 }
 
+/// Error channel for every `Store` method.
 #[derive(Debug)]
 pub enum StoreErr {
     // Phase 2: swap to sqlx::Error

@@ -56,17 +56,17 @@ pub struct FilePath(pub Arc<Path>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParseSite {
-    pub file:       Arc<Path>,
-    pub path:       Arc<[ParseSeg]>,
+    pub file: Arc<Path>,
+    pub path: Arc<[ParseSeg]>,
     pub byte_range: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParseSeg {
-    Top        { index: u16 },
+    Top { index: u16 },
     BraceChild { index: u16 },
     ParenChild { index: u16 },
-    PatternLeaf{ key: Arc<str> },
+    PatternLeaf { key: Arc<str> },
 }
 
 // ---------------------------------------------------------------------------
@@ -84,12 +84,31 @@ impl Default for SprfPath {
 
 #[derive(Debug, Clone)]
 pub enum PathSeg {
-    Op       { name: Arc<str>, parse_site: Arc<ParseSite>, step: u16 },
-    Named    { name: Arc<str>, key: Arc<str>, parse_site: Arc<ParseSite> },
-    ForkArm  { index: u16, parse_site: Arc<ParseSite> },
-    SwitchArm{ pat: Arc<str>, parse_site: Arc<ParseSite> },
-    LeafArm  { key: Arc<str>, parse_site: Arc<ParseSite> },
-    Iter     { index: u64 },
+    Op {
+        name: Arc<str>,
+        parse_site: Arc<ParseSite>,
+        step: u16,
+    },
+    Named {
+        name: Arc<str>,
+        key: Arc<str>,
+        parse_site: Arc<ParseSite>,
+    },
+    ForkArm {
+        index: u16,
+        parse_site: Arc<ParseSite>,
+    },
+    SwitchArm {
+        pat: Arc<str>,
+        parse_site: Arc<ParseSite>,
+    },
+    LeafArm {
+        key: Arc<str>,
+        parse_site: Arc<ParseSite>,
+    },
+    Iter {
+        index: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -108,13 +127,17 @@ impl<T: 'static + Send + Sync> SlotKey<T> {
     /// Const ctor so ops can declare e.g.
     /// `pub const JSON_TREE: SlotKey<JsonTree> = SlotKey::new();`
     pub const fn new() -> Self {
-        Self { _marker: PhantomData }
+        Self {
+            _marker: PhantomData,
+        }
     }
 }
 
 impl<T: 'static + Send + Sync> Copy for SlotKey<T> {}
 impl<T: 'static + Send + Sync> Clone for SlotKey<T> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 /// Typed, type-erased slot store keyed by `TypeId::of::<T>()`.
@@ -126,8 +149,12 @@ pub struct Slots {
 }
 
 impl Slots {
-    pub fn is_empty(&self) -> bool { self.map.is_empty() }
-    pub fn len(&self) -> usize { self.map.len() }
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
 
     /// Insert / replace. Returns the prior value if one existed.
     /// Last-write-wins.
@@ -137,13 +164,18 @@ impl Slots {
     }
 
     /// Insert pre-shared Arc. Common when upstream already holds `Arc<T>`.
-    pub fn set_arc<T: 'static + Send + Sync>(&mut self, _k: SlotKey<T>, v: Arc<T>) -> Option<Arc<T>> {
+    pub fn set_arc<T: 'static + Send + Sync>(
+        &mut self,
+        _k: SlotKey<T>,
+        v: Arc<T>,
+    ) -> Option<Arc<T>> {
         let prior = self.map.insert(TypeId::of::<T>(), v);
         prior.and_then(|a| Arc::downcast::<T>(a).ok())
     }
 
     pub fn get<T: 'static + Send + Sync>(&self, _k: SlotKey<T>) -> Option<Arc<T>> {
-        self.map.get(&TypeId::of::<T>())
+        self.map
+            .get(&TypeId::of::<T>())
             .and_then(|a| Arc::downcast::<T>(a.clone()).ok())
     }
 
@@ -152,7 +184,8 @@ impl Slots {
     }
 
     pub fn remove<T: 'static + Send + Sync>(&mut self, _k: SlotKey<T>) -> Option<Arc<T>> {
-        self.map.remove(&TypeId::of::<T>())
+        self.map
+            .remove(&TypeId::of::<T>())
             .and_then(|a| Arc::downcast::<T>(a).ok())
     }
 }
@@ -162,7 +195,11 @@ impl Slots {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Tri { Claimed, Verified, Missing }
+pub enum Tri {
+    Claimed,
+    Verified,
+    Missing,
+}
 
 /// Encodes whether a capture's text value is backed by a byte span in the
 /// owning content buffer (object/array sub-documents) or was synthesized
@@ -184,11 +221,11 @@ pub enum CaptureKind {
 
 #[derive(Debug, Clone)]
 pub struct Capture {
-    pub value:        Arc<str>,
-    pub kind:         CaptureKind,
-    pub ref_id:       Option<RefId>,
+    pub value: Arc<str>,
+    pub kind: CaptureKind,
+    pub ref_id: Option<RefId>,
     pub scan_pointer: Option<Arc<str>>,
-    pub verified:     Tri,
+    pub verified: Tri,
 }
 
 impl Capture {
@@ -196,14 +233,24 @@ impl Capture {
     /// ops) produce non-rebaseable scalar values; this preserves their
     /// behavior without modification.
     pub fn new(value: Arc<str>) -> Self {
-        Self { value, kind: CaptureKind::Synthesized, ref_id: None,
-               scan_pointer: None, verified: Tri::Claimed }
+        Self {
+            value,
+            kind: CaptureKind::Synthesized,
+            ref_id: None,
+            scan_pointer: None,
+            verified: Tri::Claimed,
+        }
     }
     /// Span-backed ctor — for JSON object/array sub-documents where the
     /// raw bytes at `span` in the file buffer are valid source bytes.
     pub fn span_backed(value: Arc<str>, span: Range<usize>) -> Self {
-        Self { value, kind: CaptureKind::SpanBacked { span },
-               ref_id: None, scan_pointer: None, verified: Tri::Claimed }
+        Self {
+            value,
+            kind: CaptureKind::SpanBacked { span },
+            ref_id: None,
+            scan_pointer: None,
+            verified: Tri::Claimed,
+        }
     }
     pub fn with_ref_id(mut self, r: RefId) -> Self {
         self.ref_id = Some(r);
@@ -218,37 +265,37 @@ impl Capture {
 
 #[derive(Debug, Clone)]
 pub struct Cursor {
-    pub run_id:     RunId,
-    pub repo:       Arc<str>,
-    pub rev:        Arc<str>,
-    pub fs:         Option<FilePath>,
-    pub captures:   HashMap<Arc<str>, Capture>,
-    pub fks:        HashMap<Arc<str>, RowId>,
-    pub path:       SprfPath,
-    pub evidence:   Vec<OpEvidence>,
-    pub content:    Option<Arc<bytes::Bytes>>,
+    pub run_id: RunId,
+    pub repo: Arc<str>,
+    pub rev: Arc<str>,
+    pub fs: Option<FilePath>,
+    pub captures: HashMap<Arc<str>, Capture>,
+    pub fks: HashMap<Arc<str>, RowId>,
+    pub path: SprfPath,
+    pub evidence: Vec<OpEvidence>,
+    pub content: Option<Arc<bytes::Bytes>>,
     /// Runtime byte window into `content`. When `Some`, byte-oriented
     /// downstream ops restrict scan to this range. When `None`, the cursor
     /// addresses the whole file.
     pub byte_range: Option<Range<usize>>,
     /// Typed per-cursor payload store (parse trees, etc.). See `Slots`.
-    pub slots:      Slots,
+    pub slots: Slots,
 }
 
 impl Default for Cursor {
     fn default() -> Self {
         Self {
-            run_id:     RunId::default(),
-            repo:       Arc::from(""),
-            rev:        Arc::from(""),
-            fs:         None,
-            captures:   HashMap::new(),
-            fks:        HashMap::new(),
-            path:       SprfPath::default(),
-            evidence:   Vec::new(),
-            content:    None,
+            run_id: RunId::default(),
+            repo: Arc::from(""),
+            rev: Arc::from(""),
+            fs: None,
+            captures: HashMap::new(),
+            fks: HashMap::new(),
+            path: SprfPath::default(),
+            evidence: Vec::new(),
+            content: None,
             byte_range: None,
-            slots:      Slots::default(),
+            slots: Slots::default(),
         }
     }
 }
@@ -260,8 +307,8 @@ impl Cursor {
     pub fn active_bytes(&self) -> &[u8] {
         match (&self.content, &self.byte_range) {
             (Some(bs), Some(r)) => &bs[r.clone()],
-            (Some(bs), None)    => &bs[..],
-            (None, _)           => &[],
+            (Some(bs), None) => &bs[..],
+            (None, _) => &[],
         }
     }
 
@@ -293,8 +340,8 @@ impl Cursor {
                 out.byte_range = Some(span.clone());
             }
             CaptureKind::Synthesized => {
-                out.content    = Some(Arc::new(bytes::Bytes::copy_from_slice(
-                    cap.value.as_bytes()
+                out.content = Some(Arc::new(bytes::Bytes::copy_from_slice(
+                    cap.value.as_bytes(),
                 )));
                 out.byte_range = None;
             }
@@ -308,10 +355,10 @@ impl Cursor {
 /// op the cursor passed through that opted in via `Op::witness`.
 #[derive(Debug, Clone)]
 pub struct OpEvidence {
-    pub op_name:    &'static str,
+    pub op_name: &'static str,
     pub parse_site: Arc<ParseSite>,
-    pub matched:    Arc<str>,
-    pub capture:    Option<Arc<str>>,
+    pub matched: Arc<str>,
+    pub capture: Option<Arc<str>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -321,8 +368,8 @@ pub struct OpEvidence {
 #[derive(Debug, Clone)]
 pub struct RunCtx {
     pub run_id: RunId,
-    pub op_id:  OpId,
-    pub path:   SprfPath,
+    pub op_id: OpId,
+    pub path: SprfPath,
 }
 
 // ---------------------------------------------------------------------------
@@ -330,19 +377,26 @@ pub struct RunCtx {
 // ---------------------------------------------------------------------------
 
 pub enum RunEvent {
-    Cursor         { expr_name: Option<Arc<str>>, cursor: Cursor },
-    ExprDone       { expr_name: Option<Arc<str>> },
-    Diag           { diag: Box<dyn crate::Diagnostic> },
+    Cursor {
+        expr_name: Option<Arc<str>>,
+        cursor: Cursor,
+    },
+    ExprDone {
+        expr_name: Option<Arc<str>>,
+    },
+    Diag {
+        diag: Box<dyn crate::Diagnostic>,
+    },
     MutationPrompt {
         effect: Arc<dyn crate::mutations::MutationEffect>,
-        ack:    tokio::sync::oneshot::Sender<crate::mutations::Approve>,
+        ack: tokio::sync::oneshot::Sender<crate::mutations::Approve>,
     },
     Done,
 }
 
 #[derive(Clone)]
 pub struct CursorExpr {
-    pub name:     Option<Arc<str>>,
+    pub name: Option<Arc<str>>,
     pub pipeline: crate::_5_op::Pipeline,
 }
 

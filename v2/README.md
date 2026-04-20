@@ -2,11 +2,6 @@
 
 Pipeline engine for `.sprf` files. Parses declarative rules into op pipelines, runs them against repos/revisions/files, produces cursors with typed captures and slots.
 
-Hot-path rules and the measured Reader/Store drift live in `CLAUDE.md`.
-Read that before editing reader/store/op code.
-
----
-
 ## System diagram
 
 ```

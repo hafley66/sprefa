@@ -26,6 +26,23 @@ use super::_6_path_index::PathIndex;
 // Reader
 // ---------------------------------------------------------------------------
 
+/// `Reader` impl that reads blob content and path listings from a git
+/// object DB. Works against bare clones, mirrors, or user checkouts.
+///
+/// # Hot-path shape
+///
+/// `files()` runs a three-phase flow: (1) path-index hit, (2) worktree
+/// materialize + ls-tree + index upsert, (3) libgit2 tree walk
+/// fallback. `bytes()` has a fast path that reads from a provisioned
+/// worktree directly off disk; slow path grabs `Mutex<git2::Repository>`
+/// and walks the tree.
+///
+/// # Concurrency
+///
+/// `git2::Repository` is `Send + !Sync`, so each open repo sits behind
+/// its own `Mutex`. Concurrent calls into the reader serialize at the
+/// per-repo mutex; this is the primary N+1 surface called out in the
+/// batching notes.
 pub struct GitBlobReader {
     locator: Arc<dyn CheckoutLocator>,
     /// Lazily opened repo handles. git2::Repository is Send but not Sync;

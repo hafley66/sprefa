@@ -1,0 +1,42 @@
+[package]
+name    = "effect_proof"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+# Path-dep on the framework. Once effect_runtime ships to crates.io
+# this becomes a versioned dep; the consumer code does not change.
+[dependencies]
+effect_runtime = { path = "../../crates/effect_runtime" }
+
+# Stack needed by the three benches and the demo effect modules.
+tokio             = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
+rayon             = "1"
+ast-grep-core     = "0.36"
+ast-grep-language = "0.36"
+ignore            = "0.4"
+git2              = "0.19"
+rusqlite          = { version = "0.32", features = ["bundled"] }
+regex             = "1"
+memchr            = "2"
+futures           = "0.3"
+tikv-jemallocator = "0.6"
+libc              = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
+
+[[bin]]
+name = "ast_grep_v3_bench"
+path = "src/bin/ast_grep_v3_bench.rs"
+
+[[bin]]
+name = "sqlite_v3_bench"
+path = "src/bin/sqlite_v3_bench.rs"
+
+[[bin]]
+name = "git_tree_bench"
+path = "src/bin/git_tree_bench.rs"

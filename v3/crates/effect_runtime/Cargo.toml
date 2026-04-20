@@ -1,0 +1,16 @@
+[package]
+name    = "effect_runtime"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+# Framework-only dependencies. Anything that touches ast-grep, sqlite,
+# git, regex, or a specific domain lives in the consumer crate, never
+# in this one.
+[dependencies]
+tokio             = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
+rayon             = "1"
+crossbeam-channel = "0.5"
+
+# Intentionally absent: no jemalloc pin, no tracing, no serde. This
+# crate stays neutral so consumers pick their own stack.

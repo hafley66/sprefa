@@ -17,6 +17,9 @@ use crate::_3_reader::{
 };
 use crate::_16_pattern::CompiledPattern;
 
+/// `Reader` impl backed by in-memory maps. Used by tests and by the
+/// hover-side DocSession when no git backend is wired. All state is
+/// seeded via the `with_*` builder methods; no mutation after construction.
 pub struct MemReader {
     pub repos:   Vec<Arc<str>>,
     pub revs:    HashMap<Arc<str>, Vec<Arc<str>>>,
@@ -26,6 +29,8 @@ pub struct MemReader {
 }
 
 impl MemReader {
+    /// Construct an empty MemReader bound to `config`. Use `with_repo`,
+    /// `with_files`, `with_content` to populate.
     pub fn new(config: Arc<Config>) -> Self {
         Self {
             repos: vec![],
@@ -36,6 +41,7 @@ impl MemReader {
         }
     }
 
+    /// Register `repo` with the given rev list.
     pub fn with_repo(mut self, repo: &str, revs: &[&str]) -> Self {
         let r: Arc<str> = Arc::from(repo);
         self.repos.push(r.clone());
@@ -43,6 +49,7 @@ impl MemReader {
         self
     }
 
+    /// Register the file listing for `(repo, rev)`.
     pub fn with_files(mut self, repo: &str, rev: &str, paths: &[&str]) -> Self {
         let fps: Vec<FilePath> = paths.iter()
             .map(|p| FilePath(Arc::from(std::path::Path::new(p))))
@@ -51,6 +58,7 @@ impl MemReader {
         self
     }
 
+    /// Register blob bytes for `(repo, rev, path)`.
     pub fn with_content(mut self, repo: &str, rev: &str, path: &str, bytes: &[u8]) -> Self {
         let key = (
             Arc::<str>::from(repo),

@@ -32,7 +32,17 @@ rule(capture_test) {
 
 # Cross-rule ref source (walker semantic binding pending).
 rule(base_rule) {
-  > fs(**/values.yaml) > json({ services: { **: { image: { repository: $REPO, tag: $TAG } } } });
+  > fs(**/values.yaml) 
+  > json({ 
+    services: { 
+      **: { 
+        image: { 
+          repository: "myorg/$REPO", 
+          tag: $TAG 
+        } 
+      } 
+    } 
+  });
 };
 
 rule(derived_rule) {
@@ -49,8 +59,8 @@ rule(bad_rev) {
 
 rule(bad_arm) {
   > repo(*) {
-    > rev(*) {
-      > fs(v2/**/Cargo.toml) > json({$A: $HMM});
+    > rev(HEAD) {
+      > fs(**/Cargo.toml) > json({$A: $HMM});
     }
   };
 };

@@ -4,121 +4,20 @@ Cursor-pipeline evaluator for `.sprf` files.
 
 Read `README.md` first.
 
-## The rule
-
-**A loop of N iterations should do O(1) expensive work, not O(N).**
-
-Expensive = lock acquire, heap alloc, `.await`, SQL roundtrip, subprocess
-spawn, git2 call, regex compile. Those happen once, outside. Inside the
-loop is pointer math, slice index, HashMap probe, comparison, arithmetic.
-
-The enforcement trick is **list programming at stage boundaries**: op
-inputs and outputs are slices; per-item scalar methods don't exist on
-the boundary, so N+1 is untypeable. Inside a stage, a worker loops
-scalar over its slice — that's fine, the expensive resource is held
-once per worker.
-
-### Thread model (what fast tools actually do)
-
-biome, ripgrep, swc, ast-grep all use **rayon work-stealing, not tokio**
-on the scan hot path. Each worker holds its own per-thread state
-(parser, file handle, scratch buffer); no shared locks inside the loop.
-Tokio stays at the outer boundary (LSP stdio, cancellation, reparse
-debounce) — one `spawn_blocking` opens a rayon scope, the scope does
-all the per-file work, one oneshot returns results.
-
-Shape:
-```rust
-// stage boundary: slice in, slice out
-fn pipe(input: Box<[Cursor]>, ctx: &OpCtx) -> Box<[Cursor]> {
-    input.par_iter()
-        .map_init(
-            || ctx.repo_pool.get(),        // one Repository per worker
-            |repo, c| run_one(repo, c),    // full per-item work, sync
-        )
-        .collect::<Vec<_>>()
-        .into_boxed_slice()
-}
-```
-
-Scalar `run_one` lives *inside* the rayon closure, which is fine. The
-point is no op exposes a `pipe_one(cursor)` method, so stage-to-stage
-wiring cannot accidentally do N+1.
-
-### Measured violations in this repo (2026-04-17, swc smoke)
-
-- `src/readers/_2_git.rs:407, 475` — `Mutex<git2::Repository>` acquired
-  inside `bytes()` and `blob_oid()`, called 1067× per scan. Note:
-  `git2::Repository` is `!Sync`, so the Mutex is mandatory under the
-  current "one shared handle" design. Fix direction: per-worker
-  handles (cheap; libgit2 mwindow cache is process-global), not
-  "remove the Mutex".
-- `src/readers/_4_parse_cache.rs:203, 234, 311` — three
-  `RwLock<HashMap>` write-locks per cache miss, each slot an
-  `Arc<OnceCell<Arc<ParsedTree>>>`. Tree-sitter parse is idempotent;
-  the OnceCell race protection is unjustified. Replace with `moka` or
-  `quick_cache` keyed by oid.
-- `src/ops/_9_ast_grep.rs:310` — `join_all` over 1067 per-cursor
-  futures. Replace with rayon `par_iter` over the batch.
-- `src/ops/_5_json.rs:414-422, 568-575` — `reader.bytes(...).await`
-  inside `for fp in files`.
-
-### Fast fixes before refactor (try these first)
-
-- **`git_libgit2_opts(GIT_OPT_SET_CACHE_OBJECT_LIMIT, ...)`** at
-  startup. libgit2's blob cache defaults to 0 bytes — every blob read
-  pays full decode. A one-line config change may erase the
-  "blob-read is slow" symptom without any architectural change.
-- **Raise `GIT_OPT_SET_MWINDOW_FILE_LIMIT`** for repos with many
-  packfiles.
-- **Profile before refactoring**: 1067 files × 0.85ms release = 907ms
-  total. Uncontended mutex acquisition is 50-200ns. The span log
-  claims contention but arithmetic suggests the residual lives in
-  `join_all`-quadratic-poll + parse-cache indirection, not the Mutex
-  itself.
-
-### Future moves (out of scope for immediate refactor)
-
-- **gix migration**: `gix::ThreadSafeRepository` is `Send + Sync`;
-  `.to_thread_local()` gives each worker a cheap handle. GitButler
-  saw 2.6x from git2 → gix. Larger rewrite — revisit if git2
-  per-worker-handles still bottleneck.
-- **ast-grep `BitSet potential_kinds`**: ast-grep's own 10x speedup
-  came from pre-filter-by-node-kind + multi-rule dedup traversal, not
-  IO refactoring. Check whether sprefa matches multiple patterns per
-  file and whether those coalesce into one tree walk.
-
-### Reject in PRs
-
-- `Mutex<Repository>` acquired inside a per-item call path.
-- `.await` inside `for file in batch { ... }`.
-- `join_all` / `FuturesUnordered` over per-file futures.
-- `Arc<RwLock<HashMap<_, Arc<OnceCell<Arc<_>>>>>>` in new code.
-- `sqlx` imports outside `src/store/`.
-- Scalar `pipe_one(cursor)` style methods on op stage boundaries.
-  Ops take slices.
-
-### Patterns already in the codebase — keep using
-
-- `Arc<[T]>` for cursor batches (one alloc, slice semantics).
-- `Box<[T]>` for known-size owned immutable output. `Vec<T>` during
-  growth only.
-- Concrete enums when variants are bounded (`Pipeline`, `RunEvent`).
-- Newtype wrappers over domain strings (`FilePath`, `ParseSite`,
-  `Capture`).
-- Ops own their diagnostics; each op file owns its `*Diag` type.
-- One-owner batches on the rayon side of `op.ast` (`Vec<Prep>`, no
-  per-item Arc).
-
----
-
 Read `../chat_log/20260416.2.system-zoom-1-plus-golden-tests.md` for the
 outer system (Reader / Store / MutationHandler / reparse) and the 10
-golden tests that define acceptance. Note: the zoom-1 doc predates the
-rules above — where it shows per-item methods on Reader/Store, treat
-them as ghosts to exorcise, not specs to implement.
+golden tests that define acceptance.
 
 This file is the minimum coherence surface for driving work in `v2/`.
+
+## Phase order (do not reorder)
+
+- **Phase 1** — reactive scan speed on par with biome/oxc. Measure, prove,
+  do every small thing right. Read + parse + match + emit, nothing else.
+- **Phase 2** — Mutator / write effects / approval. Important, but blocked
+  on Phase 1. `mutations.rs`, `MutationEffect`, `MutationHandler`,
+  write-side of `Store` all live here. Do not cut them as "dead" — they
+  are pre-wired scaffolding for Phase 2.
 
 ## Outer shape (what README does not cover)
 

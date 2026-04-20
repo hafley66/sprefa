@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/effect_runtime",
+    "experiments/effect_proof",
+]
+# parse_experiment keeps its own inner workspace so its tree-sitter
+# crate set does not leak into the effect-runtime lockfile.
+exclude = [
+    "experiments/parse_experiment",
+]
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+# Pinned aggressively so benches reflect production-shaped builds.
+# Inherit into each member via [profile.release.<member>] as needed.
+[profile.release]
+opt-level        = 3
+lto              = "fat"
+codegen-units    = 1
+strip            = "symbols"
+debug            = false
+incremental      = false
+overflow-checks  = false
+
+[profile.bench]
+opt-level        = 3
+lto              = "fat"
+codegen-units    = 1
+debug            = false
+incremental      = false
