@@ -1277,6 +1277,7 @@ dependencies = [
  "effect_runtime",
  "regex",
  "sprefa_macros",
+ "sprefa_parse",
  "tokio",
  "tree-sitter",
 ]
