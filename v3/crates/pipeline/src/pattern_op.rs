@@ -87,6 +87,15 @@ pub struct CompiledPattern {
     pub inner: Arc<dyn std::any::Any + Send + Sync>,
 }
 
+impl std::fmt::Debug for CompiledPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompiledPattern")
+            .field("op_name", &self.op_name)
+            .field("inner", &"<opaque>")
+            .finish()
+    }
+}
+
 impl CompiledPattern {
     pub fn new<T: std::any::Any + Send + Sync>(op_name: &'static str, value: T) -> Self {
         Self {
