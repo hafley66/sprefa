@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "crates/effect_runtime",
     "crates/pipeline",
+    "crates/spine",
+    "crates/sprefa",
+    "crates/sprefa_parse",
     "experiments/effect_proof",
     "experiments/lang_prototype",
 ]

@@ -1,0 +1,1313 @@
+//! Op + Operator traits, OpCtx, OpInvocation, Pipeline.
+
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
+use std::sync::{Arc, Mutex};
+
+use futures_core::stream::BoxStream;
+
+use crate::types::{Capture, Cursor, OpEvidence, OpId, ParseSite, PathSeg, RunEvent, RunId, Severity, SprfPath};
+use crate::diagnostic::{Diagnostic, Renderer};
+use crate::config::Config;
+use crate::reader::Reader;
+use crate::writer::Writer;
+use crate::result_store::ResultStore;
+
+// OpInvocation, the slot types, CrossRefOccurrence, BraceMode, GrammarRef all
+// live in `sprefa_parse::ast` now. Re-export so existing paths resolve.
+pub use sprefa_parse::{
+    OpInvocation, BracketSlot, ParenSlot, BraceSlot, BraceMode,
+    CrossRefOccurrence, GrammarRef,
+};
+
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub enum Pipeline {
+    Op     (LoweredOp),
+    Seq    (Vec<Pipeline>),
+    Fork   (Vec<ForkBranch>),
+    Switch { on: ChannelSelector, arms: Vec<(Arc<str>, Pipeline)> },
+}
+
+/// An op together with its compile-time cross-ref bindings.
+///
+/// Wraps `Arc<dyn Op>` so the framework can splice cross-ref expansion
+/// (`expand_xrefs`) ahead of the op's `pipe` call without changing the
+/// `Op` trait. This keeps op authors out of the cross-ref machinery
+/// entirely — they write `pipe(input, ctx)` and the framework guarantees
+/// `input` already has source-row captures seeded.
+///
+/// `xrefs` is the list of `${target.$VAR}` tokens that appeared anywhere
+/// in this op's slots (paren / bracket / brace). Empty for the common
+/// no-xref case, in which `expand_xrefs` short-circuits to zero alloc.
+///
+/// Constructed at lower time. `lower_chain` and `RuleFactory::parse`
+/// build it from `OpInvocation.crossrefs`. The `From<Arc<T>>` and
+/// `From<Arc<dyn Op>>` impls below let existing op factories keep using
+/// `Arc::new(MyOp { ... }).into()` instead of explicit wrapping.
+#[derive(Clone)]
+pub struct LoweredOp {
+    pub op:    Arc<dyn Op>,
+    pub xrefs: Arc<[CrossRefOccurrence]>,
+}
+
+impl LoweredOp {
+    pub fn new(op: Arc<dyn Op>, xrefs: Arc<[CrossRefOccurrence]>) -> Self {
+        Self { op, xrefs }
+    }
+
+    /// Bare-op constructor for the empty-xref hot path.
+    pub fn bare(op: Arc<dyn Op>) -> Self {
+        Self { op, xrefs: Arc::from(Vec::<CrossRefOccurrence>::new().into_boxed_slice()) }
+    }
+}
+
+/// Ergonomics: any concrete op `Arc::new(MyOp { ... })` flows into a
+/// `Pipeline::Op(_)` slot via `Arc::new(...).into()`. Existing op factories
+/// only need a `.into()` rather than wrapping in `LoweredOp::bare(...)`.
+impl<T: Op + 'static> From<Arc<T>> for LoweredOp {
+    fn from(op: Arc<T>) -> Self { LoweredOp::bare(op as Arc<dyn Op>) }
+}
+
+impl From<Arc<dyn Op>> for LoweredOp {
+    fn from(op: Arc<dyn Op>) -> Self { LoweredOp::bare(op) }
+}
+
+/// One arm of a Fork. Carries its parse_site so framework path-tagging can
+/// emit `PathSeg::ForkArm { index, parse_site }` per cursor that flows through.
+#[derive(Clone)]
+pub struct ForkBranch {
+    pub parse_site: Arc<ParseSite>,
+    pub pipeline:   Pipeline,
+}
+
+impl Pipeline {
+    /// Rx-style fold. Framework owns SprfPath population:
+    ///   - Op  → push `PathSeg::Op { name, parse_site, step }` per emitted cursor
+    ///   - Seq → pass step index to children; no seg of its own
+    ///   - Fork→ push `PathSeg::ForkArm { index, parse_site }` per arm's output
+    pub fn run(
+        &self,
+        input: BoxStream<'static, Arc<[Cursor]>>,
+        ctx:   OpCtx,
+    ) -> BoxStream<'static, Arc<[Cursor]>> {
+        self.run_with_step(input, ctx, 0)
+    }
+
+    fn run_with_step(
+        &self,
+        input: BoxStream<'static, Arc<[Cursor]>>,
+        ctx:   OpCtx,
+        step:  u16,
+    ) -> BoxStream<'static, Arc<[Cursor]>> {
+        use futures_util::stream::{self, StreamExt};
+        match self {
+            Pipeline::Op(lop) => {
+                let op  = &lop.op;
+                let name = Arc::<str>::from(op.name());
+                let ps   = op.parse_site().clone();
+                let collect = ctx.config.runtime.collect_witnesses;
+                let op2 = op.clone();
+                let limit = ctx.config.runtime.xref_cartesian_limit;
+                let input = expand_xrefs(input, lop.xrefs.clone(), ps.clone(), ctx.clone(), limit);
+                let piped = op.pipe(input, ctx);
+                // Optional per-op timing (SPREFA_TIMING env). Tracks wall time
+                // from first poll to stream end + batch/cursor counts.
+                let piped: BoxStream<'static, Arc<[Cursor]>> =
+                    if std::env::var_os("SPREFA_TIMING").is_some() {
+                        use std::sync::atomic::{AtomicU64, Ordering};
+                        use std::sync::Mutex;
+                        use std::time::Instant;
+                        let name_t   = name.clone();
+                        let t0       = Arc::new(Mutex::new(None::<Instant>));
+                        let batches  = Arc::new(AtomicU64::new(0));
+                        let cursors  = Arc::new(AtomicU64::new(0));
+                        let t0_i     = t0.clone();
+                        let batches_i = batches.clone();
+                        let cursors_i = cursors.clone();
+                        piped.inspect(move |b| {
+                            let mut g = t0_i.lock().unwrap();
+                            if g.is_none() { *g = Some(Instant::now()); }
+                            batches_i.fetch_add(1, Ordering::Relaxed);
+                            cursors_i.fetch_add(b.len() as u64, Ordering::Relaxed);
+                        }).chain(futures_util::stream::once(async move {
+                            let ms = t0.lock().unwrap().map(|t| t.elapsed().as_millis()).unwrap_or(0);
+                            eprintln!("[timing]     op {:<16} {:>6} ms  ({} batches, {} cursors)",
+                                name_t, ms,
+                                batches.load(Ordering::Relaxed),
+                                cursors.load(Ordering::Relaxed));
+                            Arc::<[Cursor]>::from(Vec::<Cursor>::new().into_boxed_slice())
+                        }).filter(|b| {
+                            let keep = !b.is_empty();
+                            async move { keep }
+                        })).boxed()
+                    } else {
+                        piped.boxed()
+                    };
+                piped.map(move |batch| {
+                    let out: Vec<Cursor> = batch.iter().map(|c| {
+                        let mut c = c.clone();
+                        if collect {
+                            if let Some(v) = op2.witness(&c) {
+                                c.evidence.push(OpEvidence {
+                                    op_name:    op2.name(),
+                                    parse_site: op2.parse_site().clone(),
+                                    matched:    v,
+                                    capture:    op2.capture_name(),
+                                });
+                            }
+                        }
+                        push_path(c, PathSeg::Op {
+                            name:       name.clone(),
+                            parse_site: ps.clone(),
+                            step,
+                        })
+                    }).collect();
+                    Arc::<[Cursor]>::from(out.into_boxed_slice())
+                }).boxed()
+            }
+            Pipeline::Seq(children) => children
+                .iter()
+                .enumerate()
+                .fold(input, |acc, (i, child)| child.run_with_step(acc, ctx.clone(), i as u16)),
+            Pipeline::Fork(arms) => {
+                // Distribute parent: buffer, replay to each arm, tag with ForkArm, union.
+                // TODO: real shareReplay(1) for daemon mode.
+                use futures::executor::block_on;
+                let buffered: Vec<Arc<[Cursor]>> = block_on(input.collect());
+                let mut merged: Vec<Arc<[Cursor]>> = Vec::new();
+                for (i, arm) in arms.iter().enumerate() {
+                    let s = stream::iter(buffered.clone()).boxed();
+                    let out: Vec<Arc<[Cursor]>> = block_on(arm.pipeline.run(s, ctx.clone()).collect());
+                    let ps = arm.parse_site.clone();
+                    let idx = i as u16;
+                    for batch in out {
+                        let tagged: Vec<Cursor> = batch.iter().map(|c| {
+                            push_path(c.clone(), PathSeg::ForkArm { index: idx, parse_site: ps.clone() })
+                        }).collect();
+                        merged.push(Arc::<[Cursor]>::from(tagged.into_boxed_slice()));
+                    }
+                }
+                stream::iter(merged).boxed()
+            }
+            Pipeline::Switch { .. } => unimplemented!("Pipeline::Switch"),
+        }
+    }
+}
+
+fn push_path(mut c: Cursor, seg: PathSeg) -> Cursor {
+    let mut v: Vec<PathSeg> = c.path.0.iter().cloned().collect();
+    v.push(seg);
+    c.path = SprfPath(Arc::from(v.into_boxed_slice()));
+    c
+}
+
+#[derive(Debug, Clone)]
+pub enum ChannelSelector {
+    Capture(Arc<str>),
+    Provenance(Arc<str>),
+    PathSegment,
+}
+
+// ---------------------------------------------------------------------------
+// ProgramCtx
+// ---------------------------------------------------------------------------
+
+pub struct ProgramCtx {
+    pub rules:     HashMap<Arc<str>, RuleHandle>,
+    pub constants: HashMap<Arc<str>, Capture>,
+    pub config:    Arc<Config>,
+    pub registry:  Arc<crate::registry::OperatorRegistry>,
+    /// Out-of-band diagnostic channel. Operators whose `parse` returns Ok but
+    /// still has soft errors (e.g. RuleFactory emitting per-body-op errors
+    /// while keeping a partial RuleOp around for hover/LSP) push into this.
+    /// `lower_rules` drains it into the final outcome diags.
+    pub diags:     Vec<Box<dyn crate::diagnostic::Diagnostic>>,
+}
+
+impl ProgramCtx {
+    /// Fresh ctx with empty rules/constants/diags. Use setters for non-defaults.
+    pub fn new(config: Arc<Config>, registry: Arc<crate::registry::OperatorRegistry>) -> Self {
+        Self {
+            rules:     HashMap::new(),
+            constants: HashMap::new(),
+            config,
+            registry,
+            diags:     Vec::new(),
+        }
+    }
+
+    pub fn with_rules(mut self, rules: HashMap<Arc<str>, RuleHandle>) -> Self {
+        self.rules = rules; self
+    }
+    pub fn with_constants(mut self, constants: HashMap<Arc<str>, Capture>) -> Self {
+        self.constants = constants; self
+    }
+}
+
+#[derive(Clone)]
+pub struct RuleHandle {
+    pub name:       Arc<str>,
+    pub parse_site: Arc<ParseSite>,
+    pub captures:   Vec<Arc<str>>,
+    /// Rule names this rule cross-refs (`${other.$VAR}`). Populated during
+    /// `rule.parse` by scanning body invocations' `crossrefs`. Used by the
+    /// Rule DAG (Kahn topo sort, cycle detection, runner scheduling).
+    /// Walker-embedded cross-refs inside brace bodies (e.g. `json({ k: ${r.$V} })`)
+    /// are NOT yet surfaced here — a follow-up op-level hook will add them.
+    pub depends_on: Vec<Arc<str>>,
+}
+
+// ---------------------------------------------------------------------------
+// OpCtx
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct OpCtx {
+    pub run_id: RunId,
+    pub op_id:  OpId,
+    pub reader: Arc<dyn Reader>,
+    pub writer: Arc<dyn Writer>,
+    pub config: Arc<Config>,
+    pub diags:  DiagSink,
+    pub events: EventSink,
+    /// Shared per-run row store. The Layer 2 adapter `expand_xrefs` reads
+    /// it via `rows_of(rule)` to look up source rows for `${rule.$VAR}`
+    /// tokens. Runner writes to it as cursors emit and calls
+    /// `mark_complete(rule)` on stream end (Layer 5, not yet wired).
+    /// All `OpCtx` clones across one run share the same `Arc<ResultStore>`.
+    /// Sites with no cross-refs in scope (analysis snapshots, unit tests,
+    /// CLI smoke) get a fresh empty one via `OpCtx::fresh_xref_state`.
+    pub result_store: Arc<ResultStore>,
+    /// Per-run dedup set so cross-ref diagnostics fire at most once per
+    /// site instead of once per cursor that flows through. Key encoding:
+    ///   - `(op_id, byte_range.start)` for a per-site empty-join Hint
+    ///   - `(op_id, usize::MAX)`       for a once-per-op cartesian-limit Warn
+    /// Shared with the same lifetime as `result_store`.
+    pub xref_seen: Arc<Mutex<HashSet<(OpId, usize)>>>,
+    pub store:        std::sync::Arc<dyn crate::store::Store>,
+    /// v3 effect-dispatch runtime. Ops that need IO call
+    /// `ctx.rt.put::<E>(effect).await`. Registered batchers live here.
+    /// Reader calls lower to `ctx.rt.put(ReadBytes { ... })` in follow-up
+    /// slices; this field is the landing spot.
+    pub rt:           effect_runtime::RtCtx,
+    pub mutations:    tokio::sync::mpsc::Sender<crate::mutations::MutationRequest>,
+    pub cancel:       tokio_util::sync::CancellationToken,
+    pub expr_name:    Option<Arc<str>>,
+    pub current_site: Arc<ParseSite>,
+}
+
+impl OpCtx {
+    /// Allocate fresh empty result_store + xref_seen. For test/analysis
+    /// sites that don't need cross-rule plumbing.
+    pub fn fresh_xref_state() -> (Arc<ResultStore>, Arc<Mutex<HashSet<(OpId, usize)>>>) {
+        (Arc::new(ResultStore::new()), Arc::new(Mutex::new(HashSet::new())))
+    }
+
+    /// Fully-assembled OpCtx with stub plumbing (no-op diags/events,
+    /// NoopStore, closed mutation channel, fresh cancel token, empty
+    /// ParseSite). Tests override what they care about via struct-update:
+    ///
+    /// ```ignore
+    /// let ctx = OpCtx {
+    ///     diags: my_sink,
+    ///     ..OpCtx::for_test(cfg, reader, writer)
+    /// };
+    /// ```
+    ///
+    /// New OpCtx fields land here so test sites never need to change.
+    pub fn for_test(
+        config: Arc<Config>,
+        reader: Arc<dyn Reader>,
+        writer: Arc<dyn Writer>,
+    ) -> OpCtx {
+        let (result_store, xref_seen) = Self::fresh_xref_state();
+        let reader_clone_for_effects = reader.clone();
+        OpCtx {
+            run_id: RunId(0),
+            op_id:  OpId(0),
+            reader, writer, config,
+            diags:  DiagSink(Arc::new(|_| {})),
+            events: EventSink(Arc::new(|_| {})),
+            result_store, xref_seen,
+            store:        Arc::new(crate::store::NoopStore::new())
+                          as Arc<dyn crate::store::Store>,
+            rt:           crate::effects::build_default_rt(&reader_clone_for_effects),
+            mutations:    tokio::sync::mpsc::channel::<crate::mutations::MutationRequest>(32).0,
+            cancel:       tokio_util::sync::CancellationToken::new(),
+            expr_name:    None,
+            current_site: Arc::new(ParseSite {
+                file:       Arc::from(std::path::Path::new("")),
+                path:       Arc::from(Vec::<crate::types::ParseSeg>::new().into_boxed_slice()),
+                byte_range: 0..0,
+            }),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct DiagSink(pub Arc<dyn Fn(Box<dyn Diagnostic>) + Send + Sync>);
+
+#[derive(Clone)]
+pub struct EventSink(pub Arc<dyn Fn(RunEvent) + Send + Sync>);
+
+// ---------------------------------------------------------------------------
+// Op + Operator
+// ---------------------------------------------------------------------------
+
+pub trait Op: Send + Sync {
+    fn pipe(
+        &self,
+        input: BoxStream<'static, Arc<[Cursor]>>,
+        ctx:   OpCtx,
+    ) -> BoxStream<'static, Arc<[Cursor]>>;
+
+    fn name(&self) -> &'static str;
+    fn step(&self) -> u16;
+    fn parse_site(&self) -> &Arc<ParseSite>;
+    fn tokens(&self) -> &'static [TokenSpan] { &[] }
+    fn hover_at(&self, _byte: usize) -> Option<HoverInfo> { None }
+
+    /// What concrete value satisfied this op for the given cursor.
+    /// Framework calls on every cursor the op emits and pushes the result
+    /// into `cursor.evidence` for LSP telemetry. Default `None` = opt out.
+    fn witness(&self, _c: &Cursor) -> Option<Arc<str>> { None }
+
+    /// Text to insert on completion accept. Default echoes `witness(c)` —
+    /// override when the completion label differs from the source-side
+    /// insert (json() uses a jq-path label but inserts a sprf pattern).
+    fn witness_insert(&self, c: &Cursor) -> Option<Arc<str>> {
+        self.witness(c)
+    }
+
+    /// If this op is binding a capture, its name. Paired with `witness`
+    /// in the evidence record. Default `None` = filter / non-binding mode.
+    fn capture_name(&self) -> Option<Arc<str>> { None }
+
+    // -------------------------------------------------------------------
+    // LSP hover surface — pure, no I/O.
+    // -------------------------------------------------------------------
+
+    /// Markdown for hovering directly on the op name token.
+    fn hover_self(&self) -> String { self.name().to_string() }
+
+    /// Markdown for hovering a capture variable produced by this op.
+    /// `cap` is the bare name (no `$`). `cursors` is the current result
+    /// set the LSP has in scope (may be empty; implementors must tolerate).
+    fn hover_capture(&self, _cap: &str, _cursors: &[Cursor]) -> Option<String> { None }
+
+    /// Markdown for hovering a non-captured match token whose compile-time
+    /// location is `site`. `cursors` is the current LSP result set.
+    fn hover_match(&self, _site: &ParseSite, _cursors: &[Cursor]) -> Option<String> { None }
+
+    /// If this op owns a sub-pipeline (e.g. RuleOp's brace body), return a
+    /// reference to it. Used by tree-walk resolution in DocSession to reach
+    /// inner ops without re-lowering.
+    fn body_pipeline(&self) -> Option<&Pipeline> { None }
+
+    /// Rebuild this op with `new_body` swapped in for its sub-pipeline.
+    /// Used by LSP completion so the outer op (e.g. RuleOp) still runs
+    /// its seeding/sink behavior while the inner body has a wildcard
+    /// spliced in place of the target slot. Default `None` = opt out;
+    /// only ops that own a body override.
+    fn with_body(&self, _new_body: Pipeline) -> Option<Arc<dyn Op>> { None }
+
+    /// Capture names this op contributes to its downstream scope. Default
+    /// falls back to `capture_name()` for single-binding ops. Ops that bind
+    /// several captures (walker patterns) override.
+    fn binds_captures(&self) -> Vec<Arc<str>> {
+        self.capture_name().map(|n| vec![n]).unwrap_or_default()
+    }
+
+    fn expansion_mode(&self) -> ExpansionMode { ExpansionMode::Exhaustive }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpansionMode { Exhaustive, Demand }
+
+// ---------------------------------------------------------------------------
+// CompletionItem
+// ---------------------------------------------------------------------------
+
+pub struct CompletionItem {
+    pub label:  String,
+    pub detail: String,
+    pub doc:    String,
+}
+
+// ---------------------------------------------------------------------------
+// Completion — op-owned LSP suggestion surface
+// ---------------------------------------------------------------------------
+
+/// Where the cursor sits relative to an op's slot.
+///
+/// Framework `locate(pos)` (Layer 3) produces this. Ops read `partial` to
+/// filter their candidate list, and `prefix`/`suffix` to disambiguate
+/// multi-arg parens (e.g. `json(foo, |, bar)` where the active slot is
+/// the second arg).
+#[derive(Debug, Clone)]
+pub enum ParenRole {
+    /// Cursor is inside `op(...)` paren.
+    Paren   { partial: Arc<str>, prefix: Arc<str>, suffix: Arc<str> },
+    /// Cursor is inside `op{ ... }` brace (walker pattern body).
+    Brace   { partial: Arc<str>, prefix: Arc<str>, suffix: Arc<str> },
+    /// Cursor is inside `op[ ... ]` bracket (bracket_grammar slot).
+    Bracket { partial: Arc<str>, prefix: Arc<str>, suffix: Arc<str> },
+    /// Cursor is on the op-name token itself.
+    OpName  { partial: Arc<str> },
+}
+
+impl ParenRole {
+    /// The partial token under the cursor, regardless of slot kind.
+    pub fn partial(&self) -> &str {
+        match self {
+            ParenRole::Paren   { partial, .. }
+          | ParenRole::Brace   { partial, .. }
+          | ParenRole::Bracket { partial, .. }
+          | ParenRole::OpName  { partial }      => partial,
+        }
+    }
+}
+
+/// Per-request context handed to `Op::complete_sync` / `complete_async` /
+/// `Operator::head_suggestions`. All fields are snapshots; the op must not
+/// mutate them. Carries enough to answer completion without reaching back
+/// into the runtime (no ResultStore write path, no re-parse).
+#[derive(Clone)]
+pub struct CompletionCtx {
+    /// Where the cursor sits (paren / brace / bracket / op-name).
+    pub role:      ParenRole,
+    /// Program config snapshot. Ops with config-backed options (e.g.
+    /// `repo` over `config.repos`) read from here.
+    pub config:    Arc<Config>,
+    /// Reader stack (blob / WT / buffer overlay). Ops that need file-system
+    /// truth (e.g. `fs` glob enumeration) query this rather than shelling out.
+    pub reader:    Arc<dyn Reader>,
+    /// Capture names in scope at the cursor position (no `$` prefix).
+    /// Built by unioning `binds_captures()` across upstream ops.
+    pub captures:  Arc<[Arc<str>]>,
+    /// Upstream ops in this pipe, closest first. Used by downstream ops
+    /// to look up concrete narrowing inputs (e.g. `rev` locates its
+    /// upstream `repo` here).
+    pub upstream:  Arc<[Arc<dyn Op>]>,
+    /// Known rule names in the document (for cross-ref completion inside
+    /// `${rule.$VAR}` tokens).
+    pub rules:     Arc<[Arc<str>]>,
+    /// Workspace root if resolvable, used for I/O-bound completions that
+    /// need a concrete filesystem anchor (git refs, disk walks).
+    pub root:      Option<Arc<std::path::Path>>,
+}
+
+/// One completion entry contributed by an op.
+///
+/// `insert` is the text that replaces `role.partial()` when accepted; if
+/// `None`, the LSP bin uses `label` as insert text. `filter_text` lets the
+/// client fuzzy-match against a different string than the label. `kind_hint`
+/// is a free-form op-authored tag (e.g. `"branch"`, `"repo"`, `"file"`)
+/// that the LSP bin may map to a client icon; unknown tags fall back to a
+/// generic icon. No central enum: adding a new op never edits a shared list.
+#[derive(Debug, Clone)]
+pub struct CompletionSuggestion {
+    pub label:         String,
+    pub detail:        String,
+    pub doc:           String,
+    pub kind_hint:     Option<Arc<str>>,
+    pub insert:        Option<Arc<str>>,
+    pub filter_text:   Option<Arc<str>>,
+    /// Source byte range the client should replace with `label`. Set by
+    /// paren-internal completion where partial boundaries are known so
+    /// VS Code doesn't default to word-boundary replacement (which breaks
+    /// when partials contain `/`, `.`, etc.). `None` for op-name completions
+    /// at head of line where `insert_text` is fine.
+    pub replace_range: Option<std::ops::Range<usize>>,
+}
+
+impl From<CompletionItem> for CompletionSuggestion {
+    fn from(c: CompletionItem) -> Self {
+        CompletionSuggestion {
+            label:         c.label,
+            detail:        c.detail,
+            doc:           c.doc,
+            kind_hint:     Some(Arc::from("op")),
+            insert:        None,
+            filter_text:   None,
+            replace_range: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ScanPointer — op-declared `$$sigil` provenance token
+// ---------------------------------------------------------------------------
+
+pub struct ScanPointer {
+    pub sigil: &'static str,
+    pub read:  fn(&Cursor) -> Option<Arc<str>>,
+}
+
+pub trait Operator: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn aliases(&self) -> &[&'static str] { &[] }
+
+    fn bracket_grammar(&self) -> Option<GrammarRef> { None }
+    fn paren_grammar  (&self) -> GrammarRef;
+    fn brace_mode     (&self) -> BraceMode { BraceMode::DefaultFork }
+
+    fn pre_register(&self, _inv: &OpInvocation, _pctx: &mut ProgramCtx)
+        -> Result<(), Vec<Box<dyn Diagnostic>>> { Ok(()) }
+
+    fn parse(&self, inv: &OpInvocation, pctx: &mut ProgramCtx)
+        -> Result<Pipeline, Vec<Box<dyn Diagnostic>>>;
+
+    /// `$$sigil` tokens this op owns. Registry folds them into a dispatch
+    /// map at `register()` time. Defaults to empty; ops opt in.
+    fn scan_pointers(&self) -> &'static [ScanPointer] { &[] }
+
+    /// One-line completion entry for this operator.
+    fn completion_item(&self) -> CompletionItem {
+        CompletionItem {
+            label:  self.name().to_string(),
+            detail: self.paren_grammar().0.to_string(),
+            doc:    self.name().to_string(),
+        }
+    }
+
+    /// Is this op valid at the current pipe-head position? Default yes.
+    /// Ops that only make sense downstream (e.g. json needs fs upstream)
+    /// can return false given the upstream pipe shape to suppress the
+    /// suggestion until prerequisites exist.
+    fn valid_at_head(&self, _upstream: &[Arc<dyn Op>]) -> bool { true }
+
+    /// Suggestions when no op is under cursor yet (pipe-head position).
+    /// Default: one entry derived from `completion_item()`. Operators can
+    /// override to return templates (e.g. `rule(name) { ... }`) or
+    /// multi-variant starters.
+    fn head_suggestions(&self, _ctx: &CompletionCtx) -> Vec<CompletionSuggestion> {
+        vec![self.completion_item().into()]
+    }
+
+    /// Wildcard/neutral instance of this op for partial-eval completion.
+    /// Framework splices this at the cursor position, runs the pipeline up
+    /// to and including it, and harvests witnesses from output cursors to
+    /// produce completion suggestions. Default returns None: ops that do
+    /// not participate in pipeline-driven completion (e.g. rule itself) opt
+    /// out. Ops that do participate return a "matches everything" instance
+    /// (e.g. `RepoOp { mode: Filter("*") }`).
+    fn wildcard_instance(&self, _parse_site: Arc<ParseSite>) -> Option<Arc<dyn Op>> {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LSP-adjacent metadata
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+pub struct TokenSpan { pub start: u32, pub end: u32, pub kind: TokenKind }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    Keyword, Capture, Provenance, CrossRef,
+    PatternKey, PatternString, Punctuation,
+}
+
+#[derive(Debug, Clone)]
+pub struct HoverInfo {
+    pub title:    Arc<str>,
+    pub markdown: Arc<str>,
+    pub range:    Range<u32>,
+}
+
+// ---------------------------------------------------------------------------
+// Hover grouping utility
+// ---------------------------------------------------------------------------
+
+/// Group `(fs_path, rev, value)` tuples into grouped markdown under `header`.
+///
+/// Rules:
+/// - If all `fs_path` are `None`, returns a flat bullet list (no `###` headings).
+/// - Otherwise groups by `(fs_path, rev)` with `### \`path\`  (rev: rev)` headings.
+///   If all tuples share one rev, the `(rev: …)` suffix is omitted.
+/// - Deduplicates `(fs_path, rev, value)` tuples.
+/// - Caps total values at 20 across all groups.
+///
+/// `header` is rendered verbatim as the first line if provided (non-empty).
+/// Returns `None` if `entries` is empty.
+///
+/// # TODO: reference tail needs rule name threaded from DocSession
+pub fn path_link_or_code(value: &str) -> String {
+    let p = std::path::Path::new(value);
+    if p.is_absolute() && p.is_file() {
+        format!("[{value}](file://{value})")
+    } else {
+        format!("`{value}`")
+    }
+}
+
+pub fn hover_render_grouped(
+    header:  &str,
+    entries: &[(Option<String>, String, String)],  // (fs, rev, value)
+) -> Option<String> {
+    if entries.is_empty() { return None; }
+
+    let all_fs_none = entries.iter().all(|(fs, _, _)| fs.is_none());
+
+    if all_fs_none {
+        // Flat bullet list — original behavior.
+        let mut seen: Vec<&str> = Vec::new();
+        let mut lines: Vec<String> = Vec::new();
+        for (_, _, val) in entries {
+            let v = val.as_str();
+            if seen.contains(&v) { continue; }
+            seen.push(v);
+            lines.push(format!("- `{}`", v));
+            if lines.len() >= 20 { break; }
+        }
+        if lines.is_empty() { return None; }
+        let body = lines.join("\n");
+        return Some(if header.is_empty() {
+            body
+        } else {
+            format!("{}\n\n{}", header, body)
+        });
+    }
+
+    // Determine if all revs are the same → omit (rev: …) suffix.
+    let single_rev = {
+        let mut it = entries.iter().map(|(_, rev, _)| rev.as_str());
+        let first = it.next().unwrap();
+        if it.all(|r| r == first) { Some(first) } else { None }
+    };
+
+    // Build ordered group key list + value sets, respecting 20-value cap.
+    let mut order: Vec<(Option<String>, String)> = Vec::new();  // (fs, rev)
+    let mut groups: std::collections::HashMap<(Option<String>, String), Vec<String>> =
+        std::collections::HashMap::new();
+    let mut total = 0usize;
+
+    'outer: for (fs, rev, val) in entries {
+        let key = (fs.clone(), rev.clone());
+        let bucket = groups.entry(key.clone()).or_insert_with(|| {
+            order.push(key.clone());
+            Vec::new()
+        });
+        let v = val.as_str();
+        if bucket.iter().any(|s| s.as_str() == v) { continue; }
+        bucket.push(val.clone());
+        total += 1;
+        if total >= 20 { break 'outer; }
+    }
+
+    let mut sections: Vec<String> = Vec::new();
+    for key in &order {
+        let vals = &groups[key];
+        let (fs_opt, rev) = key;
+        let heading = match fs_opt {
+            Some(path) => {
+                let label = path_link_or_code(path);
+                if single_rev.is_some() {
+                    format!("### {label}")
+                } else {
+                    format!("### {label}  (rev: {rev})")
+                }
+            }
+            None => {
+                if single_rev.is_some() {
+                    format!("### (no file)")
+                } else {
+                    format!("### (no file, rev: {rev})")
+                }
+            }
+        };
+        let bullets: Vec<String> = vals.iter()
+            .map(|v| format!("- {}", path_link_or_code(v)))
+            .collect();
+        sections.push(format!("{}\n{}", heading, bullets.join("\n")));
+    }
+
+    let body = sections.join("\n\n");
+    Some(if header.is_empty() {
+        body
+    } else {
+        format!("{}\n\n{}", header, body)
+    })
+}
+
+// ---------------------------------------------------------------------------
+// expand_xrefs — combineLatest-style adapter (Layer 2)
+// ---------------------------------------------------------------------------
+
+/// Splice between input cursors and `op.pipe`. For every cursor, expand it
+/// over the cartesian product of source rows from each xref's target rule.
+///
+/// - Empty `xrefs` → input passes through unchanged (zero alloc).
+/// - Empty target rule (no rows or pending) → cursor drops, one
+///   `xref/empty-join` Hint per op-site (deduped via `ctx.xref_seen`).
+/// - Distinct seeded tuples beyond `limit` → cursor drops, one
+///   `xref/cartesian-limit` Warn per op (sentinel key `(op_id, usize::MAX)`).
+/// - Per-input dedup: tuples of `(var, value)` in xref declaration order
+///   are hashed so duplicate target rows collapse.
+pub(crate) fn expand_xrefs(
+    input:   BoxStream<'static, Arc<[Cursor]>>,
+    xrefs:   Arc<[CrossRefOccurrence]>,
+    op_site: Arc<ParseSite>,
+    ctx:     OpCtx,
+    limit:   usize,
+) -> BoxStream<'static, Arc<[Cursor]>> {
+    use futures_util::stream::{self, StreamExt};
+
+    if xrefs.is_empty() {
+        return input;
+    }
+
+    input
+        .flat_map(move |batch| {
+            // Each input cursor expands into its own output batch (the cartesian
+            // fan-out of that cursor over source rows). An input cursor that
+            // produces zero expansions still emits an empty Arc<[]> so the
+            // batch shape stays 1:1 with input cursors.
+            let xrefs = xrefs.clone();
+            let op_site = op_site.clone();
+            let ctx = ctx.clone();
+            let outs: Vec<Arc<[Cursor]>> = batch.iter().map(|c| {
+                let v = expand_one(c, &xrefs, &op_site, &ctx, limit);
+                Arc::<[Cursor]>::from(v.into_boxed_slice())
+            }).collect();
+            stream::iter(outs)
+        })
+        .boxed()
+}
+
+fn expand_one(
+    cursor:  &Cursor,
+    xrefs:   &Arc<[CrossRefOccurrence]>,
+    op_site: &Arc<ParseSite>,
+    ctx:     &OpCtx,
+    limit:   usize,
+) -> Vec<Cursor> {
+    // Pull rows for every xref. Empty/missing → empty-join, drop.
+    let mut row_lists: Vec<Vec<crate::result_store::CaptureMap>> =
+        Vec::with_capacity(xrefs.len());
+    for xr in xrefs.iter() {
+        let rows = ctx.result_store.rows_of(&xr.rule).unwrap_or_default();
+        if rows.is_empty() {
+            emit_empty_join(ctx, op_site, xr);
+            return Vec::new();
+        }
+        row_lists.push(rows);
+    }
+
+    // Cartesian over row indices.
+    let counts: Vec<usize> = row_lists.iter().map(|v| v.len()).collect();
+    let total: usize = counts.iter().product();
+
+    // Output dedup key: tuple of (var, value) in xref declaration order.
+    let mut seen_tuples: HashSet<Vec<(Arc<str>, Arc<str>)>> = HashSet::new();
+    let mut out: Vec<Cursor> = Vec::new();
+
+    let mut idx = vec![0usize; xrefs.len()];
+    'combos: for _ in 0..total {
+        // Build seed pairs for this combination.
+        let mut seeds: Vec<(Arc<str>, Capture)> = Vec::with_capacity(xrefs.len());
+        let mut key:   Vec<(Arc<str>, Arc<str>)> = Vec::with_capacity(xrefs.len());
+        let mut skip = false;
+        for (i, xr) in xrefs.iter().enumerate() {
+            let row = &row_lists[i][idx[i]];
+            let Some(cap) = row.get(&xr.var) else { skip = true; break; };
+            key.push((xr.var.clone(), cap.value.clone()));
+            seeds.push((xr.var.clone(), cap.clone()));
+        }
+
+        if !skip {
+            if !seen_tuples.contains(&key) {
+                if seen_tuples.len() >= limit {
+                    // Count how many distinct tuples we'd actually have produced
+                    // by walking the rest. For diagnostic clarity, keep going to
+                    // tally distinct, but stop emitting cursors.
+                    let distinct = count_distinct_tuples(xrefs, &row_lists);
+                    emit_cartesian_limit(ctx, op_site, xrefs, &counts, distinct, limit);
+                    return Vec::new();
+                }
+                seen_tuples.insert(key);
+
+                let mut c = cursor.clone();
+                for (var, cap) in seeds {
+                    c.captures.insert(var, cap);
+                }
+                out.push(c);
+            }
+        }
+        let _ = skip;
+
+        // Increment mixed-radix counter.
+        let mut k = xrefs.len();
+        while k > 0 {
+            k -= 1;
+            idx[k] += 1;
+            if idx[k] < counts[k] { continue 'combos; }
+            idx[k] = 0;
+        }
+        break;
+    }
+
+    out
+}
+
+fn count_distinct_tuples(
+    xrefs:     &Arc<[CrossRefOccurrence]>,
+    row_lists: &[Vec<crate::result_store::CaptureMap>],
+) -> usize {
+    let counts: Vec<usize> = row_lists.iter().map(|v| v.len()).collect();
+    let total: usize = counts.iter().product();
+    let mut seen: HashSet<Vec<(Arc<str>, Arc<str>)>> = HashSet::new();
+    let mut idx = vec![0usize; xrefs.len()];
+    'combos: for _ in 0..total {
+        let mut key: Vec<(Arc<str>, Arc<str>)> = Vec::with_capacity(xrefs.len());
+        let mut ok = true;
+        for (i, xr) in xrefs.iter().enumerate() {
+            let row = &row_lists[i][idx[i]];
+            match row.get(&xr.var) {
+                Some(cap) => key.push((xr.var.clone(), cap.value.clone())),
+                None => { ok = false; break; }
+            }
+        }
+        if ok { seen.insert(key); }
+        let mut k = xrefs.len();
+        while k > 0 {
+            k -= 1;
+            idx[k] += 1;
+            if idx[k] < counts[k] { continue 'combos; }
+            idx[k] = 0;
+        }
+        break;
+    }
+    seen.len()
+}
+
+fn emit_empty_join(ctx: &OpCtx, _op_site: &Arc<ParseSite>, xr: &CrossRefOccurrence) {
+    let key = (ctx.op_id, xr.byte_range.start);
+    {
+        let mut g = ctx.xref_seen.lock().unwrap();
+        if g.contains(&key) { return; }
+        g.insert(key);
+    }
+    let mut site = (**_op_site).clone();
+    site.byte_range = xr.byte_range.clone();
+    let diag = XrefEmptyJoin { site, target_rule: xr.rule.clone() };
+    (ctx.diags.0)(Box::new(diag));
+}
+
+fn emit_cartesian_limit(
+    ctx:        &OpCtx,
+    op_site:    &Arc<ParseSite>,
+    xrefs:      &Arc<[CrossRefOccurrence]>,
+    counts:     &[usize],
+    distinct:   usize,
+    limit:      usize,
+) {
+    let key = (ctx.op_id, usize::MAX);
+    {
+        let mut g = ctx.xref_seen.lock().unwrap();
+        if g.contains(&key) { return; }
+        g.insert(key);
+    }
+    let rule_counts: Vec<(Arc<str>, usize)> = xrefs
+        .iter()
+        .zip(counts.iter())
+        .map(|(xr, n)| (xr.rule.clone(), *n))
+        .collect();
+    let diag = XrefCartesianLimit {
+        site: (**op_site).clone(),
+        distinct, limit, rule_counts,
+    };
+    (ctx.diags.0)(Box::new(diag));
+}
+
+// ---------------------------------------------------------------------------
+// Cross-ref runtime diagnostics
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct XrefEmptyJoin {
+    pub site:        ParseSite,
+    pub target_rule: Arc<str>,
+}
+
+impl Diagnostic for XrefEmptyJoin {
+    fn code(&self) -> &str { "xref/empty-join" }
+    fn severity(&self) -> Severity { Severity::Hint }
+    fn primary(&self) -> &ParseSite { &self.site }
+    fn render(&self, out: &mut dyn Renderer) {
+        out.header(self.code(), self.severity(),
+            &format!("cross-ref to rule `{}` produced zero rows; cursor dropped",
+                self.target_rule));
+        out.primary(&self.site);
+    }
+}
+
+#[derive(Debug)]
+pub struct XrefCartesianLimit {
+    pub site:        ParseSite,
+    pub distinct:    usize,
+    pub limit:       usize,
+    pub rule_counts: Vec<(Arc<str>, usize)>,
+}
+
+impl Diagnostic for XrefCartesianLimit {
+    fn code(&self) -> &str { "xref/cartesian-limit" }
+    fn severity(&self) -> Severity { Severity::Warn }
+    fn primary(&self) -> &ParseSite { &self.site }
+    fn render(&self, out: &mut dyn Renderer) {
+        let counts: Vec<String> = self.rule_counts.iter()
+            .map(|(r, n)| format!("{r}={n}")).collect();
+        out.header(self.code(), self.severity(),
+            &format!("cross-ref expansion exceeded cartesian limit (distinct={} limit={}; rules: {})",
+                self.distinct, self.limit, counts.join(", ")));
+        out.primary(&self.site);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// expand_xrefs tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod xref_tests {
+    use super::*;
+    use crate::types::{Capture, Cursor, FileId, OpId, ParseSite, RunId};
+    use crate::diagnostic::Diagnostic;
+    use crate::result_store::{CaptureMap, ResultStore};
+    use crate::{Config, RuntimeConfig};
+    use crate::readers::MemReader;
+    use crate::writers::MemWriter;
+    use futures_util::stream::{self, StreamExt};
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    fn site() -> Arc<ParseSite> {
+        Arc::new(ParseSite {
+            file:       Arc::from(Path::new("test.sprf")),
+            path:       Arc::from(Vec::<crate::types::ParseSeg>::new().into_boxed_slice()),
+            byte_range: 100..110,
+        })
+    }
+
+    fn make_config() -> Arc<Config> {
+        Arc::new(Config {
+            repos: vec![], revs: vec![], fs_exclude: vec![],
+            sprf_files: vec![], shell_allow: vec![],
+            runtime: RuntimeConfig {
+                worker_threads: 1, buffer_size: 64,
+                flush_interval_ms: 100, collect_witnesses: false,
+                xref_cartesian_limit: 10_000,
+                max_passes:           8,
+                max_claims_per_pass:  10_000,
+                max_cursors_per_root: 1_000_000,
+                max_file_bytes:       1_048_576,
+            },
+            content_hash: 0,
+        })
+    }
+
+    fn cap(v: &str) -> Capture { Capture::new(Arc::from(v)) }
+
+    fn row(pairs: &[(&str, &str)]) -> CaptureMap {
+        pairs.iter().map(|(k, v)| (Arc::<str>::from(*k), cap(v))).collect()
+    }
+
+    fn cursor() -> Cursor {
+        Cursor {
+            run_id: RunId(0),
+            repo:   Arc::from("repo"),
+            rev:    Arc::from("HEAD"),
+            ..Default::default()
+        }
+    }
+
+    fn cursor_with(cap_pairs: &[(&str, &str)]) -> Cursor {
+        let mut c = cursor();
+        for (k, v) in cap_pairs {
+            c.captures.insert(Arc::<str>::from(*k), cap(v));
+        }
+        c
+    }
+
+    struct TestCtx {
+        ctx:   OpCtx,
+        store: Arc<ResultStore>,
+        diags: Arc<Mutex<Vec<(String, String)>>>,  // (code, _rendered placeholder unused here)
+    }
+
+    fn build_ctx() -> TestCtx {
+        let config = make_config();
+        let reader: Arc<dyn crate::reader::Reader + Send + Sync> =
+            Arc::new(MemReader::new(config.clone()));
+        let writer: Arc<dyn crate::writer::Writer + Send + Sync> =
+            Arc::new(MemWriter::new());
+        let fired: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(vec![]));
+        let fired2 = fired.clone();
+        let diags = DiagSink(Arc::new(move |d: Box<dyn Diagnostic>| {
+            fired2.lock().unwrap().push((d.code().to_string(), String::new()));
+        }));
+        let events = EventSink(Arc::new(|_| {}));
+        let store = Arc::new(ResultStore::new());
+        let xref_seen = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let (__mtx, __mrx) = tokio::sync::mpsc::channel::<crate::mutations::MutationRequest>(32);
+        std::mem::drop(__mrx);
+        let ctx = OpCtx {
+            run_id: RunId(0),
+            op_id:  OpId(42),
+            reader, writer, config, diags, events,
+            result_store: store.clone(),
+            xref_seen,
+            store:        std::sync::Arc::new(crate::store::NoopStore::new())
+                          as std::sync::Arc<dyn crate::store::Store>,
+            mutations:    __mtx,
+            cancel:       tokio_util::sync::CancellationToken::new(),
+            expr_name:    None,
+            current_site: std::sync::Arc::new(crate::types::ParseSite {
+                file:       std::sync::Arc::from(std::path::Path::new("")),
+                path:       std::sync::Arc::from(Vec::<crate::types::ParseSeg>::new().into_boxed_slice()),
+                byte_range: 0..0,
+            }),
+        };
+        TestCtx { ctx, store, diags: fired }
+    }
+
+    fn xref(rule: &str, var: &str, start: usize) -> CrossRefOccurrence {
+        CrossRefOccurrence {
+            rule: Arc::from(rule),
+            var:  Arc::from(var),
+            byte_range: start..(start + 4),
+        }
+    }
+
+    fn drain(s: BoxStream<'static, Arc<[Cursor]>>) -> Vec<Cursor> {
+        let batches: Vec<Arc<[Cursor]>> = futures::executor::block_on(s.collect());
+        batches.into_iter().flat_map(|b| b.iter().cloned().collect::<Vec<_>>()).collect()
+    }
+
+    fn run(xrefs: Vec<CrossRefOccurrence>, inputs: Vec<Cursor>, tctx: &TestCtx, limit: usize)
+        -> Vec<Cursor>
+    {
+        // Wrap each input cursor as a singleton batch so the fan-out semantics
+        // under test match the trait's per-cursor expansion contract.
+        let batches: Vec<Arc<[Cursor]>> = inputs.into_iter()
+            .map(|c| Arc::<[Cursor]>::from(vec![c].into_boxed_slice()))
+            .collect();
+        let s = stream::iter(batches).boxed();
+        let arc: Arc<[CrossRefOccurrence]> = Arc::from(xrefs.into_boxed_slice());
+        drain(expand_xrefs(s, arc, site(), tctx.ctx.clone(), limit))
+    }
+
+    #[test]
+    fn no_xrefs_passthrough() {
+        let t = build_ctx();
+        let out = run(vec![], vec![cursor(), cursor()], &t, 10_000);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn single_xref_single_row() {
+        let t = build_ctx();
+        let rule: Arc<str> = Arc::from("R");
+        t.store.append(&rule, row(&[("TAG", "v1")]));
+        t.store.mark_complete(&rule);
+
+        let out = run(vec![xref("R", "TAG", 0)], vec![cursor()], &t, 10_000);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].captures.get(&Arc::<str>::from("TAG")).unwrap().value.as_ref(), "v1");
+    }
+
+    #[test]
+    fn single_xref_multiple_rows() {
+        let t = build_ctx();
+        let rule: Arc<str> = Arc::from("R");
+        for v in &["v1", "v2", "v3"] {
+            t.store.append(&rule, row(&[("TAG", v)]));
+        }
+        t.store.mark_complete(&rule);
+
+        let out = run(vec![xref("R", "TAG", 0)], vec![cursor()], &t, 10_000);
+        let mut vals: Vec<String> = out.iter()
+            .map(|c| c.captures[&Arc::<str>::from("TAG")].value.to_string())
+            .collect();
+        vals.sort();
+        assert_eq!(vals, vec!["v1", "v2", "v3"]);
+    }
+
+    #[test]
+    fn single_xref_duplicate_values_deduped() {
+        let t = build_ctx();
+        let rule: Arc<str> = Arc::from("R");
+        for _ in 0..5 { t.store.append(&rule, row(&[("TAG", "v1")])); }
+        t.store.mark_complete(&rule);
+
+        let out = run(vec![xref("R", "TAG", 0)], vec![cursor()], &t, 10_000);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn two_xrefs_cartesian() {
+        let t = build_ctx();
+        let a: Arc<str> = Arc::from("A");
+        let b: Arc<str> = Arc::from("B");
+        for v in &["a1", "a2"] { t.store.append(&a, row(&[("X", v)])); }
+        for v in &["b1", "b2", "b3"] { t.store.append(&b, row(&[("Y", v)])); }
+        t.store.mark_complete(&a);
+        t.store.mark_complete(&b);
+
+        let out = run(
+            vec![xref("A", "X", 0), xref("B", "Y", 10)],
+            vec![cursor()],
+            &t, 10_000,
+        );
+        assert_eq!(out.len(), 6);
+    }
+
+    #[test]
+    fn two_xrefs_partial_dedup() {
+        let t = build_ctx();
+        let a: Arc<str> = Arc::from("A");
+        let b: Arc<str> = Arc::from("B");
+        for v in &["a1", "a2"] { t.store.append(&a, row(&[("X", v)])); }
+        for v in &["b1", "b1", "b2"] { t.store.append(&b, row(&[("Y", v)])); }
+        t.store.mark_complete(&a);
+        t.store.mark_complete(&b);
+
+        let out = run(
+            vec![xref("A", "X", 0), xref("B", "Y", 10)],
+            vec![cursor()],
+            &t, 10_000,
+        );
+        // distinct tuples: 2 * 2 = 4
+        assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn empty_join_drops_and_diags() {
+        let t = build_ctx();
+        let rule: Arc<str> = Arc::from("R");
+        t.store.mark_complete(&rule);  // no rows
+
+        let out = run(vec![xref("R", "TAG", 0)], vec![cursor()], &t, 10_000);
+        assert!(out.is_empty());
+        let d = t.diags.lock().unwrap();
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].0, "xref/empty-join");
+    }
+
+    #[test]
+    fn empty_join_dedup_across_cursors() {
+        let t = build_ctx();
+        let rule: Arc<str> = Arc::from("R");
+        t.store.mark_complete(&rule);
+
+        let out = run(
+            vec![xref("R", "TAG", 0)],
+            vec![cursor(), cursor(), cursor()],
+            &t, 10_000,
+        );
+        assert!(out.is_empty());
+        assert_eq!(t.diags.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cartesian_limit_exceeded() {
+        let t = build_ctx();
+        let a: Arc<str> = Arc::from("A");
+        let b: Arc<str> = Arc::from("B");
+        for i in 0..100 { t.store.append(&a, row(&[("X", &format!("a{}", i))])); }
+        for i in 0..200 { t.store.append(&b, row(&[("Y", &format!("b{}", i))])); }
+        t.store.mark_complete(&a);
+        t.store.mark_complete(&b);
+
+        let out = run(
+            vec![xref("A", "X", 0), xref("B", "Y", 10)],
+            vec![cursor()],
+            &t, 10_000,
+        );
+        assert!(out.is_empty());
+        let d = t.diags.lock().unwrap();
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].0, "xref/cartesian-limit");
+    }
+
+    #[test]
+    fn cartesian_limit_diag_once_per_op() {
+        let t = build_ctx();
+        let a: Arc<str> = Arc::from("A");
+        let b: Arc<str> = Arc::from("B");
+        for i in 0..100 { t.store.append(&a, row(&[("X", &format!("a{}", i))])); }
+        for i in 0..200 { t.store.append(&b, row(&[("Y", &format!("b{}", i))])); }
+        t.store.mark_complete(&a);
+        t.store.mark_complete(&b);
+
+        let out = run(
+            vec![xref("A", "X", 0), xref("B", "Y", 10)],
+            vec![cursor(), cursor()],
+            &t, 10_000,
+        );
+        assert!(out.is_empty());
+        assert_eq!(t.diags.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn unknown_target_rule_treated_as_empty_join() {
+        let t = build_ctx();
+        let out = run(vec![xref("GhostRule", "TAG", 0)], vec![cursor()], &t, 10_000);
+        assert!(out.is_empty());
+        let d = t.diags.lock().unwrap();
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].0, "xref/empty-join");
+    }
+
+    #[test]
+    fn seed_overwrites_existing_capture_with_same_key() {
+        let t = build_ctx();
+        let rule: Arc<str> = Arc::from("R");
+        t.store.append(&rule, row(&[("TAG", "new")]));
+        t.store.mark_complete(&rule);
+
+        let out = run(
+            vec![xref("R", "TAG", 0)],
+            vec![cursor_with(&[("TAG", "old")])],
+            &t, 10_000,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].captures[&Arc::<str>::from("TAG")].value.as_ref(), "new");
+    }
+
+    #[test]
+    fn non_seeded_captures_preserved() {
+        let t = build_ctx();
+        let rule: Arc<str> = Arc::from("R");
+        t.store.append(&rule, row(&[("TAG", "v1")]));
+        t.store.mark_complete(&rule);
+
+        let out = run(
+            vec![xref("R", "TAG", 0)],
+            vec![cursor_with(&[("OTHER", "x")])],
+            &t, 10_000,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].captures[&Arc::<str>::from("OTHER")].value.as_ref(), "x");
+        assert_eq!(out[0].captures[&Arc::<str>::from("TAG")].value.as_ref(), "v1");
+    }
+
+    // Suppress unused-import warnings for FileId.
+    #[allow(dead_code)]
+    fn _silence_unused(_: FileId) {}
+
+    // Task 1: default scan_pointers() is empty for any Operator that has not
+    // opted in. Updated in Task 3 when RepoFactory registers repo/repo_norm.
+    #[test]
+    fn default_scan_pointers_is_empty() {
+        // RuleFactory declares none; verifies the trait default stays empty.
+        let factory = crate::ops::RuleFactory;
+        assert!(Operator::scan_pointers(&factory).is_empty());
+    }
+}
