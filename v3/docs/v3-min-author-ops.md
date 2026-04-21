@@ -157,7 +157,7 @@ Min-author-ops is not min-LoC. Specifically:
 
 ## Evolution notes 2026-04-20 — affordances added, metric held
 
-Cross-reference: `v3-unified-language-locks.md` (session lockfile).
+Cross-reference: `../crates/sprefa_parse/parse.md` (session lockfile).
 
 The sigil-unification and parametric-rule session added framework
 affordances. Every affordance carries a default that costs zero to
@@ -193,7 +193,7 @@ Each is a single folder, `(1, 0, 0)` preserved:
 ### Anti-goals reaffirmed
 
 - Do not fold term-annotation semantics into the base term grammar
-  until the annotation lane (`v3-unified-language-locks.md` Section 14)
+  until the annotation lane (`../crates/sprefa_parse/parse.md` Section 14)
   resolves. Pre-commit risks baking an atom-only shape that can't
   carry kind/link/persistence directives later.
 - Do not add framework match arms for tag-op or link-op kinds. Each is

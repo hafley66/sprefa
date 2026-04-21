@@ -208,7 +208,7 @@ central enums grow either way.
 
 ## Evolution notes 2026-04-20 — language-surface locks
 
-Cross-reference: `v3-unified-language-locks.md` (session lockfile).
+Cross-reference: `../crates/sprefa_parse/parse.md` (session lockfile).
 This section documents what changed in A/B/C/D rows after the
 sigil-unification and parametric-rule session. The row table above is
 preserved unchanged for historical trace.
@@ -253,7 +253,7 @@ All paid once by framework, zero cost to existing ops (defaults hold):
 ### Reserved grammar lane
 
 Term annotations are reserved as an exploration surface. Candidate
-shapes, design questions, and scope listed in `v3-unified-language-locks.md`
+shapes, design questions, and scope listed in `../crates/sprefa_parse/parse.md`
 Section 14. Tag-op and link-op families may shrink or vanish when the
 annotation grammar lands, depending on chosen shape. Author-surface
 rows above are stable against either outcome because tag-ops and

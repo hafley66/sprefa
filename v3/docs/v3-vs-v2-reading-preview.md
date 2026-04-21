@@ -187,7 +187,7 @@ See also:
 
 ## Evolution notes 2026-04-20 — language-surface read
 
-Cross-reference: `v3-unified-language-locks.md`. The Rust op-reading
+Cross-reference: `../crates/sprefa_parse/parse.md`. The Rust op-reading
 example above is unchanged; this section adds the sprf-author reading.
 
 ### Reading a rule in v3
@@ -235,7 +235,7 @@ Framework handles everything else:
 
 ### Framework reading (the language-lockfile 5% case)
 
-Framework author reads `v3-unified-language-locks.md` once for the six
+Framework author reads `../crates/sprefa_parse/parse.md` once for the six
 concepts, three sigils, six Cursor fields, four Pipeline cases, five
 EntityRef cases. Op author never opens that file.
 
