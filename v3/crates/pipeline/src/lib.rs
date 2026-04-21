@@ -10,6 +10,10 @@
 //! See PAIN_POINTS.md for the friction discovered while building this
 //! slice, ranked by severity for the next move.
 
+// Self-extern so `#[sprf_pattern_op]`-expanded paths like
+// `::pipeline::Op` resolve when the macro is used inside this crate.
+extern crate self as pipeline;
+
 #[allow(non_snake_case)]
 pub mod _0_cursor;
 #[allow(non_snake_case)]

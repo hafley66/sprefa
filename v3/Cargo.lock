@@ -1275,6 +1275,7 @@ version = "0.0.0"
 dependencies = [
  "cc",
  "effect_runtime",
+ "sprefa_macros",
  "tokio",
  "tree-sitter",
 ]

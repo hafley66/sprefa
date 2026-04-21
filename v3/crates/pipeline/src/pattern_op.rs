@@ -42,11 +42,13 @@ pub trait PatternOp: Op {
 
     /// Names of captures this call-site binds (§14.7).
     ///
+    /// `tree` is the injected sub-tree; `bytes` is the slot-body source
+    /// (byte offsets in `tree` are substring-relative, matching §14.5a).
     /// Walks the injected tree for `term_ref` nodes and returns their
     /// lexical names. Engines with native capture syntax (regex named
     /// groups, ast-grep metavars) surface those names here too, so the
     /// resolver treats sugar and native identically.
-    fn binds_captures(&self, tree: &Tree) -> Vec<Arc<str>>;
+    fn binds_captures(&self, tree: &Tree, bytes: &[u8]) -> Vec<Arc<str>>;
 
     /// Hover body for a match-kind node inside the injected tree.
     ///
