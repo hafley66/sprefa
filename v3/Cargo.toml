@@ -4,7 +4,6 @@ members = [
     "crates/effect_runtime",
     "crates/pipeline",
     "crates/spine",
-    "crates/sprefa",
     "crates/sprefa_parse",
     "crates/tree-sitter-sprefa",
     "experiments/effect_proof",
@@ -12,7 +11,10 @@ members = [
 ]
 # parse_experiment keeps its own inner workspace so its tree-sitter
 # crate set does not leak into the effect-runtime lockfile.
+# sprefa is v2 carryover; excluded while v3 parse/op surface is
+# broken. Sweep after ops_core lands.
 exclude = [
+    "crates/sprefa",
     "experiments/parse_experiment",
 ]
 

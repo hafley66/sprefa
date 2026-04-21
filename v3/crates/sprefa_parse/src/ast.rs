@@ -1,70 +1,80 @@
 //! Host-parser AST — what `parse.rs` hands back.
 //!
-//! Pure data, zero behavior. Every op invocation in a .sprf file comes
-//! out the other end of `host_parse` as one of these `OpInvocation`
-//! structs with zero or more slot bodies (`BracketSlot`, `ParenSlot`,
-//! `BraceSlot`) carrying raw source bytes. The owning op is responsible
-//! for parsing those slot bodies in its own `parse()` hook — this crate
-//! only does host-level slicing.
+//! `ParsedSource` owns the tree-sitter `Tree` (Arc-shared so every
+//! `OpInvocation` can resolve back to its CST `Node`). `Pipe` is a
+//! sequence of pipe steps; `OpInvocation` is one op call. Slot bodies
+//! are NOT pre-sliced — ops walk the CST node directly via
+//! `OpInvocation::node(...)`.
 //!
-//! Who consumes these:
-//!   - `sprefa::ops::*::parse` — each op's per-op lowering reads its
-//!     matched `OpInvocation`, dispatches on slot contents, returns a
-//!     `Pipeline`.
-//!   - `sprefa::registry::lower_rules` — walks invocations, calls each
-//!     op's `parse`, stitches the result into the rule DAG.
-//!   - `sprefa::op::CrossRefOccurrence` consumers — rule dep-graph
-//!     builder (`sprefa::dag`) pulls xref edges from here.
-//!   - `sprefa::analysis` (LSP hover/completion) — inspects invocations
-//!     at a cursor position.
-//!
-//! `BraceMode` and `GrammarRef` exist so ops can declare at registration
-//! time how their brace body wants to be interpreted; parse uses that
-//! signal when slicing.
+//! Why no `ParenSlot` / `BraceSlot` / `BracketSlot` wrappers: the
+//! tree-sitter grammar exposes named fields (`bracket`, `paren`, `brace`)
+//! on `op_invocation` nodes. Ops use `node.children_by_field_name(...)` /
+//! `node.child_by_field_name(...)` and walk the bodies they care about.
+//! Re-parsing slot bytes is a v2 leftover.
 
-use std::ops::Range;
 use std::sync::Arc;
 
-use crate::site::ParseSite;
+use tree_sitter::{Node, Tree};
+
+use crate::site::{ParseSeg, ParseSite};
+
+/// One parse of a .sprf source. Owns the underlying CST so every
+/// `OpInvocation` in `pipes` can resolve its `parse_site.byte_range`
+/// back to a tree-sitter `Node` for further structured walking.
+#[derive(Debug, Clone)]
+pub struct ParsedSource {
+    pub tree:  Arc<Tree>,
+    pub pipes: Vec<Pipe>,
+}
+
+/// One Rx-style pipe of ops chained with `>`. Lowers to `Pipeline::Seq`.
+#[derive(Debug, Clone)]
+pub struct Pipe {
+    pub ops: Vec<OpInvocation>,
+}
 
 #[derive(Debug, Clone)]
 pub struct OpInvocation {
+    /// Op-invocation kind. `op_invocation` for normal `name(...)` calls,
+    /// `cursor_ref`, `xref`, `capture_write`, `ans_ref`, or
+    /// `deprecated_scan_sigil` for the sugar steps.
+    pub kind:       PipeStepKind,
+    /// Op name. Empty for non-`op_invocation` step kinds (caller inspects
+    /// `kind` first).
     pub name:       Arc<str>,
-    pub brackets:   Vec<BracketSlot>,
-    pub paren_src:  Option<ParenSlot>,
-    pub brace_src:  Option<BraceSlot>,
     pub parse_site: Arc<ParseSite>,
-    /// Cross-refs (`${rule.$VAR}`) discovered in paren/bracket tokens at
-    /// host-parse time. Feeds the rule DAG build. Walker-embedded cross-refs
-    /// inside brace bodies are gathered separately at lower time.
-    pub crossrefs:  Vec<CrossRefOccurrence>,
+    /// Shared with every other invocation from the same parse. Used to
+    /// resolve `parse_site.byte_range` back to a CST `Node` via
+    /// `OpInvocation::node`.
+    pub tree:       Arc<Tree>,
 }
 
-/// One `${rule.$VAR}` cross-ref token discovered at host-parse time.
-///
-/// `rule` and `var` are the parsed components inside the braces.
-/// `byte_range` is the absolute byte span of the entire `${...}` token in
-/// the original source — used to anchor `xref/empty-join` and friends so
-/// the diagnostic underlines the exact ref that caused the problem.
-///
-/// Populated by `parse::scan_slot_crossrefs` over paren, bracket,
-/// and brace slots. Consumed by the runtime crate's lowering.
-#[derive(Debug, Clone)]
-pub struct CrossRefOccurrence {
-    pub rule:       Arc<str>,
-    pub var:        Arc<str>,
-    pub byte_range: Range<usize>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PipeStepKind {
+    OpInvocation,
+    CursorRef,
+    Xref,
+    CaptureWrite,
+    AnsRef,
+    DeprecatedScanSigil,
 }
 
-#[derive(Debug, Clone)]
-pub struct BracketSlot { pub src: Arc<str>, pub byte_range: Range<usize> }
-#[derive(Debug, Clone)]
-pub struct ParenSlot   { pub src: Arc<str>, pub byte_range: Range<usize> }
-#[derive(Debug, Clone)]
-pub struct BraceSlot   { pub src: Arc<str>, pub byte_range: Range<usize> }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BraceMode { DefaultFork, CustomSprf, WalkerPattern }
-
-#[derive(Debug, Clone)]
-pub struct GrammarRef(pub Arc<str>);
+impl OpInvocation {
+    /// Resolve back to the CST node this invocation came from. Walks the
+    /// `parse_site.path` from the tree root via named-child indices so
+    /// the result is unambiguous (byte-range lookup picks the smallest
+    /// descendant, which collapses when an op_invocation wraps a single
+    /// identifier).
+    pub fn node(&self) -> Node<'_> {
+        let mut n = self.tree.root_node();
+        for seg in self.parse_site.path.iter() {
+            let ParseSeg::Child { index } = seg;
+            let mut cur = n.walk();
+            n = n
+                .named_children(&mut cur)
+                .nth(*index as usize)
+                .expect("parse path step must point at an existing named child");
+        }
+        n
+    }
+}

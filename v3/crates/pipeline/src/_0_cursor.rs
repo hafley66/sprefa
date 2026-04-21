@@ -42,12 +42,19 @@ pub struct Capture {
 /// `slots` is `Arc<dyn Any + Send + Sync>` so Fork distribution clones
 /// are cheap. Downcast happens inside `get_slot::<T>()`; authors see
 /// typed readout only.
+///
+/// `last_bound` records the most recent capture name written by the
+/// upstream op (e.g. `> $TARGET` sets it to `"TARGET"`). The `$$`
+/// (ans-ref) sugar reads this to resolve the implicit binding without
+/// the source author naming it. Cleared by `rebase` because the
+/// underlying capture spans no longer apply.
 #[derive(Clone)]
 pub struct Cursor {
     pub content: Arc<[u8]>,
     pub byte_range: Range<usize>,
     pub captures: Vec<Capture>,
     pub path: SprfPath,
+    pub last_bound: Option<Arc<str>>,
     slots: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
@@ -59,6 +66,7 @@ impl Cursor {
             byte_range: 0..len,
             captures: Vec::new(),
             path: Vec::new(),
+            last_bound: None,
             slots: HashMap::new(),
         }
     }
@@ -94,14 +102,30 @@ impl Cursor {
     }
 
     /// Replace content. Slots cleared per lifecycle rule. Captures and
-    /// path preserved.
+    /// path preserved. `last_bound` is cleared because the prior binding
+    /// referenced spans in the previous content.
     pub fn rebase(&self, new_content: Arc<[u8]>, new_range: Range<usize>) -> Cursor {
         Cursor {
             content: new_content,
             byte_range: new_range,
             captures: self.captures.clone(),
             path: self.path.clone(),
+            last_bound: None,
             slots: HashMap::new(),
         }
+    }
+
+    /// Look up a capture by name. Returns the most recent binding if
+    /// duplicates exist (later writes shadow earlier ones).
+    pub fn capture(&self, name: &str) -> Option<&Capture> {
+        self.captures.iter().rev().find(|c| &*c.name == name)
+    }
+
+    /// Resolve the implicit `$$` binding. Returns the capture named by
+    /// `last_bound`, or None if no upstream op wrote one.
+    pub fn ans_capture(&self) -> Option<&Capture> {
+        self.last_bound
+            .as_deref()
+            .and_then(|n| self.capture(n))
     }
 }

@@ -17,7 +17,9 @@ pub mod _1_op;
 #[allow(non_snake_case)]
 pub mod _2_pipeline;
 pub mod lower;
+pub mod ops;
 
 pub use _0_cursor::{Capture, Cursor, PathSeg, SprfPath};
 pub use _1_op::Op;
 pub use _2_pipeline::Pipeline;
+pub use ops::{AnsRefOp, CaptureWriteOp, VoidOp};
