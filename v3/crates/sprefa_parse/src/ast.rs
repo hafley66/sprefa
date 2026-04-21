@@ -21,10 +21,30 @@ use crate::site::{ParseSeg, ParseSite};
 /// One parse of a .sprf source. Owns the underlying CST so every
 /// `OpInvocation` in `pipes` can resolve its `parse_site.byte_range`
 /// back to a tree-sitter `Node` for further structured walking.
+///
+/// `injected` holds one entry per pattern-op call-site whose op has a
+/// registered sub-grammar (spec §14.5a, §14.6). It is empty when the
+/// caller invokes `host_parse` (no resolver); populated by
+/// `host_parse_with_injections`.
 #[derive(Debug, Clone)]
 pub struct ParsedSource {
-    pub tree:  Arc<Tree>,
-    pub pipes: Vec<Pipe>,
+    pub tree:     Arc<Tree>,
+    pub pipes:    Vec<Pipe>,
+    pub injected: Vec<InjectedTree>,
+}
+
+/// One parsed pattern body. Byte offsets inside `tree` are relative
+/// to the slot body (substring parse), not the full source; callers
+/// that want absolute positions resolve `host_node.byte_range` and
+/// apply the slot-interior offset.
+#[derive(Debug, Clone)]
+pub struct InjectedTree {
+    /// Pointer back to the host `paren_slot` (or `brace_slot`) node
+    /// whose body was reparsed.
+    pub host_node:     Arc<ParseSite>,
+    /// Sub-grammar identifier, e.g. `"sprefa_glob"`, `"sprefa_re"`.
+    pub language_name: Arc<str>,
+    pub tree:          Arc<Tree>,
 }
 
 /// One Rx-style pipe of ops chained with `>`. Lowers to `Pipeline::Seq`.

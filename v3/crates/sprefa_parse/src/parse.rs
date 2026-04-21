@@ -9,10 +9,16 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-use tree_sitter::{Node, Parser, Tree, TreeCursor};
+use tree_sitter::{Language, Node, Parser, Tree, TreeCursor};
 
-use crate::ast::{OpInvocation, ParsedSource, Pipe, PipeStepKind};
+use crate::ast::{InjectedTree, OpInvocation, ParsedSource, Pipe, PipeStepKind};
 use crate::site::{ParseSeg, ParseSite};
+
+/// Language resolver closure. Pattern-op-aware callers pass a closure
+/// backed by their op registry (e.g. `pipeline::op_languages::language_of`).
+/// Returning `None` skips the injected parse for that op — the path
+/// for `str` and for non-pattern ops.
+pub type ResolveLanguage<'a> = &'a dyn Fn(&str) -> Option<Language>;
 
 /// Parse-time diagnostic. Always carries a `byte_range` so the LSP can
 /// underline the exact span; `kind` is structured so the diagnostic
@@ -42,8 +48,26 @@ impl ParseError {
 }
 
 /// Parse a .sprf source. Always returns the partial CST; `errors` is
-/// empty on a clean parse.
+/// empty on a clean parse. `injected` is always empty — to get pattern
+/// sub-tree parses, use [`host_parse_with_injections`] and pass your
+/// op→language resolver.
 pub fn host_parse(src: &str, file: Arc<Path>) -> (ParsedSource, Vec<ParseError>) {
+    host_parse_with_injections(src, file, &|_| None)
+}
+
+/// Parse a .sprf source plus every pattern-op paren body whose op has
+/// a registered sub-grammar (§14.5a). `resolve` maps op name →
+/// tree-sitter language; returning `None` skips the injection for that
+/// op (the expected path for `str` and for non-pattern ops).
+///
+/// Injected parse errors (ERROR / MISSING inside a pattern body) are
+/// merged into the returned `errors` vec with byte ranges shifted into
+/// the source coordinate space (§14.8).
+pub fn host_parse_with_injections(
+    src:     &str,
+    file:    Arc<Path>,
+    resolve: ResolveLanguage<'_>,
+) -> (ParsedSource, Vec<ParseError>) {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_sprefa::LANGUAGE.into())
@@ -67,7 +91,80 @@ pub fn host_parse(src: &str, file: Arc<Path>) -> (ParsedSource, Vec<ParseError>)
         }
     }
 
-    (ParsedSource { tree, pipes }, errors)
+    let injected = collect_injections(src, &file, &tree, &pipes, resolve, &mut errors);
+
+    (ParsedSource { tree, pipes, injected }, errors)
+}
+
+fn collect_injections(
+    src:     &str,
+    _file:   &Arc<Path>,
+    _tree:   &Arc<Tree>,
+    pipes:   &[Pipe],
+    resolve: ResolveLanguage<'_>,
+    errors:  &mut Vec<ParseError>,
+) -> Vec<InjectedTree> {
+    let mut out = Vec::new();
+    for pipe in pipes {
+        for inv in &pipe.ops {
+            if inv.kind != PipeStepKind::OpInvocation { continue; }
+            let Some(lang) = resolve(&inv.name) else { continue; };
+            let op_node = inv.node();
+            let Some(paren) = op_node.child_by_field_name("paren") else { continue; };
+            // Paren body excludes the `(` and `)` delimiters.
+            let body_range = (paren.start_byte() + 1)..(paren.end_byte().saturating_sub(1));
+            if body_range.start > body_range.end || body_range.end > src.len() {
+                continue;
+            }
+            let mut p = Parser::new();
+            if p.set_language(&lang).is_err() { continue; }
+            let body_src = &src[body_range.clone()];
+            let Some(sub) = p.parse(body_src, None) else { continue; };
+            let sub = Arc::new(sub);
+
+            let mut walker = sub.walk();
+            collect_errors_shifted(&mut walker, body_range.start, errors);
+            drop(walker);
+
+            out.push(InjectedTree {
+                host_node:     inv.parse_site.clone(),
+                language_name: Arc::from(format!("sprefa_{}", inv.name)),
+                tree:          sub,
+            });
+        }
+    }
+    out
+}
+
+fn collect_errors_shifted(
+    cursor: &mut TreeCursor<'_>,
+    offset: usize,
+    out:    &mut Vec<ParseError>,
+) {
+    let n = cursor.node();
+    if n.is_error() {
+        let r = n.byte_range();
+        out.push(ParseError {
+            kind:       ParseErrorKind::SyntaxError,
+            byte_range: (r.start + offset)..(r.end + offset),
+            message:    Arc::from("syntax error"),
+        });
+    } else if n.is_missing() {
+        let expected: Arc<str> = Arc::from(n.kind());
+        let r = n.byte_range();
+        out.push(ParseError {
+            kind:       ParseErrorKind::Missing { expected: expected.clone() },
+            byte_range: (r.start + offset)..(r.end + offset),
+            message:    Arc::from(format!("missing `{}`", expected)),
+        });
+    }
+    if cursor.goto_first_child() {
+        loop {
+            collect_errors_shifted(cursor, offset, out);
+            if !cursor.goto_next_sibling() { break; }
+        }
+        cursor.goto_parent();
+    }
 }
 
 fn lower_pipe(
@@ -263,6 +360,44 @@ mod tests {
         let paren = node.child_by_field_name("paren").expect("paren slot");
         assert_eq!(paren.kind(), "paren_slot");
         assert_eq!(&src[paren.byte_range()], "(:main)");
+    }
+
+    #[test]
+    fn host_parse_leaves_injected_empty() {
+        let (p, _) = host_parse("glob(stuff)", fake_file());
+        assert!(p.injected.is_empty());
+    }
+
+    #[test]
+    fn injections_populated_when_resolver_returns_some() {
+        // Resolver returns the sprefa host language for any op. This is
+        // not semantically meaningful but exercises the plumbing end to
+        // end: paren body → substring parse → InjectedTree entry.
+        let src = "foo(bar)";
+        let resolve = |_op: &str| -> Option<Language> {
+            Some(tree_sitter_sprefa::LANGUAGE.into())
+        };
+        let (p, errs) = host_parse_with_injections(src, fake_file(), &resolve);
+        assert!(errs.is_empty(), "unexpected errs: {errs:?}");
+        assert_eq!(p.injected.len(), 1, "one op_invocation, one injected tree");
+        let inj = &p.injected[0];
+        assert_eq!(&*inj.language_name, "sprefa_foo");
+        assert_eq!(inj.tree.root_node().kind(), "source_file");
+    }
+
+    #[test]
+    fn injections_skip_ops_whose_resolver_returns_none() {
+        let (p, _) = host_parse_with_injections(
+            "alpha(x) > beta(y)",
+            fake_file(),
+            &|op| (op == "alpha").then(|| tree_sitter_sprefa::LANGUAGE.into()),
+        );
+        assert_eq!(p.injected.len(), 1);
+        // Only alpha should have injected.
+        let inv = p.pipes[0].ops.iter()
+            .find(|o| &*o.name == "alpha")
+            .unwrap();
+        assert_eq!(p.injected[0].host_node.byte_range, inv.parse_site.byte_range);
     }
 
     /// Ops walk their slot subtrees themselves. Demonstrates the v3
