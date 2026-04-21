@@ -651,65 +651,245 @@ sub-pipelines.
 
 ---
 
-## 14. Core pattern DSLs — glob + regex host-owned
+## 14. Pattern DSLs — ops own grammar, queries, and parse
 
-Glob and regex are promoted out of "per-op parser" into host-owned
-pattern sorts because every cursor-op touches paths or byte ranges.
-json / ast-grep / yaml / toml / md / shell stay op-owned per §13.
+Patterns are **ops**, not string literals. `str(...)`, `glob(...)`,
+`re(...)`, `json(...)`, `ast(...)`, `sh{...}` are op invocations whose
+paren (or brace) body is their pattern. No quoted-string pattern
+surface. No host-owned pattern sort. Each op ships its own grammar
+and owns every tool-facing concern for its DSL.
 
-### 14.1 Surface
+Ops own everything is the invariant (§2.1). Pattern ops take that
+literally.
 
-A string literal at paren-slot position is reinterpreted per the op's
-declared arg sort:
+### 14.1 Per-op deliverables
 
-| op shape | arg sort | example |
+Each pattern op lives in its own folder under
+`v3/crates/pipeline/src/ops/<name>/`:
+
+```
+ops/glob/
+├── mod.rs                       # Op + PatternOp impls
+├── grammar.js                   # tree-sitter grammar for paren body
+├── scanner.c                    # OPTIONAL; only if op needs external tokens
+└── queries/
+    ├── highlights.scm           # editor colorization
+    └── injections.scm           # OPTIONAL; for nested DSLs
+```
+
+Non-pattern ops (`capture_write`, `void`) remain single-file
+`ops/<name>.rs`.
+
+### 14.2 Surface
+
+```sprf
+str(literal bytes)               # constant; diag pattern/str-forbids-hole on any $TERM
+glob(**/$DIR/file.txt)           # $DIR is a term_ref CST node inside glob sub-tree
+re(TODO\($WHO\))                 # $WHO is term_ref; native (?<X>...) also allowed
+ast[rust](fn $NAME ($$$ARGS))    # bracket tags language; body is ast-grep pattern
+json({ pkg: $PKG, version: $V }) # json walker owns its brace grammar
+```
+
+String literals survive in the grammar for scalar positions (atoms,
+messages). They never carry pattern bodies.
+
+### 14.3 Shared tokens — one source of truth
+
+Every pattern sub-grammar must emit `term_ref` and `carveout_expr`
+identically. Host ships a shared rules fragment:
+
+```text
+v3/crates/tree-sitter-sprefa/
+└── shared/
+    └── tokens.js                # exports term_ref + carveout_expr
+```
+
+Each op's `grammar.js` spreads it:
+
+```js
+const shared = require('../../../tree-sitter-sprefa/shared/tokens');
+module.exports = grammar({
+  name: 'sprefa_glob',
+  rules: {
+    source_file: $ => repeat($._atom),
+    _atom: $ => choice($.segment, $.double_star, $.term_ref, $.carveout_expr),
+    segment:     $ => /[^/*${}]+/,
+    double_star: $ => '**',
+    ...shared($),
+  },
+});
+```
+
+Build-script asserts every op's `grammar.js` contains `...shared($)`.
+Drift-grep, not an external scanner. (Rationale: tree-sitter external
+scanners are ~300-line C state machines; two lines of shared JS beat
+that for a two-token shared surface.)
+
+### 14.4 Build pipeline
+
+Lives at `pipeline/build.rs`. One script walks the ops folder.
+
+| step | what | output |
 |---|---|---|
-| `fs("…")` | Glob | `fs("**/$DIR/file.txt")` binds `DIR` |
-| `repo("…")` / `rev("…")` | Literal-or-Glob (op decides) | `repo("acme/*")` |
-| `re("…")` at **pipe position** | line/newline filter op | `> re("^pub fn")` |
-| `re("…")` at **arg position** | returns a regex pattern-term | `line(re("TODO\($WHO\)"))` |
-| `json(…)` / `ast(…)` / `sh{…}` | op-owned per §13 | unchanged |
+| 1 | walk `src/ops/*/grammar.js` | list of pattern-op names |
+| 2 | for each, shell out to `tree-sitter generate` | per-op `parser.c` under `OUT_DIR/ops/<name>/` |
+| 3 | compile each `parser.c` + optional `scanner.c` via `cc` | one `.a` per op |
+| 4 | emit `op_languages.rs` | `pub fn language_of(name) -> Option<Language>` + `highlights_of(name)` |
+| 5 | regenerate host `queries/injections.scm` from the op list | committed alongside `parser.c` |
+| 6 | grep each op's `grammar.js` for the `...shared($)` spread | drift assert, fails build on miss |
 
-`re` is one op with two call shapes; position-driven dispatch is
-native under arg-mode dispatch (§18).
+Generated host injection query (shape):
 
-### 14.2 Hole mechanic
+```scheme
+((op_invocation
+  name: (identifier) @_n
+  paren: (paren_slot) @injection.content)
+ (#match? @_n "^(str|glob|re|json|ast|sh)$")
+ (#set! injection.language "sprefa_\\1"))
+```
 
-Inside any core-pattern string, `$NAME` is a hole that becomes a
-capture on match. UPPERCASE per §5. String body is lexed for `$NAME`
-tokens **before** the sort-specific parser runs.
+### 14.5 Rust trait surface
 
-| sort | hole default matcher | native capture syntax still works |
+Two slots added to `Op` (both default to "not a pattern op"), plus a
+companion `PatternOp` sub-trait for pattern-specific hooks.
+
+```rust
+pub trait Op: Send + Sync + 'static {
+    fn name(&self) -> &'static str;
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>>;
+
+    /// Sub-grammar for this op's paren-slot body. None = non-pattern op.
+    fn language(&self) -> Option<tree_sitter::Language> { None }
+
+    /// Highlight queries for the sub-grammar.
+    fn highlights(&self) -> Option<&'static str> { None }
+}
+
+pub trait PatternOp: Op {
+    /// Compile parsed sub-tree into executable matcher.
+    fn compile(&self, tree: &Tree, bytes: &[u8])
+        -> Result<CompiledPattern, Diagnostics>;
+
+    /// Capture names declared in the parsed sub-tree (v2 binds_captures port).
+    fn binds_captures(&self, tree: &Tree) -> Vec<Arc<str>>;
+
+    /// Hover body for a pattern-local node kind (e.g. re's char_class).
+    /// `term_ref` hover is framework-owned; this is for match-kind nodes.
+    fn hover_match(&self, node: Node, cursors: &[Cursor]) -> Option<String> { None }
+}
+```
+
+`#[sprf_pattern_op(name = "glob")]` proc-macro fills in `language()`
+and `highlights()` from sibling files:
+
+```rust
+#[sprf_pattern_op(name = "glob")]
+pub struct GlobOp;
+
+// proc-macro expands to:
+// impl Op for GlobOp {
+//     fn name(&self) -> &'static str { "glob" }
+//     fn language(&self) -> Option<Language> { Some(op_languages::GLOB.into()) }
+//     fn highlights(&self) -> Option<&'static str> {
+//         Some(include_str!("queries/highlights.scm"))
+//     }
+// }
+```
+
+### 14.6 Framework glue — zero per-op LSP code
+
+Hover dispatcher lives once in the LSP adapter:
+
+```text
+hover(byte_pos):
+  1. host.descendant_for_byte(pos)
+  2. walk up until inside a paren_slot of an op_invocation
+  3. op = registry.lookup(op_name)
+  4. lang = op.language()?                       # skip non-pattern ops
+  5. injected = parse_injected(slot_bytes, lang)
+  6. node = injected.descendant_for_byte(pos)
+  7. match node.kind() {
+       "term_ref"      => BindingGraph hover (framework-owned),
+       "carveout_expr" => recurse into host dispatch,
+       _               => op.hover_match(node, cursors),
+     }
+```
+
+Lower-time parsing mirrors this:
+
+```text
+lower:
+  for each op_invocation:
+    injected = parse_injected(paren_bytes, op.language())
+    captures = op.binds_captures(injected)
+    pattern  = op.compile(injected, bytes)?
+    push Pipeline::Op(LoweredOp { op, pattern, captures, parse_site })
+```
+
+Neither hover nor lower contains pattern-DSL-specific code. Adding a
+new pattern op = new folder, plus registry entry. Framework core does
+not change.
+
+### 14.7 Hole mechanic, grounded
+
+`$NAME` inside a pattern body is a **term_ref CST node** in the op's
+injected tree. The op's `compile()` walks its tree, finds term_ref
+nodes, and desugars them to the engine's native metavariable:
+
+| op | how `$NAME` desugars at compile |
+|---|---|
+| `glob` | a `Segment::Hole { name }` in the compiled glob AST; match fills `captures[NAME]` with the matched path segment |
+| `re` | rewritten to `(?P<NAME>.*?)` (non-greedy default) before compilation; on match, `captures[NAME] = regex.name("NAME")` |
+| `ast` | passed through as ast-grep native metavar `$NAME` (already that engine's language) |
+| `json` | walker-step capture field, per v2 `_5_json.rs:144-157` |
+| `str` | rejected; emit `pattern/str-forbids-hole` diag |
+
+Native engine-side capture syntax stays available where applicable:
+`re((?<X>\w+))` and `re($X)` are equivalent, both surface in
+`binds_captures(tree) -> ["X"]`.
+
+### 14.8 Diagnostics at parse phase
+
+With ops owning their sub-grammars, pattern-syntax errors fire at
+**parse phase**, not lower. The op's grammar produces ERROR / MISSING
+nodes; `sprefa_parse::host_parse` walks them via `collect_errors` the
+same way it does for host errors.
+
+New codes:
+
+| code | phase | where |
 |---|---|---|
-| Glob | one path segment; `**/$DIR` widens to multi-segment | n/a |
-| Regex | non-greedy `(?P<NAME>.*?)` | `(?<NAME>…)` coexists; both surface as captures |
+| `pattern/str-forbids-hole` | parse | §14.2, `str(...)` containing term_ref |
+| `pattern/<op>-syntax` | parse | tree-sitter ERROR inside op's injected tree |
+| `pattern/<op>-missing` | parse | tree-sitter MISSING inside op's injected tree |
 
-### 14.3 Parser location
+### 14.9 Dogfood path
 
-| sort | parser | rationale |
-|---|---|---|
-| Glob, Regex | `pipeline::core_patterns::{glob, regex}` | ubiquitous across cursor ops |
-| json, yaml, toml, md, ast-grep YAML, shell | per-op under `ops/<name>/` | opaque, engine-owned |
+Phase 1 — manual (near-term landing):
+- `pipeline/build.rs` + `op_languages.rs` generator
+- `tree-sitter-sprefa/shared/tokens.js` + drift-grep
+- `ops/str/`, `ops/glob/`, `ops/re/` folders with hand-written grammar
+- `#[sprf_pattern_op]` proc-macro
+- host `injections.scm` regeneration
+- injected-tree support in `sprefa_parse::host_parse`
 
-### 14.4 Grammar impact
+Phase 2 — dogfood:
+- a sprf rule walks `pipeline/src/ops/*/`, finds `#[sprf_pattern_op]` sites
+- reads sibling `grammar.js`, drift-checks shared tokens, regenerates
+- LSP code-action "register new pattern op" drops a skeleton folder +
+  reruns build via the same `MutationEffect` machinery as §32 type
+  transclusion
+- `render_into_marker` writes the regenerated `injections.scm`
 
-Zero new CST nodes. Core-pattern strings are already `string_literal`
-in grammar.js. Interpretation tier is between parse and run:
+### 14.10 Removes the v1 weirdness
 
-1. **Lower time**: op signature declares arg sort. Lowering scans the
-   string for `$NAME` holes, builds `Pattern::Glob { segments, holes: Vec<CaptureSlot> }`
-   or `Pattern::Regex { source, holes }`. LSP renders holes as bold
-   `**DIR**` on hover.
-2. **Run time**: op calls `pattern.match_against(bytes) -> Vec<HoleBinding>`.
-   Each binding becomes a capture on the output cursor.
-
-### 14.5 Removes the v1 weirdness
-
-- `re:pattern` prefix strings → gone; regex lives in `re("…")`.
-- `glob("derp/$$$PATHS/x")` triple-sigil → gone; `$PATH` inside the
-  string is the hole.
+- `re:pattern` prefix strings → gone; regex lives in `re(...)`.
+- `glob("derp/$$$PATHS/x")` triple-sigil → gone; `$PATH` inside
+  `glob(derp/$PATH/x)` is the hole (ordinary term_ref node).
 - Capture groups forced to SCREAMING → still uppercase by convention,
   falls out of §5 uniformly.
+- String-literal-with-hole parsing → gone; no string-level `$NAME`
+  lexing. Every hole is a CST node in an op-owned sub-tree.
 
 ---
 
@@ -1189,6 +1369,9 @@ enum ParseErrorKind {
 | `unresolved-term-ref`         | lower  | §19, no binding source             |
 | `capture-write-bad-position`  | parse  | §10, `$X` in non-chain-step spot   |
 | `fork-capture-not-in-intersection` | lower | §20.1                          |
+| `pattern/str-forbids-hole`    | parse  | §14.8, term_ref inside `str(…)`    |
+| `pattern/<op>-syntax`         | parse  | §14.8, ERROR in injected sub-tree  |
+| `pattern/<op>-missing`        | parse  | §14.8, MISSING in injected sub-tree |
 
 ---
 
@@ -1232,7 +1415,7 @@ Everything else defaults.
 7. §10 `CaptureWriteOp` for bare-`$IDENT` chain step (annotate-only).
 8. §11 `VoidOp` registration.
 9. §12 scan-pointer op skeleton reading `cursor.last_bound`.
-10. §14 core-pattern lexer + `Pattern::{Glob, Regex}` lowering.
+10. §14 ops-own-grammar infra: `pipeline/build.rs`, `op_languages.rs` codegen, `tree-sitter-sprefa/shared/tokens.js`, `#[sprf_pattern_op]` macro, `ops/{str,glob,re}/` folders, host `injections.scm` regeneration, injected-tree support in `sprefa_parse::host_parse`.
 
 ### 28.2 Explicit non-goals for first pass
 
