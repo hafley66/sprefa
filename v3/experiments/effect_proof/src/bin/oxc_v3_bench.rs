@@ -1,12 +1,17 @@
-//! oxc throughput: four modes over the same corpus.
+//! oxc throughput: parse-only and import-extraction modes over the same corpus.
 //!
-//! Modes:
+//! Parse modes:
 //!   shell-serial   fork `oxc_parse_one` once per file, collect.
 //!   shell-batch    fork `oxc_parse_one` with N files per invocation
 //!                  (amortizes fork cost; closer to realistic CLI use).
 //!   rayon          `par_iter` over paths, parse in process, no framework.
 //!   ctx-put        `ctx.put(OxcParse{path}).await` via BoundedWorkSteal.
 //!   ctx-batch      one `ctx.put(OxcParseBatch{paths})`, handler par_iters.
+//!
+//! Import-extraction modes:
+//!   imports-rayon      parse + walk import/export declarations, no framework.
+//!   imports-ctx-put    `ctx.put(OxcImports{path}).await`.
+//!   imports-ctx-batch  one `ctx.put(OxcImportsBatch{paths})`, handler par_iters.
 //!
 //! All modes read the file via std::fs, parse with oxc, and sum
 //! (bytes, errors, files). Output is one line per trial and a final
@@ -22,6 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use effect_proof::effects::oxc_imports::{extract_one, OxcImports, OxcImportsBatch};
 use effect_proof::effects::oxc_parse::{parse_one, OxcParse, OxcParseBatch};
 use effect_runtime::batchers::{BoundedWorkSteal, Passthrough};
 use effect_runtime::RtCtxBuilder;
@@ -71,7 +77,6 @@ fn rss_peak_kb() -> u64 {
 }
 
 fn find_shell_target() -> PathBuf {
-    // Prefer release binary built by the same workspace.
     let candidates = [
         "target/release/oxc_parse_one",
         "../target/release/oxc_parse_one",
@@ -83,7 +88,6 @@ fn find_shell_target() -> PathBuf {
             return p;
         }
     }
-    // Final fallback: rely on PATH.
     PathBuf::from("oxc_parse_one")
 }
 
@@ -96,7 +100,6 @@ fn run_shell_serial(paths: &[PathBuf], bin: &Path) -> (u64, u64, u64) {
             continue;
         };
         let s = String::from_utf8_lossy(&out.stdout);
-        // format: bytes=N errors=N
         for tok in s.split_whitespace() {
             if let Some(v) = tok.strip_prefix("bytes=") {
                 bytes += v.parse::<u64>().unwrap_or(0);
@@ -154,11 +157,26 @@ fn run_rayon(paths: &[PathBuf]) -> (u64, u64, u64) {
         .reduce(|| (0, 0, 0), |(a, b, c), (x, y, z)| (a + x, b + y, c + z))
 }
 
-async fn run_ctx_put(
-    ctx: &effect_runtime::RtCtx,
+fn run_imports_rayon(paths: &[PathBuf]) -> (u64, u64, u64) {
+    paths
+        .par_iter()
+        .map(|p| {
+            let s = extract_one(p);
+            (s.bytes, s.errors, 1u64)
+        })
+        .reduce(|| (0, 0, 0), |(a, b, c), (x, y, z)| (a + x, b + y, c + z))
+}
+
+async fn run_ctx_put_inner<F, Fut>(
+    _ctx: effect_runtime::RtCtx,
     paths: &[PathBuf],
     submitters: usize,
-) -> (u64, u64, u64) {
+    work: F,
+) -> (u64, u64, u64)
+where
+    F: FnMut(PathBuf) -> Fut + Send + Clone + 'static,
+    Fut: std::future::Future<Output = (u64, u64, u64)> + Send,
+{
     let idx = Arc::new(AtomicU64::new(0));
     let bytes = Arc::new(AtomicU64::new(0));
     let errors = Arc::new(AtomicU64::new(0));
@@ -167,12 +185,12 @@ async fn run_ctx_put(
     let paths_arc: Arc<Vec<PathBuf>> = Arc::new(paths.to_vec());
     let mut join = Vec::with_capacity(submitters);
     for _ in 0..submitters {
-        let ctx = ctx.clone();
         let idx = idx.clone();
         let bytes = bytes.clone();
         let errors = errors.clone();
         let files = files.clone();
         let paths_arc = paths_arc.clone();
+        let mut work = work.clone();
         join.push(tokio::spawn(async move {
             loop {
                 let i = idx.fetch_add(1, Ordering::Relaxed);
@@ -180,10 +198,10 @@ async fn run_ctx_put(
                     return;
                 }
                 let p = paths_arc[i as usize].clone();
-                let s = ctx.put(OxcParse { path: p }).await;
-                bytes.fetch_add(s.bytes, Ordering::Relaxed);
-                errors.fetch_add(s.errors, Ordering::Relaxed);
-                files.fetch_add(1, Ordering::Relaxed);
+                let (b, e, f) = work(p).await;
+                bytes.fetch_add(b, Ordering::Relaxed);
+                errors.fetch_add(e, Ordering::Relaxed);
+                files.fetch_add(f, Ordering::Relaxed);
             }
         }));
     }
@@ -197,8 +215,47 @@ async fn run_ctx_put(
     )
 }
 
+async fn run_ctx_put(
+    ctx: &effect_runtime::RtCtx,
+    paths: &[PathBuf],
+    submitters: usize,
+) -> (u64, u64, u64) {
+    let ctx = ctx.clone();
+    run_ctx_put_inner(ctx.clone(), paths, submitters, move |p| {
+        let ctx = ctx.clone();
+        async move {
+            let s = ctx.put(OxcParse { path: p }).await;
+            (s.bytes, s.errors, 1u64)
+        }
+    })
+    .await
+}
+
 async fn run_ctx_batch(ctx: &effect_runtime::RtCtx, paths: &[PathBuf]) -> (u64, u64, u64) {
     let req = OxcParseBatch {
+        paths: Arc::new(paths.to_vec()),
+    };
+    ctx.put(req).await
+}
+
+async fn run_imports_ctx_put(
+    ctx: &effect_runtime::RtCtx,
+    paths: &[PathBuf],
+    submitters: usize,
+) -> (u64, u64, u64) {
+    let ctx = ctx.clone();
+    run_ctx_put_inner(ctx.clone(), paths, submitters, move |p| {
+        let ctx = ctx.clone();
+        async move {
+            let s = ctx.put(OxcImports { path: p }).await;
+            (s.bytes, s.errors, 1u64)
+        }
+    })
+    .await
+}
+
+async fn run_imports_ctx_batch(ctx: &effect_runtime::RtCtx, paths: &[PathBuf]) -> (u64, u64, u64) {
+    let req = OxcImportsBatch {
         paths: Arc::new(paths.to_vec()),
     };
     ctx.put(req).await
@@ -263,8 +320,6 @@ async fn main() {
         .build_global()
         .ok();
 
-    // Enumerate corpus (.ts + .tsx; DT is overwhelmingly .d.ts which
-    // also uses the .ts extension).
     let t_enum = Instant::now();
     let mut paths = enumerate(&root, &["ts", "tsx"]);
     let enumerate_ms = t_enum.elapsed().as_secs_f64() * 1000.0;
@@ -274,7 +329,6 @@ async fn main() {
     assert!(!paths.is_empty(), "no files enumerated under {:?}", root);
     let rss_after_enum_kb = rss_peak_kb();
 
-    // Warm page cache.
     let t_pc = Instant::now();
     for p in &paths {
         let _ = std::fs::read(p);
@@ -282,7 +336,6 @@ async fn main() {
     let page_cache_ms = t_pc.elapsed().as_secs_f64() * 1000.0;
     let rss_after_pc_kb = rss_peak_kb();
 
-    // Build ctx (only used by ctx-* modes, but cheap to always build).
     let ctx = RtCtxBuilder::new()
         .register::<OxcParse, _>(BoundedWorkSteal::<OxcParse>::new(
             cap,
@@ -294,6 +347,23 @@ async fn main() {
                 .par_iter()
                 .map(|p| {
                     let s = parse_one(p);
+                    (s.bytes, s.errors, 1u64)
+                })
+                .reduce(
+                    || (0u64, 0u64, 0u64),
+                    |(a, b, c), (x, y, z)| (a + x, b + y, c + z),
+                )
+        }))
+        .register::<OxcImports, _>(BoundedWorkSteal::<OxcImports>::new(
+            cap,
+            workers,
+            |e: OxcImports| extract_one(&e.path),
+        ))
+        .register::<OxcImportsBatch, _>(Passthrough::<OxcImportsBatch, _>::new(|e: OxcImportsBatch| {
+            e.paths
+                .par_iter()
+                .map(|p| {
+                    let s = extract_one(p);
                     (s.bytes, s.errors, 1u64)
                 })
                 .reduce(
@@ -334,6 +404,9 @@ async fn main() {
             "rayon" => run_rayon(&paths),
             "ctx-put" => run_ctx_put(&ctx, &paths, submitters).await,
             "ctx-batch" => run_ctx_batch(&ctx, &paths).await,
+            "imports-rayon" => run_imports_rayon(&paths),
+            "imports-ctx-put" => run_imports_ctx_put(&ctx, &paths, submitters).await,
+            "imports-ctx-batch" => run_imports_ctx_batch(&ctx, &paths).await,
             other => panic!("unknown mode: {}", other),
         };
         let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -351,7 +424,7 @@ async fn main() {
             mbps,
             rss_peak_kb(),
         );
-        if mode == "ctx-put" || mode == "ctx-batch" {
+        if mode.starts_with("ctx-") || mode.starts_with("imports-ctx-") {
             eprintln!("{}", ctx.telemetry().summary());
         }
     }
