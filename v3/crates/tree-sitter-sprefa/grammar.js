@@ -27,6 +27,8 @@
  * diagnostics, partial tree keeps working).
  */
 
+const shared = require('./shared/tokens');
+
 module.exports = grammar({
   name: 'sprefa',
 
@@ -143,8 +145,9 @@ module.exports = grammar({
     ),
 
     // ---- terms ------------------------------------------------------------
-
-    term_ref: $ => token(seq('$', /[A-Za-z_][A-Za-z0-9_]*/)),
+    // term_ref lives in shared/tokens.js and is spread into this rules
+    // block below (§14.3); pattern-op sub-grammars spread the same fragment
+    // so $NAME tokenizes identically everywhere.
 
     // `$IDENT` at pipe-step position (no following `(` / `[` / `{`) is the
     // capture-write sugar (§11). We recognize the lex shape here; lower
@@ -208,5 +211,9 @@ module.exports = grammar({
     // ---- comments ---------------------------------------------------------
 
     line_comment: $ => token(seq('#', /[^\n]*/)),
+
+    // ---- shared fragments -------------------------------------------------
+    // §14.3: term_ref shared across host + pattern sub-grammars.
+    ...shared,
   },
 });

@@ -540,22 +540,6 @@
         }
       ]
     },
-    "term_ref": {
-      "type": "TOKEN",
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "STRING",
-            "value": "$"
-          },
-          {
-            "type": "PATTERN",
-            "value": "[A-Za-z_][A-Za-z0-9_]*"
-          }
-        ]
-      }
-    },
     "capture_write": {
       "type": "PREC",
       "value": 2,
@@ -794,6 +778,22 @@
           {
             "type": "PATTERN",
             "value": "[^\\n]*"
+          }
+        ]
+      }
+    },
+    "term_ref": {
+      "type": "TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "$"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[A-Za-z_][A-Za-z0-9_]*"
           }
         ]
       }
