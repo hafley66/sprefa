@@ -11,7 +11,7 @@ rule(classes) > ast[rust] { class $NAME } ;
 rule(calls)   > ast[rust] { new ${classes.$NAME > $TARGET}() } ;
 rule(env)     > sh { echo ${{HOME}} > $DIR } ;
 rule(addrs)   > &.$DIR > void ;
-rule(tagged)  > tag(:repo, $R) > $$ > $$deprecated_sigil ;
+rule(tagged)  > tag(:repo, $R) ;
 "#;
 
 fn parse() -> (String, Vec<(String, (usize, usize))>) {
@@ -63,8 +63,6 @@ fn every_feature_lives_in_the_tree() {
     assert!(has(&nodes, "term_ref"),           "$NAME term_ref");
     assert!(has(&nodes, "carveout_expr"),      "${{...}} carveout");
     assert!(has(&nodes, "shell_literal"),      "${{{{...}}}} shell escape");
-    assert!(has(&nodes, "ans_ref"),            "$$ ans ref");
-    assert!(has(&nodes, "deprecated_scan_sigil"), "$$sigil migration shape");
 
     // §10 — rule.$V as ordinary dotted host_expr (xref node)
     assert!(has(&nodes, "xref"),               "rule.$V dotted");

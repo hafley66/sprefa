@@ -485,6 +485,68 @@ sub-pipelines.
 
 ---
 
+## 13a. Core pattern DSLs — glob + regex are host-owned
+
+Glob and regex are promoted out of "per-op parser" into host-owned
+pattern sorts because every cursor-op touches paths or byte ranges.
+json / ast-grep / yaml / toml / md / shell stay op-owned per §13.
+
+### Surface
+
+A string literal at paren-slot position is reinterpreted per the op's
+declared arg sort:
+
+| op shape | arg sort | example |
+|---|---|---|
+| `fs("…")` | Glob | `fs("**/$DIR/file.txt")` binds `DIR` |
+| `repo("…")` / `rev("…")` | Literal-or-Glob (op decides) | `repo("acme/*")` |
+| `re("…")` at **pipe position** | line/newline filter op | `> re("^pub fn")` |
+| `re("…")` at **arg position** | returns a regex pattern-term | `line(re("TODO\($WHO\)"))` |
+| `json(…)` / `ast(…)` / `sh{…}` | op-owned per §13 | unchanged |
+
+`re` is one op with two call shapes; position-driven dispatch is native
+under arg-mode dispatch.
+
+### Hole mechanic
+
+Inside any core-pattern string, `$NAME` is a hole that becomes a
+capture on match. UPPERCASE per §(casing lock). String body is lexed
+for `$NAME` tokens **before** the sort-specific parser runs.
+
+| sort | hole default matcher | native capture syntax still works |
+|---|---|---|
+| Glob | one path segment; `**/$DIR` widens to multi-segment | n/a |
+| Regex | non-greedy `(?P<NAME>.*?)` | `(?<NAME>…)` coexists; both surface as captures |
+
+### Where it lives
+
+| sort | parser | rationale |
+|---|---|---|
+| Glob, Regex | `pipeline::core_patterns::{glob, regex}` | ubiquitous across cursor ops |
+| json, yaml, toml, md, ast-grep YAML, shell | per-op under `ops/<name>/` | opaque, engine-owned |
+
+### Grammar impact
+
+Zero new CST nodes. Core-pattern strings are already `string_literal`
+in grammar.js. Interpretation tier is between parse and run:
+
+1. **Lower time**: op signature declares arg sort. Lowering scans the
+   string for `$NAME` holes, builds `Pattern::Glob { segments, holes:
+   Vec<CaptureSlot> }` or `Pattern::Regex { source, holes }`. LSP
+   renders holes as bold `**DIR**` on hover.
+2. **Run time**: op calls `pattern.match_against(bytes) -> Vec<HoleBinding>`.
+   Each binding becomes a capture on the output cursor.
+
+### Removes the v1 weirdness
+
+- `re:pattern` prefix strings → gone; regex lives in `re("…")`.
+- `glob("derp/$$$PATHS/x")` triple-sigil → gone; `$PATH` inside the
+  string is the hole.
+- Capture groups forced to SCREAMING → still uppercase by convention,
+  but that falls out of §(casing lock) uniformly.
+
+---
+
 ## 14. Term annotations — **open exploration grammar lane**
 
 This is where arbitrary linking / tagging / annotating may live. The

@@ -5,14 +5,12 @@
  *   - program = stmt*
  *   - stmt    = pipe `;`?
  *   - pipe    = pipe_step (`>` pipe_step)*
- *   - step    = op_invocation | cursor_ref | capture_write | ans_ref
+ *   - step    = op_invocation | cursor_ref | capture_write
  *   - op      = IDENT ('[' … ']')* ('(' … ')')? ('{' … '}')?
  *   - `${...}` = carveout_expr (HostExpr)         — §8.3
  *   - `&{...}` = carveout_expr (Address)          — §8.3
  *   - `${{...}}` = shell_literal                  — §8.4
  *   - `$IDENT` = term_ref (shorthand for `${IDENT}`)
- *   - `$$`    = ans_ref                           — §13 Ans slot
- *   - `$$IDENT` = deprecated_scan_sigil           — §8.5 migration diag
  *   - `:name` = atom_literal
  *   - `"..."` = string_literal
  *   - `r"..."` / `r#"..."#` = raw_string_literal
@@ -59,8 +57,6 @@ module.exports = grammar({
       $.cursor_ref,
       $.xref,
       $.capture_write,
-      $.ans_ref,
-      $.deprecated_scan_sigil,
     ),
 
     // ---- op invocation ----------------------------------------------------
@@ -89,8 +85,6 @@ module.exports = grammar({
       $.raw_string_literal,
       $.atom_literal,
       $.term_ref,
-      $.ans_ref,
-      $.deprecated_scan_sigil,
       $.xref,
       $.identifier,
       $.number_literal,
@@ -162,12 +156,6 @@ module.exports = grammar({
       // actually an op (`$NAME(...)` is currently reserved — not in §18).
       // We approximate by not consuming slots here.
     )),
-
-    // Longest-match resolves these: `$$ident` hits deprecated_scan_sigil,
-    // bare `$$` hits ans_ref.
-    ans_ref: $ => token('$$'),
-
-    deprecated_scan_sigil: $ => token(seq('$$', /[A-Za-z_][A-Za-z0-9_]*/)),
 
     // `${rule.$V}` is a sub-case of carveout_expr whose body is a field
     // access. We surface it as an xref alias for the resolver; the token

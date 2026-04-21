@@ -116,8 +116,6 @@ fn pipe_step_kind(s: &str) -> Option<PipeStepKind> {
         "cursor_ref"            => PipeStepKind::CursorRef,
         "xref"                  => PipeStepKind::Xref,
         "capture_write"         => PipeStepKind::CaptureWrite,
-        "ans_ref"               => PipeStepKind::AnsRef,
-        "deprecated_scan_sigil" => PipeStepKind::DeprecatedScanSigil,
         _                       => return None,
     })
 }
@@ -216,17 +214,6 @@ mod tests {
         let (p, _) = host_parse("foo > $TARGET", fake_file());
         assert_eq!(p.pipes[0].ops.len(), 2);
         assert_eq!(p.pipes[0].ops[1].kind, PipeStepKind::CaptureWrite);
-    }
-
-    #[test]
-    fn ans_and_deprecated_sigil_steps() {
-        let (p, _) = host_parse("foo > $$ > $$old", fake_file());
-        let kinds: Vec<PipeStepKind> = p.pipes[0].ops.iter().map(|o| o.kind).collect();
-        assert_eq!(kinds, vec![
-            PipeStepKind::OpInvocation,
-            PipeStepKind::AnsRef,
-            PipeStepKind::DeprecatedScanSigil,
-        ]);
     }
 
     #[test]

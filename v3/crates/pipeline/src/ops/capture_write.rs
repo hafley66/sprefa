@@ -1,6 +1,7 @@
 //! `> $TARGET` — assign the cursor's active byte range to a capture
-//! named `TARGET`. Sets `last_bound` so a downstream `$$` resolves
-//! without naming.
+//! named `TARGET`. Sets `last_bound` so a downstream annotate-by-ref op
+//! (scan-pointer, tag, …) can pick up the freshly-named span without
+//! the author re-stating the name.
 //!
 //! Does not change `content` or `byte_range`. The cursor flows through
 //! unchanged except for the appended `Capture` and the `last_bound`

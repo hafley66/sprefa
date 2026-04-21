@@ -74,14 +74,6 @@
         {
           "type": "SYMBOL",
           "name": "capture_write"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "ans_ref"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "deprecated_scan_sigil"
         }
       ]
     },
@@ -253,14 +245,6 @@
         {
           "type": "SYMBOL",
           "name": "term_ref"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "ans_ref"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "deprecated_scan_sigil"
         },
         {
           "type": "SYMBOL",
@@ -585,29 +569,6 @@
               "type": "SYMBOL",
               "name": "term_ref"
             }
-          }
-        ]
-      }
-    },
-    "ans_ref": {
-      "type": "TOKEN",
-      "content": {
-        "type": "STRING",
-        "value": "$$"
-      }
-    },
-    "deprecated_scan_sigil": {
-      "type": "TOKEN",
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "STRING",
-            "value": "$$"
-          },
-          {
-            "type": "PATTERN",
-            "value": "[A-Za-z_][A-Za-z0-9_]*"
           }
         ]
       }

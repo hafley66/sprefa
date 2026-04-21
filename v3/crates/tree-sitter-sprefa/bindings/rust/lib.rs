@@ -7,8 +7,8 @@
 //! Tree shape is documented in `src/node-types.json`. Host node names
 //! mirror the `grammar.js` rule names: `source_file`, `pipe`,
 //! `op_invocation`, `bracket_slot`, `paren_slot`, `brace_slot`,
-//! `carveout_expr`, `shell_literal`, `term_ref`, `ans_ref`,
-//! `deprecated_scan_sigil`, `xref`, `cursor_ref`, `atom_literal`,
+//! `carveout_expr`, `shell_literal`, `term_ref`,
+//! `xref`, `cursor_ref`, `atom_literal`,
 //! `string_literal`, `raw_string_literal`, `number_literal`,
 //! `identifier`, `line_comment`.
 

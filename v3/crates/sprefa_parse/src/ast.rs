@@ -36,8 +36,7 @@ pub struct Pipe {
 #[derive(Debug, Clone)]
 pub struct OpInvocation {
     /// Op-invocation kind. `op_invocation` for normal `name(...)` calls,
-    /// `cursor_ref`, `xref`, `capture_write`, `ans_ref`, or
-    /// `deprecated_scan_sigil` for the sugar steps.
+    /// `cursor_ref`, `xref`, or `capture_write` for the sugar steps.
     pub kind:       PipeStepKind,
     /// Op name. Empty for non-`op_invocation` step kinds (caller inspects
     /// `kind` first).
@@ -55,8 +54,6 @@ pub enum PipeStepKind {
     CursorRef,
     Xref,
     CaptureWrite,
-    AnsRef,
-    DeprecatedScanSigil,
 }
 
 impl OpInvocation {

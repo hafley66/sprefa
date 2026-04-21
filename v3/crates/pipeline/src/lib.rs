@@ -22,4 +22,4 @@ pub mod ops;
 pub use _0_cursor::{Capture, Cursor, PathSeg, SprfPath};
 pub use _1_op::Op;
 pub use _2_pipeline::Pipeline;
-pub use ops::{AnsRefOp, CaptureWriteOp, VoidOp};
+pub use ops::{CaptureWriteOp, VoidOp};

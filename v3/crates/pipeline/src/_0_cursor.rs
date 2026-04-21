@@ -44,10 +44,9 @@ pub struct Capture {
 /// typed readout only.
 ///
 /// `last_bound` records the most recent capture name written by the
-/// upstream op (e.g. `> $TARGET` sets it to `"TARGET"`). The `$$`
-/// (ans-ref) sugar reads this to resolve the implicit binding without
-/// the source author naming it. Cleared by `rebase` because the
-/// underlying capture spans no longer apply.
+/// upstream op. Scan-pointer ops and other annotate-by-reference callers
+/// read it to resolve the implicit binding without the source author
+/// naming it. Cleared by `rebase`.
 #[derive(Clone)]
 pub struct Cursor {
     pub content: Arc<[u8]>,
@@ -58,16 +57,26 @@ pub struct Cursor {
     slots: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
+impl Default for Cursor {
+    fn default() -> Self {
+        Cursor {
+            content: Arc::from(&[][..]),
+            byte_range: 0..0,
+            captures: Vec::new(),
+            path: Vec::new(),
+            last_bound: None,
+            slots: HashMap::new(),
+        }
+    }
+}
+
 impl Cursor {
     pub fn new(content: Arc<[u8]>) -> Self {
         let len = content.len();
         Cursor {
             content,
             byte_range: 0..len,
-            captures: Vec::new(),
-            path: Vec::new(),
-            last_bound: None,
-            slots: HashMap::new(),
+            ..Self::default()
         }
     }
 
@@ -121,9 +130,11 @@ impl Cursor {
         self.captures.iter().rev().find(|c| &*c.name == name)
     }
 
-    /// Resolve the implicit `$$` binding. Returns the capture named by
-    /// `last_bound`, or None if no upstream op wrote one.
-    pub fn ans_capture(&self) -> Option<&Capture> {
+    /// Resolve the most recent binding. Returns the capture named by
+    /// `last_bound`, or None if no upstream op wrote one. Scan-pointer
+    /// ops and similar annotate-by-reference callers use this to pick
+    /// up the previous op's named span.
+    pub fn last_bound_capture(&self) -> Option<&Capture> {
         self.last_bound
             .as_deref()
             .and_then(|n| self.capture(n))

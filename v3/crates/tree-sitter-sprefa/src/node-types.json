@@ -8,19 +8,11 @@
       "required": false,
       "types": [
         {
-          "type": "ans_ref",
-          "named": true
-        },
-        {
           "type": "atom_literal",
           "named": true
         },
         {
           "type": "carveout_expr",
-          "named": true
-        },
-        {
-          "type": "deprecated_scan_sigil",
           "named": true
         },
         {
@@ -63,19 +55,11 @@
       "required": false,
       "types": [
         {
-          "type": "ans_ref",
-          "named": true
-        },
-        {
           "type": "atom_literal",
           "named": true
         },
         {
           "type": "carveout_expr",
-          "named": true
-        },
-        {
-          "type": "deprecated_scan_sigil",
           "named": true
         },
         {
@@ -220,19 +204,11 @@
       "required": false,
       "types": [
         {
-          "type": "ans_ref",
-          "named": true
-        },
-        {
           "type": "atom_literal",
           "named": true
         },
         {
           "type": "carveout_expr",
-          "named": true
-        },
-        {
-          "type": "deprecated_scan_sigil",
           "named": true
         },
         {
@@ -275,19 +251,11 @@
       "required": true,
       "types": [
         {
-          "type": "ans_ref",
-          "named": true
-        },
-        {
           "type": "capture_write",
           "named": true
         },
         {
           "type": "cursor_ref",
-          "named": true
-        },
-        {
-          "type": "deprecated_scan_sigil",
           "named": true
         },
         {
@@ -422,15 +390,7 @@
     "named": false
   },
   {
-    "type": "ans_ref",
-    "named": true
-  },
-  {
     "type": "atom_literal",
-    "named": true
-  },
-  {
-    "type": "deprecated_scan_sigil",
     "named": true
   },
   {
