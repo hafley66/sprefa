@@ -32,7 +32,7 @@ alongside the code. Drift is worse than redundancy.
 
 ### Part III — Sub-grammars
 13. [Sub-grammar lowering (two flavors)](#13-sub-grammar-lowering-two-flavors)
-14. [Core pattern DSLs — glob + regex host-owned](#14-core-pattern-dsls--glob--regex-host-owned)
+14. [Pattern DSLs — ops own grammar, queries, and parse](#14-pattern-dsls--ops-own-grammar-queries-and-parse)
 15. [Term annotations — open exploration lane](#15-term-annotations--open-exploration-lane)
 
 ### Part IV — Semantics
@@ -136,16 +136,17 @@ Rules:
 
 1. **One Cargo crate** for all built-in ops. Each op is a folder or
    file, not a crate. Ten ops = ten folders, not ten `Cargo.toml`s.
-2. **`pipeline/build.rs`** is the single codegen driver: walks
-   `ops/*/grammar.js`, runs `tree-sitter generate`, compiles `parser.c`
-   (+ optional `scanner.c`), emits `OUT_DIR/op_languages.rs`, and
-   regenerates `tree-sitter-sprefa/queries/injections.scm`.
+2. **`pipeline/build.rs`** only runs `cc::Build` across each op's
+   committed `parser.c` (+ optional `scanner.c`). It does **not** run
+   `tree-sitter generate`. Regeneration is manual (see §14.4).
 3. **Per-op tests** run via `cargo test -p pipeline ops::<name>::`.
    Grammar fixtures live in `ops/<name>/tests/`.
-4. **Sub-grammar artifacts are ephemeral.** `parser.c` files are
-   regenerated every build and not committed. The one committed
-   generated file is `tree-sitter-sprefa/queries/injections.scm`, with
-   CI asserting it matches the build output.
+4. **Sub-grammar artifacts are committed.** Each op's `parser.c` (and
+   `grammar.json` / `node-types.json` as tree-sitter emits them) lives
+   in `ops/<name>/src/` and is checked in alongside `grammar.js`. Same
+   convention as `tree-sitter-sprefa` already uses for the host grammar.
+   `tree-sitter-sprefa/queries/injections.scm` is likewise hand-maintained.
+   YOLO posture — automation lands via dogfood later (§14.9 Phase 2).
 
 ### 1.8 When to promote an op to its own crate
 
@@ -161,25 +162,21 @@ trait lives in the core crate; the op impl + grammar lives in a
 sibling crate. No framework changes required; the registry picks up
 whatever is linked.
 
-### 1.9 Injection query regeneration — single writer, committed artifact
+### 1.9 Injection query — hand-maintained
 
-`tree-sitter-sprefa/queries/injections.scm` is **owned** by
-`tree-sitter-sprefa` (lives in its tree, ships with its parser
-distribution) but **written** by `pipeline/build.rs` (which knows the
-op list). No circular dep — the file is not consumed at parse time by
-`tree-sitter-sprefa` itself, only by LSP injection walks at runtime.
+`tree-sitter-sprefa/queries/injections.scm` lives in the host grammar
+crate (ships with the parser distribution) and is hand-edited. Adding
+or removing a pattern op = one-line edit to the `#match?` alternation.
 
-Workflow:
-- pipeline's build.rs enumerates `ops/*/grammar.js`
-- builds the `#match?` regex from the op names
-- writes the file into tree-sitter-sprefa's tree
-- CI step `cargo build -p pipeline && git diff --exit-code` catches
-  drift
+No codegen, no drift-grep, no CI assert. One file, author-maintained.
+When Phase 2 dogfood lands (§14.9), a sprf rule will regenerate it
+from the op registry via the same `MutationEffect` machinery as §32
+type transclusion.
 
-Rationale: having `tree-sitter-sprefa` own the file (directory-wise)
-lets external consumers get injections alongside the host grammar;
-having `pipeline` write it means the op registry is the source of
-truth. Split responsibility; no cycle.
+Rationale for living with the host: external tree-sitter consumers
+expect queries alongside the parser distribution. Rationale for
+manual: the file is ~5 lines; build-time automation is not worth the
+cost until the op count justifies it.
 
 ### 1.10 Why not split sub-grammars into a separate crate
 
@@ -746,12 +743,15 @@ the previous op already did the naming.
 | regex (as op body) | single `re_match(pattern)` op | opaque, leaf; see §14 for arg-position regex |
 | shell | `sh` op with body as literal + carveout substitution | opaque, effect |
 
-`${...}` and `&{...}` carveouts inside any sub-grammar body are
-extracted via the balanced-brace pre-pass (§7.3); sub-grammar parses
-with those ranges excluded. Host ranges re-enter as narrowed-cursor
-sub-pipelines.
+`${...}` and `&{...}` carveouts inside any pattern sub-grammar body
+are emitted as **`carveout_expr` CST nodes** in the injected tree (via
+the shared rule fragment, §14.3). There is no balanced-brace pre-pass
+at the byte level. LSP hover dispatches by node kind (§14.6); lower-time
+recursion walks `carveout_expr` children back into host-grammar
+sub-pipelines via `parse_injected` with the host language.
 
-`sh` double-brace escape `${{var}}` passes literal `${var}` to shell.
+`sh` double-brace escape `${{var}}` passes literal `${var}` to shell;
+this is a shared-rule exception owned by the `sh` op grammar.
 
 ---
 
@@ -775,6 +775,10 @@ Each pattern op lives in its own folder under
 ops/glob/
 ├── mod.rs                       # Op + PatternOp impls
 ├── grammar.js                   # tree-sitter grammar for paren body
+├── src/
+│   ├── parser.c                 # COMMITTED; regenerated via `just` (§14.4)
+│   ├── grammar.json             # COMMITTED (tree-sitter emits)
+│   └── node-types.json          # COMMITTED (tree-sitter emits)
 ├── scanner.c                    # OPTIONAL; only if op needs external tokens
 └── queries/
     ├── highlights.scm           # editor colorization
@@ -784,23 +788,33 @@ ops/glob/
 Non-pattern ops (`capture_write`, `void`) remain single-file
 `ops/<name>.rs`.
 
+`str` is a pattern op only by membership in the injection registry; it
+has **no sub-grammar** (§14.2). Its folder is just `ops/str/mod.rs`.
+
 ### 14.2 Surface
 
 ```sprf
-str(literal bytes)               # constant; diag pattern/str-forbids-hole on any $TERM
+str(literal bytes)               # CONST; paren body read as raw bytes, no parse, no holes
 glob(**/$DIR/file.txt)           # $DIR is a term_ref CST node inside glob sub-tree
 re(TODO\($WHO\))                 # $WHO is term_ref; native (?<X>...) also allowed
 ast[rust](fn $NAME ($$$ARGS))    # bracket tags language; body is ast-grep pattern
 json({ pkg: $PKG, version: $V }) # json walker owns its brace grammar
 ```
 
+`str` is special-cased: **no sub-grammar, no parse step**. The paren
+body is read as `&[u8]` from the host parse site and stored as an
+`Arc<str>`. `$NAME` inside `str(...)` is literal bytes, not a term_ref.
+Any term binding the author wants must use one of the parsed pattern
+ops (glob / re / ast / json).
+
 String literals survive in the grammar for scalar positions (atoms,
 messages). They never carry pattern bodies.
 
 ### 14.3 Shared tokens — one source of truth
 
-Every pattern sub-grammar must emit `term_ref` and `carveout_expr`
-identically. Host ships a shared rules fragment:
+Pattern sub-grammars (glob / re / ast / json — NOT str) must emit
+`term_ref` and `carveout_expr` identically. Host ships a shared rules
+fragment:
 
 ```text
 v3/crates/tree-sitter-sprefa/
@@ -824,33 +838,56 @@ module.exports = grammar({
 });
 ```
 
-Build-script asserts every op's `grammar.js` contains `...shared($)`.
-Drift-grep, not an external scanner. (Rationale: tree-sitter external
-scanners are ~300-line C state machines; two lines of shared JS beat
-that for a two-token shared surface.)
+Drift enforcement is **by convention**, not build-script. Author runs
+`just regen-grammars` (§14.4) after any grammar edit; if shared tokens
+diverge, parser.c diffs show it. Phase 2 dogfood (§14.9) adds a sprf
+rule to grep for missing spreads.
 
-### 14.4 Build pipeline
+### 14.4 Build pipeline — manual regen, minimal cargo hooks
 
-Lives at `pipeline/build.rs`. One script walks the ops folder.
+Regeneration is author-driven via `justfile` recipes. Cargo compiles
+what's already committed.
 
-| step | what | output |
-|---|---|---|
-| 1 | walk `src/ops/*/grammar.js` | list of pattern-op names |
-| 2 | for each, shell out to `tree-sitter generate` | per-op `parser.c` under `OUT_DIR/ops/<name>/` |
-| 3 | compile each `parser.c` + optional `scanner.c` via `cc` | one `.a` per op |
-| 4 | emit `op_languages.rs` | `pub fn language_of(name) -> Option<Language>` + `highlights_of(name)` |
-| 5 | regenerate host `queries/injections.scm` from the op list | committed alongside `parser.c` |
-| 6 | grep each op's `grammar.js` for the `...shared($)` spread | drift assert, fails build on miss |
+**`justfile`** at repo root (new, ~20 LoC):
 
-Generated host injection query (shape):
+```make
+# regenerate a single op's parser.c from its grammar.js
+regen-op OP:
+    cd v3/crates/pipeline/src/ops/{{OP}} && tree-sitter generate
+
+# regenerate all pattern op parsers
+regen-grammars:
+    for op in v3/crates/pipeline/src/ops/*/grammar.js; do \
+      dir=$(dirname $op); \
+      echo "regenerating $dir"; \
+      (cd $dir && tree-sitter generate); \
+    done
+
+# regenerate host grammar (existing convention)
+regen-host:
+    cd v3/crates/tree-sitter-sprefa && tree-sitter generate
+```
+
+**`pipeline/build.rs`** (~40 LoC): one job only — compile each op's
+committed `parser.c` + optional `scanner.c` via `cc::Build`. It does
+not invoke `tree-sitter`. If `parser.c` is missing the build fails
+with a pointer to `just regen-op <name>`.
+
+**`op_languages.rs`**: hand-written or emitted by `build.rs` as a
+trivial `match` over op names → `extern "C"` language fns. Either
+works; hand-written is fine while the op count is small.
+
+**`tree-sitter-sprefa/queries/injections.scm`**: hand-edited. Shape:
 
 ```scheme
 ((op_invocation
   name: (identifier) @_n
   paren: (paren_slot) @injection.content)
- (#match? @_n "^(str|glob|re|json|ast|sh)$")
+ (#match? @_n "^(glob|re|json|ast|sh)$")
  (#set! injection.language "sprefa_\\1"))
 ```
+
+Adding a new pattern op = append to the alternation, commit.
 
 ### 14.5 Rust trait surface
 
@@ -900,6 +937,61 @@ pub struct GlobOp;
 // }
 ```
 
+`str` does NOT use this macro. It is a plain `Op` impl; `language()`
+and `highlights()` return `None`; its `pipe()` reads `paren_slot`
+bytes into `Arc<str>` and stores them in a cursor slot (no compile,
+no sub-tree, no captures).
+
+### 14.5a Parsed source — host tree plus injected trees
+
+`sprefa_parse::host_parse` returns a `ParsedSource` that bundles the
+host tree with one injected tree per pattern-op call-site. Parsing is
+a sum:
+
+```
+parse_host(bytes)                       : bytes → (HostTree, Errors)
+parse_L_i(bytes[slot_i.byte_range])     : bytes → (InjectedTree_i, Errors)
+                                          for each pattern-op invocation i
+                                          with language L_i = op(i).language()
+
+ParsedSource(bytes) = parse_host(bytes)  +  { parse_L_i(slot_i) : i }
+```
+
+Same big-O as a single host parse: each byte is parsed at most twice
+(host sees `paren_slot` as opaque; injected grammar consumes slot
+bytes only, via tree-sitter `set_included_ranges`).
+
+```rust
+pub struct ParsedSource {
+    pub host:     Arc<Tree>,           // full host parse
+    pub pipes:    Vec<Pipe>,           // lowered pipeline surface
+    pub injected: Vec<InjectedTree>,   // one per pattern-op call-site
+}
+
+pub struct InjectedTree {
+    pub host_node:     Arc<ParseSite>, // pointer back to the paren_slot
+    pub language_name: Arc<str>,       // "sprefa_glob", "sprefa_re", ...
+    pub tree:          Arc<Tree>,      // parsed body
+}
+```
+
+Why it exists:
+
+- **Capture extraction at lower time**: `PatternOp::binds_captures`
+  walks `term_ref` nodes in the injected tree (§14.5). No string-scan
+  phase over the host source.
+- **LSP hover by node kind**: the dispatcher (§14.6) reaches the
+  injected tree by host_node byte-range lookup, then dispatches on
+  `node.kind()`.
+- **Parse-phase pattern diagnostics**: ERROR / MISSING nodes inside
+  the injected tree feed the same `collect_errors` pass as host errors
+  (§14.8).
+
+Dependency direction: `sprefa_parse` takes a `&dyn Fn(&str) ->
+Option<Language>` closure for the op→language lookup; it does not
+depend on `pipeline`. The pipeline crate supplies the closure at
+construction time, keyed off `op_languages` (§14.4).
+
 ### 14.6 Framework glue — zero per-op LSP code
 
 Hover dispatcher lives once in the LSP adapter:
@@ -946,7 +1038,7 @@ nodes, and desugars them to the engine's native metavariable:
 | `re` | rewritten to `(?P<NAME>.*?)` (non-greedy default) before compilation; on match, `captures[NAME] = regex.name("NAME")` |
 | `ast` | passed through as ast-grep native metavar `$NAME` (already that engine's language) |
 | `json` | walker-step capture field, per v2 `_5_json.rs:144-157` |
-| `str` | rejected; emit `pattern/str-forbids-hole` diag |
+| `str` | N/A — body is unparsed bytes; `$NAME` inside `str(...)` is literal |
 
 Native engine-side capture syntax stays available where applicable:
 `re((?<X>\w+))` and `re($X)` are equivalent, both surface in
@@ -963,26 +1055,29 @@ New codes:
 
 | code | phase | where |
 |---|---|---|
-| `pattern/str-forbids-hole` | parse | §14.2, `str(...)` containing term_ref |
 | `pattern/<op>-syntax` | parse | tree-sitter ERROR inside op's injected tree |
 | `pattern/<op>-missing` | parse | tree-sitter MISSING inside op's injected tree |
 
+`str` has no parse-phase pattern diagnostics; its body is unparsed.
+
 ### 14.9 Dogfood path
 
-Phase 1 — manual (near-term landing):
-- `pipeline/build.rs` + `op_languages.rs` generator
-- `tree-sitter-sprefa/shared/tokens.js` + drift-grep
-- `ops/str/`, `ops/glob/`, `ops/re/` folders with hand-written grammar
-- `#[sprf_pattern_op]` proc-macro
-- host `injections.scm` regeneration
+Phase 1 — manual YOLO (near-term landing):
+- `justfile` with `regen-op`, `regen-grammars`, `regen-host` recipes
+- `pipeline/build.rs` does `cc::Build` only (no tree-sitter invocation)
+- `tree-sitter-sprefa/shared/tokens.js` (author-maintained, no drift-grep)
+- `tree-sitter-sprefa/queries/injections.scm` hand-edited
+- `ops/str/` (const, plain `Op`), `ops/glob/`, `ops/re/` with committed
+  `parser.c` next to each `grammar.js`
+- `#[sprf_pattern_op]` proc-macro in `sprefa_macros`
 - injected-tree support in `sprefa_parse::host_parse`
 
-Phase 2 — dogfood:
+Phase 2 — dogfood (later):
 - a sprf rule walks `pipeline/src/ops/*/`, finds `#[sprf_pattern_op]` sites
-- reads sibling `grammar.js`, drift-checks shared tokens, regenerates
+- drift-checks shared tokens, regenerates `parser.c`, regenerates
+  `injections.scm`
 - LSP code-action "register new pattern op" drops a skeleton folder +
-  reruns build via the same `MutationEffect` machinery as §32 type
-  transclusion
+  reruns `just regen-op` via `MutationEffect` (§32)
 - `render_into_marker` writes the regenerated `injections.scm`
 
 ### 14.10 Removes the v1 weirdness
@@ -1189,6 +1284,21 @@ call site.
 ### 18.2 Rule mode: explicit annotation
 
 Reserved for §15 term-annotations lane. Not locked.
+
+### 18.3 Pattern ops as arg-mode consumers
+
+Pattern ops (§14) declare their paren body as a single positional arg
+with `body = Body::Paren { injected: true }`. Bracket-tags still route
+through the normal `ArgSpec` list (e.g. `ast[rust](...)` has one
+bracket-tag arg `:lang` plus one paren-body arg). `$NAME` references
+inside a pattern body are **not** arg-mode inputs — they are
+capture-writes owned by the op (§14.7). Resolver reads them via
+`PatternOp::binds_captures(injected_tree)` at lower time (§19 phase
+lower) and treats them identically to captures produced by a
+downstream `> $NAME`.
+
+`str` has `body = Body::Paren { injected: false }`; its paren body is
+raw bytes, no injected tree, no captures.
 
 ---
 
