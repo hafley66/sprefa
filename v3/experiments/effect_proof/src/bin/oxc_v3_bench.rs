@@ -18,8 +18,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use effect_proof::effects::oxc_parse::{parse_one, OxcParse, OxcParseBatch};
@@ -33,11 +33,19 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn enumerate(root: &Path, exts: &[&str]) -> Vec<PathBuf> {
     let mut v = Vec::new();
-    for entry in WalkBuilder::new(root).hidden(true).git_ignore(false).build() {
+    for entry in WalkBuilder::new(root)
+        .hidden(true)
+        .git_ignore(false)
+        .build()
+    {
         let Ok(e) = entry else { continue };
-        if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
+        if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
         let p = e.into_path();
-        let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+        let Some(ext) = p.extension().and_then(|s| s.to_str()) else {
+            continue;
+        };
         if exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) {
             v.push(p);
         }
@@ -48,9 +56,17 @@ fn enumerate(root: &Path, exts: &[&str]) -> Vec<PathBuf> {
 fn rss_peak_kb() -> u64 {
     unsafe {
         let mut u: libc::rusage = std::mem::zeroed();
-        if libc::getrusage(libc::RUSAGE_SELF, &mut u) != 0 { return 0; }
-        #[cfg(target_os = "macos")] { (u.ru_maxrss as u64) / 1024 }
-        #[cfg(not(target_os = "macos"))] { u.ru_maxrss as u64 }
+        if libc::getrusage(libc::RUSAGE_SELF, &mut u) != 0 {
+            return 0;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            (u.ru_maxrss as u64) / 1024
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            u.ru_maxrss as u64
+        }
     }
 }
 
@@ -63,7 +79,9 @@ fn find_shell_target() -> PathBuf {
     ];
     for c in candidates {
         let p = PathBuf::from(c);
-        if p.exists() { return p; }
+        if p.exists() {
+            return p;
+        }
     }
     // Final fallback: rely on PATH.
     PathBuf::from("oxc_parse_one")
@@ -74,7 +92,9 @@ fn run_shell_serial(paths: &[PathBuf], bin: &Path) -> (u64, u64, u64) {
     let mut errors = 0u64;
     let mut files = 0u64;
     for p in paths {
-        let Ok(out) = Command::new(bin).arg(p).output() else { continue };
+        let Ok(out) = Command::new(bin).arg(p).output() else {
+            continue;
+        };
         let s = String::from_utf8_lossy(&out.stdout);
         // format: bytes=N errors=N
         for tok in s.split_whitespace() {
@@ -93,12 +113,19 @@ fn run_shell_batch(paths: &[PathBuf], bin: &Path, chunk: usize, workers: usize) 
     let bytes = AtomicU64::new(0);
     let errors = AtomicU64::new(0);
     let files = AtomicU64::new(0);
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .unwrap();
     pool.install(|| {
         paths.par_chunks(chunk).for_each(|group| {
             let mut cmd = Command::new(bin);
-            for p in group { cmd.arg(p); }
-            let Ok(out) = cmd.output() else { return; };
+            for p in group {
+                cmd.arg(p);
+            }
+            let Ok(out) = cmd.output() else {
+                return;
+            };
             let s = String::from_utf8_lossy(&out.stdout);
             for tok in s.split_whitespace() {
                 if let Some(v) = tok.strip_prefix("bytes=") {
@@ -110,11 +137,16 @@ fn run_shell_batch(paths: &[PathBuf], bin: &Path, chunk: usize, workers: usize) 
             files.fetch_add(group.len() as u64, Ordering::Relaxed);
         });
     });
-    (bytes.load(Ordering::Relaxed), errors.load(Ordering::Relaxed), files.load(Ordering::Relaxed))
+    (
+        bytes.load(Ordering::Relaxed),
+        errors.load(Ordering::Relaxed),
+        files.load(Ordering::Relaxed),
+    )
 }
 
 fn run_rayon(paths: &[PathBuf]) -> (u64, u64, u64) {
-    paths.par_iter()
+    paths
+        .par_iter()
         .map(|p| {
             let s = parse_one(p);
             (s.bytes, s.errors, 1u64)
@@ -144,7 +176,9 @@ async fn run_ctx_put(
         join.push(tokio::spawn(async move {
             loop {
                 let i = idx.fetch_add(1, Ordering::Relaxed);
-                if i >= n { return; }
+                if i >= n {
+                    return;
+                }
                 let p = paths_arc[i as usize].clone();
                 let s = ctx.put(OxcParse { path: p }).await;
                 bytes.fetch_add(s.bytes, Ordering::Relaxed);
@@ -153,15 +187,20 @@ async fn run_ctx_put(
             }
         }));
     }
-    for h in join { let _ = h.await; }
-    (bytes.load(Ordering::Relaxed), errors.load(Ordering::Relaxed), files.load(Ordering::Relaxed))
+    for h in join {
+        let _ = h.await;
+    }
+    (
+        bytes.load(Ordering::Relaxed),
+        errors.load(Ordering::Relaxed),
+        files.load(Ordering::Relaxed),
+    )
 }
 
-async fn run_ctx_batch(
-    ctx: &effect_runtime::RtCtx,
-    paths: &[PathBuf],
-) -> (u64, u64, u64) {
-    let req = OxcParseBatch { paths: Arc::new(paths.to_vec()) };
+async fn run_ctx_batch(ctx: &effect_runtime::RtCtx, paths: &[PathBuf]) -> (u64, u64, u64) {
+    let req = OxcParseBatch {
+        paths: Arc::new(paths.to_vec()),
+    };
     ctx.put(req).await
 }
 
@@ -180,33 +219,66 @@ async fn main() {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--root"        => { root = PathBuf::from(&args[i + 1]); i += 2; }
-            "--workers"     => { workers = args[i + 1].parse().unwrap(); i += 2; }
-            "--trials"      => { trials = args[i + 1].parse::<usize>().unwrap().max(1); i += 2; }
-            "--mode"        => { mode = args[i + 1].clone(); i += 2; }
-            "--cap"         => { cap = args[i + 1].parse().unwrap(); i += 2; }
-            "--submitters"  => { submitters = args[i + 1].parse().unwrap(); i += 2; }
-            "--max-files"   => { max_files = args[i + 1].parse().unwrap(); i += 2; }
-            "--shell-chunk" => { shell_chunk = args[i + 1].parse().unwrap(); i += 2; }
+            "--root" => {
+                root = PathBuf::from(&args[i + 1]);
+                i += 2;
+            }
+            "--workers" => {
+                workers = args[i + 1].parse().unwrap();
+                i += 2;
+            }
+            "--trials" => {
+                trials = args[i + 1].parse::<usize>().unwrap().max(1);
+                i += 2;
+            }
+            "--mode" => {
+                mode = args[i + 1].clone();
+                i += 2;
+            }
+            "--cap" => {
+                cap = args[i + 1].parse().unwrap();
+                i += 2;
+            }
+            "--submitters" => {
+                submitters = args[i + 1].parse().unwrap();
+                i += 2;
+            }
+            "--max-files" => {
+                max_files = args[i + 1].parse().unwrap();
+                i += 2;
+            }
+            "--shell-chunk" => {
+                shell_chunk = args[i + 1].parse().unwrap();
+                i += 2;
+            }
             other => panic!("unknown arg: {}", other),
         }
     }
-    if submitters == 0 { submitters = workers * 2; }
+    if submitters == 0 {
+        submitters = workers * 2;
+    }
 
-    rayon::ThreadPoolBuilder::new().num_threads(workers).build_global().ok();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build_global()
+        .ok();
 
     // Enumerate corpus (.ts + .tsx; DT is overwhelmingly .d.ts which
     // also uses the .ts extension).
     let t_enum = Instant::now();
     let mut paths = enumerate(&root, &["ts", "tsx"]);
     let enumerate_ms = t_enum.elapsed().as_secs_f64() * 1000.0;
-    if max_files > 0 && paths.len() > max_files { paths.truncate(max_files); }
+    if max_files > 0 && paths.len() > max_files {
+        paths.truncate(max_files);
+    }
     assert!(!paths.is_empty(), "no files enumerated under {:?}", root);
     let rss_after_enum_kb = rss_peak_kb();
 
     // Warm page cache.
     let t_pc = Instant::now();
-    for p in &paths { let _ = std::fs::read(p); }
+    for p in &paths {
+        let _ = std::fs::read(p);
+    }
     let page_cache_ms = t_pc.elapsed().as_secs_f64() * 1000.0;
     let rss_after_pc_kb = rss_peak_kb();
 
@@ -217,25 +289,38 @@ async fn main() {
             workers,
             |e: OxcParse| parse_one(&e.path),
         ))
-        .register::<OxcParseBatch, _>(Passthrough::<OxcParseBatch, _>::new(
-            |e: OxcParseBatch| {
-                e.paths
-                    .par_iter()
-                    .map(|p| { let s = parse_one(p); (s.bytes, s.errors, 1u64) })
-                    .reduce(|| (0u64, 0u64, 0u64), |(a, b, c), (x, y, z)| (a + x, b + y, c + z))
-            },
-        ))
+        .register::<OxcParseBatch, _>(Passthrough::<OxcParseBatch, _>::new(|e: OxcParseBatch| {
+            e.paths
+                .par_iter()
+                .map(|p| {
+                    let s = parse_one(p);
+                    (s.bytes, s.errors, 1u64)
+                })
+                .reduce(
+                    || (0u64, 0u64, 0u64),
+                    |(a, b, c), (x, y, z)| (a + x, b + y, c + z),
+                )
+        }))
         .build();
 
     let shell_bin = find_shell_target();
 
     eprintln!(
         "# harness: files={} enumerate_ms={:.1} page_cache_ms={:.1} rss_kb_enum={} rss_kb_pc={}",
-        paths.len(), enumerate_ms, page_cache_ms, rss_after_enum_kb, rss_after_pc_kb,
+        paths.len(),
+        enumerate_ms,
+        page_cache_ms,
+        rss_after_enum_kb,
+        rss_after_pc_kb,
     );
     eprintln!(
         "# config: mode={} workers={} submitters={} cap={} shell_chunk={} shell_bin={}",
-        mode, workers, submitters, cap, shell_chunk, shell_bin.display(),
+        mode,
+        workers,
+        submitters,
+        cap,
+        shell_chunk,
+        shell_bin.display(),
     );
 
     let mut walls_ms: Vec<f64> = Vec::with_capacity(trials);
@@ -245,10 +330,10 @@ async fn main() {
         let t0 = Instant::now();
         let triple = match mode.as_str() {
             "shell-serial" => run_shell_serial(&paths, &shell_bin),
-            "shell-batch"  => run_shell_batch(&paths, &shell_bin, shell_chunk, workers),
-            "rayon"        => run_rayon(&paths),
-            "ctx-put"      => run_ctx_put(&ctx, &paths, submitters).await,
-            "ctx-batch"    => run_ctx_batch(&ctx, &paths).await,
+            "shell-batch" => run_shell_batch(&paths, &shell_bin, shell_chunk, workers),
+            "rayon" => run_rayon(&paths),
+            "ctx-put" => run_ctx_put(&ctx, &paths, submitters).await,
+            "ctx-batch" => run_ctx_batch(&ctx, &paths).await,
             other => panic!("unknown mode: {}", other),
         };
         let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -257,7 +342,14 @@ async fn main() {
         let mbps = (triple.0 as f64 / 1_048_576.0) / (wall_ms / 1000.0);
         eprintln!(
             "# trial {}/{}: wall_ms={:.1} files={} bytes={} errors={} mbps={:.1} rss_kb={}",
-            t + 1, trials, wall_ms, triple.2, triple.0, triple.1, mbps, rss_peak_kb(),
+            t + 1,
+            trials,
+            wall_ms,
+            triple.2,
+            triple.0,
+            triple.1,
+            mbps,
+            rss_peak_kb(),
         );
         if mode == "ctx-put" || mode == "ctx-batch" {
             eprintln!("{}", ctx.telemetry().summary());

@@ -152,3 +152,72 @@ Min-author-ops is not min-LoC. Specifically:
   locked algebra.
 - `chat_log/20260418.2.v3-design-and-numbers.md` — LoC delta,
   per-effect batching policy, migration path.
+
+---
+
+## Evolution notes 2026-04-20 — affordances added, metric held
+
+Cross-reference: `v3-unified-language-locks.md` (session lockfile).
+
+The sigil-unification and parametric-rule session added framework
+affordances. Every affordance carries a default that costs zero to
+existing ops. The min-viable op stays at four slots; the metric
+survives.
+
+### Affordances added
+
+| affordance | default | cost to existing op |
+|---|---|---|
+| `ArgValue::TermRef` | not used unless op reads TermRefs | 0 |
+| `TermMode` dispatch via `OpCtx::resolve_term_modes` | op never calls it | 0 |
+| `Operator::signature()` declaring `ArgSpec { accepts: AcceptsMode }` | default `Either` for all args | 0 |
+| `ProgramCtx::register_invocation` | op never calls it | 0 |
+| Parametric `Rule { params }` | built-in rule op handles; existing ops untouched | 0 |
+| `BindingGraph` + `StageDeps` analysis | framework-computed | 0 |
+| `SubscribePolicy` | defaults to Cold | 0 |
+| `MutationEffect::{preview, reversible, reverse, source_range}` | all default None/false/unreachable | 0 for read-only ops; write ops opt in |
+| Tag-op / link-op families as first-class | nothing — these are new ops, not framework changes | 0 |
+
+### New op folders this session enables
+
+Each is a single folder, `(1, 0, 0)` preserved:
+
+| op | lane | cost |
+|---|---|---|
+| `is_repo`, `is_rev`, `is_fs`, `is_repo_norm`, `is_rev_norm` | tag-op family | one folder each |
+| `link`, `depends_on`, `generated_from` | link-op family | one folder each |
+| `retry`, `until`, `while_changes`, `when`, `if_else`, `debounce`, `distinct_by`, `merge_by_key` | higher-order control ops | one folder each |
+| `filter` | binary conditionality | one folder |
+| `load(term)` | capture → content dual of `> $X` capture-write | one folder |
+
+### Anti-goals reaffirmed
+
+- Do not fold term-annotation semantics into the base term grammar
+  until the annotation lane (`v3-unified-language-locks.md` Section 14)
+  resolves. Pre-commit risks baking an atom-only shape that can't
+  carry kind/link/persistence directives later.
+- Do not add framework match arms for tag-op or link-op kinds. Each is
+  its own op with its own kind string; the relations table stores `kind`
+  as a free text column.
+- Do not expand `RuntimeConfig` for parametric-rule options.
+  `@recursive(max_depth=N)` is per-rule attribute; subscribe policy is
+  per-pipeline; neither is a cross-cutting knob.
+
+### Framework core LoC impact
+
+Session adds ~200 LoC to framework core (resolver's BindingGraph,
+StageDeps, TermMode resolution helper, rule-param mode derivation).
+`effect_proof` drill target was 126 LoC — language lockfile surface
+raises the realistic framework-core target to ~400 LoC. Op authoring
+surface unchanged.
+
+### Drill amendment
+
+Re-run `_.sprfv2.expr.plugins.audit` now also fails if:
+
+- any op touches `ArgValue::TermRef` resolution directly (should use `ctx.resolve_term_modes`)
+- any tag-op or link-op reaches into the `relations` table via raw SQL (should use the framework writer helper)
+- any higher-order control op hardcodes a batching policy (should accept `SubscribePolicy` from caller if composable)
+
+Policy: these failures are warnings, not errors, until the first
+production consumer of each surface lands.

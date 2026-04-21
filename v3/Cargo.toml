@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/effect_runtime",
+    "crates/pipeline",
     "experiments/effect_proof",
 ]
 # parse_experiment keeps its own inner workspace so its tree-sitter

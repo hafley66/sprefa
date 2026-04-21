@@ -203,3 +203,76 @@ central enums grow either way.
    ecosystems converged on this surface.
 5. `appendix/v3-vs-v2-reading-preview.md` — what a v3 op looks like
    to read vs v2 today.
+
+---
+
+## Evolution notes 2026-04-20 — language-surface locks
+
+Cross-reference: `v3-unified-language-locks.md` (session lockfile).
+This section documents what changed in A/B/C/D rows after the
+sigil-unification and parametric-rule session. The row table above is
+preserved unchanged for historical trace.
+
+### Rows impacted
+
+| row | before | after |
+|---|---|---|
+| A4 | `decl_captures() -> [CaptureName]` | same; terms now addressed by `TermPath = (scope_path, name)` via `ArgValue::TermRef { term_path, slot_key }`. Decl discovery unchanged. |
+| A5 | `use_captures() -> [PathExpr]` | replaced by `BindingGraph` resolver pass. Per `$TERM` reference, resolver proves non-empty `Vec<BindingSource>` across five source kinds (param, walker-body, chain-stage, fork-arm, parametric-call). Diagnostic category "statically-unresolvable-term." |
+| A6 | `needs: { file?, byte_range?, parsed_tree? }` | unchanged; fs/repo/rev now slot-held per Cursor Shape C, still declarable here |
+| A7 | stub `register_expr_schema` | parametric rule schema adds `arg_<param>` columns per rule-declared param; zero-param rule schema unchanged |
+| B2 | `completions_in_args` | gains arg-mode context: framework provides per-arg `AcceptsMode` so completion can prefer bound vs unbound candidates |
+| C1 | `pipe(ctx, stream) -> stream` | unchanged shape; op now additionally calls `ctx.resolve_term_modes(cursor, args)` when dispatching on term groundness |
+| C6 | `CaptureKind` impl | optional: rule params with atom annotations may absorb part of this when the term-annotation exploration lane lands (Section 14 of lockfile) |
+| D1 | `Arc<dyn MutationEffect>` | adds four optional slots: `preview()`, `reversible()`, `reverse()`, `source_range()`. Min viable still `kind` + `apply`. |
+| D3 | `RunEvent::MutationPrompt { preview }` | LSP bridge now also publishes diagnostic at `source_range` with code actions `[Approve, Preview, Skip]` |
+
+### Framework affordances added
+
+All paid once by framework, zero cost to existing ops (defaults hold):
+
+| affordance | purpose |
+|---|---|
+| `ArgValue::TermRef { term_path, slot_key }` | new ArgValue variant carrying resolved term addressing |
+| `TermMode { Bound(Value), Unbound }` | runtime resolution of a term against flowing cursor |
+| `OpCtx::resolve_term_modes(cursor, &[ArgValue]) -> Vec<TermMode>` | helper for arg-mode dispatch |
+| `Operator::signature() -> Vec<ArgSpec>` | per-arg accepts declaration; default all `Either` |
+| `ProgramCtx::register_invocation(kind, range, path)` | op populates its own registry at parse time |
+| `Rule { params: Vec<TermPath>, schema: /* arg_ + cap cols */ }` | parametric rule type replaces separate OpDef concept |
+| `BindingGraph` + `StageDeps` | lower-time analysis artifacts; consumed by runner, LSP |
+| `SubscribePolicy { Cold, Shared, Memo }` | Pipeline subscription modes, cold by default |
+| `MutationEffect::{preview, reversible, reverse, source_range}` | optional approval-flow slots |
+
+### Sigil class change
+
+- `$$` scan-pointer sigils retired. Tag-ops `is_repo($R)`, `is_rev($T)`, `is_fs($F)` replace. Each op owns its kind + diagnostic + write semantics.
+- `&&` registry sigil retired. Registry access is op-mediated: parametric call with unbound arg iterates that op's registry.
+- `$TERM` gains mode dispatch; carveout `${...}` survives as the only host-expr hole inside sub-grammars.
+- Three sigils total: `$`, `&`, carveouts `${...}` / `&{...}`.
+
+### Reserved grammar lane
+
+Term annotations are reserved as an exploration surface. Candidate
+shapes, design questions, and scope listed in `v3-unified-language-locks.md`
+Section 14. Tag-op and link-op families may shrink or vanish when the
+annotation grammar lands, depending on chosen shape. Author-surface
+rows above are stable against either outcome because tag-ops and
+link-ops satisfy (1, 0, 0) each — collapsing them removes files
+cleanly.
+
+### Min-viable op — unchanged
+
+Still four slots: `NAME`, `parse`, `pipe`, one `CaptureKind`. New
+affordances carry defaults that make them no-ops for existing ops.
+The min-author-ops metric survives.
+
+### Rows that did not change
+
+- A1, A2, A3 — registry, args grammar, sub-lang body extract
+- A8, A9 — parse / lower diag (already trait-based)
+- B1, B3, B4, B5, B6, B7, B8, B9, B10, B11 — LSP surfaces
+- C2, C3, C4, C5, C7, C8, C9, C10, C11 — runtime surfaces
+- D2, D4, D5, D6, D7, D8 — approval, preview, apply, cache, persist, reparse safety
+
+Change concentrated in A4/A5 (binding model) and D1/D3 (mutation
+approval UX).
