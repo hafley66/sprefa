@@ -9,7 +9,9 @@
 //!   - void:          `> void`     — drop the cursor.
 
 pub mod capture_write;
+pub mod str_op;
 pub mod void;
 
 pub use capture_write::CaptureWriteOp;
+pub use str_op::{StrOp, StrValue};
 pub use void::VoidOp;

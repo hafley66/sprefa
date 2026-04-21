@@ -23,5 +23,5 @@ pub mod pattern_op;
 pub use _0_cursor::{Capture, Cursor, PathSeg, SprfPath};
 pub use _1_op::Op;
 pub use _2_pipeline::Pipeline;
-pub use ops::{CaptureWriteOp, VoidOp};
+pub use ops::{CaptureWriteOp, StrOp, StrValue, VoidOp};
 pub use pattern_op::{CompiledPattern, PatternDiagnostic, PatternOp};
