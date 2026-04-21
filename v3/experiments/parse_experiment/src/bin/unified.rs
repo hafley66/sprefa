@@ -12,8 +12,8 @@
 //!
 //! The prototype runs the following example program:
 //!
-//!     (classes) ast[rust] { class ${N} }
-//!     (calls) ast[rust] { new ${classes.N > TARGET}() }
+//!     rule(classes) > ast[rust] { class ${N} }
+//!     rule(calls)   > ast[rust] { new ${classes.N > TARGET}() }
 //!
 //! Output shows:
 //!   - parsed AST
@@ -32,13 +32,13 @@ use std::fmt;
 // -- source --------------------------------------------------------------------
 
 const SRC: &str = r#"
-(classes) ast[rust] { class ${N} }
-(calls)   ast[rust] { new ${classes.N > TARGET}() }
+rule(classes) > ast[rust] { class ${N} }
+rule(calls)   > ast[rust] { new ${classes.N > TARGET}() }
 "#;
 
 // For the "nested carveout" demonstration at the end.
 const NESTED_SRC: &str = r#"
-(outer) sh[bash] { echo ${{HOME}}/${:pathspec.$DIR > LOCAL} }
+rule(outer) > sh[bash] { echo ${{HOME}}/${:pathspec.$DIR > LOCAL} }
 "#;
 
 // -- AST -----------------------------------------------------------------------

@@ -4,6 +4,7 @@ members = [
     "crates/effect_runtime",
     "crates/pipeline",
     "experiments/effect_proof",
+    "experiments/lang_prototype",
 ]
 # parse_experiment keeps its own inner workspace so its tree-sitter
 # crate set does not leak into the effect-runtime lockfile.

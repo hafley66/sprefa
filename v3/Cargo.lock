@@ -735,6 +735,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lang_prototype"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "globset",
+ "regex",
+ "walkdir",
+]
+
+[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

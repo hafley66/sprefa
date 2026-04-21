@@ -281,9 +281,21 @@ prevents indefinite waits.
 No new syntax. Four mechanisms cover everything.
 
 1. **Fork arms** for branching: `{ > A; > B; }`.
-2. **Filter ops** for conditional drop: `filter(cond)`.
+2. **Bare `$X` in chain position** as semijoin — drops cursors lacking `$X`. Relation ops (`eq`, `gt`, `lt`, `in`) emit zero or one cursor and compose the same way. No separate `filter(cond)` primitive.
 3. **Recursive rules** for looping (with `@recursive(max_depth=N)` opt-in).
 4. **Higher-order control ops** as Rust ops taking Pipeline args.
+
+### Fork capture semantics — **intersection, not union**
+
+When a Fork `{ A ; B }` emits, downstream stages see only captures present in
+**all** arms. A cursor from arm 0 lacking arm 1's bindings cannot safely be
+consumed by a downstream op that expects both. Static checker computes
+`Γ_A ∩ Γ_B`; any downstream reference to a capture not in the intersection
+produces a lower-phase diagnostic.
+
+*Rationale*: bash `wait` returns the exit status of the last foreground job;
+sprefa Fork is parallel composition with a meet-semilattice merge. Union would
+permit unsound downstream references.
 
 ### Higher-order control op table (Rust ops, one folder each)
 
@@ -597,6 +609,7 @@ Everything else defaults.
 | Separate `Rule` vs `Op` runtime | Rule is a named Pipeline; collapse |
 | Norm as dedicated syntax | `is_repo_norm($R)` tag-op |
 | Bash-style `>&N` content redirect | capture-write op + prolog mode |
+| Full unification / SLD resolution as framework concern | shallow prolog only (mode dispatch); embed deep logic in `prolog(...)` op if ever needed |
 
 ---
 
