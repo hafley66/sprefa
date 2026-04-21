@@ -56,4 +56,14 @@ pub trait Op: Send + Sync + 'static {
     /// (e.g., join-group ops) still want a batch view; left for a
     /// follow-up slice.
     fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>>;
+
+    /// Sub-grammar for this op's paren-slot body (§14.5).
+    ///
+    /// `None` = non-pattern op (capture_write, void, str). The lowerer
+    /// and LSP hover dispatcher branch on this.
+    fn language(&self) -> Option<tree_sitter::Language> { None }
+
+    /// Editor highlight queries for the sub-grammar (§14.5). Usually
+    /// `include_str!("queries/highlights.scm")` via `#[sprf_pattern_op]`.
+    fn highlights(&self) -> Option<&'static str> { None }
 }

@@ -18,8 +18,10 @@ pub mod _1_op;
 pub mod _2_pipeline;
 pub mod lower;
 pub mod ops;
+pub mod pattern_op;
 
 pub use _0_cursor::{Capture, Cursor, PathSeg, SprfPath};
 pub use _1_op::Op;
 pub use _2_pipeline::Pipeline;
 pub use ops::{CaptureWriteOp, VoidOp};
+pub use pattern_op::{CompiledPattern, PatternDiagnostic, PatternOp};

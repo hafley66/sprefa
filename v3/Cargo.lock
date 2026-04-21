@@ -1275,6 +1275,7 @@ version = "0.0.0"
 dependencies = [
  "effect_runtime",
  "tokio",
+ "tree-sitter",
 ]
 
 [[package]]
