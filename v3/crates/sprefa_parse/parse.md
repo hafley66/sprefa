@@ -15,7 +15,7 @@ alongside the code. Drift is worse than redundancy.
 ## Table of Contents
 
 ### Part I — Foundations
-1. [Scope and layering](#1-scope-and-layering)
+1. [Scope and layering](#1-scope-and-layering) — incl. §1.5 crate layout, §1.7 op partitioning, §1.9 injection-query ownership
 2. [Core invariants (six)](#2-core-invariants-six)
 3. [Concept model](#3-concept-model)
 4. [Three tiers: stream / name / value](#4-three-tiers-stream--name--value)
@@ -90,6 +90,110 @@ LSP-as-op lives in core, per the v2 pattern.
 1.4 When this spec disagrees with code, code wins if recent (< 1 week);
 otherwise this file wins and code is out of date. Teaching doc
 (`v2/docs/_b_v3-unified-language.md`) is historical context only.
+
+### 1.5 Crate layout
+
+Workspace partition. Each crate has one responsibility; boundaries
+enforce the invariants.
+
+```
+v3/crates/
+├── spine/              # foundational shared types (Atom, RowId, etc.)
+├── effect_runtime/     # RtCtx, effect dispatch, BoxFuture plumbing
+├── tree-sitter-sprefa/ # HOST grammar + shared/tokens.js + generated injections.scm
+├── sprefa_parse/       # host_parse, AST, ParseError, injected-tree support (this spec)
+├── pipeline/           # Op trait, Cursor, Pipeline enum, ops/<name>/ folders, build.rs
+└── sprefa/ (future)    # runtime binary, HTTP server, watcher, Store
+    ├── sprefa-lsp/     # proxy to sprefa HTTP; wraps tower-lsp OR raw JSON-RPC
+    └── sprefa-cli/     # proxy to sprefa HTTP
+```
+
+### 1.6 Dependency arrows
+
+Strict DAG. Every arrow is a Cargo dep.
+
+| crate | depends on | does NOT depend on |
+|---|---|---|
+| `spine` | (none internal) | anything |
+| `effect_runtime` | (none internal) | pipeline, sprefa_parse |
+| `tree-sitter-sprefa` | (none internal) | any other v3 crate |
+| `sprefa_parse` | `tree-sitter-sprefa`, `spine` | pipeline, effect_runtime |
+| `pipeline` | `sprefa_parse`, `effect_runtime`, `spine`, `tree-sitter-sprefa` | sprefa |
+| `sprefa` | `pipeline`, `sprefa_parse`, `effect_runtime`, `spine` | sprefa-lsp, sprefa-cli |
+| `sprefa-lsp` / `sprefa-cli` | `sprefa` (via HTTP, not Cargo) | each other |
+
+`sprefa_parse` knows nothing about ops. It produces `OpInvocation`
+nodes with opaque `name: Arc<str>`. Op resolution happens in
+`pipeline`. This keeps the parse layer reusable by any consumer.
+
+### 1.7 Op partitioning — one crate, one folder per op
+
+Every op lives under `pipeline/src/ops/<name>/`. Pattern ops own their
+sub-grammar in the same folder (§14.1). Non-pattern ops stay as single
+files `ops/<name>.rs`.
+
+Rules:
+
+1. **One Cargo crate** for all built-in ops. Each op is a folder or
+   file, not a crate. Ten ops = ten folders, not ten `Cargo.toml`s.
+2. **`pipeline/build.rs`** is the single codegen driver: walks
+   `ops/*/grammar.js`, runs `tree-sitter generate`, compiles `parser.c`
+   (+ optional `scanner.c`), emits `OUT_DIR/op_languages.rs`, and
+   regenerates `tree-sitter-sprefa/queries/injections.scm`.
+3. **Per-op tests** run via `cargo test -p pipeline ops::<name>::`.
+   Grammar fixtures live in `ops/<name>/tests/`.
+4. **Sub-grammar artifacts are ephemeral.** `parser.c` files are
+   regenerated every build and not committed. The one committed
+   generated file is `tree-sitter-sprefa/queries/injections.scm`, with
+   CI asserting it matches the build output.
+
+### 1.8 When to promote an op to its own crate
+
+| signal | action |
+|---|---|
+| op's grammar + impl > 5kloc | extract to `sprefa-op-<name>` crate, depend on `pipeline` for `Op` + `PatternOp` traits |
+| op has third-party dependencies with version conflicts with pipeline's other ops | extract for isolation |
+| op is a plugin (external author, loaded dynamically) | always its own crate, registered via `inventory::submit!` at runtime |
+| op is one of the built-in common set | stays in `pipeline/src/ops/` |
+
+The extracted-op pattern mirrors the v2 ast-grep carve-out: the op
+trait lives in the core crate; the op impl + grammar lives in a
+sibling crate. No framework changes required; the registry picks up
+whatever is linked.
+
+### 1.9 Injection query regeneration — single writer, committed artifact
+
+`tree-sitter-sprefa/queries/injections.scm` is **owned** by
+`tree-sitter-sprefa` (lives in its tree, ships with its parser
+distribution) but **written** by `pipeline/build.rs` (which knows the
+op list). No circular dep — the file is not consumed at parse time by
+`tree-sitter-sprefa` itself, only by LSP injection walks at runtime.
+
+Workflow:
+- pipeline's build.rs enumerates `ops/*/grammar.js`
+- builds the `#match?` regex from the op names
+- writes the file into tree-sitter-sprefa's tree
+- CI step `cargo build -p pipeline && git diff --exit-code` catches
+  drift
+
+Rationale: having `tree-sitter-sprefa` own the file (directory-wise)
+lets external consumers get injections alongside the host grammar;
+having `pipeline` write it means the op registry is the source of
+truth. Split responsibility; no cycle.
+
+### 1.10 Why not split sub-grammars into a separate crate
+
+Considered and rejected:
+
+| option | rejected because |
+|---|---|
+| each op its own tree-sitter crate (`tree-sitter-sprefa-glob`, …) | 10+ crate explosion for built-in ops; build-time fan-out without corresponding modularity |
+| single `tree-sitter-sprefa-patterns` crate containing all sub-grammars | grammars move with op impls; co-locating in `pipeline/ops/<name>/` keeps edit scope local |
+| host grammar absorbs pattern grammars via `grammar.extends` | tree-sitter's extension mechanism is primitive; shared-token approach (§14.3) is simpler and scales better |
+
+Ops move as units: Rust impl + grammar + queries + tests ship in one
+folder, reviewed as one diff, deleted in one `rm -rf`. That's the
+invariant the crate layout optimizes for.
 
 ---
 
