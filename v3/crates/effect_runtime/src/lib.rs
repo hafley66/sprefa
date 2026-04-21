@@ -319,5 +319,8 @@ impl RtCtxBuilder {
 pub mod batchers;
 pub mod telemetry;
 
+#[cfg(feature = "rx")]
+pub mod rx;
+
 // Effect examples live in the consumer crate (`effect_proof`). The
 // framework stays domain-neutral.

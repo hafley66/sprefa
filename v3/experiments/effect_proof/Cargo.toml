@@ -10,7 +10,8 @@ path = "src/lib.rs"
 # Path-dep on the framework. Once effect_runtime ships to crates.io
 # this becomes a versioned dep; the consumer code does not change.
 [dependencies]
-effect_runtime = { path = "../../crates/effect_runtime" }
+effect_runtime = { path = "../../crates/effect_runtime", features = ["rx"] }
+rxrust         = "1.0.0-rc.4"
 
 # Stack needed by the three benches and the demo effect modules.
 tokio             = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
@@ -25,6 +26,10 @@ memchr            = "2"
 futures           = "0.3"
 tikv-jemallocator = "0.6"
 libc              = "0.2"
+oxc_allocator     = "0.127"
+oxc_ast           = "0.127"
+oxc_parser        = "0.127"
+oxc_span          = "0.127"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
@@ -44,3 +49,11 @@ path = "src/bin/git_tree_bench.rs"
 [[bin]]
 name = "cache_ab_bench"
 path = "src/bin/cache_ab_bench.rs"
+
+[[bin]]
+name = "oxc_v3_bench"
+path = "src/bin/oxc_v3_bench.rs"
+
+[[bin]]
+name = "oxc_parse_one"
+path = "src/bin/oxc_parse_one.rs"

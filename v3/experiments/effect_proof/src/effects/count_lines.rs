@@ -5,6 +5,7 @@
 
 use effect_runtime::{Batcher, BoxFuture, CancellationToken, EffectKind};
 
+#[derive(Clone)]
 pub struct CountLines {
     pub content: Vec<u8>,
 }
