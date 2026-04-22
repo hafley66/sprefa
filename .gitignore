@@ -9,3 +9,7 @@ target/
 .ext-survey
 **/.path_index_cache/
 **/.fixtures/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key

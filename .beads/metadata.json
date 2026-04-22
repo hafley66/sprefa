@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "sprefa",
+  "project_id": "bd6d958c-e2d9-4055-89ad-cd4557cb89ca"
+}
