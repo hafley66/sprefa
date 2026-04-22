@@ -1,110 +1,105 @@
 //! End-to-end pattern-op integration: host parse → injected sub-tree →
-//! PatternOp::compile + binds_captures, per spec §14.5a / §14.6.
-//!
-//! Wires `pipeline::op_languages::language_of` into
-//! `sprefa_parse::host_parse_with_injections` and exercises each
-//! pattern op that shipped in this Phase 1 slice.
+//! op-inherent compile_from_tree → Op::pipe / capability methods, per
+//! spec §14.5a / §14.6 / §14.5m.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pipeline::ops::glob::CompiledGlob;
-use pipeline::ops::re::CompiledRe;
-use pipeline::{op_languages, GlobOp, PatternOp, ReOp};
+use pipeline::{Cursor, GlobOp, PatternOp, ReOp, Op};
 use sprefa_parse::{host_parse_with_injections, InjectedTree};
 
 fn fake_file() -> Arc<std::path::Path> {
     Arc::from(PathBuf::from("test.sprf").as_path())
 }
 
-/// Substring of `src` corresponding to an injected body. The injected
-/// tree carries substring-relative byte offsets; the host_node
-/// parse_site points at the *paren_slot* span, so we re-derive the
-/// slot-interior by trimming the enclosing parens.
+/// The slot body: substring between the op's opening `(` and closing `)`.
 fn slot_body<'a>(src: &'a str, inj: &InjectedTree) -> &'a str {
     let host_range = inj.host_node.byte_range.clone();
-    // host_range is the full op_invocation span; find the paren body
-    // via the host tree… simpler in integration tests: assume the
-    // op name precedes a single `(` and extract between `(` and the
-    // final `)`.
     let slice = &src[host_range];
     let open = slice.find('(').expect("op_invocation has `(`");
     let close = slice.rfind(')').expect("op_invocation has `)`");
     &slice[open + 1..close]
 }
 
-#[test]
-fn glob_end_to_end() {
+#[tokio::test]
+async fn glob_end_to_end() {
     let src = "glob(a/$DIR/b)";
     let (parsed, errs) = host_parse_with_injections(
         src,
         fake_file(),
-        &op_languages::language_of,
+        &pipeline::op_languages::language_of,
     );
+
     assert!(errs.is_empty(), "unexpected parse errs: {errs:?}");
     assert_eq!(parsed.injected.len(), 1);
+    assert_eq!(&*parsed.injected[0].language_name, "sprefa_glob");
+
     let inj = &parsed.injected[0];
-    assert_eq!(&*inj.language_name, "sprefa_glob");
-
     let body = slot_body(src, inj);
-    let compiled = GlobOp
-        .compile(&inj.tree, body.as_bytes())
+    let g = GlobOp::compile_from_tree(&inj.tree, body.as_bytes())
         .expect("glob compiles");
-    let g = compiled.downcast::<CompiledGlob>().unwrap();
-    assert!(matches!(
-        g.segments[2],
-        pipeline::ops::glob::Segment::Hole { .. }
-    ));
+    assert!(g.regex.as_str().contains("(?P<DIR>[^/]+)"));
+    assert_eq!(
+        g.bound_captures.iter().map(|a| &**a).collect::<Vec<_>>(),
+        vec!["DIR"]
+    );
 
-    let caps: Vec<String> = GlobOp
+    // PatternOp::binds_captures tree-walk reports the same name set.
+    let probe = GlobOp::default();
+    let caps: Vec<String> = probe
         .binds_captures(&inj.tree, body.as_bytes())
         .into_iter()
         .map(|a| a.to_string())
         .collect();
     assert_eq!(caps, vec!["DIR"]);
+
+    // Op::pipe narrows cursor + records capture.
+    let op: Arc<dyn Op> = Arc::new(g);
+    let ctx = effect_runtime::RtCtx::default();
+    let content: Arc<[u8]> = Arc::from(b"a/middle/b".as_slice());
+    let out = op.pipe(&ctx, Cursor::new(content)).await;
+    assert_eq!(out.len(), 1);
+    let dir = out[0].captures.iter().find(|c| &*c.name == "DIR").expect("DIR capture");
+    assert_eq!(&out[0].content[dir.byte_range.clone()], b"middle");
 }
 
 #[test]
-fn re_end_to_end_binds_sugar_and_native() {
+fn re_end_to_end_sugar_and_native() {
     let src = r"re(TODO\($WHO\) (?P<WHEN>\d{4}))";
     let (parsed, errs) = host_parse_with_injections(
         src,
         fake_file(),
-        &op_languages::language_of,
+        &pipeline::op_languages::language_of,
     );
     assert!(errs.is_empty(), "unexpected parse errs: {errs:?}");
     assert_eq!(parsed.injected.len(), 1);
+    assert_eq!(&*parsed.injected[0].language_name, "sprefa_re");
+
     let inj = &parsed.injected[0];
-    assert_eq!(&*inj.language_name, "sprefa_re");
-
     let body = slot_body(src, inj);
-    let compiled = ReOp
-        .compile(&inj.tree, body.as_bytes())
+    let r = ReOp::compile_from_tree(&inj.tree, body.as_bytes())
         .expect("re compiles");
-    let c = compiled.downcast::<CompiledRe>().unwrap();
-    let captures = c.regex.captures("TODO(alice) 2026").expect("matches");
-    assert_eq!(captures.name("WHO").unwrap().as_str(), "alice");
-    assert_eq!(captures.name("WHEN").unwrap().as_str(), "2026");
+    let caps = r.regex.captures(b"TODO(alice) 2026").expect("matches");
+    assert_eq!(caps.name("WHO").unwrap().as_bytes(), b"alice");
+    assert_eq!(caps.name("WHEN").unwrap().as_bytes(), b"2026");
 
-    let caps: Vec<String> = ReOp
+    let probe = ReOp::default();
+    let names: Vec<String> = probe
         .binds_captures(&inj.tree, body.as_bytes())
         .into_iter()
         .map(|a| a.to_string())
         .collect();
-    assert!(caps.contains(&"WHO".to_string()));
-    assert!(caps.contains(&"WHEN".to_string()));
+    assert!(names.contains(&"WHO".to_string()));
+    assert!(names.contains(&"WHEN".to_string()));
 }
 
 #[test]
 fn str_has_no_injected_entry() {
-    // str is a plain Op. op_languages::language_of returns None for it
-    // (no grammar.js folder contributed). The paren body survives as
-    // opaque host bytes; no InjectedTree is produced.
     let src = r"str(hello $NAME world)";
     let (parsed, errs) = host_parse_with_injections(
         src,
         fake_file(),
-        &op_languages::language_of,
+        &pipeline::op_languages::language_of,
     );
     assert!(errs.is_empty());
     assert_eq!(parsed.pipes[0].ops.len(), 1);
@@ -117,13 +112,40 @@ fn bad_regex_surfaces_as_compile_error() {
     let (parsed, _) = host_parse_with_injections(
         src,
         fake_file(),
-        &op_languages::language_of,
+        &pipeline::op_languages::language_of,
     );
     let inj = &parsed.injected[0];
     let body = slot_body(src, inj);
-    let diags = ReOp
-        .compile(&inj.tree, body.as_bytes())
+    let diags = ReOp::compile_from_tree(&inj.tree, body.as_bytes())
         .expect_err("regex parse error expected");
     assert_eq!(diags.len(), 1);
     assert_eq!(diags[0].code, "pattern/re-syntax");
+}
+
+#[test]
+fn try_raw_regex_is_some_for_regex_and_glob() {
+    let (parsed, _) = host_parse_with_injections(
+        "glob(**/*.rs)",
+        fake_file(),
+        &pipeline::op_languages::language_of,
+    );
+    let inj = &parsed.injected[0];
+    let body = slot_body("glob(**/*.rs)", inj);
+    let g: Arc<dyn Op> = Arc::new(
+        GlobOp::compile_from_tree(&inj.tree, body.as_bytes()).unwrap(),
+    );
+    let raw = g.try_raw_regex().expect("glob exposes raw regex");
+    assert!(raw.as_str().starts_with('^') && raw.as_str().ends_with('$'));
+
+    let (parsed2, _) = host_parse_with_injections(
+        r"re(foo)",
+        fake_file(),
+        &pipeline::op_languages::language_of,
+    );
+    let inj2 = &parsed2.injected[0];
+    let body2 = slot_body(r"re(foo)", inj2);
+    let r: Arc<dyn Op> = Arc::new(
+        ReOp::compile_from_tree(&inj2.tree, body2.as_bytes()).unwrap(),
+    );
+    assert!(r.try_raw_regex().is_some());
 }

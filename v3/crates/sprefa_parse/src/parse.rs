@@ -369,6 +369,37 @@ mod tests {
     }
 
     #[test]
+    fn nested_op_invocation_in_paren_slot() {
+        // fs(glob(**/*.rs)) — nested op_invocation must surface as a real
+        // op_invocation node inside the outer paren_slot, not as an
+        // identifier + balanced_parens shadow shape.
+        let (p, errs) = host_parse("fs(glob(**/*.rs))", fake_file());
+        assert!(errs.is_empty(), "unexpected errs: {errs:?}");
+        let outer = p.pipes[0].ops[0].node();
+        assert_eq!(outer.kind(), "op_invocation");
+        let paren = outer.child_by_field_name("paren").expect("outer paren");
+        // Descend into the paren body and find the nested op_invocation.
+        let mut cur = paren.walk();
+        let mut nested = None;
+        for child in paren.named_children(&mut cur) {
+            if child.kind() == "op_invocation" {
+                nested = Some(child);
+                break;
+            }
+        }
+        let nested = nested.expect("nested op_invocation inside paren_slot");
+        let name = nested
+            .child_by_field_name("name")
+            .expect("nested op has name field");
+        let src = "fs(glob(**/*.rs))";
+        assert_eq!(&src[name.byte_range()], "glob");
+        let inner_paren = nested
+            .child_by_field_name("paren")
+            .expect("nested op has paren_slot");
+        assert_eq!(&src[inner_paren.byte_range()], "(**/*.rs)");
+    }
+
+    #[test]
     fn injections_populated_when_resolver_returns_some() {
         // Resolver returns the sprefa host language for any op. This is
         // not semantically meaningful but exercises the plumbing end to
@@ -431,7 +462,7 @@ mod tests {
             let var  = n.child_by_field_name("var").unwrap();
             out.push((
                 src[rule.byte_range()].to_string(),
-                src[var.byte_range()].trim_start_matches('$').to_string(),
+                src[var.byte_range()].trim_start_matches(|c: char| c == '.' || c == '$').to_string(),
                 src[n.byte_range()].to_string(),
             ));
         }
@@ -442,5 +473,141 @@ mod tests {
             }
             cursor.goto_parent();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // sprefa-4m7.14: Pattern values as first-class — parse-layer acceptance
+    // tests. These tests assert the host-CST shapes that the lowerer (14)
+    // depends on. Each test documents which spec invariant it covers.
+    // -----------------------------------------------------------------------
+
+    /// §14.2 / §14.5c: `fs(glob(**/*.rs))` — the canonical nested-op arg
+    /// form. Outer paren_slot must contain exactly one `op_invocation` named
+    /// child whose `name` field is "glob" and whose inner paren covers the
+    /// glob body.
+    ///
+    /// Three assertions share one parse call: no errors, outer name is "fs",
+    /// inner op name is "glob" with body "**/*.rs".
+    #[test]
+    fn nested_op_with_literal_pattern_body() {
+        let src = "fs(glob(**/*.rs))";
+        let (p, errs) = host_parse(src, fake_file());
+        assert!(errs.is_empty(), "unexpected parse errs: {errs:?}");
+
+        let outer = p.pipes[0].ops[0].node();
+        assert_eq!(outer.kind(), "op_invocation");
+        assert_eq!(&src[outer.child_by_field_name("name").unwrap().byte_range()], "fs");
+
+        let paren = outer.child_by_field_name("paren").expect("outer paren_slot");
+        let mut cur = paren.walk();
+        let nested = paren
+            .named_children(&mut cur)
+            .find(|c| c.kind() == "op_invocation")
+            .expect("op_invocation child inside outer paren_slot");
+
+        let inner_name = nested.child_by_field_name("name").expect("inner name field");
+        assert_eq!(&src[inner_name.byte_range()], "glob");
+
+        let inner_paren = nested.child_by_field_name("paren").expect("inner paren_slot");
+        // Strip the parens to get the body.
+        let inner_paren_src = &src[inner_paren.byte_range()];
+        assert_eq!(inner_paren_src, "(**/*.rs)");
+    }
+
+    /// §14.2 / §14.5c.1: `rev(re($V))` — inner re op carries a term_ref.
+    /// The inner paren_slot must contain a term_ref node whose text is "$V".
+    ///
+    /// Covers the "explicit opt-in" path: rev rejects bare $V but accepts
+    /// rev(re($V)) because the outer re op makes the intent explicit.
+    #[test]
+    fn nested_op_with_term_arg() {
+        let src = "rev(re($V))";
+        let (p, errs) = host_parse(src, fake_file());
+        assert!(errs.is_empty(), "unexpected parse errs: {errs:?}");
+
+        let outer = p.pipes[0].ops[0].node();
+        let paren = outer.child_by_field_name("paren").expect("outer paren_slot");
+
+        let mut cur = paren.walk();
+        let nested = paren
+            .named_children(&mut cur)
+            .find(|c| c.kind() == "op_invocation")
+            .expect("re op_invocation inside rev's paren_slot");
+
+        let inner_paren = nested.child_by_field_name("paren").expect("inner paren_slot");
+
+        // Walk the inner paren body for a term_ref node.
+        let term_ref = find_kind(inner_paren, "term_ref")
+            .expect("term_ref node inside re(...)");
+        assert_eq!(&src[term_ref.byte_range()], "$V");
+    }
+
+    /// §14.2: `:main` in arg position produces an `atom_literal` node whose
+    /// text span covers the full `:main` bytes.
+    #[test]
+    fn atom_literal_in_slot_position() {
+        let src = "rev(:main)";
+        let (p, errs) = host_parse(src, fake_file());
+        assert!(errs.is_empty(), "unexpected parse errs: {errs:?}");
+
+        let outer = p.pipes[0].ops[0].node();
+        let paren = outer.child_by_field_name("paren").expect("paren_slot");
+
+        let atom = find_kind(paren, "atom_literal")
+            .expect("atom_literal inside rev(:main)");
+        assert_eq!(&src[atom.byte_range()], ":main");
+    }
+
+    /// §14.2: `comment(re(/\*), re(\*/))` — two comma-separated arg groups
+    /// inside a paren_slot. The slot must contain two `op_invocation` children
+    /// separated by at least one `slot_punct` (comma) node.
+    #[test]
+    fn mixed_args_split_on_comma() {
+        // Use a two-arg comment invocation with two nested re ops.
+        let src = r"comment(re(\/\*), re(\*\/))";
+        let (p, errs) = host_parse(src, fake_file());
+        assert!(errs.is_empty(), "unexpected parse errs: {errs:?}");
+
+        let outer = p.pipes[0].ops[0].node();
+        let paren = outer.child_by_field_name("paren").expect("paren_slot");
+
+        let mut cur = paren.walk();
+        let nested_ops: Vec<_> = paren
+            .named_children(&mut cur)
+            .filter(|c| c.kind() == "op_invocation")
+            .collect();
+        assert_eq!(nested_ops.len(), 2, "expected two op_invocation children");
+
+        // Both inner ops should be named "re".
+        for op in &nested_ops {
+            let name_node = op.child_by_field_name("name").expect("op name");
+            assert_eq!(&src[name_node.byte_range()], "re");
+        }
+    }
+
+    /// §14.2: Grammar must tolerate a bare identifier in slot position
+    /// without hard-failing the parse. The lowerer (not the grammar) is
+    /// responsible for emitting `value/bare-ident`.
+    #[test]
+    fn bare_ident_in_slot_still_parses() {
+        let src = "rev(main)";
+        let (p, _errs) = host_parse(src, fake_file());
+        // Parse must produce at least one pipe/op, regardless of errors.
+        assert_eq!(p.pipes.len(), 1, "source parses to exactly one pipe");
+        assert!(!p.pipes[0].ops.is_empty(), "pipe has at least one op");
+        // Op name is "rev".
+        assert_eq!(&*p.pipes[0].ops[0].name, "rev");
+    }
+
+    // Helper: depth-first search for the first node of a given kind.
+    fn find_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>> {
+        if node.kind() == kind { return Some(node); }
+        let mut cur = node.walk();
+        for child in node.children(&mut cur) {
+            if let Some(found) = find_kind(child, kind) {
+                return Some(found);
+            }
+        }
+        None
     }
 }

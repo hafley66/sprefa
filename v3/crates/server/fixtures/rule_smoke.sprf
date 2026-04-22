@@ -1,0 +1,5 @@
+# rule-form smoke: brace body holds two sub-pipes under one rule name.
+rule(sources) {
+  repo($R) > rev(HEAD) > fs(**/*.rs);
+  repo($R) > rev(HEAD) > fs(**/*.toml);
+}

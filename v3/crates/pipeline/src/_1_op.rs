@@ -32,13 +32,34 @@
 //! and `c.get_slot::<T>`, with the TypeId-map dyn boundary visible but
 //! typed at the call site.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use regex::bytes::Regex;
+
 use crate::_0_cursor::Cursor;
+use crate::value::ArgSpec;
 use effect_runtime::{BoxFuture, RtCtx};
 
-pub trait Op: Send + Sync + 'static {
+pub trait Op: Send + Sync + std::fmt::Debug + 'static {
     /// Stable identifier used for `PathSeg::Op { name, .. }` tagging
     /// and for diagnostics. Framework reads this, ops don't.
     fn name(&self) -> &'static str;
+
+    /// Per-slot expectation. The lowerer consults this slot-by-slot to
+    /// validate each arg and reject obvious misuses (atom into an op
+    /// slot, etc.).
+    ///
+    /// Default is empty — ops with no args or with opaque bodies (`str`,
+    /// `void`) skip it. Ops that take a single pattern-capable arg
+    /// return a one-element slice; multi-arg ops return one entry per
+    /// slot in lex order.
+    ///
+    /// The lowerer walks arg slots positionally. Slot count > spec len
+    /// is a lower-time diagnostic. Slot count < spec len is also a
+    /// diagnostic unless the last spec entry is declared variadic
+    /// (follow-up; not in this slice).
+    fn arg_spec(&self) -> &[ArgSpec] { &[] }
 
     /// Per-cursor work. Returns zero-or-more output cursors.
     ///
@@ -66,4 +87,62 @@ pub trait Op: Send + Sync + 'static {
     /// Editor highlight queries for the sub-grammar (§14.5). Usually
     /// `include_str!("queries/highlights.scm")` via `#[sprf_pattern_op]`.
     fn highlights(&self) -> Option<&'static str> { None }
+
+    // -----------------------------------------------------------------
+    // Capability surface (§14.5m)
+    //
+    // Absorbs the bulk-inspection slots previously on `PatternValue`.
+    // Non-pattern ops inherit the empty defaults. Pattern ops override
+    // so outer consumers (fs, rev, repo, comment, ...) can inspect
+    // without a concrete-type downcast.
+    // -----------------------------------------------------------------
+
+    /// `$NAME` holes this op declares as writeable/readable captures.
+    /// The resolver consults this at lower time to validate downstream
+    /// `> $NAME` references. Default empty — non-pattern ops bind
+    /// nothing through this channel.
+    fn bound_captures(&self) -> &[Arc<str>] { &[] }
+
+    /// Bulk escape hatch. `Some(&regex)` iff this op's work is a regex
+    /// run on `cursor.active()` as raw bytes with no structural
+    /// post-filter (identity projection, all holes unbound). Consumers
+    /// match on this: `Some` → hand to a bulk backend; `None` → fall
+    /// back to `pipe` per cursor. Default `None`.
+    fn try_raw_regex(&self) -> Option<&Regex> { None }
+
+    /// Partial eager collapse: rebuild the matcher with upstream-bound
+    /// terms substituted as escaped literals. Bulk consumers call this
+    /// when at least one term is bound; for the all-unbound case they
+    /// use `try_raw_regex`. `None` = op does not carry a re-buildable
+    /// template. Default `None`.
+    fn materialize_with(
+        &self,
+        _bindings: &HashMap<Arc<str>, Vec<u8>>,
+    ) -> Option<Regex> { None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ops::{FsOp, RepoOp, RevOp, VoidOp};
+
+    #[test]
+    fn default_arg_spec_is_empty() {
+        let op = VoidOp;
+        assert!(op.arg_spec().is_empty());
+    }
+
+    #[test]
+    fn repo_rev_declare_any_arg() {
+        let repo = RepoOp::from_source("myorg/*").unwrap();
+        assert!(matches!(repo.arg_spec(), [ArgSpec::Any]));
+        let rev = RevOp::from_source("main").unwrap();
+        assert!(matches!(rev.arg_spec(), [ArgSpec::Any]));
+    }
+
+    #[test]
+    fn fs_declares_pattern_arg() {
+        let fs = FsOp::from_source("**/*.rs").unwrap();
+        assert!(matches!(fs.arg_spec(), [ArgSpec::Op]));
+    }
 }

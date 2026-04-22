@@ -1,0 +1,220 @@
+//! `rev(...)` — filter or bind on `cursor.rev` (parse.md §14.5c).
+//!
+//! Mechanically identical to [`super::repo::RepoOp`] but with one
+//! additional v2-inherited guard: each distinct rev potentially
+//! materializes its own worktree under the real Reader, so unbounded
+//! matches (`*`, `**`, `**/*`, `*/*`, `$V`) are rejected at
+//! construction time. Bounded globs (`v1.*`, `main`, `*-stable`) pass.
+
+use std::sync::Arc;
+
+use effect_runtime::{BoxFuture, RtCtx};
+
+use crate::_0_cursor::{Capture, Cursor};
+use crate::_1_op::Op;
+use crate::op_ctor::OpCtor;
+use crate::pattern_op::PatternDiagnostic;
+use crate::value::{ArgSpec, Value};
+
+const REV_ARG_SPEC: &[ArgSpec] = &[ArgSpec::Any];
+
+#[derive(Debug)]
+pub struct RevOp {
+    pub mode: RevMode,
+}
+
+#[derive(Debug)]
+pub enum RevMode {
+    Filter(Arc<dyn Op>),
+    Bind(Arc<str>),
+}
+
+const UNBOUNDED_WILDCARDS: &[&str] = &["*", "**", "**/*", "*/*"];
+
+impl RevOp {
+    pub fn from_source(src: &str) -> Result<Self, Vec<PatternDiagnostic>> {
+        let arg = src.trim();
+        if arg.is_empty() {
+            return Err(vec![PatternDiagnostic {
+                code: "rev/missing-arg",
+                message: "rev requires a glob pattern or capture (e.g. rev(main) or rev(v1.*))".into(),
+                byte_range: 0..src.len(),
+            }]);
+        }
+        if let Some(name) = super::repo::parse_capture(arg) {
+            return Err(vec![PatternDiagnostic {
+                code: "rev/unbounded-capture",
+                message: format!(
+                    "rev(${name}) binds every rev unconditionally — \
+                     each rev materializes a git worktree on first query. \
+                     Bind against a bounded filter upstream or inline, e.g. \
+                     rev(v1.*) > rev(${name})"
+                ),
+                byte_range: 0..src.len(),
+            }]);
+        }
+        if UNBOUNDED_WILDCARDS.iter().any(|w| *w == arg) {
+            return Err(vec![PatternDiagnostic {
+                code: "rev/unbounded-wildcard",
+                message: format!(
+                    "rev pattern `{arg}` matches every rev unconditionally. \
+                     Narrow with a prefix/suffix: rev(v1.*), rev(*-stable), rev(main)."
+                ),
+                byte_range: 0..src.len(),
+            }]);
+        }
+        let pat = super::glob::compile_str(arg)?;
+        Ok(RevOp { mode: RevMode::Filter(Arc::new(pat)) })
+    }
+
+    pub fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
+        match values.as_slice() {
+            [Value::Term(name)] => Err(vec![PatternDiagnostic {
+                code: "rev/unbounded-capture",
+                message: format!(
+                    "rev(${name}) binds every rev unconditionally — \
+                     each rev materializes a git worktree on first query. \
+                     Bind against a bounded filter upstream or inline, e.g. \
+                     rev(v1.*) > rev(${name})"
+                ),
+                byte_range: 0..0,
+            }]),
+            [Value::Atom(s)] | [Value::Str(s)] => {
+                if UNBOUNDED_WILDCARDS.iter().any(|w| *w == s.as_ref()) {
+                    return Err(vec![PatternDiagnostic {
+                        code: "rev/unbounded-wildcard",
+                        message: format!(
+                            "rev pattern `{s}` matches every rev unconditionally. \
+                             Narrow with a prefix/suffix: rev(v1.*), rev(*-stable), rev(main)."
+                        ),
+                        byte_range: 0..0,
+                    }]);
+                }
+                let pat = super::glob::compile_str(s)?;
+                Ok(RevOp { mode: RevMode::Filter(Arc::new(pat)) })
+            }
+            [Value::Op(op)] if op.try_raw_regex().is_some() => {
+                Ok(RevOp { mode: RevMode::Filter(op.clone()) })
+            }
+            [Value::Op(_)] => Err(vec![PatternDiagnostic {
+                code: "rev/unsupported-pattern",
+                message: "rev requires an op exposing a raw regex (glob or re)".into(),
+                byte_range: 0..0,
+            }]),
+            [] => Err(vec![PatternDiagnostic {
+                code: "rev/missing-arg",
+                message: "rev requires a glob pattern or capture (e.g. rev(main) or rev(v1.*))".into(),
+                byte_range: 0..0,
+            }]),
+            _ => Err(vec![PatternDiagnostic {
+                code: "value/arity-mismatch",
+                message: format!("rev takes 1 argument, got {}", values.len()),
+                byte_range: 0..0,
+            }]),
+        }
+    }
+
+    pub fn filter(pat: Arc<dyn Op>) -> Self {
+        RevOp { mode: RevMode::Filter(pat) }
+    }
+
+    pub fn bind(name: impl Into<Arc<str>>) -> Self {
+        RevOp { mode: RevMode::Bind(name.into()) }
+    }
+}
+
+impl OpCtor for RevOp {
+    const NAME: &'static str = "rev";
+    const DOC:  &'static str = "\
+**rev**(_string_ | `$NAME`)
+
+Filter or bind on `cursor.rev`. Accepts a literal revision; rejects
+wildcards like `*`/`**` and bare captures without prior context.
+
+- `rev(HEAD)` / `rev(main)` — filter.
+- `rev($V)` — bind.
+";
+
+    fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
+        Self::from_values(values)
+    }
+}
+
+impl Op for RevOp {
+    fn name(&self) -> &'static str { "rev" }
+
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
+        Box::pin(async move {
+            match &self.mode {
+                RevMode::Filter(op) => {
+                    let re = match op.try_raw_regex() {
+                        Some(r) => r,
+                        None => return vec![],
+                    };
+                    if re.is_match(c.rev.as_bytes()) { vec![c] } else { vec![] }
+                }
+                RevMode::Bind(name) => {
+                    let mut out = c;
+                    let v = out.rev.clone();
+                    out.captures.push(Capture::synthesized(name.clone(), v));
+                    out.last_bound = Some(name.clone());
+                    vec![out]
+                }
+            }
+        })
+    }
+
+    fn language(&self) -> Option<tree_sitter::Language> {
+        crate::op_languages::language_of("glob")
+    }
+
+    fn arg_spec(&self) -> &[ArgSpec] { REV_ARG_SPEC }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_cursor(rev: &str) -> Cursor {
+        let mut c = Cursor::default();
+        c.rev = Arc::from(rev);
+        c
+    }
+
+    #[tokio::test]
+    async fn filter_and_bind_scenarios() {
+        let ctx = RtCtx::default();
+
+        let op = RevOp::from_source("v1.*").unwrap();
+        assert_eq!(op.pipe(&ctx, mk_cursor("v1.2.3")).await.len(), 1);
+        assert_eq!(op.pipe(&ctx, mk_cursor("v2.0")).await.len(), 0);
+
+        let op = RevOp::from_source("main").unwrap();
+        assert_eq!(op.pipe(&ctx, mk_cursor("main")).await.len(), 1);
+        assert_eq!(op.pipe(&ctx, mk_cursor("develop")).await.len(), 0);
+
+        let op = RevOp::bind("V");
+        let out = op.pipe(&ctx, mk_cursor("main")).await;
+        assert_eq!(out.len(), 1);
+        assert_eq!(&*out[0].captures[0].name, "V");
+        assert_eq!(out[0].captures[0].bytes(&out[0].content), b"main");
+    }
+
+    #[test]
+    fn unbounded_forms_rejected_at_parse() {
+        fn err_of(src: &str) -> Vec<PatternDiagnostic> {
+            match RevOp::from_source(src) {
+                Err(e) => e,
+                Ok(_) => panic!("expected rejection for `{src}`"),
+            }
+        }
+        for bare in UNBOUNDED_WILDCARDS {
+            let err = err_of(bare);
+            assert_eq!(err.len(), 1);
+            assert_eq!(err[0].code, "rev/unbounded-wildcard",
+                "unexpected code for `{bare}`: {}", err[0].code);
+        }
+        assert_eq!(err_of("$V")[0].code, "rev/unbounded-capture");
+        assert_eq!(err_of("  ")[0].code, "rev/missing-arg");
+    }
+}

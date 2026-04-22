@@ -16,9 +16,13 @@ use effect_runtime::{BoxFuture, RtCtx};
 
 use crate::_0_cursor::Cursor;
 use crate::_1_op::Op;
+use crate::op_ctor::OpCtor;
+use crate::pattern_op::PatternDiagnostic;
+use crate::value::Value;
 
 /// Compiled call-site for `str(...)`. One instance per invocation in
 /// the lowered pipeline; `body` is the exact paren-body bytes as UTF-8.
+#[derive(Debug)]
 pub struct StrOp {
     pub body: Arc<str>,
 }
@@ -33,6 +37,28 @@ impl StrOp {
 /// read it via `cursor.get_slot::<StrValue>()`.
 #[derive(Clone)]
 pub struct StrValue(pub Arc<str>);
+
+impl OpCtor for StrOp {
+    const NAME: &'static str = "str";
+    const DOC:  &'static str = "\
+**str**(_bytes_)
+
+Constant bytes, stashed in a slot for downstream consumers. No sub-
+grammar; `$NAME` inside the body is literal text (§14.2).
+";
+
+    fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
+        match values.as_slice() {
+            [] => Ok(StrOp::new("")),
+            [Value::Str(s)] | [Value::Atom(s)] => Ok(StrOp::new(s.clone())),
+            _ => Err(vec![PatternDiagnostic {
+                code: "value/wrong-kind",
+                message: "str takes a single string body".into(),
+                byte_range: 0..0,
+            }]),
+        }
+    }
+}
 
 impl Op for StrOp {
     fn name(&self) -> &'static str { "str" }

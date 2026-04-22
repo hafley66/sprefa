@@ -1,0 +1,25 @@
+[package]
+name    = "server"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sprefa-lsp"
+path = "src/bin/sprefa-lsp.rs"
+
+[[bin]]
+name = "sprefa-run"
+path = "src/bin/sprefa-run.rs"
+
+[dependencies]
+effect_runtime = { path = "../effect_runtime" }
+pipeline       = { path = "../pipeline" }
+sprefa_parse   = { path = "../sprefa_parse" }
+tree-sitter    = "0.24"
+tower-lsp      = "0.20"
+tokio          = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync"] }
+toml           = "0.8"
+serde          = { version = "1", features = ["derive"] }
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -15,6 +15,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::ops::Range;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Framework-owned trail of how a cursor arrived at this point. Every
@@ -28,13 +29,54 @@ pub enum PathSeg {
 
 pub type SprfPath = Vec<PathSeg>;
 
-/// A captured span. Minimal shape for this slice: only SpanBacked.
-/// CaptureKind trait (SpanBacked vs Synthesized vs …) is a follow-up
-/// slice; per v2/_0_types.rs:212-264.
+/// A captured span. `kind` mirrors v2/_0_types.rs:212-264 — SpanBacked
+/// means the capture's bytes live at `cursor.content[byte_range]`;
+/// Synthesized means the bytes live in `kind.value` and `byte_range` is
+/// only a hint (typically `0..0`). Synthesized captures are written by
+/// ops like `repo($R)` / `rev($V)` that bind a cursor field (which is
+/// not inside `cursor.content`) into a name.
 #[derive(Clone, Debug)]
 pub struct Capture {
     pub name: Arc<str>,
     pub byte_range: Range<usize>,
+    pub kind: CaptureKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum CaptureKind {
+    /// Bytes live at `cursor.content[byte_range]`. The default shape for
+    /// regex/glob/ast captures that name a span inside the file content.
+    SpanBacked,
+    /// Bytes are carried inline. Produced by ops that bind external
+    /// state (repo / rev / fs slug) or by rules that emit a computed
+    /// value that has no span in any source file.
+    Synthesized { value: Arc<str> },
+}
+
+impl Capture {
+    /// New SpanBacked capture. The common constructor; used by
+    /// capture_write, Pattern::apply, and any op emitting a
+    /// content-backed span.
+    pub fn span_backed(name: Arc<str>, byte_range: Range<usize>) -> Self {
+        Capture { name, byte_range, kind: CaptureKind::SpanBacked }
+    }
+
+    /// New Synthesized capture carrying literal bytes. Used by
+    /// repo/rev/fs bind mode.
+    pub fn synthesized(name: Arc<str>, value: Arc<str>) -> Self {
+        Capture { name, byte_range: 0..0, kind: CaptureKind::Synthesized { value } }
+    }
+
+    /// Bytes this capture carries, from whichever source its `kind`
+    /// selects. Callers resolving bindings (Pattern read mode, hover,
+    /// downstream ops) should prefer this over reading
+    /// `cursor.content[byte_range]` directly.
+    pub fn bytes<'a>(&'a self, cursor_content: &'a [u8]) -> &'a [u8] {
+        match &self.kind {
+            CaptureKind::SpanBacked => &cursor_content[self.byte_range.clone()],
+            CaptureKind::Synthesized { value } => value.as_bytes(),
+        }
+    }
 }
 
 /// The unit flowing between ops.
@@ -54,6 +96,17 @@ pub struct Cursor {
     pub captures: Vec<Capture>,
     pub path: SprfPath,
     pub last_bound: Option<Arc<str>>,
+    /// Repo slug the cursor is scoped to. Empty string means "no repo
+    /// scope" and is the ctor default. repo/rev/fs are v2-native Cursor
+    /// fields (parse.md §14.5c); repo/rev ops read or bind them and fs
+    /// uses all three as its walk anchor.
+    pub repo: Arc<str>,
+    /// Revision (tag/branch/SHA) within `repo`. Same empty-as-none
+    /// convention as `repo`.
+    pub rev: Arc<str>,
+    /// Repo-relative file path the cursor addresses, when known. `None`
+    /// before any `fs` op has fanned out.
+    pub fs: Option<Arc<Path>>,
     slots: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
@@ -65,6 +118,9 @@ impl Default for Cursor {
             captures: Vec::new(),
             path: Vec::new(),
             last_bound: None,
+            repo: Arc::from(""),
+            rev: Arc::from(""),
+            fs: None,
             slots: HashMap::new(),
         }
     }
@@ -120,6 +176,9 @@ impl Cursor {
             captures: self.captures.clone(),
             path: self.path.clone(),
             last_bound: None,
+            repo: self.repo.clone(),
+            rev: self.rev.clone(),
+            fs: self.fs.clone(),
             slots: HashMap::new(),
         }
     }

@@ -1,117 +1,212 @@
 # sprefa v3
 
-Top-level for sprefa v3 work. Everything here is pre-stable; the v2
-crate in the sibling `v2/` directory remains the running system.
+Cross-codebase causal-linking engine. v3 is the active line; the v2
+crate in the sibling `v2/` directory still runs but new work lands here.
 
-## Layout
+Language spec: [`crates/sprefa_parse/parse.md`](crates/sprefa_parse/parse.md).
+Perf + framework notes: [`docs/FINDINGS.md`](docs/FINDINGS.md).
 
+## What v3 does today
+
+- Parses `.sprf` source into pipes with a tree-sitter host grammar +
+  per-op injected sub-grammars (glob, regex).
+- Runs pipes through a reactive runner built on top of
+  `effect_runtime` (pure-effect cache + cancellation + batching).
+- Ships an LSP (`sprefa-lsp`) + CLI (`sprefa-run`) + VS Code
+  extension (`editors/vscode/`).
+
+## Op inventory (landed)
+
+| op          | body                  | what it does                                                                      |
+|-------------|-----------------------|-----------------------------------------------------------------------------------|
+| `repo`      | glob `or` `$NAME`     | filter on or bind `cursor.repo`                                                   |
+| `rev`       | literal `or` `$NAME`  | filter on or bind `cursor.rev`; rejects wildcards                                 |
+| `fs`        | glob `or` `$NAME`     | enumerate files under `(repo, rev)`; filter mode or bind mode                     |
+| `read`      | *(none)*              | explicit byte-load. Optional — `comment`/`print`/etc. auto-load via `ensure_content_loaded` |
+| `comment`   | regex `[, regex]`     | narrow `cursor.byte_range` to comment-marker regions (sequential or paired)       |
+| `print`     | `[prefix]`            | emit `cursor.active()` as one line via `PrintEffect`                              |
+| `str`       | raw bytes             | stash a constant byte slot                                                        |
+| `void`      | *(none)*              | drop the cursor; fork-arm tail                                                    |
+| `> $TARGET` | *(grammar-lowered)*   | capture-write: name `cursor.active()` as `$TARGET`                                |
+| `rule(N)`   | single pipe or brace  | name a pipe or a group of pipes                                                   |
+
+Parametric rules + sub-grammar ops (`ast[lang]`, `json`, `md`) are
+specified in `parse.md` but not yet landed.
+
+## Quick recipe
+
+Create `hello.sprf`:
+
+```sprf
+# Find "sprefa-run" mentions inside comments under this tree.
+fs(**/*.rs) > comment("sprefa-run") > print("match")
 ```
-v3/
-├── Cargo.toml                           workspace root
-├── crates/
-│   └── effect_runtime/                  framework: EffectKind + PureEffect,
-│                                        Batcher (CancellationToken),
-│                                        RtCtx (ArcSwap registry,
-│                                        rebind, invalidate_domain,
-│                                        cancel_all), five batchers
-│                                        incl. CacheLayer, core telemetry
-├── experiments/
-│   ├── effect_proof/                    consumer: demo effects + 3 benches
-│   │                                    (ast-grep parity, sqlite batched
-│   │                                    inserts, git blob walk) + tests
-│   └── parse_experiment/                earlier parse-direction probe
-│                                        (own inner workspace)
-└── docs/
-    ├── FINDINGS.md                      teaching doc: perf levers, topology
-    │                                    taxonomy, plugin perf affirmation,
-    │                                    sqlite write leg, git bench,
-    │                                    design-doc join, followups
-    ├── PRIOR_ART.md                     ten-project survey of typed-
-    │                                    effect-dispatcher libs with
-    │                                    shape-match matrix
-    ├── v3-plugin-author-surface.md      Phase A/B/C/D row table for the
-    │                                    op-author lifecycle
-    ├── v3-min-author-ops.md             target metric + validation
-    ├── v3-vs-v2-reading-preview.md      what a v3 op reads like vs v2
-    └── convergent-evolution-effect-dispatcher.md
-                                         Haxl / redux-saga / tower / v3
-                                         unification
+
+`fs` lists paths; `comment` + `print` auto-load bytes on demand via
+the shared `ensure_content_loaded` helper. An explicit `> read` step
+is only needed to force-load at a specific point (e.g. for a custom
+op that does not call the helper yet).
+
+Run it:
+
+```bash
+cd v3
+cargo build -p server --bin sprefa-run
+./target/debug/sprefa-run hello.sprf --root crates/server --rev HEAD
 ```
 
-## Quick tour
+Output: one `match: <line>` per comment region hit, with a trailing
+`<header> — N rows` summary.
 
-1. `docs/FINDINGS.md` — the measurements and the rules they support.
-   Start here.
-2. `docs/PRIOR_ART.md` — survey of the Rust + adjacent ecosystem,
-   ranked by shape-match.
-3. `crates/effect_runtime/src/lib.rs` — framework, ~240 LoC.
-4. `crates/effect_runtime/src/batchers/` — four topologies +
-   `CacheLayer` (moka-backed, keyed on `PureEffect::Key`, domain
-   invalidation via `ctx.invalidate_domain(d)`).
-5. `experiments/effect_proof/src/bin/` — four benches that run
-   against `v2/tests/smoke/.fixtures/linux` (+ an in-memory cache A/B
-   harness) and report per-effect throughput via core telemetry.
+## Binding and filtering
+
+```sprf
+# Bind (synthesized capture written into cursor).
+repo($R) > rev(HEAD) > fs($P)
+# → emits one row per file, with R, P captures set.
+
+# Filter (keep only matching cursors).
+repo(myorg/*) > rev(HEAD) > fs(src/**/*.rs)
+```
+
+## Rules and rule-bodies
+
+```sprf
+rule(sources) {
+  repo($R) > rev(HEAD) > fs(**/*.rs);
+  repo($R) > rev(HEAD) > fs(**/*.toml);
+}
+```
+
+A brace body lowers to one sub-pipe per `;`, each run under the rule's
+name. Output rows are tagged with `rule sources pipe 0 — …`.
+
+## Config file
+
+Seeds can live in `.sprefa.toml` instead of CLI flags:
+
+```toml
+[[seeds]]
+slug = "server"
+root = "crates/server"
+rev  = "HEAD"
+```
+
+```bash
+./target/debug/sprefa-run hello.sprf --config .sprefa.toml
+```
+
+## VS Code extension
+
+`editors/vscode/` ships syntax highlighting + an LSP client that talks
+to the `sprefa-lsp` binary built from this workspace.
+
+### One-shot install
+
+```bash
+editors/vscode/install.sh           # debug build
+editors/vscode/install.sh --release # or optimized
+```
+
+The script:
+
+1. Builds `sprefa-lsp` via `cargo build -p server --bin sprefa-lsp`.
+2. Runs `npm install` + `tsc` in `editors/vscode/`.
+3. Packages a local `.vsix` with `vsce`.
+4. Installs it with `code --install-extension … --force`.
+5. Writes the absolute path of the built binary into VS Code user
+   settings under `sprf.serverPath`, so the client never falls back
+   to a random `sprefa-lsp` from `$PATH`.
+
+Re-runs are idempotent — rebuilding after a Rust change is just
+`editors/vscode/install.sh` again. Reload any open VS Code window
+afterward to pick up the new binary.
+
+Prerequisites: `code`, `vsce`, `node`/`npm`, `cargo`. On macOS:
+
+```bash
+brew install --cask visual-studio-code
+npm install -g @vscode/vsce
+```
+
+### Uninstall
+
+```bash
+code --uninstall-extension sprefa.sprf
+```
+
+### What the extension surfaces today
+
+Hover on any op name (`repo`, `fs`, `read`, `comment`, `print`, …) to
+see its Registry doc. Hover inside injected pattern bodies
+(glob, regex) is planned; the host-name path is live.
+
+## Smoke tests
+
+```bash
+v3/tests/smoke/_1_run.sh      # fs over .rs files
+v3/tests/smoke/_2_rule.sh     # brace-body sub-pipes
+v3/tests/smoke/_3_comment.sh  # fs > read > comment > print end-to-end
+```
+
+## Fixtures and examples
+
+Landed, runnable today:
+
+- [`crates/server/fixtures/smoke.sprf`](crates/server/fixtures/smoke.sprf)
+  — minimal `repo > rev > fs` bind.
+- [`crates/server/fixtures/rule_smoke.sprf`](crates/server/fixtures/rule_smoke.sprf)
+  — `rule(sources) { ... }` with two sub-pipes.
+- [`crates/server/fixtures/comment_smoke.sprf`](crates/server/fixtures/comment_smoke.sprf)
+  — full content-contract walk: `fs > read > comment > print`.
+
+Parse-only (host CST coverage, no runtime):
+
+- [`crates/tree-sitter-sprefa/tests/kitchen_sink.rs`](crates/tree-sitter-sprefa/tests/kitchen_sink.rs)
+  — one source exercising every §8–§13 syntax node: `rule(…)`,
+  `ast[lang]{…}`, `&.$X` cursor-ref, `${target.$FIELD > $T}`
+  xref capture, `sh{…}` effect, `tag(:repo, $R)`.
+
+Prior-art kitchen sinks (reference only; they target v1/v2 surface and
+exercise ops that v3 has not yet ported):
+
+- [`crates/sprf/tests/fixtures/kitchen_sink.sprf`](../crates/sprf/tests/fixtures/kitchen_sink.sprf)
+  — v1 full feature sweep: `fs`, `json`, `folder`, scoped blocks,
+  recursive descent, scan-pointer joins, cross-repo refs.
+- [`crates/sprf-lsp/tests/e2e/fixtures/kitchen_sink.sprf`](../crates/sprf-lsp/tests/e2e/fixtures/kitchen_sink.sprf)
+  / [`kitchen_sink_v2.sprf`](../crates/sprf-lsp/tests/e2e/fixtures/kitchen_sink_v2.sprf)
+  — LSP diagnostics / hover fixtures for v1 and v2.
 
 ## Build and test
 
 ```bash
 cd v3
-cargo test                    # 10 tests green
-cargo build --release         # builds three bench binaries
-./target/release/ast_grep_v3_bench --root ../v2/tests/smoke/.fixtures/linux \
-    --workers 8 --trials 3 --pattern 'printk($$$)' --lang c --mode batch
-./target/release/sqlite_v3_bench --root ../v2/tests/smoke/.fixtures/linux \
-    --workers 8 --trials 3 --chunk 256 --cap 16 --max-batch 8
-./target/release/git_tree_bench --repo ../v2/tests/smoke/.fixtures/linux \
-    --trials 3 --needle printk
+cargo test                               # full workspace
+cargo test -p pipeline --lib             # fast lib tests
+cargo build -p server --bin sprefa-run
+cargo build -p server --bin sprefa-lsp
 ```
 
-Or source the helpers and drive by name:
-
-```bash
-source v3/experiments/effect_proof/helpers.bash
-_.sprfv3.bench.help                         # list all functions
-_.sprfv3.bench.build && _.sprfv3.bench.build-probe
-_.sprfv3.bench.probe-no-prefilter 8 3       # expose the 6x lever
-_.sprfv3.bench.head-to-head-ast-grep 8      # probe vs ctx.put, 5 trials
-_.sprfv3.bench.three-domains                # ast-grep + sqlite + git
-```
-
-Each bench prints a per-effect table from `ctx.telemetry().summary()`:
+## Layout
 
 ```
-effect                  count       p50       p95       p99     mean    total_MB    wall   MB/s_wall
-ScanBatch                   1     3.75s     3.75s     3.75s    3.75s    1342.2 MB   3.75s     358.4
+v3/
+├── Cargo.toml
+├── crates/
+│   ├── effect_runtime/        framework: EffectKind, PureEffect, Batcher, RtCtx
+│   ├── pipeline/              Op trait, Cursor, registry, ops, effects
+│   ├── sprefa_parse/          host tree-sitter parse + parse.md spec
+│   ├── sprefa_macros/         proc-macros (pattern-op derive)
+│   ├── server/                sprefa-run CLI + sprefa-lsp + DocSession
+│   └── tree-sitter-sprefa/    host grammar (grammar.js, parser.c)
+├── experiments/               effect_proof benches, lang_prototype
+├── docs/                      FINDINGS, PRIOR_ART, spec side-files
+└── tests/smoke/               end-to-end shell scripts
 ```
 
-## Status
+## Further reading
 
-- Framework surface: `EffectKind`, `PureEffect`, `Batcher<E>` (with
-  `CancellationToken`), `RtCtx`/`RtCtxBuilder`, five batchers
-  (`Passthrough`, `WorkSteal`, `BoundedWorkSteal`, `BoundedBatched`,
-  `CacheLayer`), telemetry.
-- Four benches: ast-grep batch/per-file (3.69s / 4.17s), sqlite
-  extract+insert (2.07s / 746k rows/s), git walk (git2 4.13s vs
-  shell-out 1.92s ≈ 2.14×), cache A/B (~4.3× warm-pass speedup).
-- 19 tests green. Cancellation, ArcSwap-backed handler rebinding,
-  domain-bucketed cache invalidation, and jemalloc pinning landed
-  against the same measured perf numbers.
-
-## Crate boundary intent
-
-`effect_runtime` stays neutral: tokio + rayon + crossbeam, nothing
-else. Anything domain-specific (ast-grep, sqlite, git, regex, specific
-format) lives in the consumer (`effect_proof` today, `sprefa-v3`
-later).
-
-Cancellation is decided (token on `Batcher::run`, root token on `RtCtx`
-with `cancel_all`). Once sprefa v3 exercises the surface end-to-end,
-`effect_runtime` is a cratesio publication candidate. Names floated:
-`hopp`, `taxon`, `fable`, `kit`, `effect-dispatch`.
-
-## Related
-
-- `v2/examples/throughput_probe_v2.rs` — the perf probe that produced
-  the baseline numbers referenced throughout `FINDINGS.md`.
-- `chat_log/20260420.0.v3-perf-plugin-synthesis-and-library-split.md`
-  — session notes for the work that landed this directory.
+- `crates/sprefa_parse/parse.md` — language spec. §14.5 covers each
+  op's sub-grammar contract; §14.5i-m cover the ops added this week.
+- `docs/FINDINGS.md` — perf measurements and the rules they support.
+- `docs/PRIOR_ART.md` — Haxl / tower / salsa / redux-saga survey.

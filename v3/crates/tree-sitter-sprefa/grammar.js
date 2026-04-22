@@ -39,7 +39,16 @@ module.exports = grammar({
 
   word: $ => $.identifier,
 
-  conflicts: $ => [],
+  conflicts: $ => [
+    // `foo[bar]` inside a slot body: op_invocation vs identifier + _balanced_brackets.
+    // GLR explores both; lowerer picks op_invocation when the token after the
+    // identifier is `[` / `(` / `{` (op-head shape). See parse.md §14.5.
+    [$.op_invocation, $._slot_atom],
+    // `foo(bar){baz}` nested: brace_slot extends the inner op, or the `{baz}`
+    // is a `_balanced_braces` atom of the outer body. GLR produces both; the
+    // lowerer sees op_invocation with brace_slot and takes it.
+    [$.op_invocation],
+  ],
 
   rules: {
     source_file: $ => repeat($._stmt),
@@ -83,6 +92,7 @@ module.exports = grammar({
     _slot_atom: $ => choice(
       $.carveout_expr,
       $.shell_literal,
+      $.op_invocation,
       $.string_literal,
       $.raw_string_literal,
       $.atom_literal,
@@ -163,11 +173,20 @@ module.exports = grammar({
     // `${rule.$V}` is a sub-case of carveout_expr whose body is a field
     // access. We surface it as an xref alias for the resolver; the token
     // itself is still a carveout.
+    //
+    // The `.$NAME` suffix is a single fused token so that a bare `.`
+    // NOT followed by `$` (e.g. `file.txt` inside a slot body) cannot
+    // commit the parser into xref state and strand the `.` as ERROR.
+    // `var` is aliased to `term_ref` to preserve the node shape; its
+    // byte range includes the leading `.$` — callers must strip both.
     xref: $ => seq(
       field('rule', $.identifier),
-      '.',
-      field('var',  $.term_ref),
+      field('var',  alias($._xref_suffix, $.term_ref)),
     ),
+
+    _xref_suffix: $ => token(prec(2, seq(
+      '.', '$', /[A-Za-z_][A-Za-z0-9_]*/,
+    ))),
 
     // ---- cursor_ref -------------------------------------------------------
 

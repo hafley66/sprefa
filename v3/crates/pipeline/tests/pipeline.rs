@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 // --- a tiny effect (local to the test) ---
 
+#[derive(Debug)]
 struct LenOf {
     bytes: Vec<u8>,
 }
@@ -20,6 +21,7 @@ impl EffectKind for LenOf {
     type Response = usize;
 }
 
+#[derive(Debug)]
 struct DirectLen;
 impl Batcher<LenOf> for DirectLen {
     fn run(&self, req: LenOf, _cancel: CancellationToken) -> BoxFuture<'static, usize> {
@@ -30,6 +32,7 @@ impl Batcher<LenOf> for DirectLen {
 // --- ops ---
 
 /// Writes a typed slot derived from current content length.
+#[derive(Debug)]
 struct StampLenOp;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stamped(usize);
@@ -45,6 +48,7 @@ impl Op for StampLenOp {
 }
 
 /// Reads the upstream slot.
+#[derive(Debug)]
 struct ReadStampOp;
 impl Op for ReadStampOp {
     fn name(&self) -> &'static str { "read_stamp" }
@@ -60,6 +64,7 @@ impl Op for ReadStampOp {
 /// Calls into the effect layer, stashes the response into a slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LenFromEffect(usize);
+#[derive(Debug)]
 struct LenEffectOp;
 impl Op for LenEffectOp {
     fn name(&self) -> &'static str { "len_effect" }
@@ -74,6 +79,7 @@ impl Op for LenEffectOp {
 
 /// Two-output op, for Fork fan-in cross-check (outputs duplicate the
 /// input with a suffix narrowing).
+#[derive(Debug)]
 struct HalveOp;
 impl Op for HalveOp {
     fn name(&self) -> &'static str { "halve" }

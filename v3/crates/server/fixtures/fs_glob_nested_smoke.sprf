@@ -1,0 +1,6 @@
+# Smoke fixture for sprefa-4m7.14: nested glob arg form.
+# Exercises fs(glob(**/*.rs)) — the Pattern-value lowering path for fs.
+# Before 14 lands, the registry takes raw paren bodies; after 14 lands,
+# the lowerer emits Value::Pattern(Pattern::Glob(_)) for the nested
+# glob(…) invocation and passes it to FsOp::from_values.
+repo($R) > rev(HEAD) > fs(glob(**/*.rs))

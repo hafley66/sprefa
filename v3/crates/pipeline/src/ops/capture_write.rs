@@ -11,9 +11,10 @@ use std::sync::Arc;
 
 use effect_runtime::{BoxFuture, RtCtx};
 
-use crate::_0_cursor::{Capture, Cursor};
+use crate::_0_cursor::{Capture, CaptureKind, Cursor};
 use crate::_1_op::Op;
 
+#[derive(Debug)]
 pub struct CaptureWriteOp {
     pub target: Arc<str>,
 }
@@ -33,6 +34,7 @@ impl Op for CaptureWriteOp {
             out.captures.push(Capture {
                 name:       self.target.clone(),
                 byte_range: out.byte_range.clone(),
+                kind:       CaptureKind::SpanBacked,
             });
             out.last_bound = Some(self.target.clone());
             vec![out]

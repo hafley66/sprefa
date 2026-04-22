@@ -9,7 +9,7 @@ let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
   const config = workspace.getConfiguration("sprf");
-  const serverPath = config.get<string>("serverPath") || "sprf-lsp";
+  const serverPath = config.get<string>("serverPath") || "sprefa-lsp";
 
   const serverOptions: ServerOptions = {
     command: serverPath,

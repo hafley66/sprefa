@@ -12,6 +12,143 @@ alongside the code. Drift is worse than redundancy.
 
 ---
 
+## Project-wide conventions (binding for all contributors)
+
+### Test style
+
+- **Consolidate common setup.** When two or more tests share a compile
+  / parse / fixture prefix, merge them into one test function with
+  multiple `assert!` / `assert_eq!` per scenario. Put a short `//`
+  comment above each assert block describing what it checks. One
+  `#[test]` per *fixture*, not per *assertion*.
+- **No one-assert tests** that only vary their expected output over a
+  shared setup. They fragment the signal and inflate the file.
+- Inline snapshots (`insta::assert_snapshot!` / `toMatchInlineSnapshot`)
+  are preferred when the output is structured.
+- `assert!(x.is_some())` / `toBeDefined` style is forbidden. Assert the
+  exact value.
+
+### Communication style (for agents and contributors writing prose)
+
+- No em dashes.
+- No LLM-common fluff: "you're absolutely right", "not X, it's Y" in
+  any form including across sentences, "this isn't X; it's Y".
+- No personhood pronouns; act like a textbook that is awake.
+- No rhetorical closes, no drop-the-mic, no framing as inevitable or
+  novel, no lineage positioning.
+- No negative parallelism (`not X. Y.` pattern).
+- No banned-word lists; write positive posture instead.
+
+These apply to every text file under `v3/` including chat_log entries,
+inline comments, and generated docs.
+
+---
+
+## Pattern-arg interchangeability (worked example)
+
+`re(...)`, `glob(...)`, `ast[lang](...)`, `json(...)` all compile to
+the same `Value::Op(Arc<dyn Op>)` (§4.3, §14.5a; post-Pass-A of §14.5m).
+Any op slot declared `ArgSpec::Op` accepts any of them — the outer op
+inspects via the capability surface (`try_raw_regex`, `bound_captures`,
+`materialize_with`) without pattern-matching on variants or downcasting
+to concrete types. A `$NAME` inside a pattern body is a hole (term_ref);
+holes bound upstream fall into *read mode*, unbound holes into
+*write mode* (§14.5b, §18.3).
+
+### Example A — glob at the fs slot, re at the json key slot
+
+```
+fs(glob($A/$B/*/$FILE.json))
+  > json({
+      ${re((devD|optionalD|peerD|d)ependencies) > $DEP_KIND}:
+        { $DEP : $VER }
+    })
+```
+
+Slot-by-slot:
+
+- `fs(glob(...))` — fs's arg slot is `ArgSpec::Op`. The glob op
+  compiles to a `GlobOp` with holes `$A`, `$B`, `$FILE` and unbound_re
+  `[^/]+`; fs reads `op.try_raw_regex()` and drives the ignore-crate
+  walker with the anchored path regex.
+- `$A/$B/*/$FILE.json` — three holes + one unbound wildcard segment.
+  Each match binds `$A`, `$B`, `$FILE` on the emitted cursor.
+- `> json({...})` — json pattern at pipe-step position; its body is
+  a structural json template.
+- `${re(...) > $DEP_KIND}` — carveout slot holding another pattern
+  op chained into a term bind. re's hole-bodied group captures the
+  matched key into `$DEP_KIND`; `$DEP` and `$VER` are bound by the
+  surrounding json template at the leaf level.
+
+### Example B — re at the fs slot, glob at the json key slot
+
+```
+fs(re($A/$B/[^/]+/$FILE\.json))
+  > json({
+      ${glob($DEP_KIND) > $DEP_KIND}:
+        { $DEP : $VER }
+    })
+```
+
+The swap is mechanical: each pattern slot accepts whichever pattern
+op's grammar is natural for the shape. Outer ops never downcast to
+glob-specific or re-specific types; they pattern-match the `Pattern`
+enum and, when they need raw bytes to hand to a bulk backend, call
+`Pattern::as_raw_regex()`. Bodies that use operators exclusive to
+one grammar (glob `**`, re `|`) stop being literal-swappable, but
+the slot stays the same.
+
+### Example C — cross-repo dep graph with scan pointers
+
+```
+fs(re($A/$B/[^/]+/$FILE\.json))
+  > json({
+      ${glob($DEP_KIND) > $DEP_KIND}: {
+        ${$DEP > is_repo_norm($DEP_NORM)} : ${$VER > is_repo_rev_norm($DEP_NORM)}
+      }
+    })
+```
+
+Motivation. Semver ranges (`^1.2.3`, `~3.x`) cannot address a
+concrete git tag or SHA. Cross-repo joins that need literal rev
+values read `package-lock.json`, since it records the resolved ref
+per dependency rather than a range expression.
+
+Cross-repo walk. `fs(re(...))` fans over every repo in the corpus
+(§14.5c, repo dimension). `$A` and `$B` bind repo-owner and
+repo-name segments; the `[^/]+` segment catches intermediate
+directories; `$FILE` binds the lockfile stem. `cursor.repo` and
+`cursor.rev` come along as Synthesized captures (§14.5c bind mode).
+
+Scan pointer.
+
+- `${$DEP > is_repo_norm($DEP_NORM)}`. `$DEP` is bound by the
+  surrounding json template (the dependency name). `is_repo_norm`
+  receives `$DEP` in read mode, normalizes it (lowercase, strip
+  punctuation), and writes the result into `$DEP_NORM`. `$DEP_NORM`
+  is a scan pointer: a canonical handle usable as a lookup key in
+  sibling slots and downstream steps.
+- `${$VER > is_repo_rev_norm($DEP_NORM)}`. `$DEP_NORM` is already
+  bound by the sibling slot. `is_repo_rev_norm` receives it in read
+  mode, addresses the cross-repo rev index with it, and emits the
+  matched rev literal alongside a scan pointer back to the
+  originating lockfile row.
+
+Arg-mode dispatch (§18.1).
+
+- `is_repo_norm(X)`: X absent on input ⇒ write mode. Rule body
+  binds X before the row leaves the rule.
+- `is_repo_rev_norm(X)`: X present on input ⇒ read mode. Rule body
+  reads X, never rebinds.
+- Passing one term through both roles in one row is how sprf
+  expresses a cross-repo join without a temporary variable table.
+
+Exercised surface. fs cross-repo walk, injected json pattern,
+json-template dotted term binding, arg-mode dispatch with a shared
+term, rev-index read under a synthesized scan pointer.
+
+---
+
 ## Table of Contents
 
 ### Part I — Foundations
@@ -103,8 +240,8 @@ v3/crates/
 ├── tree-sitter-sprefa/ # HOST grammar + shared/tokens.js + generated injections.scm
 ├── sprefa_parse/       # host_parse, AST, ParseError, injected-tree support (this spec)
 ├── pipeline/           # Op trait, Cursor, Pipeline enum, ops/<name>/ folders, build.rs
+├── server/             # stdio LSP (tower-lsp); parse diagnostics landed, hover/completion stubbed
 └── sprefa/ (future)    # runtime binary, HTTP server, watcher, Store
-    ├── sprefa-lsp/     # proxy to sprefa HTTP; wraps tower-lsp OR raw JSON-RPC
     └── sprefa-cli/     # proxy to sprefa HTTP
 ```
 
@@ -117,10 +254,26 @@ Strict DAG. Every arrow is a Cargo dep.
 | `spine` | (none internal) | anything |
 | `effect_runtime` | (none internal) | pipeline, sprefa_parse |
 | `tree-sitter-sprefa` | (none internal) | any other v3 crate |
-| `sprefa_parse` | `tree-sitter-sprefa`, `spine` | pipeline, effect_runtime |
-| `pipeline` | `sprefa_parse`, `effect_runtime`, `spine`, `tree-sitter-sprefa` | sprefa |
-| `sprefa` | `pipeline`, `sprefa_parse`, `effect_runtime`, `spine` | sprefa-lsp, sprefa-cli |
-| `sprefa-lsp` / `sprefa-cli` | `sprefa` (via HTTP, not Cargo) | each other |
+| `sprefa_parse` | `tree-sitter-sprefa` | pipeline, effect_runtime, spine |
+| `sprefa_macros` | (none internal) | anything |
+| `pipeline` | `effect_runtime`, `sprefa_macros`; builds `ops/*/parser.c` via `cc` | sprefa_parse, sprefa, server, spine, tree-sitter-sprefa |
+| `server` | `pipeline`, `sprefa_parse`, `effect_runtime` | sprefa (future) |
+| `sprefa` | `pipeline`, `sprefa_parse`, `effect_runtime`, `spine` | sprefa-cli, server |
+| `sprefa-cli` | `sprefa` (via HTTP, not Cargo) | server |
+
+Notes on the actual graph as of Stage A:
+
+- `pipeline` has no Cargo dep on `sprefa_parse`. The op layer is parse-
+  agnostic; it works against `OpInvocation` only when a caller (server,
+  tests) feeds it one. `sprefa_parse` is a dev-dep so integration tests
+  in `pipeline/tests/` can exercise the full host-parse → lower path.
+- `pipeline` does not Cargo-depend on `tree-sitter-sprefa`. Each op's
+  sub-grammar `parser.c` is compiled in-tree by `pipeline/build.rs`
+  using `cc`. The host grammar's parser is reached transitively through
+  `sprefa_parse` only from consumers that parse `.sprf` sources.
+- `spine` is currently a parked foundational crate. No v3 build-path
+  consumer imports it. The row in this table is reserved for when the
+  row/schema types promote out of in-crate shapes.
 
 `sprefa_parse` knows nothing about ops. It produces `OpInvocation`
 nodes with opaque `name: Arc<str>`. Op resolution happens in
@@ -309,20 +462,43 @@ Information in a running sprf program lives in one of three tiers.
 4.2 **Name tier.** Identifiers bind to values in a single lexically-scoped
 environment. Resolved kind: op, rule, capture, or scalar (see §3.3).
 
-4.3 **Value tier.** Scalar literals: string, atom, number, bool, null.
+4.3 **Value tier.** What an op receives in an argument slot. Closed
+algebra. Added 2026-04-21: `Pattern` and `Pipeline` joined the Value
+tier so that op arguments carry a uniform typed face, no runtime
+downcast to extract op-internal state.
 
 ```rust
 enum Value {
-    String(Arc<str>),
     Atom(Arc<str>),
-    Number(f64),
-    Bool(bool),
-    Null,
+    Str(Arc<str>),
+    Int(i64),
+    Float(f64),
+    Term(Arc<str>),          // unresolved $NAME reference
+    Pattern(Pattern),        // compiled matcher from glob/re/ast/json at arg position
+    Pipeline(Arc<Pipeline>), // any other op chain passed as arg
 }
 ```
 
-4.4 Values flow as fields inside cursors. Names reference streams of
+4.4 Op membership in Value is what makes "ops pass ops into ops"
+first-class without a value/operator split at the surface. A pattern
+op at pipe-step position lowers to `PipelineStep`; at arg position it
+lowers to `Value::Op(Arc<dyn Op>)`. The outer op's `ArgSpec` per slot
+(§18) decides which; the outer op introspects via the capability
+surface at arg position.
+
+4.5 Values flow as fields inside cursors. Names reference streams of
 cursors. Ops transform streams. One uniform rule per tier.
+
+4.6 Collapse landed Pass A (spike sprefa-x5b §14.5m, 2026-04-22).
+`Value::Pattern` and `Value::Pipeline` merged into `Value::Op(Arc<dyn Op>)`.
+`Term` survives as a sugar-distinct variant for resolver ergonomics.
+Scalars stay as cheap leaves. Consumers read capability methods on the
+inbound `Op` (`try_raw_regex`, `materialize_with`, `bound_captures`)
+instead of pattern-matching on variants or downcasting to concrete
+matcher types. `PatternValue` trait and concrete matcher structs
+(`GlobPattern` / `RegexPattern` / `JsonPattern` / `AstPattern`) deleted;
+state folded into `GlobOp` / `ReOp` directly. See §14.5m for the full
+migration log.
 
 ---
 
@@ -730,6 +906,18 @@ No fork, no sigil. Cursor flows; relations table gets a row. `last_bound`
 lets the author write `> scan(:repo)` without re-naming `$VAR` when
 the previous op already did the naming.
 
+12.6 Three shapes (x5b framing, §14.5m.3):
+
+| shape | source when unbound | examples |
+|---|---|---|
+| produce-or-filter | op has a source to draw from | `tag(:key, $V)`, `fs($P)`, `rev($R)`, `repo($R)` |
+| filter-only | no source; asserts on existing cursor state | `is_rev($R)`, `is_repo($R)`, `is_fs($F)` |
+| pattern-with-embedded-term | the pattern's compile/apply cycle (§14.5b) | `re($NAME = ...)`, `glob(.../$F)` |
+
+Per-op arg-mode dispatch. Each op reads `cursor.captures` for names
+declared in its `bound_captures()` and chooses its branch. Pipe order
+is goal order. Shallow prolog, forward-only — no search, no backtrack.
+
 ---
 
 # Part III — Sub-grammars
@@ -788,27 +976,156 @@ ops/glob/
 Non-pattern ops (`capture_write`, `void`) remain single-file
 `ops/<name>.rs`.
 
-`str` is a pattern op only by membership in the injection registry; it
-has **no sub-grammar** (§14.2). Its folder is just `ops/str/mod.rs`.
+`str` is a pattern op whose sub-grammar is the identity: the paren
+body is stored as `Arc<str>` and wrapped as `Pattern::Str` (§14.2).
+Its folder is `ops/str/mod.rs` plus the shared PatternOp trait impl.
 
 ### 14.2 Surface
 
+Pattern ops live in two positions (§14.2b). At **pipe-step** position
+they drive cursors through `Op::pipe`. At **arg-slot** position they
+appear inside another op's paren body and lower to `Value::Op(Arc<dyn Op>)`
+so the outer op consumes the compiled op via the capability surface.
+
 ```sprf
-str(literal bytes)               # CONST; paren body read as raw bytes, no parse, no holes
-glob(**/$DIR/file.txt)           # $DIR is a term_ref CST node inside glob sub-tree
-re(TODO\($WHO\))                 # $WHO is term_ref; native (?<X>...) also allowed
-ast[rust](fn $NAME ($$$ARGS))    # bracket tags language; body is ast-grep pattern
-json({ pkg: $PKG, version: $V }) # json walker owns its brace grammar
+str(literal bytes)                       # identity sub-grammar; paren body = raw bytes
+glob(**/$DIR/file.txt)                   # $DIR is term_ref; bare or braced both accepted
+re(TODO\($WHO\))                         # $WHO is term_ref; bare or braced both accepted
+ast[rust](fn ${NAME}(${{ARGS}}))         # braces required inside ast; see §14.2a
+cst[rust]((identifier) @${NAME})         # braces required inside cst; `@` prefix per tree-sitter
+json({ pkg: $PKG, version: $V })         # json walker owns its brace grammar
 ```
 
-`str` is special-cased: **no sub-grammar, no parse step**. The paren
-body is read as `&[u8]` from the host parse site and stored as an
-`Arc<str>`. `$NAME` inside `str(...)` is literal bytes, not a term_ref.
-Any term binding the author wants must use one of the parsed pattern
-ops (glob / re / ast / json).
+Composition (arg-slot position, locked 2026-04-22):
 
-String literals survive in the grammar for scalar positions (atoms,
-messages). They never carry pattern bodies.
+```sprf
+fs(glob(**/*.rs))                        # nested op_invocation lowers to Value::Op
+repo(glob(myorg/*))
+rev(:main)                               # :ident atom sugar — scalar filter literal
+rev(str(next/10.1.1))                    # str wrapper required for non-[A-Za-z0-9_$!?] bytes
+rev($V)                                  # ERROR: unbounded; terms in filter position require a body
+rev(re($ALL_LOL))                        # legal opt-in: explicit regex body with term hole
+comment(re(TODO\($WHO\)))
+line(glob(**/*.rs))                      # line-level filter
+line(re(TODO))
+line(str(literal))
+```
+
+No raw string literals in arg slots. No bare identifiers in arg slots
+(use `:atom`). No raw glob body — glob/re/str must appear as explicit
+op calls so each arg is a self-describing Pattern value.
+
+`str` is the **identity sub-grammar**: its `compile` stores the paren
+body bytes as an `Arc<str>` on a `StrOp` instance. `$NAME` inside
+`str(...)` is literal bytes, not a term_ref. Term binding requires one
+of the other pattern ops (glob / re / ast / cst / json).
+
+The `:ident` atom is a lowerer-level shortcut that emits `Value::Atom`.
+Ops that expect a scalar filter accept `Atom` and `Str` interchangeably
+with a literal-bytes `StrOp`. See §14.5c for rev/repo/fs consumer shapes.
+
+### 14.2a Capture-sigil form per sub-grammar (locked 2026-04-22)
+
+Every sub-grammar parses `term_ref` from `shared/tokens.js` (§14.3),
+but not every sub-grammar accepts both the bare `$NAME` and braced
+`${NAME}` forms. The decision is per-op and follows a single rule:
+if the sub-grammar's surrounding token alphabet can abut identifier
+characters, braces are required; otherwise both forms are accepted.
+
+| op    | authored form         | bare `$NAME` | rationale                                                    |
+|-------|-----------------------|--------------|--------------------------------------------------------------|
+| re    | `$NAME` or `${NAME}`  | legal        | non-dollar literal bytes terminate the sigil naturally       |
+| glob  | `$NAME` or `${NAME}`  | legal        | `*`, `?`, `/` terminate; dollar cannot appear in a segment   |
+| host  | `$NAME` or `${NAME}`  | legal        | whitespace, `(`, `.`, `>` terminate                          |
+| ast   | `${NAME}` only        | rejected     | pattern-by-example abuts idents (`fn$Ax(`); unbraced ambig. |
+| cst   | `@${NAME}` only       | rejected     | S-expression parens+idents abut sigils; mirror of ast        |
+| json  | `$NAME` or `${NAME}`  | legal        | `,`, `:`, `{`, `}`, `"`, `[`, `]` terminate                  |
+| str   | literal bytes, no sigil | n/a        | identity sub-grammar; no term_refs, byte-equality Pattern    |
+
+The `@` prefix in `cst` is tree-sitter's capture marker; compile
+strips `@` + `${`/`}` when rendering the actual tree-sitter Query
+source, so the engine sees `@NAME`. v2's ast-grep extension
+precedent: `${VAR}` sugar was optional in v2 and is now mandatory
+in v3 inside ast/cst bodies.
+
+Multi-node subseq capture (ast-grep `$$$NAME`) follows the same rule
+with triple-dollar: inside ast, write `$$${NAME}` to capture a
+subsequence. Bare `$$$NAME` is rejected for the same ambiguity
+reason as bare `${NAME}`.
+
+### 14.2b Pattern-op position duality — pipe-step vs arg
+
+Every pattern op has two legal positions with two distinct lowerings.
+Author syntax is identical; the lowerer picks the form by the host-CST
+parent of the invocation.
+
+| position                    | lowering                                   | mechanic                                                                                        |
+|-----------------------------|--------------------------------------------|-------------------------------------------------------------------------------------------------|
+| pipe-step `> ast[rust]{…}`  | `Box<dyn Op>` inside `Pipeline::Op`        | per cursor, calls `Op::pipe`; emits 0..N narrowed cursors                                       |
+| arg slot `fs(glob(…))`      | `Value::Op(Arc<dyn Op>)`                   | outer op introspects via capability surface; bulk backends call `op.try_raw_regex()` when valid |
+
+The same inherent `<Op>::compile_from_tree(tree, bytes) -> Self` runs
+in both cases. Choice of lowering lives entirely in the host lowerer,
+driven by the outer op's `arg_spec` (§18). Slots declaring `ArgSpec::Op`
+or `ArgSpec::Any` receive `Value::Op(arc)`.
+
+Invariant: no pattern op branches on "am I a pipe step or an arg?".
+`compile` is pure. Position-specific behavior is the outer lowerer's
+concern.
+
+### 14.2c Nestable ast/cst — sprf chaining for structural narrowing
+
+ast and cst narrow the cursor to the matched CST subtree. Chaining a
+second structural op after the first re-parses that narrowed subtree.
+Two authoring forms, one desugaring:
+
+**Linear chain.** Plain pipe:
+
+```sprf
+ast[rust] { struct ${NAME} { $$${BODY} } }
+  > ast[rust] { fn ${METHOD_NAME}(${{ARGS}}) }
+```
+
+The first ast matches structs and narrows `cursor.byte_range` to the
+struct body. The second ast runs against the narrowed content. Per
+§14.5b content contract, the inner op parses `cursor.content[byte_range]`
+first; no re-read from the filesystem. Nothing ast-specific about
+this — every pipe-step op composes the same way.
+
+**Brace-block form** — sugar for the nested chain:
+
+```sprf
+ast[rust] { struct ${NAME} { $$${BODY} } }{
+  > ast[rust] { fn ${METHOD_NAME}(${{ARGS}}) }
+  > sql_write{ INSERT INTO methods(...) VALUES (...) }
+}
+```
+
+The `{ … }` after the pattern body's closing brace holds a nested
+pipeline spliced in after the outer match emits cursors. Desugars to
+the linear chain; exists for readability when the inner pipe is
+visually bound to the outer pattern ("for each struct, extract
+methods and write").
+
+**Lowering.** The brace block lowers as a `Pipeline` value the outer
+ast's `Op::pipe` runs once per emitted cursor. This is the inverse of
+§14.2b duality: at pipe-step position the outer op is driven as an
+`Op`, and its brace block is a nested `Pipeline` driven as a value.
+Position-duality applies at every level.
+
+**Chaining across ops.** A pattern op at pipe-step position is just
+an op. Chaining into a non-pattern op is a plain pipe:
+
+```sprf
+ast[rust] { impl ${TRAIT} for ${TY} { $$${BODY} } }
+  > sql_write{ INSERT INTO impls(trait, ty) VALUES (${TRAIT}, ${TY}) }
+```
+
+`sql_write` is a mutation effect (§25), not a pattern op. It reads
+the upstream-bound `${TRAIT}` and `${TY}` captures and writes one row
+per cursor. Pattern ops carry no special status in the chain — they
+emit cursors, downstream ops consume cursors, and the shape of the
+downstream is open.
 
 ### 14.3 Shared tokens — one source of truth
 
@@ -894,31 +1211,708 @@ Adding a new pattern op = append to the alternation, commit.
 Two slots added to `Op` (both default to "not a pattern op"), plus a
 companion `PatternOp` sub-trait for pattern-specific hooks.
 
+(Pass A of spike sprefa-x5b landed 2026-04-22: `bound_captures`,
+`try_raw_regex`, `materialize_with` now live on `Op` as optional
+capability methods with defaults; see §14.5m.2. `PatternValue` deleted;
+`GlobPattern` / `RegexPattern` / `JsonPattern` / `AstPattern` deleted;
+state folded into `GlobOp` / `ReOp`. The trait snippet below reflects
+the landed shape.)
+
 ```rust
-pub trait Op: Send + Sync + 'static {
+pub trait Op: Send + Sync + std::fmt::Debug + 'static {
     fn name(&self) -> &'static str;
     fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>>;
+
+    /// Per-slot expectation. Lowerer consults this positionally to
+    /// validate args and reject obvious misuses (atom into an op slot,
+    /// etc.). Default empty — ops with no args or opaque bodies (`str`,
+    /// `void`) skip. One entry per slot in lex order. Variadic-tail is
+    /// a follow-up.
+    fn arg_spec(&self) -> &[ArgSpec] { &[] }
 
     /// Sub-grammar for this op's paren-slot body. None = non-pattern op.
     fn language(&self) -> Option<tree_sitter::Language> { None }
 
     /// Highlight queries for the sub-grammar.
     fn highlights(&self) -> Option<&'static str> { None }
+
+    // --- capability surface (Pass A of §14.5m) -----------------------
+    /// `$NAME` holes this op declares as writable/readable captures.
+    fn bound_captures(&self) -> &[Arc<str>] { &[] }
+    /// Bulk escape hatch. `Some(&regex)` iff this op's work is a regex
+    /// over raw bytes with no structural post-filter.
+    fn try_raw_regex(&self) -> Option<&Regex> { None }
+    /// Partial eager collapse: rebuild the matcher with upstream-bound
+    /// terms substituted as escaped literals.
+    fn materialize_with(&self, _: &HashMap<Arc<str>, Vec<u8>>) -> Option<Regex> { None }
 }
 
 pub trait PatternOp: Op {
-    /// Compile parsed sub-tree into executable matcher.
-    fn compile(&self, tree: &Tree, bytes: &[u8])
-        -> Result<CompiledPattern, Diagnostics>;
-
-    /// Capture names declared in the parsed sub-tree (v2 binds_captures port).
-    fn binds_captures(&self, tree: &Tree) -> Vec<Arc<str>>;
+    /// Capture names declared in the parsed sub-tree. Walks the tree;
+    /// callable before the op is compiled (resolver/LSP use this).
+    fn binds_captures(&self, tree: &Tree, bytes: &[u8]) -> Vec<Arc<str>>;
 
     /// Hover body for a pattern-local node kind (e.g. re's char_class).
     /// `term_ref` hover is framework-owned; this is for match-kind nodes.
     fn hover_match(&self, node: Node, cursors: &[Cursor]) -> Option<String> { None }
+
+    /// Per-cursor work at pipe-step position (macro-generated
+    /// `Op::pipe` delegates here for macro-wired pattern ops).
+    /// Default: passthrough. Pattern ops override with their own
+    /// identity-apply. Glob/Re no longer use the macro; they impl
+    /// `Op::pipe` directly from their fused state.
+    fn pattern_pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor)
+        -> BoxFuture<'a, Vec<Cursor>> { /* default passthrough */ }
+}
+
+// Construction lives off-trait because it returns Self (Sized):
+impl GlobOp {
+    pub fn compile_from_tree(tree: &Tree, bytes: &[u8])
+        -> Result<Self, Vec<PatternDiagnostic>> { ... }
+}
+impl ReOp {
+    pub fn compile_from_tree(tree: &Tree, bytes: &[u8])
+        -> Result<Self, Vec<PatternDiagnostic>> { ... }
 }
 ```
+
+### 14.5a Pattern value shape (locked 2026-04-21, collapsed 2026-04-22 §14.5m)
+
+**Historical form (locked 2026-04-21, superseded 2026-04-22):** four
+concrete `*Pattern` structs behind a `PatternValue` object-safe trait,
+with `Pattern = Arc<dyn PatternValue>` as a `Value` variant. Three
+accessors — `apply`, `as_raw_regex`, `materialize_for` — drove consumers.
+
+**Landed form (Pass A of §14.5m, 2026-04-22):** the wrapper structs and
+the trait are gone. Their state fuses directly into `GlobOp` / `ReOp`:
+
+```rust
+pub struct GlobOp {
+    template:       Vec<Seg>,
+    regex:          regex::bytes::Regex,  // cached all-unbound form
+    bound_captures: Vec<Arc<str>>,
+    anchors:        (Arc<str>, Arc<str>),
+}
+pub struct ReOp { /* same four fields */ }
+
+pub enum Seg {
+    Fragment(Arc<str>),                            // pre-escaped regex bytes
+    Term { name: Arc<str>, unbound_re: Arc<str> }, // $NAME hole, read-or-write at apply time
+}
+```
+
+`Json` / `Ast` placeholder structs deleted outright; those ops haven't
+landed yet and will carry their own fused state when they do.
+
+**Projection model stays the same.** Every pattern op is
+`(projection, regex, rehydrate)`. Identity-projection ops (Regex, Glob)
+answer `try_raw_regex() -> Some(&Regex)` and unlock the bulk fast path.
+Non-identity ops answer `None` and force consumers down the per-cursor
+`Op::pipe` path. One code path across variants.
+
+**Accessors moved to the `Op` capability surface (§14.5m.2):**
+
+```rust
+trait Op {
+    /// Bulk escape hatch. Some(&regex) iff projection is identity and
+    /// no structural post-filter. fs/rev/repo/ripgrep wrappers hand
+    /// the regex straight to the bulk backend.
+    fn try_raw_regex(&self) -> Option<&Regex> { None }
+
+    /// Rebuild regex with upstream-bound terms substituted as escaped
+    /// literals. Bulk consumers call this when any term is
+    /// upstream-bound. `None` = op does not carry a rebuildable template.
+    fn materialize_with(&self, bindings: &HashMap<Arc<str>, Vec<u8>>)
+        -> Option<Regex> { None }
+
+    /// Uniform per-cursor interface. Dispatches write vs read per hole
+    /// at apply time via the shared `apply_identity_pattern` helper.
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor)
+        -> BoxFuture<'a, Vec<Cursor>>;
+}
+```
+
+Shared `apply_identity_pattern(regex, bound_captures, template, anchors, &c)`
+helper lives in `pipeline::value` and is reused by both Glob and Re
+`Op::pipe` impls.
+
+### 14.5b Term-binding dispatch (§18 arg-mode for pattern bodies)
+
+`$NAME` inside a pattern body is dual. At `apply` time each hole is
+classified by looking it up in `cursor.captures`:
+
+| upstream state of `$NAME` | mode   | effect |
+|---------------------------|--------|--------|
+| absent from `c.captures`  | write  | hole becomes `(?P<NAME>unbound_re)`; match span written as a new Capture on the output cursor |
+| present in `c.captures`   | read   | hole substituted with `regex::escape(bound_bytes)`; no new Capture written (upstream owns it) |
+
+Fast path: every hole unbound → cached `regex` reused. Slow path: at
+least one hole bound → `materialize_for` rebuilds a fresh regex for
+this `apply`. Future amortization: LRU cache keyed by bindings set.
+
+Unbound-hole substitutions are op-specific constants:
+
+| op    | unbound_re    | rationale                             |
+|-------|---------------|---------------------------------------|
+| glob  | `[^/]+`       | never cross `/` unless `**` says so   |
+| re    | `.*?`         | non-greedy so chained holes don't eat |
+| json  | (op-specific) | leaf-scalar default                   |
+| ast   | n/a           | structural post-filter, not regex     |
+
+### 14.5c fs reads repo/rev/fs as Cursor fields, not captures
+
+**Status (2026-04-21).** Landed in `pipeline` crate:
+
+- `Cursor { repo: Arc<str>, rev: Arc<str>, fs: Option<Arc<Path>>, … }`
+  (`_0_cursor.rs`). `narrow()` carries by clone; `rebase()` preserves
+  repo/rev/fs while resetting slots + content.
+- `Capture { name, byte_range, kind }` where
+  `CaptureKind::{SpanBacked, Synthesized { value: Arc<str> }}`. Bind-
+  mode ops (repo / rev / fs) emit Synthesized captures; pattern ops
+  emit SpanBacked. `Capture::bytes(cursor.content)` resolves either
+  source uniformly; `Pattern::apply`'s binding collector uses it.
+- `ops/repo/mod.rs`, `ops/rev/mod.rs`, `ops/fs/mod.rs`: filter-or-bind
+  classified from the raw paren source via a local `parse_capture`
+  helper plus `glob::compile_str`. `rev` additionally rejects
+  `*`/`**`/`**/*`/`*/*` (unbounded-wildcard) and bare `$V`
+  (unbounded-capture).
+- `fs` pulls its file listing through `RtCtx.put(FsListFilesEffect
+  { repo, rev })` (`pipeline::effects`). The effect is a
+  `PureEffect` in the `"fs"` domain — listings are cached per
+  `(repo, rev)` so repeat `fs(...)` call-sites across pipes, rules,
+  and fork arms share one walk. Callers register an
+  `FsListFilesBatcher` on the `RtCtxBuilder` at ctx construction;
+  `FsOp` itself is stateless beyond its mode and carries no
+  `FileSource` handle.
+
+Original-spec cursor sketch follows:
+
+Parroting v2 (`v2/src/_0_types.rs:267`, `v2/src/ops/_1_repo.rs`).
+Cursor carries repo/rev/fs as first-class fields (Phase-1.5 landing):
+
+```rust
+pub struct Cursor {
+    pub content:    Arc<[u8]>,
+    pub byte_range: Range<usize>,
+    pub repo:       Arc<str>,           // added for v3
+    pub rev:        Arc<str>,           // added for v3
+    pub fs:         Option<Arc<Path>>,  // added for v3
+    pub captures:   Vec<Capture>,
+    pub path:       SprfPath,
+    pub last_bound: Option<Arc<str>>,
+    pub slots:      HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+}
+```
+
+**fs contract.** `fs(pattern)` takes exactly one slot: a pattern. It
+reads `cursor.repo`, `cursor.rev`, `cursor.fs` from the incoming
+cursor to know what to walk. No kwargs, no brackets, no `=` sugar.
+Per-cursor file stream flows through the pattern; matches fan out as
+child cursors.
+
+**repo/rev/fs as ops.** Dedicated filter-or-bind pattern ops mirror
+v2. Paren body is a single `Value`; the outer op classifies by Value
+kind (locked 2026-04-22):
+
+```
+repo(glob(myorg/*))  # filter: cursor.repo must match glob
+repo(:home)          # filter: equals-atom shortcut
+repo(str(some-org))  # filter: equality on non-ident bytes
+repo($R)             # bind:   write cursor.repo into capture $R
+
+rev(:main)           # filter: cursor.rev equals
+rev(glob(v1.*))      # filter: glob
+rev(str(next/10.x))  # filter: non-ident literal
+rev($V)              # ERROR: unbounded-capture; see rationale below
+rev(re($V))          # legal opt-in: every rev matches, bind into V (expensive)
+
+fs(glob(**/*.rs))    # filter/enumerate
+fs(:CHANGELOG)       # equality on filename
+fs($P)               # bind: read cursor.fs into capture $P (rare)
+```
+
+Consumer dispatch pattern: each factory takes `Vec<Value>` and matches
+on `values[0]`:
+
+- `Value::Term(name)`: bind mode. `rev` rejects (unbounded). `repo`
+  and `fs` accept, emit Synthesized capture.
+- `Value::Atom(s)` or `Value::Str(s)`: filter mode with byte equality
+  (compiled to an anchored glob internally).
+- `Value::Op(op) if op.try_raw_regex().is_some()`: filter mode driven
+  by the op's raw regex. Covers both `glob(...)` and `re(...)` without
+  the consumer caring which.
+- Other `Value::Op(op)`: rejected — the consumer needs a regex surface
+  and the op doesn't expose one (e.g. a json/ast op in an fs slot).
+
+No local `parse_capture` / `classify_token` helper in the ops. The
+lowerer resolves the Value shape before the factory sees it.
+
+**Projection operators** `&.repo` / `&.rev` / `&.fs` (grammar already
+accepts these; §8.5) turn a Cursor field into a cursor whose `content`
+is that field's value.
+
+Landing order: Cursor fields + preserve across rebase/narrow first;
+RepoOp / RevOp / FsOp next. **All four landed 2026-04-21.**
+
+Pattern-value refactor (sprefa-4m7.14, 2026-04-22): factories migrated
+from raw-string paren bodies to structured `Value` inputs. The
+`parse_capture` helper and `glob::compile_str` inline calls are
+retired from rev/repo/fs; lowering happens at parse time via the
+nested-op-in-slot grammar path.
+
+### 14.5c.1 `rev($V)` rejection rationale
+
+A bare term in a filter position has nothing to match against and
+would bind every rev unconditionally — each rev potentially
+materializes its own worktree on first query. Rejected at factory
+time with diagnostic `rev/unbounded-capture`. Authors who genuinely
+want per-rev fan-out write `rev(re($V))` (or `rev(glob(*))` if the
+self-harm is preferred shape), which makes the "all revs" intent
+explicit.
+
+This sits in the narrow class of ops where bind-only-without-body is
+unsound. `repo($R)` and `fs($P)` stay legal because repo is bounded
+by the config's repo set and fs's enumerator body (the pattern) is
+the discipline; rev lacks an enumerator here.
+
+### 14.5d Server crate landing
+
+`v3/crates/server` hosts the stdio LSP for smoke-testing `.sprf` sources
+in VS Code. Shape:
+
+- `DocSession` owns one source buffer plus the latest `ParsedSource` +
+  `Vec<ParseError>`. `on_source_change` reparses via
+  `host_parse_with_injections`, feeding `pipeline::op_languages::language_of`
+  as the injection resolver.
+- `Backend` is a `tower_lsp::LanguageServer`; per-URI `DocSession` map.
+  did_open / did_change / did_save → publish parse diagnostics as LSP
+  `Diagnostic` ranges.
+- Hover and completion return `None` until the DocSession grows past
+  the parse layer (§14.6).
+- Transport: stdio only. HTTP / WebSocket (v2 `_5_transport_http.rs`)
+  deferred.
+- Binary: `sprefa-lsp` under `server/src/bin/`.
+
+### 14.5e `rule(name)` — linear + brace forms (LANDED)
+
+`rule` is recognized at pipe-head position by the CLI driver
+(`server/src/bin/sprefa-run.rs`). Two shapes, both host-grammar native:
+
+- Linear: `rule(name) > op > op ...` — the rest of the pipe runs
+  under the given name; header printed as `rule <name> — N rows`.
+- Brace:  `rule(name) { pipe; pipe; }` — the brace body is re-parsed
+  as a `.sprf` sub-program via `host_parse_with_injections`, each
+  sub-pipe runs independently, header printed as
+  `rule <name> pipe <j> — N rows`.
+
+The brace body reparse uses the outer language resolver, so sub-pipes
+get the same pattern-op grammar injections as top-level pipes. Rule
+itself is not a registered pipeline `Op`; it is a control-flow sugar
+handled by the driver above the op layer. A future registry pass
+generalizes this dispatch but the user surface is locked.
+
+Smoke: `tests/smoke/_2_rule.sh` + `fixtures/rule_smoke.sprf`.
+
+### 14.5f Glob `**` semantics (ripgrep-style, LANDED)
+
+`GlobOp::compile` walks paired tokens before single-node lowering:
+
+- `/**/` → `(?:/[^/]+)*/` — zero or more interior segments.
+- `**/` → `(?:[^/]+/)*` — zero or more leading segments.
+- `/**` → `(?:/[^/]+)*` — zero or more trailing segments.
+- bare `**` → `.*` (unchanged; fallback for non-path globs).
+
+This fixes the former segment-bracketed behavior where `src/**/*.rs`
+missed `src/foo.rs`. Covered by tests in `ops/glob/mod.rs`:
+`double_star_slash_matches_zero_or_more_segments`,
+`leading_double_star_slash_matches_zero_prefix`,
+`trailing_slash_double_star_matches_zero_suffix`.
+
+### 14.5g `.sprefa.toml` workspace config (LANDED)
+
+`server/src/config.rs` loads a TOML workspace file into
+`Config { seeds: Vec<Seed> }`. Each seed names one `(slug, root, rev)`
+triple. The CLI driver builds one `RtCtx` per seed, registers an
+`FsListFilesBatcher` pointed at that seed's `DiskFileSource`, and
+iterates every pipe in the `.sprf` source under that seed.
+
+Format:
+
+```toml
+[[seed]]
+slug = "sprefa"
+root = "."        # relative roots resolved against the .toml's parent
+rev  = "HEAD"     # default when omitted
+
+[[seed]]
+slug = "other"
+root = "../other"
+rev  = "main"
+```
+
+Resolution precedence (sprefa-run):
+
+1. `--config <path>` explicit.
+2. CLI single-seed: `--root <dir>` + `--rev <rev>`; slug = basename(root).
+
+Ancestor walk and `.sprefa.toml`-in-CWD auto-pickup are follow-ups.
+Output headers prefix each line with `[slug] ` when more than one seed
+is in play; single-seed runs keep the legacy `pipe I — N rows` shape
+so the existing smoke scripts stay intact.
+
+### 14.5h `FsListFilesEffect` batcher (LANDED)
+
+`pipeline/src/effects.rs` defines:
+
+- `FsListFilesEffect { repo: Arc<str>, rev: Arc<str> }` —
+  `PureEffect` in the `"fs"` domain; response
+  `Vec<Arc<Path>>`; cache key `(repo, rev)`.
+- `FsListFilesBatcher` — wraps `Arc<dyn FileSource>`; implements
+  `Batcher<FsListFilesEffect>`.
+
+`FsOp` holds only its `FsMode` (filter glob or bind name + `**`-glob).
+At `pipe()` time it calls `ctx.put(FsListFilesEffect { repo, rev })`
+and filters the returned paths through the compiled glob. Multiple
+`fs(...)` call-sites in the same pipe, rule body, or seed share one
+fs walk courtesy of the effect's `CacheLayer`. Test coverage lives in
+`effects::tests` plus the pre-existing `fs::tests` rewired to build
+an `RtCtx` with the batcher registered.
+
+### 14.5i `comment(open_re [, close_re])` — v2 `marker` port (LANDED)
+
+`ops/comment.rs` narrows `cursor.byte_range` to comment-bounded
+regions. Two shapes from one body:
+
+- Single arg `comment("SECTION:")` — sequential. Every comment line
+  whose text matches `open_re` opens a region; the next match (or
+  EOF) closes it.
+- Two args `comment("BEGIN:", "END:")` — paired. Matches nest LIFO;
+  an unpaired open collapses to the next comment line (or EOF). Close
+  matches with no open on the stack are ignored.
+
+A named group in the open regex binds the matched label as a
+SpanBacked capture on the output cursor. Fallback: when no named
+group exists, the op synthesizes the label from the trimmed post-match
+tail.
+
+Comment detection is line-prefix only: `//`, `#`, `--`, `/*`, `*`,
+`<!--`. Per-language tree-sitter detection is parked; the line-prefix
+set covers the common surfaces without pulling a language parser into
+`pipeline`.
+
+The paren body is classified at construction time via a top-level
+comma split that respects `[...]` classes and backslash escapes. No
+tree-sitter injection grammar yet; a `comment` sub-grammar lands when
+the op grows beyond regex-pair semantics.
+
+Diagnostic codes: `comment/missing-arg`, `comment/too-many-args`,
+`comment/open-syntax`, `comment/close-syntax`.
+
+### 14.5j Operator registry (LANDED)
+
+`pipeline/src/registry.rs` maps op name → factory closure:
+
+```rust
+pub type OpFactory =
+    dyn Fn(&str, &str) -> Result<Box<dyn Op>, Vec<PatternDiagnostic>>
+    + Send + Sync;
+```
+
+The factory takes `(op_name, paren_body)` as raw strings so `pipeline`
+stays free of any Cargo dep on `sprefa_parse` (§1.6 invariant).
+Callers holding an `OpInvocation` extract its paren body and dispatch
+through `Registry::build(name, body)`.
+
+`Registry::with_stdlib()` pre-registers every built-in: `repo`, `rev`,
+`fs`, `void`, `str`, `comment`, `print`. `CaptureWriteOp` is built out
+of band via `Registry::capture_write(target)` because the grammar
+lowers `> $NAME` to a dedicated `PipeStepKind::CaptureWrite` node, not
+an op invocation.
+
+`Registry::doc(name)` returns the op's markdown hover text. Every
+registered name has a doc; a unit test enforces that invariant.
+
+`sprefa-run` and the LSP `Backend` share one registry; construction is
+one-time at driver startup.
+
+### 14.5k `PrintEffect` + `print([prefix])` (LANDED)
+
+First write-side (non-pure) effect in the v3 pipeline. Registered via
+`RtCtxBuilder::register` (not `register_pure`) — print is not
+cacheable.
+
+- `PrintEffect { line: Arc<str> }` — `EffectKind` with
+  `payload_bytes = Some(line.len())` for telemetry.
+- `PrintSink { Stdout | Buffer(Arc<Mutex<Vec<String>>>) }` — sink
+  selected at batcher construction. `Buffer` gives tests captured
+  output without redirecting stdout.
+- `PrintBatcher::new(sink)`, `PrintBatcher::stdout()`,
+  `PrintBatcher::buffer()` — three constructors for the three usage
+  shapes.
+- `PrintOp { prefix: Option<Arc<str>> }` at `pipe()` time puts one
+  `PrintEffect { line }` per input cursor. Optional prefix prepends
+  `prefix: ` so several `print` sites stay distinguishable. The cursor
+  flows through unchanged.
+
+Diagnostic code: `print/too-many-args`.
+
+### 14.5l LSP hover dispatcher (LANDED)
+
+`DocSession::hover_at(offset)` walks the host CST to the innermost
+descendant at `offset`, climbs to the enclosing `op_invocation`, reads
+its `name` field, and returns `Registry::doc(name)`. The LSP
+`Backend::hover` converts the LSP `Position` to a byte offset via
+`position_to_offset` and wraps the markdown body in a
+`HoverContents::Markup` response.
+
+Hover inside an injected pattern body (per §14.6) is the next step.
+The registry and `PatternOp::hover_match` surface are in place; the
+dispatcher today terminates at the outer op name.
+
+---
+
+### 14.5m x5b — IO unification + lowerer trait fu (spike locked 2026-04-22; Pass A + Pass B both landed 2026-04-22)
+
+Thesis: one IO contract end-to-end, `cursor[] -> cursor[]`. Every
+composable thing impls `Op`. Pattern, Pipeline, Term fold into a single
+`Value::Op(Arc<dyn Op>)` variant; scalars stay as cheap leaves. Args are
+tuples. Pipes are tuples. Patterns are tuples of sub-grammar-emitted
+Ops. Same substance at every tier.
+
+#### 14.5m.1 Value collapse (target)
+
+```rust
+// post-x5b
+enum Value {
+    Atom(Arc<str>),
+    Str(Arc<str>),
+    Int(i64),
+    Float(f64),
+    Op(Arc<dyn Op>),   // absorbs Pattern + Pipeline + Term from §4.3
+}
+```
+
+`$NAME` is sugar for term-op; `${body}` is term-op with a sprf-body
+slot. The grammar-level fused token stays for ergonomics; the lowerer
+desugars to `Value::Op(Arc<term_op>)`.
+
+Value::Term may survive as sugar-distinct through migration for
+resolver ergonomics; re-evaluate after step 5 of §14.5m.6.
+
+#### 14.5m.2 Op capability surface
+
+`Op` stays object-safe. Optional capability methods with defaults carry
+the bulk/lazy/eager collapse hooks that `PatternValue` used to own:
+
+```rust
+pub trait Op: Send + Sync + 'static {
+    fn name(&self) -> &'static str;
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>>;
+    fn arg_spec(&self) -> &[ArgSpec] { &[] }
+    fn language(&self) -> Option<tree_sitter::Language> { None }
+    fn highlights(&self) -> Option<&'static str> { None }
+
+    // capability surface (absorbed from PatternValue):
+    fn bound_captures(&self) -> &[Arc<str>] { &[] }
+    fn try_raw_regex(&self) -> Option<&Regex> { None }
+    fn materialize_with(&self, _: &HashMap<Arc<str>, Vec<u8>>) -> Option<Regex> { None }
+}
+```
+
+Consumers (`fs`, `rev`, `repo`, `comment`) stop pattern-matching on
+`Value` variants and stop downcasting to `GlobPattern` / `RegexPattern`.
+They call `op.try_raw_regex()` for the bulk path and fall through to
+`op.pipe(ctx, c)` for the generic path. Concrete matcher structs
+(`GlobPattern`, `RegexPattern`) fold into the compiled state of their
+ops (`GlobOp`, `ReOp`).
+
+`PatternOp` extension trait stays — it owns the compile-time
+sub-grammar surface (`compile`, `language`, `highlights`, `hover_match`)
+that non-pattern ops don't need. Runtime dispatch surface is Op only.
+
+#### 14.5m.3 Scan-pointer as op category (not a framework primitive)
+
+§12 already says scan-pointers are ops. x5b names the three shapes
+explicitly, distinguished by what happens when an arg is observed
+unbound at drive time:
+
+| shape | source when unbound | example |
+|---|---|---|
+| produce-or-filter | op has a source to draw from | `tag(:key, $V)`, `fs($P)`, `rev($R)`, `repo($R)` |
+| filter-only | no source; asserts on existing cursor state | `is_rev($R)`, `is_repo($R)`, `is_fs($F)` |
+| pattern-with-embedded-term | pattern compiles its hole into write-mode named group, or read-mode literal substitution | `re($NAME = ...)`, `glob(.../$F)` |
+
+Per-op arg-mode dispatch: each op inspects incoming `cursor.captures`
+for names declared in `bound_captures()`. Per-slot state (absent /
+present-empty / present-full) selects the branch. Pipe order is goal
+order. No search, no re-ordering, no backtrack. Shallow prolog,
+forward-only.
+
+Two equivalent compositions express the same semantics:
+
+```sprf
+json({ ${KEY > is_rev()}: _ })   # sub-pipe drives is_rev on cursor w/ KEY slot
+json({ ${is_rev($KEY)}: _ })     # is_rev takes $KEY arg, inspects slot
+```
+
+Both end with `KEY` bound iff `is_rev` approves. Difference is
+composition shape (pipe vs arg); semantics identical.
+
+#### 14.5m.4 Term-as-cursor-of-1-hashmap
+
+A term IS a cursor with one capture slot entry. Bound = slot has
+bytes. Unbound = slot present but empty. Three-state (unbound / bound
+/ free) collapses to two. "Free" doesn't exist at runtime — it's just
+slot-absent, which is a resolver error at lower time (§19).
+
+Scan-pointer side-effect = op writing to `cursor.captures` from its
+pipe body. Framework never auto-writes. Every capture mutation is an
+op executing its own semantics. `bound_captures()` is the
+declared-intent contract that resolver and LSP read; the op itself is
+the authority on how bindings flow.
+
+#### 14.5m.5 Lowerer trait fu — default behavior, per-op escape hatch
+
+Object-safe `Op` can't hold constructors (`Self: Sized`). Split into
+three traits:
+
+```rust
+// Object-safe; dyn-dispatched. Above, §14.5m.2.
+pub trait Op { ... }
+
+// Companion; compile-time. Most ops live here.
+pub trait OpCtor: Op + Sized {
+    fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>>;
+    fn compile_from_tree(_: &Tree, _: &[u8])
+        -> Result<Self, Vec<PatternDiagnostic>> { Err(unsupported()) }
+    fn language_static() -> Option<tree_sitter::Language> { None }
+}
+
+// Registry-facing factory; one impl per op.
+pub trait OpLowering: Send + Sync + 'static {
+    fn lower(
+        &self,
+        node: Node<'_>,
+        src: &[u8],
+        registry: &Registry,
+        diags: &mut Vec<PatternDiagnostic>,
+    ) -> Option<Box<dyn Op>>;
+}
+
+pub struct DefaultLowering<O: OpCtor>(PhantomData<O>);
+
+impl<O: OpCtor + 'static> OpLowering for DefaultLowering<O> {
+    fn lower(&self, node, src, registry, diags) -> Option<Box<dyn Op>> {
+        // 1. If O::language_static() is Some AND node has an injected
+        //    tree (sub-grammar body): parse + O::compile_from_tree.
+        // 2. Else: walk paren children via registry.lower_paren_slot
+        //    into Vec<Value>; call O::from_values.
+        // 3. Validate arg count/variants against O::arg_spec() before
+        //    the from_values call; push diagnostics for mismatches.
+    }
+}
+```
+
+Registration:
+
+```rust
+registry.register::<FsOp>("fs");               // default lowering (90% of ops)
+registry.register::<ReOp>("re");               // default lowering (has language_static)
+registry.register::<GlobOp>("glob");
+registry.register_custom("tag", TagLowering);  // custom: per-slot arg-mode dispatch
+```
+
+Ops that need raw CST inspection, partial-construction on error, or
+per-slot arg-mode dispatch that can't be expressed via `arg_spec`
+register a custom `OpLowering` impl. `tag` is the first expected
+consumer (produce-or-filter shape with both arg modes coming through
+the same syntactic slot).
+
+#### 14.5m.6 Migration steps
+
+**Pass A — landed 2026-04-22 (Value collapse + consumer migration):**
+
+1. [x] `_1_op.rs` — `bound_captures` / `try_raw_regex` /
+   `materialize_with` added with defaults. `Op: Debug` bound added.
+2. [x] `value.rs` — `Value::Pattern` + `Value::Pipeline` collapsed
+   into `Value::Op(Arc<dyn Op>)`. `ArgSpec::Pattern` + `::Pipeline`
+   collapsed into `ArgSpec::Op`. `Pattern` type alias removed outright
+   (no migration window needed — consumers flipped in the same pass).
+7. [x] Deleted: `PatternValue` trait, `GlobPattern`, `RegexPattern`,
+   `JsonPattern`, `AstPattern`, `AstStructuralConfirm`. Json/Ast
+   placeholders removed since those ops haven't landed.
+8. [x] `GlobOp` / `ReOp` fused with their former `*Pattern`
+   structs: hold `template` / `regex` / `bound_captures` / `anchors`
+   directly. Static inherent `compile_from_tree(&Tree, &[u8]) -> Self`.
+   `Op::pipe` runs `apply_identity_pattern` directly. `Op::try_raw_regex`
+   / `materialize_with` / `bound_captures` override the capability
+   defaults from their own state. Dropped `#[sprf_pattern_op]` macro
+   for these two — hand-rolled `impl Op` is cleaner than extending the
+   macro to delegate capability methods.
+9. [x] `PatternOp` trait slimmed: kept `binds_captures` (tree-walk
+   probe, used by resolver/LSP) and `hover_match`. Dropped `compile`,
+   `compiled_pattern`, `pattern_pipe` default. Construction now lives
+   on the op as an inherent `compile_from_tree` (requires `Self: Sized`,
+   so outside the dyn-safe trait).
+10. [x] Consumers (`fs` / `rev` / `repo` / `comment`): downcast-to-
+    concrete replaced with `Value::Op(op) if op.try_raw_regex().is_some()`
+    + `op.try_raw_regex().unwrap().clone()` where a regex is needed.
+    RevOp / RepoOp / FsOp store `Arc<dyn Op>` in their Filter variants.
+11. [x] `registry.rs` — `compile_pattern` returns `Arc<dyn Op>`.
+    Nested `op_invocation` lowering emits `Value::Op(op)` directly.
+    Two-door registry shape preserved (`OpFactory` + `PatternOpFactory`).
+12. [x] 170/170 workspace tests green.
+
+**Pass B — landed 2026-04-22 (trait-fu registry ergonomics):**
+
+1. [x] `op_ctor.rs` NEW — three sibling traits: `OpCtor` (value-arg
+   construction), `PatternCtor` (compile-from-injected-tree), `OpLowering`
+   (raw-CST escape hatch). Each carries `const NAME` / `const DOC`.
+   `PatternCtor` also carries `language()` / `highlights()` so the
+   sub-grammar handle moves out of the by-name `op_languages` lookup.
+2. [x] `registry.rs` — `Builder::register::<O>()` /
+   `register_pattern::<O>()` / `register_custom::<L>()` replace the
+   per-op closure hand-rolling. Languages + highlights now stored in
+   the registry (`Registry::pattern_language(name)` /
+   `pattern_highlights(name)`); the by-name `crate::op_languages::
+   language_of` lookup in `lower_nested_op_invocation` becomes a
+   typed registry method. The two factory tables remain underneath the
+   trait facade — the trait surface is the seam, the storage shape is
+   unchanged.
+3. [x] Per-op `impl OpCtor for <Op>`: every stdlib op now declares
+   `NAME` + `DOC` on its own type. `from_values` either hoisted into
+   the trait or delegated to the inherent (kept inherent for the
+   five ops with non-trivial bodies — repo/rev/fs/comment/print —
+   so the inherent ascii-table-of-arms remains the source of truth).
+4. [x] `with_stdlib()` is now ten one-liners
+   (`register::<RepoOp>()` ... `register_pattern::<ReOp>()`).
+   `register_custom::<L>()` exists with no consumer; lands when the
+   first `tag`-style op arrives.
+
+Pass B is organizational — unlocks nothing at runtime. The motivation
+for landing it now (rather than waiting for `tag`) was twofold:
+ergonomic registration for the next 4-5 ops about to land (json/ast/
+sh/render), and the `register_custom` door pre-built so `tag` slots in
+without re-shaping the registry.
+
+LoC: registry.rs net −22 (factory closures + `*_DOC` consts removed,
+trait-driven Builder methods + language storage added). Per-op DOC
+strings now live next to each op (~80 lines moved, not added).
+
+#### 14.5m.7 Open tensions (deferred)
+
+- `Value::Term` survival: kept as sugar-distinct variant through
+  Pass A. Resolver ergonomics seem to want the syntactic distinction;
+  re-evaluate if Pass B or a later slice surfaces a reason to fold
+  into `Value::Op(term_op)`.
+- `ArgSpec` post-collapse is now `Atom | Str | Int | Float | Term |
+  Op | Any`. Per-slot "must-be-bulk-collapsible" refinement (e.g.
+  `ArgSpec::Op { bulk: required }`) left as op-side diagnostic for now
+  — current consumers check `op.try_raw_regex().is_some()` inline.
+- Scalar literals as trivial Ops: no. Leaves stay leaves; lift on
+  demand at the outer op's seam.
+
+---
 
 `#[sprf_pattern_op(name = "glob")]` proc-macro fills in `language()`
 and `highlights()` from sibling files:
@@ -1199,8 +2193,8 @@ term-refs park cursors; upstream close drops them (never throw).
 signature. Zero params is the degenerate case.
 
 ```sprf
-rule(classes) > ast[rust] { class $NAME }                # zero params; runs on subscribe
-rule(used_by, $CLASS) > ast[rust] { new $CLASS() }       # one param; lazy until call
+rule(classes) > ast[rust] { class ${NAME} }              # zero params; runs on subscribe
+rule(used_by, $CLASS) > ast[rust] { new ${CLASS}() }     # one param; lazy until call
 
 rule(audit) {
   > classes
@@ -1735,7 +2729,7 @@ rule(doc_type_sync) {
   > fs("**/parse.md")
   > marker(sprf:type, $ENTITY_NAME, $ATTRS)
   > &{ path_of($ATTRS) }
-  > ast[rust] { struct $ENTITY_NAME { $$$BODY } }
+  > ast[rust] { struct ${ENTITY_NAME} { $$${BODY} } }
   > render_into_marker
 }
 ```

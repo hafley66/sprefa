@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/effect_runtime",
     "crates/pipeline",
+    "crates/server",
     "crates/spine",
     "crates/sprefa_macros",
     "crates/sprefa_parse",
@@ -10,10 +11,9 @@ members = [
     "experiments/effect_proof",
     "experiments/lang_prototype",
 ]
-# parse_experiment keeps its own inner workspace so its tree-sitter
-# crate set does not leak into the effect-runtime lockfile.
-# sprefa is v2 carryover; excluded while v3 parse/op surface is
-# broken. Sweep after ops_core lands.
+# crates/sprefa is v2 carryover against v2's parse/op surface; not
+# compatible with v3's new parse_parse + pipeline::Op. Kept on disk for
+# cherry-picking (runner, DAG, server shapes) but out of the build.
 exclude = [
     "crates/sprefa",
     "experiments/parse_experiment",

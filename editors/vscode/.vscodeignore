@@ -1,0 +1,10 @@
+.vscode/**
+src/**
+tsconfig.json
+**/*.map
+**/tsconfig.tsbuildinfo
+install.sh
+sprf-*.vsix
+# Do NOT list node_modules here. vsce auto-prunes dev deps and keeps
+# prod deps (vscode-languageclient). Excluding node_modules wholesale
+# strips vscode-languageclient from the .vsix and kills LSP startup.
