@@ -223,8 +223,8 @@ pub fn lower_paren_slot(
                 out.push(val);
             }
             "term_ref" => {
-                let name = extract_term_ref_name(child, src);
-                out.push(Value::Term(Arc::from(name)));
+                let (name, mode) = extract_term_ref(child, src);
+                out.push(Value::Term { name: Arc::from(name), mode });
             }
             "atom_literal" => {
                 let range = child.byte_range();
@@ -379,7 +379,9 @@ fn extract_op_body_str<'a>(node: Node<'_>, src: &'a [u8]) -> &'a str {
     std::str::from_utf8(&src[range.start + 1..range.end.saturating_sub(1)]).unwrap_or("")
 }
 
-fn extract_term_ref_name<'a>(node: Node<'_>, src: &'a [u8]) -> &'a str {
+/// Returns (name, mode) from a term_ref node.
+/// Accepts: `$NAME`, `${NAME}`, `$NAME?`, `${NAME?}`. Trailing `?` → Unbound.
+fn extract_term_ref<'a>(node: Node<'_>, src: &'a [u8]) -> (&'a str, crate::value::TermMode) {
     let range = node.byte_range();
     let bytes = &src[range];
     let rest = if bytes.first() == Some(&b'$') { &bytes[1..] } else { bytes };
@@ -388,7 +390,12 @@ fn extract_term_ref_name<'a>(node: Node<'_>, src: &'a [u8]) -> &'a str {
     } else {
         rest
     };
-    std::str::from_utf8(rest).unwrap_or("")
+    let (name_bytes, mode) = if rest.last() == Some(&b'?') {
+        (&rest[..rest.len() - 1], crate::value::TermMode::Unbound)
+    } else {
+        (rest, crate::value::TermMode::Read)
+    };
+    (std::str::from_utf8(name_bytes).unwrap_or(""), mode)
 }
 
 fn process_string_literal(node: Node<'_>, src: &[u8]) -> String {
@@ -583,7 +590,7 @@ mod tests {
 
         assert!(diags.is_empty(), "unexpected diags: {diags:?}");
         assert_eq!(values.len(), 1);
-        assert!(matches!(&values[0], Value::Term(n) if n.as_ref() == "R"));
+        assert!(matches!(&values[0], Value::Term { name, .. } if name.as_ref() == "R"));
     }
 
     #[test]

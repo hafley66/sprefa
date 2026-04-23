@@ -48,10 +48,11 @@ pub enum Value {
     /// `1.5` — float literal.
     Float(f64),
 
-    /// `$NAME` — capture reference. Unbound at lower time; resolved via
-    /// the binding graph at drive time. The resolver looks up its
-    /// current binding in the cursor's captures.
-    Term(Arc<str>),
+    /// `${NAME}` (read) or `${NAME?}` (unbound introducer) — capture
+    /// reference. Resolved via the binding graph at drive time. The
+    /// resolver looks up the current binding (read mode) or introduces
+    /// a fresh binding (unbound mode) on the cursor's captures.
+    Term { name: Arc<str>, mode: TermMode },
 
     /// Any op instance in arg position: pattern ops (`re(...)`,
     /// `glob(...)`, ...), nested pipelines, and arbitrary sub-pipes.
@@ -61,6 +62,20 @@ pub enum Value {
     Op(Arc<dyn Op>),
 }
 
+/// Syntactic mode for a term reference. Locked at lower time from the
+/// `${NAME}` vs `${NAME?}` surface (sprefa-9lt). No runtime-inferred
+/// path any more: BindingGraph checks the mode statically.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum TermMode {
+    /// `${NAME}` — must already be bound at this point. Static error
+    /// if no upstream writer in this arm.
+    Read,
+    /// `${NAME?}` — introducer. Must NOT be bound at this point; the
+    /// hole binds from the match (pattern ops) or writes from the cursor
+    /// (tag/capture_write). Static error if the name is already in scope.
+    Unbound,
+}
+
 impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -68,7 +83,7 @@ impl std::fmt::Debug for Value {
             Value::Str(s) => write!(f, "Str({s:?})"),
             Value::Int(n) => write!(f, "Int({n})"),
             Value::Float(n) => write!(f, "Float({n})"),
-            Value::Term(t) => write!(f, "Term({t:?})"),
+            Value::Term { name, mode } => write!(f, "Term({name:?}, {mode:?})"),
             Value::Op(op) => write!(f, "Op({})", op.name()),
         }
     }

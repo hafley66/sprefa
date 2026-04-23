@@ -59,7 +59,7 @@ impl RepoOp {
 
     pub fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
         match values.as_slice() {
-            [Value::Term(name)] => Ok(RepoOp::bind(name.clone())),
+            [Value::Term { name, .. }] => Ok(RepoOp::bind(name.clone())),
             [Value::Atom(s)] | [Value::Str(s)] => {
                 let pat = super::glob::compile_str(s)?;
                 Ok(RepoOp { mode: RepoMode::Filter(Arc::new(pat)) })

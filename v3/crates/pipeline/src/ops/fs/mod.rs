@@ -60,7 +60,7 @@ impl FsOp {
 
     pub fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
         match values.as_slice() {
-            [Value::Term(name)] => Ok(FsOp::bind(name.clone())),
+            [Value::Term { name, .. }] => Ok(FsOp::bind(name.clone())),
             [Value::Atom(s)] | [Value::Str(s)] => {
                 let pat = super::glob::compile_str(s)?;
                 Ok(FsOp { mode: FsMode::Filter(Arc::new(pat)) })

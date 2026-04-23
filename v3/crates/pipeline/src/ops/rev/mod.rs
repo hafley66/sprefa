@@ -69,7 +69,7 @@ impl RevOp {
 
     pub fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
         match values.as_slice() {
-            [Value::Term(name)] => Err(vec![PatternDiagnostic {
+            [Value::Term { name, .. }] => Err(vec![PatternDiagnostic {
                 code: "rev/unbounded-capture",
                 message: format!(
                     "rev(${name}) binds every rev unconditionally — \

@@ -113,7 +113,7 @@ fn lower_rev_atom_emits_filter() {
 /// factory time with diagnostic code "rev/unbounded-capture".
 #[test]
 fn lower_rev_term_rejects() {
-    let values = vec![Value::Term(Arc::from("V"))];
+    let values = vec![Value::Term { name: Arc::from("V"), mode: pipeline::value::TermMode::Read }];
     let errs = RevOp::from_values(values).expect_err("rev($V) must return diagnostic");
     assert_eq!(errs.len(), 1);
     assert_eq!(errs[0].code, "rev/unbounded-capture");
@@ -187,7 +187,7 @@ fn lower_fs_glob_emits_pattern_value() {
 /// stored for synthesized capture emission.
 #[test]
 fn lower_fs_term_binds() {
-    let values = vec![Value::Term(Arc::from("P"))];
+    let values = vec![Value::Term { name: Arc::from("P"), mode: pipeline::value::TermMode::Read }];
     let op = FsOp::from_values(values).expect("fs($P) should construct in bind mode");
     match &op.mode {
         FsMode::Bind { name, .. } => {
