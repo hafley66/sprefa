@@ -48,6 +48,7 @@ impl ReadOp {
 
 impl OpCtor for ReadOp {
     const NAME: &'static str = "read";
+    const BODY_GRAMMAR: &'static str = "none";
     const DOC:  &'static str = "\
 **read**
 

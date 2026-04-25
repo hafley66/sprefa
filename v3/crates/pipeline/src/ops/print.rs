@@ -71,6 +71,7 @@ impl PrintOp {
 
 impl OpCtor for PrintOp {
     const NAME: &'static str = "print";
+    const BODY_GRAMMAR: &'static str = "literal prefix (optional)";
     const DOC:  &'static str = "\
 **print**([_prefix_])
 

@@ -160,6 +160,7 @@ impl CommentOp {
 
 impl OpCtor for CommentOp {
     const NAME: &'static str = "comment";
+    const BODY_GRAMMAR: &'static str = "regex(es), comma-separated; quotes optional";
     const DOC:  &'static str = "\
 **comment**(_open_re_[, _close_re_])
 

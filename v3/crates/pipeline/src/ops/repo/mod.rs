@@ -96,6 +96,7 @@ impl RepoOp {
 
 impl OpCtor for RepoOp {
     const NAME: &'static str = "repo";
+    const BODY_GRAMMAR: &'static str = "glob (`*` `**` `?` `$NAME`)";
     const DOC:  &'static str = "\
 **repo**(_glob_ | `$NAME`)
 

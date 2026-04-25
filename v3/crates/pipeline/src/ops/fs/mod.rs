@@ -113,6 +113,7 @@ impl FsOp {
 
 impl OpCtor for FsOp {
     const NAME: &'static str = "fs";
+    const BODY_GRAMMAR: &'static str = "glob (`*` `**` `?` `$NAME`)";
     const DOC:  &'static str = "\
 **fs**(_glob_ | `$NAME`)
 

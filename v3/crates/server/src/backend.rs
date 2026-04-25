@@ -229,7 +229,7 @@ async fn render_enriched_hover(
     ));
     md.push_str(&format!(
         "**Body grammar:** {}  \n",
-        body_grammar_hint(&plan.focus_name)
+        registry.body_grammar(&plan.focus_name).unwrap_or("(see op doc)")
     ));
 
     // Config banner.
@@ -422,22 +422,6 @@ fn render_match_cell(c: &Cursor) -> String {
     let preview = escape_pipe(&preview);
     let preview = preview.replace('`', "\\`");
     format!("`{}`", truncate(&preview, 80))
-}
-
-/// Human-readable label for each op's paren-body grammar. Kept as a
-/// local static map so the hover can tell glob-vs-regex-vs-literal
-/// at a glance, even when the op doesn't yet ship a sub-grammar.
-fn body_grammar_hint(op: &str) -> &'static str {
-    match op {
-        "fs" | "repo"             => "glob (`*` `**` `?` `$NAME`)",
-        "rev"                     => "literal rev or `$NAME`",
-        "re"                      => "regex (`regex` crate syntax)",
-        "comment"                 => "regex(es), comma-separated; quotes optional",
-        "print"                   => "literal prefix (optional)",
-        "str"                     => "raw bytes",
-        "read" | "void"           => "none",
-        _                         => "(see op doc)",
-    }
 }
 
 fn line_of_offset(bytes: &[u8], offset: usize) -> usize {

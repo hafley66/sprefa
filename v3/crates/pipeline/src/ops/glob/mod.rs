@@ -157,6 +157,7 @@ impl GlobOp {
 
 impl crate::op_ctor::PatternCtor for GlobOp {
     const NAME: &'static str = "glob";
+    const BODY_GRAMMAR: &'static str = "glob (`*` `**` `?` `$NAME`)";
     const DOC:  &'static str = "\
 **glob**(_pattern_)
 

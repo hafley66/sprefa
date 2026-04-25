@@ -125,6 +125,7 @@ impl RevOp {
 
 impl OpCtor for RevOp {
     const NAME: &'static str = "rev";
+    const BODY_GRAMMAR: &'static str = "literal rev or `$NAME`";
     const DOC:  &'static str = "\
 **rev**(_string_ | `$NAME`)
 

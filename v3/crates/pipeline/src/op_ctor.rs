@@ -29,6 +29,10 @@ use crate::value::Value;
 pub trait OpCtor: Op + Sized {
     const NAME: &'static str;
     const DOC:  &'static str;
+    /// One-line label describing what the paren body looks like.
+    /// Surfaced by the LSP hover banner. Override per op; the default
+    /// punts the reader at the full doc.
+    const BODY_GRAMMAR: &'static str = "(see op doc)";
 
     fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>>;
 }
@@ -37,6 +41,7 @@ pub trait OpCtor: Op + Sized {
 pub trait PatternCtor: Op + Sized {
     const NAME: &'static str;
     const DOC:  &'static str;
+    const BODY_GRAMMAR: &'static str = "(see op doc)";
 
     fn language() -> Language;
     fn highlights() -> Option<&'static str> { None }
@@ -59,6 +64,7 @@ pub trait PatternCtor: Op + Sized {
 pub trait OpLowering: 'static + Send + Sync {
     const NAME: &'static str;
     const DOC:  &'static str;
+    const BODY_GRAMMAR: &'static str = "(see op doc)";
 
     fn language() -> Option<Language> { None }
 

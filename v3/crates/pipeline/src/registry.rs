@@ -53,6 +53,7 @@ pub struct Registry {
     languages:         Arc<HashMap<&'static str, Language>>,
     highlights:        Arc<HashMap<&'static str, &'static str>>,
     docs:              Arc<HashMap<&'static str, &'static str>>,
+    body_grammars:     Arc<HashMap<&'static str, &'static str>>,
 }
 
 struct Builder {
@@ -62,6 +63,7 @@ struct Builder {
     languages:         HashMap<&'static str, Language>,
     highlights:        HashMap<&'static str, &'static str>,
     docs:              HashMap<&'static str, &'static str>,
+    body_grammars:     HashMap<&'static str, &'static str>,
 }
 
 impl Builder {
@@ -73,12 +75,14 @@ impl Builder {
             languages:         HashMap::new(),
             highlights:        HashMap::new(),
             docs:              HashMap::new(),
+            body_grammars:     HashMap::new(),
         }
     }
 
     fn register<O: OpCtor>(mut self) -> Self {
         self.factories.insert(O::NAME, op_factory::<O>());
         self.docs.insert(O::NAME, O::DOC);
+        self.body_grammars.insert(O::NAME, O::BODY_GRAMMAR);
         self
     }
 
@@ -94,6 +98,7 @@ impl Builder {
             self.highlights.insert(O::NAME, h);
         }
         self.docs.insert(O::NAME, O::DOC);
+        self.body_grammars.insert(O::NAME, O::BODY_GRAMMAR);
         self
     }
 
@@ -108,6 +113,7 @@ impl Builder {
             self.languages.insert(L::NAME, lang);
         }
         self.docs.insert(L::NAME, L::DOC);
+        self.body_grammars.insert(L::NAME, L::BODY_GRAMMAR);
         self
     }
 
@@ -119,6 +125,7 @@ impl Builder {
             languages:         Arc::new(self.languages),
             highlights:        Arc::new(self.highlights),
             docs:              Arc::new(self.docs),
+            body_grammars:     Arc::new(self.body_grammars),
         }
     }
 }
@@ -187,6 +194,13 @@ impl Registry {
     ) -> Option<Value> {
         let f = self.custom_lowerers.get(op_name)?;
         Some(f(node, src, self, diagnostics))
+    }
+
+    /// Op-declared one-line label for the paren body grammar.
+    /// Each op carries its own copy via the ctor trait const so the
+    /// LSP hover never has to switch on op name.
+    pub fn body_grammar(&self, op_name: &str) -> Option<&'static str> {
+        self.body_grammars.get(op_name).copied()
     }
 
     pub fn doc(&self, op_name: &str) -> Option<&'static str> {

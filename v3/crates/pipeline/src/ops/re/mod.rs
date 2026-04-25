@@ -99,6 +99,7 @@ impl ReOp {
 
 impl crate::op_ctor::PatternCtor for ReOp {
     const NAME: &'static str = "re";
+    const BODY_GRAMMAR: &'static str = "regex (`regex` crate syntax)";
     const DOC:  &'static str = "\
 **re**(_regex_)
 

@@ -21,6 +21,7 @@ impl Op for VoidOp {
 
 impl OpCtor for VoidOp {
     const NAME: &'static str = "void";
+    const BODY_GRAMMAR: &'static str = "none";
     const DOC:  &'static str = "\
 **void**
 

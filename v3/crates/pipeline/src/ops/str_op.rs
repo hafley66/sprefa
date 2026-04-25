@@ -40,6 +40,7 @@ pub struct StrValue(pub Arc<str>);
 
 impl OpCtor for StrOp {
     const NAME: &'static str = "str";
+    const BODY_GRAMMAR: &'static str = "raw bytes";
     const DOC:  &'static str = "\
 **str**(_bytes_)
 
