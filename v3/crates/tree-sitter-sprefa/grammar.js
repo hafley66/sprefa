@@ -136,7 +136,24 @@ module.exports = grammar({
       seq('&{', field('body', $._carveout_host_body), '}'),
     ),
 
-    _carveout_host_body: $ => $.pipe,
+    // Body forms inside `${...}` / `&{...}`:
+    //   - `${IDENT?}` — unbound term shorthand. Lexes as a single token to
+    //     disambiguate from `IDENT` followed by punct `?`. Aliased to
+    //     `term_ref` so downstream consumers see the same node kind as
+    //     bare `$IDENT`. Mode (Read vs Unbound) is recovered downstream by
+    //     inspecting whether the byte range ends in `?`.
+    //   - any pipe — including a bare IDENT which the lowerer recognizes
+    //     as a term-shorthand (Read mode) when it's a single op_invocation
+    //     with no slots.
+    _carveout_host_body: $ => choice(
+      alias($._brace_term_unbound, $.term_ref),
+      $.pipe,
+    ),
+
+    _brace_term_unbound: $ => token(seq(
+      /[A-Za-z_][A-Za-z0-9_]*/,
+      '?',
+    )),
 
     // `${{...}}` — atomic shell literal. Body is opaque bytes terminated by
     // the first `}}` that isn't inside a nested balanced pair.

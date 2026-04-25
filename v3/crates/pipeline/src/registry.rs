@@ -226,6 +226,11 @@ pub fn lower_paren_slot(
                 let (name, mode) = extract_term_ref(child, src);
                 out.push(Value::Term { name: Arc::from(name), mode });
             }
+            "carveout_expr" => {
+                if let Some(v) = lower_carveout_expr(child, src, registry, diagnostics) {
+                    out.push(v);
+                }
+            }
             "atom_literal" => {
                 let range = child.byte_range();
                 let bytes = &src[range.start + 1..range.end];
@@ -396,6 +401,60 @@ fn extract_term_ref<'a>(node: Node<'_>, src: &'a [u8]) -> (&'a str, crate::value
         (rest, crate::value::TermMode::Read)
     };
     (std::str::from_utf8(name_bytes).unwrap_or(""), mode)
+}
+
+/// Lower a `${...}` / `&{...}` carveout body to a Value.
+///
+/// Two recognized shapes today:
+///   - body=term_ref       → `${NAME?}` (Unbound)
+///   - body=pipe of a single op_invocation with bare ident, no slots
+///                         → `${NAME}` (Read mode term shorthand)
+///
+/// Other body shapes (full pipes as arg-values, &{...} address forms)
+/// are not yet wired; they emit a diagnostic and are skipped.
+fn lower_carveout_expr(
+    node: Node<'_>,
+    src: &[u8],
+    _registry: &Registry,
+    diagnostics: &mut Vec<PatternDiagnostic>,
+) -> Option<Value> {
+    let body = node.child_by_field_name("body")?;
+    match body.kind() {
+        "term_ref" => {
+            let (name, mode) = extract_term_ref(body, src);
+            Some(Value::Term { name: Arc::from(name), mode })
+        }
+        "pipe" => {
+            let mut walk = body.walk();
+            let steps: Vec<Node<'_>> = body.named_children(&mut walk)
+                .filter(|n| n.kind() == "op_invocation")
+                .collect();
+            if steps.len() == 1 {
+                let inv = steps[0];
+                let has_paren = inv.child_by_field_name("paren").is_some();
+                let has_brace = inv.child_by_field_name("brace").is_some();
+                let has_bracket = inv.child_by_field_name("bracket").is_some();
+                if !has_paren && !has_brace && !has_bracket {
+                    if let Some(name_node) = inv.child_by_field_name("name") {
+                        let text = std::str::from_utf8(&src[name_node.byte_range()])
+                            .unwrap_or("");
+                        return Some(Value::Term {
+                            name: Arc::from(text),
+                            mode: crate::value::TermMode::Read,
+                        });
+                    }
+                }
+            }
+            diagnostics.push(PatternDiagnostic {
+                code: "value/carveout-pipe-unsupported",
+                message: "carveout pipes as arg values not yet supported; \
+                          only `${NAME}` / `${NAME?}` term shorthands recognized".into(),
+                byte_range: node.byte_range(),
+            });
+            None
+        }
+        _ => None,
+    }
 }
 
 fn process_string_literal(node: Node<'_>, src: &[u8]) -> String {
@@ -591,6 +650,40 @@ mod tests {
         assert!(diags.is_empty(), "unexpected diags: {diags:?}");
         assert_eq!(values.len(), 1);
         assert!(matches!(&values[0], Value::Term { name, .. } if name.as_ref() == "R"));
+    }
+
+    #[test]
+    fn lower_paren_slot_carveout_term_shorthands() {
+        use tree_sitter::Parser;
+        use crate::value::TermMode;
+
+        let cases = [
+            ("repo(${R})", "R", TermMode::Read),
+            ("repo(${R?})", "R", TermMode::Unbound),
+        ];
+        for (src, want_name, want_mode) in cases {
+            let mut p = Parser::new();
+            p.set_language(&tree_sitter_sprefa::LANGUAGE.into()).unwrap();
+            let tree = p.parse(src, None).unwrap();
+            let root = tree.root_node();
+            let pipe = root.named_child(0).unwrap();
+            let op = pipe.named_child(0).unwrap();
+            let paren = op.child_by_field_name("paren").unwrap();
+
+            let r = Registry::with_stdlib();
+            let mut diags: Vec<PatternDiagnostic> = Vec::new();
+            let values = lower_paren_slot(paren, src.as_bytes(), &r, &mut diags);
+
+            assert!(diags.is_empty(), "src={src} diags={diags:?}");
+            assert_eq!(values.len(), 1, "src={src}");
+            match &values[0] {
+                Value::Term { name, mode } => {
+                    assert_eq!(name.as_ref(), want_name, "src={src}");
+                    assert_eq!(*mode, want_mode, "src={src}");
+                }
+                other => panic!("src={src} expected Value::Term, got {other:?}"),
+            }
+        }
     }
 
     #[test]

@@ -128,6 +128,10 @@
           {
             "type": "pipe",
             "named": true
+          },
+          {
+            "type": "term_ref",
+            "named": true
           }
         ]
       }

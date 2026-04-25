@@ -491,8 +491,38 @@
       ]
     },
     "_carveout_host_body": {
-      "type": "SYMBOL",
-      "name": "pipe"
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_brace_term_unbound"
+          },
+          "named": true,
+          "value": "term_ref"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "pipe"
+        }
+      ]
+    },
+    "_brace_term_unbound": {
+      "type": "TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "PATTERN",
+            "value": "[A-Za-z_][A-Za-z0-9_]*"
+          },
+          {
+            "type": "STRING",
+            "value": "?"
+          }
+        ]
+      }
     },
     "shell_literal": {
       "type": "SEQ",
