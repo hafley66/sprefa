@@ -5,8 +5,8 @@
 //! parse + find_all on the cursor's active bytes.
 //!
 //! Examples:
-//!   ast[rust](fn $NAME($$$ARGS) { $$$BODY })
-//!   ast[typescript](let $X: ${TY}Error = $V)
+//!   ast[rust](fn ${NAME?}($$${ARGS?}) { $$${BODY?} })
+//!   ast[typescript](let ${X?}: ${TY?}Error = ${V?})
 //!
 //! Metavars (strict — bare `$NAME` / `$$$NAME` rejected at lower-time):
 //!   - `${VAR}`        — single-node sprefa metavar. Synthetic
@@ -14,10 +14,13 @@
 //!     a named regex pulls `VAR` from that slot's matched text. Lets
 //!     you capture sub-token spans without breaking ast-grep's pattern
 //!     grammar.
-//!   - `${$$$VAR}`     — multi-node metavar (only legal when the brace
-//!     sits free of identifier-char neighbours; sub-token multi is
-//!     rejected). Rewrites to native `$$$SPRFSLOTN`; matched node texts
-//!     are joined and bound as a synthesized capture.
+//!   - `$$${VAR}`      — multi-node metavar. The `$$$` ast-grep prefix
+//!     sits OUTSIDE the host's `${...}` carveout (the host parses the
+//!     leading `$` chars as opaque slot punctuation, then the `${VAR}`
+//!     as a normal carveout). Only legal when the carveout sits free of
+//!     identifier-char neighbours; sub-token multi is rejected.
+//!     Rewrites to native `$$$SPRFSLOTN`; matched node texts are joined
+//!     and bound as a synthesized capture.
 //!
 //! Strict-mode rationale: ast-grep pattern-by-example abuts identifier
 //! characters, so bare `$N` ambiguates against legitimate identifiers
@@ -62,7 +65,7 @@ pub struct AstGrepOp {
 
 impl OpCtor for AstGrepOp {
     const NAME: &'static str = "ast";
-    const BODY_GRAMMAR: &'static str = "ast-grep pattern using ${VAR} / ${$$$VAR}; lang via [rust|ts]";
+    const BODY_GRAMMAR: &'static str = "ast-grep pattern using ${VAR} / $$${VAR}; lang via [rust|ts]";
     const DOC: &'static str = "\
 **ast**[_lang_](_pattern_)
 
@@ -75,9 +78,9 @@ Strict metavar grammar (bare `$NAME` / `$$$NAME` rejected):
   run collapses to a synthetic `$SPRFSLOTN` and a named regex pulls
   `VAR` out of that slot's matched text. Use mid-token: `${TY}Error`
   matches `MyError` and binds `TY=My`.
-- `${$$$VAR}` — multi-node capture. Only legal with no identifier-char
-  neighbours. Matched node texts join (space-separated) into one
-  Synthesized capture under `VAR`.
+- `$$${VAR}` — multi-node capture. The `$$$` prefix sits outside the
+  carveout. Only legal with no identifier-char neighbours. Matched node
+  texts join (space-separated) into one Synthesized capture under `VAR`.
 ";
 
     fn from_values(_values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
@@ -451,7 +454,15 @@ fn reject_bare_metavars(
     let mut i = 0;
     while i < b.len() {
         if b[i] != b'$' { i += 1; continue; }
-        // `${...}` is the carveout — skip past matching `}`.
+        // `$$${...}` — multi-node carveout with outer-prefix. Skip past
+        // matching `}`.
+        if i + 3 < b.len() && b[i + 1] == b'$' && b[i + 2] == b'$' && b[i + 3] == b'{' {
+            let mut j = i + 4;
+            while j < b.len() && b[j] != b'}' { j += 1; }
+            i = if j < b.len() { j + 1 } else { b.len() };
+            continue;
+        }
+        // `${...}` — single-node carveout. Skip past matching `}`.
         if i + 1 < b.len() && b[i + 1] == b'{' {
             let mut j = i + 2;
             while j < b.len() && b[j] != b'}' { j += 1; }
@@ -467,7 +478,7 @@ fn reject_bare_metavars(
         if j > name_start {
             let name = &pat[name_start..j];
             let canonical = if multi {
-                format!("${{$$$\u{200B}{name}}}").replace('\u{200B}', "")
+                format!("$$${{{name}}}")
             } else {
                 format!("${{{name}}}")
             };
@@ -494,12 +505,12 @@ fn parse_lang(s: &str) -> Option<SupportLang> {
     }
 }
 
-/// Rewrite each `${VAR}` / `${$$$VAR}` carveout. Single-form collapses
+/// Rewrite each `${VAR}` / `$$${VAR}` carveout. Single-form collapses
 /// the surrounding identifier-char token run into `$SPRFSLOTN` plus a
-/// named regex for sub-token extraction. Multi-form (`${$$$VAR}`) is
-/// only legal with no identifier-char neighbours and rewrites to native
-/// `$$$SPRFSLOTN`; bound text comes from `get_multiple_matches` joined
-/// with spaces.
+/// named regex for sub-token extraction. Multi-form (`$$${VAR}`) carries
+/// the `$$$` ast-grep prefix outside the carveout; only legal with no
+/// identifier-char neighbours and rewrites to native `$$$SPRFSLOTN`;
+/// bound text comes from `get_multiple_matches` joined with spaces.
 fn lower_sugar(
     src:        &str,
     paren_span: std::ops::Range<usize>,
@@ -523,8 +534,23 @@ fn lower_sugar(
     let mut i = 0usize;
 
     while i < bytes.len() {
-        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-            let inner_start = i + 2;
+        // Outer-prefix multi-form `$$${...}`: ast-grep's `$$$` lives
+        // OUTSIDE the host carveout. Detect first so single-form match
+        // doesn't shadow it.
+        let multi = bytes[i] == b'$'
+            && i + 3 < bytes.len()
+            && bytes[i + 1] == b'$'
+            && bytes[i + 2] == b'$'
+            && bytes[i + 3] == b'{';
+        let single = !multi
+            && bytes[i] == b'$'
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b'{';
+        if multi || single {
+            // `token_start` covers the full carveout including any outer
+            // `$$$` prefix — used for term_positions span.
+            let token_start = i;
+            let inner_start = if multi { i + 4 } else { i + 2 };
             let mut j = inner_start;
             while j < bytes.len() && bytes[j] != b'}' { j += 1; }
             if j >= bytes.len() {
@@ -536,11 +562,7 @@ fn lower_sugar(
             }
             let inner = &src[inner_start..j];
             let inner_trimmed = inner.trim();
-            let (multi, name_with_suffix) = if let Some(rest) = inner_trimmed.strip_prefix("$$$") {
-                (true, rest.trim())
-            } else {
-                (false, inner_trimmed)
-            };
+            let name_with_suffix = inner_trimmed;
             // `${NAME?}` Unbound suffix mirrors host grammar; same name
             // for v0 walker.
             let name = name_with_suffix.strip_suffix('?').unwrap_or(name_with_suffix);
@@ -578,7 +600,7 @@ fn lower_sugar(
                     return Err(vec![PatternDiagnostic {
                         code: "ast/multi-sub-token-illegal",
                         message: format!(
-                            "multi metavar `${{$$${}}}` cannot sit adjacent to identifier characters \
+                            "multi metavar `$$${{{}}}` cannot sit adjacent to identifier characters \
                              (sub-token multi has no defined meaning); place it free of neighbours",
                             name
                         ),
@@ -608,9 +630,10 @@ fn lower_sugar(
             if !captures.iter().any(|s| s.as_ref() == cap_arc.as_ref()) {
                 captures.push(cap_arc.clone());
             }
-            // Token span = the whole `${...}` carveout, body-relative.
-            // Caller lifts to absolute when constructing TermPositions.
-            positions.push((cap_arc, i..(j + 1)));
+            // Token span = the whole carveout including outer `$$$`
+            // prefix when present, body-relative. Caller lifts to
+            // absolute when constructing TermPositions.
+            positions.push((cap_arc, token_start..(j + 1)));
             i = k;
         } else {
             out.push(bytes[i] as char);
@@ -684,7 +707,7 @@ mod tests {
     #[test]
     fn lower_sugar_multi_emits_native_triple() {
         let (out, res, multi, caps, _) =
-            lower_sugar("fn f(${$$$ARGS})", dummy_span()).unwrap();
+            lower_sugar("fn f($$${ARGS})", dummy_span()).unwrap();
         assert_eq!(out, "fn f($$$SPRFSLOT0)");
         assert!(res.is_empty());
         assert_eq!(multi.len(), 1);
@@ -695,7 +718,7 @@ mod tests {
 
     #[test]
     fn lower_sugar_rejects_multi_with_neighbours() {
-        let err = lower_sugar("foo${$$$X}bar", dummy_span()).unwrap_err();
+        let err = lower_sugar("foo$$${X}bar", dummy_span()).unwrap_err();
         assert_eq!(err[0].code, "ast/multi-sub-token-illegal");
     }
 
@@ -769,7 +792,7 @@ mod tests {
         let ctx = test_ctx();
         let body = b"fn f(a: i32, b: i32) {}\n";
         let c = Cursor::new(Arc::from(body.as_slice()));
-        let op = lower("ast[rust](fn ${N}(${$$$ARGS}) {})").unwrap();
+        let op = lower("ast[rust](fn ${N}($$${ARGS}) {})").unwrap();
         let out = op.pipe(&ctx, c).await;
         assert_eq!(out.len(), 1);
         let args = out[0].captures.iter().find(|c| &*c.name == "ARGS").unwrap();

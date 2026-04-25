@@ -422,6 +422,10 @@
             {
               "type": "STRING",
               "value": ">"
+            },
+            {
+              "type": "STRING",
+              "value": "$"
             }
           ]
         }
@@ -471,18 +475,6 @@
       "content": {
         "type": "SEQ",
         "members": [
-          {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "STRING",
-                "value": "$$$"
-              },
-              {
-                "type": "BLANK"
-              }
-            ]
-          },
           {
             "type": "PATTERN",
             "value": "[A-Za-z_][A-Za-z0-9_]*"

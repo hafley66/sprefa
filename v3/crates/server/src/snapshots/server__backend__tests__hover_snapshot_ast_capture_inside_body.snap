@@ -13,15 +13,15 @@ Strict metavar grammar (bare `$NAME` / `$$$NAME` rejected):
   run collapses to a synthetic `$SPRFSLOTN` and a named regex pulls
   `VAR` out of that slot's matched text. Use mid-token: `${TY}Error`
   matches `MyError` and binds `TY=My`.
-- `${$$$VAR}` — multi-node capture. Only legal with no identifier-char
-  neighbours. Matched node texts join (space-separated) into one
-  Synthesized capture under `VAR`.
+- `$$${VAR}` — multi-node capture. The `$$$` prefix sits outside the
+  carveout. Only legal with no identifier-char neighbours. Matched node
+  texts join (space-separated) into one Synthesized capture under `VAR`.
 
 
 ---
 
 **Pipe position:** step 1 / 1  
-**Body grammar:** ast-grep pattern using ${VAR} / ${$$$VAR}; lang via [rust|ts]  
+**Body grammar:** ast-grep pattern using ${VAR} / $$${VAR}; lang via [rust|ts]  
 **Config:** cwd fallback (no `.sprefa.toml` found)
 
 | slug | rev | root |
