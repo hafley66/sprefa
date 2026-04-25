@@ -266,6 +266,89 @@ impl Batcher<PrintEffect> for PrintBatcher {
     }
 }
 
+// ---------------------------------------------------------------------------
+// WriteFileEffect — first non-pure write effect that touches durable state.
+// Produced by `write_file(path)`. Sink decides whether bytes hit disk or a
+// test-side buffer. Shares no domain with the read-side effects yet; once
+// invalidation lands, this and `ReadBytesEffect` will both ride `"fs"` so
+// a write-then-read sequence sees the new bytes.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub struct WriteFileEffect {
+    pub path:  Arc<std::path::Path>,
+    pub bytes: Arc<[u8]>,
+}
+
+impl EffectKind for WriteFileEffect {
+    type Response = Result<(), Arc<str>>;
+
+    fn payload_bytes(&self) -> Option<usize> {
+        Some(self.bytes.len())
+    }
+}
+
+/// Where a [`WriteFileBatcher`] sends its writes.
+#[derive(Clone)]
+pub enum WriteFileSink {
+    Disk,
+    Buffer(Arc<Mutex<Vec<(Arc<std::path::Path>, Arc<[u8]>)>>>),
+}
+
+impl WriteFileSink {
+    pub fn buffer() -> (Self, Arc<Mutex<Vec<(Arc<std::path::Path>, Arc<[u8]>)>>>) {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        (WriteFileSink::Buffer(buf.clone()), buf)
+    }
+
+    fn write(&self, path: &Arc<std::path::Path>, bytes: &Arc<[u8]>) -> Result<(), String> {
+        match self {
+            WriteFileSink::Disk => {
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| format!("create_dir_all({}): {}", parent.display(), e))?;
+                    }
+                }
+                std::fs::write(path.as_ref(), bytes.as_ref())
+                    .map_err(|e| format!("write({}): {}", path.display(), e))
+            }
+            WriteFileSink::Buffer(buf) => {
+                buf.lock()
+                    .expect("write buffer poisoned")
+                    .push((path.clone(), bytes.clone()));
+                Ok(())
+            }
+        }
+    }
+}
+
+pub struct WriteFileBatcher {
+    sink: WriteFileSink,
+}
+
+impl WriteFileBatcher {
+    pub fn new(sink: WriteFileSink) -> Self { Self { sink } }
+    pub fn disk() -> Self { Self { sink: WriteFileSink::Disk } }
+    pub fn buffer() -> (Self, Arc<Mutex<Vec<(Arc<std::path::Path>, Arc<[u8]>)>>>) {
+        let (sink, buf) = WriteFileSink::buffer();
+        (Self { sink }, buf)
+    }
+}
+
+impl Batcher<WriteFileEffect> for WriteFileBatcher {
+    fn run(
+        &self,
+        req: WriteFileEffect,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'static, Result<(), Arc<str>>> {
+        let sink = self.sink.clone();
+        Box::pin(async move {
+            sink.write(&req.path, &req.bytes).map_err(|e| Arc::from(e.as_str()))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,6 +378,22 @@ mod tests {
         rt.put(PrintEffect { line: Arc::from("world") }).await;
         let lines = buf.lock().unwrap().clone();
         assert_eq!(lines, vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn write_file_buffer_captures_bytes() {
+        let (batcher, buf) = WriteFileBatcher::buffer();
+        let rt = RtCtxBuilder::new().register::<WriteFileEffect, _>(batcher).build();
+        let path: Arc<std::path::Path> = Arc::from(std::path::Path::new("out/a.txt"));
+        let res = rt.put(WriteFileEffect {
+            path: path.clone(),
+            bytes: Arc::from(b"hello".as_slice()),
+        }).await;
+        assert!(res.is_ok());
+        let written = buf.lock().unwrap().clone();
+        assert_eq!(written.len(), 1);
+        assert_eq!(written[0].0, path);
+        assert_eq!(written[0].1.as_ref(), b"hello");
     }
 
     #[tokio::test]

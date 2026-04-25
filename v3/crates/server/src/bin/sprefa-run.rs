@@ -185,27 +185,17 @@ async fn run_and_print(
 ) {
     let mut ops: Vec<Pipeline> = Vec::new();
     for inv in &pipe.ops {
-        let values = match inv.node().child_by_field_name("paren") {
-            Some(p) => {
-                let mut diags = Vec::new();
-                let vs = pipeline::registry::lower_paren_slot(
-                    p,
-                    source.as_bytes(),
-                    registry,
-                    &mut diags,
-                );
+        let mut diags = Vec::new();
+        match registry.build_from_node(&inv.name, inv.node(), source.as_bytes(), &mut diags) {
+            Some(Ok(op)) => {
                 if !diags.is_empty() {
                     for d in &diags {
                         eprintln!("lower {}: {}: {}", inv.name, d.code, d.message);
                     }
                     std::process::exit(1);
                 }
-                vs
+                ops.push(Pipeline::Op(op))
             }
-            None => Vec::new(),
-        };
-        match registry.build(&inv.name, values) {
-            Some(Ok(op)) => ops.push(Pipeline::Op(op)),
             Some(Err(errs)) => {
                 for d in &errs {
                     eprintln!("lower {}: {}: {}", inv.name, d.code, d.message);

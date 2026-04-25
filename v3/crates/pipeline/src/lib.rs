@@ -39,15 +39,15 @@ pub mod op_languages {
 
 pub use _0_cursor::{Capture, Cursor, PathSeg, SprfPath};
 pub use _1_op::Op;
-pub use op_ctor::{OpCtor, OpLowering, PatternCtor};
 pub use _2_pipeline::Pipeline;
 pub use effects::{
-    FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect, PrintSink,
-    ReadBytesBatcher, ReadBytesEffect,
+    FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect, PrintSink, ReadBytesBatcher,
+    ReadBytesEffect, WriteFileBatcher, WriteFileEffect, WriteFileSink,
 };
-pub use ops::{CommentOp, GlobOp, PrintOp, ReOp, ReadOp, StrOp, StrValue, VoidOp};
-pub use registry::Registry;
+pub use op_ctor::{OpCtor, OpLowering, PatternCtor};
+pub use ops::{
+    CommentOp, GlobOp, JsonOp, PrintOp, ReOp, ReadOp, StrOp, StrValue, VoidOp, WriteFileOp,
+};
 pub use pattern_op::{PatternDiagnostic, PatternOp};
-pub use value::{
-    apply_identity_pattern, materialize_template, ArgSpec, Seg, Value,
-};
+pub use registry::Registry;
+pub use value::{apply_identity_pattern, materialize_template, ArgSpec, Seg, Value};

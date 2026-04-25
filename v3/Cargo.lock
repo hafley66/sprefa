@@ -85,7 +85,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-java",
  "tree-sitter-javascript",
- "tree-sitter-json",
+ "tree-sitter-json 0.23.0",
  "tree-sitter-kotlin-sg",
  "tree-sitter-lua",
  "tree-sitter-php",
@@ -1373,6 +1373,7 @@ dependencies = [
  "sprefa_parse",
  "tokio",
  "tree-sitter",
+ "tree-sitter-json 0.24.8",
  "tree-sitter-sprefa",
 ]
 
@@ -2199,6 +2200,16 @@ name = "tree-sitter-json"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86a5d6b3ea17e06e7a34aabeadd68f5866c0d0f9359155d432095f8b751865e4"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-json"
+version = "0.24.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d727acca406c0020cffc6cf35516764f36c8e3dc4408e5ebe2cb35a947ec471"
 dependencies = [
  "cc",
  "tree-sitter-language",

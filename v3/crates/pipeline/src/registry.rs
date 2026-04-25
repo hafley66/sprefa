@@ -29,9 +29,12 @@ use std::sync::Arc;
 use tree_sitter::{Language, Node, Parser, Tree};
 
 use crate::_1_op::Op;
-use crate::op_ctor::{op_factory, CustomLowerFn, OpCtor, OpLowering, PatternCtor};
+use crate::op_ctor::{
+    node_factory, op_factory, CustomLowerFn, NodeFactoryFn, OpCtor, OpLowering, PatternCtor,
+};
 use crate::ops::{
-    CommentOp, FsOp, GlobOp, PrintOp, ReadOp, ReOp, RepoOp, RevOp, StrOp, VoidOp,
+    CommentOp, FsOp, GlobOp, JsonOp, PrintOp, ReadOp, ReOp, RepoOp, RevOp, StrOp, VoidOp,
+    WriteFileOp,
 };
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::Value;
@@ -44,10 +47,43 @@ pub type OpFactory =
 type PatternOpFactory =
     dyn Fn(&Tree, &[u8]) -> Result<Arc<dyn Op>, Vec<PatternDiagnostic>> + Send + Sync;
 
+/// Adapter so an `Arc<dyn Op>` (returned by pattern-op compile_pattern)
+/// can stand in where `Box<dyn Op>` is required (Pipeline::Op). All
+/// methods delegate to the inner Arc.
+#[derive(Debug)]
+struct ArcOpAdapter(Arc<dyn Op>);
+
+impl Op for ArcOpAdapter {
+    fn name(&self) -> &'static str { self.0.name() }
+    fn arg_spec(&self) -> &[crate::value::ArgSpec] { self.0.arg_spec() }
+    fn pipe<'a>(
+        &'a self,
+        ctx: &'a effect_runtime::RtCtx,
+        c:   crate::_0_cursor::Cursor,
+    ) -> effect_runtime::BoxFuture<'a, Vec<crate::_0_cursor::Cursor>> {
+        self.0.pipe(ctx, c)
+    }
+    fn language(&self) -> Option<tree_sitter::Language> { self.0.language() }
+    fn highlights(&self) -> Option<&'static str> { self.0.highlights() }
+    fn bound_captures(&self) -> &[Arc<str>] { self.0.bound_captures() }
+    fn try_raw_regex(&self) -> Option<&regex::bytes::Regex> { self.0.try_raw_regex() }
+    fn materialize_with(
+        &self,
+        bindings: &HashMap<Arc<str>, Vec<u8>>,
+    ) -> Option<regex::bytes::Regex> {
+        self.0.materialize_with(bindings)
+    }
+}
+
+fn arc_to_box_op(arc: Arc<dyn Op>) -> Box<dyn Op> {
+    Box::new(ArcOpAdapter(arc))
+}
+
 /// Op name → factory map. Clone-cheap (`Arc` inside).
 #[derive(Clone, Default)]
 pub struct Registry {
     factories:         Arc<HashMap<&'static str, Arc<OpFactory>>>,
+    node_factories:    Arc<HashMap<&'static str, Arc<NodeFactoryFn>>>,
     pattern_factories: Arc<HashMap<&'static str, Arc<PatternOpFactory>>>,
     custom_lowerers:   Arc<HashMap<&'static str, Arc<CustomLowerFn>>>,
     languages:         Arc<HashMap<&'static str, Language>>,
@@ -58,6 +94,7 @@ pub struct Registry {
 
 struct Builder {
     factories:         HashMap<&'static str, Arc<OpFactory>>,
+    node_factories:    HashMap<&'static str, Arc<NodeFactoryFn>>,
     pattern_factories: HashMap<&'static str, Arc<PatternOpFactory>>,
     custom_lowerers:   HashMap<&'static str, Arc<CustomLowerFn>>,
     languages:         HashMap<&'static str, Language>,
@@ -70,6 +107,7 @@ impl Builder {
     fn new() -> Self {
         Self {
             factories:         HashMap::new(),
+            node_factories:    HashMap::new(),
             pattern_factories: HashMap::new(),
             custom_lowerers:   HashMap::new(),
             languages:         HashMap::new(),
@@ -81,6 +119,7 @@ impl Builder {
 
     fn register<O: OpCtor>(mut self) -> Self {
         self.factories.insert(O::NAME, op_factory::<O>());
+        self.node_factories.insert(O::NAME, node_factory::<O>());
         self.docs.insert(O::NAME, O::DOC);
         self.body_grammars.insert(O::NAME, O::BODY_GRAMMAR);
         self
@@ -120,6 +159,7 @@ impl Builder {
     fn finish(self) -> Registry {
         Registry {
             factories:         Arc::new(self.factories),
+            node_factories:    Arc::new(self.node_factories),
             pattern_factories: Arc::new(self.pattern_factories),
             custom_lowerers:   Arc::new(self.custom_lowerers),
             languages:         Arc::new(self.languages),
@@ -141,6 +181,11 @@ impl Registry {
             .register::<CommentOp>()
             .register::<PrintOp>()
             .register::<ReadOp>()
+            // `JsonOp` (jq-path v0) intentionally NOT registered — it's
+            // the wrong shape per user direction (brace-walker DSL is the
+            // target, not jq). File kept in tree pending the v2 walker
+            // port (sprefa-lpk).
+            .register::<WriteFileOp>()
             .register_pattern::<GlobOp>()
             .register_pattern::<ReOp>()
             .finish()
@@ -153,6 +198,51 @@ impl Registry {
     ) -> Option<Result<Box<dyn Op>, Vec<PatternDiagnostic>>> {
         let factory = self.factories.get(op_name)?;
         Some(factory(op_name, values))
+    }
+
+    /// Unified pipe-step builder. Tries node-factory first (ops whose
+    /// paren body is a raw DSL — `str`, future `sh`, etc.); falls
+    /// through to `lower_paren_slot` + value-factory for the common case.
+    /// Pattern ops at pipe-step (`re`, `glob`) take the `compile_pattern`
+    /// route through their sub-grammar.
+    ///
+    /// `inv_node` is the host CST `op_invocation` node. Returns `None`
+    /// only when `op_name` is not registered at all.
+    pub fn build_from_node(
+        &self,
+        op_name:     &str,
+        inv_node:    Node<'_>,
+        src:         &[u8],
+        diagnostics: &mut Vec<PatternDiagnostic>,
+    ) -> Option<Result<Box<dyn Op>, Vec<PatternDiagnostic>>> {
+        // Try the raw-body path first.
+        if let Some(nf) = self.node_factories.get(op_name) {
+            if let Some(res) = nf(inv_node, src) {
+                return Some(res);
+            }
+        }
+        // Pattern op at pipe-step: extract body, parse with sub-grammar,
+        // compile to Arc<dyn Op>. Wrap into Box via a lightweight adapter.
+        if self.is_pattern_op(op_name) {
+            if let Some(lang) = self.pattern_language(op_name) {
+                let body_src = extract_op_body_str(inv_node, src);
+                let mut parser = Parser::new();
+                if parser.set_language(&lang).is_ok() {
+                    if let Some(sub_tree) = parser.parse(body_src, None) {
+                        if let Some(res) = self.compile_pattern(op_name, &sub_tree, body_src.as_bytes()) {
+                            return Some(res.map(|arc| arc_to_box_op(arc)));
+                        }
+                    }
+                }
+            }
+        }
+        // Standard path: lower_paren_slot + from_values.
+        let values = if let Some(paren) = inv_node.child_by_field_name("paren") {
+            lower_paren_slot(paren, src, self, diagnostics)
+        } else {
+            Vec::new()
+        };
+        self.build(op_name, values)
     }
 
     /// Compile a pattern-op body into an `Arc<dyn Op>`. Returns `None`
@@ -559,7 +649,7 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["comment", "fs", "print", "read", "repo", "rev", "str", "void"]
+            vec!["comment", "fs", "print", "read", "repo", "rev", "str", "void", "write_file"]
         );
     }
 

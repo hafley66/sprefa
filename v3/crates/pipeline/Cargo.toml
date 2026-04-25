@@ -6,11 +6,12 @@ publish.workspace = true
 build   = "build.rs"
 
 [dependencies]
-effect_runtime = { path = "../effect_runtime" }
-regex          = "1"
-sprefa_macros  = { path = "../sprefa_macros" }
-tokio          = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
-tree-sitter    = "0.24"
+effect_runtime   = { path = "../effect_runtime" }
+regex            = "1"
+sprefa_macros    = { path = "../sprefa_macros" }
+tokio            = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
+tree-sitter      = "0.24"
+tree-sitter-json = "0.24"
 
 [dev-dependencies]
 sprefa_parse          = { path = "../sprefa_parse" }

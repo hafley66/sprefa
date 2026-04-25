@@ -35,6 +35,27 @@ pub trait OpCtor: Op + Sized {
     const BODY_GRAMMAR: &'static str = "(see op doc)";
 
     fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>>;
+
+    /// Optional override for ops whose paren body is a raw DSL not
+    /// amenable to value-list lowering (canonical: `str`, where
+    /// `str(hello ${X} world)` is one literal-bytes-with-carveouts
+    /// template, not a comma-separated list of values).
+    ///
+    /// Default returns `None`, signalling the registry to walk the
+    /// paren slot via `lower_paren_slot` and call `from_values`. An op
+    /// that returns `Some(_)` takes full ownership of its CST and bypasses
+    /// `lower_paren_slot` entirely — including its bare-ident
+    /// diagnostics. Diagnostics emitted by the op should be folded into
+    /// the returned `Result`.
+    ///
+    /// `inv_node` is the host CST `op_invocation` node. The op finds its
+    /// paren slot via `inv_node.child_by_field_name("paren")`.
+    fn from_paren_node(
+        _inv_node: Node<'_>,
+        _src: &[u8],
+    ) -> Option<Result<Self, Vec<PatternDiagnostic>>> {
+        None
+    }
 }
 
 /// Construction door for pattern ops with a sub-grammar (§14.5).
@@ -92,5 +113,20 @@ pub(crate) type CustomLowerFn = dyn Fn(
 pub(crate) fn op_factory<O: OpCtor>() -> Arc<crate::registry::OpFactory> {
     Arc::new(|_, values| {
         O::from_values(values).map(|op| Box::new(op) as Box<dyn Op>)
+    })
+}
+
+/// Erased CST-walking factory. Mirrors [`OpCtor::from_paren_node`].
+/// Returns `None` when the op declines this path (default OpCtor impl).
+pub(crate) type NodeFactoryFn = dyn Fn(
+        Node<'_>,
+        &[u8],
+    ) -> Option<Result<Box<dyn Op>, Vec<PatternDiagnostic>>>
+    + Send
+    + Sync;
+
+pub(crate) fn node_factory<O: OpCtor>() -> Arc<NodeFactoryFn> {
+    Arc::new(|node, src| {
+        O::from_paren_node(node, src).map(|res| res.map(|op| Box::new(op) as Box<dyn Op>))
     })
 }

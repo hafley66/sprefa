@@ -8,19 +8,22 @@
 //!   - void:          `> void`     — drop the cursor.
 
 pub mod comment;
+pub mod fs;
 pub mod glob;
+pub mod json;
 pub mod print;
-pub mod read;
 pub mod re;
+pub mod read;
 pub mod repo;
 pub mod rev;
-pub mod fs;
 pub mod str_op;
 pub mod void;
+pub mod write_file;
 
 pub use comment::CommentOp;
 pub use fs::{FsMode, FsOp};
 pub use glob::GlobOp;
+pub use json::JsonOp;
 pub use print::PrintOp;
 pub use read::ReadOp;
 pub use re::ReOp;
@@ -28,3 +31,4 @@ pub use repo::{RepoMode, RepoOp};
 pub use rev::{RevMode, RevOp};
 pub use str_op::{StrOp, StrValue};
 pub use void::VoidOp;
+pub use write_file::WriteFileOp;

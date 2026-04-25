@@ -325,7 +325,6 @@ async fn render_enriched_hover(
 
 fn lower_plan(ops: &[PlannedOp], registry: &pipeline::registry::Registry) -> Option<Pipeline> {
     use sprefa_parse::host_parse;
-    use pipeline::registry::lower_paren_slot;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -342,15 +341,8 @@ fn lower_plan(ops: &[PlannedOp], registry: &pipeline::registry::Registry) -> Opt
             return None;
         }
         let inv = parsed.pipes.first()?.ops.first()?;
-        let paren = inv.node().child_by_field_name("paren");
-        let values = match paren {
-            Some(p) => {
-                let mut diags = Vec::new();
-                lower_paren_slot(p, synth.as_bytes(), registry, &mut diags)
-            }
-            None => Vec::new(),
-        };
-        let built = registry.build(&op.name, values)?;
+        let mut diags = Vec::new();
+        let built = registry.build_from_node(&op.name, inv.node(), synth.as_bytes(), &mut diags)?;
         let op_box = built.ok()?;
         seq.push(Pipeline::Op(op_box));
     }
