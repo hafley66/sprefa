@@ -145,7 +145,13 @@ module.exports = grammar({
       $.pipe,
     ),
 
+    // Optional `$$$` prefix is the multi-node metavar marker used by
+    // pattern ops (ast, cst). `${VAR?}` = single-node Unbound capture;
+    // `${$$$VAR?}` = multi-node Unbound capture. Single `$` prefix
+    // (`${$VAR?}`) is intentionally NOT accepted — it would re-introduce
+    // the ambiguity rejected at the ast layer.
     _brace_term_unbound: $ => token(seq(
+      optional('$$$'),
       /[A-Za-z_][A-Za-z0-9_]*/,
       '?',
     )),
