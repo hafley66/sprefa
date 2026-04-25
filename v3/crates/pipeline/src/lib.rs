@@ -20,6 +20,7 @@ pub mod _0_cursor;
 pub mod _1_op;
 #[allow(non_snake_case)]
 pub mod _2_pipeline;
+pub mod binding_graph;
 pub mod effects;
 pub mod lower;
 pub mod op_ctor;
