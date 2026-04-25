@@ -1,5 +1,20 @@
 [
   {
+    "type": "brace_alt",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "brace_alt_item",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "source_file",
     "named": true,
     "root": true,
@@ -8,6 +23,10 @@
       "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "brace_alt",
+          "named": true
+        },
         {
           "type": "double_star",
           "named": true
@@ -36,6 +55,14 @@
     }
   },
   {
+    "type": ",",
+    "named": false
+  },
+  {
+    "type": "brace_alt_item",
+    "named": true
+  },
+  {
     "type": "double_star",
     "named": true
   },
@@ -58,5 +85,13 @@
   {
     "type": "term_ref",
     "named": true
+  },
+  {
+    "type": "{",
+    "named": false
+  },
+  {
+    "type": "}",
+    "named": false
   }
 ]

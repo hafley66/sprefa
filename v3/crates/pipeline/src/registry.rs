@@ -41,43 +41,11 @@ use crate::value::Value;
 
 /// Factory signature for ops constructed from lowered values.
 pub type OpFactory =
-    dyn Fn(&str, Vec<Value>) -> Result<Box<dyn Op>, Vec<PatternDiagnostic>> + Send + Sync;
+    dyn Fn(&str, Vec<Value>) -> Result<Arc<dyn Op>, Vec<PatternDiagnostic>> + Send + Sync;
 
 /// Factory signature for pattern ops compiled from injected sub-trees.
 type PatternOpFactory =
     dyn Fn(&Tree, &[u8]) -> Result<Arc<dyn Op>, Vec<PatternDiagnostic>> + Send + Sync;
-
-/// Adapter so an `Arc<dyn Op>` (returned by pattern-op compile_pattern)
-/// can stand in where `Box<dyn Op>` is required (Pipeline::Op). All
-/// methods delegate to the inner Arc.
-#[derive(Debug)]
-struct ArcOpAdapter(Arc<dyn Op>);
-
-impl Op for ArcOpAdapter {
-    fn name(&self) -> &'static str { self.0.name() }
-    fn arg_spec(&self) -> &[crate::value::ArgSpec] { self.0.arg_spec() }
-    fn pipe<'a>(
-        &'a self,
-        ctx: &'a effect_runtime::RtCtx,
-        c:   crate::_0_cursor::Cursor,
-    ) -> effect_runtime::BoxFuture<'a, Vec<crate::_0_cursor::Cursor>> {
-        self.0.pipe(ctx, c)
-    }
-    fn language(&self) -> Option<tree_sitter::Language> { self.0.language() }
-    fn highlights(&self) -> Option<&'static str> { self.0.highlights() }
-    fn bound_captures(&self) -> &[Arc<str>] { self.0.bound_captures() }
-    fn try_raw_regex(&self) -> Option<&regex::bytes::Regex> { self.0.try_raw_regex() }
-    fn materialize_with(
-        &self,
-        bindings: &HashMap<Arc<str>, Vec<u8>>,
-    ) -> Option<regex::bytes::Regex> {
-        self.0.materialize_with(bindings)
-    }
-}
-
-fn arc_to_box_op(arc: Arc<dyn Op>) -> Box<dyn Op> {
-    Box::new(ArcOpAdapter(arc))
-}
 
 /// Op name → factory map. Clone-cheap (`Arc` inside).
 #[derive(Clone, Default)]
@@ -193,7 +161,7 @@ impl Registry {
         &self,
         op_name: &str,
         values: Vec<Value>,
-    ) -> Option<Result<Box<dyn Op>, Vec<PatternDiagnostic>>> {
+    ) -> Option<Result<Arc<dyn Op>, Vec<PatternDiagnostic>>> {
         let factory = self.factories.get(op_name)?;
         Some(factory(op_name, values))
     }
@@ -212,7 +180,7 @@ impl Registry {
         inv_node:    Node<'_>,
         src:         &[u8],
         diagnostics: &mut Vec<PatternDiagnostic>,
-    ) -> Option<Result<Box<dyn Op>, Vec<PatternDiagnostic>>> {
+    ) -> Option<Result<Arc<dyn Op>, Vec<PatternDiagnostic>>> {
         // Try the raw-body path first.
         if let Some(nf) = self.node_factories.get(op_name) {
             if let Some(res) = nf(inv_node, src) {
@@ -220,7 +188,7 @@ impl Registry {
             }
         }
         // Pattern op at pipe-step: extract body, parse with sub-grammar,
-        // compile to Arc<dyn Op>. Wrap into Box via a lightweight adapter.
+        // compile to Arc<dyn Op>.
         if self.is_pattern_op(op_name) {
             if let Some(lang) = self.pattern_language(op_name) {
                 let body_src = extract_op_body_str(inv_node, src);
@@ -228,7 +196,7 @@ impl Registry {
                 if parser.set_language(&lang).is_ok() {
                     if let Some(sub_tree) = parser.parse(body_src, None) {
                         if let Some(res) = self.compile_pattern(op_name, &sub_tree, body_src.as_bytes()) {
-                            return Some(res.map(|arc| arc_to_box_op(arc)));
+                            return Some(res);
                         }
                     }
                 }

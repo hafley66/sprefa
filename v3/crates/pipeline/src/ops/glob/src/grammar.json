@@ -30,6 +30,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "brace_alt"
+        },
+        {
+          "type": "SYMBOL",
           "name": "term_ref"
         },
         {
@@ -54,9 +58,46 @@
       "type": "STRING",
       "value": "/"
     },
+    "brace_alt": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "{"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "brace_alt_item"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": ","
+              },
+              {
+                "type": "SYMBOL",
+                "name": "brace_alt_item"
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "}"
+        }
+      ]
+    },
+    "brace_alt_item": {
+      "type": "PATTERN",
+      "value": "[^,}]+"
+    },
     "literal": {
       "type": "PATTERN",
-      "value": "[^*?/$]+"
+      "value": "[^*?/${}]+"
     },
     "term_ref": {
       "type": "TOKEN",

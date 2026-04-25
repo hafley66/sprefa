@@ -25,6 +25,7 @@ module.exports = grammar({
       $.star,
       $.question,
       $.slash,
+      $.brace_alt,
       $.term_ref,
       $.literal,
     ),
@@ -34,8 +35,19 @@ module.exports = grammar({
     question:    $ => '?',
     slash:       $ => '/',
 
+    // Brace alternation: `{c,h}` matches `c` or `h`; `**/*.{ts,tsx}`
+    // matches both. Each alternative is a literal byte run with no
+    // nested glob features (commas and braces are the only specials).
+    brace_alt: $ => seq(
+      '{',
+      $.brace_alt_item,
+      repeat(seq(',', $.brace_alt_item)),
+      '}',
+    ),
+    brace_alt_item: $ => /[^,}]+/,
+
     // Any run of non-special bytes.
-    literal: $ => /[^*?/$]+/,
+    literal: $ => /[^*?/${}]+/,
 
     ...shared,
   },

@@ -276,7 +276,7 @@ fn lower_all_pipes(
                     let mut diags = Vec::new();
                     let built = registry.build_from_node(&inv.name, inv.node(), src, &mut diags);
                     let (op, mut diagnostics) = match built {
-                        Some(Ok(boxed)) => (Some(Arc::<dyn Op>::from(boxed)), diags),
+                        Some(Ok(arc)) => (Some(arc), diags),
                         Some(Err(errs)) => (None, errs),
                         None            => (None, diags),
                     };

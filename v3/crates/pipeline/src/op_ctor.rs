@@ -112,7 +112,7 @@ pub(crate) type CustomLowerFn = dyn Fn(
 /// closure stored by the registry.
 pub(crate) fn op_factory<O: OpCtor>() -> Arc<crate::registry::OpFactory> {
     Arc::new(|_, values| {
-        O::from_values(values).map(|op| Box::new(op) as Box<dyn Op>)
+        O::from_values(values).map(|op| Arc::new(op) as Arc<dyn Op>)
     })
 }
 
@@ -121,12 +121,12 @@ pub(crate) fn op_factory<O: OpCtor>() -> Arc<crate::registry::OpFactory> {
 pub(crate) type NodeFactoryFn = dyn Fn(
         Node<'_>,
         &[u8],
-    ) -> Option<Result<Box<dyn Op>, Vec<PatternDiagnostic>>>
+    ) -> Option<Result<Arc<dyn Op>, Vec<PatternDiagnostic>>>
     + Send
     + Sync;
 
 pub(crate) fn node_factory<O: OpCtor>() -> Arc<NodeFactoryFn> {
     Arc::new(|node, src| {
-        O::from_paren_node(node, src).map(|res| res.map(|op| Box::new(op) as Box<dyn Op>))
+        O::from_paren_node(node, src).map(|res| res.map(|op| Arc::new(op) as Arc<dyn Op>))
     })
 }

@@ -230,7 +230,7 @@ async fn run_and_print(
                     }
                     std::process::exit(1);
                 }
-                ops.push(Pipeline::Op(Arc::from(op)))
+                ops.push(Pipeline::Op(op))
             }
             Some(Err(errs)) => {
                 for d in &errs {

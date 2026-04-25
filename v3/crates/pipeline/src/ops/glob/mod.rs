@@ -119,6 +119,25 @@ impl GlobOp {
                         template.push(Seg::Fragment(Arc::from(regex::escape(s))));
                     }
                 }
+                "brace_alt" => {
+                    // `{a,b,c}` → `(?:a|b|c)`, each alt regex-escaped.
+                    // Items are matched against `/` as a literal — brace
+                    // expansion does not implicitly cross path boundaries.
+                    let mut alt_cursor = child.walk();
+                    let mut parts: Vec<String> = Vec::new();
+                    for item in child.named_children(&mut alt_cursor) {
+                        if item.kind() != "brace_alt_item" { continue; }
+                        if let Ok(s) = std::str::from_utf8(&bytes[item.byte_range()]) {
+                            parts.push(regex::escape(s));
+                        }
+                    }
+                    if parts.is_empty() {
+                        template.push(Seg::Fragment(Arc::from("")));
+                    } else {
+                        let body = parts.join("|");
+                        template.push(Seg::Fragment(Arc::from(format!("(?:{body})"))));
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -341,6 +360,23 @@ mod tests {
             _ => None,
         }).collect();
         assert_eq!(modes, vec![TermMode::Read, TermMode::Unbound]);
+    }
+
+    #[test]
+    fn brace_alt_lowers_to_regex_alternation() {
+        let g = compile("**/*.{ts,tsx}");
+        assert!(g.regex.as_str().contains("(?:ts|tsx)"));
+        assert!(g.regex.is_match(b"src/foo/bar.ts"));
+        assert!(g.regex.is_match(b"src/foo/bar.tsx"));
+        assert!(!g.regex.is_match(b"src/foo/bar.js"));
+    }
+
+    #[test]
+    fn brace_alt_escapes_literal_specials() {
+        let g = compile("Cargo.{toml,lock}");
+        assert!(g.regex.as_str().contains(r"Cargo\.(?:toml|lock)"));
+        assert!(g.regex.is_match(b"Cargo.toml"));
+        assert!(g.regex.is_match(b"Cargo.lock"));
     }
 
     #[test]
