@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use pipeline::binding_graph::{analyze_pipe, BindingDiagnostic};
 use pipeline::registry::Registry;
 use sprefa_parse::{host_parse_with_injections, OpInvocation, ParseError, ParsedSource, Pipe};
 use tree_sitter::Node;
@@ -25,6 +26,7 @@ pub struct DocSession {
     source: String,
     parsed: ParsedSource,
     errors: Vec<ParseError>,
+    binding_diags: Vec<BindingDiagnostic>,
     registry: Registry,
     config: Config,
     config_source: ConfigSource,
@@ -46,8 +48,9 @@ impl DocSession {
             file.clone(),
             &pipeline::op_languages::language_of,
         );
+        let binding_diags = collect_binding_diags(&parsed, source.as_bytes());
         let (config, config_source) = discover_config(&file);
-        Self { file, source, parsed, errors, registry, config, config_source }
+        Self { file, source, parsed, errors, binding_diags, registry, config, config_source }
     }
 
     pub fn config(&self) -> &Config { &self.config }
@@ -61,6 +64,7 @@ impl DocSession {
             self.file.clone(),
             &pipeline::op_languages::language_of,
         );
+        self.binding_diags = collect_binding_diags(&parsed, self.source.as_bytes());
         self.parsed = parsed;
         self.errors = errors;
     }
@@ -68,6 +72,7 @@ impl DocSession {
     pub fn source(&self) -> &str { &self.source }
     pub fn parsed(&self) -> &ParsedSource { &self.parsed }
     pub fn parse_errors(&self) -> &[ParseError] { &self.errors }
+    pub fn binding_diagnostics(&self) -> &[BindingDiagnostic] { &self.binding_diags }
 
     /// Hover markdown at a byte offset. Returns `None` when the offset
     /// is outside any op_invocation or the op is not registered.
@@ -220,6 +225,18 @@ pub struct PlannedOp {
 /// Walk from the .sprf file's directory up to the filesystem root,
 /// picking up the first `.sprefa.toml` we find. Fall back to a single
 /// cwd-rooted HEAD seed.
+fn collect_binding_diags(parsed: &ParsedSource, src: &[u8]) -> Vec<BindingDiagnostic> {
+    let mut out = Vec::new();
+    let root = parsed.tree.root_node();
+    let mut walker = root.walk();
+    for child in root.named_children(&mut walker) {
+        if child.kind() != "pipe" { continue; }
+        let report = analyze_pipe(child, src);
+        out.extend(report.diagnostics);
+    }
+    out
+}
+
 fn discover_config(file: &Path) -> (Config, ConfigSource) {
     let start = file.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))

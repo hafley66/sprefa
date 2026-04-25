@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use pipeline::binding_graph::BindingDiagnostic;
 use pipeline::registry::Registry;
 use sprefa_parse::{ParseError, ParseErrorKind};
 use tokio::sync::Mutex;
@@ -62,7 +63,12 @@ impl Backend {
         let diags = {
             let guard = self.sessions.lock().await;
             let Some(entry) = guard.get(uri) else { return; };
-            parse_errors_to_lsp(entry.source(), entry.parse_errors())
+            let mut diags = parse_errors_to_lsp(entry.source(), entry.parse_errors());
+            diags.extend(binding_diags_to_lsp(
+                entry.source(),
+                entry.binding_diagnostics(),
+            ));
+            diags
         };
         self.client
             .publish_diagnostics(uri.clone(), diags, None)
@@ -529,6 +535,27 @@ fn parse_errors_to_lsp(source: &str, errors: &[ParseError]) -> Vec<Diagnostic> {
         .collect()
 }
 
+fn binding_diags_to_lsp(source: &str, diags: &[BindingDiagnostic]) -> Vec<Diagnostic> {
+    diags
+        .iter()
+        .map(|d| {
+            let (sl, sc) = offset_to_position(source, d.byte_range.start);
+            let (el, ec) = offset_to_position(source, d.byte_range.end);
+            Diagnostic {
+                range: Range {
+                    start: Position { line: sl, character: sc },
+                    end: Position { line: el, character: ec },
+                },
+                severity: Some(DiagnosticSeverity::WARNING),
+                code: Some(NumberOrString::String(d.code.to_string())),
+                source: Some("sprefa".into()),
+                message: d.message.clone(),
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,6 +573,27 @@ mod tests {
         let d = &diags[0];
         assert_eq!(d.severity, Some(DiagnosticSeverity::ERROR));
         assert!(d.code.is_some());
+        assert_eq!(d.source.as_deref(), Some("sprefa"));
+    }
+
+    #[test]
+    fn binding_diags_render_as_lsp_warnings() {
+        use crate::session::DocSession;
+        let file: Arc<std::path::Path> =
+            Arc::from(std::path::PathBuf::from("t.sprf").as_path());
+        let session = DocSession::new(
+            file,
+            "rev(${X})".into(),
+            Registry::with_stdlib(),
+        );
+        let diags = binding_diags_to_lsp(session.source(), session.binding_diagnostics());
+        assert_eq!(diags.len(), 1, "expected one term/unbound diag");
+        let d = &diags[0];
+        assert_eq!(d.severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(
+            d.code,
+            Some(NumberOrString::String("term/unbound".to_string())),
+        );
         assert_eq!(d.source.as_deref(), Some("sprefa"));
     }
 }
