@@ -1,3 +1,3 @@
 # comment-op smoke: fs lists files, comment auto-loads bytes via the
 # ensure_content_loaded seam, narrows to marker regions, print emits.
-fs(**/*.rs) > comment("sprefa-run") > print("match")
+fs(glob(**/*.rs)) > comment("sprefa-run") > print("match")

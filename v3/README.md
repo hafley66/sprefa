@@ -12,23 +12,39 @@ Perf + framework notes: [`docs/FINDINGS.md`](docs/FINDINGS.md).
   per-op injected sub-grammars (glob, regex).
 - Runs pipes through a reactive runner built on top of
   `effect_runtime` (pure-effect cache + cancellation + batching).
+- Static `BindingGraph` analysis for `${TERM}` reads / `${TERM?}`
+  introducers; surfaces `term/unbound` and `term/shadowed` warnings
+  through the LSP.
 - Ships an LSP (`sprefa-lsp`) + CLI (`sprefa-run`) + VS Code
   extension (`editors/vscode/`).
 
+## Status (2026-04-25)
+
+v3 is in maintenance / use-case-driven mode. The op stdlib + grammar +
+runtime + LSP are stable enough to write real verification rules
+against checkouts of multiple repos. New ops land when a concrete use
+case demands them (target candidates: `json`, `tag`, two-pass diff
+between revs). Speculative architecture work (source-op arg-pipe
+unification, term-as-Subject runtime, flow-class taxonomy, pluggable
+DSL delimiters) is documented in
+[`../chat_log/20260425.2.sprefa-4iv-ambiguities.md`](../chat_log/20260425.2.sprefa-4iv-ambiguities.md)
+and is on hold.
+
 ## Op inventory (landed)
 
-| op          | body                  | what it does                                                                      |
-|-------------|-----------------------|-----------------------------------------------------------------------------------|
-| `repo`      | glob `or` `$NAME`     | filter on or bind `cursor.repo`                                                   |
-| `rev`       | literal `or` `$NAME`  | filter on or bind `cursor.rev`; rejects wildcards                                 |
-| `fs`        | glob `or` `$NAME`     | enumerate files under `(repo, rev)`; filter mode or bind mode                     |
-| `read`      | *(none)*              | explicit byte-load. Optional — `comment`/`print`/etc. auto-load via `ensure_content_loaded` |
-| `comment`   | regex `[, regex]`     | narrow `cursor.byte_range` to comment-marker regions (sequential or paired)       |
-| `print`     | `[prefix]`            | emit `cursor.active()` as one line via `PrintEffect`                              |
-| `str`       | raw bytes             | stash a constant byte slot                                                        |
-| `void`      | *(none)*              | drop the cursor; fork-arm tail                                                    |
-| `> $TARGET` | *(grammar-lowered)*   | capture-write: name `cursor.active()` as `$TARGET`                                |
-| `rule(N)`   | single pipe or brace  | name a pipe or a group of pipes                                                   |
+| op        | body                  | what it does                                                                      |
+|-----------|-----------------------|-----------------------------------------------------------------------------------|
+| `repo`    | glob `or` `$NAME`     | filter on or bind `cursor.repo`                                                   |
+| `rev`     | `:atom` `or` `$NAME`  | filter on or bind `cursor.rev`; rejects wildcards                                 |
+| `fs`      | `glob(...)` `or` `$NAME` | enumerate files under `(repo, rev)`; filter mode or bind mode                  |
+| `read`    | *(none)*              | explicit byte-load. Optional — `comment`/`print`/etc. auto-load via `ensure_content_loaded` |
+| `comment` | regex `[, regex]`     | narrow `cursor.byte_range` to comment-marker regions (sequential or paired)       |
+| `print`   | `[prefix]`            | emit `cursor.active()` as one line via `PrintEffect`                              |
+| `str`     | raw bytes             | stash a constant byte slot                                                        |
+| `void`    | *(none)*              | drop the cursor; fork-arm tail                                                    |
+| `glob`    | glob pattern          | pattern op exposing a regex; consumed by `fs` / `repo` arg slots                  |
+| `re`      | regex pattern         | pattern op exposing a regex; consumed by `fs` / `repo` arg slots                  |
+| `rule(N)` | single pipe or brace  | name a pipe or a group of pipes                                                   |
 
 Parametric rules + sub-grammar ops (`ast[lang]`, `json`, `md`) are
 specified in `parse.md` but not yet landed.
@@ -39,7 +55,7 @@ Create `hello.sprf`:
 
 ```sprf
 # Find "sprefa-run" mentions inside comments under this tree.
-fs(**/*.rs) > comment("sprefa-run") > print("match")
+fs(glob(**/*.rs)) > comment("sprefa-run") > print("match")
 ```
 
 `fs` lists paths; `comment` + `print` auto-load bytes on demand via
@@ -62,19 +78,19 @@ Output: one `match: <line>` per comment region hit, with a trailing
 
 ```sprf
 # Bind (synthesized capture written into cursor).
-repo($R) > rev(HEAD) > fs($P)
+repo($R) > rev(:HEAD) > fs(glob(**/$P.rs))
 # → emits one row per file, with R, P captures set.
 
 # Filter (keep only matching cursors).
-repo(myorg/*) > rev(HEAD) > fs(src/**/*.rs)
+repo(myorg/*) > rev(:HEAD) > fs(glob(src/**/*.rs))
 ```
 
 ## Rules and rule-bodies
 
 ```sprf
 rule(sources) {
-  repo($R) > rev(HEAD) > fs(**/*.rs);
-  repo($R) > rev(HEAD) > fs(**/*.toml);
+  repo($R) > rev(:HEAD) > fs(glob(**/*.rs));
+  repo($R) > rev(:HEAD) > fs(glob(**/*.toml));
 }
 ```
 
@@ -144,10 +160,14 @@ see its Registry doc. Hover inside injected pattern bodies
 ## Smoke tests
 
 ```bash
-v3/tests/smoke/_1_run.sh      # fs over .rs files
-v3/tests/smoke/_2_rule.sh     # brace-body sub-pipes
-v3/tests/smoke/_3_comment.sh  # fs > read > comment > print end-to-end
+v3/tests/smoke/_1_run.sh             # fs over .rs files
+v3/tests/smoke/_2_rule.sh            # brace-body sub-pipes
+v3/tests/smoke/_3_comment.sh         # fs > comment > print end-to-end
+v3/tests/smoke/_4_fs_glob_nested.sh  # fs(glob(...)) nested-arg form
+v3/tests/smoke/_5_rev_atom_filter.sh # rev(:HEAD) atom filter
 ```
+
+All five pass against `crates/server` itself as the seed root.
 
 ## Fixtures and examples
 
@@ -163,9 +183,11 @@ Landed, runnable today:
 Parse-only (host CST coverage, no runtime):
 
 - [`crates/tree-sitter-sprefa/tests/kitchen_sink.rs`](crates/tree-sitter-sprefa/tests/kitchen_sink.rs)
-  — one source exercising every §8–§13 syntax node: `rule(…)`,
-  `ast[lang]{…}`, `&.$X` cursor-ref, `${target.$FIELD > $T}`
-  xref capture, `sh{…}` effect, `tag(:repo, $R)`.
+  — one source exercising the locked syntax surface: `rule(…) { … }`,
+  `ast[lang]{…}` injected pattern body, `${TERM?}` brace-mandatory
+  unbound term, `${TERM}` brace-mandatory bound read, `${{…}}` shell
+  literal, `tag(:atom, $TERM)`. Cursor-ref / xref / capture-write
+  retired (sprefa-r6k); brace-mandatory terms locked (sprefa-9lt).
 
 Prior-art kitchen sinks (reference only; they target v1/v2 surface and
 exercise ops that v3 has not yet ported):

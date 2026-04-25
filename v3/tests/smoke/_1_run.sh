@@ -26,7 +26,7 @@ echo "$out" | grep -qE '^pipe 0 — [0-9]+ rows$' \
     || { echo "FAIL: missing pipe header" >&2; exit 1; }
 
 # At least one row with server@HEAD and R=server.
-echo "$out" | grep -qE '^\s+server@HEAD .* R=server$' \
+echo "$out" | grep -qE '^\s+server@HEAD .* R=server' \
     || { echo "FAIL: missing server@HEAD row with R=server" >&2; exit 1; }
 
 # Count rows; should be > 0.
