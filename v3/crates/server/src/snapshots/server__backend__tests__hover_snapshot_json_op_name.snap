@@ -1,0 +1,35 @@
+---
+source: crates/server/src/backend.rs
+expression: md
+---
+**json**({ _pattern_ })
+
+Brace-pattern walker over JSON documents. Body is a structural pattern:
+
+- bare keys match exactly: `{ name: $N }`
+- captured keys: `{ $K: $V }`
+- `**` recurses through nested objects: `{ **: { image: $I } }`
+- arrays via `[...]`: `{ items: [...{ id: $ID }] }`
+- quoted leaf patterns: `{ image: "$REPO:$TAG" }`
+- regex / glob keys: `{ re:^dep_: $V }`, `{ "@$SCOPE/$NAME": $V }`
+
+Each match emits one cursor with named captures bound to the matched
+spans. Multiple captures fan out as a row-per-match.
+
+
+---
+
+**Pipe position:** step 1 / 1  
+**Body grammar:** brace pattern: { key: $V, $K: ..., **: ... }  
+**Config:** cwd fallback (no `.sprefa.toml` found)
+
+| slug | rev | root |
+| --- | --- | --- |
+
+---
+
+**Cursors after this op:**
+
+_(no cursors emitted)_
+
+**Total rows:** 0

@@ -18,7 +18,7 @@ use tower_lsp::{Client, LanguageServer};
 
 use crate::config::Config;
 use crate::position::{offset_to_position, position_to_offset};
-use crate::session::{ConfigSource, DocSession, HoverPlan, PlannedOp, SuggestionKind};
+use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionKind};
 
 use effect_runtime::RtCtxBuilder;
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor, PathSeg};
@@ -68,6 +68,7 @@ impl Backend {
                 entry.source(),
                 entry.binding_diagnostics(),
             ));
+            diags.extend(lower_diags_to_lsp(entry.source(), entry.lowered_pipes()));
             diags
         };
         self.client
@@ -135,21 +136,28 @@ impl LanguageServer for Backend {
             let offset = position_to_offset(session.source(), pos.line, pos.character);
             let plan = session.hover_plan(offset);
             let static_doc = session.hover_at(offset);
+            // Trigger the session's one-shot lowering inside the lock,
+            // then clone out only the slice this hover needs (cheap —
+            // each entry is an Arc<dyn Op> + small Vec of diagnostics).
+            let lowered_slice: Option<Vec<LoweredOp>> = plan.as_ref().map(|p| {
+                session.lowered_pipes()[p.pipe_idx][..=p.focus_step].to_vec()
+            });
             Some(HoverSnapshot {
                 config: session.config().clone(),
                 config_source: session.config_source().clone(),
                 registry: session.registry().clone(),
                 plan,
+                lowered_slice,
                 static_doc,
             })
         };
         let Some(snap) = snapshot else { return Ok(None) };
 
-        let body = match snap.plan {
-            Some(plan) => {
-                render_enriched_hover(&plan, &snap.config, &snap.config_source, &snap.registry).await
+        let body = match (snap.plan, snap.lowered_slice) {
+            (Some(plan), Some(slice)) => {
+                render_enriched_hover(&plan, &slice, &snap.config, &snap.config_source, &snap.registry).await
             }
-            None => snap.static_doc,
+            _ => snap.static_doc,
         };
         let Some(value) = body else { return Ok(None) };
 
@@ -202,6 +210,7 @@ struct HoverSnapshot {
     config_source: ConfigSource,
     registry: pipeline::registry::Registry,
     plan: Option<HoverPlan>,
+    lowered_slice: Option<Vec<LoweredOp>>,
     static_doc: Option<String>,
 }
 
@@ -210,6 +219,7 @@ const HOVER_ROW_CAP: usize = 20;
 
 async fn render_enriched_hover(
     plan: &HoverPlan,
+    lowered: &[LoweredOp],
     config: &Config,
     config_source: &ConfigSource,
     registry: &pipeline::registry::Registry,
@@ -261,20 +271,30 @@ async fn render_enriched_hover(
         ));
     }
 
-    // Lower the upstream pipeline once. Keep the lowered focus op
-    // alongside so we can ask it for term_positions (capture spans
-    // inside opaque paren bodies — json/ast/str).
-    let lowered = lower_plan_keeping_ops(&plan.pipe_ops, registry);
-    let Some((pipeline, lowered_ops)) = lowered else {
-        md.push_str(
-            "\n_pipeline lowering failed — one of the ops returned a body diagnostic._\n",
-        );
-        return Some(md);
-    };
+    // The session already lowered every op once via the same call CLI
+    // makes (`registry.build_from_node` over the host CST node). Bail
+    // out only if any upstream slot still has no `Op` after that single
+    // pathway — and surface the actual diagnostics instead of a generic
+    // failure line.
+    let mut pipeline_arcs: Vec<Arc<dyn pipeline::Op>> = Vec::with_capacity(lowered.len());
+    for slot in lowered {
+        let Some(op) = slot.op.clone() else {
+            md.push_str("\n_pipeline lowering failed:_\n");
+            for d in &slot.diagnostics {
+                md.push_str(&format!("- `{}`: {}\n", d.code, d.message));
+            }
+            return Some(md);
+        };
+        pipeline_arcs.push(op);
+    }
+    let pipeline = Pipeline::Seq(
+        pipeline_arcs.iter().cloned().map(Pipeline::Op).collect(),
+    );
 
     // Resolve the focused capture: hover sits inside a `${NAME?}`
-    // recorded in the focus op's `term_positions`.
-    let focus_capture: Option<Arc<str>> = lowered_ops
+    // recorded in the focus op's `term_positions`. Coordinates are
+    // host-relative because lowering ran against the original CST.
+    let focus_capture: Option<Arc<str>> = pipeline_arcs
         .get(plan.focus_step)
         .and_then(|op| {
             op.term_positions().iter().find_map(|tp| {
@@ -345,101 +365,6 @@ async fn render_enriched_hover(
     ));
 
     Some(md)
-}
-
-/// Lower the planned ops AND keep an `Arc<dyn Op>` view of each so the
-/// renderer can call `term_positions()` on the focus op without a
-/// second lowering pass.
-fn lower_plan_keeping_ops(
-    ops:      &[PlannedOp],
-    registry: &pipeline::registry::Registry,
-) -> Option<(Pipeline, Vec<Arc<dyn pipeline::Op>>)> {
-    use sprefa_parse::host_parse;
-    use std::path::PathBuf;
-    use std::sync::Arc;
-
-    let mut seq: Vec<Pipeline> = Vec::with_capacity(ops.len());
-    let mut shared: Vec<Arc<dyn pipeline::Op>> = Vec::with_capacity(ops.len());
-    for op in ops {
-        // Re-lower the op's paren body through the host parser + paren-slot
-        // lowerer. We synthesize `name(body)` here, so paren positions
-        // inside the synth source don't match the host source. The
-        // render path uses `op.paren_origin` from the host source for
-        // the term_positions comparison, and term_positions already
-        // came in absolute from the original lowering — wait: this
-        // synth path re-lowers from a fake source, which produces
-        // term_positions absolute into the synth. Re-base them to host
-        // by subtracting (synth paren origin) and adding `paren_origin`.
-        let synth = format!("{}({})", op.name, op.body);
-        let synth_paren_origin = op.name.len() + 1; // after "name("
-        let file: Arc<std::path::Path> = Arc::from(PathBuf::from("<hover>").as_path());
-        let (parsed, errs) = host_parse(&synth, file);
-        if !errs.is_empty() {
-            return None;
-        }
-        let inv = parsed.pipes.first()?.ops.first()?;
-        let mut diags = Vec::new();
-        let built = registry.build_from_node(&op.name, inv.node(), synth.as_bytes(), &mut diags)?;
-        let op_box = built.ok()?;
-        let arc: Arc<dyn pipeline::Op> = Arc::from(op_box);
-        // Wrap with a re-based view so callers see term_positions in
-        // host coordinates. For ops whose term_positions is empty this
-        // is a no-op.
-        let rebased: Arc<dyn pipeline::Op> = if arc.term_positions().is_empty() {
-            arc.clone()
-        } else {
-            Arc::new(RebasedOp {
-                inner:        arc.clone(),
-                synth_origin: synth_paren_origin,
-                host_origin:  op.paren_origin,
-                cached_positions: arc
-                    .term_positions()
-                    .iter()
-                    .map(|tp| pipeline::TermPosition {
-                        name:  tp.name.clone(),
-                        range: (op.paren_origin + (tp.range.start - synth_paren_origin))
-                              ..(op.paren_origin + (tp.range.end   - synth_paren_origin)),
-                    })
-                    .collect(),
-            })
-        };
-        shared.push(rebased);
-        // Pipeline::Op holds Box<dyn Op>; reuse the lowered op via a
-        // second build call to get a fresh Box. Cheaper alternative
-        // would be returning Arc directly from the registry, but that
-        // is a wider change.
-        let mut diags2 = Vec::new();
-        let built2 = registry.build_from_node(&op.name, inv.node(), synth.as_bytes(), &mut diags2)?;
-        let op_box2 = built2.ok()?;
-        seq.push(Pipeline::Op(op_box2));
-    }
-    Some((Pipeline::Seq(seq), shared))
-}
-
-/// Wrapper that exposes an Op's `term_positions()` re-based from
-/// synth-source coordinates to host-source coordinates. All other
-/// trait methods delegate.
-#[derive(Debug)]
-struct RebasedOp {
-    inner:            Arc<dyn pipeline::Op>,
-    #[allow(dead_code)]
-    synth_origin:     usize,
-    #[allow(dead_code)]
-    host_origin:      usize,
-    cached_positions: Vec<pipeline::TermPosition>,
-}
-
-impl pipeline::Op for RebasedOp {
-    fn name(&self) -> &'static str { self.inner.name() }
-    fn pipe<'a>(
-        &'a self,
-        ctx: &'a effect_runtime::RtCtx,
-        c:   pipeline::Cursor,
-    ) -> effect_runtime::BoxFuture<'a, Vec<pipeline::Cursor>> {
-        self.inner.pipe(ctx, c)
-    }
-    fn bound_captures(&self) -> &[Arc<str>] { self.inner.bound_captures() }
-    fn term_positions(&self) -> &[pipeline::TermPosition] { &self.cached_positions }
 }
 
 /// Compact per-cursor block: header line with file link + repo@rev +
@@ -653,6 +578,35 @@ fn parse_errors_to_lsp(source: &str, errors: &[ParseError]) -> Vec<Diagnostic> {
         .collect()
 }
 
+/// Surface op-body lowering failures (the third diag channel produced
+/// by `registry.build_from_node`) as LSP diagnostics. Severity ERROR
+/// because a slot with `op = None` collapses the whole pipe — the
+/// pipeline cannot run past it. Byte ranges from the registry are
+/// already source-absolute (tree-sitter `Node::byte_range`).
+fn lower_diags_to_lsp(source: &str, lowered: &[Vec<LoweredOp>]) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for pipe in lowered {
+        for slot in pipe {
+            for d in &slot.diagnostics {
+                let (sl, sc) = offset_to_position(source, d.byte_range.start);
+                let (el, ec) = offset_to_position(source, d.byte_range.end);
+                out.push(Diagnostic {
+                    range: Range {
+                        start: Position { line: sl, character: sc },
+                        end:   Position { line: el, character: ec },
+                    },
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    code: Some(NumberOrString::String(d.code.to_string())),
+                    source: Some("sprefa".into()),
+                    message: d.message.clone(),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+    out
+}
+
 fn binding_diags_to_lsp(source: &str, diags: &[BindingDiagnostic]) -> Vec<Diagnostic> {
     diags
         .iter()
@@ -792,5 +746,89 @@ mod tests {
             Some(NumberOrString::String("term/unbound".to_string())),
         );
         assert_eq!(d.source.as_deref(), Some("sprefa"));
+    }
+
+    #[test]
+    fn lower_diags_render_as_lsp_errors() {
+        use crate::session::DocSession;
+        let file: Arc<std::path::Path> =
+            Arc::from(std::path::PathBuf::from("t.sprf").as_path());
+        // Bare ident in value position triggers value/bare-ident from
+        // registry::lower_paren_slot (the third diag channel).
+        let session = DocSession::new(
+            file,
+            "fs(foo)".into(),
+            Registry::with_stdlib(),
+        );
+        let diags = lower_diags_to_lsp(session.source(), session.lowered_pipes());
+        assert!(!diags.is_empty(), "expected a lowering diag");
+        let d = &diags[0];
+        assert_eq!(d.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(d.source.as_deref(), Some("sprefa"));
+        assert_eq!(
+            d.code,
+            Some(NumberOrString::String("value/bare-ident".to_string())),
+        );
+    }
+
+    // ─── Hover snapshots ────────────────────────────────────────────────
+    //
+    // Pin the full markdown body produced by `render_enriched_hover` for
+    // representative pattern-op fixtures. The Config is empty + the
+    // ConfigSource is CwdFallback, so output is fully deterministic
+    // (no on-disk paths, no seed rows, no actual file reads).
+    //
+    // A "lowering failed — one of the ops returned a body diagnostic"
+    // line in any snapshot means the synth re-parse path in
+    // `lower_plan_keeping_ops` could not round-trip the op invocation.
+
+    async fn enriched_at(src: &str, byte_offset: usize) -> Option<String> {
+        use crate::session::DocSession;
+        let file: Arc<std::path::Path> =
+            Arc::from(std::path::PathBuf::from("t.sprf").as_path());
+        let session = DocSession::new(file, src.into(), Registry::with_stdlib());
+        let plan = session.hover_plan(byte_offset)?;
+        let lowered: Vec<LoweredOp> = session
+            .lowered_pipes()[plan.pipe_idx][..=plan.focus_step]
+            .to_vec();
+        let cfg = Config { seeds: vec![] };
+        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry()).await
+    }
+
+    fn off_of(src: &str, needle: &str) -> usize {
+        src.find(needle).unwrap_or_else(|| panic!("needle {needle:?} not in {src:?}"))
+            + needle.len() / 2
+    }
+
+    #[tokio::test]
+    async fn hover_snapshot_json_op_name() {
+        let src = "json({ name: ${N?}, version: ${V?} })";
+        let md = enriched_at(src, off_of(src, "json")).await
+            .expect("hover plan present at op name");
+        insta::assert_snapshot!(md);
+    }
+
+    #[tokio::test]
+    async fn hover_snapshot_json_capture_inside_body() {
+        let src = "json({ name: ${N?}, version: ${V?} })";
+        let md = enriched_at(src, off_of(src, "${N?}")).await
+            .expect("hover plan present at capture");
+        insta::assert_snapshot!(md);
+    }
+
+    #[tokio::test]
+    async fn hover_snapshot_ast_op_name() {
+        let src = "ast[rust](fn ${N?}(${ARGS?}) { ${BODY?} })";
+        let md = enriched_at(src, off_of(src, "ast")).await
+            .expect("hover plan present at op name");
+        insta::assert_snapshot!(md);
+    }
+
+    #[tokio::test]
+    async fn hover_snapshot_ast_capture_inside_body() {
+        let src = "ast[rust](fn ${N?}(${ARGS?}) { ${BODY?} })";
+        let md = enriched_at(src, off_of(src, "${N?}")).await
+            .expect("hover plan present at capture");
+        insta::assert_snapshot!(md);
     }
 }

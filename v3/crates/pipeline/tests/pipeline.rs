@@ -112,8 +112,8 @@ fn cursor_from(s: &str) -> Cursor {
 async fn seq_threads_slot_between_ops() {
     let ctx = RtCtx::default();
     let pipe = Pipeline::Seq(vec![
-        Pipeline::Op(Box::new(StampLenOp)),
-        Pipeline::Op(Box::new(ReadStampOp)),
+        Pipeline::Op(std::sync::Arc::new(StampLenOp)),
+        Pipeline::Op(std::sync::Arc::new(ReadStampOp)),
     ]);
     let out = pipe.run(&ctx, vec![cursor_from("hello world")]).await;
     assert_eq!(out.len(), 1);
@@ -124,8 +124,8 @@ async fn seq_threads_slot_between_ops() {
 async fn fork_distributes_and_tags_arms() {
     let ctx = RtCtx::default();
     let pipe = Pipeline::Fork(vec![
-        Pipeline::Op(Box::new(StampLenOp)),
-        Pipeline::Op(Box::new(StampLenOp)),
+        Pipeline::Op(std::sync::Arc::new(StampLenOp)),
+        Pipeline::Op(std::sync::Arc::new(StampLenOp)),
     ]);
     let out = pipe.run(&ctx, vec![cursor_from("abcd")]).await;
     assert_eq!(out.len(), 2, "two arms, one input cursor each = 2 outputs");
@@ -141,7 +141,7 @@ async fn fork_distributes_and_tags_arms() {
 #[tokio::test]
 async fn op_calls_effect_and_stashes_response() {
     let ctx = ctx_with_len_effect();
-    let pipe = Pipeline::Op(Box::new(LenEffectOp));
+    let pipe = Pipeline::Op(std::sync::Arc::new(LenEffectOp));
     let out = pipe.run(&ctx, vec![cursor_from("abc")]).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].get_slot::<LenFromEffect>().map(|a| (*a).clone()), Some(LenFromEffect(3)));
@@ -150,7 +150,7 @@ async fn op_calls_effect_and_stashes_response() {
 #[tokio::test]
 async fn rebase_clears_slots_preserves_captures_and_path() {
     let ctx = RtCtx::default();
-    let pipe = Pipeline::Op(Box::new(StampLenOp));
+    let pipe = Pipeline::Op(std::sync::Arc::new(StampLenOp));
     let out = pipe.run(&ctx, vec![cursor_from("xyz")]).await;
     let c = &out[0];
     assert!(c.get_slot::<Stamped>().is_some(), "slot set by op");
@@ -167,8 +167,8 @@ async fn halve_multiplies_cursors_downstream_sees_all() {
     // Seq(Halve, StampLen) — one input → two outputs, each stamped.
     let ctx = RtCtx::default();
     let pipe = Pipeline::Seq(vec![
-        Pipeline::Op(Box::new(HalveOp)),
-        Pipeline::Op(Box::new(StampLenOp)),
+        Pipeline::Op(std::sync::Arc::new(HalveOp)),
+        Pipeline::Op(std::sync::Arc::new(StampLenOp)),
     ]);
     let out = pipe.run(&ctx, vec![cursor_from("abcdef")]).await;
     assert_eq!(out.len(), 2);
@@ -180,7 +180,7 @@ async fn halve_multiplies_cursors_downstream_sees_all() {
 async fn path_tags_leaf_first_op_then_nothing() {
     // Sanity: a single Op adds one PathSeg::Op to the input.
     let ctx = RtCtx::default();
-    let pipe = Pipeline::Op(Box::new(StampLenOp));
+    let pipe = Pipeline::Op(std::sync::Arc::new(StampLenOp));
     let out = pipe.run(&ctx, vec![cursor_from("a")]).await;
     match out[0].path.last().unwrap() {
         PathSeg::Op { name, step } => {

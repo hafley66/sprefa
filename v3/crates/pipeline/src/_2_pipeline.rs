@@ -29,7 +29,14 @@ use crate::_1_op::Op;
 use effect_runtime::{BoxFuture, RtCtx};
 
 pub enum Pipeline {
-    Op(Box<dyn Op>),
+    /// `Arc` so a single lowered op can back both the LSP hover render
+    /// path and the pipeline run path without re-lowering. The previous
+    /// shape (`Box<dyn Op>`) forced a second `registry.build_from_node`
+    /// call from `lower_plan_keeping_ops`, which in turn meant
+    /// re-parsing synthesized source — the bug surface that dropped
+    /// bracket args. With `Arc`, `DocSession` lowers each op once on
+    /// first use, hands out clones to every reader.
+    Op(Arc<dyn Op>),
     Seq(Vec<Pipeline>),
     Fork(Vec<Pipeline>),
 }

@@ -11,15 +11,34 @@
 //! doc. Hover inside an injected pattern body is the next step (spec
 //! §14.6); the registry + op trait surface is in place for it.
 
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pipeline::binding_graph::{analyze_pipe, BindingDiagnostic};
+use pipeline::pattern_op::PatternDiagnostic;
 use pipeline::registry::Registry;
-use sprefa_parse::{host_parse_with_injections, OpInvocation, ParseError, ParsedSource, Pipe};
+use pipeline::Op;
+use sprefa_parse::{host_parse_with_injections, ParseError, ParsedSource, Pipe};
 use tree_sitter::Node;
 
 use crate::config::{self, Config};
+
+/// One op in a pipe, lowered lazily from the host CST. Shared by the
+/// LSP hover render path and the pipeline run path. The same
+/// `Arc<dyn Op>` flows into `Pipeline::Op` and into the hover snapshot
+/// — there is no second lowering pass.
+#[derive(Clone)]
+pub struct LoweredOp {
+    pub name: Arc<str>,
+    pub op:   Option<Arc<dyn Op>>,
+    pub diagnostics: Vec<PatternDiagnostic>,
+    /// Host-source byte range of the full op invocation.
+    pub byte_range: std::ops::Range<usize>,
+    /// Host-source byte offset of the first character inside the paren
+    /// body, or 0 when the op has no paren slot.
+    pub paren_origin: usize,
+}
 
 pub struct DocSession {
     file: Arc<Path>,
@@ -30,6 +49,10 @@ pub struct DocSession {
     registry: Registry,
     config: Config,
     config_source: ConfigSource,
+    /// Lazily computed on first call to [`DocSession::lowered_pipes`].
+    /// Cleared on every source change. One inner `Vec<LoweredOp>` per
+    /// host-level pipe, in source order.
+    lowered: OnceCell<Vec<Vec<LoweredOp>>>,
 }
 
 /// Where the resolved [`Config`] came from. Surfaced on hover so the
@@ -50,7 +73,19 @@ impl DocSession {
         );
         let binding_diags = collect_binding_diags(&parsed, source.as_bytes());
         let (config, config_source) = discover_config(&file);
-        Self { file, source, parsed, errors, binding_diags, registry, config, config_source }
+        Self {
+            file, source, parsed, errors, binding_diags, registry,
+            config, config_source,
+            lowered: OnceCell::new(),
+        }
+    }
+
+    /// Lazily lower every op in every top-level pipe. Computed once per
+    /// source revision; subsequent calls return the cached slice. Both
+    /// the LSP hover path and the pipeline run path read from this —
+    /// the synth-reparse round-trip in earlier code is gone.
+    pub fn lowered_pipes(&self) -> &[Vec<LoweredOp>] {
+        self.lowered.get_or_init(|| lower_all_pipes(&self.parsed, self.source.as_bytes(), &self.registry))
     }
 
     pub fn config(&self) -> &Config { &self.config }
@@ -67,6 +102,7 @@ impl DocSession {
         self.binding_diags = collect_binding_diags(&parsed, self.source.as_bytes());
         self.parsed = parsed;
         self.errors = errors;
+        self.lowered = OnceCell::new();
     }
 
     pub fn source(&self) -> &str { &self.source }
@@ -86,23 +122,14 @@ impl DocSession {
     /// including the hovered op, plus the op's name. Pipes nested
     /// inside rule bodies are skipped (top-level pipes only for now).
     pub fn hover_plan(&self, offset: usize) -> Option<HoverPlan> {
-        for pipe in &self.parsed.pipes {
+        for (pipe_idx, pipe) in self.parsed.pipes.iter().enumerate() {
             for (idx, inv) in pipe.ops.iter().enumerate() {
                 let rng = &inv.parse_site.byte_range;
                 if rng.contains(&offset) || offset == rng.end {
-                    let upstream: Vec<PlannedOp> = pipe.ops[..=idx]
-                        .iter()
-                        .map(|i| PlannedOp {
-                            name: i.name.to_string(),
-                            body: paren_body(i, &self.source).unwrap_or("").to_string(),
-                            byte_range: i.parse_site.byte_range.clone(),
-                            paren_origin: paren_body_origin(i, &self.source),
-                        })
-                        .collect();
                     return Some(HoverPlan {
+                        pipe_idx,
                         focus_name: inv.name.to_string(),
                         focus_step: idx,
-                        pipe_ops: upstream,
                         pipe_len: pipe.ops.len(),
                         hover_offset: offset,
                     });
@@ -207,14 +234,17 @@ impl DocSession {
     }
 }
 
-/// Plan for an enriched hover. Backend lowers each `PlannedOp` via
-/// the registry, runs the resulting pipeline, and renders markdown.
+/// Plan for an enriched hover. Carries indices into the session's
+/// lazily-lowered pipe cache; the renderer reads the actual
+/// `Arc<dyn Op>` slice from there, so there is no hover-specific
+/// lowering pathway.
 #[derive(Debug, Clone)]
 pub struct HoverPlan {
-    pub focus_name: String,
-    pub focus_step: usize,
-    pub pipe_ops: Vec<PlannedOp>,
-    pub pipe_len: usize,
+    /// Index into `DocSession::lowered_pipes()`.
+    pub pipe_idx:    usize,
+    pub focus_name:  String,
+    pub focus_step:  usize,
+    pub pipe_len:    usize,
     /// Absolute hover offset into the host source. The renderer pairs
     /// it with the focus op's `term_positions` to identify a focused
     /// capture inside opaque paren bodies (json/ast/str), and to
@@ -222,16 +252,51 @@ pub struct HoverPlan {
     pub hover_offset: usize,
 }
 
-#[derive(Debug, Clone)]
-pub struct PlannedOp {
-    pub name: String,
-    pub body: String,
-    pub byte_range: std::ops::Range<usize>,
-    /// Absolute byte offset of `body[0]` in the host source — i.e. the
-    /// byte after the op's opening `(`. Lets the renderer compare an
-    /// `Op::term_positions()` entry (already absolute today) without
-    /// re-deriving the paren origin.
-    pub paren_origin: usize,
+/// Single lowering pathway shared by hover, run, future HTTP/CLI
+/// drivers. For each top-level pipe, walks its op invocations and calls
+/// `registry.build_from_node` against the original host CST node — no
+/// synth re-parse, no string round-trip. `Op::term_positions()` therefore
+/// comes back in host coordinates directly.
+///
+/// On lower failure, the slot keeps `op = None` and stashes the
+/// diagnostics. Callers (hover render, future LSP diag publisher) can
+/// surface those instead of guessing from a missing `Pipeline`.
+fn lower_all_pipes(
+    parsed:   &ParsedSource,
+    src:      &[u8],
+    registry: &Registry,
+) -> Vec<Vec<LoweredOp>> {
+    parsed
+        .pipes
+        .iter()
+        .map(|pipe| {
+            pipe.ops
+                .iter()
+                .map(|inv| {
+                    let mut diags = Vec::new();
+                    let built = registry.build_from_node(&inv.name, inv.node(), src, &mut diags);
+                    let (op, mut diagnostics) = match built {
+                        Some(Ok(boxed)) => (Some(Arc::<dyn Op>::from(boxed)), diags),
+                        Some(Err(errs)) => (None, errs),
+                        None            => (None, diags),
+                    };
+                    diagnostics.shrink_to_fit();
+                    let node = inv.node();
+                    let paren_origin = node
+                        .child_by_field_name("paren")
+                        .map(|p| p.start_byte() + 1)
+                        .unwrap_or(0);
+                    LoweredOp {
+                        name:         inv.name.clone(),
+                        op,
+                        diagnostics,
+                        byte_range:   inv.parse_site.byte_range.clone(),
+                        paren_origin,
+                    }
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Walk from the .sprf file's directory up to the filesystem root,
@@ -267,26 +332,6 @@ fn discover_config(file: &Path) -> (Config, ConfigSource) {
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     (config::from_cli(cwd, "HEAD".into()), ConfigSource::CwdFallback)
-}
-
-fn paren_body<'a>(inv: &OpInvocation, source: &'a str) -> Option<&'a str> {
-    let node = inv.node();
-    let paren = node.child_by_field_name("paren")?;
-    let start = paren.start_byte() + 1;
-    let end = paren.end_byte().saturating_sub(1);
-    if start > end || end > source.len() { return None; }
-    Some(&source[start..end])
-}
-
-/// Absolute byte offset of the first character inside the op's paren
-/// body. Returns 0 when the op has no paren slot — callers should
-/// guard against that case before comparing offsets.
-fn paren_body_origin(inv: &OpInvocation, _source: &str) -> usize {
-    let node = inv.node();
-    match node.child_by_field_name("paren") {
-        Some(p) => p.start_byte() + 1,
-        None    => 0,
-    }
 }
 
 #[allow(dead_code)]
@@ -559,10 +604,12 @@ mod tests {
         assert_eq!(plan.focus_name, "fs");
         assert_eq!(plan.focus_step, 2);
         assert_eq!(plan.pipe_len, 3);
-        let names: Vec<_> = plan.pipe_ops.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(plan.pipe_idx, 0);
+        // The lowering cache resolves the same slice the renderer reads.
+        let slice = &s.lowered_pipes()[plan.pipe_idx][..=plan.focus_step];
+        let names: Vec<_> = slice.iter().map(|o| o.name.as_ref()).collect();
         assert_eq!(names, vec!["repo", "rev", "fs"]);
-        // Bodies come through intact.
-        assert_eq!(plan.pipe_ops[2].body, "**/*.rs");
+        assert!(slice.iter().all(|o| o.op.is_some()), "every step lowered");
     }
 
     #[test]

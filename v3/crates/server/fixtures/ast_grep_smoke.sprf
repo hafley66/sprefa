@@ -3,4 +3,4 @@
 #   fs(glob(**/*.rs)) ↦ each Rust file
 #   ast[rust](fn $N($$$ARGS) { $$$BODY }) ↦ one cursor per fn
 # Expected: at least one row binding $N to a function name.
-repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rust](fn ${N?}(${$$$ARGS}) { ${$$$BODY} })
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rs](fn ${N?}(${$ARGS?}) { ${$$$BODY?} })

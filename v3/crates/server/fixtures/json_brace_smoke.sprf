@@ -5,7 +5,7 @@
 # Expected: at least one row per package.json with $N and $V bound.
 repo(${R?}) 
 > rev(:HEAD) 
-> fs(glob(**/package.json)) 
-> json({ name: ${N?}, version: ${V?} });
+> fs(glob(**/*.rs)) 
+> ast[rs](pub fn ${X?} {});
 
 
