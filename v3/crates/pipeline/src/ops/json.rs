@@ -28,7 +28,7 @@ use tree_sitter::Node;
 
 use crate::_0_cursor::{Capture, Cursor};
 use crate::_1_op::Op;
-use crate::data::JsonNode;
+use crate::data::{parse_by_ext, AnyDataNode, JsonNode};
 use crate::op_ctor::OpCtor;
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::Value;
@@ -47,6 +47,11 @@ pub struct JsonOp {
     pub steps:           Arc<[CompiledStep]>,
     pub bound_caps:      Vec<Arc<str>>,
     pub _annotations:    Arc<[ScanAnnotation]>,
+    /// Term positions absolute into the host source: each `${NAME?}` /
+    /// `$NAME` token's byte range. Surfaced via `Op::term_positions()`
+    /// so the LSP hover dispatcher can fire on captures inside the
+    /// brace body.
+    pub term_positions:  Arc<[crate::TermPosition]>,
 }
 
 impl OpCtor for JsonOp {
@@ -73,9 +78,10 @@ spans. Multiple captures fan out as a row-per-match.
         // If a caller bypasses the node path, return an empty walker that
         // matches nothing. Tests/static callers should use `lower_body`.
         Ok(JsonOp {
-            steps:        Arc::from(Vec::<CompiledStep>::new()),
-            bound_caps:   Vec::new(),
-            _annotations: Arc::from(Vec::<ScanAnnotation>::new()),
+            steps:          Arc::from(Vec::<CompiledStep>::new()),
+            bound_caps:     Vec::new(),
+            _annotations:   Arc::from(Vec::<ScanAnnotation>::new()),
+            term_positions: Arc::from(Vec::<crate::TermPosition>::new()),
         })
     }
 
@@ -98,11 +104,21 @@ impl Op for JsonOp {
             let active = c.active();
             let base = c.byte_range.start;
 
-            let Ok(json) = JsonNode::parse(Arc::from(active)) else {
-                return Vec::new();
+            // Dispatch parser by file extension. Unknown / missing ext
+            // falls back to JSON so `json(...)` over inline content
+            // still works without an `fs` upstream.
+            let parsed: AnyDataNode = match cursor_ext(&c) {
+                Some(ext) => match parse_by_ext(&ext, Arc::from(active)) {
+                    Ok(n)  => n,
+                    Err(_) => return Vec::new(),
+                },
+                None => match JsonNode::parse(Arc::from(active)) {
+                    Ok(n)  => AnyDataNode::Json(n),
+                    Err(_) => return Vec::new(),
+                },
             };
 
-            let outcome = walk(&json, &self.steps);
+            let outcome = walk(&parsed, &self.steps);
 
             let mut out = Vec::with_capacity(outcome.rows.len());
             for row in outcome.rows {
@@ -126,6 +142,8 @@ impl Op for JsonOp {
     }
 
     fn bound_captures(&self) -> &[Arc<str>] { &self.bound_caps }
+
+    fn term_positions(&self) -> &[crate::TermPosition] { &self.term_positions }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +184,7 @@ fn lower_json_paren(
         }]);
     }
 
-    let (steps, annotations) = parse_body(body).map_err(|e| {
+    let (steps, annotations, positions) = parse_body(body).map_err(|e| {
         vec![PatternDiagnostic {
             code: "json/parse-body",
             message: e,
@@ -184,11 +202,29 @@ fn lower_json_paren(
 
     let bound_caps = collect_pattern_captures(&compiled);
 
+    // brace_parse positions are bytes into the body slice, which sits
+    // at `paren.start_byte() + 1` in the host source. Lift to absolute
+    // ranges so the LSP can compare them directly to a hover offset.
+    let body_origin = p_start + 1;
+    let term_positions: Vec<crate::TermPosition> = positions
+        .into_iter()
+        .map(|p| crate::TermPosition {
+            name:  p.name,
+            range: (body_origin + p.range.start)..(body_origin + p.range.end),
+        })
+        .collect();
+
     Ok(JsonOp {
-        steps:        Arc::from(compiled.into_boxed_slice()),
+        steps:          Arc::from(compiled.into_boxed_slice()),
         bound_caps,
-        _annotations: Arc::from(annotations.into_boxed_slice()),
+        _annotations:   Arc::from(annotations.into_boxed_slice()),
+        term_positions: Arc::from(term_positions.into_boxed_slice()),
     })
+}
+
+fn cursor_ext(c: &Cursor) -> Option<String> {
+    let p = c.fs.as_ref()?;
+    p.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase())
 }
 
 fn collect_pattern_captures(steps: &[CompiledStep]) -> Vec<Arc<str>> {

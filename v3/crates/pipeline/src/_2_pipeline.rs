@@ -23,6 +23,7 @@
 //! path would need to read it from its *input* cursor, not from its
 //! output. For this slice, ops reference `c.path` from the input side.
 
+use std::sync::Arc;
 use crate::_0_cursor::{Cursor, PathSeg};
 use crate::_1_op::Op;
 use effect_runtime::{BoxFuture, RtCtx};
@@ -42,13 +43,20 @@ impl Pipeline {
         Box::pin(async move {
             match self {
                 Pipeline::Op(op) => {
+                    // Hand the whole input slice to `pipe_batch`. Ops
+                    // that override get one rayon `par_iter` pass; ops
+                    // that don't ride the default `buffered` impl. The
+                    // runner stays the only site that appends
+                    // `PathSeg::Op` — ops never touch path tagging.
+                    let name = op.name();
+                    let cs_arc: Arc<[Cursor]> = Arc::from(inputs);
+                    let groups = op.pipe_batch(ctx, cs_arc).await;
                     let mut out = Vec::new();
-                    for (step, c) in inputs.into_iter().enumerate() {
-                        let mut cs = op.pipe(ctx, c).await;
-                        for nc in &mut cs {
-                            nc.path.push(PathSeg::Op { name: op.name(), step });
+                    for (step, group) in groups.into_iter().enumerate() {
+                        for mut nc in group {
+                            nc.path.push(PathSeg::Op { name, step });
+                            out.push(nc);
                         }
-                        out.extend(cs);
                     }
                     out
                 }

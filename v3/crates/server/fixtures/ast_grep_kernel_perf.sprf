@@ -1,0 +1,9 @@
+# Perf measurement fixture for sprefa-4m7.2.22.
+# Mirrors the FINDINGS §1 baseline: scan kernel for printk call sites
+# across both .c and .h (~63k files total — same corpus as the bench
+# probe and the ast-grep CLI baseline). The glob sub-grammar today does
+# not support alternation (`|`, `{c,h}`, `[ch]`), so the corpus is
+# expressed as two pipes; FsListFilesEffect's per-(repo,rev) cache
+# makes the second walk free, and the wall sums the two ast passes.
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.c)) > ast[c](printk(${$$$ARGS}))
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.h)) > ast[c](printk(${$$$ARGS}))

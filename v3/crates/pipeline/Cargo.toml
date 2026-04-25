@@ -7,7 +7,7 @@ build   = "build.rs"
 
 [dependencies]
 ast-grep-core     = "0.36"
-ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust", "tree-sitter-typescript"] }
+ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust", "tree-sitter-typescript", "tree-sitter-c"] }
 effect_runtime    = { path = "../effect_runtime" }
 globset           = "0.4"
 regex             = "1"
@@ -15,7 +15,11 @@ rustc-hash        = "2"
 sprefa_macros     = { path = "../sprefa_macros" }
 tokio             = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
 tree-sitter       = "0.24"
-tree-sitter-json  = "0.24"
+tree-sitter-json    = "0.24"
+tree-sitter-yaml    = "0.7"
+tree-sitter-toml-ng = "0.7"
+futures           = "0.3"
+rayon             = "1"
 
 
 [dev-dependencies]

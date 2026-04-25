@@ -40,7 +40,7 @@ pub mod op_languages {
 }
 
 pub use _0_cursor::{Capture, Cursor, PathSeg, SprfPath};
-pub use _1_op::Op;
+pub use _1_op::{Op, TermPosition};
 pub use _2_pipeline::Pipeline;
 pub use effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect, PrintSink, ReadBytesBatcher,

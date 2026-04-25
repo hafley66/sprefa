@@ -51,24 +51,32 @@ pub trait DataNode: Clone + Send + Sync + Sized {
 #[derive(Clone)]
 pub enum AnyDataNode {
     Json(super::json::JsonNode),
+    Yaml(super::yaml::YamlNode),
+    Toml(super::toml::TomlNode),
 }
 
 impl DataNode for AnyDataNode {
     fn kind(&self) -> DataKind {
         match self {
             AnyDataNode::Json(n) => n.kind(),
+            AnyDataNode::Yaml(n) => n.kind(),
+            AnyDataNode::Toml(n) => n.kind(),
         }
     }
 
     fn byte_range(&self) -> (u32, u32) {
         match self {
             AnyDataNode::Json(n) => n.byte_range(),
+            AnyDataNode::Yaml(n) => n.byte_range(),
+            AnyDataNode::Toml(n) => n.byte_range(),
         }
     }
 
     fn as_scalar_text(&self) -> Option<Cow<'_, str>> {
         match self {
             AnyDataNode::Json(n) => n.as_scalar_text(),
+            AnyDataNode::Yaml(n) => n.as_scalar_text(),
+            AnyDataNode::Toml(n) => n.as_scalar_text(),
         }
     }
 
@@ -77,25 +85,37 @@ impl DataNode for AnyDataNode {
             AnyDataNode::Json(n) => Box::new(
                 n.entries().map(|(k, v)| (AnyDataNode::Json(k), AnyDataNode::Json(v))),
             ),
+            AnyDataNode::Yaml(n) => Box::new(
+                n.entries().map(|(k, v)| (AnyDataNode::Yaml(k), AnyDataNode::Yaml(v))),
+            ),
+            AnyDataNode::Toml(n) => Box::new(
+                n.entries().map(|(k, v)| (AnyDataNode::Toml(k), AnyDataNode::Toml(v))),
+            ),
         }
     }
 
     fn items(&self) -> Box<dyn Iterator<Item = Self> + '_> {
         match self {
             AnyDataNode::Json(n) => Box::new(n.items().map(AnyDataNode::Json)),
+            AnyDataNode::Yaml(n) => Box::new(n.items().map(AnyDataNode::Yaml)),
+            AnyDataNode::Toml(n) => Box::new(n.items().map(AnyDataNode::Toml)),
         }
     }
 
     fn source(&self) -> &[u8] {
         match self {
             AnyDataNode::Json(n) => n.source(),
+            AnyDataNode::Yaml(n) => n.source(),
+            AnyDataNode::Toml(n) => n.source(),
         }
     }
 }
 
 pub fn parse_by_ext(ext: &str, src: Arc<[u8]>) -> Result<AnyDataNode, ParseError> {
     match ext {
-        "json" => super::json::JsonNode::parse(src).map(AnyDataNode::Json),
+        "json"          => super::json::JsonNode::parse(src).map(AnyDataNode::Json),
+        "yaml" | "yml"  => super::yaml::YamlNode::parse(src).map(AnyDataNode::Yaml),
+        "toml"          => super::toml::TomlNode::parse(src).map(AnyDataNode::Toml),
         other => Err(ParseError::new(Arc::from(format!("unsupported extension: {other}")))),
     }
 }

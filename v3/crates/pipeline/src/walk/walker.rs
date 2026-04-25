@@ -414,7 +414,7 @@ mod tests {
     }
 
     fn compile(body: &str) -> Vec<CompiledStep> {
-        let (steps, _) = parse_body(body).unwrap();
+        let (steps, _, _) = parse_body(body).unwrap();
         compile_steps(&steps).unwrap()
     }
 

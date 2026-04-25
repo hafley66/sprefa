@@ -96,6 +96,7 @@ impl DocSession {
                             name: i.name.to_string(),
                             body: paren_body(i, &self.source).unwrap_or("").to_string(),
                             byte_range: i.parse_site.byte_range.clone(),
+                            paren_origin: paren_body_origin(i, &self.source),
                         })
                         .collect();
                     return Some(HoverPlan {
@@ -103,6 +104,7 @@ impl DocSession {
                         focus_step: idx,
                         pipe_ops: upstream,
                         pipe_len: pipe.ops.len(),
+                        hover_offset: offset,
                     });
                 }
             }
@@ -213,6 +215,11 @@ pub struct HoverPlan {
     pub focus_step: usize,
     pub pipe_ops: Vec<PlannedOp>,
     pub pipe_len: usize,
+    /// Absolute hover offset into the host source. The renderer pairs
+    /// it with the focus op's `term_positions` to identify a focused
+    /// capture inside opaque paren bodies (json/ast/str), and to
+    /// surface a capture-targeted hover.
+    pub hover_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +227,11 @@ pub struct PlannedOp {
     pub name: String,
     pub body: String,
     pub byte_range: std::ops::Range<usize>,
+    /// Absolute byte offset of `body[0]` in the host source — i.e. the
+    /// byte after the op's opening `(`. Lets the renderer compare an
+    /// `Op::term_positions()` entry (already absolute today) without
+    /// re-deriving the paren origin.
+    pub paren_origin: usize,
 }
 
 /// Walk from the .sprf file's directory up to the filesystem root,
@@ -264,6 +276,17 @@ fn paren_body<'a>(inv: &OpInvocation, source: &'a str) -> Option<&'a str> {
     let end = paren.end_byte().saturating_sub(1);
     if start > end || end > source.len() { return None; }
     Some(&source[start..end])
+}
+
+/// Absolute byte offset of the first character inside the op's paren
+/// body. Returns 0 when the op has no paren slot — callers should
+/// guard against that case before comparing offsets.
+fn paren_body_origin(inv: &OpInvocation, _source: &str) -> usize {
+    let node = inv.node();
+    match node.child_by_field_name("paren") {
+        Some(p) => p.start_byte() + 1,
+        None    => 0,
+    }
 }
 
 #[allow(dead_code)]

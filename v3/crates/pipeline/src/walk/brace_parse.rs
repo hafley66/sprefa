@@ -15,6 +15,7 @@
 //! kept for v2 fidelity; v3 cross-repo wiring (sprefa-4m7.13.x) decides
 //! whether to revive them.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use super::compile::{KeyMatcher, ObjectEntry, SelectStep};
@@ -25,21 +26,34 @@ pub struct ScanAnnotation {
     pub sigil: Arc<str>,
 }
 
-pub fn parse_body(src: &str) -> Result<(Vec<SelectStep>, Vec<ScanAnnotation>), String> {
+/// One `$NAME` / `${NAME}` / `${NAME?}` token recorded during the brace
+/// parse. `range` is bytes into the body string (the slice handed to
+/// `parse_body`).
+#[derive(Debug, Clone)]
+pub struct CapturePosition {
+    pub name:  Arc<str>,
+    pub range: Range<usize>,
+}
+
+pub fn parse_body(
+    src: &str,
+) -> Result<(Vec<SelectStep>, Vec<ScanAnnotation>, Vec<CapturePosition>), String> {
     let mut pos = 0;
     let mut annotations = Vec::new();
-    let steps = parse_pattern(src.trim(), &mut pos, &mut annotations)?;
+    let mut positions = Vec::new();
+    let steps = parse_pattern(src, &mut pos, &mut annotations, &mut positions)?;
     let remaining = src[pos..].trim();
     if !remaining.is_empty() {
         return Err(format!("unexpected trailing content in json body: {:?}", remaining));
     }
-    Ok((steps, annotations))
+    Ok((steps, annotations, positions))
 }
 
 fn parse_pattern(
     input: &str,
     pos:   &mut usize,
     annotations: &mut Vec<ScanAnnotation>,
+    positions:   &mut Vec<CapturePosition>,
 ) -> Result<Vec<SelectStep>, String> {
     skip_ws(input, pos);
     if *pos >= input.len() {
@@ -90,9 +104,9 @@ fn parse_pattern(
 
     let c = input.as_bytes()[*pos];
     match c {
-        b'{' => parse_object(input, pos, annotations),
-        b'[' => parse_array(input, pos, annotations),
-        b'$' => parse_capture_or_wildcard(input, pos),
+        b'{' => parse_object(input, pos, annotations, positions),
+        b'[' => parse_array(input, pos, annotations, positions),
+        b'$' => parse_capture_or_wildcard(input, pos, positions),
         b'"' => parse_quoted_value(input, pos),
         _    => parse_value_glob(input, pos),
     }
@@ -102,6 +116,7 @@ fn parse_object(
     input: &str,
     pos:   &mut usize,
     annotations: &mut Vec<ScanAnnotation>,
+    positions:   &mut Vec<CapturePosition>,
 ) -> Result<Vec<SelectStep>, String> {
     expect_byte(input, pos, b'{')?;
     skip_ws(input, pos);
@@ -115,7 +130,7 @@ fn parse_object(
 
     loop {
         skip_ws(input, pos);
-        let (key, value_steps) = parse_entry(input, pos, annotations)?;
+        let (key, value_steps) = parse_entry(input, pos, annotations, positions)?;
 
         if matches!(&key, KeyMatcher::Exact(s) if s == "**") {
             skip_ws(input, pos);
@@ -152,6 +167,7 @@ fn parse_array(
     input: &str,
     pos:   &mut usize,
     annotations: &mut Vec<ScanAnnotation>,
+    positions:   &mut Vec<CapturePosition>,
 ) -> Result<Vec<SelectStep>, String> {
     expect_byte(input, pos, b'[')?;
     skip_ws(input, pos);
@@ -162,7 +178,7 @@ fn parse_array(
     *pos += 3;
     skip_ws(input, pos);
 
-    let item_steps = parse_pattern(input, pos, annotations)?;
+    let item_steps = parse_pattern(input, pos, annotations, positions)?;
 
     skip_ws(input, pos);
     expect_byte(input, pos, b']')?;
@@ -170,7 +186,12 @@ fn parse_array(
     Ok(vec![SelectStep::Array { item: item_steps }])
 }
 
-fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> Result<Vec<SelectStep>, String> {
+fn parse_capture_or_wildcard(
+    input:     &str,
+    pos:       &mut usize,
+    positions: &mut Vec<CapturePosition>,
+) -> Result<Vec<SelectStep>, String> {
+    let token_start = *pos;
     *pos += 1;
     if *pos >= input.len() { return Err("unexpected end after `$`".into()); }
 
@@ -188,7 +209,7 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> Result<Vec<SelectS
         }
         if depth != 0 { return Err("unclosed `${` in json pattern".into()); }
         let inner = &input[inner_start..*pos - 1];
-        let (name, is_crossref) = if let Some((_rule, rest)) = inner.split_once('.') {
+        let (name_with_suffix, is_crossref) = if let Some((_rule, rest)) = inner.split_once('.') {
             let n = rest.strip_prefix('$').ok_or_else(|| {
                 format!("malformed cross-ref `${{{}}}` (expected `${{rule.$VAR}}`)", inner)
             })?;
@@ -196,12 +217,20 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> Result<Vec<SelectS
         } else {
             (inner, false)
         };
+        // Trailing `?` = Unbound binding marker (host-grammar `${NAME?}`).
+        // Recorded structurally elsewhere; for the v0 walker `${X?}` and
+        // `${X}` are the same capture name.
+        let name = name_with_suffix.strip_suffix('?').unwrap_or(name_with_suffix);
         if name.is_empty()
             || !(name.as_bytes()[0].is_ascii_alphabetic() || name.as_bytes()[0] == b'_')
             || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         {
             return Err(format!("invalid capture name `${{{}}}`", inner));
         }
+        positions.push(CapturePosition {
+            name:  Arc::from(name),
+            range: token_start..*pos,
+        });
         return if is_crossref {
             Ok(vec![SelectStep::Leaf { capture: Some(name.to_string()) }])
         } else {
@@ -222,6 +251,10 @@ fn parse_capture_or_wildcard(input: &str, pos: &mut usize) -> Result<Vec<SelectS
     { *pos += 1; }
     let name = &input[start..*pos];
     if name.is_empty() { return Err("empty capture name after `$`".into()); }
+    positions.push(CapturePosition {
+        name:  Arc::from(name),
+        range: token_start..*pos,
+    });
     Ok(vec![SelectStep::CaptureAny { capture: Some(name.to_string()) }])
 }
 
@@ -257,17 +290,22 @@ fn parse_entry(
     input: &str,
     pos:   &mut usize,
     annotations: &mut Vec<ScanAnnotation>,
+    positions:   &mut Vec<CapturePosition>,
 ) -> Result<(KeyMatcher, Vec<SelectStep>), String> {
     skip_ws(input, pos);
-    let key = parse_key(input, pos)?;
+    let key = parse_key(input, pos, positions)?;
     skip_ws(input, pos);
     expect_byte(input, pos, b':')?;
     skip_ws(input, pos);
-    let value = parse_pattern(input, pos, annotations)?;
+    let value = parse_pattern(input, pos, annotations, positions)?;
     Ok((key, value))
 }
 
-fn parse_key(input: &str, pos: &mut usize) -> Result<KeyMatcher, String> {
+fn parse_key(
+    input:     &str,
+    pos:       &mut usize,
+    positions: &mut Vec<CapturePosition>,
+) -> Result<KeyMatcher, String> {
     skip_ws(input, pos);
 
     if input.as_bytes()[*pos] == b'"' {
@@ -304,6 +342,7 @@ fn parse_key(input: &str, pos: &mut usize) -> Result<KeyMatcher, String> {
     }
 
     if input.as_bytes()[*pos] == b'$' {
+        let token_start = *pos;
         *pos += 1;
         if *pos < input.len()
             && input.as_bytes()[*pos] == b'_'
@@ -318,6 +357,10 @@ fn parse_key(input: &str, pos: &mut usize) -> Result<KeyMatcher, String> {
         { *pos += 1; }
         let name = &input[start..*pos];
         if name.is_empty() { return Err("empty capture name after `$` in key position".into()); }
+        positions.push(CapturePosition {
+            name:  Arc::from(name),
+            range: token_start..*pos,
+        });
         return Ok(KeyMatcher::Capture(name.to_string()));
     }
 
@@ -367,7 +410,7 @@ mod tests {
 
     #[test]
     fn flat_object() {
-        let (steps, _) = parse_body("{ name: $NAME }").unwrap();
+        let (steps, _, _) = parse_body("{ name: $NAME }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Exact(s) if s == "name"));
@@ -379,14 +422,14 @@ mod tests {
 
     #[test]
     fn double_star_wildcard() {
-        let (steps, _) = parse_body("{ **: { image: $I } }").unwrap();
+        let (steps, _, _) = parse_body("{ **: { image: $I } }").unwrap();
         assert!(matches!(&steps[0], SelectStep::Any));
         assert!(matches!(&steps[1], SelectStep::Object { .. }));
     }
 
     #[test]
     fn captured_key() {
-        let (steps, _) = parse_body("{ $K: $V }").unwrap();
+        let (steps, _, _) = parse_body("{ $K: $V }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].key, KeyMatcher::Capture(s) if s == "K"));
@@ -397,7 +440,7 @@ mod tests {
 
     #[test]
     fn array_iter() {
-        let (steps, _) = parse_body("{ items: [...$X] }").unwrap();
+        let (steps, _, _) = parse_body("{ items: [...$X] }").unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].value[0], SelectStep::Array { .. }));
@@ -407,8 +450,20 @@ mod tests {
     }
 
     #[test]
+    fn unbound_suffix_in_brace_capture() {
+        let (steps, _, _) = parse_body("{ name: ${N?}, version: ${V?} }").unwrap();
+        match &steps[0] {
+            SelectStep::Object { entries } => {
+                assert!(matches!(&entries[0].value[0], SelectStep::CaptureAny { capture: Some(c) } if c == "N"));
+                assert!(matches!(&entries[1].value[0], SelectStep::CaptureAny { capture: Some(c) } if c == "V"));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
     fn quoted_leaf_pattern() {
-        let (steps, _) = parse_body(r#"{ image: "$REPO:$TAG" }"#).unwrap();
+        let (steps, _, _) = parse_body(r#"{ image: "$REPO:$TAG" }"#).unwrap();
         match &steps[0] {
             SelectStep::Object { entries } => {
                 assert!(matches!(&entries[0].value[0], SelectStep::LeafPattern { pattern } if pattern == "$REPO:$TAG"));

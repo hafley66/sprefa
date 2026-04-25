@@ -189,6 +189,121 @@ impl Batcher<ReadBytesEffect> for ReadBytesBatcher {
 }
 
 // ---------------------------------------------------------------------------
+// ReadBytesBatchEffect — bulk read.
+//
+// `ensure_content_loaded` running in a `pipe_batch` over N=36k cursors
+// fires N `ctx.put(ReadBytesEffect)` calls. Each pays the dispatch tax
+// (registry+telemetry+Box+downcast+future state machine) and each
+// cache-checks separately. With a fresh process the cache hit ratio is
+// 0%, so the whole stack is pure overhead.
+//
+// This effect collapses the N puts into one. Handler reads in parallel
+// via rayon `par_iter`, returns `Vec<Option<Arc<[u8]>>>` aligned with
+// the request slice. Bulk ops (`pipe_batch` for ast/json/str) call
+// `ensure_content_loaded_batch` instead of looping `ensure_content_loaded`.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct ReadBytesBatchEffect {
+    /// Aligned with the response. `(repo, rev, path)` per slot.
+    pub reads: Arc<[(Arc<str>, Arc<str>, Arc<std::path::Path>)]>,
+}
+
+impl EffectKind for ReadBytesBatchEffect {
+    type Response = Vec<Option<Arc<[u8]>>>;
+
+    fn payload_bytes(&self) -> Option<usize> {
+        Some(self.reads.iter().map(|(_, _, p)| p.as_os_str().len()).sum())
+    }
+
+    fn response_bytes(r: &Self::Response) -> Option<usize> {
+        Some(r.iter().filter_map(|b| b.as_ref().map(|b| b.len())).sum())
+    }
+}
+
+/// Bulk variant of [`ensure_content_loaded`]. Issues one
+/// `ctx.put(ReadBytesBatchEffect)` for the cursors that need a read,
+/// then re-stitches results back into a `Vec<Option<Cursor>>` aligned
+/// with the input. Cursors that already have content or have no `fs`
+/// pass through without consuming a read slot.
+pub async fn ensure_content_loaded_batch(
+    ctx: &effect_runtime::RtCtx,
+    cs:  &[crate::_0_cursor::Cursor],
+) -> Vec<Option<crate::_0_cursor::Cursor>> {
+    // Fast path: nothing to read. Avoid an empty `ctx.put`.
+    let mut needs_read: Vec<usize> = Vec::new();
+    for (i, c) in cs.iter().enumerate() {
+        if c.content.is_empty() && c.fs.is_some() {
+            needs_read.push(i);
+        }
+    }
+    if needs_read.is_empty() {
+        return cs.iter().cloned().map(Some).collect();
+    }
+
+    let reads: Vec<(Arc<str>, Arc<str>, Arc<std::path::Path>)> = needs_read
+        .iter()
+        .map(|&i| {
+            let c = &cs[i];
+            (c.repo.clone(), c.rev.clone(), c.fs.clone().unwrap())
+        })
+        .collect();
+    let req = ReadBytesBatchEffect { reads: Arc::from(reads) };
+    let responses: Vec<Option<Arc<[u8]>>> = ctx.put(req).await;
+
+    let mut out: Vec<Option<crate::_0_cursor::Cursor>> = cs.iter().cloned().map(Some).collect();
+    for (slot, resp) in needs_read.iter().zip(responses.into_iter()) {
+        let i = *slot;
+        let c = cs[i].clone();
+        match resp {
+            Some(b) => {
+                let end = b.len();
+                out[i] = Some(c.rebase(b, 0..end));
+            }
+            None => out[i] = None,
+        }
+    }
+    out
+}
+
+/// Sync bulk-read function. Drop into a `Passthrough` batcher (or any
+/// closure-shaped batcher) to handle [`ReadBytesBatchEffect`].
+/// `par_iter` reads files concurrently on rayon's global pool.
+pub fn read_bytes_batch(
+    source: &dyn FileSource,
+    req:    ReadBytesBatchEffect,
+) -> Vec<Option<Arc<[u8]>>> {
+    use rayon::prelude::*;
+    req.reads
+        .par_iter()
+        .map(|(repo, rev, path)| source.file_bytes(repo, rev, path))
+        .collect()
+}
+
+pub struct ReadBytesBatchBatcher {
+    source: Arc<dyn FileSource>,
+}
+
+impl ReadBytesBatchBatcher {
+    pub fn new(source: Arc<dyn FileSource>) -> Self { Self { source } }
+}
+
+impl Batcher<ReadBytesBatchEffect> for ReadBytesBatchBatcher {
+    fn run(
+        &self,
+        req:     ReadBytesBatchEffect,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'static, Vec<Option<Arc<[u8]>>>> {
+        let source = self.source.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || read_bytes_batch(&*source, req))
+                .await
+                .unwrap_or_default()
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PrintEffect — first write-side (non-pure) effect. Proves the write
 // path through `RtCtxBuilder::register` independently of `register_pure`.
 // ---------------------------------------------------------------------------
@@ -347,6 +462,46 @@ impl Batcher<WriteFileEffect> for WriteFileBatcher {
             sink.write(&req.path, &req.bytes).map_err(|e| Arc::from(e.as_str()))
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// AstParseEffect — offload tree-sitter parse to a worker pool.
+//
+// The ast op used to call `lang.ast_grep(src)` inline inside its async
+// `pipe()`. With sequential cursor dispatch that ran on the driver
+// thread; with concurrent dispatch (`Pipeline::Op::buffered`) it ran on
+// whatever tokio worker happened to poll. Routing through `ctx.put`
+// + `BoundedWorkSteal` puts the parse on the dedicated worker pool so
+// the sweet spot from FINDINGS §5 is reachable.
+//
+// Returns `Arc<AstGrep<StrDoc<SupportLang>>>` so the caller can run
+// `.root().find_all(&pattern)` and bind captures from the same parse
+// without re-parsing. No cache yet — V0 is parse-per-call to mirror
+// the bench shape; PureEffect + content-hash key is a follow-up.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct AstParseEffect {
+    pub content:    Arc<[u8]>,
+    pub byte_range: std::ops::Range<usize>,
+    pub lang:       ast_grep_language::SupportLang,
+}
+
+impl EffectKind for AstParseEffect {
+    type Response = Option<Arc<ast_grep_core::AstGrep<ast_grep_core::source::StrDoc<ast_grep_language::SupportLang>>>>;
+
+    fn payload_bytes(&self) -> Option<usize> {
+        Some(self.byte_range.len())
+    }
+}
+
+/// Synchronous parse function — drop into a `BoundedWorkSteal` closure
+/// or call directly. Returns `None` for non-UTF-8 or empty range.
+pub fn ast_parse(req: AstParseEffect) -> <AstParseEffect as EffectKind>::Response {
+    use ast_grep_core::Language;
+    let slice = req.content.get(req.byte_range)?;
+    let s = std::str::from_utf8(slice).ok()?;
+    Some(Arc::new(req.lang.ast_grep(s)))
 }
 
 #[cfg(test)]

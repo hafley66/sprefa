@@ -78,6 +78,41 @@ pub trait Op: Send + Sync + std::fmt::Debug + 'static {
     /// follow-up slice.
     fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>>;
 
+    /// Optional batch entrypoint. Default impl runs `pipe` per cursor
+    /// with bounded concurrency. Ops where per-cursor work parallelizes
+    /// independently (ast, json, future re/md) override and return the
+    /// per-input grouping in one rayon `par_iter` pass — this is the
+    /// `ScanBatch` shape from FINDINGS §5.2 (parity with the bench
+    /// reference at the per-op-invocation level instead of the
+    /// per-cursor level).
+    ///
+    /// Returns `Vec<Vec<Cursor>>` so the framework can append
+    /// `PathSeg::Op { step }` per input slot without the op caring
+    /// about path tagging. Inputs are passed as `Arc<[Cursor]>` so
+    /// overrides can fork cheap snapshots into rayon scopes without
+    /// owning the slice.
+    fn pipe_batch<'a>(
+        &'a self,
+        ctx: &'a RtCtx,
+        cs:  std::sync::Arc<[Cursor]>,
+    ) -> BoxFuture<'a, Vec<Vec<Cursor>>> {
+        Box::pin(async move {
+            use futures::stream::StreamExt;
+            let n = cs.len();
+            let mut stream = futures::stream::iter(
+                (0..n).map(|i| {
+                    let c = cs[i].clone();
+                    async move { self.pipe(ctx, c).await }
+                })
+            ).buffered(1024);
+            let mut out: Vec<Vec<Cursor>> = Vec::with_capacity(n);
+            while let Some(group) = stream.next().await {
+                out.push(group);
+            }
+            out
+        })
+    }
+
     /// Sub-grammar for this op's paren-slot body (§14.5).
     ///
     /// `None` = non-pattern op (void, str, etc.). The lowerer and LSP
@@ -119,6 +154,23 @@ pub trait Op: Send + Sync + std::fmt::Debug + 'static {
         &self,
         _bindings: &HashMap<Arc<str>, Vec<u8>>,
     ) -> Option<Regex> { None }
+
+    /// Byte ranges (relative to the op's paren body start) of every
+    /// capture token written or read inside the body. Empty for ops
+    /// whose captures live in host-grammar `term_ref` / `carveout_expr`
+    /// nodes (re, glob, repo, rev, fs, ...) — those reach the LSP via
+    /// the host CST. Populated by raw-paren-body ops (json, ast, str)
+    /// so the LSP hover dispatcher can surface a capture-focused hover
+    /// without a host-CST node to switch on.
+    fn term_positions(&self) -> &[TermPosition] { &[] }
+}
+
+/// One capture token's location inside a raw paren-body op. `range` is
+/// relative to the body start (i.e. immediately after the opening `(`).
+#[derive(Debug, Clone)]
+pub struct TermPosition {
+    pub name:  Arc<str>,
+    pub range: std::ops::Range<usize>,
 }
 
 #[cfg(test)]

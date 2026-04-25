@@ -21,7 +21,7 @@ use crate::position::{offset_to_position, position_to_offset};
 use crate::session::{ConfigSource, DocSession, HoverPlan, PlannedOp, SuggestionKind};
 
 use effect_runtime::RtCtxBuilder;
-use pipeline::_0_cursor::{CaptureKind, Cursor, PathSeg};
+use pipeline::_0_cursor::{Capture, CaptureKind, Cursor, PathSeg};
 use pipeline::_2_pipeline::Pipeline;
 use pipeline::effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect,
@@ -261,20 +261,44 @@ async fn render_enriched_hover(
         ));
     }
 
-    // Lower the upstream pipeline once.
-    let Some(pipeline) = lower_plan(&plan.pipe_ops, registry) else {
+    // Lower the upstream pipeline once. Keep the lowered focus op
+    // alongside so we can ask it for term_positions (capture spans
+    // inside opaque paren bodies — json/ast/str).
+    let lowered = lower_plan_keeping_ops(&plan.pipe_ops, registry);
+    let Some((pipeline, lowered_ops)) = lowered else {
         md.push_str(
             "\n_pipeline lowering failed — one of the ops returned a body diagnostic._\n",
         );
         return Some(md);
     };
 
+    // Resolve the focused capture: hover sits inside a `${NAME?}`
+    // recorded in the focus op's `term_positions`.
+    let focus_capture: Option<Arc<str>> = lowered_ops
+        .get(plan.focus_step)
+        .and_then(|op| {
+            op.term_positions().iter().find_map(|tp| {
+                if tp.range.contains(&plan.hover_offset) || plan.hover_offset == tp.range.end {
+                    Some(tp.name.clone())
+                } else {
+                    None
+                }
+            })
+        });
+
+    if let Some(name) = &focus_capture {
+        md.push_str(&format!(
+            "\n---\n\n**Focused capture:** `${name}` _(declared by `{}`)_  \n\
+             Below: every cursor that binds `${name}`, with the value linking back \
+             to its source span.\n",
+            plan.focus_name,
+        ));
+    }
+
     // Run per seed, aggregate.
     let mut total_rows = 0usize;
     let mut rendered = 0usize;
-    md.push_str("\n**Cursors after this op:**\n\n");
-    md.push_str("| # | repo@rev | fs | byte_range | match | captures | last_bound | SprfPath |\n");
-    md.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    md.push_str("\n---\n\n**Cursors after this op:**\n");
 
     let mut seed_roots: std::collections::HashMap<Arc<str>, PathBuf> =
         std::collections::HashMap::new();
@@ -302,13 +326,13 @@ async fn render_enriched_hover(
         for c in &rows {
             total_rows += 1;
             if rendered >= HOVER_ROW_CAP { continue; }
-            md.push_str(&render_cursor_row(rendered + 1, c, &root));
+            md.push_str(&render_cursor_block(rendered + 1, c, &root, focus_capture.as_deref()));
             rendered += 1;
         }
     }
 
     if total_rows == 0 {
-        md.push_str("| _(no cursors emitted)_ |  |  |  |  |  |  |  |\n");
+        md.push_str("\n_(no cursors emitted)_\n");
     }
     md.push_str(&format!(
         "\n**Total rows:** {}{}\n",
@@ -323,18 +347,31 @@ async fn render_enriched_hover(
     Some(md)
 }
 
-fn lower_plan(ops: &[PlannedOp], registry: &pipeline::registry::Registry) -> Option<Pipeline> {
+/// Lower the planned ops AND keep an `Arc<dyn Op>` view of each so the
+/// renderer can call `term_positions()` on the focus op without a
+/// second lowering pass.
+fn lower_plan_keeping_ops(
+    ops:      &[PlannedOp],
+    registry: &pipeline::registry::Registry,
+) -> Option<(Pipeline, Vec<Arc<dyn pipeline::Op>>)> {
     use sprefa_parse::host_parse;
     use std::path::PathBuf;
     use std::sync::Arc;
 
     let mut seq: Vec<Pipeline> = Vec::with_capacity(ops.len());
+    let mut shared: Vec<Arc<dyn pipeline::Op>> = Vec::with_capacity(ops.len());
     for op in ops {
         // Re-lower the op's paren body through the host parser + paren-slot
-        // lowerer so the factory receives a Vec<Value>. This mirrors how
-        // the main lower.rs path would handle this invocation if it were
-        // inline in a .sprf source.
+        // lowerer. We synthesize `name(body)` here, so paren positions
+        // inside the synth source don't match the host source. The
+        // render path uses `op.paren_origin` from the host source for
+        // the term_positions comparison, and term_positions already
+        // came in absolute from the original lowering — wait: this
+        // synth path re-lowers from a fake source, which produces
+        // term_positions absolute into the synth. Re-base them to host
+        // by subtracting (synth paren origin) and adding `paren_origin`.
         let synth = format!("{}({})", op.name, op.body);
+        let synth_paren_origin = op.name.len() + 1; // after "name("
         let file: Arc<std::path::Path> = Arc::from(PathBuf::from("<hover>").as_path());
         let (parsed, errs) = host_parse(&synth, file);
         if !errs.is_empty() {
@@ -344,76 +381,183 @@ fn lower_plan(ops: &[PlannedOp], registry: &pipeline::registry::Registry) -> Opt
         let mut diags = Vec::new();
         let built = registry.build_from_node(&op.name, inv.node(), synth.as_bytes(), &mut diags)?;
         let op_box = built.ok()?;
-        seq.push(Pipeline::Op(op_box));
+        let arc: Arc<dyn pipeline::Op> = Arc::from(op_box);
+        // Wrap with a re-based view so callers see term_positions in
+        // host coordinates. For ops whose term_positions is empty this
+        // is a no-op.
+        let rebased: Arc<dyn pipeline::Op> = if arc.term_positions().is_empty() {
+            arc.clone()
+        } else {
+            Arc::new(RebasedOp {
+                inner:        arc.clone(),
+                synth_origin: synth_paren_origin,
+                host_origin:  op.paren_origin,
+                cached_positions: arc
+                    .term_positions()
+                    .iter()
+                    .map(|tp| pipeline::TermPosition {
+                        name:  tp.name.clone(),
+                        range: (op.paren_origin + (tp.range.start - synth_paren_origin))
+                              ..(op.paren_origin + (tp.range.end   - synth_paren_origin)),
+                    })
+                    .collect(),
+            })
+        };
+        shared.push(rebased);
+        // Pipeline::Op holds Box<dyn Op>; reuse the lowered op via a
+        // second build call to get a fresh Box. Cheaper alternative
+        // would be returning Arc directly from the registry, but that
+        // is a wider change.
+        let mut diags2 = Vec::new();
+        let built2 = registry.build_from_node(&op.name, inv.node(), synth.as_bytes(), &mut diags2)?;
+        let op_box2 = built2.ok()?;
+        seq.push(Pipeline::Op(op_box2));
     }
-    Some(Pipeline::Seq(seq))
+    Some((Pipeline::Seq(seq), shared))
 }
 
-fn render_cursor_row(n: usize, c: &Cursor, root: &Path) -> String {
-    let fs_cell = match &c.fs {
+/// Wrapper that exposes an Op's `term_positions()` re-based from
+/// synth-source coordinates to host-source coordinates. All other
+/// trait methods delegate.
+#[derive(Debug)]
+struct RebasedOp {
+    inner:            Arc<dyn pipeline::Op>,
+    #[allow(dead_code)]
+    synth_origin:     usize,
+    #[allow(dead_code)]
+    host_origin:      usize,
+    cached_positions: Vec<pipeline::TermPosition>,
+}
+
+impl pipeline::Op for RebasedOp {
+    fn name(&self) -> &'static str { self.inner.name() }
+    fn pipe<'a>(
+        &'a self,
+        ctx: &'a effect_runtime::RtCtx,
+        c:   pipeline::Cursor,
+    ) -> effect_runtime::BoxFuture<'a, Vec<pipeline::Cursor>> {
+        self.inner.pipe(ctx, c)
+    }
+    fn bound_captures(&self) -> &[Arc<str>] { self.inner.bound_captures() }
+    fn term_positions(&self) -> &[pipeline::TermPosition] { &self.cached_positions }
+}
+
+/// Compact per-cursor block: header line with file link + repo@rev +
+/// byte range, optional match preview as blockquote, captures as a
+/// bullet list with each value linking to its source span.
+///
+/// `focus_capture` (when set) marks the bullet for that capture name
+/// with a `→` indicator and bolds the value link, so the user's eye
+/// lands on the right line per row.
+fn render_cursor_block(n: usize, c: &Cursor, root: &Path, focus_capture: Option<&str>) -> String {
+    let mut out = String::new();
+
+    // Header line. File link sits first because it's the thing the user
+    // actually clicks; metadata trails.
+    let header_anchor = match &c.fs {
         Some(rel) => {
-            let rel_str = rel.to_string_lossy().into_owned();
             let abs = root.join(rel.as_ref());
             let line = line_of_offset(&c.content, c.byte_range.start);
-            let link = format!("file://{}#L{}", abs.display(), line);
-            format!("[`{}`]({})", escape_pipe(&rel_str), link)
+            format!(
+                "[`{}#L{line}`](file://{}#L{line})",
+                rel.to_string_lossy(),
+                abs.display(),
+            )
         }
-        None => "-".into(),
+        None => "_(no file)_".into(),
     };
-    let caps = c
-        .captures
-        .iter()
-        .map(|cap| {
-            let val = match &cap.kind {
-                CaptureKind::Synthesized { value } => value.to_string(),
-                CaptureKind::SpanBacked => {
-                    String::from_utf8_lossy(&c.content[cap.byte_range.clone()]).into_owned()
-                }
-            };
-            format!("`{}`=`{}`", cap.name, truncate(&val, 24))
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let path = c
-        .path
-        .iter()
-        .map(|s| match s {
-            PathSeg::Op { name, step } => format!("{name}#{step}"),
-            PathSeg::ForkArm { index } => format!("arm{index}"),
-        })
-        .collect::<Vec<_>>()
-        .join(" > ");
-    let last_bound = c
-        .last_bound
-        .as_ref()
-        .map(|s| format!("`${s}`"))
-        .unwrap_or_else(|| "-".into());
-    let match_cell = render_match_cell(c);
-    format!(
-        "| {} | `{}@{}` | {} | `{}..{}` | {} | {} | {} | `{}` |\n",
-        n,
-        c.repo,
-        c.rev,
-        fs_cell,
-        c.byte_range.start,
-        c.byte_range.end,
-        match_cell,
-        if caps.is_empty() { "-".into() } else { caps },
-        last_bound,
-        path,
-    )
+    out.push_str(&format!(
+        "\n**{n}.** {header_anchor} · `{}@{}` · `bytes {}..{}`\n",
+        c.repo, c.rev, c.byte_range.start, c.byte_range.end,
+    ));
+
+    // Match preview. Blockquote keeps it visually separate from the
+    // capture list and avoids the table-cell escape gymnastics.
+    let preview = render_preview(c);
+    if !preview.is_empty() {
+        out.push_str(&format!("> `{preview}`\n"));
+    }
+
+    // Capture list. SpanBacked → linked value pointing at its byte_range
+    // line; Synthesized → inline value, no link (no source span).
+    if !c.captures.is_empty() {
+        for cap in &c.captures {
+            let cell = render_capture_line(c, cap, root);
+            let is_focus = focus_capture.is_some_and(|f| f == &*cap.name);
+            let marker = if is_focus { "▶" } else { "-" };
+            if is_focus {
+                out.push_str(&format!("{marker} **{cell}**\n"));
+            } else {
+                out.push_str(&format!("{marker} {cell}\n"));
+            }
+        }
+    }
+
+    // last_bound and SprfPath are diagnostic; only render when present.
+    if let Some(name) = c.last_bound.as_ref() {
+        out.push_str(&format!("- _last_bound:_ `${name}`\n"));
+    }
+    if !c.path.is_empty() {
+        let path = c
+            .path
+            .iter()
+            .map(|s| match s {
+                PathSeg::Op { name, step } => format!("{name}#{step}"),
+                PathSeg::ForkArm { index } => format!("arm{index}"),
+            })
+            .collect::<Vec<_>>()
+            .join(" > ");
+        out.push_str(&format!("- _SprfPath:_ `{path}`\n"));
+    }
+
+    out
 }
 
-fn render_match_cell(c: &Cursor) -> String {
+fn render_preview(c: &Cursor) -> String {
     let active = c.active();
-    if active.is_empty() {
-        return "-".into();
+    if active.is_empty() { return String::new(); }
+    let s = String::from_utf8_lossy(active);
+    let s = s.replace('\n', " ⏎ ");
+    let s = s.replace('`', "\\`");
+    truncate(&s, 80)
+}
+
+fn render_capture_line(c: &Cursor, cap: &Capture, root: &Path) -> String {
+    let value_str = match &cap.kind {
+        CaptureKind::Synthesized { value } => value.to_string(),
+        CaptureKind::SpanBacked => {
+            String::from_utf8_lossy(&c.content[cap.byte_range.clone()]).into_owned()
+        }
+    };
+    let value_short = truncate(&value_str.replace('`', "\\`"), 48);
+
+    match &cap.kind {
+        CaptureKind::SpanBacked => {
+            // Link the value text into the source file at the capture's
+            // start line. file:// + #Lnn lets editors jump straight to it.
+            let target = match &c.fs {
+                Some(rel) => {
+                    let abs = root.join(rel.as_ref());
+                    let line = line_of_offset(&c.content, cap.byte_range.start);
+                    Some(format!("file://{}#L{line}", abs.display()))
+                }
+                None => None,
+            };
+            match target {
+                Some(href) => format!(
+                    "`${}` → [`{}`]({href}) `bytes {}..{}`",
+                    cap.name, value_short, cap.byte_range.start, cap.byte_range.end,
+                ),
+                None => format!(
+                    "`${}` → `{}` `bytes {}..{}`",
+                    cap.name, value_short, cap.byte_range.start, cap.byte_range.end,
+                ),
+            }
+        }
+        CaptureKind::Synthesized { .. } => {
+            format!("`${}` → `{}` _(synthesized)_", cap.name, value_short)
+        }
     }
-    let preview = String::from_utf8_lossy(active);
-    let preview = preview.replace('\n', " ⏎ ");
-    let preview = escape_pipe(&preview);
-    let preview = preview.replace('`', "\\`");
-    format!("`{}`", truncate(&preview, 80))
 }
 
 fn line_of_offset(bytes: &[u8], offset: usize) -> usize {
@@ -429,8 +573,6 @@ fn truncate(s: &str, max: usize) -> String {
     out.push('…');
     out
 }
-
-fn escape_pipe(s: &str) -> String { s.replace('|', "\\|") }
 
 struct DiskFileSource {
     root: PathBuf,
@@ -535,6 +677,85 @@ fn binding_diags_to_lsp(source: &str, diags: &[BindingDiagnostic]) -> Vec<Diagno
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_block_renders_capture_links_to_file_lines() {
+        // Synthetic: 3-line JSON, capture spans line 2 bytes 7..18.
+        let body = b"{\n  \"name\": \"alice\"\n}\n";
+        let mut c = Cursor::new(Arc::from(body.as_slice()));
+        c.repo = Arc::from("repo-x");
+        c.rev  = Arc::from("HEAD");
+        c.fs   = Some(Arc::from(std::path::PathBuf::from("Cargo.toml").as_path()));
+        c.byte_range = 0..body.len();
+        let name_pos = body.windows(7).position(|w| w == b"\"alice\"").unwrap();
+        c.captures.push(Capture::span_backed(
+            Arc::from("N"),
+            name_pos..(name_pos + 7),
+        ));
+
+        let root = std::path::PathBuf::from("/tmp/root");
+        let md = render_cursor_block(1, &c, &root, None);
+
+        assert!(md.contains("[`Cargo.toml#L1`]"), "header file link present: {md}");
+        assert!(md.contains("(file:///tmp/root/Cargo.toml#L"), "absolute file:// URL: {md}");
+        assert!(
+            md.contains("`$N` → [`\"alice\"`]"),
+            "capture value rendered as a link: {md}"
+        );
+        assert!(
+            md.contains(&format!("#L2)")),
+            "capture link points at line 2 of the source: {md}"
+        );
+    }
+
+    #[test]
+    fn json_op_exposes_term_positions_for_brace_captures() {
+        // The LSP hover dispatcher relies on Op::term_positions() to
+        // light up captures inside opaque paren bodies. Build a JsonOp
+        // through the registry exactly the way render_enriched_hover
+        // does, and assert that ${N?} / ${V?} land at their host-source
+        // byte ranges.
+        let src = "json({ name: ${N?}, version: ${V?} })";
+        let file: Arc<std::path::Path> =
+            Arc::from(std::path::PathBuf::from("t.sprf").as_path());
+        let (parsed, errs) = sprefa_parse::host_parse(src, file);
+        assert!(errs.is_empty(), "host parse errors: {errs:?}");
+
+        let inv = parsed.pipes.first().unwrap().ops.first().unwrap();
+        let registry = Registry::with_stdlib();
+        let mut diags = Vec::new();
+        let built = registry
+            .build_from_node("json", inv.node(), src.as_bytes(), &mut diags)
+            .expect("registry knows json");
+        let op = built.expect("json lowered cleanly");
+
+        let positions: Vec<_> = op
+            .term_positions()
+            .iter()
+            .map(|tp| (tp.name.to_string(), tp.range.clone()))
+            .collect();
+        assert_eq!(
+            positions.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            vec!["N", "V"],
+            "two captures recorded in source order: {positions:?}",
+        );
+        // Each range must round-trip back to the same `${...}` token in src.
+        for (name, r) in &positions {
+            let token = &src[r.clone()];
+            assert!(
+                token.starts_with("${") && token.ends_with('}'),
+                "term_position[{name}] = {r:?} → {token:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_block_renders_synthesized_capture_inline() {
+        let mut c = Cursor::new(Arc::from(&b""[..]));
+        c.captures.push(Capture::synthesized(Arc::from("ARGS"), Arc::from("a , b")));
+        let md = render_cursor_block(1, &c, std::path::Path::new("/"), None);
+        assert!(md.contains("`$ARGS` → `a , b` _(synthesized)_"), "synthesized capture: {md}");
+    }
 
     #[test]
     fn parse_errors_convert_with_utf16_ranges() {

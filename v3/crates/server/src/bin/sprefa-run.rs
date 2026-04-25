@@ -9,11 +9,17 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use effect_runtime::{RtCtx, RtCtxBuilder};
 use pipeline::_0_cursor::{CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
+use effect_runtime::batchers::{BoundedWorkSteal, CacheLayer};
 use pipeline::effects::{
-    FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect,
+    ast_parse, AstParseEffect, FsListFilesBatcher, FsListFilesEffect,
+    PrintBatcher, PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect,
     ReadBytesBatcher, ReadBytesEffect,
 };
 use pipeline::readers::FileSource;
@@ -64,7 +70,7 @@ fn main() {
         }
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
@@ -99,14 +105,32 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
         // targets stdout so `print()` ops surface in the CLI output.
         let file_source: Arc<dyn FileSource> =
             Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
+        // ast parse worker pool: 8 rayon threads, inbox cap 256.
+        // Mirrors FINDINGS §5.1's W=8, cap=256 sweet spot for the
+        // kernel printk scan. Tunable via env later.
+        let ast_workers: usize = std::env::var("SPREFA_AST_WORKERS")
+            .ok().and_then(|s| s.parse().ok())
+            .unwrap_or(8);
+        let ast_cap: usize = std::env::var("SPREFA_AST_CAP")
+            .ok().and_then(|s| s.parse().ok())
+            .unwrap_or(256);
+        // Build CacheLayer<ReadBytesEffect> by hand so the run loop can
+        // surface its hit/miss counters in stderr after each pipe — the
+        // sugar `register_pure` swallows the layer handle.
+        let listing_cache: CacheLayer<FsListFilesEffect> =
+            CacheLayer::new(1024, FsListFilesBatcher::new(file_source.clone()));
+        let read_cache: CacheLayer<ReadBytesEffect> =
+            CacheLayer::new(65_536, ReadBytesBatcher::new(file_source.clone()));
         let ctx = RtCtxBuilder::new()
-            .register_pure::<FsListFilesEffect, _>(
-                1024,
-                FsListFilesBatcher::new(file_source.clone()),
+            .register_domain_aware::<FsListFilesEffect, _>(listing_cache.clone())
+            .register_domain_aware::<ReadBytesEffect, _>(read_cache.clone())
+            .register::<ReadBytesBatchEffect, _>(
+                ReadBytesBatchBatcher::new(file_source),
             )
-            .register_pure::<ReadBytesEffect, _>(
-                1024,
-                ReadBytesBatcher::new(file_source),
+            .register::<AstParseEffect, _>(
+                BoundedWorkSteal::<AstParseEffect>::new(
+                    ast_cap, ast_workers, ast_parse,
+                ),
             )
             .register::<PrintEffect, _>(PrintBatcher::stdout())
             .build();
@@ -171,6 +195,18 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
                 seed,
                 &registry,
             ).await;
+        }
+        // Cache telemetry: dump hit/miss snapshot to stderr so the
+        // wall numbers in `time` are paired with the cache state that
+        // produced them. SPREFA_TELEMETRY=quiet suppresses.
+        if std::env::var("SPREFA_TELEMETRY").as_deref() != Ok("quiet") {
+            let r = read_cache.stats();
+            let l = listing_cache.stats();
+            eprintln!(
+                "# cache: read[hits={} misses={} entries={} hit%={:.1}] listing[hits={} misses={} entries={}]",
+                r.hits, r.misses, r.entries, r.hit_ratio() * 100.0,
+                l.hits, l.misses, l.entries,
+            );
         }
     }
 }

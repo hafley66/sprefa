@@ -3,4 +3,9 @@
 #   fs(glob(**/package.json)) ↦ each json file
 #   json({ name: $N, version: $V }) ↦ row-field captures
 # Expected: at least one row per package.json with $N and $V bound.
-repo($R) > rev(:HEAD) > fs(glob(**/package.json)) > json({ name: $N, version: $V })
+repo(${R?}) 
+> rev(:HEAD) 
+> fs(glob(**/package.json)) 
+> json({ name: ${N?}, version: ${V?} });
+
+

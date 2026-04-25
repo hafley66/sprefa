@@ -47,3 +47,9 @@ incremental      = false
 opt-level = 3
 [profile.dev.package.ast-grep-language]
 opt-level = 3
+[profile.dev.package.tree-sitter-json]
+opt-level = 3
+[profile.dev.package.tree-sitter-yaml]
+opt-level = 3
+[profile.dev.package.tree-sitter-toml-ng]
+opt-level = 3
