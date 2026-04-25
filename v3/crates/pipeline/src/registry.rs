@@ -33,8 +33,8 @@ use crate::op_ctor::{
     node_factory, op_factory, CustomLowerFn, NodeFactoryFn, OpCtor, OpLowering, PatternCtor,
 };
 use crate::ops::{
-    CommentOp, FsOp, GlobOp, JsonOp, PrintOp, ReadOp, ReOp, RepoOp, RevOp, StrOp, VoidOp,
-    WriteFileOp,
+    AstGrepOp, CommentOp, FsOp, GlobOp, JsonOp, PrintOp, ReadOp, ReOp, RepoOp, RevOp, StrOp,
+    VoidOp, WriteFileOp,
 };
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::Value;
@@ -181,10 +181,8 @@ impl Registry {
             .register::<CommentOp>()
             .register::<PrintOp>()
             .register::<ReadOp>()
-            // `JsonOp` (jq-path v0) intentionally NOT registered — it's
-            // the wrong shape per user direction (brace-walker DSL is the
-            // target, not jq). File kept in tree pending the v2 walker
-            // port (sprefa-lpk).
+            .register::<JsonOp>()
+            .register::<AstGrepOp>()
             .register::<WriteFileOp>()
             .register_pattern::<GlobOp>()
             .register_pattern::<ReOp>()
@@ -649,7 +647,7 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["comment", "fs", "print", "read", "repo", "rev", "str", "void", "write_file"]
+            vec!["ast", "comment", "fs", "json", "print", "read", "repo", "rev", "str", "void", "write_file"]
         );
     }
 

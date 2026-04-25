@@ -1,0 +1,6 @@
+# Smoke fixture for sprefa-lpk: json brace-walker DSL.
+# Exercises the brace-pattern shape end-to-end:
+#   fs(glob(**/package.json)) ↦ each json file
+#   json({ name: $N, version: $V }) ↦ row-field captures
+# Expected: at least one row per package.json with $N and $V bound.
+repo($R) > rev(:HEAD) > fs(glob(**/package.json)) > json({ name: $N, version: $V })

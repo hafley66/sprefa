@@ -7,6 +7,7 @@
 //! Inventory (this slice):
 //!   - void:          `> void`     — drop the cursor.
 
+pub mod ast_grep;
 pub mod comment;
 pub mod fs;
 pub mod glob;
@@ -20,6 +21,7 @@ pub mod str_op;
 pub mod void;
 pub mod write_file;
 
+pub use ast_grep::AstGrepOp;
 pub use comment::CommentOp;
 pub use fs::{FsMode, FsOp};
 pub use glob::GlobOp;

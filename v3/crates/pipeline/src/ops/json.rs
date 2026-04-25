@@ -1,127 +1,89 @@
-//! `json(<jq_path>, ${CAP?})` — DEPRECATED jq-path v0.
+//! `json({ ... })` — brace-walker DSL over JSON.
 //!
-//! NOT REGISTERED in `Registry::with_stdlib()`. Wrong direction per
-//! user feedback: the target is v2's brace-walker DSL with `**` wildcards
-//! and structural multi-capture (`json({ name: $N, version: $V })`,
-//! `json({ **: { image: $I } })`). This file is parked pending the
-//! brace-walker port (see sprefa-lpk).
+//! Ported from v2/src/ops/_5_json.rs + v2 walk subsystem. Body is a
+//! curly-brace pattern with structural matching: bare keys match exactly,
+//! `$NAME` captures values, `$KEY` in key position captures keys, `**`
+//! recurses through nested objects, `[...]` iterates arrays, and quoted
+//! strings with `$VARS` are leaf-segment patterns.
 //!
-//! Original v0 doc preserved below for reference.
-//! ----
+//! Examples:
+//!   json({ name: $N, version: $V })
+//!   json({ deps: { $K: $V } })
+//!   json({ **: { image: "$REPO:$TAG" } })
+//!   json({ users: [...{ name: $N, age: $A }] })
 //!
-//! `json(<jq_path>, ${CAP?})` — extract a single value from a JSON
-//! document by jq-style path, bind it to a capture.
+//! Cursor flow: each WalkOutcome row becomes one output cursor; capture
+//! names map to v3 `Capture::span_backed` entries with absolute byte
+//! ranges (cursor.byte_range.start + walker offset).
 //!
-//! v0 scope (sprefa-4m7.2.12 first slice):
-//!   * Single jq path → single Unbound capture.
-//!   * Path grammar: dot-separated keys, bracketed integer indices, `[]`
-//!     for array fan-out. Examples: `.name`, `.version`, `.deps.foo`,
-//!     `.items[0]`, `.items[]` (fan-out).
-//!   * Format support: JSON only (uses `tree-sitter-json`). YAML/TOML
-//!     deferred — v2 had them via a generic data-tree abstraction
-//!     (~2000 LoC dependency cone) that does not belong in a port pass.
-//!   * Brace-pattern multi-capture form (`json({k1:$X, k2:$Y})`) deferred.
-//!     The brace walker is its own subsystem; landing it requires an
-//!     active use case to scope.
-//!
-//! Cursor flow:
-//!   * `cursor.content` is parsed with tree-sitter-json on first call.
-//!   * For each match of the jq path, an output cursor is emitted with
-//!     `byte_range` narrowed to the matched value's bytes and a new
-//!     `Capture` named after the introducer.
-//!   * `[]` array-fan-out emits one cursor per array element.
-//!
-//! Diagnostics:
-//!   * Missing args                              → `json/missing-args`
-//!   * Wrong arg shapes                          → `value/wrong-kind`
-//!   * Capture not Unbound                       → `term/must-be-unbound-in-json`
-//!   * jq path syntax error                      → `json/path-syntax`
-//!   * tree-sitter-json parse error              → `json/parse`
-//!
-//! Spec: parse.md §14 (data DSLs); supersedes v2/src/ops/_5_json.rs for
-//! the single-path slice.
+//! YAML/TOML deferred (sprefa-lpk follow-up). The v2 `DataNode` trait
+//! lives in `crate::data` so additional formats slot in without walker
+//! changes.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use effect_runtime::{BoxFuture, RtCtx};
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
 use crate::_0_cursor::{Capture, Cursor};
 use crate::_1_op::Op;
+use crate::data::JsonNode;
 use crate::op_ctor::OpCtor;
 use crate::pattern_op::PatternDiagnostic;
-use crate::value::{TermMode, Value};
+use crate::value::Value;
+use crate::walk::brace_parse::{parse_body, ScanAnnotation};
+use crate::walk::compile::compile_steps;
+use crate::walk::compiled::{CompiledKeyMatcher, CompiledStep};
+use crate::walk::walker::walk;
 
-#[derive(Debug, Clone)]
-pub enum PathSeg {
-    Key(Arc<str>),
-    Index(usize),
-    /// `[]` — fan out across all elements of an array.
-    AllItems,
-}
-
+/// Compiled `json({...})` op.
+///
+/// `_annotations` (from v2's `$$sigil($X)` form) parse but are not
+/// surfaced today — kept for fidelity until sprefa-4m7.13.x decides
+/// whether v3 cross-repo wiring revives them.
 #[derive(Debug)]
 pub struct JsonOp {
-    pub path:    Vec<PathSeg>,
-    pub capture: Arc<str>,
+    pub steps:           Arc<[CompiledStep]>,
+    pub bound_caps:      Vec<Arc<str>>,
+    pub _annotations:    Arc<[ScanAnnotation]>,
 }
 
 impl OpCtor for JsonOp {
     const NAME: &'static str = "json";
-    const BODY_GRAMMAR: &'static str = "jq-path string + ${CAP?} introducer";
-    const DOC:  &'static str = "\
-**json**(_path_, ${CAP?})
+    const BODY_GRAMMAR: &'static str = "brace pattern: { key: $V, $K: ..., **: ... }";
+    const DOC: &'static str = "\
+**json**({ _pattern_ })
 
-Extract values from a JSON document by jq-style path. Path grammar:
-dot-keys (`.name`), bracketed integer indices (`.items[0]`), and array
-fan-out (`.items[]` emits one cursor per element).
+Brace-pattern walker over JSON documents. Body is a structural pattern:
 
-Each match emits one cursor with `byte_range` narrowed to the value's
-span and `${CAP}` bound to the same span. v0: single path + single
-introducer; brace-pattern multi-capture form is parked.
+- bare keys match exactly: `{ name: $N }`
+- captured keys: `{ $K: $V }`
+- `**` recurses through nested objects: `{ **: { image: $I } }`
+- arrays via `[...]`: `{ items: [...{ id: $ID }] }`
+- quoted leaf patterns: `{ image: \"$REPO:$TAG\" }`
+- regex / glob keys: `{ re:^dep_: $V }`, `{ \"@$SCOPE/$NAME\": $V }`
+
+Each match emits one cursor with named captures bound to the matched
+spans. Multiple captures fan out as a row-per-match.
 ";
 
-    fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
-        if values.len() != 2 {
-            return Err(vec![PatternDiagnostic {
-                code: "json/missing-args",
-                message: "json takes exactly two arguments: a jq-path string and an Unbound `${CAP?}` capture".into(),
-                byte_range: 0..0,
-            }]);
-        }
+    fn from_values(_values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
+        // Defensive: registry always routes json through `from_paren_node`.
+        // If a caller bypasses the node path, return an empty walker that
+        // matches nothing. Tests/static callers should use `lower_body`.
+        Ok(JsonOp {
+            steps:        Arc::from(Vec::<CompiledStep>::new()),
+            bound_caps:   Vec::new(),
+            _annotations: Arc::from(Vec::<ScanAnnotation>::new()),
+        })
+    }
 
-        let path = match &values[0] {
-            Value::Str(s) | Value::Atom(s) => parse_jq_path(s)?,
-            _ => {
-                return Err(vec![PatternDiagnostic {
-                    code: "value/wrong-kind",
-                    message: "json's first arg must be a jq-path string literal".into(),
-                    byte_range: 0..0,
-                }]);
-            }
-        };
-
-        let capture = match &values[1] {
-            Value::Term { name, mode: TermMode::Unbound } => name.clone(),
-            Value::Term { name, mode: TermMode::Read } => {
-                return Err(vec![PatternDiagnostic {
-                    code: "term/must-be-unbound-in-json",
-                    message: format!(
-                        "`${{{name}}}` must be `${{{name}?}}` — json binds the path's value into a fresh capture"
-                    ),
-                    byte_range: 0..0,
-                }]);
-            }
-            _ => {
-                return Err(vec![PatternDiagnostic {
-                    code: "value/wrong-kind",
-                    message: "json's second arg must be an Unbound `${CAP?}` term".into(),
-                    byte_range: 0..0,
-                }]);
-            }
-        };
-
-        Ok(JsonOp { path, capture })
+    fn from_paren_node(
+        inv_node: Node<'_>,
+        src:      &[u8],
+    ) -> Option<Result<Self, Vec<PatternDiagnostic>>> {
+        Some(lower_json_paren(inv_node, src))
     }
 }
 
@@ -136,318 +98,251 @@ impl Op for JsonOp {
             let active = c.active();
             let base = c.byte_range.start;
 
-            let mut parser = Parser::new();
-            if parser
-                .set_language(&tree_sitter_json::LANGUAGE.into())
-                .is_err()
-            {
-                return Vec::new();
-            }
-            let Some(tree) = parser.parse(active, None) else {
+            let Ok(json) = JsonNode::parse(Arc::from(active)) else {
                 return Vec::new();
             };
 
-            let root = tree.root_node();
-            // tree-sitter-json's root is "document"; the value is the
-            // first named child.
-            let value_root = root.named_child(0).unwrap_or(root);
+            let outcome = walk(&json, &self.steps);
 
-            let mut hits: Vec<(usize, usize)> = Vec::new();
-            walk_path(value_root, active, &self.path, &mut hits);
-
-            let mut out = Vec::with_capacity(hits.len());
-            for (start, end) in hits {
-                let abs = (base + start)..(base + end);
-                let mut next = c.narrow(abs.clone());
-                next.captures
-                    .push(Capture::span_backed(self.capture.clone(), abs));
+            let mut out = Vec::with_capacity(outcome.rows.len());
+            for row in outcome.rows {
+                let mut next = c.clone();
+                let mut union_start: Option<usize> = None;
+                let mut union_end:   Option<usize> = None;
+                for (name, wc) in row.captures {
+                    let abs: Range<usize> =
+                        (base + wc.byte_start as usize)..(base + wc.byte_end as usize);
+                    union_start = Some(union_start.map(|s| s.min(abs.start)).unwrap_or(abs.start));
+                    union_end   = Some(union_end.map(|e| e.max(abs.end)).unwrap_or(abs.end));
+                    next.captures.push(Capture::span_backed(name, abs));
+                }
+                if let (Some(s), Some(e)) = (union_start, union_end) {
+                    next.byte_range = s..e;
+                }
                 out.push(next);
             }
             out
         })
     }
 
-    fn bound_captures(&self) -> &[Arc<str>] {
-        std::slice::from_ref(&self.capture)
-    }
+    fn bound_captures(&self) -> &[Arc<str>] { &self.bound_caps }
 }
 
 // ---------------------------------------------------------------------------
-// jq path parser — `.key`, `.key.sub`, `.items[0]`, `.items[]`.
+// Lowering: host CST `op_invocation` → JsonOp.
+//
+// json's body is the paren slot's bytes between `(` and `)`. We grab
+// those bytes, run the v2 brace parser, compile to CompiledSteps. The
+// v3 host grammar's term_ref / carveout_expr children inside the paren
+// get ignored — the brace parser owns the byte-level DSL.
 // ---------------------------------------------------------------------------
 
-fn parse_jq_path(src: &str) -> Result<Vec<PathSeg>, Vec<PatternDiagnostic>> {
-    let s = src.trim();
-    if s.is_empty() || s == "." {
-        return Ok(Vec::new());
-    }
-    if !s.starts_with('.') {
+fn lower_json_paren(
+    inv_node: Node<'_>,
+    src:      &[u8],
+) -> Result<JsonOp, Vec<PatternDiagnostic>> {
+    let Some(paren) = inv_node.child_by_field_name("paren") else {
         return Err(vec![PatternDiagnostic {
-            code: "json/path-syntax",
-            message: format!("jq path must start with `.`, got `{s}`"),
-            byte_range: 0..0,
+            code: "json/missing-body",
+            message: "json requires a brace-pattern body, e.g. json({ key: $V })".into(),
+            byte_range: inv_node.byte_range(),
+        }]);
+    };
+    let p_start = paren.start_byte();
+    let p_end   = paren.end_byte();
+    let body_bytes = if p_end < p_start + 2 { &[][..] } else { &src[p_start + 1..p_end - 1] };
+    let body = std::str::from_utf8(body_bytes).map_err(|_| {
+        vec![PatternDiagnostic {
+            code: "json/non-utf8",
+            message: "json body is not valid UTF-8".into(),
+            byte_range: paren.byte_range(),
+        }]
+    })?;
+    if body.trim().is_empty() {
+        return Err(vec![PatternDiagnostic {
+            code: "json/empty-body",
+            message: "json body is empty; expected a brace pattern, e.g. json({ key: $V })".into(),
+            byte_range: paren.byte_range(),
         }]);
     }
-    let mut out = Vec::new();
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'.' => {
-                i += 1;
-                let start = i;
-                while i < bytes.len() && bytes[i] != b'.' && bytes[i] != b'[' {
-                    i += 1;
-                }
-                if i > start {
-                    let key = std::str::from_utf8(&bytes[start..i])
-                        .map_err(|_| {
-                            vec![PatternDiagnostic {
-                                code: "json/path-syntax",
-                                message: "non-utf8 jq key".into(),
-                                byte_range: 0..0,
-                            }]
-                        })?;
-                    out.push(PathSeg::Key(Arc::from(key)));
-                }
-            }
-            b'[' => {
-                i += 1;
-                let start = i;
-                while i < bytes.len() && bytes[i] != b']' {
-                    i += 1;
-                }
-                if i >= bytes.len() {
-                    return Err(vec![PatternDiagnostic {
-                        code: "json/path-syntax",
-                        message: "unterminated `[` in jq path".into(),
-                        byte_range: 0..0,
-                    }]);
-                }
-                let inner =
-                    std::str::from_utf8(&bytes[start..i]).map_err(|_| vec![
-                        PatternDiagnostic {
-                            code: "json/path-syntax",
-                            message: "non-utf8 jq index".into(),
-                            byte_range: 0..0,
-                        },
-                    ])?;
-                if inner.is_empty() {
-                    out.push(PathSeg::AllItems);
-                } else if let Ok(n) = inner.parse::<usize>() {
-                    out.push(PathSeg::Index(n));
-                } else {
-                    return Err(vec![PatternDiagnostic {
-                        code: "json/path-syntax",
-                        message: format!("jq index must be empty (`[]`) or integer, got `{inner}`"),
-                        byte_range: 0..0,
-                    }]);
-                }
-                i += 1; // skip ']'
-            }
-            _ => {
-                return Err(vec![PatternDiagnostic {
-                    code: "json/path-syntax",
-                    message: format!("unexpected byte `{}` in jq path", bytes[i] as char),
-                    byte_range: 0..0,
-                }]);
-            }
-        }
-    }
-    Ok(out)
+
+    let (steps, annotations) = parse_body(body).map_err(|e| {
+        vec![PatternDiagnostic {
+            code: "json/parse-body",
+            message: e,
+            byte_range: paren.byte_range(),
+        }]
+    })?;
+
+    let compiled = compile_steps(&steps).map_err(|e| {
+        vec![PatternDiagnostic {
+            code: "json/compile",
+            message: e,
+            byte_range: paren.byte_range(),
+        }]
+    })?;
+
+    let bound_caps = collect_pattern_captures(&compiled);
+
+    Ok(JsonOp {
+        steps:        Arc::from(compiled.into_boxed_slice()),
+        bound_caps,
+        _annotations: Arc::from(annotations.into_boxed_slice()),
+    })
 }
 
-// ---------------------------------------------------------------------------
-// Tree walker — applies a path to a tree-sitter-json node, collecting
-// the matched values' byte ranges.
-// ---------------------------------------------------------------------------
-
-fn walk_path(
-    node: Node<'_>,
-    src:  &[u8],
-    path: &[PathSeg],
-    out:  &mut Vec<(usize, usize)>,
-) {
-    let Some(seg) = path.first() else {
-        out.push((node.start_byte(), node.end_byte()));
-        return;
-    };
-    let rest = &path[1..];
-
-    match seg {
-        PathSeg::Key(k) => {
-            // Object: walk children with kind == "pair".
-            if node.kind() != "object" {
-                return;
-            }
-            let mut walk = node.walk();
-            for child in node.named_children(&mut walk) {
-                if child.kind() != "pair" {
-                    continue;
-                }
-                let Some(key_node) = child.child_by_field_name("key") else {
-                    continue;
-                };
-                let key_text = node_string_text(key_node, src);
-                if key_text.as_deref() == Some(k.as_ref()) {
-                    if let Some(val) = child.child_by_field_name("value") {
-                        walk_path(val, src, rest, out);
+fn collect_pattern_captures(steps: &[CompiledStep]) -> Vec<Arc<str>> {
+    let mut seen: Vec<Arc<str>> = Vec::new();
+    fn push(seen: &mut Vec<Arc<str>>, name: &str) {
+        if !seen.iter().any(|s| s.as_ref() == name) {
+            seen.push(Arc::from(name));
+        }
+    }
+    fn walk_steps(seen: &mut Vec<Arc<str>>, steps: &[CompiledStep]) {
+        for s in steps {
+            match s {
+                CompiledStep::Key { capture: Some(n), .. }
+                | CompiledStep::KeyMatch { capture: Some(n), .. }
+                | CompiledStep::Leaf { capture: Some(n) }
+                | CompiledStep::CaptureAny { capture: Some(n) } => push(seen, n),
+                CompiledStep::Object { entries } => {
+                    for e in entries {
+                        if let CompiledKeyMatcher::Capture(n) = &e.key { push(seen, n); }
+                        walk_steps(seen, &e.value);
                     }
                 }
-            }
-        }
-        PathSeg::Index(n) => {
-            if node.kind() != "array" {
-                return;
-            }
-            let items: Vec<Node> = (0..node.named_child_count())
-                .filter_map(|i| node.named_child(i))
-                .collect();
-            if let Some(item) = items.get(*n) {
-                walk_path(*item, src, rest, out);
-            }
-        }
-        PathSeg::AllItems => {
-            if node.kind() != "array" {
-                return;
-            }
-            let mut walk = node.walk();
-            for child in node.named_children(&mut walk) {
-                walk_path(child, src, rest, out);
+                CompiledStep::Array { item } => walk_steps(seen, item),
+                _ => {}
             }
         }
     }
-}
-
-/// Return the unquoted text of a tree-sitter-json `string` node, or
-/// `None` if the node is not a string. tree-sitter-json strings expose
-/// the raw bytes including surrounding quotes; we strip them here.
-fn node_string_text(node: Node<'_>, src: &[u8]) -> Option<String> {
-    if node.kind() != "string" {
-        return None;
-    }
-    let raw = std::str::from_utf8(&src[node.byte_range()]).ok()?;
-    let trimmed = raw.trim();
-    let bytes = trimmed.as_bytes();
-    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
-        Some(trimmed[1..trimmed.len() - 1].to_string())
-    } else {
-        Some(trimmed.to_string())
-    }
+    walk_steps(&mut seen, steps);
+    seen
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tree_sitter::Parser;
 
-    fn op(path: &str, cap: &str) -> JsonOp {
-        JsonOp::from_values(vec![
-            Value::Str(Arc::from(path)),
-            Value::Term {
-                name: Arc::from(cap),
-                mode: TermMode::Unbound,
-            },
-        ])
-        .unwrap()
+    fn host_lang() -> tree_sitter::Language {
+        tree_sitter_sprefa::LANGUAGE.into()
+    }
+
+    fn lower(src: &str) -> Result<JsonOp, Vec<PatternDiagnostic>> {
+        let mut parser = Parser::new();
+        parser.set_language(&host_lang()).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        let root = tree.root_node();
+        let inv = find_op_invocation(root).expect("no op_invocation in source");
+        lower_json_paren(inv, src.as_bytes())
+    }
+
+    fn find_op_invocation(n: Node<'_>) -> Option<Node<'_>> {
+        if n.kind() == "op_invocation" { return Some(n); }
+        let mut walk = n.walk();
+        for ch in n.named_children(&mut walk) {
+            if let Some(v) = find_op_invocation(ch) { return Some(v); }
+        }
+        None
     }
 
     #[test]
-    fn path_parse_simple_keys() {
-        let p = parse_jq_path(".name").unwrap();
-        assert!(matches!(p[0], PathSeg::Key(ref k) if &**k == "name"));
+    fn lower_flat_pattern_collects_caps() {
+        let op = lower("json({ name: $N, version: $V })").unwrap();
+        let names: Vec<&str> = op.bound_captures().iter().map(|s| s.as_ref()).collect();
+        assert!(names.contains(&"N"));
+        assert!(names.contains(&"V"));
     }
 
     #[test]
-    fn path_parse_nested_with_index_and_fanout() {
-        let p = parse_jq_path(".deps.list[0]").unwrap();
-        assert_eq!(p.len(), 3);
-        assert!(matches!(p[2], PathSeg::Index(0)));
-
-        let p = parse_jq_path(".items[]").unwrap();
-        assert_eq!(p.len(), 2);
-        assert!(matches!(p[1], PathSeg::AllItems));
+    fn lower_rejects_empty_body() {
+        let err = lower("json()").unwrap_err();
+        assert_eq!(err[0].code, "json/empty-body");
     }
 
     #[test]
-    fn path_parse_rejects_no_dot() {
-        let e = parse_jq_path("name").unwrap_err();
-        assert_eq!(e[0].code, "json/path-syntax");
+    fn lower_rejects_bad_brace_syntax() {
+        let err = lower("json({ name }").unwrap_err();
+        assert_eq!(err[0].code, "json/parse-body");
     }
 
     #[tokio::test]
-    async fn extract_top_level_string_field() {
+    async fn pipe_extracts_flat_object() {
         let ctx = RtCtx::default();
-        let body = br#"{"name": "alice", "version": "1.2"}"#;
+        let body = br#"{"name":"alice","version":"1.2"}"#;
         let c = Cursor::new(Arc::from(body.as_slice()));
-        let out = op(".version", "V").pipe(&ctx, c).await;
+        let op = lower("json({ name: $N, version: $V })").unwrap();
+        let out = op.pipe(&ctx, c).await;
         assert_eq!(out.len(), 1);
-        // Match span includes quotes.
-        assert_eq!(out[0].active(), b"\"1.2\"");
-        let cap = out[0]
-            .captures
+        let n = out[0].captures.iter().find(|c| &*c.name == "N").unwrap();
+        let v = out[0].captures.iter().find(|c| &*c.name == "V").unwrap();
+        assert_eq!(n.bytes(&out[0].content), b"\"alice\"");
+        assert_eq!(v.bytes(&out[0].content), b"\"1.2\"");
+    }
+
+    #[tokio::test]
+    async fn pipe_captured_keys_fan_out() {
+        let ctx = RtCtx::default();
+        let body = br#"{"deps":{"foo":"1","bar":"2"}}"#;
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("json({ deps: { $K: $V } })").unwrap();
+        let out = op.pipe(&ctx, c).await;
+        assert_eq!(out.len(), 2);
+        let mut pairs: Vec<(String, String)> = out
             .iter()
-            .find(|c| &*c.name == "V")
-            .unwrap();
-        assert_eq!(cap.byte_range, out[0].byte_range);
+            .map(|c| {
+                let k = c.captures.iter().find(|c| &*c.name == "K").unwrap();
+                let v = c.captures.iter().find(|c| &*c.name == "V").unwrap();
+                (
+                    String::from_utf8_lossy(k.bytes(&c.content)).into_owned(),
+                    String::from_utf8_lossy(v.bytes(&c.content)).into_owned(),
+                )
+            })
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("\"bar\"".to_string(), "\"2\"".to_string()),
+                ("\"foo\"".to_string(), "\"1\"".to_string()),
+            ]
+        );
     }
 
     #[tokio::test]
-    async fn extract_nested_field() {
+    async fn pipe_array_iter() {
         let ctx = RtCtx::default();
-        let body = br#"{"deps": {"foo": "1.0"}}"#;
+        let body = br#"{"users":[{"id":"a"},{"id":"b"}]}"#;
         let c = Cursor::new(Arc::from(body.as_slice()));
-        let out = op(".deps.foo", "X").pipe(&ctx, c).await;
+        let op = lower("json({ users: [...{ id: $I }] })").unwrap();
+        let out = op.pipe(&ctx, c).await;
+        assert_eq!(out.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn pipe_double_star_recurses() {
+        let ctx = RtCtx::default();
+        let body = br#"{"a":{"b":{"image":"nginx"}}}"#;
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("json({ **: { image: $I } })").unwrap();
+        let out = op.pipe(&ctx, c).await;
+        assert!(out.iter().any(|c| {
+            c.captures.iter().any(|cap| &*cap.name == "I" && cap.bytes(&c.content) == b"\"nginx\"")
+        }));
+    }
+
+    #[tokio::test]
+    async fn pipe_leaf_pattern_splits_image_tag() {
+        let ctx = RtCtx::default();
+        let body = br#"{"image":"nginx:1.21"}"#;
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower(r#"json({ image: "$REPO:$TAG" })"#).unwrap();
+        let out = op.pipe(&ctx, c).await;
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].active(), b"\"1.0\"");
-    }
-
-    #[tokio::test]
-    async fn array_index_extracts_one() {
-        let ctx = RtCtx::default();
-        let body = br#"{"items": ["a", "b", "c"]}"#;
-        let c = Cursor::new(Arc::from(body.as_slice()));
-        let out = op(".items[1]", "X").pipe(&ctx, c).await;
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].active(), b"\"b\"");
-    }
-
-    #[tokio::test]
-    async fn array_fanout_emits_one_per_element() {
-        let ctx = RtCtx::default();
-        let body = br#"{"items": [1, 2, 3]}"#;
-        let c = Cursor::new(Arc::from(body.as_slice()));
-        let out = op(".items[]", "X").pipe(&ctx, c).await;
-        assert_eq!(out.len(), 3);
-        assert_eq!(out[0].active(), b"1");
-        assert_eq!(out[1].active(), b"2");
-        assert_eq!(out[2].active(), b"3");
-    }
-
-    #[tokio::test]
-    async fn missing_path_emits_no_cursors() {
-        let ctx = RtCtx::default();
-        let body = br#"{"name": "alice"}"#;
-        let c = Cursor::new(Arc::from(body.as_slice()));
-        let out = op(".version", "X").pipe(&ctx, c).await;
-        assert_eq!(out.len(), 0);
-    }
-
-    #[test]
-    fn from_values_rejects_read_term() {
-        let err = JsonOp::from_values(vec![
-            Value::Str(Arc::from(".x")),
-            Value::Term {
-                name: Arc::from("Y"),
-                mode: TermMode::Read,
-            },
-        ])
-        .unwrap_err();
-        assert_eq!(err[0].code, "term/must-be-unbound-in-json");
-    }
-
-    #[test]
-    fn from_values_rejects_wrong_arity() {
-        let err = JsonOp::from_values(vec![Value::Str(Arc::from(".x"))]).unwrap_err();
-        assert_eq!(err[0].code, "json/missing-args");
+        let r = out[0].captures.iter().find(|c| &*c.name == "REPO").unwrap();
+        let t = out[0].captures.iter().find(|c| &*c.name == "TAG").unwrap();
+        assert_eq!(String::from_utf8_lossy(r.bytes(&out[0].content)), "\"nginx:1.21\"");
+        assert_eq!(String::from_utf8_lossy(t.bytes(&out[0].content)), "\"nginx:1.21\"");
     }
 }

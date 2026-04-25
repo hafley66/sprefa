@@ -40,3 +40,10 @@ lto              = "fat"
 codegen-units    = 1
 debug            = false
 incremental      = false
+
+# ast-grep parsing is the per-cursor hot path; opt-level 3 even in dev
+# keeps `cargo test` and smoke runs from being painfully slow.
+[profile.dev.package.ast-grep-core]
+opt-level = 3
+[profile.dev.package.ast-grep-language]
+opt-level = 3
