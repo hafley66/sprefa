@@ -85,12 +85,8 @@ impl DocSession {
             for (idx, inv) in pipe.ops.iter().enumerate() {
                 let rng = &inv.parse_site.byte_range;
                 if rng.contains(&offset) || offset == rng.end {
-                    if inv.kind != sprefa_parse::PipeStepKind::OpInvocation {
-                        return None;
-                    }
                     let upstream: Vec<PlannedOp> = pipe.ops[..=idx]
                         .iter()
-                        .filter(|i| i.kind == sprefa_parse::PipeStepKind::OpInvocation)
                         .map(|i| PlannedOp {
                             name: i.name.to_string(),
                             body: paren_body(i, &self.source).unwrap_or("").to_string(),

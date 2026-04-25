@@ -9,7 +9,7 @@
 //!   - 4 Pipeline cases: Op, Chain, Group, Fork
 //!   - 5 EntityRef cases: Scalar, Op, Pipeline, Rule, Capture
 //!   - 6 Cursor fields: path, content, byte_range, slots, captures, parent
-//!   - 3 sigils: `$`, `&`, carveouts `${...}` / `&{...}`
+//!   - 1 sigil: brace-mandatory carveouts `${...}`
 //!   - Arg-mode dispatch: ArgSpec + TermMode + OpAction
 //!   - Every expression returns a Cursor or stream of Cursors
 
@@ -49,50 +49,22 @@ pub enum Scalar {
 /// parameter list, or a carveout. The lowering layer has already resolved
 /// names to slots / rules / ops, so this is explicitly typed.
 ///
-/// *Why 6 variants?*
+/// *Why 4 variants?*
 /// - `Scalar`: literals ("hello", 42, :atom).
-/// - `CaptureRef`: `$NAME` — the universal variable reference.
+/// - `CaptureRef`: `${NAME}` — the universal variable reference.
 /// - `Carveout`: `${expr}` — general expression hole; inner pipeline
 ///   evaluates to cursors whose active bytes become the term value.
-/// - `CursorRef`: `&.$CAP`, `&.fs`, `&{computed}` — cursor rebase.
-/// - `Xref`: `other_rule.$VAR` — cross-rule capture reference.
 /// - `Annotated`: extension point for Section 14 annotations.
 ///
-/// Removing `Carveout` breaks `${TERM > lowercase}` and nested pipelines
-/// inside args. Removing `Xref` breaks cross-rule refs entirely.
-/// Removing `Annotated` forecloses every future annotation syntax.
+/// Cursor-field access (`${REPO}`, `${REV}`, `${FS}`) lowers to
+/// `CaptureRef` against reserved synthesized names, not a separate
+/// variant. Cross-rule refs are rule calls with `${X?}` arg-mode.
 #[derive(Clone, Debug)]
 pub enum Term {
     Scalar(Scalar),
     CaptureRef(CaptureSlot),
     Carveout(Box<Pipeline>),
-    CursorRef(PathExpr),
-    Xref { rule: Arc<str>, var: Arc<str> },
     Annotated { term: Box<Term>, annot: Annotation },
-}
-
-// ---------------------------------------------------------------------------
-// PathExpr — cursor rebase paths (`&.` family)
-// ---------------------------------------------------------------------------
-
-/// Address into a cursor's state. Produced by `&.` desugaring.
-///
-/// *Why `Computed`?* `&{pipeline}` lets a pipeline dynamically compute
-/// the rebase target (e.g., pick a capture name based on a conditional).
-/// Without it, cursor_ref is limited to statically-known paths.
-#[derive(Clone, Debug)]
-pub enum PathExpr {
-    SelfCap(Arc<str>),          // `.$NAME`
-    Field(FieldKind),           // `.repo`, `.rev`, `.fs`, `.byte_range`
-    Computed(Box<Pipeline>),    // `&{computed_pipeline}`
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FieldKind {
-    Repo,
-    Rev,
-    Fs,
-    ByteRange,
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +108,9 @@ pub struct Captures {
 
 impl Default for Captures {
     fn default() -> Self {
-        Self { inner: HashMap::new() }
+        Self {
+            inner: HashMap::new(),
+        }
     }
 }
 
@@ -167,7 +141,9 @@ pub struct SlotMap {
 
 impl Clone for SlotMap {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -181,7 +157,9 @@ impl std::fmt::Debug for SlotMap {
 
 impl Default for SlotMap {
     fn default() -> Self {
-        Self { inner: HashMap::new() }
+        Self {
+            inner: HashMap::new(),
+        }
     }
 }
 
@@ -286,7 +264,10 @@ pub enum PathSeg {
     /// Fork arm index.
     ForkArm { index: usize },
     /// Parameter binding embedded in the path.
-    Param { name: Arc<str>, value: Option<Arc<str>> },
+    Param {
+        name: Arc<str>,
+        value: Option<Arc<str>>,
+    },
     /// Anonymous pipeline synthesized identifier.
     Anon { file: Arc<str>, hash: [u8; 8] },
 }
@@ -410,22 +391,6 @@ pub enum SubscribePolicy {
     Cold,
     Shared { store_key: Arc<str> },
     Memo { ttl: Duration },
-}
-
-// ---------------------------------------------------------------------------
-// Decl — top-level program item
-// ---------------------------------------------------------------------------
-
-/// A program is a sequence of declarations.
-///
-/// *Why `Assert`?* The auto-watch invariant language needs a parseable,
-/// lowerable form. An assert is just a named Pipeline with a trigger
-/// condition. The runner evaluates it lazily when the condition fires.
-/// Leaving asserts out breaks the "X is not up to date with Y" use case.
-#[derive(Clone, Debug)]
-pub enum Decl {
-    Rule(Rule),
-    Assert { name: Arc<str>, trigger: AssertTrigger, body: Pipeline },
 }
 
 #[derive(Clone, Debug)]

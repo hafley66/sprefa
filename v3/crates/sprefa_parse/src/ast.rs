@@ -55,25 +55,13 @@ pub struct Pipe {
 
 #[derive(Debug, Clone)]
 pub struct OpInvocation {
-    /// Op-invocation kind. `op_invocation` for normal `name(...)` calls,
-    /// `cursor_ref`, `xref`, or `capture_write` for the sugar steps.
-    pub kind:       PipeStepKind,
-    /// Op name. Empty for non-`op_invocation` step kinds (caller inspects
-    /// `kind` first).
+    /// Op name.
     pub name:       Arc<str>,
     pub parse_site: Arc<ParseSite>,
     /// Shared with every other invocation from the same parse. Used to
     /// resolve `parse_site.byte_range` back to a CST `Node` via
     /// `OpInvocation::node`.
     pub tree:       Arc<Tree>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PipeStepKind {
-    OpInvocation,
-    CursorRef,
-    Xref,
-    CaptureWrite,
 }
 
 impl OpInvocation {

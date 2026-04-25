@@ -19,7 +19,7 @@ use pipeline::effects::{
 use pipeline::readers::FileSource;
 use pipeline::registry::Registry;
 use server::config::{self, Config, Seed};
-use sprefa_parse::{host_parse_with_injections, OpInvocation, Pipe, PipeStepKind};
+use sprefa_parse::{host_parse_with_injections, OpInvocation, Pipe};
 use tree_sitter::Node;
 
 fn main() {
@@ -118,7 +118,7 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
 
         for (i, pipe) in parsed.pipes.iter().enumerate() {
             let Some(head) = pipe.ops.first() else { continue };
-            let is_rule = head.kind == PipeStepKind::OpInvocation && &*head.name == "rule";
+            let is_rule = &*head.name == "rule";
 
             if is_rule {
                 let rule_name = rule_name_of(head, source)
@@ -185,13 +185,6 @@ async fn run_and_print(
 ) {
     let mut ops: Vec<Pipeline> = Vec::new();
     for inv in &pipe.ops {
-        if inv.kind != PipeStepKind::OpInvocation {
-            eprintln!(
-                "skip step (unsupported kind): kind={:?} name={}",
-                inv.kind, inv.name
-            );
-            continue;
-        }
         let values = match inv.node().child_by_field_name("paren") {
             Some(p) => {
                 let mut diags = Vec::new();

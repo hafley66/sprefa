@@ -31,7 +31,7 @@ use tree_sitter::{Language, Node, Parser, Tree};
 use crate::_1_op::Op;
 use crate::op_ctor::{op_factory, CustomLowerFn, OpCtor, OpLowering, PatternCtor};
 use crate::ops::{
-    CaptureWriteOp, CommentOp, FsOp, GlobOp, PrintOp, ReadOp, ReOp, RepoOp, RevOp, StrOp, VoidOp,
+    CommentOp, FsOp, GlobOp, PrintOp, ReadOp, ReOp, RepoOp, RevOp, StrOp, VoidOp,
 };
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::Value;
@@ -137,10 +137,6 @@ impl Registry {
             .register_pattern::<GlobOp>()
             .register_pattern::<ReOp>()
             .finish()
-    }
-
-    pub fn capture_write(target: impl Into<Arc<str>>) -> Box<dyn Op> {
-        Box::new(CaptureWriteOp::new(target))
     }
 
     pub fn build(

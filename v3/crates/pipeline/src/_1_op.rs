@@ -80,8 +80,8 @@ pub trait Op: Send + Sync + std::fmt::Debug + 'static {
 
     /// Sub-grammar for this op's paren-slot body (§14.5).
     ///
-    /// `None` = non-pattern op (capture_write, void, str). The lowerer
-    /// and LSP hover dispatcher branch on this.
+    /// `None` = non-pattern op (void, str, etc.). The lowerer and LSP
+    /// hover dispatcher branch on this.
     fn language(&self) -> Option<tree_sitter::Language> { None }
 
     /// Editor highlight queries for the sub-grammar (§14.5). Usually

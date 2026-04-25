@@ -62,18 +62,6 @@
         {
           "type": "SYMBOL",
           "name": "op_invocation"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "cursor_ref"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "xref"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "capture_write"
         }
       ]
     },
@@ -249,10 +237,6 @@
         {
           "type": "SYMBOL",
           "name": "term_ref"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "xref"
         },
         {
           "type": "SYMBOL",
@@ -444,49 +428,23 @@
       }
     },
     "carveout_expr": {
-      "type": "CHOICE",
+      "type": "SEQ",
       "members": [
         {
-          "type": "SEQ",
-          "members": [
-            {
-              "type": "STRING",
-              "value": "${"
-            },
-            {
-              "type": "FIELD",
-              "name": "body",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_carveout_host_body"
-              }
-            },
-            {
-              "type": "STRING",
-              "value": "}"
-            }
-          ]
+          "type": "STRING",
+          "value": "${"
         },
         {
-          "type": "SEQ",
-          "members": [
-            {
-              "type": "STRING",
-              "value": "&{"
-            },
-            {
-              "type": "FIELD",
-              "name": "body",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_carveout_host_body"
-              }
-            },
-            {
-              "type": "STRING",
-              "value": "}"
-            }
-          ]
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_carveout_host_body"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "}"
         }
       ]
     },
@@ -573,124 +531,6 @@
           }
         }
       ]
-    },
-    "capture_write": {
-      "type": "PREC",
-      "value": 2,
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "FIELD",
-            "name": "slot",
-            "content": {
-              "type": "SYMBOL",
-              "name": "term_ref"
-            }
-          }
-        ]
-      }
-    },
-    "xref": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "FIELD",
-          "name": "rule",
-          "content": {
-            "type": "SYMBOL",
-            "name": "identifier"
-          }
-        },
-        {
-          "type": "FIELD",
-          "name": "var",
-          "content": {
-            "type": "ALIAS",
-            "content": {
-              "type": "SYMBOL",
-              "name": "_xref_suffix"
-            },
-            "named": true,
-            "value": "term_ref"
-          }
-        }
-      ]
-    },
-    "_xref_suffix": {
-      "type": "TOKEN",
-      "content": {
-        "type": "PREC",
-        "value": 2,
-        "content": {
-          "type": "SEQ",
-          "members": [
-            {
-              "type": "STRING",
-              "value": "."
-            },
-            {
-              "type": "STRING",
-              "value": "$"
-            },
-            {
-              "type": "PATTERN",
-              "value": "[A-Za-z_][A-Za-z0-9_]*"
-            }
-          ]
-        }
-      }
-    },
-    "cursor_ref": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "&"
-        },
-        {
-          "type": "FIELD",
-          "name": "path",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_cursor_path"
-          }
-        }
-      ]
-    },
-    "_cursor_path": {
-      "type": "REPEAT1",
-      "content": {
-        "type": "CHOICE",
-        "members": [
-          {
-            "type": "SEQ",
-            "members": [
-              {
-                "type": "STRING",
-                "value": "."
-              },
-              {
-                "type": "SYMBOL",
-                "name": "identifier"
-              }
-            ]
-          },
-          {
-            "type": "SEQ",
-            "members": [
-              {
-                "type": "STRING",
-                "value": "."
-              },
-              {
-                "type": "SYMBOL",
-                "name": "term_ref"
-              }
-            ]
-          }
-        ]
-      }
     },
     "atom_literal": {
       "type": "TOKEN",

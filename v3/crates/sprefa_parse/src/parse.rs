@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use tree_sitter::{Language, Node, Parser, Tree, TreeCursor};
 
-use crate::ast::{InjectedTree, OpInvocation, ParsedSource, Pipe, PipeStepKind};
+use crate::ast::{InjectedTree, OpInvocation, ParsedSource, Pipe};
 use crate::site::{ParseSeg, ParseSite};
 
 /// Language resolver closure. Pattern-op-aware callers pass a closure
@@ -107,7 +107,6 @@ fn collect_injections(
     let mut out = Vec::new();
     for pipe in pipes {
         for inv in &pipe.ops {
-            if inv.kind != PipeStepKind::OpInvocation { continue; }
             let Some(lang) = resolve(&inv.name) else { continue; };
             let op_node = inv.node();
             let Some(paren) = op_node.child_by_field_name("paren") else { continue; };
@@ -177,20 +176,16 @@ fn lower_pipe(
     let mut ops = Vec::new();
     let mut walker = pipe_node.walk();
     for (idx, step) in pipe_node.named_children(&mut walker).enumerate() {
-        let kind = match pipe_step_kind(step.kind()) {
-            Some(k) => k,
-            None    => continue, // line_comment, etc.
-        };
+        if step.kind() != "op_invocation" {
+            continue; // line_comment, etc.
+        }
         let mut step_path: Vec<ParseSeg> = path.to_vec();
         step_path.push(ParseSeg::Child { index: idx as u16 });
 
-        let name = match kind {
-            PipeStepKind::OpInvocation => step
-                .child_by_field_name("name")
-                .map(|n| Arc::<str>::from(&src[n.byte_range()]))
-                .unwrap_or_else(|| Arc::from("")),
-            _ => Arc::from(""),
-        };
+        let name = step
+            .child_by_field_name("name")
+            .map(|n| Arc::<str>::from(&src[n.byte_range()]))
+            .unwrap_or_else(|| Arc::from(""));
 
         let site = ParseSite {
             file:       file.clone(),
@@ -198,23 +193,12 @@ fn lower_pipe(
             byte_range: step.byte_range(),
         };
         ops.push(OpInvocation {
-            kind,
             name,
             parse_site: Arc::new(site),
             tree:       tree.clone(),
         });
     }
     Pipe { ops }
-}
-
-fn pipe_step_kind(s: &str) -> Option<PipeStepKind> {
-    Some(match s {
-        "op_invocation"         => PipeStepKind::OpInvocation,
-        "cursor_ref"            => PipeStepKind::CursorRef,
-        "xref"                  => PipeStepKind::Xref,
-        "capture_write"         => PipeStepKind::CaptureWrite,
-        _                       => return None,
-    })
 }
 
 fn collect_errors(cursor: &mut TreeCursor<'_>, out: &mut Vec<ParseError>) {
@@ -269,7 +253,6 @@ mod tests {
         assert_eq!(p.pipes.len(), 1);
         assert_eq!(p.pipes[0].ops.len(), 1);
         assert_eq!(&*p.pipes[0].ops[0].name, "foo");
-        assert_eq!(p.pipes[0].ops[0].kind, PipeStepKind::OpInvocation);
     }
 
     #[test]
@@ -296,28 +279,6 @@ mod tests {
         let node = bar.node();
         assert_eq!(node.kind(), "op_invocation");
         assert_eq!(&src[node.byte_range()], "bar");
-    }
-
-    #[test]
-    fn cursor_ref_step() {
-        let (p, _) = host_parse("&.$DIR > void", fake_file());
-        assert_eq!(p.pipes[0].ops.len(), 2);
-        assert_eq!(p.pipes[0].ops[0].kind, PipeStepKind::CursorRef);
-        assert_eq!(&*p.pipes[0].ops[1].name, "void");
-    }
-
-    #[test]
-    fn capture_write_step() {
-        let (p, _) = host_parse("foo > $TARGET", fake_file());
-        assert_eq!(p.pipes[0].ops.len(), 2);
-        assert_eq!(p.pipes[0].ops[1].kind, PipeStepKind::CaptureWrite);
-    }
-
-    #[test]
-    fn xref_step_kind() {
-        let (p, _) = host_parse("rule_a.$VAR", fake_file());
-        assert_eq!(p.pipes[0].ops.len(), 1);
-        assert_eq!(p.pipes[0].ops[0].kind, PipeStepKind::Xref);
     }
 
     #[test]
@@ -431,49 +392,6 @@ mod tests {
         assert_eq!(p.injected[0].host_node.byte_range, inv.parse_site.byte_range);
     }
 
-    /// Ops walk their slot subtrees themselves. Demonstrates the v3
-    /// handoff: collect xrefs from a paren body via tree-sitter, no
-    /// byte scanning.
-    #[test]
-    fn xref_in_paren_collected_via_node_walk() {
-        let src = "foo(${classes.$NAME})";
-        let (p, _) = host_parse(src, fake_file());
-        let inv = &p.pipes[0].ops[0];
-        let paren = inv.node().child_by_field_name("paren").unwrap();
-
-        let mut found = Vec::new();
-        collect_xrefs(paren, src, &mut found);
-        assert_eq!(found.len(), 1);
-        let (rule, var, full) = &found[0];
-        assert_eq!(rule, "classes");
-        assert_eq!(var,  "NAME");
-        assert_eq!(full, "classes.$NAME");
-    }
-
-    fn collect_xrefs(node: Node<'_>, src: &str, out: &mut Vec<(String, String, String)>) {
-        let mut cursor = node.walk();
-        walk(&mut cursor, src, out);
-    }
-
-    fn walk(cursor: &mut TreeCursor<'_>, src: &str, out: &mut Vec<(String, String, String)>) {
-        let n = cursor.node();
-        if n.kind() == "xref" {
-            let rule = n.child_by_field_name("rule").unwrap();
-            let var  = n.child_by_field_name("var").unwrap();
-            out.push((
-                src[rule.byte_range()].to_string(),
-                src[var.byte_range()].trim_start_matches(|c: char| c == '.' || c == '$').to_string(),
-                src[n.byte_range()].to_string(),
-            ));
-        }
-        if cursor.goto_first_child() {
-            loop {
-                walk(cursor, src, out);
-                if !cursor.goto_next_sibling() { break; }
-            }
-            cursor.goto_parent();
-        }
-    }
 
     // -----------------------------------------------------------------------
     // sprefa-4m7.14: Pattern values as first-class — parse-layer acceptance

@@ -5,10 +5,8 @@
 //! framework just runs them.
 //!
 //! Inventory (this slice):
-//!   - capture_write: `> $TARGET` — name the active span.
 //!   - void:          `> void`     — drop the cursor.
 
-pub mod capture_write;
 pub mod comment;
 pub mod glob;
 pub mod print;
@@ -20,7 +18,6 @@ pub mod fs;
 pub mod str_op;
 pub mod void;
 
-pub use capture_write::CaptureWriteOp;
 pub use comment::CommentOp;
 pub use fs::{FsMode, FsOp};
 pub use glob::GlobOp;

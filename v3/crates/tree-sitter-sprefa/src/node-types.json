@@ -42,10 +42,6 @@
         {
           "type": "term_ref",
           "named": true
-        },
-        {
-          "type": "xref",
-          "named": true
         }
       ]
     }
@@ -93,28 +89,8 @@
         {
           "type": "term_ref",
           "named": true
-        },
-        {
-          "type": "xref",
-          "named": true
         }
       ]
-    }
-  },
-  {
-    "type": "capture_write",
-    "named": true,
-    "fields": {
-      "slot": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "term_ref",
-            "named": true
-          }
-        ]
-      }
     }
   },
   {
@@ -127,30 +103,6 @@
         "types": [
           {
             "type": "pipe",
-            "named": true
-          },
-          {
-            "type": "term_ref",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
-    "type": "cursor_ref",
-    "named": true,
-    "fields": {
-      "path": {
-        "multiple": true,
-        "required": true,
-        "types": [
-          {
-            "type": ".",
-            "named": false
-          },
-          {
-            "type": "identifier",
             "named": true
           },
           {
@@ -250,10 +202,6 @@
         {
           "type": "term_ref",
           "named": true
-        },
-        {
-          "type": "xref",
-          "named": true
         }
       ]
     }
@@ -267,19 +215,7 @@
       "required": true,
       "types": [
         {
-          "type": "capture_write",
-          "named": true
-        },
-        {
-          "type": "cursor_ref",
-          "named": true
-        },
-        {
           "type": "op_invocation",
-          "named": true
-        },
-        {
-          "type": "xref",
           "named": true
         }
       ]
@@ -328,32 +264,6 @@
     "fields": {}
   },
   {
-    "type": "xref",
-    "named": true,
-    "fields": {
-      "rule": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      },
-      "var": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "term_ref",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
     "type": "\"",
     "named": false
   },
@@ -366,23 +276,11 @@
     "named": false
   },
   {
-    "type": "&",
-    "named": false
-  },
-  {
-    "type": "&{",
-    "named": false
-  },
-  {
     "type": "(",
     "named": false
   },
   {
     "type": ")",
-    "named": false
-  },
-  {
-    "type": ".",
     "named": false
   },
   {

@@ -20,7 +20,7 @@ fn glob_literal_with_dot() {
     }
     if let Some(pipe) = parsed.pipes.first() {
         for (i, op) in pipe.ops.iter().enumerate() {
-            eprintln!("op[{i}] kind={:?} name={}", op.kind, op.name);
+            eprintln!("op[{i}] name={}", op.name);
         }
         eprintln!("host sexp: {}", parsed.tree.root_node().to_sexp());
     }

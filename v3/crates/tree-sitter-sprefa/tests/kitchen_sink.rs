@@ -7,11 +7,11 @@ use tree_sitter::{Language, Parser, TreeCursor};
 use tree_sitter_sprefa::LANGUAGE;
 
 const SRC: &str = r#"# top-level comment
-rule(classes) > ast[rust] { class $NAME } ;
-rule(calls)   > ast[rust] { new ${classes.$NAME > $TARGET}() } ;
-rule(env)     > sh { echo ${{HOME}} > $DIR } ;
-rule(addrs)   > &.$DIR > void ;
-rule(tagged)  > tag(:repo, $R) ;
+rule(classes) > ast[rust] { class ${NAME?} } ;
+rule(calls)   > ast[rust] { new ${classes}() } ;
+rule(env)     > sh { echo ${{HOME}} } ;
+rule(addrs)   > fs(${DIR}) > void ;
+rule(tagged)  > tag(:repo, ${R}) ;
 "#;
 
 fn parse() -> (String, Vec<(String, (usize, usize))>) {
@@ -59,16 +59,10 @@ fn find_all<'a>(nodes: &'a [(String, (usize, usize))], kind: &str)
 fn every_feature_lives_in_the_tree() {
     let (_sexp, nodes) = parse();
 
-    // §8 — unified `$` op shapes
-    assert!(has(&nodes, "term_ref"),           "$NAME term_ref");
-    assert!(has(&nodes, "carveout_expr"),      "${{...}} carveout");
-    assert!(has(&nodes, "shell_literal"),      "${{{{...}}}} shell escape");
-
-    // §10 — rule.$V as ordinary dotted host_expr (xref node)
-    assert!(has(&nodes, "xref"),               "rule.$V dotted");
-
-    // §11 — bare $IDENT at chain-step position (capture_write node)
-    assert!(has(&nodes, "capture_write"),      "> $TARGET capture-write");
+    // §8 — brace-mandatory term forms inside slot bodies
+    assert!(has(&nodes, "term_ref"),           "term_ref node present");
+    assert!(has(&nodes, "carveout_expr"),      "carveout_expr node present");
+    assert!(has(&nodes, "shell_literal"),      "shell_literal node present");
 
     // §12 — fork/void: sample has `> void` trailing op
     let voids: Vec<_> = find_all(&nodes, "op_invocation")
@@ -76,9 +70,6 @@ fn every_feature_lives_in_the_tree() {
         .filter(|(_, (s, e))| &SRC[*s..*e] == "void")
         .collect();
     assert_eq!(voids.len(), 1, "void op as ordinary pipe step");
-
-    // §8.5 — cursor_ref &.$X survives
-    assert!(has(&nodes, "cursor_ref"),         "&.$DIR cursor ref");
 
     // Atoms
     let atoms = find_all(&nodes, "atom_literal");
@@ -96,20 +87,17 @@ fn every_feature_lives_in_the_tree() {
 }
 
 #[test]
-fn carveout_body_is_a_pipe_with_xref_and_capture_write() {
+fn carveout_body_pipes_a_bare_ident_for_term_read() {
     let mut parser = Parser::new();
     parser.set_language(&LANGUAGE.into()).unwrap();
     let tree = parser.parse(SRC, None).unwrap();
     let sexp = tree.root_node().to_sexp();
 
-    // The carveout containing `classes.$NAME > $TARGET` should have a
-    // pipe body with an xref followed by a capture_write.
+    // ${classes} should produce a carveout_expr whose body is a pipe of
+    // one bare-IDENT op_invocation (term-read shorthand, sprefa-9lt).
     assert!(
-        sexp.contains("(carveout_expr")
-            && sexp.contains("(pipe")
-            && sexp.contains("(xref")
-            && sexp.contains("(capture_write"),
-        "sexp missing expected carveout shape:\n{sexp}"
+        sexp.contains("(carveout_expr") && sexp.contains("(pipe"),
+        "sexp missing carveout/pipe nesting:\n{sexp}"
     );
 }
 

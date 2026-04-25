@@ -45,7 +45,7 @@ pub use effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect, PrintSink,
     ReadBytesBatcher, ReadBytesEffect,
 };
-pub use ops::{CaptureWriteOp, CommentOp, GlobOp, PrintOp, ReOp, ReadOp, StrOp, StrValue, VoidOp};
+pub use ops::{CommentOp, GlobOp, PrintOp, ReOp, ReadOp, StrOp, StrValue, VoidOp};
 pub use registry::Registry;
 pub use pattern_op::{PatternDiagnostic, PatternOp};
 pub use value::{

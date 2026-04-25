@@ -5,7 +5,7 @@
  *   - program = stmt*
  *   - stmt    = pipe `;`?
  *   - pipe    = pipe_step (`>` pipe_step)*
- *   - step    = op_invocation | cursor_ref | capture_write
+ *   - step    = op_invocation
  *   - op      = IDENT ('[' … ']')* ('(' … ')')? ('{' … '}')?
  *   - `${...}` = carveout_expr (HostExpr)         — §8.3
  *   - `&{...}` = carveout_expr (Address)          — §8.3
@@ -65,9 +65,6 @@ module.exports = grammar({
 
     _pipe_step: $ => choice(
       $.op_invocation,
-      $.cursor_ref,
-      $.xref,
-      $.capture_write,
     ),
 
     // ---- op invocation ----------------------------------------------------
@@ -97,7 +94,6 @@ module.exports = grammar({
       $.raw_string_literal,
       $.atom_literal,
       $.term_ref,
-      $.xref,
       $.identifier,
       $.number_literal,
       $._slot_punct,
@@ -130,10 +126,9 @@ module.exports = grammar({
     // ---- carveouts --------------------------------------------------------
 
     // `${...}` — host expression carveout. Body re-enters the grammar as a
-    // pipe_step so `${op(x)}`, `${rule.$V}`, and `${rule.$V > $T}` all parse.
-    carveout_expr: $ => choice(
-      seq('${', field('body', $._carveout_host_body), '}'),
-      seq('&{', field('body', $._carveout_host_body), '}'),
+    // pipe so `${op(x)}` and `${X?}` term-shorthand both parse.
+    carveout_expr: $ => seq(
+      '${', field('body', $._carveout_host_body), '}',
     ),
 
     // Body forms inside `${...}` / `&{...}`:
@@ -174,49 +169,10 @@ module.exports = grammar({
     // ---- terms ------------------------------------------------------------
     // term_ref lives in shared/tokens.js and is spread into this rules
     // block below (§14.3); pattern-op sub-grammars spread the same fragment
-    // so $NAME tokenizes identically everywhere.
-
-    // `$IDENT` at pipe-step position (no following `(` / `[` / `{`) is the
-    // capture-write sugar (§11). We recognize the lex shape here; lower
-    // decides whether it's a ref or a write based on chain position.
-    capture_write: $ => prec(2, seq(
-      field('slot', $.term_ref),
-      // Lookahead guard: capture_write only matches when NOT followed by
-      // invocation slots. If the ident is followed by `(`/`[`/`{` it's
-      // actually an op (`$NAME(...)` is currently reserved — not in §18).
-      // We approximate by not consuming slots here.
-    )),
-
-    // `${rule.$V}` is a sub-case of carveout_expr whose body is a field
-    // access. We surface it as an xref alias for the resolver; the token
-    // itself is still a carveout.
-    //
-    // The `.$NAME` suffix is a single fused token so that a bare `.`
-    // NOT followed by `$` (e.g. `file.txt` inside a slot body) cannot
-    // commit the parser into xref state and strand the `.` as ERROR.
-    // `var` is aliased to `term_ref` to preserve the node shape; its
-    // byte range includes the leading `.$` — callers must strip both.
-    xref: $ => seq(
-      field('rule', $.identifier),
-      field('var',  alias($._xref_suffix, $.term_ref)),
-    ),
-
-    _xref_suffix: $ => token(prec(2, seq(
-      '.', '$', /[A-Za-z_][A-Za-z0-9_]*/,
-    ))),
-
-    // ---- cursor_ref -------------------------------------------------------
-
-    // `&.$PATH` / `&.ident` — cursor-ref pipe step (v2 lowered to cursor_ref).
-    cursor_ref: $ => seq(
-      '&',
-      field('path', $._cursor_path),
-    ),
-
-    _cursor_path: $ => repeat1(choice(
-      seq('.', $.identifier),
-      seq('.', $.term_ref),
-    )),
+    // so $NAME tokenizes identically everywhere. The host grammar only
+    // sees term_ref inside slot bodies (paren/brace/bracket); those bodies
+    // are re-parsed by each op's sub-grammar. At pipe-step position only
+    // op_invocation is legal (sprefa-r6k, brace-mandatory).
 
     // ---- literals ---------------------------------------------------------
 
