@@ -106,10 +106,11 @@ impl GlobOp {
                 "question" => template.push(Seg::Fragment(Arc::from("[^/]"))),
                 "slash" => template.push(Seg::Fragment(Arc::from("/"))),
                 "term_ref" => {
-                    let name = term_ref_name(child, bytes);
+                    let (name, mode) = term_ref_parts(child, bytes);
                     template.push(Seg::Term {
                         name: name.clone(),
                         unbound_re: Arc::from(GLOB_UNBOUND_HOLE),
+                        mode,
                     });
                     holes.push(name);
                 }
@@ -127,7 +128,7 @@ impl GlobOp {
         for seg in &template {
             match seg {
                 Seg::Fragment(s) => rx.push_str(s),
-                Seg::Term { name, unbound_re } => {
+                Seg::Term { name, unbound_re, .. } => {
                     rx.push_str("(?P<");
                     rx.push_str(name);
                     rx.push('>');
@@ -238,16 +239,21 @@ impl PatternOp for GlobOp {
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
             if child.kind() == "term_ref" {
-                out.push(term_ref_name(child, bytes));
+                out.push(term_ref_parts(child, bytes).0);
             }
         }
         out
     }
 }
 
-fn term_ref_name(node: Node<'_>, bytes: &[u8]) -> Arc<str> {
+fn term_ref_parts(node: Node<'_>, bytes: &[u8]) -> (Arc<str>, crate::value::TermMode) {
     let raw = std::str::from_utf8(&bytes[node.byte_range()]).unwrap_or("");
-    Arc::from(raw.trim_start_matches('$'))
+    let stripped = raw.trim_start_matches('$');
+    if let Some(name) = stripped.strip_suffix('?') {
+        (Arc::from(name), crate::value::TermMode::Unbound)
+    } else {
+        (Arc::from(stripped), crate::value::TermMode::Read)
+    }
 }
 
 /// Compile a raw glob source string without staging a tree-sitter parse.
@@ -323,6 +329,17 @@ mod tests {
     fn star_and_question_lower_to_non_slash_classes() {
         let g = compile("a*b?c");
         assert_eq!(g.regex.as_str(), r"^a[^/]*b[^/]c$");
+    }
+
+    #[test]
+    fn term_ref_question_suffix_marks_unbound_mode() {
+        use crate::value::TermMode;
+        let g = compile("**/$X/$Y?");
+        let modes: Vec<TermMode> = g.template.iter().filter_map(|s| match s {
+            Seg::Term { mode, .. } => Some(*mode),
+            _ => None,
+        }).collect();
+        assert_eq!(modes, vec![TermMode::Read, TermMode::Unbound]);
     }
 
     #[test]

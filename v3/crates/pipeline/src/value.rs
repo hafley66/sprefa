@@ -106,6 +106,7 @@ pub enum Seg {
     Term {
         name: Arc<str>,
         unbound_re: Arc<str>,
+        mode: TermMode,
     },
 }
 
@@ -122,7 +123,7 @@ pub fn materialize_template(
     for seg in template {
         match seg {
             Seg::Fragment(s) => out.push_str(s),
-            Seg::Term { name, unbound_re } => match bindings.get(name) {
+            Seg::Term { name, unbound_re, .. } => match bindings.get(name) {
                 Some(bytes) => {
                     let s = std::str::from_utf8(bytes).map_err(|_| {
                         regex::Error::Syntax("bound term is not valid UTF-8".into())

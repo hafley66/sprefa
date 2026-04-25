@@ -60,7 +60,7 @@ impl ReOp {
         for seg in &template {
             match seg {
                 Seg::Fragment(s) => rx.push_str(s),
-                Seg::Term { name, unbound_re } => {
+                Seg::Term { name, unbound_re, .. } => {
                     rx.push_str("(?P<");
                     rx.push_str(name);
                     rx.push('>');
@@ -181,7 +181,7 @@ impl PatternOp for ReOp {
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
             if child.kind() == "term_ref" {
-                out.push(term_ref_name(child, bytes));
+                out.push(term_ref_parts(child, bytes).0);
             }
         }
 
@@ -208,10 +208,11 @@ fn build_template(tree: &Tree, bytes: &[u8]) -> (Vec<Seg>, Vec<Arc<str>>) {
     for child in root.named_children(&mut cursor) {
         match child.kind() {
             "term_ref" => {
-                let name = term_ref_name(child, bytes);
+                let (name, mode) = term_ref_parts(child, bytes);
                 template.push(Seg::Term {
                     name: name.clone(),
                     unbound_re: Arc::from(RE_UNBOUND_HOLE),
+                    mode,
                 });
                 sugar.push(name);
             }
@@ -232,7 +233,7 @@ fn desugar(tree: &Tree, bytes: &[u8]) -> String {
     for seg in &template {
         match seg {
             Seg::Fragment(s) => out.push_str(s),
-            Seg::Term { name, unbound_re } => {
+            Seg::Term { name, unbound_re, .. } => {
                 out.push_str("(?P<");
                 out.push_str(name);
                 out.push('>');
@@ -244,9 +245,14 @@ fn desugar(tree: &Tree, bytes: &[u8]) -> String {
     out
 }
 
-fn term_ref_name(node: Node<'_>, bytes: &[u8]) -> Arc<str> {
+fn term_ref_parts(node: Node<'_>, bytes: &[u8]) -> (Arc<str>, crate::value::TermMode) {
     let raw = std::str::from_utf8(&bytes[node.byte_range()]).unwrap_or("");
-    Arc::from(raw.trim_start_matches('$'))
+    let stripped = raw.trim_start_matches('$');
+    if let Some(name) = stripped.strip_suffix('?') {
+        (Arc::from(name), crate::value::TermMode::Unbound)
+    } else {
+        (Arc::from(stripped), crate::value::TermMode::Read)
+    }
 }
 
 #[cfg(test)]

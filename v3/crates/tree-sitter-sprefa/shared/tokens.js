@@ -26,5 +26,5 @@
  */
 
 module.exports = {
-  term_ref: $ => token(seq('$', /[A-Za-z_][A-Za-z0-9_]*/)),
+  term_ref: $ => token(seq('$', /[A-Za-z_][A-Za-z0-9_]*/, optional('?'))),
 };
