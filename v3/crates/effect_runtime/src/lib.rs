@@ -176,7 +176,13 @@ impl RtCtx {
         let entry = snapshot
             .get(&TypeId::of::<E>())
             .cloned()
-            .expect("effect kind not registered");
+            .unwrap_or_else(|| {
+                panic!(
+                    "effect kind not registered: {} (registered: {} kinds)",
+                    std::any::type_name::<E>(),
+                    snapshot.len(),
+                )
+            });
         let payload_bytes = e.payload_bytes();
         let span = self.telemetry.start::<E>(payload_bytes);
         let any_in: Box<dyn Any + Send> = Box::new(e);
