@@ -1,0 +1,24 @@
+# tag(:name, ...) smoke — variadic write + nullary read; reactive.
+# Spec: v3/docs/v3-render-write-cursor-vision.md
+# Status: DOES NOT PARSE TODAY — uses dotted carveout access (${R.head?})
+#   pending grammar landing in sprefa-p0m. Registry impl pending
+#   sprefa-465; depends on Pending primitive sprefa-126.
+#
+# Replaces v2 scan-pointer. Two modes:
+#   tag(:name, ${A?}, ${B?})  — write: assert a fact keyed by bindings
+#   tag(:name)                — read:  subscription source
+
+# Producer side: declare each repo+rev pair we currently track as
+# "prod-cut". Re-fires whenever any repo or rev binding refreshes.
+repo(${R?}) > rev(:prod) > tag(:prod-cut, ${R?}, ${R.head?});
+
+# Consumer side: any pipe step can subscribe and emit one cursor per
+# (repo, rev) tuple currently bound to :prod-cut.
+tag(:prod-cut)
+  > fs(glob(**/*.rs))
+  > ast[rust](pub fn ${F?}())
+  > rule(prod_pub_fns);
+
+# Multi-tag join: cursor emitted only when both tags are bound.
+tag(:prod-cut) > tag(:in-review)
+  > rule(prod_pending_review);

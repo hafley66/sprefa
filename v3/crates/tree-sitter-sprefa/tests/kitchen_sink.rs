@@ -12,6 +12,47 @@ rule(calls)   > ast[rust] { new ${classes}() } ;
 rule(env)     > sh { echo ${{HOME}} } ;
 rule(addrs)   > fs(${DIR}) > void ;
 rule(tagged)  > tag(:repo, ${R}) ;
+
+# ---- spec'd 2026-04-26 (v3-render-write-cursor-vision.md) ----
+# These parse today as ordinary op_invocations; registry impls pending
+# (sprefa-e6c render, sprefa-1cl write_cursor, sprefa-5ii lsp,
+# sprefa-465 tag, sprefa-p0m comment @sprf body re-entry).
+#
+# Note: dotted carveout access (${X.field?}), backtick template strings,
+# and @begin/@end marker identifiers are part of the spec but pending
+# grammar landings (sprefa-p0m); fixtures with those shapes are kept
+# under server/fixtures/ as forward-looking docs and are NOT included
+# here so this test stays green on today's grammar.
+
+# render[fmt] — bracket-arg picks backend (md/ascii/lsp/rust/json).
+fs(glob(./views/*/)) > render[md](- ${STEM?}) > write_cursor(${SCOPE?}) ;
+
+# render[ascii] with nested layout primitives in the paren slot.
+collect(${WS?}) > render[ascii](
+  col(
+    title("workspace"),
+    box(:live, header="LIVE", body=${WS?}),
+    flow(:e1, from=:a, to=:b, label="bytes"))) ;
+
+# write_cursor positional mode atom.
+rule(scope) > render[rust](use crate::${M?}) > write_cursor(${S?}, :append) ;
+rule(call)  > render[rust](new(${A?})) > write_cursor(${H?}, :wrap) ;
+
+# lsp[severity] family — bracket-arg as severity.
+fs(glob(**/*.rs)) > ast[rust](unwrap())
+  > lsp[warn](message "no unwrap", code "no-unwrap") ;
+fs(glob(**/*.rs)) > lsp[error](message "x") ;
+fs(glob(**/*.rs)) > lsp[hint](message "x") ;
+fs(glob(**/*.rs)) > lsp[info](message "x") ;
+
+# tag variadic write + nullary read.
+repo(${R?}) > rev(:prod) > tag(:prod-cut, ${R?}, ${HEAD?}) ;
+tag(:prod-cut) > fs(glob(**/*.rs)) > rule(prod_files) ;
+tag(:prod-cut) > tag(:in-review) > rule(prod_pending) ;
+
+# comment(@sprf …) read direction; write direction (@begin/@end) is
+# pending grammar work and is exercised only by fixtures.
+fs(glob(**/*.rs)) > comment(@sprf ${BODY?}) > eval(${BODY?}) ;
 "#;
 
 fn parse() -> (String, Vec<(String, (usize, usize))>) {
@@ -71,10 +112,14 @@ fn every_feature_lives_in_the_tree() {
         .collect();
     assert_eq!(voids.len(), 1, "void op as ordinary pipe step");
 
-    // Atoms
+    // Atoms — original :repo plus several from the spec'd lines (atom-arg
+    // mode atoms like :append/:wrap/:prod-cut/:e1/:a/:b/:live etc.).
     let atoms = find_all(&nodes, "atom_literal");
-    assert_eq!(atoms.len(), 1, "one :repo atom");
-    assert_eq!(&SRC[atoms[0].1.0..atoms[0].1.1], ":repo");
+    assert!(atoms.len() >= 1, "at least one atom literal present");
+    let repo_atoms: Vec<_> = atoms.iter()
+        .filter(|(_, (s, e))| &SRC[*s..*e] == ":repo")
+        .collect();
+    assert_eq!(repo_atoms.len(), 1, "one :repo atom from original sample");
 
     // Comments
     assert!(has(&nodes, "line_comment"));
@@ -114,5 +159,48 @@ fn pipe_groups_steps_under_one_node() {
     for child in root.children(&mut cursor) {
         if child.kind() == "pipe" { pipe_count += 1; }
     }
-    assert_eq!(pipe_count, 5, "five top-level pipes");
+    // 5 original + 12 spec'd lines from v3-render-write-cursor-vision.md.
+    assert_eq!(pipe_count, 17, "seventeen top-level pipes");
+}
+
+#[test]
+fn spec_2026_04_26_ops_parse_as_op_invocations() {
+    // The vision doc (v3/docs/v3-render-write-cursor-vision.md) reserves
+    // these op shapes; they should all parse today as ordinary
+    // op_invocation nodes even though their registry impls are pending.
+    let (_sexp, nodes) = parse();
+
+    let invocations: Vec<&str> = find_all(&nodes, "op_invocation")
+        .into_iter()
+        .map(|(_, (s, e))| &SRC[*s..*e])
+        .collect();
+
+    let starts_with = |prefix: &str| -> usize {
+        invocations.iter().filter(|s| s.starts_with(prefix)).count()
+    };
+
+    // render[fmt] — at least md / ascii / rust appear at op-head position.
+    assert!(starts_with("render[md]") >= 1, "render[md] op present");
+    assert!(starts_with("render[ascii]") >= 1, "render[ascii] op present");
+    assert!(starts_with("render[rust]") >= 2, "render[rust] op present (>=2)");
+
+    // write_cursor — bare and with mode atoms.
+    assert!(starts_with("write_cursor") >= 3, "write_cursor present (>=3)");
+
+    // lsp[severity] — all four severities.
+    for sev in ["lsp[warn]", "lsp[error]", "lsp[hint]", "lsp[info]"] {
+        assert!(starts_with(sev) >= 1, "{sev} present");
+    }
+
+    // tag — both write (variadic) and read (nullary) forms.
+    assert!(starts_with("tag(:prod-cut") >= 1, "tag write form present");
+
+    // comment @sprf read direction.
+    assert!(starts_with("comment(@sprf") >= 1, "comment(@sprf …) present");
+
+    // eval — sister op for comment-body re-entry.
+    assert!(starts_with("eval") >= 1, "eval op present");
+
+    // collect — rendezvous from streaming to tabular Value.
+    assert!(starts_with("collect") >= 1, "collect op present");
 }

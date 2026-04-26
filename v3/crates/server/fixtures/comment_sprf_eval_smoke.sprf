@@ -1,0 +1,25 @@
+# comment(@sprf …) bidirectional smoke.
+# Spec: v3/docs/v3-render-write-cursor-vision.md
+# Status: DOES NOT PARSE TODAY — uses @begin/@end comment markers
+#   pending grammar landing in sprefa-p0m. eval op + comment body
+#   re-entry semantics also pending in same card.
+#
+# Comment op extension recognises @sprf prefix and re-enters the host
+# parser on the body, lowering it as Value::Pipeline. The eval op
+# consumes a Value::Pipeline cursor and runs it as an inner pipeline.
+
+# Read direction: discover sprf snippets embedded in source comments
+# across the repo, run each one in-place. Polyglot — comment op strips
+# language-specific comment delimiters before matching @sprf.
+fs(glob(**/*.{rs,ts,py,go}))
+  > comment(@sprf ${BODY?})
+  > eval(${BODY?});
+
+# Write direction: comment-bounded scope as render target. SCOPE.byte_range
+# covers the body between markers; write_cursor splices into it.
+fs(glob(./src/lib.rs))
+  > comment(@begin module-list ${SCOPE?} @end);
+
+fs(glob(./src/*.rs))
+  > render[md](- ${fs.stem})
+  > write_cursor(${SCOPE?});
