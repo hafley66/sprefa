@@ -12,4 +12,4 @@ tag(:rel, "gamma", "G1");
 tag?(:rel, "alpha", "A1") > print(:HIT);
 tag?(:rel, "missing") > print(:MISS);
 tag?(:rel, "beta", ${V?}) > print(:JOIN);
-tag?(:rel, ${X?}, ${V?}) > print(:DRAIN)
+tag?(:rel, ${X?}, ${V?}) > print(:DRAIN);

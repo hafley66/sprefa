@@ -24,7 +24,7 @@ use pipeline::effects::{
     PrintBatcher, PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect,
     ReadBytesBatcher, ReadBytesEffect,
 };
-use pipeline::ops::RuleCallOp;
+use pipeline::ops::{RuleCallOp, RulePredicateOp};
 use pipeline::ops::relation::RelationArg;
 use pipeline::registry::lower_paren_slot;
 use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
@@ -293,6 +293,20 @@ fn lower_op_invocation(
         let args = lower_call_args(inv, source, registry);
         return Some(Pipeline::Op(Arc::new(RuleCallOp::new(inv.name.clone(), args))));
     }
+    // Rule predicate: bare name with `?` suffix, present in known_rules.
+    // Classify args by bound/unbound and emit RulePredicateOp.
+    if inv.predicate && known_rules.contains(&inv.name) {
+        let values = lower_predicate_values(inv, source, registry);
+        return match RulePredicateOp::classify(inv.name.clone(), values) {
+            Ok(op) => Some(Pipeline::Op(Arc::new(op))),
+            Err(errs) => {
+                for d in &errs {
+                    eprintln!("lower {}?: {}: {}", inv.name, d.code, d.message);
+                }
+                std::process::exit(1);
+            }
+        };
+    }
     let lookup_name: Arc<str> = if inv.predicate {
         Arc::from(format!("{}?", inv.name))
     } else {
@@ -320,6 +334,22 @@ fn lower_op_invocation(
             None
         }
     }
+}
+
+/// Lower the paren-args of a rule-predicate site to raw `Value`s for
+/// [`RulePredicateOp::classify`]. Mirrors `lower_paren_slot` but returns
+/// the unclassified value list so the op's classifier can decide
+/// Probe / Join / Query.
+fn lower_predicate_values(
+    inv:      &OpInvocation,
+    source:   &str,
+    registry: &Registry,
+) -> Vec<Value> {
+    let Some(paren) = inv.node().child_by_field_name("paren") else {
+        return Vec::new();
+    };
+    let mut diags = Vec::new();
+    lower_paren_slot(paren, source.as_bytes(), registry, &mut diags)
 }
 
 /// Lower the paren-args of a rule-call site to `RelationArg` values.

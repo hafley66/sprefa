@@ -40,7 +40,7 @@ pub use read::ReadOp;
 pub use re::ReOp;
 pub use render::{RenderFormat, RenderOp};
 pub use relation::RelationArg;
-pub use rule::RuleCallOp;
+pub use rule::{RuleCallOp, RuleMode, RulePredicateOp, RuleSlot};
 pub use repo::{RepoMode, RepoOp};
 pub use rev::{RevMode, RevOp};
 pub use str_op::{StrOp, StrValue};

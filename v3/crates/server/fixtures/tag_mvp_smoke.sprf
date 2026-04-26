@@ -9,4 +9,4 @@
 # binary keeps running. The smoke wraps it in `timeout`.
 tag(:hits, "alpha");
 tag(:hits, "beta");
-tag(:hits, ${A?})
+tag(:hits, ${A?});
