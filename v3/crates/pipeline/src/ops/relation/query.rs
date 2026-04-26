@@ -97,7 +97,7 @@ fn subscribe_stream(
         loop {
             if s.cancel.is_cancelled() { return None; }
             let key = s.registry.fresh_key();
-            match s.store.snapshot_or_subscribe(&s.name, s.last_idx, key, &s.registry) {
+            match s.store.snapshot_or_subscribe(&s.name, s.last_idx, key, None, &s.registry) {
                 SnapshotOrSubscribed::Rows(rows) => {
                     let n = rows.len();
                     let batch = rows_to_batch(&s.cursor, &s.holes, rows);

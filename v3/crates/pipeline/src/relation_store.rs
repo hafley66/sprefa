@@ -30,14 +30,26 @@ impl SubjectKind for RelationWake {
     type Payload = Row;
 }
 
+/// Wake-key shape for a parked subscriber.
+///
+/// `Broadcast` waiters fire on every write (QueryOp / `tag?` all-unbound).
+/// `Exact` waiters fire only when the appended row's leading columns match
+/// the supplied key vector. Step bd5 ships exact-prefix matching; later
+/// cards may add column-projection keys.
+pub type WakeKey = Option<Vec<Arc<str>>>;
+
 /// One bag of rows + parked subscribers waiting for the next write.
+///
+/// Subjects are pre-registered on `SubjectRegistry<RelationWake>` (entries
+/// already inserted in `pending`). On write, the writer derives the row's
+/// key and fires only the matching waiters via `registry.next(key, row)`.
 #[derive(Default)]
 pub struct Bag {
-    pub rows: Vec<Row>,
-    /// Subjects pre-registered on `SubjectRegistry<RelationWake>` (entries
-    /// already inserted in `pending`). On write, each is woken via
-    /// `registry.next(key, row)` and removed from this list.
-    pub waiters: Vec<SubjectKey<RelationWake>>,
+    pub rows:        Vec<Row>,
+    /// Waiters that fire on every write (no key narrowing).
+    pub broadcast:   Vec<SubjectKey<RelationWake>>,
+    /// Keyed waiters indexed by the prefix vector they match against.
+    pub keyed:       HashMap<Vec<Arc<str>>, Vec<SubjectKey<RelationWake>>>,
 }
 
 /// Outcome of an atomic snapshot-or-subscribe call. Either the caller gets
@@ -80,15 +92,21 @@ impl RelationStore {
     /// `SubjectRegistry` (synchronously inserts a pending entry per
     /// `subscribe`'s contract) and return a `Subscribed` future.
     ///
-    /// The `key` passed in is consumed: it goes into both the registry
-    /// pending map and the bag's waiters list under one store-lock critical
+    /// `wake_key` selects which writes wake this subscriber:
+    ///   * `None` — broadcast: fires on every push to this bag.
+    ///   * `Some(k)` — exact-prefix: fires only when the appended row's
+    ///     leading columns equal `k`.
+    ///
+    /// The `subj_key` passed in is consumed: it goes into both the registry
+    /// pending map and the bag's waiter index under one store-lock critical
     /// section, closing the producer-side race where a write would otherwise
-    /// drain `key` from the bag before the registry entry exists.
+    /// drain `subj_key` from the bag before the registry entry exists.
     pub fn snapshot_or_subscribe(
         &self,
-        name: &Arc<str>,
+        name:     &Arc<str>,
         last_idx: usize,
-        key:      SubjectKey<RelationWake>,
+        subj_key: SubjectKey<RelationWake>,
+        wake_key: WakeKey,
         registry: &Arc<SubjectRegistry<RelationWake>>,
     ) -> SnapshotOrSubscribed {
         let mut g = self.inner.lock().unwrap();
@@ -97,19 +115,38 @@ impl RelationStore {
             let tail: Vec<Row> = bag.rows[last_idx..].to_vec();
             SnapshotOrSubscribed::Rows(tail)
         } else {
-            let fut = registry.subscribe(key, None);
-            bag.waiters.push(key);
+            let fut = registry.subscribe(subj_key, None);
+            match wake_key {
+                None => bag.broadcast.push(subj_key),
+                Some(k) => bag.keyed.entry(k).or_default().push(subj_key),
+            }
             SnapshotOrSubscribed::Subscribed(fut)
         }
     }
 
-    /// Append `row` to the named bag. Returns the waiter list that was parked
-    /// at the time of the write; caller fires `registry.next` on each.
+    /// Append `row` to the named bag. Returns every waiter whose key shape
+    /// matches the row (broadcast + exact-prefix keyed). Caller fires
+    /// `registry.next` on each.
     pub fn push_row(&self, name: &Arc<str>, row: Row) -> Vec<SubjectKey<RelationWake>> {
         let mut g = self.inner.lock().unwrap();
         let bag = g.entry(name.clone()).or_default();
-        bag.rows.push(row);
-        std::mem::take(&mut bag.waiters)
+        bag.rows.push(row.clone());
+        let mut out: Vec<SubjectKey<RelationWake>> = std::mem::take(&mut bag.broadcast);
+        // Drain every keyed bucket whose key is a prefix of `row`. The
+        // common case today is full-row keys (all-bound probe); prefix
+        // matching also covers shorter exact-prefix keys for future
+        // partial-bound probes.
+        bag.keyed.retain(|key, subs| {
+            let is_prefix = key.len() <= row.len()
+                && key.iter().zip(row.iter()).all(|(a, b)| a == b);
+            if is_prefix {
+                out.append(subs);
+                false
+            } else {
+                true
+            }
+        });
+        out
     }
 
     /// Stub: register a rule body pipeline under `name`. Wired by `rhu`.
@@ -160,6 +197,66 @@ pub struct WriteBatcher {
 impl WriteBatcher {
     pub fn new(store: Arc<RelationStore>, registry: Arc<SubjectRegistry<RelationWake>>) -> Self {
         Self { store, registry }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(x: &str) -> Arc<str> { Arc::from(x) }
+
+    #[test]
+    fn keyed_waiter_fires_only_on_matching_row() {
+        let store = RelationStore::new();
+        let registry = Arc::new(SubjectRegistry::<RelationWake>::new());
+        let name: Arc<str> = s("r");
+
+        let key_match = registry.fresh_key();
+        let key_other = registry.fresh_key();
+        match store.snapshot_or_subscribe(&name, 0, key_match, Some(vec![s("hit")]), &registry) {
+            SnapshotOrSubscribed::Subscribed(_) => {}
+            _ => panic!("expected Subscribed on empty bag"),
+        }
+        match store.snapshot_or_subscribe(&name, 0, key_other, Some(vec![s("miss")]), &registry) {
+            SnapshotOrSubscribed::Subscribed(_) => {}
+            _ => panic!("expected Subscribed on empty bag"),
+        }
+
+        let woken = store.push_row(&name, vec![s("hit")]);
+        assert_eq!(woken, vec![key_match]);
+
+        // The non-matching keyed waiter is still parked.
+        let g = store.inner.lock().unwrap();
+        let bag = g.get(&name).unwrap();
+        assert_eq!(bag.keyed.get(&vec![s("miss")]).map(|v| v.len()), Some(1));
+    }
+
+    #[test]
+    fn broadcast_waiter_fires_on_every_row() {
+        let store = RelationStore::new();
+        let registry = Arc::new(SubjectRegistry::<RelationWake>::new());
+        let name: Arc<str> = s("r");
+
+        let k = registry.fresh_key();
+        store.snapshot_or_subscribe(&name, 0, k, None, &registry);
+
+        let woken = store.push_row(&name, vec![s("anything")]);
+        assert_eq!(woken, vec![k]);
+    }
+
+    #[test]
+    fn keyed_prefix_match_fires_with_extra_row_columns() {
+        let store = RelationStore::new();
+        let registry = Arc::new(SubjectRegistry::<RelationWake>::new());
+        let name: Arc<str> = s("r");
+
+        let k = registry.fresh_key();
+        store.snapshot_or_subscribe(&name, 0, k, Some(vec![s("a")]), &registry);
+
+        // Row has extra trailing columns; prefix [a] matches.
+        let woken = store.push_row(&name, vec![s("a"), s("b")]);
+        assert_eq!(woken, vec![k]);
     }
 }
 
