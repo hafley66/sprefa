@@ -24,11 +24,11 @@ use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionK
 use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor, PathSeg};
 use pipeline::_2_pipeline::Pipeline;
-use pipeline::effects::TagWake;
 use pipeline::effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect,
-    ReadBytesBatcher, ReadBytesEffect, TagStore, TagWriteBatcher, TagWriteEffect,
+    ReadBytesBatcher, ReadBytesEffect,
 };
+use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
 use pipeline::readers::FileSource;
 
 pub struct Backend {
@@ -328,10 +328,10 @@ async fn render_enriched_hover(
         seed_roots.insert(Arc::from(seed.slug.as_str()), seed.root.clone());
         let source: Arc<dyn FileSource> =
             Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
-        let tag_store = Arc::new(TagStore::new());
-        let registry = Arc::new(SubjectRegistry::<TagWake>::new());
+        let relation_store = Arc::new(RelationStore::new());
+        let registry = Arc::new(SubjectRegistry::<RelationWake>::new());
         let ctx = RtCtxBuilder::new()
-            .with_store(tag_store.clone())
+            .with_store(relation_store.clone())
             .with_store(registry.clone())
             .register_pure::<FsListFilesEffect, _>(
                 256,
@@ -342,9 +342,9 @@ async fn render_enriched_hover(
                 ReadBytesBatcher::new(source),
             )
             .register::<PrintEffect, _>(PrintBatcher::buffer().0)
-            .register::<Yield<TagWake>, _>(YieldBatcher::new(registry.clone()))
-            .register::<TagWriteEffect, _>(
-                TagWriteBatcher::new(tag_store, registry.clone()),
+            .register::<Yield<RelationWake>, _>(YieldBatcher::new(registry.clone()))
+            .register::<WriteEffect, _>(
+                WriteBatcher::new(relation_store, registry.clone()),
             )
             .build();
 

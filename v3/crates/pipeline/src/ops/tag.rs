@@ -14,7 +14,7 @@
 //!
 //! Read-side perpetual subscription uses
 //! [`SubjectRegistry::subscribe`][effect_runtime::SubjectRegistry::subscribe]
-//! and [`TagStore::snapshot_or_subscribe`][crate::effects::TagStore::snapshot_or_subscribe]
+//! and [`RelationStore::snapshot_or_subscribe`][crate::relation_store::RelationStore::snapshot_or_subscribe]
 //! atomically. Writer fires `registry.next(key)` once per parked waiter
 //! after pushing the row; the read loop wakes, re-snapshots from
 //! `last_idx`, emits a batch per cursor, re-subscribes, repeats until
@@ -29,7 +29,7 @@ use effect_runtime::{BoxFuture, CancellationToken, RtCtx, SubjectRegistry};
 
 use crate::_0_cursor::{Capture, Cursor};
 use crate::_1_op::{per_cursor, Op, DEFAULT_PIPE_CONCURRENCY};
-use crate::effects::{SnapshotOrSubscribed, TagRow, TagStore, TagWake, TagWriteEffect};
+use crate::relation_store::{RelationStore, RelationWake, Row, SnapshotOrSubscribed, WriteEffect};
 use crate::op_ctor::OpCtor;
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::{TermMode, Value};
@@ -56,7 +56,7 @@ impl Op for TagOp {
             TagOp::Write { name, args } => {
                 Box::pin(per_cursor(batch, move |c| async move {
                     let row = materialize_row(args, &c);
-                    let _ = ctx.put(TagWriteEffect {
+                    let _ = ctx.put(WriteEffect {
                         name: name.clone(),
                         row,
                     }).await;
@@ -83,10 +83,10 @@ impl Op for TagOp {
             // Each upstream cursor opens its own perpetual subscription;
             // merge them concurrently via flat_map_unordered.
             TagOp::Read { name, holes } => {
-                let store = ctx.store::<TagStore>()
-                    .expect("TagStore not registered on RtCtx");
-                let registry = ctx.store::<SubjectRegistry<TagWake>>()
-                    .expect("SubjectRegistry<TagWake> not registered on RtCtx");
+                let store = ctx.store::<RelationStore>()
+                    .expect("RelationStore not registered on RtCtx");
+                let registry = ctx.store::<SubjectRegistry<RelationWake>>()
+                    .expect("SubjectRegistry<RelationWake> not registered on RtCtx");
                 let cancel = ctx.root_cancel();
                 Box::pin(
                     upstream
@@ -112,20 +112,20 @@ impl Op for TagOp {
 
 /// Build the per-cursor perpetual stream for tag-read.
 ///
-/// Holds the shared `TagStore` + `SubjectRegistry`; per call: snapshot
+/// Holds the shared `RelationStore` + `SubjectRegistry`; per call: snapshot
 /// past `last_idx`, if rows present emit a batch and advance; else
 /// subscribe atomically and await the next write or unsubscribe.
 fn subscribe_stream(
-    store:    Arc<TagStore>,
-    registry: Arc<SubjectRegistry<TagWake>>,
+    store:    Arc<RelationStore>,
+    registry: Arc<SubjectRegistry<RelationWake>>,
     cancel:   CancellationToken,
     name:     Arc<str>,
     holes:    Arc<[Arc<str>]>,
     cursor:   Cursor,
 ) -> BoxStream<'static, Arc<[Cursor]>> {
     struct State {
-        store:    Arc<TagStore>,
-        registry: Arc<SubjectRegistry<TagWake>>,
+        store:    Arc<RelationStore>,
+        registry: Arc<SubjectRegistry<RelationWake>>,
         cancel:   CancellationToken,
         name:     Arc<str>,
         holes:    Arc<[Arc<str>]>,
@@ -158,7 +158,7 @@ fn subscribe_stream(
                             // without re-locking the store. Loop will
                             // re-snapshot on the next iteration to drain
                             // any further rows accumulated meanwhile.
-                            let row: TagRow = (*row_arc).clone();
+                            let row: Row = (*row_arc).clone();
                             let batch = rows_to_batch(&s.cursor, &s.holes, vec![row]);
                             s.last_idx += 1;
                             return Some((batch, s));
@@ -300,7 +300,7 @@ mod tests {
     use super::*;
     use crate::_0_cursor::Capture;
     use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
-    use crate::effects::TagWriteBatcher;
+    use crate::relation_store::WriteBatcher;
     use crate::_2_pipeline::Pipeline;
     use futures::StreamExt;
 
@@ -314,18 +314,18 @@ mod tests {
     fn s(x: &str) -> Value { Value::Str(Arc::from(x)) }
 
     /// Build an RtCtx with both stores + Yield + TagWrite batchers wired
-    /// to one shared `TagStore` + `SubjectRegistry`. Returns
+    /// to one shared `RelationStore` + `SubjectRegistry`. Returns
     /// `(ctx, store, registry)` so tests can drive writes by calling
-    /// `ctx.put(TagWriteEffect)` and assert via the store directly.
-    fn build_tag_ctx() -> (RtCtx, Arc<TagStore>, Arc<SubjectRegistry<TagWake>>) {
-        let store = Arc::new(TagStore::new());
-        let registry = Arc::new(SubjectRegistry::<TagWake>::new());
+    /// `ctx.put(WriteEffect)` and assert via the store directly.
+    fn build_tag_ctx() -> (RtCtx, Arc<RelationStore>, Arc<SubjectRegistry<RelationWake>>) {
+        let store = Arc::new(RelationStore::new());
+        let registry = Arc::new(SubjectRegistry::<RelationWake>::new());
         let ctx = RtCtxBuilder::new()
             .with_store(store.clone())
             .with_store(registry.clone())
-            .register::<Yield<TagWake>, _>(YieldBatcher::new(registry.clone()))
-            .register::<TagWriteEffect, _>(
-                TagWriteBatcher::new(store.clone(), registry.clone()),
+            .register::<Yield<RelationWake>, _>(YieldBatcher::new(registry.clone()))
+            .register::<WriteEffect, _>(
+                WriteBatcher::new(store.clone(), registry.clone()),
             )
             .build();
         (ctx, store, registry)
@@ -400,8 +400,8 @@ mod tests {
         let (ctx, store, _reg) = build_tag_ctx();
         let name: Arc<str> = Arc::from("a");
         // Write 2 rows directly via the effect.
-        ctx.put(TagWriteEffect { name: name.clone(), row: vec![Arc::from("x")] }).await;
-        ctx.put(TagWriteEffect { name: name.clone(), row: vec![Arc::from("y")] }).await;
+        ctx.put(WriteEffect { name: name.clone(), row: vec![Arc::from("x")] }).await;
+        ctx.put(WriteEffect { name: name.clone(), row: vec![Arc::from("y")] }).await;
         assert_eq!(store.rows_len("a"), 2);
 
         let read = TagOp::from_values(vec![atom("a"), term_unbound("A")]).unwrap();
@@ -417,9 +417,9 @@ mod tests {
     async fn read_dynamic_arity_zips_per_row() {
         let (ctx, _store, _reg) = build_tag_ctx();
         let name: Arc<str> = Arc::from("a");
-        ctx.put(TagWriteEffect { name: name.clone(),
+        ctx.put(WriteEffect { name: name.clone(),
             row: vec![Arc::from("a1"), Arc::from("b1")] }).await;
-        ctx.put(TagWriteEffect { name: name.clone(),
+        ctx.put(WriteEffect { name: name.clone(),
             row: vec![Arc::from("a2"), Arc::from("b2"), Arc::from("c2")] }).await;
 
         // Read with 2 captures.
@@ -453,7 +453,7 @@ mod tests {
         let writer = tokio::spawn(async move {
             // Give the subscriber time to register.
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            writer_ctx.put(TagWriteEffect {
+            writer_ctx.put(WriteEffect {
                 name: Arc::from("a"),
                 row:  vec![Arc::from("late")],
             }).await;

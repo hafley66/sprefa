@@ -29,6 +29,7 @@ pub mod ops;
 pub mod pattern_op;
 pub mod readers;
 pub mod registry;
+pub mod relation_store;
 pub mod value;
 pub mod walk;
 
@@ -45,6 +46,9 @@ pub use _2_pipeline::Pipeline;
 pub use effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect, PrintSink, ReadBytesBatcher,
     ReadBytesEffect, WriteFileBatcher, WriteFileEffect, WriteFileSink,
+};
+pub use relation_store::{
+    Bag, RelationStore, RelationWake, Row, SnapshotOrSubscribed, WriteBatcher, WriteEffect,
 };
 pub use op_ctor::{OpCtor, OpLowering, PatternCtor};
 pub use ops::{

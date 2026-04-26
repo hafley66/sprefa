@@ -14,15 +14,15 @@ use std::sync::Arc;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use effect_runtime::{RtCtx, RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
-use pipeline::effects::TagWake;
 use pipeline::_0_cursor::{CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
 use effect_runtime::batchers::{BoundedWorkSteal, CacheLayer};
 use pipeline::effects::{
     ast_parse, AstParseEffect, FsListFilesBatcher, FsListFilesEffect,
     PrintBatcher, PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect,
-    ReadBytesBatcher, ReadBytesEffect, TagStore, TagWriteBatcher, TagWriteEffect,
+    ReadBytesBatcher, ReadBytesEffect,
 };
+use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
 use pipeline::readers::FileSource;
 use pipeline::registry::Registry;
 use server::config::{self, Config, Seed};
@@ -122,10 +122,10 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
             CacheLayer::new(1024, FsListFilesBatcher::new(file_source.clone()));
         let read_cache: CacheLayer<ReadBytesEffect> =
             CacheLayer::new(65_536, ReadBytesBatcher::new(file_source.clone()));
-        let tag_store = Arc::new(TagStore::new());
-        let subject_registry = Arc::new(SubjectRegistry::<TagWake>::new());
+        let relation_store = Arc::new(RelationStore::new());
+        let subject_registry = Arc::new(SubjectRegistry::<RelationWake>::new());
         let ctx = RtCtxBuilder::new()
-            .with_store(tag_store.clone())
+            .with_store(relation_store.clone())
             .with_store(subject_registry.clone())
             .register_domain_aware::<FsListFilesEffect, _>(listing_cache.clone())
             .register_domain_aware::<ReadBytesEffect, _>(read_cache.clone())
@@ -138,9 +138,9 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
                 ),
             )
             .register::<PrintEffect, _>(PrintBatcher::stdout())
-            .register::<Yield<TagWake>, _>(YieldBatcher::new(subject_registry.clone()))
-            .register::<TagWriteEffect, _>(
-                TagWriteBatcher::new(tag_store, subject_registry.clone()),
+            .register::<Yield<RelationWake>, _>(YieldBatcher::new(subject_registry.clone()))
+            .register::<WriteEffect, _>(
+                WriteBatcher::new(relation_store, subject_registry.clone()),
             )
             .build();
         let seed_tag = if cfg.seeds.len() > 1 {
