@@ -231,7 +231,12 @@ async fn run_and_print(
     let mut ops: Vec<Pipeline> = Vec::new();
     for inv in &pipe.ops {
         let mut diags = Vec::new();
-        match registry.build_from_node(&inv.name, inv.node(), source.as_bytes(), &mut diags) {
+        let lookup_name: Arc<str> = if inv.predicate {
+            Arc::from(format!("{}?", inv.name))
+        } else {
+            inv.name.clone()
+        };
+        match registry.build_from_node(&lookup_name, inv.node(), source.as_bytes(), &mut diags) {
             Some(Ok(op)) => {
                 if !diags.is_empty() {
                     for d in &diags {

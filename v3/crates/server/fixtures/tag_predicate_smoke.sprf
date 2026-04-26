@@ -1,0 +1,15 @@
+# tag? predicate smoke: probe Static + join (mixed) + drain query.
+#
+# pipes 0..2 seed three rows: (alpha, A1), (beta, B1), (gamma, G1).
+# pipe 3: tag?(:rel, "alpha", "A1") — strict probe; both cols bound.
+# pipe 4: tag?(:rel, "missing") — strict probe miss; cursor dropped
+#         so print(:MISS) emits nothing.
+# pipe 5: tag?(:rel, ${X?}, ${V?}) — all-unbound; drains every row.
+# pipe 6: tag?(:rel, "beta", ${V?}) — mixed; filter X=beta, project V.
+tag(:rel, "alpha", "A1");
+tag(:rel, "beta", "B1");
+tag(:rel, "gamma", "G1");
+tag?(:rel, "alpha", "A1") > print(:HIT);
+tag?(:rel, "missing") > print(:MISS);
+tag?(:rel, "beta", ${V?}) > print(:JOIN);
+tag?(:rel, ${X?}, ${V?}) > print(:DRAIN)

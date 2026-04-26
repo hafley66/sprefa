@@ -21,7 +21,7 @@ pub mod probe;
 pub mod query;
 pub mod write;
 
-pub use join::JoinOp;
+pub use join::{JoinOp, JoinSlot};
 pub use probe::{ProbeMode, ProbeOp};
 pub use query::QueryOp;
 pub use write::WriteOp;

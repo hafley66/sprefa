@@ -185,13 +185,15 @@ fn lower_pipe(
 
         // cursor_ref has no `name` field; its op-name is the literal '&'.
         // Path content (`fs.ext`) is parsed downstream from the node bytes.
-        let name = if kind == "cursor_ref" {
-            Arc::<str>::from("&")
+        let (name, predicate) = if kind == "cursor_ref" {
+            (Arc::<str>::from("&"), false)
         } else {
-            step
+            let name = step
                 .child_by_field_name("name")
                 .map(|n| Arc::<str>::from(&src[n.byte_range()]))
-                .unwrap_or_else(|| Arc::from(""))
+                .unwrap_or_else(|| Arc::from(""));
+            let predicate = step.child_by_field_name("predicate").is_some();
+            (name, predicate)
         };
 
         let site = ParseSite {
@@ -201,6 +203,7 @@ fn lower_pipe(
         };
         ops.push(OpInvocation {
             name,
+            predicate,
             parse_site: Arc::new(site),
             tree:       tree.clone(),
         });

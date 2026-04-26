@@ -274,7 +274,12 @@ fn lower_all_pipes(
                 .iter()
                 .map(|inv| {
                     let mut diags = Vec::new();
-                    let built = registry.build_from_node(&inv.name, inv.node(), src, &mut diags);
+                    let lookup_name: Arc<str> = if inv.predicate {
+                        Arc::from(format!("{}?", inv.name))
+                    } else {
+                        inv.name.clone()
+                    };
+                    let built = registry.build_from_node(&lookup_name, inv.node(), src, &mut diags);
                     let (op, mut diagnostics) = match built {
                         Some(Ok(arc)) => (Some(arc), diags),
                         Some(Err(errs)) => (None, errs),

@@ -34,7 +34,7 @@ use crate::op_ctor::{
 };
 use crate::ops::{
     AstGrepOp, CommentOp, CursorRefOp, FsOp, GlobOp, JsonOp, LspDiagOp, PrintOp, ReadOp, ReOp,
-    RenderOp, RepoOp, RevOp, StrOp, TagOp, VoidOp, WriteCursorOp, WriteFileOp,
+    RenderOp, RepoOp, RevOp, StrOp, TagOp, TagPredicateOp, VoidOp, WriteCursorOp, WriteFileOp,
 };
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::Value;
@@ -157,6 +157,7 @@ impl Registry {
             .register::<WriteCursorOp>()
             .register::<WriteFileOp>()
             .register::<TagOp>()
+            .register::<TagPredicateOp>()
             .register_pattern::<GlobOp>()
             .register_pattern::<ReOp>()
             .finish()
@@ -620,7 +621,7 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["&", "ast", "comment", "fs", "json", "lsp", "print", "read", "render", "repo", "rev", "str", "tag", "void", "write_cursor", "write_file"]
+            vec!["&", "ast", "comment", "fs", "json", "lsp", "print", "read", "render", "repo", "rev", "str", "tag", "tag?", "void", "write_cursor", "write_file"]
         );
     }
 

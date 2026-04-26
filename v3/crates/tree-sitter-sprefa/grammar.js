@@ -72,6 +72,10 @@ module.exports = grammar({
 
     op_invocation: $ => prec(1, seq(
       field('name', $.identifier),
+      // `?` op suffix flips push→pull. e.g. `tag?(...)` is the strict /
+      // datalog / drain reader; `tag(...)` is write or all-unbound query
+      // (chat_log/20260426.7).
+      optional(field('predicate', '?')),
       repeat(field('bracket', $.bracket_slot)),
       optional(field('paren', $.paren_slot)),
       optional(field('brace', $.brace_slot)),

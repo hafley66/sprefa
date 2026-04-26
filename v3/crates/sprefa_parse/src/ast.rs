@@ -55,8 +55,11 @@ pub struct Pipe {
 
 #[derive(Debug, Clone)]
 pub struct OpInvocation {
-    /// Op name.
+    /// Op name (without the optional `?` suffix).
     pub name:       Arc<str>,
+    /// `?` op suffix presence — push/pull inversion sigil
+    /// (chat_log/20260426.7). True for `tag?(...)`, `<rule>?(...)`, etc.
+    pub predicate:  bool,
     pub parse_site: Arc<ParseSite>,
     /// Shared with every other invocation from the same parse. Used to
     /// resolve `parse_site.byte_range` back to a CST `Node` via

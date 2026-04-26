@@ -41,7 +41,7 @@ pub use render::{RenderFormat, RenderOp};
 pub use repo::{RepoMode, RepoOp};
 pub use rev::{RevMode, RevOp};
 pub use str_op::{StrOp, StrValue};
-pub use tag::{TagArg, TagOp};
+pub use tag::{TagArg, TagOp, TagPredicateOp};
 pub use void::VoidOp;
 pub use write_cursor::WriteCursorOp;
 pub use write_file::WriteFileOp;

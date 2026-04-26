@@ -159,6 +159,48 @@ impl RelationStore {
         self.bodies.lock().unwrap().get(name).cloned()
     }
 
+    /// Snapshot every row currently in `name`'s bag. Used by JoinOp to
+    /// take one read of the bag and fan out cursors against that snapshot.
+    pub fn rows_snapshot(&self, name: &Arc<str>) -> Vec<Row> {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|b| b.rows.clone())
+            .unwrap_or_default()
+    }
+
+    /// Atomic key-or-subscribe: under one bag-lock, scan for an existing
+    /// row whose leading columns match `key`. If found, return `true`. Else
+    /// register `subj_key` as a keyed waiter under `key` and return `false`,
+    /// after pre-inserting the registry pending entry — same race-safety
+    /// contract as [`snapshot_or_subscribe`].
+    ///
+    /// The returned `Subscribed` future is `None` when the key already hit
+    /// (caller should not park). When `false`, the future is `Some` and
+    /// resolves on the next matching write.
+    pub fn lookup_or_subscribe(
+        &self,
+        name:     &Arc<str>,
+        key:      Vec<Arc<str>>,
+        subj_key: SubjectKey<RelationWake>,
+        registry: &Arc<SubjectRegistry<RelationWake>>,
+    ) -> Option<BoxFuture<'static, Result<Arc<Row>, Unsubscribed>>> {
+        let mut g = self.inner.lock().unwrap();
+        let bag = g.entry(name.clone()).or_default();
+        let hit = bag
+            .rows
+            .iter()
+            .any(|row| key.len() <= row.len() && key.iter().zip(row.iter()).all(|(a, b)| a == b));
+        if hit {
+            None
+        } else {
+            let fut = registry.subscribe(subj_key, None);
+            bag.keyed.entry(key).or_default().push(subj_key);
+            Some(fut)
+        }
+    }
+
     /// Stub: exact-row key match against the named bag. Step 3 (bd5) replaces
     /// linear scan with a keyed waiter index; step 4 (kcl) consumes this for
     /// strict-bound probe.

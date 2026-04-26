@@ -28,7 +28,9 @@ use futures::stream::BoxStream;
 use crate::_0_cursor::Cursor;
 use crate::_1_op::Op;
 use crate::op_ctor::OpCtor;
-use crate::ops::relation::{QueryOp, RelationArg, WriteOp};
+use crate::ops::relation::{
+    JoinOp, JoinSlot, ProbeMode, ProbeOp, QueryOp, RelationArg, WriteOp,
+};
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::{TermMode, Value};
 
@@ -38,8 +40,14 @@ pub type TagArg = RelationArg;
 /// Facade enum: lowering chooses the variant; runtime delegates.
 #[derive(Debug)]
 pub enum TagOp {
+    /// `tag(:r, $X, ...)` all-bound, raw — append a row.
     Write(WriteOp),
+    /// `tag(:r, ${X?}, ...)` all-unbound, raw — drain + subscribe.
     Query(QueryOp),
+    /// `tag?(:r, $X, ...)` all-bound, predicate — strict probe.
+    Probe(ProbeOp),
+    /// `tag?(:r, $X, ${Y?}, ...)` mixed, predicate — datalog filter+project.
+    Join(JoinOp),
 }
 
 impl Op for TagOp {
@@ -49,6 +57,8 @@ impl Op for TagOp {
         match self {
             TagOp::Write(w) => w.pipe(ctx, batch),
             TagOp::Query(q) => q.pipe(ctx, batch),
+            TagOp::Probe(p) => p.pipe(ctx, batch),
+            TagOp::Join(j)  => j.pipe(ctx, batch),
         }
     }
 
@@ -60,6 +70,8 @@ impl Op for TagOp {
         match self {
             TagOp::Write(w) => w.pipe_flat_map(ctx, upstream),
             TagOp::Query(q) => q.pipe_flat_map(ctx, upstream),
+            TagOp::Probe(p) => p.pipe_flat_map(ctx, upstream),
+            TagOp::Join(j)  => j.pipe_flat_map(ctx, upstream),
         }
     }
 }
@@ -148,6 +160,135 @@ Mixed bound/unbound is a lower error.
             })
             .collect();
         Ok(TagOp::Write(WriteOp::new(name, args)))
+    }
+}
+
+/// `tag?(...)` — predicate-side facade. Same args, classified by bound /
+/// mixed / unbound, dispatches to ProbeOp / JoinOp / QueryOp respectively.
+///
+/// Registered under [`TagPredicateOp::NAME`] = `"tag?"`. The host lowerer
+/// flips the registry name when [`OpInvocation::predicate`] is true
+/// (see `server::run_and_print`, `backend.rs::resolve_pipeline_name`).
+#[derive(Debug)]
+pub struct TagPredicateOp(pub TagOp);
+
+impl Op for TagPredicateOp {
+    fn name(&self) -> &'static str { "tag" }
+
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        self.0.pipe(ctx, batch)
+    }
+
+    fn pipe_flat_map<'a>(
+        &'a self,
+        ctx: &'a RtCtx,
+        upstream: BoxStream<'a, Arc<[Cursor]>>,
+    ) -> BoxStream<'a, Arc<[Cursor]>> {
+        self.0.pipe_flat_map(ctx, upstream)
+    }
+}
+
+impl OpCtor for TagPredicateOp {
+    const NAME: &'static str = "tag?";
+    const BODY_GRAMMAR: &'static str = ":name, $X|${X?}|literal, ...";
+    const DOC: &'static str = "\
+**tag?**(_:name_, _arg_, ...)
+
+Pull-side counterpart of `tag`. Args classify the action:
+
+- all bound (`${X}` reads + literals) → strict probe; cursor passes if a
+  matching row exists, else dropped.
+- mixed bound + `${X?}` introducer → datalog filter+project; bound
+  positions filter, unbound positions project the matched row column
+  into a fresh capture. Fans out one cursor per matching row.
+- all unbound (`${X?}`) → drain bag + subscribe to future writes
+  (same as bare `tag(:r, ${X?})` today).
+";
+
+    fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
+        let mut iter = values.into_iter();
+        let first = iter.next().ok_or_else(|| {
+            vec![PatternDiagnostic {
+                code:       "tag/missing-name",
+                message:    "tag? requires a bag name as its first arg: tag?(:bag, ...)".into(),
+                byte_range: 0..0,
+            }]
+        })?;
+        let name = match first {
+            Value::Atom(s) => s,
+            _ => {
+                return Err(vec![PatternDiagnostic {
+                    code:       "tag/non-atom-name",
+                    message:    "tag?'s first arg must be an atom: tag?(:bag, ...)".into(),
+                    byte_range: 0..0,
+                }]);
+            }
+        };
+
+        let rest: Vec<Value> = iter.collect();
+        let mut have_bound   = false;
+        let mut have_unbound = false;
+        for v in &rest {
+            match v {
+                Value::Term { mode: TermMode::Read, .. } => have_bound = true,
+                Value::Term { mode: TermMode::Unbound, .. } => have_unbound = true,
+                Value::Atom(_) | Value::Str(_) | Value::Int(_) | Value::Float(_) => have_bound = true,
+                Value::Op(_) => {
+                    return Err(vec![PatternDiagnostic {
+                        code:       "tag/op-arg-unsupported",
+                        message:    "tag? does not accept op invocations as args".into(),
+                        byte_range: 0..0,
+                    }]);
+                }
+            }
+        }
+
+        // All-unbound: same drain+subscribe as `tag(...)` raw query.
+        if have_unbound && !have_bound {
+            let holes: Vec<Arc<str>> = rest
+                .into_iter()
+                .map(|v| match v {
+                    Value::Term { name, .. } => name,
+                    _ => unreachable!(),
+                })
+                .collect();
+            return Ok(TagPredicateOp(TagOp::Query(QueryOp::new(name, Arc::from(holes)))));
+        }
+
+        // All-bound: strict probe.
+        if have_bound && !have_unbound {
+            let key: Vec<RelationArg> = rest
+                .into_iter()
+                .map(|v| match v {
+                    Value::Term { name, mode: TermMode::Read } => RelationArg::Capture(name),
+                    Value::Atom(s) | Value::Str(s) => RelationArg::Literal(s),
+                    Value::Int(n) => RelationArg::Literal(Arc::from(n.to_string())),
+                    Value::Float(n) => RelationArg::Literal(Arc::from(n.to_string())),
+                    _ => unreachable!(),
+                })
+                .collect();
+            return Ok(TagPredicateOp(TagOp::Probe(ProbeOp::new(
+                name,
+                key,
+                ProbeMode::Static,
+            ))));
+        }
+
+        // Mixed: datalog filter+project.
+        let slots: Vec<JoinSlot> = rest
+            .into_iter()
+            .map(|v| match v {
+                Value::Term { name, mode: TermMode::Unbound } => JoinSlot::Project(name),
+                Value::Term { name, mode: TermMode::Read } => JoinSlot::Bound(RelationArg::Capture(name)),
+                Value::Atom(s) | Value::Str(s) => JoinSlot::Bound(RelationArg::Literal(s)),
+                Value::Int(n) => JoinSlot::Bound(RelationArg::Literal(Arc::from(n.to_string()))),
+                Value::Float(n) => JoinSlot::Bound(RelationArg::Literal(Arc::from(n.to_string()))),
+                _ => unreachable!(),
+            })
+            .collect();
+        // Empty arg list is also `have_unbound == false && have_bound == false`;
+        // treat as a no-op probe (no key, always passes).
+        Ok(TagPredicateOp(TagOp::Join(JoinOp::new(name, slots))))
     }
 }
 
