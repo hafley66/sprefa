@@ -23,6 +23,10 @@ tree-sitter-yaml    = "0.7"
 tree-sitter-toml-ng = "0.7"
 futures           = "0.3"
 rayon             = "1"
+tracing           = "0.1"
+serde             = { version = "1", features = ["derive", "rc"] }
+bincode           = "1"
+rusqlite          = { version = "0.32", features = ["bundled"] }
 
 
 [dev-dependencies]

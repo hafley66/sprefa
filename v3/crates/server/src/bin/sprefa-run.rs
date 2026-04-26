@@ -25,6 +25,7 @@ use pipeline::effects::{
     ReadBytesBatcher, ReadBytesEffect,
 };
 use pipeline::cache_key::OpCache;
+use pipeline::disk_cache::DiskCache;
 use pipeline::ops::{RuleCallOp, RulePredicateOp};
 use pipeline::rule_def;
 use pipeline::rule_hash::{self, RuleHashes};
@@ -38,6 +39,21 @@ use server::config::{self, Config, Seed};
 use sprefa_parse::{host_parse_with_injections, OpInvocation, Pipe, PipeStep};
 
 fn main() {
+    // Tracing init: defaults to `info`. Override with RUST_LOG, e.g.
+    //   RUST_LOG=sprefa=trace,pipeline=trace,effect_runtime=trace
+    // or `RUST_LOG=trace` for everything. Logs go to stderr so stdout
+    // (the row dump) stays parseable.
+    use tracing_subscriber::EnvFilter;
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .init();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
         eprintln!(
@@ -160,7 +176,25 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
             CacheLayer::new(1024, FsListFilesBatcher::new(file_source.clone()));
         let read_cache: CacheLayer<ReadBytesEffect> =
             CacheLayer::new(65_536, ReadBytesBatcher::new(file_source.clone()));
-        let op_cache = Arc::new(OpCache::new(cfg.run.cache));
+        // L1 (in-mem) + optional L2 (sqlite at cfg.run.out_db). The L2
+        // db file is shared with the SQLite drain (different table:
+        // op_cache vs sprf_meta + per-rule), so a single .db file
+        // accumulates both surfaces.
+        let mut op_cache_inner = OpCache::new(cfg.run.cache);
+        if cfg.run.cache {
+            let db_path = cfg.run.out_db.clone()
+                .unwrap_or_else(|| default_out_db(file));
+            match DiskCache::open(&db_path) {
+                Ok(disk) => {
+                    op_cache_inner = op_cache_inner.with_l2(Arc::new(disk));
+                }
+                Err(e) => {
+                    eprintln!("# l2 cache: open {} failed: {} (L1 only)",
+                        db_path.display(), e);
+                }
+            }
+        }
+        let op_cache = Arc::new(op_cache_inner);
         let ctx = RtCtxBuilder::new()
             .with_store(relation_store.clone())
             .with_store(subject_registry.clone())
@@ -249,6 +283,9 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
                 r.hits, r.misses, r.entries, r.hit_ratio() * 100.0,
                 l.hits, l.misses, l.entries,
             );
+            // Per-effect rollup table (count / p50 / p95 / p99 / MB-s)
+            // from the runtime's built-in span sink.
+            eprint!("# effects:\n{}", ctx.telemetry().summary());
         }
     }
 
@@ -864,13 +901,20 @@ impl DiskFileSource {
 
 impl FileSource for DiskFileSource {
     fn files(&self, _repo: &str, rev: &str) -> Vec<Arc<Path>> {
-        // Only serve the working tree when rev matches this source's rev.
-        // Cross-rev reads without a real git backend return empty.
         if rev != self.rev {
             return Vec::new();
         }
+        let _t0 = std::time::Instant::now();
         let mut out = Vec::new();
         walk(&self.root, &self.root, &mut out);
+        tracing::info!(
+            target: "sprefa::reader",
+            root = %self.root.display(),
+            rev = %rev,
+            files = out.len(),
+            elapsed_ms = _t0.elapsed().as_millis() as u64,
+            "DiskFileSource.files"
+        );
         out
     }
 
@@ -878,8 +922,18 @@ impl FileSource for DiskFileSource {
         if rev != self.rev {
             return None;
         }
+        let _t0 = std::time::Instant::now();
         let full = self.root.join(path);
-        std::fs::read(full).ok().map(Arc::from)
+        let bytes = std::fs::read(full).ok().map(Arc::<[u8]>::from);
+        let len = bytes.as_ref().map(|b| b.len()).unwrap_or(0);
+        tracing::trace!(
+            target: "sprefa::reader",
+            path = %path.display(),
+            bytes = len,
+            elapsed_us = _t0.elapsed().as_micros() as u64,
+            "DiskFileSource.file_bytes"
+        );
+        bytes
     }
 }
 

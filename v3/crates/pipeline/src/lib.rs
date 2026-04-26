@@ -23,6 +23,7 @@ pub mod _2_pipeline;
 pub mod binding_graph;
 pub mod cache_key;
 pub mod data;
+pub mod disk_cache;
 pub mod effects;
 pub mod lower;
 pub mod op_ctor;
@@ -47,6 +48,7 @@ pub use _0_cursor::{Capture, Cursor, PathSeg, SprfPath};
 pub use _1_op::{Op, TermPosition};
 pub use _2_pipeline::Pipeline;
 pub use cache_key::{batch_fingerprint, compose_key, OpCache};
+pub use disk_cache::DiskCache;
 pub use effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect, PrintSink, ReadBytesBatcher,
     ReadBytesEffect, WriteFileBatcher, WriteFileEffect, WriteFileSink,

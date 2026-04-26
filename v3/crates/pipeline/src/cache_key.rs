@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::_0_cursor::{Capture, CaptureKind, Cursor};
+use crate::disk_cache::DiskCache;
 use effect_runtime::Store;
 
 /// Stable fingerprint over a batch of cursors. Hashes per cursor:
@@ -76,6 +77,10 @@ pub fn batch_fingerprint(batch: &[Cursor]) -> [u8; 32] {
 pub struct OpCache {
     pub enabled: bool,
     map: Mutex<HashMap<[u8; 32], Arc<[Cursor]>>>,
+    /// L2 sqlite-backed persistence (sprefa-upb Phase D). When present
+    /// and `enabled`, get falls through to L2 on L1 miss and promotes
+    /// the hit into L1; insert writes through to both layers.
+    pub l2: Option<Arc<DiskCache>>,
 }
 
 impl std::fmt::Debug for OpCache {
@@ -83,22 +88,44 @@ impl std::fmt::Debug for OpCache {
         f.debug_struct("OpCache")
             .field("enabled", &self.enabled)
             .field("len", &self.len())
+            .field("l2", &self.l2.as_ref().map(|_| "<DiskCache>"))
             .finish()
     }
 }
 
 impl OpCache {
     pub fn new(enabled: bool) -> Self {
-        Self { enabled, map: Mutex::new(HashMap::new()) }
+        Self { enabled, map: Mutex::new(HashMap::new()), l2: None }
+    }
+
+    /// Attach an L2 sqlite-backed [`DiskCache`]. Calls on a disabled
+    /// cache still no-op via `enabled`. Returns `Self` for chaining.
+    pub fn with_l2(mut self, l2: Arc<DiskCache>) -> Self {
+        self.l2 = Some(l2);
+        self
     }
 
     pub fn get(&self, key: &[u8; 32]) -> Option<Arc<[Cursor]>> {
         if !self.enabled { return None; }
-        self.map.lock().unwrap().get(key).cloned()
+        if let Some(hit) = self.map.lock().unwrap().get(key).cloned() {
+            return Some(hit);
+        }
+        if let Some(l2) = self.l2.as_ref() {
+            if let Some(hit) = l2.get(key) {
+                // Promote into L1 so subsequent calls in this process
+                // skip the bincode + sqlite round trip.
+                self.map.lock().unwrap().insert(*key, hit.clone());
+                return Some(hit);
+            }
+        }
+        None
     }
 
     pub fn insert(&self, key: [u8; 32], val: Arc<[Cursor]>) {
         if !self.enabled { return; }
+        if let Some(l2) = self.l2.as_ref() {
+            l2.insert(key, &val);
+        }
         self.map.lock().unwrap().insert(key, val);
     }
 

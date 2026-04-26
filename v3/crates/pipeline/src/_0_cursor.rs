@@ -21,10 +21,45 @@ use std::sync::Arc;
 /// Framework-owned trail of how a cursor arrived at this point. Every
 /// op emission appends `Op { name, step }`; every fork-arm emission
 /// appends `ForkArm { index }`. Leaf-first order per project_v2_path_tagging.
+/// `PathSeg` carries `&'static str` (interned op names), which the
+/// derive macro cannot serialize/deserialize generically without
+/// requiring `'de: 'static`. Hand-roll a wire form via `String`,
+/// `Box::leak`-ing back to `&'static str` on deserialize. Op names are
+/// bounded by the registered op set, so the leak is a fixed-cost
+/// interning step.
 #[derive(Clone, Debug)]
 pub enum PathSeg {
     Op { name: &'static str, step: usize },
     ForkArm { index: usize },
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+enum PathSegWire {
+    Op { name: String, step: usize },
+    ForkArm { index: usize },
+}
+
+impl serde::Serialize for PathSeg {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let wire = match self {
+            PathSeg::Op { name, step } => PathSegWire::Op { name: (*name).to_string(), step: *step },
+            PathSeg::ForkArm { index } => PathSegWire::ForkArm { index: *index },
+        };
+        wire.serialize(ser)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PathSeg {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        let wire = PathSegWire::deserialize(de)?;
+        Ok(match wire {
+            PathSegWire::Op { name, step } => PathSeg::Op {
+                name: Box::leak(name.into_boxed_str()),
+                step,
+            },
+            PathSegWire::ForkArm { index } => PathSeg::ForkArm { index },
+        })
+    }
 }
 
 pub type SprfPath = Vec<PathSeg>;
@@ -35,14 +70,14 @@ pub type SprfPath = Vec<PathSeg>;
 /// only a hint (typically `0..0`). Synthesized captures are written by
 /// ops like `repo($R)` / `rev($V)` that bind a cursor field (which is
 /// not inside `cursor.content`) into a name.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Capture {
     pub name: Arc<str>,
     pub byte_range: Range<usize>,
     pub kind: CaptureKind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum CaptureKind {
     /// Bytes live at `cursor.content[byte_range]`. The default shape for
     /// regex/glob/ast captures that name a span inside the file content.
@@ -89,7 +124,7 @@ impl Capture {
 /// upstream op. Scan-pointer ops and other annotate-by-reference callers
 /// read it to resolve the implicit binding without the source author
 /// naming it. Cleared by `rebase`.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Cursor {
     pub content: Arc<[u8]>,
     pub byte_range: Range<usize>,
@@ -106,6 +141,7 @@ pub struct Cursor {
     pub rev: Arc<str>,
     /// Repo-relative file path the cursor addresses, when known. `None`
     /// before any `fs` op has fanned out.
+    #[serde(with = "fs_path_serde")]
     pub fs: Option<Arc<Path>>,
     /// blake3 of the content bytes loaded for this cursor. `Some` once
     /// `ensure_content_loaded` (or a bulk read) has populated `content`
@@ -113,7 +149,32 @@ pub struct Cursor {
     /// Phase 0 cache lock: the leaf `input_hash` for downstream stages
     /// folds blake3(repo || rev || path || content_hash) (sprefa-upb).
     pub content_hash: Option<Arc<[u8; 32]>>,
+    /// Slots carry typed payloads (`Arc<dyn Any + Send + Sync>`) which
+    /// are not generically serializable. Skipped for L2 disk cache;
+    /// downstream ops that depend on producer slots must mark the
+    /// producer uncacheable. Documented sharp edge per sprefa-efx.
+    #[serde(skip)]
     slots: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+}
+
+mod fs_path_serde {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(
+        v: &Option<Arc<Path>>, ser: S,
+    ) -> Result<S::Ok, S::Error> {
+        match v {
+            Some(p) => ser.serialize_some(&p.to_path_buf()),
+            None => ser.serialize_none(),
+        }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        de: D,
+    ) -> Result<Option<Arc<Path>>, D::Error> {
+        let opt: Option<PathBuf> = Option::deserialize(de)?;
+        Ok(opt.map(|p| Arc::<Path>::from(p)))
+    }
 }
 
 impl Default for Cursor {
