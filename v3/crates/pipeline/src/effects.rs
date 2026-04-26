@@ -465,6 +465,116 @@ impl Batcher<WriteFileEffect> for WriteFileBatcher {
 }
 
 // ---------------------------------------------------------------------------
+// WriteRangeEffect — splice bytes into a target byte_range.
+//
+// One effect powers `write_cursor`, future `write_file(range)` /
+// `write_file_at`, and LSP code-action edits. The target is identified
+// by `(file, byte_range)` and the mode controls how `new_bytes` lands:
+//
+//   :replace  — overwrite target span (default)
+//   :append   — insert at byte_range.end
+//   :prepend  — insert at byte_range.start
+//   :wrap     — surround the existing target span with new_bytes
+//
+// Sink decides delivery (disk / buffer); domain "fs" is the same domain
+// `WriteFileEffect` and `ReadBytesEffect` will share once invalidation
+// lands.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteMode {
+    Replace,
+    Append,
+    Prepend,
+    Wrap,
+}
+
+impl WriteMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim_start_matches(':') {
+            "replace" => Some(WriteMode::Replace),
+            "append"  => Some(WriteMode::Append),
+            "prepend" => Some(WriteMode::Prepend),
+            "wrap"    => Some(WriteMode::Wrap),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WriteMode::Replace => "replace",
+            WriteMode::Append  => "append",
+            WriteMode::Prepend => "prepend",
+            WriteMode::Wrap    => "wrap",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct WriteRangeEffect {
+    pub file:       Arc<Path>,
+    pub byte_range: std::ops::Range<usize>,
+    pub new_bytes:  Arc<[u8]>,
+    pub mode:       WriteMode,
+}
+
+impl EffectKind for WriteRangeEffect {
+    type Response = Result<(), Arc<str>>;
+
+    fn payload_bytes(&self) -> Option<usize> {
+        Some(self.new_bytes.len())
+    }
+}
+
+#[derive(Clone)]
+pub enum WriteRangeSink {
+    Buffer(Arc<Mutex<Vec<WriteRangeEffect>>>),
+}
+
+impl WriteRangeSink {
+    pub fn buffer() -> (Self, Arc<Mutex<Vec<WriteRangeEffect>>>) {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        (WriteRangeSink::Buffer(buf.clone()), buf)
+    }
+
+    fn write(&self, e: WriteRangeEffect) -> Result<(), String> {
+        match self {
+            WriteRangeSink::Buffer(buf) => {
+                buf.lock()
+                    .expect("write_range buffer poisoned")
+                    .push(e);
+                Ok(())
+            }
+        }
+    }
+}
+
+pub struct WriteRangeBatcher {
+    sink: WriteRangeSink,
+}
+
+impl WriteRangeBatcher {
+    pub fn new(sink: WriteRangeSink) -> Self { Self { sink } }
+    pub fn buffer() -> (Self, Arc<Mutex<Vec<WriteRangeEffect>>>) {
+        let (sink, buf) = WriteRangeSink::buffer();
+        (Self { sink }, buf)
+    }
+}
+
+impl Batcher<WriteRangeEffect> for WriteRangeBatcher {
+    fn run(
+        &self,
+        req: WriteRangeEffect,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'static, Result<(), Arc<str>>> {
+        let sink = self.sink.clone();
+        Box::pin(async move {
+            sink.write(req).map_err(|e| Arc::from(e.as_str()))
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // LspDiagEffect — emit one LSP-style diagnostic per cursor.
 //
 // Produced by `lsp[severity](message=..., code=..., hint=...)` at the
