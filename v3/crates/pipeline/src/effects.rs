@@ -18,13 +18,15 @@
 //! pipes. Single-shot runs pay the same walk cost as before; multi-pipe
 //! runs amortize it across call-sites.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use std::sync::Mutex;
 
 use effect_runtime::{
-    Batcher, BoxFuture, CancellationToken, EffectKind, PureEffect,
+    Batcher, BoxFuture, CancellationToken, EffectKind, PureEffect, Store,
+    SubjectKey, SubjectRegistry, Unsubscribed, NextValue,
 };
 
 use crate::readers::FileSource;
@@ -705,6 +707,153 @@ pub fn ast_parse(req: AstParseEffect) -> <AstParseEffect as EffectKind>::Respons
     let slice = req.content.get(req.byte_range)?;
     let s = std::str::from_utf8(slice).ok()?;
     Some(Arc::new(req.lang.ast_grep(s)))
+}
+
+// ---------------------------------------------------------------------------
+// TagStore + TagWriteEffect — relational bag store and its writer.
+//
+// `tag(:name, ...)` is the first sprefa op that uses persistent shared
+// state across cursors. The bag is just a vec of string-tuple rows keyed
+// by tag name; writers append, readers drain + perpetually subscribe.
+//
+// Shared state lives in `TagStore`, registered once on `RtCtxBuilder` via
+// `with_store`. Writer side issues `TagWriteEffect`; the batcher pushes
+// the row into the bag and drains any waiters that the read op has
+// parked there. Wakes go through `SubjectRegistry::next` — same primitive
+// as `Yield`, no separate channel.
+//
+// Read-side state machine lives in `ops/tag.rs` because the perpetual
+// subscription override is a `pipe_flat_map` shape, not an effect.
+// ---------------------------------------------------------------------------
+
+/// One bag of rows + parked subscribers waiting for the next write.
+#[derive(Default)]
+pub struct Bag {
+    pub rows: Vec<Vec<Arc<str>>>,
+    /// Subjects pre-registered on `SubjectRegistry` (entries already
+    /// inserted in `pending`). On write, each is woken via
+    /// `registry.next(key, _)` and removed from this list.
+    pub waiters: Vec<SubjectKey>,
+}
+
+/// Outcome of an atomic snapshot-or-subscribe call. Either the caller
+/// gets the tail of new rows since `last_idx`, or it gets a future that
+/// resolves the next time a writer drains the waiter list.
+pub enum SnapshotOrSubscribed {
+    Rows(Vec<Vec<Arc<str>>>),
+    Subscribed(BoxFuture<'static, Result<NextValue, Unsubscribed>>),
+}
+
+/// Relational bag store. `TagStore` holds one `Bag` per tag name.
+///
+/// Stored on `RtCtx` via `with_store`. The read op fetches via
+/// `ctx.store::<TagStore>()`; the write batcher holds an `Arc<TagStore>`
+/// at registration time.
+#[derive(Default)]
+pub struct TagStore {
+    inner: Mutex<HashMap<Arc<str>, Bag>>,
+}
+
+impl Store for TagStore {}
+
+impl TagStore {
+    pub fn new() -> Self { Self::default() }
+
+    /// Test/debug hook: how many rows currently in `name`'s bag.
+    pub fn rows_len(&self, name: &str) -> usize {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|b| b.rows.len())
+            .unwrap_or(0)
+    }
+
+    /// Atomically check for new rows past `last_idx`. If any exist,
+    /// return them as `Rows`. Otherwise register a fresh waiter on the
+    /// supplied `SubjectRegistry` (synchronously inserts a pending entry
+    /// per `subscribe`'s contract) and return a `Subscribed` future.
+    ///
+    /// The `key` passed in is consumed: it goes into both the registry
+    /// pending map and the bag's waiters list under one store-lock
+    /// critical section, closing the producer-side race where a write
+    /// would otherwise drain `key` from the bag before the registry
+    /// entry exists.
+    pub fn snapshot_or_subscribe(
+        &self,
+        name: &Arc<str>,
+        last_idx: usize,
+        key:      SubjectKey,
+        registry: &Arc<SubjectRegistry>,
+    ) -> SnapshotOrSubscribed {
+        let mut g = self.inner.lock().unwrap();
+        let bag = g.entry(name.clone()).or_default();
+        if bag.rows.len() > last_idx {
+            let tail: Vec<Vec<Arc<str>>> = bag.rows[last_idx..].to_vec();
+            SnapshotOrSubscribed::Rows(tail)
+        } else {
+            let fut = registry.subscribe(key, None);
+            bag.waiters.push(key);
+            SnapshotOrSubscribed::Subscribed(fut)
+        }
+    }
+
+    /// Append `row` to the named bag. Returns the waiter list that was
+    /// parked at the time of the write; caller fires `registry.next` on
+    /// each.
+    pub fn push_row(&self, name: &Arc<str>, row: Vec<Arc<str>>) -> Vec<SubjectKey> {
+        let mut g = self.inner.lock().unwrap();
+        let bag = g.entry(name.clone()).or_default();
+        bag.rows.push(row);
+        std::mem::take(&mut bag.waiters)
+    }
+}
+
+/// Append one row to a named bag. The batcher fires `registry.next` on
+/// every parked waiter so the read op can re-snapshot.
+#[derive(Clone, Debug)]
+pub struct TagWriteEffect {
+    pub name: Arc<str>,
+    pub row:  Vec<Arc<str>>,
+}
+
+impl EffectKind for TagWriteEffect {
+    type Response = ();
+
+    fn payload_bytes(&self) -> Option<usize> {
+        Some(self.row.iter().map(|s| s.len()).sum::<usize>() + self.name.len())
+    }
+}
+
+pub struct TagWriteBatcher {
+    store:    Arc<TagStore>,
+    registry: Arc<SubjectRegistry>,
+}
+
+impl TagWriteBatcher {
+    pub fn new(store: Arc<TagStore>, registry: Arc<SubjectRegistry>) -> Self {
+        Self { store, registry }
+    }
+}
+
+impl Batcher<TagWriteEffect> for TagWriteBatcher {
+    fn run(
+        &self,
+        req:     TagWriteEffect,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'static, ()> {
+        let store = self.store.clone();
+        let registry = self.registry.clone();
+        Box::pin(async move {
+            let waiters = store.push_row(&req.name, req.row);
+            // Single shared sentinel value; readers re-snapshot anyway,
+            // the wake just signals "rows changed".
+            let wake: NextValue = Arc::new(());
+            for k in waiters {
+                registry.next(k, wake.clone());
+            }
+        })
+    }
 }
 
 #[cfg(test)]

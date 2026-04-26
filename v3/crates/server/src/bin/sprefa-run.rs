@@ -13,14 +13,14 @@ use std::sync::Arc;
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-use effect_runtime::{RtCtx, RtCtxBuilder};
+use effect_runtime::{RtCtx, RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
 use pipeline::_0_cursor::{CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
 use effect_runtime::batchers::{BoundedWorkSteal, CacheLayer};
 use pipeline::effects::{
     ast_parse, AstParseEffect, FsListFilesBatcher, FsListFilesEffect,
     PrintBatcher, PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect,
-    ReadBytesBatcher, ReadBytesEffect,
+    ReadBytesBatcher, ReadBytesEffect, TagStore, TagWriteBatcher, TagWriteEffect,
 };
 use pipeline::readers::FileSource;
 use pipeline::registry::Registry;
@@ -121,7 +121,11 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
             CacheLayer::new(1024, FsListFilesBatcher::new(file_source.clone()));
         let read_cache: CacheLayer<ReadBytesEffect> =
             CacheLayer::new(65_536, ReadBytesBatcher::new(file_source.clone()));
+        let tag_store = Arc::new(TagStore::new());
+        let subject_registry = Arc::new(SubjectRegistry::new());
         let ctx = RtCtxBuilder::new()
+            .with_store(tag_store.clone())
+            .with_store(subject_registry.clone())
             .register_domain_aware::<FsListFilesEffect, _>(listing_cache.clone())
             .register_domain_aware::<ReadBytesEffect, _>(read_cache.clone())
             .register::<ReadBytesBatchEffect, _>(
@@ -133,6 +137,10 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
                 ),
             )
             .register::<PrintEffect, _>(PrintBatcher::stdout())
+            .register::<Yield, _>(YieldBatcher::new(subject_registry.clone()))
+            .register::<TagWriteEffect, _>(
+                TagWriteBatcher::new(tag_store, subject_registry.clone()),
+            )
             .build();
         let seed_tag = if cfg.seeds.len() > 1 {
             format!("[{}] ", seed.slug)
@@ -256,15 +264,15 @@ async fn run_and_print(
         futures::stream::iter(vec![std::sync::Arc::<[Cursor]>::from(vec![c])]),
     );
     let mut s = pipeline.run(ctx, upstream);
-    let mut out: Vec<Cursor> = Vec::new();
+    let mut total = 0usize;
+    println!("{header}");
     while let Some(b) = futures::StreamExt::next(&mut s).await {
-        out.extend(b.iter().cloned());
+        for c in b.iter() {
+            total += 1;
+            print_row(c);
+        }
     }
-
-    println!("{header} — {} rows", out.len());
-    for c in &out {
-        print_row(c);
-    }
+    println!("{header} — {} rows", total);
 }
 
 fn rule_name_of(inv: &OpInvocation, source: &str) -> Option<String> {

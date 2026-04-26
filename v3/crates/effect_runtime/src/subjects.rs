@@ -191,6 +191,39 @@ impl SubjectRegistry {
             .insert(key, Entry { sender: tx, lineage });
         rx
     }
+
+    /// Synchronous subscribe: insert a pending entry for `key` BEFORE
+    /// returning, then hand back a future that awaits the wake.
+    ///
+    /// Producers holding `key` can call [`next`] / [`unsubscribe`]
+    /// immediately after this returns and the wake is guaranteed to
+    /// land — there is no batcher-poll window during which the entry is
+    /// missing.
+    ///
+    /// The returned future is `'static`, carries an internal Drop guard
+    /// that calls [`unsubscribe`] when the future is dropped before
+    /// resolution (covers caller cancel via `select!`, future-drop, and
+    /// caller-side teardown).
+    ///
+    /// This is the door tag-style ops use; they hand `key` to a writer
+    /// that will call `next(key)` and need the entry to exist by the
+    /// time their await begins. `Yield` via `cx.put` rides the same
+    /// primitive (see [`YieldBatcher`]).
+    pub fn subscribe(
+        self: &Arc<Self>,
+        key: SubjectKey,
+        lineage: Option<Lineage>,
+    ) -> BoxFuture<'static, Result<NextValue, Unsubscribed>> {
+        let rx = self.register(key, lineage);
+        let guard = YieldGuard { registry: self.clone(), key };
+        Box::pin(async move {
+            let _g = guard;
+            match rx.await {
+                Ok(r) => r,
+                Err(_) => Err(Unsubscribed),
+            }
+        })
+    }
 }
 
 /// Batcher for `Yield`. Construct once with an `Arc<SubjectRegistry>`
@@ -235,20 +268,10 @@ impl Batcher<Yield> for YieldBatcher {
         req: Yield,
         cancel: CancellationToken,
     ) -> BoxFuture<'static, Result<NextValue, Unsubscribed>> {
-        let registry = self.registry.clone();
-        let key = req.key;
-        let rx = registry.register(key, req.lineage);
-        let guard = YieldGuard {
-            registry: registry.clone(),
-            key,
-        };
+        let fut = self.registry.subscribe(req.key, req.lineage);
         Box::pin(async move {
-            let _g = guard;
             tokio::select! {
-                resolved = rx => match resolved {
-                    Ok(result) => result,
-                    Err(_) => Err(Unsubscribed),
-                },
+                resolved = fut => resolved,
                 _ = cancel.cancelled() => Err(Unsubscribed),
             }
         })
@@ -437,6 +460,39 @@ mod tests {
         // Same Arc — fresh_key sequence is shared.
         let k = from_store.fresh_key();
         assert_eq!(k.raw(), reg.fresh_key().raw() - 1);
+    }
+
+    /// The race the existing tests papered over: when the SubjectKey
+    /// is shared with a producer, the producer can call `next(key)`
+    /// BEFORE the awaiting code has any chance to register the pending
+    /// entry. With `ctx.put(Yield)` the registration only happens when
+    /// `YieldBatcher::run` is polled — a window during which `next`
+    /// silently misses and the await blocks forever.
+    ///
+    /// `subscribe` closes the window by inserting the entry before
+    /// returning. This test fires `next` synchronously after subscribe
+    /// (no spawn, no sleep) and expects it to resolve.
+    #[tokio::test]
+    async fn subscribe_then_synchronous_next_resolves() {
+        let reg = Arc::new(SubjectRegistry::new());
+        let key = reg.fresh_key();
+        let fut = reg.subscribe(key, None);
+        // Producer fires immediately; entry must already exist.
+        assert!(reg.next(key, val("eager")));
+        let v = fut.await.expect("Ok");
+        assert_eq!(as_str(&v), "eager");
+        assert_eq!(reg.pending_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn subscribe_drop_unsubscribes() {
+        let reg = Arc::new(SubjectRegistry::new());
+        let key = reg.fresh_key();
+        let fut = reg.subscribe(key, None);
+        assert_eq!(reg.pending_count(), 1);
+        drop(fut);
+        // Drop guard runs unsubscribe; entry gone.
+        assert_eq!(reg.pending_count(), 0);
     }
 
     #[tokio::test]

@@ -21,12 +21,12 @@ use crate::config::Config;
 use crate::position::{offset_to_position, position_to_offset};
 use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionKind};
 
-use effect_runtime::RtCtxBuilder;
+use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor, PathSeg};
 use pipeline::_2_pipeline::Pipeline;
 use pipeline::effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect,
-    ReadBytesBatcher, ReadBytesEffect,
+    ReadBytesBatcher, ReadBytesEffect, TagStore, TagWriteBatcher, TagWriteEffect,
 };
 use pipeline::readers::FileSource;
 
@@ -327,7 +327,11 @@ async fn render_enriched_hover(
         seed_roots.insert(Arc::from(seed.slug.as_str()), seed.root.clone());
         let source: Arc<dyn FileSource> =
             Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
+        let tag_store = Arc::new(TagStore::new());
+        let registry = Arc::new(SubjectRegistry::new());
         let ctx = RtCtxBuilder::new()
+            .with_store(tag_store.clone())
+            .with_store(registry.clone())
             .register_pure::<FsListFilesEffect, _>(
                 256,
                 FsListFilesBatcher::new(source.clone()),
@@ -337,6 +341,10 @@ async fn render_enriched_hover(
                 ReadBytesBatcher::new(source),
             )
             .register::<PrintEffect, _>(PrintBatcher::buffer().0)
+            .register::<Yield, _>(YieldBatcher::new(registry.clone()))
+            .register::<TagWriteEffect, _>(
+                TagWriteBatcher::new(tag_store, registry.clone()),
+            )
             .build();
 
         let mut c = Cursor::default();
