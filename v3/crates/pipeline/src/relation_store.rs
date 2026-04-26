@@ -23,6 +23,12 @@ use crate::Pipeline;
 /// One row in a relation bag — opaque to the runtime, downstream zips by hole.
 pub type Row = Vec<Arc<str>>;
 
+/// One row sunk by a rule's body terminal cursors. Capture-named rather
+/// than positional. Insertion order preserved: the order ops on the body
+/// emitted captures into the cursor. Drain layers (e.g. SQLite) compute
+/// the column union across rows and write a row-per-row.
+pub type RuleRow = Vec<(Arc<str>, Arc<str>)>;
+
 /// `SubjectKind` for relation wakes. Payload is the freshly-pushed row, so
 /// readers receive it directly without re-snapshotting under the store mutex.
 pub struct RelationWake;
@@ -68,8 +74,15 @@ pub enum SnapshotOrSubscribed {
 /// `Arc<RelationStore>` at registration time.
 #[derive(Default)]
 pub struct RelationStore {
-    inner:  Mutex<HashMap<Arc<str>, Bag>>,
-    bodies: Mutex<HashMap<Arc<str>, Arc<Pipeline>>>,
+    inner:      Mutex<HashMap<Arc<str>, Bag>>,
+    bodies:     Mutex<HashMap<Arc<str>, Arc<Pipeline>>>,
+    /// Declared param names per rule. Used by `RuleCallOp` to bind
+    /// caller args into the body's capture namespace.
+    params:     Mutex<HashMap<Arc<str>, Vec<Arc<str>>>>,
+    /// Rows sunk by rule bodies. Capture-named, distinct from `inner`'s
+    /// positional `Row` shape. Drained at end of run by the SQLite
+    /// writer; one table per rule, column union across rows.
+    rule_rows:  Mutex<HashMap<Arc<str>, Vec<RuleRow>>>,
 }
 
 impl Store for RelationStore {}
@@ -166,14 +179,41 @@ impl RelationStore {
         out
     }
 
-    /// Stub: register a rule body pipeline under `name`. Wired by `rhu`.
+    /// Register a rule body pipeline under `name`. Idempotent: re-binding
+    /// overwrites. Called by the lower's pass-1 walk.
     pub fn bind_body(&self, name: Arc<str>, body: Arc<Pipeline>) {
         self.bodies.lock().unwrap().insert(name, body);
     }
 
-    /// Stub: fetch a rule body pipeline by name. Wired by `rhu`.
+    /// Fetch a rule body pipeline by name.
     pub fn body(&self, name: &str) -> Option<Arc<Pipeline>> {
         self.bodies.lock().unwrap().get(name).cloned()
+    }
+
+    /// Register the param name list for `name`. Empty `Vec` for arity-0.
+    pub fn bind_params(&self, name: Arc<str>, params: Vec<Arc<str>>) {
+        self.params.lock().unwrap().insert(name, params);
+    }
+
+    /// Fetch param names. Empty if rule unknown.
+    pub fn params(&self, name: &str) -> Vec<Arc<str>> {
+        self.params.lock().unwrap().get(name).cloned().unwrap_or_default()
+    }
+
+    /// Append one rule row under `name`.
+    pub fn push_rule_row(&self, name: &Arc<str>, row: RuleRow) {
+        self.rule_rows
+            .lock()
+            .unwrap()
+            .entry(name.clone())
+            .or_default()
+            .push(row);
+    }
+
+    /// Snapshot the entire rule-rows map. Drain-side helper for SQLite
+    /// writer; clones the inner Vecs.
+    pub fn rule_rows_snapshot(&self) -> HashMap<Arc<str>, Vec<RuleRow>> {
+        self.rule_rows.lock().unwrap().clone()
     }
 
     /// Snapshot every row currently in `name`'s bag. Used by JoinOp to

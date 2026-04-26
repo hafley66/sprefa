@@ -1,0 +1,22 @@
+# rule arity 0 / 1 / 2 smoke + sqlite drain.
+#
+# Each top-level rule def auto-fires once after pass-1 lower binds
+# body+params on RelationStore. Body terminal cursor's full capture set
+# becomes one RuleRow; sprefa-run drains rule_rows to <stem>.db at exit.
+#
+# Schema written:
+#   rule_arity_smoke__zero (id, R)
+#   rule_arity_smoke__one  (id, P, R)
+#   rule_arity_smoke__two  (id, A, B, R)
+
+rule(:zero) {
+  repo($R)
+}
+
+rule(:one, ${P?}) {
+  repo($R)
+}
+
+rule(:two, ${A?}, ${B?}) {
+  repo($R)
+}

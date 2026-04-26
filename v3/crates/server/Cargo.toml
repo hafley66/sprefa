@@ -24,6 +24,7 @@ serde          = { version = "1", features = ["derive"] }
 tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures        = "0.3"
+sqlx           = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.6"

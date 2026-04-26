@@ -45,9 +45,35 @@ and is on hold.
 | `glob`    | glob pattern          | pattern op exposing a regex; consumed by `fs` / `repo` arg slots                  |
 | `re`      | regex pattern         | pattern op exposing a regex; consumed by `fs` / `repo` arg slots                  |
 | `rule(N)` | single pipe or brace  | name a pipe or a group of pipes                                                   |
+| `tag`     | `(:r, $X, $Y)`        | append/read rows in a relational bag; `tag?` adds predicate / probe / join         |
+| `rule`    | `(:r, ${A?}, ...) {}` | parametric rule definition; body terminal cursors sink as relation rows           |
 
 Parametric rules + sub-grammar ops (`ast[lang]`, `json`, `md`) are
 specified in `parse.md` but not yet landed.
+
+## SQLite drain (end-of-run)
+
+`sprefa-run` writes every rule's terminal-cursor rows to a SQLite
+database at exit. Default db path is `<sprf_stem>.db` next to the
+`.sprf` source; override with `--out <path>`.
+
+Per-rule schema (v0/v1 parity, flat shape):
+
+- table `<sprf_stem>__<rule_name>`
+- `id INTEGER PRIMARY KEY AUTOINCREMENT`
+- synthetic columns from cursor fields lead: `repo`, `rev`, `fs`
+- one paired (`<cap>`, `<cap>_norm`) `TEXT` per distinct user capture
+- `_norm` is `sprf_norm()` (strip non-ASCII-alphanumeric + lowercase),
+  ported 1:1 from `crates/config/src/normalize.rs`
+- `CREATE INDEX <table>_<col>_norm_idx` per normalized column
+- FTS5 trigram virtual table `<table>_fts` indexing every `_norm`
+  column with `content=` link + ai/ad/au sync triggers
+- pool PRAGMAs: `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`
+
+Tables drop+recreate each run. Incremental caching (sprf_meta +
+content_hash + scanner_hash) is filed under bd `sprefa-upb` and not
+yet landed; `norm2` (configurable suffix-strip) under `sprefa-9ma`;
+shared `strings`/`refs`/`files` dedup tier filed separately.
 
 ## Quick recipe
 

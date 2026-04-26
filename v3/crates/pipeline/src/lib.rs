@@ -48,12 +48,13 @@ pub use effects::{
     ReadBytesEffect, WriteFileBatcher, WriteFileEffect, WriteFileSink,
 };
 pub use relation_store::{
-    Bag, RelationStore, RelationWake, Row, SnapshotOrSubscribed, WriteBatcher, WriteEffect,
+    Bag, RelationStore, RelationWake, Row, RuleRow, SnapshotOrSubscribed, WriteBatcher,
+    WriteEffect,
 };
 pub use op_ctor::{OpCtor, OpLowering, PatternCtor};
 pub use ops::{
-    AstGrepOp, CommentOp, GlobOp, JsonOp, PrintOp, ReOp, ReadOp, StrOp, StrValue, VoidOp,
-    WriteFileOp,
+    AstGrepOp, CommentOp, GlobOp, JsonOp, PrintOp, ReOp, ReadOp, RelationArg, RuleCallOp, StrOp,
+    StrValue, VoidOp, WriteFileOp,
 };
 pub use pattern_op::{PatternDiagnostic, PatternOp};
 pub use registry::Registry;
