@@ -1,1 +1,1 @@
-20260425.10.ast-outer-prefix-and-rule-store-workspace-discovery.md
+20260426.0.render-write-cursor-lsp-severity-vision-lock.md
