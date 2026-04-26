@@ -216,6 +216,23 @@ impl Op for FsOp {
     fn arg_spec(&self) -> &[ArgSpec] {
         FS_ARG_SPEC
     }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        match &self.mode {
+            FsMode::Filter(op) => {
+                h.update(b"\x00filter\x00");
+                let _ = op.cache_key(h);
+            }
+            FsMode::Bind { name, pat } => {
+                h.update(b"\x00bind\x00");
+                h.update(name.as_bytes());
+                h.update(&[0u8]);
+                let _ = pat.cache_key(h);
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]

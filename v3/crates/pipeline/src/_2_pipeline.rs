@@ -32,6 +32,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::_0_cursor::{Cursor, PathSeg};
 use crate::_1_op::Op;
+use crate::cache_key::{batch_fingerprint, OpCache};
 use effect_runtime::RtCtx;
 
 pub enum Pipeline {
@@ -51,8 +52,38 @@ impl Pipeline {
         match self {
             Pipeline::Op(op) => {
                 let name = op.name();
-                let stream = op
-                    .pipe_flat_map(ctx, upstream)
+                // Probe op cacheability once. If the op declares itself
+                // cacheable AND an OpCache store is bound on the ctx, we
+                // route per-batch through a cached `pipe` call. Otherwise
+                // fall through to the standard `pipe_flat_map`.
+                let cacheable = {
+                    let mut probe = blake3::Hasher::new();
+                    op.cache_key(&mut probe)
+                };
+                let cache: Option<Arc<OpCache>> = ctx.store::<OpCache>();
+                let inner: BoxStream<'a, Arc<[Cursor]>> = match (cacheable, cache) {
+                    (true, Some(cache)) if cache.enabled => {
+                        let op_arc = op.clone();
+                        Box::pin(upstream.then(move |batch| {
+                            let cache = cache.clone();
+                            let op = op_arc.clone();
+                            async move {
+                                let mut h = blake3::Hasher::new();
+                                h.update(&batch_fingerprint(&batch));
+                                let _ = op.cache_key(&mut h);
+                                let key = *h.finalize().as_bytes();
+                                if let Some(hit) = cache.get(&key) {
+                                    return hit;
+                                }
+                                let out = op.pipe(ctx, batch).await;
+                                cache.insert(key, out.clone());
+                                out
+                            }
+                        }))
+                    }
+                    _ => op.pipe_flat_map(ctx, upstream),
+                };
+                let stream = inner
                     .enumerate()
                     .map(move |(step, batch)| {
                         let mut v: Vec<Cursor> = batch.iter().cloned().collect();

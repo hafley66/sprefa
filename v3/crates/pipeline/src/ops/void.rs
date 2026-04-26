@@ -19,6 +19,11 @@ impl Op for VoidOp {
     fn pipe<'a>(&'a self, _ctx: &'a RtCtx, _batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
         Box::pin(async move { Arc::<[Cursor]>::from(Vec::<Cursor>::new()) })
     }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        true
+    }
 }
 
 impl OpCtor for VoidOp {

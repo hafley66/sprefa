@@ -24,6 +24,7 @@ use pipeline::effects::{
     PrintBatcher, PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect,
     ReadBytesBatcher, ReadBytesEffect,
 };
+use pipeline::cache_key::OpCache;
 use pipeline::ops::{RuleCallOp, RulePredicateOp};
 use pipeline::rule_def;
 use pipeline::rule_hash::{self, RuleHashes};
@@ -159,9 +160,11 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
             CacheLayer::new(1024, FsListFilesBatcher::new(file_source.clone()));
         let read_cache: CacheLayer<ReadBytesEffect> =
             CacheLayer::new(65_536, ReadBytesBatcher::new(file_source.clone()));
+        let op_cache = Arc::new(OpCache::new(cfg.run.cache));
         let ctx = RtCtxBuilder::new()
             .with_store(relation_store.clone())
             .with_store(subject_registry.clone())
+            .with_store(op_cache.clone())
             .register_domain_aware::<FsListFilesEffect, _>(listing_cache.clone())
             .register_domain_aware::<ReadBytesEffect, _>(read_cache.clone())
             .register::<ReadBytesBatchEffect, _>(

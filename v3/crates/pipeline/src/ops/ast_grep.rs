@@ -144,6 +144,17 @@ impl Op for AstGrepOp {
     fn bound_captures(&self) -> &[Arc<str>] { &self.bound_caps }
 
     fn term_positions(&self) -> &[crate::TermPosition] { &self.term_positions }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        h.update(&[0u8]);
+        h.update(self.lang.to_string().as_bytes());
+        h.update(&[0u8]);
+        // `_src` is the raw pattern body the op was compiled from; pair it
+        // with lang for identity.
+        h.update(self._src.as_bytes());
+        true
+    }
 }
 
 /// Per-cursor scan with a pre-parsed grep tree. Shared by `pipe` (which

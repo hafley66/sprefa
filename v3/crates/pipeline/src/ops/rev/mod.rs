@@ -170,6 +170,21 @@ impl Op for RevOp {
     }
 
     fn arg_spec(&self) -> &[ArgSpec] { REV_ARG_SPEC }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        match &self.mode {
+            RevMode::Filter(op) => {
+                h.update(b"\x00filter\x00");
+                let _ = op.cache_key(h);
+            }
+            RevMode::Bind(name) => {
+                h.update(b"\x00bind\x00");
+                h.update(name.as_bytes());
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]

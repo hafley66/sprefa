@@ -140,6 +140,22 @@ impl Op for RepoOp {
     }
 
     fn arg_spec(&self) -> &[ArgSpec] { REPO_ARG_SPEC }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        match &self.mode {
+            RepoMode::Filter(op) => {
+                h.update(b"\x00filter\x00");
+                // Recurse: pattern op's identity (glob/re source) feeds in.
+                let _ = op.cache_key(h);
+            }
+            RepoMode::Bind(name) => {
+                h.update(b"\x00bind\x00");
+                h.update(name.as_bytes());
+            }
+        }
+        true
+    }
 }
 
 /// `$NAME` → `NAME`. Whitespace is the caller's job.

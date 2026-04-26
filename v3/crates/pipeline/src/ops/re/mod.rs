@@ -171,6 +171,13 @@ impl Op for ReOp {
         )
         .ok()
     }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        h.update(&[0u8]);
+        h.update(self.regex.as_str().as_bytes());
+        true
+    }
 }
 
 impl PatternOp for ReOp {

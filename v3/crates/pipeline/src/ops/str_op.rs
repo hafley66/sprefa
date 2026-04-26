@@ -111,6 +111,26 @@ impl Op for StrOp {
             vec![out]
         }))
     }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        h.update(&[0u8]);
+        for seg in &self.template {
+            match seg {
+                StrSeg::Lit(s) => {
+                    h.update(b"L");
+                    h.update(s.as_bytes());
+                    h.update(&[0u8]);
+                }
+                StrSeg::Term(name) => {
+                    h.update(b"T");
+                    h.update(name.as_bytes());
+                    h.update(&[0u8]);
+                }
+            }
+        }
+        true
+    }
 }
 
 // ---------------------------------------------------------------------------

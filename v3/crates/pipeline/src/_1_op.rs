@@ -99,6 +99,14 @@ pub trait Op: Send + Sync + std::fmt::Debug + 'static {
     ) -> Option<Regex> { None }
 
     fn term_positions(&self) -> &[TermPosition] { &[] }
+
+    /// Append this op's identity to the hasher. Return true if the op is
+    /// cacheable. Default = false (skip cache for unknown / side-effecting ops).
+    ///
+    /// Cacheable ops MUST write `self.name().as_bytes()` first then any config
+    /// bytes that distinguish two instances. The runner composes the final
+    /// cache key as blake3(input_fingerprint || op_cache_bytes).
+    fn cache_key(&self, _h: &mut blake3::Hasher) -> bool { false }
 }
 
 /// One capture token's location inside a raw paren-body op. `range` is

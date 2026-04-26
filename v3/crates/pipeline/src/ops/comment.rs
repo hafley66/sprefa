@@ -228,6 +228,21 @@ impl Op for CommentOp {
                 .collect()
         }))
     }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        h.update(&[0u8]);
+        h.update(self.open.as_str().as_bytes());
+        h.update(&[0u8]);
+        if let Some(close) = &self.close {
+            h.update(close.as_str().as_bytes());
+        }
+        h.update(&[0u8]);
+        if let Some(name) = &self.label_capture {
+            h.update(name.as_bytes());
+        }
+        true
+    }
 }
 
 // --------------------------------------------------------------------

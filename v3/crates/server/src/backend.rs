@@ -332,9 +332,11 @@ async fn render_enriched_hover(
             Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
         let relation_store = Arc::new(RelationStore::new());
         let registry = Arc::new(SubjectRegistry::<RelationWake>::new());
+        let op_cache = Arc::new(pipeline::cache_key::OpCache::new(true));
         let ctx = RtCtxBuilder::new()
             .with_store(relation_store.clone())
             .with_store(registry.clone())
+            .with_store(op_cache.clone())
             .register_pure::<FsListFilesEffect, _>(
                 256,
                 FsListFilesBatcher::new(source.clone()),

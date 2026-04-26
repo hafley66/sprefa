@@ -95,6 +95,13 @@ impl Op for CursorRefOp {
             vec![out]
         }))
     }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        h.update(&[0u8]);
+        h.update(self.joined.as_bytes());
+        true
+    }
 }
 
 impl OpCtor for CursorRefOp {

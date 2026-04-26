@@ -90,6 +90,11 @@ impl Op for ReadOp {
             }
         }))
     }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        true
+    }
 }
 
 #[cfg(test)]

@@ -144,6 +144,15 @@ impl Op for JsonOp {
     fn bound_captures(&self) -> &[Arc<str>] { &self.bound_caps }
 
     fn term_positions(&self) -> &[crate::TermPosition] { &self.term_positions }
+
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        h.update(&[0u8]);
+        // Compiled steps are the canonical body identity; their Debug
+        // shape captures key matchers, captures, recursion flags etc.
+        h.update(format!("{:?}", self.steps).as_bytes());
+        true
+    }
 }
 
 // ---------------------------------------------------------------------------
