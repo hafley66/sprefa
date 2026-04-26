@@ -673,15 +673,44 @@ mod tests {
 
     fn dummy_span() -> std::ops::Range<usize> { 0..0 }
 
-    /// Test ctx with `AstParseEffect` registered against a synchronous
-    /// passthrough handler. Tests bypass the `BoundedWorkSteal` worker
-    /// pool because parse work is small and synchronous in unit tests.
+    /// Synthetic-overhead pause applied to every `AstParseEffect`
+    /// dispatch in the ast-grep operator tests. Establishes a known
+    /// baseline so future perf comparisons can subtract a fixed
+    /// per-dispatch latency. Adjust here, not per-test.
+    const SYNTHETIC_PAUSE: std::time::Duration =
+        std::time::Duration::from_millis(16);
+
+    /// Async batcher that sleeps `SYNTHETIC_PAUSE` before delegating to
+    /// the sync `ast_parse`. Drop-in replacement for `Passthrough` when
+    /// a known synthetic overhead is wanted.
+    struct PausedAstParse;
+    impl effect_runtime::Batcher<crate::effects::AstParseEffect> for PausedAstParse {
+        fn run(
+            &self,
+            req: crate::effects::AstParseEffect,
+            cancel: effect_runtime::CancellationToken,
+        ) -> effect_runtime::BoxFuture<
+            'static,
+            <crate::effects::AstParseEffect as effect_runtime::EffectKind>::Response,
+        > {
+            Box::pin(async move {
+                tokio::select! {
+                    _ = tokio::time::sleep(SYNTHETIC_PAUSE) => crate::effects::ast_parse(req),
+                    _ = cancel.cancelled() => None,
+                }
+            })
+        }
+    }
+
+    /// Test ctx with `AstParseEffect` registered against the
+    /// `PausedAstParse` batcher. Tests bypass the `BoundedWorkSteal`
+    /// worker pool because parse work is small in unit tests; the
+    /// 16 ms synthetic pause stands in as a measurable baseline.
     fn test_ctx() -> RtCtx {
         use effect_runtime::RtCtxBuilder;
-        use effect_runtime::batchers::Passthrough;
-        use crate::effects::{ast_parse, AstParseEffect};
+        use crate::effects::AstParseEffect;
         RtCtxBuilder::new()
-            .register::<AstParseEffect, _>(Passthrough::<AstParseEffect, _>::new(ast_parse))
+            .register::<AstParseEffect, _>(PausedAstParse)
             .build()
     }
 
@@ -822,5 +851,111 @@ mod tests {
             .collect();
         tys.sort();
         assert_eq!(tys, vec!["My".to_string(), "Other".to_string()]);
+    }
+
+    // --- synthetic-pause baseline tests ---
+    //
+    // These pin the load-bearing properties around `SYNTHETIC_PAUSE`:
+    //
+    //   A. Floor — a real dispatch pays the pause (catches accidental
+    //      `Passthrough` regression).
+    //   B. Cancellability — a `cx.cancel_all()` mid-pause resolves the
+    //      dispatch in « one pause (catches `select!` or cancel-token
+    //      propagation regressions).
+    //   C. Parallelism — N concurrent dispatches finish in « N pauses
+    //      (catches accidental serialization in the batcher pool).
+    //
+    // Bounds are slack-tolerant: the lower edge is "pause not paid" and
+    // the upper edge is "cancel/parallelism is broken". CI variance
+    // sits comfortably inside the gap.
+
+    fn timing_op() -> AstGrepOp {
+        lower("ast[rust](fn ${N}() {})").unwrap()
+    }
+
+    fn timing_cursor() -> Cursor {
+        let body: &[u8] = b"fn alpha() {}\n";
+        Cursor::new(Arc::from(body))
+    }
+
+    #[tokio::test]
+    async fn synthetic_pause_is_paid_per_dispatch() {
+        let ctx = test_ctx();
+        let op = timing_op();
+        let c = timing_cursor();
+
+        let t0 = std::time::Instant::now();
+        let _ = op.pipe(&ctx, c).await;
+        let elapsed = t0.elapsed();
+
+        // Lower edge: 15ms (just under 16) absorbs sleep wake-up jitter
+        // without letting a `Passthrough` regression sneak through.
+        assert!(
+            elapsed >= std::time::Duration::from_millis(15),
+            "synthetic pause was not paid: {elapsed:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn synthetic_pause_is_cancellable_mid_flight() {
+        let ctx = test_ctx();
+        let op = timing_op();
+        let c = timing_cursor();
+
+        let canceller = {
+            let ctx = ctx.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                ctx.cancel_all();
+            })
+        };
+
+        let t0 = std::time::Instant::now();
+        let out = op.pipe(&ctx, c).await;
+        let elapsed = t0.elapsed();
+        canceller.await.unwrap();
+
+        // Cancel-mid-pause must resolve well before the full pause.
+        // Half the pause is the conservative ceiling; in practice it
+        // resolves in 2-3 ms.
+        assert!(
+            elapsed < SYNTHETIC_PAUSE / 2,
+            "cancel did not preempt pause: {elapsed:?}",
+        );
+        // Cancelled parse returns None → ast-grep op emits no cursors.
+        assert!(out.is_empty(), "cancel should yield zero matches");
+    }
+
+    #[tokio::test]
+    async fn synthetic_pauses_parallelize_across_dispatches() {
+        let ctx = test_ctx();
+        let n: usize = 8;
+
+        let t0 = std::time::Instant::now();
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..n {
+            let ctx = ctx.clone();
+            let op = timing_op();
+            let c = timing_cursor();
+            set.spawn(async move { op.pipe(&ctx, c).await });
+        }
+        while let Some(j) = set.join_next().await {
+            let out = j.unwrap();
+            assert_eq!(out.len(), 1);
+        }
+        let elapsed = t0.elapsed();
+
+        // Floor: pause was actually paid (>= one full pause).
+        assert!(
+            elapsed >= std::time::Duration::from_millis(15),
+            "even one pause was not paid: {elapsed:?}",
+        );
+        // Ceiling: real parallelism — wall time below the half-serial
+        // cost. Generous slack handles single-thread test runners.
+        let serial_half = SYNTHETIC_PAUSE * (n as u32 / 2);
+        assert!(
+            elapsed < serial_half,
+            "{n} dispatches serialized to {elapsed:?}, expected < {serial_half:?}",
+        );
     }
 }
