@@ -26,7 +26,7 @@ use std::sync::Mutex;
 
 use effect_runtime::{
     Batcher, BoxFuture, CancellationToken, EffectKind, PureEffect, Store,
-    SubjectKey, SubjectRegistry, Unsubscribed, NextValue,
+    SubjectKey, SubjectKind, SubjectRegistry, Unsubscribed,
 };
 
 use crate::readers::FileSource;
@@ -726,22 +726,33 @@ pub fn ast_parse(req: AstParseEffect) -> <AstParseEffect as EffectKind>::Respons
 // subscription override is a `pipe_flat_map` shape, not an effect.
 // ---------------------------------------------------------------------------
 
+/// One row in a tag bag — opaque to the runtime, downstream zips by hole.
+pub type TagRow = Vec<Arc<str>>;
+
+/// `SubjectKind` for tag wakes. Payload is the freshly-pushed row, so
+/// readers receive it directly without re-snapshotting under the store
+/// mutex.
+pub struct TagWake;
+impl SubjectKind for TagWake {
+    type Payload = TagRow;
+}
+
 /// One bag of rows + parked subscribers waiting for the next write.
 #[derive(Default)]
 pub struct Bag {
-    pub rows: Vec<Vec<Arc<str>>>,
-    /// Subjects pre-registered on `SubjectRegistry` (entries already
-    /// inserted in `pending`). On write, each is woken via
-    /// `registry.next(key, _)` and removed from this list.
-    pub waiters: Vec<SubjectKey>,
+    pub rows: Vec<TagRow>,
+    /// Subjects pre-registered on `SubjectRegistry<TagWake>` (entries
+    /// already inserted in `pending`). On write, each is woken via
+    /// `registry.next(key, row)` and removed from this list.
+    pub waiters: Vec<SubjectKey<TagWake>>,
 }
 
 /// Outcome of an atomic snapshot-or-subscribe call. Either the caller
 /// gets the tail of new rows since `last_idx`, or it gets a future that
 /// resolves the next time a writer drains the waiter list.
 pub enum SnapshotOrSubscribed {
-    Rows(Vec<Vec<Arc<str>>>),
-    Subscribed(BoxFuture<'static, Result<NextValue, Unsubscribed>>),
+    Rows(Vec<TagRow>),
+    Subscribed(BoxFuture<'static, Result<Arc<TagRow>, Unsubscribed>>),
 }
 
 /// Relational bag store. `TagStore` holds one `Bag` per tag name.
@@ -783,13 +794,13 @@ impl TagStore {
         &self,
         name: &Arc<str>,
         last_idx: usize,
-        key:      SubjectKey,
-        registry: &Arc<SubjectRegistry>,
+        key:      SubjectKey<TagWake>,
+        registry: &Arc<SubjectRegistry<TagWake>>,
     ) -> SnapshotOrSubscribed {
         let mut g = self.inner.lock().unwrap();
         let bag = g.entry(name.clone()).or_default();
         if bag.rows.len() > last_idx {
-            let tail: Vec<Vec<Arc<str>>> = bag.rows[last_idx..].to_vec();
+            let tail: Vec<TagRow> = bag.rows[last_idx..].to_vec();
             SnapshotOrSubscribed::Rows(tail)
         } else {
             let fut = registry.subscribe(key, None);
@@ -801,7 +812,7 @@ impl TagStore {
     /// Append `row` to the named bag. Returns the waiter list that was
     /// parked at the time of the write; caller fires `registry.next` on
     /// each.
-    pub fn push_row(&self, name: &Arc<str>, row: Vec<Arc<str>>) -> Vec<SubjectKey> {
+    pub fn push_row(&self, name: &Arc<str>, row: TagRow) -> Vec<SubjectKey<TagWake>> {
         let mut g = self.inner.lock().unwrap();
         let bag = g.entry(name.clone()).or_default();
         bag.rows.push(row);
@@ -827,11 +838,11 @@ impl EffectKind for TagWriteEffect {
 
 pub struct TagWriteBatcher {
     store:    Arc<TagStore>,
-    registry: Arc<SubjectRegistry>,
+    registry: Arc<SubjectRegistry<TagWake>>,
 }
 
 impl TagWriteBatcher {
-    pub fn new(store: Arc<TagStore>, registry: Arc<SubjectRegistry>) -> Self {
+    pub fn new(store: Arc<TagStore>, registry: Arc<SubjectRegistry<TagWake>>) -> Self {
         Self { store, registry }
     }
 }
@@ -845,10 +856,12 @@ impl Batcher<TagWriteEffect> for TagWriteBatcher {
         let store = self.store.clone();
         let registry = self.registry.clone();
         Box::pin(async move {
-            let waiters = store.push_row(&req.name, req.row);
-            // Single shared sentinel value; readers re-snapshot anyway,
-            // the wake just signals "rows changed".
-            let wake: NextValue = Arc::new(());
+            let row = req.row;
+            let waiters = store.push_row(&req.name, row.clone());
+            // Ship the row through the wake. Each waiter receives a cheap
+            // Arc clone; the read loop emits without re-acquiring the
+            // store mutex for a snapshot.
+            let wake: Arc<TagRow> = Arc::new(row);
             for k in waiters {
                 registry.next(k, wake.clone());
             }

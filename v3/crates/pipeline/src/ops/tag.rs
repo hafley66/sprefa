@@ -29,7 +29,7 @@ use effect_runtime::{BoxFuture, CancellationToken, RtCtx, SubjectRegistry};
 
 use crate::_0_cursor::{Capture, Cursor};
 use crate::_1_op::{per_cursor, Op, DEFAULT_PIPE_CONCURRENCY};
-use crate::effects::{SnapshotOrSubscribed, TagStore, TagWriteEffect};
+use crate::effects::{SnapshotOrSubscribed, TagRow, TagStore, TagWake, TagWriteEffect};
 use crate::op_ctor::OpCtor;
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::{TermMode, Value};
@@ -85,8 +85,8 @@ impl Op for TagOp {
             TagOp::Read { name, holes } => {
                 let store = ctx.store::<TagStore>()
                     .expect("TagStore not registered on RtCtx");
-                let registry = ctx.store::<SubjectRegistry>()
-                    .expect("SubjectRegistry not registered on RtCtx");
+                let registry = ctx.store::<SubjectRegistry<TagWake>>()
+                    .expect("SubjectRegistry<TagWake> not registered on RtCtx");
                 let cancel = ctx.root_cancel();
                 Box::pin(
                     upstream
@@ -117,7 +117,7 @@ impl Op for TagOp {
 /// subscribe atomically and await the next write or unsubscribe.
 fn subscribe_stream(
     store:    Arc<TagStore>,
-    registry: Arc<SubjectRegistry>,
+    registry: Arc<SubjectRegistry<TagWake>>,
     cancel:   CancellationToken,
     name:     Arc<str>,
     holes:    Arc<[Arc<str>]>,
@@ -125,7 +125,7 @@ fn subscribe_stream(
 ) -> BoxStream<'static, Arc<[Cursor]>> {
     struct State {
         store:    Arc<TagStore>,
-        registry: Arc<SubjectRegistry>,
+        registry: Arc<SubjectRegistry<TagWake>>,
         cancel:   CancellationToken,
         name:     Arc<str>,
         holes:    Arc<[Arc<str>]>,
@@ -153,7 +153,16 @@ fn subscribe_stream(
                         _ = cancel.cancelled() => Err(effect_runtime::Unsubscribed),
                     };
                     match resolved {
-                        Ok(_) => continue,
+                        Ok(row_arc) => {
+                            // Wake delivered the row directly; emit it
+                            // without re-locking the store. Loop will
+                            // re-snapshot on the next iteration to drain
+                            // any further rows accumulated meanwhile.
+                            let row: TagRow = (*row_arc).clone();
+                            let batch = rows_to_batch(&s.cursor, &s.holes, vec![row]);
+                            s.last_idx += 1;
+                            return Some((batch, s));
+                        }
                         Err(_) => return None,
                     }
                 }
@@ -308,13 +317,13 @@ mod tests {
     /// to one shared `TagStore` + `SubjectRegistry`. Returns
     /// `(ctx, store, registry)` so tests can drive writes by calling
     /// `ctx.put(TagWriteEffect)` and assert via the store directly.
-    fn build_tag_ctx() -> (RtCtx, Arc<TagStore>, Arc<SubjectRegistry>) {
+    fn build_tag_ctx() -> (RtCtx, Arc<TagStore>, Arc<SubjectRegistry<TagWake>>) {
         let store = Arc::new(TagStore::new());
-        let registry = Arc::new(SubjectRegistry::new());
+        let registry = Arc::new(SubjectRegistry::<TagWake>::new());
         let ctx = RtCtxBuilder::new()
             .with_store(store.clone())
             .with_store(registry.clone())
-            .register::<Yield, _>(YieldBatcher::new(registry.clone()))
+            .register::<Yield<TagWake>, _>(YieldBatcher::new(registry.clone()))
             .register::<TagWriteEffect, _>(
                 TagWriteBatcher::new(store.clone(), registry.clone()),
             )

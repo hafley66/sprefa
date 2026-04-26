@@ -2,19 +2,20 @@
 //!
 //! Vocabulary (locked 2026-04-26):
 //!
-//! - **Yield**: op-side suspend point. Op calls `cx.put(Yield {..})` and
-//!   awaits a `Result<NextValue, Unsubscribed>`. JS-generator analogue.
+//! - **Yield**: op-side suspend point. Op calls `cx.put(Yield::<S> {..})`
+//!   and awaits a `Result<Arc<S::Payload>, Unsubscribed>`.
 //! - **Next**: outside-world resume. Outside code calls
 //!   `registry.next(key, value)` to deliver a value to the awaiting op.
-//!   `Subject.next(v)` from RxJS is the analogue.
 //! - **Unsubscribe**: outside-world cancel. Outside code calls
-//!   `registry.unsubscribe(key)` (or bulk via `unsubscribe_where`) to
-//!   tear down the subscription. The op's await resolves
-//!   `Err(Unsubscribed)`.
+//!   `registry.unsubscribe(key)` (or bulk via `unsubscribe_where`).
+//!   The op's await resolves `Err(Unsubscribed)`.
 //!
-//! Three runtime constructs collapse to this primitive: parked write
-//! effects (await user approval), tag-subscribe (await matching write),
-//! Pending captures (await upstream binding).
+//! Each `SubjectKind` instantiation is its own `EffectKind`, its own
+//! `TypeMap` slot, its own `SubjectRegistry`. Payload type is statically
+//! known at the call site; no `Any` downcast at the API boundary.
+//!
+//! Three planned consumers (parked write effects, tag-subscribe, Pending
+//! captures) declare three `SubjectKind` impls and live side by side.
 //!
 //! ## Cancellation paths
 //!
@@ -30,13 +31,15 @@
 //!
 //! ## Lineage
 //!
-//! `Yield` carries an opaque `Option<Lineage>` (boxed `Any`). The
-//! framework stays domain-neutral; consumers (e.g. the pipeline crate)
-//! attach their own `CursorLineage` struct and use `unsubscribe_where`
+//! `Yield` carries an opaque `Option<Lineage>` (boxed `Any`). Lineage
+//! erasure is independent of payload typing — different consumers attach
+//! their own struct (e.g. `CursorLineage`) and use `unsubscribe_where`
 //! with a downcast predicate to invalidate by upstream-cursor identity.
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -44,59 +47,84 @@ use tokio::sync::oneshot;
 
 use crate::{Batcher, BoxFuture, CancellationToken, EffectKind, Store};
 
-/// Identifier for a pending subject. Allocated by
-/// `SubjectRegistry::fresh_key`; opaque to consumers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SubjectKey(u64);
+/// Marker trait identifying a subject channel and its payload type.
+/// Implementors are zero-sized markers (`struct TagWake;`); the only
+/// associated item is the typed payload that wakes carry.
+pub trait SubjectKind: Send + Sync + 'static {
+    type Payload: Send + Sync + 'static;
+}
 
-impl SubjectKey {
-    pub fn raw(self) -> u64 { self.0 }
+/// Identifier for a pending subject in registry `S`. Allocated by
+/// `SubjectRegistry::<S>::fresh_key`; opaque to consumers. The phantom
+/// `S` keeps keys from one registry from being passed to another.
+pub struct SubjectKey<S: SubjectKind> {
+    id: u64,
+    _s: PhantomData<fn() -> S>,
+}
+
+impl<S: SubjectKind> SubjectKey<S> {
+    pub fn raw(self) -> u64 { self.id }
+}
+
+impl<S: SubjectKind> Clone for SubjectKey<S> {
+    fn clone(&self) -> Self { *self }
+}
+impl<S: SubjectKind> Copy for SubjectKey<S> {}
+impl<S: SubjectKind> PartialEq for SubjectKey<S> {
+    fn eq(&self, other: &Self) -> bool { self.id == other.id }
+}
+impl<S: SubjectKind> Eq for SubjectKey<S> {}
+impl<S: SubjectKind> Hash for SubjectKey<S> {
+    fn hash<H: Hasher>(&self, state: &mut H) { self.id.hash(state); }
+}
+impl<S: SubjectKind> std::fmt::Debug for SubjectKey<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SubjectKey<{}>({})", std::any::type_name::<S>(), self.id)
+    }
 }
 
 /// Sentinel error: the subject was unsubscribed before a value arrived.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Unsubscribed;
 
-/// Resume payload. `Arc<dyn Any>` keeps the runtime domain-neutral.
-/// Consumers downcast to their concrete type.
-pub type NextValue = Arc<dyn Any + Send + Sync>;
-
 /// Optional lineage tag attached at register time. Used by
 /// `unsubscribe_where` for bulk teardown when an upstream invariant
-/// changes. Consumers define their own struct (e.g. `CursorLineage`)
-/// and attach it as `Arc<MyLineage>`.
+/// changes. Consumers define their own struct and attach it as
+/// `Arc<MyLineage>`.
 pub type Lineage = Arc<dyn Any + Send + Sync>;
 
-/// Effect kind. Op author writes `cx.put(Yield { key, lineage }).await`.
-pub struct Yield {
-    pub key: SubjectKey,
+/// Effect kind. Op author writes
+/// `cx.put(Yield::<S> { key, lineage }).await`.
+pub struct Yield<S: SubjectKind> {
+    pub key: SubjectKey<S>,
     pub lineage: Option<Lineage>,
 }
 
-impl EffectKind for Yield {
-    type Response = Result<NextValue, Unsubscribed>;
+impl<S: SubjectKind> EffectKind for Yield<S> {
+    type Response = Result<Arc<S::Payload>, Unsubscribed>;
 }
 
-struct Entry {
-    sender: oneshot::Sender<Result<NextValue, Unsubscribed>>,
+struct Entry<S: SubjectKind> {
+    sender: oneshot::Sender<Result<Arc<S::Payload>, Unsubscribed>>,
     lineage: Option<Lineage>,
 }
 
-/// Keyed registry of pending Yield calls. Held as a `Store` on `RtCtx`.
-/// Outside code (LSP server, CLI runner, tag-write batcher) gets it via
-/// `cx.store::<SubjectRegistry>()` and drives `next` / `unsubscribe`.
-pub struct SubjectRegistry {
+/// Keyed registry of pending Yield calls for subject kind `S`. Held as
+/// a `Store` on `RtCtx`. Outside code (LSP server, CLI runner, write
+/// batcher) gets it via `cx.store::<SubjectRegistry<S>>()` and drives
+/// `next` / `unsubscribe`.
+pub struct SubjectRegistry<S: SubjectKind> {
     next_id: AtomicU64,
-    pending: Mutex<HashMap<SubjectKey, Entry>>,
+    pending: Mutex<HashMap<SubjectKey<S>, Entry<S>>>,
 }
 
-impl Default for SubjectRegistry {
+impl<S: SubjectKind> Default for SubjectRegistry<S> {
     fn default() -> Self { Self::new() }
 }
 
-impl Store for SubjectRegistry {}
+impl<S: SubjectKind> Store for SubjectRegistry<S> {}
 
-impl SubjectRegistry {
+impl<S: SubjectKind> SubjectRegistry<S> {
     pub fn new() -> Self {
         Self {
             next_id: AtomicU64::new(1),
@@ -107,8 +135,11 @@ impl SubjectRegistry {
     /// Allocate a fresh subject key. Op authors call this before
     /// dispatching `Yield` so the same key is reachable to whichever
     /// outside path will resume them.
-    pub fn fresh_key(&self) -> SubjectKey {
-        SubjectKey(self.next_id.fetch_add(1, Ordering::Relaxed))
+    pub fn fresh_key(&self) -> SubjectKey<S> {
+        SubjectKey {
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            _s: PhantomData,
+        }
     }
 
     /// Number of currently-pending subjects. Useful for tests + debug.
@@ -117,10 +148,9 @@ impl SubjectRegistry {
     }
 
     /// Resume the op awaiting `key` with `value`. Returns true if a
-    /// pending subject was found and woken; false if no such key (e.g.
-    /// already resolved or unsubscribed). Concurrent `next` calls on
-    /// the same key: first wins, rest return false.
-    pub fn next(&self, key: SubjectKey, value: NextValue) -> bool {
+    /// pending subject was found and woken; false if no such key.
+    /// Concurrent `next` calls on the same key: first wins.
+    pub fn next(&self, key: SubjectKey<S>, value: Arc<S::Payload>) -> bool {
         let entry = self.pending.lock().unwrap().remove(&key);
         match entry {
             Some(e) => {
@@ -132,7 +162,7 @@ impl SubjectRegistry {
     }
 
     /// Cancel `key`. Returns true if a pending subject was found.
-    pub fn unsubscribe(&self, key: SubjectKey) -> bool {
+    pub fn unsubscribe(&self, key: SubjectKey<S>) -> bool {
         let entry = self.pending.lock().unwrap().remove(&key);
         match entry {
             Some(e) => {
@@ -150,7 +180,7 @@ impl SubjectRegistry {
         F: FnMut(&dyn Any) -> bool,
     {
         let mut guard = self.pending.lock().unwrap();
-        let to_remove: Vec<SubjectKey> = guard
+        let to_remove: Vec<SubjectKey<S>> = guard
             .iter()
             .filter_map(|(k, e)| match e.lineage.as_ref() {
                 Some(lin) if pred(lin.as_ref()) => Some(*k),
@@ -181,9 +211,9 @@ impl SubjectRegistry {
 
     fn register(
         &self,
-        key: SubjectKey,
+        key: SubjectKey<S>,
         lineage: Option<Lineage>,
-    ) -> oneshot::Receiver<Result<NextValue, Unsubscribed>> {
+    ) -> oneshot::Receiver<Result<Arc<S::Payload>, Unsubscribed>> {
         let (tx, rx) = oneshot::channel();
         self.pending
             .lock()
@@ -202,18 +232,12 @@ impl SubjectRegistry {
     ///
     /// The returned future is `'static`, carries an internal Drop guard
     /// that calls [`unsubscribe`] when the future is dropped before
-    /// resolution (covers caller cancel via `select!`, future-drop, and
-    /// caller-side teardown).
-    ///
-    /// This is the door tag-style ops use; they hand `key` to a writer
-    /// that will call `next(key)` and need the entry to exist by the
-    /// time their await begins. `Yield` via `cx.put` rides the same
-    /// primitive (see [`YieldBatcher`]).
+    /// resolution.
     pub fn subscribe(
         self: &Arc<Self>,
-        key: SubjectKey,
+        key: SubjectKey<S>,
         lineage: Option<Lineage>,
-    ) -> BoxFuture<'static, Result<NextValue, Unsubscribed>> {
+    ) -> BoxFuture<'static, Result<Arc<S::Payload>, Unsubscribed>> {
         let rx = self.register(key, lineage);
         let guard = YieldGuard { registry: self.clone(), key };
         Box::pin(async move {
@@ -226,23 +250,26 @@ impl SubjectRegistry {
     }
 }
 
-/// Batcher for `Yield`. Construct once with an `Arc<SubjectRegistry>`
+/// Batcher for `Yield<S>`. Construct once with an `Arc<SubjectRegistry<S>>`
 /// shared with whoever drives `next` / `unsubscribe`. Register on the
 /// builder alongside the store:
 ///
 /// ```ignore
-/// let registry = Arc::new(SubjectRegistry::new());
+/// struct TagWake;
+/// impl SubjectKind for TagWake { type Payload = Vec<Arc<str>>; }
+///
+/// let registry = Arc::new(SubjectRegistry::<TagWake>::new());
 /// let cx = RtCtxBuilder::new()
 ///     .with_store(registry.clone())
-///     .register::<Yield, _>(YieldBatcher::new(registry.clone()))
+///     .register::<Yield<TagWake>, _>(YieldBatcher::new(registry.clone()))
 ///     .build();
 /// ```
-pub struct YieldBatcher {
-    registry: Arc<SubjectRegistry>,
+pub struct YieldBatcher<S: SubjectKind> {
+    registry: Arc<SubjectRegistry<S>>,
 }
 
-impl YieldBatcher {
-    pub fn new(registry: Arc<SubjectRegistry>) -> Self {
+impl<S: SubjectKind> YieldBatcher<S> {
+    pub fn new(registry: Arc<SubjectRegistry<S>>) -> Self {
         Self { registry }
     }
 }
@@ -251,23 +278,23 @@ impl YieldBatcher {
 /// path that exits the `select!` (Next, Unsubscribe, cancel-token,
 /// future-drop from outside) hits this Drop. Already-resolved entries
 /// are no-ops because `unsubscribe` returns false.
-struct YieldGuard {
-    registry: Arc<SubjectRegistry>,
-    key: SubjectKey,
+struct YieldGuard<S: SubjectKind> {
+    registry: Arc<SubjectRegistry<S>>,
+    key: SubjectKey<S>,
 }
 
-impl Drop for YieldGuard {
+impl<S: SubjectKind> Drop for YieldGuard<S> {
     fn drop(&mut self) {
         self.registry.unsubscribe(self.key);
     }
 }
 
-impl Batcher<Yield> for YieldBatcher {
+impl<S: SubjectKind> Batcher<Yield<S>> for YieldBatcher<S> {
     fn run(
         &self,
-        req: Yield,
+        req: Yield<S>,
         cancel: CancellationToken,
-    ) -> BoxFuture<'static, Result<NextValue, Unsubscribed>> {
+    ) -> BoxFuture<'static, Result<Arc<S::Payload>, Unsubscribed>> {
         let fut = self.registry.subscribe(req.key, req.lineage);
         Box::pin(async move {
             tokio::select! {
@@ -284,29 +311,33 @@ mod tests {
     use crate::{RtCtx, RtCtxBuilder};
     use std::time::Duration;
 
-    fn build_cx() -> (RtCtx, Arc<SubjectRegistry>) {
-        let registry = Arc::new(SubjectRegistry::new());
+    /// Test subject: payload is a String so wakes carry typed values.
+    pub struct TestSubject;
+    impl SubjectKind for TestSubject {
+        type Payload = String;
+    }
+
+    type TestKey = SubjectKey<TestSubject>;
+    type TestRegistry = SubjectRegistry<TestSubject>;
+
+    fn build_cx() -> (RtCtx, Arc<TestRegistry>) {
+        let registry = Arc::new(TestRegistry::new());
         let cx = RtCtxBuilder::new()
             .with_store(registry.clone())
-            .register::<Yield, _>(YieldBatcher::new(registry.clone()))
+            .register::<Yield<TestSubject>, _>(YieldBatcher::new(registry.clone()))
             .build();
         (cx, registry)
     }
 
-    fn val(s: &'static str) -> NextValue {
+    fn val(s: &str) -> Arc<String> {
         Arc::new(s.to_string())
-    }
-
-    fn as_str(v: &NextValue) -> String {
-        v.downcast_ref::<String>().unwrap().clone()
     }
 
     #[tokio::test]
     async fn roundtrip_next_resolves_yield() {
         let (cx, reg) = build_cx();
         let key = reg.fresh_key();
-        let yield_fut =
-            cx.put(Yield { key, lineage: None });
+        let yield_fut = cx.put(Yield::<TestSubject> { key, lineage: None });
 
         let driver = {
             let reg = reg.clone();
@@ -316,9 +347,8 @@ mod tests {
             })
         };
 
-        let result = yield_fut.await;
-        let v = result.expect("Ok");
-        assert_eq!(as_str(&v), "hello");
+        let v = yield_fut.await.expect("Ok");
+        assert_eq!(&*v, "hello");
         assert_eq!(reg.pending_count(), 0);
         driver.await.unwrap();
     }
@@ -334,7 +364,7 @@ mod tests {
     async fn unsubscribe_resolves_with_err() {
         let (cx, reg) = build_cx();
         let key = reg.fresh_key();
-        let yield_fut = cx.put(Yield { key, lineage: None });
+        let yield_fut = cx.put(Yield::<TestSubject> { key, lineage: None });
 
         let driver = {
             let reg = reg.clone();
@@ -354,12 +384,9 @@ mod tests {
         let (cx, reg) = build_cx();
         let key = reg.fresh_key();
 
-        // Spawn a task that awaits the Yield, then abort it. Aborting
-        // drops the future while the Yield is pending, which exercises
-        // the YieldGuard Drop path.
         let cx_clone = cx.clone();
         let handle = tokio::spawn(async move {
-            let _ = cx_clone.put(Yield { key, lineage: None }).await;
+            let _ = cx_clone.put(Yield::<TestSubject> { key, lineage: None }).await;
         });
         tokio::time::sleep(Duration::from_millis(10)).await;
         assert_eq!(reg.pending_count(), 1, "registered while awaited");
@@ -374,7 +401,7 @@ mod tests {
     async fn runtime_cancel_resolves_err_and_gcs() {
         let (cx, reg) = build_cx();
         let key = reg.fresh_key();
-        let yield_fut = cx.put(Yield { key, lineage: None });
+        let yield_fut = cx.put(Yield::<TestSubject> { key, lineage: None });
 
         let driver = {
             let cx = cx.clone();
@@ -385,7 +412,6 @@ mod tests {
         };
 
         assert_unsub(yield_fut.await);
-        // YieldGuard drop runs, registry entry gone.
         tokio::task::yield_now().await;
         assert_eq!(reg.pending_count(), 0);
         driver.await.unwrap();
@@ -394,15 +420,13 @@ mod tests {
     #[derive(Debug)]
     struct Lin { tag: u32 }
 
-    /// Spawn a `Yield` so the future is actually driven. Returns a
-    /// JoinHandle the test can `.await` for the resolved result.
     fn spawn_yield(
         cx: &RtCtx,
-        key: SubjectKey,
+        key: TestKey,
         lineage: Option<Lineage>,
-    ) -> tokio::task::JoinHandle<Result<NextValue, Unsubscribed>> {
+    ) -> tokio::task::JoinHandle<Result<Arc<String>, Unsubscribed>> {
         let cx = cx.clone();
-        tokio::spawn(async move { cx.put(Yield { key, lineage }).await })
+        tokio::spawn(async move { cx.put(Yield::<TestSubject> { key, lineage }).await })
     }
 
     #[tokio::test]
@@ -416,7 +440,6 @@ mod tests {
         let h2 = spawn_yield(&cx, k2, Some(Arc::new(Lin { tag: 2 })));
         let h3 = spawn_yield(&cx, k3, None);
 
-        // Let all three register.
         tokio::time::sleep(Duration::from_millis(10)).await;
         assert_eq!(reg.pending_count(), 3);
 
@@ -426,11 +449,9 @@ mod tests {
         assert_eq!(n, 1);
         assert_unsub(h1.await.unwrap());
 
-        // h2 and h3 still pending. Resolve them so the test isn't
-        // dependent on cleanup ordering.
         assert!(reg.next(k2, val("two")));
         assert!(reg.unsubscribe(k3));
-        assert_eq!(as_str(&h2.await.unwrap().unwrap()), "two");
+        assert_eq!(&*h2.await.unwrap().unwrap(), "two");
         assert_unsub(h3.await.unwrap());
         assert_eq!(reg.pending_count(), 0);
     }
@@ -441,7 +462,6 @@ mod tests {
         let key = reg.fresh_key();
         let h = spawn_yield(&cx, key, None);
 
-        // Let it register.
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         assert!(reg.next(key, val("first")));
@@ -449,20 +469,19 @@ mod tests {
         assert!(!reg.unsubscribe(key), "unsubscribe after next is no-op");
 
         let v = h.await.unwrap().unwrap();
-        assert_eq!(as_str(&v), "first");
+        assert_eq!(&*v, "first");
     }
 
     #[tokio::test]
     async fn registry_reachable_via_store_typemap() {
         let (cx, reg) = build_cx();
-        let from_store: Arc<SubjectRegistry> =
-            cx.store::<SubjectRegistry>().expect("registered");
-        // Same Arc — fresh_key sequence is shared.
+        let from_store: Arc<TestRegistry> =
+            cx.store::<TestRegistry>().expect("registered");
         let k = from_store.fresh_key();
         assert_eq!(k.raw(), reg.fresh_key().raw() - 1);
     }
 
-    /// The race the existing tests papered over: when the SubjectKey
+    /// The race the original tests papered over: when the SubjectKey
     /// is shared with a producer, the producer can call `next(key)`
     /// BEFORE the awaiting code has any chance to register the pending
     /// entry. With `ctx.put(Yield)` the registration only happens when
@@ -474,24 +493,22 @@ mod tests {
     /// (no spawn, no sleep) and expects it to resolve.
     #[tokio::test]
     async fn subscribe_then_synchronous_next_resolves() {
-        let reg = Arc::new(SubjectRegistry::new());
+        let reg = Arc::new(TestRegistry::new());
         let key = reg.fresh_key();
         let fut = reg.subscribe(key, None);
-        // Producer fires immediately; entry must already exist.
         assert!(reg.next(key, val("eager")));
         let v = fut.await.expect("Ok");
-        assert_eq!(as_str(&v), "eager");
+        assert_eq!(&*v, "eager");
         assert_eq!(reg.pending_count(), 0);
     }
 
     #[tokio::test]
     async fn subscribe_drop_unsubscribes() {
-        let reg = Arc::new(SubjectRegistry::new());
+        let reg = Arc::new(TestRegistry::new());
         let key = reg.fresh_key();
         let fut = reg.subscribe(key, None);
         assert_eq!(reg.pending_count(), 1);
         drop(fut);
-        // Drop guard runs unsubscribe; entry gone.
         assert_eq!(reg.pending_count(), 0);
     }
 

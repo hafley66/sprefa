@@ -381,7 +381,7 @@ pub mod subjects;
 pub mod telemetry;
 
 pub use subjects::{
-    Lineage, NextValue, SubjectKey, SubjectRegistry, Unsubscribed, Yield,
+    Lineage, SubjectKey, SubjectKind, SubjectRegistry, Unsubscribed, Yield,
     YieldBatcher,
 };
 

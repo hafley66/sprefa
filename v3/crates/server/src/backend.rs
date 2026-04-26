@@ -24,6 +24,7 @@ use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionK
 use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor, PathSeg};
 use pipeline::_2_pipeline::Pipeline;
+use pipeline::effects::TagWake;
 use pipeline::effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect,
     ReadBytesBatcher, ReadBytesEffect, TagStore, TagWriteBatcher, TagWriteEffect,
@@ -328,7 +329,7 @@ async fn render_enriched_hover(
         let source: Arc<dyn FileSource> =
             Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
         let tag_store = Arc::new(TagStore::new());
-        let registry = Arc::new(SubjectRegistry::new());
+        let registry = Arc::new(SubjectRegistry::<TagWake>::new());
         let ctx = RtCtxBuilder::new()
             .with_store(tag_store.clone())
             .with_store(registry.clone())
@@ -341,7 +342,7 @@ async fn render_enriched_hover(
                 ReadBytesBatcher::new(source),
             )
             .register::<PrintEffect, _>(PrintBatcher::buffer().0)
-            .register::<Yield, _>(YieldBatcher::new(registry.clone()))
+            .register::<Yield<TagWake>, _>(YieldBatcher::new(registry.clone()))
             .register::<TagWriteEffect, _>(
                 TagWriteBatcher::new(tag_store, registry.clone()),
             )

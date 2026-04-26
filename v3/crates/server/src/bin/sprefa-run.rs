@@ -14,6 +14,7 @@ use std::sync::Arc;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use effect_runtime::{RtCtx, RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
+use pipeline::effects::TagWake;
 use pipeline::_0_cursor::{CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
 use effect_runtime::batchers::{BoundedWorkSteal, CacheLayer};
@@ -122,7 +123,7 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
         let read_cache: CacheLayer<ReadBytesEffect> =
             CacheLayer::new(65_536, ReadBytesBatcher::new(file_source.clone()));
         let tag_store = Arc::new(TagStore::new());
-        let subject_registry = Arc::new(SubjectRegistry::new());
+        let subject_registry = Arc::new(SubjectRegistry::<TagWake>::new());
         let ctx = RtCtxBuilder::new()
             .with_store(tag_store.clone())
             .with_store(subject_registry.clone())
@@ -137,7 +138,7 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
                 ),
             )
             .register::<PrintEffect, _>(PrintBatcher::stdout())
-            .register::<Yield, _>(YieldBatcher::new(subject_registry.clone()))
+            .register::<Yield<TagWake>, _>(YieldBatcher::new(subject_registry.clone()))
             .register::<TagWriteEffect, _>(
                 TagWriteBatcher::new(tag_store, subject_registry.clone()),
             )
