@@ -110,17 +110,10 @@ impl Op for AstGrepOp {
         ctx: &'a RtCtx,
         batch: Arc<[Cursor]>,
     ) -> BoxFuture<'a, Arc<[Cursor]>> {
-        // Per-cursor effect-dispatched path: every cursor goes through
-        // `ctx.put(AstParseEffect)` so the registered batcher (production
-        // BoundedWorkSteal pool, tests' PausedAstParse) governs parallelism
-        // and overhead. Bulk-RSS-bounded chunked rayon is a follow-up
-        // override for very large batches; tracked by perf rerun card.
         Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let Some(c) = crate::effects::ensure_content_loaded(ctx, c).await else {
                 return Vec::new();
             };
-            // Prefilter probe before issuing the parse effect — most
-            // files skip parse on the kernel corpus. FINDINGS §2.3.
             {
                 let active = c.active();
                 let Ok(src_str) = std::str::from_utf8(active) else { return Vec::new(); };

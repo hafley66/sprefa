@@ -1,23 +1,70 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# -----------------------------------------------------------------------------
-# v3 cargo + smokes
-# -----------------------------------------------------------------------------
+# =============================================================================
+# v3 cargo + smokes + perf + LSP probes
+# =============================================================================
 #
-#   just build                 # build sprefa-run binary
+# Quick reference:
+#
+#   just                       # alias for `just test-all`
+#   just build                 # debug build of sprefa-run + sprefa-lsp
+#   just build-release         # release build of both binaries
 #   just test                  # cargo test for the active crates
-#   just smokes                # run every tests/smoke/*.sh, OK/FAIL summary
-#   just smoke <match>         # run a single smoke by partial filename match
+#   just smokes                # bash tests/smoke/*.sh, OK/FAIL summary
+#   just smoke <match>         # one smoke by partial filename match
 #   just smokes-bin            # rebuild then run smokes
 #   just test-all              # cargo test + smokes (full pre-commit gate)
+#
+#   just bench-cli <fixture>   # release CLI run with effect/op tracing
+#   just bench-cli-debug <f>   # same on a debug binary (slower; for tracing
+#                                comparisons only — debug ast-grep is 75-450x
+#                                slower than release per 2026-04-26 baseline)
+#   just trace <fixture>       # release CLI with RUST_LOG=trace (verbose)
+#
+#   just lsp-probe <line> <char> [fixture]
+#                              # drive sprefa-lsp via stdio, hover at
+#                                (line,char). Defaults to copy_audit.sprf
+#                                line 11 'ast'. Auto-builds release binary.
+#   just lsp-probe-debug <l> <c> [fixture]
+#                              # same but against debug binary (catches
+#                                tracing/regressions at the cost of perf).
+#
+#   just vscode-install        # build debug + wire up VS Code extension
+#   just vscode-install-release # release build + wire up VS Code extension
+#
+# Notes:
+# - `cargo build` (no --release) is roughly 75x slower than release for
+#   anything that touches tree-sitter / ast-grep. Always use the release
+#   binary for performance reasoning. Debug exists for tracing/regression.
+# - Tracing: `RUST_LOG=info` already gives op-level cardinality+wall via
+#   `sprefa::pipeline` events emitted from the Pipeline runner. Bump to
+#   `RUST_LOG=sprefa=trace,pipeline=trace,effect_runtime=trace` for
+#   deepest signal.
+# - `bench-cli` defaults to `--no-cache` so successive runs don't lie.
+#   Drop `--no-cache` and add `--out path.db` if measuring warm-cache.
+# =============================================================================
+
+# Default target: full pre-commit gate.
+default: test-all
+
+# -----------------------------------------------------------------------------
+# Builds
 # -----------------------------------------------------------------------------
 
 build:
     cargo build -p server --bin sprefa-run --bin sprefa-lsp
 
+build-release:
+    cargo build -p server --bin sprefa-run --bin sprefa-lsp --release
+
+# -----------------------------------------------------------------------------
+# Tests + smokes
+# -----------------------------------------------------------------------------
+
 test:
     cargo test -p tree-sitter-sprefa -p sprefa_parse -p pipeline -p server
 
+# Run every shell smoke; one line per file with OK/FAIL.
 smokes:
     for s in tests/smoke/*.sh; do \
       printf "%s: " "$s"; \
@@ -25,9 +72,102 @@ smokes:
       else echo FAIL; fi; \
     done
 
+# Build first, then smokes — catches "smoke depended on a binary I just changed".
 smokes-bin: build smokes
 
+# Run a single smoke by partial filename match. Example:
+#   just smoke lsp        # → tests/smoke/_f_lsp_hover_ast.sh
 smoke MATCH:
     bash "$(ls tests/smoke/*{{MATCH}}*.sh | head -1)"
 
+# Full gate: cargo test + smokes. Use before committing.
 test-all: test build smokes
+
+# -----------------------------------------------------------------------------
+# Perf / tracing baselines
+# -----------------------------------------------------------------------------
+#
+# Both `bench-cli*` recipes:
+# - run with `--no-cache` so the wall is cold each invocation
+# - print runner-level op tracing (in/out cursor counts, elapsed_ms,
+#   slow-step warnings ≥ 2s) on stderr
+# - print the per-effect telemetry table (count / p50 / p95 / p99 / MB-s)
+#   from effect_runtime::telemetry on stderr
+# - prefix with /usr/bin/time so the wall is impossible to miss
+# -----------------------------------------------------------------------------
+
+# Release CLI run with op tracing. FIXTURE is a .sprf file path
+# (relative to v3/ or absolute). ROOT defaults to v3/, REV to HEAD.
+# Override via env: ROOT=/path REV=branch just bench-cli foo.sprf
+bench-cli FIXTURE: build-release
+    RUST_LOG="${RUST_LOG:-info,sprefa::pipeline=info}" \
+    SPREFA_TELEMETRY="${SPREFA_TELEMETRY:-on}" \
+    /usr/bin/time -p ./target/release/sprefa-run "{{FIXTURE}}" \
+        --root "${ROOT:-.}" --rev "${REV:-HEAD}" --no-cache
+
+# Debug-binary version. Useful for diffing tracing output against
+# release, NOT for perf claims.
+bench-cli-debug FIXTURE: build
+    RUST_LOG="${RUST_LOG:-info,sprefa::pipeline=info}" \
+    SPREFA_TELEMETRY="${SPREFA_TELEMETRY:-on}" \
+    /usr/bin/time -p ./target/debug/sprefa-run "{{FIXTURE}}" \
+        --root "${ROOT:-.}" --rev "${REV:-HEAD}" --no-cache
+
+# Trace-everything release run. Output is large; redirect for inspection:
+#   just trace foo.sprf 2> trace.log
+trace FIXTURE: build-release
+    RUST_LOG="trace" \
+    SPREFA_TELEMETRY=on \
+    ./target/release/sprefa-run "{{FIXTURE}}" \
+        --root "${ROOT:-.}" --rev "${REV:-HEAD}" --no-cache
+
+# -----------------------------------------------------------------------------
+# LSP probes — drive sprefa-lsp via stdio without VS Code in the loop
+# -----------------------------------------------------------------------------
+#
+# Useful when:
+# - reproducing a hover hang/panic outside VS Code's restart loop
+# - bisecting which op in a pipe is slow (combine with RUST_LOG)
+# - checking effect-kind registration completeness on the LSP path
+#
+# The script (`tests/smoke/_f_lsp_hover_ast.sh`) sends initialize +
+# initialized + didOpen + hover, asserts a response within deadline,
+# kills the server on any exit path.
+#
+# LINE/CHAR are 0-indexed (LSP convention). FIXTURE optional; defaults
+# to crates/server/fixtures/copy_audit.sprf.
+# -----------------------------------------------------------------------------
+
+# Release-binary probe (use this for perf reasoning).
+lsp-probe LINE CHAR FIXTURE="": build-release
+    SPREFA_LSP_PROFILE=release \
+    SPREFA_LSP_LINE="{{LINE}}" \
+    SPREFA_LSP_CHAR="{{CHAR}}" \
+    SPREFA_LSP_FIXTURE="{{FIXTURE}}" \
+    VERBOSE="${VERBOSE:-0}" \
+    bash tests/smoke/_f_lsp_hover_ast.sh
+
+# Debug-binary probe (matches what VS Code sees if you ran
+# `editors/vscode/install.sh` without --release).
+lsp-probe-debug LINE CHAR FIXTURE="": build
+    SPREFA_LSP_PROFILE=debug \
+    SPREFA_LSP_LINE="{{LINE}}" \
+    SPREFA_LSP_CHAR="{{CHAR}}" \
+    SPREFA_LSP_FIXTURE="{{FIXTURE}}" \
+    VERBOSE="${VERBOSE:-0}" \
+    bash tests/smoke/_f_lsp_hover_ast.sh
+
+# -----------------------------------------------------------------------------
+# VS Code extension install
+# -----------------------------------------------------------------------------
+#
+# Wraps `editors/vscode/install.sh`. The release variant is what you
+# want for actual editor use; the debug variant is for instrumented
+# regression hunts.
+# -----------------------------------------------------------------------------
+
+vscode-install:
+    bash ../editors/vscode/install.sh
+
+vscode-install-release:
+    bash ../editors/vscode/install.sh --release

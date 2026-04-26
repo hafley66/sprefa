@@ -720,9 +720,20 @@ impl EffectKind for AstParseEffect {
 /// or call directly. Returns `None` for non-UTF-8 or empty range.
 pub fn ast_parse(req: AstParseEffect) -> <AstParseEffect as EffectKind>::Response {
     use ast_grep_core::Language;
+    let _t0 = std::time::Instant::now();
+    let len = req.byte_range.len();
+    let lang = format!("{:?}", req.lang);
     let slice = req.content.get(req.byte_range)?;
     let s = std::str::from_utf8(slice).ok()?;
-    Some(Arc::new(req.lang.ast_grep(s)))
+    let g = Arc::new(req.lang.ast_grep(s));
+    tracing::debug!(
+        target: "sprefa::effect::ast_parse",
+        bytes = len,
+        lang = %lang,
+        elapsed_us = _t0.elapsed().as_micros() as u64,
+        "ast_parse"
+    );
+    Some(g)
 }
 
 #[cfg(test)]

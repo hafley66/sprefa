@@ -68,15 +68,46 @@ impl Pipeline {
                             let cache = cache.clone();
                             let op = op_arc.clone();
                             async move {
+                                let in_len = batch.len();
+                                let t0 = std::time::Instant::now();
                                 let mut h = blake3::Hasher::new();
                                 h.update(&batch_fingerprint(&batch));
                                 let _ = op.cache_key(&mut h);
                                 let key = *h.finalize().as_bytes();
                                 if let Some(hit) = cache.get(&key) {
+                                    tracing::info!(
+                                        target: "sprefa::pipeline",
+                                        op = name,
+                                        in_cursors = in_len,
+                                        out_cursors = hit.len(),
+                                        elapsed_ms = t0.elapsed().as_millis() as u64,
+                                        cache = "hit",
+                                        "op.batch"
+                                    );
                                     return hit;
                                 }
                                 let out = op.pipe(ctx, batch).await;
                                 cache.insert(key, out.clone());
+                                let elapsed_ms = t0.elapsed().as_millis() as u64;
+                                tracing::info!(
+                                    target: "sprefa::pipeline",
+                                    op = name,
+                                    in_cursors = in_len,
+                                    out_cursors = out.len(),
+                                    elapsed_ms,
+                                    cache = "miss",
+                                    "op.batch"
+                                );
+                                if elapsed_ms >= 2_000 {
+                                    tracing::warn!(
+                                        target: "sprefa::pipeline",
+                                        op = name,
+                                        in_cursors = in_len,
+                                        out_cursors = out.len(),
+                                        elapsed_ms,
+                                        "op.slow"
+                                    );
+                                }
                                 out
                             }
                         }))

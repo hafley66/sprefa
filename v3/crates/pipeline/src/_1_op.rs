@@ -72,9 +72,37 @@ pub trait Op: Send + Sync + std::fmt::Debug + 'static {
         ctx: &'a RtCtx,
         upstream: BoxStream<'a, Arc<[Cursor]>>,
     ) -> BoxStream<'a, Arc<[Cursor]>> {
+        let name = self.name();
         Box::pin(
             upstream
-                .map(move |batch| self.pipe(ctx, batch))
+                .map(move |batch| {
+                    let in_len = batch.len();
+                    let t0 = std::time::Instant::now();
+                    let fut = self.pipe(ctx, batch);
+                    async move {
+                        let out = fut.await;
+                        let elapsed_ms = t0.elapsed().as_millis() as u64;
+                        tracing::info!(
+                            target: "sprefa::pipeline",
+                            op = name,
+                            in_cursors = in_len,
+                            out_cursors = out.len(),
+                            elapsed_ms,
+                            "op.batch"
+                        );
+                        if elapsed_ms >= 2_000 {
+                            tracing::warn!(
+                                target: "sprefa::pipeline",
+                                op = name,
+                                in_cursors = in_len,
+                                out_cursors = out.len(),
+                                elapsed_ms,
+                                "op.slow"
+                            );
+                        }
+                        out
+                    }
+                })
                 .buffer_unordered(DEFAULT_PIPE_CONCURRENCY),
         )
     }

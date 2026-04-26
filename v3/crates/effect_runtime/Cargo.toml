@@ -15,10 +15,12 @@ crossbeam-channel = "0.5"
 arc-swap          = "1"
 moka              = { version = "0.12", features = ["future"] }
 rxrust            = { version = "1.0.0-rc.4", optional = true }
+tracing           = "0.1"
 
 [features]
 default = []
 rx      = ["dep:rxrust"]
 
-# Intentionally absent: no jemalloc pin, no tracing, no serde. This
-# crate stays neutral so consumers pick their own stack.
+# Intentionally absent: no jemalloc pin, no serde. tracing is a
+# zero-cost facade when no subscriber is installed; we keep it on by
+# default so consumers can opt in via env_filter.

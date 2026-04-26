@@ -13,13 +13,26 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 v3_dir="$(cd "$here/../.." && pwd)"
 cd "$v3_dir"
 
-bin="./target/debug/sprefa-lsp"
+# Pick the binary profile via env. SPREFA_LSP_PROFILE=release picks the
+# release-mode binary (ast-grep/tree-sitter are 75-450x faster in release;
+# the smoke is meaningless on debug numbers).
+profile="${SPREFA_LSP_PROFILE:-debug}"
+bin="./target/$profile/sprefa-lsp"
 if [ ! -x "$bin" ]; then
-    echo "building sprefa-lsp..." >&2
-    cargo build -p server --bin sprefa-lsp >&2
+    echo "building sprefa-lsp ($profile)..." >&2
+    if [ "$profile" = "release" ]; then
+        cargo build -p server --bin sprefa-lsp --release >&2
+    else
+        cargo build -p server --bin sprefa-lsp >&2
+    fi
 fi
 
-fixture="$v3_dir/crates/server/fixtures/copy_audit.sprf"
+# Fixture + hover position can be overridden so this script doubles as
+# an ad-hoc "probe any position in any file" tool. Defaults exercise
+# `ast[rs](format!(${X?}))` on copy_audit.sprf line 11.
+fixture="${SPREFA_LSP_FIXTURE:-$v3_dir/crates/server/fixtures/copy_audit.sprf}"
+HOVER_LINE="${SPREFA_LSP_LINE:-10}"
+HOVER_CHAR="${SPREFA_LSP_CHAR:-48}"
 uri="file://$fixture"
 text="$(cat "$fixture")"
 
@@ -66,7 +79,7 @@ didopen='{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocumen
 
 # Hover target: copy_audit.sprf line 11 ('ast' in
 # `... > ast[rs](format!(${X?}));`). LSP positions are 0-indexed.
-hover='{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$uri"'"},"position":{"line":10,"character":48}}}'
+hover='{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$uri"'"},"position":{"line":'"$HOVER_LINE"',"character":'"$HOVER_CHAR"'}}}'
 
 "$bin" <"$PIPE" >"$OUT" 2>"$ERR" &
 PID=$!

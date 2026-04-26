@@ -130,6 +130,14 @@ impl LanguageServer for Backend {
     async fn hover(&self, p: HoverParams) -> RpcResult<Option<Hover>> {
         let uri = p.text_document_position_params.text_document.uri;
         let pos = p.text_document_position_params.position;
+        let _hover_t0 = std::time::Instant::now();
+        tracing::info!(
+            target: "sprefa::lsp",
+            uri = %uri,
+            line = pos.line,
+            character = pos.character,
+            "hover.req"
+        );
 
         // Snapshot everything we need out of the mutex before running
         // the pipeline so an expensive hover does not block
@@ -163,8 +171,21 @@ impl LanguageServer for Backend {
             }
             _ => snap.static_doc,
         };
-        let Some(value) = body else { return Ok(None) };
+        let Some(value) = body else {
+            tracing::info!(
+                target: "sprefa::lsp",
+                elapsed_ms = _hover_t0.elapsed().as_millis() as u64,
+                "hover.done.empty"
+            );
+            return Ok(None)
+        };
 
+        tracing::info!(
+            target: "sprefa::lsp",
+            elapsed_ms = _hover_t0.elapsed().as_millis() as u64,
+            md_bytes = value.len(),
+            "hover.done"
+        );
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -228,6 +249,15 @@ async fn render_enriched_hover(
     config_source: &ConfigSource,
     registry: &pipeline::registry::Registry,
 ) -> Option<String> {
+    let _t0 = std::time::Instant::now();
+    tracing::info!(
+        target: "sprefa::hover",
+        focus_op = %plan.focus_name,
+        focus_step = plan.focus_step,
+        pipe_len = plan.pipe_len,
+        seeds = config.seeds.len(),
+        "render_enriched_hover.start"
+    );
     let mut md = String::new();
 
     // Op doc at the top.
@@ -327,6 +357,14 @@ async fn render_enriched_hover(
     let mut seed_roots: std::collections::HashMap<Arc<str>, PathBuf> =
         std::collections::HashMap::new();
     for seed in &config.seeds {
+        let _seed_t0 = std::time::Instant::now();
+        tracing::info!(
+            target: "sprefa::hover",
+            seed = %seed.slug,
+            rev = %seed.rev,
+            root = %seed.root.display(),
+            "seed.start"
+        );
         seed_roots.insert(Arc::from(seed.slug.as_str()), seed.root.clone());
         let source: Arc<dyn FileSource> =
             Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
@@ -364,11 +402,28 @@ async fn render_enriched_hover(
         let upstream: futures::stream::BoxStream<'_, Arc<[Cursor]>> = Box::pin(
             stream::iter(vec![Arc::<[Cursor]>::from(vec![c])]),
         );
+        let _drain_t0 = std::time::Instant::now();
         let mut s = pipeline.run(&ctx, upstream);
         let mut rows: Vec<Cursor> = Vec::new();
+        let mut batch_count = 0usize;
         while let Some(b) = s.next().await {
+            batch_count += 1;
             rows.extend(b.iter().cloned());
         }
+        let summary = ctx.telemetry().summary();
+        tracing::info!(
+            target: "sprefa::hover",
+            seed = %seed.slug,
+            batches = batch_count,
+            rows = rows.len(),
+            drain_ms = _drain_t0.elapsed().as_millis() as u64,
+            seed_total_ms = _seed_t0.elapsed().as_millis() as u64,
+            "seed.done"
+        );
+        tracing::info!(
+            target: "sprefa::hover",
+            "seed.effects:\n{}", summary
+        );
         let root = seed.root.clone();
         for c in &rows {
             total_rows += 1;
@@ -391,6 +446,13 @@ async fn render_enriched_hover(
         },
     ));
 
+    tracing::info!(
+        target: "sprefa::hover",
+        total_rows,
+        rendered,
+        elapsed_ms = _t0.elapsed().as_millis() as u64,
+        "render_enriched_hover.done"
+    );
     Some(md)
 }
 
@@ -538,14 +600,33 @@ impl DiskFileSource {
 impl FileSource for DiskFileSource {
     fn files(&self, _repo: &str, rev: &str) -> Vec<Arc<Path>> {
         if rev != self.rev { return Vec::new(); }
+        let _t0 = std::time::Instant::now();
         let mut out = Vec::new();
         walk(&self.root, &self.root, &mut out);
+        tracing::info!(
+            target: "sprefa::reader",
+            root = %self.root.display(),
+            rev = %rev,
+            files = out.len(),
+            elapsed_ms = _t0.elapsed().as_millis() as u64,
+            "DiskFileSource.files"
+        );
         out
     }
 
     fn file_bytes(&self, _repo: &str, rev: &str, path: &Path) -> Option<Arc<[u8]>> {
         if rev != self.rev { return None; }
-        std::fs::read(self.root.join(path)).ok().map(Arc::from)
+        let _t0 = std::time::Instant::now();
+        let bytes = std::fs::read(self.root.join(path)).ok().map(Arc::<[u8]>::from);
+        let len = bytes.as_ref().map(|b| b.len()).unwrap_or(0);
+        tracing::trace!(
+            target: "sprefa::reader",
+            path = %path.display(),
+            bytes = len,
+            elapsed_us = _t0.elapsed().as_micros() as u64,
+            "DiskFileSource.file_bytes"
+        );
+        bytes
     }
 }
 
