@@ -31,6 +31,7 @@ pub mod readers;
 pub mod registry;
 pub mod relation_store;
 pub mod rule_def;
+pub mod rule_hash;
 pub mod value;
 pub mod walk;
 

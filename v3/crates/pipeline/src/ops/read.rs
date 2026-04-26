@@ -81,20 +81,13 @@ impl Op for ReadOp {
 
     fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: std::sync::Arc<[Cursor]>) -> BoxFuture<'a, std::sync::Arc<[Cursor]>> {
         Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
-            let Some(path) = c.fs.clone() else {
-                return vec![c];
-            };
-            let bytes = ctx.put(ReadBytesEffect {
-                repo: c.repo.clone(),
-                rev:  c.rev.clone(),
-                path,
-            }).await;
-            match bytes {
-                Some(b) => {
-                    let end = b.len();
-                    vec![c.rebase(b, 0..end)]
-                }
-                None => Vec::new(),
+            // Delegate to ensure_content_loaded so the content_hash
+            // plumbing (sprefa-upb Phase B) lives in one place.
+            // Cursors without `fs` pass through (Some(c) unchanged);
+            // miss returns None and the cursor drops.
+            match crate::effects::ensure_content_loaded(ctx, c).await {
+                Some(c) => vec![c],
+                None    => Vec::new(),
             }
         }))
     }
@@ -137,6 +130,19 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(&*out[0].content, b"hello world");
         assert_eq!(out[0].byte_range, 0..11);
+
+        // Phase B: content_hash populated by ensure_content_loaded.
+        // Same bytes -> same blake3; bytes differ -> hash differs.
+        let h_a = out[0].content_hash.clone().expect("hash set");
+        let out2 = op.pipe(&ctx, Arc::from(vec![cursor_with_fs("r", "main", "a.rs")])).await;
+        assert_eq!(out2[0].content_hash.as_deref(), Some(&*h_a));
+
+        let src2: Arc<dyn FileSource> = Arc::new(
+            MemFileSource::new().with_file_bytes("r", "main", "a.rs", b"hello other"),
+        );
+        let ctx2 = rt(src2);
+        let out3 = op.pipe(&ctx2, Arc::from(vec![cursor_with_fs("r", "main", "a.rs")])).await;
+        assert_ne!(out3[0].content_hash.as_deref(), Some(&*h_a));
 
         // Miss: unknown path → empty output.
         let out = op.pipe(&ctx, Arc::from(vec![cursor_with_fs("r", "main", "gone.rs")])).await;

@@ -158,10 +158,19 @@ pub async fn ensure_content_loaded(ctx: &effect_runtime::RtCtx, c: crate::_0_cur
     match bytes {
         Some(b) => {
             let end = b.len();
-            Some(c.rebase(b, 0..end))
+            let hash = blake3_of(&b);
+            let mut next = c.rebase(b, 0..end);
+            next.content_hash = Some(hash);
+            Some(next)
         }
         None => None,
     }
+}
+
+/// blake3 of a byte slice, boxed for cheap clone + storage on Cursor.
+fn blake3_of(bytes: &[u8]) -> Arc<[u8; 32]> {
+    let h = blake3::hash(bytes);
+    Arc::new(*h.as_bytes())
 }
 
 pub struct ReadBytesBatcher {
@@ -257,7 +266,10 @@ pub async fn ensure_content_loaded_batch(
         match resp {
             Some(b) => {
                 let end = b.len();
-                out[i] = Some(c.rebase(b, 0..end));
+                let hash = blake3_of(&b);
+                let mut next = c.rebase(b, 0..end);
+                next.content_hash = Some(hash);
+                out[i] = Some(next);
             }
             None => out[i] = None,
         }

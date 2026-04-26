@@ -41,6 +41,10 @@ pub enum ParseErrorKind {
     /// wasn't in the source. `expected` is the node kind tree-sitter
     /// would have emitted (e.g. `}`, `identifier`, `>`).
     Missing { expected: Arc<str> },
+    /// A rule body invokes itself. Self-recursion is forbidden in v0
+    /// (no SLD/backtrack); cross-rule cycles are caught separately.
+    /// `byte_range` points at the offending invocation.
+    RecursionForbidden { rule: Arc<str> },
 }
 
 impl ParseError {

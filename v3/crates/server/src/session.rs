@@ -78,6 +78,8 @@ impl DocSession {
         let binding_diags = collect_binding_diags(&parsed, source.as_bytes());
         let (config, config_source) = discover_config(&file);
         let rule_defs = rule_def::collect(&parsed, source.as_bytes(), &registry, &file);
+        let mut errors = errors;
+        errors.extend(rule_def::self_recursion_errors(&rule_defs));
         Self {
             file, source, parsed, errors, binding_diags, registry,
             config, config_source, rule_defs,
@@ -109,6 +111,8 @@ impl DocSession {
         );
         self.binding_diags = collect_binding_diags(&parsed, self.source.as_bytes());
         self.rule_defs = rule_def::collect(&parsed, self.source.as_bytes(), &self.registry, &self.file);
+        let mut errors = errors;
+        errors.extend(rule_def::self_recursion_errors(&self.rule_defs));
         self.parsed = parsed;
         self.errors = errors;
         self.lowered = OnceCell::new();

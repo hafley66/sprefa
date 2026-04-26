@@ -1,0 +1,5 @@
+# Smoke (sprefa-1sg): self-recursive rule body must produce a parse-layer
+# diagnostic. v0 has no SLD/backtrack — direct self-call is forbidden.
+rule(:foo, ${X?}) {
+  > foo(${X?})
+}

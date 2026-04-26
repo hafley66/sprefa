@@ -26,6 +26,7 @@ use pipeline::effects::{
 };
 use pipeline::ops::{RuleCallOp, RulePredicateOp};
 use pipeline::rule_def;
+use pipeline::rule_hash::{self, RuleHashes};
 use pipeline::ops::relation::RelationArg;
 use pipeline::registry::lower_paren_slot;
 use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
@@ -48,6 +49,7 @@ fn main() {
     let mut rev: String = "HEAD".to_string();
     let mut config_path: Option<PathBuf> = None;
     let mut out_db: Option<PathBuf> = None;
+    let mut no_cache: bool = false;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -55,6 +57,7 @@ fn main() {
             "--rev" => rev = it.next().cloned().unwrap_or("HEAD".into()),
             "--config" => config_path = it.next().map(PathBuf::from),
             "--out" => out_db = it.next().map(PathBuf::from),
+            "--no-cache" => no_cache = true,
             other => {
                 eprintln!("unknown flag: {other}");
                 std::process::exit(2);
@@ -68,7 +71,9 @@ fn main() {
     });
 
     // Precedence: explicit --config > CLI --root/--rev.
-    let cfg = match config_path {
+    // CLI flags (--out, --no-cache) overlay onto cfg.run so every
+    // driver (CLI here, LSP/HTTP later) reads the same shape.
+    let mut cfg = match config_path {
         Some(p) => config::from_path(&p).unwrap_or_else(|e| {
             eprintln!("config error: {e}");
             std::process::exit(1);
@@ -78,17 +83,19 @@ fn main() {
             config::from_cli(root, rev.clone())
         }
     };
+    if let Some(p) = out_db { cfg.run.out_db = Some(p); }
+    if no_cache { cfg.run.cache = false; }
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
     rt.block_on(async {
-        run(&source, &sprf_path, &cfg, out_db.as_deref()).await
+        run(&source, &sprf_path, &cfg).await
     });
 }
 
-async fn run(source: &str, file: &Path, cfg: &Config, out_db: Option<&Path>) {
+async fn run(source: &str, file: &Path, cfg: &Config) {
     let (parsed, errors) = host_parse_with_injections(
         source,
         Arc::from(file),
@@ -110,6 +117,23 @@ async fn run(source: &str, file: &Path, cfg: &Config, out_db: Option<&Path>) {
     // drain at end-of-run sees every relation row produced.
     let relation_store = Arc::new(RelationStore::new());
     let subject_registry = Arc::new(SubjectRegistry::<RelationWake>::new());
+
+    // Rule defs + sprf_meta hashes are deterministic from source and
+    // shared across seeds. Compute once before the seed loop so the
+    // per-seed pass-1 picks them up and the SQLite drain reuses them.
+    let file_arc: Arc<Path> = Arc::from(file);
+    let rule_defs = rule_def::collect(&parsed, source.as_bytes(), &registry, &file_arc);
+    let rec_errors = rule_def::self_recursion_errors(&rule_defs);
+    if !rec_errors.is_empty() {
+        for e in &rec_errors {
+            eprintln!(
+                "parse: {:?} at {}..{}: {}",
+                e.kind, e.byte_range.start, e.byte_range.end, e.message,
+            );
+        }
+        std::process::exit(1);
+    }
+    let rule_hashes = rule_hash::compute(&rule_defs, source.as_bytes());
 
     for seed in &cfg.seeds {
         // One RtCtx per seed. The FsListFilesEffect batcher is bound to
@@ -167,8 +191,6 @@ async fn run(source: &str, file: &Path, cfg: &Config, out_db: Option<&Path>) {
         // needs the metadata for hover).
         let mut known_rules: HashSet<Arc<str>> = HashSet::new();
         let mut auto_fire: Vec<Arc<str>> = Vec::new();
-        let file_arc: Arc<Path> = Arc::from(file);
-        let rule_defs = rule_def::collect(&parsed, source.as_bytes(), &registry, &file_arc);
         for def in rule_defs.values() {
             let Some(brace_range) = def.brace_range.clone() else { continue };
             let Some(body) = lower_rule_body(
@@ -230,11 +252,10 @@ async fn run(source: &str, file: &Path, cfg: &Config, out_db: Option<&Path>) {
     // SQLite drain: dump rule rows. One table per rule, columns =
     // union of all capture names seen across rows for that rule, all
     // VARCHAR. Schema discovered at drain time (no fixed shape).
-    let db_path = match out_db {
-        Some(p) => p.to_path_buf(),
-        None => default_out_db(file),
-    };
-    if let Err(e) = dump_to_sqlite(&relation_store, &db_path, file).await {
+    let db_path = cfg.run.out_db.clone().unwrap_or_else(|| default_out_db(file));
+    if let Err(e) = dump_to_sqlite(
+        &relation_store, &db_path, file, &rule_hashes, &cfg.run,
+    ).await {
         eprintln!("sqlite drain: {e}");
         std::process::exit(1);
     }
@@ -495,10 +516,29 @@ fn sprf_norm(value: &str) -> String {
 /// PRAGMAs set on the pool: `journal_mode=WAL`, `synchronous=NORMAL`,
 /// `foreign_keys=ON`. Tables are dropped + recreated each run; the
 /// run is the source of truth for its rule rows.
+/// sprf_meta diff classification per rule. Drives the drain path:
+/// New + SchemaChanged force DROP+CREATE; ExtractChanged keeps the
+/// table and only refreshes rows; Unchanged short-circuits the rule.
+#[derive(Debug, Clone, Copy)]
+enum MetaDiff { New, SchemaChanged, ExtractChanged, Unchanged }
+
+impl MetaDiff {
+    fn label(self) -> &'static str {
+        match self {
+            MetaDiff::New            => "New",
+            MetaDiff::SchemaChanged  => "SchemaChanged",
+            MetaDiff::ExtractChanged => "ExtractChanged",
+            MetaDiff::Unchanged      => "Unchanged",
+        }
+    }
+}
+
 async fn dump_to_sqlite(
-    store:     &RelationStore,
-    db_path:   &Path,
-    sprf_path: &Path,
+    store:       &RelationStore,
+    db_path:     &Path,
+    sprf_path:   &Path,
+    rule_hashes: &HashMap<Arc<str>, RuleHashes>,
+    run:         &server::config::RunOpts,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
     use std::str::FromStr;
@@ -522,10 +562,50 @@ async fn dump_to_sqlite(
         .connect_with(opts)
         .await?;
 
+    // sprf_meta: per-rule (schema_hash, extract_hash, last_scanned_at).
+    // Schema/extract diff classifies each rule's drain path:
+    //   New | SchemaChanged   -> DROP + CREATE + INSERT (full rebuild)
+    //   ExtractChanged        -> DELETE + INSERT (schema stable)
+    //   Unchanged             -> skip drain entirely
+    // `--no-cache` collapses everything to SchemaChanged.
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS sprf_meta (
+            rule_name TEXT PRIMARY KEY,
+            schema_hash TEXT NOT NULL,
+            extract_hash TEXT NOT NULL,
+            last_scanned_at TEXT NOT NULL
+        )"#
+    ).execute(&pool).await?;
+
     for (rule_name, rows) in &snapshot {
         let table = format!("{prefix}__{rule_name}");
         if !is_safe_ident(&table) {
             eprintln!("sqlite: skipping unsafe table name {table:?}");
+            continue;
+        }
+
+        // sprf_meta lookup + classify.
+        let curr = rule_hashes.get(rule_name);
+        let prev: Option<(String, String)> = match curr {
+            Some(_) => sqlx::query_as::<_, (String, String)>(
+                "SELECT schema_hash, extract_hash FROM sprf_meta WHERE rule_name = ?"
+            )
+            .bind(rule_name.as_ref())
+            .fetch_optional(&pool).await?,
+            None => None,
+        };
+        let diff: MetaDiff = match (run.cache, curr, prev) {
+            (false, _, _)            => MetaDiff::SchemaChanged,
+            (true, None, _)          => MetaDiff::SchemaChanged,
+            (true, Some(_), None)    => MetaDiff::New,
+            (true, Some(c), Some((ps, pe))) => {
+                if c.schema_hash != ps        { MetaDiff::SchemaChanged }
+                else if c.extract_hash != pe  { MetaDiff::ExtractChanged }
+                else                          { MetaDiff::Unchanged }
+            }
+        };
+        if matches!(diff, MetaDiff::Unchanged) {
+            eprintln!("# sqlite: {table}: cached (Unchanged), skipped");
             continue;
         }
 
@@ -551,16 +631,24 @@ async fn dump_to_sqlite(
             );
         }
 
-        // Drop FTS first (depends on table), then triggers, then table.
-        // sqlx will silently no-op on missing triggers via IF EXISTS.
-        for stmt in [
-            format!(r#"DROP TRIGGER IF EXISTS "{table}_ai""#),
-            format!(r#"DROP TRIGGER IF EXISTS "{table}_ad""#),
-            format!(r#"DROP TRIGGER IF EXISTS "{table}_au""#),
-            format!(r#"DROP TABLE IF EXISTS "{table}_fts""#),
-            format!(r#"DROP TABLE IF EXISTS "{table}""#),
-        ] {
-            sqlx::query(&stmt).execute(&pool).await?;
+        let full_rebuild = matches!(diff, MetaDiff::SchemaChanged | MetaDiff::New);
+        if full_rebuild {
+            // Drop FTS first (depends on table), then triggers, then table.
+            // sqlx will silently no-op on missing triggers via IF EXISTS.
+            for stmt in [
+                format!(r#"DROP TRIGGER IF EXISTS "{table}_ai""#),
+                format!(r#"DROP TRIGGER IF EXISTS "{table}_ad""#),
+                format!(r#"DROP TRIGGER IF EXISTS "{table}_au""#),
+                format!(r#"DROP TABLE IF EXISTS "{table}_fts""#),
+                format!(r#"DROP TABLE IF EXISTS "{table}""#),
+            ] {
+                sqlx::query(&stmt).execute(&pool).await?;
+            }
+        } else {
+            // ExtractChanged: schema stable, just truncate rows. FTS
+            // mirrors via triggers, so DELETE from base also clears FTS.
+            sqlx::query(&format!(r#"DELETE FROM "{table}""#))
+                .execute(&pool).await?;
         }
 
         let mut col_decls: Vec<String> = Vec::new();
@@ -573,6 +661,7 @@ async fn dump_to_sqlite(
         } else {
             format!(", {}", col_decls.join(", "))
         };
+        if full_rebuild {
         let create_sql = format!(
             r#"CREATE TABLE "{table}" (id INTEGER PRIMARY KEY AUTOINCREMENT{cols_sql})"#
         );
@@ -642,6 +731,7 @@ async fn dump_to_sqlite(
             );
             sqlx::query(&au).execute(&pool).await?;
         }
+        } // end if full_rebuild
 
         if safe_columns.is_empty() {
             // Arity-0 (or all-unsafe-named): one bare INSERT per fire.
@@ -680,11 +770,27 @@ async fn dump_to_sqlite(
             }
         }
 
+        if let Some(c) = curr {
+            sqlx::query(
+                r#"INSERT INTO sprf_meta (rule_name, schema_hash, extract_hash, last_scanned_at)
+                   VALUES (?, ?, ?, datetime('now'))
+                   ON CONFLICT(rule_name) DO UPDATE SET
+                     schema_hash = excluded.schema_hash,
+                     extract_hash = excluded.extract_hash,
+                     last_scanned_at = excluded.last_scanned_at"#
+            )
+            .bind(rule_name.as_ref())
+            .bind(&c.schema_hash)
+            .bind(&c.extract_hash)
+            .execute(&pool).await?;
+        }
+
         eprintln!(
-            "# sqlite: {table}: {} rows, {} cols (×2 norm), fts={}",
+            "# sqlite: {table}: {} rows, {} cols (×2 norm), fts={} [{}]",
             rows.len(),
             safe_columns.len(),
             !safe_columns.is_empty(),
+            diff.label(),
         );
     }
 

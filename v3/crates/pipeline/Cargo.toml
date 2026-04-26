@@ -7,6 +7,7 @@ build   = "build.rs"
 
 [dependencies]
 ast-grep-core     = "0.36"
+blake3            = "1"
 ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust", "tree-sitter-typescript", "tree-sitter-c"] }
 effect_runtime    = { path = "../effect_runtime" }
 globset           = "0.4"

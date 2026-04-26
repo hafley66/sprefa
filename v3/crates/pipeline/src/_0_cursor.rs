@@ -107,6 +107,12 @@ pub struct Cursor {
     /// Repo-relative file path the cursor addresses, when known. `None`
     /// before any `fs` op has fanned out.
     pub fs: Option<Arc<Path>>,
+    /// blake3 of the content bytes loaded for this cursor. `Some` once
+    /// `ensure_content_loaded` (or a bulk read) has populated `content`
+    /// from the reader; `None` for synthetic / pre-read cursors.
+    /// Phase 0 cache lock: the leaf `input_hash` for downstream stages
+    /// folds blake3(repo || rev || path || content_hash) (sprefa-upb).
+    pub content_hash: Option<Arc<[u8; 32]>>,
     slots: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
@@ -121,6 +127,7 @@ impl Default for Cursor {
             repo: Arc::from(""),
             rev: Arc::from(""),
             fs: None,
+            content_hash: None,
             slots: HashMap::new(),
         }
     }
@@ -179,6 +186,12 @@ impl Cursor {
             repo: self.repo.clone(),
             rev: self.rev.clone(),
             fs: self.fs.clone(),
+            // Content swap invalidates the prior hash. The reader-side
+            // path that triggers a rebase (`ensure_content_loaded`) sets
+            // the new hash from the just-read bytes; pure narrowings that
+            // don't change the underlying content use `narrow` and keep
+            // their hash via the Clone in that path.
+            content_hash: None,
             slots: HashMap::new(),
         }
     }

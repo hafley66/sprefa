@@ -579,6 +579,10 @@ fn parse_errors_to_lsp(source: &str, errors: &[ParseError]) -> Vec<Diagnostic> {
                     "parse/missing".to_string(),
                     format!("missing `{expected}`"),
                 ),
+                ParseErrorKind::RecursionForbidden { rule } => (
+                    "parse/recursion-forbidden".to_string(),
+                    format!("rule `{rule}` calls itself; self-recursion is forbidden"),
+                ),
             };
             Diagnostic {
                 range: Range {
@@ -808,7 +812,7 @@ mod tests {
         let lowered: Vec<LoweredOp> = session
             .lowered_pipes()[plan.pipe_idx][..=plan.focus_step]
             .to_vec();
-        let cfg = Config { seeds: vec![] };
+        let cfg = Config { seeds: vec![], run: Default::default() };
         render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry()).await
     }
 

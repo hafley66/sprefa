@@ -46,6 +46,23 @@ pub struct Seed {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub seeds: Vec<Seed>,
+    pub run:   RunOpts,
+}
+
+/// Run-shaped knobs that apply to every driver (CLI, LSP, HTTP).
+/// Lives on `Config` so each surface populates the same struct
+/// instead of fanning out parallel function-signature args.
+#[derive(Debug, Clone)]
+pub struct RunOpts {
+    /// Output sqlite path. `None` = derive from sprf path.
+    pub out_db: Option<PathBuf>,
+    /// sprf_meta cache. `true` = honor (skip Unchanged, DELETE+INSERT
+    /// on ExtractChanged); `false` = full DROP+CREATE every run.
+    pub cache:  bool,
+}
+
+impl Default for RunOpts {
+    fn default() -> Self { Self { out_db: None, cache: true } }
 }
 
 /// TOML-wire shape. Intermediate, not exposed.
@@ -53,7 +70,19 @@ pub struct Config {
 struct ConfigWire {
     #[serde(default)]
     seed: Vec<SeedWire>,
+    #[serde(default)]
+    run:  RunOptsWire,
 }
+
+#[derive(Debug, Default, Deserialize)]
+struct RunOptsWire {
+    #[serde(default)]
+    out_db: Option<String>,
+    #[serde(default = "default_cache")]
+    cache:  bool,
+}
+
+fn default_cache() -> bool { true }
 
 #[derive(Debug, Deserialize)]
 struct SeedWire {
@@ -83,7 +112,14 @@ pub fn from_toml_str(src: &str, base_dir: &Path) -> Result<Config, String> {
         };
         Seed { slug: s.slug, root, rev: s.rev }
     }).collect();
-    Ok(Config { seeds })
+    let run = RunOpts {
+        out_db: wire.run.out_db.map(|s| {
+            let p = Path::new(&s);
+            if p.is_absolute() { p.to_path_buf() } else { base_dir.join(p) }
+        }),
+        cache: wire.run.cache,
+    };
+    Ok(Config { seeds, run })
 }
 
 /// Load from a file path. The parent directory anchors relative roots.
@@ -101,7 +137,10 @@ pub fn from_cli(root: PathBuf, rev: String) -> Config {
         .and_then(|s| s.to_str())
         .unwrap_or("root")
         .to_string();
-    Config { seeds: vec![Seed { slug, root, rev }] }
+    Config {
+        seeds: vec![Seed { slug, root, rev }],
+        run:   RunOpts::default(),
+    }
 }
 
 #[cfg(test)]

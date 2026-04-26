@@ -1,0 +1,33 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# -----------------------------------------------------------------------------
+# v3 cargo + smokes
+# -----------------------------------------------------------------------------
+#
+#   just build                 # build sprefa-run binary
+#   just test                  # cargo test for the active crates
+#   just smokes                # run every tests/smoke/*.sh, OK/FAIL summary
+#   just smoke <match>         # run a single smoke by partial filename match
+#   just smokes-bin            # rebuild then run smokes
+#   just test-all              # cargo test + smokes (full pre-commit gate)
+# -----------------------------------------------------------------------------
+
+build:
+    cargo build -p server --bin sprefa-run
+
+test:
+    cargo test -p tree-sitter-sprefa -p sprefa_parse -p pipeline -p server
+
+smokes:
+    for s in tests/smoke/*.sh; do \
+      printf "%s: " "$s"; \
+      if bash "$s" >/dev/null 2>&1; then echo OK; \
+      else echo FAIL; fi; \
+    done
+
+smokes-bin: build smokes
+
+smoke MATCH:
+    bash "$(ls tests/smoke/*{{MATCH}}*.sh | head -1)"
+
+test-all: test build smokes
