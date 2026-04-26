@@ -465,6 +465,99 @@ impl Batcher<WriteFileEffect> for WriteFileBatcher {
 }
 
 // ---------------------------------------------------------------------------
+// LspDiagEffect — emit one LSP-style diagnostic per cursor.
+//
+// Produced by `lsp[severity](message=..., code=..., hint=...)` at the
+// tail of a pipe. Sink decides delivery: in-process LSP backend
+// publishes via textDocument/publishDiagnostics; tests collect into a
+// buffer. byte_range is `cursor.byte_range` at the time of emit, so
+// every capture-narrowing op upstream contributes to where the squiggle
+// lands.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LspSeverity {
+    Error,
+    Warning,
+    Hint,
+    Info,
+}
+
+impl LspSeverity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LspSeverity::Error   => "error",
+            LspSeverity::Warning => "warn",
+            LspSeverity::Hint    => "hint",
+            LspSeverity::Info    => "info",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LspDiagEffect {
+    pub file:       Option<Arc<Path>>,
+    pub byte_range: std::ops::Range<usize>,
+    pub severity:   LspSeverity,
+    pub message:    Arc<str>,
+    pub code:       Option<Arc<str>>,
+    pub hint:       Option<Arc<str>>,
+}
+
+impl EffectKind for LspDiagEffect {
+    type Response = ();
+
+    fn payload_bytes(&self) -> Option<usize> {
+        Some(self.message.len())
+    }
+}
+
+#[derive(Clone)]
+pub enum LspDiagSink {
+    Buffer(Arc<Mutex<Vec<LspDiagEffect>>>),
+}
+
+impl LspDiagSink {
+    pub fn buffer() -> (Self, Arc<Mutex<Vec<LspDiagEffect>>>) {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        (LspDiagSink::Buffer(buf.clone()), buf)
+    }
+
+    fn write(&self, diag: LspDiagEffect) {
+        match self {
+            LspDiagSink::Buffer(buf) => {
+                buf.lock().expect("lsp diag buffer poisoned").push(diag);
+            }
+        }
+    }
+}
+
+pub struct LspDiagBatcher {
+    sink: LspDiagSink,
+}
+
+impl LspDiagBatcher {
+    pub fn new(sink: LspDiagSink) -> Self { Self { sink } }
+    pub fn buffer() -> (Self, Arc<Mutex<Vec<LspDiagEffect>>>) {
+        let (sink, buf) = LspDiagSink::buffer();
+        (Self { sink }, buf)
+    }
+}
+
+impl Batcher<LspDiagEffect> for LspDiagBatcher {
+    fn run(
+        &self,
+        req: LspDiagEffect,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'static, ()> {
+        let sink = self.sink.clone();
+        Box::pin(async move {
+            sink.write(req);
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // AstParseEffect — offload tree-sitter parse to a worker pool.
 //
 // The ast op used to call `lang.ast_grep(src)` inline inside its async
