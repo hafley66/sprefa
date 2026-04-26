@@ -48,9 +48,25 @@ pub struct InjectedTree {
 }
 
 /// One Rx-style pipe of ops chained with `>`. Lowers to `Pipeline::Seq`.
+///
+/// `steps` is the authoritative ordered list of pipe steps including
+/// brace-fork blocks (`> { > arm1; > arm2; }`). `ops` is a back-compat
+/// flat view containing only the `OpInvocation` steps in source order;
+/// existing analysis/rule_def passes that walk op heads keep working.
 #[derive(Debug, Clone)]
 pub struct Pipe {
-    pub ops: Vec<OpInvocation>,
+    pub steps: Vec<PipeStep>,
+    pub ops:   Vec<OpInvocation>,
+}
+
+/// A single pipe step. Either an op invocation (or cursor_ref, lowered
+/// as the `&` op) or a naked-brace fork block over multiple sub-pipes.
+#[derive(Debug, Clone)]
+pub enum PipeStep {
+    Op(OpInvocation),
+    /// `{ > arm1; > arm2; }` — broadcast upstream to each arm, union
+    /// outputs. Lowers to `Pipeline::Fork`.
+    Fork(Vec<Pipe>),
 }
 
 #[derive(Debug, Clone)]

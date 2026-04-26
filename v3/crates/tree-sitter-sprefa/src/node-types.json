@@ -272,6 +272,25 @@
         {
           "type": "op_invocation",
           "named": true
+        },
+        {
+          "type": "pipe_fork",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "pipe_fork",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "pipe",
+          "named": true
         }
       ]
     }

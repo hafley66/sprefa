@@ -21,12 +21,14 @@ use crate::config::Config;
 use crate::position::{offset_to_position, position_to_offset};
 use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionKind};
 
+use effect_runtime::batchers::BoundedWorkSteal;
 use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor, PathSeg};
 use pipeline::_2_pipeline::Pipeline;
 use pipeline::effects::{
-    FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect,
-    ReadBytesBatcher, ReadBytesEffect,
+    ast_parse, AstParseEffect, FsListFilesBatcher, FsListFilesEffect, PrintBatcher,
+    PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect, ReadBytesBatcher,
+    ReadBytesEffect,
 };
 use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
 use pipeline::readers::FileSource;
@@ -339,7 +341,13 @@ async fn render_enriched_hover(
             )
             .register_pure::<ReadBytesEffect, _>(
                 256,
-                ReadBytesBatcher::new(source),
+                ReadBytesBatcher::new(source.clone()),
+            )
+            .register::<ReadBytesBatchEffect, _>(
+                ReadBytesBatchBatcher::new(source),
+            )
+            .register::<AstParseEffect, _>(
+                BoundedWorkSteal::<AstParseEffect>::new(256, 8, ast_parse),
             )
             .register::<PrintEffect, _>(PrintBatcher::buffer().0)
             .register::<Yield<RelationWake>, _>(YieldBatcher::new(registry.clone()))

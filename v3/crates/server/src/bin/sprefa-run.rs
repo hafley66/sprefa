@@ -34,7 +34,7 @@ use pipeline::readers::FileSource;
 use pipeline::registry::Registry;
 use pipeline::value::{TermMode, Value};
 use server::config::{self, Config, Seed};
-use sprefa_parse::{host_parse_with_injections, OpInvocation, Pipe};
+use sprefa_parse::{host_parse_with_injections, OpInvocation, Pipe, PipeStep};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -293,9 +293,22 @@ fn lower_pipe(
     known_rules: &HashSet<Arc<str>>,
 ) -> Option<Pipeline> {
     let mut steps: Vec<Pipeline> = Vec::new();
-    for inv in &pipe.ops {
-        if let Some(p) = lower_op_invocation(inv, source, registry, known_rules) {
-            steps.push(p);
+    for step in &pipe.steps {
+        match step {
+            PipeStep::Op(inv) => {
+                if let Some(p) = lower_op_invocation(inv, source, registry, known_rules) {
+                    steps.push(p);
+                }
+            }
+            PipeStep::Fork(arms) => {
+                let lowered_arms: Vec<Pipeline> = arms
+                    .iter()
+                    .filter_map(|a| lower_pipe(a, source, registry, known_rules))
+                    .collect();
+                if !lowered_arms.is_empty() {
+                    steps.push(Pipeline::Fork(lowered_arms));
+                }
+            }
         }
     }
     if steps.is_empty() { None } else { Some(Pipeline::Seq(steps)) }

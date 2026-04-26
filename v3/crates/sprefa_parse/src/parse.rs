@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use tree_sitter::{Language, Node, Parser, Tree, TreeCursor};
 
-use crate::ast::{InjectedTree, OpInvocation, ParsedSource, Pipe};
+use crate::ast::{InjectedTree, OpInvocation, ParsedSource, Pipe, PipeStep};
 use crate::site::{ParseSeg, ParseSite};
 
 /// Language resolver closure. Pattern-op-aware callers pass a closure
@@ -177,15 +177,31 @@ fn lower_pipe(
     path:      &[ParseSeg],
     tree:      &Arc<Tree>,
 ) -> Pipe {
-    let mut ops = Vec::new();
+    let mut steps: Vec<PipeStep> = Vec::new();
+    let mut ops:   Vec<OpInvocation> = Vec::new();
     let mut walker = pipe_node.walk();
     for (idx, step) in pipe_node.named_children(&mut walker).enumerate() {
         let kind = step.kind();
+        let mut step_path: Vec<ParseSeg> = path.to_vec();
+        step_path.push(ParseSeg::Child { index: idx as u16 });
+
+        if kind == "pipe_fork" {
+            // Naked-brace fork: each named-child `pipe` is one arm.
+            let mut arms: Vec<Pipe> = Vec::new();
+            let mut cur2 = step.walk();
+            for (arm_idx, arm) in step.named_children(&mut cur2).enumerate() {
+                if arm.kind() != "pipe" { continue; }
+                let mut arm_path = step_path.clone();
+                arm_path.push(ParseSeg::Child { index: arm_idx as u16 });
+                arms.push(lower_pipe(arm, src, file, &arm_path, tree));
+            }
+            steps.push(PipeStep::Fork(arms));
+            continue;
+        }
+
         if kind != "op_invocation" && kind != "cursor_ref" {
             continue; // line_comment, etc.
         }
-        let mut step_path: Vec<ParseSeg> = path.to_vec();
-        step_path.push(ParseSeg::Child { index: idx as u16 });
 
         // cursor_ref has no `name` field; its op-name is the literal '&'.
         // Path content (`fs.ext`) is parsed downstream from the node bytes.
@@ -205,14 +221,16 @@ fn lower_pipe(
             path:       Arc::from(step_path.into_boxed_slice()),
             byte_range: step.byte_range(),
         };
-        ops.push(OpInvocation {
+        let inv = OpInvocation {
             name,
             predicate,
             parse_site: Arc::new(site),
             tree:       tree.clone(),
-        });
+        };
+        ops.push(inv.clone());
+        steps.push(PipeStep::Op(inv));
     }
-    Pipe { ops }
+    Pipe { steps, ops }
 }
 
 fn collect_errors(cursor: &mut TreeCursor<'_>, out: &mut Vec<ParseError>) {
@@ -515,6 +533,35 @@ mod tests {
             let name_node = op.child_by_field_name("name").expect("op name");
             assert_eq!(&src[name_node.byte_range()], "re");
         }
+    }
+
+    /// sprefa-4v3: a naked-brace fork as a pipe step. Parses to one
+    /// outer pipe whose `steps` contain an `Op` followed by a `Fork`
+    /// holding two arms. `ops` (the back-compat flat view) holds only
+    /// the outer op-invocation.
+    #[test]
+    fn pipe_fork_step_parses_to_steps_op_then_fork() {
+        let src = "fs(glob(**/*.rs)) > { > foo(a); > bar(b); }";
+        let (p, errs) = host_parse(src, fake_file());
+        assert!(errs.is_empty(), "unexpected parse errs: {errs:?}");
+        assert_eq!(p.pipes.len(), 1);
+        let pipe = &p.pipes[0];
+        assert_eq!(pipe.steps.len(), 2, "two steps: fs op + fork block");
+        match &pipe.steps[0] {
+            PipeStep::Op(inv) => assert_eq!(&*inv.name, "fs"),
+            other => panic!("step[0] expected Op, got {other:?}"),
+        }
+        match &pipe.steps[1] {
+            PipeStep::Fork(arms) => {
+                assert_eq!(arms.len(), 2, "two fork arms");
+                assert_eq!(&*arms[0].ops[0].name, "foo");
+                assert_eq!(&*arms[1].ops[0].name, "bar");
+            }
+            other => panic!("step[1] expected Fork, got {other:?}"),
+        }
+        // ops back-compat view holds only the outer op-invocation.
+        assert_eq!(pipe.ops.len(), 1);
+        assert_eq!(&*pipe.ops[0].name, "fs");
     }
 
     /// §14.2: Grammar must tolerate a bare identifier in slot position

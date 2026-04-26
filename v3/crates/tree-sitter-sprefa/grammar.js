@@ -66,6 +66,32 @@ module.exports = grammar({
     _pipe_step: $ => choice(
       $.op_invocation,
       $.cursor_ref,
+      $.pipe_fork,
+    ),
+
+    // ---- pipe_fork --------------------------------------------------------
+    // `{ > arm1; > arm2; ... }` as a pipe step. Each arm is itself a pipe
+    // (sequence of `>`-separated steps). Arms are separated by `;`. The
+    // upstream cursor is broadcast to each arm; results union. Lowers to
+    // `Pipeline::Fork`. Distinct from `brace_slot` (which attaches to an
+    // op_invocation as the `brace` field) — `pipe_fork` is naked, no
+    // leading op-name.
+    pipe_fork: $ => seq(
+      '{',
+      optional(seq(
+        $._fork_arm,
+        repeat(seq(';', $._fork_arm)),
+        optional(';'),
+      )),
+      '}',
+    ),
+
+    // A fork arm is a pipe with an optional leading `>` so the inner
+    // reading mirrors the outer source ("upstream `>` { > arm1; > arm2 }").
+    // The leading `>` is sugar; the pipe shape is unchanged.
+    _fork_arm: $ => seq(
+      optional('>'),
+      $.pipe,
     ),
 
     // ---- op invocation ----------------------------------------------------

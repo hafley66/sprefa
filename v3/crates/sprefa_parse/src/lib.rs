@@ -18,7 +18,7 @@ pub mod ast;
 pub mod parse;
 
 pub use site::{ParseSite, ParseSeg};
-pub use ast::{InjectedTree, OpInvocation, ParsedSource, Pipe};
+pub use ast::{InjectedTree, OpInvocation, ParsedSource, Pipe, PipeStep};
 pub use parse::{
     ParseError, ParseErrorKind, ResolveLanguage, host_parse, host_parse_with_injections,
 };
