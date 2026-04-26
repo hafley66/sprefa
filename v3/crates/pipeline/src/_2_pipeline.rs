@@ -1,41 +1,42 @@
-//! Pipeline envelope. Framework owns fan-out semantics.
+//! Pipeline envelope. Framework owns fan-out semantics on a stream-to-
+//! stream surface (session 20260426.4).
 //!
-//! `Seq` threads cursors linearly; `Fork` duplicates input to every arm
-//! and concatenates outputs with per-arm tagging. Ops are leaves.
+//! `Pipeline::run` takes `BoxStream<Arc<[Cursor]>>` and returns one.
+//!   - `Op(op)`  threads upstream through the op's `pipe_flat_map`
+//!     (default = mergeMap(64) over `pipe`) and tags emitted cursors
+//!     with `PathSeg::Op { name, step }` per emitted batch.
+//!   - `Seq(xs)` folds upstream through stages: `xs.iter().fold(s, |s, st| st.run(ctx, s))`.
+//!   - `Fork(arms)` broadcasts upstream to each arm and merges arm
+//!     outputs. Each arm's emitted cursors are tagged with
+//!     `PathSeg::ForkArm { index }`.
 //!
-//! PAIN POINT — Fork input duplication cost:
+//! Backpressure: native via `futures::Stream` pull semantics. Each arm
+//! and stage is polled by downstream demand. `buffer_unordered(N)` inside
+//! `pipe_flat_map` defaults bounds in-flight `pipe` calls per op.
 //!
-//! v2 buffers the entire input stream into `Vec<Arc<[Cursor]>>` before
-//! replay (v2/src/_5_op.rs:217-239). This slice mirrors that with a
-//! `Vec<Cursor>` clone-per-arm. Cursor clone is cheap (content and
-//! slots are Arc-wrapped, captures and path are shallow Vecs) but this
-//! still materializes N × arms cursors in memory. The streaming
-//! version (BoxStream<Arc<[Cursor]>> per v2 trait) with broadcast-Fork
-//! per project_v2_runner_parallelism is the next slice once the
-//! concrete shape stabilizes.
+//! PAIN POINT — Fork broadcast cost:
 //!
-//! PAIN POINT — path tagging happens after `pipe` returns:
-//!
-//! Ops cannot read the final path their cursors will carry, because the
-//! runner appends `PathSeg::Op` *after* receiving Vec<Cursor>. That is
-//! intentional per project_v2_path_tagging ("framework owns, ops never
-//! touch"), but an op that wants to emit a diagnostic referencing the
-//! path would need to read it from its *input* cursor, not from its
-//! output. For this slice, ops reference `c.path` from the input side.
+//! Broadcast over a stream requires either replay buffering (record
+//! upstream, replay to each arm) or a fan-out channel (forward each
+//! emit to N receivers). This slice picks the channel path via
+//! `tokio::sync::broadcast`. Lossy by default if an arm lags; capacity
+//! is intentionally large for this slice. The push/pull dam pattern
+//! (theory:push-pull-dam) would replace this with a bounded mpsc per
+//! arm; deferred.
 
 use std::sync::Arc;
+
+use futures::stream::{self, BoxStream, StreamExt};
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
+
 use crate::_0_cursor::{Cursor, PathSeg};
 use crate::_1_op::Op;
-use effect_runtime::{BoxFuture, RtCtx};
+use effect_runtime::RtCtx;
 
 pub enum Pipeline {
     /// `Arc` so a single lowered op can back both the LSP hover render
-    /// path and the pipeline run path without re-lowering. The previous
-    /// shape (`Box<dyn Op>`) forced a second `registry.build_from_node`
-    /// call from `lower_plan_keeping_ops`, which in turn meant
-    /// re-parsing synthesized source — the bug surface that dropped
-    /// bracket args. With `Arc`, `DocSession` lowers each op once on
-    /// first use, hands out clones to every reader.
+    /// path and the pipeline run path without re-lowering.
     Op(Arc<dyn Op>),
     Seq(Vec<Pipeline>),
     Fork(Vec<Pipeline>),
@@ -45,48 +46,128 @@ impl Pipeline {
     pub fn run<'a>(
         &'a self,
         ctx: &'a RtCtx,
-        inputs: Vec<Cursor>,
-    ) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
-            match self {
-                Pipeline::Op(op) => {
-                    // Hand the whole input slice to `pipe_batch`. Ops
-                    // that override get one rayon `par_iter` pass; ops
-                    // that don't ride the default `buffered` impl. The
-                    // runner stays the only site that appends
-                    // `PathSeg::Op` — ops never touch path tagging.
-                    let name = op.name();
-                    let cs_arc: Arc<[Cursor]> = Arc::from(inputs);
-                    let groups = op.pipe_batch(ctx, cs_arc).await;
-                    let mut out = Vec::new();
-                    for (step, group) in groups.into_iter().enumerate() {
-                        for mut nc in group {
-                            nc.path.push(PathSeg::Op { name, step });
-                            out.push(nc);
+        upstream: BoxStream<'a, Arc<[Cursor]>>,
+    ) -> BoxStream<'a, Arc<[Cursor]>> {
+        match self {
+            Pipeline::Op(op) => {
+                let name = op.name();
+                let stream = op
+                    .pipe_flat_map(ctx, upstream)
+                    .enumerate()
+                    .map(move |(step, batch)| {
+                        let mut v: Vec<Cursor> = batch.iter().cloned().collect();
+                        for c in &mut v {
+                            c.path.push(PathSeg::Op { name, step });
                         }
-                    }
-                    out
-                }
-                Pipeline::Seq(stages) => {
-                    let mut cs = inputs;
-                    for stage in stages {
-                        cs = stage.run(ctx, cs).await;
-                    }
-                    cs
-                }
-                Pipeline::Fork(arms) => {
-                    let mut out = Vec::new();
-                    for (index, arm) in arms.iter().enumerate() {
-                        let arm_in: Vec<Cursor> = inputs.clone();
-                        let mut cs = arm.run(ctx, arm_in).await;
-                        for nc in &mut cs {
-                            nc.path.push(PathSeg::ForkArm { index });
-                        }
-                        out.extend(cs);
-                    }
-                    out
-                }
+                        Arc::<[Cursor]>::from(v)
+                    });
+                Box::pin(stream)
             }
-        })
+            Pipeline::Seq(stages) => {
+                let mut s: BoxStream<'a, Arc<[Cursor]>> = upstream;
+                for stage in stages {
+                    s = stage.run(ctx, s);
+                }
+                s
+            }
+            Pipeline::Fork(arms) => fork_broadcast(ctx, upstream, arms),
+        }
     }
+}
+
+/// Fork: broadcast upstream batches to every arm, run each arm, merge
+/// outputs. Each arm tags its emitted cursors with
+/// `PathSeg::ForkArm { index }`.
+///
+/// Implementation detail: a `tokio::sync::broadcast` channel fans
+/// upstream batches to each arm's input stream. Upstream is *not*
+/// spawned — it can borrow `'a` data, so cannot be `'static`. Instead
+/// the upstream pull is driven inline by a sentinel stream that yields
+/// no items but advances the producer. `stream::select` interleaves
+/// that producer-driver with the merged arm outputs, so polling the
+/// returned stream pulls upstream as needed.
+fn fork_broadcast<'a>(
+    ctx: &'a RtCtx,
+    upstream: BoxStream<'a, Arc<[Cursor]>>,
+    arms: &'a [Pipeline],
+) -> BoxStream<'a, Arc<[Cursor]>> {
+    // Capacity sized to absorb fork fan-out without blocking. If an
+    // arm lags past this, BroadcastStream surfaces Lagged which we map
+    // to an empty batch. The bounded mpsc-per-arm dam shape is the
+    // follow-up.
+    const FORK_CAP: usize = 1024;
+    let n = arms.len();
+    if n == 0 {
+        return Box::pin(stream::empty());
+    }
+
+    let (tx, _rx0) = broadcast::channel::<Arc<[Cursor]>>(FORK_CAP);
+
+    let mut arm_streams: Vec<BoxStream<'a, Arc<[Cursor]>>> = Vec::with_capacity(n);
+    for (index, arm) in arms.iter().enumerate() {
+        let rx = tx.subscribe();
+        let arm_input: BoxStream<'a, Arc<[Cursor]>> = Box::pin(
+            BroadcastStream::new(rx).filter_map(|r| async move {
+                match r {
+                    Ok(b) => Some(b),
+                    Err(_lagged) => None,
+                }
+            }),
+        );
+        let tagged = arm.run(ctx, arm_input).map(move |batch| {
+            let mut v: Vec<Cursor> = batch.iter().cloned().collect();
+            for c in &mut v {
+                c.path.push(PathSeg::ForkArm { index });
+            }
+            Arc::<[Cursor]>::from(v)
+        });
+        arm_streams.push(Box::pin(tagged));
+    }
+
+    // Producer-driver: an inline stream that drives upstream → broadcast.
+    // It yields no items (Stream<Item=Arc<[Cursor]>>) but each .await on
+    // upstream.next() advances the producer side of the fork. When
+    // upstream completes, drop the broadcast sender so subscribers see
+    // close.
+    let producer_driver = {
+        let tx_for_producer = tx.clone();
+        let driver = stream::unfold(
+            (Some(upstream), Some(tx_for_producer)),
+            |(mut up_opt, mut tx_opt)| async move {
+                let Some(up) = up_opt.as_mut() else { return None; };
+                match up.next().await {
+                    Some(batch) => {
+                        if let Some(tx) = tx_opt.as_ref() {
+                            let _ = tx.send(batch);
+                        }
+                        // Re-park: continue, no item emitted.
+                        // Recurse via a fresh state.
+                        Some((Arc::<[Cursor]>::from(Vec::<Cursor>::new()), (up_opt, tx_opt)))
+                    }
+                    None => {
+                        // Drop the sender so subscribers see close.
+                        tx_opt = None;
+                        up_opt = None;
+                        // Yield one final empty so downstream advances
+                        // its select; subsequent polls return None.
+                        Some((Arc::<[Cursor]>::from(Vec::<Cursor>::new()), (up_opt, tx_opt)))
+                    }
+                }
+            },
+        )
+        .filter(|b| {
+            let keep = !b.is_empty();
+            async move { keep }
+        });
+        // Concrete type erasure to a BoxStream<'a, ...>.
+        let s: BoxStream<'a, Arc<[Cursor]>> = Box::pin(driver);
+        s
+    };
+
+    // Drop the original sender; the broadcast closes when every send
+    // half drops (the producer_driver retains the only remaining one).
+    drop(tx);
+
+    let merged = stream::select_all(arm_streams);
+    Box::pin(stream::select(producer_driver, merged))
 }

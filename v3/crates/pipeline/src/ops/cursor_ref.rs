@@ -83,8 +83,8 @@ fn path_to_string(p: &Arc<Path>) -> String {
 impl Op for CursorRefOp {
     fn name(&self) -> &'static str { "&" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let value = self.resolve(&c).unwrap_or_default();
             let mut out = c;
             out.captures.push(Capture::synthesized(
@@ -93,7 +93,7 @@ impl Op for CursorRefOp {
             ));
             out.last_bound = Some(self.joined.clone());
             vec![out]
-        })
+        }))
     }
 }
 
@@ -262,7 +262,7 @@ mod tests {
         let mut c = Cursor::new(Arc::from(b"".as_slice()));
         c.repo = Arc::from("acme/widgets");
         let op = CursorRefOp::new(vec![Arc::from("repo")]);
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         let cap = out[0].capture("repo").expect("repo capture");
         assert_eq!(cap.bytes(&out[0].content), b"acme/widgets");

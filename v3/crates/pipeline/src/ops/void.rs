@@ -1,5 +1,7 @@
 //! `> void` — drop the cursor. Returns zero outputs.
 
+use std::sync::Arc;
+
 use effect_runtime::{BoxFuture, RtCtx};
 
 use crate::_0_cursor::Cursor;
@@ -14,8 +16,8 @@ pub struct VoidOp;
 impl Op for VoidOp {
     fn name(&self) -> &'static str { "void" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, _c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move { Vec::new() })
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, _batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(async move { Arc::<[Cursor]>::from(Vec::<Cursor>::new()) })
     }
 }
 
@@ -43,7 +45,8 @@ mod tests {
     async fn drops_cursor() {
         let ctx = RtCtx::default();
         let c = Cursor::new(Arc::from(b"data".as_slice()));
-        let out = VoidOp.pipe(&ctx, c).await;
+        let batch: Arc<[Cursor]> = Arc::from(vec![c]);
+        let out = VoidOp.pipe(&ctx, batch).await;
         assert!(out.is_empty());
     }
 }

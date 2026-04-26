@@ -202,8 +202,8 @@ identity-projecting match against `cursor.active()`.
 impl Op for GlobOp {
     fn name(&self) -> &'static str { "glob" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             apply_identity_pattern(
                 &self.regex,
                 &self.bound_captures,
@@ -211,7 +211,7 @@ impl Op for GlobOp {
                 (&self.anchors.0, &self.anchors.1),
                 &c,
             )
-        })
+        }))
     }
 
     fn language(&self) -> Option<tree_sitter::Language> {
@@ -430,10 +430,10 @@ mod tests {
         let ctx = RtCtx::default();
         let mk = |bytes: &[u8]| Cursor::new(Arc::from(bytes));
 
-        assert_eq!(op.pipe(&ctx, mk(b"src/lib.rs")).await.len(), 1);
-        assert_eq!(op.pipe(&ctx, mk(b"deep/nested/path/mod.rs")).await.len(), 1);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk(b"src/lib.rs")])).await.len(), 1);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk(b"deep/nested/path/mod.rs")])).await.len(), 1);
 
-        assert!(op.pipe(&ctx, mk(b"README.md")).await.is_empty());
-        assert!(op.pipe(&ctx, mk(b"Cargo.toml")).await.is_empty());
+        assert!(op.pipe(&ctx, Arc::from(vec![mk(b"README.md")])).await.is_empty());
+        assert!(op.pipe(&ctx, Arc::from(vec![mk(b"Cargo.toml")])).await.is_empty());
     }
 }

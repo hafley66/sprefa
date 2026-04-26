@@ -43,8 +43,8 @@ pub struct WriteCursorOp {
 impl Op for WriteCursorOp {
     fn name(&self) -> &'static str { "write_cursor" }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let Some(file) = c.fs.clone() else { return vec![c]; };
             let Some(cap) = c.capture(&self.target) else { return vec![c]; };
             let byte_range = cap.byte_range.clone();
@@ -56,7 +56,7 @@ impl Op for WriteCursorOp {
                 mode: self.mode,
             }).await;
             vec![c]
-        })
+        }))
     }
 }
 
@@ -206,7 +206,7 @@ mod tests {
         c.captures.push(Capture::span_backed(Arc::from("SCOPE"), 12..20));
 
         let op = WriteCursorOp { target: Arc::from("SCOPE"), mode: WriteMode::Append };
-        let out = op.pipe(&rt, c).await;
+        let out = op.pipe(&rt, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
 
         let effects = buf.lock().unwrap().clone();
@@ -227,7 +227,7 @@ mod tests {
         c.captures.push(Capture::span_backed(Arc::from("SCOPE"), 0..1));
         // c.fs is None
         let op = WriteCursorOp { target: Arc::from("SCOPE"), mode: WriteMode::Replace };
-        op.pipe(&rt, c).await;
+        op.pipe(&rt, Arc::from(vec![c])).await;
         assert!(buf.lock().unwrap().is_empty());
     }
 
@@ -241,7 +241,7 @@ mod tests {
         c.fs = Some(Arc::<std::path::Path>::from(PathBuf::from("a.rs")));
         // no SCOPE capture written
         let op = WriteCursorOp { target: Arc::from("SCOPE"), mode: WriteMode::Replace };
-        op.pipe(&rt, c).await;
+        op.pipe(&rt, Arc::from(vec![c])).await;
         assert!(buf.lock().unwrap().is_empty());
     }
 }

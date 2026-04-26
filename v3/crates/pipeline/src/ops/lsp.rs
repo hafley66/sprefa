@@ -38,8 +38,8 @@ pub struct LspDiagOp {
 impl Op for LspDiagOp {
     fn name(&self) -> &'static str { "lsp" }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             ctx.put(LspDiagEffect {
                 file:       c.fs.clone(),
                 byte_range: c.byte_range.clone(),
@@ -49,7 +49,7 @@ impl Op for LspDiagOp {
                 hint:       self.hint.clone(),
             }).await;
             vec![c]
-        })
+        }))
     }
 }
 
@@ -358,7 +358,7 @@ mod tests {
         let mut c = Cursor::new(Arc::from(b"hello world".as_slice()));
         c.byte_range = 6..11;
         c.fs = Some(Arc::<std::path::Path>::from(std::path::PathBuf::from("a.rs")));
-        let out = op.pipe(&rt, c).await;
+        let out = op.pipe(&rt, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].byte_range, 6..11);
         let diags = buf.lock().unwrap().clone();

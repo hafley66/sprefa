@@ -96,8 +96,8 @@ spans. Multiple captures fan out as a row-per-match.
 impl Op for JsonOp {
     fn name(&self) -> &'static str { "json" }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let Some(c) = crate::effects::ensure_content_loaded(ctx, c).await else {
                 return Vec::new();
             };
@@ -138,7 +138,7 @@ impl Op for JsonOp {
                 out.push(next);
             }
             out
-        })
+        }))
     }
 
     fn bound_captures(&self) -> &[Arc<str>] { &self.bound_caps }
@@ -309,7 +309,7 @@ mod tests {
         let body = br#"{"name":"alice","version":"1.2"}"#;
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower("json({ name: $N, version: $V })").unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         let n = out[0].captures.iter().find(|c| &*c.name == "N").unwrap();
         let v = out[0].captures.iter().find(|c| &*c.name == "V").unwrap();
@@ -323,7 +323,7 @@ mod tests {
         let body = br#"{"deps":{"foo":"1","bar":"2"}}"#;
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower("json({ deps: { $K: $V } })").unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 2);
         let mut pairs: Vec<(String, String)> = out
             .iter()
@@ -352,7 +352,7 @@ mod tests {
         let body = br#"{"users":[{"id":"a"},{"id":"b"}]}"#;
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower("json({ users: [...{ id: $I }] })").unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 2);
     }
 
@@ -362,7 +362,7 @@ mod tests {
         let body = br#"{"a":{"b":{"image":"nginx"}}}"#;
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower("json({ **: { image: $I } })").unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert!(out.iter().any(|c| {
             c.captures.iter().any(|cap| &*cap.name == "I" && cap.bytes(&c.content) == b"\"nginx\"")
         }));
@@ -374,7 +374,7 @@ mod tests {
         let body = br#"{"image":"nginx:1.21"}"#;
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower(r#"json({ image: "$REPO:$TAG" })"#).unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         let r = out[0].captures.iter().find(|c| &*c.name == "REPO").unwrap();
         let t = out[0].captures.iter().find(|c| &*c.name == "TAG").unwrap();

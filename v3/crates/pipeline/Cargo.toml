@@ -14,6 +14,7 @@ regex             = "1"
 rustc-hash        = "2"
 sprefa_macros     = { path = "../sprefa_macros" }
 tokio             = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
+tokio-stream      = { version = "0.1", features = ["sync"] }
 tree-sitter       = "0.24"
 tree-sitter-json    = "0.24"
 tree-sitter-yaml    = "0.7"

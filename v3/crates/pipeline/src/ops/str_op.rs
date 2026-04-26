@@ -91,8 +91,8 @@ of `re` / `glob` / `comment`).
 impl Op for StrOp {
     fn name(&self) -> &'static str { "str" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let mut buf = String::new();
             for seg in &self.template {
                 match seg {
@@ -109,7 +109,7 @@ impl Op for StrOp {
             let mut out = c;
             out.put_slot(StrValue(Arc::from(buf)));
             vec![out]
-        })
+        }))
     }
 }
 
@@ -328,8 +328,8 @@ mod tests {
         let op = StrOp {
             template: vec![StrSeg::Lit(Arc::from("hello world"))],
         };
-        let v = op.pipe(&ctx, c).await.pop().unwrap()
-            .get_slot::<StrValue>().unwrap();
+        let out_batch = op.pipe(&ctx, Arc::from(vec![c])).await;
+        let v = out_batch[0].get_slot::<StrValue>().unwrap();
         assert_eq!(&*v.0, "hello world");
     }
 
@@ -381,8 +381,8 @@ mod tests {
         let content: Arc<[u8]> = Arc::from(b"PATH=alice".as_slice());
         let mut c = Cursor::new(content);
         c.captures.push(Capture::span_backed(Arc::from("P"), 5..10));
-        let v = op.pipe(&ctx, c).await.pop().unwrap()
-            .get_slot::<StrValue>().unwrap();
+        let out_batch = op.pipe(&ctx, Arc::from(vec![c])).await;
+        let v = out_batch[0].get_slot::<StrValue>().unwrap();
         assert_eq!(&*v.0, "out/alice/file.bin");
     }
 }

@@ -34,7 +34,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
+use ast_grep_core::{source::StrDoc, AstGrep, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::{BoxFuture, RtCtx};
 use regex::Regex;
@@ -105,12 +105,20 @@ Strict metavar grammar (bare `$NAME` / `$$$NAME` rejected):
 impl Op for AstGrepOp {
     fn name(&self) -> &'static str { "ast" }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(
+        &'a self,
+        ctx: &'a RtCtx,
+        batch: Arc<[Cursor]>,
+    ) -> BoxFuture<'a, Arc<[Cursor]>> {
+        // Per-cursor effect-dispatched path: every cursor goes through
+        // `ctx.put(AstParseEffect)` so the registered batcher (production
+        // BoundedWorkSteal pool, tests' PausedAstParse) governs parallelism
+        // and overhead. Bulk-RSS-bounded chunked rayon is a follow-up
+        // override for very large batches; tracked by perf rerun card.
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let Some(c) = crate::effects::ensure_content_loaded(ctx, c).await else {
                 return Vec::new();
             };
-
             // Prefilter probe before issuing the parse effect — most
             // files skip parse on the kernel corpus. FINDINGS §2.3.
             {
@@ -121,12 +129,6 @@ impl Op for AstGrepOp {
                     return Vec::new();
                 }
             }
-
-            // Single-cursor path: parse via `ctx.put(AstParseEffect)` —
-            // routes through `BoundedWorkSteal` so the per-cursor caller
-            // gets the worker-pool dispatch story. The bulk-cursor path
-            // (`pipe_batch`) skips this and runs parse inline on rayon
-            // for `ScanBatch` parity.
             let parse_req = crate::effects::AstParseEffect {
                 content:    c.content.clone(),
                 byte_range: c.byte_range.clone(),
@@ -136,65 +138,7 @@ impl Op for AstGrepOp {
                 return Vec::new();
             };
             scan_with_grep(self, &c, &grep)
-        })
-    }
-
-    fn pipe_batch<'a>(
-        &'a self,
-        ctx: &'a RtCtx,
-        cs:  std::sync::Arc<[Cursor]>,
-    ) -> BoxFuture<'a, Vec<Vec<Cursor>>> {
-        Box::pin(async move {
-            // Chunked bulk-read + parse to bound peak RSS. Loading all
-            // 36k file bodies before scanning would hold ~1 GB of
-            // bytes alive at once. Sliding chunks of `CHUNK` keep
-            // peak working set ≈ chunk × avg-file-size while letting
-            // rayon par_iter saturate cores within each chunk. Output
-            // groups are concatenated in input order; `Vec<Vec<_>>`
-            // alignment is preserved.
-            // Tunable via `SPREFA_AST_CHUNK` for measurement.
-            let chunk_env: usize = std::env::var("SPREFA_AST_CHUNK")
-                .ok().and_then(|s| s.parse().ok())
-                .unwrap_or(2048);
-            let chunk_n = chunk_env.max(1);
-            let total = cs.len();
-            let mut groups: Vec<Vec<Cursor>> = Vec::with_capacity(total);
-            let mut start = 0;
-            while start < total {
-                let end = (start + chunk_n).min(total);
-                let slice: &[Cursor] = &cs[start..end];
-
-                // Bulk read for this chunk only.
-                let loaded: Vec<Option<Cursor>> =
-                    crate::effects::ensure_content_loaded_batch(ctx, slice).await;
-
-                // Parse + match on rayon. `spawn_blocking` hands off to
-                // tokio's blocking pool so the current tokio worker is
-                // free; rayon's global pool drives the par_iter.
-                let pattern      = self.pattern.clone();
-                let slot_regexes = self.slot_regexes.clone();
-                let multi_slots  = self.multi_slots.clone();
-                let lang         = self.lang;
-                // Hoist `fixed_string` out of the par_iter — recomputes
-                // from the pattern tree each call. One allocation per
-                // chunk instead of one per cursor.
-                let fixed: Arc<str> = Arc::from(pattern.fixed_string().as_ref());
-                let chunk_groups: Vec<Vec<Cursor>> =
-                    tokio::task::spawn_blocking(move || {
-                        use rayon::prelude::*;
-                        loaded.into_par_iter().map(|opt_c| {
-                            let Some(c) = opt_c else { return Vec::new(); };
-                            scan_one_inline(&pattern, &fixed, &slot_regexes, &multi_slots, lang, c)
-                        }).collect::<Vec<Vec<Cursor>>>()
-                    }).await.unwrap_or_default();
-                // `chunk_groups` drops here; bytes inside its Cursors'
-                // Arc<[u8]> drop with the last reference, freeing the
-                // chunk's working set before the next read.
-                groups.extend(chunk_groups);
-                start = end;
-            }
-            groups
-        })
+        }))
     }
 
     fn bound_captures(&self) -> &[Arc<str>] { &self.bound_caps }
@@ -259,90 +203,6 @@ fn scan_with_grep(
         out.push(next);
     }
     out
-}
-
-/// Sync per-cursor scan for the rayon path: prefilter → parse → match.
-/// No `ctx.put`. Runs inside `tokio::task::spawn_blocking` + rayon
-/// `par_iter`. Mirrors the bench `ScanBatch` handler.
-fn scan_one_inline(
-    pattern:      &Arc<Pattern<SupportLang>>,
-    fixed:        &str,
-    slot_regexes: &Vec<(String, Regex)>,
-    multi_slots:  &Vec<(String, Arc<str>)>,
-    lang:         SupportLang,
-    c:            Cursor,
-) -> Vec<Cursor> {
-    let active = c.active();
-    let Ok(src_str) = std::str::from_utf8(active) else { return Vec::new(); };
-    if !fixed.is_empty() && !src_str.contains(fixed) {
-        return Vec::new();
-    }
-    let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(src_str);
-    // Reuse the shared scan logic by constructing a thin synthetic op
-    // view of (pattern, slot_regexes, multi_slots). Avoids duplicating
-    // the match-and-emit code across the two paths.
-    let view = AstGrepOpRef { pattern, slot_regexes, multi_slots };
-    view.scan(&c, &grep)
-}
-
-/// Lightweight borrow-only view used inside the rayon worker so we can
-/// re-use `scan_with_grep`-style logic without holding the full
-/// `AstGrepOp`. Avoids a clone of the whole op into every par_iter slot.
-struct AstGrepOpRef<'a> {
-    pattern:      &'a Arc<Pattern<SupportLang>>,
-    slot_regexes: &'a Vec<(String, Regex)>,
-    multi_slots:  &'a Vec<(String, Arc<str>)>,
-}
-
-impl<'a> AstGrepOpRef<'a> {
-    fn scan(&self, c: &Cursor, grep: &AstGrep<StrDoc<SupportLang>>) -> Vec<Cursor> {
-        let base = c.byte_range.start;
-        let mut out: Vec<Cursor> = Vec::new();
-        for nm in grep.root().find_all(&**self.pattern) {
-            let env = nm.get_env();
-            let mut cap_values: HashMap<Arc<str>, (Arc<str>, Option<std::ops::Range<usize>>)> =
-                HashMap::new();
-            let mut slot_ok = true;
-            for (slot_name, re) in self.slot_regexes.iter() {
-                let Some(node) = env.get_match(slot_name) else { slot_ok = false; break; };
-                let text = node.text().to_string();
-                let Some(caps) = re.captures(&text) else { slot_ok = false; break; };
-                let node_r = node.range();
-                for cap_name in re.capture_names().flatten() {
-                    if let Some(m) = caps.name(cap_name) {
-                        let abs =
-                            (base + node_r.start + m.start())..(base + node_r.start + m.end());
-                        cap_values.insert(
-                            Arc::from(cap_name),
-                            (Arc::from(m.as_str()), Some(abs)),
-                        );
-                    }
-                }
-            }
-            if !slot_ok { continue; }
-            for (slot_name, cap_name) in self.multi_slots.iter() {
-                let nodes = env.get_multiple_matches(slot_name);
-                let joined: String = nodes.iter()
-                    .map(|n| n.text().to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                cap_values.insert(cap_name.clone(), (Arc::from(joined.as_str()), None));
-            }
-            let r = nm.range();
-            let abs_match = (base + r.start)..(base + r.end);
-            let mut next = c.clone();
-            next.byte_range = abs_match;
-            for (name, (text, span)) in cap_values {
-                let cap = match span {
-                    Some(s) => Capture::span_backed(name, s),
-                    None    => Capture::synthesized(name, text),
-                };
-                next.captures.push(cap);
-            }
-            out.push(next);
-        }
-        out
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -794,7 +654,7 @@ mod tests {
         let body = b"fn alpha() {}\nfn beta() {}\n";
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower("ast[rust](fn ${N}() {})").unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 2);
         let names: Vec<String> = out
             .iter()
@@ -812,7 +672,7 @@ mod tests {
         let body = b"const x: number = 1;\nconst y: string = 'a';\n";
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower("ast[ts](const ${X}: ${T} = ${V})").unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 2);
     }
 
@@ -822,7 +682,7 @@ mod tests {
         let body = b"fn f(a: i32, b: i32) {}\n";
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower("ast[rust](fn ${N}($$${ARGS}) {})").unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         let args = out[0].captures.iter().find(|c| &*c.name == "ARGS").unwrap();
         let text = match &args.kind {
@@ -840,7 +700,7 @@ mod tests {
         let body = b"type a = MyError;\ntype b = OtherError;\n";
         let c = Cursor::new(Arc::from(body.as_slice()));
         let op = lower("ast[ts](type ${A} = ${TY}Error)").unwrap();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 2);
         let mut tys: Vec<String> = out
             .iter()
@@ -885,7 +745,7 @@ mod tests {
         let c = timing_cursor();
 
         let t0 = std::time::Instant::now();
-        let _ = op.pipe(&ctx, c).await;
+        let _ = op.pipe(&ctx, Arc::from(vec![c])).await;
         let elapsed = t0.elapsed();
 
         // Lower edge: 15ms (just under 16) absorbs sleep wake-up jitter
@@ -893,6 +753,18 @@ mod tests {
         assert!(
             elapsed >= std::time::Duration::from_millis(15),
             "synthetic pause was not paid: {elapsed:?}",
+        );
+        // Upper edge: a single dispatch should not pay more than the
+        // pause + a fixed slack. If we ever introduce serialization
+        // (eg dropping `buffer_unordered` from `pipe_flat_map` default,
+        // or putting a global Mutex in front of AstParseEffect dispatch)
+        // a single dispatch will spike. Slack covers macOS sleep wakeup
+        // jitter and CI-runner startup tax.
+        let upper = SYNTHETIC_PAUSE + std::time::Duration::from_millis(48);
+        assert!(
+            elapsed < upper,
+            "single dispatch took {elapsed:?}, expected < {upper:?}; \
+             likely a runtime serialization regression",
         );
     }
 
@@ -911,7 +783,7 @@ mod tests {
         };
 
         let t0 = std::time::Instant::now();
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         let elapsed = t0.elapsed();
         canceller.await.unwrap();
 
@@ -937,7 +809,7 @@ mod tests {
             let ctx = ctx.clone();
             let op = timing_op();
             let c = timing_cursor();
-            set.spawn(async move { op.pipe(&ctx, c).await });
+            set.spawn(async move { op.pipe(&ctx, Arc::from(vec![c])).await });
         }
         while let Some(j) = set.join_next().await {
             let out = j.unwrap();

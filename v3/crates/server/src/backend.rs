@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use futures::stream::{self, StreamExt};
 use pipeline::binding_graph::BindingDiagnostic;
 use pipeline::registry::Registry;
 use sprefa_parse::{ParseError, ParseErrorKind};
@@ -341,7 +342,14 @@ async fn render_enriched_hover(
         let mut c = Cursor::default();
         c.repo = Arc::from(seed.slug.as_str());
         c.rev = Arc::from(seed.rev.as_str());
-        let rows = pipeline.run(&ctx, vec![c]).await;
+        let upstream: futures::stream::BoxStream<'_, Arc<[Cursor]>> = Box::pin(
+            stream::iter(vec![Arc::<[Cursor]>::from(vec![c])]),
+        );
+        let mut s = pipeline.run(&ctx, upstream);
+        let mut rows: Vec<Cursor> = Vec::new();
+        while let Some(b) = s.next().await {
+            rows.extend(b.iter().cloned());
+        }
         let root = seed.root.clone();
         for c in &rows {
             total_rows += 1;

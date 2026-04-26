@@ -91,8 +91,8 @@ impl Op for PrintOp {
 
     fn arg_spec(&self) -> &[ArgSpec] { PRINT_ARG_SPEC }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let Some(c) = crate::effects::ensure_content_loaded(ctx, c).await else {
                 return Vec::new();
             };
@@ -104,7 +104,7 @@ impl Op for PrintOp {
             };
             ctx.put(PrintEffect { line: Arc::from(line) }).await;
             vec![c]
-        })
+        }))
     }
 }
 
@@ -134,14 +134,14 @@ mod tests {
         // No prefix: line is exactly the active slice.
         let op = PrintOp::from_source("").unwrap();
         let c = Cursor::new(Arc::from(b"hello world".as_slice())).narrow(0..5);
-        let out = op.pipe(&rt, c).await;
+        let out = op.pipe(&rt, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].byte_range, 0..5);
 
         // With prefix: "tag: active".
         let op = PrintOp::from_source("tag").unwrap();
         let c = Cursor::new(Arc::from(b"hello world".as_slice())).narrow(6..11);
-        op.pipe(&rt, c).await;
+        op.pipe(&rt, Arc::from(vec![c])).await;
 
         let lines = buf.lock().unwrap().clone();
         assert_eq!(lines, vec!["hello".to_string(), "tag: world".to_string()]);

@@ -37,7 +37,10 @@ pub enum FsMode {
     Filter(Arc<dyn Op>),
     /// Bind mode. `pat` matches every file (`**`); `name` receives each
     /// path as a synthesized capture.
-    Bind { name: Arc<str>, pat: Arc<dyn Op> },
+    Bind {
+        name: Arc<str>,
+        pat: Arc<dyn Op>,
+    },
 }
 
 impl FsOp {
@@ -46,16 +49,24 @@ impl FsOp {
         if arg.is_empty() {
             return Err(vec![PatternDiagnostic {
                 code: "fs/missing-arg",
-                message: "fs requires a glob pattern or capture (e.g. fs(src/**/*.rs) or fs($F))".into(),
+                message: "fs requires a glob pattern or capture (e.g. fs(src/**/*.rs) or fs($F))"
+                    .into(),
                 byte_range: 0..src.len(),
             }]);
         }
         if let Some(name) = super::repo::parse_capture(arg) {
             let pat = super::glob::compile_str("**")?;
-            return Ok(FsOp { mode: FsMode::Bind { name, pat: Arc::new(pat) } });
+            return Ok(FsOp {
+                mode: FsMode::Bind {
+                    name,
+                    pat: Arc::new(pat),
+                },
+            });
         }
         let pat = super::glob::compile_str(arg)?;
-        Ok(FsOp { mode: FsMode::Filter(Arc::new(pat)) })
+        Ok(FsOp {
+            mode: FsMode::Filter(Arc::new(pat)),
+        })
     }
 
     pub fn from_values(values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {
@@ -63,11 +74,13 @@ impl FsOp {
             [Value::Term { name, .. }] => Ok(FsOp::bind(name.clone())),
             [Value::Atom(s)] | [Value::Str(s)] => {
                 let pat = super::glob::compile_str(s)?;
-                Ok(FsOp { mode: FsMode::Filter(Arc::new(pat)) })
+                Ok(FsOp {
+                    mode: FsMode::Filter(Arc::new(pat)),
+                })
             }
-            [Value::Op(op)] if op.try_raw_regex().is_some() => {
-                Ok(FsOp { mode: FsMode::Filter(op.clone()) })
-            }
+            [Value::Op(op)] if op.try_raw_regex().is_some() => Ok(FsOp {
+                mode: FsMode::Filter(op.clone()),
+            }),
             [Value::Op(_)] => Err(vec![PatternDiagnostic {
                 code: "fs/unsupported-pattern",
                 message: "fs requires an op exposing a raw regex (glob or re)".into(),
@@ -75,7 +88,8 @@ impl FsOp {
             }]),
             [] => Err(vec![PatternDiagnostic {
                 code: "fs/missing-arg",
-                message: "fs requires a glob pattern or capture (e.g. fs(src/**/*.rs) or fs($F))".into(),
+                message: "fs requires a glob pattern or capture (e.g. fs(src/**/*.rs) or fs($F))"
+                    .into(),
                 byte_range: 0..0,
             }]),
             _ => Err(vec![PatternDiagnostic {
@@ -87,13 +101,19 @@ impl FsOp {
     }
 
     pub fn filter(pat: Arc<dyn Op>) -> Self {
-        FsOp { mode: FsMode::Filter(pat) }
+        FsOp {
+            mode: FsMode::Filter(pat),
+        }
     }
 
     pub fn bind(name: impl Into<Arc<str>>) -> Self {
-        let pat = super::glob::compile_str("**")
-            .expect("'**' is a valid glob");
-        FsOp { mode: FsMode::Bind { name: name.into(), pat: Arc::new(pat) } }
+        let pat = super::glob::compile_str("**").expect("'**' is a valid glob");
+        FsOp {
+            mode: FsMode::Bind {
+                name: name.into(),
+                pat: Arc::new(pat),
+            },
+        }
     }
 
     fn pattern(&self) -> &Arc<dyn Op> {
@@ -114,7 +134,7 @@ impl FsOp {
 impl OpCtor for FsOp {
     const NAME: &'static str = "fs";
     const BODY_GRAMMAR: &'static str = "glob (`*` `**` `?` `$NAME`)";
-    const DOC:  &'static str = "\
+    const DOC: &'static str = "\
 **fs**(_glob_ | `$NAME`)
 
 Enumerate files under `(cursor.repo, cursor.rev)`. Listings are cached
@@ -130,23 +150,29 @@ via `FsListFilesEffect` in the `fs` domain.
 }
 
 impl Op for FsOp {
-    fn name(&self) -> &'static str { "fs" }
+    fn name(&self) -> &'static str {
+        "fs"
+    }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let pat = self.pattern();
             let regex = match pat.try_raw_regex() {
                 Some(r) => r,
                 None => return vec![],
             };
-            let paths = ctx.put(FsListFilesEffect {
-                repo: c.repo.clone(),
-                rev:  c.rev.clone(),
-            }).await;
+            let paths = ctx
+                .put(FsListFilesEffect {
+                    repo: c.repo.clone(),
+                    rev: c.rev.clone(),
+                })
+                .await;
             let mut out = Vec::new();
             for p in paths {
                 let path_str = p.to_string_lossy();
-                let Some(caps) = regex.captures(path_str.as_bytes()) else { continue };
+                let Some(caps) = regex.captures(path_str.as_bytes()) else {
+                    continue;
+                };
                 let mut nc = c.clone();
                 nc.fs = Some(Path::new(path_str.as_ref()).into());
 
@@ -159,14 +185,11 @@ impl Op for FsOp {
                 let mut last_glob_cap: Option<Arc<str>> = None;
                 for name in regex.capture_names().flatten() {
                     if let Some(m) = caps.name(name) {
-                        let val: Arc<str> = Arc::from(
-                            std::str::from_utf8(m.as_bytes()).unwrap_or(""),
-                        );
+                        let val: Arc<str> =
+                            Arc::from(std::str::from_utf8(m.as_bytes()).unwrap_or(""));
                         let cap_name: Arc<str> = Arc::from(name);
-                        nc.captures.push(Capture::synthesized(
-                            cap_name.clone(),
-                            val,
-                        ));
+                        nc.captures
+                            .push(Capture::synthesized(cap_name.clone(), val));
                         last_glob_cap = Some(cap_name);
                     }
                 }
@@ -183,14 +206,16 @@ impl Op for FsOp {
                 out.push(nc);
             }
             out
-        })
+        }))
     }
 
     fn language(&self) -> Option<tree_sitter::Language> {
         crate::op_languages::language_of("glob")
     }
 
-    fn arg_spec(&self) -> &[ArgSpec] { FS_ARG_SPEC }
+    fn arg_spec(&self) -> &[ArgSpec] {
+        FS_ARG_SPEC
+    }
 }
 
 #[cfg(test)]
@@ -201,9 +226,8 @@ mod tests {
     use effect_runtime::RtCtxBuilder;
 
     fn rt_with(paths: &[&str]) -> RtCtx {
-        let source: Arc<dyn FileSource> = Arc::new(
-            MemFileSource::new().with_files("r", "main", paths),
-        );
+        let source: Arc<dyn FileSource> =
+            Arc::new(MemFileSource::new().with_files("r", "main", paths));
         RtCtxBuilder::new()
             .register_pure::<FsListFilesEffect, _>(64, FsListFilesBatcher::new(source))
             .build()
@@ -219,37 +243,48 @@ mod tests {
     #[tokio::test]
     async fn filter_and_bind_scenarios() {
         let ctx = rt_with(&[
-            "src/lib.rs", "src/foo/lib.rs", "src/foo/main.rs",
-            "tests/it.rs", "README.md", "Cargo.toml",
+            "src/lib.rs",
+            "src/foo/lib.rs",
+            "src/foo/main.rs",
+            "tests/it.rs",
+            "README.md",
+            "Cargo.toml",
         ]);
 
         let op = FsOp::from_source("src/**/*.rs").unwrap();
-        let mut out = op.pipe(&ctx, cursor_at("r", "main")).await;
+        let out_arc = op.pipe(&ctx, Arc::from(vec![cursor_at("r", "main")])).await;
+        let mut out: Vec<Cursor> = out_arc.iter().cloned().collect();
         out.sort_by(|a, b| a.fs.cmp(&b.fs));
-        let got: Vec<String> = out.iter()
+        let got: Vec<String> = out
+            .iter()
             .map(|c| c.fs.as_ref().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(got, vec![
-            "src/foo/lib.rs".to_string(),
-            "src/foo/main.rs".to_string(),
-            "src/lib.rs".to_string(),
-        ]);
+        assert_eq!(
+            got,
+            vec![
+                "src/foo/lib.rs".to_string(),
+                "src/foo/main.rs".to_string(),
+                "src/lib.rs".to_string(),
+            ]
+        );
         assert!(out[0].captures.is_empty(), "filter mode does not bind");
 
         let op = FsOp::from_source("$P").unwrap();
-        let out = op.pipe(&ctx, cursor_at("r", "main")).await;
+        let out = op.pipe(&ctx, Arc::from(vec![cursor_at("r", "main")])).await;
         assert_eq!(out.len(), 6);
         assert!(out.iter().all(|c| c.captures.len() == 1));
         assert!(out.iter().all(|c| &*c.captures[0].name == "P"));
-        assert_eq!(out[0].captures[0].bytes(&out[0].content),
-                   out[0].fs.as_ref().unwrap().to_string_lossy().as_bytes());
+        assert_eq!(
+            out[0].captures[0].bytes(&out[0].content),
+            out[0].fs.as_ref().unwrap().to_string_lossy().as_bytes()
+        );
     }
 
     #[tokio::test]
     async fn no_match_drops_cursor() {
         let ctx = rt_with(&["README.md"]);
         let op = FsOp::from_source("src/**/*.rs").unwrap();
-        let out = op.pipe(&ctx, cursor_at("r", "main")).await;
+        let out = op.pipe(&ctx, Arc::from(vec![cursor_at("r", "main")])).await;
         assert!(out.is_empty());
     }
 
@@ -257,7 +292,9 @@ mod tests {
     async fn unknown_repo_rev_yields_empty() {
         let ctx = rt_with(&["a/b.rs"]);
         let op = FsOp::from_source("**/*.rs").unwrap();
-        let out = op.pipe(&ctx, cursor_at("other", "main")).await;
+        let out = op
+            .pipe(&ctx, Arc::from(vec![cursor_at("other", "main")]))
+            .await;
         assert!(out.is_empty());
     }
 

@@ -185,8 +185,8 @@ impl Op for CommentOp {
 
     fn arg_spec(&self) -> &[ArgSpec] { COMMENT_ARG_SPEC }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let Some(c) = crate::effects::ensure_content_loaded(ctx, c).await else {
                 return Vec::new();
             };
@@ -226,7 +226,7 @@ impl Op for CommentOp {
                     out
                 })
                 .collect()
-        })
+        }))
     }
 }
 
@@ -495,7 +495,7 @@ mod tests {
         {
             let src = "# SECTION: A\nline1\nline2\n# SECTION: B\nline3\n";
             let op = CommentOp::from_source("SECTION:").unwrap();
-            let out = op.pipe(&ctx, cursor_of(src.as_bytes())).await;
+            let out = op.pipe(&ctx, Arc::from(vec![cursor_of(src.as_bytes())])).await;
             assert_eq!(out.len(), 2);
             // First region starts at first `# SECTION: A` and ends at the
             // second marker.
@@ -510,7 +510,7 @@ mod tests {
         {
             let src = "# BEGIN: outer\nfoo\n# END:\ntail\n";
             let op = CommentOp::from_source("BEGIN:, END:").unwrap();
-            let out = op.pipe(&ctx, cursor_of(src.as_bytes())).await;
+            let out = op.pipe(&ctx, Arc::from(vec![cursor_of(src.as_bytes())])).await;
             assert_eq!(out.len(), 1);
             let end_line_end = src.find("# END:").unwrap() + "# END:".len();
             assert_eq!(out[0].byte_range, 0..end_line_end);
@@ -523,7 +523,7 @@ mod tests {
         {
             let src = "# BEGIN: leak\nfoo\n# other: x\n";
             let op = CommentOp::from_source("BEGIN:, END:").unwrap();
-            let out = op.pipe(&ctx, cursor_of(src.as_bytes())).await;
+            let out = op.pipe(&ctx, Arc::from(vec![cursor_of(src.as_bytes())])).await;
             assert_eq!(out.len(), 1);
             assert_eq!(out[0].byte_range.start, 0);
             // Ends at the next comment line's start (not EOF).
@@ -538,7 +538,7 @@ mod tests {
         let ctx = RtCtx::default();
         let src = "// SECTION: foo\na\nb\n// SECTION: bar\nc\n";
         let op = CommentOp::from_source("SECTION:\\s+(?P<LABEL>\\S+)").unwrap();
-        let out = op.pipe(&ctx, cursor_of(src.as_bytes())).await;
+        let out = op.pipe(&ctx, Arc::from(vec![cursor_of(src.as_bytes())])).await;
         assert_eq!(out.len(), 2);
         let c0 = out[0].capture("LABEL").unwrap();
         assert_eq!(c0.bytes(&out[0].content), b"foo");

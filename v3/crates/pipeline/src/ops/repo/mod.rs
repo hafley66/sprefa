@@ -114,8 +114,8 @@ Filter or bind on `cursor.repo`.
 impl Op for RepoOp {
     fn name(&self) -> &'static str { "repo" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             match &self.mode {
                 RepoMode::Filter(op) => {
                     let re = match op.try_raw_regex() {
@@ -132,7 +132,7 @@ impl Op for RepoOp {
                     vec![out]
                 }
             }
-        })
+        }))
     }
 
     fn language(&self) -> Option<tree_sitter::Language> {
@@ -169,16 +169,16 @@ mod tests {
     async fn filter_keeps_matching_repo_drops_rest() {
         let ctx = RtCtx::default();
         let op = RepoOp::from_source("myorg/*").unwrap();
-        assert_eq!(op.pipe(&ctx, mk_cursor("myorg/alpha")).await.len(), 1);
-        assert_eq!(op.pipe(&ctx, mk_cursor("myorg/beta")).await.len(), 1);
-        assert_eq!(op.pipe(&ctx, mk_cursor("other/alpha")).await.len(), 0);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk_cursor("myorg/alpha")])).await.len(), 1);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk_cursor("myorg/beta")])).await.len(), 1);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk_cursor("other/alpha")])).await.len(), 0);
     }
 
     #[tokio::test]
     async fn bind_writes_synthesized_capture_and_sets_last_bound() {
         let ctx = RtCtx::default();
         let op = RepoOp::from_source("$R").unwrap();
-        let out = op.pipe(&ctx, mk_cursor("myorg/alpha")).await;
+        let out = op.pipe(&ctx, Arc::from(vec![mk_cursor("myorg/alpha")])).await;
         assert_eq!(out.len(), 1);
         let c = &out[0];
         assert_eq!(c.captures.len(), 1);

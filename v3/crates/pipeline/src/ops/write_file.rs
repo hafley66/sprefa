@@ -124,8 +124,8 @@ impl WriteFileOp {
                     .map(Arc::from)
             }),
             PathSpec::SubOp(op) => {
-                let outs = op.pipe(ctx, c.clone()).await;
-                let out = outs.into_iter().next()?;
+                let outs = op.pipe(ctx, Arc::from(vec![c.clone()])).await;
+                let out = outs.first()?;
                 let v = out.get_slot::<StrValue>()?;
                 Some(v.0.clone())
             }
@@ -136,8 +136,8 @@ impl WriteFileOp {
 impl Op for WriteFileOp {
     fn name(&self) -> &'static str { "write_file" }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let Some(c) = crate::effects::ensure_content_loaded(ctx, c).await else {
                 return Vec::new();
             };
@@ -154,7 +154,7 @@ impl Op for WriteFileOp {
                 Arc::from(std::path::Path::new(path_str.as_ref()));
             let _ = ctx.put(WriteFileEffect { path, bytes }).await;
             vec![c]
-        })
+        }))
     }
 }
 
@@ -182,7 +182,7 @@ mod tests {
         let (rt, buf) = rt_with_buffer();
         let op = WriteFileOp::from_values(vec![Value::Str(Arc::from("out/a.txt"))]).unwrap();
         let c = Cursor::new(Arc::from(b"hello world".as_slice())).narrow(0..5);
-        let out = op.pipe(&rt, c).await;
+        let out = op.pipe(&rt, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         let written = buf.lock().unwrap().clone();
         assert_eq!(written.len(), 1);
@@ -202,7 +202,7 @@ mod tests {
         let mut c = Cursor::new(content).narrow(15..22);
         c.captures
             .push(Capture::span_backed(Arc::from("P"), 5..14));
-        op.pipe(&rt, c).await;
+        op.pipe(&rt, Arc::from(vec![c])).await;
         let written = buf.lock().unwrap().clone();
         assert_eq!(written[0].0.to_str().unwrap(), "tmp/x.bin");
         assert_eq!(written[0].1.as_ref(), b"payload");
@@ -224,7 +224,7 @@ mod tests {
         let mut c = Cursor::new(content).narrow(16..20);
         c.captures
             .push(Capture::span_backed(Arc::from("X"), 8..13));
-        op.pipe(&rt, c).await;
+        op.pipe(&rt, Arc::from(vec![c])).await;
         let written = buf.lock().unwrap().clone();
         assert_eq!(written[0].0.to_str().unwrap(), "dir/alice.out");
         assert_eq!(written[0].1.as_ref(), b"body");

@@ -57,7 +57,7 @@ async fn glob_end_to_end() {
     let op: Arc<dyn Op> = Arc::new(g);
     let ctx = effect_runtime::RtCtx::default();
     let content: Arc<[u8]> = Arc::from(b"a/middle/b".as_slice());
-    let out = op.pipe(&ctx, Cursor::new(content)).await;
+    let out = op.pipe(&ctx, Arc::from(vec![Cursor::new(content)])).await;
     assert_eq!(out.len(), 1);
     let dir = out[0].captures.iter().find(|c| &*c.name == "DIR").expect("DIR capture");
     assert_eq!(&out[0].content[dir.byte_range.clone()], b"middle");

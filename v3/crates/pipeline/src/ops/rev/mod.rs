@@ -144,8 +144,8 @@ wildcards like `*`/`**` and bare captures without prior context.
 impl Op for RevOp {
     fn name(&self) -> &'static str { "rev" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             match &self.mode {
                 RevMode::Filter(op) => {
                     let re = match op.try_raw_regex() {
@@ -162,7 +162,7 @@ impl Op for RevOp {
                     vec![out]
                 }
             }
-        })
+        }))
     }
 
     fn language(&self) -> Option<tree_sitter::Language> {
@@ -187,15 +187,15 @@ mod tests {
         let ctx = RtCtx::default();
 
         let op = RevOp::from_source("v1.*").unwrap();
-        assert_eq!(op.pipe(&ctx, mk_cursor("v1.2.3")).await.len(), 1);
-        assert_eq!(op.pipe(&ctx, mk_cursor("v2.0")).await.len(), 0);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk_cursor("v1.2.3")])).await.len(), 1);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk_cursor("v2.0")])).await.len(), 0);
 
         let op = RevOp::from_source("main").unwrap();
-        assert_eq!(op.pipe(&ctx, mk_cursor("main")).await.len(), 1);
-        assert_eq!(op.pipe(&ctx, mk_cursor("develop")).await.len(), 0);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk_cursor("main")])).await.len(), 1);
+        assert_eq!(op.pipe(&ctx, Arc::from(vec![mk_cursor("develop")])).await.len(), 0);
 
         let op = RevOp::bind("V");
-        let out = op.pipe(&ctx, mk_cursor("main")).await;
+        let out = op.pipe(&ctx, Arc::from(vec![mk_cursor("main")])).await;
         assert_eq!(out.len(), 1);
         assert_eq!(&*out[0].captures[0].name, "V");
         assert_eq!(out[0].captures[0].bytes(&out[0].content), b"main");

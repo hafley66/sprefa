@@ -79,8 +79,8 @@ pub struct RenderOp {
 impl Op for RenderOp {
     fn name(&self) -> &'static str { "render" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let mut buf = String::new();
             for seg in &self.template {
                 match seg {
@@ -97,7 +97,7 @@ impl Op for RenderOp {
             let bytes: Arc<[u8]> = Arc::from(buf.into_bytes());
             let len = bytes.len();
             vec![c.rebase(bytes, 0..len)]
-        })
+        }))
     }
 }
 
@@ -328,7 +328,7 @@ mod tests {
         let content: Arc<[u8]> = Arc::from(b"alice".as_slice());
         let mut c = Cursor::new(content);
         c.captures.push(Capture::span_backed(Arc::from("X"), 0..5));
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].active(), b"- alice");
         assert_eq!(out[0].byte_range, 0..7);
@@ -343,7 +343,8 @@ mod tests {
         c.repo = Arc::from("acme/widgets");
         c.rev = Arc::from("main");
         c.fs = Some(Arc::<std::path::Path>::from(std::path::PathBuf::from("src/lib.rs")));
-        let out = op.pipe(&ctx, c).await.pop().unwrap();
+        let out_batch = op.pipe(&ctx, Arc::from(vec![c])).await;
+        let out = out_batch[0].clone();
         assert_eq!(out.active(), b"use crate::foobar;");
         assert_eq!(&*out.repo, "acme/widgets");
         assert_eq!(&*out.rev, "main");

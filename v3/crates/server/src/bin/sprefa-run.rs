@@ -252,7 +252,14 @@ async fn run_and_print(
     let mut c = Cursor::default();
     c.repo = Arc::from(seed.slug.as_str());
     c.rev = Arc::from(seed.rev.as_str());
-    let out = pipeline.run(ctx, vec![c]).await;
+    let upstream: futures::stream::BoxStream<'_, std::sync::Arc<[Cursor]>> = Box::pin(
+        futures::stream::iter(vec![std::sync::Arc::<[Cursor]>::from(vec![c])]),
+    );
+    let mut s = pipeline.run(ctx, upstream);
+    let mut out: Vec<Cursor> = Vec::new();
+    while let Some(b) = futures::StreamExt::next(&mut s).await {
+        out.extend(b.iter().cloned());
+    }
 
     println!("{header} — {} rows", out.len());
     for c in &out {

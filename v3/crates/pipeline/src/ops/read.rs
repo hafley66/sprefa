@@ -79,8 +79,8 @@ miss drops the cursor from the pipe.
 impl Op for ReadOp {
     fn name(&self) -> &'static str { "read" }
 
-    fn pipe<'a>(&'a self, ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: std::sync::Arc<[Cursor]>) -> BoxFuture<'a, std::sync::Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             let Some(path) = c.fs.clone() else {
                 return vec![c];
             };
@@ -96,7 +96,7 @@ impl Op for ReadOp {
                 }
                 None => Vec::new(),
             }
-        })
+        }))
     }
 }
 
@@ -133,20 +133,20 @@ mod tests {
         let op = ReadOp;
 
         // Hit: cursor rebases onto the bytes.
-        let out = op.pipe(&ctx, cursor_with_fs("r", "main", "a.rs")).await;
+        let out = op.pipe(&ctx, Arc::from(vec![cursor_with_fs("r", "main", "a.rs")])).await;
         assert_eq!(out.len(), 1);
         assert_eq!(&*out[0].content, b"hello world");
         assert_eq!(out[0].byte_range, 0..11);
 
         // Miss: unknown path → empty output.
-        let out = op.pipe(&ctx, cursor_with_fs("r", "main", "gone.rs")).await;
+        let out = op.pipe(&ctx, Arc::from(vec![cursor_with_fs("r", "main", "gone.rs")])).await;
         assert!(out.is_empty());
 
         // No fs: cursor passes through unchanged.
         let mut c = Cursor::default();
         c.repo = Arc::from("r");
         c.rev = Arc::from("main");
-        let out = op.pipe(&ctx, c).await;
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
         assert_eq!(out.len(), 1);
         assert!(out[0].fs.is_none());
     }

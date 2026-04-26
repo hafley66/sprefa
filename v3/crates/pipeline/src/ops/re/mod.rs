@@ -125,8 +125,8 @@ matching; at pipe-step position, runs find-all against `cursor.active()`.
 impl Op for ReOp {
     fn name(&self) -> &'static str { "re" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, c: Cursor) -> BoxFuture<'a, Vec<Cursor>> {
-        Box::pin(async move {
+    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+        Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             apply_identity_pattern(
                 &self.regex,
                 &self.bound_captures,
@@ -134,7 +134,7 @@ impl Op for ReOp {
                 (&self.anchors.0, &self.anchors.1),
                 &c,
             )
-        })
+        }))
     }
 
     fn language(&self) -> Option<tree_sitter::Language> {
@@ -320,7 +320,7 @@ mod tests {
 
         // Write mode.
         let write_in = Cursor::new(Arc::from(b"TODO(alice) and TODO(bob)".as_slice()));
-        let out = op.pipe(&ctx, write_in).await;
+        let out = op.pipe(&ctx, Arc::from(vec![write_in])).await;
         assert_eq!(out.len(), 2);
         assert_eq!(&out[0].content[out[0].byte_range.clone()], b"TODO(alice)");
         let who0 = out[0].captures.iter().find(|c| &*c.name == "WHO").unwrap();
@@ -331,7 +331,7 @@ mod tests {
         let content: Arc<[u8]> = Arc::from(b"TODO(alice) and TODO(bob)".as_slice());
         let mut read_in = Cursor::new(content.clone());
         read_in.captures.push(Capture::span_backed(Arc::from("WHO"), 5..10));
-        let out = op.pipe(&ctx, read_in).await;
+        let out = op.pipe(&ctx, Arc::from(vec![read_in])).await;
         assert_eq!(out.len(), 1);
         assert_eq!(&out[0].content[out[0].byte_range.clone()], b"TODO(alice)");
         assert!(!out[0].captures.iter().any(|c| &*c.name == "WHO" && c.byte_range.start != 5));
