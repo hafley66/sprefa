@@ -17,8 +17,8 @@ repo(${R?}) > rev(:prod) > tag(:prod-cut, ${R?}, ${R.head?});
 tag(:prod-cut)
   > fs(glob(**/*.rs))
   > ast[rust](pub fn ${F?}())
-  > rule(prod_pub_fns);
+  > rule(:prod_pub_fns);
 
 # Multi-tag join: cursor emitted only when both tags are bound.
 tag(:prod-cut) > tag(:in-review)
-  > rule(prod_pending_review);
+  > rule(:prod_pending_review);
