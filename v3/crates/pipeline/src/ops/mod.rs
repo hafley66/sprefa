@@ -17,6 +17,7 @@ pub mod lsp;
 pub mod print;
 pub mod re;
 pub mod read;
+pub mod relation;
 pub mod render;
 pub mod repo;
 pub mod rev;
