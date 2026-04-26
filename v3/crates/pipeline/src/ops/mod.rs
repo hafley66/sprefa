@@ -9,6 +9,7 @@
 
 pub mod ast_grep;
 pub mod comment;
+pub mod cursor_ref;
 pub mod fs;
 pub mod glob;
 pub mod json;
@@ -23,6 +24,7 @@ pub mod write_file;
 
 pub use ast_grep::AstGrepOp;
 pub use comment::CommentOp;
+pub use cursor_ref::CursorRefOp;
 pub use fs::{FsMode, FsOp};
 pub use glob::GlobOp;
 pub use json::JsonOp;

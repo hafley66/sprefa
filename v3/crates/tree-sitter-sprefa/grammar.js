@@ -65,6 +65,7 @@ module.exports = grammar({
 
     _pipe_step: $ => choice(
       $.op_invocation,
+      $.cursor_ref,
     ),
 
     // ---- op invocation ----------------------------------------------------
@@ -75,6 +76,21 @@ module.exports = grammar({
       optional(field('paren', $.paren_slot)),
       optional(field('brace', $.brace_slot)),
     )),
+
+    // ---- cursor_ref (& "input cursor" op) ---------------------------------
+    // `&.PATH` reads a fixed cursor field. PATH = IDENT ('.' IDENT)*.
+    // Op semantics live in pipeline crate; grammar only emits the node.
+    // Op name is the literal '&'; lowerer pulls PATH from byte range.
+    cursor_ref: $ => prec(1, seq(
+      field('leader', '&'),
+      '.',
+      field('path', $.cursor_path),
+    )),
+
+    cursor_path: $ => seq(
+      $.identifier,
+      repeat(seq('.', $.identifier)),
+    ),
 
     bracket_slot: $ => seq('[', optional($._slot_body), ']'),
     paren_slot:   $ => seq('(', optional($._slot_body), ')'),

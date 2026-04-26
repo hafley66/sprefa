@@ -176,16 +176,23 @@ fn lower_pipe(
     let mut ops = Vec::new();
     let mut walker = pipe_node.walk();
     for (idx, step) in pipe_node.named_children(&mut walker).enumerate() {
-        if step.kind() != "op_invocation" {
+        let kind = step.kind();
+        if kind != "op_invocation" && kind != "cursor_ref" {
             continue; // line_comment, etc.
         }
         let mut step_path: Vec<ParseSeg> = path.to_vec();
         step_path.push(ParseSeg::Child { index: idx as u16 });
 
-        let name = step
-            .child_by_field_name("name")
-            .map(|n| Arc::<str>::from(&src[n.byte_range()]))
-            .unwrap_or_else(|| Arc::from(""));
+        // cursor_ref has no `name` field; its op-name is the literal '&'.
+        // Path content (`fs.ext`) is parsed downstream from the node bytes.
+        let name = if kind == "cursor_ref" {
+            Arc::<str>::from("&")
+        } else {
+            step
+                .child_by_field_name("name")
+                .map(|n| Arc::<str>::from(&src[n.byte_range()]))
+                .unwrap_or_else(|| Arc::from(""))
+        };
 
         let site = ParseSite {
             file:       file.clone(),

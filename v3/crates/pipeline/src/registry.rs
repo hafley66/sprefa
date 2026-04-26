@@ -33,8 +33,8 @@ use crate::op_ctor::{
     node_factory, op_factory, CustomLowerFn, NodeFactoryFn, OpCtor, OpLowering, PatternCtor,
 };
 use crate::ops::{
-    AstGrepOp, CommentOp, FsOp, GlobOp, JsonOp, PrintOp, ReadOp, ReOp, RepoOp, RevOp, StrOp,
-    VoidOp, WriteFileOp,
+    AstGrepOp, CommentOp, CursorRefOp, FsOp, GlobOp, JsonOp, PrintOp, ReadOp, ReOp, RepoOp, RevOp,
+    StrOp, VoidOp, WriteFileOp,
 };
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::Value;
@@ -145,6 +145,7 @@ impl Registry {
             .register::<RevOp>()
             .register::<FsOp>()
             .register::<VoidOp>()
+            .register::<CursorRefOp>()
             .register::<StrOp>()
             .register::<CommentOp>()
             .register::<PrintOp>()
@@ -615,8 +616,42 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["ast", "comment", "fs", "json", "print", "read", "repo", "rev", "str", "void", "write_file"]
+            vec!["&", "ast", "comment", "fs", "json", "print", "read", "repo", "rev", "str", "void", "write_file"]
         );
+    }
+
+    #[test]
+    fn cursor_ref_lowers_via_build_from_node() {
+        // End-to-end: parse `&.fs.ext > void` via host grammar, walk to
+        // the cursor_ref node, run it through registry.build_from_node
+        // under the literal name "&". Op constructs successfully and
+        // keeps its parsed path.
+        use tree_sitter::Parser;
+        let src = "&.fs.ext > void";
+        let lang: tree_sitter::Language = tree_sitter_sprefa::LANGUAGE.into();
+        let mut parser = Parser::new();
+        parser.set_language(&lang).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        let root = tree.root_node();
+
+        fn find_kind<'a>(n: Node<'a>, kind: &str) -> Option<Node<'a>> {
+            if n.kind() == kind { return Some(n); }
+            let mut w = n.walk();
+            for ch in n.named_children(&mut w) {
+                if let Some(v) = find_kind(ch, kind) { return Some(v); }
+            }
+            None
+        }
+
+        let node = find_kind(root, "cursor_ref").expect("cursor_ref node");
+        let r = Registry::with_stdlib();
+        let mut diags = Vec::new();
+        let built = r
+            .build_from_node("&", node, src.as_bytes(), &mut diags)
+            .expect("registered")
+            .expect("ok");
+        assert_eq!(built.name(), "&");
+        assert!(diags.is_empty(), "no diagnostics expected, got {diags:?}");
     }
 
     #[test]

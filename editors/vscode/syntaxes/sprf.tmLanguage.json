@@ -4,6 +4,7 @@
   "scopeName": "source.sprf",
   "patterns": [
     { "include": "#comment" },
+    { "include": "#cursor-ref" },
     { "include": "#check-declaration" },
     { "include": "#rule-declaration" },
     { "include": "#rule" }
@@ -95,6 +96,15 @@
         { "include": "#wildcard" },
         { "include": "#bare-glob" }
       ]
+    },
+
+    "cursor-ref": {
+      "match": "(&)(\\.)([a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)*)",
+      "captures": {
+        "1": { "name": "keyword.operator.input-cursor.sprf" },
+        "2": { "name": "punctuation.accessor.sprf" },
+        "3": { "name": "variable.other.member.sprf" }
+      }
     },
 
     "cross-ref": {
