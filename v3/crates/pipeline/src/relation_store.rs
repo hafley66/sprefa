@@ -127,25 +127,42 @@ impl RelationStore {
     /// Append `row` to the named bag. Returns every waiter whose key shape
     /// matches the row (broadcast + exact-prefix keyed). Caller fires
     /// `registry.next` on each.
-    pub fn push_row(&self, name: &Arc<str>, row: Row) -> Vec<SubjectKey<RelationWake>> {
+    ///
+    /// Prefer [`push_rows`] for multi-row writes — it amortizes the bag
+    /// lock + waiter scan across the whole batch.
+    pub fn push_row(&self, name: &Arc<str>, row: Row) -> Vec<(SubjectKey<RelationWake>, Arc<Row>)> {
+        self.push_rows(std::slice::from_ref(&(name.clone(), row)))
+    }
+
+    /// Append every `(name, row)` pair into its bag under a single lock
+    /// acquire. Returns every triggered waiter paired with the row it
+    /// observed, so the caller can fire `registry.next(key, Arc<Row>)`.
+    pub fn push_rows(
+        &self,
+        writes: &[(Arc<str>, Row)],
+    ) -> Vec<(SubjectKey<RelationWake>, Arc<Row>)> {
         let mut g = self.inner.lock().unwrap();
-        let bag = g.entry(name.clone()).or_default();
-        bag.rows.push(row.clone());
-        let mut out: Vec<SubjectKey<RelationWake>> = std::mem::take(&mut bag.broadcast);
-        // Drain every keyed bucket whose key is a prefix of `row`. The
-        // common case today is full-row keys (all-bound probe); prefix
-        // matching also covers shorter exact-prefix keys for future
-        // partial-bound probes.
-        bag.keyed.retain(|key, subs| {
-            let is_prefix = key.len() <= row.len()
-                && key.iter().zip(row.iter()).all(|(a, b)| a == b);
-            if is_prefix {
-                out.append(subs);
-                false
-            } else {
-                true
+        let mut out: Vec<(SubjectKey<RelationWake>, Arc<Row>)> = Vec::new();
+        for (name, row) in writes {
+            let bag = g.entry(name.clone()).or_default();
+            bag.rows.push(row.clone());
+            let row_arc: Arc<Row> = Arc::new(row.clone());
+            for k in bag.broadcast.drain(..) {
+                out.push((k, row_arc.clone()));
             }
-        });
+            bag.keyed.retain(|key, subs| {
+                let is_prefix = key.len() <= row.len()
+                    && key.iter().zip(row.iter()).all(|(a, b)| a == b);
+                if is_prefix {
+                    for k in subs.drain(..) {
+                        out.push((k, row_arc.clone()));
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        }
         out
     }
 
@@ -201,9 +218,10 @@ impl RelationStore {
         }
     }
 
-    /// Stub: exact-row key match against the named bag. Step 3 (bd5) replaces
-    /// linear scan with a keyed waiter index; step 4 (kcl) consumes this for
-    /// strict-bound probe.
+    /// Exact-row key match against the named bag. Returns matching rows.
+    ///
+    /// Prefer [`probe_keys`] for multi-key probes — it takes the bag lock
+    /// once and answers every key in one pass.
     pub fn lookup_by_key(&self, name: &str, key: &[Arc<str>]) -> Vec<Row> {
         let g = self.inner.lock().unwrap();
         let Some(bag) = g.get(name) else { return Vec::new() };
@@ -213,21 +231,46 @@ impl RelationStore {
             .cloned()
             .collect()
     }
+
+    /// Batched hit-test against the named bag. Returns one bool per input
+    /// key, true iff at least one row in the bag matches the key exactly.
+    /// Lock acquired once; rows scanned once per key.
+    pub fn probe_keys(&self, name: &str, keys: &[Vec<Arc<str>>]) -> Vec<bool> {
+        let g = self.inner.lock().unwrap();
+        let Some(bag) = g.get(name) else { return vec![false; keys.len()] };
+        keys.iter()
+            .map(|key| bag.rows.iter().any(|row| row.as_slice() == key.as_slice()))
+            .collect()
+    }
 }
 
-/// Append one row to a named bag. The batcher fires `registry.next` on every
-/// parked waiter so the read op can re-snapshot.
+/// Append one or more rows to (possibly different) named bags in a single
+/// store transaction. Avoids the N+1 fan-out where every cursor in a pipe
+/// batch would otherwise dispatch its own `WriteEffect` round-trip.
+///
+/// The single-row case is `WriteEffect { writes: vec![(name, row)] }`.
 #[derive(Clone, Debug)]
 pub struct WriteEffect {
-    pub name: Arc<str>,
-    pub row:  Vec<Arc<str>>,
+    pub writes: Vec<(Arc<str>, Vec<Arc<str>>)>,
+}
+
+impl WriteEffect {
+    /// Convenience builder for the single-row write site.
+    pub fn one(name: Arc<str>, row: Vec<Arc<str>>) -> Self {
+        Self { writes: vec![(name, row)] }
+    }
 }
 
 impl EffectKind for WriteEffect {
     type Response = ();
 
     fn payload_bytes(&self) -> Option<usize> {
-        Some(self.row.iter().map(|s| s.len()).sum::<usize>() + self.name.len())
+        Some(
+            self.writes
+                .iter()
+                .map(|(n, r)| n.len() + r.iter().map(|s| s.len()).sum::<usize>())
+                .sum::<usize>(),
+        )
     }
 }
 
@@ -266,7 +309,8 @@ mod tests {
         }
 
         let woken = store.push_row(&name, vec![s("hit")]);
-        assert_eq!(woken, vec![key_match]);
+        let woken_keys: Vec<_> = woken.iter().map(|(k, _)| *k).collect();
+        assert_eq!(woken_keys, vec![key_match]);
 
         // The non-matching keyed waiter is still parked.
         let g = store.inner.lock().unwrap();
@@ -284,7 +328,8 @@ mod tests {
         store.snapshot_or_subscribe(&name, 0, k, None, &registry);
 
         let woken = store.push_row(&name, vec![s("anything")]);
-        assert_eq!(woken, vec![k]);
+        let woken_keys: Vec<_> = woken.iter().map(|(k, _)| *k).collect();
+        assert_eq!(woken_keys, vec![k]);
     }
 
     #[test]
@@ -298,7 +343,8 @@ mod tests {
 
         // Row has extra trailing columns; prefix [a] matches.
         let woken = store.push_row(&name, vec![s("a"), s("b")]);
-        assert_eq!(woken, vec![k]);
+        let woken_keys: Vec<_> = woken.iter().map(|(k, _)| *k).collect();
+        assert_eq!(woken_keys, vec![k]);
     }
 }
 
@@ -311,11 +357,9 @@ impl Batcher<WriteEffect> for WriteBatcher {
         let store = self.store.clone();
         let registry = self.registry.clone();
         Box::pin(async move {
-            let row = req.row;
-            let waiters = store.push_row(&req.name, row.clone());
-            let wake: Arc<Row> = Arc::new(row);
-            for k in waiters {
-                registry.next(k, wake.clone());
+            let triggered = store.push_rows(&req.writes);
+            for (subj_key, row_arc) in triggered {
+                registry.next(subj_key, row_arc);
             }
         })
     }

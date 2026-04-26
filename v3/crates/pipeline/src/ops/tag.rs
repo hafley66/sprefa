@@ -389,8 +389,8 @@ mod tests {
     async fn write_then_read_drains_two_rows() {
         let (ctx, store, _reg) = build_tag_ctx();
         let name: Arc<str> = Arc::from("a");
-        ctx.put(WriteEffect { name: name.clone(), row: vec![Arc::from("x")] }).await;
-        ctx.put(WriteEffect { name: name.clone(), row: vec![Arc::from("y")] }).await;
+        ctx.put(WriteEffect::one(name.clone(), vec![Arc::from("x")])).await;
+        ctx.put(WriteEffect::one(name.clone(), vec![Arc::from("y")])).await;
         assert_eq!(store.rows_len("a"), 2);
 
         let read = TagOp::from_values(vec![atom("a"), term_unbound("A")]).unwrap();
@@ -414,16 +414,8 @@ mod tests {
     async fn read_dynamic_arity_zips_per_row() {
         let (ctx, _store, _reg) = build_tag_ctx();
         let name: Arc<str> = Arc::from("a");
-        ctx.put(WriteEffect {
-            name: name.clone(),
-            row:  vec![Arc::from("a1"), Arc::from("b1")],
-        })
-        .await;
-        ctx.put(WriteEffect {
-            name: name.clone(),
-            row:  vec![Arc::from("a2"), Arc::from("b2"), Arc::from("c2")],
-        })
-        .await;
+        ctx.put(WriteEffect::one(name.clone(), vec![Arc::from("a1"), Arc::from("b1")])).await;
+        ctx.put(WriteEffect::one(name.clone(), vec![Arc::from("a2"), Arc::from("b2"), Arc::from("c2")])).await;
 
         let read =
             TagOp::from_values(vec![atom("a"), term_unbound("A"), term_unbound("B")]).unwrap();
@@ -453,10 +445,7 @@ mod tests {
         let writer = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             writer_ctx
-                .put(WriteEffect {
-                    name: Arc::from("a"),
-                    row:  vec![Arc::from("late")],
-                })
+                .put(WriteEffect::one(Arc::from("a"), vec![Arc::from("late")]))
                 .await;
         });
 

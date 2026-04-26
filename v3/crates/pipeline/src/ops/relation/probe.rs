@@ -16,7 +16,7 @@ use futures::stream::{self, BoxStream, StreamExt};
 use effect_runtime::{BoxFuture, RtCtx, SubjectRegistry};
 
 use crate::_0_cursor::Cursor;
-use crate::_1_op::{per_cursor, Op};
+use crate::_1_op::Op;
 use crate::relation_store::{RelationStore, RelationWake};
 
 use super::{materialize_row, RelationArg};
@@ -46,21 +46,28 @@ impl Op for ProbeOp {
     fn name(&self) -> &'static str { "tag" }
 
     fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
-        // Static path: snapshot lookup, drop on miss.
+        // Static path: one bag lock for the whole batch. Each cursor's key
+        // is materialized in the pipe thread; bag rows are scanned once per
+        // key inside `probe_keys`.
         let store = ctx
             .store::<RelationStore>()
             .expect("RelationStore not registered on RtCtx");
-        Box::pin(per_cursor(batch, move |c| {
-            let store = store.clone();
-            async move {
-                let key = materialize_row(&self.key, &c);
-                if !store.lookup_by_key(&self.name, &key).is_empty() {
-                    vec![c]
-                } else {
-                    Vec::new()
-                }
+        Box::pin(async move {
+            if batch.is_empty() {
+                return batch;
             }
-        }))
+            let keys: Vec<Vec<Arc<str>>> = batch
+                .iter()
+                .map(|c| materialize_row(&self.key, c))
+                .collect();
+            let hits = store.probe_keys(&self.name, &keys);
+            let out: Vec<Cursor> = batch
+                .iter()
+                .zip(hits.into_iter())
+                .filter_map(|(c, hit)| if hit { Some(c.clone()) } else { None })
+                .collect();
+            Arc::from(out)
+        })
     }
 
     fn pipe_flat_map<'a>(
