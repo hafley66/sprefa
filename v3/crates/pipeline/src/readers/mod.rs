@@ -23,6 +23,26 @@ pub trait FileSource: Send + Sync + 'static {
     fn file_bytes(&self, _repo: &str, _rev: &str, _path: &Path) -> Option<Arc<[u8]>> {
         None
     }
+
+    /// Bytes + a precomputed content hash, when the source already has
+    /// one (e.g., a git-backed source returns the blob OID). The default
+    /// impl calls `file_bytes` and returns `None` for the hash, so
+    /// `ensure_content_loaded` falls back to blake3-of-bytes. Sources
+    /// with a free hash (git blob ID) override this to skip the
+    /// blake3 pass on large files.
+    ///
+    /// Hash space is 32 bytes; sources whose native hash is shorter
+    /// (e.g. git SHA-1 = 20 bytes) should pad or rehash into 32. Treat
+    /// the hash as opaque; equality is the only operation downstream
+    /// performs on it (Phase C cache-key composition).
+    fn file_bytes_with_hash(
+        &self,
+        repo: &str,
+        rev:  &str,
+        path: &Path,
+    ) -> Option<(Arc<[u8]>, Option<Arc<[u8; 32]>>)> {
+        self.file_bytes(repo, rev, path).map(|b| (b, None))
+    }
 }
 
 pub mod mem;

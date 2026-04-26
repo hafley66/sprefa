@@ -20,7 +20,6 @@ use effect_runtime::{BoxFuture, RtCtx};
 
 use crate::_0_cursor::Cursor;
 use crate::_1_op::Op;
-use crate::effects::ReadBytesEffect;
 use crate::op_ctor::OpCtor;
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::Value;
@@ -99,7 +98,7 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use crate::effects::ReadBytesBatcher;
+    use crate::effects::{ReadBytesBatcher, ReadBytesEffect};
     use crate::readers::{FileSource, MemFileSource};
     use effect_runtime::RtCtxBuilder;
 

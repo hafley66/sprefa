@@ -112,11 +112,18 @@ pub struct ReadBytesEffect {
     pub path: Arc<std::path::Path>,
 }
 
+/// `(bytes, precomputed_hash)`. The hash slot is `Some` only when the
+/// `FileSource` has a free identifier for the bytes (e.g., a git blob
+/// OID), in which case `ensure_content_loaded` skips the blake3 pass.
+/// Sources without a precomputed hash return `None` and the framework
+/// falls back to blake3-of-bytes.
+pub type ReadResponse = Option<(Arc<[u8]>, Option<Arc<[u8; 32]>>)>;
+
 impl EffectKind for ReadBytesEffect {
-    type Response = Option<Arc<[u8]>>;
+    type Response = ReadResponse;
 
     fn response_bytes(r: &Self::Response) -> Option<usize> {
-        r.as_ref().map(|b| b.len())
+        r.as_ref().map(|(b, _)| b.len())
     }
 }
 
@@ -150,15 +157,15 @@ pub async fn ensure_content_loaded(ctx: &effect_runtime::RtCtx, c: crate::_0_cur
     let Some(path) = c.fs.clone() else {
         return Some(c);
     };
-    let bytes = ctx.put(ReadBytesEffect {
+    let resp = ctx.put(ReadBytesEffect {
         repo: c.repo.clone(),
         rev:  c.rev.clone(),
         path,
     }).await;
-    match bytes {
-        Some(b) => {
+    match resp {
+        Some((b, h_opt)) => {
             let end = b.len();
-            let hash = blake3_of(&b);
+            let hash = h_opt.unwrap_or_else(|| blake3_of(&b));
             let mut next = c.rebase(b, 0..end);
             next.content_hash = Some(hash);
             Some(next)
@@ -188,10 +195,10 @@ impl Batcher<ReadBytesEffect> for ReadBytesBatcher {
         &self,
         req: ReadBytesEffect,
         _cancel: CancellationToken,
-    ) -> BoxFuture<'static, Option<Arc<[u8]>>> {
+    ) -> BoxFuture<'static, ReadResponse> {
         let source = self.source.clone();
         Box::pin(async move {
-            source.file_bytes(&req.repo, &req.rev, &req.path)
+            source.file_bytes_with_hash(&req.repo, &req.rev, &req.path)
         })
     }
 }
@@ -218,14 +225,14 @@ pub struct ReadBytesBatchEffect {
 }
 
 impl EffectKind for ReadBytesBatchEffect {
-    type Response = Vec<Option<Arc<[u8]>>>;
+    type Response = Vec<ReadResponse>;
 
     fn payload_bytes(&self) -> Option<usize> {
         Some(self.reads.iter().map(|(_, _, p)| p.as_os_str().len()).sum())
     }
 
     fn response_bytes(r: &Self::Response) -> Option<usize> {
-        Some(r.iter().filter_map(|b| b.as_ref().map(|b| b.len())).sum())
+        Some(r.iter().filter_map(|s| s.as_ref().map(|(b, _)| b.len())).sum())
     }
 }
 
@@ -257,16 +264,16 @@ pub async fn ensure_content_loaded_batch(
         })
         .collect();
     let req = ReadBytesBatchEffect { reads: Arc::from(reads) };
-    let responses: Vec<Option<Arc<[u8]>>> = ctx.put(req).await;
+    let responses: Vec<ReadResponse> = ctx.put(req).await;
 
     let mut out: Vec<Option<crate::_0_cursor::Cursor>> = cs.iter().cloned().map(Some).collect();
     for (slot, resp) in needs_read.iter().zip(responses.into_iter()) {
         let i = *slot;
         let c = cs[i].clone();
         match resp {
-            Some(b) => {
+            Some((b, h_opt)) => {
                 let end = b.len();
-                let hash = blake3_of(&b);
+                let hash = h_opt.unwrap_or_else(|| blake3_of(&b));
                 let mut next = c.rebase(b, 0..end);
                 next.content_hash = Some(hash);
                 out[i] = Some(next);
@@ -283,11 +290,11 @@ pub async fn ensure_content_loaded_batch(
 pub fn read_bytes_batch(
     source: &dyn FileSource,
     req:    ReadBytesBatchEffect,
-) -> Vec<Option<Arc<[u8]>>> {
+) -> Vec<ReadResponse> {
     use rayon::prelude::*;
     req.reads
         .par_iter()
-        .map(|(repo, rev, path)| source.file_bytes(repo, rev, path))
+        .map(|(repo, rev, path)| source.file_bytes_with_hash(repo, rev, path))
         .collect()
 }
 
@@ -304,7 +311,7 @@ impl Batcher<ReadBytesBatchEffect> for ReadBytesBatchBatcher {
         &self,
         req:     ReadBytesBatchEffect,
         _cancel: CancellationToken,
-    ) -> BoxFuture<'static, Vec<Option<Arc<[u8]>>>> {
+    ) -> BoxFuture<'static, Vec<ReadResponse>> {
         let source = self.source.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || read_bytes_batch(&*source, req))
