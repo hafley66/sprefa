@@ -30,6 +30,7 @@ pub mod pattern_op;
 pub mod readers;
 pub mod registry;
 pub mod relation_store;
+pub mod rule_def;
 pub mod value;
 pub mod walk;
 

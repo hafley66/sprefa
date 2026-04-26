@@ -18,8 +18,10 @@ use std::sync::Arc;
 use pipeline::binding_graph::{analyze_pipe, BindingDiagnostic};
 use pipeline::pattern_op::PatternDiagnostic;
 use pipeline::registry::Registry;
+use pipeline::rule_def::{self, RuleDef};
 use pipeline::Op;
 use sprefa_parse::{host_parse_with_injections, ParseError, ParsedSource, Pipe};
+use std::collections::HashMap;
 use tree_sitter::Node;
 
 use crate::config::{self, Config};
@@ -49,6 +51,8 @@ pub struct DocSession {
     registry: Registry,
     config: Config,
     config_source: ConfigSource,
+    /// Per-source-revision rule index. Built once per parse.
+    rule_defs: HashMap<Arc<str>, RuleDef>,
     /// Lazily computed on first call to [`DocSession::lowered_pipes`].
     /// Cleared on every source change. One inner `Vec<LoweredOp>` per
     /// host-level pipe, in source order.
@@ -73,12 +77,16 @@ impl DocSession {
         );
         let binding_diags = collect_binding_diags(&parsed, source.as_bytes());
         let (config, config_source) = discover_config(&file);
+        let rule_defs = rule_def::collect(&parsed, source.as_bytes(), &registry, &file);
         Self {
             file, source, parsed, errors, binding_diags, registry,
-            config, config_source,
+            config, config_source, rule_defs,
             lowered: OnceCell::new(),
         }
     }
+
+    /// Index of top-level rule definitions found in the current source.
+    pub fn rule_defs(&self) -> &HashMap<Arc<str>, RuleDef> { &self.rule_defs }
 
     /// Lazily lower every op in every top-level pipe. Computed once per
     /// source revision; subsequent calls return the cached slice. Both
@@ -100,6 +108,7 @@ impl DocSession {
             &pipeline::op_languages::language_of,
         );
         self.binding_diags = collect_binding_diags(&parsed, self.source.as_bytes());
+        self.rule_defs = rule_def::collect(&parsed, self.source.as_bytes(), &self.registry, &self.file);
         self.parsed = parsed;
         self.errors = errors;
         self.lowered = OnceCell::new();
@@ -145,7 +154,51 @@ impl DocSession {
         let inv = ascend_to_op_invocation(node)?;
         let name_node = inv.child_by_field_name("name")?;
         let name = &self.source[name_node.start_byte()..name_node.end_byte()];
-        self.registry.doc(name).map(|d| d.to_string())
+        // Static op doc first; if name is not a registered op but is a
+        // user-defined rule, surface a synthesized rule doc instead.
+        if let Some(d) = self.registry.doc(name) {
+            return Some(d.to_string());
+        }
+        let predicate = predicate_suffix_present(inv);
+        self.rule_doc(name, predicate)
+    }
+
+    /// Markdown for a hover targeting a rule call / rule predicate site
+    /// or a `rule(:name, ...)` definition's name atom. None when `name`
+    /// is not a known rule.
+    pub fn rule_doc(&self, name: &str, predicate: bool) -> Option<String> {
+        let def = self.rule_defs.get(name)?;
+        let mut md = String::new();
+        if predicate {
+            md.push_str(&format!(
+                "**rule?** `{}` — predicate dispatch over rule rows\n\n",
+                name
+            ));
+            md.push_str(
+                "Args classify per position:\n\
+                 - all-bound → **Probe** (filter; pass cursor on hit)\n\
+                 - mixed → **Join** (filter on bound, project unbound into hole)\n\
+                 - all-unbound → **Query** (drain all rule rows, fan out)\n\n",
+            );
+        } else {
+            md.push_str(&format!("**rule** `{}`\n\n", name));
+        }
+        md.push_str(&format!(
+            "**params:** `{}`\n\n",
+            format_params(&def.params)
+        ));
+        md.push_str(&format!(
+            "**defined at:** [`{}:{}`](file://{}#L{})  \n",
+            self.file.display(),
+            def.line,
+            self.file.display(),
+            def.line
+        ));
+        md.push_str(&format!(
+            "**body pipes:** {}\n",
+            def.body_pipe_count
+        ));
+        Some(md)
     }
 
     /// Completion suggestions at `offset`. Two contexts, picked
@@ -231,6 +284,19 @@ impl DocSession {
                 })
                 .collect(),
         )
+    }
+}
+
+/// Render a parameter list for hover. Empty params → "(none)".
+fn format_params(params: &[Arc<str>]) -> String {
+    if params.is_empty() {
+        "(none)".to_string()
+    } else {
+        params
+            .iter()
+            .map(|p| format!("${{{}?}}", p))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -355,6 +421,24 @@ pub struct CompletionSuggestion {
 pub enum SuggestionKind {
     Op,
     Capture,
+}
+
+/// Has the op_invocation `inv` got a `?` predicate suffix? The host
+/// grammar carries it as a child token, surfaced by sprefa_parse on
+/// `OpInvocation::predicate`. The CST node carries it as a `?` token
+/// child between the name and paren; checking the source byte after
+/// the name covers both name-anchored and full-invocation hovers.
+fn predicate_suffix_present(inv: Node<'_>) -> bool {
+    let Some(name) = inv.child_by_field_name("name") else { return false };
+    let after = name.end_byte();
+    let mut walker = inv.walk();
+    for c in inv.children(&mut walker) {
+        if c.start_byte() < after { continue; }
+        if c.kind() == "?" {
+            return true;
+        }
+    }
+    false
 }
 
 /// Climb from `node` toward the root until we reach an `op_invocation`.
@@ -615,6 +699,41 @@ mod tests {
         let names: Vec<_> = slice.iter().map(|o| o.name.as_ref()).collect();
         assert_eq!(names, vec!["repo", "rev", "fs"]);
         assert!(slice.iter().all(|o| o.op.is_some()), "every step lowered");
+    }
+
+    #[test]
+    fn rule_doc_surfaces_user_defined_rules() {
+        let src = "\
+rule(:foo, ${A?}, ${B?}) {\n  repo($R)\n}\n\nfoo(\"x\", \"y\") > void()\n";
+        let s = doc(src);
+
+        // Rule index built at parse time.
+        let defs = s.rule_defs();
+        let foo = defs.get("foo").expect("rule :foo indexed");
+        assert_eq!(foo.params.iter().map(|s| s.as_ref()).collect::<Vec<_>>(), vec!["A", "B"]);
+        assert_eq!(foo.line, 1);
+        assert_eq!(foo.body_pipe_count, 1);
+
+        // Hover on the rule call site `foo("x", "y")` synthesizes a doc
+        // even though `foo` is not in the registry.
+        let call_offset = src.find("foo(\"x\"").expect("call site") + 1;
+        let md = s.hover_at(call_offset).expect("hover on rule call");
+        assert!(md.contains("**rule** `foo`"), "got: {md}");
+        assert!(md.contains("**params:** `${A?}, ${B?}`"), "got: {md}");
+        assert!(md.contains("**body pipes:** 1"), "got: {md}");
+        assert!(!md.contains("**rule?**"), "no predicate framing on plain call");
+    }
+
+    #[test]
+    fn rule_predicate_doc_classifies_in_header() {
+        let src = "rule(:bar, ${X?}) {\n  repo($R)\n}\n\nbar?(${V?}) > void()\n";
+        let s = doc(src);
+        let pred_offset = src.find("bar?(").expect("predicate site") + 1;
+        let md = s.hover_at(pred_offset).expect("hover on rule? site");
+        assert!(md.contains("**rule?** `bar`"), "got: {md}");
+        assert!(md.contains("Probe"));
+        assert!(md.contains("Join"));
+        assert!(md.contains("Query"));
     }
 
     #[test]

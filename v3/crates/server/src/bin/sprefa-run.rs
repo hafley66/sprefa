@@ -25,6 +25,7 @@ use pipeline::effects::{
     ReadBytesBatcher, ReadBytesEffect,
 };
 use pipeline::ops::{RuleCallOp, RulePredicateOp};
+use pipeline::rule_def;
 use pipeline::ops::relation::RelationArg;
 use pipeline::registry::lower_paren_slot;
 use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
@@ -33,7 +34,6 @@ use pipeline::registry::Registry;
 use pipeline::value::{TermMode, Value};
 use server::config::{self, Config, Seed};
 use sprefa_parse::{host_parse_with_injections, OpInvocation, Pipe};
-use tree_sitter::Node;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -160,27 +160,32 @@ async fn run(source: &str, file: &Path, cfg: &Config, out_db: Option<&Path>) {
             String::new()
         };
 
-        // Pass 1: scan top-level pipes for rule definitions. Bind body +
-        // params on RelationStore so pass-2 RuleCallOp lookups (and any
-        // forward refs between pipes) resolve against a populated map.
+        // Pass 1: scan top-level pipes for rule definitions. Metadata
+        // (name + params + brace range) comes from the shared
+        // `rule_def::collect` walker also used by `server::DocSession`.
+        // Body Pipeline lowering is sprefa-run's add-on (DocSession just
+        // needs the metadata for hover).
         let mut known_rules: HashSet<Arc<str>> = HashSet::new();
         let mut auto_fire: Vec<Arc<str>> = Vec::new();
-        for pipe in parsed.pipes.iter() {
-            let Some(head) = pipe.ops.first() else { continue };
-            if &*head.name != "rule" { continue; }
-            let Some((name, params, body)) =
-                lower_rule_def(head, source, &registry, &seed_tag)
-            else {
-                continue;
-            };
-            relation_store.bind_params(name.clone(), params.clone());
-            relation_store.bind_body(name.clone(), Arc::new(body));
-            known_rules.insert(name.clone());
+        let file_arc: Arc<Path> = Arc::from(file);
+        let rule_defs = rule_def::collect(&parsed, source.as_bytes(), &registry, &file_arc);
+        for def in rule_defs.values() {
+            let Some(brace_range) = def.brace_range.clone() else { continue };
+            let Some(body) = lower_rule_body(
+                source,
+                brace_range,
+                &registry,
+                &def.name,
+                &seed_tag,
+            ) else { continue };
+            relation_store.bind_params(def.name.clone(), def.params.clone());
+            relation_store.bind_body(def.name.clone(), Arc::new(body));
+            known_rules.insert(def.name.clone());
             // Top-level rule defs auto-fire once after pass 1 so an
             // arity-0 rule produces rows without an explicit caller.
-            // For arity≥1 the auto-fire binds empty-string params; user
+            // For arity>=1 the auto-fire binds empty-string params; user
             // can still call the rule from another pipe with real args.
-            auto_fire.push(name);
+            auto_fire.push(def.name.clone());
         }
 
         for name in &auto_fire {
@@ -388,44 +393,21 @@ fn lower_call_args(
     args
 }
 
-/// Lower a top-level `rule(:name, ${A?}, ${B?}) { body }` def. Returns
-/// (rule name, param names, body pipeline). Body parsing reuses the
-/// host parser with injections enabled so nested pattern ops (re, glob)
-/// inside the body lower correctly.
-fn lower_rule_def(
-    inv:      &OpInvocation,
-    source:   &str,
-    registry: &Registry,
-    seed_tag: &str,
-) -> Option<(Arc<str>, Vec<Arc<str>>, Pipeline)> {
-    let node = inv.node();
-    let paren = node.child_by_field_name("paren")?;
-    let mut diags = Vec::new();
-    let values = lower_paren_slot(paren, source.as_bytes(), registry, &mut diags);
-    let mut iter = values.into_iter();
-    let name = match iter.next()? {
-        Value::Atom(s) => s,
-        other => {
-            eprintln!("rule: first arg must be an atom :name (got {other:?})");
-            return None;
-        }
-    };
-    let mut params: Vec<Arc<str>> = Vec::new();
-    for v in iter {
-        match v {
-            Value::Term { name: pname, mode: TermMode::Unbound } => params.push(pname),
-            Value::Term { name: pname, mode: TermMode::Read } => {
-                eprintln!("rule {name}: param ${pname} must use ${{X?}} introducer mode");
-                return None;
-            }
-            other => {
-                eprintln!("rule {name}: param must be ${{X?}} (got {other:?})");
-                return None;
-            }
-        }
-    }
-
-    let (brace_src, brace_offset) = brace_body(inv, source)?;
+/// Lower a rule body (the slice between `{` and `}`) to a runnable
+/// Pipeline. Body parsing reuses the host parser with injections
+/// enabled so nested pattern ops (re, glob) inside the body lower
+/// correctly. Self-recursion is the only forward-resolvable rule ref
+/// inside a body; cross-rule refs work only at pipe-time when
+/// RelationStore::body() is populated for both rules.
+fn lower_rule_body(
+    source:      &str,
+    brace_range: std::ops::Range<usize>,
+    registry:    &Registry,
+    name:        &Arc<str>,
+    seed_tag:    &str,
+) -> Option<Pipeline> {
+    let brace_offset = brace_range.start;
+    let brace_src = source.get(brace_range)?;
     let (sub, sub_errs) = host_parse_with_injections(
         brace_src,
         Arc::from(Path::new("<rule-body>")),
@@ -439,14 +421,6 @@ fn lower_rule_def(
             e.kind, start, end, e.message
         );
     }
-    // Body forward refs: self-recursion is allowed (the rule's own name
-    // is in scope). Cross-rule refs inside a body resolve by the time
-    // the BODY actually runs, because RelationStore.body() lookup is
-    // deferred until pipe time — but the lower-time `known_rules` set
-    // determines whether a bare-name step is treated as a rule call vs
-    // a registry lookup. Without the cross-rule names here, a peer
-    // rule call inside a body lowers to "skip step (unregistered)".
-    // V0 punt: only self-recursion is forward-resolvable in body lower.
     let mut body_known_rules: HashSet<Arc<str>> = HashSet::new();
     body_known_rules.insert(name.clone());
 
@@ -455,12 +429,11 @@ fn lower_rule_def(
         .iter()
         .filter_map(|p| lower_pipe(p, brace_src, registry, &body_known_rules))
         .collect();
-    let body = match lowered_pipes.len() {
-        0 => return None,
-        1 => lowered_pipes.into_iter().next().unwrap(),
-        _ => Pipeline::Fork(lowered_pipes),
-    };
-    Some((name, params, body))
+    match lowered_pipes.len() {
+        0 => None,
+        1 => Some(lowered_pipes.into_iter().next().unwrap()),
+        _ => Some(Pipeline::Fork(lowered_pipes)),
+    }
 }
 
 
@@ -728,15 +701,6 @@ fn is_safe_ident(s: &str) -> bool {
     if bytes.is_empty() { return false; }
     if bytes[0].is_ascii_digit() { return false; }
     bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
-}
-
-fn brace_body<'a>(inv: &OpInvocation, source: &'a str) -> Option<(&'a str, usize)> {
-    let node: Node<'_> = inv.node();
-    let brace = node.child_by_field_name("brace")?;
-    let start = brace.start_byte() + 1;
-    let end = brace.end_byte().saturating_sub(1);
-    if start > end || end > source.len() { return None; }
-    Some((&source[start..end], start))
 }
 
 fn print_row(c: &Cursor) {

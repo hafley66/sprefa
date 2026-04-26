@@ -13,6 +13,7 @@ globset           = "0.4"
 regex             = "1"
 rustc-hash        = "2"
 sprefa_macros     = { path = "../sprefa_macros" }
+sprefa_parse      = { path = "../sprefa_parse" }
 tokio             = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
 tokio-stream      = { version = "0.1", features = ["sync"] }
 tree-sitter       = "0.24"
@@ -24,7 +25,6 @@ rayon             = "1"
 
 
 [dev-dependencies]
-sprefa_parse          = { path = "../sprefa_parse" }
 tree-sitter-sprefa    = { path = "../tree-sitter-sprefa" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] }
 
