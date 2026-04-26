@@ -91,12 +91,10 @@ impl Op for ReadOp {
         }))
     }
 
-    // Not cacheable: read is the IO probe that produces content_hash.
-    // Caching read would lock in the bytes from first observation and
-    // short-circuit downstream invalidation until Phase F watcher
-    // eviction lands. Leave default (false) so each run re-observes the
-    // file; if bytes are unchanged, content_hash matches and downstream
-    // ops cache-hit on the same input fingerprint anyway.
+    fn cache_key(&self, h: &mut blake3::Hasher) -> bool {
+        h.update(self.name().as_bytes());
+        true
+    }
 }
 
 #[cfg(test)]
