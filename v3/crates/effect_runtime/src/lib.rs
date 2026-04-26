@@ -139,13 +139,32 @@ where
 
 type Registry = HashMap<TypeId, Arc<dyn BatcherEntry>>;
 
+// --- store TypeMap ---
+//
+// State stores live alongside effect handlers in the ctx. Different role
+// from the effect Registry: handlers dispatch typed effect calls; stores
+// hold mutable shared state that batchers and outside code (LSP server,
+// CLI runner) reach into. Two examples planned: SubjectRegistry (Yield),
+// TagStore (tag op rows). Marker trait keeps registration explicit; ops
+// opt types in via `impl Store for X {}`.
+
+/// Marker trait for state stores held by `RtCtx`. Stored as
+/// `Arc<dyn Any + Send + Sync>` and looked up by `TypeId::of::<S>()`.
+/// `S` implementations decide their own internal sync (Mutex, DashMap,
+/// RwLock, watch::Receiver, etc.) — the runtime is sync-agnostic.
+pub trait Store: Any + Send + Sync + 'static {}
+
+type Stores = HashMap<TypeId, Arc<dyn Any + Send + Sync>>;
+
 /// The runtime context. Clone-cheap (`Arc` inside). Ops call
 /// `ctx.put(effect).await`. The registry lives behind an `ArcSwap` so
 /// handlers can be rebound without rebuilding the ctx (e.g. config
-/// reload, test substitution).
+/// reload, test substitution). The store TypeMap is the parallel
+/// channel for stateful capabilities.
 #[derive(Clone)]
 pub struct RtCtx {
     registry: Arc<ArcSwap<Registry>>,
+    stores: Arc<ArcSwap<Stores>>,
     root_cancel: CancellationToken,
     telemetry: telemetry::Telemetry,
 }
@@ -257,10 +276,36 @@ impl RtCtx {
 
     /// Access the telemetry sink for this ctx.
     pub fn telemetry(&self) -> &telemetry::Telemetry { &self.telemetry }
+
+    /// Fetch a store registered at builder time (or via `bind_store`).
+    /// Returns `None` if no store of type `S` was registered. Callers
+    /// that require the store should `.expect()` with a message naming
+    /// the consumer ("tag op requires TagStore registration").
+    pub fn store<S: Store>(&self) -> Option<Arc<S>> {
+        let snapshot = self.stores.load();
+        snapshot
+            .get(&TypeId::of::<S>())
+            .cloned()
+            .and_then(|a| Arc::downcast::<S>(a).ok())
+    }
+
+    /// Bind or replace a store after build. Atomic via ArcSwap, same
+    /// shape as `rebind` for effect handlers. New `store::<S>()` calls
+    /// see the new value; existing `Arc<S>` clones held elsewhere keep
+    /// pointing at the old value.
+    pub fn bind_store<S: Store>(&self, s: Arc<S>) {
+        let entry: Arc<dyn Any + Send + Sync> = s;
+        self.stores.rcu(|prev| {
+            let mut next = (**prev).clone();
+            next.insert(TypeId::of::<S>(), entry.clone());
+            Arc::new(next)
+        });
+    }
 }
 
 pub struct RtCtxBuilder {
     registry: Registry,
+    stores: Stores,
 }
 
 impl Default for RtCtxBuilder {
@@ -271,7 +316,15 @@ impl Default for RtCtxBuilder {
 
 impl RtCtxBuilder {
     pub fn new() -> Self {
-        Self { registry: HashMap::new() }
+        Self { registry: HashMap::new(), stores: HashMap::new() }
+    }
+
+    /// Register a state store. Lookup-by-type via `cx.store::<S>()`.
+    /// Replaces any prior store of the same type.
+    pub fn with_store<S: Store>(mut self, s: Arc<S>) -> Self {
+        let entry: Arc<dyn Any + Send + Sync> = s;
+        self.stores.insert(TypeId::of::<S>(), entry);
+        self
     }
 
     pub fn register<E, B>(mut self, batcher: B) -> Self
@@ -316,6 +369,7 @@ impl RtCtxBuilder {
     pub fn build(self) -> RtCtx {
         RtCtx {
             registry: Arc::new(ArcSwap::from_pointee(self.registry)),
+            stores: Arc::new(ArcSwap::from_pointee(self.stores)),
             root_cancel: CancellationToken::new(),
             telemetry: telemetry::Telemetry::new(),
         }
@@ -323,10 +377,57 @@ impl RtCtxBuilder {
 }
 
 pub mod batchers;
+pub mod subjects;
 pub mod telemetry;
+
+pub use subjects::{
+    Lineage, NextValue, SubjectKey, SubjectRegistry, Unsubscribed, Yield,
+    YieldBatcher,
+};
 
 #[cfg(feature = "rx")]
 pub mod rx;
 
 // Effect examples live in the consumer crate (`effect_proof`). The
 // framework stays domain-neutral.
+
+#[cfg(test)]
+mod store_typemap_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct CountStore { hits: Mutex<u32> }
+    impl Store for CountStore {}
+
+    struct OtherStore { name: &'static str }
+    impl Store for OtherStore {}
+
+    #[test]
+    fn store_typemap_register_fetch_rebind() {
+        let s = Arc::new(CountStore { hits: Mutex::new(0) });
+        let other = Arc::new(OtherStore { name: "alpha" });
+        let cx = RtCtxBuilder::new()
+            .with_store(s.clone())
+            .with_store(other.clone())
+            .build();
+
+        let fetched = cx.store::<CountStore>().expect("registered");
+        *fetched.hits.lock().unwrap() += 1;
+        assert_eq!(*s.hits.lock().unwrap(), 1, "Arc shared, not cloned-by-value");
+
+        let other_fetched = cx.store::<OtherStore>().expect("registered");
+        assert_eq!(other_fetched.name, "alpha");
+
+        struct Unregistered;
+        impl Store for Unregistered {}
+        assert!(cx.store::<Unregistered>().is_none());
+
+        // bind_store rebinds atomically; new lookups see the new value.
+        let s2 = Arc::new(CountStore { hits: Mutex::new(99) });
+        cx.bind_store(s2.clone());
+        let after = cx.store::<CountStore>().expect("rebound");
+        assert_eq!(*after.hits.lock().unwrap(), 99);
+        // Old Arc still valid, still points at the old value.
+        assert_eq!(*s.hits.lock().unwrap(), 1);
+    }
+}
