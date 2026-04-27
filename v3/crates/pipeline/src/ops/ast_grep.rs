@@ -396,8 +396,83 @@ fn lower_sugar(
     let mut positions: Vec<(Arc<str>, std::ops::Range<usize>)> = Vec::new();
     let mut slot_idx = 0usize;
     let mut i = 0usize;
+    // Fusion tracker: when an identifier-token run contains both a
+    // metavar `${X}` and a hole `${re(...)}` (e.g. `use${HOOK}${re(...)}`),
+    // they share one ast-grep metavar slot. ast-grep cannot match two
+    // adjacent metavars on the same identifier, so we collapse them
+    // into one slot whose regex carries both pieces.
+    //
+    // `last_single`: bookkeeping for the most recent single-form
+    // carveout (metavar or hole). When the next carveout sits at
+    // exactly `src_end` (no separator between), we extend the same
+    // slot regex instead of emitting a new `$SPRFSLOTn` token.
+    struct LastSingle {
+        slot_name: String,
+        // Bytes already matched inside the slot regex `^…$`, written
+        // between the leading anchor and trailing `$`.
+        body:      String,
+        src_end:   usize,
+    }
+    let mut last_single: Option<LastSingle> = None;
+
+    // Helper: finalize the in-flight fused slot (if any) by writing
+    // its compiled regex to `regexes`. The fusion gate at top-of-loop
+    // is responsible for absorbing any trailing literal id-chars into
+    // `prev.body` BEFORE invoking finalize.
+    let finalize_last = |last: &mut Option<LastSingle>,
+                         regexes: &mut Vec<(String, Regex)>|
+     -> Result<(), Vec<PatternDiagnostic>> {
+        if let Some(prev) = last.take() {
+            let re_src = format!("(?s)^{}$", prev.body);
+            let re = Regex::new(&re_src).map_err(|err| vec![PatternDiagnostic {
+                code: "ast/bad-pattern",
+                message: format!("internal slot regex `{re_src}` invalid: {err}"),
+                byte_range: 0..0,
+            }])?;
+            regexes.push((prev.slot_name, re));
+        }
+        Ok(())
+    };
 
     while i < bytes.len() {
+        // If we're sitting right after a carveout slot, decide fusion
+        // BEFORE generic literal-byte handling. A `${` here means the
+        // next carveout (if single, non-multi) extends the same slot.
+        // Anything else closes the slot and we absorb any trailing
+        // identifier bytes into its regex body.
+        if let Some(prev) = last_single.as_ref() {
+            if i == prev.src_end {
+                let next_is_single_carveout = bytes[i] == b'$'
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1] == b'{'
+                    && !(i + 3 < bytes.len()
+                        && bytes[i + 1] == b'$'
+                        && bytes[i + 2] == b'$'
+                        && bytes[i + 3] == b'{');
+                // (Multi `$$${` never fuses — it has its own `$$$`
+                // outer prefix that ast-grep parses separately.)
+                if !next_is_single_carveout {
+                    // Trailing identifier bytes (if any) belong to the
+                    // slot's regex body — absorb them into `body` then
+                    // finalize.
+                    let mut k = i;
+                    while k < bytes.len()
+                        && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_')
+                    {
+                        k += 1;
+                    }
+                    if k > i {
+                        if let Some(prev) = last_single.as_mut() {
+                            prev.body.push_str(&regex::escape(&src[i..k]));
+                        }
+                    }
+                    finalize_last(&mut last_single, &mut regexes)?;
+                    i = k;
+                    continue;
+                }
+            }
+        }
+
         // Outer-prefix multi-form `$$${...}`: ast-grep's `$$$` lives
         // OUTSIDE the host carveout. Detect first so single-form match
         // doesn't shadow it.
@@ -424,11 +499,112 @@ fn lower_sugar(
                     byte_range: paren_span,
                 }]);
             }
+            // Hole detection: `${re(...)}` / `${glob(...)}`.
+            let lookahead = &src[inner_start..bytes.len().min(inner_start + 8)];
+            let hole_kind = if lookahead.starts_with("re(") {
+                Some("re")
+            } else if lookahead.starts_with("glob(") {
+                Some("glob")
+            } else {
+                None
+            };
+
+            // ----- HOLE branch -----
+            if let Some(op_name) = hole_kind {
+                if multi {
+                    return Err(vec![PatternDiagnostic {
+                        code: "ast/bad-pattern",
+                        message: format!(
+                            "multi-form `$$${{...}}` cannot wrap a hole op `{op_name}(...)`; \
+                             holes are anonymous synthetic metavars"
+                        ),
+                        byte_range: paren_span,
+                    }]);
+                }
+                let body_open = inner_start + op_name.len() + 1;
+                let body_end = match find_matching_paren(bytes, body_open - 1) {
+                    Some(end) => end,
+                    None => return Err(vec![PatternDiagnostic {
+                        code: "ast/malformed-hole",
+                        message: format!(
+                            "hole `${{{op_name}(...)}}` missing closing `)` in pattern `{src}`"
+                        ),
+                        byte_range: paren_span,
+                    }]),
+                };
+                let close_brace = body_end + 1;
+                if close_brace >= bytes.len() || bytes[close_brace] != b'}' {
+                    return Err(vec![PatternDiagnostic {
+                        code: "ast/malformed-hole",
+                        message: format!(
+                            "hole `${{{op_name}(...)}}` must close `)}}` in pattern `{src}`"
+                        ),
+                        byte_range: paren_span,
+                    }]);
+                }
+                let body_str = &src[body_open..body_end];
+                let hole_rx_src = compile_hole_regex(op_name, body_str)
+                    .map_err(|msg| vec![PatternDiagnostic {
+                        code: "ast/hole-compilation-failed",
+                        message: format!("hole `${{{op_name}({body_str})}}`: {msg}"),
+                        byte_range: paren_span.clone(),
+                    }])?;
+                let span_label: Arc<str> = Arc::from(format!("{op_name}(...)").as_str());
+                let span_end = close_brace + 1;
+                positions.push((span_label, token_start..span_end));
+
+                // Fuse if adjacent to previous single carveout, else
+                // open a new slot (and finalize any prior).
+                if let Some(prev) = last_single.as_mut() {
+                    if prev.src_end == token_start {
+                        prev.body.push_str("(?:");
+                        prev.body.push_str(&hole_rx_src);
+                        prev.body.push(')');
+                        prev.src_end = span_end;
+                        i = span_end;
+                        continue;
+                    }
+                }
+                finalize_last(&mut last_single, &mut regexes)?;
+
+                // No fusion: collect literal-prefix from `out` (since
+                // there's no previous slot, those bytes are literal
+                // src chars copied verbatim).
+                let prefix_bytes_h = {
+                    let ob = out.as_bytes();
+                    let mut kk = ob.len();
+                    let mut count = 0usize;
+                    while kk > 0 {
+                        let c = ob[kk - 1];
+                        if c.is_ascii_alphanumeric() || c == b'_' { kk -= 1; count += 1; }
+                        else { break; }
+                    }
+                    count
+                };
+                let prefix_h: String = out[out.len() - prefix_bytes_h..].to_string();
+                out.truncate(out.len() - prefix_bytes_h);
+                let slot_name = format!("SPRFHOLE{}", slot_idx);
+                slot_idx += 1;
+                out.push('$');
+                out.push_str(&slot_name);
+                let mut body = String::new();
+                body.push_str(&regex::escape(&prefix_h));
+                body.push_str("(?:");
+                body.push_str(&hole_rx_src);
+                body.push(')');
+                last_single = Some(LastSingle {
+                    slot_name,
+                    body,
+                    src_end: span_end,
+                });
+                i = span_end;
+                continue;
+            }
+
+            // ----- METAVAR branch -----
             let inner = &src[inner_start..j];
             let inner_trimmed = inner.trim();
             let name_with_suffix = inner_trimmed;
-            // `${NAME?}` Unbound suffix mirrors host grammar; same name
-            // for v0 walker.
             let name = name_with_suffix.strip_suffix('?').unwrap_or(name_with_suffix);
             if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 return Err(vec![PatternDiagnostic {
@@ -438,17 +614,6 @@ fn lower_sugar(
                 }]);
             }
 
-            // Adjacent identifier-char neighbours.
-            let prefix_bytes = {
-                let ob = out.as_bytes();
-                let mut k = ob.len();
-                let mut count = 0usize;
-                while k > 0 {
-                    let c = ob[k - 1];
-                    if c.is_ascii_alphanumeric() || c == b'_' { k -= 1; count += 1; } else { break; }
-                }
-                count
-            };
             let after_brace = j + 1;
             let mut k = after_brace;
             while k < bytes.len() && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_') {
@@ -456,10 +621,20 @@ fn lower_sugar(
             }
             let suffix_bytes = k - after_brace;
 
-            let slot_name = format!("SPRFSLOT{}", slot_idx);
-            slot_idx += 1;
-
             if multi {
+                // Multi can never fuse — finalize prior, fresh slot.
+                finalize_last(&mut last_single, &mut regexes)?;
+                let prefix_bytes = {
+                    let ob = out.as_bytes();
+                    let mut kk = ob.len();
+                    let mut count = 0usize;
+                    while kk > 0 {
+                        let c = ob[kk - 1];
+                        if c.is_ascii_alphanumeric() || c == b'_' { kk -= 1; count += 1; }
+                        else { break; }
+                    }
+                    count
+                };
                 if prefix_bytes != 0 || suffix_bytes != 0 {
                     return Err(vec![PatternDiagnostic {
                         code: "ast/multi-sub-token-illegal",
@@ -471,53 +646,144 @@ fn lower_sugar(
                         byte_range: paren_span,
                     }]);
                 }
+                let slot_name = format!("SPRFSLOT{}", slot_idx);
+                slot_idx += 1;
                 out.push_str("$$$");
                 out.push_str(&slot_name);
                 multi_slots.push((slot_name, Arc::from(name)));
-            } else {
-                let prefix: String = out[out.len() - prefix_bytes..].to_string();
-                out.truncate(out.len() - prefix_bytes);
-                let suffix: String = src[after_brace..k].to_string();
-                out.push('$');
-                out.push_str(&slot_name);
-                // The slot binds to whatever ast-grep captured for
-                // `$SPRFSLOTn`. Node text can be a single token (`x`),
-                // a quoted literal with internal whitespace
-                // (`"a multi word string"`), or a multi-line
-                // expression (`format!(\n  "x"\n)`). `\S+` rejected
-                // any of those, silently dropping every match —
-                // selfcheck.sprf's `panic!(${MSG?})` never fired
-                // because every real panic message has spaces.
-                // Use `(?s).+?` so the slot accepts arbitrary
-                // non-empty text including whitespace and newlines,
-                // and the optional surrounding `prefix`/`suffix`
-                // anchors still drive sub-token extraction.
-                let re_src = format!(
-                    "(?s)^{}(?P<{}>.+?){}$",
-                    regex::escape(&prefix),
-                    name,
-                    regex::escape(&suffix),
-                );
-                if let Ok(re) = Regex::new(&re_src) {
-                    regexes.push((slot_name, re));
+                let cap_arc: Arc<str> = Arc::from(name);
+                if !captures.iter().any(|s| s.as_ref() == cap_arc.as_ref()) {
+                    captures.push(cap_arc.clone());
+                }
+                positions.push((cap_arc, token_start..(j + 1)));
+                i = k;
+                continue;
+            }
+
+            // Single metavar: try fusion.
+            let cap_arc: Arc<str> = Arc::from(name);
+            let span_end = j + 1;
+            if let Some(prev) = last_single.as_mut() {
+                if prev.src_end == token_start {
+                    prev.body.push_str("(?P<");
+                    prev.body.push_str(name);
+                    prev.body.push_str(">.+?)");
+                    prev.src_end = span_end;
+                    if !captures.iter().any(|s| s.as_ref() == cap_arc.as_ref()) {
+                        captures.push(cap_arc.clone());
+                    }
+                    positions.push((cap_arc, token_start..span_end));
+                    i = span_end;
+                    continue;
                 }
             }
-            let cap_arc: Arc<str> = Arc::from(name);
+            finalize_last(&mut last_single, &mut regexes)?;
+
+            let prefix_bytes = {
+                let ob = out.as_bytes();
+                let mut kk = ob.len();
+                let mut count = 0usize;
+                while kk > 0 {
+                    let c = ob[kk - 1];
+                    if c.is_ascii_alphanumeric() || c == b'_' { kk -= 1; count += 1; } else { break; }
+                }
+                count
+            };
+            let prefix: String = out[out.len() - prefix_bytes..].to_string();
+            out.truncate(out.len() - prefix_bytes);
+            let slot_name = format!("SPRFSLOT{}", slot_idx);
+            slot_idx += 1;
+            out.push('$');
+            out.push_str(&slot_name);
+
+            // Body so far: literal prefix (escaped) + named term.
+            // Trailing literal id chars get absorbed at the next loop
+            // iteration's "fusion gate" (which calls finalize_last).
+            let mut body = String::new();
+            body.push_str(&regex::escape(&prefix));
+            body.push_str("(?P<");
+            body.push_str(name);
+            body.push_str(">.+?)");
+            last_single = Some(LastSingle {
+                slot_name,
+                body,
+                src_end: span_end,
+            });
             if !captures.iter().any(|s| s.as_ref() == cap_arc.as_ref()) {
                 captures.push(cap_arc.clone());
             }
-            // Token span = the whole carveout including outer `$$$`
-            // prefix when present, body-relative. Caller lifts to
-            // absolute when constructing TermPositions.
-            positions.push((cap_arc, token_start..(j + 1)));
-            i = k;
+            positions.push((cap_arc, token_start..span_end));
+            i = span_end;
         } else {
+            // Literal byte; finalize any in-flight slot.
+            finalize_last(&mut last_single, &mut regexes)?;
             out.push(bytes[i] as char);
             i += 1;
         }
     }
+    finalize_last(&mut last_single, &mut regexes)?;
 
     Ok((out, regexes, multi_slots, captures, positions))
+}
+
+/// Find the matching `)` for the `(` at `bytes[open]`. Returns the index
+/// of the closing paren, or `None` if not found. Tracks paren depth only;
+/// does not handle quoted parens (acceptable for re/glob hole bodies in
+/// practice — re patterns escape `(` as `\(`).
+fn find_matching_paren(bytes: &[u8], open: usize) -> Option<usize> {
+    debug_assert_eq!(bytes[open], b'(');
+    let mut depth = 1isize;
+    let mut i = open + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => { i += 2; continue; }
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 { return Some(i); }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Compile a hole's embedded op body to a regex source string suitable
+/// for splicing into a slot regex. Handles `re` and `glob` ops by parsing
+/// the body with the op's tree-sitter grammar and reusing the op's
+/// existing `compile_from_tree` path. Anchors `^…$` from glob's compiled
+/// regex are stripped because the slot regex re-anchors against the full
+/// matched node text.
+fn compile_hole_regex(op_name: &str, body: &str) -> Result<String, String> {
+    use tree_sitter::Parser;
+    let lang = crate::op_languages::language_of(op_name)
+        .ok_or_else(|| format!("op `{op_name}` has no registered grammar"))?;
+    let mut parser = Parser::new();
+    parser.set_language(&lang).map_err(|e| e.to_string())?;
+    let tree = parser
+        .parse(body, None)
+        .ok_or_else(|| "tree-sitter parse failed".to_string())?;
+    let bytes = body.as_bytes();
+    let raw_regex = match op_name {
+        "re" => {
+            let op = crate::ops::re::ReOp::compile_from_tree(&tree, bytes)
+                .map_err(|d| d.into_iter().map(|d| d.message).collect::<Vec<_>>().join("; "))?;
+            op.regex.as_str().to_string()
+        }
+        "glob" => {
+            let op = crate::ops::glob::GlobOp::compile_from_tree(&tree, bytes)
+                .map_err(|d| d.into_iter().map(|d| d.message).collect::<Vec<_>>().join("; "))?;
+            // Glob bakes `^...$` anchors. Strip them — the outer slot
+            // regex re-anchors to the matched node text.
+            let s = op.regex.as_str();
+            let s = s.strip_prefix('^').unwrap_or(s);
+            let s = s.strip_suffix('$').unwrap_or(s);
+            s.to_string()
+        }
+        other => return Err(format!("op `{other}` not supported in ast holes (use `re` or `glob`)")),
+    };
+    Ok(raw_regex)
 }
 
 #[cfg(test)]
@@ -619,6 +885,131 @@ mod tests {
         assert_eq!(&*multi[0].1, "ARGS");
         let names: Vec<&str> = caps.iter().map(|s| s.as_ref()).collect();
         assert_eq!(names, vec!["ARGS"]);
+    }
+
+    // --- regex/glob hole sugar (sprefa-3q3) ---
+
+    #[test]
+    fn lower_sugar_re_hole_synthesizes_constraint() {
+        // Anonymous re hole: rewritten pattern carries `$SPRFHOLE0`,
+        // slot regex anchors against the matched node text using the
+        // re op's compiled regex source.
+        let (out, res, multi, caps, _) =
+            lower_sugar("${re(Query|LazyQuery|Mutation)}", dummy_span()).unwrap();
+        assert_eq!(out, "$SPRFHOLE0");
+        assert!(multi.is_empty());
+        assert!(caps.is_empty(), "anonymous holes add no user-facing captures");
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].0, "SPRFHOLE0");
+        let rx = res[0].1.as_str();
+        assert!(rx.contains("Query|LazyQuery|Mutation"), "slot regex source: {rx}");
+        assert!(rx.starts_with("(?s)^"), "slot regex must anchor: {rx}");
+        assert!(rx.ends_with("$"));
+    }
+
+    #[test]
+    fn lower_sugar_glob_hole_strips_anchors() {
+        // Glob bakes `^...$`; the slot regex re-anchors so the inner
+        // hole regex must arrive without those anchors.
+        let (out, res, _, _, _) = lower_sugar("${glob(*.rs)}", dummy_span()).unwrap();
+        assert_eq!(out, "$SPRFHOLE0");
+        assert_eq!(res.len(), 1);
+        let rx = res[0].1.as_str();
+        // Slot regex shape: `(?s)^(?:<glob_no_anchors>)$`. The glob's
+        // own `^…$` anchors must be stripped; only the slot's outer
+        // anchors remain. The inner group should be `(?:[^/]*\.rs)`
+        // (no leading `^`, no trailing `$` before the closing paren).
+        assert!(rx.contains("(?:[^/]*\\.rs)"), "expected stripped glob inside slot: {rx}");
+        assert!(!rx.contains("(?:^"), "glob `^` anchor leaked into slot: {rx}");
+        assert!(!rx.contains("$)"), "glob `$` anchor leaked into slot: {rx}");
+    }
+
+    #[test]
+    fn lower_sugar_re_hole_with_named_group_exposes_capture_via_regex() {
+        // Named groups inside a hole regex survive into the slot regex
+        // and get picked up by `scan_with_grep` via `capture_names()`.
+        let (out, res, _, caps, _) =
+            lower_sugar("${re((?P<KIND>Query|Mutation))}", dummy_span()).unwrap();
+        assert_eq!(out, "$SPRFHOLE0");
+        // The synthesized hole adds no name to `caps` (anonymous), but
+        // the slot regex itself exposes KIND.
+        assert!(caps.is_empty());
+        let names: Vec<&str> = res[0].1.capture_names().flatten().collect();
+        assert!(names.contains(&"KIND"), "expected KIND in capture_names: {names:?}");
+    }
+
+    #[test]
+    fn lower_sugar_re_hole_with_prefix_collapses() {
+        // `use${re(...)}` — prefix `use` collapses into the slot regex.
+        let (out, res, _, _, _) =
+            lower_sugar("use${re(Query|Mutation)}", dummy_span()).unwrap();
+        assert_eq!(out, "$SPRFHOLE0");
+        let rx = res[0].1.as_str();
+        assert!(rx.contains("use"), "prefix not spliced into slot regex: {rx}");
+    }
+
+    #[test]
+    fn lower_sugar_re_hole_alongside_metavar() {
+        // RTKQ shape: `use${HOOK?}${re(...)}` — metavar and hole share
+        // the same identifier-token run, so they FUSE into one slot
+        // whose regex carries both pieces.
+        //
+        //   `use(?P<HOOK>.+?)(?:Query|LazyQuery|Mutation)$`
+        //
+        // ast-grep can't match two adjacent metavars on a single
+        // identifier; fusion is the load-bearing trick.
+        let (out, res, _, caps, _) =
+            lower_sugar("use${HOOK?}${re(Query|LazyQuery|Mutation)}()", dummy_span()).unwrap();
+        assert_eq!(out, "$SPRFSLOT0()", "fused single slot rewrite: {out}");
+        assert_eq!(res.len(), 1, "fusion collapses to one slot regex");
+        let rx = res[0].1.as_str();
+        assert!(rx.contains("(?P<HOOK>.+?)"), "metavar group missing: {rx}");
+        assert!(rx.contains("Query|LazyQuery|Mutation"), "hole alt missing: {rx}");
+        assert!(rx.starts_with("(?s)^use"), "literal prefix missing: {rx}");
+        let names: Vec<&str> = caps.iter().map(|s| s.as_ref()).collect();
+        assert_eq!(names, vec!["HOOK"], "only metavar HOOK is user-visible");
+    }
+
+    #[test]
+    fn lower_sugar_re_hole_unterminated_paren_diag() {
+        // `${re(unclosed}` — the carveout terminates at `}` but the
+        // hole's `(` never closes. Hole-specific diagnostic.
+        let err = lower_sugar("${re(unclosed}", dummy_span()).unwrap_err();
+        assert_eq!(err[0].code, "ast/malformed-hole");
+    }
+
+    #[test]
+    fn lower_sugar_multi_hole_rejected() {
+        // `$$${re(...)}` is malformed — multi wraps a metavar name, not
+        // an inline op.
+        let err = lower_sugar("$$${re(Foo)}", dummy_span()).unwrap_err();
+        assert_eq!(err[0].code, "ast/bad-pattern");
+    }
+
+    #[tokio::test]
+    async fn pipe_re_hole_filters_matches() {
+        // RTKQ pattern: `use${HOOK?}${re(Query|LazyQuery|Mutation)}()`
+        // should match useFooQuery and useBarMutation but skip useBaz
+        // (no constraint suffix).
+        let ctx = test_ctx();
+        let body = b"\
+const a = useFooQuery();
+const b = useBarMutation();
+const c = useBaz();
+";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("ast[ts](use${HOOK}${re(Query|LazyQuery|Mutation)}())").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert_eq!(
+            out.len(), 2,
+            "hole constraint should drop useBaz; got {} matches", out.len()
+        );
+        let mut hooks: Vec<String> = out.iter().map(|c| {
+            let n = c.captures.iter().find(|c| &*c.name == "HOOK").unwrap();
+            String::from_utf8_lossy(n.bytes(&c.content)).into_owned()
+        }).collect();
+        hooks.sort();
+        assert_eq!(hooks, vec!["Bar".to_string(), "Foo".to_string()]);
     }
 
     #[test]
