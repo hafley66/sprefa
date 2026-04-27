@@ -508,6 +508,25 @@ mod tests {
         assert_eq!(&src[atom.byte_range()], ":main");
     }
 
+    /// §14.2 / sprefa-3vs: the rev atom set (`:wt`, `:staged`,
+    /// `:unstaged`) parses through the same `:IDENT` atom_literal
+    /// production as `:HEAD`. The grammar is permissive on the IDENT
+    /// tail, so this confirms no parser change is needed for the
+    /// rev-set rename — only DiskFileSource/CLI defaults move.
+    #[test]
+    fn rev_atom_set_parses() {
+        for atom in [":wt", ":staged", ":unstaged", ":HEAD"] {
+            let src = format!("rev({atom})");
+            let (p, errs) = host_parse(&src, fake_file());
+            assert!(errs.is_empty(), "rev({atom}) parse errs: {errs:?}");
+            let outer = p.pipes[0].ops[0].node();
+            let paren = outer.child_by_field_name("paren").expect("paren_slot");
+            let node = find_kind(paren, "atom_literal")
+                .unwrap_or_else(|| panic!("atom_literal missing for {atom}"));
+            assert_eq!(&src[node.byte_range()], atom, "atom span mismatch");
+        }
+    }
+
     /// §14.2: `comment(re(/\*), re(\*/))` — two comma-separated arg groups
     /// inside a paren_slot. The slot must contain two `op_invocation` children
     /// separated by at least one `slot_punct` (comma) node.

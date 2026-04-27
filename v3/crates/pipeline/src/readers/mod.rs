@@ -45,6 +45,8 @@ pub trait FileSource: Send + Sync + 'static {
     }
 }
 
+pub mod disk;
 pub mod mem;
 
+pub use disk::DiskFileSource;
 pub use mem::MemFileSource;

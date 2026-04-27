@@ -406,7 +406,7 @@ fn discover_config(file: &Path) -> (Config, ConfigSource) {
         dir = parent;
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    (config::from_cli(cwd, "HEAD".into()), ConfigSource::CwdFallback)
+    (config::from_cli(cwd, "wt".into()), ConfigSource::CwdFallback)
 }
 
 #[allow(dead_code)]

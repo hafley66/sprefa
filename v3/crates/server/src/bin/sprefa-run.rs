@@ -32,7 +32,7 @@ use pipeline::rule_hash::{self, RuleHashes};
 use pipeline::ops::relation::RelationArg;
 use pipeline::registry::lower_paren_slot;
 use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
-use pipeline::readers::FileSource;
+use pipeline::readers::{DiskFileSource, FileSource};
 use pipeline::registry::Registry;
 use pipeline::value::{TermMode, Value};
 use server::config::{self, Config, Seed};
@@ -63,7 +63,7 @@ fn main() {
     }
     let sprf_path = PathBuf::from(&args[0]);
     let mut root: Option<PathBuf> = None;
-    let mut rev: String = "HEAD".to_string();
+    let mut rev: String = "wt".to_string();
     let mut config_path: Option<PathBuf> = None;
     let mut out_db: Option<PathBuf> = None;
     let mut no_cache: bool = false;
@@ -71,7 +71,7 @@ fn main() {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--root" => root = it.next().map(PathBuf::from),
-            "--rev" => rev = it.next().cloned().unwrap_or("HEAD".into()),
+            "--rev" => rev = it.next().cloned().unwrap_or("wt".into()),
             "--config" => config_path = it.next().map(PathBuf::from),
             "--out" => out_db = it.next().map(PathBuf::from),
             "--no-cache" => no_cache = true,
@@ -882,78 +882,3 @@ fn print_row(c: &Cursor) {
 }
 
 
-// ---------------------------------------------------------------------------
-// DiskFileSource: walk the fs under <root> and return repo-relative paths.
-// rev is ignored; we only serve the working-tree listing. Good enough for
-// smoke runs where the pipeline is `repo(.) > rev(HEAD) > fs(**/*.rs)`.
-// ---------------------------------------------------------------------------
-
-struct DiskFileSource {
-    root: PathBuf,
-    rev: String,
-}
-
-impl DiskFileSource {
-    fn new(root: PathBuf, rev: String) -> Self {
-        Self { root, rev }
-    }
-}
-
-impl FileSource for DiskFileSource {
-    fn files(&self, _repo: &str, rev: &str) -> Vec<Arc<Path>> {
-        if rev != self.rev {
-            return Vec::new();
-        }
-        let _t0 = std::time::Instant::now();
-        let mut out = Vec::new();
-        walk(&self.root, &self.root, &mut out);
-        tracing::info!(
-            target: "sprefa::reader",
-            root = %self.root.display(),
-            rev = %rev,
-            files = out.len(),
-            elapsed_ms = _t0.elapsed().as_millis() as u64,
-            "DiskFileSource.files"
-        );
-        out
-    }
-
-    fn file_bytes(&self, _repo: &str, rev: &str, path: &Path) -> Option<Arc<[u8]>> {
-        if rev != self.rev {
-            return None;
-        }
-        let _t0 = std::time::Instant::now();
-        let full = self.root.join(path);
-        let bytes = std::fs::read(full).ok().map(Arc::<[u8]>::from);
-        let len = bytes.as_ref().map(|b| b.len()).unwrap_or(0);
-        tracing::trace!(
-            target: "sprefa::reader",
-            path = %path.display(),
-            bytes = len,
-            elapsed_us = _t0.elapsed().as_micros() as u64,
-            "DiskFileSource.file_bytes"
-        );
-        bytes
-    }
-}
-
-fn walk(root: &Path, dir: &Path, out: &mut Vec<Arc<Path>>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    for entry in rd.flatten() {
-        let path = entry.path();
-        // Skip hidden dirs (`.git`, `.vscode`, …) and common heavy ones.
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') || name == "target" || name == "node_modules" {
-                continue;
-            }
-        }
-        let Ok(ft) = entry.file_type() else { continue };
-        if ft.is_dir() {
-            walk(root, &path, out);
-        } else if ft.is_file() {
-            if let Ok(rel) = path.strip_prefix(root) {
-                out.push(Arc::from(rel));
-            }
-        }
-    }
-}

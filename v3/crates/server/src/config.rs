@@ -10,7 +10,7 @@
 //! [[seed]]
 //! slug = "sprefa"
 //! root = "."
-//! rev  = "HEAD"
+//! rev  = "wt"
 //!
 //! [[seed]]
 //! slug = "other"
@@ -92,7 +92,7 @@ struct SeedWire {
     rev:  String,
 }
 
-fn default_rev() -> String { "HEAD".to_string() }
+fn default_rev() -> String { "wt".to_string() }
 
 /// Parse a TOML string into a `Config`. Paths in `root` are resolved
 /// relative to `base_dir` (typically the directory containing the
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(cfg.seeds.len(), 1);
         assert_eq!(cfg.seeds[0].slug, "sprefa");
         assert_eq!(cfg.seeds[0].root, PathBuf::from("/work/."));
-        assert_eq!(cfg.seeds[0].rev, "HEAD");
+        assert_eq!(cfg.seeds[0].rev, "wt");
     }
 
     #[test]

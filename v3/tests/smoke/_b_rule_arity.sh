@@ -48,11 +48,11 @@ idx_count=$(sqlite3 "$db" "SELECT COUNT(*) FROM sqlite_master WHERE type='index'
 repo=$(sqlite3 "$db" "SELECT repo FROM rule_arity_smoke__zero")
 rev=$(sqlite3 "$db" "SELECT rev FROM rule_arity_smoke__zero")
 [ "$repo" = "server" ] || { echo "FAIL: synthetic repo expected 'server', got '$repo'" >&2; exit 1; }
-[ "$rev"  = "HEAD"   ] || { echo "FAIL: synthetic rev expected 'HEAD', got '$rev'"     >&2; exit 1; }
+[ "$rev"  = "wt"     ] || { echo "FAIL: synthetic rev expected 'wt', got '$rev'"       >&2; exit 1; }
 
-# rev_norm is sprf_norm("HEAD") = "head".
+# rev_norm is sprf_norm("wt") = "wt".
 rev_norm=$(sqlite3 "$db" "SELECT rev_norm FROM rule_arity_smoke__zero")
-[ "$rev_norm" = "head" ] || { echo "FAIL: rev_norm expected 'head', got '$rev_norm'" >&2; exit 1; }
+[ "$rev_norm" = "wt" ] || { echo "FAIL: rev_norm expected 'wt', got '$rev_norm'" >&2; exit 1; }
 
 # FTS5 trigram virtual table per rule.
 for r in zero one two; do
