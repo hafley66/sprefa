@@ -1,4 +1,19 @@
-[[repo]]
+[[seed]]
 slug = "sprefa"
-path = "/Users/chrishafley/projects/sprefa"
-revs = ["HEAD", "test/1", "test/2", "test/3"]
+root = "/Users/chrishafley/projects/sprefa"
+rev  = "HEAD"
+
+[[seed]]
+slug = "sprefa"
+root = "/Users/chrishafley/projects/sprefa"
+rev  = "test/1"
+
+[[seed]]
+slug = "sprefa"
+root = "/Users/chrishafley/projects/sprefa"
+rev  = "test/2"
+
+[[seed]]
+slug = "sprefa"
+root = "/Users/chrishafley/projects/sprefa"
+rev  = "test/3"

@@ -195,4 +195,28 @@ mod tests {
         assert_eq!(cfg.seeds.len(), 1);
         assert_eq!(cfg.seeds[0].slug, "sprefa");
     }
+
+    #[test]
+    fn legacy_v2_repo_schema_currently_rejected() {
+        // v2 wrote `.sprefa.toml` as `[[repo]] slug/path/revs[]` (see
+        // commit 87de094). v3 only decodes `[[seed]] slug/root/rev`.
+        // `discover_config` swallows this Err with `if let Ok(cfg)` and
+        // walks past, dropping the LSP into CwdFallback (rev "wt") —
+        // which silently breaks any pipe with a non-`wt` rev filter.
+        // This test pins the gap so a future v2-compat layer can flip
+        // it red→green deliberately.
+        let toml = r#"
+            [[repo]]
+            slug = "sprefa"
+            path = "/Users/chrishafley/projects/sprefa"
+            revs = ["HEAD", "test/1"]
+        "#;
+        let res = from_toml_str(toml, Path::new("/work"));
+        assert!(
+            res.is_err(),
+            "v2 [[repo]] schema parsed under v3 loader; if intentional, \
+             update discover_config to surface the file source instead \
+             of falling through to CwdFallback. got: {res:?}",
+        );
+    }
 }

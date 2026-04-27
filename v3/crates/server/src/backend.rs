@@ -995,7 +995,8 @@ mod tests {
             .lowered_pipes()[plan.pipe_idx][..=plan.focus_step]
             .to_vec();
         let cfg = Config { seeds: vec![], run: Default::default() };
-        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry()).await
+        let op_cache = Arc::new(OpCache::new(true));
+        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache).await
     }
 
     fn off_of(src: &str, needle: &str) -> usize {
@@ -1033,5 +1034,128 @@ mod tests {
         let md = enriched_at(src, off_of(src, "${N?}")).await
             .expect("hover plan present at capture");
         insta::assert_snapshot!(md);
+    }
+
+    // ─── Seeded-walk hover assertions ───────────────────────────────────
+    //
+    // Snapshot tests above run with `Config { seeds: vec![] }` so the
+    // fs walk + cursor render path is exercised by zero rows. These
+    // tests stand up a tempdir + a real Seed and assert that
+    // `render_enriched_hover` actually emits cursors when the pipe
+    // matches, and emits zero (with the explicit "no cursors" line)
+    // when a `rev` filter rejects the seed rev. Pins the failure mode
+    // the LSP was hitting: `.sprefa.toml` schema mismatch dropped the
+    // user into cwd-fallback (rev "wt"), and `rev(:HEAD)` filtered
+    // every cursor out silently.
+
+    fn seeded_tempdir(files: &[(&str, &str)]) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "sprefa-hover-{}-{}", std::process::id(), nanos,
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (rel, body) in files {
+            let p = dir.join(rel);
+            if let Some(parent) = p.parent() { std::fs::create_dir_all(parent).unwrap(); }
+            std::fs::write(p, body).unwrap();
+        }
+        dir
+    }
+
+    async fn enriched_at_with_cfg(
+        src: &str,
+        byte_offset: usize,
+        cfg: Config,
+    ) -> Option<String> {
+        use crate::session::DocSession;
+        let file: Arc<std::path::Path> =
+            Arc::from(std::path::PathBuf::from("t.sprf").as_path());
+        let session = DocSession::new(file, src.into(), Registry::with_stdlib());
+        let plan = session.hover_plan(byte_offset)?;
+        let lowered: Vec<LoweredOp> = session
+            .lowered_pipes()[plan.pipe_idx][..=plan.focus_step]
+            .to_vec();
+        let op_cache = Arc::new(OpCache::new(true));
+        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache).await
+    }
+
+    #[tokio::test]
+    async fn hover_seeded_fs_walk_emits_cursor_per_matched_file() {
+        let dir = seeded_tempdir(&[
+            ("a.rs", "fn a() {}\n"),
+            ("nested/b.rs", "fn b() {}\n"),
+            ("c.txt", "skip me\n"),
+        ]);
+        let cfg = Config {
+            seeds: vec![crate::config::Seed {
+                slug: "tmp".into(),
+                root: dir.clone(),
+                rev:  "HEAD".into(),
+            }],
+            run: Default::default(),
+        };
+        let src = "fs(glob(**/*.rs))";
+        let md = enriched_at_with_cfg(src, off_of(src, "fs("), cfg).await
+            .expect("hover plan present at fs op");
+        assert!(
+            md.contains("**Total rows:** 2"),
+            "expected two .rs cursors, got:\n{md}",
+        );
+        assert!(md.contains("a.rs"),       "row for a.rs missing:\n{md}");
+        assert!(md.contains("nested/b.rs"), "row for nested/b.rs missing:\n{md}");
+        assert!(!md.contains("c.txt"),     "txt file leaked through glob:\n{md}");
+    }
+
+    #[tokio::test]
+    async fn hover_rev_atom_filter_passes_when_seed_rev_matches() {
+        // `rev(:HEAD)` lowers to Value::Atom("HEAD") (colon stripped),
+        // which becomes a glob matching exactly "HEAD" against
+        // cursor.rev. Seed rev "HEAD" must pass; the file then walks.
+        let dir = seeded_tempdir(&[("a.rs", "fn a() {}\n")]);
+        let cfg = Config {
+            seeds: vec![crate::config::Seed {
+                slug: "tmp".into(),
+                root: dir,
+                rev:  "HEAD".into(),
+            }],
+            run: Default::default(),
+        };
+        let src = "rev(:HEAD) > fs(glob(**/*.rs))";
+        let md = enriched_at_with_cfg(src, off_of(src, "fs("), cfg).await
+            .expect("hover plan present at fs");
+        assert!(
+            md.contains("**Total rows:** 1"),
+            "rev(:HEAD) + seed rev=HEAD must pass one cursor:\n{md}",
+        );
+    }
+
+    #[tokio::test]
+    async fn hover_rev_atom_filter_drops_when_seed_rev_mismatches() {
+        // Pins the silent-drop bug the user hit: `.sprefa.toml` schema
+        // mismatch sent the LSP into cwd-fallback with rev "wt", and
+        // `rev(:HEAD)` then filtered every cursor out. With seed rev
+        // "wt" against `rev(:HEAD)`, total_rows must be 0 and the
+        // "(no cursors emitted)" sentinel must be present.
+        let dir = seeded_tempdir(&[("a.rs", "fn a() {}\n")]);
+        let cfg = Config {
+            seeds: vec![crate::config::Seed {
+                slug: "tmp".into(),
+                root: dir,
+                rev:  "wt".into(),
+            }],
+            run: Default::default(),
+        };
+        let src = "rev(:HEAD) > fs(glob(**/*.rs))";
+        let md = enriched_at_with_cfg(src, off_of(src, "fs("), cfg).await
+            .expect("hover plan present at fs");
+        assert!(
+            md.contains("**Total rows:** 0"),
+            "seed rev=wt must be filtered out by rev(:HEAD):\n{md}",
+        );
+        assert!(
+            md.contains("(no cursors emitted)"),
+            "explicit zero-row sentinel missing:\n{md}",
+        );
     }
 }
