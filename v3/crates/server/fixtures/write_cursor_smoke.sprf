@@ -17,14 +17,14 @@
 # Bind a comment-bounded scope, then replace its body with rendered list.
 fs(glob(./src/lib.rs))
   > comment(@begin auto-imports ${SCOPE?} @end)
-  > rule(import_scope);
+  > rule(:import_scope);
 
 fs(glob(./src/modules/*.rs))
   > render[rust](use crate::${fs.stem};)
-  > write_cursor(${SCOPE?});
+  > write_cursor(${SCOPE});
 
 # Append a generated-on line at end of a marker block.
-rule(import_scope)
+rule(:import_scope)
   > render[rust](// generated ${rev.head?})
   > write_cursor(${SCOPE?}, :append);
 

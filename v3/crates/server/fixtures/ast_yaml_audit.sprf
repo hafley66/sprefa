@@ -15,6 +15,6 @@ repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast_yaml[rs](
 );
 
 # Sugared form (no `rule:` envelope; body wrapped automatically).
-repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast_yaml[rs](
+repo(${R?}) > rev(:HEAD) > fs(glob(**/v3/**/*.rs)) > ast_yaml[rs](
   pattern: "${X?}.to_owned()"
 );
