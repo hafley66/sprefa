@@ -547,12 +547,20 @@ impl EffectKind for WriteRangeEffect {
 #[derive(Clone)]
 pub enum WriteRangeSink {
     Buffer(Arc<Mutex<Vec<WriteRangeEffect>>>),
+    /// Read-modify-write splice on the local filesystem. A per-sink
+    /// `Mutex<()>` serializes splices so two effects targeting the same
+    /// drain pass cannot race the file-on-disk between read and write.
+    Disk(Arc<Mutex<()>>),
 }
 
 impl WriteRangeSink {
     pub fn buffer() -> (Self, Arc<Mutex<Vec<WriteRangeEffect>>>) {
         let buf = Arc::new(Mutex::new(Vec::new()));
         (WriteRangeSink::Buffer(buf.clone()), buf)
+    }
+
+    pub fn disk() -> Self {
+        WriteRangeSink::Disk(Arc::new(Mutex::new(())))
     }
 
     fn write(&self, e: WriteRangeEffect) -> Result<(), String> {
@@ -563,8 +571,63 @@ impl WriteRangeSink {
                     .push(e);
                 Ok(())
             }
+            WriteRangeSink::Disk(lock) => {
+                let _g = lock.lock().expect("write_range disk lock poisoned");
+                let path = e.file.as_ref();
+                let cur = std::fs::read(path)
+                    .map_err(|err| format!("read({}): {err}", path.display()))?;
+                let spliced = splice_bytes(&cur, &e.byte_range, &e.new_bytes, e.mode)
+                    .map_err(|m| format!("splice({}): {m}", path.display()))?;
+                std::fs::write(path, &spliced)
+                    .map_err(|err| format!("write({}): {err}", path.display()))
+            }
         }
     }
+}
+
+/// Splice `new_bytes` into `existing` at `range` per `mode`. Range
+/// out-of-bounds returns Err so a misaligned capture does not corrupt
+/// the file.
+fn splice_bytes(
+    existing: &[u8],
+    range:    &std::ops::Range<usize>,
+    new:      &[u8],
+    mode:     WriteMode,
+) -> Result<Vec<u8>, String> {
+    let len = existing.len();
+    let s = range.start;
+    let e = range.end;
+    if s > e || e > len {
+        return Err(format!(
+            "byte_range {s}..{e} out of bounds for file len {len}"
+        ));
+    }
+    let mut out = Vec::with_capacity(len + new.len());
+    match mode {
+        WriteMode::Replace => {
+            out.extend_from_slice(&existing[..s]);
+            out.extend_from_slice(new);
+            out.extend_from_slice(&existing[e..]);
+        }
+        WriteMode::Append => {
+            out.extend_from_slice(&existing[..e]);
+            out.extend_from_slice(new);
+            out.extend_from_slice(&existing[e..]);
+        }
+        WriteMode::Prepend => {
+            out.extend_from_slice(&existing[..s]);
+            out.extend_from_slice(new);
+            out.extend_from_slice(&existing[s..]);
+        }
+        WriteMode::Wrap => {
+            out.extend_from_slice(&existing[..s]);
+            out.extend_from_slice(new);
+            out.extend_from_slice(&existing[s..e]);
+            out.extend_from_slice(new);
+            out.extend_from_slice(&existing[e..]);
+        }
+    }
+    Ok(out)
 }
 
 pub struct WriteRangeBatcher {
@@ -573,6 +636,7 @@ pub struct WriteRangeBatcher {
 
 impl WriteRangeBatcher {
     pub fn new(sink: WriteRangeSink) -> Self { Self { sink } }
+    pub fn disk() -> Self { Self { sink: WriteRangeSink::disk() } }
     pub fn buffer() -> (Self, Arc<Mutex<Vec<WriteRangeEffect>>>) {
         let (sink, buf) = WriteRangeSink::buffer();
         (Self { sink }, buf)

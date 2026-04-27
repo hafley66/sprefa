@@ -1,17 +1,22 @@
-# render[md] smoke — markdown rendering into a comment-bounded scope.
-# Spec: v3/docs/v3-render-write-cursor-vision.md
-# Status: DOES NOT PARSE TODAY — uses dotted carveout access (${fs.stem})
-#   pending grammar landing in sprefa-p0m. Registry impls also pending
-#   (sprefa-e6c render + sprefa-1cl write_cursor).
+# ============================================================
+# PARKED — uses syntax not yet in the host grammar.
+# Reason: dotted carveout access (${fs.stem}) is not lowered today;
+#   render+write_cursor+comment chain is exercised end-to-end by
+#   tests/smoke/_j_write_cursor_replace.sh using current syntax.
+# Restore when: dotted-path carveout lands.
+# ============================================================
 #
-# Pattern: walk a folder, emit one bullet per child, splice into the
-# `@begin` … `@end` marker pair.
-
-repo(${R?}) > rev(:HEAD)
-  > fs(glob(./views/*/))
-  > render[md](- ${fs.stem})
-  > write_cursor(${SCOPE?});
-
-# Bound elsewhere by:
-#   comment(@begin ${SCOPE?} @end)
-# which yields SCOPE.byte_range covering the marker body.
+# # render[md] smoke — markdown rendering into a comment-bounded scope.
+# # Spec: v3/docs/v3-render-write-cursor-vision.md
+# #
+# # Pattern: walk a folder, emit one bullet per child, splice into the
+# # `@begin` … `@end` marker pair.
+#
+# repo(${R?}) > rev(:HEAD)
+#   > fs(glob(./views/*/))
+#   > render[md](- ${fs.stem})
+#   > write_cursor(${SCOPE?});
+#
+# # Bound elsewhere by:
+# #   comment(@begin ${SCOPE?} @end)
+# # which yields SCOPE.byte_range covering the marker body.

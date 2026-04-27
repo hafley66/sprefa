@@ -58,9 +58,9 @@ impl std::fmt::Debug for AstYamlOp {
 impl OpCtor for AstYamlOp {
     const NAME: &'static str = "ast_yaml";
     const BODY_GRAMMAR: &'static str =
-        "ast-grep RuleConfig YAML (top-level rule fields); lang via [rust|rs|ts|c]";
+        "ast-grep RuleConfig YAML (top-level rule fields); lang via `[rust|rs|ts|c]`";
     const DOC: &'static str = "\
-**ast_yaml**[_lang_](_yaml_)
+`ast_yaml[lang](yaml)`
 
 Match an ast-grep RuleConfig against the cursor's active bytes. The body
 is parsed as YAML and deserialised into ast-grep's `SerializableRuleCore`
@@ -73,12 +73,10 @@ named utility rules.
 
 `lang` is `rust` (`rs`), `typescript` (`ts`), or `c`.
 
-Captures: ast-grep native `$VAR` / `$$$VAR` metavars inside `pattern:`
-strings bind into the cursor's capture set under `VAR`.
-
-First-pass: no sprf carveouts (`${X?}`) inside the YAML body. The body
-is static. (Carveout splice is sprefa-dkm; this op re-opens once that
-lands.)
+Captures bind under the metavar name in the cursor's capture set:
+- ast-grep native `$VAR` / `$$$VAR` inside `pattern:` strings.
+- sprf carveouts `${VAR?}` / `${VAR}` / `$$${VAR?}` anywhere in the
+  YAML body; rewritten to native ast-grep metavars before deserialise.
 ";
 
     fn from_values(_values: Vec<Value>) -> Result<Self, Vec<PatternDiagnostic>> {

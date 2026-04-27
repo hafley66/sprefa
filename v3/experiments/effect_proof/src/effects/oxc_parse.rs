@@ -20,7 +20,7 @@ pub struct OxcParse {
     pub path: PathBuf,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct OxcParseSummary {
     pub bytes: u64,
     pub errors: u64,

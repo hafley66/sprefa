@@ -105,7 +105,7 @@ impl OpCtor for RenderOp {
     const NAME: &'static str = "render";
     const BODY_GRAMMAR: &'static str = "literal bytes + ${NAME} reads";
     const DOC: &'static str = "\
-**render**[_format_](_template_)
+`render[format](template)`
 
 Universal output template. Format ∈ {md, ascii, rust, json, sql, plain}.
 Paren body is literal bytes plus `${NAME}` reads of bound captures.

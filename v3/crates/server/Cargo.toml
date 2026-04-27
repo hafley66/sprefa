@@ -5,6 +5,10 @@ edition.workspace = true
 publish.workspace = true
 
 [[bin]]
+name = "sprefa-server"
+path = "src/bin/sprefa-server.rs"
+
+[[bin]]
 name = "sprefa-lsp"
 path = "src/bin/sprefa-lsp.rs"
 
@@ -18,13 +22,28 @@ pipeline       = { path = "../pipeline" }
 sprefa_parse   = { path = "../sprefa_parse" }
 tree-sitter    = "0.24"
 tower-lsp      = "0.20"
-tokio          = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync"] }
+tokio          = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "signal", "net", "fs"] }
+tokio-util     = { version = "0.7", features = ["rt"] }
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "handshake"] }
 toml           = "0.8"
 serde          = { version = "1", features = ["derive"] }
+serde_json     = "1"
 tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures        = "0.3"
+futures-core   = "0.3"
+futures-util   = "0.3"
 sqlx           = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+axum           = { version = "0.8", features = ["ws"] }
+hyper          = { version = "1", features = ["client", "http1"] }
+hyper-util     = { version = "0.1", features = ["server-auto", "service", "tokio"] }
+http-body-util = "0.1"
+bytes          = "1"
+anyhow         = "1"
+clap           = { version = "4", features = ["derive"] }
+chrono         = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+async-stream   = "0.3"
+url            = "2"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.6"

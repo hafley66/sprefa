@@ -61,6 +61,21 @@ pub trait Batcher<E: EffectKind>: Send + Sync + 'static {
     fn run(&self, req: E, cancel: CancellationToken) -> BoxFuture<'static, E::Response>;
 }
 
+/// Sharing a single batcher across many `RtCtx` builds (the v3 server's
+/// long-lived `BoundedWorkSteal<AstParseEffect>` is the load-bearing
+/// case) only needs an `Arc` to be `Batcher<E>` itself. The blanket
+/// impl forwards through the deref so registering `arc.clone()` Just
+/// Works in any builder slot.
+impl<E, B> Batcher<E> for Arc<B>
+where
+    E: EffectKind,
+    B: Batcher<E> + ?Sized,
+{
+    fn run(&self, req: E, cancel: CancellationToken) -> BoxFuture<'static, E::Response> {
+        (**self).run(req, cancel)
+    }
+}
+
 // --- type-erasure layer. Invisible to op authors. ---
 
 trait BatcherEntry: Send + Sync {

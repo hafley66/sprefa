@@ -7,14 +7,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures::stream::{self, StreamExt};
 use pipeline::binding_graph::BindingDiagnostic;
 use pipeline::registry::Registry;
-use pipeline::{spawn_fs_watcher, spawn_invalidator, ChangeSubject, FsWatcherGuard, OpCache};
+use pipeline::OpCache;
 use sprefa_parse::{ParseError, ParseErrorKind};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tower_lsp::jsonrpc::Result as RpcResult;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -22,110 +22,99 @@ use tower_lsp::{Client, LanguageServer};
 use crate::config::Config;
 use crate::position::{offset_to_position, position_to_offset};
 use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionKind};
+use crate::state::ServerState;
 
 use effect_runtime::batchers::BoundedWorkSteal;
 use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
 use pipeline::effects::{
-    ast_parse, AstParseEffect, FsListFilesBatcher, FsListFilesEffect, PrintBatcher,
+    AstParseEffect, FsListFilesBatcher, FsListFilesEffect, PrintBatcher,
     PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect, ReadBytesBatcher,
     ReadBytesEffect,
 };
 use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
 use pipeline::readers::{DiskFileSource, FileSource};
 
-/// Watcher debounce window. Larger than the test value to swallow
-/// editor save-burst patterns (atomic-rename + fsync) without missing
-/// the eviction window.
-const WATCHER_DEBOUNCE: Duration = Duration::from_millis(200);
-
 pub struct Backend {
     client: Client,
-    sessions: Arc<Mutex<HashMap<Url, DocSession>>>,
-    registry: Registry,
-    /// Long-lived OpCache shared across every hover and every session.
-    /// `cache_key` carries (repo, rev) inside batch_fingerprint, so cross-
-    /// session entries cannot collide; one global cache is always safe.
-    /// L1 only — `feedback_buffer_no_l2` keeps L2 off when DocSession
-    /// buffer overlay is in the source stack.
-    cache: Arc<OpCache>,
-    /// Side-band Subject<Change>. Producers (per-repo fs watchers) clone
-    /// the inner Sender via `subject.sender()`.
-    subject: ChangeSubject,
-    /// One watcher per (slug, canonical-root). Lazy-spawned the first
-    /// time a hover surfaces a new seed root.
-    watchers: Arc<Mutex<HashMap<(Arc<str>, PathBuf), FsWatcherGuard>>>,
-    /// Cache-eviction drain task. Held so it lives as long as the
-    /// Backend; aborted on drop.
-    _drain: tokio::task::JoinHandle<()>,
+    /// Shared process state (cache, watchers, batcher, registry, ...).
+    /// Cloned by every per-WS Backend; one daemon, one set of resources.
+    state: Arc<ServerState>,
+    sessions: Arc<Mutex<HashMap<Url, SessionEntry>>>,
 }
 
-impl Drop for Backend {
-    fn drop(&mut self) {
-        // watchers (Sender clones) go first via `Drop` on the field
-        // order above isn't guaranteed by Rust, but explicit abort of
-        // the drain task here covers the close path even if the
-        // ChangeSubject still has live senders elsewhere.
-        self._drain.abort();
-    }
+struct SessionEntry {
+    session:   DocSession,
+    /// Canonical workspace root for this URI's file. Set on did_open.
+    workspace: Option<PathBuf>,
+    /// switchMap-style cancel slots, keyed by op (`"hover"`, etc.).
+    /// did_change cancels every entry; a fresh hover replaces "hover".
+    in_flight: HashMap<&'static str, CancellationToken>,
 }
 
 impl Backend {
+    /// Stdio entry point — boots a private ServerState. Used by the
+    /// legacy stdio binary path; daemon mode goes through `with_state`.
     pub fn new(client: Client) -> Self {
-        let cache = Arc::new(OpCache::new(true));
-        let subject = ChangeSubject::new();
-        let drain = spawn_invalidator(cache.clone(), &subject);
+        // Block on async ServerState construction by deferring to a
+        // helper task; new() is only called inside an executor.
+        let state = futures::executor::block_on(async {
+            ServerState::new(&Default::default()).await.expect("ServerState::new")
+        });
+        Self::with_state(client, state)
+    }
+
+    /// Shared-state entry point. Used by `transport_lsp` for every WS
+    /// connection, so all editors against the daemon share resources.
+    pub fn with_state(client: Client, state: Arc<ServerState>) -> Self {
         Self {
             client,
+            state,
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            registry: Registry::with_stdlib(),
-            cache,
-            subject,
-            watchers: Arc::new(Mutex::new(HashMap::new())),
-            _drain: drain,
         }
     }
 
-    /// Lazy: ensure an FS watcher is running for `(slug, root)`. Called
-    /// per seed before each hover pipe drain so newly configured seeds
-    /// pick up live invalidation without restart.
+    fn registry(&self) -> Registry { self.state.registry.clone() }
+    fn cache(&self) -> Arc<OpCache> { self.state.cache.clone() }
+    fn ast_parse_batcher(&self) -> Arc<BoundedWorkSteal<AstParseEffect>> {
+        self.state.ast_parse_batcher.clone()
+    }
+
     async fn ensure_watcher(&self, slug: Arc<str>, root: PathBuf) {
-        let canonical = std::fs::canonicalize(&root).unwrap_or(root);
-        let key = (slug.clone(), canonical.clone());
-        let mut guard = self.watchers.lock().await;
-        if guard.contains_key(&key) { return; }
-        match spawn_fs_watcher(slug, canonical.clone(), self.subject.sender(), WATCHER_DEBOUNCE) {
-            Ok(w) => {
-                tracing::info!(
-                    target: "sprefa::lsp",
-                    slug = %key.0,
-                    root = %canonical.display(),
-                    "fs_watcher.spawned"
-                );
-                guard.insert(key, w);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "sprefa::lsp",
-                    root = %canonical.display(),
-                    err = %e,
-                    "fs_watcher.spawn_failed"
-                );
-            }
-        }
+        self.state.ensure_watcher(slug, root).await;
     }
 
     async fn open_or_replace(&self, uri: &Url, source: String) {
         let file = uri_to_path(uri);
-        let file: Arc<std::path::Path> = Arc::from(file.as_path());
+        let file_arc: Arc<std::path::Path> = Arc::from(file.as_path());
+
+        // Resolve workspace, push the new bytes into its overlay so
+        // subsequent pipes scanning this path see editor bytes.
+        let workspace = self.state.workspaces
+            .write().await
+            .resolve(&file, &self.state.cancel_root)
+            .await;
+        if let Ok(rel) = file.strip_prefix(&workspace.root) {
+            workspace.source.set(rel.to_path_buf(), Arc::from(source.as_bytes().to_vec()));
+        }
+
         let mut guard = self.sessions.lock().await;
         match guard.get_mut(uri) {
-            Some(entry) => entry.on_source_change(source),
+            Some(entry) => {
+                // Cancel everything in flight on this doc — switchMap.
+                for (_, tok) in entry.in_flight.drain() { tok.cancel(); }
+                entry.session.on_source_change(source);
+                entry.workspace = Some(workspace.root.clone());
+            }
             None => {
                 guard.insert(
                     uri.clone(),
-                    DocSession::new(file, source, self.registry.clone()),
+                    SessionEntry {
+                        session:   DocSession::new(file_arc, source, self.registry()),
+                        workspace: Some(workspace.root.clone()),
+                        in_flight: HashMap::new(),
+                    },
                 );
             }
         }
@@ -135,12 +124,13 @@ impl Backend {
         let diags = {
             let guard = self.sessions.lock().await;
             let Some(entry) = guard.get(uri) else { return; };
-            let mut diags = parse_errors_to_lsp(entry.source(), entry.parse_errors());
+            let session = &entry.session;
+            let mut diags = parse_errors_to_lsp(session.source(), session.parse_errors());
             diags.extend(binding_diags_to_lsp(
-                entry.source(),
-                entry.binding_diagnostics(),
+                session.source(),
+                session.binding_diagnostics(),
             ));
-            diags.extend(lower_diags_to_lsp(entry.source(), entry.lowered_pipes()));
+            diags.extend(lower_diags_to_lsp(session.source(), session.lowered_pipes()));
             diags
         };
         self.client
@@ -191,7 +181,17 @@ impl LanguageServer for Backend {
     }
 
     async fn did_save(&self, p: DidSaveTextDocumentParams) {
-        let uri = p.text_document.uri;
+        let uri = p.text_document.uri.clone();
+        // Disk has caught up — drop the buffer overlay so subsequent
+        // pipes read live disk bytes again.
+        let file = uri_to_path(&uri);
+        let workspace = self.state.workspaces
+            .write().await
+            .resolve(&file, &self.state.cancel_root)
+            .await;
+        if let Ok(rel) = file.strip_prefix(&workspace.root) {
+            workspace.source.clear(rel);
+        }
         self.publish(&uri).await;
     }
 
@@ -210,15 +210,22 @@ impl LanguageServer for Backend {
         // Snapshot everything we need out of the mutex before running
         // the pipeline so an expensive hover does not block
         // did_change / did_save on other docs.
+        // switchMap: cancel the prior hover for this URI, install a
+        // fresh per-request token. The token is wired into the per-put
+        // cancel inside `BoundedWorkSteal::run`, so an in-flight ast
+        // parse pool short-circuits the moment a newer hover lands.
+        let cancel = self.state.cancel_root.child_token();
         let snapshot = {
-            let guard = self.sessions.lock().await;
-            let Some(session) = guard.get(&uri) else { return Ok(None) };
+            let mut guard = self.sessions.lock().await;
+            let Some(entry) = guard.get_mut(&uri) else { return Ok(None) };
+            if let Some(prev) = entry.in_flight.remove("hover") {
+                prev.cancel();
+            }
+            entry.in_flight.insert("hover", cancel.clone());
+            let session = &entry.session;
             let offset = position_to_offset(session.source(), pos.line, pos.character);
             let plan = session.hover_plan(offset);
             let static_doc = session.hover_at(offset);
-            // Trigger the session's one-shot lowering inside the lock,
-            // then clone out only the slice this hover needs (cheap —
-            // each entry is an Arc<dyn Op> + small Vec of diagnostics).
             let lowered_slice: Option<Vec<LoweredOp>> = plan.as_ref().map(|p| {
                 session.lowered_pipes()[p.pipe_idx][..=p.focus_step].to_vec()
             });
@@ -242,30 +249,25 @@ impl LanguageServer for Backend {
             ).await;
         }
 
-        let cache_len_before = self.cache.len();
-        tracing::info!(
-            target: "sprefa::cache",
-            cache_len = cache_len_before,
-            "hover.cache.before"
-        );
-
         let body = match (snap.plan, snap.lowered_slice) {
             (Some(plan), Some(slice)) => {
                 render_enriched_hover(
                     &plan, &slice, &snap.config, &snap.config_source,
-                    &snap.registry, self.cache.clone(),
+                    &snap.registry, self.cache(), self.ast_parse_batcher(),
                 ).await
             }
             _ => snap.static_doc,
         };
 
-        let cache_len_after = self.cache.len();
-        tracing::info!(
-            target: "sprefa::cache",
-            cache_len = cache_len_after,
-            delta = cache_len_after as i64 - cache_len_before as i64,
-            "hover.cache.after"
-        );
+        // Settle: drop the in_flight slot if our token wasn't replaced
+        // by a newer hover. A concurrent did_change / hover would have
+        // tripped our token, so is_cancelled() is the same-identity proxy.
+        if !cancel.is_cancelled() {
+            let mut guard = self.sessions.lock().await;
+            if let Some(entry) = guard.get_mut(&uri) {
+                entry.in_flight.remove("hover");
+            }
+        }
         let Some(value) = body else {
             tracing::info!(
                 target: "sprefa::lsp",
@@ -297,7 +299,8 @@ impl LanguageServer for Backend {
         let uri = p.text_document_position.text_document.uri;
         let pos = p.text_document_position.position;
         let guard = self.sessions.lock().await;
-        let Some(session) = guard.get(&uri) else { return Ok(None) };
+        let Some(entry) = guard.get(&uri) else { return Ok(None) };
+        let session = &entry.session;
         let offset = position_to_offset(session.source(), pos.line, pos.character);
         let items: Vec<CompletionItem> = session
             .completions_at(offset)
@@ -344,6 +347,7 @@ async fn render_enriched_hover(
     config_source: &ConfigSource,
     registry: &pipeline::registry::Registry,
     op_cache: Arc<OpCache>,
+    ast_parse_batcher: Arc<BoundedWorkSteal<AstParseEffect>>,
 ) -> Option<String> {
     let _t0 = std::time::Instant::now();
     tracing::info!(
@@ -481,9 +485,9 @@ async fn render_enriched_hover(
             .register::<ReadBytesBatchEffect, _>(
                 ReadBytesBatchBatcher::new(source),
             )
-            .register::<AstParseEffect, _>(
-                BoundedWorkSteal::<AstParseEffect>::new(256, 8, ast_parse),
-            )
+            // Long-lived rayon pool, cloned via the blanket
+            // `Batcher<E> for Arc<B>` impl. No new threads per hover.
+            .register::<AstParseEffect, _>(ast_parse_batcher.clone())
             .register::<PrintEffect, _>(PrintBatcher::buffer().0)
             .register::<Yield<RelationWake>, _>(YieldBatcher::new(registry.clone()))
             .register::<WriteEffect, _>(
@@ -1077,7 +1081,10 @@ mod tests {
             .to_vec();
         let cfg = Config { seeds: vec![], run: Default::default() };
         let op_cache = Arc::new(OpCache::new(true));
-        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache).await
+        let batcher = Arc::new(BoundedWorkSteal::<AstParseEffect>::new(
+            64, 4, pipeline::effects::ast_parse,
+        ));
+        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache, batcher).await
     }
 
     fn off_of(src: &str, needle: &str) -> usize {
@@ -1115,6 +1122,136 @@ mod tests {
         let md = enriched_at(src, off_of(src, "${N?}")).await
             .expect("hover plan present at capture");
         insta::assert_snapshot!(md);
+    }
+
+    #[tokio::test]
+    async fn hover_ast_yaml_multiline_body_renders_without_choking() {
+        // Repro: ast_yaml_audit.sprf — multi-line YAML body with a
+        // ${X?} carveout buried inside a `pattern:` string spread over
+        // several physical lines. The whole hover render must come
+        // back as Some(_), with no panic and no truncated empty body.
+        let src = "ast_yaml[rs](\n  rule:\n    pattern: \"${X?}.to_string()\"\n    not:\n      inside:\n        kind: mod_item\n)";
+        let off = off_of(src, "${X?}");
+        let md = enriched_at(src, off).await
+            .expect("hover plan present at ${X?} inside multi-line ast_yaml body");
+        assert!(
+            md.contains("**Focused capture:** `$X`"),
+            "focused capture must surface for multiline ast_yaml:\n{md}",
+        );
+        assert!(
+            !md.contains("_pipeline lowering failed:_"),
+            "ast_yaml lowering should succeed on multi-line body:\n{md}",
+        );
+        // Op-doc header used to be `**ast_yaml**[_lang_](_yaml_)`,
+        // which markdown parses as a literal hyperlink and turned the
+        // VS Code hover into a broken-link soup. Pinning the inline
+        // code form so any regression flips this test.
+        assert!(
+            md.contains("`ast_yaml[lang](yaml)`"),
+            "op header must be inline code, not a stray markdown link:\n{md}",
+        );
+        assert!(
+            !md.contains("**ast_yaml**[_lang_]"),
+            "old broken markdown-link header sneaked back in:\n{md}",
+        );
+    }
+
+    /// Regression: hovering on the ast_yaml op of the shipped
+    /// `fixtures/ast_yaml_parity.sprf` must run the seeded fs walk and
+    /// render the actual cursor table — not just the static op doc.
+    /// Drift between the ast and ast_yaml pipes is what chokes VS Code
+    /// hover; this test seeds a tempdir with a Rust source matching
+    /// the pattern, points a Seed at it, and asserts BOTH pipes emit
+    /// the same cursor row count with the same `$N` capture binding.
+    #[tokio::test]
+    async fn hover_ast_yaml_parity_fixture_emits_cursor_rows() {
+        let src = include_str!("../fixtures/ast_yaml_parity.sprf");
+
+        // Tempdir with two functions in one .rs file. Both pipes match
+        // `fn $N($$$ARGS) { $$$BODY }` (no return type — that fn shape
+        // is what the ast-grep pattern hits; adding `-> T` puts a node
+        // between `)` and `{` and breaks the match).
+        let dir = seeded_tempdir(&[(
+            "lib.rs",
+            "fn add(a: i32, b: i32) { let _ = a + b; }\nfn sub(a: i32, b: i32) { let _ = a - b; }\n",
+        )]);
+        let cfg = Config {
+            seeds: vec![crate::config::Seed {
+                slug: "tmp".into(),
+                root: dir.clone(),
+                rev:  "HEAD".into(),
+            }],
+            run: Default::default(),
+        };
+
+        // For each pipe, hover lands on the ast / ast_yaml op name and
+        // the seeded fs walk runs end-to-end. Pin the cursor render:
+        // both functions surface, `$N` binds to `add` and `sub`, and
+        // the rendered total matches the file's two function defs.
+        let hover_sites: Vec<(&str, &str, &str)> = vec![
+            ("ast[rs](",      "ast",      "`ast[lang](pattern)`"),
+            ("ast_yaml[rs](", "ast_yaml", "`ast_yaml[lang](yaml)`"),
+        ];
+        let mut row_counts: Vec<usize> = Vec::with_capacity(2);
+        for (anchor, op_name, header) in &hover_sites {
+            let pos = src.find(anchor).unwrap_or_else(|| {
+                panic!("anchor `{anchor}` missing from fixture");
+            });
+            let off = pos + anchor.len() / 2;
+            let md = enriched_at_with_cfg(src, off, cfg.clone()).await
+                .unwrap_or_else(|| panic!("no hover plan at `{op_name}`"));
+
+            // Lowering must succeed end-to-end; a stuck pipe surfaces
+            // as `_pipeline lowering failed:_` and zero seeded rows.
+            assert!(
+                !md.contains("_pipeline lowering failed:_"),
+                "[{op_name}] lowering failed:\n{md}",
+            );
+            assert!(
+                md.contains(header),
+                "[{op_name}] op header missing inline-code form `{header}`:\n{md}",
+            );
+            // Old broken `**op**[_lang_](_pattern_)` form parsed as a
+            // markdown link, the choke that started this regression.
+            assert!(
+                !md.contains("](_pattern_)") && !md.contains("](_yaml_)"),
+                "[{op_name}] broken markdown-link header crept back:\n{md}",
+            );
+
+            // The seeded walk must hit both `fn add` and `fn sub`. The
+            // cursor table renders one row per match; capture column
+            // header is `$N` (declared by the focus op), values are
+            // span-backed links to the seeded file.
+            assert!(
+                md.contains("**Total rows:** 2"),
+                "[{op_name}] expected 2 cursor rows from seeded walk:\n{md}",
+            );
+            assert!(
+                md.contains("`$N`"),
+                "[{op_name}] capture column `$N` missing from cursor table:\n{md}",
+            );
+            assert!(
+                md.contains("[`add`]") && md.contains("[`sub`]"),
+                "[{op_name}] both fn names must appear as $N values:\n{md}",
+            );
+            // File-link should resolve to the seeded tempdir, never
+            // collapse to a bare basename without a target.
+            assert!(
+                md.contains("[`lib.rs#L1`]"),
+                "[{op_name}] cursor row file-link missing:\n{md}",
+            );
+
+            row_counts.push(2);
+        }
+
+        // Belt-and-suspenders: parity is the whole point of the
+        // fixture, so make the assertion explicit.
+        assert_eq!(
+            row_counts[0], row_counts[1],
+            "ast vs ast_yaml row counts diverged: {row_counts:?}",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ─── Seeded-walk hover assertions ───────────────────────────────────
@@ -1158,7 +1295,10 @@ mod tests {
             .lowered_pipes()[plan.pipe_idx][..=plan.focus_step]
             .to_vec();
         let op_cache = Arc::new(OpCache::new(true));
-        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache).await
+        let batcher = Arc::new(BoundedWorkSteal::<AstParseEffect>::new(
+            64, 4, pipeline::effects::ast_parse,
+        ));
+        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache, batcher).await
     }
 
     #[tokio::test]

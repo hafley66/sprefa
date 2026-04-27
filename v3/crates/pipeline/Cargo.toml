@@ -29,6 +29,7 @@ bincode           = "1"
 rusqlite          = { version = "0.32", features = ["bundled"] }
 notify            = { version = "6", default-features = false, features = ["macos_fsevent"] }
 notify-debouncer-mini = { version = "0.4", default-features = false }
+ignore            = "0.4"
 ast-grep-config = "0.36"
 serde_yaml = "0.9.34"
 

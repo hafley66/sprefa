@@ -62,9 +62,9 @@ impl Op for WriteCursorOp {
 
 impl OpCtor for WriteCursorOp {
     const NAME: &'static str = "write_cursor";
-    const BODY_GRAMMAR: &'static str = "${TARGET}, [:replace|:append|:prepend|:wrap]";
+    const BODY_GRAMMAR: &'static str = "`${TARGET}`, `[:replace|:append|:prepend|:wrap]`";
     const DOC: &'static str = "\
-**write_cursor**(_${TARGET}_, [_:mode_])
+`write_cursor(${TARGET}, [:mode])`
 
 Splice `cursor.active()` bytes into the byte_range of the named target
 capture on `cursor.fs`. Mode atoms: `:replace` (default), `:append`,

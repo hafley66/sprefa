@@ -1,24 +1,32 @@
-//! sprefa server — stdio LSP fitted on v3's pipeline + sprefa_parse.
+//! sprefa server — daemon shape per `chat_log/20260427.1.v3-server-port-zoom3.md`.
 //!
-//! Stage B slice: parse-diagnostics only. Hover / completion are stubs
-//! until DocSession grows past the parse layer.
+//! Topology:
+//!   - `sprefa-server` (long-lived daemon): owns `ServerState`. Listens
+//!     on unix socket + TCP. Writes `server.json` for shells to find.
+//!   - `sprefa-lsp` (~100 LoC stdio↔WS proxy): editor spawns it, it
+//!     dials `server.json` `/lsp` endpoint.
+//!   - `sprefa-run` (HTTP client): POST `/run`, stream SSE events.
 //!
-//! Shape:
-//!   - `session::DocSession` owns one `.sprf` source buffer + latest
-//!     ParsedSource + errors. Reparse on source-change.
-//!   - `backend::Backend` is the tower-lsp `LanguageServer` impl. Per-
-//!     URI DocSession map. did_open/did_change/did_save → publish
-//!     diagnostics.
-//!   - `position` converts byte offsets ↔ LSP line/col (UTF-16 code
-//!     units per LSP spec).
-//!
-//! Binary entry point at `bin/sprefa-lsp.rs`.
+//! `Backend::new(client)` still works for legacy stdio mode (one
+//! private ServerState); `Backend::with_state(client, state)` is the
+//! daemon mode that shares one ServerState across every WS connection.
 
 pub mod backend;
 pub mod config;
 pub mod position;
+pub mod run;
 pub mod session;
+pub mod state;
+pub mod transport_http;
+pub mod transport_lsp;
+pub mod workspace;
 
 pub use backend::Backend;
 pub use config::{Config, Seed};
+pub use run::{run_pipeline, RunEvent, RunRequest, RunStart};
 pub use session::DocSession;
+pub use state::{
+    default_info_path, default_log_path, default_unix_socket_path, HttpInfo,
+    ServerInfo, ServerOpts, ServerState,
+};
+pub use transport_http::{serve_http, HttpOpts};

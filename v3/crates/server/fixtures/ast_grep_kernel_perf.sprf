@@ -5,5 +5,5 @@
 # not support alternation (`|`, `{c,h}`, `[ch]`), so the corpus is
 # expressed as two pipes; FsListFilesEffect's per-(repo,rev) cache
 # makes the second walk free, and the wall sums the two ast passes.
-repo(${R?}) > rev(:HEAD) > fs(glob(**/*.c)) > ast[c](printk(${$$$ARGS}))
-repo(${R?}) > rev(:HEAD) > fs(glob(**/*.h)) > ast[c](printk(${$$$ARGS}))
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.c)) > ast[c](printk($$${ARGS?}))
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.h)) > ast[c](printk($$${ARGS?}))

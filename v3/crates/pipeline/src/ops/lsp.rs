@@ -55,9 +55,9 @@ impl Op for LspDiagOp {
 
 impl OpCtor for LspDiagOp {
     const NAME: &'static str = "lsp";
-    const BODY_GRAMMAR: &'static str = "kwargs: message=\"...\" [code=\"...\"] [hint=\"...\"]";
+    const BODY_GRAMMAR: &'static str = "kwargs: `message=\"...\"` `[code=\"...\"]` `[hint=\"...\"]`";
     const DOC: &'static str = "\
-**lsp**[_severity_](message=_str_, [code=_str_], [hint=_str_])
+`lsp[severity](message=str, [code=str], [hint=str])`
 
 Emit one LSP diagnostic per incoming cursor at `cursor.byte_range`
 against `cursor.fs`. Severity is one of `error`, `warn`, `hint`, `info`.

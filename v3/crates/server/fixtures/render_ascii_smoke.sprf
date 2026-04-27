@@ -1,25 +1,31 @@
-# render[ascii] smoke — diagram an in-memory table to ASCII boxes.
-# Spec: v3/docs/v3-render-write-cursor-vision.md
-# Status: DOES NOT PARSE TODAY — uses dotted carveout access (${WS.LIVE},
-#   ${WS.EXCL}) pending grammar landing in sprefa-p0m. Registry impl also
-#   pending (sprefa-e6c).
+# ============================================================
+# PARKED — uses syntax not yet in the host grammar.
+# Reason: dotted carveout access (${WS.LIVE}, ${WS.EXCL}) and the
+#   ascii layout minilang (col/row/box/flow/title) inside render[ascii]
+#   are not lowered today.
+# Restore when: dotted-path carveout lands and render[ascii] sub-grammar
+#   ships its layout primitives.
+# ============================================================
 #
-# col / row / box / flow / title are layout primitives in the ascii
-# minilang. flow draws an arrow between named anchors after the layout
-# pass. box body interpolates the bound column slot.
-
-fs(glob(v3/Cargo.toml))
-  > toml(workspace.members ${LIVE?}, workspace.exclude ${EXCL?})
-  > collect(${WS?})
-  > render[ascii](
-      col(
-        title("v3 sprefa workspace"),
-        row(
-          box(:live, header="LIVE crates", body=${WS.LIVE}),
-          box(:excl, header="EXCLUDED",    body=${WS.EXCL})
-        ),
-        flow(:host_to_sub,
-          from=:live::tree_sitter_sprefa,
-          to=:live::sprefa_parse,
-          label="paren_slot bytes")))
-  > write_file(./MAP.txt);
+# # render[ascii] smoke — diagram an in-memory table to ASCII boxes.
+# # Spec: v3/docs/v3-render-write-cursor-vision.md
+# #
+# # col / row / box / flow / title are layout primitives in the ascii
+# # minilang. flow draws an arrow between named anchors after the layout
+# # pass. box body interpolates the bound column slot.
+#
+# fs(glob(v3/Cargo.toml))
+#   > toml(workspace.members ${LIVE?}, workspace.exclude ${EXCL?})
+#   > collect(${WS?})
+#   > render[ascii](
+#       col(
+#         title("v3 sprefa workspace"),
+#         row(
+#           box(:live, header="LIVE crates", body=${WS.LIVE}),
+#           box(:excl, header="EXCLUDED",    body=${WS.EXCL})
+#         ),
+#         flow(:host_to_sub,
+#           from=:live::tree_sitter_sprefa,
+#           to=:live::sprefa_parse,
+#           label="paren_slot bytes")))
+#   > write_file(./MAP.txt);

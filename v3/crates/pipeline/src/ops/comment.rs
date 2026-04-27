@@ -37,7 +37,7 @@ use crate::_0_cursor::{Capture, Cursor};
 use crate::_1_op::Op;
 use crate::op_ctor::OpCtor;
 use crate::pattern_op::PatternDiagnostic;
-use crate::value::{ArgSpec, Value};
+use crate::value::{ArgSpec, TermMode, Value};
 
 const COMMENT_ARG_SPEC: &[ArgSpec] = &[ArgSpec::Str];
 
@@ -50,6 +50,11 @@ pub struct CommentOp {
     /// Captured label bytes land as a SpanBacked capture on the output
     /// cursor.
     label_capture: Option<Arc<str>>,
+    /// Name of the unbound term arg, if any. The byte range *between*
+    /// the open and close marker lines (exclusive of both) is bound to
+    /// this capture, so downstream `write_cursor(${SCOPE?}, :replace)`
+    /// has a target. `None` when no term arg was supplied.
+    scope_capture: Option<Arc<str>>,
 }
 
 impl CommentOp {
@@ -88,17 +93,49 @@ impl CommentOp {
             }
         }
 
-        match values.as_slice() {
+        // Sift unbound term args (the `${SCOPE?}` introducer) out of the
+        // marker slice. At most one is allowed; multiple is a diagnostic.
+        // A bound `${SCOPE}` (Read mode) at this position is also wrong:
+        // there is nothing to read against here, the term is naming a
+        // *binding site*, not a reference.
+        let mut scope_capture: Option<Arc<str>> = None;
+        let mut markers: Vec<Value> = Vec::with_capacity(values.len());
+        for v in values {
+            match v {
+                Value::Term { mode: TermMode::Unbound, name } => {
+                    if scope_capture.is_some() {
+                        return Err(vec![PatternDiagnostic {
+                            code: "comment/multiple-scope-terms",
+                            message: "comment accepts at most one `${SCOPE?}` term arg".into(),
+                            byte_range: 0..0,
+                        }]);
+                    }
+                    scope_capture = Some(name);
+                }
+                Value::Term { mode: TermMode::Read, name } => {
+                    return Err(vec![PatternDiagnostic {
+                        code: "comment/scope-term-must-be-unbound",
+                        message: format!(
+                            "comment scope term must use the unbound form `${{{name}?}}`, not `${{{name}}}`"
+                        ),
+                        byte_range: 0..0,
+                    }]);
+                }
+                other => markers.push(other),
+            }
+        }
+
+        match markers.as_slice() {
             [one] => {
                 let open = value_to_regex(one, "open")?;
                 let label_capture = first_named_capture(&open);
-                Ok(CommentOp { open, close: None, label_capture })
+                Ok(CommentOp { open, close: None, label_capture, scope_capture })
             }
             [one, two] => {
                 let open  = value_to_regex(one, "open")?;
                 let close = value_to_regex(two, "close")?;
                 let label_capture = first_named_capture(&open);
-                Ok(CommentOp { open, close: Some(close), label_capture })
+                Ok(CommentOp { open, close: Some(close), label_capture, scope_capture })
             }
             [] => Err(vec![PatternDiagnostic {
                 code: "comment/missing-arg",
@@ -107,7 +144,7 @@ impl CommentOp {
             }]),
             _ => Err(vec![PatternDiagnostic {
                 code: "comment/too-many-args",
-                message: format!("comment accepts 1 or 2 regex arguments; got {}", values.len()),
+                message: format!("comment accepts 1 or 2 regex arguments; got {}", markers.len()),
                 byte_range: 0..0,
             }]),
         }
@@ -134,7 +171,7 @@ impl CommentOp {
             [one] => {
                 let open = compile_body(one, "comment/open-syntax")?;
                 let label_capture = first_named_capture(&open);
-                Ok(CommentOp { open, close: None, label_capture })
+                Ok(CommentOp { open, close: None, label_capture, scope_capture: None })
             }
             [one, two] => {
                 let open = compile_body(one, "comment/open-syntax")?;
@@ -144,6 +181,7 @@ impl CommentOp {
                     open,
                     close: Some(close),
                     label_capture,
+                    scope_capture: None,
                 })
             }
             _ => Err(vec![PatternDiagnostic {
@@ -162,7 +200,7 @@ impl OpCtor for CommentOp {
     const NAME: &'static str = "comment";
     const BODY_GRAMMAR: &'static str = "regex(es), comma-separated; quotes optional";
     const DOC:  &'static str = "\
-**comment**(_open_re_[, _close_re_])
+`comment(open_re[, close_re])`
 
 Narrow `cursor.byte_range` to regions bounded by comment markers.
 
@@ -223,6 +261,13 @@ impl Op for CommentOp {
                         ));
                         out.last_bound = Some(out.captures.last().unwrap().name.clone());
                     }
+                    if let Some(scope_name) = self.scope_capture.as_ref() {
+                        out.captures.push(Capture::span_backed(
+                            scope_name.clone(),
+                            (base + r.inner_start)..(base + r.inner_end),
+                        ));
+                        out.last_bound = Some(out.captures.last().unwrap().name.clone());
+                    }
                     out
                 })
                 .collect()
@@ -239,6 +284,10 @@ impl Op for CommentOp {
         }
         h.update(&[0u8]);
         if let Some(name) = &self.label_capture {
+            h.update(name.as_bytes());
+        }
+        h.update(&[0u8]);
+        if let Some(name) = &self.scope_capture {
             h.update(name.as_bytes());
         }
         true
@@ -396,6 +445,12 @@ fn comment_prefix_len(line: &[u8]) -> usize {
 struct Region {
     start: usize,
     end: usize,
+    /// Inner range, exclusive of the open marker line and the close
+    /// marker line (paired) or of just the open marker line (sequential).
+    /// In active-slice coordinates; the op shifts by the cursor's
+    /// `byte_range.start` before emitting captures.
+    inner_start: usize,
+    inner_end: usize,
     label: Option<(Arc<str>, Range<usize>)>,
 }
 
@@ -406,20 +461,30 @@ fn sequential_regions(
     src_len: usize,
 ) -> Vec<Region> {
     let mut regions = Vec::new();
-    let mut opens: Vec<(usize, Option<(Arc<str>, Range<usize>)>)> = Vec::new();
+    // Track open-marker line span (start..end) so inner_start can skip
+    // past the marker line itself.
+    let mut opens: Vec<(usize, usize, Option<(Arc<str>, Range<usize>)>)> = Vec::new();
     for comment in comments {
         if let Some(m) = open.find(comment.text.as_bytes()) {
             let label = extract_label(comment, m.end(), open, capture_name);
-            opens.push((comment.byte_start, label));
+            opens.push((comment.byte_start, comment.byte_end, label));
         }
     }
     for i in 0..opens.len() {
-        let (start, label) = &opens[i];
+        let (start, marker_end, label) = &opens[i];
         let end = opens
             .get(i + 1)
-            .map(|(s, _)| *s)
+            .map(|(s, _, _)| *s)
             .unwrap_or(src_len);
-        regions.push(Region { start: *start, end, label: label.clone() });
+        let inner_start = (marker_end + 1).min(src_len);
+        let inner_end = end.max(inner_start);
+        regions.push(Region {
+            start: *start,
+            end,
+            inner_start,
+            inner_end,
+            label: label.clone(),
+        });
     }
     regions
 }
@@ -432,25 +497,44 @@ fn paired_regions(
     src_len: usize,
 ) -> Vec<Region> {
     let mut regions = Vec::new();
-    let mut stack: Vec<(usize, Option<(Arc<str>, Range<usize>)>)> = Vec::new();
+    // Stack frame carries open marker line span (byte_start, byte_end)
+    // plus the optional label capture, so inner_start can skip past the
+    // open marker line.
+    let mut stack: Vec<(usize, usize, Option<(Arc<str>, Range<usize>)>)> = Vec::new();
     for comment in comments {
         if let Some(m) = open.find(comment.text.as_bytes()) {
             let label = extract_label(comment, m.end(), open, capture_name);
-            stack.push((comment.byte_start, label));
+            stack.push((comment.byte_start, comment.byte_end, label));
         } else if close.is_match(comment.text.as_bytes()) {
-            if let Some((start, label)) = stack.pop() {
-                regions.push(Region { start, end: comment.byte_end, label });
+            if let Some((start, marker_end, label)) = stack.pop() {
+                let inner_start = (marker_end + 1).min(src_len);
+                let inner_end = comment.byte_start.max(inner_start);
+                regions.push(Region {
+                    start,
+                    end: comment.byte_end,
+                    inner_start,
+                    inner_end,
+                    label,
+                });
             }
         }
     }
     // Unpaired opens collapse to the next comment line (or EOF).
-    for (start, label) in stack {
+    for (start, marker_end, label) in stack {
         let next_line_end = comments
             .iter()
             .find(|c| c.byte_start > start)
             .map(|c| c.byte_start)
             .unwrap_or(src_len);
-        regions.push(Region { start, end: next_line_end, label });
+        let inner_start = (marker_end + 1).min(src_len);
+        let inner_end = next_line_end.max(inner_start);
+        regions.push(Region {
+            start,
+            end: next_line_end,
+            inner_start,
+            inner_end,
+            label,
+        });
     }
     regions
 }
@@ -584,5 +668,76 @@ mod tests {
     fn comma_in_character_class_stays_together() {
         let parts = split_top_level_comma(r"[a,b]+, END:");
         assert_eq!(parts, vec!["[a,b]+", "END:"]);
+    }
+
+    // Term-arg form via from_values: `comment(@begin, ${SCOPE?}, @end)`
+    // — paired mode binds the inner-region byte_range to a capture
+    // named "SCOPE" exclusive of both marker lines.
+    #[tokio::test]
+    async fn scope_capture_paired_three_arg_binds_inner_range() {
+        let ctx = RtCtx::default();
+        let src = "# BEGIN: outer\nINNER1\nINNER2\n# END:\n";
+        let op = CommentOp::from_values(vec![
+            Value::Atom(Arc::from("BEGIN:")),
+            Value::Term { name: Arc::from("SCOPE"), mode: TermMode::Unbound },
+            Value::Atom(Arc::from("END:")),
+        ]).unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![cursor_of(src.as_bytes())])).await;
+        assert_eq!(out.len(), 1);
+
+        let scope = out[0].capture("SCOPE").expect("SCOPE capture present");
+        let bytes = scope.bytes(&out[0].content);
+        assert_eq!(bytes, b"INNER1\nINNER2\n");
+
+        // Cursor still narrows to the OUTER region (markers included)
+        // so subsequent ops see the whole block; capture targets inner.
+        let outer = out[0].active();
+        assert!(outer.starts_with(b"# BEGIN: outer"));
+        assert!(outer.ends_with(b"# END:"));
+    }
+
+    // Sequential mode with scope term: `comment(@section, ${SCOPE?})`
+    // binds the byte_range from after the marker line up to the next
+    // marker (or EOF).
+    #[tokio::test]
+    async fn scope_capture_sequential_two_arg_binds_after_marker() {
+        let ctx = RtCtx::default();
+        let src = "# SECTION: A\nfoo\nbar\n# SECTION: B\nbaz\n";
+        let op = CommentOp::from_values(vec![
+            Value::Atom(Arc::from("SECTION:")),
+            Value::Term { name: Arc::from("SCOPE"), mode: TermMode::Unbound },
+        ]).unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![cursor_of(src.as_bytes())])).await;
+        assert_eq!(out.len(), 2);
+
+        let s0 = out[0].capture("SCOPE").unwrap();
+        assert_eq!(s0.bytes(&out[0].content), b"foo\nbar\n");
+
+        let s1 = out[1].capture("SCOPE").unwrap();
+        assert_eq!(s1.bytes(&out[1].content), b"baz\n");
+    }
+
+    // Bound `${SCOPE}` (Read mode) at the comment scope-arg slot is
+    // disallowed: there's nothing to read against; the term *names* a
+    // binding, it isn't a reference.
+    #[test]
+    fn scope_term_must_be_unbound() {
+        let err = CommentOp::from_values(vec![
+            Value::Atom(Arc::from("BEGIN:")),
+            Value::Term { name: Arc::from("SCOPE"), mode: TermMode::Read },
+            Value::Atom(Arc::from("END:")),
+        ]).unwrap_err();
+        assert_eq!(err[0].code, "comment/scope-term-must-be-unbound");
+    }
+
+    #[test]
+    fn multiple_unbound_terms_rejected() {
+        let err = CommentOp::from_values(vec![
+            Value::Atom(Arc::from("BEGIN:")),
+            Value::Term { name: Arc::from("A"), mode: TermMode::Unbound },
+            Value::Term { name: Arc::from("B"), mode: TermMode::Unbound },
+            Value::Atom(Arc::from("END:")),
+        ]).unwrap_err();
+        assert_eq!(err[0].code, "comment/multiple-scope-terms");
     }
 }

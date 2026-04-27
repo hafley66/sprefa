@@ -65,9 +65,9 @@ pub struct AstGrepOp {
 
 impl OpCtor for AstGrepOp {
     const NAME: &'static str = "ast";
-    const BODY_GRAMMAR: &'static str = "ast-grep pattern using ${VAR} / $$${VAR}; lang via [rust|ts]";
+    const BODY_GRAMMAR: &'static str = "ast-grep pattern using `${VAR}` / `$$${VAR}`; lang via `[rust|ts]`";
     const DOC: &'static str = "\
-**ast**[_lang_](_pattern_)
+`ast[lang](pattern)`
 
 Match an ast-grep pattern against the cursor's active bytes. `lang` is
 `rust` (`rs`) or `typescript` (`ts`).

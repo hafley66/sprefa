@@ -2,7 +2,7 @@
 source: crates/server/src/backend.rs
 expression: md
 ---
-**ast**[_lang_](_pattern_)
+`ast[lang](pattern)`
 
 Match an ast-grep pattern against the cursor's active bytes. `lang` is
 `rust` (`rs`) or `typescript` (`ts`).
@@ -21,7 +21,7 @@ Strict metavar grammar (bare `$NAME` / `$$$NAME` rejected):
 ---
 
 **Pipe position:** step 1 / 1  
-**Body grammar:** ast-grep pattern using ${VAR} / $$${VAR}; lang via [rust|ts]  
+**Body grammar:** ast-grep pattern using `${VAR}` / `$$${VAR}`; lang via `[rust|ts]`  
 **Config:** cwd fallback (no `.sprefa.toml` found)
 
 | slug | rev | root |
