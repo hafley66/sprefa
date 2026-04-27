@@ -7,10 +7,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::stream::{self, StreamExt};
 use pipeline::binding_graph::BindingDiagnostic;
 use pipeline::registry::Registry;
+use pipeline::{spawn_fs_watcher, spawn_invalidator, ChangeSubject, FsWatcherGuard, OpCache};
 use sprefa_parse::{ParseError, ParseErrorKind};
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result as RpcResult;
@@ -33,18 +35,84 @@ use pipeline::effects::{
 use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
 use pipeline::readers::{DiskFileSource, FileSource};
 
+/// Watcher debounce window. Larger than the test value to swallow
+/// editor save-burst patterns (atomic-rename + fsync) without missing
+/// the eviction window.
+const WATCHER_DEBOUNCE: Duration = Duration::from_millis(200);
+
 pub struct Backend {
     client: Client,
     sessions: Arc<Mutex<HashMap<Url, DocSession>>>,
     registry: Registry,
+    /// Long-lived OpCache shared across every hover and every session.
+    /// `cache_key` carries (repo, rev) inside batch_fingerprint, so cross-
+    /// session entries cannot collide; one global cache is always safe.
+    /// L1 only — `feedback_buffer_no_l2` keeps L2 off when DocSession
+    /// buffer overlay is in the source stack.
+    cache: Arc<OpCache>,
+    /// Side-band Subject<Change>. Producers (per-repo fs watchers) clone
+    /// the inner Sender via `subject.sender()`.
+    subject: ChangeSubject,
+    /// One watcher per (slug, canonical-root). Lazy-spawned the first
+    /// time a hover surfaces a new seed root.
+    watchers: Arc<Mutex<HashMap<(Arc<str>, PathBuf), FsWatcherGuard>>>,
+    /// Cache-eviction drain task. Held so it lives as long as the
+    /// Backend; aborted on drop.
+    _drain: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Backend {
+    fn drop(&mut self) {
+        // watchers (Sender clones) go first via `Drop` on the field
+        // order above isn't guaranteed by Rust, but explicit abort of
+        // the drain task here covers the close path even if the
+        // ChangeSubject still has live senders elsewhere.
+        self._drain.abort();
+    }
 }
 
 impl Backend {
     pub fn new(client: Client) -> Self {
+        let cache = Arc::new(OpCache::new(true));
+        let subject = ChangeSubject::new();
+        let drain = spawn_invalidator(cache.clone(), &subject);
         Self {
             client,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             registry: Registry::with_stdlib(),
+            cache,
+            subject,
+            watchers: Arc::new(Mutex::new(HashMap::new())),
+            _drain: drain,
+        }
+    }
+
+    /// Lazy: ensure an FS watcher is running for `(slug, root)`. Called
+    /// per seed before each hover pipe drain so newly configured seeds
+    /// pick up live invalidation without restart.
+    async fn ensure_watcher(&self, slug: Arc<str>, root: PathBuf) {
+        let canonical = std::fs::canonicalize(&root).unwrap_or(root);
+        let key = (slug.clone(), canonical.clone());
+        let mut guard = self.watchers.lock().await;
+        if guard.contains_key(&key) { return; }
+        match spawn_fs_watcher(slug, canonical.clone(), self.subject.sender(), WATCHER_DEBOUNCE) {
+            Ok(w) => {
+                tracing::info!(
+                    target: "sprefa::lsp",
+                    slug = %key.0,
+                    root = %canonical.display(),
+                    "fs_watcher.spawned"
+                );
+                guard.insert(key, w);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "sprefa::lsp",
+                    root = %canonical.display(),
+                    err = %e,
+                    "fs_watcher.spawn_failed"
+                );
+            }
         }
     }
 
@@ -165,9 +233,21 @@ impl LanguageServer for Backend {
         };
         let Some(snap) = snapshot else { return Ok(None) };
 
+        // Ensure each configured seed has a live fs watcher before the
+        // pipe drains. First-touch is lazy; subsequent hovers are no-ops.
+        for seed in &snap.config.seeds {
+            self.ensure_watcher(
+                Arc::from(seed.slug.as_str()),
+                seed.root.clone(),
+            ).await;
+        }
+
         let body = match (snap.plan, snap.lowered_slice) {
             (Some(plan), Some(slice)) => {
-                render_enriched_hover(&plan, &slice, &snap.config, &snap.config_source, &snap.registry).await
+                render_enriched_hover(
+                    &plan, &slice, &snap.config, &snap.config_source,
+                    &snap.registry, self.cache.clone(),
+                ).await
             }
             _ => snap.static_doc,
         };
@@ -248,6 +328,7 @@ async fn render_enriched_hover(
     config: &Config,
     config_source: &ConfigSource,
     registry: &pipeline::registry::Registry,
+    op_cache: Arc<OpCache>,
 ) -> Option<String> {
     let _t0 = std::time::Instant::now();
     tracing::info!(
@@ -370,7 +451,6 @@ async fn render_enriched_hover(
             Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
         let relation_store = Arc::new(RelationStore::new());
         let registry = Arc::new(SubjectRegistry::<RelationWake>::new());
-        let op_cache = Arc::new(pipeline::cache_key::OpCache::new(true));
         let ctx = RtCtxBuilder::new()
             .with_store(relation_store.clone())
             .with_store(registry.clone())
