@@ -311,16 +311,27 @@ impl LanguageServer for Backend {
             .next()
             .unwrap_or("<unknown>")
             .to_string();
+        let source_text: Option<String> = {
+            let guard = self.sessions.lock().await;
+            guard.get(&uri).map(|e| e.session.source().to_string())
+        };
         let body = match (snap.plan, snap.lowered_slice) {
             (Some(plan), Some(slice)) => {
                 render_enriched_hover(
                     &plan, &slice, &snap.config, &snap.config_source,
                     &snap.registry, self.cache(), &self.state,
-                    &mut target_diags, &source_basename,
+                    &mut target_diags,
+                    Some(&uri), source_text.as_deref().unwrap_or(""),
+                    &source_basename,
                 ).await
             }
             _ => snap.static_doc,
         };
+
+        // Multi-seed hover (HEAD + test/1/2/3) drains the same pipe
+        // against overlapping trees; collapse identical diagnostics
+        // before publishing so the user sees one squiggle per rule×span.
+        dedupe_target_diagnostics(&mut target_diags);
 
         // Publish target-file diagnostics + clear any URIs that fell
         // out of the new set since this .sprf last hovered.
@@ -416,8 +427,26 @@ async fn render_enriched_hover(
     op_cache: Arc<OpCache>,
     state: &Arc<ServerState>,
     diagnostics_out: &mut HashMap<Url, Vec<Diagnostic>>,
+    source_uri: Option<&Url>,
+    source_text: &str,
     source_basename: &str,
 ) -> Option<String> {
+    // Build the .sprf-side related-information location: the focused
+    // op's invocation span, lifted to LSP coordinates against the
+    // session's host source. Reused for every diagnostic this hover
+    // produces.
+    let source_link: Option<Location> = source_uri.and_then(|u| {
+        let r = lowered.get(plan.focus_step).map(|lo| lo.byte_range.clone())?;
+        let (sl, sc) = offset_to_position(source_text, r.start);
+        let (el, ec) = offset_to_position(source_text, r.end);
+        Some(Location {
+            uri: u.clone(),
+            range: Range {
+                start: Position { line: sl, character: sc },
+                end:   Position { line: el, character: ec },
+            },
+        })
+    });
     let _t0 = std::time::Instant::now();
     tracing::info!(
         target: "sprefa::hover",
@@ -586,9 +615,9 @@ async fn render_enriched_hover(
         // resolved absolute path. Severity defaults to HINT until ops
         // grow an explicit severity surface (lsp[error|warn|hint|info]).
         for c in &rows {
-            if let Some((uri, diag)) =
-                cursor_to_target_diagnostic(c, &seed.root, &plan.focus_name, source_basename)
-            {
+            if let Some((uri, diag)) = cursor_to_target_diagnostic(
+                c, &seed.root, &plan.focus_name, source_basename, source_link.as_ref(),
+            ) {
                 diagnostics_out.entry(uri).or_default().push(diag);
             }
         }
@@ -826,6 +855,7 @@ fn cursor_to_target_diagnostic(
     seed_root:       &Path,
     focus_op_name:   &str,
     source_basename: &str,
+    source_link:     Option<&Location>,
 ) -> Option<(Url, Diagnostic)> {
     let rel = c.fs.as_ref()?;
     let abs = seed_root.join(rel.as_ref());
@@ -837,6 +867,12 @@ fn cursor_to_target_diagnostic(
     }
     let (sl, sc) = offset_to_position(text, c.byte_range.start);
     let (el, ec) = offset_to_position(text, c.byte_range.end);
+    let related = source_link.map(|loc| {
+        vec![DiagnosticRelatedInformation {
+            location: loc.clone(),
+            message:  format!("rule `{focus_op_name}` defined here"),
+        }]
+    });
     let diag = Diagnostic {
         range: Range {
             start: Position { line: sl, character: sc },
@@ -847,11 +883,35 @@ fn cursor_to_target_diagnostic(
         code_description: None,
         source: Some(format!("sprf:{source_basename}")),
         message: format!("matched by `{focus_op_name}` (in {source_basename})"),
-        related_information: None,
+        related_information: related,
         tags: None,
         data: None,
     };
     Some((uri, diag))
+}
+
+/// Collapse duplicate diagnostics within a target URI. Multi-seed
+/// hover (e.g. HEAD + test/1/2/3) re-runs the same pipe against
+/// overlapping trees; identical (range, code, message) diagnostics
+/// would otherwise stack. Insertion-order preserved: the first
+/// occurrence wins, rest dropped.
+fn dedupe_target_diagnostics(map: &mut HashMap<Url, Vec<Diagnostic>>) {
+    for diags in map.values_mut() {
+        let mut seen: std::collections::HashSet<(u32, u32, u32, u32, String, String)> =
+            std::collections::HashSet::new();
+        diags.retain(|d| {
+            let code = match &d.code {
+                Some(NumberOrString::String(s)) => s.clone(),
+                Some(NumberOrString::Number(n)) => n.to_string(),
+                None => String::new(),
+            };
+            seen.insert((
+                d.range.start.line, d.range.start.character,
+                d.range.end.line,   d.range.end.character,
+                code, d.message.clone(),
+            ))
+        });
+    }
 }
 
 fn uri_to_path(uri: &Url) -> PathBuf {
@@ -987,8 +1047,15 @@ mod tests {
         c.fs = Some(Arc::from(target_rel.as_path()));
         c.byte_range = needle_start..needle_end;
 
+        let source_link = Location {
+            uri: Url::parse("file:///tmp/selfcheck.sprf").unwrap(),
+            range: Range {
+                start: Position { line: 7, character: 0 },
+                end:   Position { line: 7, character: 12 },
+            },
+        };
         let (uri, diag) = cursor_to_target_diagnostic(
-            &c, &dir, "ast", "selfcheck.sprf",
+            &c, &dir, "ast", "selfcheck.sprf", Some(&source_link),
         ).expect("diagnostic produced");
 
         // URI canonicalizes to the temp path.
@@ -1004,6 +1071,12 @@ mod tests {
         assert_eq!(diag.source.as_deref(), Some("sprf:selfcheck.sprf"));
         assert!(diag.message.contains("ast"));
         assert!(diag.message.contains("selfcheck.sprf"));
+        // related_information links back to the source .sprf rule.
+        let related = diag.related_information.as_ref().expect("related set");
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].location.uri, source_link.uri);
+        assert_eq!(related[0].location.range, source_link.range);
+        assert!(related[0].message.contains("ast"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1015,9 +1088,37 @@ mod tests {
         c.byte_range = 0..5;
         c.fs = None;
         let out = cursor_to_target_diagnostic(
-            &c, std::path::Path::new("/tmp"), "ast", "x.sprf",
+            &c, std::path::Path::new("/tmp"), "ast", "x.sprf", None,
         );
         assert!(out.is_none(), "no fs → no diagnostic");
+    }
+
+    #[test]
+    fn dedupe_target_diagnostics_collapses_identical_entries() {
+        // Multi-seed fanout shape: same range, same code, same message,
+        // four times. Dedupe collapses to one.
+        let uri = Url::parse("file:///tmp/x.rs").unwrap();
+        let mk = |line: u32| Diagnostic {
+            range: Range {
+                start: Position { line, character: 0 },
+                end:   Position { line, character: 5 },
+            },
+            severity: Some(DiagnosticSeverity::HINT),
+            code: Some(NumberOrString::String("ast".into())),
+            code_description: None,
+            source: Some("sprf:x.sprf".into()),
+            message: "matched by `ast` (in x.sprf)".into(),
+            related_information: None,
+            tags: None,
+            data: None,
+        };
+        let mut map: HashMap<Url, Vec<Diagnostic>> = HashMap::new();
+        map.insert(uri.clone(), vec![mk(10), mk(10), mk(10), mk(10), mk(20)]);
+        dedupe_target_diagnostics(&mut map);
+        let v = map.get(&uri).unwrap();
+        assert_eq!(v.len(), 2, "4 dupes on line 10 collapse to 1; line 20 distinct");
+        assert_eq!(v[0].range.start.line, 10);
+        assert_eq!(v[1].range.start.line, 20);
     }
 
     #[test]
@@ -1268,7 +1369,8 @@ mod tests {
             let mut diags: HashMap<Url, Vec<Diagnostic>> = HashMap::new();
             render_enriched_hover(
                 &plan, &lowered, &cfg, &ConfigSource::CwdFallback,
-                session.registry(), op_cache, &state, &mut diags, "t.sprf",
+                session.registry(), op_cache, &state, &mut diags,
+                None, src, "t.sprf",
             ).await
         }
     }
@@ -1486,7 +1588,8 @@ mod tests {
             let mut diags: HashMap<Url, Vec<Diagnostic>> = HashMap::new();
             render_enriched_hover(
                 &plan, &lowered, &cfg, &ConfigSource::CwdFallback,
-                session.registry(), op_cache, &state, &mut diags, "t.sprf",
+                session.registry(), op_cache, &state, &mut diags,
+                None, src, "t.sprf",
             ).await
         }
     }
