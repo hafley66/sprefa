@@ -25,6 +25,8 @@ pub mod cache_key;
 pub mod data;
 pub mod disk_cache;
 pub mod effects;
+pub mod fs_watcher;
+pub mod invalidate;
 pub mod lower;
 pub mod op_ctor;
 pub mod ops;
@@ -47,8 +49,10 @@ pub mod op_languages {
 pub use _0_cursor::{Capture, Cursor, PathSeg, SprfPath};
 pub use _1_op::{Op, TermPosition};
 pub use _2_pipeline::Pipeline;
-pub use cache_key::{batch_fingerprint, compose_key, OpCache};
+pub use cache_key::{batch_fingerprint, compose_key, LeafCoord, OpCache};
 pub use disk_cache::DiskCache;
+pub use fs_watcher::{spawn_fs_watcher, FsWatcherGuard};
+pub use invalidate::{apply_change, install_subject, spawn_invalidator, Change, ChangeSubject};
 pub use effects::{
     FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect, PrintSink, ReadBytesBatcher,
     ReadBytesEffect, WriteFileBatcher, WriteFileEffect, WriteFileSink,

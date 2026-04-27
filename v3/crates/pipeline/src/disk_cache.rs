@@ -81,6 +81,22 @@ impl DiskCache {
         );
     }
 
+    /// Phase F: bulk DELETE keyed eviction. Errors are dropped per the
+    /// best-effort contract; on next miss the L1 recompute repopulates.
+    pub fn delete_many(&self, keys: &[[u8; 32]]) {
+        if keys.is_empty() { return; }
+        let Ok(mut conn) = self.conn.lock() else { return };
+        let Ok(tx) = conn.transaction() else { return };
+        {
+            let Ok(mut stmt) = tx.prepare("DELETE FROM op_cache WHERE key = ?")
+            else { return };
+            for k in keys {
+                let _ = stmt.execute(params![&k[..]]);
+            }
+        }
+        let _ = tx.commit();
+    }
+
     /// Total persisted entries (test helper / telemetry).
     pub fn len(&self) -> usize {
         let Ok(conn) = self.conn.lock() else { return 0 };
