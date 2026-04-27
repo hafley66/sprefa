@@ -160,12 +160,14 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, p: DidOpenTextDocumentParams) {
         let uri = p.text_document.uri.clone();
+        if !is_sprf_uri(&uri) { return; }
         self.open_or_replace(&uri, p.text_document.text).await;
         self.publish(&uri).await;
     }
 
     async fn did_change(&self, p: DidChangeTextDocumentParams) {
         let uri = p.text_document.uri.clone();
+        if !is_sprf_uri(&uri) { return; }
         if let Some(change) = p.content_changes.into_iter().last() {
             self.open_or_replace(&uri, change.text).await;
             self.publish(&uri).await;
@@ -174,6 +176,7 @@ impl LanguageServer for Backend {
 
     async fn did_save(&self, p: DidSaveTextDocumentParams) {
         let uri = p.text_document.uri.clone();
+        if !is_sprf_uri(&uri) { return; }
         // Disk has caught up — drop the buffer overlay so subsequent
         // pipes read live disk bytes again.
         let file = uri_to_path(&uri);
@@ -727,6 +730,21 @@ fn truncate(s: &str, max: usize) -> String {
 fn uri_to_path(uri: &Url) -> PathBuf {
     uri.to_file_path()
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+/// Buffer-overlay scope: only `.sprf` URIs participate in did_open /
+/// did_change / did_save sync. Other files reach the server only through
+/// hover / code-action requests; sprf decides what files to read via its
+/// own fs ops (DiskFileSource) and never needs the editor's in-memory
+/// buffer for them. The VS Code client widens documentSelector to all
+/// files so requests route here, then filters didOpen/didChange in
+/// middleware. This is the server-side defense in depth.
+fn is_sprf_uri(uri: &Url) -> bool {
+    uri.path()
+        .rsplit('/')
+        .next()
+        .map(|name| name.ends_with(".sprf"))
+        .unwrap_or(false)
 }
 
 fn parse_errors_to_lsp(source: &str, errors: &[ParseError]) -> Vec<Diagnostic> {
