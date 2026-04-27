@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use futures::stream::{self, BoxStream, StreamExt};
 use tokio_util::sync::CancellationToken;
@@ -213,6 +213,11 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 staged_ranges,
                 staged_files,
                 lsp_diags,
+                // Keep the invalidator cell alive for the seed's lifetime —
+                // the staging sinks hold a Weak ref; if this drops, splice
+                // -> invalidate becomes a no-op and stale ReadBytes cache
+                // entries corrupt downstream pipes (sprefa-5ld).
+                _invalidator_cell,
                 ..
             } = build_seed_ctx(
                 &state,
@@ -395,6 +400,11 @@ pub(crate) struct SeedRtCtx {
     /// hover/save path (publishDiagnostics). The `lsp[severity]` op
     /// pushes one entry per cursor.
     pub lsp_diags:      Arc<Mutex<Vec<LspDiagEffect>>>,
+    /// Strong owner of the fs-invalidation cell. The staging sinks hold a
+    /// Weak ref to this cell to avoid a refcount cycle; this field keeps
+    /// the cell alive for the lifetime of the ctx so splice -> invalidate
+    /// stays wired. Drops with SeedRtCtx, breaking the cycle cleanly.
+    _invalidator_cell:  Arc<OnceLock<RtCtx>>,
 }
 
 /// Single source-of-truth for the per-seed effect registration list.
@@ -423,10 +433,37 @@ pub(crate) fn build_seed_ctx(
     write_policy:     Arc<WritePolicy>,
 ) -> SeedRtCtx {
     let write_approval = Arc::new(SubjectRegistry::<WriteApproval>::new());
-    let (write_range_batcher, staged_ranges) =
-        WriteRangeBatcher::stage_and_approve(write_approval.clone(), write_policy.clone());
-    let (write_file_batcher, staged_files) =
-        WriteFileBatcher::stage_and_approve(write_approval.clone(), write_policy);
+
+    // Cell + closure that lets the staging sinks invalidate the "fs"
+    // domain cache after each successful splice. The cell stays empty
+    // until the ctx is built below; sinks pick up the live ctx the first
+    // time they fire. Without this, two pipes that touch the same file
+    // (or two ops in one pipe) hit the ReadBytesEffect cache for the
+    // pre-splice bytes and corrupt the post-splice file with stale
+    // byte_ranges. (sprefa-5ld)
+    //
+    // The closure holds a Weak reference to the cell, NOT a Strong one.
+    // A Strong ref would form a cycle (closure -> cell -> ctx clone ->
+    // registry -> sink -> closure) and leak the ctx forever. With Weak,
+    // the cell is kept alive by the SeedRtCtx field below; once SeedRtCtx
+    // drops, the cell drops, the ctx clone in it drops, registry refcount
+    // hits zero, sinks drop, closure drops, Weak goes invalid (no-op).
+    let invalidator_cell: Arc<OnceLock<RtCtx>> = Arc::new(OnceLock::new());
+    let weak_cell = Arc::downgrade(&invalidator_cell);
+    let invalidate_fs: pipeline::effects::FsInvalidator = Arc::new(move || {
+        if let Some(cell) = weak_cell.upgrade() {
+            if let Some(c) = cell.get() {
+                c.invalidate_domain("fs");
+            }
+        }
+    });
+
+    let (write_range_batcher, staged_ranges) = WriteRangeBatcher::stage_and_approve(
+        write_approval.clone(), write_policy.clone(), invalidate_fs.clone(),
+    );
+    let (write_file_batcher, staged_files) = WriteFileBatcher::stage_and_approve(
+        write_approval.clone(), write_policy, invalidate_fs,
+    );
     let (lsp_diag_batcher, lsp_diags) = LspDiagBatcher::buffer();
 
     let ctx = RtCtxBuilder::new()
@@ -457,7 +494,15 @@ pub(crate) fn build_seed_ctx(
         .register::<LspDiagEffect, _>(lsp_diag_batcher)
         .build();
 
-    SeedRtCtx { ctx, write_approval, staged_ranges, staged_files, lsp_diags }
+    // Fill the cell so the staging sinks can reach the live ctx for
+    // domain-invalidation. Set fails only if already populated, which
+    // can't happen because the cell is freshly constructed above.
+    let _ = invalidator_cell.set(ctx.clone());
+
+    SeedRtCtx {
+        ctx, write_approval, staged_ranges, staged_files, lsp_diags,
+        _invalidator_cell: invalidator_cell,
+    }
 }
 
 // ---------------------------------------------------------------------------

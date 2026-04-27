@@ -89,6 +89,23 @@ impl WriteDecision {
     }
 }
 
+/// Callback the staging sink fires after each successfully-spliced write.
+/// Wired to `RtCtx::invalidate_domain("fs")` in production so the
+/// `ReadBytesEffect` / `FsListFilesEffect` caches drop entries that just
+/// went stale on disk. Tests pass [`no_op_fs_invalidator`].
+///
+/// Why this is necessary: `register_pure::<ReadBytesEffect, _>` wraps the
+/// reader in a `CacheLayer`; without invalidation, two pipes that touch
+/// the same file (or two ops within one pipe) hit the cache for the
+/// pre-splice bytes after the first splice lands, then index those stale
+/// byte_ranges into the post-splice file and corrupt it.
+pub type FsInvalidator = Arc<dyn Fn() + Send + Sync>;
+
+/// Convenience for tests / surfaces (LSP hover) that don't splice.
+pub fn no_op_fs_invalidator() -> FsInvalidator {
+    Arc::new(|| {})
+}
+
 use crate::readers::FileSource;
 
 /// List every file under `(repo, rev)`. Results are repo-relative paths.
@@ -524,9 +541,10 @@ pub enum WriteFileSink {
     /// (if `approval` was set on the effect) wake the awaiting op via
     /// `registry.next(key, Arc::new(result))`.
     StageAndApprove {
-        buffer:   Arc<Mutex<Vec<StagedWriteFileRow>>>,
-        registry: Arc<SubjectRegistry<WriteApproval>>,
-        policy:   Arc<WritePolicy>,
+        buffer:        Arc<Mutex<Vec<StagedWriteFileRow>>>,
+        registry:      Arc<SubjectRegistry<WriteApproval>>,
+        policy:        Arc<WritePolicy>,
+        invalidate_fs: FsInvalidator,
     },
 }
 
@@ -537,12 +555,15 @@ impl WriteFileSink {
     }
 
     pub fn stage_and_approve(
-        registry: Arc<SubjectRegistry<WriteApproval>>,
-        policy:   Arc<WritePolicy>,
+        registry:      Arc<SubjectRegistry<WriteApproval>>,
+        policy:        Arc<WritePolicy>,
+        invalidate_fs: FsInvalidator,
     ) -> (Self, Arc<Mutex<Vec<StagedWriteFileRow>>>) {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         (
-            WriteFileSink::StageAndApprove { buffer: buffer.clone(), registry, policy },
+            WriteFileSink::StageAndApprove {
+                buffer: buffer.clone(), registry, policy, invalidate_fs,
+            },
             buffer,
         )
     }
@@ -557,7 +578,7 @@ impl WriteFileSink {
                     .push((req.path.clone(), req.bytes.clone()));
                 Ok(())
             }
-            WriteFileSink::StageAndApprove { buffer, registry, policy } => {
+            WriteFileSink::StageAndApprove { buffer, registry, policy, invalidate_fs } => {
                 let id = write_file_id(&req.path, &req.bytes);
                 let decision = policy.decide(&id);
                 let result: Result<(), Arc<str>> = match decision {
@@ -566,6 +587,9 @@ impl WriteFileSink {
                     WriteDecision::DryRun   => Err(Arc::<str>::from("dry-run")),
                     WriteDecision::Rejected => Err(Arc::<str>::from("rejected by policy")),
                 };
+                if matches!(decision, WriteDecision::Approved) && result.is_ok() {
+                    invalidate_fs();
+                }
                 buffer
                     .lock()
                     .expect("staged write buffer poisoned")
@@ -608,10 +632,11 @@ impl WriteFileBatcher {
         (Self { sink }, buf)
     }
     pub fn stage_and_approve(
-        registry: Arc<SubjectRegistry<WriteApproval>>,
-        policy:   Arc<WritePolicy>,
+        registry:      Arc<SubjectRegistry<WriteApproval>>,
+        policy:        Arc<WritePolicy>,
+        invalidate_fs: FsInvalidator,
     ) -> (Self, Arc<Mutex<Vec<StagedWriteFileRow>>>) {
-        let (sink, buf) = WriteFileSink::stage_and_approve(registry, policy);
+        let (sink, buf) = WriteFileSink::stage_and_approve(registry, policy, invalidate_fs);
         (Self { sink }, buf)
     }
 }
@@ -735,10 +760,11 @@ pub enum WriteRangeSink {
     /// in the buffer, and (if `approval` was set on the effect) wake the
     /// awaiting op via `registry.next(key, Arc::new(result))`.
     StageAndApprove {
-        buffer:    Arc<Mutex<Vec<StagedWriteRangeRow>>>,
-        registry:  Arc<SubjectRegistry<WriteApproval>>,
-        policy:    Arc<WritePolicy>,
-        disk_lock: Arc<Mutex<()>>,
+        buffer:        Arc<Mutex<Vec<StagedWriteRangeRow>>>,
+        registry:      Arc<SubjectRegistry<WriteApproval>>,
+        policy:        Arc<WritePolicy>,
+        disk_lock:     Arc<Mutex<()>>,
+        invalidate_fs: FsInvalidator,
     },
 }
 
@@ -753,8 +779,9 @@ impl WriteRangeSink {
     }
 
     pub fn stage_and_approve(
-        registry: Arc<SubjectRegistry<WriteApproval>>,
-        policy:   Arc<WritePolicy>,
+        registry:      Arc<SubjectRegistry<WriteApproval>>,
+        policy:        Arc<WritePolicy>,
+        invalidate_fs: FsInvalidator,
     ) -> (Self, Arc<Mutex<Vec<StagedWriteRangeRow>>>) {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         (
@@ -763,6 +790,7 @@ impl WriteRangeSink {
                 registry,
                 policy,
                 disk_lock: Arc::new(Mutex::new(())),
+                invalidate_fs,
             },
             buffer,
         )
@@ -779,7 +807,7 @@ impl WriteRangeSink {
             WriteRangeSink::Disk(lock) => {
                 disk_splice_range(&e, lock).map_err(|m| Arc::from(m.as_str()))
             }
-            WriteRangeSink::StageAndApprove { buffer, registry, policy, disk_lock } => {
+            WriteRangeSink::StageAndApprove { buffer, registry, policy, disk_lock, invalidate_fs } => {
                 let id = write_range_id(&e);
                 let decision = policy.decide(&id);
                 let result: Result<(), Arc<str>> = match decision {
@@ -788,6 +816,9 @@ impl WriteRangeSink {
                     WriteDecision::DryRun   => Err(Arc::<str>::from("dry-run")),
                     WriteDecision::Rejected => Err(Arc::<str>::from("rejected by policy")),
                 };
+                if matches!(decision, WriteDecision::Approved) && result.is_ok() {
+                    invalidate_fs();
+                }
                 let approval = e.approval;
                 buffer
                     .lock()
@@ -875,10 +906,11 @@ impl WriteRangeBatcher {
         (Self { sink }, buf)
     }
     pub fn stage_and_approve(
-        registry: Arc<SubjectRegistry<WriteApproval>>,
-        policy:   Arc<WritePolicy>,
+        registry:      Arc<SubjectRegistry<WriteApproval>>,
+        policy:        Arc<WritePolicy>,
+        invalidate_fs: FsInvalidator,
     ) -> (Self, Arc<Mutex<Vec<StagedWriteRangeRow>>>) {
-        let (sink, buf) = WriteRangeSink::stage_and_approve(registry, policy);
+        let (sink, buf) = WriteRangeSink::stage_and_approve(registry, policy, invalidate_fs);
         (Self { sink }, buf)
     }
 }

@@ -293,8 +293,9 @@ mod tests {
 
         let registry = Arc::new(SubjectRegistry::<WriteApproval>::new());
         let policy = Arc::new(crate::effects::WritePolicy::ApproveAll);
-        let (range_batcher, staged) =
-            WriteRangeBatcher::stage_and_approve(registry.clone(), policy);
+        let (range_batcher, staged) = WriteRangeBatcher::stage_and_approve(
+            registry.clone(), policy, crate::effects::no_op_fs_invalidator(),
+        );
         let rt = RtCtxBuilder::new()
             .with_store(registry.clone())
             .register::<WriteRangeEffect, _>(range_batcher)
@@ -337,8 +338,9 @@ mod tests {
             -> Vec<crate::effects::StagedWriteRangeRow>
         {
             let registry = Arc::new(SubjectRegistry::<WriteApproval>::new());
-            let (range_batcher, staged) =
-                WriteRangeBatcher::stage_and_approve(registry.clone(), policy);
+            let (range_batcher, staged) = WriteRangeBatcher::stage_and_approve(
+                registry.clone(), policy, crate::effects::no_op_fs_invalidator(),
+            );
             let rt = RtCtxBuilder::new()
                 .with_store(registry.clone())
                 .register::<WriteRangeEffect, _>(range_batcher)
@@ -389,5 +391,81 @@ mod tests {
         assert_eq!(rows_ok[0].decision, WriteDecision::Approved);
         assert!(rows_ok[0].result.is_ok());
         assert_eq!(std::fs::read(&p_ok).unwrap(), b"abcREPLACEDghi");
+    }
+
+    /// Two `ReadBytesEffect` puts with a successful `WriteRangeEffect`
+    /// splice in between MUST return distinct bytes. The cache layer that
+    /// `register_pure` wraps around the reader memoizes the first read;
+    /// without sink-driven `invalidate_domain("fs")`, the second read
+    /// returns the pre-splice bytes and any byte_range computed from
+    /// them indexes into the post-splice file at wrong offsets.
+    /// (Repro for sprefa-5ld.)
+    #[tokio::test]
+    async fn write_invalidates_fs_read_cache() {
+        use crate::effects::{
+            no_op_fs_invalidator, ReadBytesBatcher, ReadBytesEffect, WriteApproval,
+            WritePolicy,
+        };
+        use crate::readers::{DiskFileSource, FileSource};
+        use effect_runtime::{SubjectRegistry, Yield, YieldBatcher};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, b"abcDEFghi").unwrap();
+
+        let registry = Arc::new(SubjectRegistry::<WriteApproval>::new());
+        let policy = Arc::new(WritePolicy::ApproveAll);
+
+        // Cell + closure mirrors the production wiring in run::build_seed_ctx.
+        let cell: Arc<std::sync::OnceLock<effect_runtime::RtCtx>> =
+            Arc::new(std::sync::OnceLock::new());
+        let cell_cb = cell.clone();
+        let invalidate: crate::effects::FsInvalidator = Arc::new(move || {
+            if let Some(c) = cell_cb.get() { c.invalidate_domain("fs"); }
+        });
+
+        let (range_batcher, _staged) = WriteRangeBatcher::stage_and_approve(
+            registry.clone(), policy, invalidate,
+        );
+        let file_source: Arc<dyn FileSource> =
+            Arc::new(DiskFileSource::new(dir.path().to_path_buf(), "wt".into()));
+        let rt = RtCtxBuilder::new()
+            .with_store(registry.clone())
+            .register_pure::<ReadBytesEffect, _>(64, ReadBytesBatcher::new(file_source))
+            .register::<WriteRangeEffect, _>(range_batcher)
+            .register::<Yield<WriteApproval>, _>(YieldBatcher::new(registry.clone()))
+            .build();
+        let _ = cell.set(rt.clone());
+
+        let key = ReadBytesEffect {
+            repo: Arc::from("r"),
+            rev:  Arc::from("wt"),
+            path: Arc::<std::path::Path>::from(PathBuf::from("f.txt").as_path()),
+        };
+
+        // First read populates the cache with v0 bytes.
+        let v0 = rt.put(key.clone()).await.expect("read v0");
+        assert_eq!(v0.0.as_ref(), b"abcDEFghi", "pre-splice bytes");
+
+        // Splice 'DEF' -> 'XYZ' on disk.
+        let _ = rt.put(WriteRangeEffect {
+            file:       Arc::<std::path::Path>::from(path.as_path()),
+            byte_range: 3..6,
+            new_bytes:  Arc::from(b"XYZ".to_vec()),
+            mode:       WriteMode::Replace,
+            approval:   None,
+        }).await;
+        assert_eq!(std::fs::read(&path).unwrap(), b"abcXYZghi", "disk mutated");
+
+        // Second read MUST reflect the new bytes — not the cache.
+        let v1 = rt.put(key).await.expect("read v1");
+        assert_eq!(
+            v1.0.as_ref(), b"abcXYZghi",
+            "post-splice read must see fresh bytes; cache invalidation broken"
+        );
+
+        // Sanity: no_op_fs_invalidator wired into the *_test* convenience
+        // path is exported and callable.
+        no_op_fs_invalidator()();
     }
 }
