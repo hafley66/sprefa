@@ -93,13 +93,30 @@ async fn main() -> Result<()> {
         },
         log_path: opts.log_path.clone(),
     };
-    ServerInfo::write_atomic(&state.info_path, &info)?;
-    tracing::info!(info_path = %state.info_path.display(), "server.json written");
 
     let http_opts = HttpOpts { unix: opts.http_unix.clone(), tcp: opts.http_tcp };
 
+    // Spawn the server first; only write server.json once every listener
+    // is bound and accepting. Otherwise sprefa-lsp/sprefa-run can observe
+    // the locator before the socket exists and hit ECONNREFUSED.
+    let serve_state = state.clone();
+    let mut serve = tokio::spawn(async move { serve_http(serve_state, http_opts).await });
+
+    let ready = state.ready.clone();
     tokio::select! {
-        res = serve_http(state.clone(), http_opts) => { res?; }
+        _ = ready.notified() => {
+            ServerInfo::write_atomic(&state.info_path, &info)?;
+            tracing::info!(info_path = %state.info_path.display(), "server.json written");
+        }
+        res = &mut serve => {
+            // serve_http exited before signaling ready: bind failure.
+            res??;
+            anyhow::bail!("serve_http exited before becoming ready");
+        }
+    }
+
+    tokio::select! {
+        res = &mut serve => { res??; }
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("sigint received");
         }

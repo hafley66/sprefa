@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use effect_runtime::batchers::BoundedWorkSteal;
@@ -67,6 +67,12 @@ pub struct ServerState {
 
     /// Locator file path (`server.json`). Removed on shutdown.
     pub info_path: PathBuf,
+
+    /// Fired by `serve_http` once every configured listener is bound and
+    /// accepting. The daemon binary awaits this before writing
+    /// `server.json` so clients (sprefa-lsp / sprefa-run) can't observe
+    /// the locator before the socket is connectable.
+    pub ready: Arc<Notify>,
 }
 
 impl ServerState {
@@ -93,6 +99,7 @@ impl ServerState {
             cancel_root: CancellationToken::new(),
             drain,
             info_path: opts.info_path.clone().unwrap_or_else(default_info_path),
+            ready: Arc::new(Notify::new()),
         }))
     }
 

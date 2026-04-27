@@ -55,10 +55,7 @@ async fn main() -> Result<()> {
     }
 
     let info_path = info_path.unwrap_or_else(default_info_path);
-    let info = match ServerInfo::read(&info_path) {
-        Ok(i) => i,
-        Err(_) => spawn_daemon_and_wait(&info_path)?,
-    };
+    let (info, conn, host) = connect_or_spawn(&info_path).await?;
 
     let source = std::fs::read_to_string(&file)
         .with_context(|| format!("read {}", file.display()))?;
@@ -70,7 +67,7 @@ async fn main() -> Result<()> {
         "cache":          cache,
     }).to_string();
 
-    post_sse(&info, "/run", body, print_frame).await
+    post_sse(&info, conn, host, "/run", body, print_frame).await
 }
 
 #[derive(Default)]
@@ -149,27 +146,43 @@ fn print_frame(line: &str) -> bool {
 
 enum Conn { Unix(UnixStream), Tcp(TcpStream) }
 
-async fn dial(info: &ServerInfo) -> Result<(Conn, String)> {
+async fn try_dial(info_path: &std::path::Path) -> Option<(ServerInfo, Conn, String)> {
+    let info = ServerInfo::read(info_path).ok()?;
     if let Some(sock) = &info.http.unix {
         if let Ok(s) = UnixStream::connect(sock).await {
-            return Ok((Conn::Unix(s), "localhost".into()));
+            return Some((info, Conn::Unix(s), "localhost".into()));
         }
     }
     if let Some(addr) = &info.http.tcp {
-        let s = TcpStream::connect(addr).await
-            .with_context(|| format!("tcp connect {addr}"))?;
-        return Ok((Conn::Tcp(s), addr.clone()));
+        if let Ok(s) = TcpStream::connect(addr).await {
+            let host = addr.clone();
+            return Some((info, Conn::Tcp(s), host));
+        }
     }
-    Err(anyhow!("server.json lists no reachable transport"))
+    None
+}
+
+async fn connect_or_spawn(info_path: &std::path::Path)
+    -> Result<(ServerInfo, Conn, String)>
+{
+    if let Some(t) = try_dial(info_path).await { return Ok(t); }
+    spawn_daemon(info_path)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(t) = try_dial(info_path).await { return Ok(t); }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Err(anyhow!("sprefa-server did not become reachable via {} within 5s", info_path.display()))
 }
 
 async fn post_sse(
-    info: &ServerInfo,
+    _info: &ServerInfo,
+    conn: Conn,
+    host: String,
     path: &str,
     body: String,
     mut cb: impl FnMut(&str) -> bool,
 ) -> Result<()> {
-    let (conn, host) = dial(info).await?;
     let req = Request::builder()
         .method("POST")
         .uri(path.parse::<Uri>()?)
@@ -214,7 +227,7 @@ async fn send_stream(conn: Conn, req: Request<Full<Bytes>>) -> Result<hyper::bod
     }
 }
 
-fn spawn_daemon_and_wait(info_path: &std::path::Path) -> Result<ServerInfo> {
+fn spawn_daemon(_info_path: &std::path::Path) -> Result<()> {
     let exe = std::env::current_exe().context("locate sprefa-run")?;
     let server_bin = exe.parent()
         .map(|p| p.join("sprefa-server"))
@@ -226,13 +239,7 @@ fn spawn_daemon_and_wait(info_path: &std::path::Path) -> Result<ServerInfo> {
     std::process::Command::new(&server_bin)
         .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().context("spawn sprefa-server")?;
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if let Ok(info) = ServerInfo::read(info_path) { return Ok(info); }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Err(anyhow!("sprefa-server did not write {} within 5s", info_path.display()))
+    Ok(())
 }
 
 fn which_in_path(name: &str) -> Option<PathBuf> {

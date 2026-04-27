@@ -51,10 +51,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let info_path = cli.info_path.unwrap_or_else(default_info_path);
 
-    let info = match ServerInfo::read(&info_path) {
-        Ok(i) => i,
-        Err(_) => spawn_daemon_and_wait(&info_path)?,
-    };
+    type Io = Box<dyn io_dyn::AsyncIo>;
+    let (_info, stream): (ServerInfo, Io) = connect_or_spawn(&info_path).await?;
 
     let req = Request::builder()
         .method("GET").uri("ws://sprefa/lsp")
@@ -64,22 +62,6 @@ async fn main() -> Result<()> {
         .header("sec-websocket-version", "13")
         .header("sec-websocket-key", generate_key())
         .body(())?;
-
-    type Io = Box<dyn io_dyn::AsyncIo>;
-    let stream: Io = if let Some(sock) = &info.http.unix {
-        match UnixStream::connect(sock).await {
-            Ok(s) => Box::new(s),
-            Err(_) => if let Some(addr) = &info.http.tcp {
-                Box::new(TcpStream::connect(addr).await?)
-            } else {
-                return Err(anyhow!("unix dial failed and no tcp fallback"));
-            }
-        }
-    } else if let Some(addr) = &info.http.tcp {
-        Box::new(TcpStream::connect(addr).await?)
-    } else {
-        return Err(anyhow!("server.json lists no transport"));
-    };
 
     let (ws_stream, _resp) = tokio_tungstenite::client_async(req, stream).await?;
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
@@ -112,9 +94,18 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn spawn_daemon_and_wait(info_path: &std::path::Path) -> Result<ServerInfo> {
-    let exe = std::env::current_exe()
-        .context("locate sprefa-lsp executable")?;
+/// Probe `info_path` and return a connected stream. If no daemon is
+/// reachable, spawn one and retry until a deadline. Treats every step
+/// as best-effort: stale `server.json`, partial writes, daemon mid-bind,
+/// daemon mid-shutdown all collapse to "retry until something connects."
+async fn connect_or_spawn(info_path: &std::path::Path)
+    -> Result<(ServerInfo, Box<dyn io_dyn::AsyncIo>)>
+{
+    if let Some((info, stream)) = try_dial(info_path).await {
+        return Ok((info, stream));
+    }
+
+    let exe = std::env::current_exe().context("locate sprefa-lsp executable")?;
     let server_bin = exe.parent()
         .map(|p| p.join("sprefa-server"))
         .filter(|p| p.exists())
@@ -126,15 +117,31 @@ fn spawn_daemon_and_wait(info_path: &std::path::Path) -> Result<ServerInfo> {
         .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().context("spawn sprefa-server")?;
 
-    // Poll for server.json up to 5s.
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if let Ok(info) = ServerInfo::read(info_path) {
-            return Ok(info);
+        if let Some((info, stream)) = try_dial(info_path).await {
+            return Ok((info, stream));
         }
-        std::thread::sleep(Duration::from_millis(50));
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    Err(anyhow!("sprefa-server did not write {} within 5s", info_path.display()))
+    Err(anyhow!("sprefa-server did not become reachable via {} within 5s", info_path.display()))
+}
+
+async fn try_dial(info_path: &std::path::Path)
+    -> Option<(ServerInfo, Box<dyn io_dyn::AsyncIo>)>
+{
+    let info = ServerInfo::read(info_path).ok()?;
+    if let Some(sock) = &info.http.unix {
+        if let Ok(s) = UnixStream::connect(sock).await {
+            return Some((info, Box::new(s)));
+        }
+    }
+    if let Some(addr) = &info.http.tcp {
+        if let Ok(s) = TcpStream::connect(addr).await {
+            return Some((info, Box::new(s)));
+        }
+    }
+    None
 }
 
 fn which_in_path(name: &str) -> Option<PathBuf> {

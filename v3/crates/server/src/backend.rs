@@ -24,16 +24,11 @@ use crate::position::{offset_to_position, position_to_offset};
 use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionKind};
 use crate::state::ServerState;
 
-use effect_runtime::batchers::BoundedWorkSteal;
-use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
+use effect_runtime::SubjectRegistry;
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
-use pipeline::effects::{
-    AstParseEffect, FsListFilesBatcher, FsListFilesEffect, PrintBatcher,
-    PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect, ReadBytesBatcher,
-    ReadBytesEffect,
-};
-use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
+use pipeline::effects::PrintBatcher;
+use pipeline::relation_store::{RelationStore, RelationWake};
 use pipeline::readers::{DiskFileSource, FileSource};
 
 pub struct Backend {
@@ -77,9 +72,6 @@ impl Backend {
 
     fn registry(&self) -> Registry { self.state.registry.clone() }
     fn cache(&self) -> Arc<OpCache> { self.state.cache.clone() }
-    fn ast_parse_batcher(&self) -> Arc<BoundedWorkSteal<AstParseEffect>> {
-        self.state.ast_parse_batcher.clone()
-    }
 
     async fn ensure_watcher(&self, slug: Arc<str>, root: PathBuf) {
         self.state.ensure_watcher(slug, root).await;
@@ -253,7 +245,7 @@ impl LanguageServer for Backend {
             (Some(plan), Some(slice)) => {
                 render_enriched_hover(
                     &plan, &slice, &snap.config, &snap.config_source,
-                    &snap.registry, self.cache(), self.ast_parse_batcher(),
+                    &snap.registry, self.cache(), &self.state,
                 ).await
             }
             _ => snap.static_doc,
@@ -347,7 +339,7 @@ async fn render_enriched_hover(
     config_source: &ConfigSource,
     registry: &pipeline::registry::Registry,
     op_cache: Arc<OpCache>,
-    ast_parse_batcher: Arc<BoundedWorkSteal<AstParseEffect>>,
+    state: &Arc<ServerState>,
 ) -> Option<String> {
     let _t0 = std::time::Instant::now();
     tracing::info!(
@@ -466,34 +458,21 @@ async fn render_enriched_hover(
             "seed.start"
         );
         seed_roots.insert(Arc::from(seed.slug.as_str()), seed.root.clone());
-        let source: Arc<dyn FileSource> =
+        let file_source: Arc<dyn FileSource> =
             Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
         let relation_store = Arc::new(RelationStore::new());
-        let registry = Arc::new(SubjectRegistry::<RelationWake>::new());
-        let ctx = RtCtxBuilder::new()
-            .with_store(relation_store.clone())
-            .with_store(registry.clone())
-            .with_store(op_cache.clone())
-            .register_pure::<FsListFilesEffect, _>(
-                256,
-                FsListFilesBatcher::new(source.clone()),
-            )
-            .register_pure::<ReadBytesEffect, _>(
-                256,
-                ReadBytesBatcher::new(source.clone()),
-            )
-            .register::<ReadBytesBatchEffect, _>(
-                ReadBytesBatchBatcher::new(source),
-            )
-            // Long-lived rayon pool, cloned via the blanket
-            // `Batcher<E> for Arc<B>` impl. No new threads per hover.
-            .register::<AstParseEffect, _>(ast_parse_batcher.clone())
-            .register::<PrintEffect, _>(PrintBatcher::buffer().0)
-            .register::<Yield<RelationWake>, _>(YieldBatcher::new(registry.clone()))
-            .register::<WriteEffect, _>(
-                WriteBatcher::new(relation_store, registry.clone()),
-            )
-            .build();
+        let subject_registry = Arc::new(SubjectRegistry::<RelationWake>::new());
+        // Single source-of-truth registration list. Hover hovering uses
+        // the same builder as `/run`'s per-seed loop; adding an effect
+        // kind happens in `run::build_seed_ctx` exactly once.
+        let ctx = crate::run::build_seed_ctx(
+            state,
+            file_source,
+            op_cache.clone(),
+            relation_store.clone(),
+            subject_registry.clone(),
+            PrintBatcher::buffer().0,
+        );
 
         let mut c = Cursor::default();
         c.repo = Arc::from(seed.slug.as_str());
@@ -1081,10 +1060,8 @@ mod tests {
             .to_vec();
         let cfg = Config { seeds: vec![], run: Default::default() };
         let op_cache = Arc::new(OpCache::new(true));
-        let batcher = Arc::new(BoundedWorkSteal::<AstParseEffect>::new(
-            64, 4, pipeline::effects::ast_parse,
-        ));
-        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache, batcher).await
+        let state = ServerState::new(&Default::default()).await.expect("ServerState::new");
+        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache, &state).await
     }
 
     fn off_of(src: &str, needle: &str) -> usize {
@@ -1295,10 +1272,8 @@ mod tests {
             .lowered_pipes()[plan.pipe_idx][..=plan.focus_step]
             .to_vec();
         let op_cache = Arc::new(OpCache::new(true));
-        let batcher = Arc::new(BoundedWorkSteal::<AstParseEffect>::new(
-            64, 4, pipeline::effects::ast_parse,
-        ));
-        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache, batcher).await
+        let state = ServerState::new(&Default::default()).await.expect("ServerState::new");
+        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache, &state).await
     }
 
     #[tokio::test]

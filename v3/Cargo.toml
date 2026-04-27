@@ -45,8 +45,13 @@ incremental      = false
 
 # ast-grep + tree-sitter parsing is the per-cursor hot path on every
 # smoke and unit test. Run every third-party dependency at release
-# optimization level even in dev so an iterative build does not pay the
-# debug-codegen tax on syntax engines. Workspace members keep the
-# default `opt-level = 0` so editing sprefa's own crates stays fast.
+# optimization level even in dev.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Workspace members at opt-level=1: kills the worst -O0 overhead in
+# registry dispatch / op trampolines / content-slice walks while
+# keeping iterative rebuilds reasonable. The hover hot path crosses
+# our own code 413+ times per request; -O0 here was the bottleneck.
+[profile.dev]
+opt-level = 1

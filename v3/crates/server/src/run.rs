@@ -24,7 +24,7 @@ use std::sync::Arc;
 use futures::stream::{self, BoxStream, StreamExt};
 use tokio_util::sync::CancellationToken;
 
-use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
+use effect_runtime::{RtCtx, RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
 use pipeline::_0_cursor::Cursor;
 use pipeline::_2_pipeline::Pipeline;
 use pipeline::cache_key::OpCache;
@@ -152,12 +152,13 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     let source_text = req.source.clone();
     let registry = state.registry.clone();
     let cancel = req.cancel.clone();
-    let ast_parse_batcher = state.ast_parse_batcher.clone();
     let workspace_for_stream = workspace.clone();
+    let state_for_stream = state.clone();
 
     let rule_names_for_stream = rule_names.clone();
     let stream = async_stream::stream! {
         let rule_names = rule_names_for_stream;
+        let state = state_for_stream;
         for ev in diag_events { yield ev; }
 
         let relation_store = Arc::new(RelationStore::new());
@@ -185,30 +186,14 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
             }
             let op_cache = Arc::new(op_cache);
 
-            let ctx = RtCtxBuilder::new()
-                .with_store(relation_store.clone())
-                .with_store(subject_registry.clone())
-                .with_store(op_cache.clone())
-                .register_pure::<FsListFilesEffect, _>(
-                    1024,
-                    FsListFilesBatcher::new(file_source.clone()),
-                )
-                .register_pure::<ReadBytesEffect, _>(
-                    65_536,
-                    ReadBytesBatcher::new(file_source.clone()),
-                )
-                .register::<ReadBytesBatchEffect, _>(
-                    ReadBytesBatchBatcher::new(file_source.clone()),
-                )
-                .register::<AstParseEffect, _>(ast_parse_batcher.clone())
-                .register::<PrintEffect, _>(PrintBatcher::stdout())
-                .register::<Yield<RelationWake>, _>(YieldBatcher::new(subject_registry.clone()))
-                .register::<WriteEffect, _>(
-                    WriteBatcher::new(relation_store.clone(), subject_registry.clone()),
-                )
-                .register::<WriteFileEffect, _>(WriteFileBatcher::disk())
-                .register::<WriteRangeEffect, _>(WriteRangeBatcher::disk())
-                .build();
+            let ctx = build_seed_ctx(
+                &state,
+                file_source.clone(),
+                op_cache.clone(),
+                relation_store.clone(),
+                subject_registry.clone(),
+                PrintBatcher::stdout(),
+            );
 
             // Pass 1: rule defs (auto-fire arity-0 rules).
             let mut known_rules: HashSet<Arc<str>> = HashSet::new();
@@ -290,6 +275,48 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     };
 
     RunStart { rule_names, stream: stream.boxed() }
+}
+
+/// Single source-of-truth for the per-seed effect registration list.
+/// Both `/run` (this file) and the LSP hover render path
+/// (`backend::render_enriched_hover`) build their RtCtx through here so
+/// adding or renaming an effect kind only happens in one place.
+///
+/// Caller supplies: the file source (per-seed reader stack), the cache
+/// (shared `state.cache` for live LSP, fresh per-run for /run), and the
+/// relation store + subject registry (caller controls drain ordering).
+pub(crate) fn build_seed_ctx(
+    state:            &ServerState,
+    file_source:      Arc<dyn FileSource>,
+    op_cache:         Arc<OpCache>,
+    relation_store:   Arc<RelationStore>,
+    subject_registry: Arc<SubjectRegistry<RelationWake>>,
+    print:            PrintBatcher,
+) -> RtCtx {
+    RtCtxBuilder::new()
+        .with_store(relation_store.clone())
+        .with_store(subject_registry.clone())
+        .with_store(op_cache)
+        .register_pure::<FsListFilesEffect, _>(
+            1024,
+            FsListFilesBatcher::new(file_source.clone()),
+        )
+        .register_pure::<ReadBytesEffect, _>(
+            65_536,
+            ReadBytesBatcher::new(file_source.clone()),
+        )
+        .register::<ReadBytesBatchEffect, _>(
+            ReadBytesBatchBatcher::new(file_source),
+        )
+        .register::<AstParseEffect, _>(state.ast_parse_batcher.clone())
+        .register::<PrintEffect, _>(print)
+        .register::<Yield<RelationWake>, _>(YieldBatcher::new(subject_registry.clone()))
+        .register::<WriteEffect, _>(
+            WriteBatcher::new(relation_store, subject_registry),
+        )
+        .register::<WriteFileEffect, _>(WriteFileBatcher::disk())
+        .register::<WriteRangeEffect, _>(WriteRangeBatcher::disk())
+        .build()
 }
 
 // ---------------------------------------------------------------------------

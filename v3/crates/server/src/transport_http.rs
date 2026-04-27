@@ -168,7 +168,21 @@ pub async fn serve_http(state: Arc<ServerState>, opts: HttpOpts) -> Result<()> {
         if let Some(parent) = sock_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let _ = tokio::fs::remove_file(&sock_path).await;
+        // If the socket exists AND something is accepting on it, another
+        // daemon is already live — bail rather than orphan their listener
+        // by unlinking the dirent out from under them.
+        if sock_path.exists() {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                tokio::net::UnixStream::connect(&sock_path),
+            ).await {
+                Ok(Ok(_)) => anyhow::bail!(
+                    "another sprefa-server is already accepting on {}",
+                    sock_path.display(),
+                ),
+                _ => { let _ = tokio::fs::remove_file(&sock_path).await; }
+            }
+        }
         let listener = UnixListener::bind(&sock_path)?;
         tracing::info!(socket = %sock_path.display(), "http unix listening");
         let app = app.clone();
@@ -196,6 +210,10 @@ pub async fn serve_http(state: Arc<ServerState>, opts: HttpOpts) -> Result<()> {
     if tasks.is_empty() {
         anyhow::bail!("serve_http: no listeners configured");
     }
+
+    // All listeners are bound and inside their accept loops. Signal the
+    // daemon binary so it can write server.json without racing clients.
+    state.ready.notify_one();
 
     for t in tasks { t.await??; }
     Ok(())
