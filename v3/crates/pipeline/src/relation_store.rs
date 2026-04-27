@@ -10,7 +10,7 @@
 //! `bodies` map and stub methods (`bind_body`, `body`, `lookup_by_key`) are
 //! seeded here; later cards (rhu, bd5/kcl) wire them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::{
@@ -49,9 +49,15 @@ pub type WakeKey = Option<Vec<Arc<str>>>;
 /// Subjects are pre-registered on `SubjectRegistry<RelationWake>` (entries
 /// already inserted in `pending`). On write, the writer derives the row's
 /// key and fires only the matching waiters via `registry.next(key, row)`.
+///
+/// **Set semantics, not multiset.** A row that already exists in the bag
+/// is dropped at push time: no append, no waiter fired. `seen` is the
+/// dedup index; `rows` preserves insertion order for snapshot+last_idx
+/// readers.
 #[derive(Default)]
 pub struct Bag {
     pub rows:        Vec<Row>,
+    pub seen:        HashSet<Row>,
     /// Waiters that fire on every write (no key narrowing).
     pub broadcast:   Vec<SubjectKey<RelationWake>>,
     /// Keyed waiters indexed by the prefix vector they match against.
@@ -82,7 +88,12 @@ pub struct RelationStore {
     /// Rows sunk by rule bodies. Capture-named, distinct from `inner`'s
     /// positional `Row` shape. Drained at end of run by the SQLite
     /// writer; one table per rule, column union across rows.
-    rule_rows:  Mutex<HashMap<Arc<str>, Vec<RuleRow>>>,
+    ///
+    /// Set semantics: a (rule_name, row) pair seen twice is dropped on
+    /// the second push. The `rule_row_seen` index mirrors `rule_rows`
+    /// for O(1) dedup. Order in the Vec is first-insertion order.
+    rule_rows:       Mutex<HashMap<Arc<str>, Vec<RuleRow>>>,
+    rule_row_seen:   Mutex<HashMap<Arc<str>, HashSet<RuleRow>>>,
 }
 
 impl Store for RelationStore {}
@@ -158,6 +169,9 @@ impl RelationStore {
         let mut out: Vec<(SubjectKey<RelationWake>, Arc<Row>)> = Vec::new();
         for (name, row) in writes {
             let bag = g.entry(name.clone()).or_default();
+            // Set semantics: a duplicate row is a no-op. Skip the push
+            // and skip waking waiters — there is nothing new to observe.
+            if !bag.seen.insert(row.clone()) { continue; }
             bag.rows.push(row.clone());
             let row_arc: Arc<Row> = Arc::new(row.clone());
             for k in bag.broadcast.drain(..) {
@@ -200,8 +214,13 @@ impl RelationStore {
         self.params.lock().unwrap().get(name).cloned().unwrap_or_default()
     }
 
-    /// Append one rule row under `name`.
+    /// Append one rule row under `name`. Set semantics: an identical
+    /// row already in the bag is dropped silently.
     pub fn push_rule_row(&self, name: &Arc<str>, row: RuleRow) {
+        let mut seen_map = self.rule_row_seen.lock().unwrap();
+        let seen = seen_map.entry(name.clone()).or_default();
+        if !seen.insert(row.clone()) { return; }
+        drop(seen_map);
         self.rule_rows
             .lock()
             .unwrap()
