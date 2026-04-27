@@ -472,6 +472,7 @@ async fn render_enriched_hover(
             relation_store.clone(),
             subject_registry.clone(),
             PrintBatcher::buffer().0,
+            std::sync::Arc::new(pipeline::effects::WritePolicy::ApproveAll),
         ).ctx;
 
         let mut c = Cursor::default();

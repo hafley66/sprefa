@@ -292,8 +292,9 @@ mod tests {
         std::fs::write(&path, b"abcDEFghi").unwrap();
 
         let registry = Arc::new(SubjectRegistry::<WriteApproval>::new());
+        let policy = Arc::new(crate::effects::WritePolicy::ApproveAll);
         let (range_batcher, staged) =
-            WriteRangeBatcher::stage_and_approve(registry.clone());
+            WriteRangeBatcher::stage_and_approve(registry.clone(), policy);
         let rt = RtCtxBuilder::new()
             .with_store(registry.clone())
             .register::<WriteRangeEffect, _>(range_batcher)
@@ -320,5 +321,73 @@ mod tests {
 
         // Registry drained — no leaked pending entries (op resumed).
         assert_eq!(registry.pending_count(), 0);
+    }
+
+    /// WritePolicy::DryRun + ApproveOnly govern the staging sink. A
+    /// dry-run buffers the row with `decision = DryRun` + `Err("dry-run")`
+    /// and never touches disk; `ApproveOnly` containing the row's id
+    /// splices, missing it rejects.
+    #[tokio::test]
+    async fn pipe_staging_respects_write_policy() {
+        use crate::effects::{WriteApproval, WriteDecision, WritePolicy};
+        use effect_runtime::{SubjectRegistry, Yield, YieldBatcher};
+        use std::collections::HashSet;
+
+        async fn run_with(policy: Arc<WritePolicy>, path: &std::path::Path)
+            -> Vec<crate::effects::StagedWriteRangeRow>
+        {
+            let registry = Arc::new(SubjectRegistry::<WriteApproval>::new());
+            let (range_batcher, staged) =
+                WriteRangeBatcher::stage_and_approve(registry.clone(), policy);
+            let rt = RtCtxBuilder::new()
+                .with_store(registry.clone())
+                .register::<WriteRangeEffect, _>(range_batcher)
+                .register::<Yield<WriteApproval>, _>(YieldBatcher::new(registry.clone()))
+                .build();
+
+            let mut c = Cursor::new(Arc::from(b"REPLACED".as_slice()));
+            c.fs = Some(Arc::<std::path::Path>::from(path));
+            c.captures.push(Capture::span_backed(Arc::from("SCOPE"), 3..6));
+            let op = WriteCursorOp { target: Arc::from("SCOPE"), mode: WriteMode::Replace };
+            let _ = op.pipe(&rt, Arc::from(vec![c])).await;
+            assert_eq!(registry.pending_count(), 0);
+            let rows = staged.lock().unwrap().clone();
+            rows
+        }
+
+        // DryRun: file untouched, decision recorded as DryRun.
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dry.txt");
+        std::fs::write(&p, b"abcDEFghi").unwrap();
+        let rows = run_with(Arc::new(WritePolicy::DryRun), &p).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].decision, WriteDecision::DryRun);
+        assert_eq!(rows[0].result.as_ref().unwrap_err().as_ref(), "dry-run");
+        assert_eq!(std::fs::read(&p).unwrap(), b"abcDEFghi");
+
+        // ApproveOnly with a non-matching id: rejected, file untouched.
+        let p_rej = dir.path().join("rej.txt");
+        std::fs::write(&p_rej, b"abcDEFghi").unwrap();
+        let mut none: HashSet<Arc<str>> = HashSet::new();
+        none.insert(Arc::from("000000000000"));
+        let rows_rej = run_with(Arc::new(WritePolicy::ApproveOnly(none)), &p_rej).await;
+        assert_eq!(rows_rej[0].decision, WriteDecision::Rejected);
+        assert_eq!(rows_rej[0].result.as_ref().unwrap_err().as_ref(), "rejected by policy");
+        assert_eq!(std::fs::read(&p_rej).unwrap(), b"abcDEFghi");
+
+        // ApproveOnly with the row's actual id: splice lands. Probe via
+        // a DryRun first to learn the content-hash id, then re-run with
+        // that id approved.
+        let p_ok = dir.path().join("ok.txt");
+        std::fs::write(&p_ok, b"abcDEFghi").unwrap();
+        let probe = run_with(Arc::new(WritePolicy::DryRun), &p_ok).await;
+        let probe_id = probe[0].id.clone();
+        let mut allow: HashSet<Arc<str>> = HashSet::new();
+        allow.insert(probe_id);
+        std::fs::write(&p_ok, b"abcDEFghi").unwrap();
+        let rows_ok = run_with(Arc::new(WritePolicy::ApproveOnly(allow)), &p_ok).await;
+        assert_eq!(rows_ok[0].decision, WriteDecision::Approved);
+        assert!(rows_ok[0].result.is_ok());
+        assert_eq!(std::fs::read(&p_ok).unwrap(), b"abcREPLACEDghi");
     }
 }

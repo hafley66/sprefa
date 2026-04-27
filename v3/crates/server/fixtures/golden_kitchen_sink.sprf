@@ -38,7 +38,7 @@
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/openapi.json))
   > json({ paths: { /users: { get: { operationId: ${OPID?} } } } })
-  > print(:openapi-listusers);
+  > print(:openapi_listusers);
 
 
 # ---------- 2. JSON OP — TOML and YAML parity ----------
@@ -63,12 +63,12 @@ repo(${R?}) > rev(:HEAD)
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/api/*.ts))
   > ast[ts](use${HOOK?}Query)
-  > print(:rtkq-query);
+  > print(:rtkq_query);
 
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/api/*.ts))
   > ast[ts](use${HOOK?}Mutation)
-  > print(:rtkq-mut);
+  > print(:rtkq_mut);
 
 
 # ---------- 4. AST_YAML — composed ast-grep rule ----------
@@ -85,11 +85,11 @@ repo(${R?}) > rev(:HEAD)
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/api/*.ts))
   > comment("// Mock RTKQ-shaped")
-  > print(:doc-banner);
+  > print(:doc_banner);
 
 
 # ---------- 6. STR OP — value passthrough ----------
-str("hello-from-golden-demo") > print(:str-demo);
+str("hello-from-golden-demo") > print(:str_demo);
 
 
 # ---------- 7. COMMENT-BOUNDED AUTO-RENDER (main goal) ----------
@@ -140,18 +140,18 @@ fs(glob(HOOKS.md))
 # op's source span in this file.
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/api/*.ts))
-  > ast[ts](useNonExistentHookQuery) > print(:should-be-empty);
+  > ast[ts](useNonExistentHookQuery) > print(:should_be_empty);
 
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/openapi.json))
   > json({ paths: { /no-such-route: { get: { operationId: ${X?} } } } })
-  > print(:should-also-be-empty);
+  > print(:should_also_be_empty);
 
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/api/*.ts))
   > ast_yaml[ts](pattern: "thisIdentifierDoesNotExist")
-  > print(:yaml-empty);
+  > print(:yaml_empty);
 
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/api/*.ts))
-  > comment("// @no-such-marker") > print(:comment-empty);
+  > comment("// @no-such-marker") > print(:comment_empty);

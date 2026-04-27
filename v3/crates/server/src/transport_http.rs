@@ -55,6 +55,14 @@ pub struct RunDto {
     #[serde(default)] pub out_db:         Option<PathBuf>,
     #[serde(default = "default_cache")]
     pub cache: bool,
+    /// `true` ⇒ buffer + report writes but never splice.
+    #[serde(default)]
+    pub dry_run: bool,
+    /// When non-empty: only writes whose content-hash id is in the set
+    /// splice; the rest are rejected with `"rejected by policy"`. Takes
+    /// precedence over `dry_run` ⇒ approve-only.
+    #[serde(default)]
+    pub approve_only: Vec<String>,
 }
 
 fn default_cache() -> bool { true }
@@ -82,6 +90,18 @@ async fn run_handler(
     Json(req):    Json<RunDto>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let cancel = state.cancel_root.child_token();
+    let write_policy = if !req.approve_only.is_empty() {
+        let set: std::collections::HashSet<std::sync::Arc<str>> = req
+            .approve_only
+            .iter()
+            .map(|s| std::sync::Arc::<str>::from(s.as_str()))
+            .collect();
+        std::sync::Arc::new(pipeline::effects::WritePolicy::ApproveOnly(set))
+    } else if req.dry_run {
+        std::sync::Arc::new(pipeline::effects::WritePolicy::DryRun)
+    } else {
+        std::sync::Arc::new(pipeline::effects::WritePolicy::ApproveAll)
+    };
     let start = run_pipeline(state.clone(), RunRequest {
         source:         req.source,
         source_path:    req.source_path,
@@ -89,6 +109,7 @@ async fn run_handler(
         out_db:         req.out_db,
         cache:          req.cache,
         cancel,
+        write_policy,
     }).await;
 
     let meta = RunFrame::Meta {

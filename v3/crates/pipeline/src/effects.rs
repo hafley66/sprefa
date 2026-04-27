@@ -18,6 +18,7 @@
 //! pipes. Single-shot runs pay the same walk cost as before; multi-pipe
 //! runs amortize it across call-sites.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -41,6 +42,51 @@ use effect_runtime::{
 pub struct WriteApproval;
 impl SubjectKind for WriteApproval {
     type Payload = Result<(), Arc<str>>;
+}
+
+/// Per-run policy that the staging sink consults to decide whether to
+/// splice each write. Threaded through `RunRequest` from sprefa-run /
+/// HTTP transport so the user can choose dry-run or selective approval
+/// without changing op code.
+#[derive(Debug, Clone)]
+pub enum WritePolicy {
+    /// Splice every staged write (default).
+    ApproveAll,
+    /// Buffer + report but never splice.
+    DryRun,
+    /// Splice only the writes whose content-hash id is in the set;
+    /// reject the rest with `"rejected by policy"`.
+    ApproveOnly(HashSet<Arc<str>>),
+}
+
+impl WritePolicy {
+    pub fn decide(&self, id: &str) -> WriteDecision {
+        match self {
+            WritePolicy::ApproveAll => WriteDecision::Approved,
+            WritePolicy::DryRun     => WriteDecision::DryRun,
+            WritePolicy::ApproveOnly(set) => {
+                if set.contains(id) { WriteDecision::Approved }
+                else                { WriteDecision::Rejected }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteDecision {
+    Approved,
+    DryRun,
+    Rejected,
+}
+
+impl WriteDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WriteDecision::Approved => "approved",
+            WriteDecision::DryRun   => "dry-run",
+            WriteDecision::Rejected => "rejected",
+        }
+    }
 }
 
 use crate::readers::FileSource;
@@ -452,10 +498,11 @@ impl EffectKind for WriteFileEffect {
 /// approve in the next run.
 #[derive(Clone, Debug)]
 pub struct StagedWriteFileRow {
-    pub id:     Arc<str>,
-    pub path:   Arc<std::path::Path>,
-    pub bytes:  Arc<[u8]>,
-    pub result: Result<(), Arc<str>>,
+    pub id:       Arc<str>,
+    pub path:     Arc<std::path::Path>,
+    pub bytes:    Arc<[u8]>,
+    pub decision: WriteDecision,
+    pub result:   Result<(), Arc<str>>,
 }
 
 fn write_file_id(path: &std::path::Path, bytes: &[u8]) -> Arc<str> {
@@ -472,12 +519,14 @@ fn write_file_id(path: &std::path::Path, bytes: &[u8]) -> Arc<str> {
 pub enum WriteFileSink {
     Disk,
     Buffer(Arc<Mutex<Vec<(Arc<std::path::Path>, Arc<[u8]>)>>>),
-    /// Phase 1 staging: write to disk, record the (path, bytes, result)
-    /// row in the buffer, and (if `approval` was set on the effect) wake
-    /// the awaiting op via `registry.next(key, Arc::new(result))`.
+    /// Phase 1 staging: consult `policy` per write, optionally splice,
+    /// record the (path, bytes, decision, result) row in the buffer, and
+    /// (if `approval` was set on the effect) wake the awaiting op via
+    /// `registry.next(key, Arc::new(result))`.
     StageAndApprove {
         buffer:   Arc<Mutex<Vec<StagedWriteFileRow>>>,
         registry: Arc<SubjectRegistry<WriteApproval>>,
+        policy:   Arc<WritePolicy>,
     },
 }
 
@@ -489,10 +538,11 @@ impl WriteFileSink {
 
     pub fn stage_and_approve(
         registry: Arc<SubjectRegistry<WriteApproval>>,
+        policy:   Arc<WritePolicy>,
     ) -> (Self, Arc<Mutex<Vec<StagedWriteFileRow>>>) {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         (
-            WriteFileSink::StageAndApprove { buffer: buffer.clone(), registry },
+            WriteFileSink::StageAndApprove { buffer: buffer.clone(), registry, policy },
             buffer,
         )
     }
@@ -507,10 +557,15 @@ impl WriteFileSink {
                     .push((req.path.clone(), req.bytes.clone()));
                 Ok(())
             }
-            WriteFileSink::StageAndApprove { buffer, registry } => {
-                let result = disk_write_file(&req.path, &req.bytes)
-                    .map_err(|e| Arc::<str>::from(e.as_str()));
+            WriteFileSink::StageAndApprove { buffer, registry, policy } => {
                 let id = write_file_id(&req.path, &req.bytes);
+                let decision = policy.decide(&id);
+                let result: Result<(), Arc<str>> = match decision {
+                    WriteDecision::Approved => disk_write_file(&req.path, &req.bytes)
+                        .map_err(|e| Arc::<str>::from(e.as_str())),
+                    WriteDecision::DryRun   => Err(Arc::<str>::from("dry-run")),
+                    WriteDecision::Rejected => Err(Arc::<str>::from("rejected by policy")),
+                };
                 buffer
                     .lock()
                     .expect("staged write buffer poisoned")
@@ -518,6 +573,7 @@ impl WriteFileSink {
                         id,
                         path: req.path.clone(),
                         bytes: req.bytes.clone(),
+                        decision,
                         result: result.clone(),
                     });
                 if let Some(key) = req.approval {
@@ -553,8 +609,9 @@ impl WriteFileBatcher {
     }
     pub fn stage_and_approve(
         registry: Arc<SubjectRegistry<WriteApproval>>,
+        policy:   Arc<WritePolicy>,
     ) -> (Self, Arc<Mutex<Vec<StagedWriteFileRow>>>) {
-        let (sink, buf) = WriteFileSink::stage_and_approve(registry);
+        let (sink, buf) = WriteFileSink::stage_and_approve(registry, policy);
         (Self { sink }, buf)
     }
 }
@@ -647,9 +704,10 @@ impl EffectKind for WriteRangeEffect {
 /// deciding which writes to approve in the next run.
 #[derive(Clone, Debug)]
 pub struct StagedWriteRangeRow {
-    pub id:     Arc<str>,
-    pub effect: WriteRangeEffect,
-    pub result: Result<(), Arc<str>>,
+    pub id:       Arc<str>,
+    pub effect:   WriteRangeEffect,
+    pub decision: WriteDecision,
+    pub result:   Result<(), Arc<str>>,
 }
 
 fn write_range_id(e: &WriteRangeEffect) -> Arc<str> {
@@ -679,6 +737,7 @@ pub enum WriteRangeSink {
     StageAndApprove {
         buffer:    Arc<Mutex<Vec<StagedWriteRangeRow>>>,
         registry:  Arc<SubjectRegistry<WriteApproval>>,
+        policy:    Arc<WritePolicy>,
         disk_lock: Arc<Mutex<()>>,
     },
 }
@@ -695,12 +754,14 @@ impl WriteRangeSink {
 
     pub fn stage_and_approve(
         registry: Arc<SubjectRegistry<WriteApproval>>,
+        policy:   Arc<WritePolicy>,
     ) -> (Self, Arc<Mutex<Vec<StagedWriteRangeRow>>>) {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         (
             WriteRangeSink::StageAndApprove {
                 buffer:    buffer.clone(),
                 registry,
+                policy,
                 disk_lock: Arc::new(Mutex::new(())),
             },
             buffer,
@@ -718,10 +779,15 @@ impl WriteRangeSink {
             WriteRangeSink::Disk(lock) => {
                 disk_splice_range(&e, lock).map_err(|m| Arc::from(m.as_str()))
             }
-            WriteRangeSink::StageAndApprove { buffer, registry, disk_lock } => {
+            WriteRangeSink::StageAndApprove { buffer, registry, policy, disk_lock } => {
                 let id = write_range_id(&e);
-                let result = disk_splice_range(&e, disk_lock)
-                    .map_err(|m| Arc::<str>::from(m.as_str()));
+                let decision = policy.decide(&id);
+                let result: Result<(), Arc<str>> = match decision {
+                    WriteDecision::Approved => disk_splice_range(&e, disk_lock)
+                        .map_err(|m| Arc::<str>::from(m.as_str())),
+                    WriteDecision::DryRun   => Err(Arc::<str>::from("dry-run")),
+                    WriteDecision::Rejected => Err(Arc::<str>::from("rejected by policy")),
+                };
                 let approval = e.approval;
                 buffer
                     .lock()
@@ -729,6 +795,7 @@ impl WriteRangeSink {
                     .push(StagedWriteRangeRow {
                         id,
                         effect: e,
+                        decision,
                         result: result.clone(),
                     });
                 if let Some(key) = approval {
@@ -809,8 +876,9 @@ impl WriteRangeBatcher {
     }
     pub fn stage_and_approve(
         registry: Arc<SubjectRegistry<WriteApproval>>,
+        policy:   Arc<WritePolicy>,
     ) -> (Self, Arc<Mutex<Vec<StagedWriteRangeRow>>>) {
-        let (sink, buf) = WriteRangeSink::stage_and_approve(registry);
+        let (sink, buf) = WriteRangeSink::stage_and_approve(registry, policy);
         (Self { sink }, buf)
     }
 }

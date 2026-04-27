@@ -32,8 +32,8 @@ use pipeline::disk_cache::DiskCache;
 use pipeline::effects::{
     AstParseEffect, FsListFilesBatcher, FsListFilesEffect, LspDiagBatcher, LspDiagEffect,
     PrintBatcher, PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect, ReadBytesBatcher,
-    ReadBytesEffect, StagedWriteFileRow, StagedWriteRangeRow, WriteApproval, WriteFileBatcher,
-    WriteFileEffect, WriteRangeBatcher, WriteRangeEffect,
+    ReadBytesEffect, StagedWriteFileRow, StagedWriteRangeRow, WriteApproval, WriteDecision,
+    WriteFileBatcher, WriteFileEffect, WritePolicy, WriteRangeBatcher, WriteRangeEffect,
 };
 use pipeline::ops::relation::RelationArg;
 use pipeline::ops::{RuleCallOp, RulePredicateOp};
@@ -60,6 +60,9 @@ pub struct RunRequest {
     /// switchMap-style cancellation the LSP layer constructs a per-doc
     /// child token from `state.cancel_root`.
     pub cancel:         CancellationToken,
+    /// Staging policy consulted by the write sinks. Default
+    /// `ApproveAll` mirrors prior behavior.
+    pub write_policy:   Arc<WritePolicy>,
 }
 
 pub struct RunStart {
@@ -72,6 +75,23 @@ pub enum RunEvent {
     ExprDone { expr_name: Option<Arc<str>> },
     Diag     { code: String, severity: String, message: String },
     Done,
+}
+
+/// Map a (decision, result) onto the (severity, code, outcome string)
+/// used in the staged-write diag panel. `kind` is the non-rejected code
+/// namespace (`staged/write_range` or `staged/write_file`); rejected
+/// rows always surface as `staged/rejected` Warning so they stand out.
+fn decision_render(
+    decision: WriteDecision,
+    result:   &Result<(), Arc<str>>,
+    kind:     &str,
+) -> (String, String, String) {
+    match (decision, result) {
+        (WriteDecision::Approved, Ok(()))  => ("Info".into(),    kind.to_string(),         "ok".to_string()),
+        (WriteDecision::Approved, Err(e))  => ("Info".into(),    kind.to_string(),         format!("err: {e}")),
+        (WriteDecision::DryRun,   _)       => ("Info".into(),    kind.to_string(),         "dry-run".to_string()),
+        (WriteDecision::Rejected, _)       => ("Warning".into(), "staged/rejected".into(), "rejected by policy".to_string()),
+    }
 }
 
 pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart {
@@ -155,6 +175,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     let cancel = req.cancel.clone();
     let workspace_for_stream = workspace.clone();
     let state_for_stream = state.clone();
+    let write_policy = req.write_policy.clone();
 
     let rule_names_for_stream = rule_names.clone();
     let stream = async_stream::stream! {
@@ -200,6 +221,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 relation_store.clone(),
                 subject_registry.clone(),
                 PrintBatcher::stdout(),
+                write_policy.clone(),
             );
             // Phase 1a: staged write rows are auto-approved inline by
             // the sink. The buffers are still populated for downstream
@@ -301,10 +323,8 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 std::mem::take(&mut *g)
             };
             for row in drained_ranges {
-                let outcome = match &row.result {
-                    Ok(())  => "ok".to_string(),
-                    Err(e)  => format!("err: {e}"),
-                };
+                let (severity, code, outcome) =
+                    decision_render(row.decision, &row.result, "staged/write_range");
                 let msg = format!(
                     "[id={}] {} {}..{} +{}B mode={} -> {}",
                     row.id,
@@ -315,21 +335,15 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                     row.effect.mode.as_str(),
                     outcome,
                 );
-                yield RunEvent::Diag {
-                    code:     "staged/write_range".into(),
-                    severity: "Info".into(),
-                    message:  msg,
-                };
+                yield RunEvent::Diag { code, severity, message: msg };
             }
             let drained_files: Vec<StagedWriteFileRow> = {
                 let mut g = staged_files.lock().expect("staged write_file buffer poisoned");
                 std::mem::take(&mut *g)
             };
             for row in drained_files {
-                let outcome = match &row.result {
-                    Ok(())  => "ok".to_string(),
-                    Err(e)  => format!("err: {e}"),
-                };
+                let (severity, code, outcome) =
+                    decision_render(row.decision, &row.result, "staged/write_file");
                 let msg = format!(
                     "[id={}] {} +{}B -> {}",
                     row.id,
@@ -337,11 +351,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                     row.bytes.len(),
                     outcome,
                 );
-                yield RunEvent::Diag {
-                    code:     "staged/write_file".into(),
-                    severity: "Info".into(),
-                    message:  msg,
-                };
+                yield RunEvent::Diag { code, severity, message: msg };
             }
         }
 
@@ -410,12 +420,13 @@ pub(crate) fn build_seed_ctx(
     relation_store:   Arc<RelationStore>,
     subject_registry: Arc<SubjectRegistry<RelationWake>>,
     print:            PrintBatcher,
+    write_policy:     Arc<WritePolicy>,
 ) -> SeedRtCtx {
     let write_approval = Arc::new(SubjectRegistry::<WriteApproval>::new());
     let (write_range_batcher, staged_ranges) =
-        WriteRangeBatcher::stage_and_approve(write_approval.clone());
+        WriteRangeBatcher::stage_and_approve(write_approval.clone(), write_policy.clone());
     let (write_file_batcher, staged_files) =
-        WriteFileBatcher::stage_and_approve(write_approval.clone());
+        WriteFileBatcher::stage_and_approve(write_approval.clone(), write_policy);
     let (lsp_diag_batcher, lsp_diags) = LspDiagBatcher::buffer();
 
     let ctx = RtCtxBuilder::new()

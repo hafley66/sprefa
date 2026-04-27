@@ -35,7 +35,8 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
-        eprintln!("usage: sprefa-run <file.sprf> [--root <dir>] [--out <db>] [--no-cache]");
+        eprintln!("usage: sprefa-run <file.sprf> [--root <dir>] [--out <db>] [--no-cache] \
+                   [--no-write|--dry-run] [--approve-only id1,id2,...]");
         std::process::exit(2);
     }
     let file = PathBuf::from(&args[0]);
@@ -43,13 +44,21 @@ async fn main() -> Result<()> {
     let mut out_db: Option<PathBuf> = None;
     let mut cache: bool = true;
     let mut info_path: Option<PathBuf> = None;
+    let mut dry_run: bool = false;
+    let mut approve_only: Vec<String> = Vec::new();
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--root"     => root = it.next().map(PathBuf::from),
-            "--out"      => out_db = it.next().map(PathBuf::from),
-            "--no-cache" => cache = false,
-            "--info"     => info_path = it.next().map(PathBuf::from),
+            "--root"         => root = it.next().map(PathBuf::from),
+            "--out"          => out_db = it.next().map(PathBuf::from),
+            "--no-cache"     => cache = false,
+            "--info"         => info_path = it.next().map(PathBuf::from),
+            "--no-write" | "--dry-run" => dry_run = true,
+            "--approve-only" => {
+                approve_only = it.next()
+                    .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+                    .unwrap_or_default();
+            }
             other => { eprintln!("unknown flag: {other}"); std::process::exit(2); }
         }
     }
@@ -72,6 +81,8 @@ async fn main() -> Result<()> {
         "workspace_hint": root,
         "out_db":         out_db,
         "cache":          cache,
+        "dry_run":        dry_run,
+        "approve_only":   approve_only,
     }).to_string();
 
     post_sse(&info, conn, host, "/run", body, print_frame).await
