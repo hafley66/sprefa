@@ -1,0 +1,20 @@
+# ast_yaml smoke fixture. Same audit shape as copy_audit.sprf, but the
+# rule body is raw ast-grep YAML so we exercise nested composition that
+# the plain ast op surface cannot express.
+#
+# Carveouts (${X?} / ${X}) inside the YAML behave like in ast[lang]:
+# they rewrite to native ast-grep `$X` metavars before deserialise.
+
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast_yaml[rs](
+  rule:
+    pattern: "${X?}.to_string()"
+    not:
+      inside:
+        kind: mod_item
+        regex: "^mod tests"
+);
+
+# Sugared form (no `rule:` envelope; body wrapped automatically).
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast_yaml[rs](
+  pattern: "${X?}.to_owned()"
+);

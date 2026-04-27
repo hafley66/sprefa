@@ -1,0 +1,8 @@
+# Parity smoke for ast vs ast_yaml. Both pipes match the same Rust
+# pattern (`fn $N($$$ARGS) { $$$BODY }`) over the same file set; row
+# counts and capture bindings should agree.
+
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rs](fn ${N?}($$${ARGS?}) { $$${BODY?} });
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast_yaml[rs](
+  pattern: "fn ${N?}($$${ARGS?}) { $$${BODY?} }"
+);

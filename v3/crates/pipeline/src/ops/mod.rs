@@ -8,6 +8,7 @@
 //!   - void:          `> void`     — drop the cursor.
 
 pub mod ast_grep;
+pub mod ast_yaml;
 pub mod comment;
 pub mod cursor_ref;
 pub mod fs;
@@ -29,6 +30,7 @@ pub mod write_cursor;
 pub mod write_file;
 
 pub use ast_grep::AstGrepOp;
+pub use ast_yaml::AstYamlOp;
 pub use comment::CommentOp;
 pub use cursor_ref::CursorRefOp;
 pub use fs::{FsMode, FsOp};

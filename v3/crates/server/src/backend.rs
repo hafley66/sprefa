@@ -754,6 +754,64 @@ mod tests {
     }
 
     #[test]
+    fn ast_and_ast_yaml_parity_term_positions_and_captures() {
+        // Parity contract: hovering on `${X?}` inside an `ast[rs](...)`
+        // body and inside an `ast_yaml[rs](...)` body must both surface
+        // the X capture via Op::term_positions() and Op::bound_captures().
+        // If this drifts, ast_yaml hover stops lighting up metavars.
+        let registry = Registry::with_stdlib();
+        let file: Arc<std::path::Path> =
+            Arc::from(std::path::PathBuf::from("t.sprf").as_path());
+
+        for (name, src) in &[
+            ("ast",      "ast[rs](${X?}.to_string())"),
+            ("ast_yaml", "ast_yaml[rs](pattern: \"${X?}.to_string()\")"),
+        ] {
+            let (parsed, errs) = sprefa_parse::host_parse(src, file.clone());
+            assert!(errs.is_empty(), "[{name}] host parse errors: {errs:?}");
+            let inv = parsed.pipes.first().unwrap().ops.first().unwrap();
+            let mut diags = Vec::new();
+            let built = registry
+                .build_from_node(name, inv.node(), src.as_bytes(), &mut diags)
+                .unwrap_or_else(|| panic!("[{name}] registry has no factory"));
+            let op = built
+                .unwrap_or_else(|e| panic!("[{name}] lower failed: {e:?}"));
+
+            let cap_names: Vec<&str> = op
+                .bound_captures()
+                .iter()
+                .map(|s| s.as_ref())
+                .collect();
+            assert!(
+                cap_names.contains(&"X"),
+                "[{name}] bound_captures must include X: {cap_names:?}",
+            );
+
+            let positions: Vec<_> = op
+                .term_positions()
+                .iter()
+                .map(|tp| (tp.name.to_string(), tp.range.clone()))
+                .collect();
+            assert!(
+                !positions.is_empty(),
+                "[{name}] term_positions must be non-empty so hover can find ${{X?}}",
+            );
+            let xs: Vec<_> = positions
+                .iter()
+                .filter(|(n, _)| n == "X")
+                .collect();
+            assert!(!xs.is_empty(), "[{name}] no term_position for X: {positions:?}");
+            for (_, r) in xs {
+                let token = &src[r.clone()];
+                assert!(
+                    token.starts_with("${") && token.ends_with('}'),
+                    "[{name}] term_position for X = {r:?} → {token:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cursor_block_renders_synthesized_capture_inline() {
         let mut c = Cursor::new(Arc::from(&b""[..]));
         c.captures.push(Capture::synthesized(Arc::from("ARGS"), Arc::from("a , b")));

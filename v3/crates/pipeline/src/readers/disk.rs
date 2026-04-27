@@ -1,10 +1,9 @@
 //! DiskFileSource — walks the filesystem under `root` and serves
-//! repo-relative paths. The `cursor.rev` field is currently IGNORED:
-//! `:wt`, `:HEAD`, `:staged`, `:unstaged` all short-circuit to the
-//! current worktree state. This source matches a single configured
-//! `rev` string (so `(repo, rev)` keys still partition cleanly in the
-//! reader cache); cursors carrying any other rev get an empty listing /
-//! a read miss.
+//! repo-relative paths. `cursor.rev` is IGNORED here: `:wt`, `:HEAD`,
+//! `:staged`, `:unstaged` all short-circuit to the current worktree
+//! state. The cursor still carries whatever rev label it was tagged
+//! with (the cache partitions on `(repo, rev)` so identical bytes can
+//! co-live under multiple rev keys without collision).
 //!
 //! A follow-up card will introduce a git-blob-backed source for
 //! immutable rev reads (`:HEAD`, branches, tags, SHAs) and a separate
@@ -29,9 +28,6 @@ impl DiskFileSource {
 
 impl FileSource for DiskFileSource {
     fn files(&self, _repo: &str, rev: &str) -> Vec<Arc<Path>> {
-        if rev != self.rev {
-            return Vec::new();
-        }
         let _t0 = std::time::Instant::now();
         let mut out = Vec::new();
         walk(&self.root, &self.root, &mut out);
@@ -46,10 +42,7 @@ impl FileSource for DiskFileSource {
         out
     }
 
-    fn file_bytes(&self, _repo: &str, rev: &str, path: &Path) -> Option<Arc<[u8]>> {
-        if rev != self.rev {
-            return None;
-        }
+    fn file_bytes(&self, _repo: &str, _rev: &str, path: &Path) -> Option<Arc<[u8]>> {
         let _t0 = std::time::Instant::now();
         let bytes = std::fs::read(self.root.join(path)).ok().map(Arc::<[u8]>::from);
         let len = bytes.as_ref().map(|b| b.len()).unwrap_or(0);

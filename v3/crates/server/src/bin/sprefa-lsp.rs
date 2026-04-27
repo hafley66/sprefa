@@ -12,6 +12,9 @@ use tracing_subscriber::EnvFilter;
 async fn main() {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
+        // VS Code's LSP output channel doesn't render ANSI; force-disable
+        // colour so the log stays readable in the channel view.
+        .with_ansi(false)
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
