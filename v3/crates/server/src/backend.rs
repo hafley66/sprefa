@@ -873,6 +873,7 @@ fn cursor_to_target_diagnostic(
             message:  format!("rule `{focus_op_name}` defined here"),
         }]
     });
+    let message = format_capture_message(c);
     let diag = Diagnostic {
         range: Range {
             start: Position { line: sl, character: sc },
@@ -882,12 +883,59 @@ fn cursor_to_target_diagnostic(
         code: Some(NumberOrString::String(focus_op_name.to_string())),
         code_description: None,
         source: Some(format!("sprf:{source_basename}")),
-        message: format!("matched by `{focus_op_name}` (in {source_basename})"),
+        message,
         related_information: related,
         tags: None,
         data: None,
     };
     Some((uri, diag))
+}
+
+/// Render a cursor's bound captures as a short, useful diagnostic
+/// message. The source/code/related slots already convey "rule X in
+/// file Y"; this slot's only job is to say *what* got bound at the
+/// match site.
+///
+/// Shape: `${A}=foo, ${B}="msg"`. Single-line, individual values
+/// truncated to keep the Problems-panel row scannable. Empty cursor
+/// (no captures) falls back to `(match)` so VS Code still shows the
+/// squiggle without an empty hover row.
+fn format_capture_message(c: &Cursor) -> String {
+    const VAL_MAX: usize = 60;
+    const TOTAL_MAX: usize = 240;
+    if c.captures.is_empty() {
+        return "(match)".into();
+    }
+    let mut parts: Vec<String> = Vec::with_capacity(c.captures.len());
+    for cap in c.captures.iter() {
+        let raw = std::str::from_utf8(cap.bytes(&c.content)).unwrap_or("<non-utf8>");
+        // Collapse whitespace runs so multi-line bindings stay one row.
+        let mut flat = String::with_capacity(raw.len());
+        let mut prev_space = false;
+        for ch in raw.chars() {
+            if ch.is_whitespace() {
+                if !prev_space { flat.push(' '); prev_space = true; }
+            } else {
+                flat.push(ch);
+                prev_space = false;
+            }
+        }
+        let flat = flat.trim();
+        let shown: String = if flat.chars().count() > VAL_MAX {
+            let cut: String = flat.chars().take(VAL_MAX).collect();
+            format!("{cut}…")
+        } else {
+            flat.to_string()
+        };
+        parts.push(format!("${{{name}}}={shown}", name = cap.name));
+    }
+    let joined = parts.join(", ");
+    if joined.chars().count() > TOTAL_MAX {
+        let cut: String = joined.chars().take(TOTAL_MAX).collect();
+        format!("{cut}…")
+    } else {
+        joined
+    }
 }
 
 /// Collapse duplicate diagnostics within a target URI. Multi-seed
@@ -1069,8 +1117,8 @@ mod tests {
             Some(NumberOrString::String("ast".to_string())),
         );
         assert_eq!(diag.source.as_deref(), Some("sprf:selfcheck.sprf"));
-        assert!(diag.message.contains("ast"));
-        assert!(diag.message.contains("selfcheck.sprf"));
+        // Empty captures → fallback message.
+        assert_eq!(diag.message, "(match)");
         // related_information links back to the source .sprf rule.
         let related = diag.related_information.as_ref().expect("related set");
         assert_eq!(related.len(), 1);
@@ -1091,6 +1139,40 @@ mod tests {
             &c, std::path::Path::new("/tmp"), "ast", "x.sprf", None,
         );
         assert!(out.is_none(), "no fs → no diagnostic");
+    }
+
+    #[test]
+    fn format_capture_message_renders_bound_values() {
+        // Cursor body covers full content; two captures: V is span-backed
+        // (an identifier `something`), MSG is synthesized ("a long msg").
+        let body = b"let foo = something.unwrap();";
+        let mut c = Cursor::new(Arc::from(body.as_slice()));
+        c.byte_range = 0..body.len();
+        let v_start = body.windows(9).position(|w| w == b"something").unwrap();
+        c.captures.push(Capture::span_backed(
+            Arc::from("V"),
+            v_start..(v_start + 9),
+        ));
+        c.captures.push(Capture::synthesized(
+            Arc::from("MSG"),
+            Arc::from("a long\n   msg"),
+        ));
+        let s = format_capture_message(&c);
+        // Captures rendered inline; whitespace collapsed for synthesized.
+        assert!(s.contains("${V}=something"), "msg: {s}");
+        assert!(s.contains("${MSG}=a long msg"), "msg: {s}");
+    }
+
+    #[test]
+    fn format_capture_message_truncates_long_values() {
+        let mut c = Cursor::new(Arc::from(b"".as_slice()));
+        let big: String = "x".repeat(200);
+        c.captures.push(Capture::synthesized(Arc::from("HUGE"), Arc::from(big.as_str())));
+        let s = format_capture_message(&c);
+        assert!(s.ends_with('…'), "expected trailing ellipsis: {s}");
+        // Per-value cap is 60; entry should be `${HUGE}=xxxx…` with at most
+        // ~70 chars, well under the total cap.
+        assert!(s.chars().count() < 80, "msg too long: {} chars", s.chars().count());
     }
 
     #[test]
