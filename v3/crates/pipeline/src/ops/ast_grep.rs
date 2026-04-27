@@ -480,8 +480,20 @@ fn lower_sugar(
                 let suffix: String = src[after_brace..k].to_string();
                 out.push('$');
                 out.push_str(&slot_name);
+                // The slot binds to whatever ast-grep captured for
+                // `$SPRFSLOTn`. Node text can be a single token (`x`),
+                // a quoted literal with internal whitespace
+                // (`"a multi word string"`), or a multi-line
+                // expression (`format!(\n  "x"\n)`). `\S+` rejected
+                // any of those, silently dropping every match —
+                // selfcheck.sprf's `panic!(${MSG?})` never fired
+                // because every real panic message has spaces.
+                // Use `(?s).+?` so the slot accepts arbitrary
+                // non-empty text including whitespace and newlines,
+                // and the optional surrounding `prefix`/`suffix`
+                // anchors still drive sub-token extraction.
                 let re_src = format!(
-                    "^{}(?P<{}>\\S+){}$",
+                    "(?s)^{}(?P<{}>.+?){}$",
                     regex::escape(&prefix),
                     name,
                     regex::escape(&suffix),
@@ -694,6 +706,129 @@ mod tests {
             _ => panic!("expected synthesized text for multi capture"),
         };
         assert!(text.contains("a") && text.contains("b"), "joined args text: {text}");
+    }
+
+    // --- regression coverage for `selfcheck.sprf` patterns ---
+    //
+    // These pin the patterns the dogfood `selfcheck.sprf` fixture
+    // depends on. Each one is tested against actual Rust source that
+    // grep agrees contains the construct. A regression here means
+    // selfcheck silently goes back to "0 cursors emitted" in the LSP
+    // hover panel and on `sprefa-run` stderr.
+    //
+    // 2026-04-27 finding: every shape below MATCHES at the
+    // `lower → op.pipe(in-memory cursor)` level. The selfcheck.sprf
+    // 0-match symptom is therefore not a pattern-compile gap — it's
+    // upstream (cursor content / byte_range / fs+ast integration) and
+    // is exercised by the smoke harness, not these unit tests.
+
+    #[tokio::test]
+    async fn selfcheck_method_call_unit() {
+        // The one shape that works today; if this regresses, every
+        // selfcheck `${V?}.unwrap()` lint goes silent.
+        let ctx = test_ctx();
+        let body = b"fn f() { let _ = x.unwrap(); let _ = y.unwrap(); }\n";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("ast[rust](${V}.unwrap())").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert_eq!(out.len(), 2, "method-call shape must keep matching");
+    }
+
+    #[tokio::test]
+    async fn selfcheck_macro_with_metavar_arg() {
+        // `panic!(${MSG?})` over real `panic!("boom")`. Sample taken
+        // from v3/crates/pipeline/src/ops/ast_grep.rs L694 (`panic!(...)`
+        // in this very file).
+        let ctx = test_ctx();
+        let body = b"fn f() { panic!(\"boom\"); }\n";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("ast[rust](panic!(${MSG}))").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert!(
+            !out.is_empty(),
+            "macro_invocation pattern matched 0 cursors against `panic!(\"boom\")`"
+        );
+    }
+
+    #[tokio::test]
+    async fn selfcheck_macro_metavar_binds_text_with_whitespace() {
+        // The exact bug that made selfcheck.sprf show 0 panic hits
+        // against the live tree: every real panic message has spaces,
+        // and the slot regex used `\S+` which rejects whitespace.
+        // Two non-trivial shapes both must bind MSG:
+        //   panic!("expected Object")             — quoted string + space
+        //   panic!(\n    "multi-line msg"\n)    — newline inside the call
+        //
+        // Out of scope (ast-grep 0.36 limitation, not the slot regex):
+        //   panic!(format!(...))                  — nested macro
+        //     in the token-tree arg slot. ast-grep does not reliably
+        //     bind a metavar to a nested macro_invocation here. File
+        //     under sprefa-4m7.3 if it bites.
+        let ctx = test_ctx();
+        let body = b"\
+fn a() { panic!(\"expected Object\"); }
+fn b() {
+    panic!(
+        \"multi-line msg\"
+    );
+}
+";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("ast[rust](panic!(${MSG}))").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        let bound: Vec<String> = out.iter().map(|c| {
+            let m = c.captures.iter().find(|c| &*c.name == "MSG").unwrap();
+            String::from_utf8_lossy(m.bytes(&c.content)).into_owned()
+        }).collect();
+        assert_eq!(
+            out.len(), 2,
+            "panic!(${{MSG}}) must bind MSG even when the message contains \
+             whitespace or newlines (got {}: {:?})",
+            out.len(), bound
+        );
+        assert!(bound.iter().any(|s| s.contains("expected Object")));
+        assert!(bound.iter().any(|s| s.contains("multi-line msg")));
+    }
+
+    #[tokio::test]
+    async fn selfcheck_bare_macro_no_args() {
+        let ctx = test_ctx();
+        let body = b"fn f() { todo!(); }\n";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("ast[rust](todo!())").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert!(
+            !out.is_empty(),
+            "bare-macro pattern matched 0 cursors against `todo!()`"
+        );
+    }
+
+    #[tokio::test]
+    async fn selfcheck_path_call_zero_args() {
+        let ctx = test_ctx();
+        let body = b"fn f() { let _ = RtCtxBuilder::new(); }\n";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("ast[rust](RtCtxBuilder::new())").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert!(
+            !out.is_empty(),
+            "path-call pattern matched 0 cursors against `RtCtxBuilder::new()`"
+        );
+    }
+
+    #[tokio::test]
+    async fn selfcheck_method_call_with_string_arg() {
+        // `${V?}.expect("")` shape. ast-grep should bind V to the
+        // receiver and match on the empty-string literal arg.
+        let ctx = test_ctx();
+        let body = b"fn f() { let _ = x.expect(\"\"); }\n";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("ast[rust](${V}.expect(\"\"))").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert!(
+            !out.is_empty(),
+            "string-arg method pattern matched 0 cursors against `x.expect(\"\")`"
+        );
     }
 
     #[tokio::test]

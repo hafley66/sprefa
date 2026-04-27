@@ -181,56 +181,68 @@ async fn run_lsp_stdio(
     };
     let state = ServerState::new(&opts).await?;
 
-    if http_unix.is_some() || http_tcp.is_some() {
-        let serve_state = state.clone();
-        let serve_opts  = HttpOpts { unix: http_unix.clone(), tcp: http_tcp };
-        let info = ServerInfo {
-            pid:        std::process::id(),
-            version:    env!("CARGO_PKG_VERSION").to_string(),
-            started_at: Utc::now().to_rfc3339(),
-            http: HttpInfo {
-                unix: http_unix.clone(),
-                tcp:  http_tcp.map(|a| a.to_string()),
-            },
-            log_path: None,
+    let http_task: Option<tokio::task::JoinHandle<()>> =
+        if http_unix.is_some() || http_tcp.is_some() {
+            let serve_state = state.clone();
+            let serve_opts  = HttpOpts { unix: http_unix.clone(), tcp: http_tcp };
+            let info = ServerInfo {
+                pid:        std::process::id(),
+                version:    env!("CARGO_PKG_VERSION").to_string(),
+                started_at: Utc::now().to_rfc3339(),
+                http: HttpInfo {
+                    unix: http_unix.clone(),
+                    tcp:  http_tcp.map(|a| a.to_string()),
+                },
+                log_path: None,
+            };
+            let ready = state.ready.clone();
+            let info_for_writer = info_path.clone();
+            Some(tokio::spawn(async move {
+                let mut serve = tokio::spawn(async move {
+                    serve_http(serve_state, serve_opts).await
+                });
+                tokio::select! {
+                    _ = ready.notified() => {
+                        if let Err(e) = ServerInfo::write_atomic(&info_for_writer, &info) {
+                            tracing::warn!(err = %e, "lsp_stdio: server.json write failed");
+                        } else {
+                            tracing::info!(
+                                info_path = %info_for_writer.display(),
+                                "lsp_stdio: HTTP also serving; server.json written"
+                            );
+                        }
+                        // Keep serve future alive; pin it to this task.
+                        let _ = serve.await;
+                    }
+                    res = &mut serve => {
+                        match res {
+                            Ok(Err(e)) => tracing::info!(
+                                err = %e,
+                                "lsp_stdio: HTTP not bound (likely another daemon); LSP-only"
+                            ),
+                            Ok(Ok(())) => {}
+                            Err(e) => tracing::warn!(err = %e, "lsp_stdio: serve_http join error"),
+                        }
+                    }
+                }
+            }))
+        } else {
+            None
         };
-        let ready = state.ready.clone();
-        let info_for_writer = info_path.clone();
-        tokio::spawn(async move {
-            let mut serve = tokio::spawn(async move {
-                serve_http(serve_state, serve_opts).await
-            });
-            tokio::select! {
-                _ = ready.notified() => {
-                    if let Err(e) = ServerInfo::write_atomic(&info_for_writer, &info) {
-                        tracing::warn!(err = %e, "lsp_stdio: server.json write failed");
-                    } else {
-                        tracing::info!(
-                            info_path = %info_for_writer.display(),
-                            "lsp_stdio: HTTP also serving; server.json written"
-                        );
-                    }
-                    // Keep serve future alive; pin it to this task.
-                    let _ = serve.await;
-                }
-                res = &mut serve => {
-                    match res {
-                        Ok(Err(e)) => tracing::info!(
-                            err = %e,
-                            "lsp_stdio: HTTP not bound (likely another daemon); LSP-only"
-                        ),
-                        Ok(Ok(())) => {}
-                        Err(e) => tracing::warn!(err = %e, "lsp_stdio: serve_http join error"),
-                    }
-                }
-            }
-        });
-    }
 
     let stdin  = tokio::io::stdin();
     let stdout = tokio::io::stdout();
+    let svc_state = state.clone();
     let (service, socket) =
-        LspService::new(move |client| Backend::with_state(client, state.clone()));
+        LspService::new(move |client| Backend::with_state(client, svc_state.clone()));
     LspServer::new(stdin, stdout, socket).serve(service).await;
+
+    // tower_lsp returned: VS Code closed stdin or sent shutdown. Trip
+    // cancel_root so any in-flight hover/pipeline drain unwinds, abort
+    // the side HTTP task, and let the process exit before VS Code's
+    // stop timeout fires SIGKILL.
+    tracing::info!("lsp_stdio: stdio serve loop exited; shutting down");
+    state.shutdown().await;
+    if let Some(h) = http_task { h.abort(); }
     Ok(())
 }

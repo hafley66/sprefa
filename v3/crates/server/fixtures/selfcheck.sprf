@@ -150,7 +150,7 @@ fs(glob(crates/*/Cargo.toml))
 # ============================================================
 
 fs(glob(crates/**/src/**/*.rs))
-  > ast_yaml[rust](pattern: "fn ${N?}_test(${ARGS?})")
+  > ast_yaml[rust](pattern: "async fn ${N?}_test($$${ARGS?})")
   > lsp[info](
       message = "test fn naming convention `_test` suffix",
       code    = "selfcheck/test-fn-suffix");
