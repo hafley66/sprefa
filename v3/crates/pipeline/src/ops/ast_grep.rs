@@ -970,6 +970,67 @@ mod tests {
         assert_eq!(names, vec!["HOOK"], "only metavar HOOK is user-visible");
     }
 
+    // --- sprefa-236: pin the user-facing shape end-to-end ---
+
+    #[tokio::test]
+    async fn pipe_fusion_use_opname_re_with_multi_args() {
+        // The exact shape from the sprefa-236 ask:
+        //   use${OP_NAME?}${re(Query|LazyQuery|Mutation)}($$$)
+        //
+        // Fuses metavar+re into one slot, then ast-grep's bare `$$$`
+        // sweeps any number of args. Should bind OP_NAME to the prefix
+        // before the re alternation, drop call sites whose name doesn't
+        // end with one of the listed suffixes.
+        let ctx = test_ctx();
+        let body = b"\
+const a = useFooQuery(1, 2);
+const b = useBarMutation();
+const c = useBaz(99);
+const d = useThingLazyQuery(x, y, z);
+";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op =
+            lower("ast[ts](use${OP_NAME?}${re(Query|LazyQuery|Mutation)}($$$))").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        let mut bound: Vec<String> = out.iter().map(|c| {
+            let n = c.captures.iter().find(|c| &*c.name == "OP_NAME").unwrap();
+            String::from_utf8_lossy(n.bytes(&c.content)).into_owned()
+        }).collect();
+        bound.sort();
+        assert_eq!(bound, vec!["Bar".to_string(), "Foo".to_string(), "Thing".to_string()]);
+    }
+
+    // Known gap (sprefa-236 follow-up): `${X?}${glob(*Service)}` lowers
+    // to `(?P<X>.+?)(?:[^/]*Service)$`. The glob's leading `*` becomes
+    // greedy `[^/]*` next to the term's non-greedy `.+?`; the greedy
+    // `[^/]*` eats the prefix the user expects X to bind. Resolution
+    // would special-case fusion when the hole's regex begins with a
+    // wildcard quantifier (collapse the `*` into the term). Filed for
+    // follow-up; the re path (no leading wildcard, alternation literal)
+    // works as expected today.
+
+    #[tokio::test]
+    async fn pipe_two_adjacent_terms_first_term_grabs_minimum() {
+        // Two unconstrained metavars adjacent collapse into
+        // `(?P<A>.+?)(?P<B>.+?)`. Both are non-greedy, so A grabs the
+        // minimum (one char) and B grabs the rest. No constraint => no
+        // sensible split, but the regex still resolves deterministically.
+        // Pinned so a future change to fusion behavior surfaces here.
+        let ctx = test_ctx();
+        let body = b"type t = FooBar;\n";
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower("ast[ts](type t = ${A?}${B?})").unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert_eq!(out.len(), 1);
+        let cap = |name: &str| -> String {
+            let cc = &out[0];
+            let m = cc.captures.iter().find(|c| &*c.name == name).unwrap();
+            String::from_utf8_lossy(m.bytes(&cc.content)).into_owned()
+        };
+        assert_eq!(cap("A"), "F");
+        assert_eq!(cap("B"), "ooBar");
+    }
+
     #[test]
     fn lower_sugar_re_hole_unterminated_paren_diag() {
         // `${re(unclosed}` — the carveout terminates at `}` but the
