@@ -19,11 +19,12 @@ if [ ! -x "$bin" ]; then
 fi
 
 fixture="crates/server/fixtures/rule_arity_smoke.sprf"
-db="crates/server/fixtures/rule_arity_smoke.db"
+db="$(mktemp -t rule_arity_smoke.XXXX.db)"
 root="crates/server"
 
+trap 'rm -f "$db" "$db-shm" "$db-wal"' EXIT
 rm -f "$db"
-"$bin" "$fixture" --root "$root" >/dev/null
+"$bin" "$fixture" --root "$root" --out "$db" >/dev/null
 
 [ -f "$db" ] || { echo "FAIL: db not created at $db" >&2; exit 1; }
 

@@ -100,7 +100,26 @@ fn main() {
             config::from_cli(root, rev.clone())
         }
     };
-    if let Some(p) = out_db { cfg.run.out_db = Some(p); }
+    // Out-db resolution: explicit --out wins. Otherwise allocate a
+    // disposable tmp file under $TMPDIR; the path is the same one the
+    // L2 disk cache opens AND the SQL drain writes to, so a single run
+    // exercises the full stack without leaving artifacts on disk. The
+    // tmp path is captured here so the cleanup hook below can rm it
+    // (plus its -shm/-wal siblings) on every exit path.
+    let auto_out_db: Option<PathBuf> = if out_db.is_some() {
+        cfg.run.out_db = out_db;
+        None
+    } else {
+        let pid = std::process::id();
+        let nonce: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let p = std::env::temp_dir()
+            .join(format!("sprefa_run_{pid}_{nonce}.db"));
+        cfg.run.out_db = Some(p.clone());
+        Some(p)
+    };
     if no_cache { cfg.run.cache = false; }
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -110,6 +129,14 @@ fn main() {
     rt.block_on(async {
         run(&source, &sprf_path, &cfg).await
     });
+
+    // Auto-tmp cleanup: when --out wasn't supplied, the run picked a
+    // temp path. Delete it (plus -shm/-wal siblings) on the success
+    // exit path. Explicit --out paths are left alone — that file is
+    // the user's artifact. process::exit inside run() skips this hook,
+    // but those paths land in $TMPDIR (which the OS reaps), so the
+    // project tree still stays clean.
+    if let Some(p) = &auto_out_db { rm_db_triplet(p); }
 }
 
 async fn run(source: &str, file: &Path, cfg: &Config) {
@@ -182,18 +209,20 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
         // accumulates both surfaces.
         let mut op_cache_inner = OpCache::new(cfg.run.cache);
         if cfg.run.cache {
-            let db_path = cfg.run.out_db.clone()
-                .unwrap_or_else(|| default_out_db(file));
-            match DiskCache::open(&db_path) {
-                Ok(disk) => {
-                    op_cache_inner = op_cache_inner.with_l2(Arc::new(disk));
-                }
-                Err(e) => {
-                    eprintln!("# l2 cache: open {} failed: {} (L1 only)",
-                        db_path.display(), e);
+            if let Some(db_path) = cfg.run.out_db.clone() {
+                match DiskCache::open(&db_path) {
+                    Ok(disk) => {
+                        op_cache_inner = op_cache_inner.with_l2(Arc::new(disk));
+                    }
+                    Err(e) => {
+                        eprintln!("# l2 cache: open {} failed: {} (L1 only)",
+                            db_path.display(), e);
+                    }
                 }
             }
         }
+        // Note: out_db is always Some by the time we get here — explicit
+        // --out or the auto-tmp allocation in main().
         let op_cache = Arc::new(op_cache_inner);
         let ctx = RtCtxBuilder::new()
             .with_store(relation_store.clone())
@@ -292,13 +321,27 @@ async fn run(source: &str, file: &Path, cfg: &Config) {
     // SQLite drain: dump rule rows. One table per rule, columns =
     // union of all capture names seen across rows for that rule, all
     // VARCHAR. Schema discovered at drain time (no fixed shape).
-    let db_path = cfg.run.out_db.clone().unwrap_or_else(|| default_out_db(file));
+    let db_path = cfg.run.out_db.clone()
+        .expect("out_db is always set by main() — explicit --out or auto-tmp");
     if let Err(e) = dump_to_sqlite(
         &relation_store, &db_path, file, &rule_hashes, &cfg.run,
     ).await {
         eprintln!("sqlite drain: {e}");
         std::process::exit(1);
     }
+}
+
+/// Remove a sqlite db file and its WAL/SHM siblings. Best-effort —
+/// missing files are not an error. Called by `main()` after a
+/// successful run when the db was auto-allocated to a tmp path.
+fn rm_db_triplet(p: &Path) {
+    let _ = std::fs::remove_file(p);
+    let mut shm = p.as_os_str().to_owned();
+    shm.push("-shm");
+    let _ = std::fs::remove_file(PathBuf::from(&shm));
+    let mut wal = p.as_os_str().to_owned();
+    wal.push("-wal");
+    let _ = std::fs::remove_file(PathBuf::from(&wal));
 }
 
 /// Drive a pre-lowered Pipeline against a single seed cursor. Prints
@@ -514,18 +557,6 @@ fn lower_rule_body(
 // ---------------------------------------------------------------------------
 // SQLite drain
 // ---------------------------------------------------------------------------
-
-/// Default db file path: `<sprf_path with .db extension>`. Honors
-/// the parent dir of the .sprf file so multiple .sprf files in the
-/// same dir get sibling .db files.
-fn default_out_db(sprf_path: &Path) -> PathBuf {
-    let stem = sprf_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "sprefa".to_string());
-    let parent = sprf_path.parent().unwrap_or(Path::new("."));
-    parent.join(format!("{stem}.db"))
-}
 
 /// File stem of the .sprf source — the prefix every per-rule table
 /// gets. `foo.sprf` rules `bar`, `baz` produce tables

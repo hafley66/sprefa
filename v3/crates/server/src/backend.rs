@@ -25,7 +25,7 @@ use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionK
 
 use effect_runtime::batchers::BoundedWorkSteal;
 use effect_runtime::{RtCtxBuilder, SubjectRegistry, Yield, YieldBatcher};
-use pipeline::_0_cursor::{Capture, CaptureKind, Cursor, PathSeg};
+use pipeline::_0_cursor::{Capture, CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
 use pipeline::effects::{
     ast_parse, AstParseEffect, FsListFilesBatcher, FsListFilesEffect, PrintBatcher,
@@ -520,11 +520,13 @@ async fn render_enriched_hover(
             "seed.effects:\n{}", summary
         );
         let root = seed.root.clone();
-        for c in &rows {
-            total_rows += 1;
-            if rendered >= HOVER_ROW_CAP { continue; }
-            md.push_str(&render_cursor_block(rendered + 1, c, &root, focus_capture.as_deref()));
-            rendered += 1;
+        let take = (HOVER_ROW_CAP.saturating_sub(rendered)).min(rows.len());
+        total_rows += rows.len();
+        if take > 0 {
+            md.push_str(&render_cursor_tables(
+                &rows[..take], rendered, &root, focus_capture.as_deref(),
+            ));
+            rendered += take;
         }
     }
 
@@ -551,77 +553,119 @@ async fn render_enriched_hover(
     Some(md)
 }
 
-/// Compact per-cursor block: header line with file link + repo@rev +
-/// byte range, optional match preview as blockquote, captures as a
-/// bullet list with each value linking to its source span.
+/// Render a batch of cursors as one or more wide markdown tables —
+/// one table per group of cursors that share the same capture-name
+/// signature. Each row is one cursor; columns are
+/// `# | file | bytes | match | $X | $Y | ... | last_bound`.
 ///
-/// `focus_capture` (when set) marks the bullet for that capture name
-/// with a `→` indicator and bolds the value link, so the user's eye
-/// lands on the right line per row.
-fn render_cursor_block(n: usize, c: &Cursor, root: &Path, focus_capture: Option<&str>) -> String {
+/// Grouping by signature keeps columns stable per table; pipelines
+/// that emit cursors with diverging capture sets get a small number
+/// of tables instead of one ragged super-table.
+///
+/// `start_index` is added to the row number so multi-seed runs
+/// keep ordinals globally consistent.
+fn render_cursor_tables(
+    cursors:       &[Cursor],
+    start_index:   usize,
+    root:          &Path,
+    focus_capture: Option<&str>,
+) -> String {
     let mut out = String::new();
 
-    // Header line (outside the table so the click target keeps full
-    // width and never wraps inside a cell).
-    let header_anchor = match &c.fs {
-        Some(rel) => {
-            let abs = root.join(rel.as_ref());
-            let line = line_of_offset(&c.content, c.byte_range.start);
-            format!(
-                "[`{}#L{line}`](file://{}#L{line})",
-                rel.to_string_lossy(),
-                abs.display(),
-            )
-        }
-        None => "_(no file)_".into(),
-    };
-    out.push_str(&format!(
-        "\n**{n}.** {header_anchor} · `{}@{}` · `bytes {}..{}`\n",
-        c.repo, c.rev, c.byte_range.start, c.byte_range.end,
-    ));
-
-    // Per-cursor 2-col table. One row per fact: match preview,
-    // captures, last_bound, SprfPath. Easier to scan than the prior
-    // bullet-list shape.
-    let mut rows: Vec<(String, String)> = Vec::new();
-
-    let preview = render_preview(c);
-    if !preview.is_empty() {
-        rows.push(("_match_".into(), format!("`{}`", escape_pipe(&preview))));
-    }
-
-    for cap in &c.captures {
-        let value_cell = render_capture_value(c, cap, root);
-        let is_focus = focus_capture.is_some_and(|f| f == &*cap.name);
-        let field = if is_focus {
-            format!("▶ **`${}`**", cap.name)
+    // Group by capture-name signature, preserving first-seen order.
+    let mut groups: Vec<(Vec<Arc<str>>, Vec<usize>)> = Vec::new();
+    for (i, c) in cursors.iter().enumerate() {
+        let sig: Vec<Arc<str>> = c.captures.iter().map(|cap| cap.name.clone()).collect();
+        if let Some((_, idxs)) = groups.iter_mut().find(|(s, _)| s == &sig) {
+            idxs.push(i);
         } else {
-            format!("`${}`", cap.name)
-        };
-        let value = if is_focus { format!("**{value_cell}**") } else { value_cell };
-        rows.push((field, value));
+            groups.push((sig, vec![i]));
+        }
     }
 
-    if let Some(name) = c.last_bound.as_ref() {
-        rows.push(("_last_bound_".into(), format!("`${name}`")));
-    }
-    if !c.path.is_empty() {
-        let path = c
-            .path
-            .iter()
-            .map(|s| match s {
-                PathSeg::Op { name, step } => format!("{name}#{step}"),
-                PathSeg::ForkArm { index } => format!("arm{index}"),
-            })
-            .collect::<Vec<_>>()
-            .join(" > ");
-        rows.push(("_SprfPath_".into(), format!("`{}`", escape_pipe(&path))));
-    }
+    for (gi, (sig, idxs)) in groups.iter().enumerate() {
+        if gi > 0 {
+            out.push('\n');
+        }
+        if groups.len() > 1 {
+            let cap_list: Vec<String> = sig.iter().map(|n| format!("`${n}`")).collect();
+            out.push_str(&format!(
+                "\n_Group {} of {} ({} rows; captures: {})_\n",
+                gi + 1,
+                groups.len(),
+                idxs.len(),
+                if cap_list.is_empty() { "_(none)_".into() } else { cap_list.join(", ") },
+            ));
+        }
 
-    if !rows.is_empty() {
-        out.push_str("\n| | |\n| --- | --- |\n");
-        for (field, value) in &rows {
-            out.push_str(&format!("| {field} | {value} |\n"));
+        // Header row.
+        out.push_str("\n| # | file | bytes | match |");
+        for n in sig {
+            let is_focus = focus_capture.is_some_and(|f| f == n.as_ref());
+            if is_focus {
+                out.push_str(&format!(" **`${n}`** ▶ |"));
+            } else {
+                out.push_str(&format!(" `${n}` |"));
+            }
+        }
+        out.push_str(" last_bound |\n");
+        out.push_str("| --- | --- | --- | --- |");
+        for _ in sig { out.push_str(" --- |"); }
+        out.push_str(" --- |\n");
+
+        // Data rows.
+        for &i in idxs {
+            let c = &cursors[i];
+            let n = start_index + i + 1;
+
+            let file_cell = match &c.fs {
+                Some(rel) => {
+                    let abs = root.join(rel.as_ref());
+                    let line = line_of_offset(&c.content, c.byte_range.start);
+                    format!(
+                        "[`{}#L{line}`](file://{}#L{line})",
+                        rel.to_string_lossy(),
+                        abs.display(),
+                    )
+                }
+                None => "_(no file)_".into(),
+            };
+
+            let bytes_cell = format!("`{}..{}`", c.byte_range.start, c.byte_range.end);
+            let preview = render_preview(c);
+            let match_cell = if preview.is_empty() {
+                String::new()
+            } else {
+                format!("`{}`", escape_pipe(&preview))
+            };
+
+            out.push_str(&format!(
+                "| {n} | {file_cell} | {bytes_cell} | {match_cell} |",
+            ));
+
+            // Capture cells in signature order. Every cursor in this
+            // group has the same capture-name set by construction.
+            for cap_name in sig {
+                let cell = c
+                    .captures
+                    .iter()
+                    .find(|cap| &cap.name == cap_name)
+                    .map(|cap| render_capture_value(c, cap, root))
+                    .unwrap_or_default();
+                let is_focus = focus_capture.is_some_and(|f| f == cap_name.as_ref());
+                if is_focus {
+                    out.push_str(&format!(" **{cell}** |"));
+                } else {
+                    out.push_str(&format!(" {cell} |"));
+                }
+            }
+
+            let last = c
+                .last_bound
+                .as_ref()
+                .map(|n| format!("`${n}`"))
+                .unwrap_or_default();
+            out.push_str(&format!(" {last} |\n"));
         }
     }
 
@@ -806,19 +850,17 @@ mod tests {
         ));
 
         let root = std::path::PathBuf::from("/tmp/root");
-        let md = render_cursor_block(1, &c, &root, None);
+        let md = render_cursor_tables(std::slice::from_ref(&c), 0, &root, None);
 
         assert!(md.contains("[`Cargo.toml#L1`]"), "header file link present: {md}");
         assert!(md.contains("(file:///tmp/root/Cargo.toml#L"), "absolute file:// URL: {md}");
-        assert!(
-            md.contains("| `$N` | [`\"alice\"`]"),
-            "capture row rendered as table row with linked value: {md}"
-        );
+        assert!(md.contains("`$N`"), "capture column header present: {md}");
+        assert!(md.contains("[`\"alice\"`]"), "capture value rendered as link: {md}");
         assert!(
             md.contains(&format!("#L2)")),
             "capture link points at line 2 of the source: {md}"
         );
-        assert!(md.contains("| --- | --- |"), "table separator present: {md}");
+        assert!(md.contains("| --- |"), "table separator present: {md}");
     }
 
     #[test]
@@ -924,10 +966,11 @@ mod tests {
     fn cursor_block_renders_synthesized_capture_inline() {
         let mut c = Cursor::new(Arc::from(&b""[..]));
         c.captures.push(Capture::synthesized(Arc::from("ARGS"), Arc::from("a , b")));
-        let md = render_cursor_block(1, &c, std::path::Path::new("/"), None);
+        let md = render_cursor_tables(std::slice::from_ref(&c), 0, std::path::Path::new("/"), None);
+        assert!(md.contains("`$ARGS`"), "synthesized capture column header: {md}");
         assert!(
-            md.contains("| `$ARGS` | `a , b` _(synthesized)_ |"),
-            "synthesized capture as table row: {md}",
+            md.contains("`a , b` _(synthesized)_"),
+            "synthesized value cell: {md}",
         );
     }
 
@@ -941,7 +984,7 @@ mod tests {
             Arc::from("BODY"),
             Arc::from("for d in dirs {\n    fs::create_dir_all(r"),
         ));
-        let md = render_cursor_block(1, &c, std::path::Path::new("/"), None);
+        let md = render_cursor_tables(std::slice::from_ref(&c), 0, std::path::Path::new("/"), None);
         assert!(
             !md.contains("dirs {\n    fs::create"),
             "raw newline leaked into table cell: {md}",
