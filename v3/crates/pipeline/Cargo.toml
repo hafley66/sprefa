@@ -32,6 +32,7 @@ notify-debouncer-mini = { version = "0.4", default-features = false }
 ignore            = "0.4"
 ast-grep-config = "0.36"
 serde_yaml = "0.9.34"
+git2              = { version = "0.19", default-features = false }
 
 
 [dev-dependencies]

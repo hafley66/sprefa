@@ -37,7 +37,7 @@ use pipeline::effects::{
 };
 use pipeline::ops::relation::RelationArg;
 use pipeline::ops::{RuleCallOp, RulePredicateOp};
-use pipeline::readers::{BufferOverlay, DiskFileSource, FileSource};
+use pipeline::readers::{BufferOverlay, DiskFileSource, FileSource, GitFileSource};
 use pipeline::registry::{lower_paren_slot, Registry};
 use pipeline::relation_store::{RelationStore, RelationWake, WriteBatcher, WriteEffect};
 use pipeline::rule_def;
@@ -530,7 +530,32 @@ fn wrap_seed_source(
     // For now, single-seed workspaces just expose the workspace overlay.
     // Multi-seed runs fall back to fresh DiskFileSource per seed (no
     // overlay) — multi-repo overlays are out of scope for v3-now.
-    Arc::new(DiskFileSource::new(root, rev))
+    build_seed_source(root, rev)
+}
+
+/// rev-aware FileSource dispatch. `wt` (and `:wt`) → worktree;
+/// any other revspec → git2-backed `GitFileSource`. If the git open
+/// or rev-resolve fails the worktree source is returned as a fallback
+/// so a misconfigured rev surfaces as empty/wrong-content rather than
+/// blowing up the run; the warning is logged.
+pub fn build_seed_source(root: PathBuf, rev: String) -> Arc<dyn FileSource> {
+    let label = rev.strip_prefix(':').unwrap_or(&rev);
+    if label == "wt" || label == "unstaged" || label == "staged" {
+        return Arc::new(DiskFileSource::new(root, rev));
+    }
+    match GitFileSource::open(root.clone(), &rev) {
+        Ok(src) => Arc::new(src),
+        Err(e) => {
+            tracing::warn!(
+                target: "sprefa::reader",
+                root = %root.display(),
+                rev = %rev,
+                error = %e,
+                "GitFileSource.open failed; falling back to DiskFileSource"
+            );
+            Arc::new(DiskFileSource::new(root, rev))
+        }
+    }
 }
 
 fn seed_upstream(seed: &crate::config::Seed) -> futures::stream::BoxStream<'static, Arc<[Cursor]>> {

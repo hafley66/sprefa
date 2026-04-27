@@ -47,8 +47,10 @@ pub trait FileSource: Send + Sync + 'static {
 
 pub mod buffer_overlay;
 pub mod disk;
+pub mod git;
 pub mod mem;
 
 pub use buffer_overlay::BufferOverlay;
 pub use disk::DiskFileSource;
+pub use git::{GitFileSource, resolve_rev};
 pub use mem::MemFileSource;
