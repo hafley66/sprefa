@@ -37,6 +37,11 @@ pub struct Backend {
     /// Cloned by every per-WS Backend; one daemon, one set of resources.
     state: Arc<ServerState>,
     sessions: Arc<Mutex<HashMap<Url, SessionEntry>>>,
+    /// Per .sprf source URI → set of target file URIs we last published
+    /// diagnostics on. On every hover-driven republish, targets that drop
+    /// out of the new set get cleared with an empty `publish_diagnostics`.
+    /// did_close drains all entries for the source.
+    published_targets: Arc<Mutex<HashMap<Url, std::collections::HashSet<Url>>>>,
 }
 
 struct SessionEntry {
@@ -67,6 +72,7 @@ impl Backend {
             client,
             state,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            published_targets: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -109,6 +115,50 @@ impl Backend {
                     },
                 );
             }
+        }
+    }
+
+    /// Publish the new per-target diag set for `source` and clear any
+    /// URIs that this source previously published into but are not in
+    /// the new set. Empty diag vec on a target acts as a clear in LSP.
+    async fn republish_target_diagnostics(
+        &self,
+        source: &Url,
+        mut new_targets: HashMap<Url, Vec<Diagnostic>>,
+    ) {
+        let prev: std::collections::HashSet<Url> = {
+            let guard = self.published_targets.lock().await;
+            guard.get(source).cloned().unwrap_or_default()
+        };
+        for old in &prev {
+            if !new_targets.contains_key(old) {
+                self.client.publish_diagnostics(old.clone(), vec![], None).await;
+            }
+        }
+        let mut next: std::collections::HashSet<Url> =
+            std::collections::HashSet::with_capacity(new_targets.len());
+        for (target, diags) in new_targets.drain() {
+            self.client.publish_diagnostics(target.clone(), diags, None).await;
+            next.insert(target);
+        }
+        let mut guard = self.published_targets.lock().await;
+        if next.is_empty() {
+            guard.remove(source);
+        } else {
+            guard.insert(source.clone(), next);
+        }
+    }
+
+    /// Clear every target diagnostic this `.sprf` source published.
+    /// Called from `did_close` so closing the rule file removes its
+    /// squiggles from every `.rs`/`.ts`/etc. it had decorated.
+    async fn clear_target_diagnostics(&self, source: &Url) {
+        let prev = {
+            let mut guard = self.published_targets.lock().await;
+            guard.remove(source).unwrap_or_default()
+        };
+        for old in prev {
+            self.client.publish_diagnostics(old, vec![], None).await;
         }
     }
 
@@ -172,6 +222,16 @@ impl LanguageServer for Backend {
             self.open_or_replace(&uri, change.text).await;
             self.publish(&uri).await;
         }
+    }
+
+    async fn did_close(&self, p: DidCloseTextDocumentParams) {
+        let uri = p.text_document.uri.clone();
+        if !is_sprf_uri(&uri) { return; }
+        self.clear_target_diagnostics(&uri).await;
+        // Clear the .sprf's own diagnostic set as well.
+        self.client.publish_diagnostics(uri.clone(), vec![], None).await;
+        let mut g = self.sessions.lock().await;
+        g.remove(&uri);
     }
 
     async fn did_save(&self, p: DidSaveTextDocumentParams) {
@@ -244,15 +304,27 @@ impl LanguageServer for Backend {
             ).await;
         }
 
+        let mut target_diags: HashMap<Url, Vec<Diagnostic>> = HashMap::new();
+        let source_basename = uri
+            .path()
+            .rsplit('/')
+            .next()
+            .unwrap_or("<unknown>")
+            .to_string();
         let body = match (snap.plan, snap.lowered_slice) {
             (Some(plan), Some(slice)) => {
                 render_enriched_hover(
                     &plan, &slice, &snap.config, &snap.config_source,
                     &snap.registry, self.cache(), &self.state,
+                    &mut target_diags, &source_basename,
                 ).await
             }
             _ => snap.static_doc,
         };
+
+        // Publish target-file diagnostics + clear any URIs that fell
+        // out of the new set since this .sprf last hovered.
+        self.republish_target_diagnostics(&uri, target_diags).await;
 
         // Settle: drop the in_flight slot if our token wasn't replaced
         // by a newer hover. A concurrent did_change / hover would have
@@ -343,6 +415,8 @@ async fn render_enriched_hover(
     registry: &pipeline::registry::Registry,
     op_cache: Arc<OpCache>,
     state: &Arc<ServerState>,
+    diagnostics_out: &mut HashMap<Url, Vec<Diagnostic>>,
+    source_basename: &str,
 ) -> Option<String> {
     let _t0 = std::time::Instant::now();
     tracing::info!(
@@ -507,6 +581,17 @@ async fn render_enriched_hover(
             "seed.effects:\n{}", summary
         );
         let root = seed.root.clone();
+        // Harvest target-file diagnostics: every cursor with a non-None
+        // `fs` and a usable `byte_range` becomes one Diagnostic on the
+        // resolved absolute path. Severity defaults to HINT until ops
+        // grow an explicit severity surface (lsp[error|warn|hint|info]).
+        for c in &rows {
+            if let Some((uri, diag)) =
+                cursor_to_target_diagnostic(c, &seed.root, &plan.focus_name, source_basename)
+            {
+                diagnostics_out.entry(uri).or_default().push(diag);
+            }
+        }
         let take = (HOVER_ROW_CAP.saturating_sub(rendered)).min(rows.len());
         total_rows += rows.len();
         if take > 0 {
@@ -727,6 +812,48 @@ fn truncate(s: &str, max: usize) -> String {
     out
 }
 
+/// Build a target-file `Diagnostic` from a rule-emitted cursor. Returns
+/// `None` for cursors that do not carry a usable `(fs, content,
+/// byte_range)` tuple — e.g. seed cursors emitted before any `fs(...)`
+/// op has resolved a file. These cursors are legitimate intermediate
+/// values in the pipe; they just have no place in the target-file
+/// problem panel.
+///
+/// Path resolution: `seed_root.join(cursor.fs)` then canonicalize so
+/// the URI matches what VS Code holds open.
+fn cursor_to_target_diagnostic(
+    c:               &Cursor,
+    seed_root:       &Path,
+    focus_op_name:   &str,
+    source_basename: &str,
+) -> Option<(Url, Diagnostic)> {
+    let rel = c.fs.as_ref()?;
+    let abs = seed_root.join(rel.as_ref());
+    let canonical = std::fs::canonicalize(&abs).unwrap_or(abs);
+    let uri = Url::from_file_path(&canonical).ok()?;
+    let text = std::str::from_utf8(&c.content).ok()?;
+    if c.byte_range.start > text.len() || c.byte_range.end > text.len() {
+        return None;
+    }
+    let (sl, sc) = offset_to_position(text, c.byte_range.start);
+    let (el, ec) = offset_to_position(text, c.byte_range.end);
+    let diag = Diagnostic {
+        range: Range {
+            start: Position { line: sl, character: sc },
+            end:   Position { line: el, character: ec },
+        },
+        severity: Some(DiagnosticSeverity::HINT),
+        code: Some(NumberOrString::String(focus_op_name.to_string())),
+        code_description: None,
+        source: Some(format!("sprf:{source_basename}")),
+        message: format!("matched by `{focus_op_name}` (in {source_basename})"),
+        related_information: None,
+        tags: None,
+        data: None,
+    };
+    Some((uri, diag))
+}
+
 fn uri_to_path(uri: &Url) -> PathBuf {
     uri.to_file_path()
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
@@ -835,6 +962,63 @@ fn binding_diags_to_lsp(source: &str, diags: &[BindingDiagnostic]) -> Vec<Diagno
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_to_target_diagnostic_resolves_uri_and_range() {
+        // 4-line file; rule matches a span on line 2 (0-indexed line 1).
+        let body = b"alpha\nbeta gamma\ndelta\nepsilon\n";
+        let needle_start = body.windows(4).position(|w| w == b"beta").unwrap();
+        let needle_end   = needle_start + 10; // "beta gamma"
+
+        // Use a real on-disk file so canonicalize() resolves cleanly.
+        let dir = std::env::temp_dir().join(format!(
+            "sprefa_diag_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos()).unwrap_or(0),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target_rel = std::path::PathBuf::from("src/lib.rs");
+        let target_abs = dir.join(&target_rel);
+        std::fs::create_dir_all(target_abs.parent().unwrap()).unwrap();
+        std::fs::write(&target_abs, body).unwrap();
+
+        let mut c = Cursor::new(Arc::from(body.as_slice()));
+        c.fs = Some(Arc::from(target_rel.as_path()));
+        c.byte_range = needle_start..needle_end;
+
+        let (uri, diag) = cursor_to_target_diagnostic(
+            &c, &dir, "ast", "selfcheck.sprf",
+        ).expect("diagnostic produced");
+
+        // URI canonicalizes to the temp path.
+        assert!(uri.path().ends_with("src/lib.rs"), "uri path: {}", uri.path());
+        // Range covers line 2 columns 0..10.
+        assert_eq!(diag.range.start, Position { line: 1, character: 0 });
+        assert_eq!(diag.range.end,   Position { line: 1, character: 10 });
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::HINT));
+        assert_eq!(
+            diag.code,
+            Some(NumberOrString::String("ast".to_string())),
+        );
+        assert_eq!(diag.source.as_deref(), Some("sprf:selfcheck.sprf"));
+        assert!(diag.message.contains("ast"));
+        assert!(diag.message.contains("selfcheck.sprf"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cursor_to_target_diagnostic_drops_cursors_without_fs() {
+        let body = b"hello";
+        let mut c = Cursor::new(Arc::from(body.as_slice()));
+        c.byte_range = 0..5;
+        c.fs = None;
+        let out = cursor_to_target_diagnostic(
+            &c, std::path::Path::new("/tmp"), "ast", "x.sprf",
+        );
+        assert!(out.is_none(), "no fs → no diagnostic");
+    }
 
     #[test]
     fn cursor_block_renders_capture_links_to_file_lines() {
@@ -1080,7 +1264,13 @@ mod tests {
         let cfg = Config { seeds: vec![], run: Default::default() };
         let op_cache = Arc::new(OpCache::new(true));
         let state = ServerState::new(&Default::default()).await.expect("ServerState::new");
-        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache, &state).await
+        {
+            let mut diags: HashMap<Url, Vec<Diagnostic>> = HashMap::new();
+            render_enriched_hover(
+                &plan, &lowered, &cfg, &ConfigSource::CwdFallback,
+                session.registry(), op_cache, &state, &mut diags, "t.sprf",
+            ).await
+        }
     }
 
     fn off_of(src: &str, needle: &str) -> usize {
@@ -1292,7 +1482,13 @@ mod tests {
             .to_vec();
         let op_cache = Arc::new(OpCache::new(true));
         let state = ServerState::new(&Default::default()).await.expect("ServerState::new");
-        render_enriched_hover(&plan, &lowered, &cfg, &ConfigSource::CwdFallback, session.registry(), op_cache, &state).await
+        {
+            let mut diags: HashMap<Url, Vec<Diagnostic>> = HashMap::new();
+            render_enriched_hover(
+                &plan, &lowered, &cfg, &ConfigSource::CwdFallback,
+                session.registry(), op_cache, &state, &mut diags, "t.sprf",
+            ).await
+        }
     }
 
     #[tokio::test]
