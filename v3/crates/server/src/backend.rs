@@ -29,7 +29,7 @@ use pipeline::_0_cursor::{Capture, CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
 use pipeline::effects::{LspDiagEffect, LspSeverity, PrintBatcher};
 use pipeline::relation_store::{RelationStore, RelationWake};
-use pipeline::readers::{DiskFileSource, FileSource};
+use pipeline::readers::FileSource;
 
 pub struct Backend {
     client: Client,
@@ -569,7 +569,7 @@ async fn render_enriched_hover(
         );
         seed_roots.insert(Arc::from(seed.slug.as_str()), seed.root.clone());
         let file_source: Arc<dyn FileSource> =
-            Arc::new(DiskFileSource::new(seed.root.clone(), seed.rev.clone()));
+            crate::run::build_seed_source(seed.root.clone(), seed.rev.clone());
         let relation_store = Arc::new(RelationStore::new());
         let subject_registry = Arc::new(SubjectRegistry::<RelationWake>::new());
         // Single source-of-truth registration list. Hover hovering uses
@@ -879,7 +879,20 @@ fn lsp_effect_to_diagnostic(
         return None;
     }
     let (sl, sc) = offset_to_position(text, e.byte_range.start);
-    let (el, ec) = offset_to_position(text, e.byte_range.end);
+    let (mut el, mut ec) = offset_to_position(text, e.byte_range.end);
+    // Clamp to a single line. comment(...) and other narrowing ops
+    // produce cursors that cover whole regions (comment-to-comment, full
+    // file scopes) by design. A diagnostic squiggle that wraps half the
+    // file is unhelpful in the editor; end it at the first newline.
+    if el != sl {
+        let end_of_line = text[e.byte_range.start..]
+            .find('\n')
+            .map(|n| e.byte_range.start + n)
+            .unwrap_or(e.byte_range.end);
+        let (line, col) = offset_to_position(text, end_of_line);
+        el = line;
+        ec = col;
+    }
 
     let severity = match e.severity {
         LspSeverity::Error   => DiagnosticSeverity::ERROR,
