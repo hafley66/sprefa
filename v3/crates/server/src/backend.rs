@@ -242,6 +242,13 @@ impl LanguageServer for Backend {
             ).await;
         }
 
+        let cache_len_before = self.cache.len();
+        tracing::info!(
+            target: "sprefa::cache",
+            cache_len = cache_len_before,
+            "hover.cache.before"
+        );
+
         let body = match (snap.plan, snap.lowered_slice) {
             (Some(plan), Some(slice)) => {
                 render_enriched_hover(
@@ -251,6 +258,14 @@ impl LanguageServer for Backend {
             }
             _ => snap.static_doc,
         };
+
+        let cache_len_after = self.cache.len();
+        tracing::info!(
+            target: "sprefa::cache",
+            cache_len = cache_len_after,
+            delta = cache_len_after as i64 - cache_len_before as i64,
+            "hover.cache.after"
+        );
         let Some(value) = body else {
             tracing::info!(
                 target: "sprefa::lsp",

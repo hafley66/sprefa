@@ -1,0 +1,4 @@
+[[seed]]
+slug = "linux"
+root = "/Users/chrishafley/projects/sprefa/v3/tests/smoke/.fixtures/linux"
+rev  = "wt"

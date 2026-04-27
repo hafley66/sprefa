@@ -133,7 +133,7 @@ pub fn spawn_invalidator(
             match rx.recv().await {
                 Ok(change) => {
                     let evicted = apply_change(&cache, &change);
-                    tracing::debug!(
+                    tracing::info!(
                         target: "sprefa::invalidate",
                         ?change,
                         evicted,
