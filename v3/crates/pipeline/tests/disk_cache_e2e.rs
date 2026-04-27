@@ -109,6 +109,60 @@ fn l2_disk_cache_survives_drop_and_reopen() {
 }
 
 #[test]
+fn l2_eviction_removes_row_and_forces_recompute_after_reopen() {
+    // Phase F: evict_paths must scrub L2, not just L1. Otherwise a
+    // process restart would resurrect stale entries from sqlite.
+    let db_path = tempdb("evict");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut c = Cursor::new(Arc::from(b"l2-payload".as_slice()));
+    c.content_hash = Some(Arc::new([0xCE; 32]));
+    c.repo = Arc::from("org/repo");
+    c.rev = Arc::from("wt");
+    c.fs = Some(Arc::from(std::path::Path::new("src/x.rs")));
+    let batch: Arc<[Cursor]> = Arc::from(vec![c]);
+
+    {
+        let l2 = Arc::new(DiskCache::open(&db_path).unwrap());
+        let cache = Arc::new(OpCache::new(true).with_l2(l2.clone()));
+        let ctx = build_ctx(cache.clone());
+        let pipe = Pipeline::Op(Arc::new(CountingCacheableOp { calls: calls.clone() }));
+        drain(&pipe, &ctx, batch.clone());
+        assert_eq!(l2.len(), 1, "L2 row inserted");
+
+        // Phase F eviction call. Must zero L1 AND L2.
+        let evicted = pipeline::apply_change(
+            &cache,
+            &pipeline::Change::FileContent {
+                repo: Arc::from("org/repo"),
+                rev: Arc::from("wt"),
+                path: std::path::PathBuf::from("src/x.rs"),
+            },
+        );
+        assert_eq!(evicted, 1);
+        assert_eq!(cache.len(), 0, "L1 scrubbed");
+        assert_eq!(l2.len(), 0, "L2 scrubbed via delete_many");
+    }
+
+    // After the in-process cache drops, reopen the sqlite file and
+    // confirm the row is gone — proves DiskCache.delete_many was a real
+    // write, not a memory-only operation.
+    {
+        let l2 = Arc::new(DiskCache::open(&db_path).unwrap());
+        assert_eq!(l2.len(), 0, "L2 still empty after process restart");
+        let cache = Arc::new(OpCache::new(true).with_l2(l2));
+        let ctx = build_ctx(cache.clone());
+        let pipe = Pipeline::Op(Arc::new(CountingCacheableOp { calls: calls.clone() }));
+        drain(&pipe, &ctx, batch.clone());
+        assert_eq!(
+            calls.load(Ordering::SeqCst), 2,
+            "post-eviction reopen must miss and recompute"
+        );
+    }
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn l2_absent_falls_back_to_recompute() {
     // Sanity: without L2, dropping the cache loses all state and op.pipe
     // runs again on the second invocation. Pairs with the survives test
