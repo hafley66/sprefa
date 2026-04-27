@@ -27,7 +27,7 @@ use crate::state::ServerState;
 use effect_runtime::SubjectRegistry;
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
-use pipeline::effects::PrintBatcher;
+use pipeline::effects::{LspDiagEffect, LspSeverity, PrintBatcher};
 use pipeline::relation_store::{RelationStore, RelationWake};
 use pipeline::readers::{DiskFileSource, FileSource};
 
@@ -429,7 +429,7 @@ async fn render_enriched_hover(
     diagnostics_out: &mut HashMap<Url, Vec<Diagnostic>>,
     source_uri: Option<&Url>,
     source_text: &str,
-    source_basename: &str,
+    _source_basename: &str,
 ) -> Option<String> {
     // Build the .sprf-side related-information location: the focused
     // op's invocation span, lifted to LSP coordinates against the
@@ -554,6 +554,10 @@ async fn render_enriched_hover(
 
     let mut seed_roots: std::collections::HashMap<Arc<str>, PathBuf> =
         std::collections::HashMap::new();
+    // Read each target file at most once across all seeds. Range
+    // conversion needs the full file text; LANDMINES.sprf-style runs
+    // can hit the same file dozens of times.
+    let mut file_text_cache: HashMap<PathBuf, Option<String>> = HashMap::new();
     for seed in &config.seeds {
         let _seed_t0 = std::time::Instant::now();
         tracing::info!(
@@ -571,7 +575,7 @@ async fn render_enriched_hover(
         // Single source-of-truth registration list. Hover hovering uses
         // the same builder as `/run`'s per-seed loop; adding an effect
         // kind happens in `run::build_seed_ctx` exactly once.
-        let ctx = crate::run::build_seed_ctx(
+        let seed_ctx = crate::run::build_seed_ctx(
             state,
             file_source,
             op_cache.clone(),
@@ -579,7 +583,9 @@ async fn render_enriched_hover(
             subject_registry.clone(),
             PrintBatcher::buffer().0,
             std::sync::Arc::new(pipeline::effects::WritePolicy::ApproveAll),
-        ).ctx;
+        );
+        let lsp_diags = seed_ctx.lsp_diags.clone();
+        let ctx = seed_ctx.ctx;
 
         let mut c = Cursor::default();
         c.repo = Arc::from(seed.slug.as_str());
@@ -610,13 +616,18 @@ async fn render_enriched_hover(
             "seed.effects:\n{}", summary
         );
         let root = seed.root.clone();
-        // Harvest target-file diagnostics: every cursor with a non-None
-        // `fs` and a usable `byte_range` becomes one Diagnostic on the
-        // resolved absolute path. Severity defaults to HINT until ops
-        // grow an explicit severity surface (lsp[error|warn|hint|info]).
-        for c in &rows {
-            if let Some((uri, diag)) = cursor_to_target_diagnostic(
-                c, &seed.root, &plan.focus_name, source_basename, source_link.as_ref(),
+        // Harvest target-file diagnostics from `lsp[severity](...)` ops.
+        // Only rules that explicitly tail-emit a diagnostic produce a
+        // squiggle; cursors that just match are NOT diagnostics by
+        // default. The op carries the rule-author's message/code/hint
+        // verbatim — far more useful than a generic "(match)" string.
+        let drained: Vec<LspDiagEffect> = {
+            let mut g = lsp_diags.lock().unwrap();
+            std::mem::take(&mut *g)
+        };
+        for effect in &drained {
+            if let Some((uri, diag)) = lsp_effect_to_diagnostic(
+                effect, &seed.root, source_link.as_ref(), &mut file_text_cache,
             ) {
                 diagnostics_out.entry(uri).or_default().push(diag);
             }
@@ -841,101 +852,72 @@ fn truncate(s: &str, max: usize) -> String {
     out
 }
 
-/// Build a target-file `Diagnostic` from a rule-emitted cursor. Returns
-/// `None` for cursors that do not carry a usable `(fs, content,
-/// byte_range)` tuple — e.g. seed cursors emitted before any `fs(...)`
-/// op has resolved a file. These cursors are legitimate intermediate
-/// values in the pipe; they just have no place in the target-file
-/// problem panel.
+/// Build a target-file `Diagnostic` from one `lsp[severity](...)` op
+/// emission. Source/message/code/severity are taken verbatim from the
+/// rule author's invocation. Range is converted from the effect's
+/// byte_range against the target file's text (cached across calls so
+/// runs that hit the same file repeatedly read it once).
 ///
-/// Path resolution: `seed_root.join(cursor.fs)` then canonicalize so
-/// the URI matches what VS Code holds open.
-fn cursor_to_target_diagnostic(
-    c:               &Cursor,
+/// Returns `None` when the effect carries no `file`, the file cannot
+/// be read, or the byte_range falls outside the file's bytes.
+fn lsp_effect_to_diagnostic(
+    e:               &LspDiagEffect,
     seed_root:       &Path,
-    focus_op_name:   &str,
-    source_basename: &str,
     source_link:     Option<&Location>,
+    text_cache:      &mut HashMap<PathBuf, Option<String>>,
 ) -> Option<(Url, Diagnostic)> {
-    let rel = c.fs.as_ref()?;
+    let rel = e.file.as_ref()?;
     let abs = seed_root.join(rel.as_ref());
     let canonical = std::fs::canonicalize(&abs).unwrap_or(abs);
     let uri = Url::from_file_path(&canonical).ok()?;
-    let text = std::str::from_utf8(&c.content).ok()?;
-    if c.byte_range.start > text.len() || c.byte_range.end > text.len() {
+
+    let text = text_cache
+        .entry(canonical.clone())
+        .or_insert_with(|| std::fs::read_to_string(&canonical).ok())
+        .as_deref()?;
+    if e.byte_range.start > text.len() || e.byte_range.end > text.len() {
         return None;
     }
-    let (sl, sc) = offset_to_position(text, c.byte_range.start);
-    let (el, ec) = offset_to_position(text, c.byte_range.end);
-    let related = source_link.map(|loc| {
-        vec![DiagnosticRelatedInformation {
+    let (sl, sc) = offset_to_position(text, e.byte_range.start);
+    let (el, ec) = offset_to_position(text, e.byte_range.end);
+
+    let severity = match e.severity {
+        LspSeverity::Error   => DiagnosticSeverity::ERROR,
+        LspSeverity::Warning => DiagnosticSeverity::WARNING,
+        LspSeverity::Hint    => DiagnosticSeverity::HINT,
+        LspSeverity::Info    => DiagnosticSeverity::INFORMATION,
+    };
+
+    // related_information: rule definition + optional rule-author hint.
+    let mut related: Vec<DiagnosticRelatedInformation> = Vec::new();
+    if let Some(loc) = source_link {
+        related.push(DiagnosticRelatedInformation {
             location: loc.clone(),
-            message:  format!("rule `{focus_op_name}` defined here"),
-        }]
-    });
-    let message = format_capture_message(c);
+            message:  "rule defined here".into(),
+        });
+        if let Some(hint) = &e.hint {
+            related.push(DiagnosticRelatedInformation {
+                location: loc.clone(),
+                message:  hint.to_string(),
+            });
+        }
+    }
+
     let diag = Diagnostic {
         range: Range {
             start: Position { line: sl, character: sc },
             end:   Position { line: el, character: ec },
         },
-        severity: Some(DiagnosticSeverity::HINT),
-        code: Some(NumberOrString::String(focus_op_name.to_string())),
+        severity: Some(severity),
+        code: e.code.as_ref().map(|c| NumberOrString::String(c.to_string())),
         code_description: None,
-        source: Some(format!("sprf:{source_basename}")),
-        message,
-        related_information: related,
+        source: Some("sprf".into()),
+        message: e.message.to_string(),
+        related_information: if related.is_empty() { None } else { Some(related) },
         tags: None,
         data: None,
     };
     Some((uri, diag))
-}
-
-/// Render a cursor's bound captures as a short, useful diagnostic
-/// message. The source/code/related slots already convey "rule X in
-/// file Y"; this slot's only job is to say *what* got bound at the
-/// match site.
-///
-/// Shape: `${A}=foo, ${B}="msg"`. Single-line, individual values
-/// truncated to keep the Problems-panel row scannable. Empty cursor
-/// (no captures) falls back to `(match)` so VS Code still shows the
-/// squiggle without an empty hover row.
-fn format_capture_message(c: &Cursor) -> String {
-    const VAL_MAX: usize = 60;
-    const TOTAL_MAX: usize = 240;
-    if c.captures.is_empty() {
-        return "(match)".into();
-    }
-    let mut parts: Vec<String> = Vec::with_capacity(c.captures.len());
-    for cap in c.captures.iter() {
-        let raw = std::str::from_utf8(cap.bytes(&c.content)).unwrap_or("<non-utf8>");
-        // Collapse whitespace runs so multi-line bindings stay one row.
-        let mut flat = String::with_capacity(raw.len());
-        let mut prev_space = false;
-        for ch in raw.chars() {
-            if ch.is_whitespace() {
-                if !prev_space { flat.push(' '); prev_space = true; }
-            } else {
-                flat.push(ch);
-                prev_space = false;
-            }
-        }
-        let flat = flat.trim();
-        let shown: String = if flat.chars().count() > VAL_MAX {
-            let cut: String = flat.chars().take(VAL_MAX).collect();
-            format!("{cut}…")
-        } else {
-            flat.to_string()
-        };
-        parts.push(format!("${{{name}}}={shown}", name = cap.name));
-    }
-    let joined = parts.join(", ");
-    if joined.chars().count() > TOTAL_MAX {
-        let cut: String = joined.chars().take(TOTAL_MAX).collect();
-        format!("{cut}…")
-    } else {
-        joined
-    }
 }
 
 /// Collapse duplicate diagnostics within a target URI. Multi-seed
@@ -1072,15 +1054,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_to_target_diagnostic_resolves_uri_and_range() {
-        // 4-line file; rule matches a span on line 2 (0-indexed line 1).
+    fn lsp_effect_to_diagnostic_renders_author_message() {
+        // Sample on-disk file; effect span lands on line 2 cols 0..10.
         let body = b"alpha\nbeta gamma\ndelta\nepsilon\n";
         let needle_start = body.windows(4).position(|w| w == b"beta").unwrap();
-        let needle_end   = needle_start + 10; // "beta gamma"
-
-        // Use a real on-disk file so canonicalize() resolves cleanly.
+        let needle_end   = needle_start + 10;
         let dir = std::env::temp_dir().join(format!(
-            "sprefa_diag_test_{}_{}",
+            "sprefa_lspdiag_test_{}_{}",
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos()).unwrap_or(0),
@@ -1091,88 +1071,64 @@ mod tests {
         std::fs::create_dir_all(target_abs.parent().unwrap()).unwrap();
         std::fs::write(&target_abs, body).unwrap();
 
-        let mut c = Cursor::new(Arc::from(body.as_slice()));
-        c.fs = Some(Arc::from(target_rel.as_path()));
-        c.byte_range = needle_start..needle_end;
-
+        let effect = LspDiagEffect {
+            file:       Some(Arc::<Path>::from(target_rel.as_path())),
+            byte_range: needle_start..needle_end,
+            severity:   LspSeverity::Warning,
+            message:    Arc::from("load-bearing landmine: read the comment before editing"),
+            code:       Some(Arc::from("sprf/landmine")),
+            hint:       Some(Arc::from("SPRF-LANDMINE markers tag correctness contracts")),
+        };
         let source_link = Location {
-            uri: Url::parse("file:///tmp/selfcheck.sprf").unwrap(),
+            uri: Url::parse("file:///tmp/LANDMINES.sprf").unwrap(),
             range: Range {
-                start: Position { line: 7, character: 0 },
-                end:   Position { line: 7, character: 12 },
+                start: Position { line: 12, character: 4 },
+                end:   Position { line: 17, character: 1 },
             },
         };
-        let (uri, diag) = cursor_to_target_diagnostic(
-            &c, &dir, "ast", "selfcheck.sprf", Some(&source_link),
-        ).expect("diagnostic produced");
+        let mut cache: HashMap<PathBuf, Option<String>> = HashMap::new();
+        let (uri, diag) = lsp_effect_to_diagnostic(
+            &effect, &dir, Some(&source_link), &mut cache,
+        ).expect("diag produced");
 
-        // URI canonicalizes to the temp path.
-        assert!(uri.path().ends_with("src/lib.rs"), "uri path: {}", uri.path());
-        // Range covers line 2 columns 0..10.
+        assert!(uri.path().ends_with("src/lib.rs"));
         assert_eq!(diag.range.start, Position { line: 1, character: 0 });
         assert_eq!(diag.range.end,   Position { line: 1, character: 10 });
-        assert_eq!(diag.severity, Some(DiagnosticSeverity::HINT));
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(
             diag.code,
-            Some(NumberOrString::String("ast".to_string())),
+            Some(NumberOrString::String("sprf/landmine".to_string())),
         );
-        assert_eq!(diag.source.as_deref(), Some("sprf:selfcheck.sprf"));
-        // Empty captures → fallback message.
-        assert_eq!(diag.message, "(match)");
-        // related_information links back to the source .sprf rule.
-        let related = diag.related_information.as_ref().expect("related set");
-        assert_eq!(related.len(), 1);
-        assert_eq!(related[0].location.uri, source_link.uri);
-        assert_eq!(related[0].location.range, source_link.range);
-        assert!(related[0].message.contains("ast"));
+        assert_eq!(diag.source.as_deref(), Some("sprf"));
+        // Message is the rule-author's message verbatim.
+        assert_eq!(diag.message, effect.message.to_string());
+        // related_information has rule-defined-here + the author's hint.
+        let related = diag.related_information.as_ref().expect("related");
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0].message, "rule defined here");
+        assert!(related[1].message.contains("SPRF-LANDMINE"));
+
+        // Re-running on the same file uses the cache (file_text is Some).
+        let mut cache2 = cache.clone();
+        let _ = lsp_effect_to_diagnostic(&effect, &dir, None, &mut cache2);
+        assert_eq!(cache2.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn cursor_to_target_diagnostic_drops_cursors_without_fs() {
-        let body = b"hello";
-        let mut c = Cursor::new(Arc::from(body.as_slice()));
-        c.byte_range = 0..5;
-        c.fs = None;
-        let out = cursor_to_target_diagnostic(
-            &c, std::path::Path::new("/tmp"), "ast", "x.sprf", None,
-        );
-        assert!(out.is_none(), "no fs → no diagnostic");
-    }
-
-    #[test]
-    fn format_capture_message_renders_bound_values() {
-        // Cursor body covers full content; two captures: V is span-backed
-        // (an identifier `something`), MSG is synthesized ("a long msg").
-        let body = b"let foo = something.unwrap();";
-        let mut c = Cursor::new(Arc::from(body.as_slice()));
-        c.byte_range = 0..body.len();
-        let v_start = body.windows(9).position(|w| w == b"something").unwrap();
-        c.captures.push(Capture::span_backed(
-            Arc::from("V"),
-            v_start..(v_start + 9),
-        ));
-        c.captures.push(Capture::synthesized(
-            Arc::from("MSG"),
-            Arc::from("a long\n   msg"),
-        ));
-        let s = format_capture_message(&c);
-        // Captures rendered inline; whitespace collapsed for synthesized.
-        assert!(s.contains("${V}=something"), "msg: {s}");
-        assert!(s.contains("${MSG}=a long msg"), "msg: {s}");
-    }
-
-    #[test]
-    fn format_capture_message_truncates_long_values() {
-        let mut c = Cursor::new(Arc::from(b"".as_slice()));
-        let big: String = "x".repeat(200);
-        c.captures.push(Capture::synthesized(Arc::from("HUGE"), Arc::from(big.as_str())));
-        let s = format_capture_message(&c);
-        assert!(s.ends_with('…'), "expected trailing ellipsis: {s}");
-        // Per-value cap is 60; entry should be `${HUGE}=xxxx…` with at most
-        // ~70 chars, well under the total cap.
-        assert!(s.chars().count() < 80, "msg too long: {} chars", s.chars().count());
+    fn lsp_effect_to_diagnostic_drops_when_no_file() {
+        let effect = LspDiagEffect {
+            file:       None,
+            byte_range: 0..0,
+            severity:   LspSeverity::Hint,
+            message:    Arc::from("x"),
+            code:       None,
+            hint:       None,
+        };
+        let mut cache: HashMap<PathBuf, Option<String>> = HashMap::new();
+        let out = lsp_effect_to_diagnostic(&effect, Path::new("/tmp"), None, &mut cache);
+        assert!(out.is_none());
     }
 
     #[test]
