@@ -3,7 +3,7 @@
 # sites that bypass Arc<[u8]> sharing. Each pipe targets one shape;
 # review the row counts per pipe to triage.
 
-repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rs](${X?}.to_string());
+repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > read > ast[rs](${X?}.to_string());
 repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rs](${X?}.to_owned());
 repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rs](String::from_utf8_lossy(${X?}).into_owned());
 repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rs](String::from_utf8_lossy(${X?}));

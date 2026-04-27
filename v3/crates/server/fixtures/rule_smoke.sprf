@@ -2,4 +2,6 @@
 rule(:sources) {
   repo($R) > rev(:HEAD) > fs(glob(**/*.rs));
   repo($R) > rev(:HEAD) > fs(glob(**/*.toml));
-}
+};
+
+sources();

@@ -24,4 +24,4 @@ fs(glob(src/**/*.rs))
 # Hint: TODO in committed code surfaces as info.
 fs(glob(**/*.{rs,ts,py}))
   > comment(TODO ${BODY?})
-  > lsp[info](message = ${BODY});
+  > lsp[info](message = "${BODY}")
