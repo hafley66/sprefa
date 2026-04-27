@@ -1640,6 +1640,7 @@ dependencies = [
  "serde_yaml",
  "sprefa_macros",
  "sprefa_parse",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tracing",

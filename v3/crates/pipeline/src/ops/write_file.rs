@@ -27,11 +27,11 @@
 
 use std::sync::Arc;
 
-use effect_runtime::{BoxFuture, RtCtx};
+use effect_runtime::{BoxFuture, RtCtx, SubjectRegistry};
 
 use crate::_0_cursor::Cursor;
 use crate::_1_op::Op;
-use crate::effects::WriteFileEffect;
+use crate::effects::{WriteApproval, WriteFileEffect};
 use crate::op_ctor::OpCtor;
 use crate::ops::str_op::StrValue;
 use crate::pattern_op::PatternDiagnostic;
@@ -152,7 +152,29 @@ impl Op for WriteFileOp {
             let bytes: Arc<[u8]> = Arc::from(active);
             let path: Arc<std::path::Path> =
                 Arc::from(std::path::Path::new(path_str.as_ref()));
-            let _ = ctx.put(WriteFileEffect { path, bytes }).await;
+
+            // Same staging-vs-legacy split as `write_cursor.rs`. See the
+            // explanatory comment there for the race-window rationale
+            // behind pre-subscribing.
+            match ctx.store::<SubjectRegistry<WriteApproval>>() {
+                Some(registry) => {
+                    let key = registry.fresh_key();
+                    let approval = registry.subscribe(key, None);
+                    let _ = ctx.put(WriteFileEffect {
+                        path,
+                        bytes,
+                        approval: Some(key),
+                    }).await;
+                    let _ = approval.await;
+                }
+                None => {
+                    let _ = ctx.put(WriteFileEffect {
+                        path,
+                        bytes,
+                        approval: None,
+                    }).await;
+                }
+            }
             vec![c]
         }))
     }

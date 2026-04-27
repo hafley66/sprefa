@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures::stream::{self, BoxStream, StreamExt};
 use tokio_util::sync::CancellationToken;
@@ -30,9 +30,10 @@ use pipeline::_2_pipeline::Pipeline;
 use pipeline::cache_key::OpCache;
 use pipeline::disk_cache::DiskCache;
 use pipeline::effects::{
-    AstParseEffect, FsListFilesBatcher, FsListFilesEffect, PrintBatcher, PrintEffect,
-    ReadBytesBatchBatcher, ReadBytesBatchEffect, ReadBytesBatcher, ReadBytesEffect,
-    WriteFileBatcher, WriteFileEffect, WriteRangeBatcher, WriteRangeEffect,
+    AstParseEffect, FsListFilesBatcher, FsListFilesEffect, LspDiagBatcher, LspDiagEffect,
+    PrintBatcher, PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect, ReadBytesBatcher,
+    ReadBytesEffect, StagedWriteFileRow, StagedWriteRangeRow, WriteApproval, WriteFileBatcher,
+    WriteFileEffect, WriteRangeBatcher, WriteRangeEffect,
 };
 use pipeline::ops::relation::RelationArg;
 use pipeline::ops::{RuleCallOp, RulePredicateOp};
@@ -186,7 +187,13 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
             }
             let op_cache = Arc::new(op_cache);
 
-            let ctx = build_seed_ctx(
+            let SeedRtCtx {
+                ctx,
+                staged_ranges: _staged_ranges,
+                staged_files:  _staged_files,
+                lsp_diags,
+                ..
+            } = build_seed_ctx(
                 &state,
                 file_source.clone(),
                 op_cache.clone(),
@@ -194,6 +201,13 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 subject_registry.clone(),
                 PrintBatcher::stdout(),
             );
+            // Phase 1a: staged write rows are auto-approved inline by
+            // the sink. The buffers are still populated for downstream
+            // (Phase 1b LSP code-actions, Phase 2 refactor_pending sqlite
+            // table). Bound to underscore-prefixed names to keep the
+            // Arcs alive for the seed's lifetime, then drop with the
+            // seed's scope so per-seed buffers don't accumulate across
+            // a multi-seed run.
 
             // Pass 1: rule defs (auto-fire arity-0 rules).
             let mut known_rules: HashSet<Arc<str>> = HashSet::new();
@@ -248,6 +262,34 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 }
                 yield RunEvent::ExprDone { expr_name };
             }
+
+            // Drain per-seed lsp[severity] diagnostics emitted during the
+            // pipeline runs. Severity strings match the LspSeverity enum
+            // (Error/Warning/Hint/Info) so SSE consumers can color them.
+            let drained: Vec<LspDiagEffect> = {
+                let mut g = lsp_diags.lock().expect("lsp diag buffer poisoned");
+                std::mem::take(&mut *g)
+            };
+            for d in drained {
+                let sev = match d.severity {
+                    pipeline::effects::LspSeverity::Error   => "Error",
+                    pipeline::effects::LspSeverity::Warning => "Warning",
+                    pipeline::effects::LspSeverity::Hint    => "Hint",
+                    pipeline::effects::LspSeverity::Info    => "Info",
+                };
+                let loc = d.file
+                    .as_ref()
+                    .map(|p| format!("{} ", p.display()))
+                    .unwrap_or_default();
+                let code = d.code.as_deref().unwrap_or("lsp/diag").to_string();
+                let mut msg = format!("{loc}{}..{}: {}", d.byte_range.start, d.byte_range.end, d.message);
+                if let Some(h) = d.hint.as_deref() {
+                    msg.push_str(" (hint: ");
+                    msg.push_str(h);
+                    msg.push(')');
+                }
+                yield RunEvent::Diag { code, severity: sev.into(), message: msg };
+            }
         }
 
         // SQLite drain — runs after all seeds. Out_db None ⇒ skip.
@@ -277,6 +319,21 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
     RunStart { rule_names, stream: stream.boxed() }
 }
 
+/// Bundle returned by [`build_seed_ctx`] — the per-seed `RtCtx` plus
+/// staging handles the host needs to inspect / drive after the pipeline
+/// stream completes (Phase 1 write-effect staging loop). Callers that
+/// don't care about staging just take `.ctx` and ignore the rest.
+pub(crate) struct SeedRtCtx {
+    pub ctx:            RtCtx,
+    pub write_approval: Arc<SubjectRegistry<WriteApproval>>,
+    pub staged_ranges:  Arc<Mutex<Vec<StagedWriteRangeRow>>>,
+    pub staged_files:   Arc<Mutex<Vec<StagedWriteFileRow>>>,
+    /// Drained at end-of-seed by `/run` (RunEvent::Diag) and by the LSP
+    /// hover/save path (publishDiagnostics). The `lsp[severity]` op
+    /// pushes one entry per cursor.
+    pub lsp_diags:      Arc<Mutex<Vec<LspDiagEffect>>>,
+}
+
 /// Single source-of-truth for the per-seed effect registration list.
 /// Both `/run` (this file) and the LSP hover render path
 /// (`backend::render_enriched_hover`) build their RtCtx through here so
@@ -285,6 +342,14 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
 /// Caller supplies: the file source (per-seed reader stack), the cache
 /// (shared `state.cache` for live LSP, fresh per-run for /run), and the
 /// relation store + subject registry (caller controls drain ordering).
+///
+/// Phase 1 staging: this function also allocates a fresh
+/// `SubjectRegistry<WriteApproval>` plus the staged-write buffers and
+/// wires `WriteRangeBatcher::stage_and_approve` /
+/// `WriteFileBatcher::stage_and_approve` so every write effect routes
+/// through the staging sink. Auto-approve happens inline in the sink
+/// (Phase 1a). Phase 1b will add an LSP-driven approver that holds the
+/// staging buffer open until a code-action resolves the key.
 pub(crate) fn build_seed_ctx(
     state:            &ServerState,
     file_source:      Arc<dyn FileSource>,
@@ -292,10 +357,18 @@ pub(crate) fn build_seed_ctx(
     relation_store:   Arc<RelationStore>,
     subject_registry: Arc<SubjectRegistry<RelationWake>>,
     print:            PrintBatcher,
-) -> RtCtx {
-    RtCtxBuilder::new()
+) -> SeedRtCtx {
+    let write_approval = Arc::new(SubjectRegistry::<WriteApproval>::new());
+    let (write_range_batcher, staged_ranges) =
+        WriteRangeBatcher::stage_and_approve(write_approval.clone());
+    let (write_file_batcher, staged_files) =
+        WriteFileBatcher::stage_and_approve(write_approval.clone());
+    let (lsp_diag_batcher, lsp_diags) = LspDiagBatcher::buffer();
+
+    let ctx = RtCtxBuilder::new()
         .with_store(relation_store.clone())
         .with_store(subject_registry.clone())
+        .with_store(write_approval.clone())
         .with_store(op_cache)
         .register_pure::<FsListFilesEffect, _>(
             1024,
@@ -311,12 +384,16 @@ pub(crate) fn build_seed_ctx(
         .register::<AstParseEffect, _>(state.ast_parse_batcher.clone())
         .register::<PrintEffect, _>(print)
         .register::<Yield<RelationWake>, _>(YieldBatcher::new(subject_registry.clone()))
+        .register::<Yield<WriteApproval>, _>(YieldBatcher::new(write_approval.clone()))
         .register::<WriteEffect, _>(
             WriteBatcher::new(relation_store, subject_registry),
         )
-        .register::<WriteFileEffect, _>(WriteFileBatcher::disk())
-        .register::<WriteRangeEffect, _>(WriteRangeBatcher::disk())
-        .build()
+        .register::<WriteFileEffect, _>(write_file_batcher)
+        .register::<WriteRangeEffect, _>(write_range_batcher)
+        .register::<LspDiagEffect, _>(lsp_diag_batcher)
+        .build();
+
+    SeedRtCtx { ctx, write_approval, staged_ranges, staged_files, lsp_diags }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,5 @@
+service:
+  name: rtkq-demo
+  port: 8080
+features:
+  hot_reload: true

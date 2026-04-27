@@ -27,9 +27,11 @@ use std::sync::Arc;
 
 use effect_runtime::{BoxFuture, RtCtx};
 
+use effect_runtime::SubjectRegistry;
+
 use crate::_0_cursor::Cursor;
 use crate::_1_op::Op;
-use crate::effects::{WriteMode, WriteRangeEffect};
+use crate::effects::{WriteApproval, WriteMode, WriteRangeEffect};
 use crate::op_ctor::OpCtor;
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::{TermMode, Value};
@@ -49,12 +51,41 @@ impl Op for WriteCursorOp {
             let Some(cap) = c.capture(&self.target) else { return vec![c]; };
             let byte_range = cap.byte_range.clone();
             let new_bytes: Arc<[u8]> = Arc::from(c.active());
-            let _ = ctx.put(WriteRangeEffect {
-                file,
-                byte_range,
-                new_bytes,
-                mode: self.mode,
-            }).await;
+
+            // Staging path: when a WriteApproval registry is wired into
+            // the ctx (server runtime path), pre-subscribe a key, attach
+            // it to the effect, and await the wake the staging sink
+            // fires after splice. Pre-subscribe (vs Yield-via-put) closes
+            // the race window — the entry is in the registry's pending
+            // map BEFORE the batcher could possibly call next(key).
+            //
+            // No registry in store: skip the yield, treat the put's
+            // returned ack as the splice signal (legacy path, used by
+            // the per-op unit tests that wire `WriteRangeBatcher::buffer`
+            // directly without staging).
+            match ctx.store::<SubjectRegistry<WriteApproval>>() {
+                Some(registry) => {
+                    let key = registry.fresh_key();
+                    let approval = registry.subscribe(key, None);
+                    let _ = ctx.put(WriteRangeEffect {
+                        file,
+                        byte_range,
+                        new_bytes,
+                        mode: self.mode,
+                        approval: Some(key),
+                    }).await;
+                    let _ = approval.await;
+                }
+                None => {
+                    let _ = ctx.put(WriteRangeEffect {
+                        file,
+                        byte_range,
+                        new_bytes,
+                        mode: self.mode,
+                        approval: None,
+                    }).await;
+                }
+            }
             vec![c]
         }))
     }
@@ -243,5 +274,50 @@ mod tests {
         let op = WriteCursorOp { target: Arc::from("SCOPE"), mode: WriteMode::Replace };
         op.pipe(&rt, Arc::from(vec![c])).await;
         assert!(buf.lock().unwrap().is_empty());
+    }
+
+    /// Phase 1 staging: when `SubjectRegistry<WriteApproval>` is in the
+    /// store, write_cursor pre-subscribes a key, attaches it to the
+    /// effect, and awaits the wake the staging sink fires after splice.
+    /// End-to-end proof that the yield→next loop closes without hanging
+    /// and that the splice lands on disk.
+    #[tokio::test]
+    async fn pipe_staging_loop_splices_and_resolves_approval() {
+        use crate::effects::WriteApproval;
+        use effect_runtime::{SubjectRegistry, Yield, YieldBatcher};
+
+        // Tempfile target with a known body so we can assert the splice.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("target.txt");
+        std::fs::write(&path, b"abcDEFghi").unwrap();
+
+        let registry = Arc::new(SubjectRegistry::<WriteApproval>::new());
+        let (range_batcher, staged) =
+            WriteRangeBatcher::stage_and_approve(registry.clone());
+        let rt = RtCtxBuilder::new()
+            .with_store(registry.clone())
+            .register::<WriteRangeEffect, _>(range_batcher)
+            .register::<Yield<WriteApproval>, _>(YieldBatcher::new(registry.clone()))
+            .build();
+
+        let mut c = Cursor::new(Arc::from(b"REPLACED".as_slice()));
+        c.fs = Some(Arc::<std::path::Path>::from(path.clone()));
+        c.captures.push(Capture::span_backed(Arc::from("SCOPE"), 3..6));
+
+        let op = WriteCursorOp { target: Arc::from("SCOPE"), mode: WriteMode::Replace };
+        let _ = op.pipe(&rt, Arc::from(vec![c])).await;
+
+        // Splice landed on disk.
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(&after[..], b"abcREPLACEDghi");
+
+        // Buffer captured the staged row with Ok result.
+        let staged_rows = staged.lock().unwrap().clone();
+        assert_eq!(staged_rows.len(), 1);
+        assert!(staged_rows[0].1.is_ok(), "staged splice succeeded");
+        assert!(staged_rows[0].0.approval.is_some(), "approval key attached");
+
+        // Registry drained — no leaked pending entries (op resumed).
+        assert_eq!(registry.pending_count(), 0);
     }
 }

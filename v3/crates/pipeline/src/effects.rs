@@ -24,7 +24,24 @@ use std::sync::Mutex;
 
 use effect_runtime::{
     Batcher, BoxFuture, CancellationToken, EffectKind, PureEffect,
+    SubjectKey, SubjectKind, SubjectRegistry,
 };
+
+/// Subject kind for write-effect approval (Phase 1 staging loop).
+///
+/// Op flow: allocate a key from the registry, pre-subscribe to close the
+/// race window, attach the key to the `WriteRangeEffect` /
+/// `WriteFileEffect`, await the subscription. The staging sink (in the
+/// batcher) splices the bytes (Phase 1a auto-approve) or hands the
+/// effect off to the LSP for code-action approval (Phase 1b), then
+/// `registry.next(key, Arc::new(result))` resumes the op.
+///
+/// Payload carries the splice result so the op sees the same
+/// success/failure it would have seen from the disk batcher.
+pub struct WriteApproval;
+impl SubjectKind for WriteApproval {
+    type Payload = Result<(), Arc<str>>;
+}
 
 use crate::readers::FileSource;
 
@@ -409,8 +426,12 @@ impl Batcher<PrintEffect> for PrintBatcher {
 
 #[derive(Clone, Debug)]
 pub struct WriteFileEffect {
-    pub path:  Arc<std::path::Path>,
-    pub bytes: Arc<[u8]>,
+    pub path:     Arc<std::path::Path>,
+    pub bytes:    Arc<[u8]>,
+    /// When set, the staging sink wakes this key with the splice result
+    /// after the write resolves. Op pre-subscribes the key before
+    /// putting the effect to close the race window.
+    pub approval: Option<SubjectKey<WriteApproval>>,
 }
 
 impl EffectKind for WriteFileEffect {
@@ -421,11 +442,23 @@ impl EffectKind for WriteFileEffect {
     }
 }
 
+/// One staged write-file row. Mirrors the inputs to `WriteFileSink::Disk`
+/// plus the splice `Result` so the LSP / code-action layer can render
+/// the outcome without re-reading the file.
+pub type StagedWriteFileRow = (Arc<std::path::Path>, Arc<[u8]>, Result<(), Arc<str>>);
+
 /// Where a [`WriteFileBatcher`] sends its writes.
 #[derive(Clone)]
 pub enum WriteFileSink {
     Disk,
     Buffer(Arc<Mutex<Vec<(Arc<std::path::Path>, Arc<[u8]>)>>>),
+    /// Phase 1 staging: write to disk, record the (path, bytes, result)
+    /// row in the buffer, and (if `approval` was set on the effect) wake
+    /// the awaiting op via `registry.next(key, Arc::new(result))`.
+    StageAndApprove {
+        buffer:   Arc<Mutex<Vec<StagedWriteFileRow>>>,
+        registry: Arc<SubjectRegistry<WriteApproval>>,
+    },
 }
 
 impl WriteFileSink {
@@ -434,26 +467,51 @@ impl WriteFileSink {
         (WriteFileSink::Buffer(buf.clone()), buf)
     }
 
-    fn write(&self, path: &Arc<std::path::Path>, bytes: &Arc<[u8]>) -> Result<(), String> {
+    pub fn stage_and_approve(
+        registry: Arc<SubjectRegistry<WriteApproval>>,
+    ) -> (Self, Arc<Mutex<Vec<StagedWriteFileRow>>>) {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        (
+            WriteFileSink::StageAndApprove { buffer: buffer.clone(), registry },
+            buffer,
+        )
+    }
+
+    fn write(&self, req: &WriteFileEffect) -> Result<(), Arc<str>> {
         match self {
-            WriteFileSink::Disk => {
-                if let Some(parent) = path.parent() {
-                    if !parent.as_os_str().is_empty() {
-                        std::fs::create_dir_all(parent)
-                            .map_err(|e| format!("create_dir_all({}): {}", parent.display(), e))?;
-                    }
-                }
-                std::fs::write(path.as_ref(), bytes.as_ref())
-                    .map_err(|e| format!("write({}): {}", path.display(), e))
-            }
+            WriteFileSink::Disk => disk_write_file(&req.path, &req.bytes)
+                .map_err(|e| Arc::from(e.as_str())),
             WriteFileSink::Buffer(buf) => {
                 buf.lock()
                     .expect("write buffer poisoned")
-                    .push((path.clone(), bytes.clone()));
+                    .push((req.path.clone(), req.bytes.clone()));
                 Ok(())
+            }
+            WriteFileSink::StageAndApprove { buffer, registry } => {
+                let result = disk_write_file(&req.path, &req.bytes)
+                    .map_err(|e| Arc::<str>::from(e.as_str()));
+                buffer
+                    .lock()
+                    .expect("staged write buffer poisoned")
+                    .push((req.path.clone(), req.bytes.clone(), result.clone()));
+                if let Some(key) = req.approval {
+                    registry.next(key, Arc::new(result.clone()));
+                }
+                result
             }
         }
     }
+}
+
+fn disk_write_file(path: &Arc<std::path::Path>, bytes: &Arc<[u8]>) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create_dir_all({}): {}", parent.display(), e))?;
+        }
+    }
+    std::fs::write(path.as_ref(), bytes.as_ref())
+        .map_err(|e| format!("write({}): {}", path.display(), e))
 }
 
 pub struct WriteFileBatcher {
@@ -467,6 +525,12 @@ impl WriteFileBatcher {
         let (sink, buf) = WriteFileSink::buffer();
         (Self { sink }, buf)
     }
+    pub fn stage_and_approve(
+        registry: Arc<SubjectRegistry<WriteApproval>>,
+    ) -> (Self, Arc<Mutex<Vec<StagedWriteFileRow>>>) {
+        let (sink, buf) = WriteFileSink::stage_and_approve(registry);
+        (Self { sink }, buf)
+    }
 }
 
 impl Batcher<WriteFileEffect> for WriteFileBatcher {
@@ -477,7 +541,7 @@ impl Batcher<WriteFileEffect> for WriteFileBatcher {
     ) -> BoxFuture<'static, Result<(), Arc<str>>> {
         let sink = self.sink.clone();
         Box::pin(async move {
-            sink.write(&req.path, &req.bytes).map_err(|e| Arc::from(e.as_str()))
+            sink.write(&req)
         })
     }
 }
@@ -534,6 +598,10 @@ pub struct WriteRangeEffect {
     pub byte_range: std::ops::Range<usize>,
     pub new_bytes:  Arc<[u8]>,
     pub mode:       WriteMode,
+    /// When set, the staging sink wakes this key with the splice result
+    /// after the splice resolves. Op pre-subscribes the key before
+    /// putting the effect to close the race window.
+    pub approval:   Option<SubjectKey<WriteApproval>>,
 }
 
 impl EffectKind for WriteRangeEffect {
@@ -544,6 +612,10 @@ impl EffectKind for WriteRangeEffect {
     }
 }
 
+/// One staged write-range row. The original effect plus the splice
+/// `Result` so the LSP / code-action layer can render the outcome.
+pub type StagedWriteRangeRow = (WriteRangeEffect, Result<(), Arc<str>>);
+
 #[derive(Clone)]
 pub enum WriteRangeSink {
     Buffer(Arc<Mutex<Vec<WriteRangeEffect>>>),
@@ -551,6 +623,14 @@ pub enum WriteRangeSink {
     /// `Mutex<()>` serializes splices so two effects targeting the same
     /// drain pass cannot race the file-on-disk between read and write.
     Disk(Arc<Mutex<()>>),
+    /// Phase 1 staging: splice to disk, record the (effect, result) row
+    /// in the buffer, and (if `approval` was set on the effect) wake the
+    /// awaiting op via `registry.next(key, Arc::new(result))`.
+    StageAndApprove {
+        buffer:    Arc<Mutex<Vec<StagedWriteRangeRow>>>,
+        registry:  Arc<SubjectRegistry<WriteApproval>>,
+        disk_lock: Arc<Mutex<()>>,
+    },
 }
 
 impl WriteRangeSink {
@@ -563,7 +643,21 @@ impl WriteRangeSink {
         WriteRangeSink::Disk(Arc::new(Mutex::new(())))
     }
 
-    fn write(&self, e: WriteRangeEffect) -> Result<(), String> {
+    pub fn stage_and_approve(
+        registry: Arc<SubjectRegistry<WriteApproval>>,
+    ) -> (Self, Arc<Mutex<Vec<StagedWriteRangeRow>>>) {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        (
+            WriteRangeSink::StageAndApprove {
+                buffer:    buffer.clone(),
+                registry,
+                disk_lock: Arc::new(Mutex::new(())),
+            },
+            buffer,
+        )
+    }
+
+    fn write(&self, e: WriteRangeEffect) -> Result<(), Arc<str>> {
         match self {
             WriteRangeSink::Buffer(buf) => {
                 buf.lock()
@@ -572,17 +666,34 @@ impl WriteRangeSink {
                 Ok(())
             }
             WriteRangeSink::Disk(lock) => {
-                let _g = lock.lock().expect("write_range disk lock poisoned");
-                let path = e.file.as_ref();
-                let cur = std::fs::read(path)
-                    .map_err(|err| format!("read({}): {err}", path.display()))?;
-                let spliced = splice_bytes(&cur, &e.byte_range, &e.new_bytes, e.mode)
-                    .map_err(|m| format!("splice({}): {m}", path.display()))?;
-                std::fs::write(path, &spliced)
-                    .map_err(|err| format!("write({}): {err}", path.display()))
+                disk_splice_range(&e, lock).map_err(|m| Arc::from(m.as_str()))
+            }
+            WriteRangeSink::StageAndApprove { buffer, registry, disk_lock } => {
+                let result = disk_splice_range(&e, disk_lock)
+                    .map_err(|m| Arc::<str>::from(m.as_str()));
+                let approval = e.approval;
+                buffer
+                    .lock()
+                    .expect("staged write_range buffer poisoned")
+                    .push((e, result.clone()));
+                if let Some(key) = approval {
+                    registry.next(key, Arc::new(result.clone()));
+                }
+                result
             }
         }
     }
+}
+
+fn disk_splice_range(e: &WriteRangeEffect, lock: &Arc<Mutex<()>>) -> Result<(), String> {
+    let _g = lock.lock().expect("write_range disk lock poisoned");
+    let path = e.file.as_ref();
+    let cur = std::fs::read(path)
+        .map_err(|err| format!("read({}): {err}", path.display()))?;
+    let spliced = splice_bytes(&cur, &e.byte_range, &e.new_bytes, e.mode)
+        .map_err(|m| format!("splice({}): {m}", path.display()))?;
+    std::fs::write(path, &spliced)
+        .map_err(|err| format!("write({}): {err}", path.display()))
 }
 
 /// Splice `new_bytes` into `existing` at `range` per `mode`. Range
@@ -641,6 +752,12 @@ impl WriteRangeBatcher {
         let (sink, buf) = WriteRangeSink::buffer();
         (Self { sink }, buf)
     }
+    pub fn stage_and_approve(
+        registry: Arc<SubjectRegistry<WriteApproval>>,
+    ) -> (Self, Arc<Mutex<Vec<StagedWriteRangeRow>>>) {
+        let (sink, buf) = WriteRangeSink::stage_and_approve(registry);
+        (Self { sink }, buf)
+    }
 }
 
 impl Batcher<WriteRangeEffect> for WriteRangeBatcher {
@@ -650,9 +767,7 @@ impl Batcher<WriteRangeEffect> for WriteRangeBatcher {
         _cancel: CancellationToken,
     ) -> BoxFuture<'static, Result<(), Arc<str>>> {
         let sink = self.sink.clone();
-        Box::pin(async move {
-            sink.write(req).map_err(|e| Arc::from(e.as_str()))
-        })
+        Box::pin(async move { sink.write(req) })
     }
 }
 
@@ -839,6 +954,7 @@ mod tests {
         let res = rt.put(WriteFileEffect {
             path: path.clone(),
             bytes: Arc::from(b"hello".as_slice()),
+            approval: None,
         }).await;
         assert!(res.is_ok());
         let written = buf.lock().unwrap().clone();
