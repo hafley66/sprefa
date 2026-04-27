@@ -17,15 +17,18 @@ cd "$v3_dir"
 # release-mode binary (ast-grep/tree-sitter are 75-450x faster in release;
 # the smoke is meaningless on debug numbers).
 profile="${SPREFA_LSP_PROFILE:-debug}"
-bin="./target/$profile/sprefa-lsp"
+bin="./target/$profile/sprefa-server"
 if [ ! -x "$bin" ]; then
-    echo "building sprefa-lsp ($profile)..." >&2
+    echo "building sprefa-server ($profile)..." >&2
     if [ "$profile" = "release" ]; then
-        cargo build -p server --bin sprefa-lsp --release >&2
+        cargo build -p server --bin sprefa-server --release >&2
     else
-        cargo build -p server --bin sprefa-lsp >&2
+        cargo build -p server --bin sprefa-server >&2
     fi
 fi
+# --lsp-stdio: bypass HTTP and run tower-lsp directly on stdio (the
+# old sprefa-lsp binary was a thin wrapper for this).
+LSP_ARGS=("--lsp-stdio")
 
 # Fixture + hover position can be overridden so this script doubles as
 # an ad-hoc "probe any position in any file" tool. Defaults exercise
@@ -81,7 +84,7 @@ didopen='{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocumen
 # `... > ast[rs](format!(${X?}));`). LSP positions are 0-indexed.
 hover='{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$uri"'"},"position":{"line":'"$HOVER_LINE"',"character":'"$HOVER_CHAR"'}}}'
 
-"$bin" <"$PIPE" >"$OUT" 2>"$ERR" &
+"$bin" "${LSP_ARGS[@]}" <"$PIPE" >"$OUT" 2>"$ERR" &
 PID=$!
 
 eval "exec ${WRITER_FD}>\"$PIPE\""

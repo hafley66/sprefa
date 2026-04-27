@@ -57,11 +57,18 @@ async fn main() -> Result<()> {
     let info_path = info_path.unwrap_or_else(default_info_path);
     let (info, conn, host) = connect_or_spawn(&info_path).await?;
 
+    // Canonicalize `--root` (and the source path) against the CLI's CWD
+    // before sending. Otherwise `--root .` flows literally to the daemon
+    // and gets resolved against the daemon's CWD, which is wrong.
+    let root = root
+        .map(|p| std::fs::canonicalize(&p).unwrap_or(p));
+    let file_abs = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
+
     let source = std::fs::read_to_string(&file)
         .with_context(|| format!("read {}", file.display()))?;
     let body = serde_json::json!({
         "source":         source,
-        "source_path":    file,
+        "source_path":    file_abs,
         "workspace_hint": root,
         "out_db":         out_db,
         "cache":          cache,

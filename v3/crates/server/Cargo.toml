@@ -9,10 +9,6 @@ name = "sprefa-server"
 path = "src/bin/sprefa-server.rs"
 
 [[bin]]
-name = "sprefa-lsp"
-path = "src/bin/sprefa-lsp.rs"
-
-[[bin]]
 name = "sprefa-run"
 path = "src/bin/sprefa-run.rs"
 

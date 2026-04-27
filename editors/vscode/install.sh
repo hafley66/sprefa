@@ -2,13 +2,15 @@
 # One-shot installer for the sprf VS Code extension.
 #
 # Steps:
-#   1. cargo build the sprefa-lsp binary (v3/crates/server).
+#   1. cargo build the sprefa-server binary (v3/crates/server). The
+#      same binary serves both --lsp-stdio (this extension) and the
+#      HTTP daemon mode used by sprefa-run.
 #   2. npm install + tsc compile of the extension client.
 #   3. vsce package → local .vsix.
 #   4. code --install-extension to load it into VS Code.
-#   5. Write the absolute path of the built sprefa-lsp into VS Code
+#   5. Write the absolute path of the built sprefa-server into VS Code
 #      user settings under `sprf.serverPath` so the client does not
-#      pick up some random `sprefa-lsp` from PATH.
+#      pick up some random `sprefa-server` from PATH.
 #
 # Re-runs are idempotent. Pass --release to build the LSP binary in
 # release mode.
@@ -33,14 +35,14 @@ for arg in "$@"; do
     esac
 done
 
-# 1. Build sprefa-lsp.
-echo "→ building sprefa-lsp ($profile)" >&2
+# 1. Build sprefa-server.
+echo "→ building sprefa-server ($profile)" >&2
 (
     cd "$v3_dir"
-    cargo build -p server --bin sprefa-lsp "${cargo_flags[@]}"
+    cargo build -p server --bin sprefa-server "${cargo_flags[@]}"
 )
-lsp_bin="$v3_dir/target/$profile/sprefa-lsp"
-[ -x "$lsp_bin" ] || { echo "missing binary: $lsp_bin" >&2; exit 1; }
+server_bin="$v3_dir/target/$profile/sprefa-server"
+[ -x "$server_bin" ] || { echo "missing binary: $server_bin" >&2; exit 1; }
 
 # 2. Compile the TS client.
 echo "→ compiling extension client" >&2
@@ -88,7 +90,7 @@ if [ ! -f "$settings" ]; then
 fi
 
 echo "→ pinning sprf.serverPath in $settings" >&2
-node - "$settings" "$lsp_bin" <<'NODE'
+node - "$settings" "$server_bin" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 const [file, lspBin] = process.argv.slice(2);
@@ -106,5 +108,5 @@ cfg['sprf.serverPath'] = lspBin;
 fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
 NODE
 
-echo "✓ sprf extension installed; sprf.serverPath = $lsp_bin" >&2
+echo "✓ sprf extension installed; sprf.serverPath = $server_bin" >&2
 echo "  Reload VS Code windows to pick up the binding." >&2

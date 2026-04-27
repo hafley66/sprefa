@@ -42,7 +42,7 @@
         "sprf.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to sprefa-lsp binary. If empty, searches PATH for sprefa-lsp."
+          "description": "Path to sprefa-server binary (run with --lsp-stdio). If empty, searches PATH for sprefa-server."
         }
       }
     }

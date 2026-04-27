@@ -52,10 +52,10 @@ default: test-all
 # -----------------------------------------------------------------------------
 
 build:
-    cargo build -p server --bin sprefa-run --bin sprefa-lsp
+    cargo build -p server --bin sprefa-run --bin sprefa-server
 
 build-release:
-    cargo build -p server --bin sprefa-run --bin sprefa-lsp --release
+    cargo build -p server --bin sprefa-run --bin sprefa-server --release
 
 # -----------------------------------------------------------------------------
 # Tests + smokes

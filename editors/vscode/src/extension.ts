@@ -9,11 +9,11 @@ let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
   const config = workspace.getConfiguration("sprf");
-  const serverPath = config.get<string>("serverPath") || "sprefa-lsp";
+  const serverPath = config.get<string>("serverPath") || "sprefa-server";
 
   const serverOptions: ServerOptions = {
     command: serverPath,
-    args: [],
+    args: ["--lsp-stdio"],
   };
 
   const clientOptions: LanguageClientOptions = {
