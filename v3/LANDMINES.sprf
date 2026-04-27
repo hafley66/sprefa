@@ -1,0 +1,18 @@
+# LANDMINES.sprf — surface every // SPRF-LANDMINE marker in the v3 tree.
+#
+# These are non-obvious load-bearing lines. Each marker has a tag suffix
+# (e.g. invalidate-after-splice, weak-not-strong, bind-not-discard) and a
+# (sprefa-XXX) bd reference at the end of the comment.
+#
+# Run from v3/:
+#   sprefa-run LANDMINES.sprf --root .
+#
+# Or under a daemon you spun up yourself:
+#   sprefa-run LANDMINES.sprf --info /path/to/server.json --root .
+
+fs(glob(v3/crates/**/*.rs))
+  > comment("SPRF-LANDMINE")
+  > lsp[warn](
+      message = "load-bearing landmine: read the comment before editing",
+      code    = "sprf/landmine",
+      hint    = "SPRF-LANDMINE markers tag non-obvious correctness contracts; refactoring requires understanding the (sprefa-XXX) ticket cited inline");

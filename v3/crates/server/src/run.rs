@@ -213,10 +213,10 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 staged_ranges,
                 staged_files,
                 lsp_diags,
-                // Keep the invalidator cell alive for the seed's lifetime —
-                // the staging sinks hold a Weak ref; if this drops, splice
-                // -> invalidate becomes a no-op and stale ReadBytes cache
-                // entries corrupt downstream pipes (sprefa-5ld).
+                // SPRF-LANDMINE bind-not-discard: this MUST be bound, not
+                // swept under `..`. Sink holds Weak<cell>; cell dropped =
+                // splice -> invalidate is a silent no-op = stale fs cache
+                // = file corruption on cross-pipe writes. (sprefa-5ld)
                 _invalidator_cell,
                 ..
             } = build_seed_ctx(
@@ -449,6 +449,10 @@ pub(crate) fn build_seed_ctx(
     // drops, the cell drops, the ctx clone in it drops, registry refcount
     // hits zero, sinks drop, closure drops, Weak goes invalid (no-op).
     let invalidator_cell: Arc<OnceLock<RtCtx>> = Arc::new(OnceLock::new());
+    // SPRF-LANDMINE weak-not-strong: closure MUST hold Weak, not Arc, on
+    // the cell. Strong forms a cycle (closure -> cell -> ctx -> registry
+    // -> sink -> closure) and leaks the ctx every seed iteration forever.
+    // (sprefa-5ld)
     let weak_cell = Arc::downgrade(&invalidator_cell);
     let invalidate_fs: pipeline::effects::FsInvalidator = Arc::new(move || {
         if let Some(cell) = weak_cell.upgrade() {

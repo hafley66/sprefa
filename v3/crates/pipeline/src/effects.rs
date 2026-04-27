@@ -587,6 +587,10 @@ impl WriteFileSink {
                     WriteDecision::DryRun   => Err(Arc::<str>::from("dry-run")),
                     WriteDecision::Rejected => Err(Arc::<str>::from("rejected by policy")),
                 };
+                // SPRF-LANDMINE invalidate-after-splice: drops the "fs"
+                // domain CacheLayer so downstream ReadBytesEffect reads
+                // fresh post-splice bytes. Skip this and cross-pipe writes
+                // index stale byte_ranges into the new file. (sprefa-5ld)
                 if matches!(decision, WriteDecision::Approved) && result.is_ok() {
                     invalidate_fs();
                 }
@@ -816,6 +820,11 @@ impl WriteRangeSink {
                     WriteDecision::DryRun   => Err(Arc::<str>::from("dry-run")),
                     WriteDecision::Rejected => Err(Arc::<str>::from("rejected by policy")),
                 };
+                // SPRF-LANDMINE invalidate-after-splice: drops the "fs"
+                // domain CacheLayer so downstream ReadBytesEffect reads
+                // fresh post-splice bytes. Skip this and the next pipe's
+                // comment/ast/re computes byte_range from stale bytes and
+                // splices into the new file at wrong offsets. (sprefa-5ld)
                 if matches!(decision, WriteDecision::Approved) && result.is_ok() {
                     invalidate_fs();
                 }
