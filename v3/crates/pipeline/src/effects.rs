@@ -445,7 +445,27 @@ impl EffectKind for WriteFileEffect {
 /// One staged write-file row. Mirrors the inputs to `WriteFileSink::Disk`
 /// plus the splice `Result` so the LSP / code-action layer can render
 /// the outcome without re-reading the file.
-pub type StagedWriteFileRow = (Arc<std::path::Path>, Arc<[u8]>, Result<(), Arc<str>>);
+///
+/// `id` is a content-stable short hash over `(path, bytes)` so the same
+/// staged write produces the same id across runs — the cockpit can
+/// reference an id from a prior run when deciding which writes to
+/// approve in the next run.
+#[derive(Clone, Debug)]
+pub struct StagedWriteFileRow {
+    pub id:     Arc<str>,
+    pub path:   Arc<std::path::Path>,
+    pub bytes:  Arc<[u8]>,
+    pub result: Result<(), Arc<str>>,
+}
+
+fn write_file_id(path: &std::path::Path, bytes: &[u8]) -> Arc<str> {
+    let mut h = blake3::Hasher::new();
+    h.update(path.as_os_str().as_encoded_bytes());
+    h.update(b"|");
+    h.update(bytes);
+    let hex = h.finalize().to_hex();
+    Arc::from(&hex.as_str()[..12])
+}
 
 /// Where a [`WriteFileBatcher`] sends its writes.
 #[derive(Clone)]
@@ -490,10 +510,16 @@ impl WriteFileSink {
             WriteFileSink::StageAndApprove { buffer, registry } => {
                 let result = disk_write_file(&req.path, &req.bytes)
                     .map_err(|e| Arc::<str>::from(e.as_str()));
+                let id = write_file_id(&req.path, &req.bytes);
                 buffer
                     .lock()
                     .expect("staged write buffer poisoned")
-                    .push((req.path.clone(), req.bytes.clone(), result.clone()));
+                    .push(StagedWriteFileRow {
+                        id,
+                        path: req.path.clone(),
+                        bytes: req.bytes.clone(),
+                        result: result.clone(),
+                    });
                 if let Some(key) = req.approval {
                     registry.next(key, Arc::new(result.clone()));
                 }
@@ -614,7 +640,31 @@ impl EffectKind for WriteRangeEffect {
 
 /// One staged write-range row. The original effect plus the splice
 /// `Result` so the LSP / code-action layer can render the outcome.
-pub type StagedWriteRangeRow = (WriteRangeEffect, Result<(), Arc<str>>);
+///
+/// `id` is a content-stable short hash over `(file, byte_range, mode,
+/// new_bytes)` so the same staged write produces the same id across
+/// runs — the cockpit can reference an id from a prior run when
+/// deciding which writes to approve in the next run.
+#[derive(Clone, Debug)]
+pub struct StagedWriteRangeRow {
+    pub id:     Arc<str>,
+    pub effect: WriteRangeEffect,
+    pub result: Result<(), Arc<str>>,
+}
+
+fn write_range_id(e: &WriteRangeEffect) -> Arc<str> {
+    let mut h = blake3::Hasher::new();
+    h.update(e.file.as_os_str().as_encoded_bytes());
+    h.update(b"|");
+    h.update(&(e.byte_range.start as u64).to_le_bytes());
+    h.update(&(e.byte_range.end   as u64).to_le_bytes());
+    h.update(b"|");
+    h.update(e.mode.as_str().as_bytes());
+    h.update(b"|");
+    h.update(&e.new_bytes);
+    let hex = h.finalize().to_hex();
+    Arc::from(&hex.as_str()[..12])
+}
 
 #[derive(Clone)]
 pub enum WriteRangeSink {
@@ -669,13 +719,18 @@ impl WriteRangeSink {
                 disk_splice_range(&e, lock).map_err(|m| Arc::from(m.as_str()))
             }
             WriteRangeSink::StageAndApprove { buffer, registry, disk_lock } => {
+                let id = write_range_id(&e);
                 let result = disk_splice_range(&e, disk_lock)
                     .map_err(|m| Arc::<str>::from(m.as_str()));
                 let approval = e.approval;
                 buffer
                     .lock()
                     .expect("staged write_range buffer poisoned")
-                    .push((e, result.clone()));
+                    .push(StagedWriteRangeRow {
+                        id,
+                        effect: e,
+                        result: result.clone(),
+                    });
                 if let Some(key) = approval {
                     registry.next(key, Arc::new(result.clone()));
                 }

@@ -311,11 +311,12 @@ mod tests {
         let after = std::fs::read(&path).unwrap();
         assert_eq!(&after[..], b"abcREPLACEDghi");
 
-        // Buffer captured the staged row with Ok result.
+        // Buffer captured the staged row with Ok result and a stable id.
         let staged_rows = staged.lock().unwrap().clone();
         assert_eq!(staged_rows.len(), 1);
-        assert!(staged_rows[0].1.is_ok(), "staged splice succeeded");
-        assert!(staged_rows[0].0.approval.is_some(), "approval key attached");
+        assert!(staged_rows[0].result.is_ok(), "staged splice succeeded");
+        assert!(staged_rows[0].effect.approval.is_some(), "approval key attached");
+        assert_eq!(staged_rows[0].id.len(), 12, "id is 12-char short hash");
 
         // Registry drained — no leaked pending entries (op resumed).
         assert_eq!(registry.pending_count(), 0);

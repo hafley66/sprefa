@@ -189,8 +189,8 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
 
             let SeedRtCtx {
                 ctx,
-                staged_ranges: _staged_ranges,
-                staged_files:  _staged_files,
+                staged_ranges,
+                staged_files,
                 lsp_diags,
                 ..
             } = build_seed_ctx(
@@ -289,6 +289,59 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                     msg.push(')');
                 }
                 yield RunEvent::Diag { code, severity: sev.into(), message: msg };
+            }
+
+            // Drain per-seed staged writes (Phase 1 staging cockpit).
+            // Each row carries a content-stable id; surface as Info diags
+            // so the CLI / SSE consumer renders them in the same panel
+            // as parse + lsp diagnostics. Future flag `--approve <ids>`
+            // will let the user re-run with only listed ids splicing.
+            let drained_ranges: Vec<StagedWriteRangeRow> = {
+                let mut g = staged_ranges.lock().expect("staged write_range buffer poisoned");
+                std::mem::take(&mut *g)
+            };
+            for row in drained_ranges {
+                let outcome = match &row.result {
+                    Ok(())  => "ok".to_string(),
+                    Err(e)  => format!("err: {e}"),
+                };
+                let msg = format!(
+                    "[id={}] {} {}..{} +{}B mode={} -> {}",
+                    row.id,
+                    row.effect.file.display(),
+                    row.effect.byte_range.start,
+                    row.effect.byte_range.end,
+                    row.effect.new_bytes.len(),
+                    row.effect.mode.as_str(),
+                    outcome,
+                );
+                yield RunEvent::Diag {
+                    code:     "staged/write_range".into(),
+                    severity: "Info".into(),
+                    message:  msg,
+                };
+            }
+            let drained_files: Vec<StagedWriteFileRow> = {
+                let mut g = staged_files.lock().expect("staged write_file buffer poisoned");
+                std::mem::take(&mut *g)
+            };
+            for row in drained_files {
+                let outcome = match &row.result {
+                    Ok(())  => "ok".to_string(),
+                    Err(e)  => format!("err: {e}"),
+                };
+                let msg = format!(
+                    "[id={}] {} +{}B -> {}",
+                    row.id,
+                    row.path.display(),
+                    row.bytes.len(),
+                    outcome,
+                );
+                yield RunEvent::Diag {
+                    code:     "staged/write_file".into(),
+                    severity: "Info".into(),
+                    message:  msg,
+                };
             }
         }
 
