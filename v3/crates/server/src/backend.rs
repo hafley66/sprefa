@@ -647,7 +647,10 @@ fn render_capture_value(c: &Cursor, cap: &Capture, root: &Path) -> String {
             String::from_utf8_lossy(&c.content[cap.byte_range.clone()]).into_owned()
         }
     };
-    let value_short = escape_pipe(&truncate(&value_str.replace('`', "\\`"), 48));
+    let value_short = escape_pipe(&truncate(
+        &value_str.replace('\n', " ⏎ ").replace('`', "\\`"),
+        48,
+    ));
 
     match &cap.kind {
         CaptureKind::SpanBacked => {
@@ -925,6 +928,27 @@ mod tests {
         assert!(
             md.contains("| `$ARGS` | `a , b` _(synthesized)_ |"),
             "synthesized capture as table row: {md}",
+        );
+    }
+
+    #[test]
+    fn cursor_block_escapes_newlines_in_capture_values() {
+        // Newlines in a capture value would otherwise terminate the
+        // markdown table row, breaking every row that follows. Pin
+        // that they get rewritten to ` ⏎ ` and the table stays intact.
+        let mut c = Cursor::new(Arc::from(&b""[..]));
+        c.captures.push(Capture::synthesized(
+            Arc::from("BODY"),
+            Arc::from("for d in dirs {\n    fs::create_dir_all(r"),
+        ));
+        let md = render_cursor_block(1, &c, std::path::Path::new("/"), None);
+        assert!(
+            !md.contains("dirs {\n    fs::create"),
+            "raw newline leaked into table cell: {md}",
+        );
+        assert!(
+            md.contains("⏎"),
+            "newline must be replaced with ⏎ glyph: {md}",
         );
     }
 
