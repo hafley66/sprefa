@@ -561,8 +561,8 @@ async fn render_enriched_hover(
 fn render_cursor_block(n: usize, c: &Cursor, root: &Path, focus_capture: Option<&str>) -> String {
     let mut out = String::new();
 
-    // Header line. File link sits first because it's the thing the user
-    // actually clicks; metadata trails.
+    // Header line (outside the table so the click target keeps full
+    // width and never wraps inside a cell).
     let header_anchor = match &c.fs {
         Some(rel) => {
             let abs = root.join(rel.as_ref());
@@ -580,31 +580,30 @@ fn render_cursor_block(n: usize, c: &Cursor, root: &Path, focus_capture: Option<
         c.repo, c.rev, c.byte_range.start, c.byte_range.end,
     ));
 
-    // Match preview. Blockquote keeps it visually separate from the
-    // capture list and avoids the table-cell escape gymnastics.
+    // Per-cursor 2-col table. One row per fact: match preview,
+    // captures, last_bound, SprfPath. Easier to scan than the prior
+    // bullet-list shape.
+    let mut rows: Vec<(String, String)> = Vec::new();
+
     let preview = render_preview(c);
     if !preview.is_empty() {
-        out.push_str(&format!("> `{preview}`\n"));
+        rows.push(("_match_".into(), format!("`{}`", escape_pipe(&preview))));
     }
 
-    // Capture list. SpanBacked → linked value pointing at its byte_range
-    // line; Synthesized → inline value, no link (no source span).
-    if !c.captures.is_empty() {
-        for cap in &c.captures {
-            let cell = render_capture_line(c, cap, root);
-            let is_focus = focus_capture.is_some_and(|f| f == &*cap.name);
-            let marker = if is_focus { "▶" } else { "-" };
-            if is_focus {
-                out.push_str(&format!("{marker} **{cell}**\n"));
-            } else {
-                out.push_str(&format!("{marker} {cell}\n"));
-            }
-        }
+    for cap in &c.captures {
+        let value_cell = render_capture_value(c, cap, root);
+        let is_focus = focus_capture.is_some_and(|f| f == &*cap.name);
+        let field = if is_focus {
+            format!("▶ **`${}`**", cap.name)
+        } else {
+            format!("`${}`", cap.name)
+        };
+        let value = if is_focus { format!("**{value_cell}**") } else { value_cell };
+        rows.push((field, value));
     }
 
-    // last_bound and SprfPath are diagnostic; only render when present.
     if let Some(name) = c.last_bound.as_ref() {
-        out.push_str(&format!("- _last_bound:_ `${name}`\n"));
+        rows.push(("_last_bound_".into(), format!("`${name}`")));
     }
     if !c.path.is_empty() {
         let path = c
@@ -616,7 +615,14 @@ fn render_cursor_block(n: usize, c: &Cursor, root: &Path, focus_capture: Option<
             })
             .collect::<Vec<_>>()
             .join(" > ");
-        out.push_str(&format!("- _SprfPath:_ `{path}`\n"));
+        rows.push(("_SprfPath_".into(), format!("`{}`", escape_pipe(&path))));
+    }
+
+    if !rows.is_empty() {
+        out.push_str("\n| | |\n| --- | --- |\n");
+        for (field, value) in &rows {
+            out.push_str(&format!("| {field} | {value} |\n"));
+        }
     }
 
     out
@@ -631,19 +637,20 @@ fn render_preview(c: &Cursor) -> String {
     truncate(&s, 80)
 }
 
-fn render_capture_line(c: &Cursor, cap: &Capture, root: &Path) -> String {
+/// Value-only cell for the cursor table. The capture name lives in the
+/// field column, so this returns just the rhs: a linked code-span for
+/// span-backed captures, an inline `…` _(synthesized)_ for synthesized.
+fn render_capture_value(c: &Cursor, cap: &Capture, root: &Path) -> String {
     let value_str = match &cap.kind {
         CaptureKind::Synthesized { value } => value.to_string(),
         CaptureKind::SpanBacked => {
             String::from_utf8_lossy(&c.content[cap.byte_range.clone()]).into_owned()
         }
     };
-    let value_short = truncate(&value_str.replace('`', "\\`"), 48);
+    let value_short = escape_pipe(&truncate(&value_str.replace('`', "\\`"), 48));
 
     match &cap.kind {
         CaptureKind::SpanBacked => {
-            // Link the value text into the source file at the capture's
-            // start line. file:// + #Lnn lets editors jump straight to it.
             let target = match &c.fs {
                 Some(rel) => {
                     let abs = root.join(rel.as_ref());
@@ -654,20 +661,23 @@ fn render_capture_line(c: &Cursor, cap: &Capture, root: &Path) -> String {
             };
             match target {
                 Some(href) => format!(
-                    "`${}` → [`{}`]({href}) `bytes {}..{}`",
-                    cap.name, value_short, cap.byte_range.start, cap.byte_range.end,
+                    "[`{value_short}`]({href}) `bytes {}..{}`",
+                    cap.byte_range.start, cap.byte_range.end,
                 ),
                 None => format!(
-                    "`${}` → `{}` `bytes {}..{}`",
-                    cap.name, value_short, cap.byte_range.start, cap.byte_range.end,
+                    "`{value_short}` `bytes {}..{}`",
+                    cap.byte_range.start, cap.byte_range.end,
                 ),
             }
         }
         CaptureKind::Synthesized { .. } => {
-            format!("`${}` → `{}` _(synthesized)_", cap.name, value_short)
+            format!("`{value_short}` _(synthesized)_")
         }
     }
 }
+
+/// Escape `|` so cell values don't terminate a markdown table column.
+fn escape_pipe(s: &str) -> String { s.replace('|', "\\|") }
 
 fn line_of_offset(bytes: &[u8], offset: usize) -> usize {
     let end = offset.min(bytes.len());
@@ -798,13 +808,14 @@ mod tests {
         assert!(md.contains("[`Cargo.toml#L1`]"), "header file link present: {md}");
         assert!(md.contains("(file:///tmp/root/Cargo.toml#L"), "absolute file:// URL: {md}");
         assert!(
-            md.contains("`$N` → [`\"alice\"`]"),
-            "capture value rendered as a link: {md}"
+            md.contains("| `$N` | [`\"alice\"`]"),
+            "capture row rendered as table row with linked value: {md}"
         );
         assert!(
             md.contains(&format!("#L2)")),
             "capture link points at line 2 of the source: {md}"
         );
+        assert!(md.contains("| --- | --- |"), "table separator present: {md}");
     }
 
     #[test]
@@ -911,7 +922,10 @@ mod tests {
         let mut c = Cursor::new(Arc::from(&b""[..]));
         c.captures.push(Capture::synthesized(Arc::from("ARGS"), Arc::from("a , b")));
         let md = render_cursor_block(1, &c, std::path::Path::new("/"), None);
-        assert!(md.contains("`$ARGS` → `a , b` _(synthesized)_"), "synthesized capture: {md}");
+        assert!(
+            md.contains("| `$ARGS` | `a , b` _(synthesized)_ |"),
+            "synthesized capture as table row: {md}",
+        );
     }
 
     #[test]
