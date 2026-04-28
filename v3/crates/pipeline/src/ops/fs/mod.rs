@@ -17,6 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use effect_runtime::{BoxFuture, RtCtx};
+use futures::stream::{self, StreamExt};
 
 use crate::_0_cursor::{Capture, Cursor};
 use crate::_1_op::Op;
@@ -165,22 +166,26 @@ impl Op for FsOp {
             // Run the sub-op, take last_bound from each output cursor as
             // the path to bind on cursor.fs.
             if let FsMode::ArgPipe(op) = &self.mode {
-                let outs = op.pipe(ctx, Arc::from(vec![c.clone()])).await;
-                let mut emitted: Vec<Cursor> = Vec::with_capacity(outs.len());
-                for o in outs.iter() {
-                    let value = match o.last_bound.as_ref()
-                        .and_then(|n| o.capture(n))
-                    {
-                        Some(cap) => cap.bytes(&o.content).to_vec(),
-                        None => continue,
-                    };
-                    let path_str = match std::str::from_utf8(&value) {
-                        Ok(s)  => s,
-                        Err(_) => continue,
-                    };
-                    let mut nc = o.clone();
-                    nc.fs = Some(Path::new(path_str).into());
-                    emitted.push(nc);
+                // Snapshot drain — see RepoMode::ArgPipe for rationale.
+                let upstream = stream::iter(vec![Arc::<[Cursor]>::from(vec![c.clone()])]);
+                let mut s = op.pipe_flat_map(ctx, Box::pin(upstream));
+                let mut emitted: Vec<Cursor> = Vec::new();
+                if let Some(batch) = s.next().await {
+                    for o in batch.iter() {
+                        let value = match o.last_bound.as_ref()
+                            .and_then(|n| o.capture(n))
+                        {
+                            Some(cap) => cap.bytes(&o.content).to_vec(),
+                            None => continue,
+                        };
+                        let path_str = match std::str::from_utf8(&value) {
+                            Ok(s)  => s,
+                            Err(_) => continue,
+                        };
+                        let mut nc = o.clone();
+                        nc.fs = Some(Path::new(path_str).into());
+                        emitted.push(nc);
+                    }
                 }
                 return emitted;
             }

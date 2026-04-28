@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use effect_runtime::{BoxFuture, RtCtx};
+use futures::stream::{self, StreamExt};
 
 use crate::_0_cursor::{Capture, Cursor};
 use crate::_1_op::Op;
@@ -137,22 +138,30 @@ impl Op for RepoOp {
                     vec![out]
                 }
                 RepoMode::ArgPipe(op) => {
-                    let outs = op.pipe(ctx, Arc::from(vec![c.clone()])).await;
-                    let mut emitted: Vec<Cursor> = Vec::with_capacity(outs.len());
-                    for o in outs.iter() {
-                        let value = match o.last_bound.as_ref()
-                            .and_then(|n| o.capture(n))
-                        {
-                            Some(cap) => cap.bytes(&o.content).to_vec(),
-                            None => continue,
-                        };
-                        let new_repo: Arc<str> = match std::str::from_utf8(&value) {
-                            Ok(s)  => Arc::from(s),
-                            Err(_) => continue,
-                        };
-                        let mut nc = o.clone();
-                        nc.repo = new_repo;
-                        emitted.push(nc);
+                    // Drive via pipe_flat_map so streaming sources (tag's
+                    // QueryOp drain+subscribe, etc.) emit their snapshot
+                    // batch. We take only the FIRST emission — that is
+                    // the synchronous snapshot of currently-known rows.
+                    // Future writes don't backfill (snapshot semantics).
+                    let upstream = stream::iter(vec![Arc::<[Cursor]>::from(vec![c.clone()])]);
+                    let mut s = op.pipe_flat_map(ctx, Box::pin(upstream));
+                    let mut emitted: Vec<Cursor> = Vec::new();
+                    if let Some(batch) = s.next().await {
+                        for o in batch.iter() {
+                            let value = match o.last_bound.as_ref()
+                                .and_then(|n| o.capture(n))
+                            {
+                                Some(cap) => cap.bytes(&o.content).to_vec(),
+                                None => continue,
+                            };
+                            let new_repo: Arc<str> = match std::str::from_utf8(&value) {
+                                Ok(s)  => Arc::from(s),
+                                Err(_) => continue,
+                            };
+                            let mut nc = o.clone();
+                            nc.repo = new_repo;
+                            emitted.push(nc);
+                        }
                     }
                     emitted
                 }
