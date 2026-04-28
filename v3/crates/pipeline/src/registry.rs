@@ -34,7 +34,7 @@ use crate::op_ctor::{
 };
 use crate::ops::{
     AstGrepOp, AstYamlOp, CommentOp, CursorRefOp, FsOp, GlobOp, JsonOp, LspDiagOp, PrintOp,
-    ReadOp, ReOp, RenderOp, RepoOp, RevOp, StrOp, TagOp, TagPredicateOp, VoidOp, WriteCursorOp,
+    ReadOp, ReOp, RenderOp, RepoOp, RevOp, ShOp, StrOp, TagOp, TagPredicateOp, VoidOp, WriteCursorOp,
     WriteFileOp,
 };
 use crate::pattern_op::PatternDiagnostic;
@@ -154,6 +154,7 @@ impl Registry {
             .register::<JsonOp>()
             .register::<LspDiagOp>()
             .register::<RenderOp>()
+            .register::<ShOp>()
             .register::<AstGrepOp>()
             .register::<AstYamlOp>()
             .register::<WriteCursorOp>()

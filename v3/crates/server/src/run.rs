@@ -33,6 +33,7 @@ use pipeline::effects::{
     AstParseEffect, FsListFilesBatcher, FsListFilesEffect, LspDiagBatcher, LspDiagEffect,
     PrintBatcher, PrintEffect, ReadBytesBatchBatcher, ReadBytesBatchEffect, ReadBytesBatcher,
     ReadBytesEffect, StagedWriteFileRow, StagedWriteRangeRow, WriteApproval, WriteDecision,
+    ShBatcher, ShEffect, StagedShRow,
     WriteFileBatcher, WriteFileEffect, WritePolicy, WriteRangeBatcher, WriteRangeEffect,
 };
 use pipeline::ops::relation::RelationArg;
@@ -186,7 +187,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
         let relation_store = Arc::new(RelationStore::new());
         let subject_registry = Arc::new(SubjectRegistry::<RelationWake>::new());
 
-        for seed in &cfg.seeds {
+        for (seed_idx, seed) in cfg.seeds.iter().enumerate() {
             if cancel.is_cancelled() { yield RunEvent::Done; return; }
 
             // Per-seed file source: BufferOverlay<DiskFileSource> from
@@ -212,6 +213,7 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 ctx,
                 staged_ranges,
                 staged_files,
+                staged_sh,
                 lsp_diags,
                 // SPRF-LANDMINE bind-not-discard: this MUST be bound, not
                 // swept under `..`. Sink holds Weak<cell>; cell dropped =
@@ -274,6 +276,25 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 if cancel.is_cancelled() { yield RunEvent::Done; return; }
                 let Some(head) = pipe.ops.first() else { continue };
                 if &*head.name == "rule" { continue; }
+                // Single-seed gate: pipes containing write ops run only on
+                // seed₀. Multi-seed write coordination (shared FsInvalidator
+                // + serial loop with cache eviction) is the proper fix; this
+                // gate prevents the multi-splice clobber documented in
+                // fixtures/golden_kitchen_sink.sprf §7.
+                let has_write = pipe.ops.iter().any(|o| {
+                    matches!(&*o.name, "write_cursor" | "write_file")
+                });
+                if has_write && seed_idx > 0 {
+                    yield RunEvent::Diag {
+                        code: "write/single-seed-gate".into(),
+                        severity: "Info".into(),
+                        message: format!(
+                            "skipped pipe #{i} on seed `{}` (write op + seed_idx>0)",
+                            seed.slug,
+                        ),
+                    };
+                    continue;
+                }
                 let Some(p) = lower_pipe(pipe, &source_text, &registry, &known_rules) else {
                     continue;
                 };
@@ -358,6 +379,48 @@ pub async fn run_pipeline(state: Arc<ServerState>, req: RunRequest) -> RunStart 
                 );
                 yield RunEvent::Diag { code, severity, message: msg };
             }
+            // Drain per-seed staged sh invocations. Each row carries the
+            // rendered cmd_line, the decision (approved / dry-run / rejected),
+            // and the response (exit + stdout/stderr lengths). Surface as
+            // Info diags so the operator sees what bash got handed.
+            let drained_sh: Vec<StagedShRow> = {
+                let mut g = staged_sh.lock().expect("staged sh buffer poisoned");
+                std::mem::take(&mut *g)
+            };
+            for row in drained_sh {
+                let (severity, code, outcome) = match (row.decision, &row.result) {
+                    (pipeline::effects::ShDecision::Approved, Some(Ok(r))) => (
+                        if r.exit_code == 0 { "Info".to_string() } else { "Warning".to_string() },
+                        "staged/sh".to_string(),
+                        format!("exit={} stdout={}B stderr={}B in {}ms",
+                            r.exit_code, r.stdout.len(), r.stderr.len(), r.elapsed_ms),
+                    ),
+                    (pipeline::effects::ShDecision::Approved, Some(Err(e))) => (
+                        "Warning".to_string(), "staged/sh".to_string(),
+                        format!("err: {e}"),
+                    ),
+                    (pipeline::effects::ShDecision::DryRun, _) => (
+                        "Info".to_string(), "staged/sh".to_string(),
+                        "dry-run".to_string(),
+                    ),
+                    (pipeline::effects::ShDecision::Rejected, _) => (
+                        "Warning".to_string(), "staged/sh-rejected".to_string(),
+                        "rejected".to_string(),
+                    ),
+                    (_, None) => (
+                        "Warning".to_string(), "staged/sh".to_string(),
+                        "no result captured".to_string(),
+                    ),
+                };
+                let msg = format!(
+                    "[id={}] policy={} `{}` -> {}",
+                    row.id,
+                    row.effect.policy.as_str(),
+                    row.effect.cmd_line,
+                    outcome,
+                );
+                yield RunEvent::Diag { code, severity, message: msg };
+            }
         }
 
         // SQLite drain — runs after all seeds. Out_db None ⇒ skip.
@@ -396,6 +459,7 @@ pub(crate) struct SeedRtCtx {
     pub write_approval: Arc<SubjectRegistry<WriteApproval>>,
     pub staged_ranges:  Arc<Mutex<Vec<StagedWriteRangeRow>>>,
     pub staged_files:   Arc<Mutex<Vec<StagedWriteFileRow>>>,
+    pub staged_sh:      Arc<Mutex<Vec<StagedShRow>>>,
     /// Drained at end-of-seed by `/run` (RunEvent::Diag) and by the LSP
     /// hover/save path (publishDiagnostics). The `lsp[severity]` op
     /// pushes one entry per cursor.
@@ -469,6 +533,7 @@ pub(crate) fn build_seed_ctx(
         write_approval.clone(), write_policy, invalidate_fs,
     );
     let (lsp_diag_batcher, lsp_diags) = LspDiagBatcher::buffer();
+    let (sh_batcher, staged_sh) = ShBatcher::new();
 
     let ctx = RtCtxBuilder::new()
         .with_store(relation_store.clone())
@@ -496,6 +561,7 @@ pub(crate) fn build_seed_ctx(
         .register::<WriteFileEffect, _>(write_file_batcher)
         .register::<WriteRangeEffect, _>(write_range_batcher)
         .register::<LspDiagEffect, _>(lsp_diag_batcher)
+        .register::<ShEffect, _>(sh_batcher)
         .build();
 
     // Fill the cell so the staging sinks can reach the live ctx for
@@ -504,7 +570,7 @@ pub(crate) fn build_seed_ctx(
     let _ = invalidator_cell.set(ctx.clone());
 
     SeedRtCtx {
-        ctx, write_approval, staged_ranges, staged_files, lsp_diags,
+        ctx, write_approval, staged_ranges, staged_files, staged_sh, lsp_diags,
         _invalidator_cell: invalidator_cell,
     }
 }

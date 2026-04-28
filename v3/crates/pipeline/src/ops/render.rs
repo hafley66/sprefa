@@ -96,7 +96,9 @@ impl Op for RenderOp {
             }
             let bytes: Arc<[u8]> = Arc::from(buf.into_bytes());
             let len = bytes.len();
-            vec![c.rebase(bytes, 0..len)]
+            let mut out = c.rebase(bytes, 0..len);
+            out.captures.clear();
+            vec![out]
         }))
     }
 }

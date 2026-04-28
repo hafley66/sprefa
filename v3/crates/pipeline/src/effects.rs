@@ -1079,6 +1079,205 @@ pub fn ast_parse(req: AstParseEffect) -> <AstParseEffect as EffectKind>::Respons
     Some(g)
 }
 
+// ---------------------------------------------------------------------------
+// ShEffect — run a shell snippet (`bash -c <cmd_line>`) and return
+// stdout/stderr/exit. cmd_line is already-rendered by the `sh` op,
+// which substituted `$$X` template reads against in-flight cursor
+// captures. Surface stays small: one positional body string, optional
+// cwd. No env, no stdin yet — add when oasdiff workflow needs them.
+//
+// Three policies:
+//   Auto    — run unconditionally
+//   Cache   — memoize on blake3(cmd_line ‖ cwd) inside the batcher
+//   Approve — TODO HITL: stage row, wait on ShApproval registry; today
+//             degrades to Auto + emits a staged row for visibility
+//   DryRun  — never run, return empty stdout + exit=-1
+//
+// EffectKind::Response is `Result<ShResponse, Arc<str>>` so the op sees
+// subprocess failure as Err and can drop the cursor with a diag.
+// ---------------------------------------------------------------------------
+
+pub struct ShApproval;
+impl SubjectKind for ShApproval {
+    type Payload = Result<ShResponse, Arc<str>>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShPolicy {
+    Auto,
+    Cache,
+    Approve,
+    DryRun,
+}
+
+impl ShPolicy {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "auto"    => Some(ShPolicy::Auto),
+            "cache"   => Some(ShPolicy::Cache),
+            "approve" => Some(ShPolicy::Approve),
+            "dry"     | "dry-run" | "dry_run" => Some(ShPolicy::DryRun),
+            _ => None,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ShPolicy::Auto    => "auto",
+            ShPolicy::Cache   => "cache",
+            ShPolicy::Approve => "approve",
+            ShPolicy::DryRun  => "dry",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShDecision { Approved, DryRun, Rejected }
+
+impl ShDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ShDecision::Approved => "approved",
+            ShDecision::DryRun   => "dry-run",
+            ShDecision::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ShEffect {
+    pub cmd_line: Arc<str>,
+    pub cwd:      Option<Arc<Path>>,
+    pub policy:   ShPolicy,
+    pub approval: Option<SubjectKey<ShApproval>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ShResponse {
+    pub stdout:     Arc<[u8]>,
+    pub stderr:     Arc<[u8]>,
+    pub exit_code:  i32,
+    pub elapsed_ms: u64,
+}
+
+impl EffectKind for ShEffect {
+    type Response = Result<ShResponse, Arc<str>>;
+    fn payload_bytes(&self) -> Option<usize> { Some(self.cmd_line.len()) }
+}
+
+#[derive(Clone, Debug)]
+pub struct StagedShRow {
+    pub id:       Arc<str>,
+    pub effect:   ShEffect,
+    pub decision: ShDecision,
+    pub result:   Option<Result<ShResponse, Arc<str>>>,
+}
+
+pub struct ShBatcher {
+    cache:  Arc<Mutex<std::collections::HashMap<u64, ShResponse>>>,
+    staged: Arc<Mutex<Vec<StagedShRow>>>,
+}
+
+impl ShBatcher {
+    pub fn new() -> (Self, Arc<Mutex<Vec<StagedShRow>>>) {
+        let staged = Arc::new(Mutex::new(Vec::new()));
+        let b = Self {
+            cache:  Arc::new(Mutex::new(std::collections::HashMap::new())),
+            staged: staged.clone(),
+        };
+        (b, staged)
+    }
+}
+
+fn sh_cache_key(eff: &ShEffect) -> u64 {
+    let mut h = blake3::Hasher::new();
+    h.update(eff.cmd_line.as_bytes());
+    if let Some(c) = &eff.cwd {
+        h.update(b"\0cwd:");
+        h.update(c.to_string_lossy().as_bytes());
+    }
+    let bytes = h.finalize();
+    u64::from_le_bytes(bytes.as_bytes()[..8].try_into().unwrap())
+}
+
+fn sh_short_id(key: u64) -> Arc<str> {
+    Arc::from(format!("{:016x}", key))
+}
+
+async fn run_bash(eff: &ShEffect) -> Result<ShResponse, Arc<str>> {
+    let t0 = std::time::Instant::now();
+    let cmd_line = eff.cmd_line.clone();
+    let cwd = eff.cwd.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        let mut c = std::process::Command::new("bash");
+        c.arg("-c").arg(&*cmd_line);
+        if let Some(p) = cwd { c.current_dir(&*p); }
+        c.output()
+    }).await;
+    let out = match join {
+        Ok(Ok(o))  => o,
+        Ok(Err(e)) => return Err(Arc::from(format!("sh spawn: {e}"))),
+        Err(e)     => return Err(Arc::from(format!("sh join: {e}"))),
+    };
+    Ok(ShResponse {
+        stdout:     Arc::from(out.stdout.into_boxed_slice()),
+        stderr:     Arc::from(out.stderr.into_boxed_slice()),
+        exit_code:  out.status.code().unwrap_or(-1),
+        elapsed_ms: t0.elapsed().as_millis() as u64,
+    })
+}
+
+impl Batcher<ShEffect> for ShBatcher {
+    fn run(
+        &self,
+        req: ShEffect,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'static, Result<ShResponse, Arc<str>>> {
+        let cache  = self.cache.clone();
+        let staged = self.staged.clone();
+        Box::pin(async move {
+            let key = sh_cache_key(&req);
+            let id  = sh_short_id(key);
+            match req.policy {
+                ShPolicy::DryRun => {
+                    let resp = ShResponse {
+                        stdout:     Arc::from(&[][..]),
+                        stderr:     Arc::from(&[][..]),
+                        exit_code:  -1,
+                        elapsed_ms: 0,
+                    };
+                    staged.lock().expect("sh staged buffer poisoned").push(StagedShRow {
+                        id, effect: req, decision: ShDecision::DryRun,
+                        result: Some(Ok(resp.clone())),
+                    });
+                    Ok(resp)
+                }
+                ShPolicy::Cache => {
+                    if let Some(hit) = cache.lock().expect("sh cache poisoned").get(&key).cloned() {
+                        return Ok(hit);
+                    }
+                    let resp = run_bash(&req).await?;
+                    cache.lock().expect("sh cache poisoned").insert(key, resp.clone());
+                    Ok(resp)
+                }
+                ShPolicy::Auto => run_bash(&req).await,
+                ShPolicy::Approve => {
+                    // TODO LSP-as-coroutine: pre-subscribe to ShApproval
+                    // key, stage row, await approval click, then run.
+                    // Today: degrade to Auto and emit a staged row so the
+                    // operator can see the body that would have prompted.
+                    let result = run_bash(&req).await;
+                    let decision = if result.is_ok() { ShDecision::Approved } else { ShDecision::Rejected };
+                    staged.lock().expect("sh staged buffer poisoned").push(StagedShRow {
+                        id, effect: req, decision,
+                        result: Some(result.clone()),
+                    });
+                    result
+                }
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
