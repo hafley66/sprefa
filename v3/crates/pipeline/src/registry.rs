@@ -624,7 +624,7 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["&", "ast", "ast_yaml", "comment", "fs", "json", "lsp", "print", "read", "render", "repo", "rev", "str", "tag", "tag?", "void", "write_cursor", "write_file"]
+            vec!["&", "ast", "ast_yaml", "comment", "fs", "json", "lsp", "print", "read", "render", "repo", "rev", "sh", "str", "tag", "tag?", "void", "write_cursor", "write_file"]
         );
     }
 

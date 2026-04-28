@@ -41,6 +41,11 @@ pub enum FsMode {
         name: Arc<str>,
         pat: Arc<dyn Op>,
     },
+    /// sprefa-4iv: arg-pipe producer. Per input cursor, run the sub-op
+    /// and for each output cursor read its `last_bound` capture as the
+    /// new fs path. Bypasses disk enumeration; downstream ops see the
+    /// path as cursor.fs.
+    ArgPipe(Arc<dyn Op>),
 }
 
 impl FsOp {
@@ -81,11 +86,10 @@ impl FsOp {
             [Value::Op(op)] if op.try_raw_regex().is_some() => Ok(FsOp {
                 mode: FsMode::Filter(op.clone()),
             }),
-            [Value::Op(_)] => Err(vec![PatternDiagnostic {
-                code: "fs/unsupported-pattern",
-                message: "fs requires an op exposing a raw regex (glob or re)".into(),
-                byte_range: 0..0,
-            }]),
+            [Value::Op(op)] => Ok(FsOp {
+                // sprefa-4iv: any non-regex op is an arg-pipe producer.
+                mode: FsMode::ArgPipe(op.clone()),
+            }),
             [] => Err(vec![PatternDiagnostic {
                 code: "fs/missing-arg",
                 message: "fs requires a glob pattern or capture (e.g. fs(src/**/*.rs) or fs($F))"
@@ -116,17 +120,18 @@ impl FsOp {
         }
     }
 
-    fn pattern(&self) -> &Arc<dyn Op> {
+    fn pattern(&self) -> Option<&Arc<dyn Op>> {
         match &self.mode {
-            FsMode::Filter(p) => p,
-            FsMode::Bind { pat, .. } => pat,
+            FsMode::Filter(p) => Some(p),
+            FsMode::Bind { pat, .. } => Some(pat),
+            FsMode::ArgPipe(_) => None,
         }
     }
 
     fn bind_name(&self) -> Option<&Arc<str>> {
         match &self.mode {
             FsMode::Bind { name, .. } => Some(name),
-            FsMode::Filter(_) => None,
+            FsMode::Filter(_) | FsMode::ArgPipe(_) => None,
         }
     }
 }
@@ -156,7 +161,33 @@ impl Op for FsOp {
 
     fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
         Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
-            let pat = self.pattern();
+            // sprefa-4iv: ArgPipe mode bypasses disk enumeration entirely.
+            // Run the sub-op, take last_bound from each output cursor as
+            // the path to bind on cursor.fs.
+            if let FsMode::ArgPipe(op) = &self.mode {
+                let outs = op.pipe(ctx, Arc::from(vec![c.clone()])).await;
+                let mut emitted: Vec<Cursor> = Vec::with_capacity(outs.len());
+                for o in outs.iter() {
+                    let value = match o.last_bound.as_ref()
+                        .and_then(|n| o.capture(n))
+                    {
+                        Some(cap) => cap.bytes(&o.content).to_vec(),
+                        None => continue,
+                    };
+                    let path_str = match std::str::from_utf8(&value) {
+                        Ok(s)  => s,
+                        Err(_) => continue,
+                    };
+                    let mut nc = o.clone();
+                    nc.fs = Some(Path::new(path_str).into());
+                    emitted.push(nc);
+                }
+                return emitted;
+            }
+            let pat = match self.pattern() {
+                Some(p) => p,
+                None => return vec![],
+            };
             let regex = match pat.try_raw_regex() {
                 Some(r) => r,
                 None => return vec![],
@@ -229,6 +260,10 @@ impl Op for FsOp {
                 h.update(name.as_bytes());
                 h.update(&[0u8]);
                 let _ = pat.cache_key(h);
+            }
+            FsMode::ArgPipe(op) => {
+                h.update(b"\x00arg_pipe\x00");
+                let _ = op.cache_key(h);
             }
         }
         true

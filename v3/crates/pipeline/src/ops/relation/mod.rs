@@ -73,6 +73,13 @@ pub(crate) fn rows_to_batch(
             c.captures
                 .push(crate::_0_cursor::Capture::synthesized(hole.clone(), value));
         }
+        // sprefa-4iv: set last_bound to the rightmost hole written so the
+        // downstream source-op arg-pipe contract (repo/rev/fs consume
+        // last_bound) lights up without requiring an explicit per-row
+        // bind step.
+        if let Some(last) = holes.last() {
+            c.last_bound = Some(last.clone());
+        }
         out.push(c);
     }
     Arc::from(out)

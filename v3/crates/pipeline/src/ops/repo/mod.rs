@@ -36,6 +36,10 @@ pub enum RepoMode {
     Filter(Arc<dyn Op>),
     /// Bind `cursor.repo` into a new capture by this name.
     Bind(Arc<str>),
+    /// sprefa-4iv: arg-pipe producer. Per input cursor, run the sub-op
+    /// and for each output cursor read its `last_bound` capture as the
+    /// new repo coordinate. Streams one decorated cursor per output row.
+    ArgPipe(Arc<dyn Op>),
 }
 
 impl RepoOp {
@@ -67,11 +71,12 @@ impl RepoOp {
             [Value::Op(op)] if op.try_raw_regex().is_some() => {
                 Ok(RepoOp { mode: RepoMode::Filter(op.clone()) })
             }
-            [Value::Op(_)] => Err(vec![PatternDiagnostic {
-                code: "repo/unsupported-pattern",
-                message: "repo requires an op exposing a raw regex (glob or re)".into(),
-                byte_range: 0..0,
-            }]),
+            [Value::Op(op)] => {
+                // sprefa-4iv: any non-regex op is treated as an arg-pipe
+                // producer. The op runs per input cursor; output cursors'
+                // last_bound captures supply the new repo coord.
+                Ok(RepoOp { mode: RepoMode::ArgPipe(op.clone()) })
+            }
             [] => Err(vec![PatternDiagnostic {
                 code: "repo/missing-arg",
                 message: "repo requires a glob pattern or capture (e.g. repo(myorg/*) or repo($R))".into(),
@@ -114,7 +119,7 @@ Filter or bind on `cursor.repo`.
 impl Op for RepoOp {
     fn name(&self) -> &'static str { "repo" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
         Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             match &self.mode {
                 RepoMode::Filter(op) => {
@@ -130,6 +135,26 @@ impl Op for RepoOp {
                     out.captures.push(Capture::synthesized(name.clone(), v));
                     out.last_bound = Some(name.clone());
                     vec![out]
+                }
+                RepoMode::ArgPipe(op) => {
+                    let outs = op.pipe(ctx, Arc::from(vec![c.clone()])).await;
+                    let mut emitted: Vec<Cursor> = Vec::with_capacity(outs.len());
+                    for o in outs.iter() {
+                        let value = match o.last_bound.as_ref()
+                            .and_then(|n| o.capture(n))
+                        {
+                            Some(cap) => cap.bytes(&o.content).to_vec(),
+                            None => continue,
+                        };
+                        let new_repo: Arc<str> = match std::str::from_utf8(&value) {
+                            Ok(s)  => Arc::from(s),
+                            Err(_) => continue,
+                        };
+                        let mut nc = o.clone();
+                        nc.repo = new_repo;
+                        emitted.push(nc);
+                    }
+                    emitted
                 }
             }
         }))
@@ -152,6 +177,10 @@ impl Op for RepoOp {
             RepoMode::Bind(name) => {
                 h.update(b"\x00bind\x00");
                 h.update(name.as_bytes());
+            }
+            RepoMode::ArgPipe(op) => {
+                h.update(b"\x00arg_pipe\x00");
+                let _ = op.cache_key(h);
             }
         }
         true

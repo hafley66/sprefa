@@ -27,6 +27,10 @@ pub struct RevOp {
 pub enum RevMode {
     Filter(Arc<dyn Op>),
     Bind(Arc<str>),
+    /// sprefa-4iv: arg-pipe producer. Per input cursor, run the sub-op
+    /// and for each output cursor read its `last_bound` capture as the
+    /// new rev coordinate.
+    ArgPipe(Arc<dyn Op>),
 }
 
 const UNBOUNDED_WILDCARDS: &[&str] = &["*", "**", "**/*", "*/*"];
@@ -96,11 +100,12 @@ impl RevOp {
             [Value::Op(op)] if op.try_raw_regex().is_some() => {
                 Ok(RevOp { mode: RevMode::Filter(op.clone()) })
             }
-            [Value::Op(_)] => Err(vec![PatternDiagnostic {
-                code: "rev/unsupported-pattern",
-                message: "rev requires an op exposing a raw regex (glob or re)".into(),
-                byte_range: 0..0,
-            }]),
+            [Value::Op(op)] => {
+                // sprefa-4iv: arg-pipe producer. The pipe enumeration
+                // bounds the rev set, so unbounded-capture concerns
+                // don't apply here.
+                Ok(RevOp { mode: RevMode::ArgPipe(op.clone()) })
+            }
             [] => Err(vec![PatternDiagnostic {
                 code: "rev/missing-arg",
                 message: "rev requires a glob pattern or capture (e.g. rev(main) or rev(v1.*))".into(),
@@ -144,7 +149,7 @@ wildcards like `*`/`**` and bare captures without prior context.
 impl Op for RevOp {
     fn name(&self) -> &'static str { "rev" }
 
-    fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
+    fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
         Box::pin(crate::_1_op::per_cursor(batch, move |c| async move {
             match &self.mode {
                 RevMode::Filter(op) => {
@@ -160,6 +165,26 @@ impl Op for RevOp {
                     out.captures.push(Capture::synthesized(name.clone(), v));
                     out.last_bound = Some(name.clone());
                     vec![out]
+                }
+                RevMode::ArgPipe(op) => {
+                    let outs = op.pipe(ctx, Arc::from(vec![c.clone()])).await;
+                    let mut emitted: Vec<Cursor> = Vec::with_capacity(outs.len());
+                    for o in outs.iter() {
+                        let value = match o.last_bound.as_ref()
+                            .and_then(|n| o.capture(n))
+                        {
+                            Some(cap) => cap.bytes(&o.content).to_vec(),
+                            None => continue,
+                        };
+                        let new_rev: Arc<str> = match std::str::from_utf8(&value) {
+                            Ok(s)  => Arc::from(s),
+                            Err(_) => continue,
+                        };
+                        let mut nc = o.clone();
+                        nc.rev = new_rev;
+                        emitted.push(nc);
+                    }
+                    emitted
                 }
             }
         }))
@@ -181,6 +206,10 @@ impl Op for RevOp {
             RevMode::Bind(name) => {
                 h.update(b"\x00bind\x00");
                 h.update(name.as_bytes());
+            }
+            RevMode::ArgPipe(op) => {
+                h.update(b"\x00arg_pipe\x00");
+                let _ = op.cache_key(h);
             }
         }
         true
