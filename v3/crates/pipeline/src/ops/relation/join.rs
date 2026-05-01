@@ -39,7 +39,7 @@ impl JoinOp {
 }
 
 impl Op for JoinOp {
-    fn name(&self) -> &'static str { "tag" }
+    fn name(&self) -> &'static str { "fact" }
 
     fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
         let store = ctx

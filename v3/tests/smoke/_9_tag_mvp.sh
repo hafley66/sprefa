@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Smoke 9 (sprefa-944): tag(:name, ...) MVP — write 2 rows, read drains
+# Smoke 9 (sprefa-944): fact(:name, ...) MVP — write 2 rows, read drains
 # both. Validates: positional all-string columns, atom name lowering,
-# Term::Read vs Term::Unbound classification (write vs read), TagStore
+# Term::Read vs Term::Unbound classification (write vs read), RelationStore
 # shared across pipes in one seed RtCtx, snapshot batch emits per row,
 # and SubjectRegistry::subscribe atomicity (no lost wakes between pipes).
 #
@@ -19,11 +19,11 @@ if [ ! -x "$bin" ]; then
     cargo build -p server --bin sprefa-run >&2
 fi
 
-fixture="crates/server/fixtures/tag_mvp_smoke.sprf"
+fixture="crates/server/fixtures/fact_mvp_smoke.sprf"
 root="crates/server"
 rev="HEAD"
 
-# Bound the run; tag-read parks on subscription after snapshot.
+# Bound the run; fact-read parks on subscription after snapshot.
 out="$(timeout 3 "$bin" "$fixture" --root "$root" --rev "$rev" 2>/dev/null || true)"
 echo "$out"
 
@@ -40,4 +40,4 @@ echo "$out" | grep -qE '^pipe 0 — [0-9]+ rows$' \
 echo "$out" | grep -qE '^pipe 1 — [0-9]+ rows$' \
     || { echo "FAIL: pipe 1 (write) did not finalize" >&2; exit 1; }
 
-echo "OK (tag write+read roundtrip via shared TagStore)"
+echo "OK (fact write+read roundtrip via shared RelationStore)"

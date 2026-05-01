@@ -33,7 +33,7 @@ impl QueryOp {
 }
 
 impl Op for QueryOp {
-    fn name(&self) -> &'static str { "tag" }
+    fn name(&self) -> &'static str { "fact" }
 
     fn pipe<'a>(&'a self, _ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
         // pipe never called for Query — pipe_flat_map takes over.

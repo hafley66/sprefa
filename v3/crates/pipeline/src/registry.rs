@@ -33,9 +33,9 @@ use crate::op_ctor::{
     node_factory, op_factory, CustomLowerFn, NodeFactoryFn, OpCtor, OpLowering, PatternCtor,
 };
 use crate::ops::{
-    AstGrepOp, AstYamlOp, CommentOp, CursorRefOp, FsOp, GlobOp, JsonOp, LspDiagOp, PrintOp,
-    ReadOp, ReOp, RenderOp, RepoOp, RevOp, ShOp, StrOp, TagOp, TagPredicateOp, VoidOp, WriteCursorOp,
-    WriteFileOp,
+    AstGrepOp, AstYamlOp, CommentOp, CursorRefOp, FactOp, FactPredicateOp, FsOp, GlobOp, JsonOp,
+    LspDiagOp, PrintOp, ReadOp, ReOp, RenderOp, RepoOp, RevOp, ShOp, StrOp, VoidOp,
+    WriteCursorOp, WriteFileOp,
 };
 use crate::pattern_op::PatternDiagnostic;
 use crate::value::Value;
@@ -141,7 +141,7 @@ impl Builder {
 
 impl Registry {
     pub fn with_stdlib() -> Self {
-        Builder::new()
+        let mut b = Builder::new()
             .register::<RepoOp>()
             .register::<RevOp>()
             .register::<FsOp>()
@@ -159,11 +159,32 @@ impl Registry {
             .register::<AstYamlOp>()
             .register::<WriteCursorOp>()
             .register::<WriteFileOp>()
-            .register::<TagOp>()
-            .register::<TagPredicateOp>()
+            .register::<FactOp>()
+            .register::<FactPredicateOp>()
             .register_pattern::<GlobOp>()
-            .register_pattern::<ReOp>()
-            .finish()
+            .register_pattern::<ReOp>();
+
+        // Alias period: "tag" / "tag?" accepted with a deprecation diag.
+        // Each factory delegates to FactOp / FactPredicateOp after pushing
+        // the diag, so existing fixtures continue to run during migration.
+        let fact_factory = b.factories.get("fact").cloned().expect("fact registered");
+        b.factories.insert("tag", Arc::new(move |name, values| {
+            // Diag emitted by build_from_node; factory just delegates.
+            fact_factory(name, values)
+        }));
+        b.docs.insert("tag", "**tag** — renamed to `fact`. Use `fact(...)` instead.");
+        b.body_grammars.insert("tag", FactOp::BODY_GRAMMAR);
+        b.node_factories.insert("tag", b.node_factories.get("fact").cloned().expect("fact node factory"));
+
+        let fact_pred_factory = b.factories.get("fact?").cloned().expect("fact? registered");
+        b.factories.insert("tag?", Arc::new(move |name, values| {
+            fact_pred_factory(name, values)
+        }));
+        b.docs.insert("tag?", "**tag?** — renamed to `fact?`. Use `fact?(...)` instead.");
+        b.body_grammars.insert("tag?", FactPredicateOp::BODY_GRAMMAR);
+        b.node_factories.insert("tag?", b.node_factories.get("fact?").cloned().expect("fact? node factory"));
+
+        b.finish()
     }
 
     pub fn build(
@@ -190,6 +211,26 @@ impl Registry {
         src:         &[u8],
         diagnostics: &mut Vec<PatternDiagnostic>,
     ) -> Option<Result<Arc<dyn Op>, Vec<PatternDiagnostic>>> {
+        // Alias period: "tag" / "tag?" are deprecated names for "fact" / "fact?".
+        // Emit the rename diag and continue; the factories delegate to FactOp.
+        match op_name {
+            "tag" => {
+                diagnostics.push(PatternDiagnostic {
+                    code:       "tag/renamed-to-fact",
+                    message:    "`tag(...)` has been renamed to `fact(...)`; update your pipeline".into(),
+                    byte_range: inv_node.byte_range(),
+                });
+            }
+            "tag?" => {
+                diagnostics.push(PatternDiagnostic {
+                    code:       "tag/renamed-to-fact",
+                    message:    "`tag?(...)` has been renamed to `fact?(...)`; update your pipeline".into(),
+                    byte_range: inv_node.byte_range(),
+                });
+            }
+            _ => {}
+        }
+
         // Try the raw-body path first.
         if let Some(nf) = self.node_factories.get(op_name) {
             if let Some(res) = nf(inv_node, src) {
@@ -624,7 +665,13 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["&", "ast", "ast_yaml", "comment", "fs", "json", "lsp", "print", "read", "render", "repo", "rev", "sh", "str", "tag", "tag?", "void", "write_cursor", "write_file"]
+            vec![
+                "&", "ast", "ast_yaml", "comment", "fact", "fact?", "fs", "json", "lsp", "print",
+                "read", "render", "repo", "rev", "sh", "str",
+                // alias period: "tag" / "tag?" kept as deprecated aliases for "fact" / "fact?"
+                "tag", "tag?",
+                "void", "write_cursor", "write_file",
+            ]
         );
     }
 

@@ -666,8 +666,9 @@ mod tests {
         let src = "repo(r) > f";
         let s = doc(src);
         let items = s.completions_at(src.len());
-        let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
-        assert_eq!(labels, vec!["fs"], "only `fs` starts with `f`");
+        let mut labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
+        labels.sort();
+        assert_eq!(labels, vec!["fact", "fact?", "fs"], "ops starting with `f`");
 
         // Comment-preceded head position still qualifies.
         let src = "# comment\n";

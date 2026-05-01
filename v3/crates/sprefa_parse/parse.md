@@ -910,7 +910,7 @@ the previous op already did the naming.
 
 | shape | source when unbound | examples |
 |---|---|---|
-| produce-or-filter | op has a source to draw from | `tag(:key, $V)`, `fs($P)`, `rev($R)`, `repo($R)` |
+| produce-or-filter | op has a source to draw from | `fact(:key, $V)`, `fs($P)`, `rev($R)`, `repo($R)` |
 | filter-only | no source; asserts on existing cursor state | `is_rev($R)`, `is_repo($R)`, `is_fs($F)` |
 | pattern-with-embedded-term | the pattern's compile/apply cycle (§14.5b) | `re($NAME = ...)`, `glob(.../$F)` |
 
@@ -1738,7 +1738,7 @@ unbound at drive time:
 
 | shape | source when unbound | example |
 |---|---|---|
-| produce-or-filter | op has a source to draw from | `tag(:key, $V)`, `fs($P)`, `rev($R)`, `repo($R)` |
+| produce-or-filter | op has a source to draw from | `fact(:key, $V)`, `fs($P)`, `rev($R)`, `repo($R)` |
 | filter-only | no source; asserts on existing cursor state | `is_rev($R)`, `is_repo($R)`, `is_fs($F)` |
 | pattern-with-embedded-term | pattern compiles its hole into write-mode named group, or read-mode literal substitution | `re($NAME = ...)`, `glob(.../$F)` |
 
@@ -1819,12 +1819,12 @@ Registration:
 registry.register::<FsOp>("fs");               // default lowering (90% of ops)
 registry.register::<ReOp>("re");               // default lowering (has language_static)
 registry.register::<GlobOp>("glob");
-registry.register_custom("tag", TagLowering);  // custom: per-slot arg-mode dispatch
+registry.register_custom("fact", FactLowering);  // custom: per-slot arg-mode dispatch
 ```
 
 Ops that need raw CST inspection, partial-construction on error, or
 per-slot arg-mode dispatch that can't be expressed via `arg_spec`
-register a custom `OpLowering` impl. `tag` is the first expected
+register a custom `OpLowering` impl. `fact` is the first expected
 consumer (produce-or-filter shape with both arg modes coming through
 the same syntactic slot).
 
@@ -1887,12 +1887,12 @@ the same syntactic slot).
 4. [x] `with_stdlib()` is now ten one-liners
    (`register::<RepoOp>()` ... `register_pattern::<ReOp>()`).
    `register_custom::<L>()` exists with no consumer; lands when the
-   first `tag`-style op arrives.
+   first `fact`-style op arrives.
 
 Pass B is organizational — unlocks nothing at runtime. The motivation
-for landing it now (rather than waiting for `tag`) was twofold:
+for landing it now (rather than waiting for `fact`) was twofold:
 ergonomic registration for the next 4-5 ops about to land (json/ast/
-sh/render), and the `register_custom` door pre-built so `tag` slots in
+sh/render), and the `register_custom` door pre-built so `fact` slots in
 without re-shaping the registry.
 
 LoC: registry.rs net −22 (factory closures + `*_DOC` consts removed,
@@ -2271,7 +2271,7 @@ Resolver walks rule body, collects per-param constraints from op
 ArgSpecs. Propagation produces per-param derived mode at rule
 declaration.
 
-Example: rule `r` whose body calls `tag($PARAM, :kind)` — tag requires
+Example: rule `r` whose body calls `fact($PARAM, :kind)` — fact requires
 arg 0 bound; therefore `r`'s `$PARAM` is derived as `BoundOnly` at
 call site.
 
@@ -2450,7 +2450,7 @@ live as parked cursors.
 |---|---|---|---|
 | capture | `rule_<path>` | rule's Pipeline | per emitted cursor |
 | evidence | `rule_<path>_evidence_<stage>` | framework | auto-tap before filter |
-| relations | `relations` | tag-ops, link-ops, scan-pointer ops | cursor-pass-through side effect |
+| relations | `relations` | fact-ops, link-ops, scan-pointer ops | cursor-pass-through side effect |
 | violations | `violations_<check>` | check ops | per SQL row returned |
 
 ### 24.1 Relations schema
@@ -2649,7 +2649,7 @@ Everything else defaults.
 
 | discarded | replaced by |
 |---|---|
-| `$$repo($R)` / `$$rev($T)` scan sigil class | tag-op family `is_repo($R)` / `is_rev($T)` (§12) |
+| `$$repo($R)` / `$$rev($T)` scan sigil class | fact-op family `is_repo($R)` / `is_rev($T)` (§12) |
 | `$$` Ans-slot sigil | scan-pointer op reads `cursor.last_bound` directly (§12) |
 | `$$sigil` migration diag | dead; v1→v3 source must be rewritten |
 | `&&.rules` registry sigil | op-mediated registry via parametric call `rule($R)` |
@@ -2658,11 +2658,12 @@ Everything else defaults.
 | Scan-pointer as sigil class | relation rows with known `kind` (§24) |
 | `$NAME` vs `${NAME}` duality | `$NAME` canonical; `${...}` is the carveout expr-hole |
 | Separate `Rule` vs `Op` runtime | Rule is a named Pipeline; collapse (§17) |
-| Norm as dedicated syntax | `is_repo_norm($R)` tag-op |
+| Norm as dedicated syntax | `is_repo_norm($R)` fact-op |
 | Bash-style `>&N` content redirect | capture-write op + prolog mode |
 | Full unification / SLD resolution as framework concern | shallow prolog only (mode dispatch); embed deep logic in `prolog(...)` op if ever needed |
 | `re:pattern` prefix strings (v1) | `re("…")` with `$NAME` holes (§14) |
 | `glob("…/$$$PATHS/…")` triple-sigil (v1) | `fs("…/$PATH/…")` single hole (§14) |
+| `tag(...)` / `tag?(...)` (alias period) | `fact(...)` / `fact?(...)` — emits diag `tag/renamed-to-fact` during alias period |
 
 ---
 

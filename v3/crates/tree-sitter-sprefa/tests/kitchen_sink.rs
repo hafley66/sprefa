@@ -11,7 +11,7 @@ rule(classes) > ast[rust] { class ${NAME?} } ;
 rule(calls)   > ast[rust] { new ${classes}() } ;
 rule(env)     > sh { echo ${{HOME}} } ;
 rule(addrs)   > fs(${DIR}) > void ;
-rule(tagged)  > tag(:repo, ${R}) ;
+rule(tagged)  > fact(:repo, ${R}) ;
 
 # ---- spec'd 2026-04-26 (v3-render-write-cursor-vision.md) ----
 # These parse today as ordinary op_invocations; registry impls pending
@@ -45,10 +45,10 @@ fs(glob(**/*.rs)) > lsp[error](message "x") ;
 fs(glob(**/*.rs)) > lsp[hint](message "x") ;
 fs(glob(**/*.rs)) > lsp[info](message "x") ;
 
-# tag variadic write + nullary read.
-repo(${R?}) > rev(:prod) > tag(:prod-cut, ${R?}, ${HEAD?}) ;
-tag(:prod-cut) > fs(glob(**/*.rs)) > rule(prod_files) ;
-tag(:prod-cut) > tag(:in-review) > rule(prod_pending) ;
+# fact variadic write + nullary read.
+repo(${R?}) > rev(:prod) > fact(:prod-cut, ${R?}, ${HEAD?}) ;
+fact(:prod-cut) > fs(glob(**/*.rs)) > rule(prod_files) ;
+fact(:prod-cut) > fact(:in-review) > rule(prod_pending) ;
 
 # comment(@sprf …) read direction; write direction (@begin/@end) is
 # pending grammar work and is exercised only by fixtures.
@@ -192,8 +192,8 @@ fn spec_2026_04_26_ops_parse_as_op_invocations() {
         assert!(starts_with(sev) >= 1, "{sev} present");
     }
 
-    // tag — both write (variadic) and read (nullary) forms.
-    assert!(starts_with("tag(:prod-cut") >= 1, "tag write form present");
+    // fact — both write (variadic) and read (nullary) forms.
+    assert!(starts_with("fact(:prod-cut") >= 1, "fact write form present");
 
     // comment @sprf read direction.
     assert!(starts_with("comment(@sprf") >= 1, "comment(@sprf …) present");

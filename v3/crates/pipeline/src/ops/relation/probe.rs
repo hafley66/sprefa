@@ -43,7 +43,7 @@ impl ProbeOp {
 }
 
 impl Op for ProbeOp {
-    fn name(&self) -> &'static str { "tag" }
+    fn name(&self) -> &'static str { "fact" }
 
     fn pipe<'a>(&'a self, ctx: &'a RtCtx, batch: Arc<[Cursor]>) -> BoxFuture<'a, Arc<[Cursor]>> {
         // Static path: one bag lock for the whole batch. Each cursor's key
