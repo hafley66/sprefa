@@ -34,6 +34,8 @@ pub mod pattern_op;
 pub mod readers;
 pub mod registry;
 pub mod relation_store;
+#[cfg(feature = "dd")]
+pub mod dd;
 pub mod rule_def;
 pub mod rule_hash;
 pub mod value;

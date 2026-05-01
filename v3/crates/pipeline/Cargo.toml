@@ -10,6 +10,9 @@ ast-grep-core     = "0.36"
 blake3            = "1"
 ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust", "tree-sitter-typescript", "tree-sitter-c"] }
 effect_runtime    = { path = "../effect_runtime" }
+rxrust            = { version = "1.0.0-rc.4", optional = true }
+async-broadcast      = { version = "0.7", optional = true }
+futures-concurrency  = { version = "7", optional = true }
 globset           = "0.4"
 regex             = "1"
 rustc-hash        = "2"
@@ -33,6 +36,9 @@ ignore            = "0.4"
 ast-grep-config = "0.36"
 serde_yaml = "0.9.34"
 git2              = { version = "0.19", default-features = false }
+differential-dataflow = { version = "0.12", optional = true }
+timely                = { version = "0.12", optional = true }
+crossbeam-channel     = { version = "0.5", optional = true }
 
 
 [dev-dependencies]
@@ -42,3 +48,37 @@ tempfile = "3"
 
 [build-dependencies]
 cc = "1"
+
+[features]
+default = []
+rx = ["dep:rxrust", "effect_runtime/rx"]
+stream_kernel = ["dep:async-broadcast", "dep:futures-concurrency"]
+# DD adoption gate — see sprefa-avl. Off by default until perf gate clears.
+dd = ["dep:differential-dataflow", "dep:timely", "dep:crossbeam-channel"]
+
+[[example]]
+name = "rx_shape_proof"
+required-features = ["rx"]
+
+[[example]]
+name = "rx_native_proof"
+required-features = ["rx"]
+
+[[bin]]
+name = "rx_shape_proof"
+path = "examples/rx_shape_proof.rs"
+required-features = ["rx"]
+
+[[bin]]
+name = "rx_native_proof"
+path = "examples/rx_native_proof.rs"
+required-features = ["rx"]
+
+[[example]]
+name = "stream_kernel"
+required-features = ["stream_kernel"]
+
+[[bin]]
+name = "stream_kernel"
+path = "examples/stream_kernel.rs"
+required-features = ["stream_kernel"]
