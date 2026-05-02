@@ -1,6 +1,14 @@
 [package]
 name = "v4"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+ast-grep-core = "0.36"
+ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust"] }
+differential-dataflow = "0.12"
+timely = "0.12"
+
+[[bin]]
+name = "v4-proto"
+path = "src/main.rs"
