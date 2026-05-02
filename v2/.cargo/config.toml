@@ -1,6 +1,0 @@
-# Native-CPU codegen for max throughput on bench runs.
-# This enables AVX2/NEON auto-vectorization where tree-sitter / ast-grep /
-# regex-automata can use it. Do NOT commit if binary portability across
-# machines matters; for local perf research it is the right default.
-[build]
-rustflags = ["-C", "target-cpu=native"]

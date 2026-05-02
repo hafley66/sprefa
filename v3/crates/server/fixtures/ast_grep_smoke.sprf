@@ -5,4 +5,4 @@
 # Expected: at least one row binding $N to a function name.
 repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rs](fn ${N?}($$${ARGS?}) { $$${BODY?} });
 
-# tag(:a, str(A), str(B)); tag(:a, ${A?}, ${B?}) > print(:lol);
+# fact(:a, str(A), str(B)); fact(:a, ${A?}, ${B?}) > print(:lol);

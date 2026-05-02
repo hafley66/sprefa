@@ -6,6 +6,6 @@
 repo(${R?}) 
 > rev(:HEAD) 
 > fs(glob(**/*.rs)) 
-> ast[rs](pub fn ${X?} {});
+> ast[rs](pub fn ${X?}($$${_?}){$$${BODY?}});
 
 

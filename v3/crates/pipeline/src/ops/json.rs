@@ -378,6 +378,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pipe_no_match_emits_zero_cursors() {
+        // Regression: a pattern that names a non-existent key must
+        // produce zero cursors, not the pre-walk cursor as a passthrough.
+        // golden_kitchen_sink.sprf relies on this for `should_also_be_empty`.
+        let ctx = RtCtx::default();
+        let body = br#"{
+            "paths": {
+              "/users":  { "get": { "operationId": "listUsers" } },
+              "/posts":  { "get": { "operationId": "listPosts" } }
+            }
+        }"#;
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower(
+            "json({ paths: { /no-such-route: { get: { operationId: ${X?} } } } })",
+        )
+        .unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert_eq!(
+            out.len(),
+            0,
+            "non-existent key /no-such-route must filter to 0 cursors, got {}",
+            out.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn pipe_no_match_nested_emits_zero_cursors() {
+        // Nested non-match: /users exists, but get.operationDoesNotExist
+        // does not. Walker must reject without falling back.
+        let ctx = RtCtx::default();
+        let body = br#"{ "paths": { "/users": { "get": { "operationId": "listUsers" } } } }"#;
+        let c = Cursor::new(Arc::from(body.as_slice()));
+        let op = lower(
+            "json({ paths: { /users: { get: { operationDoesNotExist: ${X?} } } } })",
+        )
+        .unwrap();
+        let out = op.pipe(&ctx, Arc::from(vec![c])).await;
+        assert_eq!(out.len(), 0);
+    }
+
+    #[tokio::test]
     async fn pipe_leaf_pattern_splits_image_tag() {
         let ctx = RtCtx::default();
         let body = br#"{"image":"nginx:1.21"}"#;

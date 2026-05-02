@@ -15,4 +15,5 @@ fs(glob(v3/crates/**/*.rs))
   > lsp[warn](
       message = "load-bearing landmine: read the comment before editing",
       code    = "sprf/landmine",
-      hint    = "SPRF-LANDMINE markers tag non-obvious correctness contracts; refactoring requires understanding the (sprefa-XXX) ticket cited inline");
+      hint    = "SPRF-LANDMINE markers tag non-obvious correctness contracts; refactoring requires understanding the (sprefa-XXX) ticket cited inline"
+  );

@@ -212,7 +212,7 @@ Parse-only (host CST coverage, no runtime):
   — one source exercising the locked syntax surface: `rule(…) { … }`,
   `ast[lang]{…}` injected pattern body, `${TERM?}` brace-mandatory
   unbound term, `${TERM}` brace-mandatory bound read, `${{…}}` shell
-  literal, `tag(:atom, $TERM)`. Cursor-ref / xref / capture-write
+  literal, `fact(:atom, $TERM)`. Cursor-ref / xref / capture-write
   retired (sprefa-r6k); brace-mandatory terms locked (sprefa-9lt).
 
 Prior-art kitchen sinks (reference only; they target v1/v2 surface and

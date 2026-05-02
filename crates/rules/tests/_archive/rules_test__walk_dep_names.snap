@@ -1,6 +1,0 @@
----
-source: crates/rules/tests/rules_test.rs
-expression: names
----
-- express
-- lodash

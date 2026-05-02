@@ -149,8 +149,8 @@ fs(glob(crates/*/Cargo.toml))
 # and routes through ast-grep-core.
 # ============================================================
 
-fs(glob(crates/**/src/**/*.rs))
-  > ast_yaml[rust](pattern: "async fn ${N?}_test($$${ARGS?})")
+fs(glob(v3/crates/**/src/**/*.rs))
+  > ast[rust](async fn ${N?}_expr($$${ARGS?}))
   > lsp[info](
       message = "test fn naming convention `_test` suffix",
       code    = "selfcheck/test-fn-suffix");

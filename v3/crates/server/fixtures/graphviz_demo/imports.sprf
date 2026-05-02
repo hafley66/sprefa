@@ -1,0 +1,13 @@
+# imports.sprf — extract every `use MOD::ITEM` in the v3 server crate.
+# Each row maps to one .dot edge: "<source-file>" -> "<MOD>".
+#
+# Run:
+#   v3/target/debug/sprefa-run \
+#     v3/crates/server/fixtures/graphviz_demo/imports.sprf \
+#     --root . \
+#   | v3/crates/server/fixtures/graphviz_demo/to_dot.sh \
+#     > /tmp/imports.dot
+#   dot -Tpng /tmp/imports.dot -o /tmp/imports.png
+fs(glob(v3/crates/server/src/**/*.rs))
+  > ast[rust](use ${MOD?}::${ITEM?})
+  > print(:edge);

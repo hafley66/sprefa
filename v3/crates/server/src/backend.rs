@@ -24,10 +24,10 @@ use crate::position::{offset_to_position, position_to_offset};
 use crate::session::{ConfigSource, DocSession, HoverPlan, LoweredOp, SuggestionKind};
 use crate::state::ServerState;
 
-use effect_runtime::SubjectRegistry;
+use effect_runtime::{RtCtx, SubjectRegistry};
 use pipeline::_0_cursor::{Capture, CaptureKind, Cursor};
 use pipeline::_2_pipeline::Pipeline;
-use pipeline::effects::{LspDiagEffect, LspSeverity, PrintBatcher};
+use pipeline::effects::{LspDiagEffect, LspSeverity, PrintBatcher, StagedWriteRangeRow};
 use pipeline::relation_store::{RelationStore, RelationWake};
 use pipeline::readers::FileSource;
 
@@ -179,6 +179,79 @@ impl Backend {
             .publish_diagnostics(uri.clone(), diags, None)
             .await;
     }
+
+    /// Like `publish`, but also drains every pipe in the file end-to-end
+    /// to surface `sprf/no-output` choke diagnostics without needing a
+    /// hover. Scoped to this single `.sprf` URI; never workspace-wide.
+    /// Wired to did_open / did_save (NOT did_change — keystrokes keep
+    /// the cheap parse-only `publish` path).
+    async fn publish_with_drain(&self, uri: &Url) {
+        let cancel = self.state.cancel_root.child_token();
+        let snapshot = {
+            let mut guard = self.sessions.lock().await;
+            let Some(entry) = guard.get_mut(uri) else { return; };
+            if let Some(prev) = entry.in_flight.remove("drain") { prev.cancel(); }
+            entry.in_flight.insert("drain", cancel.clone());
+            let session = &entry.session;
+            let mut diags = parse_errors_to_lsp(session.source(), session.parse_errors());
+            diags.extend(binding_diags_to_lsp(
+                session.source(),
+                session.binding_diagnostics(),
+            ));
+            diags.extend(lower_diags_to_lsp(session.source(), session.lowered_pipes()));
+            Some((
+                diags,
+                session.config().clone(),
+                session.lowered_pipes().to_vec(),
+                session.source().to_string(),
+            ))
+        };
+        let Some((mut diags, config, lowered_pipes, source_text)) = snapshot else { return };
+
+        // Lazy-install per-seed watchers (same as hover path).
+        for seed in &config.seeds {
+            self.ensure_watcher(
+                Arc::from(seed.slug.as_str()),
+                seed.root.clone(),
+            ).await;
+        }
+
+        let n_pipes = lowered_pipes.len();
+        let t0 = std::time::Instant::now();
+        let chokes = drain_all_pipes_for_chokes(
+            &lowered_pipes, &config, self.cache(), &self.state,
+            &source_text, cancel.clone(),
+        ).await;
+        let elapsed = t0.elapsed();
+        diags.extend(chokes);
+
+        if cancel.is_cancelled() {
+            // A newer drain superseded us; drop our results on the floor.
+            return;
+        }
+        self.client
+            .publish_diagnostics(uri.clone(), diags, None)
+            .await;
+
+        if elapsed > std::time::Duration::from_millis(2000) {
+            self.client.show_message(
+                MessageType::WARNING,
+                format!(
+                    "sprf drain took {} ms over {} pipe{}",
+                    elapsed.as_millis(),
+                    n_pipes,
+                    if n_pipes == 1 { "" } else { "s" },
+                ),
+            ).await;
+        }
+
+        if !cancel.is_cancelled() {
+            let mut guard = self.sessions.lock().await;
+            if let Some(entry) = guard.get_mut(uri) {
+                entry.in_flight.remove("drain");
+            }
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -212,7 +285,7 @@ impl LanguageServer for Backend {
         let uri = p.text_document.uri.clone();
         if !is_sprf_uri(&uri) { return; }
         self.open_or_replace(&uri, p.text_document.text).await;
-        self.publish(&uri).await;
+        self.publish_with_drain(&uri).await;
     }
 
     async fn did_change(&self, p: DidChangeTextDocumentParams) {
@@ -220,6 +293,16 @@ impl LanguageServer for Backend {
         if !is_sprf_uri(&uri) { return; }
         if let Some(change) = p.content_changes.into_iter().last() {
             self.open_or_replace(&uri, change.text).await;
+            // Cancel any in-flight drain — its choke diagnostics are
+            // about to be stale anyway. Keystroke path stays cheap.
+            {
+                let mut guard = self.sessions.lock().await;
+                if let Some(entry) = guard.get_mut(&uri) {
+                    if let Some(prev) = entry.in_flight.remove("drain") {
+                        prev.cancel();
+                    }
+                }
+            }
             self.publish(&uri).await;
         }
     }
@@ -247,7 +330,7 @@ impl LanguageServer for Backend {
         if let Ok(rel) = file.strip_prefix(&workspace.root) {
             workspace.source.clear(rel);
         }
-        self.publish(&uri).await;
+        self.publish_with_drain(&uri).await;
     }
 
     async fn hover(&self, p: HoverParams) -> RpcResult<Option<Hover>> {
@@ -519,9 +602,13 @@ async fn render_enriched_hover(
         };
         pipeline_arcs.push(op);
     }
-    let pipeline = Pipeline::Seq(
-        pipeline_arcs.iter().cloned().map(Pipeline::Op).collect(),
-    );
+    // Per-step input/output totals summed across all seeds. A step is
+    // a "universal choke" only when at least one seed sent cursors into
+    // it but no seed produced any output from it. Per-seed filtering
+    // (e.g. `rev(:HEAD)` rejecting non-HEAD seeds) is silent — that's
+    // selective, not broken. Only the global blocker gets a diagnostic.
+    let mut step_input_totals:  Vec<usize> = vec![0; pipeline_arcs.len()];
+    let mut step_output_totals: Vec<usize> = vec![0; pipeline_arcs.len()];
 
     // Resolve the focused capture: hover sits inside a `${NAME?}`
     // recorded in the focus op's `term_positions`. Coordinates are
@@ -549,6 +636,10 @@ async fn render_enriched_hover(
 
     // Run per seed, aggregate.
     let mut total_rows = 0usize;
+    // Dry-run staged writes for the focused-step prefix, accumulated
+    // across seeds. Surfaced as a HINT on the focused slot when the
+    // focused op is `write_cursor`.
+    let mut staged_focus: Vec<StagedWriteRangeRow> = Vec::new();
     let mut rendered = 0usize;
     md.push_str("\n---\n\n**Cursors after this op:**\n");
 
@@ -582,30 +673,29 @@ async fn render_enriched_hover(
             relation_store.clone(),
             subject_registry.clone(),
             PrintBatcher::buffer().0,
-            std::sync::Arc::new(pipeline::effects::WritePolicy::ApproveAll),
+            std::sync::Arc::new(pipeline::effects::WritePolicy::DryRun),
         );
         let lsp_diags = seed_ctx.lsp_diags.clone();
+        let staged_ranges = seed_ctx.staged_ranges.clone();
         let ctx = seed_ctx.ctx;
 
-        let mut c = Cursor::default();
-        c.repo = Arc::from(seed.slug.as_str());
-        c.rev = Arc::from(seed.rev.as_str());
-        let upstream: futures::stream::BoxStream<'_, Arc<[Cursor]>> = Box::pin(
-            stream::iter(vec![Arc::<[Cursor]>::from(vec![c])]),
-        );
         let _drain_t0 = std::time::Instant::now();
-        let mut s = pipeline.run(&ctx, upstream);
-        let mut rows: Vec<Cursor> = Vec::new();
-        let mut batch_count = 0usize;
-        while let Some(b) = s.next().await {
-            batch_count += 1;
-            rows.extend(b.iter().cloned());
+        let drain = drain_pipe_steps(&ctx, &pipeline_arcs, &seed.slug, &seed.rev).await;
+        for i in 0..pipeline_arcs.len() {
+            step_input_totals[i]  += drain.in_counts[i];
+            step_output_totals[i] += drain.out_counts[i];
         }
+        let rows = drain.final_rows;
+        tracing::info!(
+            target: "sprefa::hover",
+            seed = %seed.slug,
+            step_counts = ?drain.out_counts,
+            "seed.step_counts"
+        );
         let summary = ctx.telemetry().summary();
         tracing::info!(
             target: "sprefa::hover",
             seed = %seed.slug,
-            batches = batch_count,
             rows = rows.len(),
             drain_ms = _drain_t0.elapsed().as_millis() as u64,
             seed_total_ms = _seed_t0.elapsed().as_millis() as u64,
@@ -621,6 +711,11 @@ async fn render_enriched_hover(
         // squiggle; cursors that just match are NOT diagnostics by
         // default. The op carries the rule-author's message/code/hint
         // verbatim — far more useful than a generic "(match)" string.
+        // Take any dry-run staged write rows this seed produced.
+        {
+            let mut g = staged_ranges.lock().unwrap();
+            staged_focus.extend(std::mem::take(&mut *g));
+        }
         let drained: Vec<LspDiagEffect> = {
             let mut g = lsp_diags.lock().unwrap();
             std::mem::take(&mut *g)
@@ -645,6 +740,78 @@ async fn render_enriched_hover(
     if total_rows == 0 {
         md.push_str("\n_(no cursors emitted)_\n");
     }
+
+    // Surface per-step choke diagnostics on the .sprf source: for each
+    // op that received >0 cursors but emitted 0, attach a HINT squiggle
+    // on the op's invocation span. Multi-seed runs aggregate seeds per
+    // step into one diagnostic.
+    // Universal choke: first step where some seed sent cursors in but
+    // no seed produced any output. Per-seed filters (`rev(:HEAD)` etc.)
+    // produce no diagnostic since at least one seed survives them.
+    let universal_choke: Option<usize> = (0..pipeline_arcs.len()).find(|&i| {
+        step_input_totals[i] > 0 && step_output_totals[i] == 0
+    });
+    tracing::info!(
+        target: "sprefa::hover",
+        step_input_totals = ?step_input_totals,
+        step_output_totals = ?step_output_totals,
+        universal_choke = ?universal_choke,
+        "render_enriched_hover.choke_scan"
+    );
+    if let (Some(uri), Some(step)) = (source_uri, universal_choke) {
+        if let Some(slot) = lowered.get(step) {
+            // Squiggle just the op-name span (e.g. `json`, `ast[ts]`)
+            // up to the `(`, so the underline reads as "this op
+            // starved" without highlighting the entire body.
+            let full = slot.byte_range.clone();
+            let name_end = if slot.paren_origin > 0 {
+                slot.paren_origin.saturating_sub(1)
+            } else {
+                full.end
+            };
+            let r = full.start..name_end;
+            if r.start <= source_text.len()
+                && r.end <= source_text.len()
+                && r.start < r.end
+            {
+                let (sl, sc) = offset_to_position(source_text, r.start);
+                let (el, ec) = offset_to_position(source_text, r.end);
+                let in_total  = step_input_totals[step];
+                let out_total = step_output_totals[step];
+                let diag = Diagnostic {
+                    range: Range {
+                        start: Position { line: sl, character: sc },
+                        end:   Position { line: el, character: ec },
+                    },
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    code: Some(NumberOrString::String("sprf/no-output".into())),
+                    code_description: None,
+                    source: Some("sprf".into()),
+                    message: format!(
+                        "step `{}` received {} cursors across {} seeds but emitted 0",
+                        slot.name, in_total, config.seeds.len()
+                    ),
+                    related_information: None,
+                    tags: None,
+                    data: None,
+                };
+                let _ = out_total;
+                diagnostics_out.entry(uri.clone()).or_default().push(diag);
+            }
+        }
+    }
+
+    // write_cursor HINT on the focused slot. Hover only drains the
+    // focused-step prefix, so dry-run writes can only attach to the
+    // focused slot (the last entry in `lowered`).
+    if let (Some(uri), Some(slot)) = (source_uri, lowered.last()) {
+        if slot.name.as_ref() == "write_cursor" {
+            for d in write_pending_diags(slot, &staged_focus, source_text) {
+                diagnostics_out.entry(uri.clone()).or_default().push(d);
+            }
+        }
+    }
+
     md.push_str(&format!(
         "\n**Total rows:** {}{}\n",
         total_rows,
@@ -663,6 +830,186 @@ async fn render_enriched_hover(
         "render_enriched_hover.done"
     );
     Some(md)
+}
+
+/// Per-step input/output counts for one drain of one pipe.
+struct PipeDrain {
+    in_counts:  Vec<usize>,
+    out_counts: Vec<usize>,
+    final_rows: Vec<Cursor>,
+}
+
+/// Unified per-step drain: feed a fresh seed cursor into the head of
+/// `ops`, materialize each stage's output, count cursors in/out at each
+/// step, and return the per-step totals plus the final stage's rows.
+///
+/// Caller owns the seed loop and the `RtCtx` build (different sites
+/// want different post-drain bookkeeping — hover renders rows, the
+/// file-open path only wants choke counts). This is the shared inner
+/// loop used by `render_enriched_hover` and `drain_all_pipes_for_chokes`.
+async fn drain_pipe_steps(
+    ctx: &RtCtx,
+    ops: &[Arc<dyn pipeline::Op>],
+    seed_slug: &str,
+    seed_rev:  &str,
+) -> PipeDrain {
+    let mut in_counts  = vec![0usize; ops.len()];
+    let mut out_counts = vec![0usize; ops.len()];
+
+    let mut c = Cursor::default();
+    c.repo = Arc::from(seed_slug);
+    c.rev  = Arc::from(seed_rev);
+    let mut s: futures::stream::BoxStream<'_, Arc<[Cursor]>> = Box::pin(
+        stream::iter(vec![Arc::<[Cursor]>::from(vec![c])]),
+    );
+
+    let mut prev_count: usize = 1;
+    for (i, op) in ops.iter().enumerate() {
+        in_counts[i] = prev_count;
+        let stage = Pipeline::Op(op.clone());
+        let stream_in = std::mem::replace(
+            &mut s,
+            Box::pin(stream::empty::<Arc<[Cursor]>>()),
+        );
+        let mut stage_out = stage.run(ctx, stream_in);
+        let mut buf: Vec<Arc<[Cursor]>> = Vec::new();
+        let mut count = 0usize;
+        while let Some(b) = stage_out.next().await {
+            count += b.len();
+            buf.push(b);
+        }
+        out_counts[i] = count;
+        prev_count = count;
+        s = Box::pin(stream::iter(buf));
+    }
+
+    let mut final_rows: Vec<Cursor> = Vec::new();
+    while let Some(b) = s.next().await {
+        final_rows.extend(b.iter().cloned());
+    }
+    PipeDrain { in_counts, out_counts, final_rows }
+}
+
+/// File-wide drain: run every pipe in `lowered_pipes` end-to-end across
+/// every seed and emit one `sprf/no-output` diagnostic per pipe whose
+/// universal choke is non-empty. Same per-step counting logic as
+/// `render_enriched_hover` but no markdown, no per-seed table rendering,
+/// no target-file diagnostics — just the source-side squiggles for
+/// "this op starved" so the user sees them on file open / save without
+/// having to hover each rule individually.
+///
+/// Pipes with any unlowered slot (lower-phase diagnostic already
+/// published) are skipped — no point draining a pipeline that the
+/// lowerer rejected.
+async fn drain_all_pipes_for_chokes(
+    lowered_pipes: &[Vec<LoweredOp>],
+    config: &Config,
+    op_cache: Arc<OpCache>,
+    state: &Arc<ServerState>,
+    source_text: &str,
+    cancel: CancellationToken,
+) -> Vec<Diagnostic> {
+    // Per-pipe (input_totals, output_totals) summed across seeds.
+    let mut totals: Vec<(Vec<usize>, Vec<usize>)> = lowered_pipes
+        .iter()
+        .map(|p| (vec![0usize; p.len()], vec![0usize; p.len()]))
+        .collect();
+    // Per-pipe lowered op vector, or None if any slot failed to lower.
+    let pipe_arcs: Vec<Option<Vec<Arc<dyn pipeline::Op>>>> = lowered_pipes
+        .iter()
+        .map(|p| p.iter().map(|s| s.op.clone()).collect::<Option<Vec<_>>>())
+        .collect();
+
+    // Dry-run staged writes per pipe, accumulated across seeds. Used to
+    // surface a HINT on write_cursor invocations.
+    let mut staged_per_pipe: Vec<Vec<StagedWriteRangeRow>> =
+        (0..lowered_pipes.len()).map(|_| Vec::new()).collect();
+
+    for seed in &config.seeds {
+        if cancel.is_cancelled() { return vec![]; }
+        let file_source: Arc<dyn FileSource> =
+            crate::run::build_seed_source(seed.root.clone(), seed.rev.clone());
+        let relation_store = Arc::new(RelationStore::new());
+        let subject_registry = Arc::new(SubjectRegistry::<RelationWake>::new());
+        let seed_ctx = crate::run::build_seed_ctx(
+            state,
+            file_source,
+            op_cache.clone(),
+            relation_store.clone(),
+            subject_registry.clone(),
+            PrintBatcher::buffer().0,
+            std::sync::Arc::new(pipeline::effects::WritePolicy::DryRun),
+        );
+        let staged_ranges = seed_ctx.staged_ranges.clone();
+        let ctx = seed_ctx.ctx;
+
+        for (pidx, arcs_opt) in pipe_arcs.iter().enumerate() {
+            if cancel.is_cancelled() { return vec![]; }
+            let Some(arcs) = arcs_opt else { continue };
+            let drain = drain_pipe_steps(&ctx, arcs, &seed.slug, &seed.rev).await;
+            for i in 0..arcs.len() {
+                totals[pidx].0[i] += drain.in_counts[i];
+                totals[pidx].1[i] += drain.out_counts[i];
+            }
+            // Drain rows accumulated by THIS pipe and tag them by pidx.
+            // Doing it per-pipe (vs once per seed) lets us attribute to
+            // the right write_cursor span.
+            let drained: Vec<StagedWriteRangeRow> = {
+                let mut g = staged_ranges.lock().unwrap();
+                std::mem::take(&mut *g)
+            };
+            staged_per_pipe[pidx].extend(drained);
+        }
+    }
+
+    let mut diags: Vec<Diagnostic> = Vec::new();
+    for (pidx, pipe) in lowered_pipes.iter().enumerate() {
+        if pipe_arcs[pidx].is_none() { continue }
+        let (in_t, out_t) = &totals[pidx];
+        let Some(step) = (0..pipe.len()).find(|&i| in_t[i] > 0 && out_t[i] == 0)
+        else { continue };
+        let slot = &pipe[step];
+        let full = slot.byte_range.clone();
+        let name_end = if slot.paren_origin > 0 {
+            slot.paren_origin.saturating_sub(1)
+        } else {
+            full.end
+        };
+        let r = full.start..name_end;
+        if !(r.start <= source_text.len()
+            && r.end <= source_text.len()
+            && r.start < r.end) { continue }
+        let (sl, sc) = offset_to_position(source_text, r.start);
+        let (el, ec) = offset_to_position(source_text, r.end);
+        diags.push(Diagnostic {
+            range: Range {
+                start: Position { line: sl, character: sc },
+                end:   Position { line: el, character: ec },
+            },
+            severity: Some(DiagnosticSeverity::WARNING),
+            code: Some(NumberOrString::String("sprf/no-output".into())),
+            code_description: None,
+            source: Some("sprf".into()),
+            message: format!(
+                "step `{}` received {} cursors across {} seeds but emitted 0",
+                slot.name, in_t[step], config.seeds.len()
+            ),
+            related_information: None,
+            tags: None,
+            data: None,
+        });
+    }
+    // write_cursor HINT: for any pipe that staged dry-run writes, attach
+    // a HINT to each `write_cursor` invocation in the pipe.
+    for (pidx, pipe) in lowered_pipes.iter().enumerate() {
+        let rows = &staged_per_pipe[pidx];
+        if rows.is_empty() { continue }
+        for slot in pipe.iter() {
+            if slot.name.as_ref() != "write_cursor" { continue }
+            diags.extend(write_pending_diags(slot, rows, source_text));
+        }
+    }
+    diags
 }
 
 /// Render a batch of cursors as one or more wide markdown tables —
@@ -785,8 +1132,15 @@ fn render_cursor_tables(
 }
 
 fn render_preview(c: &Cursor) -> String {
-    let active = c.active();
-    if active.is_empty() { return String::new(); }
+    // Defensive: render-side ops (e.g. `render[plain]`) replace
+    // `content` with rendered bytes while leaving `byte_range` pinned
+    // at the upstream span. `c.active()` panics in that case. Clamp
+    // the range to content.len() and bail out if the start is OOB.
+    let len = c.content.len();
+    let s = c.byte_range.start.min(len);
+    let e = c.byte_range.end.min(len);
+    if s >= e { return String::new(); }
+    let active = &c.content[s..e];
     let s = String::from_utf8_lossy(active);
     let s = s.replace('\n', " ⏎ ");
     let s = s.replace('`', "\\`");
@@ -800,7 +1154,17 @@ fn render_capture_value(c: &Cursor, cap: &Capture, root: &Path) -> String {
     let value_str = match &cap.kind {
         CaptureKind::Synthesized { value } => value.to_string(),
         CaptureKind::SpanBacked => {
-            String::from_utf8_lossy(&c.content[cap.byte_range.clone()]).into_owned()
+            // Defensive clamp: render-side ops can swap `content` to the
+            // rendered bytes while capture byte_ranges still point at
+            // upstream spans. Slicing OOB panics, so clamp.
+            let len = c.content.len();
+            let s = cap.byte_range.start.min(len);
+            let e = cap.byte_range.end.min(len);
+            if s >= e {
+                String::new()
+            } else {
+                String::from_utf8_lossy(&c.content[s..e]).into_owned()
+            }
         }
     };
     let value_short = escape_pipe(&truncate(
@@ -878,16 +1242,28 @@ fn lsp_effect_to_diagnostic(
     if e.byte_range.start > text.len() || e.byte_range.end > text.len() {
         return None;
     }
-    let (sl, sc) = offset_to_position(text, e.byte_range.start);
+    // Shift start past leading whitespace on its line so the squiggle
+    // hugs the actual non-blank content. comment(...) emits byte_range
+    // starting at column 0 of the marker line (before indent); without
+    // this shift, the squiggle paints leading spaces and reads as off.
+    let line_lead_end = {
+        let mut i = e.byte_range.start;
+        let bytes = text.as_bytes();
+        while i < e.byte_range.end && (bytes[i] == b' ' || bytes[i] == b'\t') {
+            i += 1;
+        }
+        i
+    };
+    let (sl, sc) = offset_to_position(text, line_lead_end);
     let (mut el, mut ec) = offset_to_position(text, e.byte_range.end);
     // Clamp to a single line. comment(...) and other narrowing ops
     // produce cursors that cover whole regions (comment-to-comment, full
     // file scopes) by design. A diagnostic squiggle that wraps half the
     // file is unhelpful in the editor; end it at the first newline.
     if el != sl {
-        let end_of_line = text[e.byte_range.start..]
+        let end_of_line = text[line_lead_end..]
             .find('\n')
-            .map(|n| e.byte_range.start + n)
+            .map(|n| line_lead_end + n)
             .unwrap_or(e.byte_range.end);
         let (line, col) = offset_to_position(text, end_of_line);
         el = line;
@@ -938,6 +1314,64 @@ fn lsp_effect_to_diagnostic(
 /// overlapping trees; identical (range, code, message) diagnostics
 /// would otherwise stack. Insertion-order preserved: the first
 /// occurrence wins, rest dropped.
+/// Build one HINT diagnostic per dry-run staged write row for a
+/// `write_cursor` slot. Each row shows file, byte_range, mode, length,
+/// and a preview of the bytes that *would* be spliced. Per-row (not
+/// aggregated) so multi-seed runs surface stale-byte_range duplicates
+/// instead of hiding them behind a single "N writes" summary.
+fn write_pending_diags(
+    slot:        &LoweredOp,
+    rows:        &[StagedWriteRangeRow],
+    source_text: &str,
+) -> Vec<Diagnostic> {
+    if rows.is_empty() { return Vec::new(); }
+    let full = slot.byte_range.clone();
+    let name_end = if slot.paren_origin > 0 {
+        slot.paren_origin.saturating_sub(1)
+    } else { full.end };
+    let r = full.start..name_end;
+    if !(r.start <= source_text.len() && r.end <= source_text.len() && r.start < r.end) {
+        return Vec::new();
+    }
+    let (sl, sc) = offset_to_position(source_text, r.start);
+    let (el, ec) = offset_to_position(source_text, r.end);
+
+    rows.iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let file = row.effect.file.display().to_string();
+            let bytes = row.effect.new_bytes.len();
+            let span  = &row.effect.byte_range;
+            let mode  = row.effect.mode.as_str();
+            let preview = String::from_utf8_lossy(&row.effect.new_bytes)
+                .replace('\n', "⏎")
+                .replace('`', "\\`");
+            let preview = if preview.chars().count() > 60 {
+                let mut s: String = preview.chars().take(60).collect();
+                s.push('…');
+                s
+            } else { preview };
+            Diagnostic {
+                range: Range {
+                    start: Position { line: sl, character: sc },
+                    end:   Position { line: el, character: ec },
+                },
+                severity: Some(DiagnosticSeverity::HINT),
+                code:     Some(NumberOrString::String("sprf/write-pending".into())),
+                code_description: None,
+                source:   Some("sprf".into()),
+                message:  format!(
+                    "write[{}] {} {} bytes in {}[{}..{}]: \"{}\"",
+                    i, mode, bytes, file, span.start, span.end, preview,
+                ),
+                related_information: None,
+                tags: None,
+                data: None,
+            }
+        })
+        .collect()
+}
+
 fn dedupe_target_diagnostics(map: &mut HashMap<Url, Vec<Diagnostic>>) {
     for diags in map.values_mut() {
         let mut seen: std::collections::HashSet<(u32, u32, u32, u32, String, String)> =

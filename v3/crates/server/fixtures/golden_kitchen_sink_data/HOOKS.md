@@ -9,7 +9,40 @@ the marker pair. Re-run the demo from this directory to refresh:
 ## RTKQ Hooks
 
 <!-- @sprf-begin rtkq -->
-(empty until first run)
+
+- discovered RTKQ hook scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
+scopes go here (Phase 1 staging)
 <!-- @sprf-end rtkq -->
 
 ## OpenAPI Operations

@@ -293,10 +293,14 @@ fn walk_object_entries<N: DataNode>(
         if is_row_field(e) { row_fields.push(e); } else { descents.push(e); }
     }
 
+    // Row fields: each named key in the pattern is a hard structural
+    // constraint. If any row_field key resolves to zero hits, OR
+    // descending into it produces zero matches, the whole pattern
+    // fails for this object — no rows.
     let mut row_templates: Vec<Captures> = vec![caps.clone()];
     for entry in &row_fields {
         let key_hits = resolve_keys(node, &entry.key);
-        if key_hits.is_empty() { continue; }
+        if key_hits.is_empty() { return vec![]; }
         let mut next_templates = vec![];
         for tmpl in &row_templates {
             for (k_text, k_range, v_node) in &key_hits {
@@ -307,7 +311,8 @@ fn walk_object_entries<N: DataNode>(
                 for r in sub { next_templates.push(r.captures); }
             }
         }
-        if !next_templates.is_empty() { row_templates = next_templates; }
+        if next_templates.is_empty() { return vec![]; }
+        row_templates = next_templates;
     }
 
     if descents.is_empty() {
@@ -318,11 +323,14 @@ fn walk_object_entries<N: DataNode>(
         return out;
     }
 
+    // Descents: same structural-constraint rule. Every descent key must
+    // resolve to at least one hit AND produce at least one downstream
+    // match. Missing key or empty descent fails the whole pattern.
     let mut out = vec![];
-    let mut any_descent_produced = false;
     for descent in &descents {
         let key_hits = resolve_keys(node, &descent.key);
-        if key_hits.is_empty() { continue; }
+        if key_hits.is_empty() { return vec![]; }
+        let mut produced = false;
         for (k_text, k_range, v_node) in &key_hits {
             let child_ctx = ctx.descend_key(k_text);
             for tmpl in &row_templates {
@@ -330,16 +338,12 @@ fn walk_object_entries<N: DataNode>(
                 bind_key_captures(&descent.key, k_text, *k_range, &mut seeded);
                 let sub = walk_inner(v_node, &descent.value, &child_ctx, &seeded);
                 for r in sub {
-                    any_descent_produced = true;
+                    produced = true;
                     out.extend(walk_inner(node, rest, ctx, &r.captures));
                 }
             }
         }
-    }
-    if !any_descent_produced {
-        for tmpl in row_templates {
-            out.extend(walk_inner(node, rest, ctx, &tmpl));
-        }
+        if !produced { return vec![]; }
     }
     out
 }
@@ -477,12 +481,30 @@ mod tests {
     }
 
     #[test]
-    fn missed_keys_surface() {
+    fn missed_keys_fail_pattern() {
+        // Hard-constraint semantic: every named key in the pattern must
+        // exist in the data. Any miss kills the whole pattern.
         let json = parse_json(r#"{"a":"foo"}"#);
         let steps = compile("{ a: $A, missing: $X }");
         let out = walk(&json, &steps);
-        assert_eq!(out.rows.len(), 1);
-        assert!(!out.rows[0].captures.contains_key("X"));
+        assert_eq!(out.rows.len(), 0);
         assert!(out.missed_keys.iter().any(|k| k.as_ref() == "missing"));
+    }
+
+    #[test]
+    fn nested_missing_key_fails_pattern() {
+        let json = parse_json(r#"{"paths":{"/users":{"get":{"operationId":"listUsers"}}}}"#);
+        let steps = compile("{ paths: { /no-such-route: { get: { operationId: $X } } } }");
+        let out = walk(&json, &steps);
+        assert_eq!(out.rows.len(), 0);
+    }
+
+    #[test]
+    fn nested_existing_key_emits_match() {
+        let json = parse_json(r#"{"paths":{"/users":{"get":{"operationId":"listUsers"}}}}"#);
+        let steps = compile("{ paths: { /users: { get: { operationId: $X } } } }");
+        let out = walk(&json, &steps);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(&*out.rows[0].captures["X"].text, "listUsers");
     }
 }

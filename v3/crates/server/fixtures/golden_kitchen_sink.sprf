@@ -75,7 +75,9 @@ repo(${R?}) > rev(:HEAD)
 # Raw YAML rule body for predicates the bracket form cannot reach.
 repo(${R?}) > rev(:HEAD)
   > fs(glob(v3/crates/server/fixtures/golden_kitchen_sink_data/api/*.ts))
-  > ast_yaml[ts](pattern: "${EP?}: build.${KIND?}")
+  > ast_yaml[ts](
+    pattern: "${EP?}: build.${KIND?}"
+  )
   > print(:endpoints);
 
 
@@ -118,7 +120,7 @@ str("hello-from-golden-demo") > print(:str_demo);
 # pipes against a workspace with a single seed, or guard with `rev(:HEAD)`
 # once that filter composes with disk-mode fs. Tracked as a follow-on
 # to sprefa-ft8.
-fs(glob(HOOKS.md))
+fs(glob(**/HOOKS.md))
   > comment("@sprf-begin rtkq", ${SCOPE?}, "@sprf-end rtkq")
   > render[plain](
 - discovered RTKQ hook scopes go here (Phase 1 staging)
