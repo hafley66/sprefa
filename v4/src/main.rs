@@ -1,18 +1,20 @@
-// sprefa v4 prototype — min DD wiring, all 7 layers, fs + ast-grep only.
+// sprefa v4 prototype — min DD wiring + IR-as-data, all 7 layers, fs + ast-grep.
 //
-// hardcoded "script":
-//   fs(**/*.rs) > ast("fn $NAME") > tag(:fns, $name, $path:lo..hi)
-//   tag?(:fns, ${A?}, ${B?}) > filter(name.len >= 8) > print     // long fns
-//   tag?(:fns, ${A?}, ${B?}) antijoin tag?(:long_names, ${A?})    // short fns
+// Hardcoded "script" expressed as OpIR values (see build_ir below):
+//   in   ──filter(NameLenGte 8)──►  long
+//   in   ──subtract by Name on long──►  short
+//   long  ──print──►  stdout
+//   short ──print──►  stdout
 //
-// L0 SOURCE       — InputSession<Gen, Cursor, ±1>; rounds drive retraction
-// L1 PARSE+LOWER  — input seam: rayon-side parse with ast-grep, push rows
+// L0 SOURCE       — InputEvent vec, drives InputSession (insert / remove)
+// L1 PARSE+LOWER  — build_ir() returns Vec<OpIR>; lower() walks it, building DD wiring
 // L2 RULE STORE   — DD's traces ARE the per-collection store (memo + retract)
-// L3 SLICE RUNTIME — Slice = Collection<G, Cursor> → Collection<G, Cursor>
-// L4 SAGA DISPATCH — inspect_batch on output collections drains effects
+// L3 SLICE RUNTIME — OpIR variants ≡ ops; lower() = single match → DD method calls
+// L4 SAGA DISPATCH — Print variant emits inspect_batch sinks
 // L5 SUBSTRATE    — timely worker + DD scope; FsSubstrate for filesystem
 // L6 OS           — std::fs
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use ast_grep_core::{source::StrDoc, AstGrep, Pattern};
@@ -20,20 +22,107 @@ use ast_grep_language::SupportLang;
 
 use differential_dataflow::input::InputSession;
 use differential_dataflow::operators::{Join, Threshold};
+use differential_dataflow::Collection;
 use timely::dataflow::operators::probe::Handle;
+use timely::dataflow::Scope;
 
 // ─────────────────────────────────────────────────────────── shared types ──
 
 type Gen = u64;
 
-/// Cursor row in DD. Kept tiny + Hash/Ord/Clone-friendly.
-/// Real v4 will carry an Arc<bytes> handle + richer captures.
+/// Cursor row. Tiny + Hash/Ord/Clone-friendly.
 type Cursor = (
-    String,            // path
-    u32,               // lo
-    u32,               // hi
-    String,            // capture: NAME (empty if none)
+    String, // path
+    u32,    // lo
+    u32,    // hi
+    String, // capture: NAME (empty if none)
 );
+
+// ─────────────────────────────────────────────────────────── L3 IR ──
+// Ops are first-class IR values. Same shape as a Redux "action creator
+// graph": each entry derives a named fact from prior facts.
+
+#[derive(Debug, Clone)]
+enum OpIR {
+    /// Filter `src` by predicate, write to `out`.
+    Filter   { src: String, pred: Pred, out: String },
+    /// `out` = `left` minus rows whose `key` appears in `right`'s `key`s.
+    /// (Slice over antijoin: project key, distinct, antijoin, project back.)
+    Subtract { left: String, right: String, key: KeyFn, out: String },
+    /// Sink: drain `src` to stdout, prefixed with `label`.
+    Print    { src: String, label: String },
+}
+
+#[derive(Debug, Clone)]
+enum Pred  { NameLenGte(usize) }
+#[derive(Debug, Clone, Copy)]
+enum KeyFn { Name }
+
+fn pred_eval(p: &Pred, c: &Cursor) -> bool {
+    match p { Pred::NameLenGte(n) => c.3.len() >= *n }
+}
+fn key_of(k: KeyFn, c: &Cursor) -> String {
+    match k { KeyFn::Name => c.3.clone() }
+}
+
+// L1 builder: hand-built IR for the demo. A real lowerer takes parsed
+// .sprf source. Same enum shape either way.
+fn build_ir() -> Vec<OpIR> {
+    vec![
+        OpIR::Filter   { src: "in".into(),    pred: Pred::NameLenGte(8),
+                         out: "long".into() },
+        OpIR::Subtract { left: "in".into(),   right: "long".into(),
+                         key: KeyFn::Name,
+                         out: "short".into() },
+        OpIR::Print    { src: "long".into(),  label: "long ".into() },
+        OpIR::Print    { src: "short".into(), label: "short".into() },
+    ]
+}
+
+// L3 lowerer: walks IR, threads named Collections through a HashMap.
+// Single match arm per variant — every "op" in the language is one DD
+// method-call recipe. Adding a new op = adding a variant + an arm.
+fn lower<G: Scope<Timestamp = Gen>>(
+    ir:    &[OpIR],
+    input: Collection<G, Cursor>,
+    probe: &mut Handle<Gen>,
+) {
+    let mut facts: HashMap<String, Collection<G, Cursor>> = HashMap::new();
+    facts.insert("in".into(), input);
+
+    for op in ir {
+        match op {
+            OpIR::Filter { src, pred, out } => {
+                let s = facts.get(src).expect("undefined src in Filter").clone();
+                let pred = pred.clone();
+                let derived = s.filter(move |c| pred_eval(&pred, c));
+                facts.insert(out.clone(), derived);
+            }
+            OpIR::Subtract { left, right, key, out } => {
+                let l = facts.get(left ).expect("undefined left in Subtract").clone();
+                let r = facts.get(right).expect("undefined right in Subtract").clone();
+                let k = *key;
+                let l_kv      = l.map(move |c| (key_of(k, &c), c));
+                let right_keys = r.map(move |c| key_of(k, &c)).distinct();
+                let kept      = l_kv.antijoin(&right_keys).map(|(_, c)| c);
+                facts.insert(out.clone(), kept);
+            }
+            OpIR::Print { src, label } => {
+                let s = facts.get(src).expect("undefined src in Print").clone();
+                let label = label.clone();
+                s.inspect_batch(move |t, batch| {
+                    for ((path, lo, hi, name), _, diff) in batch {
+                        let sign = if *diff > 0 { '+' } else { '-' };
+                        println!(
+                            "[{}] {} gen={} {}:{}..{}  fn {}",
+                            sign, label, t, path, lo, hi, name
+                        );
+                    }
+                }).probe_with(probe);
+            }
+        }
+    }
+}
 
 // ─────────────────────────────────────────────────────────── L6/L5 substrate ──
 
@@ -53,7 +142,6 @@ fn walk_rs(root: &PathBuf, out: &mut Vec<PathBuf>) {
 }
 
 // ─────────────────────────────────────────────────────────── L1 input seam ──
-// rayon-side equivalent: parse one file with ast-grep, return Vec<Cursor>.
 
 fn extract_fns(path: &PathBuf, pattern: &Pattern<SupportLang>) -> Vec<Cursor> {
     let Ok(src) = std::fs::read_to_string(path) else { return vec![] };
@@ -72,9 +160,7 @@ fn extract_fns(path: &PathBuf, pattern: &Pattern<SupportLang>) -> Vec<Cursor> {
 // ─────────────────────────────────────────────────────────── L0 events ──
 
 enum InputEvent {
-    /// Initial seed.
-    Run { root: PathBuf },
-    /// Drop one file's rows (simulates fs-watcher delete).
+    Run    { root: PathBuf },
     Forget { path: String },
 }
 
@@ -85,53 +171,22 @@ fn main() {
         .map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
 
     let events = vec![
-        InputEvent::Run { root: root.clone() },
+        InputEvent::Run    { root: root.clone() },
         InputEvent::Forget { path: format!("{}/src/main.rs", root.display()) },
     ];
 
     timely::execute_directly(move |worker| {
-        // L0 InputSession — the dam between rayon side and DD side.
         let mut input: InputSession<Gen, Cursor, isize> = InputSession::new();
         let mut probe = Handle::new();
+        let ir = build_ir();
 
-        // L3+L4: build the slice graph once, hook sinks via inspect_batch.
         worker.dataflow::<Gen, _, _>(|scope| {
             let cursors = input.to_collection(scope);
-
-            // tag(:fns, $name, (path, lo, hi))   keyed by NAME for joins
-            let fns_by_name = cursors.map(|(p, lo, hi, n)| (n, (p, lo, hi)));
-
-            // filter slice — long-named fns
-            let long = fns_by_name
-                .filter(|(n, _)| n.len() >= 8);
-
-            // tag?(:long_names, ${A?})  derived collection of just keys
-            let long_keys = long.map(|(n, _)| n).distinct();
-
-            // antijoin slice — fns whose name is NOT in long_keys (i.e. short)
-            let short = fns_by_name.antijoin(&long_keys);
-
-            // sinks (L4): drain to stdout. Diff sign reflects insert vs retract.
-            long.inspect_batch(|t, batch| {
-                for ((name, (path, lo, hi)), _, diff) in batch {
-                    let sign = if *diff > 0 { '+' } else { '-' };
-                    println!("[{}] long  gen={} {}:{}..{}  fn {}", sign, t, path, lo, hi, name);
-                }
-            }).probe_with(&mut probe);
-
-            short.inspect_batch(|t, batch| {
-                for ((name, (path, lo, hi)), _, diff) in batch {
-                    let sign = if *diff > 0 { '+' } else { '-' };
-                    println!("[{}] short gen={} {}:{}..{}  fn {}", sign, t, path, lo, hi, name);
-                }
-            }).probe_with(&mut probe);
+            lower(&ir, cursors, &mut probe);
         });
 
-        // shared pattern compiled once.
         let pat = Pattern::new("fn $NAME", SupportLang::Rust);
-
-        // remember per-path inserted rows so Forget can issue exact retractions.
-        let mut by_path: std::collections::HashMap<String, Vec<Cursor>> = Default::default();
+        let mut by_path: HashMap<String, Vec<Cursor>> = Default::default();
 
         let mut t: Gen = 0;
         for ev in events {
@@ -142,9 +197,8 @@ fn main() {
                     walk_rs(&root, &mut files);
                     for f in files {
                         let rows = extract_fns(&f, &pat);
-                        let key = f.display().to_string();
                         for r in &rows { input.insert(r.clone()); }
-                        by_path.insert(key, rows);
+                        by_path.insert(f.display().to_string(), rows);
                     }
                 }
                 InputEvent::Forget { path } => {
