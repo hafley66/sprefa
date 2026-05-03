@@ -107,6 +107,7 @@ impl Cursor {
 #[async_trait::async_trait]
 trait Store: Send + Sync + 'static {
     async fn insert(&self, fact: &str, row: Cursor, gen: Gen);
+    async fn insert_many(&self, fact: &str, rows: Vec<Cursor>, gen: Gen);
     async fn remove(&self, fact: &str, row: Cursor, gen: Gen);
     /// Drop every row in `fact` whose cursor's `key_term` equals `key_value`.
     async fn forget_by(&self, fact: &str, key_term: &str, key_value: &str, gen: Gen);
@@ -207,12 +208,17 @@ fn body_depends_on(body: &RuleBody, fact: &str) -> bool {
 #[async_trait::async_trait]
 impl Store for MemStore {
     async fn insert(&self, fact: &str, row: Cursor, gen: Gen) {
+        self.insert_many(fact, vec![row], gen).await
+    }
+    async fn insert_many(&self, fact: &str, rows: Vec<Cursor>, gen: Gen) {
+        if rows.is_empty() { return; }
         {
             let mut w = self.facts.write().await;
-            w.entry(fact.to_string()).or_default().insert(row.clone(), gen);
+            let set = w.entry(fact.to_string()).or_default();
+            for r in &rows { set.insert(r.clone(), gen); }
         }
         let tx = self.channel(fact);
-        let _ = tx.send(Diff { row, gen, sign: 1 });
+        for r in rows { let _ = tx.send(Diff { row: r, gen, sign: 1 }); }
         self.rederive(fact).await;
     }
     async fn remove(&self, fact: &str, row: Cursor, gen: Gen) {
@@ -316,8 +322,8 @@ enum Effect {
 
 trait Op: Send + Sync + 'static {
     fn ident(&self) -> [u8; 32];
-    fn run(self: Arc<Self>, hooks: Hooks, input: BoxStream<'static, Cursor>)
-        -> BoxStream<'static, Cursor>;
+    fn run(self: Arc<Self>, hooks: Hooks, input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>;
 }
 
 fn ident_of(parts: &[&[u8]]) -> [u8; 32] {
@@ -334,24 +340,28 @@ fn ident_of(parts: &[&[u8]]) -> [u8; 32] {
 // flavored. ast-grep called directly. cursors carry whatever terms the
 // upstream op set; this op may extend them.
 
-/// Walks `root`, emits one cursor per `*.<ext>` file with FS=path.
+/// Walks `root`, emits batches of cursors (BATCH paths each) with FS=path.
+const BATCH: usize = 64;
 struct Fs { root: PathBuf, ext: String }
 impl Op for Fs {
     fn ident(&self) -> [u8; 32] {
         ident_of(&[b"fs", self.root.to_string_lossy().as_bytes(), self.ext.as_bytes()])
     }
-    fn run(self: Arc<Self>, _h: Hooks, _in: BoxStream<'static, Cursor>)
-        -> BoxStream<'static, Cursor>
+    fn run(self: Arc<Self>, _h: Hooks, _in: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
     {
         let me = self.clone();
         Box::pin(async_stream::stream! {
             let mut files = Vec::new();
             walk(&me.root, &me.ext, &mut files);
+            let mut buf: Vec<Cursor> = Vec::with_capacity(BATCH);
             for f in files {
                 let mut c = Cursor::default();
                 c.set("FS", f.display().to_string());
-                yield c;
+                buf.push(c);
+                if buf.len() >= BATCH { yield std::mem::take(&mut buf); }
             }
+            if !buf.is_empty() { yield buf; }
         })
     }
 }
@@ -383,90 +393,106 @@ impl Op for AstNm {
     fn ident(&self) -> [u8; 32] {
         ident_of(&[b"ast", b"rust", self.pattern_src.as_bytes()])
     }
-    fn run(self: Arc<Self>, _h: Hooks, mut input: BoxStream<'static, Cursor>)
-        -> BoxStream<'static, Cursor>
+    fn run(self: Arc<Self>, _h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
     {
         let me = self.clone();
-        let pat = Pattern::new(&me.pattern_src, SupportLang::Rust);
-        let pat = Arc::new(pat);
+        let pat = Arc::new(Pattern::new(&me.pattern_src, SupportLang::Rust));
         Box::pin(async_stream::stream! {
-            while let Some(c) = input.next().await {
-                let path = match c.get("FS") { Some(p) => p.to_string(), None => continue };
-                let Ok(src) = std::fs::read_to_string(&path) else { continue };
-                let grep: AstGrep<StrDoc<SupportLang>> = AstGrep::new(&src, SupportLang::Rust);
-                for nm in grep.root().find_all(&*pat) {
-                    let env = nm.get_env();
-                    let r = nm.range();
-                    let mut child = c.clone();
-                    child.set("LO", (r.start as u64).to_string());
-                    child.set("HI", (r.end   as u64).to_string());
-                    for nm_name in &me.capture_names {
-                        if let Some(node) = env.get_match(nm_name) {
-                            child.set(nm_name, node.text().to_string());
+            while let Some(batch) = input.next().await {
+                let mut out: Vec<Cursor> = Vec::with_capacity(batch.len() * 4);
+                for c in &batch {
+                    let path = match c.get("FS") { Some(p) => p.to_string(), None => continue };
+                    let Ok(src) = std::fs::read_to_string(&path) else { continue };
+                    let grep: AstGrep<StrDoc<SupportLang>> = AstGrep::new(&src, SupportLang::Rust);
+                    for nm in grep.root().find_all(&*pat) {
+                        let env = nm.get_env();
+                        let r = nm.range();
+                        let mut child = c.clone();
+                        child.set("LO", (r.start as u64).to_string());
+                        child.set("HI", (r.end   as u64).to_string());
+                        for nm_name in &me.capture_names {
+                            if let Some(node) = env.get_match(nm_name) {
+                                child.set(nm_name, node.text().to_string());
+                            }
                         }
+                        out.push(child);
                     }
-                    yield child;
                 }
+                if !out.is_empty() { yield out; }
             }
         })
     }
 }
 
-/// Insert each upstream cursor into the named fact. Pass-through.
+/// Insert each upstream batch into the named fact via insert_many. Pass-through.
 struct Fact { name: String }
 impl Op for Fact {
     fn ident(&self) -> [u8; 32] { ident_of(&[b"fact", self.name.as_bytes()]) }
-    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Cursor>)
-        -> BoxStream<'static, Cursor>
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
     {
         let me = self.clone();
         Box::pin(async_stream::stream! {
-            while let Some(c) = input.next().await {
-                h.use_store().insert(&me.name, c.clone(), h.use_gen()).await;
-                yield c;
+            while let Some(batch) = input.next().await {
+                h.use_store().insert_many(&me.name, batch.clone(), h.use_gen()).await;
+                yield batch;
             }
         })
     }
 }
 
-/// Source op: subscribes to `name` (fact or rule), emits one cursor per
-/// diff. sign is set on a synthetic SIGN term so downstream can branch
-/// on insert vs retract.
+/// Source op: subscribes to `name` (fact or rule), emits batches of cursors
+/// per diff burst. SIGN/GEN terms set per row so downstream can branch.
+/// Coalesces backlog into one batch per wakeup.
 struct Select { name: String }
 impl Op for Select {
     fn ident(&self) -> [u8; 32] { ident_of(&[b"select", self.name.as_bytes()]) }
-    fn run(self: Arc<Self>, h: Hooks, _in: BoxStream<'static, Cursor>)
-        -> BoxStream<'static, Cursor>
+    fn run(self: Arc<Self>, h: Hooks, _in: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
     {
         let mut sub = h.use_store().select(&self.name);
         Box::pin(async_stream::stream! {
             while let Some(d) = sub.next().await {
-                let mut c = d.row.clone();
-                c.set("GEN",  d.gen.to_string());
-                c.set("SIGN", if d.sign > 0 { "+" } else { "-" });
-                yield c;
+                // drain any contiguously-ready diffs into one batch
+                let mut batch = Vec::with_capacity(BATCH);
+                let mut push = |d: Diff, b: &mut Vec<Cursor>| {
+                    let mut c = d.row.clone();
+                    c.set("GEN",  d.gen.to_string());
+                    c.set("SIGN", if d.sign > 0 { "+" } else { "-" });
+                    b.push(c);
+                };
+                push(d, &mut batch);
+                while let Some(Some(more)) = futures::future::poll_immediate(sub.next()).await {
+                    push(more, &mut batch);
+                    if batch.len() >= BATCH { break; }
+                }
+                yield batch;
             }
         })
     }
 }
 
-/// Sink: format upstream cursors via a tiny `{TERM}` template and dispatch
-/// a Print effect. Consumes the stream (emits nothing downstream).
+/// Sink: format upstream cursors via a tiny `{TERM}` template; dispatches
+/// one Print effect per row but iterates the whole batch in one task wake.
+/// Emits nothing downstream.
 struct Print { template: String }
 impl Op for Print {
     fn ident(&self) -> [u8; 32] { ident_of(&[b"print", self.template.as_bytes()]) }
-    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Cursor>)
-        -> BoxStream<'static, Cursor>
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
     {
         let me = self.clone();
         Box::pin(async_stream::stream! {
-            while let Some(c) = input.next().await {
-                let mut s = me.template.clone();
-                for (n, v) in &c.terms {
-                    s = s.replace(&format!("{{{}}}", n), v);
+            while let Some(batch) = input.next().await {
+                for c in &batch {
+                    let mut s = me.template.clone();
+                    for (n, v) in &c.terms {
+                        s = s.replace(&format!("{{{}}}", n), v);
+                    }
+                    h.use_dispatch_effect(Effect::Print(s));
                 }
-                h.use_dispatch_effect(Effect::Print(s));
-                if false { yield c; } // keeps stream type; never fires
+                if false { yield batch; }
             }
         })
     }
@@ -561,18 +587,18 @@ async fn index_one(h: &Hooks, path: PathBuf) {
     for chain in chains { drive(chain, h.clone()).await; }
 }
 
-/// Source op variant: emit exactly one cursor for a known path.
+/// Source op variant: emit a one-row batch for a known path.
 struct SinglePath { path: PathBuf }
 impl Op for SinglePath {
     fn ident(&self) -> [u8;32] { ident_of(&[b"single", self.path.to_string_lossy().as_bytes()]) }
-    fn run(self: Arc<Self>, _h: Hooks, _in: BoxStream<'static, Cursor>)
-        -> BoxStream<'static, Cursor>
+    fn run(self: Arc<Self>, _h: Hooks, _in: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
     {
         let p = self.path.clone();
         Box::pin(async_stream::stream! {
             let mut c = Cursor::default();
             c.set("FS", p.display().to_string());
-            yield c;
+            yield vec![c];
         })
     }
 }
@@ -584,7 +610,7 @@ async fn drive(chain: Vec<Arc<dyn Op>>, h: Hooks) {
     if chain.is_empty() { return; }
     let mut iter = chain.into_iter();
     let first = iter.next().unwrap();
-    let empty: BoxStream<'static, Cursor> = Box::pin(futures::stream::empty());
+    let empty: BoxStream<'static, Vec<Cursor>> = Box::pin(futures::stream::empty());
     let mut s = first.run(h.clone(), empty);
     for op in iter { s = op.run(h.clone(), s); }
     while s.next().await.is_some() {}
