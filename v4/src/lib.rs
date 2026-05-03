@@ -305,6 +305,10 @@ pub struct DdStore {
     handle:        Mutex<Option<std::thread::JoinHandle<()>>>,
     tele:          OnceLock<Telemetry>,
     rule_outputs:  std::sync::RwLock<HashMap<String, broadcast::Sender<Diff>>>,
+    /// Per-rule (row -> signed multiplicity) accumulator, updated from
+    /// inspect_batch on the worker thread. Read from `snapshot()` to
+    /// verify output parity against MemStore.
+    rule_state:    Arc<Mutex<HashMap<String, HashMap<DdRow, isize>>>>,
 }
 
 type DdRow = Vec<(String, String)>;
@@ -341,6 +345,9 @@ impl DdStore {
         let outputs_for_worker = rule_outputs.clone();
         let fact_for_worker = fact_name.clone();
         let rules_for_worker = rules.clone();
+        let rule_state: Arc<Mutex<HashMap<String, HashMap<DdRow, isize>>>> =
+            Arc::new(Mutex::new(rules.iter().map(|(n, _)| (n.clone(), HashMap::new())).collect()));
+        let rule_state_for_worker = rule_state.clone();
 
         // timely::execute_directly requires its worker closure to be
         // Send + Sync. Receiver isn't Sync, so wrap it. Single-threaded
@@ -354,6 +361,13 @@ impl DdStore {
                 use timely::dataflow::operators::probe::Handle as ProbeHandle;
                 let derived_counter = Arc::new(AtomicU64::new(0));
                 let mut probes: Vec<ProbeHandle<Gen>> = Vec::new();
+                // Internal monotonic time. The Hooks.gen value is per-
+                // trial and may not change between commits in a single
+                // trial, which would let advance_to silently no-op.
+                // We bump on every Commit, and route each Insert to the
+                // current time. The caller's gen is preserved on Diff
+                // for downstream subscribers.
+                let mut dd_time: Gen = 0;
                 let mut input = worker.dataflow::<Gen, _, _>(|scope| {
                     let (input, facts) = scope.new_collection::<DdRow, isize>();
                     for (rule_name, body) in &rules_for_worker {
@@ -363,6 +377,8 @@ impl DdStore {
                         let min = *min;
                         let out_tx = outputs_for_worker.get(rule_name).unwrap().clone();
                         let derived = derived_counter.clone();
+                        let rule_state_inner = rule_state_for_worker.clone();
+                        let rule_name_owned = rule_name.clone();
                         let key_for_map = key.clone();
                         let key_for_reduce = key.clone();
                         let stream = facts
@@ -382,8 +398,11 @@ impl DdStore {
                                 }
                             })
                             .inspect_batch(move |t, batch| {
+                                let mut state = rule_state_inner.lock().unwrap();
+                                let entry = state.entry(rule_name_owned.clone()).or_default();
                                 for ((_k, row), _t, sign) in batch {
                                     derived.fetch_add(1, Ordering::Relaxed);
+                                    *entry.entry(row.clone()).or_insert(0) += *sign as isize;
                                     let _ = out_tx.send(Diff {
                                         row: dd_to_cursor(row),
                                         gen: *t,
@@ -398,16 +417,15 @@ impl DdStore {
 
                 loop {
                     match cmd_rx.recv() {
-                        Ok(DdCmd::Insert { fact, rows, gen }) => {
+                        Ok(DdCmd::Insert { fact, rows, gen: _ }) => {
                             if fact != fact_for_worker { continue; }
-                            input.advance_to(gen);
+                            input.advance_to(dd_time);
                             for r in rows { input.insert(r); }
                         }
-                        #[allow(unreachable_patterns)]
-                        Ok(_) if false => {}
-                        Ok(DdCmd::Commit { gen, ack }) => {
+                        Ok(DdCmd::Commit { gen: _, ack }) => {
                             let t_adv = Instant::now();
-                            input.advance_to(gen + 1);
+                            dd_time += 1;
+                            input.advance_to(dd_time);
                             input.flush();
                             let advance_ns = t_adv.elapsed().as_nanos() as u64;
                             let t_step = Instant::now();
@@ -431,6 +449,7 @@ impl DdStore {
             handle: Mutex::new(Some(handle)),
             tele: OnceLock::new(),
             rule_outputs: std::sync::RwLock::new(rule_outputs),
+            rule_state,
         })
     }
     pub fn attach_tele(&self, t: Telemetry) { let _ = self.tele.set(t); }
@@ -484,7 +503,14 @@ impl Store for DdStore {
             while let Ok(diff) = rx.recv().await { yield diff; }
         })
     }
-    async fn snapshot(&self, _name: &str) -> Vec<Cursor> { vec![] }
+    async fn snapshot(&self, name: &str) -> Vec<Cursor> {
+        let state = self.rule_state.lock().unwrap();
+        let Some(rule) = state.get(name) else { return vec![] };
+        rule.iter()
+            .filter(|(_, &mult)| mult > 0)
+            .map(|(row, _)| dd_to_cursor(row))
+            .collect()
+    }
 }
 
 impl Drop for DdStore {

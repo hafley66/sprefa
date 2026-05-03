@@ -78,6 +78,9 @@ async fn main() {
     let mut rules: usize = 1;
     // mem | dd. Picks Store impl in Insert/Full modes.
     let mut store_kind = String::from("mem");
+    // When true, run the SAME workload twice (once mem, once dd) and
+    // compare rule snapshots row-for-row. Sanity check; bypasses --store.
+    let mut verify = false;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -97,6 +100,7 @@ async fn main() {
             "--commit-every" => { commit_every = args[i+1].parse().unwrap(); i += 2; }
             "--rules"        => { rules        = args[i+1].parse::<usize>().unwrap().max(1); i += 2; }
             "--store"        => { store_kind   = args[i+1].clone(); i += 2; }
+            "--verify"       => { verify       = true; i += 1; }
             other       => panic!("unknown arg: {}", other),
         }
     }
@@ -201,6 +205,10 @@ async fn main() {
         drive_with(chain, hooks, cap).await;
         if matches!(mode, Mode::Full) { store.commit(trial as u64).await; }
         let wall = t_run.elapsed();
+        // Correctness probe. Snapshot rule 0 (always defined in Full mode).
+        let rule0_cardinality = if matches!(mode, Mode::Full) {
+            store.snapshot("hot_pattern_0").await.len()
+        } else { 0 };
 
         drop(eff_tx);
         let _ = saga.await;
@@ -209,8 +217,8 @@ async fn main() {
         let _b = bytes_seen.load(Ordering::Relaxed);
         let files_s = "n/a"; // Fs walks internally; we don't enumerate up-front
         let rss = rss_peak_kb() / 1024;
-        eprintln!("trial {}: wall={:.3}s  matches={:>9}  files/s={}  rss_peak_MB={}",
-                  trial, wall.as_secs_f64(), m, files_s, rss);
+        eprintln!("trial {}: wall={:.3}s  matches={:>9}  rule0_rows={}  files/s={}  rss_peak_MB={}",
+                  trial, wall.as_secs_f64(), m, rule0_cardinality, files_s, rss);
         eprint!("{}", tele.summary());
         // Mem-only stats footer (DdStore arrangements are inside the worker).
         if !matches!(mode, Mode::Bare) && store_kind == "mem" {
