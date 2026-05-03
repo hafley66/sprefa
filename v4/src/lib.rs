@@ -257,6 +257,14 @@ pub struct Span {
     pub wall_ns:  u64,
     pub n_in:    Option<u64>,
     pub n_out:   Option<u64>,
+    /// Bytes consumed by this span (sum of file sizes parsed, etc.).
+    pub bytes_in: Option<u64>,
+    /// Time spent in tree-sitter parse (sum across files inside batch).
+    pub parse_ns: Option<u64>,
+    /// Time spent in find_all + match collection.
+    pub match_ns: Option<u64>,
+    /// Process RSS at span close, KB. Sampled via getrusage.
+    pub rss_kb_end: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -282,6 +290,9 @@ impl Telemetry {
             started:  now,
             start_ns: now.saturating_duration_since(epoch).as_nanos() as u64,
             n_in,
+            bytes_in: None,
+            parse_ns: None,
+            match_ns: None,
             sink: self.inner.clone(),
         }
     }
@@ -302,31 +313,59 @@ impl Telemetry {
     }
     pub fn summary(&self) -> String {
         let reports = self.report();
-        let mut s = String::with_capacity(1024);
+        let mut s = String::with_capacity(2048);
+        // Row 1: timing + throughput
         s.push_str(&format!(
-            "{:<28} {:>8} {:>10} {:>10} {:>10} {:>10} {:>12} {:>12} {:>14}\n",
-            "op", "batches", "p50", "p95", "p99", "mean",
-            "rows_in", "wall", "rows/s_wall",
+            "{:<20} {:>7} {:>9} {:>9} {:>9} {:>9} {:>10} {:>9} {:>10}\n",
+            "op", "batches", "p50", "p95", "p99", "mean", "wall", "MB", "MB/s",
         ));
         s.push_str(&format!(
-            "{:<28} {:>8} {:>10} {:>10} {:>10} {:>10} {:>12} {:>12} {:>14}\n",
-            "-".repeat(28), "-------", "---", "---", "---", "----",
-            "-------", "----", "-----------",
+            "{:<20} {:>7} {:>9} {:>9} {:>9} {:>9} {:>10} {:>9} {:>10}\n",
+            "-".repeat(20), "-------", "---", "---", "---", "----",
+            "----", "--", "----",
         ));
         for r in &reports {
             let wall_s = r.wall_window_ns as f64 / 1e9;
-            let rps = if wall_s > 0.0 { r.total_in.map(|n| n as f64 / wall_s) } else { None };
+            let mb = r.total_bytes_in.map(|b| b as f64 / 1_048_576.0);
+            let mbs = match (mb, wall_s) {
+                (Some(m), w) if w > 0.0 => Some(m / w),
+                _ => None,
+            };
             s.push_str(&format!(
-                "{:<28} {:>8} {:>10} {:>10} {:>10} {:>10} {:>12} {:>12} {:>14}\n",
+                "{:<20} {:>7} {:>9} {:>9} {:>9} {:>9} {:>10} {:>9} {:>10}\n",
                 short_name(r.name),
                 r.count,
-                fmt_ns(r.p50_ns),
-                fmt_ns(r.p95_ns),
-                fmt_ns(r.p99_ns),
-                fmt_ns(r.mean_ns),
-                r.total_in.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                fmt_ns(r.p50_ns), fmt_ns(r.p95_ns), fmt_ns(r.p99_ns), fmt_ns(r.mean_ns),
                 fmt_ns(r.wall_window_ns),
-                rps.map(|r| format!("{:.0}", r)).unwrap_or_else(|| "—".into()),
+                mb.map(|m| format!("{:.1}", m)).unwrap_or_else(|| "—".into()),
+                mbs.map(|m| format!("{:.1}", m)).unwrap_or_else(|| "—".into()),
+            ));
+        }
+        // Row 2: parse vs match split + RSS
+        s.push('\n');
+        s.push_str(&format!(
+            "{:<20} {:>10} {:>10} {:>7} {:>10} {:>10} {:>10}\n",
+            "op", "parse_sum", "match_sum", "p/m", "rss_min", "rss_max", "rss_last",
+        ));
+        s.push_str(&format!(
+            "{:<20} {:>10} {:>10} {:>7} {:>10} {:>10} {:>10}\n",
+            "-".repeat(20), "---------", "---------", "---", "-------", "-------", "--------",
+        ));
+        for r in &reports {
+            let pm_ratio = match (r.total_parse_ns, r.total_match_ns) {
+                (Some(p), Some(m)) if m > 0 => Some(p as f64 / m as f64),
+                _ => None,
+            };
+            let mb_str = |kb: Option<u64>| kb.map(|k| format!("{} MB", k / 1024)).unwrap_or_else(|| "—".into());
+            s.push_str(&format!(
+                "{:<20} {:>10} {:>10} {:>7} {:>10} {:>10} {:>10}\n",
+                short_name(r.name),
+                r.total_parse_ns.map(fmt_ns).unwrap_or_else(|| "—".into()),
+                r.total_match_ns.map(fmt_ns).unwrap_or_else(|| "—".into()),
+                pm_ratio.map(|x| format!("{:.1}×", x)).unwrap_or_else(|| "—".into()),
+                mb_str(r.rss_kb_min),
+                mb_str(r.rss_kb_max),
+                mb_str(r.rss_kb_last),
             ));
         }
         s
@@ -338,13 +377,27 @@ pub struct SpanOpen {
     started: Instant,
     start_ns: u64,
     n_in:    Option<u64>,
+    bytes_in: Option<u64>,
+    parse_ns: Option<u64>,
+    match_ns: Option<u64>,
     sink: Arc<Mutex<Vec<Span>>>,
 }
 
 impl SpanOpen {
+    pub fn set_bytes(&mut self, bytes: u64) { self.bytes_in = Some(bytes); }
+    pub fn set_parse_ns(&mut self, ns: u64) { self.parse_ns = Some(ns); }
+    pub fn set_match_ns(&mut self, ns: u64) { self.match_ns = Some(ns); }
     pub fn close(self, n_out: Option<u64>) {
         let wall_ns = self.started.elapsed().as_nanos() as u64;
-        let span = Span { name: self.name, start_ns: self.start_ns, wall_ns, n_in: self.n_in, n_out };
+        let rss_kb_end = Some(rss_peak_kb_now());
+        let span = Span {
+            name: self.name, start_ns: self.start_ns, wall_ns,
+            n_in: self.n_in, n_out,
+            bytes_in: self.bytes_in,
+            parse_ns: self.parse_ns,
+            match_ns: self.match_ns,
+            rss_kb_end,
+        };
         self.sink.lock().unwrap().push(span);
         std::mem::forget(self);
     }
@@ -353,8 +406,24 @@ impl SpanOpen {
 impl Drop for SpanOpen {
     fn drop(&mut self) {
         let wall_ns = self.started.elapsed().as_nanos() as u64;
-        let span = Span { name: self.name, start_ns: self.start_ns, wall_ns, n_in: self.n_in, n_out: None };
+        let span = Span {
+            name: self.name, start_ns: self.start_ns, wall_ns,
+            n_in: self.n_in, n_out: None,
+            bytes_in: self.bytes_in,
+            parse_ns: self.parse_ns,
+            match_ns: self.match_ns,
+            rss_kb_end: Some(rss_peak_kb_now()),
+        };
         if let Ok(mut v) = self.sink.lock() { v.push(span); }
+    }
+}
+
+fn rss_peak_kb_now() -> u64 {
+    unsafe {
+        let mut u: libc::rusage = std::mem::zeroed();
+        if libc::getrusage(libc::RUSAGE_SELF, &mut u) != 0 { return 0; }
+        #[cfg(target_os = "macos")] { (u.ru_maxrss as u64) / 1024 }
+        #[cfg(not(target_os = "macos"))] { u.ru_maxrss as u64 }
     }
 }
 
@@ -367,6 +436,12 @@ pub struct OpReport {
     pub wall_window_ns: u64,
     pub total_in: Option<u64>,
     pub total_out: Option<u64>,
+    pub total_bytes_in: Option<u64>,
+    pub total_parse_ns: Option<u64>,
+    pub total_match_ns: Option<u64>,
+    pub rss_kb_min: Option<u64>,
+    pub rss_kb_max: Option<u64>,
+    pub rss_kb_last: Option<u64>,
 }
 
 impl OpReport {
@@ -384,9 +459,23 @@ impl OpReport {
         let latest   = spans.iter().map(|s| s.start_ns.saturating_add(s.wall_ns)).max().unwrap_or(0);
         let mut total_in:  Option<u64> = None;
         let mut total_out: Option<u64> = None;
+        let mut total_bytes_in: Option<u64> = None;
+        let mut total_parse_ns: Option<u64> = None;
+        let mut total_match_ns: Option<u64> = None;
+        let mut rss_kb_min: Option<u64> = None;
+        let mut rss_kb_max: Option<u64> = None;
+        let mut rss_kb_last: Option<u64> = None;
         for s in spans {
             if let Some(n) = s.n_in  { total_in  = Some(total_in.unwrap_or(0)  + n); }
             if let Some(n) = s.n_out { total_out = Some(total_out.unwrap_or(0) + n); }
+            if let Some(b) = s.bytes_in { total_bytes_in = Some(total_bytes_in.unwrap_or(0) + b); }
+            if let Some(p) = s.parse_ns { total_parse_ns = Some(total_parse_ns.unwrap_or(0) + p); }
+            if let Some(m) = s.match_ns { total_match_ns = Some(total_match_ns.unwrap_or(0) + m); }
+            if let Some(r) = s.rss_kb_end {
+                rss_kb_min = Some(rss_kb_min.map(|x| x.min(r)).unwrap_or(r));
+                rss_kb_max = Some(rss_kb_max.map(|x| x.max(r)).unwrap_or(r));
+                rss_kb_last = Some(r);
+            }
         }
         Self {
             name, count,
@@ -394,6 +483,8 @@ impl OpReport {
             total_wall_ns: sum_wall,
             wall_window_ns: latest.saturating_sub(earliest),
             total_in, total_out,
+            total_bytes_in, total_parse_ns, total_match_ns,
+            rss_kb_min, rss_kb_max, rss_kb_last,
         }
     }
 }
@@ -533,7 +624,7 @@ impl Op for AstNm {
         Box::pin(async_stream::stream! {
             while let Some(batch) = input.next().await {
                 let n_in = batch.len() as u64;
-                let span = tele.start("v4::AstNm", Some(n_in));
+                let mut span = tele.start("v4::AstNm", Some(n_in));
                 let pat   = pat.clone();
                 let fixed = fixed.clone();
                 let cap_names = me.capture_names.clone();
@@ -542,14 +633,30 @@ impl Op for AstNm {
                 let dbg_seen   = dbg_seen.clone();
                 let dbg_passed = dbg_passed.clone();
                 let dbg_hit    = dbg_hit.clone();
+                // Per-batch atomic accumulators populated inside par_iter.
+                let bytes_acc = Arc::new(AtomicU64::new(0));
+                let parse_acc = Arc::new(AtomicU64::new(0));
+                let match_acc = Arc::new(AtomicU64::new(0));
+                let bytes_a = bytes_acc.clone();
+                let parse_a = parse_acc.clone();
+                let match_a = match_acc.clone();
                 let out: Vec<Cursor> = tokio::task::spawn_blocking(move || {
                     batch.par_iter().flat_map(|c| {
                         // [perf-probe] dbg_seen.fetch_add(1, Ordering::Relaxed);
                         let Some(path) = c.get("FS") else { return vec![] };
-                        let Ok(src) = std::fs::read_to_string(path) else { return vec![] };
+                        // Skip UTF-8 validation. tree-sitter parsers accept any byte
+                        // sequence; mis-encoded bytes already turn into ERROR nodes.
+                        // Validating once with `read_to_string` would walk the whole
+                        // 1.4 GB of source for nothing.
+                        let Ok(bytes) = std::fs::read(path) else { return vec![] };
+                        bytes_a.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                        let src: String = unsafe { String::from_utf8_unchecked(bytes) };
                         if !fixed.is_empty() && !src.contains(&*fixed) { return vec![]; }
                         // [perf-probe] dbg_passed.fetch_add(1, Ordering::Relaxed);
+                        let t_parse = Instant::now();
                         let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
+                        parse_a.fetch_add(t_parse.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                        let t_match = Instant::now();
                         let hits = grep.root().find_all(&*pat).map(|nm| {
                             let env = nm.get_env();
                             let r = nm.range();
@@ -564,11 +671,15 @@ impl Op for AstNm {
                             }
                             child
                         }).collect::<Vec<_>>();
+                        match_a.fetch_add(t_match.elapsed().as_nanos() as u64, Ordering::Relaxed);
                         // [perf-probe] if !hits.is_empty() { dbg_hit.fetch_add(hits.len() as u64, Ordering::Relaxed); }
                         hits
                     }).collect()
                 }).await.unwrap_or_default();
                 let n_out = out.len() as u64;
+                span.set_bytes(bytes_acc.load(Ordering::Relaxed));
+                span.set_parse_ns(parse_acc.load(Ordering::Relaxed));
+                span.set_match_ns(match_acc.load(Ordering::Relaxed));
                 span.close(Some(n_out));
                 if !out.is_empty() { yield out; }
             }
@@ -578,6 +689,115 @@ impl Op for AstNm {
             //     dbg_passed.load(Ordering::Relaxed),
             //     dbg_hit.load(Ordering::Relaxed));
             let _ = (&dbg_seen, &dbg_passed, &dbg_hit);
+        })
+    }
+}
+
+/// Multi-pattern AstNm: parses each file once, then runs all `patterns`
+/// against the same `AstGrep<StrDoc>`. The "share-the-parse" lever.
+/// Each match cursor gets a `PAT` term identifying which pattern fired.
+/// Prefilter: file is read+parsed if ANY pattern's fixed_string is present
+/// (or any pattern has empty fixed_string).
+///
+/// `out_chunk_files` controls back-pressure: rather than accumulate every
+/// match for the whole input batch into one Vec (RSS blowup on patterns
+/// that match millions of nodes), the op processes the batch in chunks
+/// of this many files at a time and ships each chunk's matches out
+/// immediately via mpsc. Default 256.
+pub struct MultiAstNm {
+    pub patterns: Vec<(String, String)>,  // (label, pattern_src)
+    pub lang:     SupportLang,
+    pub out_chunk_files: usize,
+}
+
+impl MultiAstNm {
+    pub fn new(patterns: Vec<(String, String)>, lang: SupportLang) -> Self {
+        Self { patterns, lang, out_chunk_files: 256 }
+    }
+    pub fn with_out_chunk(mut self, n: usize) -> Self { self.out_chunk_files = n; self }
+}
+
+impl Op for MultiAstNm {
+    fn ident(&self) -> [u8; 32] {
+        let lang = format!("{:?}", self.lang);
+        let mut bits: Vec<&[u8]> = vec![b"multi_ast", lang.as_bytes()];
+        for (l, p) in &self.patterns { bits.push(l.as_bytes()); bits.push(p.as_bytes()); }
+        ident_of(&bits)
+    }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        // Compile once per run; share via Arc.
+        let pats: Arc<Vec<(Arc<str>, Arc<Pattern<SupportLang>>, Arc<str>)>> = Arc::new(
+            me.patterns.iter().map(|(label, src)| {
+                let p = Pattern::new(src, me.lang);
+                let fx: Arc<str> = Arc::from(p.fixed_string().to_string().as_str());
+                (Arc::<str>::from(label.as_str()), Arc::new(p), fx)
+            }).collect()
+        );
+        let chunk_files = me.out_chunk_files.max(1);
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let mut span = tele.start("v4::MultiAstNm", Some(n_in));
+                let pats = pats.clone();
+                let lang = me.lang;
+                let (tx, mut rx) = mpsc::channel::<Vec<Cursor>>(4);
+                // Per-batch instrumentation. Atomics are written from rayon
+                // workers (Relaxed is fine — read once at end-of-batch from
+                // the same thread that joined spawn_blocking).
+                let bytes_acc = Arc::new(AtomicU64::new(0));
+                let parse_acc = Arc::new(AtomicU64::new(0));
+                let match_acc = Arc::new(AtomicU64::new(0));
+                let bytes_a = bytes_acc.clone();
+                let parse_a = parse_acc.clone();
+                let match_a = match_acc.clone();
+                let chunk_join = tokio::task::spawn_blocking(move || {
+                    for chunk in batch.chunks(chunk_files) {
+                        let sub: Vec<Cursor> = chunk.par_iter().flat_map(|c| {
+                            let Some(path) = c.get("FS") else { return vec![] };
+                            let Ok(bytes) = std::fs::read(path) else { return vec![] };
+                            bytes_a.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                            let src: String = unsafe { String::from_utf8_unchecked(bytes) };
+                            let any_fires = pats.iter().any(|(_, _, fx)| fx.is_empty() || src.contains(&**fx));
+                            if !any_fires { return vec![]; }
+                            let t_parse = Instant::now();
+                            let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
+                            parse_a.fetch_add(t_parse.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                            let t_match = Instant::now();
+                            let mut out: Vec<Cursor> = Vec::new();
+                            for (label, pat, fx) in pats.iter() {
+                                if !fx.is_empty() && !src.contains(&**fx) { continue; }
+                                for nm in grep.root().find_all(&**pat) {
+                                    let r = nm.range();
+                                    let mut child = c.clone();
+                                    child.set("PAT", &**label);
+                                    child.set("LO",  (r.start as u64).to_string());
+                                    child.set("HI",  (r.end   as u64).to_string());
+                                    out.push(child);
+                                }
+                            }
+                            match_a.fetch_add(t_match.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                            out
+                        }).collect();
+                        if !sub.is_empty() {
+                            if tx.blocking_send(sub).is_err() { return; }
+                        }
+                    }
+                });
+                let mut total_out: u64 = 0;
+                while let Some(sub) = rx.recv().await {
+                    total_out += sub.len() as u64;
+                    yield sub;
+                }
+                let _ = chunk_join.await;
+                span.set_bytes(bytes_acc.load(Ordering::Relaxed));
+                span.set_parse_ns(parse_acc.load(Ordering::Relaxed));
+                span.set_match_ns(match_acc.load(Ordering::Relaxed));
+                span.close(Some(total_out));
+            }
         })
     }
 }

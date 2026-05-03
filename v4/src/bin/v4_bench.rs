@@ -67,6 +67,9 @@ async fn main() {
     // small (~256) and --cap 8 to preserve tail latency.
     let mut cap: usize = 64;
     let mut batch: usize = 4096;
+    let mut file: Option<PathBuf> = None;
+    let mut multi: usize = 0;     // 0 = single AstNm; >0 = MultiAstNm w/ N copies of --pattern
+    let mut multi_each: Vec<String> = Vec::new(); // alternative: --pattern-each foo --pattern-each bar
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -80,6 +83,9 @@ async fn main() {
             "--mode"    => { mode_str    = args[i+1].clone(); i += 2; }
             "--cap"     => { cap         = args[i+1].parse().unwrap(); i += 2; }
             "--batch"   => { batch       = args[i+1].parse().unwrap(); i += 2; }
+            "--file"    => { file        = Some(PathBuf::from(&args[i+1])); i += 2; }
+            "--multi"   => { multi       = args[i+1].parse().unwrap(); i += 2; }
+            "--pattern-each" => { multi_each.push(args[i+1].clone()); i += 2; }
             other       => panic!("unknown arg: {}", other),
         }
     }
@@ -123,12 +129,26 @@ async fn main() {
             tele:    tele.clone(),
         };
 
-        // Build the real pipeline. Last op depends on mode.
-        let ast = AstNm::new(&pattern_src, lang, &[]).with_match_text(false);
-        let mut chain: Vec<Arc<dyn Op>> = vec![
-            Arc::new(Fs { root: root.clone(), exts: exts.clone(), batch, cap }),
-            Arc::new(ast),
-        ];
+        // Build the real pipeline. Source is SinglePath when --file is
+        // set (single-file scaling probe), else Fs (bulk corpus).
+        // Matcher op is MultiAstNm when --multi N or --pattern-each are used,
+        // else single AstNm.
+        let source: Arc<dyn Op> = match &file {
+            Some(p) => Arc::new(SinglePath { path: p.clone() }),
+            None    => Arc::new(Fs { root: root.clone(), exts: exts.clone(), batch, cap }),
+        };
+        let matcher: Arc<dyn Op> = if !multi_each.is_empty() {
+            let pats: Vec<(String, String)> = multi_each.iter().enumerate()
+                .map(|(i, p)| (format!("p{}", i), p.clone())).collect();
+            Arc::new(MultiAstNm::new(pats, lang))
+        } else if multi > 0 {
+            let pats: Vec<(String, String)> = (0..multi)
+                .map(|i| (format!("p{}", i), pattern_src.clone())).collect();
+            Arc::new(MultiAstNm::new(pats, lang))
+        } else {
+            Arc::new(AstNm::new(&pattern_src, lang, &[]).with_match_text(false))
+        };
+        let mut chain: Vec<Arc<dyn Op>> = vec![source, matcher];
         match mode {
             Mode::Bare => chain.push(Arc::new(Count {
                 matches: matches.clone(), bytes_seen: bytes_seen.clone(),
