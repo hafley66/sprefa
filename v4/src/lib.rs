@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
@@ -94,6 +94,9 @@ pub struct MemStore {
     pub rules:    std::sync::RwLock<HashMap<String, RuleBody>>,
     pub channels: std::sync::RwLock<HashMap<String, broadcast::Sender<Diff>>>,
     pub dirty:    std::sync::Mutex<HashSet<String>>,
+    /// Optional telemetry sink. Attach via `attach_tele` to record store
+    /// spans (ins / commit / rederive) into the same Telemetry the ops use.
+    pub tele:     OnceLock<Telemetry>,
 }
 
 impl MemStore {
@@ -101,7 +104,28 @@ impl MemStore {
         Arc::new(Self {
             facts: Default::default(), rules: Default::default(),
             channels: Default::default(), dirty: Default::default(),
+            tele: OnceLock::new(),
         })
+    }
+    pub fn attach_tele(&self, t: Telemetry) { let _ = self.tele.set(t); }
+    fn span(&self, name: &'static str, n_in: Option<u64>) -> Option<SpanOpen> {
+        self.tele.get().map(|t| t.start(name, n_in))
+    }
+    /// Stats footer: per-fact (rows, bytes), per-rule cardinality.
+    /// Bytes are an estimate: sum of (term name + value + 16 bytes/entry).
+    pub async fn stats(&self) -> StoreStats {
+        let f = self.facts.read().await;
+        let mut facts: Vec<FactStats> = f.iter().map(|(name, rows)| {
+            let bytes: u64 = rows.keys()
+                .map(|c| c.terms.iter()
+                     .map(|(n, v)| (n.len() + v.len() + 16) as u64).sum::<u64>())
+                .sum();
+            FactStats { name: name.clone(), rows: rows.len() as u64, bytes }
+        }).collect();
+        facts.sort_by(|a, b| b.rows.cmp(&a.rows));
+        let rules = self.rules.read().unwrap().len() as u64;
+        let channels = self.channels.read().unwrap().len() as u64;
+        StoreStats { facts, rules, channels }
     }
     fn mark_dirty(&self, fact: &str) { self.dirty.lock().unwrap().insert(fact.to_string()); }
     fn channel(&self, name: &str) -> broadcast::Sender<Diff> {
@@ -109,15 +133,21 @@ impl MemStore {
         let mut w = self.channels.write().unwrap();
         w.entry(name.to_string()).or_insert_with(|| broadcast::channel(1024).0).clone()
     }
-    async fn rederive(&self, changed_fact: &str) {
+    async fn rederive(&self, changed_fact: &str) -> u64 {
         let rules = self.rules.read().unwrap().clone();
+        let mut total: u64 = 0;
         for (name, body) in rules {
             if !body_depends_on(&body, changed_fact) { continue; }
+            let sp = self.span("v4::Mem::rederive", None);
             let derived = self.materialize(&body).await;
+            let n = derived.len() as u64;
             let tx = self.channel(&name);
             let g = GEN.load(Ordering::SeqCst);
             for row in derived { let _ = tx.send(Diff { row, gen: g, sign: 1 }); }
+            if let Some(s) = sp { s.close(Some(n)); }
+            total += n;
         }
+        total
     }
     pub async fn materialize(&self, body: &RuleBody) -> Vec<Cursor> {
         let facts = self.facts.read().await;
@@ -145,6 +175,36 @@ impl MemStore {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FactStats { pub name: String, pub rows: u64, pub bytes: u64 }
+#[derive(Debug, Clone)]
+pub struct StoreStats { pub facts: Vec<FactStats>, pub rules: u64, pub channels: u64 }
+
+impl StoreStats {
+    pub fn summary(&self) -> String {
+        let mut s = String::with_capacity(512);
+        s.push_str(&format!("{:<24} {:>12} {:>12}\n", "fact", "rows", "bytes"));
+        s.push_str(&format!("{:<24} {:>12} {:>12}\n",
+            "-".repeat(24), "-".repeat(12), "-".repeat(12)));
+        let mut total_rows = 0u64;
+        let mut total_bytes = 0u64;
+        for f in &self.facts {
+            s.push_str(&format!("{:<24} {:>12} {:>11} K\n",
+                &f.name, f.rows, f.bytes / 1024));
+            total_rows  += f.rows;
+            total_bytes += f.bytes;
+        }
+        s.push_str(&format!("{:<24} {:>12} {:>11} K\n",
+            "TOTAL", total_rows, total_bytes / 1024));
+        s.push_str(&format!("rules={} channels={}\n", self.rules, self.channels));
+        s
+    }
+}
+
+fn cursor_bytes(c: &Cursor) -> u64 {
+    c.terms.iter().map(|(n, v)| (n.len() + v.len() + 16) as u64).sum()
+}
+
 fn body_depends_on(body: &RuleBody, fact: &str) -> bool {
     match body {
         RuleBody::Filter   { src, .. }       => src == fact,
@@ -160,6 +220,12 @@ impl Store for MemStore {
     }
     async fn insert_many(&self, fact: &str, rows: Vec<Cursor>, gen: Gen) {
         if rows.is_empty() { return; }
+        let n = rows.len() as u64;
+        let mut sp = self.span("v4::Mem::ins", Some(n));
+        if let Some(s) = sp.as_mut() {
+            let bytes: u64 = rows.iter().map(cursor_bytes).sum();
+            s.set_bytes(bytes);
+        }
         {
             let mut w = self.facts.write().await;
             let set = w.entry(fact.to_string()).or_default();
@@ -168,10 +234,14 @@ impl Store for MemStore {
         let tx = self.channel(fact);
         for r in rows { let _ = tx.send(Diff { row: r, gen, sign: 1 }); }
         self.mark_dirty(fact);
+        if let Some(s) = sp { s.close(Some(n)); }
     }
     async fn commit(&self, _gen: Gen) {
+        let sp = self.span("v4::Mem::commit", None);
         let drained: Vec<String> = { let mut d = self.dirty.lock().unwrap(); d.drain().collect() };
-        for fact in drained { self.rederive(&fact).await; }
+        let mut total_out: u64 = 0;
+        for fact in &drained { total_out += self.rederive(fact).await; }
+        if let Some(s) = sp { s.close(Some(total_out)); }
     }
     async fn remove(&self, fact: &str, row: Cursor, gen: Gen) {
         let removed = {
@@ -817,6 +887,33 @@ impl Op for Fact {
                 let span = tele.start("v4::Fact", Some(n));
                 h.use_store().insert_many(&me.name, batch.clone(), h.use_gen()).await;
                 span.close(Some(n));
+                yield batch;
+            }
+        })
+    }
+}
+
+/// Pass-through op that calls `store.commit(gen)` every `every` batches.
+/// Used to stress-test rule rederive cost under reactive (LSP-shaped)
+/// workloads where commits happen many times per run instead of once.
+pub struct CommitEvery { pub every: usize, pub counter: AtomicU64 }
+impl CommitEvery {
+    pub fn new(every: usize) -> Self {
+        Self { every, counter: AtomicU64::new(0) }
+    }
+}
+impl Op for CommitEvery {
+    fn ident(&self) -> [u8; 32] { ident_of(&[b"commit_every"]) }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n = me.counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if me.every > 0 && (n as usize) % me.every == 0 {
+                    h.use_store().commit(h.use_gen()).await;
+                }
                 yield batch;
             }
         })

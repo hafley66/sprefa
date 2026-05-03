@@ -70,6 +70,12 @@ async fn main() {
     let mut file: Option<PathBuf> = None;
     let mut multi: usize = 0;     // 0 = single AstNm; >0 = MultiAstNm w/ N copies of --pattern
     let mut multi_each: Vec<String> = Vec::new(); // alternative: --pattern-each foo --pattern-each bar
+    // Store-stress knobs (Full mode only):
+    //   --commit-every N: insert a CommitEvery op that fires store.commit
+    //     every N batches. 0 (default) = commit once at end, current shape.
+    //   --rules N: define N copies of the GroupCount rule. Tests fan-out.
+    let mut commit_every: usize = 0;
+    let mut rules: usize = 1;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -86,6 +92,8 @@ async fn main() {
             "--file"    => { file        = Some(PathBuf::from(&args[i+1])); i += 2; }
             "--multi"   => { multi       = args[i+1].parse().unwrap(); i += 2; }
             "--pattern-each" => { multi_each.push(args[i+1].clone()); i += 2; }
+            "--commit-every" => { commit_every = args[i+1].parse().unwrap(); i += 2; }
+            "--rules"        => { rules        = args[i+1].parse::<usize>().unwrap().max(1); i += 2; }
             other       => panic!("unknown arg: {}", other),
         }
     }
@@ -106,12 +114,15 @@ async fn main() {
     let mut last = (0u64, 0u64);
 
     for trial in 1..=trials {
-        let store: Arc<dyn Store> = MemStore::new();
+        let mem = MemStore::new();
+        let store: Arc<dyn Store> = mem.clone();
         if matches!(mode, Mode::Full) {
-            store.define_rule("hot_pattern", RuleBody::GroupCount {
-                src: "matches".into(), key: "FS".into(),
-                min: 2, count_term: "COUNT".into(),
-            });
+            for r in 0..rules {
+                store.define_rule(&format!("hot_pattern_{}", r), RuleBody::GroupCount {
+                    src: "matches".into(), key: "FS".into(),
+                    min: 2, count_term: "COUNT".into(),
+                });
+            }
         }
 
         let matches    = Arc::new(AtomicU64::new(0));
@@ -121,6 +132,7 @@ async fn main() {
         let saga = tokio::spawn(async move { while eff_rx.recv().await.is_some() {} });
 
         let tele = Telemetry::new();
+        mem.attach_tele(tele.clone());
         let hooks = Hooks {
             store:   store.clone(),
             effects: eff_tx.clone(),
@@ -159,6 +171,9 @@ async fn main() {
                     matches: matches.clone(), bytes_seen: bytes_seen.clone(),
                 }));
                 chain.push(Arc::new(Fact { name: "matches".into() }));
+                if matches!(mode, Mode::Full) && commit_every > 0 {
+                    chain.push(Arc::new(CommitEvery::new(commit_every)));
+                }
             }
         }
 
@@ -177,6 +192,9 @@ async fn main() {
         eprintln!("trial {}: wall={:.3}s  matches={:>9}  files/s={}  rss_peak_MB={}",
                   trial, wall.as_secs_f64(), m, files_s, rss);
         eprint!("{}", tele.summary());
+        if !matches!(mode, Mode::Bare) {
+            eprint!("\n{}", mem.stats().await.summary());
+        }
         walls.push(wall);
         last = (0, m);
     }
