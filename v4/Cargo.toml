@@ -21,6 +21,8 @@ ignore            = "0.4"
 libc              = "0.2"
 rayon             = "1"
 tokio-stream      = "0.1"
+differential-dataflow = "0.12"
+timely            = "0.12"
 
 [[bin]]
 name = "v4-proto"

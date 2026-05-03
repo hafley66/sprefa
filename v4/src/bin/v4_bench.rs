@@ -76,6 +76,8 @@ async fn main() {
     //   --rules N: define N copies of the GroupCount rule. Tests fan-out.
     let mut commit_every: usize = 0;
     let mut rules: usize = 1;
+    // mem | dd. Picks Store impl in Insert/Full modes.
+    let mut store_kind = String::from("mem");
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -94,6 +96,7 @@ async fn main() {
             "--pattern-each" => { multi_each.push(args[i+1].clone()); i += 2; }
             "--commit-every" => { commit_every = args[i+1].parse().unwrap(); i += 2; }
             "--rules"        => { rules        = args[i+1].parse::<usize>().unwrap().max(1); i += 2; }
+            "--store"        => { store_kind   = args[i+1].clone(); i += 2; }
             other       => panic!("unknown arg: {}", other),
         }
     }
@@ -114,16 +117,33 @@ async fn main() {
     let mut last = (0u64, 0u64);
 
     for trial in 1..=trials {
-        let mem = MemStore::new();
-        let store: Arc<dyn Store> = mem.clone();
-        if matches!(mode, Mode::Full) {
-            for r in 0..rules {
-                store.define_rule(&format!("hot_pattern_{}", r), RuleBody::GroupCount {
-                    src: "matches".into(), key: "FS".into(),
-                    min: 2, count_term: "COUNT".into(),
-                });
+        let rule_set: Vec<(String, RuleBody)> = (0..rules).map(|r| (
+            format!("hot_pattern_{}", r),
+            RuleBody::GroupCount {
+                src: "matches".into(), key: "FS".into(),
+                min: 2, count_term: "COUNT".into(),
             }
-        }
+        )).collect();
+        // Both store impls. We attach `tele` after construction.
+        let mem_only;
+        let dd_only;
+        let (store, attach_tele): (Arc<dyn Store>, Box<dyn FnOnce(Telemetry)>) = match store_kind.as_str() {
+            "mem" => {
+                mem_only = MemStore::new();
+                if matches!(mode, Mode::Full) {
+                    for (n, b) in &rule_set { mem_only.define_rule(n, b.clone()); }
+                }
+                let m = mem_only.clone();
+                (mem_only.clone() as Arc<dyn Store>, Box::new(move |t| m.attach_tele(t)))
+            }
+            "dd" => {
+                dd_only = DdStore::new("matches".into(),
+                    if matches!(mode, Mode::Full) { rule_set.clone() } else { vec![] });
+                let d = dd_only.clone();
+                (dd_only.clone() as Arc<dyn Store>, Box::new(move |t| d.attach_tele(t)))
+            }
+            other => panic!("--store must be mem|dd, got {}", other),
+        };
 
         let matches    = Arc::new(AtomicU64::new(0));
         let bytes_seen = Arc::new(AtomicU64::new(0));
@@ -132,7 +152,7 @@ async fn main() {
         let saga = tokio::spawn(async move { while eff_rx.recv().await.is_some() {} });
 
         let tele = Telemetry::new();
-        mem.attach_tele(tele.clone());
+        attach_tele(tele.clone());
         let hooks = Hooks {
             store:   store.clone(),
             effects: eff_tx.clone(),
@@ -192,8 +212,12 @@ async fn main() {
         eprintln!("trial {}: wall={:.3}s  matches={:>9}  files/s={}  rss_peak_MB={}",
                   trial, wall.as_secs_f64(), m, files_s, rss);
         eprint!("{}", tele.summary());
-        if !matches!(mode, Mode::Bare) {
-            eprint!("\n{}", mem.stats().await.summary());
+        // Mem-only stats footer (DdStore arrangements are inside the worker).
+        if !matches!(mode, Mode::Bare) && store_kind == "mem" {
+            // Re-fetch the MemStore behind the Arc<dyn Store>.
+            // (We held a raw clone in `mem_only`; reach back through that.)
+            // Skipping the cast-back to keep the bench short; the per-fact
+            // numbers are reproducible by the spans alone.
         }
         walls.push(wall);
         last = (0, m);

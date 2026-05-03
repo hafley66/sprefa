@@ -46,7 +46,7 @@ pub enum ActionKind {
 // ║         § 2   cursor — dynamic-scope term-capture bag         ║
 // ╚═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╝
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Cursor { pub terms: Vec<(Arc<str>, Arc<str>)> }
 
 impl Cursor {
@@ -290,6 +290,210 @@ impl Store for MemStore {
     }
 }
 
+// ▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░
+// ░  § 3b  DdStore — differential-dataflow Store impl                  ░
+// ▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░
+//
+// Single-worker timely runtime, single fact "matches", N copies of the
+// GroupCount rule pre-built at construction. Async store API marshals
+// commands across a std::sync::mpsc channel into the worker thread.
+// Lab scope: prove DD's incremental delta cost vs MemStore's full
+// rederive. Generalize fact names / rule kinds after the proof point.
+
+pub struct DdStore {
+    cmd_tx:        std::sync::mpsc::SyncSender<DdCmd>,
+    handle:        Mutex<Option<std::thread::JoinHandle<()>>>,
+    tele:          OnceLock<Telemetry>,
+    rule_outputs:  std::sync::RwLock<HashMap<String, broadcast::Sender<Diff>>>,
+}
+
+type DdRow = Vec<(String, String)>;
+
+fn cursor_to_dd(c: &Cursor) -> DdRow {
+    c.terms.iter().map(|(n, v)| ((**n).to_string(), (**v).to_string())).collect()
+}
+fn dd_to_cursor(r: &DdRow) -> Cursor {
+    let mut c = Cursor::default();
+    for (n, v) in r { c.set(n.as_str(), v.as_str()); }
+    c
+}
+
+enum DdCmd {
+    Insert { fact: String, rows: Vec<DdRow>, gen: Gen },
+    Commit { gen: Gen, ack: tokio::sync::oneshot::Sender<DdAck> },
+    Stop,
+}
+
+#[derive(Default, Debug)]
+pub struct DdAck { pub derived: u64, pub advance_ns: u64, pub step_ns: u64 }
+
+impl DdStore {
+    /// Build a DdStore with `rules` pre-attached over fact `fact_name`.
+    /// Each rule is GroupCount(src=fact_name, key, min, count_term).
+    pub fn new(fact_name: String, rules: Vec<(String, RuleBody)>) -> Arc<Self> {
+        use differential_dataflow::input::Input;
+        use differential_dataflow::operators::Reduce;
+
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel::<DdCmd>(1024);
+        let rule_outputs: HashMap<String, broadcast::Sender<Diff>> = rules.iter()
+            .map(|(n, _)| (n.clone(), broadcast::channel(1024).0))
+            .collect();
+        let outputs_for_worker = rule_outputs.clone();
+        let fact_for_worker = fact_name.clone();
+        let rules_for_worker = rules.clone();
+
+        // timely::execute_directly requires its worker closure to be
+        // Send + Sync. Receiver isn't Sync, so wrap it. Single-threaded
+        // worker contention is impossible (one worker, one thread) so
+        // the Mutex is uncontended.
+        let cmd_rx = Arc::new(Mutex::new(cmd_rx));
+        let handle = std::thread::spawn(move || {
+            let cmd_rx = cmd_rx.clone();
+            timely::execute_directly(move |worker| {
+                let cmd_rx = cmd_rx.lock().unwrap();
+                use timely::dataflow::operators::probe::Handle as ProbeHandle;
+                let derived_counter = Arc::new(AtomicU64::new(0));
+                let mut probes: Vec<ProbeHandle<Gen>> = Vec::new();
+                let mut input = worker.dataflow::<Gen, _, _>(|scope| {
+                    let (input, facts) = scope.new_collection::<DdRow, isize>();
+                    for (rule_name, body) in &rules_for_worker {
+                        let RuleBody::GroupCount { key, min, count_term, .. } = body else { continue };
+                        let key = key.clone();
+                        let count_term = count_term.clone();
+                        let min = *min;
+                        let out_tx = outputs_for_worker.get(rule_name).unwrap().clone();
+                        let derived = derived_counter.clone();
+                        let key_for_map = key.clone();
+                        let key_for_reduce = key.clone();
+                        let stream = facts
+                            .map(move |r: DdRow| {
+                                let k = r.iter().find(|(n, _)| n == &key_for_map)
+                                    .map(|(_, v)| v.clone()).unwrap_or_default();
+                                (k, r)
+                            })
+                            .reduce(move |k, vs, out| {
+                                let n = vs.iter().map(|(_, m)| *m).sum::<isize>();
+                                if n >= min as isize {
+                                    let row: DdRow = vec![
+                                        (key_for_reduce.clone(), k.clone()),
+                                        (count_term.clone(), n.to_string()),
+                                    ];
+                                    out.push((row, 1));
+                                }
+                            })
+                            .inspect_batch(move |t, batch| {
+                                for ((_k, row), _t, sign) in batch {
+                                    derived.fetch_add(1, Ordering::Relaxed);
+                                    let _ = out_tx.send(Diff {
+                                        row: dd_to_cursor(row),
+                                        gen: *t,
+                                        sign: *sign as i8,
+                                    });
+                                }
+                            });
+                        probes.push(stream.probe());
+                    }
+                    input
+                });
+
+                loop {
+                    match cmd_rx.recv() {
+                        Ok(DdCmd::Insert { fact, rows, gen }) => {
+                            if fact != fact_for_worker { continue; }
+                            input.advance_to(gen);
+                            for r in rows { input.insert(r); }
+                        }
+                        #[allow(unreachable_patterns)]
+                        Ok(_) if false => {}
+                        Ok(DdCmd::Commit { gen, ack }) => {
+                            let t_adv = Instant::now();
+                            input.advance_to(gen + 1);
+                            input.flush();
+                            let advance_ns = t_adv.elapsed().as_nanos() as u64;
+                            let t_step = Instant::now();
+                            let prev = derived_counter.load(Ordering::Relaxed);
+                            while probes.iter().any(|p| p.less_than(input.time())) {
+                                worker.step();
+                            }
+                            let step_ns = t_step.elapsed().as_nanos() as u64;
+                            let derived = derived_counter.load(Ordering::Relaxed) - prev;
+                            let _ = ack.send(DdAck { derived, advance_ns, step_ns });
+                        }
+                        Ok(DdCmd::Stop) => break,
+                        Err(_) => break,
+                    }
+                }
+            });
+        });
+
+        Arc::new(Self {
+            cmd_tx,
+            handle: Mutex::new(Some(handle)),
+            tele: OnceLock::new(),
+            rule_outputs: std::sync::RwLock::new(rule_outputs),
+        })
+    }
+    pub fn attach_tele(&self, t: Telemetry) { let _ = self.tele.set(t); }
+    fn span(&self, name: &'static str, n_in: Option<u64>) -> Option<SpanOpen> {
+        self.tele.get().map(|t| t.start(name, n_in))
+    }
+}
+
+#[async_trait::async_trait]
+impl Store for DdStore {
+    async fn insert(&self, fact: &str, row: Cursor, gen: Gen) {
+        self.insert_many(fact, vec![row], gen).await
+    }
+    async fn insert_many(&self, fact: &str, rows: Vec<Cursor>, gen: Gen) {
+        if rows.is_empty() { return; }
+        let n = rows.len() as u64;
+        let mut sp = self.span("v4::Dd::ins", Some(n));
+        if let Some(s) = sp.as_mut() {
+            let bytes: u64 = rows.iter().map(cursor_bytes).sum();
+            s.set_bytes(bytes);
+        }
+        let dd_rows: Vec<DdRow> = rows.iter().map(cursor_to_dd).collect();
+        let _ = self.cmd_tx.send(DdCmd::Insert { fact: fact.to_string(), rows: dd_rows, gen });
+        if let Some(s) = sp { s.close(Some(n)); }
+    }
+    async fn commit(&self, gen: Gen) {
+        let sp = self.span("v4::Dd::commit", None);
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        let _ = self.cmd_tx.send(DdCmd::Commit { gen, ack: ack_tx });
+        let ack = ack_rx.await.unwrap_or_default();
+        // Synthesize child spans from worker-side accumulators so the
+        // summary table breaks DD::commit into advance + step phases.
+        if let Some(t) = self.tele.get() {
+            push_synthetic_span(t, "v4::Dd::advance", ack.advance_ns, None);
+            push_synthetic_span(t, "v4::Dd::step",    ack.step_ns,    Some(ack.derived));
+        }
+        if let Some(s) = sp { s.close(Some(ack.derived)); }
+    }
+    async fn remove(&self, _fact: &str, _row: Cursor, _gen: Gen) {}
+    async fn forget_by(&self, _fact: &str, _key: &str, _v: &str, _gen: Gen) {}
+    fn define_rule(&self, _name: &str, _body: RuleBody) {
+        // No-op: DdStore takes rules at construction.
+    }
+    fn select(&self, name: &str) -> BoxStream<'static, Diff> {
+        let tx = self.rule_outputs.write().unwrap()
+            .entry(name.to_string())
+            .or_insert_with(|| broadcast::channel(1024).0).clone();
+        let rx = tx.subscribe();
+        Box::pin(async_stream::stream! {
+            let mut rx = rx;
+            while let Ok(diff) = rx.recv().await { yield diff; }
+        })
+    }
+    async fn snapshot(&self, _name: &str) -> Vec<Cursor> { vec![] }
+}
+
+impl Drop for DdStore {
+    fn drop(&mut self) {
+        let _ = self.cmd_tx.send(DdCmd::Stop);
+        if let Some(h) = self.handle.lock().unwrap().take() { let _ = h.join(); }
+    }
+}
+
 // ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐
 // ╳    § 4   Hooks                                                  ╳
 // └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘ └─┘
@@ -486,6 +690,22 @@ impl Drop for SpanOpen {
         };
         if let Ok(mut v) = self.sink.lock() { v.push(span); }
     }
+}
+
+/// Push a synthetic span with a precomputed wall_ns. Useful when the
+/// timed work happens on a non-async thread (e.g. timely worker) and
+/// we forward accumulated nanoseconds across a channel boundary.
+pub fn push_synthetic_span(t: &Telemetry, name: &'static str, wall_ns: u64, n_out: Option<u64>) {
+    let epoch = *t.epoch.lock().unwrap();
+    let now   = Instant::now();
+    let start_ns = now.saturating_duration_since(epoch).as_nanos() as u64;
+    let span = Span {
+        name, start_ns, wall_ns,
+        n_in: None, n_out,
+        bytes_in: None, parse_ns: None, match_ns: None,
+        rss_kb_end: Some(rss_peak_kb_now()),
+    };
+    t.inner.lock().unwrap().push(span);
 }
 
 fn rss_peak_kb_now() -> u64 {
