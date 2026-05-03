@@ -3,16 +3,28 @@ name = "v4"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "v4"
+path = "src/lib.rs"
+
 [dependencies]
 ast-grep-core     = "0.36"
-ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust"] }
+ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust", "tree-sitter-c"] }
 blake3            = "1"
 tokio             = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 futures           = "0.3"
 async-trait       = "0.1"
 async-stream      = "0.3"
 anyhow            = "1"
+tikv-jemallocator = "0.6"
+ignore            = "0.4"
+libc              = "0.2"
+rayon             = "1"
 
 [[bin]]
 name = "v4-proto"
-path = "src/main.rs"
+path = "src/bin/v4_proto.rs"
+
+[[bin]]
+name = "v4-bench"
+path = "src/bin/v4_bench.rs"
