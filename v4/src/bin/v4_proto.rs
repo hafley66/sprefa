@@ -52,6 +52,7 @@ async fn dispatch(store: &Arc<dyn Store>, eff_tx: &mpsc::UnboundedSender<Effect>
         effects: eff_tx.clone(),
         gen:     action.gen,
         lineage: new_lineage(),
+        tele:    Telemetry::new(),
     };
     match action.kind {
         ActionKind::Run { root } => {
@@ -97,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let h = Hooks {
             store: store.clone(), effects: eff_tx.clone(), gen: 0, lineage: 0,
+            tele: Telemetry::new(),
         };
         let chain: Vec<Arc<dyn Op>> = vec![
             Arc::new(Select { name: "unused_fns".into() }),
@@ -107,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let h = Hooks {
             store: store.clone(), effects: eff_tx.clone(), gen: 0, lineage: 0,
+            tele: Telemetry::new(),
         };
         let chain: Vec<Arc<dyn Op>> = vec![
             Arc::new(Select { name: "imports_used_2plus".into() }),

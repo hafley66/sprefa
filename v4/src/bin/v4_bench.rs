@@ -106,11 +106,13 @@ async fn main() {
         let (eff_tx, mut eff_rx) = mpsc::unbounded_channel();
         let saga = tokio::spawn(async move { while eff_rx.recv().await.is_some() {} });
 
+        let tele = Telemetry::new();
         let hooks = Hooks {
             store:   store.clone(),
             effects: eff_tx.clone(),
             gen:     trial as u64,
             lineage: new_lineage(),
+            tele:    tele.clone(),
         };
 
         // Build the real pipeline. Last op depends on mode.
@@ -146,6 +148,7 @@ async fn main() {
         let rss = rss_peak_kb() / 1024;
         eprintln!("trial {}: wall={:.3}s  matches={:>9}  files/s={}  rss_peak_MB={}",
                   trial, wall.as_secs_f64(), m, files_s, rss);
+        eprint!("{}", tele.summary());
         walls.push(wall);
         last = (0, m);
     }

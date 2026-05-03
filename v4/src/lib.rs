@@ -10,7 +10,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
@@ -229,12 +230,182 @@ pub struct Hooks {
     pub effects: mpsc::UnboundedSender<Effect>,
     pub gen:     Gen,
     pub lineage: LineageId,
+    pub tele:    Telemetry,
 }
 
 impl Hooks {
     pub fn use_store(&self) -> &Arc<dyn Store> { &self.store }
     pub fn use_dispatch_effect(&self, e: Effect) { let _ = self.effects.send(e); }
     pub fn use_gen(&self) -> Gen { self.gen }
+    pub fn use_tele(&self) -> &Telemetry { &self.tele }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 4b   Telemetry — v3-shape spans, per-op-batch granularity
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//
+// One Telemetry per drive() call. Each op opens a span per batch via
+// `tele.start("v4::Fs", Some(in_rows))` and closes it with `out_rows`.
+// Summary groups by name and reports count / p50 / p95 / p99 / mean
+// plus wall_window (latest_close − earliest_open) so concurrent batches
+// across ops report aggregate throughput, not summed wall.
+
+#[derive(Clone, Debug)]
+pub struct Span {
+    pub name:    &'static str,
+    pub start_ns: u64,
+    pub wall_ns:  u64,
+    pub n_in:    Option<u64>,
+    pub n_out:   Option<u64>,
+}
+
+#[derive(Clone)]
+pub struct Telemetry {
+    inner: Arc<Mutex<Vec<Span>>>,
+    epoch: Arc<Mutex<Instant>>,
+}
+
+impl Default for Telemetry { fn default() -> Self { Self::new() } }
+
+impl Telemetry {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Vec::with_capacity(1 << 14))),
+            epoch: Arc::new(Mutex::new(Instant::now())),
+        }
+    }
+    pub fn start(&self, name: &'static str, n_in: Option<u64>) -> SpanOpen {
+        let epoch = *self.epoch.lock().unwrap();
+        let now   = Instant::now();
+        SpanOpen {
+            name,
+            started:  now,
+            start_ns: now.saturating_duration_since(epoch).as_nanos() as u64,
+            n_in,
+            sink: self.inner.clone(),
+        }
+    }
+    pub fn snapshot(&self) -> Vec<Span> { self.inner.lock().unwrap().clone() }
+    pub fn drain(&self) -> Vec<Span> { std::mem::take(&mut *self.inner.lock().unwrap()) }
+    pub fn clear(&self) {
+        self.inner.lock().unwrap().clear();
+        *self.epoch.lock().unwrap() = Instant::now();
+    }
+    pub fn report(&self) -> Vec<OpReport> {
+        let spans = self.inner.lock().unwrap();
+        let mut by: HashMap<&'static str, Vec<&Span>> = HashMap::new();
+        for s in spans.iter() { by.entry(s.name).or_default().push(s); }
+        let mut out: Vec<OpReport> = by.into_iter()
+            .map(|(n, v)| OpReport::from_spans(n, &v)).collect();
+        out.sort_by(|a, b| b.total_wall_ns.cmp(&a.total_wall_ns));
+        out
+    }
+    pub fn summary(&self) -> String {
+        let reports = self.report();
+        let mut s = String::with_capacity(1024);
+        s.push_str(&format!(
+            "{:<28} {:>8} {:>10} {:>10} {:>10} {:>10} {:>12} {:>12} {:>14}\n",
+            "op", "batches", "p50", "p95", "p99", "mean",
+            "rows_in", "wall", "rows/s_wall",
+        ));
+        s.push_str(&format!(
+            "{:<28} {:>8} {:>10} {:>10} {:>10} {:>10} {:>12} {:>12} {:>14}\n",
+            "-".repeat(28), "-------", "---", "---", "---", "----",
+            "-------", "----", "-----------",
+        ));
+        for r in &reports {
+            let wall_s = r.wall_window_ns as f64 / 1e9;
+            let rps = if wall_s > 0.0 { r.total_in.map(|n| n as f64 / wall_s) } else { None };
+            s.push_str(&format!(
+                "{:<28} {:>8} {:>10} {:>10} {:>10} {:>10} {:>12} {:>12} {:>14}\n",
+                short_name(r.name),
+                r.count,
+                fmt_ns(r.p50_ns),
+                fmt_ns(r.p95_ns),
+                fmt_ns(r.p99_ns),
+                fmt_ns(r.mean_ns),
+                r.total_in.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                fmt_ns(r.wall_window_ns),
+                rps.map(|r| format!("{:.0}", r)).unwrap_or_else(|| "—".into()),
+            ));
+        }
+        s
+    }
+}
+
+pub struct SpanOpen {
+    name:    &'static str,
+    started: Instant,
+    start_ns: u64,
+    n_in:    Option<u64>,
+    sink: Arc<Mutex<Vec<Span>>>,
+}
+
+impl SpanOpen {
+    pub fn close(self, n_out: Option<u64>) {
+        let wall_ns = self.started.elapsed().as_nanos() as u64;
+        let span = Span { name: self.name, start_ns: self.start_ns, wall_ns, n_in: self.n_in, n_out };
+        self.sink.lock().unwrap().push(span);
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for SpanOpen {
+    fn drop(&mut self) {
+        let wall_ns = self.started.elapsed().as_nanos() as u64;
+        let span = Span { name: self.name, start_ns: self.start_ns, wall_ns, n_in: self.n_in, n_out: None };
+        if let Ok(mut v) = self.sink.lock() { v.push(span); }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OpReport {
+    pub name: &'static str,
+    pub count: usize,
+    pub p50_ns: u64, pub p95_ns: u64, pub p99_ns: u64, pub mean_ns: u64,
+    pub total_wall_ns: u64,
+    pub wall_window_ns: u64,
+    pub total_in: Option<u64>,
+    pub total_out: Option<u64>,
+}
+
+impl OpReport {
+    fn from_spans(name: &'static str, spans: &[&Span]) -> Self {
+        let count = spans.len();
+        let mut walls: Vec<u64> = spans.iter().map(|s| s.wall_ns).collect();
+        walls.sort_unstable();
+        let p = |q: f64| -> u64 {
+            if walls.is_empty() { return 0; }
+            walls[((walls.len() - 1) as f64 * q).round() as usize]
+        };
+        let sum_wall: u64 = walls.iter().sum();
+        let mean_ns = if count > 0 { sum_wall / count as u64 } else { 0 };
+        let earliest = spans.iter().map(|s| s.start_ns).min().unwrap_or(0);
+        let latest   = spans.iter().map(|s| s.start_ns.saturating_add(s.wall_ns)).max().unwrap_or(0);
+        let mut total_in:  Option<u64> = None;
+        let mut total_out: Option<u64> = None;
+        for s in spans {
+            if let Some(n) = s.n_in  { total_in  = Some(total_in.unwrap_or(0)  + n); }
+            if let Some(n) = s.n_out { total_out = Some(total_out.unwrap_or(0) + n); }
+        }
+        Self {
+            name, count,
+            p50_ns: p(0.50), p95_ns: p(0.95), p99_ns: p(0.99), mean_ns,
+            total_wall_ns: sum_wall,
+            wall_window_ns: latest.saturating_sub(earliest),
+            total_in, total_out,
+        }
+    }
+}
+
+fn fmt_ns(ns: u64) -> String {
+    if ns >= 1_000_000_000 { format!("{:.2}s",  ns as f64 / 1e9) }
+    else if ns >= 1_000_000 { format!("{:.1}ms", ns as f64 / 1e6) }
+    else if ns >= 1_000     { format!("{:.1}µs", ns as f64 / 1e3) }
+    else                    { format!("{}ns", ns) }
+}
+fn short_name(full: &'static str) -> String {
+    full.rsplit("::").next().unwrap_or(full).to_string()
 }
 
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
@@ -276,10 +447,11 @@ impl Op for Fs {
         for e in &self.exts { bits.push(e.as_bytes()); }
         ident_of(&bits)
     }
-    fn run(self: Arc<Self>, _h: Hooks, _in: BoxStream<'static, Vec<Cursor>>)
+    fn run(self: Arc<Self>, h: Hooks, _in: BoxStream<'static, Vec<Cursor>>)
         -> BoxStream<'static, Vec<Cursor>>
     {
         let me = self.clone();
+        let tele = h.tele.clone();
         let (tx, rx) = mpsc::channel::<Vec<Cursor>>(8);
         tokio::task::spawn_blocking(move || {
             let mut buf: Vec<Cursor> = Vec::with_capacity(BATCH);
@@ -293,11 +465,19 @@ impl Op for Fs {
                 c.set("FS", p.display().to_string());
                 buf.push(c);
                 if buf.len() >= BATCH {
-                    if tx.blocking_send(std::mem::take(&mut buf)).is_err() { return; }
+                    let span = tele.start("v4::Fs", None);
+                    let n = buf.len() as u64;
+                    if tx.blocking_send(std::mem::take(&mut buf)).is_err() { span.close(Some(n)); return; }
+                    span.close(Some(n));
                     buf = Vec::with_capacity(BATCH);
                 }
             }
-            if !buf.is_empty() { let _ = tx.blocking_send(buf); }
+            if !buf.is_empty() {
+                let span = tele.start("v4::Fs", None);
+                let n = buf.len() as u64;
+                let _ = tx.blocking_send(buf);
+                span.close(Some(n));
+            }
         });
         Box::pin(ReceiverStream::new(rx))
     }
@@ -330,10 +510,11 @@ impl Op for AstNm {
     fn ident(&self) -> [u8; 32] {
         ident_of(&[b"ast", format!("{:?}", self.lang).as_bytes(), self.pattern_src.as_bytes()])
     }
-    fn run(self: Arc<Self>, _h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
         -> BoxStream<'static, Vec<Cursor>>
     {
         let me  = self.clone();
+        let tele = h.tele.clone();
         let pat = Arc::new(Pattern::new(&me.pattern_src, me.lang));
         let fixed: Arc<str> = Arc::from(pat.fixed_string().to_string().as_str());
         // [perf-probe] flip these on to attribute prefilter cutoff vs ast-grep recall.
@@ -343,6 +524,8 @@ impl Op for AstNm {
         let dbg_hit    = Arc::new(AtomicU64::new(0));
         Box::pin(async_stream::stream! {
             while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start("v4::AstNm", Some(n_in));
                 let pat   = pat.clone();
                 let fixed = fixed.clone();
                 let cap_names = me.capture_names.clone();
@@ -377,6 +560,8 @@ impl Op for AstNm {
                         hits
                     }).collect()
                 }).await.unwrap_or_default();
+                let n_out = out.len() as u64;
+                span.close(Some(n_out));
                 if !out.is_empty() { yield out; }
             }
             // [perf-probe] re-enable alongside the pattern eprintln above.
@@ -397,9 +582,13 @@ impl Op for Fact {
         -> BoxStream<'static, Vec<Cursor>>
     {
         let me = self.clone();
+        let tele = h.tele.clone();
         Box::pin(async_stream::stream! {
             while let Some(batch) = input.next().await {
+                let n = batch.len() as u64;
+                let span = tele.start("v4::Fact", Some(n));
                 h.use_store().insert_many(&me.name, batch.clone(), h.use_gen()).await;
+                span.close(Some(n));
                 yield batch;
             }
         })
@@ -410,13 +599,17 @@ impl Op for Fact {
 pub struct Count { pub matches: Arc<AtomicU64>, pub bytes_seen: Arc<AtomicU64> }
 impl Op for Count {
     fn ident(&self) -> [u8; 32] { ident_of(&[b"count"]) }
-    fn run(self: Arc<Self>, _h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
         -> BoxStream<'static, Vec<Cursor>>
     {
         let me = self.clone();
+        let tele = h.tele.clone();
         Box::pin(async_stream::stream! {
             while let Some(batch) = input.next().await {
-                me.matches.fetch_add(batch.len() as u64, Ordering::Relaxed);
+                let n = batch.len() as u64;
+                let span = tele.start("v4::Count", Some(n));
+                me.matches.fetch_add(n, Ordering::Relaxed);
+                span.close(Some(n));
                 yield batch;
             }
         })
