@@ -13,12 +13,12 @@ use v4::*;
 async fn run_indexer(h: &Hooks, root: PathBuf) {
     let pipelines: Vec<Vec<Arc<dyn Op>>> = vec![
         vec![
-            Arc::new(Fs { root: root.clone(), exts: vec!["rs".into()] }),
+            Arc::new(Fs::new(root.clone(), vec!["rs".into()])),
             Arc::new(AstNm::new("fn $NAME",  SupportLang::Rust, &["NAME"])),
             Arc::new(Fact { name: "fns".into() }),
         ],
         vec![
-            Arc::new(Fs { root: root.clone(), exts: vec!["rs".into()] }),
+            Arc::new(Fs::new(root.clone(), vec!["rs".into()])),
             Arc::new(AstNm::new("use $PATH", SupportLang::Rust, &["PATH"])),
             Arc::new(Fact { name: "uses".into() }),
         ],

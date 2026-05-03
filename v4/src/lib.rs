@@ -439,7 +439,14 @@ pub const BATCH: usize = 256;
 
 /// Walks `root` via `ignore::WalkBuilder` (skips .git etc.), emits batches
 /// of cursors with FS=path. Same enumerator v3's bench uses.
-pub struct Fs { pub root: PathBuf, pub exts: Vec<String> }
+/// `batch` is the per-yield row count; `cap` is the mpsc channel cap
+/// between Fs's blocking task and the rest of the pipeline.
+pub struct Fs { pub root: PathBuf, pub exts: Vec<String>, pub batch: usize, pub cap: usize }
+impl Fs {
+    pub fn new(root: PathBuf, exts: Vec<String>) -> Self {
+        Self { root, exts, batch: BATCH, cap: 8 }
+    }
+}
 impl Op for Fs {
     fn ident(&self) -> [u8; 32] {
         let root = self.root.to_string_lossy();
@@ -452,9 +459,10 @@ impl Op for Fs {
     {
         let me = self.clone();
         let tele = h.tele.clone();
-        let (tx, rx) = mpsc::channel::<Vec<Cursor>>(8);
+        let batch = me.batch;
+        let (tx, rx) = mpsc::channel::<Vec<Cursor>>(me.cap);
         tokio::task::spawn_blocking(move || {
-            let mut buf: Vec<Cursor> = Vec::with_capacity(BATCH);
+            let mut buf: Vec<Cursor> = Vec::with_capacity(batch);
             for entry in WalkBuilder::new(&me.root).hidden(true).git_ignore(false).build() {
                 let Ok(e) = entry else { continue };
                 if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
@@ -464,12 +472,12 @@ impl Op for Fs {
                 let mut c = Cursor::default();
                 c.set("FS", p.display().to_string());
                 buf.push(c);
-                if buf.len() >= BATCH {
+                if buf.len() >= batch {
                     let span = tele.start("v4::Fs", None);
                     let n = buf.len() as u64;
                     if tx.blocking_send(std::mem::take(&mut buf)).is_err() { span.close(Some(n)); return; }
                     span.close(Some(n));
-                    buf = Vec::with_capacity(BATCH);
+                    buf = Vec::with_capacity(batch);
                 }
             }
             if !buf.is_empty() {
@@ -696,11 +704,13 @@ pub fn new_action(kind: ActionKind, parent: Option<(Gen, LineageId)>) -> Action 
 
 pub fn new_lineage() -> LineageId { LIN.fetch_add(1, Ordering::SeqCst) + 1 }
 
-pub async fn drive(chain: Vec<Arc<dyn Op>>, h: Hooks) {
+pub async fn drive(chain: Vec<Arc<dyn Op>>, h: Hooks) { drive_with(chain, h, 8).await }
+
+/// Run a chain with explicit channel cap between ops. Producer can be
+/// up to `cap` batches ahead of consumer; raise to absorb burstier
+/// upstreams, lower to surface back-pressure as Fs span wall.
+pub async fn drive_with(chain: Vec<Arc<dyn Op>>, h: Hooks, cap: usize) {
     if chain.is_empty() { return; }
-    // Per-op task connected by bounded mpsc(8). Producer can be N batches
-    // ahead of consumer; gives pipeline parallelism instead of strict
-    // alternation between adjacent ops.
     let mut prev_rx: Option<mpsc::Receiver<Vec<Cursor>>> = None;
     let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let n = chain.len();
@@ -717,7 +727,7 @@ pub async fn drive(chain: Vec<Arc<dyn Op>>, h: Hooks) {
                 while s.next().await.is_some() {}
             }));
         } else {
-            let (tx, rx) = mpsc::channel::<Vec<Cursor>>(8);
+            let (tx, rx) = mpsc::channel::<Vec<Cursor>>(cap);
             prev_rx = Some(rx);
             handles.push(tokio::spawn(async move {
                 let mut s = op.run(hooks, in_stream);

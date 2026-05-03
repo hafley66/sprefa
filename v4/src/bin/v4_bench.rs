@@ -61,6 +61,12 @@ async fn main() {
     let mut pattern_src = String::from("printk($$$)");
     let mut lang_spec = String::from("c");
     let mut mode_str = String::from("bare");
+    // Defaults tuned for bulk scan (linux fixture, 63k files, 8 workers):
+    // batch ≈ files/workers and cap big enough to fully decouple Fs from
+    // AstNm. Small-corpus / incremental workloads should pass --batch
+    // small (~256) and --cap 8 to preserve tail latency.
+    let mut cap: usize = 64;
+    let mut batch: usize = 4096;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -72,6 +78,8 @@ async fn main() {
             "--pattern" => { pattern_src = args[i+1].clone(); i += 2; }
             "--lang"    => { lang_spec   = args[i+1].clone(); i += 2; }
             "--mode"    => { mode_str    = args[i+1].clone(); i += 2; }
+            "--cap"     => { cap         = args[i+1].parse().unwrap(); i += 2; }
+            "--batch"   => { batch       = args[i+1].parse().unwrap(); i += 2; }
             other       => panic!("unknown arg: {}", other),
         }
     }
@@ -85,8 +93,8 @@ async fn main() {
 
     rayon::ThreadPoolBuilder::new().num_threads(workers).build_global().ok();
 
-    eprintln!("mode={:?} workers={} trials={} pattern={:?} lang={:?} root={}",
-              mode, workers, trials, pattern_src, lang, root.display());
+    eprintln!("mode={:?} workers={} cap={} batch={} trials={} pattern={:?} lang={:?} root={}",
+              mode, workers, cap, batch, trials, pattern_src, lang, root.display());
 
     let mut walls = Vec::new();
     let mut last = (0u64, 0u64);
@@ -118,7 +126,7 @@ async fn main() {
         // Build the real pipeline. Last op depends on mode.
         let ast = AstNm::new(&pattern_src, lang, &[]).with_match_text(false);
         let mut chain: Vec<Arc<dyn Op>> = vec![
-            Arc::new(Fs    { root: root.clone(), exts: exts.clone() }),
+            Arc::new(Fs { root: root.clone(), exts: exts.clone(), batch, cap }),
             Arc::new(ast),
         ];
         match mode {
@@ -135,7 +143,7 @@ async fn main() {
         }
 
         let t_run = Instant::now();
-        drive(chain, hooks).await;
+        drive_with(chain, hooks, cap).await;
         if matches!(mode, Mode::Full) { store.commit(trial as u64).await; }
         let wall = t_run.elapsed();
 
