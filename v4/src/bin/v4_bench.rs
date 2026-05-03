@@ -34,8 +34,11 @@ impl Mode {
 }
 
 fn parse_lang(s: &str) -> SupportLang {
+    // Match v3's bench: route `c` → Cpp because tree-sitter-cpp is more
+    // tolerant of kernel-flavored C (macro adjacency, GCC extensions).
+    // tree-sitter-c rejects most kernel TUs and silently yields ~0 hits.
     match s {
-        "c" | "cpp" | "c++" => SupportLang::C,
+        "c" | "cpp" | "c++" => SupportLang::Cpp,
         "rust" | "rs"       => SupportLang::Rust,
         other => panic!("unknown --lang: {}", other),
     }

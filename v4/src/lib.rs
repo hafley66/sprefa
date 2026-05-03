@@ -18,6 +18,7 @@ use futures::stream::{BoxStream, StreamExt};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio_stream::wrappers::ReceiverStream;
 
 // ░░░▒▒▒▓▓▓██████████████████████████████████████████████████████▓▓▓▒▒▒░░░
 // ░░░▒                  § 1   actions / dispatch                    ▒░░░
@@ -279,7 +280,8 @@ impl Op for Fs {
         -> BoxStream<'static, Vec<Cursor>>
     {
         let me = self.clone();
-        Box::pin(async_stream::stream! {
+        let (tx, rx) = mpsc::channel::<Vec<Cursor>>(8);
+        tokio::task::spawn_blocking(move || {
             let mut buf: Vec<Cursor> = Vec::with_capacity(BATCH);
             for entry in WalkBuilder::new(&me.root).hidden(true).git_ignore(false).build() {
                 let Ok(e) = entry else { continue };
@@ -290,10 +292,14 @@ impl Op for Fs {
                 let mut c = Cursor::default();
                 c.set("FS", p.display().to_string());
                 buf.push(c);
-                if buf.len() >= BATCH { yield std::mem::take(&mut buf); }
+                if buf.len() >= BATCH {
+                    if tx.blocking_send(std::mem::take(&mut buf)).is_err() { return; }
+                    buf = Vec::with_capacity(BATCH);
+                }
             }
-            if !buf.is_empty() { yield buf; }
-        })
+            if !buf.is_empty() { let _ = tx.blocking_send(buf); }
+        });
+        Box::pin(ReceiverStream::new(rx))
     }
 }
 
@@ -330,6 +336,11 @@ impl Op for AstNm {
         let me  = self.clone();
         let pat = Arc::new(Pattern::new(&me.pattern_src, me.lang));
         let fixed: Arc<str> = Arc::from(pat.fixed_string().to_string().as_str());
+        // [perf-probe] flip these on to attribute prefilter cutoff vs ast-grep recall.
+        // eprintln!("[AstNm] pattern={:?} fixed_string={:?}", me.pattern_src, fixed);
+        let dbg_seen   = Arc::new(AtomicU64::new(0));
+        let dbg_passed = Arc::new(AtomicU64::new(0));
+        let dbg_hit    = Arc::new(AtomicU64::new(0));
         Box::pin(async_stream::stream! {
             while let Some(batch) = input.next().await {
                 let pat   = pat.clone();
@@ -337,13 +348,18 @@ impl Op for AstNm {
                 let cap_names = me.capture_names.clone();
                 let lang  = me.lang;
                 let want_match = me.want_match;
+                let dbg_seen   = dbg_seen.clone();
+                let dbg_passed = dbg_passed.clone();
+                let dbg_hit    = dbg_hit.clone();
                 let out: Vec<Cursor> = tokio::task::spawn_blocking(move || {
                     batch.par_iter().flat_map(|c| {
+                        // [perf-probe] dbg_seen.fetch_add(1, Ordering::Relaxed);
                         let Some(path) = c.get("FS") else { return vec![] };
                         let Ok(src) = std::fs::read_to_string(path) else { return vec![] };
                         if !fixed.is_empty() && !src.contains(&*fixed) { return vec![]; }
+                        // [perf-probe] dbg_passed.fetch_add(1, Ordering::Relaxed);
                         let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
-                        grep.root().find_all(&*pat).map(|nm| {
+                        let hits = grep.root().find_all(&*pat).map(|nm| {
                             let env = nm.get_env();
                             let r = nm.range();
                             let mut child = c.clone();
@@ -356,11 +372,19 @@ impl Op for AstNm {
                                 }
                             }
                             child
-                        }).collect::<Vec<_>>()
+                        }).collect::<Vec<_>>();
+                        // [perf-probe] if !hits.is_empty() { dbg_hit.fetch_add(hits.len() as u64, Ordering::Relaxed); }
+                        hits
                     }).collect()
                 }).await.unwrap_or_default();
                 if !out.is_empty() { yield out; }
             }
+            // [perf-probe] re-enable alongside the pattern eprintln above.
+            // eprintln!("[AstNm] seen={} passed_prefilter={} total_hits={}",
+            //     dbg_seen.load(Ordering::Relaxed),
+            //     dbg_passed.load(Ordering::Relaxed),
+            //     dbg_hit.load(Ordering::Relaxed));
+            let _ = (&dbg_seen, &dbg_passed, &dbg_hit);
         })
     }
 }
@@ -481,10 +505,34 @@ pub fn new_lineage() -> LineageId { LIN.fetch_add(1, Ordering::SeqCst) + 1 }
 
 pub async fn drive(chain: Vec<Arc<dyn Op>>, h: Hooks) {
     if chain.is_empty() { return; }
-    let mut iter = chain.into_iter();
-    let first = iter.next().unwrap();
-    let empty: BoxStream<'static, Vec<Cursor>> = Box::pin(futures::stream::empty());
-    let mut s = first.run(h.clone(), empty);
-    for op in iter { s = op.run(h.clone(), s); }
-    while s.next().await.is_some() {}
+    // Per-op task connected by bounded mpsc(8). Producer can be N batches
+    // ahead of consumer; gives pipeline parallelism instead of strict
+    // alternation between adjacent ops.
+    let mut prev_rx: Option<mpsc::Receiver<Vec<Cursor>>> = None;
+    let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+    let n = chain.len();
+    for (i, op) in chain.into_iter().enumerate() {
+        let is_last = i + 1 == n;
+        let in_stream: BoxStream<'static, Vec<Cursor>> = match prev_rx.take() {
+            Some(rx) => Box::pin(ReceiverStream::new(rx)),
+            None     => Box::pin(futures::stream::empty()),
+        };
+        let hooks = h.clone();
+        if is_last {
+            handles.push(tokio::spawn(async move {
+                let mut s = op.run(hooks, in_stream);
+                while s.next().await.is_some() {}
+            }));
+        } else {
+            let (tx, rx) = mpsc::channel::<Vec<Cursor>>(8);
+            prev_rx = Some(rx);
+            handles.push(tokio::spawn(async move {
+                let mut s = op.run(hooks, in_stream);
+                while let Some(batch) = s.next().await {
+                    if tx.send(batch).await.is_err() { return; }
+                }
+            }));
+        }
+    }
+    for h in handles { let _ = h.await; }
 }
