@@ -139,6 +139,19 @@ pub trait Store: Send + Sync + 'static {
     fn define_rule(&self, name: &str, body: RuleBody);
     fn select(&self, name: &str) -> BoxStream<'static, Diff>;
     async fn snapshot(&self, name: &str) -> Vec<Cursor>;
+    /// Declare the fact's column set. Backends that need typed storage
+    /// (sqlite) materialize the table here. Mem/Dd ignore.
+    fn ensure_schema(&self, _fact: &str, _cols: &[&str]) {}
+    /// Brute-force per-batch IN-clause read: rows where `key_col`
+    /// matches any of `key_values`, projected to `project` cols.
+    /// Returned as Cursors carrying the projected terms.
+    async fn read_in(
+        &self,
+        fact: &str,
+        key_col: &str,
+        key_values: Vec<String>,
+        project: Vec<String>,
+    ) -> Vec<Cursor>;
 }
 
 #[derive(Clone, Debug)]
@@ -349,6 +362,28 @@ impl Store for MemStore {
         let r = self.rules.read().unwrap().get(name).cloned();
         if let Some(body) = r { return self.materialize(&body).await; }
         self.facts.read().await.get(name).map(|s| s.keys().cloned().collect()).unwrap_or_default()
+    }
+    async fn read_in(
+        &self,
+        fact: &str,
+        key_col: &str,
+        key_values: Vec<String>,
+        project: Vec<String>,
+    ) -> Vec<Cursor> {
+        let keys: HashSet<String> = key_values.into_iter().collect();
+        let f = self.facts.read().await;
+        let Some(set) = f.get(fact) else { return vec![] };
+        set.keys()
+            .filter(|c| c.get(key_col).map_or(false, |v| keys.contains(v)))
+            .map(|c| {
+                let mut out = Cursor::default();
+                if let Some(v) = c.get(key_col) { out.set(key_col, v); }
+                for col in &project {
+                    if let Some(v) = c.get(col) { out.set(col, v); }
+                }
+                out
+            })
+            .collect()
     }
 }
 
@@ -588,12 +623,199 @@ impl Store for DdStore {
             .map(|(row, _)| dd_to_cursor(row, &self.interner))
             .collect()
     }
+    async fn read_in(
+        &self,
+        _fact: &str,
+        _key_col: &str,
+        _key_values: Vec<String>,
+        _project: Vec<String>,
+    ) -> Vec<Cursor> {
+        // Parked. DdStore is no longer on the active read path.
+        vec![]
+    }
 }
 
 impl Drop for DdStore {
     fn drop(&mut self) {
         let _ = self.cmd_tx.send(DdCmd::Stop);
         if let Some(h) = self.handle.lock().unwrap().take() { let _ = h.join(); }
+    }
+}
+
+// ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+// ▒  § 3c  SqliteStore — write-through fact store, brute-force IN()    ▒
+// ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+//
+// `:memory:` first to lock the trait shape without filesystem ceremony.
+// One Mutex<Connection> for the POC; multi-conn pool comes when
+// benchmarks force it. Schema is per-fact, declared via ensure_schema.
+// Writes accumulate in an in-memory pending Vec per fact, flushed via
+// commit() inside one transaction with a prepared INSERT. Reads are
+// brute-force per-batch SELECT WHERE key_col IN (?, ?, …) with the
+// projection columns chosen by the caller.
+
+pub struct SqliteStore {
+    conn:    Mutex<rusqlite::Connection>,
+    schemas: std::sync::RwLock<HashMap<String, Vec<String>>>,
+    pending: Mutex<HashMap<String, Vec<Cursor>>>,
+    tele:    OnceLock<Telemetry>,
+}
+
+impl SqliteStore {
+    pub fn open_memory() -> Arc<Self> {
+        let conn = rusqlite::Connection::open_in_memory()
+            .expect("open_in_memory");
+        Arc::new(Self {
+            conn:    Mutex::new(conn),
+            schemas: Default::default(),
+            pending: Mutex::new(HashMap::new()),
+            tele:    OnceLock::new(),
+        })
+    }
+    pub fn attach_tele(&self, t: Telemetry) { let _ = self.tele.set(t); }
+    fn span(&self, name: &'static str, n_in: Option<u64>) -> Option<SpanOpen> {
+        self.tele.get().map(|t| t.start(name, n_in))
+    }
+}
+
+#[async_trait::async_trait]
+impl Store for SqliteStore {
+    async fn insert(&self, fact: &str, row: Cursor, gen: Gen) {
+        self.insert_many(fact, vec![row], gen).await
+    }
+    async fn insert_many(&self, fact: &str, rows: Vec<Cursor>, _gen: Gen) {
+        if rows.is_empty() { return; }
+        let n = rows.len() as u64;
+        let mut sp = self.span("v4::Sqlite::ins", Some(n));
+        if let Some(s) = sp.as_mut() {
+            let bytes: u64 = rows.iter().map(cursor_bytes).sum();
+            s.set_bytes(bytes);
+        }
+        let mut pending = self.pending.lock().unwrap();
+        pending.entry(fact.to_string()).or_default().extend(rows);
+        if let Some(s) = sp { s.close(Some(n)); }
+    }
+    async fn commit(&self, _gen: Gen) {
+        let sp = self.span("v4::Sqlite::commit", None);
+        let to_flush: HashMap<String, Vec<Cursor>> = {
+            let mut p = self.pending.lock().unwrap();
+            std::mem::take(&mut *p)
+        };
+        let schemas = self.schemas.read().unwrap().clone();
+        let mut conn = self.conn.lock().unwrap();
+        let txn = conn.transaction().expect("begin txn");
+        let mut total: u64 = 0;
+        for (fact, rows) in &to_flush {
+            let Some(cols) = schemas.get(fact) else { continue };
+            // Prepared INSERT: INSERT INTO fact (c1, c2, ...) VALUES (?, ?, ...)
+            let placeholders = cols.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            let col_list = cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+            let sql = format!("INSERT INTO \"{}\" ({}) VALUES ({})", fact, col_list, placeholders);
+            let mut stmt = txn.prepare_cached(&sql).expect("prepare insert");
+            for row in rows {
+                let vals: Vec<String> = cols.iter()
+                    .map(|c| row.get(c).unwrap_or("").to_string()).collect();
+                let params: Vec<&dyn rusqlite::ToSql> = vals.iter()
+                    .map(|v| v as &dyn rusqlite::ToSql).collect();
+                stmt.execute(params.as_slice()).expect("exec insert");
+                total += 1;
+            }
+        }
+        txn.commit().expect("commit txn");
+        if let Some(s) = sp { s.close(Some(total)); }
+    }
+    async fn remove(&self, _fact: &str, _row: Cursor, _gen: Gen) {}
+    async fn forget_by(&self, _fact: &str, _k: &str, _v: &str, _gen: Gen) {}
+    fn define_rule(&self, _name: &str, _body: RuleBody) {
+        // POC: rules are run by the driver, not stored here.
+    }
+    fn select(&self, _name: &str) -> BoxStream<'static, Diff> {
+        Box::pin(async_stream::stream! {
+            // POC: SqliteStore doesn't push diffs; reads are pull-only via read_in / snapshot.
+            if false { yield Diff { row: Cursor::default(), gen: 0, sign: 1 }; }
+        })
+    }
+    async fn snapshot(&self, fact: &str) -> Vec<Cursor> {
+        let cols = self.schemas.read().unwrap().get(fact).cloned();
+        let Some(cols) = cols else { return vec![] };
+        let conn = self.conn.lock().unwrap();
+        let col_list = cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+        let sql = format!("SELECT {} FROM \"{}\"", col_list, fact);
+        let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return vec![] };
+        let cols_owned = cols.clone();
+        let rows = stmt.query_map([], move |row| {
+            let mut c = Cursor::default();
+            for (i, name) in cols_owned.iter().enumerate() {
+                let v: String = row.get(i).unwrap_or_default();
+                c.set(name, v);
+            }
+            Ok(c)
+        });
+        match rows {
+            Ok(it) => it.filter_map(|r| r.ok()).collect(),
+            Err(_) => vec![],
+        }
+    }
+    fn ensure_schema(&self, fact: &str, cols: &[&str]) {
+        {
+            let r = self.schemas.read().unwrap();
+            if let Some(existing) = r.get(fact) {
+                debug_assert_eq!(existing.len(), cols.len(),
+                    "ensure_schema: {} reschema mismatch", fact);
+                return;
+            }
+        }
+        let cols_owned: Vec<String> = cols.iter().map(|s| s.to_string()).collect();
+        let col_decls = cols_owned.iter()
+            .map(|c| format!("\"{}\" TEXT", c))
+            .collect::<Vec<_>>().join(", ");
+        let sql = format!("CREATE TABLE IF NOT EXISTS \"{}\" ({})", fact, col_decls);
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(&sql, []).expect("create table");
+        }
+        self.schemas.write().unwrap().insert(fact.to_string(), cols_owned);
+    }
+    async fn read_in(
+        &self,
+        fact: &str,
+        key_col: &str,
+        key_values: Vec<String>,
+        project: Vec<String>,
+    ) -> Vec<Cursor> {
+        if key_values.is_empty() { return vec![] }
+        let mut sp = self.span("v4::Sqlite::read_in", Some(key_values.len() as u64));
+        let placeholders = (0..key_values.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
+        // Always include key_col in the projection so caller can re-key.
+        let mut full_proj: Vec<String> = vec![key_col.to_string()];
+        for c in &project { if c != key_col { full_proj.push(c.clone()); } }
+        let col_list = full_proj.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+        let sql = format!(
+            "SELECT {} FROM \"{}\" WHERE \"{}\" IN ({})",
+            col_list, fact, key_col, placeholders
+        );
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare_cached(&sql) {
+            Ok(s) => s,
+            Err(_) => { if let Some(s) = sp.take() { s.close(Some(0)); } return vec![] }
+        };
+        let params: Vec<&dyn rusqlite::ToSql> = key_values.iter()
+            .map(|v| v as &dyn rusqlite::ToSql).collect();
+        let proj_for_map = full_proj.clone();
+        let rows = stmt.query_map(params.as_slice(), move |row| {
+            let mut c = Cursor::default();
+            for (i, name) in proj_for_map.iter().enumerate() {
+                let v: String = row.get(i).unwrap_or_default();
+                c.set(name, v);
+            }
+            Ok(c)
+        });
+        let out: Vec<Cursor> = match rows {
+            Ok(it) => it.filter_map(|r| r.ok()).collect(),
+            Err(_) => vec![],
+        };
+        if let Some(s) = sp { s.close(Some(out.len() as u64)); }
+        out
     }
 }
 
@@ -909,6 +1131,10 @@ pub trait Op: Send + Sync + 'static {
     fn ident(&self) -> [u8; 32];
     fn run(self: Arc<Self>, hooks: Hooks, input: BoxStream<'static, Vec<Cursor>>)
         -> BoxStream<'static, Vec<Cursor>>;
+    /// Pure ops: same input lineage → same output. Cacheable.
+    /// Sources (Fs, FactRead) and sinks (FactWrite) and effectful ops
+    /// (sh, http) override to false. Default false (assume impure).
+    fn is_pure(&self) -> bool { false }
 }
 
 pub fn ident_of(parts: &[&[u8]]) -> [u8; 32] {
@@ -1005,6 +1231,10 @@ impl Op for AstNm {
     fn ident(&self) -> [u8; 32] {
         ident_of(&[b"ast", format!("{:?}", self.lang).as_bytes(), self.pattern_src.as_bytes()])
     }
+    /// Pure: output cursors are determined by (input cursor's FS) +
+    /// (file content) + (pattern). The CONTENT_HASH stamp on every
+    /// emitted cursor lets downstream caches detect "same input, skip."
+    fn is_pure(&self) -> bool { true }
     fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
         -> BoxStream<'static, Vec<Cursor>>
     {
@@ -1035,6 +1265,7 @@ impl Op for AstNm {
                 let match_acc = Arc::new(AtomicU64::new(0));
                 let bytes_a = bytes_acc.clone();
                 let parse_a = parse_acc.clone();
+                let interner_for_par = h.interner.clone();
                 let match_a = match_acc.clone();
                 let out: Vec<Cursor> = tokio::task::spawn_blocking(move || {
                     batch.par_iter().flat_map(|c| {
@@ -1046,6 +1277,12 @@ impl Op for AstNm {
                         // 1.4 GB of source for nothing.
                         let Ok(bytes) = std::fs::read(path) else { return vec![] };
                         bytes_a.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                        // CONTENT_HASH: blake3 of file bytes, hex-encoded,
+                        // interned so all cursors emitted from this file
+                        // share one Arc<str>. Anchor for downstream caches
+                        // (same content → same lineage → skippable).
+                        let content_hash = blake3::hash(&bytes).to_hex().to_string();
+                        let content_hash_arc: Arc<str> = interner_for_par.intern(&content_hash);
                         let src: String = unsafe { String::from_utf8_unchecked(bytes) };
                         if !fixed.is_empty() && !src.contains(&*fixed) { return vec![]; }
                         // [perf-probe] dbg_passed.fetch_add(1, Ordering::Relaxed);
@@ -1057,6 +1294,7 @@ impl Op for AstNm {
                             let env = nm.get_env();
                             let r = nm.range();
                             let mut child = c.clone();
+                            child.set_arc("CONTENT_HASH", content_hash_arc.clone());
                             child.set("LO", (r.start as u64).to_string());
                             child.set("HI", (r.end   as u64).to_string());
                             if want_match { child.set("MATCH", &src[r.start..r.end]); }
@@ -1199,6 +1437,9 @@ impl Op for MultiAstNm {
 }
 
 /// Insert each upstream batch into the named fact. Pass-through.
+/// Legacy: writes whatever terms the cursor carries — works for MemStore /
+/// DdStore which accept arbitrary Cursor shapes; SqliteStore needs a
+/// declared column set, use `FactWrite` for that.
 pub struct Fact { pub name: String }
 impl Op for Fact {
     fn ident(&self) -> [u8; 32] { ident_of(&[b"fact", self.name.as_bytes()]) }
@@ -1216,6 +1457,173 @@ impl Op for Fact {
                 yield batch;
             }
         })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   FactWrite — schema-aware sink. Calls ensure_schema on first batch.
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+pub struct FactWrite {
+    pub name: String,
+    pub cols: Vec<String>,
+}
+impl FactWrite {
+    pub fn new(name: impl Into<String>, cols: &[&str]) -> Self {
+        Self { name: name.into(), cols: cols.iter().map(|s| s.to_string()).collect() }
+    }
+}
+impl Op for FactWrite {
+    fn ident(&self) -> [u8; 32] {
+        let mut bits: Vec<&[u8]> = vec![b"fact_write", self.name.as_bytes()];
+        for c in &self.cols { bits.push(c.as_bytes()); }
+        ident_of(&bits)
+    }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        Box::pin(async_stream::stream! {
+            // Schema decl is idempotent + sync; safe to do at op start.
+            let cols_ref: Vec<&str> = me.cols.iter().map(|s| s.as_str()).collect();
+            h.use_store().ensure_schema(&me.name, &cols_ref);
+            while let Some(batch) = input.next().await {
+                let n = batch.len() as u64;
+                let span = tele.start("v4::FactWrite", Some(n));
+                h.use_store().insert_many(&me.name, batch.clone(), h.use_gen()).await;
+                span.close(Some(n));
+                yield batch;
+            }
+        })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   FactRead — brute-force IN-batch fact-read with bound/unbound terms.
+//
+//   key_term : term name that MUST be present on every input cursor
+//              (the bound side, drives WHERE col IN (?, ?, ...))
+//   project  : term names to fetch from the fact's row and set on each
+//              output cursor (the unbound side)
+//
+//   Per input batch:
+//     1. collect distinct key_term values
+//     2. ONE read_in() call → rows
+//     3. group rows by key_term value
+//     4. for each input cursor, emit one output per matching row
+//        (cross-product cursor × matching rows)
+//
+//   N input cursors with M avg matches each → 1 query, N × M outputs.
+//   The N+1 query failure mode (one query per input cursor) does not
+//   exist by construction.
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+pub struct FactRead {
+    pub fact:     String,
+    pub key_term: String,
+    pub project:  Vec<String>,
+}
+impl FactRead {
+    pub fn new(fact: impl Into<String>, key_term: impl Into<String>, project: &[&str]) -> Self {
+        Self {
+            fact: fact.into(),
+            key_term: key_term.into(),
+            project: project.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+impl Op for FactRead {
+    fn ident(&self) -> [u8; 32] {
+        let mut bits: Vec<&[u8]> = vec![b"fact_read", self.fact.as_bytes(), self.key_term.as_bytes()];
+        for c in &self.project { bits.push(c.as_bytes()); }
+        ident_of(&bits)
+    }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start("v4::FactRead", Some(n_in));
+                // 1. collect distinct keys from the batch
+                let mut keys: Vec<String> = Vec::with_capacity(batch.len());
+                let mut seen: HashSet<String> = HashSet::new();
+                for c in &batch {
+                    if let Some(v) = c.get(&me.key_term) {
+                        if seen.insert(v.to_string()) { keys.push(v.to_string()); }
+                    }
+                }
+                // 2. one query
+                let rows = h.use_store().read_in(
+                    &me.fact, &me.key_term, keys, me.project.clone(),
+                ).await;
+                // 3. group by key
+                let mut by_key: HashMap<String, Vec<Cursor>> = HashMap::new();
+                for r in rows {
+                    if let Some(k) = r.get(&me.key_term) {
+                        by_key.entry(k.to_string()).or_default().push(r);
+                    }
+                }
+                // 4. cross-product into output
+                let mut out: Vec<Cursor> = Vec::with_capacity(batch.len());
+                for cursor in &batch {
+                    let Some(k) = cursor.get(&me.key_term) else { continue };
+                    let Some(matches) = by_key.get(k) else { continue };
+                    for m in matches {
+                        let mut child = cursor.clone();
+                        for col in &me.project {
+                            if let Some(v) = m.get(col) { child.set(col, v); }
+                        }
+                        out.push(child);
+                    }
+                }
+                let n_out = out.len() as u64;
+                span.close(Some(n_out));
+                if !out.is_empty() { yield out; }
+            }
+        })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   Rule — a callable, parametric pipeline whose output sinks to a fact.
+//
+//   Replaces the RuleBody enum's role for sqlite-shaped workloads.
+//   `body` is the streaming op chain that produces cursors. `sink` is
+//   the FactWrite step at the end (named so the runner can ensure_schema
+//   before drain). RuleBody enum stays for MemStore/DdStore until the
+//   unification refactor lands.
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+#[derive(Clone)]
+pub struct Rule {
+    pub name: String,
+    pub body: Vec<Arc<dyn Op>>,
+    pub sink: RuleSink,
+}
+#[derive(Clone)]
+pub struct RuleSink {
+    pub fact: String,
+    pub cols: Vec<String>,
+}
+impl Rule {
+    pub fn new(name: impl Into<String>, body: Vec<Arc<dyn Op>>, sink_fact: impl Into<String>, sink_cols: &[&str]) -> Self {
+        Self {
+            name: name.into(),
+            body,
+            sink: RuleSink {
+                fact: sink_fact.into(),
+                cols: sink_cols.iter().map(|s| s.to_string()).collect(),
+            },
+        }
+    }
+    /// Append a FactWrite step targeting the rule's sink. Returns the
+    /// full chain ready for drive_with.
+    pub fn into_chain(self) -> Vec<Arc<dyn Op>> {
+        let cols_ref: Vec<&str> = self.sink.cols.iter().map(|s| s.as_str()).collect();
+        let mut chain = self.body;
+        chain.push(Arc::new(FactWrite::new(self.sink.fact, &cols_ref)));
+        chain
     }
 }
 
@@ -1381,4 +1789,20 @@ pub async fn drive_with(chain: Vec<Arc<dyn Op>>, h: Hooks, cap: usize) {
         }
     }
     for h in handles { let _ = h.await; }
+}
+
+/// Two-tick driver: render (drive_with drains) → commit (store flushes).
+/// React mental model: tick 1 is render, tick 2 is commit. CI mode runs
+/// this once and exits. Reactive mode wraps it in a switchMap event loop
+/// that aborts in-flight tick 1 work when fresh invalidations arrive.
+///
+/// Tick 1: pipeline drains end-to-end. FactWrite buffers writes into the
+/// store's pending area. FactRead sees the store as it stood entering
+/// the tick (no half-applied writes from this run).
+///
+/// Tick 2: store.commit(gen) flushes pending writes inside one txn,
+/// fsyncs, broadcasts diffs to any subscribers.
+pub async fn drive_two_tick(chain: Vec<Arc<dyn Op>>, h: Hooks, cap: usize) {
+    drive_with(chain, h.clone(), cap).await;
+    h.use_store().commit(h.gen).await;
 }

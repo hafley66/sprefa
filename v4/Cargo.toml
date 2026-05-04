@@ -23,6 +23,7 @@ rayon             = "1"
 tokio-stream      = "0.1"
 differential-dataflow = "0.12"
 timely            = "0.12"
+rusqlite          = { version = "0.31", features = ["bundled"] }
 
 [[bin]]
 name = "v4-proto"
