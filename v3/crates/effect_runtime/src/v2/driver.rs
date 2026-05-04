@@ -110,20 +110,10 @@ pub fn drive<N: Next>(
     let mut stats = DriveStats::default();
 
     loop {
-        let ready = opts.bus.snapshot_ready();
-        let batch = queue.pull_runnable_batch(&ready, drive_tick, opts.batch_cap);
+        let batch = queue.pull_runnable_batch(drive_tick, opts.batch_cap);
         if batch.is_empty() {
             stats.parked = queue.depth();
             break;
-        }
-
-        // Forget all Wake::Key keys now that the rows have been pulled.
-        // Keeps the ready set bounded; future Yield for the same
-        // logical pause uses a fresh key.
-        for row in &batch {
-            if let Wake::Key(k) = &row.wake {
-                opts.bus.forget(*k);
-            }
         }
 
         let head_depth = batch[0].depth;

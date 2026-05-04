@@ -5,10 +5,11 @@
 //! purity precondition.
 //!
 //! Invalidation:
-//!   - `MemoCache` is a `BusListener`. On `DomainDirty(d)`, every
-//!     entry tagged with `d` is dropped. On `KeyDirty(k)`, the entry
-//!     whose input hash equals `k.0` is dropped (rare; usually the
-//!     cache is coarser-grained than the wake registry).
+//!   - `MemoCache` is a `BusListener`. On `Event::Dirty { domain, key:
+//!     None }`, every entry tagged with `domain` is dropped. On
+//!     `Event::Dirty { domain: _, key: Some(k) }`, the entry whose
+//!     input hash equals `k.0` is dropped (rare; usually the cache is
+//!     coarser-grained than the wake registry).
 //!
 //! Each `Memoize` records the domains its inner Component depends on
 //! at construction time (`with_domain("fs")`). That tag rides with
@@ -78,9 +79,8 @@ impl<N: Next> Default for MemoCache<N> {
 impl<N: Next> BusListener for MemoCache<N> {
     fn on_event(&self, ev: &Event) {
         match ev {
-            Event::DomainDirty(d) => { self.invalidate_domain(d); }
-            Event::KeyDirty(k)    => { self.invalidate_input(*k); }
-            Event::PathDirty(_)   => { /* paths track parker rows, not memo entries */ }
+            Event::Dirty { domain, key: None }    => { self.invalidate_domain(domain); }
+            Event::Dirty { domain: _, key: Some(k) } => { self.invalidate_input(*k); }
         }
         // PHASE E (deferred): when an entry is invalidated, the
         // children it previously emitted are downstream rows in the

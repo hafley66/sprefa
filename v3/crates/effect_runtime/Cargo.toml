@@ -27,3 +27,6 @@ sqlite  = ["dep:rusqlite"]
 # Intentionally absent: no jemalloc pin, no serde. tracing is a
 # zero-cost facade when no subscriber is installed; we keep it on by
 # default so consumers can opt in via env_filter.
+
+[dev-dependencies]
+sysinfo = "0.32"

@@ -2,35 +2,38 @@
 //!
 //! Same trait surface as `MemQueue<N>` — the driver is unchanged.
 //! Connection is shared (`Arc<Mutex<Connection>>`) so the consumer
-//! crate (sprefa) can run queue mutations and relational fact writes
-//! in the same transaction. Construction takes the connection; this
-//! crate does not own the file or its path.
+//! crate can run queue mutations and relational fact writes in the
+//! same transaction. Construction takes the connection; this crate
+//! does not own the file or its path.
 //!
-//! Schema is created idempotently on `new`. One row per in-flight or
-//! parked queue position. Path stored as a packed LE-u32 BLOB so a
-//! prefix `LIKE x'010002...%'` query matches every descendant.
+//! Park subscriptions live in the row itself (`wake_kind`,
+//! `wake_domain`, `wake_key`). `dispatch_park(domain, key)` is one
+//! indexed `UPDATE ... SET wake_kind=IMMEDIATE` statement; the index
+//! on `(wake_kind, wake_domain, wake_key)` keeps it O(matching).
 //!
 //! Storage layout:
 //!
 //! ```sql
-//! CREATE TABLE IF NOT EXISTS sprf_v2_queue (
+//! CREATE TABLE IF NOT EXISTS sprf_v3_queue (
 //!   id              INTEGER PRIMARY KEY AUTOINCREMENT,
 //!   parent_id       INTEGER,
 //!   batch_idx       INTEGER NOT NULL,
 //!   path            BLOB    NOT NULL,
 //!   pipe_hash       INTEGER NOT NULL,
 //!   instance_id     INTEGER NOT NULL,
-//!   depth              INTEGER NOT NULL,
+//!   depth           INTEGER NOT NULL,
 //!   next_blob       BLOB    NOT NULL,
 //!   next_hash       BLOB    NOT NULL,
 //!   wake_kind       INTEGER NOT NULL,
 //!   wake_tick       INTEGER,
+//!   wake_domain     TEXT,
 //!   wake_key        BLOB,
 //!   drive_tick      INTEGER NOT NULL,
 //!   enqueued_at_ns  INTEGER NOT NULL
 //! );
 //! ```
 
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -41,30 +44,31 @@ use super::codec::Codec;
 use super::next::Next;
 use super::next_key::NextKey;
 use super::queue::{
-    DriveTick, QueueBackend, QueueId, QueueRow, ReadyKeys,
+    DriveTick, QueueBackend, QueueId, QueueRow,
 };
 use super::wake::Wake;
 
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS sprf_v2_queue (
+CREATE TABLE IF NOT EXISTS sprf_v3_queue (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   parent_id       INTEGER,
   batch_idx       INTEGER NOT NULL,
   path            BLOB    NOT NULL,
   pipe_hash       INTEGER NOT NULL,
   instance_id     INTEGER NOT NULL,
-  depth              INTEGER NOT NULL,
+  depth           INTEGER NOT NULL,
   next_blob       BLOB    NOT NULL,
   next_hash       BLOB    NOT NULL,
   wake_kind       INTEGER NOT NULL,
   wake_tick       INTEGER,
+  wake_domain     TEXT,
   wake_key        BLOB,
   drive_tick      INTEGER NOT NULL,
   enqueued_at_ns  INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS sprf_v2_queue_parent   ON sprf_v2_queue(parent_id);
-CREATE INDEX IF NOT EXISTS sprf_v2_queue_wake_key ON sprf_v2_queue(wake_key);
-CREATE INDEX IF NOT EXISTS sprf_v2_queue_kind_id  ON sprf_v2_queue(wake_kind, id);
+CREATE INDEX IF NOT EXISTS sprf_v3_queue_parent      ON sprf_v3_queue(parent_id);
+CREATE INDEX IF NOT EXISTS sprf_v3_queue_kind_id     ON sprf_v3_queue(wake_kind, id);
+CREATE INDEX IF NOT EXISTS sprf_v3_queue_park_lookup ON sprf_v3_queue(wake_kind, wake_domain, wake_key);
 ";
 
 const WAKE_KIND_IMMEDIATE: i64 = 0;
@@ -80,6 +84,9 @@ impl<N: Next + Codec> SqliteQueue<N> {
     pub fn open(conn: Arc<Mutex<Connection>>) -> Self {
         {
             let c = conn.lock().unwrap();
+            // WAL improves concurrent read/write throughput; safe at
+            // pre-1.0 since the file format is rebuilt anyway.
+            let _ = c.pragma_update(None, "journal_mode", "WAL");
             c.execute_batch(SCHEMA).expect("queue schema");
         }
         Self { conn, _marker: PhantomData }
@@ -121,10 +128,11 @@ fn row_to_queue<N: Next + Codec>(r: &Row) -> rusqlite::Result<QueueRow<N>> {
     let path_blob:      Vec<u8>   = r.get("path")?;
     let pipe_hash:      i64       = r.get("pipe_hash")?;
     let instance_id:    i64       = r.get("instance_id")?;
-    let depth:             i64       = r.get("depth")?;
+    let depth:          i64       = r.get("depth")?;
     let next_blob:      Vec<u8>   = r.get("next_blob")?;
     let wake_kind:      i64       = r.get("wake_kind")?;
     let wake_tick:      Option<i64> = r.get("wake_tick")?;
+    let wake_domain:    Option<String> = r.get("wake_domain")?;
     let wake_key:       Option<Vec<u8>> = r.get("wake_key")?;
     let drive_tick:     i64       = r.get("drive_tick")?;
     let enqueued_at_ns: i64       = r.get("enqueued_at_ns")?;
@@ -135,7 +143,10 @@ fn row_to_queue<N: Next + Codec>(r: &Row) -> rusqlite::Result<QueueRow<N>> {
         x if x == WAKE_KIND_KEY       => {
             let mut k = [0u8; 32];
             k.copy_from_slice(&wake_key.unwrap());
-            Wake::Key(NextKey(k))
+            Wake::Key {
+                domain: Cow::Owned(wake_domain.unwrap_or_default()),
+                key:    NextKey(k),
+            }
         }
         _ => unreachable!("unknown wake_kind {}", wake_kind),
     };
@@ -147,7 +158,7 @@ fn row_to_queue<N: Next + Codec>(r: &Row) -> rusqlite::Result<QueueRow<N>> {
         path:           decode_path(&path_blob),
         pipe_hash:      pipe_hash as u64,
         instance_id:    instance_id as u64,
-        depth:             depth as u32,
+        depth:          depth as u32,
         value:          Arc::new(N::decode(&next_blob)),
         wake,
         drive_tick:     drive_tick as u64,
@@ -156,20 +167,30 @@ fn row_to_queue<N: Next + Codec>(r: &Row) -> rusqlite::Result<QueueRow<N>> {
 }
 
 impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
+    // invariant: do not stash row.value anywhere; Arc<N> drops on
+    // return. Park-as-row's RSS guarantee depends on the carrier being
+    // serialized into next_blob and then dropped. If a future
+    // refactor introduces a side-cache keyed by id, it must hold a
+    // weak ref or recompute from the blob.
     fn enqueue(&self, row: QueueRow<N>) -> QueueId {
         let conn = self.conn.lock().unwrap();
-        let (wake_kind, wake_tick, wake_key) = match &row.wake {
-            Wake::Immediate     => (WAKE_KIND_IMMEDIATE, None,                    None),
-            Wake::Tick{past_tick}=>(WAKE_KIND_TICK,      Some(*past_tick as i64), None),
-            Wake::Key(k)        => (WAKE_KIND_KEY,       None,                    Some(k.0.to_vec())),
+        let (wake_kind, wake_tick, wake_domain, wake_key) = match &row.wake {
+            Wake::Immediate     => (WAKE_KIND_IMMEDIATE, None,                    None,                None),
+            Wake::Tick{past_tick}=>(WAKE_KIND_TICK,      Some(*past_tick as i64), None,                None),
+            Wake::Key { domain, key } => (
+                WAKE_KIND_KEY,
+                None,
+                Some(domain.as_ref().to_string()),
+                Some(key.0.to_vec()),
+            ),
         };
 
         conn.execute(
-            "INSERT INTO sprf_v2_queue (
+            "INSERT INTO sprf_v3_queue (
                 parent_id, batch_idx, path, pipe_hash, instance_id, depth,
-                next_blob, next_hash, wake_kind, wake_tick, wake_key,
-                drive_tick, enqueued_at_ns
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                next_blob, next_hash, wake_kind, wake_tick, wake_domain,
+                wake_key, drive_tick, enqueued_at_ns
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![
                 row.parent_id.map(|p| p as i64),
                 row.batch_idx as i64,
@@ -181,6 +202,7 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
                 row.value.content_hash().to_vec(),
                 wake_kind,
                 wake_tick,
+                wake_domain,
                 wake_key,
                 row.drive_tick as i64,
                 row.enqueued_at_ns as i64,
@@ -191,55 +213,38 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
 
     fn pull_runnable(
         &self,
-        ready_keys:  ReadyKeys<'_>,
         global_tick: DriveTick,
     ) -> Option<QueueRow<N>> {
         let conn = self.conn.lock().unwrap();
 
         // 1. Immediate — oldest by id.
         let im = conn.query_row(
-            "SELECT * FROM sprf_v2_queue WHERE wake_kind = ?1 ORDER BY id ASC LIMIT 1",
+            "SELECT * FROM sprf_v3_queue WHERE wake_kind = ?1 ORDER BY id ASC LIMIT 1",
             params![WAKE_KIND_IMMEDIATE],
             row_to_queue::<N>,
         ).optional().expect("queue select immediate");
         if let Some(row) = im {
-            conn.execute("DELETE FROM sprf_v2_queue WHERE id = ?1", params![row.id as i64])
+            conn.execute("DELETE FROM sprf_v3_queue WHERE id = ?1", params![row.id as i64])
                 .expect("queue delete");
             return Some(row);
         }
 
         // 2. Tick — any past_tick < global_tick.
         let tk = conn.query_row(
-            "SELECT * FROM sprf_v2_queue
+            "SELECT * FROM sprf_v3_queue
              WHERE wake_kind = ?1 AND wake_tick < ?2
              ORDER BY id ASC LIMIT 1",
             params![WAKE_KIND_TICK, global_tick as i64],
             row_to_queue::<N>,
         ).optional().expect("queue select tick");
         if let Some(row) = tk {
-            conn.execute("DELETE FROM sprf_v2_queue WHERE id = ?1", params![row.id as i64])
+            conn.execute("DELETE FROM sprf_v3_queue WHERE id = ?1", params![row.id as i64])
                 .expect("queue delete");
             return Some(row);
         }
 
-        // 3. Key — any row whose wake_key matches a ready key.
-        if !ready_keys.is_empty() {
-            for k in ready_keys {
-                let blob = k.0.to_vec();
-                let kr = conn.query_row(
-                    "SELECT * FROM sprf_v2_queue
-                     WHERE wake_kind = ?1 AND wake_key = ?2
-                     ORDER BY id ASC LIMIT 1",
-                    params![WAKE_KIND_KEY, blob],
-                    row_to_queue::<N>,
-                ).optional().expect("queue select key");
-                if let Some(row) = kr {
-                    conn.execute("DELETE FROM sprf_v2_queue WHERE id = ?1", params![row.id as i64])
-                        .expect("queue delete");
-                    return Some(row);
-                }
-            }
-        }
+        // 3. Key rows are never directly runnable; dispatch_park flips
+        //    them to Immediate first.
 
         None
     }
@@ -247,16 +252,34 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
     fn depth(&self) -> u64 {
         let conn = self.conn.lock().unwrap();
         let n: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sprf_v2_queue",
+            "SELECT COUNT(*) FROM sprf_v3_queue",
             [],
             |r| r.get(0),
         ).expect("queue depth");
         n as u64
     }
 
+    fn dispatch_park(&self, domain: &str, key: Option<NextKey>) -> u64 {
+        let conn = self.conn.lock().unwrap();
+        let n = match key {
+            Some(k) => conn.execute(
+                "UPDATE sprf_v3_queue
+                    SET wake_kind = ?1, wake_domain = NULL, wake_key = NULL
+                  WHERE wake_kind = ?2 AND wake_domain = ?3 AND wake_key = ?4",
+                params![WAKE_KIND_IMMEDIATE, WAKE_KIND_KEY, domain, k.0.to_vec()],
+            ).expect("dispatch_park update (keyed)"),
+            None => conn.execute(
+                "UPDATE sprf_v3_queue
+                    SET wake_kind = ?1, wake_domain = NULL, wake_key = NULL
+                  WHERE wake_kind = ?2 AND wake_domain = ?3",
+                params![WAKE_KIND_IMMEDIATE, WAKE_KIND_KEY, domain],
+            ).expect("dispatch_park update (domain)"),
+        };
+        n as u64
+    }
+
     fn pull_runnable_batch(
         &self,
-        ready_keys:  ReadyKeys<'_>,
         global_tick: DriveTick,
         n:           usize,
     ) -> Vec<QueueRow<N>> {
@@ -267,7 +290,7 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
         // order, take the (pipe_hash, depth)-homogeneous head prefix,
         // bulk DELETE matching ids in one statement.
         let mut stmt = conn.prepare_cached(
-            "SELECT * FROM sprf_v2_queue
+            "SELECT * FROM sprf_v3_queue
              WHERE wake_kind = ?1
              ORDER BY id ASC LIMIT ?2"
         ).expect("prepare batch select");
@@ -283,20 +306,18 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
             let prefix: Vec<QueueRow<N>> = rows.into_iter()
                 .take_while(|r| r.pipe_hash == head_pipe && r.depth == head_depth)
                 .collect();
-            // Bulk DELETE.
             let id_list: Vec<String> = prefix.iter().map(|r| r.id.to_string()).collect();
             let sql = format!(
-                "DELETE FROM sprf_v2_queue WHERE id IN ({})",
+                "DELETE FROM sprf_v3_queue WHERE id IN ({})",
                 id_list.join(",")
             );
             conn.execute(&sql, []).expect("bulk delete");
             return prefix;
         }
 
-        // Cold paths: fall through to single-row pull for tick/key.
         drop(stmt);
         drop(conn);
-        match self.pull_runnable(ready_keys, global_tick) {
+        match self.pull_runnable(global_tick) {
             Some(r) => vec![r],
             None    => Vec::new(),
         }

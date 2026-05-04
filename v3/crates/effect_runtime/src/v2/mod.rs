@@ -5,9 +5,10 @@
 //! (in tests) is the demo: a sorted list of `(name, value)` terms,
 //! same shape as sprefa's `Cursor`.
 //!
-//! Phase A surface: Next + NextKey + EventBus. Wake is dispatched via
-//! the bus (`KeyDirty` / `PathDirty` / `DomainDirty`). Wake +
-//! cache-invalidation share one mechanism.
+//! Park-as-row surface: wake subscriptions live on queue rows
+//! (`Wake::Key { domain, key }`) and get promoted by
+//! `QueueBackend::dispatch_park`. EventBus is cache fan-out only
+//! (`Event::Dirty { domain, key }`).
 
 pub mod next;
 pub mod next_key;

@@ -1,10 +1,16 @@
 //! Lab tests: prove the generic-over-Next shape is ergonomic, and the
-//! EventBus surface (key/path/domain) covers the migration target.
+//! park-as-row redesign covers the migration target.
+//!
+//! Park subscriptions live on rows (`Wake::Key { domain, key }`) and
+//! get promoted by `QueueBackend::dispatch_park`. EventBus is cache
+//! fan-out only (`Event::Dirty { domain, key }`).
 
 use std::sync::{Arc, Mutex};
 
 use super::*;
 use super::queue::QueueBackend;
+
+const TEST_DOMAIN: &str = "test";
 
 // --- demo carrier -----------------------------------------------------
 
@@ -141,7 +147,7 @@ impl Component for ParkOnKey {
         } else {
             Node::Yield {
                 value: Arc::new(c.clone()),
-                wake:  Wake::Key(self.key),
+                wake:  Wake::Key { domain: TEST_DOMAIN.into(), key: self.key },
             }
         }
     }
@@ -197,7 +203,7 @@ fn many_fanout_three_per_input() {
 }
 
 #[test]
-fn yield_parks_until_key_dirty_dispatched() {
+fn yield_parks_until_dispatch_park_promotes() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
     let sink  = Arc::new(Mutex::new(Vec::new()));
     let bus   = Arc::new(EventBus::new());
@@ -219,21 +225,20 @@ fn yield_parks_until_key_dirty_dispatched() {
     assert_eq!(stats.parked,   1);
     assert_eq!(sink.lock().unwrap().len(), 0);
 
-    bus.dispatch(Event::KeyDirty(key));
-    assert!(bus.is_ready(key));
+    let promoted = queue.dispatch_park(TEST_DOMAIN, Some(key));
+    assert_eq!(promoted, 1);
 
     let stats = drive(&pipe, queue.clone(), Vec::new(), opts);
-    // ParkOnKey re-renders (emits) then Collector renders.
     assert_eq!(stats.rendered, 2);
     assert_eq!(stats.parked,   0);
-    assert!(!bus.is_ready(key), "driver forgot the key after pull");
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].get(":raw"), Some("alpha"));
 }
 
-/// The "no tokio" proof: a background OS thread dispatches the event.
-/// v2's pausability has no async runtime dependency.
+/// The "no tokio" proof: a background OS thread promotes the parked
+/// row directly through the queue. v2's pausability has no async
+/// runtime dependency.
 #[test]
 fn background_thread_wake_no_async_runtime() {
     use std::time::Duration;
@@ -252,10 +257,10 @@ fn background_thread_wake_no_async_runtime() {
     drive(&pipe, queue.clone(), vec![lc(":raw", "thread-fired")], opts.clone());
     assert_eq!(queue.depth(), 1);
 
-    let bus_for_thread = bus.clone();
+    let queue_for_thread = queue.clone();
     let h = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(5));
-        bus_for_thread.dispatch(Event::KeyDirty(key));
+        queue_for_thread.dispatch_park(TEST_DOMAIN, Some(key));
     });
     h.join().unwrap();
 
@@ -266,17 +271,19 @@ fn background_thread_wake_no_async_runtime() {
 
 /// End-to-end: a Component dispatches "work" to a background thread,
 /// gets a key, parks. The thread does its thing, writes the response
-/// to MutationStore, dispatches KeyDirty. Downstream Component reads
-/// the response by key and emits a transformed cursor. No tokio.
+/// to MutationStore, promotes the parked row through the queue.
+/// Downstream Component reads the response by key and emits a
+/// transformed cursor. No tokio.
 #[test]
 fn mutation_store_routes_async_response_back() {
     use std::time::Duration;
 
     /// Single Component: dispatches off-thread on first render, parks
     /// via Yield, re-renders on wake, takes the response from the store
-    /// and emits. Yield-as-park merges the prior two-Component shape.
+    /// and emits.
     struct AsyncUppercase {
         bus:        Arc<EventBus>,
+        queue:      Arc<dyn QueueBackend<LabCursor>>,
         responses:  Arc<MutationStore<LabCursor>>,
         dispatched: Mutex<std::collections::HashMap<[u8; 32], NextKey>>,
     }
@@ -290,10 +297,9 @@ fn mutation_store_routes_async_response_back() {
                     d.remove(&hash);
                     return Node::Emit(resp);
                 }
-                // Wake fired but response not yet visible — keep parking.
                 return Node::Yield {
                     value: Arc::new(c.clone()),
-                    wake:  Wake::Key(key),
+                    wake:  Wake::Key { domain: TEST_DOMAIN.into(), key },
                 };
             }
             let key = self.bus.fresh_key();
@@ -302,19 +308,19 @@ fn mutation_store_routes_async_response_back() {
 
             let raw    = c.get(":raw").unwrap_or("").to_string();
             let parent = c.clone();
-            let bus_t  = self.bus.clone();
+            let queue_t = self.queue.clone();
             let resp_t = self.responses.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(5));
                 let mut out = parent;
                 out.set(":upper", raw.to_uppercase());
                 resp_t.put(key, Arc::new(out));
-                bus_t.dispatch(Event::KeyDirty(key));
+                queue_t.dispatch_park(TEST_DOMAIN, Some(key));
             });
 
             Node::Yield {
                 value: Arc::new(c.clone()),
-                wake:  Wake::Key(key),
+                wake:  Wake::Key { domain: TEST_DOMAIN.into(), key },
             }
         }
     }
@@ -327,6 +333,7 @@ fn mutation_store_routes_async_response_back() {
     let pipe = PipeInstance::new(vec![
         Arc::new(AsyncUppercase {
             bus: bus.clone(),
+            queue: queue.clone(),
             responses: resp.clone(),
             dispatched: Mutex::new(std::collections::HashMap::new()),
         }) as Arc<dyn Component<Next = LabCursor>>,
@@ -336,14 +343,11 @@ fn mutation_store_routes_async_response_back() {
     let opts = DriveOpts::default().with_bus(bus.clone());
 
     drive(&pipe, queue.clone(), vec![lc(":raw", "hello")], opts.clone());
-    // First drive: parked on the response.
     assert_eq!(sink.lock().unwrap().len(), 0);
     assert_eq!(queue.depth(), 1);
 
-    // Wait for the background thread to land its response + dispatch.
-    while bus.ready_count() == 0 && resp.is_empty() {
-        std::thread::yield_now();
-    }
+    // Wait for the spawned thread to land its result + promote.
+    while resp.is_empty() { std::thread::yield_now(); }
     std::thread::sleep(Duration::from_millis(15));
 
     drive(&pipe, queue.clone(), Vec::new(), opts);
@@ -357,8 +361,6 @@ fn mutation_store_routes_async_response_back() {
 
 // --- alternate carrier: prove it's actually generic ------------------
 
-/// A carrier that's not LabCursor at all — a plain integer payload —
-/// exercising the same Component / Node / driver shape with N = i64.
 #[test]
 fn carrier_can_be_a_plain_integer() {
     type N = i64;
@@ -398,70 +400,134 @@ fn carrier_can_be_a_plain_integer() {
     assert_eq!(*got, vec![12, 20]);
 }
 
-// --- new in Phase A: bus subscription flavors ------------------------
+// --- park-as-row: dispatch_park behavior -----------------------------
 
-/// `subscribe_path(prefix, key)` + `dispatch(PathDirty(p))` wakes every
-/// subscribed key whose registered path is a descendant of `p`.
-#[test]
-fn path_prefix_dirty_wakes_all_descendant_subscribers() {
-    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
-
-    // Two parker components, each parks against its own key, but
-    // subscribes that key to a path. We then dispatch PathDirty at the
-    // common prefix.
-    let key_a = bus.fresh_key();
-    let key_b = bus.fresh_key();
-    let key_c = bus.fresh_key();
-    bus.subscribe_path(vec![1, 2, 5], key_a);
-    bus.subscribe_path(vec![1, 2, 9], key_b);
-    bus.subscribe_path(vec![7, 0],    key_c); // not a descendant
-
-    bus.dispatch(Event::PathDirty(vec![1, 2]));
-    assert!( bus.is_ready(key_a));
-    assert!( bus.is_ready(key_b));
-    assert!(!bus.is_ready(key_c));
-    assert_eq!(bus.ready_count(), 2);
-
-    // And running the driver against rows parked on key_a / key_b drains.
-    let pipe = PipeInstance::new(vec![
-        Arc::new(ParkOnKey::new(key_a)) as Arc<dyn Component<Next = LabCursor>>,
-        Arc::new(Collector { sink: sink.clone() }),
-    ]);
-    let opts = DriveOpts::default().with_bus(bus.clone());
-    drive(&pipe, queue.clone(), vec![lc(":raw", "xx")], opts.clone());
-    drive(&pipe, queue.clone(), Vec::new(), opts);
-    assert_eq!(sink.lock().unwrap().len(), 1);
+fn park_row<N: Next>(
+    queue: &dyn QueueBackend<N>,
+    domain: &'static str,
+    key:    NextKey,
+    value:  Arc<N>,
+) {
+    use super::queue::QueueRow;
+    queue.enqueue(QueueRow {
+        id:             0,
+        parent_id:      None,
+        batch_idx:      0,
+        path:           Vec::new(),
+        pipe_hash:      0,
+        instance_id:    0,
+        depth:          0,
+        value,
+        wake:           Wake::Key { domain: domain.into(), key },
+        drive_tick:     0,
+        enqueued_at_ns: 0,
+    });
 }
 
-/// `subscribe_domain('fs', key)` + `dispatch(DomainDirty('fs'))` wakes
-/// every key tagged with that domain. Models react-query's
-/// `invalidateQueries` shape.
+fn fresh_key(seed: u64) -> NextKey {
+    let mut bytes = [0u8; 32];
+    bytes[24..32].copy_from_slice(&seed.to_le_bytes());
+    NextKey(bytes)
+}
+
 #[test]
-fn domain_dirty_wakes_all_domain_subscribers() {
-    let bus = Arc::new(EventBus::new());
-    let k_fs1 = bus.fresh_key();
-    let k_fs2 = bus.fresh_key();
-    let k_git = bus.fresh_key();
-    bus.subscribe_domain("fs",  k_fs1);
-    bus.subscribe_domain("fs",  k_fs2);
-    bus.subscribe_domain("git", k_git);
+fn dispatch_park_promotes_matching_rows() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let k1 = fresh_key(1);
+    let k2 = fresh_key(2);
 
-    bus.dispatch(Event::DomainDirty("fs"));
-    assert!( bus.is_ready(k_fs1));
-    assert!( bus.is_ready(k_fs2));
-    assert!(!bus.is_ready(k_git));
+    for _ in 0..3 { park_row(queue.as_ref(), "fs",  k1, lc(":raw", "f")); }
+    park_row(queue.as_ref(), "fs",  k2, lc(":raw", "f"));
+    park_row(queue.as_ref(), "git", k1, lc(":raw", "g"));
 
-    bus.dispatch(Event::DomainDirty("git"));
-    assert!(bus.is_ready(k_git));
-    assert_eq!(bus.ready_count(), 3);
+    let n = queue.dispatch_park("fs", Some(k1));
+    assert_eq!(n, 3);
+}
+
+#[test]
+fn dispatch_park_domain_only_promotes_all_keys_in_domain() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let k1 = fresh_key(1);
+    let k2 = fresh_key(2);
+
+    for _ in 0..3 { park_row(queue.as_ref(), "fs",  k1, lc(":raw", "f")); }
+    park_row(queue.as_ref(), "fs",  k2, lc(":raw", "f"));
+    park_row(queue.as_ref(), "git", k1, lc(":raw", "g"));
+
+    let n = queue.dispatch_park("fs", None);
+    assert_eq!(n, 4);
+    let m = queue.dispatch_park("git", None);
+    assert_eq!(m, 1);
+}
+
+#[test]
+fn mem_queue_dispatch_park_works() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let k = fresh_key(7);
+    park_row(queue.as_ref(), "alpha", k, lc(":raw", "a"));
+    assert_eq!(queue.depth(), 1);
+
+    let n = queue.dispatch_park("alpha", Some(k));
+    assert_eq!(n, 1);
+
+    // After promotion, the row is runnable.
+    let r = queue.pull_runnable(1);
+    assert!(r.is_some());
+    assert_eq!(queue.depth(), 0);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_dispatch_park_promotes_matching_rows() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
+    let k1 = fresh_key(11);
+    let k2 = fresh_key(12);
+
+    for _ in 0..3 { park_row(queue.as_ref(), "fs",  k1, lc(":raw", "f")); }
+    park_row(queue.as_ref(), "fs",  k2, lc(":raw", "f"));
+    park_row(queue.as_ref(), "git", k1, lc(":raw", "g"));
+
+    assert_eq!(queue.dispatch_park("fs", Some(k1)), 3);
+    assert_eq!(queue.dispatch_park("fs", None),     1); // k2 still parked
+    assert_eq!(queue.dispatch_park("git", None),    1);
+}
+
+/// Park-as-row's RSS guarantee: 10k parked rows in SqliteQueue do not
+/// retain `Arc<N>` after `enqueue`. Bound is generous to avoid flakes;
+/// the point is directional correctness, not tight measurement.
+#[cfg(all(feature = "sqlite", any(target_os = "macos", target_os = "linux")))]
+#[test]
+fn sqlite_park_rss_does_not_grow_significantly() {
+    use sysinfo::{Pid, ProcessesToUpdate, System};
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
+
+    let pid = Pid::from_u32(std::process::id());
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+    let rss_before = sys.process(pid).map(|p| p.memory()).unwrap_or(0);
+
+    const N: u64 = 10_000;
+    for i in 0..N {
+        let k = fresh_key(0xDEADBEEF + i);
+        park_row(queue.as_ref(), "fs", k, lc(":raw", "x"));
+    }
+
+    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+    let rss_after = sys.process(pid).map(|p| p.memory()).unwrap_or(0);
+
+    assert_eq!(queue.depth(), N);
+    let delta = rss_after.saturating_sub(rss_before);
+    let per_row = delta / N;
+    assert!(
+        per_row < 1024,
+        "rss delta {} bytes / {} rows = {} bytes/row exceeded 1024",
+        delta, N, per_row,
+    );
 }
 
 // --- Phase F: SqliteQueue + crash-restart proof ----------------------
 
-/// SqliteQueue is interchangeable with MemQueue at the trait boundary.
-/// Same trim-collector pipe drives identically against both backends.
 #[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_queue_replays_trim_collector_pipe() {
@@ -489,7 +555,6 @@ fn sqlite_queue_replays_trim_collector_pipe() {
     assert_eq!(queue.depth(),  0);
 }
 
-/// Sqlite many-fanout: same shape as MemQueue version.
 #[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_queue_many_fanout_three_per_input() {
@@ -506,10 +571,9 @@ fn sqlite_queue_many_fanout_three_per_input() {
     assert_eq!(sink.lock().unwrap().len(), 6);
 }
 
-/// Sqlite Yield + KeyDirty: parker survives, drains on dispatch.
 #[cfg(feature = "sqlite")]
 #[test]
-fn sqlite_queue_yield_parks_until_key_dirty_dispatched() {
+fn sqlite_queue_yield_parks_until_dispatch_park() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
     let sink  = Arc::new(Mutex::new(Vec::new()));
     let bus   = Arc::new(EventBus::new());
@@ -525,7 +589,7 @@ fn sqlite_queue_yield_parks_until_key_dirty_dispatched() {
     assert_eq!(queue.depth(), 1);
     assert_eq!(sink.lock().unwrap().len(), 0);
 
-    bus.dispatch(Event::KeyDirty(key));
+    queue.dispatch_park(TEST_DOMAIN, Some(key));
 
     drive(&pipe, queue.clone(), Vec::new(), opts);
     assert_eq!(sink.lock().unwrap().len(), 1);
@@ -538,21 +602,15 @@ fn sqlite_queue_yield_parks_until_key_dirty_dispatched() {
 /// 2. Drive a pipe that parks on a key. Pre-populate the mutation
 ///    result in the persistent store under that key (simulating a
 ///    completed mutationFn just before "crash").
-/// 3. Drop everything — Connection released, file closed.
-/// 4. Reopen the same file with a brand-new SqliteQueue +
-///    SqliteMutationStore + EventBus + driver. No in-memory state
-///    survives.
-/// 5. Dispatch KeyDirty for the same key. Drive.
-/// 6. Sink output is identical to a never-crashed run: the parked row
-///    resumed at depth+1 and read the result through the store.
+/// 3. Drop everything. Reopen and redrive.
+/// 4. Rather than re-issuing a bus event, the second process calls
+///    `queue.dispatch_park` directly to promote the persisted parked
+///    row.
 #[cfg(feature = "sqlite")]
 #[test]
 fn crash_restart_resumes_parked_row_with_persisted_mutation() {
     use std::sync::Mutex as StdMutex;
 
-    /// Yields against a deterministic key derived from the cursor.
-    /// On re-render after wake, takes the persisted mutation result
-    /// from the store and emits. Single Component owns both phases.
     struct ParkAndConsume { store: Arc<SqliteMutationStore<LabCursor>> }
     impl Component for ParkAndConsume {
         type Next = LabCursor;
@@ -563,7 +621,7 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
             }
             Node::Yield {
                 value: Arc::new(c.clone()),
-                wake:  Wake::Key(k),
+                wake:  Wake::Key { domain: TEST_DOMAIN.into(), key: k },
             }
         }
     }
@@ -581,7 +639,6 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
     let input = lc(":raw", "alpha");
     let key = deterministic_key(&input);
 
-    // ---- Process 1: park on key, persist mutation result, then crash.
     {
         let conn = Arc::new(StdMutex::new(rusqlite::Connection::open(&db_path).unwrap()));
         let queue: Arc<dyn QueueBackend<LabCursor>> =
@@ -594,24 +651,17 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
                 as Arc<dyn Component<Next = LabCursor>>,
             Arc::new(Collector { sink: Arc::new(Mutex::new(Vec::new())) }),
         ]);
-
         let opts = DriveOpts::default().with_bus(bus.clone());
 
         drive(&pipe, queue.clone(), vec![input.clone()], opts);
-        assert_eq!(queue.depth(), 1, "row parked in sqlite before crash");
+        assert_eq!(queue.depth(), 1);
 
-        // Mutation completes off-thread, persists result, would dispatch
-        // bus event — but the process dies before the dispatch lands.
-        // We persist the result; the dispatch is *intentionally* lost.
         let mut result = (*input).clone();
         result.set(":upper", "ALPHA");
         store.put(key, Arc::new(result));
         assert_eq!(store.len(), 1);
-
-        // Drop everything: simulate process exit.
     }
 
-    // ---- Process 2: reopen file, fresh bus, fresh driver, redrive.
     let collected = Arc::new(Mutex::new(Vec::new()));
     {
         let conn = Arc::new(StdMutex::new(rusqlite::Connection::open(&db_path).unwrap()));
@@ -620,14 +670,11 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
         let store = Arc::new(SqliteMutationStore::<LabCursor>::open(conn.clone()));
         let bus   = Arc::new(EventBus::new());
 
-        // After restart: the parked row is in the queue, the mutation
-        // result is in the store. The runtime needs the bus event
-        // re-dispatched to know the result is ready (events are
-        // ephemeral — by design; the queue+store are the durable state,
-        // the bus is the runtime's view of "what's ready right now").
-        bus.dispatch(Event::KeyDirty(key));
-        assert_eq!(store.len(), 1, "mutation result survived restart");
-        assert_eq!(queue.depth(), 1, "parked row survived restart");
+        // Park-as-row: the queue itself holds the wake state. Promote
+        // the parked row directly through `dispatch_park`.
+        let promoted = queue.dispatch_park(TEST_DOMAIN, Some(key));
+        assert_eq!(promoted, 1, "parked row promoted after restart");
+        assert_eq!(store.len(), 1);
 
         let pipe = PipeInstance::new(vec![
             Arc::new(ParkAndConsume { store: store.clone() })
@@ -637,26 +684,22 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
         let opts = DriveOpts::default().with_bus(bus.clone());
 
         drive(&pipe, queue.clone(), Vec::new(), opts);
-        assert_eq!(queue.depth(), 0, "queue drained after restart");
-        assert_eq!(store.len(),  0, "mutation result consumed");
+        assert_eq!(queue.depth(), 0);
+        assert_eq!(store.len(),  0);
     }
 
     let got = collected.lock().unwrap();
-    assert_eq!(got.len(), 1, "exactly the one input emitted");
+    assert_eq!(got.len(), 1);
     assert_eq!(got[0].get(":raw"),   Some("alpha"));
     assert_eq!(got[0].get(":upper"), Some("ALPHA"));
 }
 
 // --- Phase B: saga-style effect dispatch (Spawner + EffectDispatch) --
 
-/// Component shape used by both Phase B tests. Computes a stable key
-/// from the cursor's content hash, dispatches a mutationFn through
-/// `EffectDispatch` on first render, yields. On re-render after wake,
-/// takes the result from the store and emits. Single Component owns
-/// both phases.
 struct DispatchUppercase {
     fx:         Arc<EffectDispatch<LabCursor>>,
     store:      Arc<MutationStore<LabCursor>>,
+    domain:     &'static str,
     dispatched: Mutex<std::collections::HashSet<[u8; 32]>>,
 }
 impl Component for DispatchUppercase {
@@ -677,10 +720,6 @@ impl Component for DispatchUppercase {
             let raw  = c.get(":raw").unwrap_or("").to_string();
             let seed = c.clone();
             self.fx.dispatch(key, move || {
-                // Small sleep so the parked-row state is observable
-                // before the spawn finishes — otherwise the drive loop
-                // can race the spawn and drain in a single call,
-                // making the test non-deterministic.
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 let mut out = seed;
                 out.set(":upper", raw.to_uppercase());
@@ -688,11 +727,13 @@ impl Component for DispatchUppercase {
             });
         }
 
-        Node::Yield { value: Arc::new(c.clone()), wake: Wake::Key(key) }
+        Node::Yield {
+            value: Arc::new(c.clone()),
+            wake:  Wake::Key { domain: self.domain.into(), key },
+        }
     }
 }
 
-/// Phase B.1: ThreadSpawner — no async runtime in the picture.
 #[test]
 fn effect_dispatch_with_thread_spawner_no_runtime() {
     use std::time::Duration;
@@ -702,15 +743,16 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
     let bus   = Arc::new(EventBus::new());
     let store = Arc::new(MutationStore::<LabCursor>::new());
     let fx    = Arc::new(EffectDispatch::new(
-        bus.clone(),
         store.clone(),
         Arc::new(ThreadSpawner),
-    ));
+        queue.clone(),
+    ).with_domain("phase-b"));
 
     let pipe = PipeInstance::new(vec![
         Arc::new(DispatchUppercase {
             fx: fx.clone(),
             store: store.clone(),
+            domain: "phase-b",
             dispatched: Mutex::new(std::collections::HashSet::new()),
         }) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
@@ -718,9 +760,10 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
     let opts = DriveOpts::default().with_bus(bus.clone());
 
     drive(&pipe, queue.clone(), vec![lc(":raw", "phase-b")], opts.clone());
-    assert_eq!(queue.depth(), 1, "parked on the dispatched mutation");
+    assert_eq!(queue.depth(), 1);
 
-    while bus.ready_count() == 0 { std::thread::yield_now(); }
+    // Wait until the spawned thread has put + dispatched_park.
+    while store.is_empty() { std::thread::yield_now(); }
     std::thread::sleep(Duration::from_millis(5));
 
     drive(&pipe, queue.clone(), Vec::new(), opts);
@@ -729,8 +772,6 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
     assert_eq!(got[0].get(":upper"), Some("PHASE-B"));
 }
 
-/// Phase B.2: TokioSpawner — same Component code, different Spawner.
-/// Proves the Component is runtime-agnostic.
 #[test]
 fn effect_dispatch_with_tokio_spawner_via_runtime() {
     use std::time::Duration;
@@ -747,15 +788,16 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
         let bus   = Arc::new(EventBus::new());
         let store = Arc::new(MutationStore::<LabCursor>::new());
         let fx    = Arc::new(EffectDispatch::new(
-            bus.clone(),
             store.clone(),
             Arc::new(TokioSpawner),
-        ));
+            queue.clone(),
+        ).with_domain("tokio-b"));
 
         let pipe = PipeInstance::new(vec![
             Arc::new(DispatchUppercase {
                 fx: fx.clone(),
                 store: store.clone(),
+                domain: "tokio-b",
                 dispatched: Mutex::new(std::collections::HashSet::new()),
             }) as Arc<dyn Component<Next = LabCursor>>,
             Arc::new(Collector { sink: sink.clone() }),
@@ -765,7 +807,7 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
         drive(&pipe, queue.clone(), vec![lc(":raw", "tokio-b")], opts.clone());
         assert_eq!(queue.depth(), 1);
 
-        while bus.ready_count() == 0 {
+        while store.is_empty() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -779,8 +821,6 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
 
 // --- Phase C: useMemo / Memoize -------------------------------------
 
-/// Counts how many times its inner render fires. Wraps in Memoize and
-/// observes the count to assert cache hit/miss behavior.
 struct CountingTrim {
     counter: Arc<std::sync::atomic::AtomicU64>,
     from:    String,
@@ -825,15 +865,15 @@ fn memoize_hits_cache_on_identical_input() {
         &pipe, queue.clone(),
         vec![
             lc(":raw", "  hi  "),
-            lc(":raw", "  hi  "),  // identical content_hash
-            lc(":raw", "  hi  "),  // identical content_hash
+            lc(":raw", "  hi  "),
+            lc(":raw", "  hi  "),
         ],
         DriveOpts::default(),
     );
 
-    assert_eq!(sink.lock().unwrap().len(), 3, "all three rows reach the collector");
-    assert_eq!(counter.load(Ordering::SeqCst), 1, "inner render fired once; two cache hits");
-    assert_eq!(cache.len(), 1, "one entry");
+    assert_eq!(sink.lock().unwrap().len(), 3);
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+    assert_eq!(cache.len(), 1);
 }
 
 #[test]
@@ -863,12 +903,12 @@ fn memoize_misses_on_different_input() {
     );
 
     assert_eq!(sink.lock().unwrap().len(), 3);
-    assert_eq!(counter.load(Ordering::SeqCst), 3, "all distinct inputs miss the cache");
+    assert_eq!(counter.load(Ordering::SeqCst), 3);
     assert_eq!(cache.len(), 3);
 }
 
 #[test]
-fn domain_dirty_drops_tagged_memo_entries() {
+fn dirty_domain_drops_tagged_memo_entries() {
     use std::sync::atomic::Ordering;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
@@ -896,13 +936,13 @@ fn domain_dirty_drops_tagged_memo_entries() {
     assert_eq!(cache.len(), 1);
 
     drive(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
-    assert_eq!(counter.load(Ordering::SeqCst), 1, "second drive hits cache, no re-render");
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
 
-    bus.dispatch(Event::DomainDirty("fs"));
-    assert_eq!(cache.len(), 0, "fs-tagged entry dropped");
+    bus.dispatch_dirty("fs", None);
+    assert_eq!(cache.len(), 0);
 
     drive(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts);
-    assert_eq!(counter.load(Ordering::SeqCst), 2, "re-rendered after invalidation");
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
     assert_eq!(sink.lock().unwrap().len(), 3);
 }
 
@@ -915,7 +955,6 @@ impl QueryFn<LabCursor> for ListReposQueryFn {
     fn ident(&self) -> &'static str { "list_repos" }
     fn run(&self, input: &LabCursor) -> LabCursor {
         self.counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        // Tiny sleep to let render observe Pending state.
         std::thread::sleep(std::time::Duration::from_millis(5));
         let mut out = input.clone();
         out.set(":repos", "alpha,beta,gamma");
@@ -939,6 +978,7 @@ fn query_runs_query_fn_once_then_serves_from_cache() {
         ListReposQueryFn { counter: counter.clone() },
         cache.clone(),
         bus.clone(),
+        queue.clone(),
         Arc::new(ThreadSpawner),
     );
 
@@ -949,23 +989,22 @@ fn query_runs_query_fn_once_then_serves_from_cache() {
     let opts = DriveOpts::default().with_bus(bus.clone());
 
     drive(&pipe, queue.clone(), vec![lc(":raw", "init")], opts.clone());
-    assert_eq!(queue.depth(), 1, "parked while query pending");
-    while bus.ready_count() == 0 { std::thread::yield_now(); }
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    assert_eq!(queue.depth(), 1);
+    // Wait for queryFn to land its result + promote the parker.
+    std::thread::sleep(std::time::Duration::from_millis(15));
 
     drive(&pipe, queue.clone(), Vec::new(), opts.clone());
     let got_a = sink.lock().unwrap().len();
-    assert_eq!(got_a, 1, "first query produced one row");
-    assert_eq!(counter.load(Ordering::SeqCst), 1, "queryFn fired once");
+    assert_eq!(got_a, 1);
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
 
-    // Re-render with the same input — Success status, returned synchronously.
     drive(&pipe, queue.clone(), vec![lc(":raw", "init")], opts);
-    assert_eq!(sink.lock().unwrap().len(), 2, "second render emits cached data");
-    assert_eq!(counter.load(Ordering::SeqCst), 1, "still only one queryFn run");
+    assert_eq!(sink.lock().unwrap().len(), 2);
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
 }
 
 #[test]
-fn invalidate_queries_via_domain_dirty_re_runs_query_fn() {
+fn invalidate_queries_via_dirty_domain_re_runs_query_fn() {
     use std::sync::atomic::Ordering;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
@@ -980,6 +1019,7 @@ fn invalidate_queries_via_domain_dirty_re_runs_query_fn() {
         ListReposQueryFn { counter: counter.clone() },
         cache.clone(),
         bus.clone(),
+        queue.clone(),
         Arc::new(ThreadSpawner),
     ).with_domain("repos");
 
@@ -990,24 +1030,19 @@ fn invalidate_queries_via_domain_dirty_re_runs_query_fn() {
     let opts = DriveOpts::default().with_bus(bus.clone());
 
     drive(&pipe, queue.clone(), vec![lc(":raw", "x")], opts.clone());
-    while bus.ready_count() == 0 { std::thread::yield_now(); }
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::thread::sleep(std::time::Duration::from_millis(15));
     drive(&pipe, queue.clone(), Vec::new(), opts.clone());
     assert_eq!(counter.load(Ordering::SeqCst), 1);
     assert_eq!(cache.len(), 1);
 
-    bus.dispatch(Event::DomainDirty("repos"));
-    assert_eq!(cache.len(), 0, "invalidateQueries dropped the entry");
+    bus.dispatch_dirty("repos", None);
+    assert_eq!(cache.len(), 0);
 
     drive(&pipe, queue.clone(), vec![lc(":raw", "x")], opts.clone());
-    // Wait until the queryFn's spawned closure has completed
-    // (cache.set_success + bus.dispatch). bus.ready_count() goes back
-    // to 1 after the second queryFn lands its KeyDirty.
-    while bus.ready_count() == 0 { std::thread::yield_now(); }
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::thread::sleep(std::time::Duration::from_millis(15));
     drive(&pipe, queue.clone(), Vec::new(), opts);
 
-    assert_eq!(counter.load(Ordering::SeqCst), 2, "queryFn re-ran after invalidate");
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
     assert_eq!(sink.lock().unwrap().len(), 2);
 }
 
@@ -1024,10 +1059,6 @@ fn tempdir() -> std::path::PathBuf {
 // Three-tier Component proofs: render / render_batch / dispatch
 // =====================================================================
 
-/// Tier 2: `render_batch` override is the only thing implemented, and
-/// it sees the whole batch the driver pulled (homogeneous by
-/// (pipe_hash, depth)). Recorded sizes confirm batching actually
-/// happens, not "n calls of size 1".
 #[test]
 fn render_batch_override_sees_full_homogeneous_batch() {
     use std::sync::atomic::{AtomicUsize, Ordering as AO};
@@ -1070,7 +1101,7 @@ fn render_batch_override_sees_full_homogeneous_batch() {
     }
     let sizes = sizes.lock().unwrap();
     let total: usize = sizes.iter().sum();
-    assert_eq!(total, 7, "every seed reaches render_batch exactly once");
+    assert_eq!(total, 7);
     assert_eq!(calls.load(AO::SeqCst), sizes.len());
     assert!(
         sizes.iter().any(|&n| n >= 2),
@@ -1079,8 +1110,6 @@ fn render_batch_override_sees_full_homogeneous_batch() {
     );
 }
 
-/// Tier 2 + `par_render`: the rxjs-mergeMap analog. Batch fans out
-/// over rayon, results land back in input order.
 #[test]
 fn par_render_runs_over_rayon_in_input_order() {
     struct ParUpper;
@@ -1110,8 +1139,6 @@ fn par_render_runs_over_rayon_in_input_order() {
 
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 32);
-    // Every input lands; the par_render preserves slice order so each
-    // child's :raw → :upper mapping survives independently.
     for c in got.iter() {
         let raw = c.get(":raw").unwrap();
         let up  = c.get(":upper").unwrap();
@@ -1119,23 +1146,16 @@ fn par_render_runs_over_rayon_in_input_order() {
     }
 }
 
-/// Tier 3: `dispatch` override owns the splice. This Component does
-/// switchMap-style cancellation: on each render, dispatch
-/// `KeyDirty(prev_key)` to wake any prior parker, then enqueue a fresh
-/// child with `Wake::Key(new_key)`. The driver's default forget logic
-/// (it forgets keys for pulled rows) lets us count parker wakeups.
-// TODO step-1: redesign around park-as-row. Yield parks at parent.depth
-// so the cancelled-parker-flushes-downstream shape needs a different
-// formulation (the parker is the SwitchMap itself, re-rendering loops).
+/// Tier 3: `dispatch` override owns the splice. switchMap-style
+/// cancellation: each new render promotes the prior parker by domain
+/// + key, then enqueues a fresh parker.
+// TODO step-4: switchMap shape loops under park-as-row; revisit with
+// HybridQueue + cancellation primitive.
 #[test]
 #[ignore]
-fn dispatch_override_controls_parker_enqueue_and_event_dispatch() {
+fn dispatch_override_controls_parker_enqueue_and_promotion() {
     use std::sync::atomic::{AtomicUsize, Ordering as AO};
 
-    /// Tier-3 op: every input enqueues a parker keyed by a new fresh
-    /// key, AND dispatches KeyDirty for the *previous* fresh key it
-    /// minted (so the prior parker becomes runnable). Models
-    /// switchMap cancellation: a new emission supersedes the prior.
     struct SwitchMap {
         bus:        Arc<EventBus>,
         prev_key:   Mutex<Option<NextKey>>,
@@ -1148,17 +1168,17 @@ fn dispatch_override_controls_parker_enqueue_and_event_dispatch() {
             ctx:   &RenderCtx,
             rows:  &[QueueRow<LabCursor>],
             queue: &dyn QueueBackend<LabCursor>,
-            bus:   &EventBus,
+            _bus:  &EventBus,
         ) {
             for row in rows {
                 let new_key = self.bus.fresh_key();
                 if let Some(prev) = self.prev_key.lock().unwrap().replace(new_key) {
-                    bus.dispatch(Event::KeyDirty(prev));
-                    self.wake_count.fetch_add(1, AO::SeqCst);
+                    let n = queue.dispatch_park("switch", Some(prev));
+                    self.wake_count.fetch_add(n as usize, AO::SeqCst);
                 }
                 let suspended = Node::Yield {
                     value: row.value.clone(),
-                    wake:  Wake::Key(new_key),
+                    wake:  Wake::Key { domain: "switch".into(), key: new_key },
                 };
                 splice_into(row, suspended, ctx.depth + 1, ctx.drive_tick, queue);
             }
@@ -1185,20 +1205,15 @@ fn dispatch_override_controls_parker_enqueue_and_event_dispatch() {
         (0..3).map(|i| lc(":raw", &format!("v{}", i))).collect();
     drive(&pipe, queue.clone(), seeds, opts.clone());
 
-    // Expect 2 prior-key wakes (seeds 1 and 2 cancel seeds 0 and 1's
-    // parker). The most-recent parker (from seed 2) is still parked.
+    // 2 prior parkers got promoted (seeds 1 + 2 cancel seeds 0 + 1).
     assert_eq!(waked.load(AO::SeqCst), 2);
 
-    // Drive again: the two cancelled parkers are runnable, flow to
-    // the Collector. The most-recent parker stays parked.
     drive(&pipe, queue.clone(), Vec::new(), opts);
-    assert_eq!(sink.lock().unwrap().len(), 2,
-               "cancelled parkers flushed; latest parker still pending");
+    assert_eq!(sink.lock().unwrap().len(), 2);
     assert_eq!(queue.depth(), 1, "the most-recent parker is still parked");
 }
 
-/// Sanity: an op that overrides nothing is a no-op (drops every input)
-/// — confirms `render`'s terminal `Node::Done` default + chain.
+/// Sanity: an op that overrides nothing is a no-op.
 #[test]
 fn unoverridden_component_drops_every_input() {
     struct NoOp;

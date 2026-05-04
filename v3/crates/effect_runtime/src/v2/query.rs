@@ -31,6 +31,7 @@ use super::event_bus::{BusListener, Event, EventBus};
 use super::next::Next;
 use super::next_key::NextKey;
 use super::node::Node;
+use super::queue::QueueBackend;
 use super::wake::Wake;
 
 pub enum QueryStatus<N: Next> {
@@ -106,8 +107,8 @@ impl<N: Next> Default for QueryCache<N> {
 
 impl<N: Next> BusListener for QueryCache<N> {
     fn on_event(&self, ev: &Event) {
-        if let Event::DomainDirty(d) = ev {
-            self.invalidate_domain(d);
+        if let Event::Dirty { domain, key: None } = ev {
+            self.invalidate_domain(domain);
         }
         // PHASE E (deferred): on Success → Idle transition the rows
         // downstream that already consumed the prior Success(data)
@@ -122,10 +123,16 @@ pub fn attach_query_cache_to_bus<N: Next>(cache: Arc<QueryCache<N>>, bus: &Event
     bus.add_listener(cache);
 }
 
+/// Domain a Query parks under. Static; stitched into every
+/// `Wake::Key { domain, ... }` the Query mints. Used by the queue's
+/// `dispatch_park` to promote parked rows when a query result lands.
+const QUERY_DOMAIN: &str = "query";
+
 pub struct Query<N: Next, F: QueryFn<N>> {
     fn_:     Arc<F>,
     cache:   Arc<QueryCache<N>>,
     bus:     Arc<EventBus>,
+    queue:   Arc<dyn QueueBackend<N>>,
     spawner: Arc<dyn Spawner>,
     domains: Vec<&'static str>,
 }
@@ -135,9 +142,10 @@ impl<N: Next, F: QueryFn<N>> Query<N, F> {
         fn_:     F,
         cache:   Arc<QueryCache<N>>,
         bus:     Arc<EventBus>,
+        queue:   Arc<dyn QueueBackend<N>>,
         spawner: Arc<dyn Spawner>,
     ) -> Self {
-        Self { fn_: Arc::new(fn_), cache, bus, spawner, domains: Vec::new() }
+        Self { fn_: Arc::new(fn_), cache, bus, queue, spawner, domains: Vec::new() }
     }
 
     pub fn with_domain(mut self, d: &'static str) -> Self {
@@ -166,24 +174,26 @@ impl<N: Next + Clone, F: QueryFn<N>> Component for Query<N, F> {
 
             QueryStatus::Pending => Node::Yield {
                 value: Arc::new(c.clone()),
-                wake:  Wake::Key(key),
+                wake:  Wake::Key { domain: QUERY_DOMAIN.into(), key },
             },
 
             QueryStatus::Idle => {
                 self.cache.set_pending(key, self.domains.clone());
                 let fn_     = self.fn_.clone();
                 let cache   = self.cache.clone();
-                let bus     = self.bus.clone();
+                let queue   = self.queue.clone();
                 let domains = self.domains.clone();
                 let input   = c.clone();
+                let _bus    = self.bus.clone(); // reserved for future telemetry
+                let _ = _bus;
                 self.spawner.spawn(Box::new(move || {
                     let result = fn_.run(&input);
                     cache.set_success(key, Arc::new(result), domains);
-                    bus.dispatch(Event::KeyDirty(key));
+                    queue.dispatch_park(QUERY_DOMAIN, Some(key));
                 }));
                 Node::Yield {
                     value: Arc::new(c.clone()),
-                    wake:  Wake::Key(key),
+                    wake:  Wake::Key { domain: QUERY_DOMAIN.into(), key },
                 }
             }
 

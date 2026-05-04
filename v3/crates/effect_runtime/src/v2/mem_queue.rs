@@ -1,7 +1,9 @@
 //! In-RAM `QueueBackend<N>` impl. Single mutex on a struct of buckets.
 //!
-//! Lab-quality: one big lock, no sharding. Fine for tests.
+//! Lab-quality: one big lock, no sharding. Park subscriptions live in
+//! the queue itself, indexed by `(domain, key)`.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::next::Next;
 use super::next_key::NextKey;
 use super::queue::{
-    DriveTick, QueueBackend, QueueId, QueueRow, ReadyKeys,
+    DriveTick, QueueBackend, QueueId, QueueRow,
 };
 use super::wake::Wake;
 
@@ -21,7 +23,7 @@ pub struct MemQueue<N: Next> {
 struct State<N: Next> {
     runnable:    VecDeque<QueueRow<N>>,
     tick_parked: Vec<QueueRow<N>>,
-    by_key:      HashMap<NextKey, Vec<QueueRow<N>>>,
+    by_key:      HashMap<(Cow<'static, str>, NextKey), Vec<QueueRow<N>>>,
     depth:       u64,
 }
 
@@ -54,8 +56,8 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         match &row.wake {
             Wake::Immediate    => s.runnable.push_back(row),
             Wake::Tick { .. }  => s.tick_parked.push(row),
-            Wake::Key(k)       => {
-                let k = *k;
+            Wake::Key { domain, key } => {
+                let k = (domain.clone(), *key);
                 s.by_key.entry(k).or_default().push(row);
             }
         }
@@ -64,7 +66,6 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
 
     fn pull_runnable(
         &self,
-        ready_keys:  ReadyKeys<'_>,
         global_tick: DriveTick,
     ) -> Option<QueueRow<N>> {
         let mut s = self.state.lock().unwrap();
@@ -83,16 +84,6 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
             return Some(row);
         }
 
-        for k in ready_keys {
-            if let Some(bucket) = s.by_key.get_mut(k) {
-                if let Some(row) = bucket.pop() {
-                    if bucket.is_empty() { s.by_key.remove(k); }
-                    s.depth -= 1;
-                    return Some(row);
-                }
-            }
-        }
-
         None
     }
 
@@ -100,9 +91,31 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         self.state.lock().unwrap().depth
     }
 
+    fn dispatch_park(&self, domain: &str, key: Option<NextKey>) -> u64 {
+        let mut s = self.state.lock().unwrap();
+        // Collect matching keys to drain — by_key is keyed by
+        // (Cow<str>, NextKey) so domain-only sweeps walk the whole map.
+        let matching: Vec<(Cow<'static, str>, NextKey)> = s.by_key.keys()
+            .filter(|(d, k)| {
+                d.as_ref() == domain && key.map_or(true, |want| *k == want)
+            })
+            .cloned()
+            .collect();
+        let mut promoted = 0u64;
+        for k in matching {
+            if let Some(rows) = s.by_key.remove(&k) {
+                for mut row in rows {
+                    row.wake = Wake::Immediate;
+                    s.runnable.push_back(row);
+                    promoted += 1;
+                }
+            }
+        }
+        promoted
+    }
+
     fn pull_runnable_batch(
         &self,
-        ready_keys:  ReadyKeys<'_>,
         global_tick: DriveTick,
         n:           usize,
     ) -> Vec<QueueRow<N>> {
@@ -128,11 +141,9 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
             return out;
         }
 
-        // Cold paths: tick-parked + by_key buckets are not naturally
-        // homogeneous. Drop the lock and fall through to the single-
-        // row pull which already handles them.
+        // Cold path: tick-parked. Fall through to single-row pull.
         drop(s);
-        match self.pull_runnable(ready_keys, global_tick) {
+        match self.pull_runnable(global_tick) {
             Some(r) => vec![r],
             None    => Vec::new(),
         }

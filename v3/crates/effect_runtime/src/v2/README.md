@@ -1,10 +1,23 @@
 # `effect_runtime::v2` — pull-based react-shaped runtime
 
+> **Park-as-row redesign (current).** Wake subscriptions live on rows
+> in the queue, not in the bus. `Wake::Key { domain, key }` carries
+> both fields; producers call `queue.dispatch_park(domain,
+> Some(key))` to flip every matching parked row to `Wake::Immediate`
+> via one indexed UPDATE. `EventBus` retains only cache fan-out
+> (`Event::Dirty { domain, key }`); the variants `KeyDirty`,
+> `PathDirty`, `DomainDirty`, plus `subscribe_path` /
+> `subscribe_domain` / `is_ready` / `ready_count` no longer exist.
+> Some example snippets below still reference the old API for
+> historical context. The live API shape is in `tests.rs` +
+> `event_bus.rs` + `queue.rs`.
+
 A queue-backed runtime for **streaming, content-addressed, durable** value pipelines.
 Generic over the carrier (the value flowing through). Components return
-descriptions of what should happen next; the driver executes. Wake and
-cache-invalidation share one mechanism (`EventBus`). Sqlite-backed for
-redux-persist semantics across process restart.
+descriptions of what should happen next; the driver executes. Park
+subscriptions live in the queue (indexed by `(domain, key)`); cache
+invalidation flows through `EventBus`. Sqlite-backed for redux-persist
+semantics across process restart.
 
 The vocabulary deliberately matches React / Redux / react-query / redux-saga / RxJS
 since the substrate maps cleanly onto each idiom.
