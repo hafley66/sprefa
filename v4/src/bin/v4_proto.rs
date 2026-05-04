@@ -48,11 +48,12 @@ async fn index_one(h: &Hooks, path: PathBuf) {
 
 async fn dispatch(store: &Arc<dyn Store>, eff_tx: &mpsc::UnboundedSender<Effect>, action: Action) {
     let hooks = Hooks {
-        store:   store.clone(),
-        effects: eff_tx.clone(),
-        gen:     action.gen,
-        lineage: new_lineage(),
-        tele:    Telemetry::new(),
+        store:    store.clone(),
+        effects:  eff_tx.clone(),
+        gen:      action.gen,
+        lineage:  new_lineage(),
+        tele:     Telemetry::new(),
+        interner: Interner::new(),
     };
     match action.kind {
         ActionKind::Run { root } => {
@@ -98,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let h = Hooks {
             store: store.clone(), effects: eff_tx.clone(), gen: 0, lineage: 0,
-            tele: Telemetry::new(),
+            tele: Telemetry::new(), interner: Interner::new(),
         };
         let chain: Vec<Arc<dyn Op>> = vec![
             Arc::new(Select { name: "unused_fns".into() }),
@@ -109,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let h = Hooks {
             store: store.clone(), effects: eff_tx.clone(), gen: 0, lineage: 0,
-            tele: Telemetry::new(),
+            tele: Telemetry::new(), interner: Interner::new(),
         };
         let chain: Vec<Arc<dyn Op>> = vec![
             Arc::new(Select { name: "imports_used_2plus".into() }),

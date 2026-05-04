@@ -57,10 +57,57 @@ impl Cursor {
             Err(i) => self.terms.insert(i, (Arc::<str>::from(name), v)),
         }
     }
+    /// Set with a pre-built Arc<str> value. Use this with Interner so
+    /// repeated values (e.g. file paths) share heap.
+    pub fn set_arc(&mut self, name: &str, value: Arc<str>) {
+        match self.terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
+            Ok(i)  => self.terms[i].1 = value,
+            Err(i) => self.terms.insert(i, (Arc::<str>::from(name), value)),
+        }
+    }
     pub fn get(&self, name: &str) -> Option<&str> {
         self.terms.binary_search_by(|(n, _)| (**n).cmp(name))
             .ok().map(|i| &*self.terms[i].1)
     }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 2b  Interner — share Arc<str> heap for repeated values
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//
+// The matcher emits a Cursor per match. File path strings repeat
+// thousands of times across matches (avg ~80 matches per file in the
+// $F($$$) workload). Without interning, each cursor allocates a fresh
+// Arc<str> for the path. With interning, every cursor for the same
+// file holds the SAME Arc<str> — an 8-byte pointer + atomic refcount
+// bump — so the per-row heap cost drops from ~50 bytes (path content)
+// to 8 bytes (pointer).
+//
+// Cost: HashMap lookup per intern call (one per emitted cursor for
+// the path column). Amortized fast because hits dominate; misses
+// happen only on first sighting.
+
+#[derive(Default)]
+pub struct Interner {
+    table: std::sync::RwLock<HashMap<Arc<str>, Arc<str>>>,
+}
+
+impl Interner {
+    pub fn new() -> Arc<Self> { Arc::new(Self::default()) }
+    /// Return the canonical Arc<str> for `s`. Repeated calls with
+    /// equal content return the same Arc clone.
+    pub fn intern(&self, s: &str) -> Arc<str> {
+        if let Some(v) = self.table.read().unwrap().get(s) {
+            return v.clone();
+        }
+        let mut w = self.table.write().unwrap();
+        if let Some(v) = w.get(s) { return v.clone(); }
+        let arc: Arc<str> = Arc::from(s);
+        w.insert(arc.clone(), arc.clone());
+        arc
+    }
+    pub fn len(&self) -> usize { self.table.read().unwrap().len() }
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
 }
 
 // ▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░
@@ -526,11 +573,12 @@ impl Drop for DdStore {
 
 #[derive(Clone)]
 pub struct Hooks {
-    pub store:   Arc<dyn Store>,
-    pub effects: mpsc::UnboundedSender<Effect>,
-    pub gen:     Gen,
-    pub lineage: LineageId,
-    pub tele:    Telemetry,
+    pub store:    Arc<dyn Store>,
+    pub effects:  mpsc::UnboundedSender<Effect>,
+    pub gen:      Gen,
+    pub lineage:  LineageId,
+    pub tele:     Telemetry,
+    pub interner: Arc<Interner>,
 }
 
 impl Hooks {
@@ -538,6 +586,7 @@ impl Hooks {
     pub fn use_dispatch_effect(&self, e: Effect) { let _ = self.effects.send(e); }
     pub fn use_gen(&self) -> Gen { self.gen }
     pub fn use_tele(&self) -> &Telemetry { &self.tele }
+    pub fn use_interner(&self) -> &Arc<Interner> { &self.interner }
 }
 
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
@@ -866,6 +915,7 @@ impl Op for Fs {
     {
         let me = self.clone();
         let tele = h.tele.clone();
+        let interner = h.interner.clone();
         let batch = me.batch;
         let (tx, rx) = mpsc::channel::<Vec<Cursor>>(me.cap);
         tokio::task::spawn_blocking(move || {
@@ -877,7 +927,7 @@ impl Op for Fs {
                 let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
                 if !me.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
                 let mut c = Cursor::default();
-                c.set("FS", p.display().to_string());
+                c.set_arc("FS", interner.intern(&p.display().to_string()));
                 buf.push(c);
                 if buf.len() >= batch {
                     let span = tele.start("v4::Fs", None);
@@ -1089,7 +1139,7 @@ impl Op for MultiAstNm {
                                 for nm in grep.root().find_all(&**pat) {
                                     let r = nm.range();
                                     let mut child = c.clone();
-                                    child.set("PAT", &**label);
+                                    child.set_arc("PAT", label.clone());
                                     child.set("LO",  (r.start as u64).to_string());
                                     child.set("HI",  (r.end   as u64).to_string());
                                     out.push(child);

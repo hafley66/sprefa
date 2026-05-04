@@ -157,12 +157,14 @@ async fn main() {
 
         let tele = Telemetry::new();
         attach_tele(tele.clone());
+        let interner = Interner::new();
         let hooks = Hooks {
-            store:   store.clone(),
-            effects: eff_tx.clone(),
-            gen:     trial as u64,
-            lineage: new_lineage(),
-            tele:    tele.clone(),
+            store:    store.clone(),
+            effects:  eff_tx.clone(),
+            gen:      trial as u64,
+            lineage:  new_lineage(),
+            tele:     tele.clone(),
+            interner: interner.clone(),
         };
 
         // Build the real pipeline. Source is SinglePath when --file is
