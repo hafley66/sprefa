@@ -17,11 +17,12 @@ moka              = { version = "0.12", features = ["future"] }
 rxrust            = { version = "1.0.0-rc.4", optional = true }
 tracing           = "0.1"
 blake3            = "1"
-rusqlite          = { version = "0.32", features = ["bundled"] }
+rusqlite          = { version = "0.32", features = ["bundled"], optional = true }
 
 [features]
-default = []
+default = ["sqlite"]
 rx      = ["dep:rxrust"]
+sqlite  = ["dep:rusqlite"]
 
 # Intentionally absent: no jemalloc pin, no serde. tracing is a
 # zero-cost facade when no subscriber is installed; we keep it on by

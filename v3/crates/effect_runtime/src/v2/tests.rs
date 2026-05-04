@@ -459,6 +459,7 @@ fn domain_dirty_wakes_all_domain_subscribers() {
 
 /// SqliteQueue is interchangeable with MemQueue at the trait boundary.
 /// Same trim-collector pipe drives identically against both backends.
+#[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_queue_replays_trim_collector_pipe() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
@@ -486,6 +487,7 @@ fn sqlite_queue_replays_trim_collector_pipe() {
 }
 
 /// Sqlite many-fanout: same shape as MemQueue version.
+#[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_queue_many_fanout_three_per_input() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
@@ -502,6 +504,7 @@ fn sqlite_queue_many_fanout_three_per_input() {
 }
 
 /// Sqlite Suspense + KeyDirty: parker survives, drains on dispatch.
+#[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_queue_suspense_parks_until_key_dirty_dispatched() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
@@ -539,6 +542,7 @@ fn sqlite_queue_suspense_parks_until_key_dirty_dispatched() {
 /// 5. Dispatch KeyDirty for the same key. Drive.
 /// 6. Sink output is identical to a never-crashed run: the parked row
 ///    resumed at pc+1 and read the result through the store.
+#[cfg(feature = "sqlite")]
 #[test]
 fn crash_restart_resumes_parked_row_with_persisted_mutation() {
     use std::sync::Mutex as StdMutex;

@@ -14,11 +14,13 @@ pub mod next_key;
 pub mod event_bus;
 pub mod wake;
 pub mod mutation_store;
+#[cfg(feature = "sqlite")]
 pub mod sqlite_mutation_store;
 pub mod codec;
 pub mod effect_dispatch;
 pub mod memoize;
 pub mod query;
+#[cfg(feature = "sqlite")]
 pub mod sqlite_queue;
 pub mod node;
 pub mod component;
@@ -32,12 +34,14 @@ pub use next_key::{compute_key, NextKey};
 pub use event_bus::{Event, EventBus};
 pub use wake::Wake;
 pub use mutation_store::MutationStore;
+#[cfg(feature = "sqlite")]
 pub use sqlite_mutation_store::SqliteMutationStore;
 pub use codec::Codec;
 pub use effect_dispatch::{EffectDispatch, Spawner, ThreadSpawner, TokioSpawner};
 pub use event_bus::BusListener;
 pub use memoize::{attach_cache_to_bus, MemoCache, MemoKey, Memoize};
 pub use query::{attach_query_cache_to_bus, Query, QueryCache, QueryFn, QueryStatus};
+#[cfg(feature = "sqlite")]
 pub use sqlite_queue::SqliteQueue;
 pub use node::Node;
 pub use component::{Component, DynComponent, RenderCtx};
