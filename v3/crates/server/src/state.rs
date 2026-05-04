@@ -22,6 +22,7 @@ use tokio::sync::{Mutex, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use effect_runtime::batchers::BoundedWorkSteal;
+use effect_runtime::GenCounter;
 use pipeline::effects::{ast_parse, AstParseEffect};
 use pipeline::registry::Registry;
 use pipeline::{spawn_fs_watcher, spawn_invalidator, ChangeSubject, FsWatcherGuard, OpCache};
@@ -73,6 +74,14 @@ pub struct ServerState {
     /// `server.json` so clients (sprefa-lsp / sprefa-run) can't observe
     /// the locator before the socket is connectable.
     pub ready: Arc<Notify>,
+
+    /// Process-wide monotonic round counter. Bumped at every input
+    /// event that re-triggers pipeline evaluation (LSP did_change /
+    /// did_open / did_save, fs-watcher events, manual reload). Read by
+    /// op closures via `RtCtx::current_gen` to correlate effect rows
+    /// back to the round that produced them. See `effect_runtime/src/
+    /// generation.rs` and human-goals.md item 13.
+    pub gen: Arc<GenCounter>,
 }
 
 impl ServerState {
@@ -100,6 +109,7 @@ impl ServerState {
             drain,
             info_path: opts.info_path.clone().unwrap_or_else(default_info_path),
             ready: Arc::new(Notify::new()),
+            gen: Arc::new(GenCounter::new()),
         }))
     }
 

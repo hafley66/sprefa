@@ -182,6 +182,7 @@ pub struct RtCtx {
     stores: Arc<ArcSwap<Stores>>,
     root_cancel: CancellationToken,
     telemetry: telemetry::Telemetry,
+    gen: Arc<generation::GenCounter>,
 }
 
 impl Default for RtCtx {
@@ -292,6 +293,23 @@ impl RtCtx {
     /// Access the telemetry sink for this ctx.
     pub fn telemetry(&self) -> &telemetry::Telemetry { &self.telemetry }
 
+    /// Sample the current round. Cheap (atomic acquire load). Op
+    /// closures and batchers call this at staged-effect enqueue time so
+    /// downstream actors can correlate effect rows back to the round
+    /// that produced them.
+    pub fn current_gen(&self) -> generation::Generation { self.gen.current() }
+
+    /// Advance to the next round. Called only by the seed driver
+    /// (cold-start, manual reload) and the LSP backend (did_change /
+    /// did_open / did_save / fs-watcher events). Op closures must NOT
+    /// bump.
+    pub fn bump_gen(&self) -> generation::Generation { self.gen.bump() }
+
+    /// Hand out a clone of the underlying counter. The LSP daemon
+    /// shares one `Arc<GenCounter>` across every per-seed RtCtx build
+    /// so re-runs across `did_change` see monotonic gen.
+    pub fn gen_counter(&self) -> Arc<generation::GenCounter> { self.gen.clone() }
+
     /// Fetch a store registered at builder time (or via `bind_store`).
     /// Returns `None` if no store of type `S` was registered. Callers
     /// that require the store should `.expect()` with a message naming
@@ -321,6 +339,7 @@ impl RtCtx {
 pub struct RtCtxBuilder {
     registry: Registry,
     stores: Stores,
+    gen: Option<Arc<generation::GenCounter>>,
 }
 
 impl Default for RtCtxBuilder {
@@ -331,7 +350,16 @@ impl Default for RtCtxBuilder {
 
 impl RtCtxBuilder {
     pub fn new() -> Self {
-        Self { registry: HashMap::new(), stores: HashMap::new() }
+        Self { registry: HashMap::new(), stores: HashMap::new(), gen: None }
+    }
+
+    /// Override the gen counter. The LSP daemon uses this to share one
+    /// counter across every per-seed RtCtx build. Without it, each
+    /// build gets a fresh counter that starts at 0 — fine for one-shot
+    /// CLI invocations.
+    pub fn with_gen_counter(mut self, gen: Arc<generation::GenCounter>) -> Self {
+        self.gen = Some(gen);
+        self
     }
 
     /// Register a state store. Lookup-by-type via `cx.store::<S>()`.
@@ -387,14 +415,17 @@ impl RtCtxBuilder {
             stores: Arc::new(ArcSwap::from_pointee(self.stores)),
             root_cancel: CancellationToken::new(),
             telemetry: telemetry::Telemetry::new(),
+            gen: self.gen.unwrap_or_else(|| Arc::new(generation::GenCounter::new())),
         }
     }
 }
 
 pub mod batchers;
+pub mod generation;
 pub mod subjects;
 pub mod telemetry;
 
+pub use generation::{GenCounter, Generation};
 pub use subjects::{
     Lineage, SubjectKey, SubjectKind, SubjectRegistry, Unsubscribed, Yield,
     YieldBatcher,

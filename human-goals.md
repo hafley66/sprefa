@@ -123,12 +123,263 @@ And language:
 -- This is a comment
 -- This is rule op in its decl form.
 -- Rules affect a global symbol table in `RtCtx.rules[symbol] = RuleOp(...)` as part of their contract as an op.
--- operator accept 
 -- `rule(:symbol, ...maybeUnboundTerms) BRACE_BODY`
 -- calling it is just without body and all bound, querying it is having any unbounds + bounds, sql semijoin etc. (select + where)
-
-rule(:a, X?, Y?) {  
-  
+```
+rule(:a, X?, Y?) {
+  print(X, Y);
 }
 
-a()
+fs(some-file.json) > json({ ${re((devD|optionalD|peerD|d)ependencies) > $DEPS }: {
+  ${PACKAGE}: ${VERSION}
+} }) > a(PACKAGE, VERSION);
+```
+
+
+
+### My mindset sometimez
+how can i make all ops define their pipe or pipe merge map and effects in a way that is composable from outside, rtk has slices define init state and
+  events, then redux ensures they are good to go. the redux store here tho is the lowering graph, not some central registyr of paths. the paths of this
+  registry are what sprfpaths are of the runtime states, basically we create slices on the fly, bc a slice in rtk is actually just a combo of events and
+  state ala subject/behavior subject, and a scan (thats all of redux). i wanted rxjs composition bc its modal of monadic composition is literal SSS+
+  tier, you can emuklate any other things wit hit (redux toolkit, xstate, react-router, react itself, signals, react-query, etc.) with it bc extremely
+  strong monadic streaming primitives allow this code min maxing of time control and small ness. also, by playing cosnt/let golf, we worry less about
+  that particular problem, so i was tyrying to bring that energy over to this project. effect runtime was simply sagas, op defines its own effects where
+  there is actual things, they can be anything, basically stateless http handlers lmfao, i wanted routed coroutines, which is what http is, anythign
+  iwth dispatch, anything with path dispatch, aka method calls, idk, antibiotics got me high as hell damn
+
+
+I take inspiration from sql (no for or while loop ever), prolog ("bidir" with our concept of terms that are bound or unbound and all terms), no syntax for special flow, delcarative forward language of piping.
+
+all exprs, no statements, all values 1 type, its pipes and cursors and operators. calling ops produces pipe in sprf, its array to array over time, gives both axis of space and time batching.
+
+
+### IDEAS:
+1. being able to perceive own lsp/edtior ui events as a tree/html dom lmfao, idea is that _is_ a data source
+2. being able to make dynamic agent harness hook calls based on message content
+
+
+
+
+
+
+Language V4 Targets
+```sprf
+-- This is comment
+-- This is a rule, its lazy and does not run.
+-- Rule is an operator that takes a :symbol/"string"/str(string)
+rule(:one) {
+  sh(echo "Hello World");
+}
+
+one(); // Should see stdout => "Hello World"
+```
+You can have rules take _unbound terms_:
+```sprf
+rule(:two, X?, Y?) {
+  sh(echo $((\X + \Y)));
+}
+
+two("2", "3"); // stdout of 5
+```
+
+There are other operators, such as `repo` (repository), `rev` (revision/branch/tag/sha), and `fs` (filesystem/folders/files).
+These _query_ from configured sources. Lets query sprf itself. 
+`repo()` without args will crawl upwards from the sprf file's path, looking for `.git` folder.
+`rev()` without args will match current working tree on disk, aka `HEAD`.
+`fs()` will enumerate every file in that repo's rev's unignored files.
+If you don't want to query every file for your task, you can filter that query by using `re(your_regex_here)` (regex operator), or for files, `glob(your_globbish_pattern)` is a nicer alternative.
+
+```sprf
+rule(:query_for_rust_files) {
+  repo() 
+  > rev() 
+  > fs()
+  > glob(**/*.rs)
+  > log(:abc)
+}
+
+query_for_rust_files() > sh(echo ${&.content}); -- Rules have outputs, log will stdout with abc prefix
+query_for_rust_files() > sh(echo ${&.content}); -- The rule will not run again, log is not reached again, and we simply replay the rule bc its inputs are same.
+-- ...xyz/abc.rs
+```
+
+If you want to open those bytes and read them for parsing, you can pipe into `read()`.
+You can query and _capture bound terms_ using the json operator's DSL:
+```sprf
+rule(:read_json_for_packages) {
+  repo()
+  > rev() 
+  > fs()
+  > glob(**/*.json)
+  > read()
+  > json({
+    ${re((?<TYPE>(d|devD|peerD|optionalD)endencies))}: {
+      ${PACKAGE}: ${VERSION}
+    }
+  })
+  > print(:found, TYPE, PACKAGE, VERSION)
+}
+
+read_json_for_packages();
+```
+
+This will print all combos of these variables.
+
+You may notice that the common ${} being used here.
+
+Any operator defined in sprf, is allowed to defined its own DSL in tree sitter.
+`json` accepts a first arg that accepts these "holes".
+
+In general, a dsl must accept ${sprf} holes, this is akin to a string template function in JS:
+```js
+const call = styled`${something} {
+  //...
+}
+`
+```
+
+The idea in rust lowering, is that an operator is called with args of Vec<DSLItem>, DSLItem is an enum of either text from the sublanguage, and the value after it is the sprf value of whats in the hole.
+
+json will read the file, and walk this query syntax. 
+
+We are able to "capture" with ALL_CAPS, in the re() operator, the capture group is in all CAPS. This is part of regex dsl semantics. It is regex, but if you want to capture the whole key, you use this raw format.
+
+The point of sprf is this kind of dsl ability to filter or capture some value in a file. 
+
+`json` covers `yaml` and `toml` files as well, it converts the json syntax into toml/yaml getters.
+
+
+JSON and its targets are "tree" like. We also have 2 ast-grep operators, one with a pattern dsl that extends ast-grep's own, and ast_yaml that is dsl taking full config format.
+
+Rules can join with other rules:
+```sprf
+rule(:read_json_for_packages) {
+  repo()
+  > rev() 
+  > fs()
+  > glob(**/*.json)
+  > read()
+  > json({
+    ${re((?<TYPE>(d|devD|peerD|optionalD)endencies))}: {
+      ${PACKAGE}: ${VERSION}
+    }
+  })
+}
+
+read_json_for_packages()
+  > eq(TYPE, "dependencies") -- TYPE comes from the rule invoke
+  > print(:deps, PACKAGE, VERSION);
+```
+
+
+In sprf, every op call produces an op _pipe_. All pipes deal with the current value of a `Cursor`, and a set of captured TERMS (variables/scope) on the `Cursor`.
+Every operator can either filter or produce more cursors. 
+Every pipeline is allowed to optimize how they want, but they receive the set of all cursors as inputs and outputs.
+
+The idea is that you can index every string you want in N repos, or dynamically crawl your repos from a main tag of a repo that connects them all. In sprf, you can sit above all your git repos and query them, from 1 repo's main-rev, it syncs overtime, and at start, you can program any parsing rules to say "i have a repo + rev being stored in this pattern". This can dynamically call other rules that we can query in sqlite after the first pass. From there on, there will be caching. In pure ci mode, there is no sqlite, just in memory.
+
+What if you have different api transport formats and how those specs get consumed/synced across the land, and the idea is that we want them to stay up to date from main to main etc. or from some other path thru the tree of trees. 
+
+The OG idea of this repo came from a day dream:
+Everything is tree-able. Meaning you can show it as ...html.
+
+```html
+<sprf-server-config>
+  <repo-orgs>
+  </repo-orgs>
+  <repos>
+  </repos>
+</sprf-server-config>
+
+<git>
+  <repo name="abc"             path="git://abc">
+    <!--1st rev-->
+    <rev name="main"           path="git://abc/@main">
+      <fs>
+        <folder name="src"     path="git://abc/@main/src">
+          <file name="lib.rs"  path="git://abc/@main/src/lib.rs">
+            <read              path="git://abc/@main/src/lib.rs/$/">
+              <rust-ast-as-html-root .../>
+              <rust-type-graph-projected-as-tree.../>
+              <rust-call-tree-statically-analzyed .../>
+            </read>
+          </file>
+        </folder>
+      </fs>
+    </rev>
+    <!--2nd rev-->
+    <rev name="next"           path="git://abc/@next" .../>
+  </repo>
+
+  <!--2nd repo-->
+  <repo name="xyz"                              path="git://xyz">
+    <rev name="main"                            path="git://xyz/@main">
+      <fs>
+        <folder name="src"                      path="git://xyz/@main/src">
+          <file name="main.rs"                  path="git://xyz/@main/src/main.rs">
+            <read                               path="git://xyz/@main/src/main.rs/$">
+              <cst-rust-file-root-idk-lol       path="git://xyz/@main/src/main.rs/$/rs_module_scope">
+                <cst-rust-file-let-idk-lol      path="git://xyz/@main/src/main.rs/$/rs_module_scope/rs_let">
+                  <cst-rule-file-let-RHS        path="git://xyz/@main/src/main.rs/$/rs_module_scope/rs_let/rs_let_RHS".../>
+                </cst-rust-file-let-idk-lol>
+              </cst-rust-file-root-idk-lol>
+            </read>
+          </file>
+        </folder>
+        <file name="package.json"               path="git://xyz/@main/package.json">
+          <read>
+            <json-object name="$"               path="git://xyz/@main/package.json/$">
+              <json-key name="dependencies"     path="git://xyz/@main/package.json/$/dependencies">
+                <json-object name="$"           path="git://xyz/@main/package.json/$/dependencies/$">
+                  <json-key name="@types/react" path="git://xyz/@main/package.json/$/dependencies/$/@types+react/">
+                    <json-string name="1.2.3"   path="git://xyz/@main/package.json/$/dependencies/$/@types+react/1.2.3"/>
+                  </json-key>
+                </json-object>
+              </json-key>
+              <json-key name="devDependencies">
+                <!--same deal-->
+              </json-key>
+          </json-object>
+          </read>
+        </file>
+      </fs>
+    </rev>
+  </repo>
+</git>
+
+<lsp>
+  
+</lsp>
+<any-thing-else-tree-able-which-is-most-things>
+</...>
+
+<sprf-rules>
+  <sprf-file name="preamble.sprf">
+    <rule name="one" arg="" arg="" arg="">
+      <op..>
+      </op..>
+    </rule>
+  </sprf-file>
+  <sprf-file name="user.sprf">
+  </sprf-file>
+</sprf-rules>
+```
+
+Hopefully this explains why the languge looks like a bunch of direct descendent (>) between all these "ops".
+Under this lens, ops are kinda just specific nodes to read this.
+
+Which means you can now
+
+```sprf
+
+```
+
+
+Currently, there are 
+string/symbol types in sprf, and we have cursor.value is string.
+arithmetic will get side lined into sh() interp for now to borrow it and stress test bash.
+
+Bash is not a tree/table/list producing operator, it has no tree, it has a stream of stdout and stderr that are always dynamic...which i guess are line regex'able, but per command or per stdout, hmmmmm nvm im dumb. 
+
+Anytime you ask is there info, then render how you would show that info in a ui with html, and it will reveal its own structure to it. it just sucks bc the html is just xml so its all just noisy xml lmfao.

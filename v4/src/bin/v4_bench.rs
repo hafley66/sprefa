@@ -76,8 +76,10 @@ async fn main() {
     //   --rules N: define N copies of the GroupCount rule. Tests fan-out.
     let mut commit_every: usize = 0;
     let mut rules: usize = 1;
-    // mem | dd. Picks Store impl in Insert/Full modes.
+    // mem | dd | sqlite-mem | sqlite-disk. Picks Store impl in Insert/Full modes.
     let mut store_kind = String::from("mem");
+    // Override default sqlite-disk path (default: $HOME/.cache/sprefa/v4-bench.db).
+    let mut sqlite_path: Option<PathBuf> = None;
     // When true, run the SAME workload twice (once mem, once dd) and
     // compare rule snapshots row-for-row. Sanity check; bypasses --store.
     let mut verify = false;
@@ -104,6 +106,7 @@ async fn main() {
             "--commit-every" => { commit_every = args[i+1].parse().unwrap(); i += 2; }
             "--rules"        => { rules        = args[i+1].parse::<usize>().unwrap().max(1); i += 2; }
             "--store"        => { store_kind   = args[i+1].clone(); i += 2; }
+            "--sqlite-path"  => { sqlite_path  = Some(PathBuf::from(&args[i+1])); i += 2; }
             "--verify"       => { verify       = true; i += 1; }
             "--cache"        => { cache        = true; i += 1; }
             other       => panic!("unknown arg: {}", other),
@@ -143,9 +146,8 @@ async fn main() {
             }
         )).collect();
         let interner = Interner::new();
-        // Both store impls. We attach `tele` after construction.
         let mem_only;
-        let dd_only;
+        let sqlite_only;
         let (store, attach_tele): (Arc<dyn Store>, Box<dyn FnOnce(Telemetry)>) = match store_kind.as_str() {
             "mem" => {
                 mem_only = MemStore::new();
@@ -155,14 +157,33 @@ async fn main() {
                 let m = mem_only.clone();
                 (mem_only.clone() as Arc<dyn Store>, Box::new(move |t| m.attach_tele(t)))
             }
-            "dd" => {
-                dd_only = DdStore::new("matches".into(),
-                    if matches!(mode, Mode::Full) { rule_set.clone() } else { vec![] },
-                    interner.clone());
-                let d = dd_only.clone();
-                (dd_only.clone() as Arc<dyn Store>, Box::new(move |t| d.attach_tele(t)))
+            "sqlite-mem" => {
+                sqlite_only = SqliteStore::open_memory();
+                let s = sqlite_only.clone();
+                (sqlite_only.clone() as Arc<dyn Store>, Box::new(move |t| s.attach_tele(t)))
             }
-            other => panic!("--store must be mem|dd, got {}", other),
+            "sqlite-disk" | "sqlite-fast" => {
+                let path = sqlite_path.clone().unwrap_or_else(|| {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                    let name = if store_kind == "sqlite-fast" { "v4-bench-fast.db" } else { "v4-bench.db" };
+                    PathBuf::from(home).join(".cache/sprefa").join(name)
+                });
+                // Trial 1 is the cold cost. Wipe stale benchmark db so trial 1
+                // is deterministic across runs. (Trials 2..N reuse same db.)
+                if trial == 1 {
+                    let _ = std::fs::remove_file(&path);
+                    let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+                    let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+                }
+                sqlite_only = if store_kind == "sqlite-fast" {
+                    SqliteStore::open_path_fast(&path)
+                } else {
+                    SqliteStore::open_path(&path)
+                };
+                let s = sqlite_only.clone();
+                (sqlite_only.clone() as Arc<dyn Store>, Box::new(move |t| s.attach_tele(t)))
+            }
+            other => panic!("--store must be mem|sqlite-mem|sqlite-disk|sqlite-fast, got {}", other),
         };
 
         let matches    = Arc::new(AtomicU64::new(0));
@@ -213,8 +234,18 @@ async fn main() {
                 chain.push(Arc::new(Count {
                     matches: matches.clone(), bytes_seen: bytes_seen.clone(),
                 }));
-                chain.push(Arc::new(Fact { name: "matches".into() }));
-                if matches!(mode, Mode::Full) && commit_every > 0 {
+                // FactWrite declares the schema upfront — required for
+                // SqliteStore. mem/dd ignore ensure_schema, so this is
+                // safe across all four stores. Cols come from AstNm's
+                // stamp set with want_match=false.
+                chain.push(Arc::new(FactWrite::new(
+                    "matches",
+                    &["FS", "CONTENT_HASH", "LO", "HI"],
+                )));
+                // CommitEvery applies to Insert + Full both — useful to
+                // measure store commit overhead under reactive-shaped
+                // (many small commits) workloads, not just one big tx.
+                if commit_every > 0 {
                     chain.push(Arc::new(CommitEvery::new(commit_every)));
                 }
             }
@@ -222,7 +253,11 @@ async fn main() {
 
         let t_run = Instant::now();
         drive_with(chain, hooks, cap).await;
-        if matches!(mode, Mode::Full) { store.commit(trial as u64).await; }
+        // Insert AND Full both need commit on stores that buffer pending
+        // rows (Sqlite). Mem/Dd treat commit as a no-op or boundary tick.
+        if matches!(mode, Mode::Insert | Mode::Full) {
+            store.commit(trial as u64).await;
+        }
         let wall = t_run.elapsed();
         // Correctness probe. Snapshot rule 0 (always defined in Full mode).
         let rule0_cardinality = if matches!(mode, Mode::Full) {

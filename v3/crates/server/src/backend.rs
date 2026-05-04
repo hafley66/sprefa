@@ -284,6 +284,8 @@ impl LanguageServer for Backend {
     async fn did_open(&self, p: DidOpenTextDocumentParams) {
         let uri = p.text_document.uri.clone();
         if !is_sprf_uri(&uri) { return; }
+        let g = self.state.gen.bump();
+        tracing::debug!(target: "sprefa::lsp", uri = %uri, gen = %g, "did_open.bump_gen");
         self.open_or_replace(&uri, p.text_document.text).await;
         self.publish_with_drain(&uri).await;
     }
@@ -291,6 +293,8 @@ impl LanguageServer for Backend {
     async fn did_change(&self, p: DidChangeTextDocumentParams) {
         let uri = p.text_document.uri.clone();
         if !is_sprf_uri(&uri) { return; }
+        let g = self.state.gen.bump();
+        tracing::debug!(target: "sprefa::lsp", uri = %uri, gen = %g, "did_change.bump_gen");
         if let Some(change) = p.content_changes.into_iter().last() {
             self.open_or_replace(&uri, change.text).await;
             // Cancel any in-flight drain — its choke diagnostics are
@@ -320,6 +324,8 @@ impl LanguageServer for Backend {
     async fn did_save(&self, p: DidSaveTextDocumentParams) {
         let uri = p.text_document.uri.clone();
         if !is_sprf_uri(&uri) { return; }
+        let g = self.state.gen.bump();
+        tracing::debug!(target: "sprefa::lsp", uri = %uri, gen = %g, "did_save.bump_gen");
         // Disk has caught up — drop the buffer overlay so subsequent
         // pipes read live disk bytes again.
         let file = uri_to_path(&uri);

@@ -536,6 +536,7 @@ pub(crate) fn build_seed_ctx(
     let (sh_batcher, staged_sh) = ShBatcher::new();
 
     let ctx = RtCtxBuilder::new()
+        .with_gen_counter(state.gen.clone())
         .with_store(relation_store.clone())
         .with_store(subject_registry.clone())
         .with_store(write_approval.clone())

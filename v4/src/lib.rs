@@ -1,4 +1,5 @@
 pub mod cst;
+pub mod react;
 
 // sprefa v4 — runtime lib. shared by v4-proto (demo) and v4-bench (perf).
 //
@@ -394,260 +395,6 @@ impl Store for MemStore {
     }
 }
 
-// ▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░
-// ░  § 3b  DdStore — differential-dataflow Store impl                  ░
-// ▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░▓░
-//
-// Single-worker timely runtime, single fact "matches", N copies of the
-// GroupCount rule pre-built at construction. Async store API marshals
-// commands across a std::sync::mpsc channel into the worker thread.
-// Lab scope: prove DD's incremental delta cost vs MemStore's full
-// rederive. Generalize fact names / rule kinds after the proof point.
-
-pub struct DdStore {
-    cmd_tx:        std::sync::mpsc::SyncSender<DdCmd>,
-    handle:        Mutex<Option<std::thread::JoinHandle<()>>>,
-    tele:          OnceLock<Telemetry>,
-    rule_outputs:  std::sync::RwLock<HashMap<String, broadcast::Sender<Diff>>>,
-    /// Per-rule (row -> signed multiplicity) accumulator, updated from
-    /// inspect_batch on the worker thread. Read from `snapshot()` to
-    /// verify output parity against MemStore.
-    rule_state:    Arc<Mutex<HashMap<String, HashMap<DdRow, isize>>>>,
-    /// Shared with caller. Used to convert Cursor ↔ DdRow (id-keyed).
-    interner:      Arc<Interner>,
-}
-
-/// DD-side row representation: 4-byte ids on each side, 8 bytes per
-/// term vs ~32 bytes for (Arc<str>, Arc<str>). Repeated values
-/// (paths, term names, pattern labels) collapse to one entry in the
-/// interner regardless of how many rows reference them.
-type DdRow = Vec<(u32, u32)>;
-
-fn cursor_to_dd(c: &Cursor, interner: &Interner) -> DdRow {
-    c.terms.iter()
-        .map(|(n, v)| (interner.intern_id(n), interner.intern_id(v)))
-        .collect()
-}
-fn dd_to_cursor(r: &DdRow, interner: &Interner) -> Cursor {
-    let mut c = Cursor::default();
-    for (n_id, v_id) in r {
-        let n = interner.lookup(*n_id);
-        let v = interner.lookup(*v_id);
-        c.set_arc(&n, v);
-    }
-    c
-}
-
-enum DdCmd {
-    Insert { fact: String, rows: Vec<DdRow>, gen: Gen },
-    Commit { gen: Gen, ack: tokio::sync::oneshot::Sender<DdAck> },
-    Stop,
-}
-
-#[derive(Default, Debug)]
-pub struct DdAck { pub derived: u64, pub advance_ns: u64, pub step_ns: u64 }
-
-impl DdStore {
-    /// Build a DdStore with `rules` pre-attached over fact `fact_name`.
-    /// Each rule is GroupCount(src=fact_name, key, min, count_term).
-    pub fn new(fact_name: String, rules: Vec<(String, RuleBody)>, interner: Arc<Interner>) -> Arc<Self> {
-        use differential_dataflow::input::Input;
-        use differential_dataflow::operators::Reduce;
-
-        let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel::<DdCmd>(1024);
-        let rule_outputs: HashMap<String, broadcast::Sender<Diff>> = rules.iter()
-            .map(|(n, _)| (n.clone(), broadcast::channel(1024).0))
-            .collect();
-        let outputs_for_worker = rule_outputs.clone();
-        let fact_for_worker = fact_name.clone();
-        let rules_for_worker = rules.clone();
-        let interner_for_worker = interner.clone();
-        let rule_state: Arc<Mutex<HashMap<String, HashMap<DdRow, isize>>>> =
-            Arc::new(Mutex::new(rules.iter().map(|(n, _)| (n.clone(), HashMap::new())).collect()));
-        let rule_state_for_worker = rule_state.clone();
-
-        // timely::execute_directly requires its worker closure to be
-        // Send + Sync. Receiver isn't Sync, so wrap it. Single-threaded
-        // worker contention is impossible (one worker, one thread) so
-        // the Mutex is uncontended.
-        let cmd_rx = Arc::new(Mutex::new(cmd_rx));
-        let handle = std::thread::spawn(move || {
-            let cmd_rx = cmd_rx.clone();
-            timely::execute_directly(move |worker| {
-                let cmd_rx = cmd_rx.lock().unwrap();
-                use timely::dataflow::operators::probe::Handle as ProbeHandle;
-                let derived_counter = Arc::new(AtomicU64::new(0));
-                let mut probes: Vec<ProbeHandle<Gen>> = Vec::new();
-                // Internal monotonic time. The Hooks.gen value is per-
-                // trial and may not change between commits in a single
-                // trial, which would let advance_to silently no-op.
-                // We bump on every Commit, and route each Insert to the
-                // current time. The caller's gen is preserved on Diff
-                // for downstream subscribers.
-                let mut dd_time: Gen = 0;
-                let mut input = worker.dataflow::<Gen, _, _>(|scope| {
-                    let (input, facts) = scope.new_collection::<DdRow, isize>();
-                    for (rule_name, body) in &rules_for_worker {
-                        let RuleBody::GroupCount { key, min, count_term, .. } = body else { continue };
-                        let key_name_id    = interner_for_worker.intern_id(key);
-                        let count_term_id  = interner_for_worker.intern_id(count_term);
-                        let min = *min;
-                        let out_tx = outputs_for_worker.get(rule_name).unwrap().clone();
-                        let derived = derived_counter.clone();
-                        let rule_state_inner = rule_state_for_worker.clone();
-                        let rule_name_owned = rule_name.clone();
-                        let interner_for_reduce  = interner_for_worker.clone();
-                        let interner_for_inspect = interner_for_worker.clone();
-                        let stream = facts
-                            .map(move |r: DdRow| {
-                                let k_id = r.iter().find(|(n, _)| *n == key_name_id)
-                                    .map(|(_, v)| *v).unwrap_or(u32::MAX);
-                                (k_id, r)
-                            })
-                            .reduce(move |k_id, vs, out| {
-                                let n = vs.iter().map(|(_, m)| *m).sum::<isize>();
-                                if n >= min as isize {
-                                    let n_str_id = interner_for_reduce.intern_id(&n.to_string());
-                                    let row: DdRow = vec![
-                                        (key_name_id, *k_id),
-                                        (count_term_id, n_str_id),
-                                    ];
-                                    out.push((row, 1));
-                                }
-                            })
-                            .inspect_batch(move |t, batch| {
-                                let mut state = rule_state_inner.lock().unwrap();
-                                let entry = state.entry(rule_name_owned.clone()).or_default();
-                                for ((_k, row), _t, sign) in batch {
-                                    derived.fetch_add(1, Ordering::Relaxed);
-                                    *entry.entry(row.clone()).or_insert(0) += *sign as isize;
-                                    let _ = out_tx.send(Diff {
-                                        row: dd_to_cursor(row, &interner_for_inspect),
-                                        gen: *t,
-                                        sign: *sign as i8,
-                                    });
-                                }
-                            });
-                        probes.push(stream.probe());
-                    }
-                    input
-                });
-
-                loop {
-                    match cmd_rx.recv() {
-                        Ok(DdCmd::Insert { fact, rows, gen: _ }) => {
-                            if fact != fact_for_worker { continue; }
-                            input.advance_to(dd_time);
-                            for r in rows { input.insert(r); }
-                        }
-                        Ok(DdCmd::Commit { gen: _, ack }) => {
-                            let t_adv = Instant::now();
-                            dd_time += 1;
-                            input.advance_to(dd_time);
-                            input.flush();
-                            let advance_ns = t_adv.elapsed().as_nanos() as u64;
-                            let t_step = Instant::now();
-                            let prev = derived_counter.load(Ordering::Relaxed);
-                            while probes.iter().any(|p| p.less_than(input.time())) {
-                                worker.step();
-                            }
-                            let step_ns = t_step.elapsed().as_nanos() as u64;
-                            let derived = derived_counter.load(Ordering::Relaxed) - prev;
-                            let _ = ack.send(DdAck { derived, advance_ns, step_ns });
-                        }
-                        Ok(DdCmd::Stop) => break,
-                        Err(_) => break,
-                    }
-                }
-            });
-        });
-
-        Arc::new(Self {
-            cmd_tx,
-            handle: Mutex::new(Some(handle)),
-            tele: OnceLock::new(),
-            rule_outputs: std::sync::RwLock::new(rule_outputs),
-            rule_state,
-            interner,
-        })
-    }
-    pub fn attach_tele(&self, t: Telemetry) { let _ = self.tele.set(t); }
-    fn span(&self, name: &'static str, n_in: Option<u64>) -> Option<SpanOpen> {
-        self.tele.get().map(|t| t.start(name, n_in))
-    }
-}
-
-#[async_trait::async_trait]
-impl Store for DdStore {
-    async fn insert(&self, fact: &str, row: Cursor, gen: Gen) {
-        self.insert_many(fact, vec![row], gen).await
-    }
-    async fn insert_many(&self, fact: &str, rows: Vec<Cursor>, gen: Gen) {
-        if rows.is_empty() { return; }
-        let n = rows.len() as u64;
-        let mut sp = self.span("v4::Dd::ins", Some(n));
-        if let Some(s) = sp.as_mut() {
-            let bytes: u64 = rows.iter().map(cursor_bytes).sum();
-            s.set_bytes(bytes);
-        }
-        let dd_rows: Vec<DdRow> = rows.iter().map(|c| cursor_to_dd(c, &self.interner)).collect();
-        let _ = self.cmd_tx.send(DdCmd::Insert { fact: fact.to_string(), rows: dd_rows, gen });
-        if let Some(s) = sp { s.close(Some(n)); }
-    }
-    async fn commit(&self, gen: Gen) {
-        let sp = self.span("v4::Dd::commit", None);
-        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-        let _ = self.cmd_tx.send(DdCmd::Commit { gen, ack: ack_tx });
-        let ack = ack_rx.await.unwrap_or_default();
-        // Synthesize child spans from worker-side accumulators so the
-        // summary table breaks DD::commit into advance + step phases.
-        if let Some(t) = self.tele.get() {
-            push_synthetic_span(t, "v4::Dd::advance", ack.advance_ns, None);
-            push_synthetic_span(t, "v4::Dd::step",    ack.step_ns,    Some(ack.derived));
-        }
-        if let Some(s) = sp { s.close(Some(ack.derived)); }
-    }
-    async fn remove(&self, _fact: &str, _row: Cursor, _gen: Gen) {}
-    async fn forget_by(&self, _fact: &str, _key: &str, _v: &str, _gen: Gen) {}
-    fn define_rule(&self, _name: &str, _body: RuleBody) {
-        // No-op: DdStore takes rules at construction.
-    }
-    fn select(&self, name: &str) -> BoxStream<'static, Diff> {
-        let tx = self.rule_outputs.write().unwrap()
-            .entry(name.to_string())
-            .or_insert_with(|| broadcast::channel(1024).0).clone();
-        let rx = tx.subscribe();
-        Box::pin(async_stream::stream! {
-            let mut rx = rx;
-            while let Ok(diff) = rx.recv().await { yield diff; }
-        })
-    }
-    async fn snapshot(&self, name: &str) -> Vec<Cursor> {
-        let state = self.rule_state.lock().unwrap();
-        let Some(rule) = state.get(name) else { return vec![] };
-        rule.iter()
-            .filter(|(_, &mult)| mult > 0)
-            .map(|(row, _)| dd_to_cursor(row, &self.interner))
-            .collect()
-    }
-    async fn read_in(
-        &self,
-        _fact: &str,
-        _key_col: &str,
-        _key_values: Vec<String>,
-        _project: Vec<String>,
-    ) -> Vec<Cursor> {
-        // Parked. DdStore is no longer on the active read path.
-        vec![]
-    }
-}
-
-impl Drop for DdStore {
-    fn drop(&mut self) {
-        let _ = self.cmd_tx.send(DdCmd::Stop);
-        if let Some(h) = self.handle.lock().unwrap().take() { let _ = h.join(); }
-    }
-}
 
 // ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
 // ▒  § 3c  SqliteStore — write-through fact store, brute-force IN()    ▒
@@ -694,6 +441,30 @@ impl SqliteStore {
             tele:    OnceLock::new(),
         })
     }
+    /// On-disk constructor tuned for CACHE durability — no fsync, journal
+    /// in memory, exclusive lock, 64MB page cache. Loses pending writes
+    /// on crash; correct when sqlite is a derived cache (LSP / scanner)
+    /// that can be rebuilt from the source corpus + Layer-2 hashes.
+    pub fn open_path_fast(p: impl AsRef<std::path::Path>) -> Arc<Self> {
+        if let Some(parent) = p.as_ref().parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let conn = rusqlite::Connection::open(p.as_ref()).expect("open sqlite");
+        // Apply BEFORE any DDL. page_size must be set before first write.
+        let _ = conn.pragma_update(None, "page_size", 8192_i64);
+        let _ = conn.pragma_update(None, "journal_mode", "MEMORY");
+        let _ = conn.pragma_update(None, "synchronous", "OFF");
+        let _ = conn.pragma_update(None, "locking_mode", "EXCLUSIVE");
+        let _ = conn.pragma_update(None, "temp_store", "MEMORY");
+        // Negative = -KB; 65536 = 64 MB.
+        let _ = conn.pragma_update(None, "cache_size", -65536_i64);
+        Arc::new(Self {
+            conn:    Mutex::new(conn),
+            schemas: Default::default(),
+            pending: Mutex::new(HashMap::new()),
+            tele:    OnceLock::new(),
+        })
+    }
     /// Default on-disk path: $HOME/.cache/sprefa/v4.db.
     pub fn open_default() -> Arc<Self> {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -730,29 +501,61 @@ impl Store for SqliteStore {
             std::mem::take(&mut *p)
         };
         let schemas = self.schemas.read().unwrap().clone();
+        // Spans by phase. Lets us see if commit cost is lock contention on
+        // the connection, txn-begin overhead, the chunked-execute loop,
+        // or txn-commit (where the WAL fsync lives).
+        let sp_lock = self.span("v4::Sqlite::commit::lock", None);
         let mut conn = self.conn.lock().unwrap();
+        if let Some(s) = sp_lock { s.close(None); }
+
+        let sp_begin = self.span("v4::Sqlite::commit::begin", None);
         let txn = conn.transaction().expect("begin txn");
+        if let Some(s) = sp_begin { s.close(None); }
+
         let mut total: u64 = 0;
+        // Chunk size knob. sqlite default SQLITE_MAX_VARIABLE_NUMBER = 32766;
+        // chunk * ncols must stay under it. SPREFA_SQLITE_CHUNK env var lets
+        // perf labs sweep the knob without rebuilding. 500 was the win on
+        // 4-col TEXT writes at 366k rows in baseline lab.
+        let chunk_size: usize = std::env::var("SPREFA_SQLITE_CHUNK")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(500);
         for (fact, rows) in &to_flush {
             let Some(cols) = schemas.get(fact) else { continue };
-            // Prepared INSERT: INSERT INTO fact (c1, c2, ...) VALUES (?, ?, ...)
-            let placeholders = cols.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            let n_rows = rows.len() as u64;
+            let mut sp_fact = self.span("v4::Sqlite::commit::write", Some(n_rows));
+            let mut bytes_total: u64 = 0;
+            let ncols = cols.len();
+            let max_chunk = if ncols == 0 { chunk_size }
+                            else { (32000 / ncols).max(1).min(chunk_size) };
             let col_list = cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
-            let sql = format!("INSERT INTO \"{}\" ({}) VALUES ({})", fact, col_list, placeholders);
-            let mut stmt = txn.prepare_cached(&sql).expect("prepare insert");
-            for row in rows {
-                // Missing term → NULL (Option::None ToSql). Empty string
-                // is preserved as a literal "" if the cursor explicitly
-                // set the term to "". This makes "input optional" work.
-                let vals: Vec<Option<String>> = cols.iter()
-                    .map(|c| row.get(c).map(|s| s.to_string())).collect();
+            let single = "(".to_string() + &cols.iter().map(|_| "?").collect::<Vec<_>>().join(",") + ")";
+
+            for chunk in rows.chunks(max_chunk) {
+                let values_clause = vec![single.as_str(); chunk.len()].join(",");
+                let sql = format!("INSERT INTO \"{}\" ({}) VALUES {}", fact, col_list, values_clause);
+                let mut stmt = txn.prepare_cached(&sql).expect("prepare insert");
+                // Bind Option<&str> directly. Cursor::get returns &str into
+                // an Arc<str> backing — no String allocation per cell. At
+                // 366k rows × 4 cols that's 1.5M allocations avoided.
+                let mut vals: Vec<Option<&str>> = Vec::with_capacity(chunk.len() * ncols);
+                for row in chunk {
+                    for c in cols {
+                        let v = row.get(c);
+                        if let Some(s) = v { bytes_total += s.len() as u64; }
+                        vals.push(v);
+                    }
+                }
                 let params: Vec<&dyn rusqlite::ToSql> = vals.iter()
                     .map(|v| v as &dyn rusqlite::ToSql).collect();
                 stmt.execute(params.as_slice()).expect("exec insert");
-                total += 1;
+                total += chunk.len() as u64;
             }
+            if let Some(s) = sp_fact.as_mut() { s.set_bytes(bytes_total); }
+            if let Some(s) = sp_fact { s.close(Some(n_rows)); }
         }
+        let sp_commit = self.span("v4::Sqlite::commit::txn", None);
         txn.commit().expect("commit txn");
+        if let Some(s) = sp_commit { s.close(None); }
         if let Some(s) = sp { s.close(Some(total)); }
     }
     async fn remove(&self, _fact: &str, _row: Cursor, _gen: Gen) {}
@@ -1999,6 +1802,173 @@ impl Op for ShBang {
 }
 
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7s  SimpleOp — cheap op authoring
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// Implementing `Op` directly costs ~30 LOC of async-stream + Hooks +
+// tele plumbing. SimpleOp lets a transformation op be written as a
+// 1-line `step(&Cursor) -> Vec<Cursor>`. The blanket `impl<T: SimpleOp>
+// Op for T` does the rest. Use Op (not SimpleOp) when the op needs to
+// own the stream shape (parallelism via spawn_blocking + rayon, batch
+// reshaping, async I/O like Sh, fan-out across batches).
+//
+// Authoring contract:
+//   kind()      — &'static str, used as ident bytes AND tele span name
+//   instance()  — Optional fingerprint distinguishing two ops of same kind
+//   step(&c)    — fn-of-cursor → 0..N cursors. Pure by default.
+//
+// Telemetry: spans use `kind()` as the span name. Counts batches as one
+// span each, n_in / n_out as element counts. Same surface as the manual
+// Op impls so the bench summary stays consistent.
+pub trait SimpleOp: Send + Sync + 'static {
+    fn kind(&self) -> &'static str;
+    fn instance(&self) -> String { String::new() }
+    fn step(&self, c: &Cursor) -> Vec<Cursor>;
+    fn is_pure(&self) -> bool { true }
+}
+// Blanket: every SimpleOp is an Op. Do NOT impl Op manually for the
+// same type — that would conflict with this blanket.
+impl<T: SimpleOp> Op for T {
+    fn ident(&self) -> [u8; 32] {
+        let inst = self.instance();
+        let kind = self.kind().as_bytes();
+        ident_of(&[kind, b"|", inst.as_bytes()])
+    }
+    fn is_pure(&self) -> bool { SimpleOp::is_pure(self) }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        let span_name: &'static str = me.kind();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start(span_name, Some(n_in));
+                let mut out: Vec<Cursor> = Vec::with_capacity(batch.len());
+                for c in batch {
+                    out.extend(me.step(&c));
+                }
+                let n_out = out.len() as u64;
+                span.close(Some(n_out));
+                if !out.is_empty() { yield out; }
+            }
+        })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7t  String / path std-lib (SimpleOp instances)
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// Five starter ops over the SimpleOp surface. Each is a single
+// transformation cursor → cursor(s); none allocate streams or batches.
+// Patterns to follow when adding more (json_path, toml_get, replace, ...).
+
+/// `Split` — split `from` term's value by `sep`, emit one child cursor
+/// per non-empty piece, bound to `into` term.
+pub struct Split { pub from: String, pub sep: String, pub into: String }
+impl Split {
+    pub fn new(from: &str, sep: &str, into: &str) -> Self {
+        Self { from: from.into(), sep: sep.into(), into: into.into() }
+    }
+}
+impl SimpleOp for Split {
+    fn kind(&self) -> &'static str { "v4::Split" }
+    fn instance(&self) -> String { format!("{}|{}|{}", self.from, self.sep, self.into) }
+    fn step(&self, c: &Cursor) -> Vec<Cursor> {
+        let Some(s) = c.get(&self.from) else { return vec![] };
+        s.split(self.sep.as_str())
+            .filter(|p| !p.is_empty())
+            .map(|p| { let mut k = c.clone(); k.set(&self.into, p); k })
+            .collect()
+    }
+}
+
+/// `Format` — render a template with ${TERM} substitutions, bind the
+/// rendered string to `into`. Uses `render_template` (Sh's renderer)
+/// without shell-quoting; if you need quoting use Sh.
+pub struct Format { pub template: String, pub into: String }
+impl Format {
+    pub fn new(template: &str, into: &str) -> Self {
+        Self { template: template.into(), into: into.into() }
+    }
+}
+impl SimpleOp for Format {
+    fn kind(&self) -> &'static str { "v4::Format" }
+    fn instance(&self) -> String { format!("{}|{}", self.template, self.into) }
+    fn step(&self, c: &Cursor) -> Vec<Cursor> {
+        let re = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+        let rendered = re.replace_all(&self.template, |caps: &regex::Captures| {
+            c.get(&caps[1]).unwrap_or("").to_string()
+        }).into_owned();
+        let mut out = c.clone();
+        out.set(&self.into, rendered);
+        vec![out]
+    }
+}
+
+/// `Trim` — trim whitespace on `from` term, write back to `into`
+/// (or `from` itself if `into` matches).
+pub struct Trim { pub from: String, pub into: String }
+impl Trim {
+    pub fn new(from: &str, into: &str) -> Self {
+        Self { from: from.into(), into: into.into() }
+    }
+    pub fn in_place(name: &str) -> Self { Self::new(name, name) }
+}
+impl SimpleOp for Trim {
+    fn kind(&self) -> &'static str { "v4::Trim" }
+    fn instance(&self) -> String { format!("{}|{}", self.from, self.into) }
+    fn step(&self, c: &Cursor) -> Vec<Cursor> {
+        let Some(s) = c.get(&self.from) else { return vec![c.clone()] };
+        let trimmed = s.trim().to_string();
+        let mut out = c.clone();
+        out.set(&self.into, trimmed);
+        vec![out]
+    }
+}
+
+/// `Basename` — extract `Path::file_name` from `from` term, bind to `into`.
+pub struct Basename { pub from: String, pub into: String }
+impl Basename {
+    pub fn new(from: &str, into: &str) -> Self {
+        Self { from: from.into(), into: into.into() }
+    }
+}
+impl SimpleOp for Basename {
+    fn kind(&self) -> &'static str { "v4::Basename" }
+    fn instance(&self) -> String { format!("{}|{}", self.from, self.into) }
+    fn step(&self, c: &Cursor) -> Vec<Cursor> {
+        let Some(s) = c.get(&self.from) else { return vec![c.clone()] };
+        let bn = std::path::Path::new(s).file_name()
+            .and_then(|b| b.to_str()).unwrap_or("").to_string();
+        let mut out = c.clone();
+        out.set(&self.into, bn);
+        vec![out]
+    }
+}
+
+/// `Dirname` — extract `Path::parent` from `from` term, bind to `into`.
+/// Empty string when source has no parent.
+pub struct Dirname { pub from: String, pub into: String }
+impl Dirname {
+    pub fn new(from: &str, into: &str) -> Self {
+        Self { from: from.into(), into: into.into() }
+    }
+}
+impl SimpleOp for Dirname {
+    fn kind(&self) -> &'static str { "v4::Dirname" }
+    fn instance(&self) -> String { format!("{}|{}", self.from, self.into) }
+    fn step(&self, c: &Cursor) -> Vec<Cursor> {
+        let Some(s) = c.get(&self.from) else { return vec![c.clone()] };
+        let dn = std::path::Path::new(s).parent()
+            .and_then(|p| p.to_str()).unwrap_or("").to_string();
+        let mut out = c.clone();
+        out.set(&self.into, dn);
+        vec![out]
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 //   § 7e  OpCache — Layer 3 skip-on-hit gate
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 // Wraps a pure inner Op. Per input cursor, hashes (op_ident, lineage(c)).
@@ -2407,6 +2377,19 @@ impl Rule {
         chain.push(Arc::new(FactWrite::new(self.sink.fact, &cols_ref)));
         chain
     }
+    /// Caller-driven chain. Prepends a `Seed` of the supplied rows so the
+    /// rule body runs against those rows as its input stream. With
+    /// `body.is_empty()` this collapses to `[Seed > FactWrite]` — the
+    /// empty-body rule echoes its caller's inputs into its sink. This is
+    /// the passthrough semantics for `fact = rule with empty body`.
+    pub fn into_chain_with_seed(self, seed: Vec<Cursor>) -> Vec<Arc<dyn Op>> {
+        let cols_ref: Vec<&str> = self.sink.cols.iter().map(|s| s.as_str()).collect();
+        let mut chain: Vec<Arc<dyn Op>> = vec![Arc::new(Seed::new(seed))];
+        chain.extend(self.body);
+        chain.push(Arc::new(FactWrite::new(self.sink.fact, &cols_ref)));
+        chain
+    }
+    pub fn is_passthrough(&self) -> bool { self.body.is_empty() }
     /// Layer-2 input set hash. Probes body[0] (the rule's source op) for
     /// (path, content_hash) pairs, hashes the sorted list. None when the
     /// source op doesn't implement probe (e.g. FactRead — store-driven).
@@ -2486,6 +2469,12 @@ pub async fn drive_rule_cached(
     cap: usize,
     cache: &RuleStateCache,
 ) -> RuleRunOutcome {
+    // Empty body without a caller-supplied seed means declaration-only.
+    // No source op upstream; nothing to drive. Skipped, not Ran.
+    if rule.is_passthrough() {
+        rule.declare(h.use_store());
+        return RuleRunOutcome::Skipped;
+    }
     let name = rule.name.clone();
     let new_hash = rule.input_set_hash();
     if let Some(nh) = new_hash {
@@ -2496,6 +2485,19 @@ pub async fn drive_rule_cached(
     drive_two_tick(rule.into_chain(), h, cap).await;
     if let Some(nh) = new_hash { cache.set(&name, nh); }
     RuleRunOutcome::Ran
+}
+
+/// Caller-driven rule run. Pipes `seed` rows through the rule body (or
+/// directly to FactWrite when body is empty) and commits at end.
+/// Bypasses RuleStateCache since input set is the caller's, not the
+/// rule's source op.
+pub async fn drive_rule_with_input(
+    rule: Rule,
+    seed: Vec<Cursor>,
+    h: Hooks,
+    cap: usize,
+) {
+    drive_two_tick(rule.into_chain_with_seed(seed), h, cap).await;
 }
 
 /// Pass-through op that calls `store.commit(gen)` every `every` batches.
