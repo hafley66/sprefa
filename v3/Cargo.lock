@@ -704,6 +704,7 @@ dependencies = [
  "crossbeam-channel",
  "moka",
  "rayon",
+ "rusqlite",
  "rxrust",
  "tokio",
  "tokio-util",

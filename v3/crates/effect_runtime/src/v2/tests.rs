@@ -51,6 +51,39 @@ impl Next for LabCursor {
     }
 }
 
+impl super::codec::Codec for LabCursor {
+    fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(self.terms.len() as u32).to_le_bytes());
+        for (n, v) in &self.terms {
+            out.extend_from_slice(&(n.len() as u32).to_le_bytes());
+            out.extend_from_slice(n.as_bytes());
+            out.extend_from_slice(&(v.len() as u32).to_le_bytes());
+            out.extend_from_slice(v.as_bytes());
+        }
+        out
+    }
+    fn decode(bytes: &[u8]) -> Self {
+        let mut p = 0;
+        let read_u32 = |b: &[u8], p: &mut usize| -> u32 {
+            let mut a = [0u8; 4];
+            a.copy_from_slice(&b[*p..*p+4]);
+            *p += 4;
+            u32::from_le_bytes(a)
+        };
+        let n = read_u32(bytes, &mut p) as usize;
+        let mut terms = Vec::with_capacity(n);
+        for _ in 0..n {
+            let nl = read_u32(bytes, &mut p) as usize;
+            let name = std::str::from_utf8(&bytes[p..p+nl]).unwrap().to_string(); p += nl;
+            let vl = read_u32(bytes, &mut p) as usize;
+            let val  = std::str::from_utf8(&bytes[p..p+vl]).unwrap().to_string(); p += vl;
+            terms.push((name, val));
+        }
+        Self { terms }
+    }
+}
+
 fn lc(name: &str, val: &str) -> Arc<LabCursor> {
     Arc::new(LabCursor::new().with(name, val))
 }
@@ -420,4 +453,208 @@ fn domain_dirty_wakes_all_domain_subscribers() {
     bus.dispatch(Event::DomainDirty("git"));
     assert!(bus.is_ready(k_git));
     assert_eq!(bus.ready_count(), 3);
+}
+
+// --- Phase F: SqliteQueue + crash-restart proof ----------------------
+
+/// SqliteQueue is interchangeable with MemQueue at the trait boundary.
+/// Same trim-collector pipe drives identically against both backends.
+#[test]
+fn sqlite_queue_replays_trim_collector_pipe() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(Trim { from: ":raw".into(), to: ":clean".into() })
+            as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    let stats = drive(
+        &pipe, queue.clone(),
+        vec![lc(":raw", "  hello  "), lc(":raw", "world\n")],
+        DriveOpts::default(),
+    );
+
+    let got = sink.lock().unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].get(":clean"), Some("hello"));
+    assert_eq!(got[1].get(":clean"), Some("world"));
+    assert_eq!(stats.rendered, 4);
+    assert_eq!(stats.parked,   0);
+    assert_eq!(queue.depth(),  0);
+}
+
+/// Sqlite many-fanout: same shape as MemQueue version.
+#[test]
+fn sqlite_queue_many_fanout_three_per_input() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(FanOut { n: 3 }) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    drive(&pipe, queue, vec![lc(":raw", "x"), lc(":raw", "y")], DriveOpts::default());
+
+    assert_eq!(sink.lock().unwrap().len(), 6);
+}
+
+/// Sqlite Suspense + KeyDirty: parker survives, drains on dispatch.
+#[test]
+fn sqlite_queue_suspense_parks_until_key_dirty_dispatched() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let bus   = Arc::new(EventBus::new());
+    let key   = bus.fresh_key();
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(ParkOnKey { key }) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+    let opts = DriveOpts::default().with_bus(bus.clone());
+
+    drive(&pipe, queue.clone(), vec![lc(":raw", "alpha")], opts.clone());
+    assert_eq!(queue.depth(), 1);
+    assert_eq!(sink.lock().unwrap().len(), 0);
+
+    bus.dispatch(Event::KeyDirty(key));
+
+    drive(&pipe, queue.clone(), Vec::new(), opts);
+    assert_eq!(sink.lock().unwrap().len(), 1);
+    assert_eq!(queue.depth(), 0);
+}
+
+/// Crash-restart proof.
+///
+/// 1. Open a SqliteQueue + SqliteMutationStore on a real file.
+/// 2. Drive a pipe that parks on a key. Pre-populate the mutation
+///    result in the persistent store under that key (simulating a
+///    completed mutationFn just before "crash").
+/// 3. Drop everything — Connection released, file closed.
+/// 4. Reopen the same file with a brand-new SqliteQueue +
+///    SqliteMutationStore + EventBus + driver. No in-memory state
+///    survives.
+/// 5. Dispatch KeyDirty for the same key. Drive.
+/// 6. Sink output is identical to a never-crashed run: the parked row
+///    resumed at pc+1 and read the result through the store.
+#[test]
+fn crash_restart_resumes_parked_row_with_persisted_mutation() {
+    use std::sync::Mutex as StdMutex;
+
+    /// Component that produces a deterministic key from the cursor and
+    /// parks on it. Unlike `bus.fresh_key()`, this key is reproducible
+    /// across processes — a stable salt mixed with the cursor's
+    /// content_hash.
+    struct ParkOnDeterministicKey;
+    impl Component for ParkOnDeterministicKey {
+        type Next = LabCursor;
+        fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+            Node::Suspense {
+                value: Arc::new(c.clone()),
+                wake:  Wake::Key(deterministic_key(c)),
+            }
+        }
+    }
+
+    /// Reads the mutation result by the deterministic key and emits it.
+    struct ConsumeFromStore { store: Arc<SqliteMutationStore<LabCursor>> }
+    impl Component for ConsumeFromStore {
+        type Next = LabCursor;
+        fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+            let k = deterministic_key(c);
+            let resp = self.store.take(k).expect("persisted mutation must be present after restart");
+            Node::Emit(resp)
+        }
+    }
+
+    fn deterministic_key(c: &LabCursor) -> NextKey {
+        let mut h = blake3::Hasher::new();
+        h.update(b"sprf_v2_test_salt");
+        h.update(&c.content_hash());
+        NextKey(*h.finalize().as_bytes())
+    }
+
+    let dir = tempdir();
+    let db_path = dir.join("crash_restart.db");
+
+    let input = lc(":raw", "alpha");
+    let key = deterministic_key(&input);
+
+    // ---- Process 1: park on key, persist mutation result, then crash.
+    {
+        let conn = Arc::new(StdMutex::new(rusqlite::Connection::open(&db_path).unwrap()));
+        let queue: Arc<dyn QueueBackend<LabCursor>> =
+            Arc::new(SqliteQueue::open(conn.clone()));
+        let store = Arc::new(SqliteMutationStore::<LabCursor>::open(conn.clone()));
+        let bus   = Arc::new(EventBus::new());
+
+        let pipe = PipeInstance::new(vec![
+            Arc::new(ParkOnDeterministicKey)
+                as Arc<dyn Component<Next = LabCursor>>,
+            Arc::new(ConsumeFromStore { store: store.clone() }),
+            Arc::new(Collector { sink: Arc::new(Mutex::new(Vec::new())) }),
+        ]);
+
+        let opts = DriveOpts::default().with_bus(bus.clone());
+
+        drive(&pipe, queue.clone(), vec![input.clone()], opts);
+        assert_eq!(queue.depth(), 1, "row parked in sqlite before crash");
+
+        // Mutation completes off-thread, persists result, would dispatch
+        // bus event — but the process dies before the dispatch lands.
+        // We persist the result; the dispatch is *intentionally* lost.
+        let mut result = (*input).clone();
+        result.set(":upper", "ALPHA");
+        store.put(key, Arc::new(result));
+        assert_eq!(store.len(), 1);
+
+        // Drop everything: simulate process exit.
+    }
+
+    // ---- Process 2: reopen file, fresh bus, fresh driver, redrive.
+    let collected = Arc::new(Mutex::new(Vec::new()));
+    {
+        let conn = Arc::new(StdMutex::new(rusqlite::Connection::open(&db_path).unwrap()));
+        let queue: Arc<dyn QueueBackend<LabCursor>> =
+            Arc::new(SqliteQueue::open(conn.clone()));
+        let store = Arc::new(SqliteMutationStore::<LabCursor>::open(conn.clone()));
+        let bus   = Arc::new(EventBus::new());
+
+        // After restart: the parked row is in the queue, the mutation
+        // result is in the store. The runtime needs the bus event
+        // re-dispatched to know the result is ready (events are
+        // ephemeral — by design; the queue+store are the durable state,
+        // the bus is the runtime's view of "what's ready right now").
+        bus.dispatch(Event::KeyDirty(key));
+        assert_eq!(store.len(), 1, "mutation result survived restart");
+        assert_eq!(queue.depth(), 1, "parked row survived restart");
+
+        let pipe = PipeInstance::new(vec![
+            Arc::new(ParkOnDeterministicKey)
+                as Arc<dyn Component<Next = LabCursor>>,
+            Arc::new(ConsumeFromStore { store: store.clone() }),
+            Arc::new(Collector { sink: collected.clone() }),
+        ]);
+        let opts = DriveOpts::default().with_bus(bus.clone());
+
+        drive(&pipe, queue.clone(), Vec::new(), opts);
+        assert_eq!(queue.depth(), 0, "queue drained after restart");
+        assert_eq!(store.len(),  0, "mutation result consumed");
+    }
+
+    let got = collected.lock().unwrap();
+    assert_eq!(got.len(), 1, "exactly the one input emitted");
+    assert_eq!(got[0].get(":raw"),   Some("alpha"));
+    assert_eq!(got[0].get(":upper"), Some("ALPHA"));
+}
+
+fn tempdir() -> std::path::PathBuf {
+    let mut p = std::env::temp_dir();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    p.push(format!("sprf_v2_test_{}_{}", std::process::id(), nanos));
+    std::fs::create_dir_all(&p).unwrap();
+    p
 }
