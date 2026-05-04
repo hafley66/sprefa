@@ -4,7 +4,7 @@
 //! A `QueryFn` is a deterministic, idempotent read effect: same input,
 //! same output. It runs off-thread (via the `Spawner`), populates a
 //! shared `QueryCache`, and signals the bus when its result lands.
-//! Components return `Suspense{Key(k)}` while pending, `Emit(data)`
+//! Components return `Yield{Key(k)}` while pending, `Emit(data)`
 //! when the cache shows `Success`. The cache's `EffectKey` is
 //! `blake3(ident, input.content_hash())` — content-derived, stable
 //! across processes.
@@ -154,7 +154,7 @@ impl<N: Next, F: QueryFn<N>> Query<N, F> {
 }
 
 // `Clone` bound on the carrier: render needs to keep a copy for the
-// spawned closure and another for the parked Suspense. Real-world
+// spawned closure and another for the parked Yield. Real-world
 // carriers (Cursor, primitives) are all Clone; tests prove the bound.
 impl<N: Next + Clone, F: QueryFn<N>> Component for Query<N, F> {
     type Next = N;

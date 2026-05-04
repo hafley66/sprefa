@@ -2,7 +2,7 @@
 //!
 //! Pure function: takes a parent row's metadata + the render result,
 //! produces K children. Done = no rows; Emit = one runnable row;
-//! Many = recurse; Suspense = one parked row.
+//! Many = recurse; Yield = one parked row at the parker's depth.
 //!
 //! Each child's `path` is `parent.path + [batch_idx]`. Roots seeded
 //! into `drive` use `path = vec![]` and accumulate from there.
@@ -77,10 +77,6 @@ fn flatten_into<N: Next>(
             for c in children {
                 flatten_into(c, parent, next_depth, drive_tick, out);
             }
-        }
-
-        Node::Suspense { value, wake } => {
-            out.push(child_row(parent, next_depth, value, wake, drive_tick));
         }
 
         Node::Yield { value, wake } => {

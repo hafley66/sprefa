@@ -19,9 +19,9 @@ since the substrate maps cleanly onto each idiom.
 - [Example 1 — smallest possible pipe (i64 doubler)](#example-1--smallest-possible-pipe-i64-doubler)
 - [Example 2 — a real carrier (`LabCursor`) with `content_hash`](#example-2--a-real-carrier-labcursor-with-content_hash)
 - [Example 3 — fan-out via `Node::Many`](#example-3--fan-out-via-nodemany)
-- [Example 4 — `Suspense` parks the row at `depth+1`](#example-4--suspense-parks-the-row-at-depth1)
+- [Example 4 — `Yield` parks the row at the same depth](#example-4--yield-parks-the-row-at-the-same-depth)
 - [Example 5 — bus dispatch from a background thread (no async runtime)](#example-5--bus-dispatch-from-a-background-thread-no-async-runtime)
-- [Example 6 — `Yield` re-renders the SAME component](#example-6--yield-re-renders-the-same-component)
+- [Example 6 — react-query state machine via `Yield`](#example-6--react-query-state-machine-via-yield)
 - [Example 7 — saga-style effects: `EffectDispatch` + `Spawner`](#example-7--saga-style-effects-effectdispatch--spawner)
 - [Example 8 — `useMemo` (`Memoize<C>`) with domain invalidation](#example-8--usememo-memoizec-with-domain-invalidation)
 - [Example 9 — `useQuery` (`Query<N, F>`) with `invalidateQueries`](#example-9--usequery-queryn-f-with-invalidatequeries)
@@ -40,7 +40,7 @@ A few terms appear throughout. Worth pinning before the examples.
 
 - **carrier** — the value type flowing through the pipe (`i64`, `LabCursor`, `Cursor`, …). Every carrier impls `Next`. The substrate is generic over it.
 - **pipe** — `Vec<Component>`, the linear sequence of stages a value walks through.
-- **depth** — index into the pipe. A `QueueRow { depth: 2, ... }` means "this value should next be rendered by `pipe.components[2]`." Increments on `Emit` / `Many` / `Suspense`. Stays put on `Yield`. Hits `pipe.len()` and the row terminates.
+- **depth** — index into the pipe. A `QueueRow { depth: 2, ... }` means "this value should next be rendered by `pipe.components[2]`." Increments on `Emit` / `Many`. Stays put on `Yield`. Hits `pipe.len()` and the row terminates.
 - **path** — `Vec<u32>` per row, the sibling-index trail from the pipe root: `parent.path + [batch_idx]`. Two siblings have paths that differ in the last segment. Powers `PathDirty` prefix invalidation and (in Phase F) sqlite prefix indices.
 - **wake** — the condition that makes a parked row runnable: `Immediate`, `Tick { past_tick }`, or `Key(NextKey)`.
 - **bus** — the `EventBus`. One `dispatch(Event)` call serves both wake (parker rows go runnable) and invalidation (cache listeners drop entries).
@@ -57,11 +57,11 @@ A few terms appear throughout. Worth pinning before the examples.
             │ Queue │ ──pull──►   render(c)  ─►  flatten(node) ── enqueue children
             └───────┘                  ▲              │
                 ▲                      │              │
-                │                      │ same depth?     │
-                └──── Wake ────────────┴── Yield ◄────┘
-                       ▲                              │ next depth?
-                       │                              ▼
-                  ┌─────────┐                    Suspense
+                │                      │ Yield: park at same depth
+                └──── Wake ────────────┴───────────────┘
+                       ▲
+                       │
+                  ┌─────────┐
                   │ EventBus │ ◄────── DomainDirty / KeyDirty / PathDirty
                   └─────────┘                  ▲
                        ▲                       │
@@ -88,7 +88,7 @@ A few terms appear throughout. Worth pinning before the examples.
 | `trait Next` | Carrier marker; `content_hash() -> [u8; 32]` | `next.rs` |
 | `NextKey([u8; 32])` | Content-derived row identity | `next_key.rs` |
 | `Wake` | `Immediate` / `Tick` / `Key(NextKey)` | `wake.rs` |
-| `enum Node<N>` | `Done` / `Emit` / `Many` / `Suspense` / `Yield` | `node.rs` |
+| `enum Node<N>` | `Done` / `Emit` / `Many` / `Yield` | `node.rs` |
 | `trait Component` | `render(&self, ctx, c) -> Node<N>` | `component.rs` |
 | `trait QueueBackend<N>` | `enqueue` / `pull_runnable` / `len` | `queue.rs` |
 | `EventBus` | `dispatch(Event)` + `subscribe_*` + listeners | `event_bus.rs` |
@@ -209,31 +209,38 @@ impl Component for FanOut {
 
 ---
 
-## Example 4 — `Suspense` parks the row at `depth+1`
+## Example 4 — `Yield` parks the row at the same depth
 
-The first pause primitive. The component returns a value plus a wake
+The pause primitive. The component returns a value plus a wake
 condition. The row goes to the parker bucket, the driver moves on. When
-the wake fires (next section), the parker row becomes runnable at
-`depth+1` (the NEXT component) with the parked value.
+the wake fires (next section), the parker row becomes runnable at the
+SAME depth — the same component renders again with the same input.
 
 ```rust
 use effect_runtime::v2::{EventBus, Wake};
 
-struct ParkOnKey { key: NextKey }
+struct ParkOnKey { key: NextKey, fired: AtomicBool }
 impl Component for ParkOnKey {
     type Next = LabCursor;
     fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
-        Node::Suspense {
-            value: Arc::new(c.clone()),
-            wake:  Wake::Key(self.key),
+        if self.fired.swap(true, Ordering::SeqCst) {
+            // Wake fired: emit downstream.
+            Node::Emit(Arc::new(c.clone()))
+        } else {
+            Node::Yield {
+                value: Arc::new(c.clone()),
+                wake:  Wake::Key(self.key),
+            }
         }
     }
 }
 ```
 
-`Suspense` advances `depth`. The same component does NOT re-render the
-same value — see [Example 6](#example-6--yield-re-renders-the-same-component)
-for the alternative.
+`Yield` parks at the parker's own depth. Render must be idempotent
+against the input — the component sees its input twice (first call
+yields, second call after wake decides what to do). See
+[Example 6](#example-6--react-query-state-machine-via-yield)
+for the canonical state-machine shape.
 
 ---
 
@@ -251,7 +258,7 @@ let bus = Arc::new(EventBus::new());
 let key = bus.fresh_key();
 
 let pipe = PipeInstance::new(vec![
-    Arc::new(ParkOnKey { key }) as Arc<dyn Component<Next = LabCursor>>,
+    Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
     Arc::new(Collector { sink: sink.clone() }),
 ]);
 let opts = DriveOpts::default().with_bus(bus.clone());
@@ -274,13 +281,13 @@ assert_eq!(sink.lock().unwrap().len(), 1);
 
 ---
 
-## Example 6 — `Yield` re-renders the SAME component
+## Example 6 — react-query state machine via `Yield`
 
-`Suspense` advances `depth`. `Yield` parks at the same `depth` so when the
-wake fires, the SAME component renders again with the same input. This
-is the react-query state machine: first call sees `Idle`, transitions
-to `Pending`, returns `Yield`. Second call (after the wake) sees
-`Success(data)` and returns `Emit(data)`.
+`Yield` parks at the same `depth`, so when the wake fires the SAME
+component renders again with the same input. The react-query state
+machine: first call sees `Idle`, transitions to `Pending`, returns
+`Yield`. Second call (after the wake) sees `Success(data)` and returns
+`Emit(data)`.
 
 ```rust
 fn render(&self, _: &RenderCtx, c: &N) -> Node<N> {
@@ -300,9 +307,8 @@ fn render(&self, _: &RenderCtx, c: &N) -> Node<N> {
 }
 ```
 
-Use `Yield` when the SAME component decides what to do based on
-external state (cache, response). Use `Suspense` when the NEXT
-component consumes the resolved value.
+`Yield` is the sole park primitive. The same component decides what to
+do based on external state (cache, response, store).
 
 ---
 
@@ -324,11 +330,19 @@ let fx      = Arc::new(EffectDispatch::new(
     Arc::new(ThreadSpawner),     // or TokioSpawner
 ));
 
-struct DispatchUppercase { fx: Arc<EffectDispatch<LabCursor>> }
+struct DispatchUppercase {
+    fx:    Arc<EffectDispatch<LabCursor>>,
+    store: Arc<MutationStore<LabCursor>>,
+}
 impl Component for DispatchUppercase {
     type Next = LabCursor;
     fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
-        let key  = NextKey(c.content_hash());
+        let key = NextKey(c.content_hash());
+        // Re-render path: result has landed, take and emit.
+        if let Some(r) = self.store.take(key) {
+            return Node::Emit(r);
+        }
+        // First-render path: dispatch and yield.
         let raw  = c.get(":raw").unwrap_or("").to_string();
         let seed = c.clone();
         self.fx.dispatch(key, move || {
@@ -336,12 +350,13 @@ impl Component for DispatchUppercase {
             out.set(":upper", raw.to_uppercase());
             out
         });
-        Node::Suspense { value: Arc::new(c.clone()), wake: Wake::Key(key) }
+        Node::Yield { value: Arc::new(c.clone()), wake: Wake::Key(key) }
     }
 }
 ```
 
-The next component reads the result via `store.take(key)`.
+The same component reads the result via `store.take(key)` on re-render
+after wake.
 
 `Spawner` is a trait — `ThreadSpawner` for the no-runtime path,
 `TokioSpawner` to share a `tokio::spawn_blocking` pool with an existing
@@ -590,11 +605,11 @@ impl Component for SwitchMap {
             if let Some(prev) = self.prev.lock().unwrap().replace(new_key) {
                 bus.dispatch(Event::KeyDirty(prev));   // cancel prior
             }
-            let parked = Node::Suspense {
+            let parked = Node::Yield {
                 value: row.value.clone(),
                 wake:  Wake::Key(new_key),
             };
-            splice_into(row, parked, ctx.depth + 1, ctx.drive_tick, queue);
+            splice_into(row, parked, ctx.depth, ctx.drive_tick, queue);
         }
     }
 }
@@ -663,7 +678,7 @@ TODO comments mark the five sites where Phase E hooks land:
 | `next.rs`              | <60 LoC. Trait + primitive impls. |
 | `next_key.rs`          | <50 LoC. Compose helper. |
 | `wake.rs`              | <20 LoC. Three variants. |
-| `node.rs`              | <60 LoC. Five variants + manual Clone. |
+| `node.rs`              | <60 LoC. Four variants + manual Clone. |
 | `component.rs`         | <40 LoC. Trait + RenderCtx + DynComponent alias. |
 | `queue.rs`             | ~80 LoC. Trait + QueueRow + ReadyKeys. |
 | `mem_queue.rs`         | ~110 LoC. Three buckets + one mutex. |

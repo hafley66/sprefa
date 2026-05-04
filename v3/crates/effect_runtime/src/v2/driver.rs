@@ -3,7 +3,7 @@
 //! Pull a runnable row → look up the component at `depth` → render →
 //! flatten → enqueue children. Repeat until nothing is runnable.
 //!
-//! Synchronous Phase-3 form. Suspense parks rows; the caller advances
+//! Synchronous Phase-3 form. Yield parks rows; the caller advances
 //! the `EventBus` ready set (or the global tick) and re-enters `drive`
 //! to make progress.
 
@@ -118,7 +118,7 @@ pub fn drive<N: Next>(
         }
 
         // Forget all Wake::Key keys now that the rows have been pulled.
-        // Keeps the ready set bounded; future Suspense for the same
+        // Keeps the ready set bounded; future Yield for the same
         // logical pause uses a fresh key.
         for row in &batch {
             if let Wake::Key(k) = &row.wake {
