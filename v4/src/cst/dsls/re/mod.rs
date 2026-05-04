@@ -84,7 +84,7 @@ impl Dsl for ReDsl {
             Diag::error("re.parse", "parser returned None", 0..0)
         })?;
 
-        let (parts, sugar_names) = build_parts(&tree, body);
+        let (parts, _sugar_names) = build_parts(&tree, body);
         let mut rx = String::new();
         for part in &parts {
             match part {
@@ -103,20 +103,9 @@ impl Dsl for ReDsl {
             Diag::error("re.syntax", err.to_string(), 0..body.len())
         })?;
 
-        // declared = sugar names first, then native named groups (deduped).
-        let mut declared: Vec<Arc<str>> = sugar_names;
-        for name in regex.capture_names().flatten() {
-            let n: Arc<str> = Arc::from(name);
-            if !declared.iter().any(|x| **x == *n) {
-                declared.push(n);
-            }
-        }
-
-        // No non-fatal diagnostics today; sink kept in the signature so it
-        // stays available when we add e.g. "duplicate name" warnings later.
         let _ = diags;
 
-        Ok(Box::new(ReCompiled { regex, tree, declared }))
+        Ok(Box::new(ReCompiled { regex, tree }))
     }
 
     fn injection_grammar(&self) -> Option<Language> { Some(self.language()) }
@@ -127,7 +116,6 @@ impl Dsl for ReDsl {
 pub struct ReCompiled {
     regex:    Regex,
     tree:     Tree,
-    declared: Vec<Arc<str>>,
 }
 
 impl ReCompiled {
@@ -136,8 +124,6 @@ impl ReCompiled {
 }
 
 impl Compiled for ReCompiled {
-    fn declared_captures(&self) -> &[Arc<str>] { &self.declared }
-
     fn match_into(&self, target: &[u8], target_off: usize, sink: &mut dyn CaptureSink) {
         let names: Vec<Option<&str>> = self.regex.capture_names().collect();
         for caps in self.regex.captures_iter(target) {
@@ -213,18 +199,18 @@ mod tests {
     use crate::cst::dsl::VecCaptureSink;
 
     #[test]
-    fn compiles_plain_literal() {
+    fn compiles_plain_literal_emits_no_captures() {
         let dsl = ReDsl::new();
         let c = dsl.compile(br"TODO\(.+\)", &SilentSink).unwrap();
-        assert!(c.declared_captures().is_empty());
+        let mut sink = VecCaptureSink::new();
+        c.match_into(b"TODO(x)", 0, &mut sink);
+        assert!(sink.rows.is_empty());
     }
 
     #[test]
-    fn sugar_lowers_to_named_group_and_declares_capture() {
+    fn sugar_lowers_to_named_group_and_emits_capture() {
         let dsl = ReDsl::new();
         let c = dsl.compile(br"TODO\($WHO\)", &SilentSink).unwrap();
-        let names: Vec<&str> = c.declared_captures().iter().map(|a| &**a).collect();
-        assert_eq!(names, vec!["WHO"]);
 
         let mut sink = VecCaptureSink::new();
         c.match_into(b"prefix TODO(alice) suffix", 100, &mut sink);
@@ -241,13 +227,14 @@ mod tests {
     }
 
     #[test]
-    fn sugar_and_native_named_group_dedup() {
+    fn sugar_and_native_named_group_both_emit() {
         let dsl = ReDsl::new();
         let c = dsl
             .compile(br"$FIRST (?P<SECOND>\w+)", &SilentSink)
             .unwrap();
-        let names: Vec<&str> =
-            c.declared_captures().iter().map(|a| &**a).collect();
+        let mut sink = VecCaptureSink::new();
+        c.match_into(b"alpha beta", 0, &mut sink);
+        let names: Vec<&str> = sink.rows.iter().map(|r| &*r.name).collect();
         assert!(names.contains(&"FIRST"));
         assert!(names.contains(&"SECOND"));
     }

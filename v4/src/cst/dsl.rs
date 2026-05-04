@@ -34,12 +34,11 @@ pub trait Dsl: Send + Sync + 'static {
 }
 
 pub trait Compiled: Send + Sync {
-    /// Names of captures this compiled pattern can bind, in declaration order.
-    fn declared_captures(&self) -> &[Arc<str>];
-
     /// Run against `target` and emit captures. `target_off` is the absolute
     /// byte offset of `target` within whatever larger document (used to make
-    /// emitted spans absolute).
+    /// emitted spans absolute). Capture names emerge from DSL-native binding
+    /// syntax (e.g. re's `(?P<NAME>)`, ast's `$NAME`); the lib does not
+    /// pre-declare names.
     fn match_into(&self, target: &[u8], target_off: usize, sink: &mut dyn CaptureSink);
 
     /// Contribute path items for a position inside the compiled body. Used to

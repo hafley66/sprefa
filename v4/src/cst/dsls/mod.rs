@@ -6,3 +6,6 @@
 //! without leaking any sprf vocabulary into the lib core.
 
 pub mod re;
+pub mod glob;
+pub mod json;
+pub mod ast;

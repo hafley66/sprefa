@@ -877,6 +877,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-hash"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
+
+[[package]]
 name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1468,6 +1474,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-toml-ng"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9adc2c898ae49730e857d75be403da3f92bb81d8e37a2f918a08dd10de5ebb1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-typescript"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1530,12 +1546,14 @@ dependencies = [
  "differential-dataflow",
  "effect_runtime",
  "futures",
+ "globset",
  "ignore",
  "libc",
  "lsp-types",
  "rayon",
  "regex",
  "rusqlite",
+ "rustc-hash",
  "streaming-iterator",
  "tempfile",
  "tikv-jemallocator",
@@ -1545,6 +1563,8 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-json 0.24.8",
  "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+ "tree-sitter-yaml",
 ]
 
 [[package]]
