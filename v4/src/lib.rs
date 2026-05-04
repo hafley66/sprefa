@@ -69,6 +69,11 @@ impl Cursor {
         self.terms.binary_search_by(|(n, _)| (**n).cmp(name))
             .ok().map(|i| &*self.terms[i].1)
     }
+    pub fn unset(&mut self, name: &str) {
+        if let Ok(i) = self.terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
+            self.terms.remove(i);
+        }
+    }
 }
 
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
@@ -672,6 +677,27 @@ impl SqliteStore {
             tele:    OnceLock::new(),
         })
     }
+    /// On-disk constructor. Sets WAL journal mode for concurrent readers.
+    pub fn open_path(p: impl AsRef<std::path::Path>) -> Arc<Self> {
+        if let Some(parent) = p.as_ref().parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let conn = rusqlite::Connection::open(p.as_ref()).expect("open sqlite");
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+        Arc::new(Self {
+            conn:    Mutex::new(conn),
+            schemas: Default::default(),
+            pending: Mutex::new(HashMap::new()),
+            tele:    OnceLock::new(),
+        })
+    }
+    /// Default on-disk path: $HOME/.cache/sprefa/v4.db.
+    pub fn open_default() -> Arc<Self> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        let path = std::path::PathBuf::from(home).join(".cache/sprefa/v4.db");
+        Self::open_path(path)
+    }
     pub fn attach_tele(&self, t: Telemetry) { let _ = self.tele.set(t); }
     fn span(&self, name: &'static str, n_in: Option<u64>) -> Option<SpanOpen> {
         self.tele.get().map(|t| t.start(name, n_in))
@@ -713,8 +739,11 @@ impl Store for SqliteStore {
             let sql = format!("INSERT INTO \"{}\" ({}) VALUES ({})", fact, col_list, placeholders);
             let mut stmt = txn.prepare_cached(&sql).expect("prepare insert");
             for row in rows {
-                let vals: Vec<String> = cols.iter()
-                    .map(|c| row.get(c).unwrap_or("").to_string()).collect();
+                // Missing term → NULL (Option::None ToSql). Empty string
+                // is preserved as a literal "" if the cursor explicitly
+                // set the term to "". This makes "input optional" work.
+                let vals: Vec<Option<String>> = cols.iter()
+                    .map(|c| row.get(c).map(|s| s.to_string())).collect();
                 let params: Vec<&dyn rusqlite::ToSql> = vals.iter()
                     .map(|v| v as &dyn rusqlite::ToSql).collect();
                 stmt.execute(params.as_slice()).expect("exec insert");
@@ -746,8 +775,9 @@ impl Store for SqliteStore {
         let rows = stmt.query_map([], move |row| {
             let mut c = Cursor::default();
             for (i, name) in cols_owned.iter().enumerate() {
-                let v: String = row.get(i).unwrap_or_default();
-                c.set(name, v);
+                // NULL → term not set on cursor (preserves "missing").
+                let v: Option<String> = row.get(i).ok().flatten();
+                if let Some(v) = v { c.set(name, v); }
             }
             Ok(c)
         });
@@ -805,8 +835,8 @@ impl Store for SqliteStore {
         let rows = stmt.query_map(params.as_slice(), move |row| {
             let mut c = Cursor::default();
             for (i, name) in proj_for_map.iter().enumerate() {
-                let v: String = row.get(i).unwrap_or_default();
-                c.set(name, v);
+                let v: Option<String> = row.get(i).ok().flatten();
+                if let Some(v) = v { c.set(name, v); }
             }
             Ok(c)
         });
@@ -1135,6 +1165,11 @@ pub trait Op: Send + Sync + 'static {
     /// Sources (Fs, FactRead) and sinks (FactWrite) and effectful ops
     /// (sh, http) override to false. Default false (assume impure).
     fn is_pure(&self) -> bool { false }
+    /// Layer-2 probe: source ops describe the (path, content_hash) set
+    /// they would emit, without running the rest of the pipeline.
+    /// Returned vector is sorted by path before hashing in
+    /// Rule::input_set_hash. Default None = "not a probeable source".
+    fn probe(&self) -> Option<Vec<(String, [u8; 32])>> { None }
 }
 
 pub fn ident_of(parts: &[&[u8]]) -> [u8; 32] {
@@ -1166,6 +1201,21 @@ impl Op for Fs {
         for e in &self.exts { bits.push(e.as_bytes()); }
         ident_of(&bits)
     }
+    fn probe(&self) -> Option<Vec<(String, [u8; 32])>> {
+        let mut out: Vec<(String, [u8; 32])> = Vec::new();
+        for entry in WalkBuilder::new(&self.root).hidden(true).git_ignore(false).build() {
+            let Ok(e) = entry else { continue };
+            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
+            let p = e.into_path();
+            let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+            if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+            let Ok(bytes) = std::fs::read(&p) else { continue };
+            let h = *blake3::hash(&bytes).as_bytes();
+            out.push((p.display().to_string(), h));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Some(out)
+    }
     fn run(self: Arc<Self>, h: Hooks, _in: BoxStream<'static, Vec<Cursor>>)
         -> BoxStream<'static, Vec<Cursor>>
     {
@@ -1195,6 +1245,395 @@ impl Op for Fs {
             }
             if !buf.is_empty() {
                 let span = tele.start("v4::Fs", None);
+                let n = buf.len() as u64;
+                let _ = tx.blocking_send(buf);
+                span.close(Some(n));
+            }
+        });
+        Box::pin(ReceiverStream::new(rx))
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7b  Repo — multi-root cross-repo source
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// One cursor per file across N labelled roots. Each cursor carries:
+//   REPO = slug (caller-supplied)
+//   FS   = absolute file path (downstream ops read bytes from this)
+// Wraps the same WalkBuilder shape as Fs; just multiplexed across roots
+// and tagged with REPO. Walking happens sequentially per root inside one
+// spawn_blocking; per-root parallelism is left to upstream batching of
+// the chained matcher (AstNm/Re par_iter on each batch).
+//
+// Probe: walks every root, blake3-hashes every matching file, returns
+// sorted ("{slug}::{path}", hash) entries. Slug-prefix prevents same-name
+// files in different repos from colliding in the Layer-2 input-set hash.
+pub struct Repo {
+    pub roots: Vec<(String, PathBuf)>,
+    pub exts:  Vec<String>,
+    pub batch: usize,
+    pub cap:   usize,
+}
+impl Repo {
+    pub fn new(roots: Vec<(String, PathBuf)>, exts: Vec<String>) -> Self {
+        Self { roots, exts, batch: BATCH, cap: 8 }
+    }
+    /// Auto-slug each root by its basename. Convenience for symmetric
+    /// multi-root walks where the caller doesn't care about labels.
+    pub fn auto(roots: &[PathBuf], exts: Vec<String>) -> Self {
+        let labelled: Vec<(String, PathBuf)> = roots.iter().map(|p| {
+            let slug = p.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| p.display().to_string());
+            (slug, p.clone())
+        }).collect();
+        Self::new(labelled, exts)
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7b0  Seed — emit a single fixed batch of cursors, ignore input
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// Useful as a chain head when the first real op (e.g., Sh::emit_lines)
+// is per-cursor but you want it to run once. `Seed::one()` ships a
+// single empty cursor; arbitrary seeds via `Seed::new(rows)`.
+pub struct Seed { pub rows: Vec<Cursor> }
+impl Seed {
+    pub fn one() -> Self { Self { rows: vec![Cursor::default()] } }
+    pub fn new(rows: Vec<Cursor>) -> Self { Self { rows } }
+}
+impl Op for Seed {
+    fn ident(&self) -> [u8; 32] { ident_of(&[b"seed"]) }
+    fn run(self: Arc<Self>, _h: Hooks, _i: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let rows = self.rows.clone();
+        Box::pin(async_stream::stream! { yield rows; })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7b'  RepoFromTerm — value-driven cross-repo source (transformer)
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// Per input cursor, treats cursor.get(term) as a repo root. Walks it,
+// emits REPO+FS cursors for each matching file, preserving all other
+// terms from the input cursor (so upstream context flows through).
+//
+// REPO = basename of the root path. FS = absolute file path.
+//
+// is_pure: false (source-shaped; reads the filesystem).
+pub struct RepoFromTerm {
+    pub term:  String,
+    pub exts:  Vec<String>,
+    pub batch: usize,
+}
+impl RepoFromTerm {
+    pub fn new(term: impl Into<String>, exts: Vec<String>) -> Self {
+        Self { term: term.into(), exts, batch: BATCH }
+    }
+}
+impl Op for RepoFromTerm {
+    fn ident(&self) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        h.update(b"repo_from_term|");
+        h.update(self.term.as_bytes()); h.update(b"|");
+        for e in &self.exts { h.update(e.as_bytes()); h.update(b","); }
+        *h.finalize().as_bytes()
+    }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        let interner = h.interner.clone();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start("v4::RepoFromTerm", Some(n_in));
+                let me_ = me.clone();
+                let interner_ = interner.clone();
+                let out: Vec<Cursor> = tokio::task::spawn_blocking(move || {
+                    let mut all: Vec<Cursor> = Vec::new();
+                    for parent in batch {
+                        let Some(root_str) = parent.get(&me_.term) else { continue };
+                        let root = PathBuf::from(root_str);
+                        let slug = root.file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| root.display().to_string());
+                        let slug_arc: Arc<str> = interner_.intern(&slug);
+                        for entry in WalkBuilder::new(&root).hidden(true).git_ignore(false).build() {
+                            let Ok(e) = entry else { continue };
+                            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
+                            let p = e.into_path();
+                            let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+                            if !me_.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+                            let mut c = parent.clone();
+                            c.set_arc("REPO", slug_arc.clone());
+                            c.set_arc("FS",   interner_.intern(&p.display().to_string()));
+                            all.push(c);
+                        }
+                    }
+                    all
+                }).await.unwrap_or_default();
+                let n_out = out.len() as u64;
+                span.close(Some(n_out));
+                if !out.is_empty() { yield out; }
+            }
+        })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7b''  Line — explode a term's value into one cursor per line
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// Reads cursor.get(source). Splits on '\n'. Empty lines dropped.
+// Each non-empty line emitted as a fresh cursor with all original terms
+// preserved + target=line. Default target = source (line replaces value).
+// is_pure: true.
+pub struct Line {
+    pub source: String,
+    pub target: String,
+}
+impl Line {
+    pub fn on(term: impl Into<String>) -> Self {
+        let s = term.into();
+        Self { target: s.clone(), source: s }
+    }
+    pub fn into_term(mut self, target: impl Into<String>) -> Self {
+        self.target = target.into(); self
+    }
+}
+impl Op for Line {
+    fn ident(&self) -> [u8; 32] {
+        ident_of(&[b"line", self.source.as_bytes(), b"->", self.target.as_bytes()])
+    }
+    fn is_pure(&self) -> bool { true }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start("v4::Line", Some(n_in));
+                let mut out = Vec::with_capacity(batch.len());
+                for c in batch {
+                    let Some(text) = c.get(&me.source).map(|s| s.to_string()) else { continue };
+                    for line in text.split('\n') {
+                        if line.is_empty() { continue; }
+                        let mut child = c.clone();
+                        child.set(&me.target, line);
+                        out.push(child);
+                    }
+                }
+                let n_out = out.len() as u64;
+                span.close(Some(n_out));
+                if !out.is_empty() { yield out; }
+            }
+        })
+    }
+}
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7c'  ChannelHub + Next / NextQ — ephemeral pub/sub between rules
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// Process-wide channel hub. One `tokio::sync::broadcast::Sender` per
+// channel name, lazily created. Channels survive across drives so a
+// producer rule and a consumer rule (separate drive_with calls) can
+// share state.
+//
+//   next(:chan)        — Next op:  send each input cursor on `chan`,
+//                        forward downstream unchanged.
+//   next?(:chan, take) — NextQ op: source-shaped, subscribes and emits
+//                        cursors as they arrive. `take` is the count
+//                        cap (None = unbounded; will block at end of
+//                        the producer's life unless `close(chan)` is
+//                        called).
+//
+// Lock detection: not implemented. Workarounds —
+//   - send is buffer-bounded (broadcast buf=1024). Lagging recv sees
+//     RecvError::Lagged; we skip and continue (telemetry counter).
+//   - recv ends when all senders drop OR the hub explicitly closes the
+//     channel. Provide `Close { chan }` op and `ChannelHub::close(name)`
+//     for explicit termination.
+pub struct ChannelHub {
+    senders: std::sync::RwLock<HashMap<String, tokio::sync::broadcast::Sender<Cursor>>>,
+    buf:     usize,
+}
+impl ChannelHub {
+    pub fn new() -> Self { Self { senders: Default::default(), buf: 1024 } }
+    fn ensure(&self, name: &str) -> tokio::sync::broadcast::Sender<Cursor> {
+        {
+            let r = self.senders.read().unwrap();
+            if let Some(s) = r.get(name) { return s.clone(); }
+        }
+        let mut w = self.senders.write().unwrap();
+        if let Some(s) = w.get(name) { return s.clone(); }
+        let (tx, _rx) = tokio::sync::broadcast::channel::<Cursor>(self.buf);
+        w.insert(name.to_string(), tx.clone());
+        tx
+    }
+    pub fn send(&self, name: &str, cur: Cursor) {
+        // Returns Err if no subscribers; broadcast still buffers, so
+        // late subscribers get historical events up to buf depth.
+        let _ = self.ensure(name).send(cur);
+    }
+    pub fn subscribe(&self, name: &str) -> tokio::sync::broadcast::Receiver<Cursor> {
+        self.ensure(name).subscribe()
+    }
+    pub fn close(&self, name: &str) {
+        self.senders.write().unwrap().remove(name);
+    }
+    pub fn subscribers(&self, name: &str) -> usize {
+        self.senders.read().unwrap().get(name).map(|s| s.receiver_count()).unwrap_or(0)
+    }
+}
+static CHANNELS: OnceLock<ChannelHub> = OnceLock::new();
+pub fn channels() -> &'static ChannelHub {
+    CHANNELS.get_or_init(ChannelHub::new)
+}
+
+pub struct Next { pub chan: String }
+impl Next {
+    pub fn new(chan: impl Into<String>) -> Self { Self { chan: chan.into() } }
+}
+impl Op for Next {
+    fn ident(&self) -> [u8; 32] { ident_of(&[b"next", self.chan.as_bytes()]) }
+    fn is_pure(&self) -> bool { false }  // observable side-effect
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n = batch.len() as u64;
+                let span = tele.start("v4::Next", Some(n));
+                for c in &batch { channels().send(&me.chan, c.clone()); }
+                span.close(Some(n));
+                yield batch;
+            }
+        })
+    }
+}
+
+pub struct NextQ {
+    pub chan: String,
+    pub take: Option<usize>,  // None = unbounded
+}
+impl NextQ {
+    pub fn new(chan: impl Into<String>) -> Self { Self { chan: chan.into(), take: None } }
+    pub fn take(mut self, n: usize) -> Self { self.take = Some(n); self }
+}
+impl Op for NextQ {
+    fn ident(&self) -> [u8; 32] { ident_of(&[b"next?", self.chan.as_bytes()]) }
+    fn is_pure(&self) -> bool { false }  // depends on external state
+    fn run(self: Arc<Self>, h: Hooks, _i: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        let mut rx = channels().subscribe(&me.chan);
+        Box::pin(async_stream::stream! {
+            let mut emitted: usize = 0;
+            loop {
+                match rx.recv().await {
+                    Ok(c) => {
+                        let span = tele.start("v4::NextQ", Some(1));
+                        emitted += 1;
+                        span.close(Some(1));
+                        yield vec![c];
+                        if let Some(n) = me.take { if emitted >= n { break; } }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+    }
+}
+
+pub struct Close { pub chan: String }
+impl Close {
+    pub fn new(chan: impl Into<String>) -> Self { Self { chan: chan.into() } }
+}
+impl Op for Close {
+    fn ident(&self) -> [u8; 32] { ident_of(&[b"close", self.chan.as_bytes()]) }
+    fn is_pure(&self) -> bool { false }
+    fn run(self: Arc<Self>, _h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await { yield batch; }
+            channels().close(&me.chan);
+        })
+    }
+}
+
+impl Op for Repo {
+    fn ident(&self) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        h.update(b"repo|");
+        for (slug, root) in &self.roots {
+            h.update(slug.as_bytes()); h.update(b"=");
+            h.update(root.to_string_lossy().as_bytes()); h.update(b"\n");
+        }
+        for e in &self.exts { h.update(e.as_bytes()); h.update(b","); }
+        *h.finalize().as_bytes()
+    }
+    fn probe(&self) -> Option<Vec<(String, [u8; 32])>> {
+        let mut out: Vec<(String, [u8; 32])> = Vec::new();
+        for (slug, root) in &self.roots {
+            for entry in WalkBuilder::new(root).hidden(true).git_ignore(false).build() {
+                let Ok(e) = entry else { continue };
+                if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
+                let p = e.into_path();
+                let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+                if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+                let Ok(bytes) = std::fs::read(&p) else { continue };
+                let h = *blake3::hash(&bytes).as_bytes();
+                out.push((format!("{}::{}", slug, p.display()), h));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Some(out)
+    }
+    fn run(self: Arc<Self>, h: Hooks, _in: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        let interner = h.interner.clone();
+        let batch = me.batch;
+        let (tx, rx) = mpsc::channel::<Vec<Cursor>>(me.cap);
+        tokio::task::spawn_blocking(move || {
+            let mut buf: Vec<Cursor> = Vec::with_capacity(batch);
+            for (slug, root) in &me.roots {
+                let slug_arc: Arc<str> = interner.intern(slug);
+                for entry in WalkBuilder::new(root).hidden(true).git_ignore(false).build() {
+                    let Ok(e) = entry else { continue };
+                    if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
+                    let p = e.into_path();
+                    let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+                    if !me.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+                    let mut c = Cursor::default();
+                    c.set_arc("REPO", slug_arc.clone());
+                    c.set_arc("FS",   interner.intern(&p.display().to_string()));
+                    buf.push(c);
+                    if buf.len() >= batch {
+                        let span = tele.start("v4::Repo", None);
+                        let n = buf.len() as u64;
+                        if tx.blocking_send(std::mem::take(&mut buf)).is_err() {
+                            span.close(Some(n)); return;
+                        }
+                        span.close(Some(n));
+                        buf = Vec::with_capacity(batch);
+                    }
+                }
+            }
+            if !buf.is_empty() {
+                let span = tele.start("v4::Repo", None);
                 let n = buf.len() as u64;
                 let _ = tx.blocking_send(buf);
                 span.close(Some(n));
@@ -1323,6 +1762,347 @@ impl Op for AstNm {
             //     dbg_passed.load(Ordering::Relaxed),
             //     dbg_hit.load(Ordering::Relaxed));
             let _ = (&dbg_seen, &dbg_passed, &dbg_hit);
+        })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7c  Re — regex matcher (grep-like)
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// One match → one output cursor. Groups bound positionally:
+//   group(0) → MATCH (when want_match)
+//   group(1..N) → captures[0..N-1]
+// Source: when on=="FS", read file bytes at cursor.get("FS"); else use
+// cursor.get(on) as the haystack text.
+pub struct Re {
+    pub pattern_src:   String,
+    pub on:            String,
+    pub capture_names: Vec<String>,
+    pub want_match:    bool,
+}
+impl Re {
+    pub fn new(pat: &str, captures: &[&str]) -> Self {
+        Self {
+            pattern_src:   pat.to_string(),
+            on:            "FS".to_string(),
+            capture_names: captures.iter().map(|s| s.to_string()).collect(),
+            want_match:    true,
+        }
+    }
+    pub fn on_term(mut self, term: &str) -> Self { self.on = term.to_string(); self }
+    pub fn with_match_text(mut self, on: bool) -> Self { self.want_match = on; self }
+}
+impl Op for Re {
+    fn ident(&self) -> [u8; 32] {
+        ident_of(&[b"re", self.on.as_bytes(), self.pattern_src.as_bytes()])
+    }
+    fn is_pure(&self) -> bool { true }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        let interner = h.interner.clone();
+        let re = Arc::new(regex::Regex::new(&me.pattern_src).expect("compile regex"));
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start("v4::Re", Some(n_in));
+                let re = re.clone();
+                let me = me.clone();
+                let interner = interner.clone();
+                let bytes_acc = Arc::new(AtomicU64::new(0));
+                let bytes_a   = bytes_acc.clone();
+                let out: Vec<Cursor> = tokio::task::spawn_blocking(move || {
+                    batch.par_iter().flat_map(|c| {
+                        let (haystack, content_hash_arc): (String, Option<Arc<str>>) =
+                            if me.on == "FS" {
+                                let Some(path) = c.get("FS") else { return vec![] };
+                                let Ok(bytes) = std::fs::read(path) else { return vec![] };
+                                bytes_a.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                                let h_hex = blake3::hash(&bytes).to_hex().to_string();
+                                let h_arc: Arc<str> = interner.intern(&h_hex);
+                                let s = match String::from_utf8(bytes) {
+                                    Ok(s) => s,
+                                    Err(e) => unsafe { String::from_utf8_unchecked(e.into_bytes()) },
+                                };
+                                (s, Some(h_arc))
+                            } else {
+                                match c.get(&me.on) {
+                                    Some(s) => (s.to_string(), None),
+                                    None => return vec![],
+                                }
+                            };
+                        let mut hits = Vec::new();
+                        for caps in re.captures_iter(&haystack) {
+                            let m0 = caps.get(0).unwrap();
+                            let mut child = c.clone();
+                            if let Some(arc) = &content_hash_arc {
+                                child.set_arc("CONTENT_HASH", arc.clone());
+                            }
+                            child.set("LO", (m0.start() as u64).to_string());
+                            child.set("HI", (m0.end()   as u64).to_string());
+                            if me.want_match { child.set("MATCH", m0.as_str()); }
+                            for (i, name) in me.capture_names.iter().enumerate() {
+                                if let Some(g) = caps.get(i + 1) {
+                                    child.set(name, g.as_str());
+                                }
+                            }
+                            hits.push(child);
+                        }
+                        hits
+                    }).collect()
+                }).await.unwrap_or_default();
+                let n_out = out.len() as u64;
+                span.close(Some(n_out));
+                if !out.is_empty() { yield out; }
+            }
+        })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7d  Sh / ShBang — shell ops
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// Sh   = query/filter shell, AUTHOR-DECLARED PURE (cacheable). Modes:
+//   EmitLines     — one cursor per stdout line, line bound to LINE term
+//   FilterByExit  — exit 0 → pass cursor, nonzero → drop
+//   CaptureStdout — bind trimmed stdout to `bind`, pass cursor
+// ShBang (sh!) = side-effect shell, IMPURE. Runs cmd, discards stdout,
+//   always passes cursor through. Never cached.
+//
+// `${TERM}` interpolation from the input cursor (POSIX single-quoted).
+// Run via `sh -c`.
+#[derive(Clone, Copy, Debug)]
+pub enum ShMode { EmitLines, FilterByExit, CaptureStdout }
+pub struct Sh {
+    pub cmd_template: String,
+    pub mode:         ShMode,
+    pub bind:         Option<String>,
+}
+impl Sh {
+    pub fn emit_lines(cmd: &str) -> Self {
+        Self { cmd_template: cmd.to_string(), mode: ShMode::EmitLines, bind: None }
+    }
+    pub fn filter(cmd: &str) -> Self {
+        Self { cmd_template: cmd.to_string(), mode: ShMode::FilterByExit, bind: None }
+    }
+    pub fn capture(cmd: &str, bind: &str) -> Self {
+        Self { cmd_template: cmd.to_string(), mode: ShMode::CaptureStdout, bind: Some(bind.to_string()) }
+    }
+}
+fn shell_quote(s: &str) -> String {
+    // POSIX: wrap in single quotes, escape embedded single quotes as '\''.
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' { out.push_str("'\\''"); } else { out.push(ch); }
+    }
+    out.push('\'');
+    out
+}
+fn render_template(template: &str, cur: &Cursor) -> String {
+    // Replace ${TERM} with shell-quoted cursor.get(TERM). Missing → empty quoted.
+    let re = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+    re.replace_all(template, |caps: &regex::Captures| {
+        let name = &caps[1];
+        let v = cur.get(name).unwrap_or("");
+        shell_quote(v)
+    }).into_owned()
+}
+impl Op for Sh {
+    fn ident(&self) -> [u8; 32] {
+        ident_of(&[b"sh", format!("{:?}", self.mode).as_bytes(), self.cmd_template.as_bytes()])
+    }
+    fn is_pure(&self) -> bool { true }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start("v4::Sh", Some(n_in));
+                let mut out: Vec<Cursor> = Vec::new();
+                for c in batch {
+                    let cmd = render_template(&me.cmd_template, &c);
+                    let res = tokio::process::Command::new("sh")
+                        .arg("-c").arg(&cmd)
+                        .output().await;
+                    let Ok(o) = res else { continue };
+                    match me.mode {
+                        ShMode::EmitLines => {
+                            let stdout = String::from_utf8_lossy(&o.stdout);
+                            for line in stdout.split('\n') {
+                                if line.is_empty() { continue; }
+                                let mut child = c.clone();
+                                child.set("LINE", line);
+                                out.push(child);
+                            }
+                        }
+                        ShMode::FilterByExit => {
+                            if o.status.success() { out.push(c); }
+                        }
+                        ShMode::CaptureStdout => {
+                            let stdout = String::from_utf8_lossy(&o.stdout).trim_end().to_string();
+                            let mut child = c;
+                            if let Some(b) = &me.bind { child.set(b, stdout.as_str()); }
+                            out.push(child);
+                        }
+                    }
+                }
+                let n_out = out.len() as u64;
+                span.close(Some(n_out));
+                if !out.is_empty() { yield out; }
+            }
+        })
+    }
+}
+
+/// `sh!` — author-declared impure shell. Runs cmd per cursor, drops
+/// stdout, always passes cursor through. Never cacheable.
+pub struct ShBang { pub cmd_template: String }
+impl ShBang {
+    pub fn new(cmd: &str) -> Self { Self { cmd_template: cmd.to_string() } }
+}
+impl Op for ShBang {
+    fn ident(&self) -> [u8; 32] {
+        ident_of(&[b"sh!", self.cmd_template.as_bytes()])
+    }
+    fn is_pure(&self) -> bool { false }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start("v4::Sh!", Some(n_in));
+                let mut out: Vec<Cursor> = Vec::with_capacity(batch.len());
+                for c in batch {
+                    let cmd = render_template(&me.cmd_template, &c);
+                    let _ = tokio::process::Command::new("sh")
+                        .arg("-c").arg(&cmd)
+                        .status().await;
+                    out.push(c);
+                }
+                let n_out = out.len() as u64;
+                span.close(Some(n_out));
+                if !out.is_empty() { yield out; }
+            }
+        })
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7e  OpCache — Layer 3 skip-on-hit gate
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// Wraps a pure inner Op. Per input cursor, hashes (op_ident, lineage(c)).
+// HIT  = drop the input. Inner is not called. Nothing flows downstream.
+// MISS = forward to inner; on output, mark all miss keys as seen.
+//
+// Memory: HashSet<[u8; 32]>. 32 bytes per unique input ever processed.
+// We do NOT hold output cursors — the determinism contract is "if we
+// see the same lineage again, the inner op would produce the same rows
+// it already produced last time, which the sink already absorbed."
+//
+// Position contract: OpCache must sit upstream of a sink (FactWrite,
+// or another cache). On warm runs nothing reaches a downstream Count or
+// other in-pipeline aggregator, by design. Read aggregates via the store.
+//
+// Lineage = blake3 of the cursor's sorted (term=value) pairs. AstNm/Re
+// stamp CONTENT_HASH on outputs, which becomes part of every downstream
+// cursor's lineage automatically.
+//
+// Refusal contract: if `inner.is_pure() == false`, we panic at construction.
+pub struct OpCache {
+    pub inner:  Arc<dyn Op>,
+    pub seen:   Arc<Mutex<HashSet<[u8; 32]>>>,
+    pub hits:   Arc<AtomicU64>,
+    pub misses: Arc<AtomicU64>,
+}
+impl OpCache {
+    pub fn wrap(inner: Arc<dyn Op>) -> Arc<Self> {
+        assert!(inner.is_pure(),
+            "OpCache::wrap requires a pure inner op (got is_pure=false)");
+        Arc::new(Self {
+            inner,
+            seen:   Arc::new(Mutex::new(HashSet::new())),
+            hits:   Arc::new(AtomicU64::new(0)),
+            misses: Arc::new(AtomicU64::new(0)),
+        })
+    }
+    pub fn hits(&self)   -> u64 { self.hits.load(Ordering::Relaxed) }
+    pub fn misses(&self) -> u64 { self.misses.load(Ordering::Relaxed) }
+}
+fn cursor_lineage_hash(c: &Cursor) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    for (k, v) in &c.terms {
+        h.update(k.as_bytes()); h.update(b"=");
+        h.update(v.as_bytes()); h.update(b"\n");
+    }
+    *h.finalize().as_bytes()
+}
+fn cache_key(op_ident: &[u8; 32], lineage: &[u8; 32]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(op_ident);
+    h.update(b"|");
+    h.update(lineage);
+    *h.finalize().as_bytes()
+}
+fn hex32(b: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(64);
+    for byte in b {
+        s.push_str(&format!("{:02x}", byte));
+    }
+    s
+}
+const OPCACHE_KEY_TERM: &str = "_OPCACHE_KEY";
+impl Op for OpCache {
+    fn ident(&self) -> [u8; 32] { self.inner.ident() }
+    fn is_pure(&self) -> bool { self.inner.is_pure() }
+    fn run(self: Arc<Self>, h: Hooks, mut input: BoxStream<'static, Vec<Cursor>>)
+        -> BoxStream<'static, Vec<Cursor>>
+    {
+        let me = self.clone();
+        let tele = h.tele.clone();
+        let op_id = me.inner.ident();
+        Box::pin(async_stream::stream! {
+            while let Some(batch) = input.next().await {
+                let n_in = batch.len() as u64;
+                let span = tele.start("v4::OpCache", Some(n_in));
+                // Partition by seen-vs-new without holding the lock for the
+                // run. Hits are dropped (no replay).
+                let mut to_run:    Vec<Cursor>   = Vec::with_capacity(batch.len());
+                let mut miss_keys: Vec<[u8; 32]> = Vec::with_capacity(batch.len());
+                {
+                    let seen = me.seen.lock().unwrap();
+                    for c in batch {
+                        let key = cache_key(&op_id, &cursor_lineage_hash(&c));
+                        if seen.contains(&key) {
+                            me.hits.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            me.misses.fetch_add(1, Ordering::Relaxed);
+                            to_run.push(c);
+                            miss_keys.push(key);
+                        }
+                    }
+                }
+                let mut total_out: u64 = 0;
+                if !to_run.is_empty() {
+                    let single = futures::stream::iter(vec![to_run]).boxed();
+                    let mut s = me.inner.clone().run(h.clone(), single);
+                    while let Some(out) = s.next().await {
+                        total_out += out.len() as u64;
+                        yield out;
+                    }
+                    let mut seen = me.seen.lock().unwrap();
+                    for key in miss_keys { seen.insert(key); }
+                }
+                span.close(Some(total_out));
+            }
         })
     }
 }
@@ -1625,6 +2405,95 @@ impl Rule {
         chain.push(Arc::new(FactWrite::new(self.sink.fact, &cols_ref)));
         chain
     }
+    /// Layer-2 input set hash. Probes body[0] (the rule's source op) for
+    /// (path, content_hash) pairs, hashes the sorted list. None when the
+    /// source op doesn't implement probe (e.g. FactRead — store-driven).
+    /// POC convention: body[0] is the source.
+    pub fn input_set_hash(&self) -> Option<[u8; 32]> {
+        let src = self.body.first()?;
+        let entries = src.probe()?;
+        let mut h = blake3::Hasher::new();
+        for (path, hash) in &entries {
+            h.update(path.as_bytes());
+            h.update(b"|");
+            h.update(hash);
+            h.update(b"\n");
+        }
+        Some(*h.finalize().as_bytes())
+    }
+    /// Declare the rule's sink schema in the store. Idempotent. The
+    /// "rule with empty body == fact declaration" path: ensures the
+    /// table exists upfront, before any FactWrite has flushed a batch.
+    pub fn declare(&self, store: &Arc<dyn Store>) {
+        let cols_ref: Vec<&str> = self.sink.cols.iter().map(|s| s.as_str()).collect();
+        store.ensure_schema(&self.sink.fact, &cols_ref);
+    }
+}
+
+/// `fact name(cols)` — declare a fact's schema once. Idempotent. Sugar
+/// for `Rule::new(name, vec![], name, cols).declare(store)`. After
+/// declaration, FactWrite inserts may omit any column; missing terms
+/// become NULL in the row.
+pub fn declare_fact(store: &Arc<dyn Store>, name: &str, cols: &[&str]) {
+    Rule::new(name, vec![], name, cols).declare(store);
+}
+
+/// `rule?` — read the sink table of a previously-driven rule by partial
+/// bindings. Structurally identical to FactRead aimed at `rule.sink.fact`.
+pub struct RuleQuery;
+impl RuleQuery {
+    pub fn from_rule(r: &Rule, key_term: &str, project: &[&str]) -> FactRead {
+        FactRead::new(r.sink.fact.clone(), key_term, project)
+    }
+    pub fn by_sink(rule_sink_fact: &str, key_term: &str, project: &[&str]) -> FactRead {
+        FactRead::new(rule_sink_fact, key_term, project)
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   § 7r  RuleStateCache + drive_rule_cached — Layer 2 first pass
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// In-memory rule_name → input_set_hash. Process-lifetime; not persisted.
+// drive_rule_cached probes the rule, compares to the last hash, skips
+// the drain on hit; on miss it drives + commits + records the new hash.
+
+#[derive(Clone, Default)]
+pub struct RuleStateCache {
+    inner: Arc<Mutex<HashMap<String, [u8; 32]>>>,
+}
+impl RuleStateCache {
+    pub fn new() -> Self { Self::default() }
+    pub fn get(&self, name: &str) -> Option<[u8; 32]> {
+        self.inner.lock().unwrap().get(name).copied()
+    }
+    pub fn set(&self, name: &str, hash: [u8; 32]) {
+        self.inner.lock().unwrap().insert(name.to_string(), hash);
+    }
+    pub fn forget(&self, name: &str) {
+        self.inner.lock().unwrap().remove(name);
+    }
+}
+
+pub enum RuleRunOutcome { Skipped, Ran }
+
+/// Layer-2 cached driver. Probe rule, hash its input set, compare to
+/// last seen. Match → Skipped. Miss/no-probe → drive_two_tick + record.
+pub async fn drive_rule_cached(
+    rule: Rule,
+    h: Hooks,
+    cap: usize,
+    cache: &RuleStateCache,
+) -> RuleRunOutcome {
+    let name = rule.name.clone();
+    let new_hash = rule.input_set_hash();
+    if let Some(nh) = new_hash {
+        if let Some(prev) = cache.get(&name) {
+            if prev == nh { return RuleRunOutcome::Skipped; }
+        }
+    }
+    drive_two_tick(rule.into_chain(), h, cap).await;
+    if let Some(nh) = new_hash { cache.set(&name, nh); }
+    RuleRunOutcome::Ran
 }
 
 /// Pass-through op that calls `store.commit(gen)` every `every` batches.

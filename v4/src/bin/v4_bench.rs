@@ -81,6 +81,10 @@ async fn main() {
     // When true, run the SAME workload twice (once mem, once dd) and
     // compare rule snapshots row-for-row. Sanity check; bypasses --store.
     let mut verify = false;
+    // Layer-3 OpCache: wrap AstNm matcher in OpCache, persist across
+    // trials. Trial 1 = cold (all misses); trial 2..N = warm (all hits
+    // when corpus + pattern unchanged).
+    let mut cache = false;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -101,6 +105,7 @@ async fn main() {
             "--rules"        => { rules        = args[i+1].parse::<usize>().unwrap().max(1); i += 2; }
             "--store"        => { store_kind   = args[i+1].clone(); i += 2; }
             "--verify"       => { verify       = true; i += 1; }
+            "--cache"        => { cache        = true; i += 1; }
             other       => panic!("unknown arg: {}", other),
         }
     }
@@ -114,8 +119,17 @@ async fn main() {
 
     rayon::ThreadPoolBuilder::new().num_threads(workers).build_global().ok();
 
-    eprintln!("mode={:?} workers={} cap={} batch={} trials={} pattern={:?} lang={:?} root={}",
-              mode, workers, cap, batch, trials, pattern_src, lang, root.display());
+    eprintln!("mode={:?} workers={} cap={} batch={} trials={} pattern={:?} lang={:?} root={} cache={}",
+              mode, workers, cap, batch, trials, pattern_src, lang, root.display(), cache);
+
+    // OpCache lifted outside the trial loop so trial 2..N see warm hits.
+    // Built only when --cache and matcher is single AstNm (Multi/SinglePath
+    // cache wrapping is a follow-up).
+    let cache_op: Option<Arc<OpCache>> = if cache && multi == 0 && multi_each.is_empty() {
+        Some(OpCache::wrap(Arc::new(
+            AstNm::new(&pattern_src, lang, &[]).with_match_text(false),
+        )))
+    } else { None };
 
     let mut walls = Vec::new();
     let mut last = (0u64, 0u64);
@@ -184,6 +198,8 @@ async fn main() {
             let pats: Vec<(String, String)> = (0..multi)
                 .map(|i| (format!("p{}", i), pattern_src.clone())).collect();
             Arc::new(MultiAstNm::new(pats, lang))
+        } else if let Some(c) = &cache_op {
+            c.clone() as Arc<dyn Op>
         } else {
             Arc::new(AstNm::new(&pattern_src, lang, &[]).with_match_text(false))
         };
@@ -220,8 +236,11 @@ async fn main() {
         let _b = bytes_seen.load(Ordering::Relaxed);
         let files_s = "n/a"; // Fs walks internally; we don't enumerate up-front
         let rss = rss_peak_kb() / 1024;
-        eprintln!("trial {}: wall={:.3}s  matches={:>9}  rule0_rows={}  files/s={}  rss_peak_MB={}",
-                  trial, wall.as_secs_f64(), m, rule0_cardinality, files_s, rss);
+        let cache_line = if let Some(c) = &cache_op {
+            format!("  cache(hits={} misses={})", c.hits(), c.misses())
+        } else { String::new() };
+        eprintln!("trial {}: wall={:.3}s  matches={:>9}  rule0_rows={}  files/s={}  rss_peak_MB={}{}",
+                  trial, wall.as_secs_f64(), m, rule0_cardinality, files_s, rss, cache_line);
         eprint!("{}", tele.summary());
         // Mem-only stats footer (DdStore arrangements are inside the worker).
         if !matches!(mode, Mode::Bare) && store_kind == "mem" {

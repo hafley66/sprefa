@@ -11,7 +11,7 @@ path = "src/lib.rs"
 ast-grep-core     = "0.36"
 ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust", "tree-sitter-c", "tree-sitter-cpp"] }
 blake3            = "1"
-tokio             = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio             = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util"] }
 futures           = "0.3"
 async-trait       = "0.1"
 async-stream      = "0.3"
@@ -24,6 +24,7 @@ tokio-stream      = "0.1"
 differential-dataflow = "0.12"
 timely            = "0.12"
 rusqlite          = { version = "0.31", features = ["bundled"] }
+regex             = "1"
 
 [[bin]]
 name = "v4-proto"
