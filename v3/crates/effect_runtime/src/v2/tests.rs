@@ -541,7 +541,7 @@ fn sqlite_queue_suspense_parks_until_key_dirty_dispatched() {
 ///    survives.
 /// 5. Dispatch KeyDirty for the same key. Drive.
 /// 6. Sink output is identical to a never-crashed run: the parked row
-///    resumed at pc+1 and read the result through the store.
+///    resumed at depth+1 and read the result through the store.
 #[cfg(feature = "sqlite")]
 #[test]
 fn crash_restart_resumes_parked_row_with_persisted_mutation() {

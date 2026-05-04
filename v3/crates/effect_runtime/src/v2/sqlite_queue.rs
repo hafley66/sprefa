@@ -20,7 +20,7 @@
 //!   path            BLOB    NOT NULL,
 //!   pipe_hash       INTEGER NOT NULL,
 //!   instance_id     INTEGER NOT NULL,
-//!   pc              INTEGER NOT NULL,
+//!   depth              INTEGER NOT NULL,
 //!   next_blob       BLOB    NOT NULL,
 //!   next_hash       BLOB    NOT NULL,
 //!   wake_kind       INTEGER NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS sprf_v2_queue (
   path            BLOB    NOT NULL,
   pipe_hash       INTEGER NOT NULL,
   instance_id     INTEGER NOT NULL,
-  pc              INTEGER NOT NULL,
+  depth              INTEGER NOT NULL,
   next_blob       BLOB    NOT NULL,
   next_hash       BLOB    NOT NULL,
   wake_kind       INTEGER NOT NULL,
@@ -121,7 +121,7 @@ fn row_to_queue<N: Next + Codec>(r: &Row) -> rusqlite::Result<QueueRow<N>> {
     let path_blob:      Vec<u8>   = r.get("path")?;
     let pipe_hash:      i64       = r.get("pipe_hash")?;
     let instance_id:    i64       = r.get("instance_id")?;
-    let pc:             i64       = r.get("pc")?;
+    let depth:             i64       = r.get("depth")?;
     let next_blob:      Vec<u8>   = r.get("next_blob")?;
     let wake_kind:      i64       = r.get("wake_kind")?;
     let wake_tick:      Option<i64> = r.get("wake_tick")?;
@@ -147,7 +147,7 @@ fn row_to_queue<N: Next + Codec>(r: &Row) -> rusqlite::Result<QueueRow<N>> {
         path:           decode_path(&path_blob),
         pipe_hash:      pipe_hash as u64,
         instance_id:    instance_id as u64,
-        pc:             pc as u32,
+        depth:             depth as u32,
         value:          Arc::new(N::decode(&next_blob)),
         wake,
         drive_tick:     drive_tick as u64,
@@ -166,7 +166,7 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
 
         conn.execute(
             "INSERT INTO sprf_v2_queue (
-                parent_id, batch_idx, path, pipe_hash, instance_id, pc,
+                parent_id, batch_idx, path, pipe_hash, instance_id, depth,
                 next_blob, next_hash, wake_kind, wake_tick, wake_key,
                 drive_tick, enqueued_at_ns
              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -176,7 +176,7 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
                 encode_path(&row.path),
                 row.pipe_hash as i64,
                 row.instance_id as i64,
-                row.pc as i64,
+                row.depth as i64,
                 row.value.encode(),
                 row.value.content_hash().to_vec(),
                 wake_kind,

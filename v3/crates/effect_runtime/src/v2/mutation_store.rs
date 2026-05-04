@@ -4,9 +4,9 @@
 //! React-query vocabulary: a `mutationFn` runs (often off-thread, often
 //! async), produces a result, and the result is delivered back to the
 //! caller. Here, the caller's continuation is a parked queue row at
-//! `pc+1`. The Component returns `Suspense{Key(k)}`, the mutation
+//! `depth+1`. The Component returns `Suspense{Key(k)}`, the mutation
 //! producer writes the result under `k`, dispatches `KeyDirty(k)` on
-//! the `EventBus`, and the row at `pc+1` reads the result by `k`.
+//! the `EventBus`, and the row at `depth+1` reads the result by `k`.
 //!
 //! Generic over `T: Next`. The store carries one type per instance —
 //! consumers spin up multiple stores for multiple result types. Phase F

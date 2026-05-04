@@ -14,22 +14,22 @@ pub enum Node<N: Next> {
     /// Consume value, emit nothing. Like `null` in JSX.
     Done,
 
-    /// Forward the value to the next pc, immediately runnable.
+    /// Forward the value to the next depth, immediately runnable.
     Emit(Arc<N>),
 
     /// Fragment of K children. All flow downstream concurrently; no
     /// implicit ordering between siblings.
     Many(Vec<Node<N>>),
 
-    /// Park the value at pc+1 with a wake condition. The same
+    /// Park the value at depth+1 with a wake condition. The same
     /// component never re-renders the same value; when the wake fires,
-    /// the parked row becomes runnable at pc+1.
+    /// the parked row becomes runnable at depth+1.
     Suspense {
         value: Arc<N>,
         wake:  Wake,
     },
 
-    /// Park the value at the SAME pc. When the wake fires, the same
+    /// Park the value at the SAME depth. When the wake fires, the same
     /// component renders again with the same value. Models react-
     /// query's "pending → success → return data" pattern: the
     /// Component decides what to do based on cache state, not based on

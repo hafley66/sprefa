@@ -13,12 +13,13 @@ since the substrate maps cleanly onto each idiom.
 
 ## Table of contents
 
+- [Glossary](#glossary)
 - [Mental model in one screen](#mental-model-in-one-screen)
 - [The seven core types](#the-seven-core-types)
 - [Example 1 — smallest possible pipe (i64 doubler)](#example-1--smallest-possible-pipe-i64-doubler)
 - [Example 2 — a real carrier (`LabCursor`) with `content_hash`](#example-2--a-real-carrier-labcursor-with-content_hash)
 - [Example 3 — fan-out via `Node::Many`](#example-3--fan-out-via-nodemany)
-- [Example 4 — `Suspense` parks the row at `pc+1`](#example-4--suspense-parks-the-row-at-pc1)
+- [Example 4 — `Suspense` parks the row at `depth+1`](#example-4--suspense-parks-the-row-at-depth1)
 - [Example 5 — bus dispatch from a background thread (no async runtime)](#example-5--bus-dispatch-from-a-background-thread-no-async-runtime)
 - [Example 6 — `Yield` re-renders the SAME component](#example-6--yield-re-renders-the-same-component)
 - [Example 7 — saga-style effects: `EffectDispatch` + `Spawner`](#example-7--saga-style-effects-effectdispatch--spawner)
@@ -32,6 +33,20 @@ since the substrate maps cleanly onto each idiom.
 
 ---
 
+## Glossary
+
+A few terms appear throughout. Worth pinning before the examples.
+
+- **carrier** — the value type flowing through the pipe (`i64`, `LabCursor`, `Cursor`, …). Every carrier impls `Next`. The substrate is generic over it.
+- **pipe** — `Vec<Component>`, the linear sequence of stages a value walks through.
+- **depth** — index into the pipe. A `QueueRow { depth: 2, ... }` means "this value should next be rendered by `pipe.components[2]`." Increments on `Emit` / `Many` / `Suspense`. Stays put on `Yield`. Hits `pipe.len()` and the row terminates.
+- **path** — `Vec<u32>` per row, the sibling-index trail from the pipe root: `parent.path + [batch_idx]`. Two siblings have paths that differ in the last segment. Powers `PathDirty` prefix invalidation and (in Phase F) sqlite prefix indices.
+- **wake** — the condition that makes a parked row runnable: `Immediate`, `Tick { past_tick }`, or `Key(NextKey)`.
+- **bus** — the `EventBus`. One `dispatch(Event)` call serves both wake (parker rows go runnable) and invalidation (cache listeners drop entries).
+- **queue len vs row depth** — `queue.len()` is the count of resident rows (queue size). `row.depth` is the position-in-pipe of one row. Different concepts, both happen to be unsigned integers.
+
+---
+
 ## Mental model in one screen
 
 ```
@@ -41,9 +56,9 @@ since the substrate maps cleanly onto each idiom.
             │ Queue │ ──pull──►   render(c)  ─►  flatten(node) ── enqueue children
             └───────┘                  ▲              │
                 ▲                      │              │
-                │                      │ same pc?     │
+                │                      │ same depth?     │
                 └──── Wake ────────────┴── Yield ◄────┘
-                       ▲                              │ next pc?
+                       ▲                              │ next depth?
                        │                              ▼
                   ┌─────────┐                    Suspense
                   │ EventBus │ ◄────── DomainDirty / KeyDirty / PathDirty
@@ -58,7 +73,7 @@ since the substrate maps cleanly onto each idiom.
   a `Node<N>` describing what to enqueue next. The driver does the
   enqueueing.
 - **Pull, not push.** The queue holds state, the driver drains it. RAM
-  is `O(in-flight pc count)`, not `O(stream length)`.
+  is `O(in-flight depth count)`, not `O(stream length)`.
 - **Wake = event = invalidation.** One `EventBus` carries all three
   signals; subscribers can be parker rows (Wake) or cache entries
   (BusListener).
@@ -74,7 +89,7 @@ since the substrate maps cleanly onto each idiom.
 | `Wake` | `Immediate` / `Tick` / `Key(NextKey)` | `wake.rs` |
 | `enum Node<N>` | `Done` / `Emit` / `Many` / `Suspense` / `Yield` | `node.rs` |
 | `trait Component` | `render(&self, ctx, c) -> Node<N>` | `component.rs` |
-| `trait QueueBackend<N>` | `enqueue` / `pull_runnable` / `depth` | `queue.rs` |
+| `trait QueueBackend<N>` | `enqueue` / `pull_runnable` / `len` | `queue.rs` |
 | `EventBus` | `dispatch(Event)` + `subscribe_*` + listeners | `event_bus.rs` |
 
 Plus three optional caches that ride on top:
@@ -189,16 +204,16 @@ impl Component for FanOut {
 ```
 
 `Node::Many(vec![Emit, Emit, Emit])` enqueues three children, each at
-`pc+1`, each `Wake::Immediate`.
+`depth+1`, each `Wake::Immediate`.
 
 ---
 
-## Example 4 — `Suspense` parks the row at `pc+1`
+## Example 4 — `Suspense` parks the row at `depth+1`
 
 The first pause primitive. The component returns a value plus a wake
 condition. The row goes to the parker bucket, the driver moves on. When
 the wake fires (next section), the parker row becomes runnable at
-`pc+1` (the NEXT component) with the parked value.
+`depth+1` (the NEXT component) with the parked value.
 
 ```rust
 use effect_runtime::v2::{EventBus, Wake};
@@ -215,7 +230,7 @@ impl Component for ParkOnKey {
 }
 ```
 
-`Suspense` advances `pc`. The same component does NOT re-render the
+`Suspense` advances `depth`. The same component does NOT re-render the
 same value — see [Example 6](#example-6--yield-re-renders-the-same-component)
 for the alternative.
 
@@ -260,7 +275,7 @@ assert_eq!(sink.lock().unwrap().len(), 1);
 
 ## Example 6 — `Yield` re-renders the SAME component
 
-`Suspense` advances `pc`. `Yield` parks at the same `pc` so when the
+`Suspense` advances `depth`. `Yield` parks at the same `depth` so when the
 wake fires, the SAME component renders again with the same input. This
 is the react-query state machine: first call sees `Idle`, transitions
 to `Pending`, returns `Yield`. Second call (after the wake) sees

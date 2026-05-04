@@ -27,7 +27,7 @@ pub struct QueueRow<N: Next> {
     pub path:           Vec<u32>,
     pub pipe_hash:      PipeHash,
     pub instance_id:    InstanceId,
-    pub pc:             u32,
+    pub depth:             u32,
     pub value:          Arc<N>,
     pub wake:           Wake,
     pub drive_tick:     DriveTick,

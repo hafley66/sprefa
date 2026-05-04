@@ -16,18 +16,18 @@ pub trait Component: Send + Sync + 'static {
     fn render(&self, ctx: &RenderCtx, c: &Self::Next) -> Node<Self::Next>;
 }
 
-/// Render-call context. Carries pipe identity and pc; future phases
+/// Render-call context. Carries pipe identity and depth; future phases
 /// add `EventBus` / `RtCtx` / `ResponseStore` here as the saga surface
 /// stabilizes.
 #[derive(Clone)]
 pub struct RenderCtx {
     pub pipe: PipeHash,
-    pub pc:   u32,
+    pub depth:   u32,
 }
 
 impl RenderCtx {
-    pub fn new(pipe: PipeHash, pc: u32) -> Self {
-        Self { pipe, pc }
+    pub fn new(pipe: PipeHash, depth: u32) -> Self {
+        Self { pipe, depth }
     }
 }
 

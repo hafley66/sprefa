@@ -1,6 +1,6 @@
 //! `drive` — the queue-backed loop, generic over carrier.
 //!
-//! Pull a runnable row → look up the component at `pc` → render →
+//! Pull a runnable row → look up the component at `depth` → render →
 //! flatten → enqueue children. Repeat until nothing is runnable.
 //!
 //! Synchronous Phase-3 form. Suspense parks rows; the caller advances
@@ -87,7 +87,7 @@ pub fn drive<N: Next>(
             path:           Vec::new(),
             pipe_hash:      pipe.pipe_hash,
             instance_id:    pipe.instance_id,
-            pc:             0,
+            depth:             0,
             value,
             wake:           Wake::Immediate,
             drive_tick,
@@ -113,17 +113,17 @@ pub fn drive<N: Next>(
             opts.bus.forget(*k);
         }
 
-        if row.pc as usize >= pipe.components.len() {
+        if row.depth as usize >= pipe.components.len() {
             stats.terminal += 1;
             continue;
         }
 
-        let comp = &pipe.components[row.pc as usize];
-        let ctx = RenderCtx::new(row.pipe_hash, row.pc);
+        let comp = &pipe.components[row.depth as usize];
+        let ctx = RenderCtx::new(row.pipe_hash, row.depth);
 
         let node = comp.render(&ctx, &row.value);
-        let next_pc = row.pc + 1;
-        let children = flatten(node, &row, next_pc, drive_tick);
+        let next_depth = row.depth + 1;
+        let children = flatten(node, &row, next_depth, drive_tick);
         stats.rendered += 1;
         stats.emitted += children.len() as u64;
 

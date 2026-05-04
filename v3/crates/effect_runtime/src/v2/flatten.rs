@@ -24,11 +24,11 @@ use super::wake::Wake;
 pub fn flatten<N: Next>(
     node:       Node<N>,
     parent:     &QueueRow<N>,
-    next_pc:    u32,
+    next_depth:    u32,
     drive_tick: DriveTick,
 ) -> Vec<QueueRow<N>> {
     let mut out = Vec::new();
-    flatten_into(node, parent, next_pc, drive_tick, &mut out);
+    flatten_into(node, parent, next_depth, drive_tick, &mut out);
     for (i, row) in out.iter_mut().enumerate() {
         row.batch_idx = i as u32;
         row.path = {
@@ -43,7 +43,7 @@ pub fn flatten<N: Next>(
 fn flatten_into<N: Next>(
     node:       Node<N>,
     parent:     &QueueRow<N>,
-    next_pc:    u32,
+    next_depth:    u32,
     drive_tick: DriveTick,
     out:        &mut Vec<QueueRow<N>>,
 ) {
@@ -51,29 +51,29 @@ fn flatten_into<N: Next>(
         Node::Done => { /* no-op */ }
 
         Node::Emit(value) => {
-            out.push(child_row(parent, next_pc, value, Wake::Immediate, drive_tick));
+            out.push(child_row(parent, next_depth, value, Wake::Immediate, drive_tick));
         }
 
         Node::Many(children) => {
             for c in children {
-                flatten_into(c, parent, next_pc, drive_tick, out);
+                flatten_into(c, parent, next_depth, drive_tick, out);
             }
         }
 
         Node::Suspense { value, wake } => {
-            out.push(child_row(parent, next_pc, value, wake, drive_tick));
+            out.push(child_row(parent, next_depth, value, wake, drive_tick));
         }
 
         Node::Yield { value, wake } => {
-            // Park at the SAME pc — re-render the same component on wake.
-            out.push(child_row(parent, parent.pc, value, wake, drive_tick));
+            // Park at the SAME depth — re-render the same component on wake.
+            out.push(child_row(parent, parent.depth, value, wake, drive_tick));
         }
     }
 }
 
 fn child_row<N: Next>(
     parent:     &QueueRow<N>,
-    pc:         u32,
+    depth:         u32,
     value:      std::sync::Arc<N>,
     wake:       Wake,
     drive_tick: DriveTick,
@@ -85,7 +85,7 @@ fn child_row<N: Next>(
         path:           Vec::new(),
         pipe_hash:      parent.pipe_hash,
         instance_id:    parent.instance_id,
-        pc,
+        depth,
         value,
         wake,
         drive_tick,

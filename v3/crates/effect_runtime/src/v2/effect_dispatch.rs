@@ -7,7 +7,7 @@
 //!     spawner. When the function returns, the result is `put` into
 //!     a `MutationStore<T>` and the bus dispatches `KeyDirty(key)`.
 //!     The Component that returned `Suspense{Key(key)}` resumes at
-//!     pc+1, reads the result via `MutationStore::take`.
+//!     depth+1, reads the result via `MutationStore::take`.
 //!
 //! The Spawner is the runtime seam. `ThreadSpawner` uses
 //! `std::thread::spawn` — zero runtime dependency, the no-tokio path.
@@ -66,7 +66,7 @@ impl<T: Next> EffectDispatch<T> {
     /// Fire `mutation_fn` off-thread, route its result back through
     /// `store` keyed by `key`, and notify the bus when ready. The
     /// caller typically returns `Suspense{Key(key)}` from `render` so
-    /// the parked row at pc+1 picks up the result.
+    /// the parked row at depth+1 picks up the result.
     pub fn dispatch<F>(&self, key: NextKey, mutation_fn: F)
     where
         F: FnOnce() -> T + Send + 'static,

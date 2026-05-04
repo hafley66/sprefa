@@ -2,7 +2,7 @@
 //!
 //! Composed from row metadata + carrier content hash. The composition
 //! gives every in-flight value a structurally-stable name: the same
-//! input cursor at the same `(pipe, instance, pc)` produces the same
+//! input cursor at the same `(pipe, instance, depth)` produces the same
 //! key on a restart, which is what makes the `ResponseStore` cache
 //! and the future `Memoize<C>` work without explicit hydration.
 //!
@@ -28,7 +28,7 @@ pub fn compute_key<N: Next>(row: &QueueRow<N>) -> NextKey {
     h.update(&row.parent_id.unwrap_or(0).to_le_bytes());
     h.update(&row.pipe_hash.to_le_bytes());
     h.update(&row.instance_id.to_le_bytes());
-    h.update(&row.pc.to_le_bytes());
+    h.update(&row.depth.to_le_bytes());
     h.update(&row.batch_idx.to_le_bytes());
     h.update(&row.drive_tick.to_le_bytes());
     for seg in &row.path {
