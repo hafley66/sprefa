@@ -32,6 +32,12 @@ pub enum Event {
     DomainDirty(&'static str),
 }
 
+/// Listener for general bus events (cache invalidation, telemetry).
+/// Distinct from wake-by-key — a listener doesn't park, it reacts.
+pub trait BusListener: Send + Sync + 'static {
+    fn on_event(&self, ev: &Event);
+}
+
 pub struct EventBus {
     counter: AtomicU64,
     inner:   Mutex<Inner>,
@@ -41,6 +47,7 @@ struct Inner {
     ready:       HashSet<NextKey>,
     path_subs:   Vec<(Vec<u32>, NextKey)>,
     domain_subs: Vec<(&'static str, NextKey)>,
+    listeners:   Vec<std::sync::Arc<dyn BusListener>>,
 }
 
 impl EventBus {
@@ -51,6 +58,7 @@ impl EventBus {
                 ready:       HashSet::new(),
                 path_subs:   Vec::new(),
                 domain_subs: Vec::new(),
+                listeners:   Vec::new(),
             }),
         }
     }
@@ -74,25 +82,35 @@ impl EventBus {
         self.inner.lock().unwrap().domain_subs.push((domain, key));
     }
 
+    pub fn add_listener(&self, l: std::sync::Arc<dyn BusListener>) {
+        self.inner.lock().unwrap().listeners.push(l);
+    }
+
     pub fn dispatch(&self, ev: Event) {
-        let mut inner = self.inner.lock().unwrap();
-        match ev {
-            Event::KeyDirty(k) => { inner.ready.insert(k); }
-            Event::PathDirty(prefix) => {
-                let to_wake: Vec<NextKey> = inner.path_subs.iter()
-                    .filter(|(p, _)| has_prefix(p, &prefix))
-                    .map(|(_, k)| *k)
-                    .collect();
-                for k in to_wake { inner.ready.insert(k); }
+        let listeners: Vec<std::sync::Arc<dyn BusListener>> = {
+            let mut inner = self.inner.lock().unwrap();
+            match &ev {
+                Event::KeyDirty(k) => { inner.ready.insert(*k); }
+                Event::PathDirty(prefix) => {
+                    let to_wake: Vec<NextKey> = inner.path_subs.iter()
+                        .filter(|(p, _)| has_prefix(p, prefix))
+                        .map(|(_, k)| *k)
+                        .collect();
+                    for k in to_wake { inner.ready.insert(k); }
+                }
+                Event::DomainDirty(d) => {
+                    let to_wake: Vec<NextKey> = inner.domain_subs.iter()
+                        .filter(|(dd, _)| *dd == *d)
+                        .map(|(_, k)| *k)
+                        .collect();
+                    for k in to_wake { inner.ready.insert(k); }
+                }
             }
-            Event::DomainDirty(d) => {
-                let to_wake: Vec<NextKey> = inner.domain_subs.iter()
-                    .filter(|(dd, _)| *dd == d)
-                    .map(|(_, k)| *k)
-                    .collect();
-                for k in to_wake { inner.ready.insert(k); }
-            }
-        }
+            inner.listeners.clone()
+        };
+        // Listeners fire outside the lock so they can re-enter the bus
+        // (e.g. cache drops triggering further dispatches).
+        for l in listeners { l.on_event(&ev); }
     }
 
     pub fn snapshot_ready(&self) -> Vec<NextKey> {

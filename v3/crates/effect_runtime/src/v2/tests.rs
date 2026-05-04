@@ -650,6 +650,360 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
     assert_eq!(got[0].get(":upper"), Some("ALPHA"));
 }
 
+// --- Phase B: saga-style effect dispatch (Spawner + EffectDispatch) --
+
+/// Component shape used by both Phase B tests. Computes a stable key
+/// from the cursor's content hash, dispatches a mutationFn through
+/// `EffectDispatch`, parks on the same key. Downstream Component reads
+/// the result and emits.
+struct DispatchUppercase {
+    fx: Arc<EffectDispatch<LabCursor>>,
+}
+impl Component for DispatchUppercase {
+    type Next = LabCursor;
+    fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+        let key  = NextKey(c.content_hash());
+        let raw  = c.get(":raw").unwrap_or("").to_string();
+        let seed = c.clone();
+        self.fx.dispatch(key, move || {
+            // Small sleep so the parked-row state is observable before
+            // the spawn finishes — otherwise the drive loop can race the
+            // spawn and drain in a single call, making the test
+            // non-deterministic.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let mut out = seed;
+            out.set(":upper", raw.to_uppercase());
+            out
+        });
+        Node::Suspense { value: Arc::new(c.clone()), wake: Wake::Key(key) }
+    }
+}
+
+struct ConsumeMut { store: Arc<MutationStore<LabCursor>> }
+impl Component for ConsumeMut {
+    type Next = LabCursor;
+    fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+        let k = NextKey(c.content_hash());
+        let r = self.store.take(k).expect("mutation result present");
+        Node::Emit(r)
+    }
+}
+
+/// Phase B.1: ThreadSpawner — no async runtime in the picture.
+#[test]
+fn effect_dispatch_with_thread_spawner_no_runtime() {
+    use std::time::Duration;
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let bus   = Arc::new(EventBus::new());
+    let store = Arc::new(MutationStore::<LabCursor>::new());
+    let fx    = Arc::new(EffectDispatch::new(
+        bus.clone(),
+        store.clone(),
+        Arc::new(ThreadSpawner),
+    ));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(DispatchUppercase { fx: fx.clone() })
+            as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(ConsumeMut { store: store.clone() }),
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+    let opts = DriveOpts::default().with_bus(bus.clone());
+
+    drive(&pipe, queue.clone(), vec![lc(":raw", "phase-b")], opts.clone());
+    assert_eq!(queue.depth(), 1, "parked on the dispatched mutation");
+
+    while bus.ready_count() == 0 { std::thread::yield_now(); }
+    std::thread::sleep(Duration::from_millis(5));
+
+    drive(&pipe, queue.clone(), Vec::new(), opts);
+    let got = sink.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].get(":upper"), Some("PHASE-B"));
+}
+
+/// Phase B.2: TokioSpawner — same Component code, different Spawner.
+/// Proves the Component is runtime-agnostic.
+#[test]
+fn effect_dispatch_with_tokio_spawner_via_runtime() {
+    use std::time::Duration;
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+        let sink  = Arc::new(Mutex::new(Vec::new()));
+        let bus   = Arc::new(EventBus::new());
+        let store = Arc::new(MutationStore::<LabCursor>::new());
+        let fx    = Arc::new(EffectDispatch::new(
+            bus.clone(),
+            store.clone(),
+            Arc::new(TokioSpawner),
+        ));
+
+        let pipe = PipeInstance::new(vec![
+            Arc::new(DispatchUppercase { fx: fx.clone() })
+                as Arc<dyn Component<Next = LabCursor>>,
+            Arc::new(ConsumeMut { store: store.clone() }),
+            Arc::new(Collector { sink: sink.clone() }),
+        ]);
+        let opts = DriveOpts::default().with_bus(bus.clone());
+
+        drive(&pipe, queue.clone(), vec![lc(":raw", "tokio-b")], opts.clone());
+        assert_eq!(queue.depth(), 1);
+
+        while bus.ready_count() == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        drive(&pipe, queue.clone(), Vec::new(), opts);
+        let got = sink.lock().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].get(":upper"), Some("TOKIO-B"));
+    });
+}
+
+// --- Phase C: useMemo / Memoize -------------------------------------
+
+/// Counts how many times its inner render fires. Wraps in Memoize and
+/// observes the count to assert cache hit/miss behavior.
+struct CountingTrim {
+    counter: Arc<std::sync::atomic::AtomicU64>,
+    from:    String,
+    to:      String,
+}
+impl Component for CountingTrim {
+    type Next = LabCursor;
+    fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+        self.counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let raw = c.get(&self.from).unwrap_or("").to_string();
+        let mut next = c.clone();
+        next.set(&self.to, raw.trim());
+        Node::Emit(Arc::new(next))
+    }
+}
+
+#[test]
+fn memoize_hits_cache_on_identical_input() {
+    use std::sync::atomic::Ordering;
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let cache = Arc::new(MemoCache::<LabCursor>::new());
+
+    let memoized = Memoize::new(
+        CountingTrim {
+            counter: counter.clone(),
+            from: ":raw".into(),
+            to: ":clean".into(),
+        },
+        "trim_clean",
+        cache.clone(),
+    );
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(memoized) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    drive(
+        &pipe, queue.clone(),
+        vec![
+            lc(":raw", "  hi  "),
+            lc(":raw", "  hi  "),  // identical content_hash
+            lc(":raw", "  hi  "),  // identical content_hash
+        ],
+        DriveOpts::default(),
+    );
+
+    assert_eq!(sink.lock().unwrap().len(), 3, "all three rows reach the collector");
+    assert_eq!(counter.load(Ordering::SeqCst), 1, "inner render fired once; two cache hits");
+    assert_eq!(cache.len(), 1, "one entry");
+}
+
+#[test]
+fn memoize_misses_on_different_input() {
+    use std::sync::atomic::Ordering;
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let cache = Arc::new(MemoCache::<LabCursor>::new());
+
+    let memoized = Memoize::new(
+        CountingTrim { counter: counter.clone(), from: ":raw".into(), to: ":clean".into() },
+        "trim_clean",
+        cache.clone(),
+    );
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(memoized) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    drive(
+        &pipe, queue.clone(),
+        vec![lc(":raw", "  hi  "), lc(":raw", "  bye  "), lc(":raw", "  yo  ")],
+        DriveOpts::default(),
+    );
+
+    assert_eq!(sink.lock().unwrap().len(), 3);
+    assert_eq!(counter.load(Ordering::SeqCst), 3, "all distinct inputs miss the cache");
+    assert_eq!(cache.len(), 3);
+}
+
+#[test]
+fn domain_dirty_drops_tagged_memo_entries() {
+    use std::sync::atomic::Ordering;
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let cache = Arc::new(MemoCache::<LabCursor>::new());
+    let bus   = Arc::new(EventBus::new());
+
+    attach_cache_to_bus(cache.clone(), &bus);
+
+    let memoized = Memoize::new(
+        CountingTrim { counter: counter.clone(), from: ":raw".into(), to: ":clean".into() },
+        "trim_clean",
+        cache.clone(),
+    ).with_domain("fs");
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(memoized) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+    let opts = DriveOpts::default().with_bus(bus.clone());
+
+    drive(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+    assert_eq!(cache.len(), 1);
+
+    drive(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
+    assert_eq!(counter.load(Ordering::SeqCst), 1, "second drive hits cache, no re-render");
+
+    bus.dispatch(Event::DomainDirty("fs"));
+    assert_eq!(cache.len(), 0, "fs-tagged entry dropped");
+
+    drive(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts);
+    assert_eq!(counter.load(Ordering::SeqCst), 2, "re-rendered after invalidation");
+    assert_eq!(sink.lock().unwrap().len(), 3);
+}
+
+// --- Phase D: useQuery / Query + invalidateQueries -------------------
+
+struct ListReposQueryFn {
+    counter: Arc<std::sync::atomic::AtomicU64>,
+}
+impl QueryFn<LabCursor> for ListReposQueryFn {
+    fn ident(&self) -> &'static str { "list_repos" }
+    fn run(&self, input: &LabCursor) -> LabCursor {
+        self.counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Tiny sleep to let render observe Pending state.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let mut out = input.clone();
+        out.set(":repos", "alpha,beta,gamma");
+        out
+    }
+}
+
+#[test]
+fn query_runs_query_fn_once_then_serves_from_cache() {
+    use std::sync::atomic::Ordering;
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let bus   = Arc::new(EventBus::new());
+    let cache = Arc::new(QueryCache::<LabCursor>::new());
+    let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+    attach_query_cache_to_bus(cache.clone(), &bus);
+
+    let q = Query::new(
+        ListReposQueryFn { counter: counter.clone() },
+        cache.clone(),
+        bus.clone(),
+        Arc::new(ThreadSpawner),
+    );
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(q) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+    let opts = DriveOpts::default().with_bus(bus.clone());
+
+    drive(&pipe, queue.clone(), vec![lc(":raw", "init")], opts.clone());
+    assert_eq!(queue.depth(), 1, "parked while query pending");
+    while bus.ready_count() == 0 { std::thread::yield_now(); }
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    drive(&pipe, queue.clone(), Vec::new(), opts.clone());
+    let got_a = sink.lock().unwrap().len();
+    assert_eq!(got_a, 1, "first query produced one row");
+    assert_eq!(counter.load(Ordering::SeqCst), 1, "queryFn fired once");
+
+    // Re-render with the same input — Success status, returned synchronously.
+    drive(&pipe, queue.clone(), vec![lc(":raw", "init")], opts);
+    assert_eq!(sink.lock().unwrap().len(), 2, "second render emits cached data");
+    assert_eq!(counter.load(Ordering::SeqCst), 1, "still only one queryFn run");
+}
+
+#[test]
+fn invalidate_queries_via_domain_dirty_re_runs_query_fn() {
+    use std::sync::atomic::Ordering;
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let bus   = Arc::new(EventBus::new());
+    let cache = Arc::new(QueryCache::<LabCursor>::new());
+    let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+    attach_query_cache_to_bus(cache.clone(), &bus);
+
+    let q = Query::new(
+        ListReposQueryFn { counter: counter.clone() },
+        cache.clone(),
+        bus.clone(),
+        Arc::new(ThreadSpawner),
+    ).with_domain("repos");
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(q) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+    let opts = DriveOpts::default().with_bus(bus.clone());
+
+    drive(&pipe, queue.clone(), vec![lc(":raw", "x")], opts.clone());
+    while bus.ready_count() == 0 { std::thread::yield_now(); }
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    drive(&pipe, queue.clone(), Vec::new(), opts.clone());
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+    assert_eq!(cache.len(), 1);
+
+    bus.dispatch(Event::DomainDirty("repos"));
+    assert_eq!(cache.len(), 0, "invalidateQueries dropped the entry");
+
+    drive(&pipe, queue.clone(), vec![lc(":raw", "x")], opts.clone());
+    // Wait until the queryFn's spawned closure has completed
+    // (cache.set_success + bus.dispatch). bus.ready_count() goes back
+    // to 1 after the second queryFn lands its KeyDirty.
+    while bus.ready_count() == 0 { std::thread::yield_now(); }
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    drive(&pipe, queue.clone(), Vec::new(), opts);
+
+    assert_eq!(counter.load(Ordering::SeqCst), 2, "queryFn re-ran after invalidate");
+    assert_eq!(sink.lock().unwrap().len(), 2);
+}
+
 fn tempdir() -> std::path::PathBuf {
     let mut p = std::env::temp_dir();
     let nanos = std::time::SystemTime::now()

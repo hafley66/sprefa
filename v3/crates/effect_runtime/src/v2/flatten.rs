@@ -54,6 +54,11 @@ fn flatten_into<N: Next>(
         Node::Suspense { value, wake } => {
             out.push(child_row(parent, next_pc, value, wake, drive_tick));
         }
+
+        Node::Yield { value, wake } => {
+            // Park at the SAME pc — re-render the same component on wake.
+            out.push(child_row(parent, parent.pc, value, wake, drive_tick));
+        }
     }
 }
 
