@@ -128,6 +128,7 @@ async fn main() {
                 min: 2, count_term: "COUNT".into(),
             }
         )).collect();
+        let interner = Interner::new();
         // Both store impls. We attach `tele` after construction.
         let mem_only;
         let dd_only;
@@ -142,7 +143,8 @@ async fn main() {
             }
             "dd" => {
                 dd_only = DdStore::new("matches".into(),
-                    if matches!(mode, Mode::Full) { rule_set.clone() } else { vec![] });
+                    if matches!(mode, Mode::Full) { rule_set.clone() } else { vec![] },
+                    interner.clone());
                 let d = dd_only.clone();
                 (dd_only.clone() as Arc<dyn Store>, Box::new(move |t| d.attach_tele(t)))
             }
@@ -157,7 +159,6 @@ async fn main() {
 
         let tele = Telemetry::new();
         attach_tele(tele.clone());
-        let interner = Interner::new();
         let hooks = Hooks {
             store:    store.clone(),
             effects:  eff_tx.clone(),

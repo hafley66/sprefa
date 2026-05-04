@@ -89,7 +89,10 @@ impl Cursor {
 
 #[derive(Default)]
 pub struct Interner {
-    table: std::sync::RwLock<HashMap<Arc<str>, Arc<str>>>,
+    /// Forward: content -> id.
+    fwd: std::sync::RwLock<HashMap<Arc<str>, u32>>,
+    /// Reverse: id -> content. id is index into this Vec.
+    rev: std::sync::RwLock<Vec<Arc<str>>>,
 }
 
 impl Interner {
@@ -97,16 +100,28 @@ impl Interner {
     /// Return the canonical Arc<str> for `s`. Repeated calls with
     /// equal content return the same Arc clone.
     pub fn intern(&self, s: &str) -> Arc<str> {
-        if let Some(v) = self.table.read().unwrap().get(s) {
-            return v.clone();
-        }
-        let mut w = self.table.write().unwrap();
-        if let Some(v) = w.get(s) { return v.clone(); }
-        let arc: Arc<str> = Arc::from(s);
-        w.insert(arc.clone(), arc.clone());
-        arc
+        let id = self.intern_id(s);
+        self.rev.read().unwrap()[id as usize].clone()
     }
-    pub fn len(&self) -> usize { self.table.read().unwrap().len() }
+    /// Return a stable u32 id for `s`. Cheaper than intern() when
+    /// downstream storage is integer-keyed (DdStore arrangements).
+    pub fn intern_id(&self, s: &str) -> u32 {
+        if let Some(&id) = self.fwd.read().unwrap().get(s) { return id; }
+        let mut fwd = self.fwd.write().unwrap();
+        if let Some(&id) = fwd.get(s) { return id; }
+        let mut rev = self.rev.write().unwrap();
+        let id = rev.len() as u32;
+        let arc: Arc<str> = Arc::from(s);
+        fwd.insert(arc.clone(), id);
+        rev.push(arc);
+        id
+    }
+    /// Resolve id -> Arc<str>. Caller must use ids issued by this
+    /// interner.
+    pub fn lookup(&self, id: u32) -> Arc<str> {
+        self.rev.read().unwrap()[id as usize].clone()
+    }
+    pub fn len(&self) -> usize { self.fwd.read().unwrap().len() }
     pub fn is_empty(&self) -> bool { self.len() == 0 }
 }
 
@@ -356,16 +371,28 @@ pub struct DdStore {
     /// inspect_batch on the worker thread. Read from `snapshot()` to
     /// verify output parity against MemStore.
     rule_state:    Arc<Mutex<HashMap<String, HashMap<DdRow, isize>>>>,
+    /// Shared with caller. Used to convert Cursor ↔ DdRow (id-keyed).
+    interner:      Arc<Interner>,
 }
 
-type DdRow = Vec<(String, String)>;
+/// DD-side row representation: 4-byte ids on each side, 8 bytes per
+/// term vs ~32 bytes for (Arc<str>, Arc<str>). Repeated values
+/// (paths, term names, pattern labels) collapse to one entry in the
+/// interner regardless of how many rows reference them.
+type DdRow = Vec<(u32, u32)>;
 
-fn cursor_to_dd(c: &Cursor) -> DdRow {
-    c.terms.iter().map(|(n, v)| ((**n).to_string(), (**v).to_string())).collect()
+fn cursor_to_dd(c: &Cursor, interner: &Interner) -> DdRow {
+    c.terms.iter()
+        .map(|(n, v)| (interner.intern_id(n), interner.intern_id(v)))
+        .collect()
 }
-fn dd_to_cursor(r: &DdRow) -> Cursor {
+fn dd_to_cursor(r: &DdRow, interner: &Interner) -> Cursor {
     let mut c = Cursor::default();
-    for (n, v) in r { c.set(n.as_str(), v.as_str()); }
+    for (n_id, v_id) in r {
+        let n = interner.lookup(*n_id);
+        let v = interner.lookup(*v_id);
+        c.set_arc(&n, v);
+    }
     c
 }
 
@@ -381,7 +408,7 @@ pub struct DdAck { pub derived: u64, pub advance_ns: u64, pub step_ns: u64 }
 impl DdStore {
     /// Build a DdStore with `rules` pre-attached over fact `fact_name`.
     /// Each rule is GroupCount(src=fact_name, key, min, count_term).
-    pub fn new(fact_name: String, rules: Vec<(String, RuleBody)>) -> Arc<Self> {
+    pub fn new(fact_name: String, rules: Vec<(String, RuleBody)>, interner: Arc<Interner>) -> Arc<Self> {
         use differential_dataflow::input::Input;
         use differential_dataflow::operators::Reduce;
 
@@ -392,6 +419,7 @@ impl DdStore {
         let outputs_for_worker = rule_outputs.clone();
         let fact_for_worker = fact_name.clone();
         let rules_for_worker = rules.clone();
+        let interner_for_worker = interner.clone();
         let rule_state: Arc<Mutex<HashMap<String, HashMap<DdRow, isize>>>> =
             Arc::new(Mutex::new(rules.iter().map(|(n, _)| (n.clone(), HashMap::new())).collect()));
         let rule_state_for_worker = rule_state.clone();
@@ -419,27 +447,28 @@ impl DdStore {
                     let (input, facts) = scope.new_collection::<DdRow, isize>();
                     for (rule_name, body) in &rules_for_worker {
                         let RuleBody::GroupCount { key, min, count_term, .. } = body else { continue };
-                        let key = key.clone();
-                        let count_term = count_term.clone();
+                        let key_name_id    = interner_for_worker.intern_id(key);
+                        let count_term_id  = interner_for_worker.intern_id(count_term);
                         let min = *min;
                         let out_tx = outputs_for_worker.get(rule_name).unwrap().clone();
                         let derived = derived_counter.clone();
                         let rule_state_inner = rule_state_for_worker.clone();
                         let rule_name_owned = rule_name.clone();
-                        let key_for_map = key.clone();
-                        let key_for_reduce = key.clone();
+                        let interner_for_reduce  = interner_for_worker.clone();
+                        let interner_for_inspect = interner_for_worker.clone();
                         let stream = facts
                             .map(move |r: DdRow| {
-                                let k = r.iter().find(|(n, _)| n == &key_for_map)
-                                    .map(|(_, v)| v.clone()).unwrap_or_default();
-                                (k, r)
+                                let k_id = r.iter().find(|(n, _)| *n == key_name_id)
+                                    .map(|(_, v)| *v).unwrap_or(u32::MAX);
+                                (k_id, r)
                             })
-                            .reduce(move |k, vs, out| {
+                            .reduce(move |k_id, vs, out| {
                                 let n = vs.iter().map(|(_, m)| *m).sum::<isize>();
                                 if n >= min as isize {
+                                    let n_str_id = interner_for_reduce.intern_id(&n.to_string());
                                     let row: DdRow = vec![
-                                        (key_for_reduce.clone(), k.clone()),
-                                        (count_term.clone(), n.to_string()),
+                                        (key_name_id, *k_id),
+                                        (count_term_id, n_str_id),
                                     ];
                                     out.push((row, 1));
                                 }
@@ -451,7 +480,7 @@ impl DdStore {
                                     derived.fetch_add(1, Ordering::Relaxed);
                                     *entry.entry(row.clone()).or_insert(0) += *sign as isize;
                                     let _ = out_tx.send(Diff {
-                                        row: dd_to_cursor(row),
+                                        row: dd_to_cursor(row, &interner_for_inspect),
                                         gen: *t,
                                         sign: *sign as i8,
                                     });
@@ -497,6 +526,7 @@ impl DdStore {
             tele: OnceLock::new(),
             rule_outputs: std::sync::RwLock::new(rule_outputs),
             rule_state,
+            interner,
         })
     }
     pub fn attach_tele(&self, t: Telemetry) { let _ = self.tele.set(t); }
@@ -518,7 +548,7 @@ impl Store for DdStore {
             let bytes: u64 = rows.iter().map(cursor_bytes).sum();
             s.set_bytes(bytes);
         }
-        let dd_rows: Vec<DdRow> = rows.iter().map(cursor_to_dd).collect();
+        let dd_rows: Vec<DdRow> = rows.iter().map(|c| cursor_to_dd(c, &self.interner)).collect();
         let _ = self.cmd_tx.send(DdCmd::Insert { fact: fact.to_string(), rows: dd_rows, gen });
         if let Some(s) = sp { s.close(Some(n)); }
     }
@@ -555,7 +585,7 @@ impl Store for DdStore {
         let Some(rule) = state.get(name) else { return vec![] };
         rule.iter()
             .filter(|(_, &mult)| mult > 0)
-            .map(|(row, _)| dd_to_cursor(row))
+            .map(|(row, _)| dd_to_cursor(row, &self.interner))
             .collect()
     }
 }
