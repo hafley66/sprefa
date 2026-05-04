@@ -1213,6 +1213,156 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
     assert_eq!(queue.depth(), 1, "the most-recent parker is still parked");
 }
 
+// =====================================================================
+// Step 4: HybridQueue (write-back cache, MemQueue hot + SqliteQueue cold)
+// =====================================================================
+
+#[cfg(feature = "sqlite")]
+mod hybrid {
+    use super::*;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use crate::v2::hybrid_queue::{HybridCfg, HybridQueue};
+    use crate::v2::queue::QueueRow;
+
+    fn now_ns() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
+    }
+
+    fn park_row_at<N: Next>(
+        queue: &dyn QueueBackend<N>,
+        domain: &'static str,
+        key: NextKey,
+        value: Arc<N>,
+        enqueued_at_ns: u64,
+    ) {
+        queue.enqueue(QueueRow {
+            id: 0,
+            parent_id: None,
+            batch_idx: 0,
+            path: Vec::new(),
+            pipe_hash: 0,
+            instance_id: 0,
+            depth: 0,
+            value,
+            wake: Wake::Key { domain: domain.into(), key },
+            drive_tick: 0,
+            enqueued_at_ns,
+        });
+    }
+
+    #[test]
+    fn hybrid_short_park_no_sql_write() {
+        let cfg = HybridCfg {
+            park_flush_interval: Duration::from_secs(1),
+            park_mem_cap: 10_000,
+            park_flush_batch: 256,
+        };
+        let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
+        let k = fresh_key(1);
+        park_row_at(&q, "test", k, lc(":raw", "hi"), now_ns());
+
+        assert_eq!(q.cold().depth(), 0);
+        assert_eq!(q.dispatch_park("test", Some(k)), 1);
+        assert_eq!(q.cold().depth(), 0);
+        let r = q.pull_runnable(1);
+        assert!(r.is_some());
+        assert_eq!(q.cold().depth(), 0);
+    }
+
+    #[test]
+    fn hybrid_long_park_flushed_to_cold() {
+        let cfg = HybridCfg {
+            park_flush_interval: Duration::from_millis(10),
+            park_mem_cap: 10_000,
+            park_flush_batch: 256,
+        };
+        let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
+        let k = fresh_key(2);
+        park_row_at(&q, "test", k, lc(":raw", "alpha"), now_ns());
+
+        std::thread::sleep(Duration::from_millis(50));
+        let n = q.tick_flush();
+        assert_eq!(n, 1);
+        assert_eq!(q.hot().depth(),  0);
+        assert_eq!(q.cold().depth(), 1);
+
+        // Promote and pull through hybrid.
+        let promoted = q.dispatch_park("test", Some(k));
+        assert_eq!(promoted, 1);
+        let r = q.pull_runnable(1);
+        assert!(r.is_some());
+        assert_eq!(q.depth(), 0);
+    }
+
+    #[test]
+    #[ignore] // best-effort; race window narrow without instrumentation
+    fn hybrid_dispatch_during_flush() {
+        // TODO: deterministic version requires a flush hook between
+        // drain and bulk_enqueue. Leaving as documentation of the
+        // scenario the design must tolerate.
+    }
+
+    #[test]
+    fn hybrid_rss_capped_by_mem_cap() {
+        let cfg = HybridCfg {
+            park_flush_interval: Duration::from_secs(60), // never age out
+            park_mem_cap: 500,
+            park_flush_batch: 5_000,
+        };
+        let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
+        let now = now_ns();
+        for i in 0..5_000u64 {
+            let k = fresh_key(0xC0DE + i);
+            park_row_at(&q, "test", k, lc(":raw", "x"), now);
+        }
+        // Cap enforcement is triggered inside `enqueue`. Hot park
+        // count should never exceed mem_cap by more than one
+        // enqueue's worth.
+        assert!(
+            q.hot().park_count() <= 500,
+            "hot park count {} exceeds cap 500",
+            q.hot().park_count(),
+        );
+        assert_eq!(q.depth(), 5_000);
+    }
+
+    #[test]
+    fn hybrid_zero_interval_writes_through() {
+        let cfg = HybridCfg {
+            park_flush_interval: Duration::ZERO,
+            park_mem_cap: 10_000,
+            park_flush_batch: 256,
+        };
+        let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
+        let now = now_ns();
+        for i in 0..10u64 {
+            let k = fresh_key(0xABCD + i);
+            park_row_at(&q, "test", k, lc(":raw", "x"), now);
+        }
+        let n = q.tick_flush();
+        assert_eq!(n, 10);
+        assert_eq!(q.hot().depth(),  0);
+        assert_eq!(q.cold().depth(), 10);
+    }
+
+    #[test]
+    fn hybrid_pull_falls_through_hot_to_cold() {
+        let cfg = HybridCfg::default();
+        let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
+        let k = fresh_key(99);
+        // Park directly in cold tier to simulate post-flush state.
+        park_row_at(q.cold().as_ref(), "test", k, lc(":raw", "cold"), now_ns());
+        assert_eq!(q.hot().depth(),  0);
+        assert_eq!(q.cold().depth(), 1);
+
+        let promoted = q.dispatch_park("test", Some(k));
+        assert_eq!(promoted, 1);
+        let r = q.pull_runnable(1);
+        assert!(r.is_some());
+        assert_eq!(q.depth(), 0);
+    }
+}
+
 /// Sanity: an op that overrides nothing is a no-op.
 #[test]
 fn unoverridden_component_drops_every_input() {

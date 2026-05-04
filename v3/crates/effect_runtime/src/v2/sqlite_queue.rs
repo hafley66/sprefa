@@ -103,6 +103,55 @@ impl<N: Next + Codec> SqliteQueue<N> {
     }
 
     pub fn connection(&self) -> Arc<Mutex<Connection>> { self.conn.clone() }
+
+    /// Bulk insert in a single transaction. Used by `HybridQueue` to
+    /// flush a batch of evicted parks to the cold tier with one fsync,
+    /// not N. Returns the number of rows inserted.
+    pub fn bulk_enqueue(&self, rows: Vec<QueueRow<N>>) -> usize {
+        if rows.is_empty() { return 0; }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().expect("bulk_enqueue tx");
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO sprf_v3_queue (
+                    parent_id, batch_idx, path, pipe_hash, instance_id, depth,
+                    next_blob, next_hash, wake_kind, wake_tick, wake_domain,
+                    wake_key, drive_tick, enqueued_at_ns
+                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            ).expect("prepare bulk insert");
+            for row in &rows {
+                let (wake_kind, wake_tick, wake_domain, wake_key) = match &row.wake {
+                    Wake::Immediate         => (WAKE_KIND_IMMEDIATE, None,                    None,                None),
+                    Wake::Tick { past_tick }=> (WAKE_KIND_TICK,      Some(*past_tick as i64), None,                None),
+                    Wake::Key { domain, key } => (
+                        WAKE_KIND_KEY,
+                        None,
+                        Some(domain.as_ref().to_string()),
+                        Some(key.0.to_vec()),
+                    ),
+                };
+                stmt.execute(params![
+                    row.parent_id.map(|p| p as i64),
+                    row.batch_idx as i64,
+                    encode_path(&row.path),
+                    row.pipe_hash as i64,
+                    row.instance_id as i64,
+                    row.depth as i64,
+                    row.value.encode(),
+                    row.value.content_hash().to_vec(),
+                    wake_kind,
+                    wake_tick,
+                    wake_domain,
+                    wake_key,
+                    row.drive_tick as i64,
+                    row.enqueued_at_ns as i64,
+                ]).expect("bulk insert row");
+            }
+        }
+        let n = rows.len();
+        tx.commit().expect("bulk_enqueue commit");
+        n
+    }
 }
 
 fn encode_path(p: &[u32]) -> Vec<u8> {

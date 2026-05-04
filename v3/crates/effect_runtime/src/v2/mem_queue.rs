@@ -119,6 +119,51 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         global_tick: DriveTick,
         n:           usize,
     ) -> Vec<QueueRow<N>> {
+        self.pull_runnable_batch_impl(global_tick, n)
+    }
+}
+
+impl<N: Next> MemQueue<N> {
+    /// Drain `Wake::Key` rows where `pred(row)` returns true. Returns
+    /// the owned rows; depth is decremented for each. Used by
+    /// `HybridQueue::tick_flush` to evict aged parks down to sqlite.
+    pub fn drain_parks_where(
+        &self,
+        mut pred: impl FnMut(&QueueRow<N>) -> bool,
+    ) -> Vec<QueueRow<N>> {
+        let mut s = self.state.lock().unwrap();
+        let mut out = Vec::new();
+        let keys: Vec<(Cow<'static, str>, NextKey)> = s.by_key.keys().cloned().collect();
+        for k in keys {
+            // Partition each bucket: keep non-matching, take matching.
+            let bucket = s.by_key.remove(&k).unwrap();
+            let mut keep = Vec::with_capacity(bucket.len());
+            for row in bucket {
+                if pred(&row) {
+                    s.depth -= 1;
+                    out.push(row);
+                } else {
+                    keep.push(row);
+                }
+            }
+            if !keep.is_empty() {
+                s.by_key.insert(k, keep);
+            }
+        }
+        out
+    }
+
+    /// Park count (Wake::Key rows only). Cap-enforcement helper.
+    pub fn park_count(&self) -> usize {
+        let s = self.state.lock().unwrap();
+        s.by_key.values().map(|v| v.len()).sum()
+    }
+
+    fn pull_runnable_batch_impl(
+        &self,
+        global_tick: DriveTick,
+        n:           usize,
+    ) -> Vec<QueueRow<N>> {
         if n == 0 { return Vec::new(); }
         let mut s = self.state.lock().unwrap();
 

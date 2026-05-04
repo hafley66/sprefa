@@ -39,6 +39,7 @@ since the substrate maps cleanly onto each idiom.
 - [Example 8 — `useMemo` (`Memoize<C>`) with domain invalidation](#example-8--usememo-memoizec-with-domain-invalidation)
 - [Example 9 — `useQuery` (`Query<N, F>`) with `invalidateQueries`](#example-9--usequery-queryn-f-with-invalidatequeries)
 - [Example 10 — `SqliteQueue` + crash-restart](#example-10--sqlitequeue--crash-restart)
+- [`HybridQueue` — write-back cache (mem hot, sqlite cold)](#hybridqueue--write-back-cache-mem-hot-sqlite-cold)
 - [Example 11 — `PathDirty` for tree-prefix invalidation](#example-11--pathdirty-for-tree-prefix-invalidation)
 - [Component override tiers (render / render_batch / dispatch)](#component-override-tiers-render--render_batch--dispatch)
 - [Cargo features](#cargo-features)
@@ -492,6 +493,42 @@ impl Codec for LabCursor {
 The `Connection` is shared (`Arc<Mutex<Connection>>`) so the consumer
 crate can run queue mutations and its own relational writes in the
 same transaction.
+
+---
+
+## `HybridQueue` — write-back cache (mem hot, sqlite cold)
+
+`HybridQueue<N>` layers `MemQueue<N>` over `SqliteQueue<N>` so a
+long-running server holding 10k file watches does not pay a sqlite
+fsync per park. Fresh parks live in RAM. Aged parks flush to sqlite
+in batches via `tick_flush()`. The crash window equals
+`park_flush_interval`; that knob is the explicit durability dial.
+
+```rust
+use std::time::Duration;
+use effect_runtime::v2::{HybridCfg, HybridQueue, QueueBackend};
+
+let cfg = HybridCfg {
+    park_flush_interval: Duration::from_millis(100), // ZERO = write-through
+    park_mem_cap:        10_000,                     // RSS backstop
+    park_flush_batch:    256,                        // rows per tick
+};
+let q = HybridQueue::<MyCarrier>::open_in_memory(cfg).unwrap();
+```
+
+Behavior:
+
+- `enqueue` always lands in hot. If hot park count exceeds
+  `park_mem_cap`, the backstop force-flushes oldest parks to cold.
+- `pull_runnable` and `pull_runnable_batch` fall through hot → cold.
+- `dispatch_park` fans both tiers; whichever holds the row promotes.
+- `tick_flush()` evicts `Wake::Key` rows aged past
+  `park_flush_interval` from hot, bulk-inserts into cold in one
+  transaction. `Wake::Immediate` and `Wake::Tick` rows stay hot.
+
+Tuning: `park_flush_interval = Duration::ZERO` writes every park
+through on the next `tick_flush`. `Duration::MAX` keeps everything in
+RAM until `park_mem_cap` triggers eviction.
 
 ---
 

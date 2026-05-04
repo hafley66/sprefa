@@ -23,6 +23,8 @@ pub mod memoize;
 pub mod query;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_queue;
+#[cfg(feature = "sqlite")]
+pub mod hybrid_queue;
 pub mod node;
 pub mod component;
 pub mod queue;
@@ -44,6 +46,8 @@ pub use memoize::{attach_cache_to_bus, MemoCache, MemoKey, Memoize};
 pub use query::{attach_query_cache_to_bus, Query, QueryCache, QueryFn, QueryStatus};
 #[cfg(feature = "sqlite")]
 pub use sqlite_queue::SqliteQueue;
+#[cfg(feature = "sqlite")]
+pub use hybrid_queue::{HybridCfg, HybridQueue};
 pub use node::Node;
 pub use component::{par_render, Component, DynComponent, RenderCtx};
 pub use flatten::splice_into;
