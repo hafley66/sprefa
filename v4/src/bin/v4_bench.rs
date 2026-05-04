@@ -87,6 +87,10 @@ async fn main() {
     // trials. Trial 1 = cold (all misses); trial 2..N = warm (all hits
     // when corpus + pattern unchanged).
     let mut cache = false;
+    // --substrate: replace the v4 stream pipeline with the
+    // effect_runtime::v2 Component pipeline (Fs > AstNm > Count). Bare
+    // mode only. Direct A/B against the native v4 path.
+    let mut substrate = false;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -109,6 +113,7 @@ async fn main() {
             "--sqlite-path"  => { sqlite_path  = Some(PathBuf::from(&args[i+1])); i += 2; }
             "--verify"       => { verify       = true; i += 1; }
             "--cache"        => { cache        = true; i += 1; }
+            "--substrate"    => { substrate    = true; i += 1; }
             other       => panic!("unknown arg: {}", other),
         }
     }
@@ -122,8 +127,53 @@ async fn main() {
 
     rayon::ThreadPoolBuilder::new().num_threads(workers).build_global().ok();
 
-    eprintln!("mode={:?} workers={} cap={} batch={} trials={} pattern={:?} lang={:?} root={} cache={}",
-              mode, workers, cap, batch, trials, pattern_src, lang, root.display(), cache);
+    eprintln!("mode={:?} workers={} cap={} batch={} trials={} pattern={:?} lang={:?} root={} cache={} substrate={}",
+              mode, workers, cap, batch, trials, pattern_src, lang, root.display(), cache, substrate);
+
+    // Substrate (effect_runtime::v2) path: bare-mode A/B against native v4.
+    // Skips Hooks/Store/saga entirely. Three Components: Fs > AstNm > Count.
+    if substrate {
+        if !matches!(mode, Mode::Bare) {
+            panic!("--substrate currently supports --mode bare only");
+        }
+        use std::sync::Arc;
+        use effect_runtime::v2::{
+            drive, Component, DriveOpts, MemQueue, PipeInstance, QueueBackend,
+        };
+        use v4::substrate_ops::{AstNmComponent, CountComponent, FsComponent};
+
+        let mut walls = Vec::new();
+        let mut last_matches: u64 = 0;
+        for trial in 1..=trials {
+            let counter = Arc::new(AtomicU64::new(0));
+            let pipe = PipeInstance::new(vec![
+                Arc::new(FsComponent::new(root.clone(), exts.clone(), batch))
+                    as Arc<dyn Component<Next = v4::Cursor>>,
+                Arc::new(AstNmComponent::new(pattern_src.clone(), lang)),
+                Arc::new(CountComponent { count: counter.clone() }),
+            ]);
+            let queue: Arc<dyn QueueBackend<v4::Cursor>> = Arc::new(MemQueue::new());
+            let opts = DriveOpts::default().with_batch_cap(batch);
+
+            let t_run = Instant::now();
+            let stats = drive(&pipe, queue, vec![Arc::new(v4::Cursor::default())], opts);
+            let wall = t_run.elapsed();
+
+            let m = counter.load(Ordering::Relaxed);
+            let rss = rss_peak_kb() / 1024;
+            eprintln!(
+                "trial {}: wall={:.3}s  matches={:>9}  rendered={}  emitted={}  rss_peak_MB={}",
+                trial, wall.as_secs_f64(), m, stats.rendered, stats.emitted, rss,
+            );
+            walls.push(wall);
+            last_matches = m;
+        }
+        walls.sort();
+        let med = walls[walls.len()/2];
+        eprintln!("───────────────────────────────────────────────────────────────────────────");
+        eprintln!("median:  wall={:.3}s  matches={}  (substrate)", med.as_secs_f64(), last_matches);
+        return;
+    }
 
     // OpCache lifted outside the trial loop so trial 2..N see warm hits.
     // Built only when --cache and matcher is single AstNm (Multi/SinglePath
