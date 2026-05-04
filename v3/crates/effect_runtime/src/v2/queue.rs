@@ -56,4 +56,22 @@ pub trait QueueBackend<N: Next>: Send + Sync + 'static {
 
     /// Total rows resident in the queue.
     fn depth(&self) -> u64;
+
+    // PHASE E (deferred): reconciliation / cascade-delete.
+    //
+    // fn cascade_delete(&self, root: QueueId) -> u64;
+    //
+    // Delete the row whose id == root, plus every descendant by
+    // parent_id chain. Returns the number of rows removed.
+    //
+    //   MemQueue impl: BFS over by_subject + tick_parked + runnable
+    //     buckets, collect ids whose parent chain hits root, delete.
+    //   SqliteQueue impl: recursive CTE keyed on parent_id, single
+    //     DELETE statement.
+    //
+    // Used by Memoize cache invalidation (drop the children that the
+    // prior cached render emitted) and by Query Success→Idle
+    // transitions (drop downstream rows derived from a now-stale
+    // result). Needs a per-parent prior-children index — see the
+    // PHASE E note in driver.rs and memoize.rs.
 }

@@ -82,6 +82,14 @@ impl<N: Next> BusListener for MemoCache<N> {
             Event::KeyDirty(k)    => { self.invalidate_input(*k); }
             Event::PathDirty(_)   => { /* paths track parker rows, not memo entries */ }
         }
+        // PHASE E (deferred): when an entry is invalidated, the
+        // children it previously emitted are downstream rows in the
+        // queue that no longer have a valid parent. Walk the cache's
+        // prior-children index for the dropped MemoKey(s) and call
+        // queue.cascade_delete(child_id) for each. Currently those
+        // rows persist as orphans — fine until the same parent re-
+        // renders with a different child set, which is exactly the
+        // point Phase E becomes load-bearing.
     }
 }
 

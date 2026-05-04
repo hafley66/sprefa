@@ -12,6 +12,15 @@ use super::node::Node;
 use super::queue::{DriveTick, QueueRow};
 use super::wake::Wake;
 
+// PHASE E (deferred): flatten is the natural place to compute the
+// per-parent prior-children index. Before returning, mint the
+// `Vec<NextKey>` for the new children (via `next_key::compute_key`)
+// and stash it on a side store keyed by `parent.id`. The driver's
+// reconciliation hook reads from there to multiset-diff against the
+// next render's output. Two reasons it's not done today:
+//   - the index store doesn't exist yet (would live next to the bus).
+//   - parents only render once in the current model, so there's
+//     never a prior set to diff against.
 pub fn flatten<N: Next>(
     node:       Node<N>,
     parent:     &QueueRow<N>,

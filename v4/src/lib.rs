@@ -1,5 +1,5 @@
 pub mod cst;
-pub mod react;
+pub mod cursor_codec;
 pub mod runtime_bridge;
 
 // sprefa v4 — runtime lib. shared by v4-proto (demo) and v4-bench (perf).

@@ -127,6 +127,19 @@ pub fn drive<N: Next>(
         stats.rendered += 1;
         stats.emitted += children.len() as u64;
 
+        // PHASE E (deferred): reconciliation hook.
+        //
+        // Before enqueuing the new children, look up the prior set of
+        // child NextKeys this row produced (kept in a per-parent index
+        // — `prior_children: HashMap<QueueId, Vec<NextKey>>` on the
+        // bus or a side store). Compute multiset diff:
+        //   prior \ new = cascade_delete those subtrees
+        //   new \ prior = enqueue (the existing path below)
+        // Triggered when a parent row re-renders (Yield-driven re-
+        // execution after a cache invalidation, mostly). Today every
+        // render is a fresh row, so there's no prior set to diff
+        // against — Phase E lights up when Memoize+Yield get composed.
+
         for child in children {
             queue.enqueue(child);
         }

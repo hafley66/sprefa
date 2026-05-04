@@ -109,6 +109,12 @@ impl<N: Next> BusListener for QueryCache<N> {
         if let Event::DomainDirty(d) = ev {
             self.invalidate_domain(d);
         }
+        // PHASE E (deferred): on Success → Idle transition the rows
+        // downstream that already consumed the prior Success(data)
+        // are stale. Index the queue's child rows that descended from
+        // each (NextKey, drive_tick) Success and cascade_delete them
+        // here so the next render's children replace, not merge, the
+        // prior emission.
     }
 }
 
