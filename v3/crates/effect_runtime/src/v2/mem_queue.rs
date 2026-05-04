@@ -99,4 +99,42 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
     fn depth(&self) -> u64 {
         self.state.lock().unwrap().depth
     }
+
+    fn pull_runnable_batch(
+        &self,
+        ready_keys:  ReadyKeys<'_>,
+        global_tick: DriveTick,
+        n:           usize,
+    ) -> Vec<QueueRow<N>> {
+        if n == 0 { return Vec::new(); }
+        let mut s = self.state.lock().unwrap();
+
+        // Hot path: runnable VecDeque. Drain a homogeneous prefix
+        // without reordering — peek front, pop only if `(pipe_hash,
+        // depth)` matches the head's.
+        if let Some(head) = s.runnable.front() {
+            let head_pipe  = head.pipe_hash;
+            let head_depth = head.depth;
+            let mut out = Vec::with_capacity(n);
+            while out.len() < n {
+                let matches = s.runnable.front()
+                    .map(|r| r.pipe_hash == head_pipe && r.depth == head_depth)
+                    .unwrap_or(false);
+                if !matches { break; }
+                let row = s.runnable.pop_front().unwrap();
+                s.depth -= 1;
+                out.push(row);
+            }
+            return out;
+        }
+
+        // Cold paths: tick-parked + by_key buckets are not naturally
+        // homogeneous. Drop the lock and fall through to the single-
+        // row pull which already handles them.
+        drop(s);
+        match self.pull_runnable(ready_keys, global_tick) {
+            Some(r) => vec![r],
+            None    => Vec::new(),
+        }
+    }
 }

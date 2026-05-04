@@ -57,6 +57,27 @@ pub trait QueueBackend<N: Next>: Send + Sync + 'static {
     /// Total rows resident in the queue.
     fn depth(&self) -> u64;
 
+    /// Pull up to `n` runnable rows in storage order, all sharing the
+    /// same `(pipe_hash, depth)` so the driver can hand them to one
+    /// Component's `dispatch` as a homogeneous batch.
+    ///
+    /// Default = single-row pull (`n` ignored, `min(1, n)`). Backends
+    /// that can peek-then-pop without reordering override to actually
+    /// fill the batch. The default never reorders the queue: it pulls
+    /// at most one row and never re-enqueues.
+    fn pull_runnable_batch(
+        &self,
+        ready_keys:  ReadyKeys<'_>,
+        global_tick: DriveTick,
+        n:           usize,
+    ) -> Vec<QueueRow<N>> {
+        if n == 0 { return Vec::new(); }
+        match self.pull_runnable(ready_keys, global_tick) {
+            Some(r) => vec![r],
+            None    => Vec::new(),
+        }
+    }
+
     // PHASE E (deferred): reconciliation / cascade-delete.
     //
     // fn cascade_delete(&self, root: QueueId) -> u64;

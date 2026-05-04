@@ -27,6 +27,7 @@ since the substrate maps cleanly onto each idiom.
 - [Example 9 — `useQuery` (`Query<N, F>`) with `invalidateQueries`](#example-9--usequery-queryn-f-with-invalidatequeries)
 - [Example 10 — `SqliteQueue` + crash-restart](#example-10--sqlitequeue--crash-restart)
 - [Example 11 — `PathDirty` for tree-prefix invalidation](#example-11--pathdirty-for-tree-prefix-invalidation)
+- [Component override tiers (render / render_batch / dispatch)](#component-override-tiers-render--render_batch--dispatch)
 - [Cargo features](#cargo-features)
 - [Phase E placeholder (reconciliation / cascade-delete)](#phase-e-placeholder-reconciliation--cascade-delete)
 - [Where to look in the code](#where-to-look-in-the-code)
@@ -488,6 +489,135 @@ assert!(!bus.is_ready(key_c));
 ```
 
 Sets up the prefix-LIKE indexed cascade-delete that Phase E will use.
+
+---
+
+## Component override tiers (render / render_batch / dispatch)
+
+The `Component` trait exposes three layered entry points. Implement
+the one that fits the work; the rest fall through via defaults. None
+is mandatory — a Component that overrides nothing is a no-op (drops
+every input).
+
+```text
+                                          ┌─ default = drop input
+  tier 1  render(&self, ctx, &N) ────────┤
+                                          └─ override = per-row pure transform
+
+                                          ┌─ default = loop render
+  tier 2  render_batch(&self, ctx, &[&N])┤
+                                          └─ override = batch-shaped work
+                                                       (rayon, SIMD, sqlite IN(...))
+
+                                          ┌─ default = render_batch + splice
+  tier 3  dispatch(&self, ctx, rows,    ─┤
+                   queue, bus)            └─ override = full substrate control
+                                                       (mergeMap, switchMap,
+                                                        parker enqueue, debounce,
+                                                        Spawner handoff)
+```
+
+Defaults flow inner → outer (`dispatch` → `render_batch` → `render`).
+The terminal default for `render` is `Node::Done`, so the chain
+cannot recurse.
+
+### Tier 1 — `render`
+
+```rust
+struct Trim { from: String, to: String }
+impl Component for Trim {
+    type Next = LabCursor;
+    fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+        let raw = c.get(&self.from).unwrap_or("").to_string();
+        let mut next = c.clone();
+        next.set(&self.to, raw.trim());
+        Node::Emit(Arc::new(next))
+    }
+}
+```
+
+### Tier 2 — `render_batch` with rayon (the rxjs `mergeMap` analog)
+
+```rust
+use effect_runtime::v2::{par_render, Component, Node, RenderCtx};
+
+struct ParAstNm { /* compiled ast-grep pattern */ }
+impl Component for ParAstNm {
+    type Next = Cursor;
+    fn render_batch(&self, _: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        // par_render maps over rayon's pool, results in input order.
+        par_render(batch, |c| {
+            let matches = self.run_pattern(c);
+            Node::Many(matches.into_iter().map(|m| {
+                let mut next = c.clone();
+                next.set(":match", m);
+                Node::Emit(Arc::new(next))
+            }).collect())
+        })
+    }
+}
+```
+
+`render_batch` sees up to `DriveOpts::batch_cap` rows (default 256)
+that share `(pipe_hash, depth)`. The batch shape lets the override
+amortize fixed work (compiled patterns, SIMD setup) across the slice.
+
+### Tier 3 — `dispatch` for substrate-aware ops
+
+`dispatch` owns the queue interaction. Use it to dispatch bus events,
+enqueue children with custom `Wake`, hand work to a `Spawner`, or
+implement reactive operators that don't fit a per-row transform.
+
+```rust
+use effect_runtime::v2::{
+    splice_into, Component, Event, EventBus, Node, QueueBackend,
+    QueueRow, RenderCtx, Wake,
+};
+
+/// switchMap-style: every new emission cancels the prior parker.
+struct SwitchMap { bus: Arc<EventBus>, prev: Mutex<Option<NextKey>> }
+impl Component for SwitchMap {
+    type Next = LabCursor;
+    fn dispatch(
+        &self,
+        ctx:   &RenderCtx,
+        rows:  &[QueueRow<LabCursor>],
+        queue: &dyn QueueBackend<LabCursor>,
+        bus:   &EventBus,
+    ) {
+        for row in rows {
+            let new_key = self.bus.fresh_key();
+            if let Some(prev) = self.prev.lock().unwrap().replace(new_key) {
+                bus.dispatch(Event::KeyDirty(prev));   // cancel prior
+            }
+            let parked = Node::Suspense {
+                value: row.value.clone(),
+                wake:  Wake::Key(new_key),
+            };
+            splice_into(row, parked, ctx.depth + 1, ctx.drive_tick, queue);
+        }
+    }
+}
+```
+
+| rxjs operator | What the `dispatch` override does |
+|---|---|
+| `mergeMap(N)`              | rayon-spawn N renders concurrently; splice as they complete |
+| `switchMap`                | dispatch `KeyDirty(prev)`; enqueue child with fresh `Wake::Key` |
+| `concatMap`                | enqueue child with `Wake::Key(prev_completion)`; dispatch on completion |
+| `debounceTime(ms)`         | `Wake::Tick { past_tick: now + ms_in_ticks }` |
+| `throttleTime(ms)`         | drop input if `last_emit_tick + ms > now_tick` |
+| `distinctUntilChanged`     | compare `c.content_hash()` to last seen, drop dupes |
+| `bufferTime(ms)`           | self-loop `Wake::Tick`, accumulate batch in a Mutex, flush on tick |
+| sprefa `next?(:event)`     | enqueue `Wake::Key(blake3(":event"))`, source op fires `bus.dispatch(KeyDirty(same))` |
+| sprefa `Sh / FactWrite`    | hand to `Spawner`; on completion, `mutation_store.put` + `KeyDirty` |
+| sprefa OpCache (Layer-3)   | check `MemoCache` before splice; cache hit short-circuits |
+
+### Driver knob
+
+`DriveOpts::with_batch_cap(n)` caps how many rows the driver pulls
+per dispatch. Default 256 (matches v3's `DEFAULT_PIPE_CONCURRENCY`).
+`Some(1)` forces per-row delivery.
 
 ---
 

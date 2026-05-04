@@ -44,10 +44,11 @@ pub use query::{attach_query_cache_to_bus, Query, QueryCache, QueryFn, QueryStat
 #[cfg(feature = "sqlite")]
 pub use sqlite_queue::SqliteQueue;
 pub use node::Node;
-pub use component::{Component, DynComponent, RenderCtx};
+pub use component::{par_render, Component, DynComponent, RenderCtx};
+pub use flatten::splice_into;
 pub use queue::{DriveTick, InstanceId, PipeHash, QueueBackend, QueueId, QueueRow};
 pub use mem_queue::MemQueue;
-pub use driver::{drive, DriveOpts, DriveStats, PipeInstance};
+pub use driver::{drive, DriveOpts, DriveStats, PipeInstance, DEFAULT_BATCH_CAP};
 
 #[cfg(test)]
 mod tests;

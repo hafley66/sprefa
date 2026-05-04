@@ -253,4 +253,52 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
         ).expect("queue depth");
         n as u64
     }
+
+    fn pull_runnable_batch(
+        &self,
+        ready_keys:  ReadyKeys<'_>,
+        global_tick: DriveTick,
+        n:           usize,
+    ) -> Vec<QueueRow<N>> {
+        if n == 0 { return Vec::new(); }
+        let conn = self.conn.lock().unwrap();
+
+        // Hot path: WAKE_KIND_IMMEDIATE rows. SELECT up to n in id
+        // order, take the (pipe_hash, depth)-homogeneous head prefix,
+        // bulk DELETE matching ids in one statement.
+        let mut stmt = conn.prepare_cached(
+            "SELECT * FROM sprf_v2_queue
+             WHERE wake_kind = ?1
+             ORDER BY id ASC LIMIT ?2"
+        ).expect("prepare batch select");
+        let rows: Vec<QueueRow<N>> = stmt
+            .query_map(params![WAKE_KIND_IMMEDIATE, n as i64], row_to_queue::<N>)
+            .expect("batch query")
+            .filter_map(Result::ok)
+            .collect();
+
+        if !rows.is_empty() {
+            let head_pipe  = rows[0].pipe_hash;
+            let head_depth = rows[0].depth;
+            let prefix: Vec<QueueRow<N>> = rows.into_iter()
+                .take_while(|r| r.pipe_hash == head_pipe && r.depth == head_depth)
+                .collect();
+            // Bulk DELETE.
+            let id_list: Vec<String> = prefix.iter().map(|r| r.id.to_string()).collect();
+            let sql = format!(
+                "DELETE FROM sprf_v2_queue WHERE id IN ({})",
+                id_list.join(",")
+            );
+            conn.execute(&sql, []).expect("bulk delete");
+            return prefix;
+        }
+
+        // Cold paths: fall through to single-row pull for tick/key.
+        drop(stmt);
+        drop(conn);
+        match self.pull_runnable(ready_keys, global_tick) {
+            Some(r) => vec![r],
+            None    => Vec::new(),
+        }
+    }
 }

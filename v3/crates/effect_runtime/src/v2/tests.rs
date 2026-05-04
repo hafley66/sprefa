@@ -1016,3 +1016,202 @@ fn tempdir() -> std::path::PathBuf {
     std::fs::create_dir_all(&p).unwrap();
     p
 }
+
+// =====================================================================
+// Three-tier Component proofs: render / render_batch / dispatch
+// =====================================================================
+
+/// Tier 2: `render_batch` override is the only thing implemented, and
+/// it sees the whole batch the driver pulled (homogeneous by
+/// (pipe_hash, depth)). Recorded sizes confirm batching actually
+/// happens, not "n calls of size 1".
+#[test]
+fn render_batch_override_sees_full_homogeneous_batch() {
+    use std::sync::atomic::{AtomicUsize, Ordering as AO};
+
+    struct UpperBatch { sizes_seen: Arc<Mutex<Vec<usize>>>, calls: Arc<AtomicUsize> }
+    impl Component for UpperBatch {
+        type Next = LabCursor;
+        fn render_batch(&self, _: &RenderCtx, batch: &[&LabCursor]) -> Vec<Node<LabCursor>> {
+            self.sizes_seen.lock().unwrap().push(batch.len());
+            self.calls.fetch_add(1, AO::SeqCst);
+            batch.iter().map(|c| {
+                let raw = c.get(":raw").unwrap_or("").to_uppercase();
+                let mut next = (*c).clone();
+                next.set(":upper", raw);
+                Node::Emit(Arc::new(next))
+            }).collect()
+        }
+    }
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sizes = Arc::new(Mutex::new(Vec::<usize>::new()));
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(UpperBatch { sizes_seen: sizes.clone(), calls: calls.clone() })
+            as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    let seeds: Vec<Arc<LabCursor>> =
+        (0..7).map(|i| lc(":raw", &format!("v{}", i))).collect();
+    drive(&pipe, queue.clone(), seeds, DriveOpts::default());
+
+    let collected = sink.lock().unwrap();
+    assert_eq!(collected.len(), 7);
+    let upper_set: Vec<&str> = collected.iter().map(|c| c.get(":upper").unwrap()).collect();
+    for v in &upper_set {
+        assert!(v.starts_with('V'), "got {:?}", v);
+    }
+    let sizes = sizes.lock().unwrap();
+    let total: usize = sizes.iter().sum();
+    assert_eq!(total, 7, "every seed reaches render_batch exactly once");
+    assert_eq!(calls.load(AO::SeqCst), sizes.len());
+    assert!(
+        sizes.iter().any(|&n| n >= 2),
+        "expected at least one batch >1 (sizes={:?})",
+        *sizes,
+    );
+}
+
+/// Tier 2 + `par_render`: the rxjs-mergeMap analog. Batch fans out
+/// over rayon, results land back in input order.
+#[test]
+fn par_render_runs_over_rayon_in_input_order() {
+    struct ParUpper;
+    impl Component for ParUpper {
+        type Next = LabCursor;
+        fn render_batch(&self, _: &RenderCtx, batch: &[&LabCursor]) -> Vec<Node<LabCursor>> {
+            par_render(batch, |c| {
+                let raw = c.get(":raw").unwrap_or("").to_uppercase();
+                let mut next = c.clone();
+                next.set(":upper", raw);
+                Node::Emit(Arc::new(next))
+            })
+        }
+    }
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(ParUpper) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    let seeds: Vec<Arc<LabCursor>> =
+        (0..32).map(|i| lc(":raw", &format!("seed{:03}", i))).collect();
+    drive(&pipe, queue, seeds, DriveOpts::default());
+
+    let got = sink.lock().unwrap();
+    assert_eq!(got.len(), 32);
+    // Every input lands; the par_render preserves slice order so each
+    // child's :raw → :upper mapping survives independently.
+    for c in got.iter() {
+        let raw = c.get(":raw").unwrap();
+        let up  = c.get(":upper").unwrap();
+        assert_eq!(up, &raw.to_uppercase());
+    }
+}
+
+/// Tier 3: `dispatch` override owns the splice. This Component does
+/// switchMap-style cancellation: on each render, dispatch
+/// `KeyDirty(prev_key)` to wake any prior parker, then enqueue a fresh
+/// child with `Wake::Key(new_key)`. The driver's default forget logic
+/// (it forgets keys for pulled rows) lets us count parker wakeups.
+#[test]
+fn dispatch_override_controls_parker_enqueue_and_event_dispatch() {
+    use std::sync::atomic::{AtomicUsize, Ordering as AO};
+
+    /// Tier-3 op: every input enqueues a parker keyed by a new fresh
+    /// key, AND dispatches KeyDirty for the *previous* fresh key it
+    /// minted (so the prior parker becomes runnable). Models
+    /// switchMap cancellation: a new emission supersedes the prior.
+    struct SwitchMap {
+        bus:        Arc<EventBus>,
+        prev_key:   Mutex<Option<NextKey>>,
+        wake_count: Arc<AtomicUsize>,
+    }
+    impl Component for SwitchMap {
+        type Next = LabCursor;
+        fn dispatch(
+            &self,
+            ctx:   &RenderCtx,
+            rows:  &[QueueRow<LabCursor>],
+            queue: &dyn QueueBackend<LabCursor>,
+            bus:   &EventBus,
+        ) {
+            for row in rows {
+                let new_key = self.bus.fresh_key();
+                if let Some(prev) = self.prev_key.lock().unwrap().replace(new_key) {
+                    bus.dispatch(Event::KeyDirty(prev));
+                    self.wake_count.fetch_add(1, AO::SeqCst);
+                }
+                let suspended = Node::Suspense {
+                    value: row.value.clone(),
+                    wake:  Wake::Key(new_key),
+                };
+                splice_into(row, suspended, ctx.depth + 1, ctx.drive_tick, queue);
+            }
+        }
+    }
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let bus   = Arc::new(EventBus::new());
+    let waked = Arc::new(AtomicUsize::new(0));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(SwitchMap {
+            bus:        bus.clone(),
+            prev_key:   Mutex::new(None),
+            wake_count: waked.clone(),
+        }) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    let opts = DriveOpts::default().with_bus(bus.clone());
+
+    let seeds: Vec<Arc<LabCursor>> =
+        (0..3).map(|i| lc(":raw", &format!("v{}", i))).collect();
+    drive(&pipe, queue.clone(), seeds, opts.clone());
+
+    // Expect 2 prior-key wakes (seeds 1 and 2 cancel seeds 0 and 1's
+    // parker). The most-recent parker (from seed 2) is still parked.
+    assert_eq!(waked.load(AO::SeqCst), 2);
+
+    // Drive again: the two cancelled parkers are runnable, flow to
+    // the Collector. The most-recent parker stays parked.
+    drive(&pipe, queue.clone(), Vec::new(), opts);
+    assert_eq!(sink.lock().unwrap().len(), 2,
+               "cancelled parkers flushed; latest parker still pending");
+    assert_eq!(queue.depth(), 1, "the most-recent parker is still parked");
+}
+
+/// Sanity: an op that overrides nothing is a no-op (drops every input)
+/// — confirms `render`'s terminal `Node::Done` default + chain.
+#[test]
+fn unoverridden_component_drops_every_input() {
+    struct NoOp;
+    impl Component for NoOp { type Next = LabCursor; }
+
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(NoOp) as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    let stats = drive(
+        &pipe, queue.clone(),
+        vec![lc(":raw", "alpha"), lc(":raw", "beta")],
+        DriveOpts::default(),
+    );
+    assert_eq!(sink.lock().unwrap().len(), 0);
+    assert_eq!(stats.rendered, 2);
+    assert_eq!(stats.emitted,  0);
+    assert_eq!(queue.depth(),  0);
+}

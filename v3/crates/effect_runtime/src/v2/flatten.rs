@@ -9,8 +9,27 @@
 
 use super::next::Next;
 use super::node::Node;
-use super::queue::{DriveTick, QueueRow};
+use super::queue::{DriveTick, QueueBackend, QueueRow};
 use super::wake::Wake;
+
+/// Splice helper for `Component::dispatch` overrides. Flattens `node`
+/// into rows under `parent` at `next_depth`, then enqueues each child.
+/// Returns the number of rows enqueued.
+///
+/// dispatch overrides that compute their own `Node<N>` per row can
+/// call this to splice without re-implementing `flatten` + enqueue.
+pub fn splice_into<N: Next>(
+    parent:     &QueueRow<N>,
+    node:       Node<N>,
+    next_depth: u32,
+    drive_tick: DriveTick,
+    queue:      &dyn QueueBackend<N>,
+) -> usize {
+    let children = flatten(node, parent, next_depth, drive_tick);
+    let n = children.len();
+    for child in children { queue.enqueue(child); }
+    n
+}
 
 // PHASE E (deferred): flatten is the natural place to compute the
 // per-parent prior-children index. Before returning, mint the
