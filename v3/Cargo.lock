@@ -700,6 +700,7 @@ name = "effect_runtime"
 version = "0.0.0"
 dependencies = [
  "arc-swap",
+ "blake3",
  "crossbeam-channel",
  "moka",
  "rayon",

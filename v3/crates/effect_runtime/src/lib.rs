@@ -424,6 +424,7 @@ pub mod batchers;
 pub mod generation;
 pub mod subjects;
 pub mod telemetry;
+pub mod v2;
 
 pub use generation::{GenCounter, Generation};
 pub use subjects::{
