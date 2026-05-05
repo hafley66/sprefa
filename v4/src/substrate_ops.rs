@@ -29,7 +29,17 @@ use effect_runtime::v2::{
 };
 use ignore::WalkBuilder;
 
-use crate::{Cursor, Store};
+use crate::{Cursor, Interner, Store};
+
+/// Helper: pack a Vec of cursors into the right Node shape.
+/// 0 -> Done, 1 -> Emit, N -> Many of Emit.
+fn nodes_from(out: Vec<Cursor>) -> Node<Cursor> {
+    match out.len() {
+        0 => Node::Done,
+        1 => Node::Emit(Arc::new(out.into_iter().next().unwrap())),
+        _ => Node::Many(out.into_iter().map(|c| Node::Emit(Arc::new(c))).collect()),
+    }
+}
 
 /// Tier-3 source op. Ignores its input cursor (the bootstrap seed),
 /// walks `root` with `WalkBuilder`, splices one child Cursor per
@@ -305,6 +315,226 @@ impl Component for CountComponent {
 
     fn render(&self, _ctx: &RenderCtx, _c: &Cursor) -> Node<Cursor> {
         self.count.fetch_add(1, Ordering::Relaxed);
+        Node::Done
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   Pure cursor mutators (former SimpleOp variants)
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+/// Split `from` term's value by `sep`, emit one child cursor per
+/// non-empty piece, bound to `into` term.
+pub struct SplitComponent { pub from: String, pub sep: String, pub into: String }
+impl SplitComponent {
+    pub fn new(from: &str, sep: &str, into: &str) -> Self {
+        Self { from: from.into(), sep: sep.into(), into: into.into() }
+    }
+}
+impl Component for SplitComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let Some(s) = c.get(&self.from) else { return Node::Done };
+        let out: Vec<Cursor> = s.split(self.sep.as_str())
+            .filter(|p| !p.is_empty())
+            .map(|p| { let mut k = c.clone(); k.set(&self.into, p); k })
+            .collect();
+        nodes_from(out)
+    }
+}
+
+/// Render a template with `${TERM}` substitutions, bind result to `into`.
+pub struct FormatComponent { pub template: String, pub into: String }
+impl FormatComponent {
+    pub fn new(template: &str, into: &str) -> Self {
+        Self { template: template.into(), into: into.into() }
+    }
+}
+impl Component for FormatComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let re = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+        let rendered = re.replace_all(&self.template, |caps: &regex::Captures| {
+            c.get(&caps[1]).unwrap_or("").to_string()
+        }).into_owned();
+        let mut out = c.clone();
+        out.set(&self.into, rendered);
+        Node::Emit(Arc::new(out))
+    }
+}
+
+/// Trim whitespace on `from` term, write back to `into` (or `from`
+/// itself if `into == from`).
+pub struct TrimComponent { pub from: String, pub into: String }
+impl TrimComponent {
+    pub fn new(from: &str, into: &str) -> Self {
+        Self { from: from.into(), into: into.into() }
+    }
+    pub fn in_place(name: &str) -> Self { Self::new(name, name) }
+}
+impl Component for TrimComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let Some(s) = c.get(&self.from) else { return Node::Emit(Arc::new(c.clone())) };
+        let trimmed = s.trim().to_string();
+        let mut out = c.clone();
+        out.set(&self.into, trimmed);
+        Node::Emit(Arc::new(out))
+    }
+}
+
+/// Extract `Path::file_name` from `from` term, bind to `into`.
+pub struct BasenameComponent { pub from: String, pub into: String }
+impl BasenameComponent {
+    pub fn new(from: &str, into: &str) -> Self {
+        Self { from: from.into(), into: into.into() }
+    }
+}
+impl Component for BasenameComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let Some(s) = c.get(&self.from) else { return Node::Emit(Arc::new(c.clone())) };
+        let bn = std::path::Path::new(s).file_name()
+            .and_then(|b| b.to_str()).unwrap_or("").to_string();
+        let mut out = c.clone();
+        out.set(&self.into, bn);
+        Node::Emit(Arc::new(out))
+    }
+}
+
+/// Extract `Path::parent` from `from` term, bind to `into`.
+pub struct DirnameComponent { pub from: String, pub into: String }
+impl DirnameComponent {
+    pub fn new(from: &str, into: &str) -> Self {
+        Self { from: from.into(), into: into.into() }
+    }
+}
+impl Component for DirnameComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let Some(s) = c.get(&self.from) else { return Node::Emit(Arc::new(c.clone())) };
+        let dn = std::path::Path::new(s).parent()
+            .and_then(|p| p.to_str()).unwrap_or("").to_string();
+        let mut out = c.clone();
+        out.set(&self.into, dn);
+        Node::Emit(Arc::new(out))
+    }
+}
+
+/// Split a term's text by `\n`, emit one child cursor per non-empty
+/// line bound to `target`.
+pub struct LineComponent { pub source: String, pub target: String }
+impl LineComponent {
+    pub fn on(term: impl Into<String>) -> Self {
+        let s = term.into();
+        Self { target: s.clone(), source: s }
+    }
+    pub fn into_term(mut self, target: impl Into<String>) -> Self {
+        self.target = target.into(); self
+    }
+}
+impl Component for LineComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let Some(text) = c.get(&self.source).map(|s| s.to_string()) else { return Node::Done };
+        let out: Vec<Cursor> = text.split('\n')
+            .filter(|l| !l.is_empty())
+            .map(|line| { let mut child = c.clone(); child.set(&self.target, line); child })
+            .collect();
+        nodes_from(out)
+    }
+}
+
+/// Regex match. Reads `on` term as the haystack (or the file at FS if
+/// `on == "FS"`). Stamps LO/HI/MATCH/captures on each hit. When `on ==
+/// "FS"`, also stamps `CONTENT_HASH` interned via `Interner`.
+pub struct ReComponent {
+    on:            String,
+    capture_names: Vec<String>,
+    want_match:    bool,
+    re:            Arc<regex::Regex>,
+    interner:      Option<Arc<Interner>>,
+}
+impl ReComponent {
+    pub fn new(pat: &str, captures: &[&str]) -> Self {
+        Self {
+            on:            "FS".to_string(),
+            capture_names: captures.iter().map(|s| s.to_string()).collect(),
+            want_match:    true,
+            re:            Arc::new(regex::Regex::new(pat).expect("compile regex")),
+            interner:      None,
+        }
+    }
+    pub fn on_term(mut self, term: &str) -> Self { self.on = term.to_string(); self }
+    pub fn with_match_text(mut self, on: bool) -> Self { self.want_match = on; self }
+    pub fn with_interner(mut self, interner: Arc<Interner>) -> Self {
+        self.interner = Some(interner); self
+    }
+}
+impl Component for ReComponent {
+    type Next = Cursor;
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let re = self.re.clone();
+        let on = self.on.clone();
+        let capture_names = self.capture_names.clone();
+        let want_match = self.want_match;
+        let interner = self.interner.clone();
+        par_render(batch, move |c| {
+            let (haystack, content_hash_arc): (String, Option<Arc<str>>) =
+                if on == "FS" {
+                    let Some(path) = c.get("FS") else { return Node::Done };
+                    let Ok(bytes) = std::fs::read(path) else { return Node::Done };
+                    let h_hex = blake3::hash(&bytes).to_hex().to_string();
+                    let h_arc: Option<Arc<str>> = interner.as_ref().map(|i| i.intern(&h_hex));
+                    let s = match String::from_utf8(bytes) {
+                        Ok(s) => s,
+                        Err(e) => unsafe { String::from_utf8_unchecked(e.into_bytes()) },
+                    };
+                    (s, h_arc)
+                } else {
+                    match c.get(&on) {
+                        Some(s) => (s.to_string(), None),
+                        None => return Node::Done,
+                    }
+                };
+            let mut hits: Vec<Node<Cursor>> = Vec::new();
+            for caps in re.captures_iter(&haystack) {
+                let m0 = caps.get(0).unwrap();
+                let mut child = c.clone();
+                if let Some(arc) = &content_hash_arc {
+                    child.set_arc("CONTENT_HASH", arc.clone());
+                }
+                child.set("LO", (m0.start() as u64).to_string());
+                child.set("HI", (m0.end()   as u64).to_string());
+                if want_match { child.set("MATCH", m0.as_str()); }
+                for (i, name) in capture_names.iter().enumerate() {
+                    if let Some(g) = caps.get(i + 1) {
+                        child.set(name, g.as_str());
+                    }
+                }
+                hits.push(Node::Emit(Arc::new(child)));
+            }
+            if hits.is_empty() { Node::Done } else { Node::Many(hits) }
+        })
+    }
+}
+
+/// Render a `{TERM}` template per cursor and println! the result.
+/// Side-effect terminal — emits `Done` after printing. (v4 native uses
+/// the Hooks effect channel; the bench's only consumer is a sink that
+/// drains it, so a direct println is equivalent for substrate scope.)
+pub struct PrintComponent { pub template: String }
+impl PrintComponent {
+    pub fn new(template: impl Into<String>) -> Self { Self { template: template.into() } }
+}
+impl Component for PrintComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let mut s = self.template.clone();
+        for (n, v) in &c.terms {
+            s = s.replace(&format!("{{{}}}", n), v);
+        }
+        println!("{}", s);
         Node::Done
     }
 }
