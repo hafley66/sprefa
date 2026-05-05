@@ -121,6 +121,58 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
     ) -> Vec<QueueRow<N>> {
         self.pull_runnable_batch_impl(global_tick, n)
     }
+
+    fn cascade_delete(&self, root: QueueId) -> u64 {
+        let mut s = self.state.lock().unwrap();
+
+        // Step 1: BFS over parent_id to collect the full doomed id set.
+        // Walk all three buckets each pass since rows live in whichever
+        // matches their wake state.
+        let mut doomed: std::collections::HashSet<QueueId> =
+            std::collections::HashSet::new();
+        doomed.insert(root);
+        let mut frontier = vec![root];
+        while !frontier.is_empty() {
+            let mut next: Vec<QueueId> = Vec::new();
+            let scan = |row: &QueueRow<N>, frontier: &[QueueId], next: &mut Vec<QueueId>, doomed: &mut std::collections::HashSet<QueueId>| {
+                if let Some(p) = row.parent_id {
+                    if frontier.contains(&p) && doomed.insert(row.id) {
+                        next.push(row.id);
+                    }
+                }
+            };
+            for r in s.runnable.iter()    { scan(r, &frontier, &mut next, &mut doomed); }
+            for r in s.tick_parked.iter() { scan(r, &frontier, &mut next, &mut doomed); }
+            for bucket in s.by_key.values() {
+                for r in bucket.iter() { scan(r, &frontier, &mut next, &mut doomed); }
+            }
+            frontier = next;
+        }
+
+        // Step 2: drop matching rows from each bucket, decrement depth.
+        let mut removed = 0u64;
+        let before = s.runnable.len();
+        s.runnable.retain(|r| !doomed.contains(&r.id));
+        removed += (before - s.runnable.len()) as u64;
+
+        let before = s.tick_parked.len();
+        s.tick_parked.retain(|r| !doomed.contains(&r.id));
+        removed += (before - s.tick_parked.len()) as u64;
+
+        let keys: Vec<(Cow<'static, str>, NextKey)> = s.by_key.keys().cloned().collect();
+        for k in keys {
+            let bucket = s.by_key.remove(&k).unwrap();
+            let kept: Vec<QueueRow<N>> = bucket.into_iter()
+                .filter(|r| {
+                    if doomed.contains(&r.id) { removed += 1; false } else { true }
+                })
+                .collect();
+            if !kept.is_empty() { s.by_key.insert(k, kept); }
+        }
+
+        s.depth = s.depth.saturating_sub(removed);
+        removed
+    }
 }
 
 impl<N: Next> MemQueue<N> {

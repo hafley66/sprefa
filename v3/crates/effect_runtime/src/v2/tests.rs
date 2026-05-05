@@ -1413,3 +1413,73 @@ fn unoverridden_component_drops_every_input() {
     assert_eq!(stats.emitted,  0);
     assert_eq!(queue.depth(),  0);
 }
+
+// ---------------------------------------------------------------------
+// cascade_delete — primitive used by Memoize-on-evict + reconcile.
+// Tests are direct against the queue trait (not via expand) since the
+// reconcile path that wires this into render is the next slice.
+// ---------------------------------------------------------------------
+
+mod cascade {
+    use super::*;
+    use super::super::queue::{QueueRow};
+    use super::super::sqlite_queue::SqliteQueue;
+    use super::super::wake::Wake;
+
+    fn row(parent: Option<u64>, wake: Wake) -> QueueRow<LabCursor> {
+        QueueRow {
+            id:             0,  // backend assigns
+            parent_id:      parent,
+            batch_idx:      0,
+            path:           Vec::new(),
+            pipe_hash:      0,
+            instance_id:    0,
+            depth:          0,
+            value:          lc(":raw", "x"),
+            wake,
+            expand_tick:    0,
+            enqueued_at_ns: 0,
+        }
+    }
+
+    /// Tree:  R -> {A -> {AA, AB}, B}     plus unrelated U.
+    /// cascade_delete(R) removes R,A,B,AA,AB (5 rows). U survives.
+    fn cascade_subtree_suite(queue: Arc<dyn QueueBackend<LabCursor>>) {
+        // Mix wake states so the doomed set straddles all three buckets.
+        let r = queue.enqueue(row(None,    Wake::Immediate));
+        let a = queue.enqueue(row(Some(r), Wake::Tick { past_tick: 0 }));
+        let _b = queue.enqueue(row(Some(r), Wake::Key {
+            domain: "d".into(),
+            key:    NextKey([0u8; 32]),
+        }));
+        let _aa = queue.enqueue(row(Some(a), Wake::Immediate));
+        let _ab = queue.enqueue(row(Some(a), Wake::Immediate));
+        let _u  = queue.enqueue(row(None,    Wake::Immediate));
+
+        assert_eq!(queue.depth(), 6);
+        let removed = queue.cascade_delete(r);
+        assert_eq!(removed, 5);
+        assert_eq!(queue.depth(), 1);
+    }
+
+    fn cascade_unknown_root_is_zero(queue: Arc<dyn QueueBackend<LabCursor>>) {
+        queue.enqueue(row(None, Wake::Immediate));
+        assert_eq!(queue.cascade_delete(99_999), 0);
+        assert_eq!(queue.depth(), 1);
+    }
+
+    fn cascade_leaf_only_removes_self(queue: Arc<dyn QueueBackend<LabCursor>>) {
+        let parent = queue.enqueue(row(None,         Wake::Immediate));
+        let leaf   = queue.enqueue(row(Some(parent), Wake::Immediate));
+        assert_eq!(queue.cascade_delete(leaf), 1);
+        assert_eq!(queue.depth(), 1);
+    }
+
+    #[test] fn mem_cascade_subtree()             { cascade_subtree_suite(Arc::new(MemQueue::new())); }
+    #[test] fn mem_cascade_unknown_root()        { cascade_unknown_root_is_zero(Arc::new(MemQueue::new())); }
+    #[test] fn mem_cascade_leaf_only()           { cascade_leaf_only_removes_self(Arc::new(MemQueue::new())); }
+
+    #[test] fn sqlite_cascade_subtree()          { cascade_subtree_suite(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
+    #[test] fn sqlite_cascade_unknown_root()     { cascade_unknown_root_is_zero(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
+    #[test] fn sqlite_cascade_leaf_only()        { cascade_leaf_only_removes_self(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
+}

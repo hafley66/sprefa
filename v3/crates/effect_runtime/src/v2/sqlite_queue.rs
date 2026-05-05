@@ -327,6 +327,24 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
         n as u64
     }
 
+    fn cascade_delete(&self, root: QueueId) -> u64 {
+        let conn = self.conn.lock().unwrap();
+        // Recursive CTE walks parent_id chain from root downward; one
+        // DELETE statement removes the whole subtree. The
+        // sprf_v3_queue_parent index makes the join O(matching).
+        let n = conn.execute(
+            "WITH RECURSIVE descendants(id) AS (
+                 SELECT id FROM sprf_v3_queue WHERE id = ?1
+                 UNION ALL
+                 SELECT q.id FROM sprf_v3_queue q
+                 JOIN descendants d ON q.parent_id = d.id
+             )
+             DELETE FROM sprf_v3_queue WHERE id IN (SELECT id FROM descendants)",
+            params![root as i64],
+        ).expect("cascade_delete");
+        n as u64
+    }
+
     fn pull_runnable_batch(
         &self,
         global_tick: ExpandTick,

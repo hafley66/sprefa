@@ -174,6 +174,14 @@ impl<N: Next + Codec> QueueBackend<N> for HybridQueue<N> {
         let c = self.cold.dispatch_park(domain, key);
         h + c
     }
+
+    fn cascade_delete(&self, root: QueueId) -> u64 {
+        // Subtree may straddle tiers (root in hot, descendants flushed
+        // to cold). Forward to both; sum.
+        let h = self.hot.cascade_delete(root);
+        let c = self.cold.cascade_delete(root);
+        h + c
+    }
 }
 
 fn now_ns() -> u64 {

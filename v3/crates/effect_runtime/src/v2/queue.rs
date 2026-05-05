@@ -83,7 +83,12 @@ pub trait QueueBackend<N: Next>: Send + Sync + 'static {
         }
     }
 
-    // PHASE E (deferred): reconciliation / cascade-delete.
-    //
-    // fn cascade_delete(&self, root: QueueId) -> u64;
+    /// Delete `root` and every descendant reachable through the
+    /// `parent_id` chain. Returns the count of rows removed (root +
+    /// descendants). Default impl is a no-op (returns 0); real backends
+    /// override with a recursive walk.
+    ///
+    /// Used by Memoize-on-evict + reconcile to drop downstream rows
+    /// whose producing render is no longer valid.
+    fn cascade_delete(&self, _root: QueueId) -> u64 { 0 }
 }
