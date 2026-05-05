@@ -1,3 +1,4 @@
+pub mod chan;
 pub mod cst;
 pub mod cursor_codec;
 pub mod runtime_bridge;
