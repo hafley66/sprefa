@@ -32,6 +32,7 @@ pub struct Rule {
     pub name:       Arc<str>,
     pub store:      Arc<dyn FactStore>,
     pub sink_table: Arc<str>,
+    pub sink_cols:  Arc<Vec<Arc<str>>>,
     body_steps:     Arc<Vec<Arc<dyn Component<Next = Cursor>>>>,
 }
 
@@ -40,12 +41,17 @@ impl Rule {
         name:       impl Into<Arc<str>>,
         store:      Arc<dyn FactStore>,
         sink_table: impl Into<Arc<str>>,
+        sink_cols:  &[&str],
         body:       Pipe<Cursor>,
     ) -> Self {
+        let sink_table: Arc<str> = sink_table.into();
+        store.declare(&sink_table, sink_cols);
+        let cols: Vec<Arc<str>> = sink_cols.iter().map(|s| Arc::<str>::from(*s)).collect();
         Self {
             name:       name.into(),
             store,
-            sink_table: sink_table.into(),
+            sink_table,
+            sink_cols:  Arc::new(cols),
             body_steps: Arc::new(body.steps),
         }
     }
@@ -57,8 +63,9 @@ impl Rule {
         name:       impl Into<Arc<str>>,
         store:      Arc<dyn FactStore>,
         sink_table: impl Into<Arc<str>>,
+        sink_cols:  &[&str],
     ) -> Self {
-        Self::new(name, store, sink_table, Pipe::new())
+        Self::new(name, store, sink_table, sink_cols, Pipe::new())
     }
 
     pub fn is_passthrough(&self) -> bool { self.body_steps.is_empty() }
@@ -123,7 +130,7 @@ mod tests {
     fn passthrough_rule_writes_seed_into_sink() {
         let store = Arc::new(MemFactStore::new());
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let rule = Rule::passthrough("noop", store.clone(), "out");
+        let rule = Rule::passthrough("noop", store.clone(), "out", &["FILE"]);
 
         rule.run_with(
             queue,
@@ -153,7 +160,7 @@ mod tests {
         let store = Arc::new(MemFactStore::new());
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let body  = Pipe::new().step(Arc::new(Upcase));
-        let rule  = Rule::new("upcase", store.clone(), "loud", body);
+        let rule  = Rule::new("upcase", store.clone(), "loud", &[], body);
 
         rule.run_with(queue, vec![cursor("hi", &[])], ExpandOpts::default());
 
@@ -167,7 +174,7 @@ mod tests {
         // Step 1: populate via run_with.
         let store = Arc::new(MemFactStore::new());
         let q1: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let rule = Rule::passthrough("strings", store.clone(), "strings");
+        let rule = Rule::passthrough("strings", store.clone(), "strings", &["FILE", "HIT"]);
         rule.run_with(q1,
             vec![
                 cursor("hi",  &[("FILE", "a.rs"), ("HIT", "hi")]),
