@@ -12,22 +12,31 @@
 //!   SqliteFactStore<R>        sqlite-backed; per-table wide schema
 //!                             with FK columns into shared sprf_strings
 //!
+//! Identity-uniform rows: every fact table carries a synthetic
+//! `_id TEXT NOT NULL UNIQUE` column. At insert time, `_id` is minted
+//! as `blake3(table || canonical(fields))` and stamped on the row
+//! before storage. Same domain across all tables, same dirty-publish
+//! key, same future cross-table-join target. Duplicate inserts of the
+//! same logical row produce the same id (dedup-friendly: SQLite uses
+//! `INSERT OR IGNORE` on the UNIQUE id).
+//!
 //! Sqlite shape: `declare(table, cols)` emits
 //!   CREATE TABLE <table>_facts (
 //!       id            INTEGER PRIMARY KEY AUTOINCREMENT,
 //!       generation_id INTEGER NOT NULL DEFAULT 0,
+//!       _id           TEXT NOT NULL UNIQUE,
 //!       <c>_id        INTEGER NOT NULL REFERENCES sprf_strings(id),
 //!       ...
 //!   );
-//! per-column indexes on `<c>_id`. Insert interns each declared cell
-//! into `sprf_strings`; reads JOIN back. Schemas persist in
-//! `sprf_fact_schemas`.
+//! per-user-column indexes on `<c>_id`. Insert interns each declared
+//! cell into `sprf_strings`; reads JOIN back. Schemas persist in
+//! `sprf_fact_schemas` (user-declared cols only; `_id` is implicit).
 //!
 //! Dirty-publish convention: `commit(gen, bus)` drains pending inserts
-//! and publishes `Event::Dirty { domain: "fact:<table>", key: H(<table>
-//! || <key_col> || <key_val>) }` for the FIRST declared column of each
-//! row. Listeners filter by domain prefix; the key matches anything
-//! parking on the same first-col value.
+//! and publishes `Event::Dirty { domain: "row", key:
+//! row_dirty_key(_id) }` per inserted row — uniform domain across all
+//! tables. Listeners filter on `domain == "row"`; per-row keys
+//! disambiguate.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -35,6 +44,15 @@ use std::sync::{Arc, Mutex};
 use super::event_bus::EventBus;
 use super::next_key::NextKey;
 use super::row::Row;
+
+/// Synthetic identity column on every fact row. Content-derived hex
+/// of `blake3(table || canonical(fields))`. Set by `insert` before
+/// the row reaches storage.
+pub const ID_COL: &str = "_id";
+
+/// Universal dirty-publish domain. All fact-table commits publish on
+/// this single domain; per-row uniqueness comes from the key.
+pub const ROW_DOMAIN: &str = "row";
 
 // ───────────────────────────────────────────────────────────────────
 // trait FactStore
@@ -44,9 +62,15 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// Declare a table's column shape. Required for SqliteFactStore
     /// before any insert; no-op for stores that auto-discover columns.
     /// Idempotent for matching schemas; panics on schema conflict.
+    /// `cols` is the user-declared shape only — `_id` is implicit and
+    /// must NOT be included.
     fn declare(&self, _table: &str, _cols: &[&str]) {}
 
-    /// Insert a row into `table`. May buffer until `commit`.
+    /// Insert a row into `table`. The store mints `_id =
+    /// content_id(table, row)` and stamps it on the row before
+    /// storage; rows arriving with `_id` already set are accepted
+    /// (re-insert paths) but the stored value is the freshly-computed
+    /// content id. May buffer until `commit`.
     fn insert(&self, table: &str, row: Arc<R>);
 
     /// Read rows where column `col` equals `value`.
@@ -67,20 +91,38 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     fn commit(&self, _gen: u64, _bus: Option<&EventBus>) {}
 }
 
-/// `domain` for a fact-table dirty event.
-pub fn fact_domain(table: &str) -> String {
-    format!("fact:{table}")
+/// Per-row dirty key. `H(_id_hex)`. Same value any consumer can
+/// derive given the row id.
+pub fn row_dirty_key(id: &str) -> NextKey {
+    NextKey(*blake3::hash(id.as_bytes()).as_bytes())
 }
 
-/// `key` for a fact-table dirty event: H(table || col || value).
-pub fn fact_dirty_key(table: &str, col: &str, value: &str) -> NextKey {
+/// Compute the content-derived `_id` for a row destined for `table`.
+/// Canonical form: collect `row.fields()` into a Vec, sort by key,
+/// concatenate `k || \0 || v || \0 || ...`. Stable across field
+/// insertion orderings.
+pub fn content_id<R: Row>(table: &str, row: &R) -> String {
+    let mut pairs: Vec<(&str, &str)> = row.fields()
+        .into_iter()
+        .filter(|(k, _)| *k != ID_COL)
+        .collect();
+    pairs.sort_by(|a, b| a.0.cmp(b.0));
     let mut h = blake3::Hasher::new();
     h.update(table.as_bytes());
     h.update(b"\0");
-    h.update(col.as_bytes());
-    h.update(b"\0");
-    h.update(value.as_bytes());
-    NextKey(*h.finalize().as_bytes())
+    for (k, v) in &pairs {
+        h.update(k.as_bytes());
+        h.update(b"\0");
+        h.update(v.as_bytes());
+        h.update(b"\0");
+    }
+    let bytes = h.finalize();
+    let mut s = String::with_capacity(64);
+    for b in bytes.as_bytes() {
+        use std::fmt::Write;
+        let _ = write!(&mut s, "{:02x}", b);
+    }
+    s
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -125,13 +167,19 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
     }
 
     fn insert(&self, table: &str, row: Arc<R>) {
-        self.tables
-            .lock()
-            .unwrap()
-            .entry(table.to_string())
-            .or_default()
-            .push(row.clone());
-        self.pending.lock().unwrap().push((table.to_string(), row));
+        let mut owned: R = Arc::unwrap_or_clone(row);
+        let id = content_id(table, &owned);
+        owned.set(ID_COL, &id);
+        let arced = Arc::new(owned);
+        // Dedup on `_id`: re-insert of identical content is a no-op.
+        let mut tables = self.tables.lock().unwrap();
+        let bucket = tables.entry(table.to_string()).or_default();
+        if bucket.iter().any(|r| r.get(ID_COL) == Some(id.as_str())) {
+            return;
+        }
+        bucket.push(arced.clone());
+        drop(tables);
+        self.pending.lock().unwrap().push((table.to_string(), arced));
     }
 
     fn read_where(&self, table: &str, col: &str, value: &str) -> Vec<Arc<R>> {
@@ -159,13 +207,9 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
     fn commit(&self, _gen: u64, bus: Option<&EventBus>) {
         let drained: Vec<(String, Arc<R>)> = std::mem::take(&mut *self.pending.lock().unwrap());
         let Some(bus) = bus else { return };
-        let schemas = self.schemas.lock().unwrap();
-        for (table, row) in &drained {
-            let Some(cols) = schemas.get(table) else { continue };
-            let Some(key_col) = cols.first() else { continue };
-            let Some(val) = row.get(key_col) else { continue };
-            let key = fact_dirty_key(table, key_col, val);
-            bus.dispatch_dirty(fact_domain(table), Some(key));
+        for (_table, row) in &drained {
+            let Some(id) = row.get(ID_COL) else { continue };
+            bus.dispatch_dirty(ROW_DOMAIN, Some(row_dirty_key(id)));
         }
     }
 }
@@ -327,7 +371,8 @@ mod sqlite {
             let mut create = format!(
                 "CREATE TABLE IF NOT EXISTS {table}_facts (\n\
                  \x20  id            INTEGER PRIMARY KEY AUTOINCREMENT,\n\
-                 \x20  generation_id INTEGER NOT NULL DEFAULT 0"
+                 \x20  generation_id INTEGER NOT NULL DEFAULT 0,\n\
+                 \x20  _id           TEXT NOT NULL UNIQUE"
             );
             for c in &cols_owned {
                 let cs = col_sql(c);
@@ -361,23 +406,40 @@ mod sqlite {
                 .clone();
             drop(schemas);
 
+            let mut owned: R = Arc::unwrap_or_clone(row);
+            let id_hex = content_id(table, &owned);
+            owned.set(ID_COL, &id_hex);
+
             let conn = self.conn.lock().unwrap();
             let ids: Vec<i64> = cols.iter()
-                .map(|c| Self::intern(&conn, row.get(c).unwrap_or("")))
+                .map(|c| Self::intern(&conn, owned.get(c).unwrap_or("")))
                 .collect();
 
-            let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
-            let col_list = cols.iter().map(|c| format!("{}_id", col_sql(c))).collect::<Vec<_>>().join(", ");
+            // _id is bound as ?1, user-col interned ids follow.
+            let mut placeholders: Vec<String> = vec!["?1".to_string()];
+            for i in 0..ids.len() {
+                placeholders.push(format!("?{}", i + 2));
+            }
+            let mut col_list = String::from("_id");
+            for c in &cols {
+                col_list.push_str(", ");
+                col_list.push_str(&format!("{}_id", col_sql(c)));
+            }
             let sql = format!(
-                "INSERT INTO {table}_facts ({col_list}) VALUES ({})",
+                "INSERT OR IGNORE INTO {table}_facts ({col_list}) VALUES ({})",
                 placeholders.join(", ")
             );
-            let params: Vec<&dyn rusqlite::ToSql> =
-                ids.iter().map(|i| i as &dyn rusqlite::ToSql).collect();
-            conn.execute(&sql, params.as_slice()).expect("fact insert");
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + ids.len());
+            params.push(&id_hex as &dyn rusqlite::ToSql);
+            for i in &ids { params.push(i as &dyn rusqlite::ToSql); }
+            let changed = conn.execute(&sql, params.as_slice()).expect("fact insert");
             drop(conn);
 
-            self.pending.lock().unwrap().push((table.to_string(), row));
+            // INSERT OR IGNORE: 0 rows changed = duplicate content,
+            // do not republish dirty.
+            if changed == 0 { return; }
+
+            self.pending.lock().unwrap().push((table.to_string(), Arc::new(owned)));
         }
 
         fn read_where(&self, table: &str, col: &str, value: &str) -> Vec<Arc<R>> {
@@ -448,13 +510,9 @@ mod sqlite {
             let drained: Vec<(String, Arc<R>)> =
                 std::mem::take(&mut *self.pending.lock().unwrap());
             let Some(bus) = bus else { return };
-            let schemas = self.schemas.lock().unwrap();
-            for (table, row) in &drained {
-                let Some(cols) = schemas.get(table) else { continue };
-                let Some(key_col) = cols.first() else { continue };
-                let Some(val) = row.get(key_col) else { continue };
-                let key = fact_dirty_key(table, key_col, val);
-                bus.dispatch_dirty(fact_domain(table), Some(key));
+            for (_table, row) in &drained {
+                let Some(id) = row.get(ID_COL) else { continue };
+                bus.dispatch_dirty(ROW_DOMAIN, Some(row_dirty_key(id)));
             }
         }
     }

@@ -38,7 +38,7 @@ pub use next_key::{compute_key, NextKey};
 pub use event_bus::{Event, EventBus};
 pub use wake::Wake;
 pub use row::Row;
-pub use fact_store::{FactStore, MemFactStore, fact_domain, fact_dirty_key};
+pub use fact_store::{FactStore, MemFactStore, ID_COL, ROW_DOMAIN, content_id, row_dirty_key};
 #[cfg(feature = "sqlite")]
 pub use fact_store::SqliteFactStore;
 pub use codec::Codec;

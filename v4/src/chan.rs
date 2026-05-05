@@ -10,10 +10,8 @@
 //!                   clears the park-mark. Carries a magic
 //!                   `:nextq:<chan>` flag so resume survives restart.
 //!
-//! No payload pass-through yet (no MutationStore wiring); a wake means
-//! "an event happened on chan", consumers re-render with the cursor
-//! they had at park-time. Payload semantics arrives with the
-//! Fact/MutationStore slice.
+//! Park/wake via queue.dispatch_park; payload semantics arrives via
+//! FactStore on a side table when needed.
 
 use std::sync::Arc;
 

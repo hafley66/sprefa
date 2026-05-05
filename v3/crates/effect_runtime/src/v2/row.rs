@@ -11,7 +11,7 @@
 
 use super::next::Next;
 
-pub trait Row: Next + Default {
+pub trait Row: Next + Default + Clone {
     /// Read a column by name. None when the column is not present.
     fn get(&self, col: &str) -> Option<&str>;
 
