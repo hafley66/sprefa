@@ -149,18 +149,23 @@ async fn main() {
         panic!("--memoize requires --substrate");
     }
 
-    // Substrate (effect_runtime::v2) path: bare-mode A/B against native v4.
-    // Skips Hooks/Store/saga entirely. Three Components: Fs > AstNm > Count.
+    // Substrate (effect_runtime::v2) path. Supports Bare + Insert; Full
+    // mode (rules + GroupCount) is deferred until the rule infrastructure
+    // ports across.
     if substrate {
-        if !matches!(mode, Mode::Bare) {
-            panic!("--substrate currently supports --mode bare only");
+        if matches!(mode, Mode::Full) {
+            panic!("--substrate does not yet support --mode full (rule infra not ported)");
         }
         use std::sync::Arc;
         use effect_runtime::v2::{
             expand, Component, ExpandOpts, MemQueue, MemoCache, Memoize,
             PipeInstance, PriorChildIndex, QueueBackend,
         };
-        use v4::substrate_ops::{AstNmComponent, CountComponent, FsComponent};
+        use v4::substrate_ops::{
+            AstNmComponent, CommitEveryComponent, CountComponent,
+            FactWriteComponent, FsComponent, MultiAstNmComponent,
+            SinglePathComponent,
+        };
 
         // Shared cache + index across trials when --memoize-share.
         let shared_cache: Option<Arc<MemoCache<v4::Cursor>>> =
@@ -177,46 +182,111 @@ async fn main() {
         for trial in 1..=trials {
             let counter = Arc::new(AtomicU64::new(0));
 
-            let astnm: Arc<dyn Component<Next = v4::Cursor>> = match memoize.as_str() {
-                "off" => Arc::new(AstNmComponent::new(pattern_src.clone(), lang)),
-                "on"  => {
-                    let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
-                    Arc::new(Memoize::new(
-                        AstNmComponent::new(pattern_src.clone(), lang),
-                        "astnm",
-                        cache,
-                    ).with_domain("fs"))
-                }
-                "reconcile" => {
-                    let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
-                    let idx   = shared_idx.clone().unwrap_or_else(|| Arc::new(PriorChildIndex::new()));
-                    Arc::new(Memoize::new(
-                        AstNmComponent::new(pattern_src.clone(), lang),
-                        "astnm",
-                        cache,
-                    ).with_domain("fs").with_prior_children(idx))
-                }
-                _ => unreachable!(),
+            // Source: SinglePath (--file) or Fs (bulk corpus).
+            let source: Arc<dyn Component<Next = v4::Cursor>> = match &file {
+                Some(p) => Arc::new(SinglePathComponent::new(p.clone())),
+                None    => Arc::new(FsComponent::new(root.clone(), exts.clone(), batch)),
             };
 
-            let pipe = PipeInstance::new(vec![
-                Arc::new(FsComponent::new(root.clone(), exts.clone(), batch))
-                    as Arc<dyn Component<Next = v4::Cursor>>,
-                astnm,
-                Arc::new(CountComponent { count: counter.clone() }),
-            ]);
+            // Matcher: Multi(Ast)Nm if --multi/--pattern-each, else AstNm
+            // wrapped in optional Memoize.
+            let matcher: Arc<dyn Component<Next = v4::Cursor>> = if !multi_each.is_empty() {
+                let pats: Vec<(String, String)> = multi_each.iter().enumerate()
+                    .map(|(i, p)| (format!("p{}", i), p.clone())).collect();
+                Arc::new(MultiAstNmComponent::new(pats, lang))
+            } else if multi > 0 {
+                let pats: Vec<(String, String)> = (0..multi)
+                    .map(|i| (format!("p{}", i), pattern_src.clone())).collect();
+                Arc::new(MultiAstNmComponent::new(pats, lang))
+            } else {
+                match memoize.as_str() {
+                    "off" => Arc::new(AstNmComponent::new(pattern_src.clone(), lang)),
+                    "on"  => {
+                        let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
+                        Arc::new(Memoize::new(
+                            AstNmComponent::new(pattern_src.clone(), lang),
+                            "astnm",
+                            cache,
+                        ).with_domain("fs"))
+                    }
+                    "reconcile" => {
+                        let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
+                        let idx   = shared_idx.clone().unwrap_or_else(|| Arc::new(PriorChildIndex::new()));
+                        Arc::new(Memoize::new(
+                            AstNmComponent::new(pattern_src.clone(), lang),
+                            "astnm",
+                            cache,
+                        ).with_domain("fs").with_prior_children(idx))
+                    }
+                    _ => unreachable!(),
+                }
+            };
+
+            // Optional Store for Insert mode. Rebuilt per trial like the
+            // native path.
+            let store_opt: Option<Arc<dyn v4::Store>> =
+                if matches!(mode, Mode::Insert) {
+                    use v4::{MemStore, SqliteStore};
+                    Some(match store_kind.as_str() {
+                        "mem"            => MemStore::new() as Arc<dyn v4::Store>,
+                        "sqlite-mem"     => SqliteStore::open_memory() as Arc<dyn v4::Store>,
+                        "sqlite-disk" | "sqlite-fast" => {
+                            let path = sqlite_path.clone().unwrap_or_else(|| {
+                                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                                let name = if store_kind == "sqlite-fast" { "v4-bench-fast.db" } else { "v4-bench.db" };
+                                PathBuf::from(home).join(".cache/sprefa").join(name)
+                            });
+                            if trial == 1 {
+                                let _ = std::fs::remove_file(&path);
+                                let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+                                let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+                            }
+                            if store_kind == "sqlite-fast" {
+                                SqliteStore::open_path_fast(&path) as Arc<dyn v4::Store>
+                            } else {
+                                SqliteStore::open_path(&path) as Arc<dyn v4::Store>
+                            }
+                        }
+                        other => panic!("--store must be mem|sqlite-mem|sqlite-disk|sqlite-fast, got {}", other),
+                    })
+                } else { None };
+
+            // Build chain: source > matcher > Count > [FactWrite] > [CommitEvery].
+            let mut steps: Vec<Arc<dyn Component<Next = v4::Cursor>>> = vec![
+                source,
+                matcher,
+            ];
+            // Count is the canonical sink in Bare. In Insert we still
+            // count for the headline number, then FactWrite passes
+            // through. Order matches the native path.
+            if matches!(mode, Mode::Insert) {
+                let store = store_opt.as_ref().unwrap().clone();
+                steps.push(Arc::new(FactWriteComponent::new(
+                    store.clone(),
+                    "matches",
+                    &["FS", "CONTENT_HASH", "LO", "HI"],
+                )));
+                if commit_every > 0 {
+                    steps.push(Arc::new(CommitEveryComponent::new(store.clone(), commit_every)));
+                }
+                steps.push(Arc::new(CountComponent { count: counter.clone() }));
+            } else {
+                steps.push(Arc::new(CountComponent { count: counter.clone() }));
+            }
+
+            let pipe = PipeInstance::new(steps);
             let queue: Arc<dyn QueueBackend<v4::Cursor>> = Arc::new(MemQueue::new());
-            // batch_cap drives rayon tail-sync frequency in AstNm:
-            // each pull_runnable_batch chunks the queue into one
-            // par_render call. Smaller cap = more sync points = slow
-            // files block N-1 workers per batch. For one-shot scan we
-            // want ONE big batch. Take max(batch, 65536) so callers
-            // who set --batch up to control FS streaming chunk size
-            // don't accidentally also constrain the AstNm batch.
+            // batch_cap drives rayon tail-sync frequency: smaller cap =
+            // more sync points = slow files block N-1 workers per batch.
+            // For one-shot scan we want ONE big batch.
             let opts = ExpandOpts::default().with_batch_cap(batch.max(65536));
 
             let t_run = Instant::now();
             let stats = expand(&pipe, queue, vec![Arc::new(v4::Cursor::default())], opts);
+            // Insert needs commit on stores that buffer pending rows.
+            if let Some(store) = &store_opt {
+                store.commit(trial as u64).await;
+            }
             let wall = t_run.elapsed();
 
             let m = counter.load(Ordering::Relaxed);

@@ -29,7 +29,7 @@ use effect_runtime::v2::{
 };
 use ignore::WalkBuilder;
 
-use crate::Cursor;
+use crate::{Cursor, Store};
 
 /// Tier-3 source op. Ignores its input cursor (the bootstrap seed),
 /// walks `root` with `WalkBuilder`, splices one child Cursor per
@@ -135,6 +135,162 @@ impl Component for AstNmComponent {
             }).collect();
             if hits.is_empty() { Node::Done } else { Node::Many(hits) }
         })
+    }
+}
+
+/// Multi-pattern AstNm. Parses each file once; runs all patterns
+/// against the same `AstGrep<StrDoc>`. Each match cursor carries `PAT`
+/// = pattern label. Prefilter: file is read+parsed if ANY pattern's
+/// fixed_string is present (or any pattern has no fixed_string).
+pub struct MultiAstNmComponent {
+    lang:     SupportLang,
+    patterns: Arc<Vec<(Arc<str>, Arc<Pattern<SupportLang>>, Arc<str>)>>,
+}
+
+impl MultiAstNmComponent {
+    pub fn new(patterns: Vec<(String, String)>, lang: SupportLang) -> Self {
+        let pats: Vec<(Arc<str>, Arc<Pattern<SupportLang>>, Arc<str>)> = patterns
+            .into_iter()
+            .map(|(label, src)| {
+                let p  = Pattern::new(&src, lang);
+                let fx: Arc<str> = Arc::from(p.fixed_string().to_string().as_str());
+                (Arc::<str>::from(label.as_str()), Arc::new(p), fx)
+            })
+            .collect();
+        Self { lang, patterns: Arc::new(pats) }
+    }
+}
+
+impl Component for MultiAstNmComponent {
+    type Next = Cursor;
+
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let pats = self.patterns.clone();
+        let lang = self.lang;
+        par_render(batch, move |c| {
+            let Some(path) = c.get("FS") else { return Node::Done };
+            let Ok(bytes)  = std::fs::read(path) else { return Node::Done };
+            let src: String = unsafe { String::from_utf8_unchecked(bytes) };
+            let any_fires = pats.iter().any(|(_, _, fx)| fx.is_empty() || src.contains(&**fx));
+            if !any_fires { return Node::Done; }
+            let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
+            let mut hits: Vec<Node<Cursor>> = Vec::new();
+            for (label, pat, fx) in pats.iter() {
+                if !fx.is_empty() && !src.contains(&**fx) { continue; }
+                for nm in grep.root().find_all(&**pat) {
+                    let r = nm.range();
+                    let mut child = c.clone();
+                    child.set_arc("PAT", label.clone());
+                    child.set("LO",  (r.start as u64).to_string());
+                    child.set("HI",  (r.end   as u64).to_string());
+                    hits.push(Node::Emit(Arc::new(child)));
+                }
+            }
+            if hits.is_empty() { Node::Done } else { Node::Many(hits) }
+        })
+    }
+}
+
+/// Tier-3 source op. Emits exactly one Cursor with FS=path. Used for
+/// the bench's --file mode (single-file scaling probe).
+pub struct SinglePathComponent {
+    pub path: PathBuf,
+}
+
+impl SinglePathComponent {
+    pub fn new(path: PathBuf) -> Self { Self { path } }
+}
+
+impl Component for SinglePathComponent {
+    type Next = Cursor;
+
+    fn dispatch(
+        &self,
+        ctx:   &RenderCtx,
+        rows:  &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let parent = match rows.first() { Some(r) => r, None => return };
+        let mut c = Cursor::default();
+        c.set("FS", self.path.display().to_string());
+        let node = Node::Emit(Arc::new(c));
+        splice_into_at(parent, node, ctx.depth + 1, ctx.expand_tick, queue, 0);
+    }
+}
+
+/// Tier-2 sink. Pass-through that calls `store.insert_many(fact, batch, gen)`
+/// for every dispatch batch. Schema declared at construction (idempotent).
+/// Gen comes from `ctx.expand_tick` — substrate equivalent of v4's Hooks.gen.
+///
+/// Store-injection pattern: Component holds Arc<dyn Store> at construction.
+/// No RenderCtx changes needed.
+pub struct FactWriteComponent {
+    store: Arc<dyn Store>,
+    fact:  String,
+    cols:  Vec<String>,
+}
+
+impl FactWriteComponent {
+    pub fn new(store: Arc<dyn Store>, fact: impl Into<String>, cols: &[&str]) -> Self {
+        let fact = fact.into();
+        let cols: Vec<String> = cols.iter().map(|s| s.to_string()).collect();
+        let cols_ref: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
+        store.ensure_schema(&fact, &cols_ref);
+        Self { store, fact, cols }
+    }
+}
+
+impl Component for FactWriteComponent {
+    type Next = Cursor;
+
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let _cols = &self.cols;
+        // insert_many wants owned Vec<Cursor>; clone is cheap (Cursor.terms
+        // is a small Vec of Arc<str> pairs).
+        let owned: Vec<Cursor> = batch.iter().map(|c| (*c).clone()).collect();
+        let gen = ctx.expand_tick;
+        let store = self.store.clone();
+        let fact  = self.fact.clone();
+        // Substrate is sync. We need to run an async insert. Bench main is
+        // #[tokio::main] so Handle::current() is valid; spin a blocking
+        // section that drives the future to completion.
+        let handle = tokio::runtime::Handle::current();
+        let _ = tokio::task::block_in_place(|| {
+            handle.block_on(store.insert_many(&fact, owned, gen))
+        });
+        // Pass-through: emit each cursor downstream so consumers can count
+        // / read further.
+        batch.iter().map(|c| Node::Emit(Arc::new((*c).clone()))).collect()
+    }
+}
+
+/// Periodic commit. Counts dispatch batches; every Nth, calls
+/// `store.commit(gen)`. Pass-through. Useful to measure store commit
+/// overhead under reactive-shaped workloads (many small commits).
+pub struct CommitEveryComponent {
+    store: Arc<dyn Store>,
+    every: usize,
+    seen:  std::sync::atomic::AtomicUsize,
+}
+
+impl CommitEveryComponent {
+    pub fn new(store: Arc<dyn Store>, every: usize) -> Self {
+        Self { store, every: every.max(1), seen: std::sync::atomic::AtomicUsize::new(0) }
+    }
+}
+
+impl Component for CommitEveryComponent {
+    type Next = Cursor;
+
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let n = self.seen.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % self.every == 0 {
+            let store = self.store.clone();
+            let gen = ctx.expand_tick;
+            let handle = tokio::runtime::Handle::current();
+            let _ = tokio::task::block_in_place(|| handle.block_on(store.commit(gen)));
+        }
+        batch.iter().map(|c| Node::Emit(Arc::new((*c).clone()))).collect()
     }
 }
 
