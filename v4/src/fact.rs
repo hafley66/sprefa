@@ -39,12 +39,24 @@ impl Component for FactWrite {
     }
 }
 
-/// `fact?(:name, KEY, [PROJ...])`. Row-SELECT.
+/// Join semantics on FactRead. Default is `Inner` (semi-join: cursor
+/// flows N times for N matches, dropped on empty). `Anti` drops on
+/// match and passes through on empty — `WHERE NOT EXISTS`.
+///
+/// TODO: `LeftOuter` — pass cursor with NULL projections on empty,
+/// emit each on match. Needed once the language surface lands rules
+/// with optional projections.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JoinKind { Inner, Anti }
+
+/// `fact?(:name, KEY, [PROJ...])`. Row-SELECT (semi-join by default).
+/// Use `FactRead::anti(...)` for `fact?` antijoin / `WHERE NOT EXISTS`.
 pub struct FactRead {
     pub store:    Arc<dyn FactStore<Cursor>>,
     pub table:    Arc<str>,
     pub key_term: Arc<str>,
     pub project:  Vec<Arc<str>>,
+    pub kind:     JoinKind,
 }
 
 impl FactRead {
@@ -59,6 +71,24 @@ impl FactRead {
             table:    table.into(),
             key_term: key_term.into(),
             project:  project.iter().map(|s| Arc::<str>::from(*s)).collect(),
+            kind:     JoinKind::Inner,
+        }
+    }
+
+    /// Antijoin: pass cursor through if NO matches; drop if any.
+    /// `fact?(:r, ${A}, ${B})` with all bound → exists-check; this is
+    /// the negation. Projection list is ignored (no rows joined in).
+    pub fn anti(
+        store: Arc<dyn FactStore<Cursor>>,
+        table: impl Into<Arc<str>>,
+        key_term: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            store,
+            table:    table.into(),
+            key_term: key_term.into(),
+            project:  Vec::new(),
+            kind:     JoinKind::Anti,
         }
     }
 }
@@ -69,21 +99,29 @@ impl Component for FactRead {
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
         let Some(k) = c.get(&self.key_term) else { return Node::Done };
         let matches = self.store.read_where(&self.table, &self.key_term, k);
-        if matches.is_empty() { return Node::Done; }
 
-        let children: Vec<Node<Cursor>> = matches
-            .iter()
-            .map(|row| {
-                let mut child = c.clone();
-                for col in &self.project {
-                    if let Some(v) = row.get(col) {
-                        child.set(col, v);
-                    }
-                }
-                Node::Emit(Arc::new(child))
-            })
-            .collect();
-        Node::Many(children)
+        match self.kind {
+            JoinKind::Anti => {
+                if matches.is_empty() { Node::Emit(Arc::new(c.clone())) }
+                else                  { Node::Done }
+            }
+            JoinKind::Inner => {
+                if matches.is_empty() { return Node::Done; }
+                let children: Vec<Node<Cursor>> = matches
+                    .iter()
+                    .map(|row| {
+                        let mut child = c.clone();
+                        for col in &self.project {
+                            if let Some(v) = row.get(col) {
+                                child.set(col, v);
+                            }
+                        }
+                        Node::Emit(Arc::new(child))
+                    })
+                    .collect();
+                Node::Many(children)
+            }
+        }
     }
 }
 
@@ -160,6 +198,33 @@ mod tests {
         let mut hits: Vec<&str> = got.iter().filter_map(|c| c.get("HIT")).collect();
         hits.sort();
         assert_eq!(hits, vec!["bye", "hi"]);
+    }
+
+    #[test]
+    fn fact_read_anti_passes_when_no_match_drops_when_match() {
+        let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        store.insert("seen", cursor("a", &[("FILE", "a.rs")]));
+
+        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        let sink  = Arc::new(Mutex::new(Vec::new()));
+        let pipe  = PipeInstance::new(vec![
+            Arc::new(FactRead::anti(store, "seen", "FILE"))
+                as Arc<dyn Component<Next = Cursor>>,
+            Arc::new(Collector { sink: sink.clone() }),
+        ]);
+
+        expand(
+            &pipe, queue,
+            vec![
+                cursor("hit",  &[("FILE", "a.rs")]),       // matches → DROP
+                cursor("miss", &[("FILE", "b.rs")]),       // no match → PASS
+            ],
+            ExpandOpts::default(),
+        );
+
+        let got = sink.lock().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].get("FILE"), Some("b.rs"));
     }
 
     #[test]

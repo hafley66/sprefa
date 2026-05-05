@@ -46,6 +46,13 @@ fn nodes_from(out: Vec<Cursor>) -> Node<Cursor> {
 /// matching file into the queue. Sync — no tokio split. The producer
 /// blocks the driver thread until the walk is done; AstNm doesn't
 /// start until then. Trade-off accepted for slice-1 simplicity.
+///
+/// PERF TODO (~200ms gain on linux/63k files): split the walk onto a
+/// dedicated thread so AstNm starts batching in parallel with the
+/// directory scan. Also add a `(path, mtime, size) → content_hash`
+/// fast-path: warm walks short-circuit the file read entirely when the
+/// triple matches. Independent of the v2 pipeline; pure source-side
+/// optimization.
 pub struct FsComponent {
     pub root:  PathBuf,
     pub exts:  Vec<String>,
