@@ -55,7 +55,7 @@ pub use component::{par_render, Component, DynComponent, RenderCtx};
 pub use flatten::splice_into;
 pub use queue::{ExpandTick, InstanceId, PipeHash, QueueBackend, QueueId, QueueRow};
 pub use mem_queue::MemQueue;
-pub use expand::{expand, ExpandOpts, ExpandStats, PipeInstance, DEFAULT_BATCH_CAP};
+pub use expand::{expand, ExpandOpts, ExpandStats, Pipe, PipeInstance, DEFAULT_BATCH_CAP};
 
 #[cfg(test)]
 mod tests;

@@ -19,6 +19,50 @@ use super::queue::{
 };
 use super::wake::Wake;
 
+/// Unbuilt pipe value. The shape DSL holes resolve to at lower-time:
+/// a flat sequence of components over carrier `N`. CST grammars can
+/// produce this without a runtime dep beyond the `Component` trait.
+///
+/// Build into a runnable form via `into_instance()`.
+pub struct Pipe<N: Next> {
+    pub steps: Vec<DynComponent<N>>,
+}
+
+impl<N: Next> Pipe<N> {
+    pub fn new() -> Self { Self { steps: Vec::new() } }
+
+    pub fn from_steps(steps: Vec<DynComponent<N>>) -> Self {
+        Self { steps }
+    }
+
+    /// Append a step. Builder form: `Pipe::new().step(a).step(b)`.
+    pub fn step(mut self, c: DynComponent<N>) -> Self {
+        self.steps.push(c);
+        self
+    }
+
+    /// Append all steps from another pipe. Used when a DSL hole's
+    /// inner pipe is spliced into an outer one at lower-time.
+    pub fn extend(mut self, other: Pipe<N>) -> Self {
+        self.steps.extend(other.steps);
+        self
+    }
+
+    pub fn len(&self) -> usize { self.steps.len() }
+    pub fn is_empty(&self) -> bool { self.steps.is_empty() }
+
+    /// Convert to a mounted, runnable instance. Pipe-hash and
+    /// instance-id default to 0 today; assign once the lower-pass
+    /// has identity stamping.
+    pub fn into_instance(self) -> PipeInstance<N> {
+        PipeInstance::new(self.steps)
+    }
+}
+
+impl<N: Next> Default for Pipe<N> {
+    fn default() -> Self { Self::new() }
+}
+
 /// One mounted pipe instance. Pipe homogeneous in `N`; components
 /// pinned via `dyn Component<Next = N>`.
 pub struct PipeInstance<N: Next> {

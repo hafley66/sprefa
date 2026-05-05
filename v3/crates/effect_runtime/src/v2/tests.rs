@@ -156,6 +156,33 @@ impl Component for ParkOnKey {
 // --- the tests -------------------------------------------------------
 
 #[test]
+fn pipe_value_builds_into_runnable_instance() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+
+    let pipe: Pipe<LabCursor> = Pipe::new()
+        .step(Arc::new(Trim { from: ":raw".into(), to: ":clean".into() }))
+        .step(Arc::new(Collector { sink: sink.clone() }));
+    assert_eq!(pipe.len(), 2);
+
+    let inst = pipe.into_instance();
+    expand(&inst, queue, vec![lc(":raw", "  hi  ")], ExpandOpts::default());
+
+    let got = sink.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].get(":clean"), Some("hi"));
+}
+
+#[test]
+fn pipe_extend_concatenates_steps() {
+    let outer: Pipe<LabCursor> = Pipe::new()
+        .step(Arc::new(Trim { from: ":raw".into(), to: ":a".into() }));
+    let inner: Pipe<LabCursor> = Pipe::new()
+        .step(Arc::new(Trim { from: ":a".into(), to: ":b".into() }));
+    assert_eq!(outer.extend(inner).len(), 2);
+}
+
+#[test]
 fn trim_collector_pipe_runs_to_drain() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
     let sink  = Arc::new(Mutex::new(Vec::new()));
