@@ -519,6 +519,178 @@ impl Component for ReComponent {
     }
 }
 
+/// Brute-force IN-batch fact-read with bound (`key_term`) and unbound
+/// (`project`) terms. Per dispatch batch:
+///   1. collect distinct key_term values
+///   2. one `store.read_in` call
+///   3. group rows by key_term
+///   4. cross-product cursor × matching rows
+///
+/// N input cursors with M avg matches each → 1 query, N × M outputs.
+pub struct FactReadComponent {
+    store:    Arc<dyn Store>,
+    fact:     String,
+    key_term: String,
+    project:  Vec<String>,
+}
+impl FactReadComponent {
+    pub fn new(
+        store:    Arc<dyn Store>,
+        fact:     impl Into<String>,
+        key_term: impl Into<String>,
+        project:  &[&str],
+    ) -> Self {
+        Self {
+            store, fact: fact.into(), key_term: key_term.into(),
+            project: project.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+impl Component for FactReadComponent {
+    type Next = Cursor;
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        use std::collections::{HashMap, HashSet};
+        let mut keys: Vec<String> = Vec::with_capacity(batch.len());
+        let mut seen: HashSet<String> = HashSet::new();
+        for c in batch {
+            if let Some(v) = c.get(&self.key_term) {
+                if seen.insert(v.to_string()) { keys.push(v.to_string()); }
+            }
+        }
+        let store = self.store.clone();
+        let fact  = self.fact.clone();
+        let key_term = self.key_term.clone();
+        let project  = self.project.clone();
+        let handle = tokio::runtime::Handle::current();
+        let rows: Vec<Cursor> = tokio::task::block_in_place(|| {
+            handle.block_on(store.read_in(&fact, &key_term, keys, project))
+        });
+        let mut by_key: HashMap<String, Vec<Cursor>> = HashMap::new();
+        for r in rows {
+            if let Some(k) = r.get(&self.key_term) {
+                by_key.entry(k.to_string()).or_default().push(r);
+            }
+        }
+        let mut out: Vec<Node<Cursor>> = Vec::new();
+        for c in batch {
+            let Some(k) = c.get(&self.key_term) else {
+                out.push(Node::Done);
+                continue;
+            };
+            let Some(matches) = by_key.get(k) else {
+                out.push(Node::Done);
+                continue;
+            };
+            let hits: Vec<Node<Cursor>> = matches.iter().map(|m| {
+                let mut child = (*c).clone();
+                for col in &self.project {
+                    if let Some(v) = m.get(col) { child.set(col, v); }
+                }
+                Node::Emit(Arc::new(child))
+            }).collect();
+            out.push(if hits.is_empty() { Node::Done } else { Node::Many(hits) });
+        }
+        out
+    }
+}
+
+/// Sh modes — same surface as v4 native.
+#[derive(Debug, Clone, Copy)]
+pub enum ShMode { EmitLines, FilterByExit, CaptureStdout }
+
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' { out.push_str("'\\''"); } else { out.push(ch); }
+    }
+    out.push('\'');
+    out
+}
+fn render_template(template: &str, cur: &Cursor) -> String {
+    let re = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+    re.replace_all(template, |caps: &regex::Captures| {
+        shell_quote(cur.get(&caps[1]).unwrap_or(""))
+    }).into_owned()
+}
+
+/// Run `sh -c <rendered>` per input cursor; act on stdout per `mode`.
+/// Substrate uses sync `std::process::Command` (rayon par_render gives
+/// per-batch parallelism). Tokio not needed.
+pub struct ShComponent {
+    cmd_template: String,
+    mode:         ShMode,
+    bind:         Option<String>,
+}
+impl ShComponent {
+    pub fn emit_lines(cmd: &str) -> Self {
+        Self { cmd_template: cmd.into(), mode: ShMode::EmitLines, bind: None }
+    }
+    pub fn filter(cmd: &str) -> Self {
+        Self { cmd_template: cmd.into(), mode: ShMode::FilterByExit, bind: None }
+    }
+    pub fn capture(cmd: &str, bind: &str) -> Self {
+        Self { cmd_template: cmd.into(), mode: ShMode::CaptureStdout, bind: Some(bind.into()) }
+    }
+}
+impl Component for ShComponent {
+    type Next = Cursor;
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let template = self.cmd_template.clone();
+        let mode     = self.mode;
+        let bind     = self.bind.clone();
+        par_render(batch, move |c| {
+            let cmd = render_template(&template, c);
+            let res = std::process::Command::new("sh")
+                .arg("-c").arg(&cmd)
+                .output();
+            let Ok(o) = res else { return Node::Done };
+            match mode {
+                ShMode::EmitLines => {
+                    let stdout = String::from_utf8_lossy(&o.stdout);
+                    let hits: Vec<Node<Cursor>> = stdout.split('\n')
+                        .filter(|l| !l.is_empty())
+                        .map(|line| {
+                            let mut child = c.clone();
+                            child.set("LINE", line);
+                            Node::Emit(Arc::new(child))
+                        }).collect();
+                    if hits.is_empty() { Node::Done } else { Node::Many(hits) }
+                }
+                ShMode::FilterByExit => {
+                    if o.status.success() { Node::Emit(Arc::new(c.clone())) } else { Node::Done }
+                }
+                ShMode::CaptureStdout => {
+                    let stdout = String::from_utf8_lossy(&o.stdout).trim_end().to_string();
+                    let mut child = c.clone();
+                    if let Some(b) = &bind { child.set(b, stdout.as_str()); }
+                    Node::Emit(Arc::new(child))
+                }
+            }
+        })
+    }
+}
+
+/// `sh!` — author-declared impure shell. Per-cursor cmd run, stdout
+/// dropped, cursor passes through. Never cacheable.
+pub struct ShBangComponent { cmd_template: String }
+impl ShBangComponent {
+    pub fn new(cmd: &str) -> Self { Self { cmd_template: cmd.into() } }
+}
+impl Component for ShBangComponent {
+    type Next = Cursor;
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let template = self.cmd_template.clone();
+        par_render(batch, move |c| {
+            let cmd = render_template(&template, c);
+            let _ = std::process::Command::new("sh")
+                .arg("-c").arg(&cmd)
+                .status();
+            Node::Emit(Arc::new(c.clone()))
+        })
+    }
+}
+
 /// Seed source: emit a fixed Vec<Cursor> once. Useful as a chain head
 /// when the first real op is per-cursor but you want it to fire once.
 pub struct SeedComponent { pub rows: Vec<Cursor> }
