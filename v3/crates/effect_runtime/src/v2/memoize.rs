@@ -171,6 +171,13 @@ impl<C: Component> Memoize<C> {
 
     /// Enable B2-style positional reconcile. Without this, `dispatch`
     /// behaves as in (b): always re-splice children, no diff.
+    ///
+    /// Use only when downstream rows survive across re-renders (LSP /
+    /// watch mode where parks persist in the queue). For scan-style
+    /// workloads where each `expand()` starts with an empty queue,
+    /// reconcile's "kept" optimization skips enqueueing children whose
+    /// downstream subtrees are assumed alive — and they aren't, so
+    /// downstream sees zero rows on trial 2+.
     pub fn with_prior_children(mut self, idx: Arc<PriorChildIndex>) -> Self {
         self.children = Some(idx);
         self
