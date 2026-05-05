@@ -44,9 +44,5 @@ tempfile = "3"
 tree-sitter-rust = "0.23"
 
 [[bin]]
-name = "v4-proto"
-path = "src/bin/v4_proto.rs"
-
-[[bin]]
 name = "v4-bench"
 path = "src/bin/v4_bench.rs"

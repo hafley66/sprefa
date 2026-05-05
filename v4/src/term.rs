@@ -1,4 +1,4 @@
-//! `Term` — the substrate Component that backs sprf's ALL-CAPS bare
+//! `Term` — the v2 runtime Component that backs sprf's ALL-CAPS bare
 //! identifier references.
 //!
 //! Two modes, both string-scoped over the current cursor:

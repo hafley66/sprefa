@@ -1,4 +1,4 @@
-//! Three Components for v4-bench's `--substrate` path. Bare mode
+//! Three Components for v4-bench's `v2` path. Bare mode
 //! only (Fs > AstNm > Count). Smallest-viable port: no telemetry, no
 //! interner, no Layer-2 / Layer-3, no Store. The point is an A/B
 //! perf number against the native v4 stream pipeline.
@@ -7,7 +7,7 @@
 //!
 //! ```ignore
 //! use effect_runtime::v2::*;
-//! use v4::substrate_ops::{FsComponent, AstNmComponent, CountComponent};
+//! use v4::v2_ops::{FsComponent, AstNmComponent, CountComponent};
 //!
 //! let pipe = PipeInstance::new(vec![
 //!     Arc::new(FsComponent::new(root, exts, batch))     as Arc<dyn Component<Next = Cursor>>,
@@ -230,7 +230,7 @@ impl Component for SinglePathComponent {
 
 /// Tier-2 sink. Pass-through that calls `store.insert_many(fact, batch, gen)`
 /// for every dispatch batch. Schema declared at construction (idempotent).
-/// Gen comes from `ctx.expand_tick` — substrate equivalent of v4's Hooks.gen.
+/// Gen comes from `ctx.expand_tick` — v2 runtime equivalent of v4's Hooks.gen.
 ///
 /// Store-injection pattern: Component holds Arc<dyn Store> at construction.
 /// No RenderCtx changes needed.
@@ -838,7 +838,7 @@ impl Component for RepoFromTermComponent {
 /// Render a `{TERM}` template per cursor and println! the result.
 /// Side-effect terminal — emits `Done` after printing. (v4 native uses
 /// the Hooks effect channel; the bench's only consumer is a sink that
-/// drains it, so a direct println is equivalent for substrate scope.)
+/// drains it, so a direct println is equivalent for v2 runtime scope.)
 pub struct PrintComponent { pub template: String }
 impl PrintComponent {
     pub fn new(template: impl Into<String>) -> Self { Self { template: template.into() } }

@@ -1,4 +1,4 @@
-//! `cst` — sprf-blind substrate for tree-sitter + LSP + path-addressable
+//! `cst` — sprf-blind v2 runtime for tree-sitter + LSP + path-addressable
 //! multi-tree composition.
 //!
 //! Layout:

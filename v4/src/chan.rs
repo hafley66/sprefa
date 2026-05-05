@@ -1,5 +1,5 @@
 //! `Next` and `NextQ` Components — sprf's imperative-event surface
-//! ported onto the substrate's park/wake primitives.
+//! ported onto the v2 runtime's park/wake primitives.
 //!
 //!   `next(:chan)`   publish: fires `queue.dispatch_park("next", H(chan))`,
 //!                   passes its input cursor through unchanged.

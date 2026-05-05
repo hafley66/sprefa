@@ -1,7 +1,7 @@
 //! Bridge: v4 `Cursor` ↔ `effect_runtime::v2`.
 //!
 //! Implements `Next` and `Codec` for `Cursor` so a sprefa pipe can be
-//! built directly on the substrate (`Component<Next = Cursor>` +
+//! built directly on the v2 runtime (`Component<Next = Cursor>` +
 //! `MemQueue<Cursor>`). The encoding mirrors `cursor_codec` — one
 //! source of bytes for hashing and persistence.
 
