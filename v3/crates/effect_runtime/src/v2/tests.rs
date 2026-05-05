@@ -1475,11 +1475,120 @@ mod cascade {
         assert_eq!(queue.depth(), 1);
     }
 
+    /// Root already popped; descendants linger. cascade_delete(root)
+    /// must still reach them. Models the Memoize-on-evict case.
+    fn cascade_with_absent_root(queue: Arc<dyn QueueBackend<LabCursor>>) {
+        let r = queue.enqueue(row(None, Wake::Immediate));
+        let _a = queue.enqueue(row(Some(r), Wake::Immediate));
+        let _b = queue.enqueue(row(Some(r), Wake::Tick { past_tick: 0 }));
+        // Pop the root out of the queue, leaving descendants orphaned.
+        let popped = queue.pull_runnable(99);
+        assert!(popped.is_some());
+        assert_eq!(popped.unwrap().id, r);
+        assert_eq!(queue.depth(), 2);
+        // Now cascade by the (gone) root id; descendants must die.
+        assert_eq!(queue.cascade_delete(r), 2);
+        assert_eq!(queue.depth(), 0);
+    }
+
     #[test] fn mem_cascade_subtree()             { cascade_subtree_suite(Arc::new(MemQueue::new())); }
     #[test] fn mem_cascade_unknown_root()        { cascade_unknown_root_is_zero(Arc::new(MemQueue::new())); }
     #[test] fn mem_cascade_leaf_only()           { cascade_leaf_only_removes_self(Arc::new(MemQueue::new())); }
+    #[test] fn mem_cascade_with_absent_root()    { cascade_with_absent_root(Arc::new(MemQueue::new())); }
 
     #[test] fn sqlite_cascade_subtree()          { cascade_subtree_suite(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
     #[test] fn sqlite_cascade_unknown_root()     { cascade_unknown_root_is_zero(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
     #[test] fn sqlite_cascade_leaf_only()        { cascade_leaf_only_removes_self(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
+    #[test] fn sqlite_cascade_with_absent_root() { cascade_with_absent_root(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
+
+    /// CacheCascadeListener: bus event evicts cache entries AND
+    /// cascade-deletes their queued descendants. End-to-end check that
+    /// (b) source_row_id tracking + cascade wiring works.
+    #[test]
+    fn cache_cascade_listener_evicts_and_cascades() {
+        use super::super::memoize::{
+            attach_cache_to_bus_with_queue, MemoCache, MemoKey,
+        };
+        use super::super::node::Node;
+
+        let cache: Arc<MemoCache<LabCursor>> = Arc::new(MemoCache::new());
+        let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+        let bus   = EventBus::new();
+
+        // Cache entry tagged with domain "fs" and source_row_id=42.
+        let key = MemoKey([1u8; 32]);
+        cache.put_with_source(
+            key,
+            Node::Done,
+            vec!["fs"],
+            [9u8; 32],
+            Some(42),
+        );
+
+        // Three children whose parent_id=42. Models descendants spliced
+        // from the (now-popped) row 42's prior render.
+        for _ in 0..3 {
+            queue.enqueue(row(Some(42), Wake::Immediate));
+        }
+        // One unrelated row that must survive.
+        let _u = queue.enqueue(row(None, Wake::Immediate));
+
+        assert_eq!(queue.depth(), 4);
+        assert_eq!(cache.len(),   1);
+
+        attach_cache_to_bus_with_queue(cache.clone(), &bus, queue.clone());
+        bus.dispatch_dirty("fs", None);
+
+        assert_eq!(cache.len(),   0);
+        assert_eq!(queue.depth(), 1);  // only the unrelated row
+    }
+
+    /// Memoize::dispatch records source_row_id when called via expand.
+    #[test]
+    fn memoize_dispatch_records_source_row_id_on_miss() {
+        use super::super::memoize::{MemoCache, Memoize};
+
+        // Inner that emits a marker child so we can confirm dispatch
+        // ran the inner Component (cache miss path).
+        struct Mark;
+        impl Component for Mark {
+            type Next = LabCursor;
+            fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+                let mut n = c.clone();
+                n.set(":marked", "1");
+                Node::Emit(Arc::new(n))
+            }
+        }
+
+        let cache: Arc<MemoCache<LabCursor>> = Arc::new(MemoCache::new());
+        let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+        let sink  = Arc::new(Mutex::new(Vec::new()));
+
+        let pipe = PipeInstance::new(vec![
+            Arc::new(Memoize::new(Mark, "mark", cache.clone()).with_domain("fs"))
+                as Arc<dyn Component<Next = LabCursor>>,
+            Arc::new(Collector { sink: sink.clone() }),
+        ]);
+
+        expand(&pipe, queue, vec![lc(":raw", "alpha")], ExpandOpts::default());
+
+        // Cache populated; the entry's source_row_id is non-None.
+        assert_eq!(cache.len(), 1);
+        assert_eq!(sink.lock().unwrap().len(), 1);
+        assert_eq!(sink.lock().unwrap()[0].get(":marked"), Some("1"));
+
+        // Re-running with the same input is a cache hit; inner doesn't
+        // re-render (we'd see a second :marked emit either way; the
+        // signal we want is cache.len() unchanged).
+        let queue2: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+        let sink2  = Arc::new(Mutex::new(Vec::new()));
+        let pipe2 = PipeInstance::new(vec![
+            Arc::new(Memoize::new(Mark, "mark", cache.clone()).with_domain("fs"))
+                as Arc<dyn Component<Next = LabCursor>>,
+            Arc::new(Collector { sink: sink2.clone() }),
+        ]);
+        expand(&pipe2, queue2, vec![lc(":raw", "alpha")], ExpandOpts::default());
+        assert_eq!(cache.len(), 1);
+        assert_eq!(sink2.lock().unwrap().len(), 1);
+    }
 }

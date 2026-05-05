@@ -83,12 +83,16 @@ pub trait QueueBackend<N: Next>: Send + Sync + 'static {
         }
     }
 
-    /// Delete `root` and every descendant reachable through the
-    /// `parent_id` chain. Returns the count of rows removed (root +
-    /// descendants). Default impl is a no-op (returns 0); real backends
+    /// Delete `root` (if present) and every descendant reachable
+    /// through the `parent_id` chain. Returns the count of rows
+    /// removed. Default impl is a no-op (returns 0); real backends
     /// override with a recursive walk.
     ///
-    /// Used by Memoize-on-evict + reconcile to drop downstream rows
-    /// whose producing render is no longer valid.
+    /// `root` need not still be in the queue — the typical caller is
+    /// Memoize-on-evict, where the row that produced the cache entry
+    /// has long since been popped and only its descendants linger as
+    /// parked subscriptions or queued futures. The walk seeds on
+    /// `id = root OR parent_id = root` so descendants are found even
+    /// when the root row is absent.
     fn cascade_delete(&self, _root: QueueId) -> u64 { 0 }
 }

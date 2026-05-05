@@ -332,14 +332,18 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
         // Recursive CTE walks parent_id chain from root downward; one
         // DELETE statement removes the whole subtree. The
         // sprf_v3_queue_parent index makes the join O(matching).
+        // Seed includes both `id = root` (root if still present) AND
+        // `parent_id = root` (direct children, so descendants are found
+        // even when root has already been popped). Recursion expands
+        // grandchildren+ from there.
         let n = conn.execute(
-            "WITH RECURSIVE descendants(id) AS (
-                 SELECT id FROM sprf_v3_queue WHERE id = ?1
+            "WITH RECURSIVE doomed(id) AS (
+                 SELECT id FROM sprf_v3_queue WHERE id = ?1 OR parent_id = ?1
                  UNION ALL
                  SELECT q.id FROM sprf_v3_queue q
-                 JOIN descendants d ON q.parent_id = d.id
+                 JOIN doomed d ON q.parent_id = d.id
              )
-             DELETE FROM sprf_v3_queue WHERE id IN (SELECT id FROM descendants)",
+             DELETE FROM sprf_v3_queue WHERE id IN (SELECT id FROM doomed)",
             params![root as i64],
         ).expect("cascade_delete");
         n as u64

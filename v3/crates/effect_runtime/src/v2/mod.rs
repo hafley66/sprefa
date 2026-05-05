@@ -44,7 +44,10 @@ pub use codec::Codec;
 pub use diag::{ByteRange, Diag, DiagSink, NoopDiagSink, Severity};
 pub use effect_dispatch::{EffectDispatch, Spawner, ThreadSpawner, TokioSpawner};
 pub use event_bus::BusListener;
-pub use memoize::{attach_cache_to_bus, MemoCache, MemoKey, Memoize};
+pub use memoize::{
+    attach_cache_to_bus, attach_cache_to_bus_with_queue,
+    CacheCascadeListener, MemoCache, MemoKey, Memoize,
+};
 pub use query::{attach_query_cache_to_bus, Query, QueryCache, QueryFn, QueryStatus};
 #[cfg(feature = "sqlite")]
 pub use sqlite_queue::SqliteQueue;

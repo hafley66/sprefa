@@ -20,9 +20,11 @@ use std::sync::{Arc, Mutex};
 
 use super::component::{Component, RenderCtx};
 use super::event_bus::{BusListener, Event, EventBus};
+use super::flatten::splice_into;
 use super::next::Next;
 use super::next_key::NextKey;
 use super::node::Node;
+use super::queue::{QueueBackend, QueueId, QueueRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MemoKey(pub [u8; 32]);
@@ -32,9 +34,14 @@ pub struct MemoCache<N: Next> {
 }
 
 struct Entry<N: Next> {
-    node:    Node<N>,
-    domains: Vec<&'static str>,
-    input:   [u8; 32],
+    node:           Node<N>,
+    domains:        Vec<&'static str>,
+    input:          [u8; 32],
+    /// QueueId of the row whose render produced this entry. `Some`
+    /// when stored via `Memoize::dispatch` (the substrate path).
+    /// `None` when stored via `MemoCache::put` directly (test paths).
+    /// On eviction this row + its descendants are cascade-deleted.
+    source_row_id:  Option<QueueId>,
 }
 
 impl<N: Next> MemoCache<N> {
@@ -47,28 +54,54 @@ impl<N: Next> MemoCache<N> {
     }
 
     pub fn put(&self, key: MemoKey, node: Node<N>, domains: Vec<&'static str>, input: [u8; 32]) {
-        self.by_key.lock().unwrap().insert(key, Entry { node, domains, input });
+        self.put_with_source(key, node, domains, input, None);
+    }
+
+    pub fn put_with_source(
+        &self,
+        key:           MemoKey,
+        node:          Node<N>,
+        domains:       Vec<&'static str>,
+        input:         [u8; 32],
+        source_row_id: Option<QueueId>,
+    ) {
+        self.by_key.lock().unwrap().insert(key, Entry {
+            node, domains, input, source_row_id,
+        });
     }
 
     pub fn len(&self) -> usize { self.by_key.lock().unwrap().len() }
     pub fn is_empty(&self) -> bool { self.len() == 0 }
 
-    /// Drop all entries tagged with `domain`. Returns the number of
-    /// entries removed — useful for metrics + tests.
-    pub fn invalidate_domain(&self, domain: &str) -> usize {
+    /// Drop all entries tagged with `domain`. Returns the source_row_ids
+    /// of evicted entries (in unspecified order). Used by the cascade
+    /// listener; bare callers can ignore the return.
+    pub fn invalidate_domain(&self, domain: &str) -> Vec<QueueId> {
         let mut by = self.by_key.lock().unwrap();
-        let before = by.len();
-        by.retain(|_, e| !e.domains.iter().any(|d| *d == domain));
-        before - by.len()
+        let mut evicted = Vec::new();
+        by.retain(|_, e| {
+            let kill = e.domains.iter().any(|d| *d == domain);
+            if kill {
+                if let Some(id) = e.source_row_id { evicted.push(id); }
+                false
+            } else { true }
+        });
+        evicted
     }
 
-    /// Drop the entry whose input hash equals `k.0`. Returns whether
-    /// an entry was removed.
-    pub fn invalidate_input(&self, k: NextKey) -> bool {
+    /// Drop entries whose input hash equals `k.0`. Returns the
+    /// source_row_ids of evicted entries.
+    pub fn invalidate_input(&self, k: NextKey) -> Vec<QueueId> {
         let mut by = self.by_key.lock().unwrap();
-        let before = by.len();
-        by.retain(|_, e| e.input != k.0);
-        before != by.len()
+        let mut evicted = Vec::new();
+        by.retain(|_, e| {
+            let kill = e.input == k.0;
+            if kill {
+                if let Some(id) = e.source_row_id { evicted.push(id); }
+                false
+            } else { true }
+        });
+        evicted
     }
 }
 
@@ -78,18 +111,39 @@ impl<N: Next> Default for MemoCache<N> {
 
 impl<N: Next> BusListener for MemoCache<N> {
     fn on_event(&self, ev: &Event) {
+        // Cache-only listener: drops entries, does not cascade. Use
+        // `attach_cache_to_bus_with_queue` to also remove descendants
+        // from the queue on eviction.
         match ev {
-            Event::Dirty { domain, key: None }    => { self.invalidate_domain(domain); }
-            Event::Dirty { domain: _, key: Some(k) } => { self.invalidate_input(*k); }
+            Event::Dirty { domain, key: None }       => { let _ = self.invalidate_domain(domain); }
+            Event::Dirty { domain: _, key: Some(k) } => { let _ = self.invalidate_input(*k); }
         }
-        // PHASE E (deferred): when an entry is invalidated, the
-        // children it previously emitted are downstream rows in the
-        // queue that no longer have a valid parent. Walk the cache's
-        // prior-children index for the dropped MemoKey(s) and call
-        // queue.cascade_delete(child_id) for each. Currently those
-        // rows persist as orphans — fine until the same parent re-
-        // renders with a different child set, which is exactly the
-        // point Phase E becomes load-bearing.
+    }
+}
+
+/// Bus listener that evicts cache entries AND cascade-deletes their
+/// downstream queue rows. This is the wiring that makes fine-grain
+/// invalidation work: when an upstream fact changes, every memoized
+/// render keyed off the now-stale data is dropped, and every queued or
+/// parked descendant of those renders is removed before it can fire.
+pub struct CacheCascadeListener<N: Next> {
+    cache: Arc<MemoCache<N>>,
+    queue: Arc<dyn QueueBackend<N>>,
+}
+
+impl<N: Next> CacheCascadeListener<N> {
+    pub fn new(cache: Arc<MemoCache<N>>, queue: Arc<dyn QueueBackend<N>>) -> Self {
+        Self { cache, queue }
+    }
+}
+
+impl<N: Next> BusListener for CacheCascadeListener<N> {
+    fn on_event(&self, ev: &Event) {
+        let evicted = match ev {
+            Event::Dirty { domain, key: None }       => self.cache.invalidate_domain(domain),
+            Event::Dirty { domain: _, key: Some(k) } => self.cache.invalidate_input(*k),
+        };
+        for id in evicted { self.queue.cascade_delete(id); }
     }
 }
 
@@ -121,6 +175,9 @@ impl<C: Component> Memoize<C> {
 impl<C: Component> Component for Memoize<C> {
     type Next = C::Next;
 
+    /// Tier 1 fallback. Stores the entry but cannot record a
+    /// source_row_id (no row available outside dispatch). On
+    /// invalidation the entry drops but no cascade fires for it.
     fn render(&self, ctx: &RenderCtx, c: &Self::Next) -> Node<Self::Next> {
         let input = c.content_hash();
         let key   = self.key_for(&input);
@@ -128,15 +185,55 @@ impl<C: Component> Component for Memoize<C> {
             return node;
         }
         let node = self.inner.render(ctx, c);
-        self.cache.put(key, node.clone(), self.domains.clone(), input);
+        self.cache.put_with_source(key, node.clone(), self.domains.clone(), input, None);
         node
+    }
+
+    /// Tier 3. Per-row substrate path that records the producing row's
+    /// id so cascade_delete can later wipe its descendants on cache
+    /// eviction. Bypasses `render_batch` of the inner Component since
+    /// caching is per-row by definition.
+    fn dispatch(
+        &self,
+        ctx:   &RenderCtx,
+        rows:  &[QueueRow<Self::Next>],
+        queue: &dyn QueueBackend<Self::Next>,
+    ) {
+        for row in rows {
+            let input = row.value.content_hash();
+            let key   = self.key_for(&input);
+            let node  = if let Some(cached) = self.cache.lookup(key) {
+                cached
+            } else {
+                let n = self.inner.render(ctx, &row.value);
+                self.cache.put_with_source(
+                    key,
+                    n.clone(),
+                    self.domains.clone(),
+                    input,
+                    Some(row.id),
+                );
+                n
+            };
+            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+        }
     }
 }
 
-/// Bind a `MemoCache` to an `EventBus` so `DomainDirty` / `KeyDirty`
-/// events trigger invalidation. Idempotent at the listener level —
-/// the bus stores the cache by `Arc` identity; calling twice doubles
-/// the dispatch cost but is otherwise harmless.
+/// Bind a `MemoCache` to an `EventBus` so `Dirty` events drop matching
+/// entries. Cache-only path — no queue cascade. Use
+/// `attach_cache_to_bus_with_queue` for fine-grain invalidation.
 pub fn attach_cache_to_bus<N: Next>(cache: Arc<MemoCache<N>>, bus: &EventBus) {
     bus.add_listener(cache);
+}
+
+/// Bind a `MemoCache` to an `EventBus` AND a queue. On `Dirty`, evict
+/// matching entries and cascade_delete the queue subtree under each
+/// evicted entry's source_row_id.
+pub fn attach_cache_to_bus_with_queue<N: Next>(
+    cache: Arc<MemoCache<N>>,
+    bus:   &EventBus,
+    queue: Arc<dyn QueueBackend<N>>,
+) {
+    bus.add_listener(Arc::new(CacheCascadeListener::new(cache, queue)));
 }
