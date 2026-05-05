@@ -855,3 +855,150 @@ impl Component for PrintComponent {
     }
 }
 
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   tests — smoke for each ported Component
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use effect_runtime::v2::{
+        expand, ExpandOpts, MemQueue, PipeInstance, QueueBackend,
+    };
+
+    struct Collector { sink: Arc<Mutex<Vec<Cursor>>> }
+    impl Component for Collector {
+        type Next = Cursor;
+        fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.sink.lock().unwrap().push(c.clone());
+            Node::Done
+        }
+    }
+
+    fn run_pipe(
+        ops:  Vec<Arc<dyn Component<Next = Cursor>>>,
+        seed: Vec<Cursor>,
+    ) -> Vec<Cursor> {
+        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        let sink  = Arc::new(Mutex::new(Vec::new()));
+        let mut steps = ops;
+        steps.push(Arc::new(Collector { sink: sink.clone() }));
+        let pipe = PipeInstance::new(steps);
+        let seed: Vec<Arc<Cursor>> = seed.into_iter().map(Arc::new).collect();
+        expand(&pipe, queue, seed, ExpandOpts::default().with_batch_cap(64));
+        let v = sink.lock().unwrap().clone();
+        v
+    }
+
+    fn cur(terms: &[(&str, &str)]) -> Cursor {
+        let mut c = Cursor::default();
+        for (n, v) in terms { c.set(n, *v); }
+        c
+    }
+
+    #[test]
+    fn split_emits_one_child_per_non_empty_piece() {
+        let out = run_pipe(
+            vec![Arc::new(SplitComponent::new("RAW", ",", "X"))],
+            vec![cur(&[("RAW", "a,b,,c")])],
+        );
+        let xs: Vec<&str> = out.iter().filter_map(|c| c.get("X")).collect();
+        assert_eq!(xs, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn format_renders_template_with_terms() {
+        let out = run_pipe(
+            vec![Arc::new(FormatComponent::new("hello ${X}", "MSG"))],
+            vec![cur(&[("X", "world")])],
+        );
+        assert_eq!(out[0].get("MSG"), Some("hello world"));
+    }
+
+    #[test]
+    fn trim_in_place_strips_whitespace() {
+        let out = run_pipe(
+            vec![Arc::new(TrimComponent::in_place("S"))],
+            vec![cur(&[("S", "  hi  \n")])],
+        );
+        assert_eq!(out[0].get("S"), Some("hi"));
+    }
+
+    #[test]
+    fn basename_dirname_split_path() {
+        let out = run_pipe(
+            vec![
+                Arc::new(BasenameComponent::new("FS", "FILE")),
+                Arc::new(DirnameComponent::new("FS", "DIR")),
+            ],
+            vec![cur(&[("FS", "/a/b/file.rs")])],
+        );
+        assert_eq!(out[0].get("FILE"), Some("file.rs"));
+        assert_eq!(out[0].get("DIR"),  Some("/a/b"));
+    }
+
+    #[test]
+    fn line_splits_text_by_newline() {
+        let out = run_pipe(
+            vec![Arc::new(LineComponent::on("TEXT").into_term("L"))],
+            vec![cur(&[("TEXT", "alpha\nbeta\n\ngamma")])],
+        );
+        let ls: Vec<&str> = out.iter().filter_map(|c| c.get("L")).collect();
+        assert_eq!(ls, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn re_matches_text_term() {
+        let out = run_pipe(
+            vec![
+                Arc::new(ReComponent::new(r"(\w+)=(\d+)", &["K", "V"])
+                    .on_term("KV")
+                    .with_match_text(false)),
+            ],
+            vec![cur(&[("KV", "x=1 y=22")])],
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].get("K"), Some("x"));
+        assert_eq!(out[0].get("V"), Some("1"));
+        assert_eq!(out[1].get("K"), Some("y"));
+        assert_eq!(out[1].get("V"), Some("22"));
+    }
+
+    #[test]
+    fn seed_emits_fixed_rows_once() {
+        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        let sink  = Arc::new(Mutex::new(Vec::new()));
+        let pipe  = PipeInstance::new(vec![
+            Arc::new(SeedComponent::new(vec![cur(&[("X", "1")]), cur(&[("X", "2")])]))
+                as Arc<dyn Component<Next = Cursor>>,
+            Arc::new(Collector { sink: sink.clone() }),
+        ]);
+        // Seed-shape needs ONE bootstrap row; the Component ignores its
+        // value and emits self.rows.
+        expand(&pipe, queue, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+        let v = sink.lock().unwrap();
+        let xs: Vec<&str> = v.iter().filter_map(|c| c.get("X")).collect();
+        assert_eq!(xs, vec!["1", "2"]);
+    }
+
+    #[test]
+    fn sh_capture_stdout_binds_to_term() {
+        let out = run_pipe(
+            vec![Arc::new(ShComponent::capture("printf alpha", "OUT"))],
+            vec![Cursor::default()],
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].get("OUT"), Some("alpha"));
+    }
+
+    #[test]
+    fn sh_filter_by_exit_drops_failed() {
+        let out = run_pipe(
+            vec![Arc::new(ShComponent::filter("false"))],
+            vec![Cursor::default()],
+        );
+        assert!(out.is_empty());
+    }
+}
+
