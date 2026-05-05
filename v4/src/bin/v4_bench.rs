@@ -206,7 +206,14 @@ async fn main() {
                 Arc::new(CountComponent { count: counter.clone() }),
             ]);
             let queue: Arc<dyn QueueBackend<v4::Cursor>> = Arc::new(MemQueue::new());
-            let opts = ExpandOpts::default().with_batch_cap(batch);
+            // batch_cap drives rayon tail-sync frequency in AstNm:
+            // each pull_runnable_batch chunks the queue into one
+            // par_render call. Smaller cap = more sync points = slow
+            // files block N-1 workers per batch. For one-shot scan we
+            // want ONE big batch. Take max(batch, 65536) so callers
+            // who set --batch up to control FS streaming chunk size
+            // don't accidentally also constrain the AstNm batch.
+            let opts = ExpandOpts::default().with_batch_cap(batch.max(65536));
 
             let t_run = Instant::now();
             let stats = expand(&pipe, queue, vec![Arc::new(v4::Cursor::default())], opts);
