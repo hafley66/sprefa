@@ -1,6 +1,7 @@
 pub mod chan;
 pub mod cst;
 pub mod cursor_codec;
+pub mod fact;
 pub mod runtime_bridge;
 pub mod substrate_ops;
 pub mod term;
