@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::next::Next;
 use super::next_key::NextKey;
 use super::queue::{
-    DriveTick, QueueBackend, QueueId, QueueRow,
+    ExpandTick, QueueBackend, QueueId, QueueRow,
 };
 use super::wake::Wake;
 
@@ -66,7 +66,7 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
 
     fn pull_runnable(
         &self,
-        global_tick: DriveTick,
+        global_tick: ExpandTick,
     ) -> Option<QueueRow<N>> {
         let mut s = self.state.lock().unwrap();
 
@@ -116,7 +116,7 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
 
     fn pull_runnable_batch(
         &self,
-        global_tick: DriveTick,
+        global_tick: ExpandTick,
         n:           usize,
     ) -> Vec<QueueRow<N>> {
         self.pull_runnable_batch_impl(global_tick, n)
@@ -161,7 +161,7 @@ impl<N: Next> MemQueue<N> {
 
     fn pull_runnable_batch_impl(
         &self,
-        global_tick: DriveTick,
+        global_tick: ExpandTick,
         n:           usize,
     ) -> Vec<QueueRow<N>> {
         if n == 0 { return Vec::new(); }

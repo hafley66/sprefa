@@ -1,10 +1,10 @@
-//! `drive` — the queue-backed loop, generic over carrier.
+//! `expand` — the queue-backed loop, generic over carrier.
 //!
 //! Pull a runnable row → look up the component at `depth` → render →
 //! flatten → enqueue children. Repeat until nothing is runnable.
 //!
 //! Synchronous Phase-3 form. Yield parks rows; the caller advances
-//! the `EventBus` ready set (or the global tick) and re-enters `drive`
+//! the `EventBus` ready set (or the global tick) and re-enters `expand`
 //! to make progress.
 
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use super::component::{DynComponent, RenderCtx};
 use super::event_bus::EventBus;
 use super::next::Next;
 use super::queue::{
-    DriveTick, InstanceId, PipeHash, QueueBackend, QueueRow,
+    ExpandTick, InstanceId, PipeHash, QueueBackend, QueueRow,
 };
 use super::wake::Wake;
 
@@ -37,14 +37,14 @@ impl<N: Next> PipeInstance<N> {
 /// the driver pulls per dispatch — Component::render_batch sees up to
 /// that many homogeneous rows in one call.
 #[derive(Clone)]
-pub struct DriveOpts {
+pub struct ExpandOpts {
     pub bus:       Arc<EventBus>,
     pub batch_cap: usize,
 }
 
 pub const DEFAULT_BATCH_CAP: usize = 256;
 
-impl Default for DriveOpts {
+impl Default for ExpandOpts {
     fn default() -> Self {
         Self {
             bus:       Arc::new(EventBus::new()),
@@ -53,7 +53,7 @@ impl Default for DriveOpts {
     }
 }
 
-impl DriveOpts {
+impl ExpandOpts {
     pub fn new() -> Self { Self::default() }
 
     pub fn with_bus(mut self, bus: Arc<EventBus>) -> Self {
@@ -68,7 +68,7 @@ impl DriveOpts {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct DriveStats {
+pub struct ExpandStats {
     pub rendered: u64,
     pub emitted:  u64,
     pub terminal: u64,
@@ -77,19 +77,19 @@ pub struct DriveStats {
 
 static GLOBAL_TICK: AtomicU64 = AtomicU64::new(1);
 
-fn bump_global_tick() -> DriveTick {
+fn bump_global_tick() -> ExpandTick {
     GLOBAL_TICK.fetch_add(1, Ordering::SeqCst)
 }
 
 /// Drive a single pipe instance until nothing is runnable. Pass empty
 /// `seed` to resume an already-seeded queue.
-pub fn drive<N: Next>(
+pub fn expand<N: Next>(
     pipe:  &PipeInstance<N>,
     queue: Arc<dyn QueueBackend<N>>,
     seed:  Vec<Arc<N>>,
-    opts:  DriveOpts,
-) -> DriveStats {
-    let drive_tick = bump_global_tick();
+    opts:  ExpandOpts,
+) -> ExpandStats {
+    let expand_tick = bump_global_tick();
 
     for value in seed {
         queue.enqueue(QueueRow {
@@ -102,15 +102,15 @@ pub fn drive<N: Next>(
             depth:             0,
             value,
             wake:           Wake::Immediate,
-            drive_tick,
+            expand_tick,
             enqueued_at_ns: 0,
         });
     }
 
-    let mut stats = DriveStats::default();
+    let mut stats = ExpandStats::default();
 
     loop {
-        let batch = queue.pull_runnable_batch(drive_tick, opts.batch_cap);
+        let batch = queue.pull_runnable_batch(expand_tick, opts.batch_cap);
         if batch.is_empty() {
             stats.parked = queue.depth();
             break;
@@ -123,7 +123,7 @@ pub fn drive<N: Next>(
         }
 
         let comp = &pipe.components[head_depth as usize];
-        let ctx  = RenderCtx::new(batch[0].pipe_hash, head_depth, drive_tick);
+        let ctx  = RenderCtx::new(batch[0].pipe_hash, head_depth, expand_tick);
 
         // PHASE E (deferred): reconciliation hook lives inside
         // `dispatch`. Before enqueueing new children, an override can

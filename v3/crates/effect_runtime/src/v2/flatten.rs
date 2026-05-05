@@ -5,11 +5,11 @@
 //! Many = recurse; Yield = one parked row at the parker's depth.
 //!
 //! Each child's `path` is `parent.path + [batch_idx]`. Roots seeded
-//! into `drive` use `path = vec![]` and accumulate from there.
+//! into `expand` use `path = vec![]` and accumulate from there.
 
 use super::next::Next;
 use super::node::Node;
-use super::queue::{DriveTick, QueueBackend, QueueRow};
+use super::queue::{ExpandTick, QueueBackend, QueueRow};
 use super::wake::Wake;
 
 /// Splice helper for `Component::dispatch` overrides. Flattens `node`
@@ -22,10 +22,10 @@ pub fn splice_into<N: Next>(
     parent:     &QueueRow<N>,
     node:       Node<N>,
     next_depth: u32,
-    drive_tick: DriveTick,
+    expand_tick: ExpandTick,
     queue:      &dyn QueueBackend<N>,
 ) -> usize {
-    let children = flatten(node, parent, next_depth, drive_tick);
+    let children = flatten(node, parent, next_depth, expand_tick);
     let n = children.len();
     for child in children { queue.enqueue(child); }
     n
@@ -44,10 +44,10 @@ pub fn flatten<N: Next>(
     node:       Node<N>,
     parent:     &QueueRow<N>,
     next_depth:    u32,
-    drive_tick: DriveTick,
+    expand_tick: ExpandTick,
 ) -> Vec<QueueRow<N>> {
     let mut out = Vec::new();
-    flatten_into(node, parent, next_depth, drive_tick, &mut out);
+    flatten_into(node, parent, next_depth, expand_tick, &mut out);
     for (i, row) in out.iter_mut().enumerate() {
         row.batch_idx = i as u32;
         row.path = {
@@ -63,25 +63,25 @@ fn flatten_into<N: Next>(
     node:       Node<N>,
     parent:     &QueueRow<N>,
     next_depth:    u32,
-    drive_tick: DriveTick,
+    expand_tick: ExpandTick,
     out:        &mut Vec<QueueRow<N>>,
 ) {
     match node {
         Node::Done => { /* no-op */ }
 
         Node::Emit(value) => {
-            out.push(child_row(parent, next_depth, value, Wake::Immediate, drive_tick));
+            out.push(child_row(parent, next_depth, value, Wake::Immediate, expand_tick));
         }
 
         Node::Many(children) => {
             for c in children {
-                flatten_into(c, parent, next_depth, drive_tick, out);
+                flatten_into(c, parent, next_depth, expand_tick, out);
             }
         }
 
         Node::Yield { value, wake } => {
             // Park at the SAME depth — re-render the same component on wake.
-            out.push(child_row(parent, parent.depth, value, wake, drive_tick));
+            out.push(child_row(parent, parent.depth, value, wake, expand_tick));
         }
     }
 }
@@ -91,7 +91,7 @@ fn child_row<N: Next>(
     depth:         u32,
     value:      std::sync::Arc<N>,
     wake:       Wake,
-    drive_tick: DriveTick,
+    expand_tick: ExpandTick,
 ) -> QueueRow<N> {
     QueueRow {
         id:             0,
@@ -103,7 +103,7 @@ fn child_row<N: Next>(
         depth,
         value,
         wake,
-        drive_tick,
+        expand_tick,
         enqueued_at_ns: now_ns(),
     }
 }

@@ -27,7 +27,7 @@ use super::codec::Codec;
 use super::mem_queue::MemQueue;
 use super::next::Next;
 use super::next_key::NextKey;
-use super::queue::{DriveTick, QueueBackend, QueueId, QueueRow};
+use super::queue::{ExpandTick, QueueBackend, QueueId, QueueRow};
 use super::sqlite_queue::SqliteQueue;
 
 #[derive(Clone, Debug)]
@@ -148,7 +148,7 @@ impl<N: Next + Codec> QueueBackend<N> for HybridQueue<N> {
         id
     }
 
-    fn pull_runnable(&self, global_tick: DriveTick) -> Option<QueueRow<N>> {
+    fn pull_runnable(&self, global_tick: ExpandTick) -> Option<QueueRow<N>> {
         if let Some(r) = self.hot.pull_runnable(global_tick) {
             return Some(r);
         }
@@ -157,7 +157,7 @@ impl<N: Next + Codec> QueueBackend<N> for HybridQueue<N> {
 
     fn pull_runnable_batch(
         &self,
-        global_tick: DriveTick,
+        global_tick: ExpandTick,
         n:           usize,
     ) -> Vec<QueueRow<N>> {
         let hot = self.hot.pull_runnable_batch(global_tick, n);

@@ -28,7 +28,7 @@
 //!   wake_tick       INTEGER,
 //!   wake_domain     TEXT,
 //!   wake_key        BLOB,
-//!   drive_tick      INTEGER NOT NULL,
+//!   expand_tick      INTEGER NOT NULL,
 //!   enqueued_at_ns  INTEGER NOT NULL
 //! );
 //! ```
@@ -44,7 +44,7 @@ use super::codec::Codec;
 use super::next::Next;
 use super::next_key::NextKey;
 use super::queue::{
-    DriveTick, QueueBackend, QueueId, QueueRow,
+    ExpandTick, QueueBackend, QueueId, QueueRow,
 };
 use super::wake::Wake;
 
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS sprf_v3_queue (
   wake_tick       INTEGER,
   wake_domain     TEXT,
   wake_key        BLOB,
-  drive_tick      INTEGER NOT NULL,
+  expand_tick      INTEGER NOT NULL,
   enqueued_at_ns  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sprf_v3_queue_parent      ON sprf_v3_queue(parent_id);
@@ -116,7 +116,7 @@ impl<N: Next + Codec> SqliteQueue<N> {
                 "INSERT INTO sprf_v3_queue (
                     parent_id, batch_idx, path, pipe_hash, instance_id, depth,
                     next_blob, next_hash, wake_kind, wake_tick, wake_domain,
-                    wake_key, drive_tick, enqueued_at_ns
+                    wake_key, expand_tick, enqueued_at_ns
                  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             ).expect("prepare bulk insert");
             for row in &rows {
@@ -143,7 +143,7 @@ impl<N: Next + Codec> SqliteQueue<N> {
                     wake_tick,
                     wake_domain,
                     wake_key,
-                    row.drive_tick as i64,
+                    row.expand_tick as i64,
                     row.enqueued_at_ns as i64,
                 ]).expect("bulk insert row");
             }
@@ -183,7 +183,7 @@ fn row_to_queue<N: Next + Codec>(r: &Row) -> rusqlite::Result<QueueRow<N>> {
     let wake_tick:      Option<i64> = r.get("wake_tick")?;
     let wake_domain:    Option<String> = r.get("wake_domain")?;
     let wake_key:       Option<Vec<u8>> = r.get("wake_key")?;
-    let drive_tick:     i64       = r.get("drive_tick")?;
+    let expand_tick:     i64       = r.get("expand_tick")?;
     let enqueued_at_ns: i64       = r.get("enqueued_at_ns")?;
 
     let wake = match wake_kind {
@@ -210,7 +210,7 @@ fn row_to_queue<N: Next + Codec>(r: &Row) -> rusqlite::Result<QueueRow<N>> {
         depth:          depth as u32,
         value:          Arc::new(N::decode(&next_blob)),
         wake,
-        drive_tick:     drive_tick as u64,
+        expand_tick:     expand_tick as u64,
         enqueued_at_ns: enqueued_at_ns as u64,
     })
 }
@@ -238,7 +238,7 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
             "INSERT INTO sprf_v3_queue (
                 parent_id, batch_idx, path, pipe_hash, instance_id, depth,
                 next_blob, next_hash, wake_kind, wake_tick, wake_domain,
-                wake_key, drive_tick, enqueued_at_ns
+                wake_key, expand_tick, enqueued_at_ns
              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![
                 row.parent_id.map(|p| p as i64),
@@ -253,7 +253,7 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
                 wake_tick,
                 wake_domain,
                 wake_key,
-                row.drive_tick as i64,
+                row.expand_tick as i64,
                 row.enqueued_at_ns as i64,
             ],
         ).expect("queue insert");
@@ -262,7 +262,7 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
 
     fn pull_runnable(
         &self,
-        global_tick: DriveTick,
+        global_tick: ExpandTick,
     ) -> Option<QueueRow<N>> {
         let conn = self.conn.lock().unwrap();
 
@@ -329,7 +329,7 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
 
     fn pull_runnable_batch(
         &self,
-        global_tick: DriveTick,
+        global_tick: ExpandTick,
         n:           usize,
     ) -> Vec<QueueRow<N>> {
         if n == 0 { return Vec::new(); }

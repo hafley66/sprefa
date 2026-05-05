@@ -30,7 +30,7 @@ pub mod component;
 pub mod queue;
 pub mod mem_queue;
 pub mod flatten;
-pub mod driver;
+pub mod expand;
 
 pub use next::Next;
 pub use next_key::{compute_key, NextKey};
@@ -51,9 +51,9 @@ pub use hybrid_queue::{HybridCfg, HybridQueue};
 pub use node::Node;
 pub use component::{par_render, Component, DynComponent, RenderCtx};
 pub use flatten::splice_into;
-pub use queue::{DriveTick, InstanceId, PipeHash, QueueBackend, QueueId, QueueRow};
+pub use queue::{ExpandTick, InstanceId, PipeHash, QueueBackend, QueueId, QueueRow};
 pub use mem_queue::MemQueue;
-pub use driver::{drive, DriveOpts, DriveStats, PipeInstance, DEFAULT_BATCH_CAP};
+pub use expand::{expand, ExpandOpts, ExpandStats, PipeInstance, DEFAULT_BATCH_CAP};
 
 #[cfg(test)]
 mod tests;

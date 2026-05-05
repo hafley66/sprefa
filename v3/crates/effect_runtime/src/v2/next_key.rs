@@ -30,7 +30,7 @@ pub fn compute_key<N: Next>(row: &QueueRow<N>) -> NextKey {
     h.update(&row.instance_id.to_le_bytes());
     h.update(&row.depth.to_le_bytes());
     h.update(&row.batch_idx.to_le_bytes());
-    h.update(&row.drive_tick.to_le_bytes());
+    h.update(&row.expand_tick.to_le_bytes());
     for seg in &row.path {
         h.update(&seg.to_le_bytes());
     }

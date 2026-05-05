@@ -14,7 +14,7 @@
 //!     Arc::new(AstNmComponent::new(pat_src, lang)),
 //!     Arc::new(CountComponent { count: counter.clone() }),
 //! ]);
-//! drive(&pipe, queue, vec![Arc::new(Cursor::default())], DriveOpts::default().with_batch_cap(batch));
+//! expand(&pipe, queue, vec![Arc::new(Cursor::default())], ExpandOpts::default().with_batch_cap(batch));
 //! ```
 
 use std::path::PathBuf;
@@ -69,7 +69,7 @@ impl Component for FsComponent {
         let flush = |buf: &mut Vec<Node<Cursor>>| {
             if buf.is_empty() { return; }
             let many = Node::Many(std::mem::take(buf));
-            splice_into(parent, many, ctx.depth + 1, ctx.drive_tick, queue);
+            splice_into(parent, many, ctx.depth + 1, ctx.expand_tick, queue);
         };
 
         for entry in WalkBuilder::new(&self.root).hidden(true).git_ignore(false).build() {

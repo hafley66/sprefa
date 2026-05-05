@@ -138,7 +138,7 @@ async fn main() {
         }
         use std::sync::Arc;
         use effect_runtime::v2::{
-            drive, Component, DriveOpts, MemQueue, PipeInstance, QueueBackend,
+            expand, Component, ExpandOpts, MemQueue, PipeInstance, QueueBackend,
         };
         use v4::substrate_ops::{AstNmComponent, CountComponent, FsComponent};
 
@@ -153,10 +153,10 @@ async fn main() {
                 Arc::new(CountComponent { count: counter.clone() }),
             ]);
             let queue: Arc<dyn QueueBackend<v4::Cursor>> = Arc::new(MemQueue::new());
-            let opts = DriveOpts::default().with_batch_cap(batch);
+            let opts = ExpandOpts::default().with_batch_cap(batch);
 
             let t_run = Instant::now();
-            let stats = drive(&pipe, queue, vec![Arc::new(v4::Cursor::default())], opts);
+            let stats = expand(&pipe, queue, vec![Arc::new(v4::Cursor::default())], opts);
             let wall = t_run.elapsed();
 
             let m = counter.load(Ordering::Relaxed);

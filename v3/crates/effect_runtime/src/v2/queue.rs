@@ -12,7 +12,7 @@ use super::wake::Wake;
 
 pub type QueueId    = u64;
 pub type InstanceId = u64;
-pub type DriveTick  = u64;
+pub type ExpandTick  = u64;
 pub type PipeHash   = u64;
 
 /// One in-flight or parked value. `path` is the position trail from the
@@ -29,7 +29,7 @@ pub struct QueueRow<N: Next> {
     pub depth:          u32,
     pub value:          Arc<N>,
     pub wake:           Wake,
-    pub drive_tick:     DriveTick,
+    pub expand_tick:     ExpandTick,
     pub enqueued_at_ns: u64,
 }
 
@@ -45,7 +45,7 @@ pub trait QueueBackend<N: Next>: Send + Sync + 'static {
     /// flips them to `Immediate`.
     fn pull_runnable(
         &self,
-        global_tick: DriveTick,
+        global_tick: ExpandTick,
     ) -> Option<QueueRow<N>>;
 
     /// Total rows resident in the queue.
@@ -73,7 +73,7 @@ pub trait QueueBackend<N: Next>: Send + Sync + 'static {
     /// fill the batch.
     fn pull_runnable_batch(
         &self,
-        global_tick: DriveTick,
+        global_tick: ExpandTick,
         n:           usize,
     ) -> Vec<QueueRow<N>> {
         if n == 0 { return Vec::new(); }

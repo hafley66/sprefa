@@ -33,7 +33,7 @@ use super::event_bus::EventBus;
 use super::flatten::splice_into;
 use super::next::Next;
 use super::node::Node;
-use super::queue::{DriveTick, PipeHash, QueueBackend, QueueRow};
+use super::queue::{ExpandTick, PipeHash, QueueBackend, QueueRow};
 
 pub trait Component: Send + Sync + 'static {
     type Next: Next;
@@ -67,7 +67,7 @@ pub trait Component: Send + Sync + 'static {
             rows.iter().map(|r| r.value.as_ref()).collect();
         let nodes = self.render_batch(ctx, &inputs);
         for (row, node) in rows.iter().zip(nodes) {
-            splice_into(row, node, ctx.depth + 1, ctx.drive_tick, queue);
+            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
         }
     }
 
@@ -79,17 +79,17 @@ pub trait Component: Send + Sync + 'static {
 
 /// Render-call context. Carries the pipe identity, the depth being
 /// rendered, and the current drive tick (needed by `flatten` to mint
-/// child `enqueued_at_ns` and stamp `drive_tick`).
+/// child `enqueued_at_ns` and stamp `expand_tick`).
 #[derive(Clone, Debug)]
 pub struct RenderCtx {
     pub pipe:       PipeHash,
     pub depth:      u32,
-    pub drive_tick: DriveTick,
+    pub expand_tick: ExpandTick,
 }
 
 impl RenderCtx {
-    pub fn new(pipe: PipeHash, depth: u32, drive_tick: DriveTick) -> Self {
-        Self { pipe, depth, drive_tick }
+    pub fn new(pipe: PipeHash, depth: u32, expand_tick: ExpandTick) -> Self {
+        Self { pipe, depth, expand_tick }
     }
 }
 

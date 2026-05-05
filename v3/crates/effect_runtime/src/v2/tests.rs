@@ -166,10 +166,10 @@ fn trim_collector_pipe_runs_to_drain() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    let stats = drive(
+    let stats = expand(
         &pipe, queue.clone(),
         vec![lc(":raw", "  hello  "), lc(":raw", "world\n")],
-        DriveOpts::default(),
+        ExpandOpts::default(),
     );
 
     let got = sink.lock().unwrap();
@@ -191,7 +191,7 @@ fn many_fanout_three_per_input() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    drive(&pipe, queue, vec![lc(":raw", "x"), lc(":raw", "y")], DriveOpts::default());
+    expand(&pipe, queue, vec![lc(":raw", "x"), lc(":raw", "y")], ExpandOpts::default());
 
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 6);
@@ -214,9 +214,9 @@ fn yield_parks_until_dispatch_park_promotes() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    let stats = drive(
+    let stats = expand(
         &pipe, queue.clone(),
         vec![lc(":raw", "alpha")],
         opts.clone(),
@@ -228,7 +228,7 @@ fn yield_parks_until_dispatch_park_promotes() {
     let promoted = queue.dispatch_park(TEST_DOMAIN, Some(key));
     assert_eq!(promoted, 1);
 
-    let stats = drive(&pipe, queue.clone(), Vec::new(), opts);
+    let stats = expand(&pipe, queue.clone(), Vec::new(), opts);
     assert_eq!(stats.rendered, 2);
     assert_eq!(stats.parked,   0);
     let got = sink.lock().unwrap();
@@ -252,9 +252,9 @@ fn background_thread_wake_no_async_runtime() {
         Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "thread-fired")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "thread-fired")], opts.clone());
     assert_eq!(queue.depth(), 1);
 
     let queue_for_thread = queue.clone();
@@ -264,7 +264,7 @@ fn background_thread_wake_no_async_runtime() {
     });
     h.join().unwrap();
 
-    drive(&pipe, queue.clone(), Vec::new(), opts);
+    expand(&pipe, queue.clone(), Vec::new(), opts);
     assert_eq!(sink.lock().unwrap().len(), 1);
     assert_eq!(queue.depth(), 0);
 }
@@ -340,9 +340,9 @@ fn mutation_store_routes_async_response_back() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "hello")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "hello")], opts.clone());
     assert_eq!(sink.lock().unwrap().len(), 0);
     assert_eq!(queue.depth(), 1);
 
@@ -350,7 +350,7 @@ fn mutation_store_routes_async_response_back() {
     while resp.is_empty() { std::thread::yield_now(); }
     std::thread::sleep(Duration::from_millis(15));
 
-    drive(&pipe, queue.clone(), Vec::new(), opts);
+    expand(&pipe, queue.clone(), Vec::new(), opts);
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].get(":upper"), Some("HELLO"));
@@ -390,10 +390,10 @@ fn carrier_can_be_a_plain_integer() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    drive(
+    expand(
         &pipe, queue,
         vec![Arc::new(3i64), Arc::new(5i64)],
-        DriveOpts::default(),
+        ExpandOpts::default(),
     );
 
     let got = sink.lock().unwrap();
@@ -419,7 +419,7 @@ fn park_row<N: Next>(
         depth:          0,
         value,
         wake:           Wake::Key { domain: domain.into(), key },
-        drive_tick:     0,
+        expand_tick:     0,
         enqueued_at_ns: 0,
     });
 }
@@ -540,10 +540,10 @@ fn sqlite_queue_replays_trim_collector_pipe() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    let stats = drive(
+    let stats = expand(
         &pipe, queue.clone(),
         vec![lc(":raw", "  hello  "), lc(":raw", "world\n")],
-        DriveOpts::default(),
+        ExpandOpts::default(),
     );
 
     let got = sink.lock().unwrap();
@@ -566,7 +566,7 @@ fn sqlite_queue_many_fanout_three_per_input() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    drive(&pipe, queue, vec![lc(":raw", "x"), lc(":raw", "y")], DriveOpts::default());
+    expand(&pipe, queue, vec![lc(":raw", "x"), lc(":raw", "y")], ExpandOpts::default());
 
     assert_eq!(sink.lock().unwrap().len(), 6);
 }
@@ -583,15 +583,15 @@ fn sqlite_queue_yield_parks_until_dispatch_park() {
         Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "alpha")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "alpha")], opts.clone());
     assert_eq!(queue.depth(), 1);
     assert_eq!(sink.lock().unwrap().len(), 0);
 
     queue.dispatch_park(TEST_DOMAIN, Some(key));
 
-    drive(&pipe, queue.clone(), Vec::new(), opts);
+    expand(&pipe, queue.clone(), Vec::new(), opts);
     assert_eq!(sink.lock().unwrap().len(), 1);
     assert_eq!(queue.depth(), 0);
 }
@@ -651,9 +651,9 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
                 as Arc<dyn Component<Next = LabCursor>>,
             Arc::new(Collector { sink: Arc::new(Mutex::new(Vec::new())) }),
         ]);
-        let opts = DriveOpts::default().with_bus(bus.clone());
+        let opts = ExpandOpts::default().with_bus(bus.clone());
 
-        drive(&pipe, queue.clone(), vec![input.clone()], opts);
+        expand(&pipe, queue.clone(), vec![input.clone()], opts);
         assert_eq!(queue.depth(), 1);
 
         let mut result = (*input).clone();
@@ -681,9 +681,9 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
                 as Arc<dyn Component<Next = LabCursor>>,
             Arc::new(Collector { sink: collected.clone() }),
         ]);
-        let opts = DriveOpts::default().with_bus(bus.clone());
+        let opts = ExpandOpts::default().with_bus(bus.clone());
 
-        drive(&pipe, queue.clone(), Vec::new(), opts);
+        expand(&pipe, queue.clone(), Vec::new(), opts);
         assert_eq!(queue.depth(), 0);
         assert_eq!(store.len(),  0);
     }
@@ -757,16 +757,16 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
         }) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "phase-b")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "phase-b")], opts.clone());
     assert_eq!(queue.depth(), 1);
 
     // Wait until the spawned thread has put + dispatched_park.
     while store.is_empty() { std::thread::yield_now(); }
     std::thread::sleep(Duration::from_millis(5));
 
-    drive(&pipe, queue.clone(), Vec::new(), opts);
+    expand(&pipe, queue.clone(), Vec::new(), opts);
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].get(":upper"), Some("PHASE-B"));
@@ -802,9 +802,9 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
             }) as Arc<dyn Component<Next = LabCursor>>,
             Arc::new(Collector { sink: sink.clone() }),
         ]);
-        let opts = DriveOpts::default().with_bus(bus.clone());
+        let opts = ExpandOpts::default().with_bus(bus.clone());
 
-        drive(&pipe, queue.clone(), vec![lc(":raw", "tokio-b")], opts.clone());
+        expand(&pipe, queue.clone(), vec![lc(":raw", "tokio-b")], opts.clone());
         assert_eq!(queue.depth(), 1);
 
         while store.is_empty() {
@@ -812,7 +812,7 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
 
-        drive(&pipe, queue.clone(), Vec::new(), opts);
+        expand(&pipe, queue.clone(), Vec::new(), opts);
         let got = sink.lock().unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].get(":upper"), Some("TOKIO-B"));
@@ -861,14 +861,14 @@ fn memoize_hits_cache_on_identical_input() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    drive(
+    expand(
         &pipe, queue.clone(),
         vec![
             lc(":raw", "  hi  "),
             lc(":raw", "  hi  "),
             lc(":raw", "  hi  "),
         ],
-        DriveOpts::default(),
+        ExpandOpts::default(),
     );
 
     assert_eq!(sink.lock().unwrap().len(), 3);
@@ -896,10 +896,10 @@ fn memoize_misses_on_different_input() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    drive(
+    expand(
         &pipe, queue.clone(),
         vec![lc(":raw", "  hi  "), lc(":raw", "  bye  "), lc(":raw", "  yo  ")],
-        DriveOpts::default(),
+        ExpandOpts::default(),
     );
 
     assert_eq!(sink.lock().unwrap().len(), 3);
@@ -929,19 +929,19 @@ fn dirty_domain_drops_tagged_memo_entries() {
         Arc::new(memoized) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
     assert_eq!(counter.load(Ordering::SeqCst), 1);
     assert_eq!(cache.len(), 1);
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 
     bus.dispatch_dirty("fs", None);
     assert_eq!(cache.len(), 0);
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts);
+    expand(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts);
     assert_eq!(counter.load(Ordering::SeqCst), 2);
     assert_eq!(sink.lock().unwrap().len(), 3);
 }
@@ -986,19 +986,19 @@ fn query_runs_query_fn_once_then_serves_from_cache() {
         Arc::new(q) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "init")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "init")], opts.clone());
     assert_eq!(queue.depth(), 1);
     // Wait for queryFn to land its result + promote the parker.
     std::thread::sleep(std::time::Duration::from_millis(15));
 
-    drive(&pipe, queue.clone(), Vec::new(), opts.clone());
+    expand(&pipe, queue.clone(), Vec::new(), opts.clone());
     let got_a = sink.lock().unwrap().len();
     assert_eq!(got_a, 1);
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "init")], opts);
+    expand(&pipe, queue.clone(), vec![lc(":raw", "init")], opts);
     assert_eq!(sink.lock().unwrap().len(), 2);
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 }
@@ -1027,20 +1027,20 @@ fn invalidate_queries_via_dirty_domain_re_runs_query_fn() {
         Arc::new(q) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "x")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "x")], opts.clone());
     std::thread::sleep(std::time::Duration::from_millis(15));
-    drive(&pipe, queue.clone(), Vec::new(), opts.clone());
+    expand(&pipe, queue.clone(), Vec::new(), opts.clone());
     assert_eq!(counter.load(Ordering::SeqCst), 1);
     assert_eq!(cache.len(), 1);
 
     bus.dispatch_dirty("repos", None);
     assert_eq!(cache.len(), 0);
 
-    drive(&pipe, queue.clone(), vec![lc(":raw", "x")], opts.clone());
+    expand(&pipe, queue.clone(), vec![lc(":raw", "x")], opts.clone());
     std::thread::sleep(std::time::Duration::from_millis(15));
-    drive(&pipe, queue.clone(), Vec::new(), opts);
+    expand(&pipe, queue.clone(), Vec::new(), opts);
 
     assert_eq!(counter.load(Ordering::SeqCst), 2);
     assert_eq!(sink.lock().unwrap().len(), 2);
@@ -1091,7 +1091,7 @@ fn render_batch_override_sees_full_homogeneous_batch() {
 
     let seeds: Vec<Arc<LabCursor>> =
         (0..7).map(|i| lc(":raw", &format!("v{}", i))).collect();
-    drive(&pipe, queue.clone(), seeds, DriveOpts::default());
+    expand(&pipe, queue.clone(), seeds, ExpandOpts::default());
 
     let collected = sink.lock().unwrap();
     assert_eq!(collected.len(), 7);
@@ -1135,7 +1135,7 @@ fn par_render_runs_over_rayon_in_input_order() {
 
     let seeds: Vec<Arc<LabCursor>> =
         (0..32).map(|i| lc(":raw", &format!("seed{:03}", i))).collect();
-    drive(&pipe, queue, seeds, DriveOpts::default());
+    expand(&pipe, queue, seeds, ExpandOpts::default());
 
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 32);
@@ -1180,7 +1180,7 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
                     value: row.value.clone(),
                     wake:  Wake::Key { domain: "switch".into(), key: new_key },
                 };
-                splice_into(row, suspended, ctx.depth + 1, ctx.drive_tick, queue);
+                splice_into(row, suspended, ctx.depth + 1, ctx.expand_tick, queue);
             }
         }
     }
@@ -1199,16 +1199,16 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    let opts = DriveOpts::default().with_bus(bus.clone());
+    let opts = ExpandOpts::default().with_bus(bus.clone());
 
     let seeds: Vec<Arc<LabCursor>> =
         (0..3).map(|i| lc(":raw", &format!("v{}", i))).collect();
-    drive(&pipe, queue.clone(), seeds, opts.clone());
+    expand(&pipe, queue.clone(), seeds, opts.clone());
 
     // 2 prior parkers got promoted (seeds 1 + 2 cancel seeds 0 + 1).
     assert_eq!(waked.load(AO::SeqCst), 2);
 
-    drive(&pipe, queue.clone(), Vec::new(), opts);
+    expand(&pipe, queue.clone(), Vec::new(), opts);
     assert_eq!(sink.lock().unwrap().len(), 2);
     assert_eq!(queue.depth(), 1, "the most-recent parker is still parked");
 }
@@ -1245,7 +1245,7 @@ mod hybrid {
             depth: 0,
             value,
             wake: Wake::Key { domain: domain.into(), key },
-            drive_tick: 0,
+            expand_tick: 0,
             enqueued_at_ns,
         });
     }
@@ -1377,10 +1377,10 @@ fn unoverridden_component_drops_every_input() {
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    let stats = drive(
+    let stats = expand(
         &pipe, queue.clone(),
         vec![lc(":raw", "alpha"), lc(":raw", "beta")],
-        DriveOpts::default(),
+        ExpandOpts::default(),
     );
     assert_eq!(sink.lock().unwrap().len(), 0);
     assert_eq!(stats.rendered, 2);

@@ -121,7 +121,7 @@ are provided.
 ```rust
 use std::sync::{Arc, Mutex};
 use effect_runtime::v2::{
-    Component, DriveOpts, MemQueue, Node, PipeInstance,
+    Component, ExpandOpts, MemQueue, Node, PipeInstance,
     QueueBackend, RenderCtx, drive,
 };
 
@@ -150,7 +150,7 @@ let pipe  = PipeInstance::new(vec![
     Arc::new(Collect { sink: sink.clone() }),
 ]);
 
-drive(&pipe, queue, vec![Arc::new(3i64), Arc::new(5i64)], DriveOpts::default());
+expand(&pipe, queue, vec![Arc::new(3i64), Arc::new(5i64)], ExpandOpts::default());
 
 assert_eq!(*sink.lock().unwrap(), vec![12, 20]);
 ```
@@ -261,7 +261,7 @@ for the canonical state-machine shape.
 ## Example 5 — bus dispatch from a background thread (no async runtime)
 
 `EventBus::dispatch(KeyDirty(k))` makes the parked row runnable on the
-next `drive` iteration. The dispatch can come from any thread; v2 has
+next `expand` iteration. The dispatch can come from any thread; v2 has
 no built-in scheduler.
 
 ```rust
@@ -275,10 +275,10 @@ let pipe = PipeInstance::new(vec![
     Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
     Arc::new(Collector { sink: sink.clone() }),
 ]);
-let opts = DriveOpts::default().with_bus(bus.clone());
+let opts = ExpandOpts::default().with_bus(bus.clone());
 
 // First drive: parks.
-drive(&pipe, queue.clone(), vec![lc(":raw", "alpha")], opts.clone());
+expand(&pipe, queue.clone(), vec![lc(":raw", "alpha")], opts.clone());
 assert_eq!(queue.depth(), 1);
 
 // Off-thread, no executor.
@@ -289,7 +289,7 @@ std::thread::spawn(move || {
 }).join().unwrap();
 
 // Second drive: drains.
-drive(&pipe, queue.clone(), Vec::new(), opts);
+expand(&pipe, queue.clone(), Vec::new(), opts);
 assert_eq!(sink.lock().unwrap().len(), 1);
 ```
 
@@ -469,7 +469,7 @@ impl Codec for LabCursor {
         Arc::new(SqliteQueue::open(conn.clone()));
     let store = Arc::new(SqliteMutationStore::<LabCursor>::open(conn.clone()));
 
-    drive(&pipe, queue.clone(), vec![input.clone()], opts);
+    expand(&pipe, queue.clone(), vec![input.clone()], opts);
     assert_eq!(queue.depth(), 1);
     store.put(deterministic_key, Arc::new(result));
     // drop everything ⇒ process exit
@@ -484,8 +484,8 @@ impl Codec for LabCursor {
     let bus   = Arc::new(EventBus::new());
 
     bus.dispatch(Event::KeyDirty(deterministic_key));
-    drive(&pipe, queue.clone(), Vec::new(),
-          DriveOpts::default().with_bus(bus));
+    expand(&pipe, queue.clone(), Vec::new(),
+          ExpandOpts::default().with_bus(bus));
     // sink output identical to never-crashed run.
 }
 ```
@@ -623,7 +623,7 @@ impl Component for ParAstNm {
 }
 ```
 
-`render_batch` sees up to `DriveOpts::batch_cap` rows (default 256)
+`render_batch` sees up to `ExpandOpts::batch_cap` rows (default 256)
 that share `(pipe_hash, depth)`. The batch shape lets the override
 amortize fixed work (compiled patterns, SIMD setup) across the slice.
 
@@ -659,7 +659,7 @@ impl Component for SwitchMap {
                 value: row.value.clone(),
                 wake:  Wake::Key(new_key),
             };
-            splice_into(row, parked, ctx.depth, ctx.drive_tick, queue);
+            splice_into(row, parked, ctx.depth, ctx.expand_tick, queue);
         }
     }
 }
@@ -680,7 +680,7 @@ impl Component for SwitchMap {
 
 ### Driver knob
 
-`DriveOpts::with_batch_cap(n)` caps how many rows the driver pulls
+`ExpandOpts::with_batch_cap(n)` caps how many rows the driver pulls
 per dispatch. Default 256 (matches v3's `DEFAULT_PIPE_CONCURRENCY`).
 `Some(1)` forces per-row delivery.
 

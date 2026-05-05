@@ -2,7 +2,7 @@
 //!
 //! Three flavors:
 //!   - `Immediate`         — driver picks up on next sweep.
-//!   - `Tick { past_tick }` — global drive_tick must advance past it.
+//!   - `Tick { past_tick }` — global expand_tick must advance past it.
 //!   - `Key { domain, key }` — park inside the queue under a (domain,
 //!     key) tag. Producers call `queue.dispatch_park(domain, Some(key))`
 //!     to flip every matching parked row to `Wake::Immediate` in one
