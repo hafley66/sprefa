@@ -18,6 +18,13 @@ use super::wake::Wake;
 ///
 /// dispatch overrides that compute their own `Node<N>` per row can
 /// call this to splice without re-implementing `flatten` + enqueue.
+///
+/// PATH INVARIANT: children get `path = parent.path + [batch_idx]` with
+/// `batch_idx` starting at 0. A `dispatch` that splices the SAME parent
+/// multiple times in one call (e.g. FS streaming flushes) MUST use
+/// `splice_into_at` and thread the running offset, otherwise sibling
+/// paths collide and any path-keyed downstream (Memoize reconcile)
+/// will misidentify children as "the same position re-rendered".
 pub fn splice_into<N: Next>(
     parent:     &QueueRow<N>,
     node:       Node<N>,
@@ -25,7 +32,20 @@ pub fn splice_into<N: Next>(
     expand_tick: ExpandTick,
     queue:      &dyn QueueBackend<N>,
 ) -> usize {
-    let children = flatten(node, parent, next_depth, expand_tick);
+    splice_into_at(parent, node, next_depth, expand_tick, queue, 0)
+}
+
+/// `splice_into` with explicit starting `batch_idx`. For callers that
+/// emit children under one parent across multiple splice calls.
+pub fn splice_into_at<N: Next>(
+    parent:         &QueueRow<N>,
+    node:           Node<N>,
+    next_depth:     u32,
+    expand_tick:    ExpandTick,
+    queue:          &dyn QueueBackend<N>,
+    batch_idx_start: u32,
+) -> usize {
+    let children = flatten_at(node, parent, next_depth, expand_tick, batch_idx_start);
     let n = children.len();
     for child in children { queue.enqueue(child); }
     n
@@ -44,7 +64,18 @@ pub fn splice_into_recorded<N: Next>(
     expand_tick: ExpandTick,
     queue:      &dyn QueueBackend<N>,
 ) -> Vec<([u8; 32], QueueId)> {
-    let children = flatten(node, parent, next_depth, expand_tick);
+    splice_into_recorded_at(parent, node, next_depth, expand_tick, queue, 0)
+}
+
+pub fn splice_into_recorded_at<N: Next>(
+    parent:         &QueueRow<N>,
+    node:           Node<N>,
+    next_depth:     u32,
+    expand_tick:    ExpandTick,
+    queue:          &dyn QueueBackend<N>,
+    batch_idx_start: u32,
+) -> Vec<([u8; 32], QueueId)> {
+    let children = flatten_at(node, parent, next_depth, expand_tick, batch_idx_start);
     children.into_iter().map(|child| {
         let h  = child.value.content_hash();
         let id = queue.enqueue(child);
@@ -67,13 +98,28 @@ pub fn flatten<N: Next>(
     next_depth:    u32,
     expand_tick: ExpandTick,
 ) -> Vec<QueueRow<N>> {
+    flatten_at(node, parent, next_depth, expand_tick, 0)
+}
+
+/// `flatten` with explicit starting `batch_idx`. Use when the caller
+/// splices a parent's children across multiple calls and needs a
+/// continuous path/batch_idx space (FS streaming flushes, paginated
+/// source ops). Single-call sites pass 0.
+pub fn flatten_at<N: Next>(
+    node:           Node<N>,
+    parent:         &QueueRow<N>,
+    next_depth:     u32,
+    expand_tick:    ExpandTick,
+    batch_idx_start: u32,
+) -> Vec<QueueRow<N>> {
     let mut out = Vec::new();
     flatten_into(node, parent, next_depth, expand_tick, &mut out);
     for (i, row) in out.iter_mut().enumerate() {
-        row.batch_idx = i as u32;
+        let bi = batch_idx_start + i as u32;
+        row.batch_idx = bi;
         row.path = {
             let mut p = parent.path.clone();
-            p.push(i as u32);
+            p.push(bi);
             p
         };
     }

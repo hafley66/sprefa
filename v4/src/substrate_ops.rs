@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
-    par_render, splice_into, Component, EventBus, Node, QueueBackend,
+    par_render, splice_into_at, Component, EventBus, Node, QueueBackend,
     QueueRow, RenderCtx,
 };
 use ignore::WalkBuilder;
@@ -64,11 +64,18 @@ impl Component for FsComponent {
             None    => return,
         };
 
+        // Streaming flushes share one parent — must thread a running
+        // batch_idx offset across calls so sibling paths stay unique.
+        // (The path collision is invisible for content-keyed
+        // memoization but breaks position-keyed reconcile via cascade
+        // of "doomed" already-enqueued descendants.)
         let mut buf: Vec<Node<Cursor>> = Vec::with_capacity(self.batch);
-        let flush = |buf: &mut Vec<Node<Cursor>>| {
+        let mut next_idx: u32 = 0;
+        let mut flush = |buf: &mut Vec<Node<Cursor>>, next_idx: &mut u32| {
             if buf.is_empty() { return; }
             let many = Node::Many(std::mem::take(buf));
-            splice_into(parent, many, ctx.depth + 1, ctx.expand_tick, queue);
+            let n = splice_into_at(parent, many, ctx.depth + 1, ctx.expand_tick, queue, *next_idx);
+            *next_idx += n as u32;
         };
 
         for entry in WalkBuilder::new(&self.root).hidden(true).git_ignore(false).build() {
@@ -82,9 +89,9 @@ impl Component for FsComponent {
             c.set("FS", p.display().to_string());
             buf.push(Node::Emit(Arc::new(c)));
 
-            if buf.len() >= self.batch { flush(&mut buf); }
+            if buf.len() >= self.batch { flush(&mut buf, &mut next_idx); }
         }
-        flush(&mut buf);
+        flush(&mut buf, &mut next_idx);
     }
 }
 

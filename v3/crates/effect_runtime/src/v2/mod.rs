@@ -56,7 +56,7 @@ pub use sqlite_queue::SqliteQueue;
 pub use hybrid_queue::{HybridCfg, HybridQueue};
 pub use node::Node;
 pub use component::{par_render, Component, DynComponent, RenderCtx};
-pub use flatten::{splice_into, splice_into_recorded};
+pub use flatten::{splice_into, splice_into_at, splice_into_recorded, splice_into_recorded_at};
 pub use prior_children::{diff_children, ChildDiff, ContentHash, PriorChildIndex};
 pub use queue::{ExpandTick, InstanceId, PipeHash, QueueBackend, QueueId, QueueRow};
 pub use mem_queue::MemQueue;
