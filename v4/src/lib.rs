@@ -90,6 +90,14 @@ impl Cursor {
     pub fn value(&self) -> &str { &self.value }
 }
 
+impl effect_runtime::v2::Row for Cursor {
+    fn get(&self, col: &str) -> Option<&str> { Cursor::get(self, col) }
+    fn set(&mut self, col: &str, value: &str) { Cursor::set(self, col, value); }
+    fn fields(&self) -> Vec<(&str, &str)> {
+        self.terms.iter().map(|(n, v)| (n.as_ref(), v.as_ref())).collect()
+    }
+}
+
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 //   § 2b  Interner — share Arc<str> heap for repeated values
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░

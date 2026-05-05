@@ -3,13 +3,19 @@
 //! React-query / redux-saga vocabulary:
 //!   - `mutationFn`: a function that produces a `T`. Runs off the
 //!     driver thread (thread or tokio task — picked by `Spawner`).
-//!   - "dispatch" hands a `mutationFn` and a `NextKey` to the
-//!     spawner. When the function returns, the result is `put` into
-//!     a `MutationStore<T>` and the queue's `dispatch_park` promotes
+//!   - "dispatch" hands a `mutationFn` and a `NextKey` to the spawner.
+//!     When the function returns, the result is stamped with
+//!     `MUTATION_KEY_COL = hex(key)` and `insert`-ed into the
+//!     dispatcher's `FactStore` under `table` (default
+//!     `mutation_results`). Then the queue's `dispatch_park` promotes
 //!     any parked rows on `(domain, key)` to runnable. The Component
 //!     that returned `Yield { wake: Wake::Key { domain, key } }` re-
-//!     renders in place after wake and reads the result via
-//!     `MutationStore::take`.
+//!     renders in place after wake and looks up the result via
+//!     `store.read_where(table, MUTATION_KEY_COL, hex(key))`.
+//!
+//! Unification note: this used to be a dedicated `MutationStore<T>`
+//! (one-cell, one-row-per-key). It is now a degenerate `FactStore<T>`
+//! table — the unified state backbone of the v2 runtime.
 //!
 //! The Spawner is the runtime seam. `ThreadSpawner` uses
 //! `std::thread::spawn` — zero runtime dependency, the no-tokio path.
@@ -20,10 +26,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::mutation_store::MutationStore;
-use super::next::Next;
+use super::fact_store::FactStore;
 use super::next_key::NextKey;
 use super::queue::QueueBackend;
+use super::row::Row;
 
 pub trait Spawner: Send + Sync + 'static {
     /// Run `f` off the driver thread. Synchronous body — async effects
@@ -56,24 +62,46 @@ impl Spawner for TokioSpawner {
 /// per domain via `with_domain`.
 pub const DEFAULT_EFFECT_DOMAIN: &str = "effect";
 
-pub struct EffectDispatch<T: Next> {
-    pub store:   Arc<MutationStore<T>>,
+/// Default fact table for mutation result writeback.
+pub const DEFAULT_MUTATION_TABLE: &str = "mutation_results";
+
+/// Column name used to key mutation results by their `NextKey` (hex).
+/// Colon-prefixed = internal term, not a user capture.
+pub const MUTATION_KEY_COL: &str = ":mutation_key";
+
+/// Hex-encode a `NextKey` for storage as a string column.
+pub fn key_hex(key: NextKey) -> String {
+    let mut s = String::with_capacity(64);
+    for b in &key.0 {
+        use std::fmt::Write;
+        let _ = write!(&mut s, "{:02x}", b);
+    }
+    s
+}
+
+pub struct EffectDispatch<T: Row> {
+    pub store:   Arc<dyn FactStore<T>>,
     pub spawner: Arc<dyn Spawner>,
     pub queue:   Arc<dyn QueueBackend<T>>,
     pub domain:  Cow<'static, str>,
+    pub table:   Cow<'static, str>,
 }
 
-impl<T: Next> EffectDispatch<T> {
+impl<T: Row> EffectDispatch<T> {
     pub fn new(
-        store:   Arc<MutationStore<T>>,
+        store:   Arc<dyn FactStore<T>>,
         spawner: Arc<dyn Spawner>,
         queue:   Arc<dyn QueueBackend<T>>,
     ) -> Self {
+        // Declare the default mutation_results table with the key
+        // column. Idempotent on re-construction.
+        store.declare(DEFAULT_MUTATION_TABLE, &[MUTATION_KEY_COL]);
         Self {
             store,
             spawner,
             queue,
             domain: Cow::Borrowed(DEFAULT_EFFECT_DOMAIN),
+            table:  Cow::Borrowed(DEFAULT_MUTATION_TABLE),
         }
     }
 
@@ -82,12 +110,31 @@ impl<T: Next> EffectDispatch<T> {
         self
     }
 
-    /// Fire `mutation_fn` off-thread, route its result back through
-    /// `store` keyed by `key`, then promote every parked row on
-    /// `(self.domain, key)` to runnable. The caller typically returns
+    /// Override the writeback table. The caller must `declare` it
+    /// (with `MUTATION_KEY_COL` first or as one of the columns).
+    pub fn with_table(mut self, t: impl Into<Cow<'static, str>>) -> Self {
+        self.table = t.into();
+        self
+    }
+
+    /// Look up a previously-dispatched mutation result by its
+    /// `NextKey`. Returns the most recent row whose
+    /// `MUTATION_KEY_COL` equals `hex(key)`, or `None` if no result
+    /// has landed yet.
+    pub fn take_result(&self, key: NextKey) -> Option<Arc<T>> {
+        let hex = key_hex(key);
+        self.store.read_where(self.table.as_ref(), MUTATION_KEY_COL, &hex)
+            .into_iter().last()
+    }
+
+    /// Fire `mutation_fn` off-thread, stamp the result with
+    /// `MUTATION_KEY_COL = hex(key)`, insert into the dispatcher's
+    /// table, then promote every parked row on `(self.domain, key)`
+    /// to runnable. The caller typically returns
     /// `Yield { wake: Wake::Key { domain: self.domain, key } }` from
-    /// `render` so the parker re-renders after wake and picks up the
-    /// result.
+    /// `render` so the parker re-renders after wake and reads the
+    /// result via `take_result(key)` (or directly via
+    /// `store.read_where(...)`).
     pub fn dispatch<F>(&self, key: NextKey, mutation_fn: F)
     where
         F: FnOnce() -> T + Send + 'static,
@@ -95,9 +142,11 @@ impl<T: Next> EffectDispatch<T> {
         let store  = self.store.clone();
         let queue  = self.queue.clone();
         let domain = self.domain.clone();
+        let table  = self.table.clone();
         self.spawner.spawn(Box::new(move || {
-            let result = mutation_fn();
-            store.put(key, Arc::new(result));
+            let mut result = mutation_fn();
+            result.set(MUTATION_KEY_COL, &key_hex(key));
+            store.insert(table.as_ref(), Arc::new(result));
             queue.dispatch_park(domain.as_ref(), Some(key));
         }));
     }

@@ -14,9 +14,8 @@ pub mod next;
 pub mod next_key;
 pub mod event_bus;
 pub mod wake;
-pub mod mutation_store;
-#[cfg(feature = "sqlite")]
-pub mod sqlite_mutation_store;
+pub mod row;
+pub mod fact_store;
 pub mod codec;
 pub mod effect_dispatch;
 pub mod memoize;
@@ -38,9 +37,10 @@ pub use next::Next;
 pub use next_key::{compute_key, NextKey};
 pub use event_bus::{Event, EventBus};
 pub use wake::Wake;
-pub use mutation_store::MutationStore;
+pub use row::Row;
+pub use fact_store::{FactStore, MemFactStore, fact_domain, fact_dirty_key};
 #[cfg(feature = "sqlite")]
-pub use sqlite_mutation_store::SqliteMutationStore;
+pub use fact_store::SqliteFactStore;
 pub use codec::Codec;
 pub use diag::{ByteRange, Diag, DiagSink, NoopDiagSink, Severity};
 pub use effect_dispatch::{EffectDispatch, Spawner, ThreadSpawner, TokioSpawner};

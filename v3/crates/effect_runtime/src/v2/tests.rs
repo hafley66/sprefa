@@ -14,9 +14,17 @@ const TEST_DOMAIN: &str = "test";
 
 // --- demo carrier -----------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LabCursor {
     pub terms: Vec<(String, String)>,
+}
+
+impl super::row::Row for LabCursor {
+    fn get(&self, col: &str) -> Option<&str> { LabCursor::get(self, col) }
+    fn set(&mut self, col: &str, value: &str) { LabCursor::set(self, col, value.to_string()); }
+    fn fields(&self) -> Vec<(&str, &str)> {
+        self.terms.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect()
+    }
 }
 
 impl LabCursor {
@@ -308,10 +316,12 @@ fn mutation_store_routes_async_response_back() {
     /// Single Component: dispatches off-thread on first render, parks
     /// via Yield, re-renders on wake, takes the response from the store
     /// and emits.
+    use super::effect_dispatch::{key_hex, MUTATION_KEY_COL};
+
     struct AsyncUppercase {
         bus:        Arc<EventBus>,
         queue:      Arc<dyn QueueBackend<LabCursor>>,
-        responses:  Arc<MutationStore<LabCursor>>,
+        responses:  Arc<dyn FactStore<LabCursor>>,
         dispatched: Mutex<std::collections::HashMap<[u8; 32], NextKey>>,
     }
     impl Component for AsyncUppercase {
@@ -320,7 +330,9 @@ fn mutation_store_routes_async_response_back() {
             let hash = c.content_hash();
             let mut d = self.dispatched.lock().unwrap();
             if let Some(&key) = d.get(&hash) {
-                if let Some(resp) = self.responses.take(key) {
+                let hex = key_hex(key);
+                let rows = self.responses.read_where("results", MUTATION_KEY_COL, &hex);
+                if let Some(resp) = rows.into_iter().last() {
                     d.remove(&hash);
                     return Node::Emit(resp);
                 }
@@ -341,7 +353,8 @@ fn mutation_store_routes_async_response_back() {
                 std::thread::sleep(Duration::from_millis(5));
                 let mut out = parent;
                 out.set(":upper", raw.to_uppercase());
-                resp_t.put(key, Arc::new(out));
+                out.set(MUTATION_KEY_COL, key_hex(key));
+                resp_t.insert("results", Arc::new(out));
                 queue_t.dispatch_park(TEST_DOMAIN, Some(key));
             });
 
@@ -355,7 +368,8 @@ fn mutation_store_routes_async_response_back() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
     let sink  = Arc::new(Mutex::new(Vec::new()));
     let bus   = Arc::new(EventBus::new());
-    let resp  = Arc::new(MutationStore::<LabCursor>::new());
+    let resp: Arc<dyn FactStore<LabCursor>> = Arc::new(MemFactStore::<LabCursor>::new());
+    resp.declare("results", &[MUTATION_KEY_COL, ":upper", ":raw"]);
 
     let pipe = PipeInstance::new(vec![
         Arc::new(AsyncUppercase {
@@ -374,7 +388,7 @@ fn mutation_store_routes_async_response_back() {
     assert_eq!(queue.depth(), 1);
 
     // Wait for the spawned thread to land its result + promote.
-    while resp.is_empty() { std::thread::yield_now(); }
+    while resp.len("results") == 0 { std::thread::yield_now(); }
     std::thread::sleep(Duration::from_millis(15));
 
     expand(&pipe, queue.clone(), Vec::new(), opts);
@@ -382,7 +396,6 @@ fn mutation_store_routes_async_response_back() {
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].get(":upper"), Some("HELLO"));
     assert_eq!(got[0].get(":raw"),   Some("hello"));
-    assert!(resp.is_empty(), "response taken from store");
     assert_eq!(queue.depth(), 0);
 }
 
@@ -625,10 +638,12 @@ fn sqlite_queue_yield_parks_until_dispatch_park() {
 
 /// Crash-restart proof.
 ///
-/// 1. Open a SqliteQueue + SqliteMutationStore on a real file.
-/// 2. Drive a pipe that parks on a key. Pre-populate the mutation
-///    result in the persistent store under that key (simulating a
-///    completed mutationFn just before "crash").
+/// 1. Open a SqliteQueue + SqliteFactStore on a real file (separate
+///    connections; the old shared-conn coupling is gone now that
+///    MutationStore was unified into FactStore).
+/// 2. Drive a pipe that parks on a key. Pre-populate the result row
+///    in the persistent fact store under MUTATION_KEY_COL=hex(key)
+///    (simulating a completed mutationFn just before "crash").
 /// 3. Drop everything. Reopen and redrive.
 /// 4. Rather than re-issuing a bus event, the second process calls
 ///    `queue.dispatch_park` directly to promote the persisted parked
@@ -637,13 +652,18 @@ fn sqlite_queue_yield_parks_until_dispatch_park() {
 #[test]
 fn crash_restart_resumes_parked_row_with_persisted_mutation() {
     use std::sync::Mutex as StdMutex;
+    use super::effect_dispatch::{key_hex, MUTATION_KEY_COL};
 
-    struct ParkAndConsume { store: Arc<SqliteMutationStore<LabCursor>> }
+    const RESULTS: &str = "results";
+
+    struct ParkAndConsume { store: Arc<dyn FactStore<LabCursor>> }
     impl Component for ParkAndConsume {
         type Next = LabCursor;
         fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
             let k = deterministic_key(c);
-            if let Some(resp) = self.store.take(k) {
+            let hex = key_hex(k);
+            let rows = self.store.read_where(RESULTS, MUTATION_KEY_COL, &hex);
+            if let Some(resp) = rows.into_iter().last() {
                 return Node::Emit(resp);
             }
             Node::Yield {
@@ -662,6 +682,7 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
 
     let dir = tempdir();
     let db_path = dir.join("crash_restart.db");
+    let fact_path = dir.join("crash_restart_facts.db");
 
     let input = lc(":raw", "alpha");
     let key = deterministic_key(&input);
@@ -670,7 +691,9 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
         let conn = Arc::new(StdMutex::new(rusqlite::Connection::open(&db_path).unwrap()));
         let queue: Arc<dyn QueueBackend<LabCursor>> =
             Arc::new(SqliteQueue::open(conn.clone()));
-        let store = Arc::new(SqliteMutationStore::<LabCursor>::open(conn.clone()));
+        let store: Arc<dyn FactStore<LabCursor>> =
+            Arc::new(SqliteFactStore::<LabCursor>::open_file(&fact_path).unwrap());
+        store.declare(RESULTS, &[MUTATION_KEY_COL, ":raw", ":upper"]);
         let bus   = Arc::new(EventBus::new());
 
         let pipe = PipeInstance::new(vec![
@@ -685,8 +708,9 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
 
         let mut result = (*input).clone();
         result.set(":upper", "ALPHA");
-        store.put(key, Arc::new(result));
-        assert_eq!(store.len(), 1);
+        result.set(MUTATION_KEY_COL, key_hex(key));
+        store.insert(RESULTS, Arc::new(result));
+        assert_eq!(store.len(RESULTS), 1);
     }
 
     let collected = Arc::new(Mutex::new(Vec::new()));
@@ -694,14 +718,15 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
         let conn = Arc::new(StdMutex::new(rusqlite::Connection::open(&db_path).unwrap()));
         let queue: Arc<dyn QueueBackend<LabCursor>> =
             Arc::new(SqliteQueue::open(conn.clone()));
-        let store = Arc::new(SqliteMutationStore::<LabCursor>::open(conn.clone()));
+        let store: Arc<dyn FactStore<LabCursor>> =
+            Arc::new(SqliteFactStore::<LabCursor>::open_file(&fact_path).unwrap());
         let bus   = Arc::new(EventBus::new());
 
         // Park-as-row: the queue itself holds the wake state. Promote
         // the parked row directly through `dispatch_park`.
         let promoted = queue.dispatch_park(TEST_DOMAIN, Some(key));
         assert_eq!(promoted, 1, "parked row promoted after restart");
-        assert_eq!(store.len(), 1);
+        assert_eq!(store.len(RESULTS), 1);
 
         let pipe = PipeInstance::new(vec![
             Arc::new(ParkAndConsume { store: store.clone() })
@@ -712,7 +737,8 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
 
         expand(&pipe, queue.clone(), Vec::new(), opts);
         assert_eq!(queue.depth(), 0);
-        assert_eq!(store.len(),  0);
+        // FactStore does not remove on read; result row stays put.
+        assert_eq!(store.len(RESULTS), 1);
     }
 
     let got = collected.lock().unwrap();
@@ -725,7 +751,6 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
 
 struct DispatchUppercase {
     fx:         Arc<EffectDispatch<LabCursor>>,
-    store:      Arc<MutationStore<LabCursor>>,
     domain:     &'static str,
     dispatched: Mutex<std::collections::HashSet<[u8; 32]>>,
 }
@@ -735,7 +760,7 @@ impl Component for DispatchUppercase {
         let hash = c.content_hash();
         let key  = NextKey(hash);
 
-        if let Some(r) = self.store.take(key) {
+        if let Some(r) = self.fx.take_result(key) {
             return Node::Emit(r);
         }
 
@@ -768,7 +793,8 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
     let sink  = Arc::new(Mutex::new(Vec::new()));
     let bus   = Arc::new(EventBus::new());
-    let store = Arc::new(MutationStore::<LabCursor>::new());
+    let store: Arc<dyn FactStore<LabCursor>> =
+        Arc::new(MemFactStore::<LabCursor>::new());
     let fx    = Arc::new(EffectDispatch::new(
         store.clone(),
         Arc::new(ThreadSpawner),
@@ -778,7 +804,6 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
     let pipe = PipeInstance::new(vec![
         Arc::new(DispatchUppercase {
             fx: fx.clone(),
-            store: store.clone(),
             domain: "phase-b",
             dispatched: Mutex::new(std::collections::HashSet::new()),
         }) as Arc<dyn Component<Next = LabCursor>>,
@@ -790,7 +815,9 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
     assert_eq!(queue.depth(), 1);
 
     // Wait until the spawned thread has put + dispatched_park.
-    while store.is_empty() { std::thread::yield_now(); }
+    while store.len(super::effect_dispatch::DEFAULT_MUTATION_TABLE) == 0 {
+        std::thread::yield_now();
+    }
     std::thread::sleep(Duration::from_millis(5));
 
     expand(&pipe, queue.clone(), Vec::new(), opts);
@@ -813,7 +840,8 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
         let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
         let sink  = Arc::new(Mutex::new(Vec::new()));
         let bus   = Arc::new(EventBus::new());
-        let store = Arc::new(MutationStore::<LabCursor>::new());
+        let store: Arc<dyn FactStore<LabCursor>> =
+            Arc::new(MemFactStore::<LabCursor>::new());
         let fx    = Arc::new(EffectDispatch::new(
             store.clone(),
             Arc::new(TokioSpawner),
@@ -823,7 +851,6 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
         let pipe = PipeInstance::new(vec![
             Arc::new(DispatchUppercase {
                 fx: fx.clone(),
-                store: store.clone(),
                 domain: "tokio-b",
                 dispatched: Mutex::new(std::collections::HashSet::new()),
             }) as Arc<dyn Component<Next = LabCursor>>,
@@ -834,7 +861,7 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
         expand(&pipe, queue.clone(), vec![lc(":raw", "tokio-b")], opts.clone());
         assert_eq!(queue.depth(), 1);
 
-        while store.is_empty() {
+        while store.len(super::effect_dispatch::DEFAULT_MUTATION_TABLE) == 0 {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;

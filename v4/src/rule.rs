@@ -18,11 +18,12 @@ use effect_runtime::v2::{
 };
 
 use crate::Cursor;
-use crate::fact::{FactRead, FactStore, FactWrite};
+use crate::fact::{FactRead, FactWrite};
+use effect_runtime::v2::FactStore;
 #[cfg(test)]
-use crate::fact::MemFactStore;
+use effect_runtime::v2::MemFactStore;
 // Note: FactStore is now a trait. Rule constructors take
-// `Arc<dyn FactStore>` so callers can pick MemFactStore or
+// `Arc<dyn FactStore<Cursor>>` so callers can pick MemFactStore or
 // SqliteFactStore at the seam.
 
 /// A callable rule. `body` is the pipe that produces rows; `sink_table`
@@ -30,7 +31,7 @@ use crate::fact::MemFactStore;
 #[derive(Clone)]
 pub struct Rule {
     pub name:       Arc<str>,
-    pub store:      Arc<dyn FactStore>,
+    pub store:      Arc<dyn FactStore<Cursor>>,
     pub sink_table: Arc<str>,
     pub sink_cols:  Arc<Vec<Arc<str>>>,
     body_steps:     Arc<Vec<Arc<dyn Component<Next = Cursor>>>>,
@@ -39,7 +40,7 @@ pub struct Rule {
 impl Rule {
     pub fn new(
         name:       impl Into<Arc<str>>,
-        store:      Arc<dyn FactStore>,
+        store:      Arc<dyn FactStore<Cursor>>,
         sink_table: impl Into<Arc<str>>,
         sink_cols:  &[&str],
         body:       Pipe<Cursor>,
@@ -61,7 +62,7 @@ impl Rule {
     /// seed is a declaration no-op.
     pub fn passthrough(
         name:       impl Into<Arc<str>>,
-        store:      Arc<dyn FactStore>,
+        store:      Arc<dyn FactStore<Cursor>>,
         sink_table: impl Into<Arc<str>>,
         sink_cols:  &[&str],
     ) -> Self {
@@ -94,7 +95,7 @@ impl Rule {
     /// `rule?` — produce a `FactRead` Component aimed at this rule's
     /// sink table. The Component slots into any pipe.
     pub fn query(
-        store:      Arc<dyn FactStore>,
+        store:      Arc<dyn FactStore<Cursor>>,
         sink_table: impl Into<Arc<str>>,
         key_term:   impl Into<Arc<str>>,
         project:    &[&str],
@@ -128,7 +129,7 @@ mod tests {
 
     #[test]
     fn passthrough_rule_writes_seed_into_sink() {
-        let store = Arc::new(MemFactStore::new());
+        let store = Arc::new(MemFactStore::<Cursor>::new());
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let rule = Rule::passthrough("noop", store.clone(), "out", &["FILE"]);
 
@@ -157,7 +158,7 @@ mod tests {
             }
         }
 
-        let store = Arc::new(MemFactStore::new());
+        let store = Arc::new(MemFactStore::<Cursor>::new());
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let body  = Pipe::new().step(Arc::new(Upcase));
         let rule  = Rule::new("upcase", store.clone(), "loud", &[], body);
@@ -172,7 +173,7 @@ mod tests {
     #[test]
     fn rule_query_reads_from_sink_table() {
         // Step 1: populate via run_with.
-        let store = Arc::new(MemFactStore::new());
+        let store = Arc::new(MemFactStore::<Cursor>::new());
         let q1: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let rule = Rule::passthrough("strings", store.clone(), "strings", &["FILE", "HIT"]);
         rule.run_with(q1,
