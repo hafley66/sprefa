@@ -91,6 +91,15 @@ async fn main() {
     // effect_runtime::v2 Component pipeline (Fs > AstNm > Count). Bare
     // mode only. Direct A/B against the native v4 path.
     let mut substrate = false;
+    // --memoize off|on|reconcile (substrate path only). Wraps AstNm in
+    // Memoize. `on` adds cache lookup cost; `reconcile` adds cache +
+    // PriorChildIndex diff. Useful for measuring (b)/(c) overhead on
+    // a workload where reconcile gains nothing (one-shot scan).
+    let mut memoize = String::from("off");
+    // --memoize-share: reuse the same MemoCache + PriorChildIndex
+    // across trials. Trials 2..N see warm cache (cache hits = inner
+    // skipped). Default off (fresh per trial = cold cost).
+    let mut memoize_share = false;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -114,6 +123,8 @@ async fn main() {
             "--verify"       => { verify       = true; i += 1; }
             "--cache"        => { cache        = true; i += 1; }
             "--substrate"    => { substrate    = true; i += 1; }
+            "--memoize"      => { memoize      = args[i+1].clone(); i += 2; }
+            "--memoize-share"=> { memoize_share= true; i += 1; }
             other       => panic!("unknown arg: {}", other),
         }
     }
@@ -127,8 +138,16 @@ async fn main() {
 
     rayon::ThreadPoolBuilder::new().num_threads(workers).build_global().ok();
 
-    eprintln!("mode={:?} workers={} cap={} batch={} trials={} pattern={:?} lang={:?} root={} cache={} substrate={}",
-              mode, workers, cap, batch, trials, pattern_src, lang, root.display(), cache, substrate);
+    eprintln!(
+        "mode={:?} workers={} cap={} batch={} trials={} pattern={:?} lang={:?} root={} cache={} substrate={} memoize={} memoize_share={}",
+        mode, workers, cap, batch, trials, pattern_src, lang, root.display(), cache, substrate, memoize, memoize_share,
+    );
+    if !matches!(memoize.as_str(), "off" | "on" | "reconcile") {
+        panic!("--memoize must be off|on|reconcile, got {memoize:?}");
+    }
+    if memoize != "off" && !substrate {
+        panic!("--memoize requires --substrate");
+    }
 
     // Substrate (effect_runtime::v2) path: bare-mode A/B against native v4.
     // Skips Hooks/Store/saga entirely. Three Components: Fs > AstNm > Count.
@@ -138,18 +157,52 @@ async fn main() {
         }
         use std::sync::Arc;
         use effect_runtime::v2::{
-            expand, Component, ExpandOpts, MemQueue, PipeInstance, QueueBackend,
+            expand, Component, ExpandOpts, MemQueue, MemoCache, Memoize,
+            PipeInstance, PriorChildIndex, QueueBackend,
         };
         use v4::substrate_ops::{AstNmComponent, CountComponent, FsComponent};
+
+        // Shared cache + index across trials when --memoize-share.
+        let shared_cache: Option<Arc<MemoCache<v4::Cursor>>> =
+            if memoize_share && memoize != "off" {
+                Some(Arc::new(MemoCache::new()))
+            } else { None };
+        let shared_idx: Option<Arc<PriorChildIndex>> =
+            if memoize_share && memoize == "reconcile" {
+                Some(Arc::new(PriorChildIndex::new()))
+            } else { None };
 
         let mut walls = Vec::new();
         let mut last_matches: u64 = 0;
         for trial in 1..=trials {
             let counter = Arc::new(AtomicU64::new(0));
+
+            let astnm: Arc<dyn Component<Next = v4::Cursor>> = match memoize.as_str() {
+                "off" => Arc::new(AstNmComponent::new(pattern_src.clone(), lang)),
+                "on"  => {
+                    let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
+                    Arc::new(Memoize::new(
+                        AstNmComponent::new(pattern_src.clone(), lang),
+                        "astnm",
+                        cache,
+                    ).with_domain("fs"))
+                }
+                "reconcile" => {
+                    let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
+                    let idx   = shared_idx.clone().unwrap_or_else(|| Arc::new(PriorChildIndex::new()));
+                    Arc::new(Memoize::new(
+                        AstNmComponent::new(pattern_src.clone(), lang),
+                        "astnm",
+                        cache,
+                    ).with_domain("fs").with_prior_children(idx))
+                }
+                _ => unreachable!(),
+            };
+
             let pipe = PipeInstance::new(vec![
                 Arc::new(FsComponent::new(root.clone(), exts.clone(), batch))
                     as Arc<dyn Component<Next = v4::Cursor>>,
-                Arc::new(AstNmComponent::new(pattern_src.clone(), lang)),
+                astnm,
                 Arc::new(CountComponent { count: counter.clone() }),
             ]);
             let queue: Arc<dyn QueueBackend<v4::Cursor>> = Arc::new(MemQueue::new());

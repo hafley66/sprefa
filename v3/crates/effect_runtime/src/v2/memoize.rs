@@ -201,39 +201,71 @@ impl<C: Component> Component for Memoize<C> {
         node
     }
 
-    /// Tier 3. Per-row substrate path that records the producing row's
-    /// id so cascade_delete can later wipe its descendants on cache
-    /// eviction. Bypasses `render_batch` of the inner Component since
-    /// caching is per-row by definition.
+    /// Tier 3. Substrate path that records each producing row's id so
+    /// cascade_delete can later wipe its descendants on cache eviction.
+    /// Preserves inner's `render_batch` override: misses are batched
+    /// into a single inner.render_batch call; hits replay cached node
+    /// without invoking inner.
     ///
-    /// When `with_prior_children` was called, this also performs
-    /// multiset-diff reconcile against the prior child set at the same
-    /// `row.path`: doomed children are cascade_deleted, kept children
-    /// stay (their downstream subtrees are preserved), only added
-    /// children are enqueued. Otherwise behaves as in (b): re-splices
-    /// every child, no diff.
+    /// When `with_prior_children` was called, performs multiset-diff
+    /// reconcile against the prior child set at each row.path: doomed
+    /// children are cascade_deleted, kept children stay (downstream
+    /// subtrees preserved), only added children are enqueued.
     fn dispatch(
         &self,
         ctx:   &RenderCtx,
         rows:  &[QueueRow<Self::Next>],
         queue: &dyn QueueBackend<Self::Next>,
     ) {
+        // Pre-pass: classify rows as cache hit or miss. Within a batch
+        // of identical inputs, dedupe so inner only renders each unique
+        // input once; identical inputs share that result.
+        let mut nodes: Vec<Option<Node<Self::Next>>> = Vec::with_capacity(rows.len());
+        let mut input_hashes: Vec<[u8; 32]>          = Vec::with_capacity(rows.len());
+        let mut keys:         Vec<MemoKey>           = Vec::with_capacity(rows.len());
+        let mut miss_inputs:  Vec<&Self::Next>       = Vec::new();
+        let mut row_to_miss:  Vec<Option<usize>>     = Vec::with_capacity(rows.len());
+        let mut miss_seen:    std::collections::HashMap<MemoKey, usize> =
+            std::collections::HashMap::new();
+
         for row in rows {
-            let input = row.value.content_hash();
-            let key   = self.key_for(&input);
-            let node  = if let Some(cached) = self.cache.lookup(key) {
-                cached
+            let h = row.value.content_hash();
+            let k = self.key_for(&h);
+            input_hashes.push(h);
+            keys.push(k);
+            if let Some(cached) = self.cache.lookup(k) {
+                nodes.push(Some(cached));
+                row_to_miss.push(None);
             } else {
-                let n = self.inner.render(ctx, &row.value);
-                self.cache.put_with_source(
-                    key,
-                    n.clone(),
-                    self.domains.clone(),
-                    input,
-                    Some(row.id),
-                );
-                n
-            };
+                nodes.push(None);
+                let mi = *miss_seen.entry(k).or_insert_with(|| {
+                    let idx = miss_inputs.len();
+                    miss_inputs.push(row.value.as_ref());
+                    idx
+                });
+                row_to_miss.push(Some(mi));
+            }
+        }
+
+        if !miss_inputs.is_empty() {
+            let rendered = self.inner.render_batch(ctx, &miss_inputs);
+            for (i, mi_opt) in row_to_miss.iter().enumerate() {
+                if let Some(mi) = mi_opt {
+                    let n = rendered[*mi].clone();
+                    self.cache.put_with_source(
+                        keys[i],
+                        n.clone(),
+                        self.domains.clone(),
+                        input_hashes[i],
+                        Some(rows[i].id),
+                    );
+                    nodes[i] = Some(n);
+                }
+            }
+        }
+
+        for (row_i, row) in rows.iter().enumerate() {
+            let node = nodes[row_i].take().unwrap();
 
             match &self.children {
                 None => {
