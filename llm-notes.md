@@ -777,3 +777,188 @@ To pause inside what feels like one logical step, the author splits it: op A ren
 - **Effect.then evaluation timing**: closure inside `then` evaluated at queue-fold time (when response arrives) vs op's render called again with response in input cursor. Lean: re-render with response, since "render is a pure function of cursor" is the load-bearing invariant. Means `Effect.then` is a *cursor template*, not an arbitrary continuation.
 - **Mem backend's parity story**: SqliteQueue gives restart survival for free. MemQueue can't. Either accept the asymmetry (Mem = ephemeral, like RAM) or build a periodic Mem→Sqlite snapshot. Almost certainly the former — Mem is the throughput backend; durability is what you switch to Sqlite for.
 - **Pipe authoring surface**: today pipes are `Vec<Box<dyn Op>>`. With Mount, pipes can be cursor-term values (subpipe references). Need a registry: name → pipe definition. Probably `PipeRegistry` as a `Hooks.stores` entry, parallel to `mount_registry`.
+
+---
+
+## v4 workspace layout — partition plan (session 7, 2026-05-04)
+
+User asked for "ideal v4 dream-team lib/crate/bin arrangement, thin shell clients, popular OSS for config, save somewhere for citation." Plan revised after consulting two parallel sonnet agents (pragmatics + semantics angles); both independently flagged ops-as-own-crate, `engine` as the wrong central name, and three premature splits.
+
+### Tiny summary
+
+Three tiers, eleven crates. Shells import only `sprefa_main`. Operators get their own crate. Single rule (`shells → sprefa_main` only) does the architectural policing.
+
+```
+   libs/      — sprf-blind pure libs (2)
+   core/      — sprf-irreducible (5)
+   shells/    — thin process clients (3)
+   bench/     — tooling (1)
+```
+
+### Partition
+
+```
+   tier 1 — pure libs (sprf-blind)
+   ───────────────────────────────
+   libs/cst              parse + match + DslBodyLsp           DONE
+   libs/effect_runtime   Component/Next, render bus, batcher  IN FLIGHT (s5)
+                         + effect_store module: mem | sqlite
+                         (via [features] sqlite). Lives inside
+                         effect_runtime, not its own crate —
+                         the store is effect_runtime's, splitting
+                         it adds a boundary without insight.
+
+   tier 2 — sprf irreducible
+   ─────────────────────────
+   core/sprefa_parse     host CST + tree-sitter grammar
+                         (build.rs folds in ts artifacts)
+   core/sprefa_types     Cursor, TermBag, capture flow,
+                         tag/relation, write-target tuple
+   core/sprefa_ops       ~20 ops, flat dir, one file per op:
+                         re, glob, json, ast, fs/, fact, tag,
+                         write_cursor, write_file, render,
+                         comment, repo, rev, rule, str_op,
+                         sh, void, ...
+   core/sprefa_compile   host CST → Vec<Component>,
+                         op-name registry, ${...} eval,
+                         bracket-arg dispatch
+   core/sprefa_main      Session, run/query/lsp_request API.
+                         The ONLY crate shells import.
+
+   tier 3 — thin shells
+   ────────────────────
+   shells/sprefa-cli     ~150 LoC main.rs. clap → main → stdout.
+   shells/sprefa-lsp     ~200 LoC main.rs. lsp_server::Connection
+                         → main.lsp_request.
+   shells/sprefa-http    ~200 LoC main.rs. axum router.
+                         Subsumes v3 transport_http + transport_lsp ws.
+
+   tier 4 — tooling
+   ────────────────
+   bench/v4-bench        bench harness, depends on sprefa_main.
+```
+
+### Why ops get their own crate
+
+v3 has ~20 ops actively under development. Burying them inside `sprefa_compile` puts the highest-churn surface inside a compile-phase crate; every op edit dirties everything downstream. Splitting:
+
+- `sprefa_ops` is the single grep destination for "where does write_cursor live"
+- ops deps: `sprefa_types`, `cst`, `effect_runtime`
+- `sprefa_compile` deps `sprefa_ops` for the registry; doesn't co-rebuild on op edits
+
+Grouping inside `sprefa_ops` is flat (one file per op, mirroring v3). Subgrouping by mode (read/write/source/control) was considered and dropped — adds an indirection that makes "where does fact.rs live" two-step instead of one.
+
+### Main API surface (what makes shells trivial)
+
+```rust
+pub struct Session;
+
+impl Session {
+    pub fn new(cfg: Config, store: Arc<dyn Store>) -> Self;
+    pub async fn run(&self, src: &str) -> impl Stream<Item = RunEvent>;
+    pub async fn lsp_initialize(&self, p: InitializeParams) -> InitializeResult;
+    pub async fn lsp_request(&self, req: LspRequest) -> LspResponse;
+    pub async fn lsp_notify(&self, n: LspNotification);
+}
+```
+
+### Naming decisions (locked)
+
+| crate            | rationale                                                                       |
+|------------------|---------------------------------------------------------------------------------|
+| `sprefa_main`    | shells go here to import. Matches "main entry point" mental model               |
+| `sprefa_compile` | full compile phase (host CST → ops). "lower" implied a non-existent sibling pass|
+| `sprefa_types`   | language's live data types. "core" overloads with stdlib connotation            |
+| `sprefa_ops`     | flat one-file-per-op dir. Highest-churn surface, own crate                      |
+| `sprefa_parse`   | folds tree-sitter grammar (separate crate boundary bought nothing)              |
+| `cst`            | kept. Pure enough; README + 80 tests already say cst                            |
+| `effect_store`   | module inside `effect_runtime`, not its own crate. mem | sqlite via feature    |
+
+### v3 failure modes this layout fixes
+
+- `server::backend.rs` 2166 LoC mixed lsp dispatch + state + diag publish.
+  v4: dispatch lives in `sprefa_main`; transport in shell. backend.rs disappears.
+- `server::run.rs` 995 LoC run loop + cursor accumulation + RunEvent shaping.
+  v4: `Session::run -> Stream<RunEvent>`. Shell only consumes the stream.
+- `server::session.rs` 754 LoC correct shape, wrong crate.
+  v4: same code, moved to `sprefa_main` where it's the public type.
+- v3 ops scattered inside `pipeline/` alongside types/effects/registry.
+  v4: `sprefa_ops` isolates the high-churn surface from compile + types.
+
+### Config — outsourced to popular OSS, no bespoke loader
+
+Stack (~80 LoC of own code, one file):
+
+| role            | crate                                |
+|-----------------|--------------------------------------|
+| CLI args        | `clap` "4" (derive, env, completions)|
+| layered config  | `figment` "0.10" (provider chain)    |
+| schema          | `serde` "1"                          |
+| file format     | `toml` "0.8"                         |
+| XDG paths       | `directories` "5"                    |
+| logging         | `tracing` + `tracing-subscriber`     |
+| errors          | `thiserror` (libs) + `anyhow` (bins) |
+| .env (optional) | `dotenvy` "0.15"                     |
+
+Resolution order owned by figment: `defaults < ~/.config/sprefa/config.toml < ./sprefa.toml < SPREFA_* env < CLI`. `deny_unknown_fields` catches typos. Yeoman analogue: `sprefa init` writes `include_str!("../templates/sprefa.toml")`. ~10 LoC.
+
+`Config` lives inline in `sprefa_main`. Promote to `libs/config` only when a 4th non-main consumer appears.
+
+### Crate graph (11 crates, acyclic)
+
+```
+   cst ──► (no v4 deps)
+   effect_runtime ──► cst   (effect_store is an internal module
+                             of effect_runtime; sqlite gated by
+                             [features] sqlite)
+
+   sprefa_parse   ──► (build.rs uses tree-sitter)
+   sprefa_types   ──► sprefa_parse
+   sprefa_ops     ──► sprefa_types, cst, effect_runtime
+   sprefa_compile ──► sprefa_ops, sprefa_types, cst
+   sprefa_main    ──► sprefa_compile, effect_runtime
+
+   sprefa-{cli,lsp,http} ──► sprefa_main
+   v4-bench       ──► sprefa_main
+```
+
+### Why 11 is the floor
+
+Going below 11 means:
+- fold ops into compile → restores high-churn rebuild coupling
+- fold types into compile → cyclic with ops
+- fold parse into types → forces tree-sitter dep on Cursor consumers
+- fold cst into a smaller pattern lib → already collapsed maximally
+- fold main into shells → loses the thin-shell rule
+- split effect_store out of effect_runtime → pedantic without insight;
+  the store is effect_runtime's own persistence, not a generic shared
+  crate
+
+Each costs more than it saves.
+
+### Migration order (rough)
+
+1. add `effect_store` module to effect_runtime (mem + sqlite feature) (~1–2 days)
+2. rebuild `Cursor` against effect_store's persistence trait (~half day)
+3. split current `v4/src/lib.rs` (2683 LoC) into `sprefa_types` +
+   `sprefa_ops` + `sprefa_compile` + `sprefa_main` (~2 days)
+4. write three shells (~1 day total, ~200 LoC each)
+5. move `v4-bench` under `bench/`, depend on `sprefa_main` (~1 hr)
+
+Each step ships a passing workspace. No big-bang.
+
+### Load-bearing constraint
+
+**Shells import only `sprefa_main`.** That single rule does the architectural policing. If main grows weird methods to satisfy one shell, it signals main or that shell needs splitting. The constraint enforces itself; no manual review needed.
+
+### Things deliberately not pre-decided
+
+- HTTP framework (axum vs hyper vs poem) — contained in `sprefa-http`
+- LSP transport (stdio vs ws vs tcp) — contained in `sprefa-lsp`
+- Storage backend (sqlite vs sled vs redb) — feature flag inside
+  effect_runtime's effect_store module
+- Sync vs async engine — recommend tokio-only since lsp/http need it,
+  cli uses `block_on`
+- Diag bus split — currently inside cst. Promote to `libs/diag` only when
+  effect_runtime + store + sprefa_main all want an external consumer
+  contract for it

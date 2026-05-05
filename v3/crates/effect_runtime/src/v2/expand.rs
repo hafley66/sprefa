@@ -63,6 +63,16 @@ impl<N: Next> Default for Pipe<N> {
     fn default() -> Self { Self::new() }
 }
 
+// Cloning a Pipe deep-copies the step Vec but shares each component
+// via Arc clone. Lower-time call sites need this when a Value::Pipe
+// argument is consumed in more than one place (e.g. validate scans the
+// shape, lower then folds the steps in).
+impl<N: Next> Clone for Pipe<N> {
+    fn clone(&self) -> Self {
+        Self { steps: self.steps.iter().cloned().collect() }
+    }
+}
+
 /// One mounted pipe instance. Pipe homogeneous in `N`; components
 /// pinned via `dyn Component<Next = N>`.
 pub struct PipeInstance<N: Next> {

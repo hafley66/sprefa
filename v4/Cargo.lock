@@ -1555,6 +1555,7 @@ dependencies = [
  "regex",
  "rusqlite",
  "rustc-hash",
+ "serde_json",
  "streaming-iterator",
  "tempfile",
  "tikv-jemallocator",

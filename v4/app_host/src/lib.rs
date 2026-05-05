@@ -193,22 +193,8 @@ where
     fn service(&self) -> Self::Service { AppService::new(self.app.clone()) }
 }
 
-/// Stub for daemon-side. A real impl forwards `Action` over a socket to a
-/// remote `App` running `sprefa serve`. Same `tower::Service` surface;
-/// shells stay identical regardless of which transport they hold.
-pub struct DaemonProxy<D> {
-    pub addr: String,
-    _d: PhantomData<D>,
-}
-
-impl<D> DaemonProxy<D> {
-    pub fn new(addr: impl Into<String>) -> Self {
-        Self { addr: addr.into(), _d: PhantomData }
-    }
-}
-
-// (impl Transport<D> for DaemonProxy<D> intentionally omitted —
-// requires wire codec + connection pool, lands when sprefa serve is built)
+pub mod daemon;
+pub use daemon::{serve_unix, DaemonProxy, WireError};
 
 // ───────────────────────────────────────────────────────────────────
 // Task-local context
