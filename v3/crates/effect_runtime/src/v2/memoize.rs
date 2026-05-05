@@ -20,10 +20,11 @@ use std::sync::{Arc, Mutex};
 
 use super::component::{Component, RenderCtx};
 use super::event_bus::{BusListener, Event, EventBus};
-use super::flatten::splice_into;
+use super::flatten::{flatten, splice_into};
 use super::next::Next;
 use super::next_key::NextKey;
 use super::node::Node;
+use super::prior_children::{diff_children, PriorChildIndex};
 use super::queue::{QueueBackend, QueueId, QueueRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -148,19 +149,30 @@ impl<N: Next> BusListener for CacheCascadeListener<N> {
 }
 
 pub struct Memoize<C: Component> {
-    inner:   C,
-    ident:   &'static str,
-    domains: Vec<&'static str>,
-    cache:   Arc<MemoCache<C::Next>>,
+    inner:    C,
+    ident:    &'static str,
+    domains:  Vec<&'static str>,
+    cache:    Arc<MemoCache<C::Next>>,
+    /// Optional per-position child index. When set, `dispatch` does
+    /// multiset-diff reconcile against prior children at the same
+    /// `row.path`, cascade-deleting only what changed.
+    children: Option<Arc<PriorChildIndex>>,
 }
 
 impl<C: Component> Memoize<C> {
     pub fn new(inner: C, ident: &'static str, cache: Arc<MemoCache<C::Next>>) -> Self {
-        Self { inner, ident, domains: Vec::new(), cache }
+        Self { inner, ident, domains: Vec::new(), cache, children: None }
     }
 
     pub fn with_domain(mut self, d: &'static str) -> Self {
         self.domains.push(d);
+        self
+    }
+
+    /// Enable B2-style positional reconcile. Without this, `dispatch`
+    /// behaves as in (b): always re-splice children, no diff.
+    pub fn with_prior_children(mut self, idx: Arc<PriorChildIndex>) -> Self {
+        self.children = Some(idx);
         self
     }
 
@@ -193,6 +205,13 @@ impl<C: Component> Component for Memoize<C> {
     /// id so cascade_delete can later wipe its descendants on cache
     /// eviction. Bypasses `render_batch` of the inner Component since
     /// caching is per-row by definition.
+    ///
+    /// When `with_prior_children` was called, this also performs
+    /// multiset-diff reconcile against the prior child set at the same
+    /// `row.path`: doomed children are cascade_deleted, kept children
+    /// stay (their downstream subtrees are preserved), only added
+    /// children are enqueued. Otherwise behaves as in (b): re-splices
+    /// every child, no diff.
     fn dispatch(
         &self,
         ctx:   &RenderCtx,
@@ -215,7 +234,40 @@ impl<C: Component> Component for Memoize<C> {
                 );
                 n
             };
-            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+
+            match &self.children {
+                None => {
+                    splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+                }
+                Some(idx) => {
+                    // B2 reconcile: diff new children against prior at row.path.
+                    let new_children = flatten(node, row, ctx.depth + 1, ctx.expand_tick);
+                    let new_hashes: Vec<[u8; 32]> = new_children
+                        .iter()
+                        .map(|c| c.value.content_hash())
+                        .collect();
+
+                    let prior = idx.take(&row.path);
+                    let diff  = diff_children(&prior, &new_hashes);
+
+                    for id in &diff.doomed_ids { queue.cascade_delete(*id); }
+
+                    // Walk new_children once, consuming. For each index
+                    // not in added_idx, drop the child (kept slot
+                    // already covered by prior id).
+                    let added: std::collections::HashSet<usize> =
+                        diff.added_idx.iter().copied().collect();
+                    let mut merged = diff.kept;
+                    for (i, child) in new_children.into_iter().enumerate() {
+                        if added.contains(&i) {
+                            let h  = new_hashes[i];
+                            let id = queue.enqueue(child);
+                            merged.push((h, id));
+                        }
+                    }
+                    idx.put(row.path.clone(), merged);
+                }
+            }
         }
     }
 }

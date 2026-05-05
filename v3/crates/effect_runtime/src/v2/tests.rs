@@ -1543,6 +1543,114 @@ mod cascade {
         assert_eq!(queue.depth(), 1);  // only the unrelated row
     }
 
+    /// B2 reconcile: Memoize with PriorChildIndex diffs new vs prior
+    /// children at the same row.path. doomed are cascade_deleted, kept
+    /// subtrees survive untouched.
+    ///
+    /// Setup: pipe = [Memoize(EmitItems), ParkEach]
+    ///   EmitItems: read :list = "a,b,c" → emit one child cursor per
+    ///              item, each child stripped to {":item": s} so its
+    ///              content_hash depends only on s.
+    ///   ParkEach:  yield each input → row stays parked at depth 1.
+    ///
+    /// Run 1 with list "a,b,c" → 3 parked rows survive expand.
+    /// Run 2 with list "a,b,d" → expected: c's subtree dies, d's
+    /// subtree spawns, a and b's parked rows untouched.
+    #[test]
+    fn memoize_reconcile_diffs_prior_children_at_same_path() {
+        use super::super::memoize::{MemoCache, Memoize};
+        use super::super::prior_children::PriorChildIndex;
+
+        struct EmitItems;
+        impl Component for EmitItems {
+            type Next = LabCursor;
+            fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+                let raw = c.get(":list").unwrap_or("").to_string();
+                Node::Many(raw.split(',').map(|s| {
+                    let mut child = LabCursor::new();
+                    child.set(":item", s);
+                    Node::Emit(Arc::new(child))
+                }).collect())
+            }
+        }
+
+        struct ParkEach { bus: Arc<EventBus> }
+        impl Component for ParkEach {
+            type Next = LabCursor;
+            fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
+                Node::Yield {
+                    value: Arc::new(c.clone()),
+                    wake:  Wake::Key {
+                        domain: TEST_DOMAIN.into(),
+                        key:    self.bus.fresh_key(),
+                    },
+                }
+            }
+        }
+
+        let cache:     Arc<MemoCache<LabCursor>>     = Arc::new(MemoCache::new());
+        let prior_idx: Arc<PriorChildIndex>          = Arc::new(PriorChildIndex::new());
+        let queue:     Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+        let bus = Arc::new(EventBus::new());
+        let opts = ExpandOpts::default().with_bus(bus.clone());
+
+        let memo = Memoize::new(EmitItems, "emit", cache.clone())
+            .with_prior_children(prior_idx.clone());
+        let pipe = PipeInstance::new(vec![
+            Arc::new(memo) as Arc<dyn Component<Next = LabCursor>>,
+            Arc::new(ParkEach { bus: bus.clone() }),
+        ]);
+
+        // Run 1: list = "a,b,c". Three children from Memoize → three
+        // rows hit ParkEach → three yielded parks.
+        expand(
+            &pipe, queue.clone(),
+            vec![Arc::new(LabCursor::new().with(":list", "a,b,c"))],
+            opts.clone(),
+        );
+        assert_eq!(queue.depth(), 3, "run1: 3 parked rows");
+        let prior1 = prior_idx.get(&[]);
+        assert_eq!(prior1.len(), 3, "run1: index has 3 entries at path=[]");
+        let prior1_ids: Vec<QueueId> = prior1.iter().map(|(_, id)| *id).collect();
+
+        // Run 2: list = "a,b,d". Diff: a/b kept, c doomed, d added.
+        // Total parked rows still 3.
+        expand(
+            &pipe, queue.clone(),
+            vec![Arc::new(LabCursor::new().with(":list", "a,b,d"))],
+            opts.clone(),
+        );
+        assert_eq!(queue.depth(), 3, "run2: 3 parked rows (c dead, d new, a/b kept)");
+
+        let prior2 = prior_idx.get(&[]);
+        assert_eq!(prior2.len(), 3);
+        let prior2_ids: Vec<QueueId> = prior2.iter().map(|(_, id)| *id).collect();
+
+        // Hashes for items a, b, c, d (computed from a stripped cursor).
+        let h = |s: &str| LabCursor::new().with(":item", s).content_hash();
+        let hashes2: std::collections::HashSet<_> = prior2.iter().map(|(h, _)| *h).collect();
+        assert!(hashes2.contains(&h("a")));
+        assert!(hashes2.contains(&h("b")));
+        assert!(hashes2.contains(&h("d")));
+        assert!(!hashes2.contains(&h("c")));
+
+        // Kept-id invariant: a and b's QueueIds in run2 match what they
+        // were in run1 (the prior records were carried forward).
+        let id_for = |hash: ContentHash, slice: &[(ContentHash, QueueId)]| -> QueueId {
+            slice.iter().find(|(h, _)| *h == hash).map(|(_, id)| *id).unwrap()
+        };
+        assert_eq!(id_for(h("a"), &prior1), id_for(h("a"), &prior2));
+        assert_eq!(id_for(h("b"), &prior1), id_for(h("b"), &prior2));
+
+        // d's id is new (didn't appear in run1's id set).
+        let d_id = id_for(h("d"), &prior2);
+        assert!(!prior1_ids.contains(&d_id));
+
+        // c's id is gone (didn't appear in run2's id set).
+        let c_id = id_for(h("c"), &prior1);
+        assert!(!prior2_ids.contains(&c_id));
+    }
+
     /// Memoize::dispatch records source_row_id when called via expand.
     #[test]
     fn memoize_dispatch_records_source_row_id_on_miss() {

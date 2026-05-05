@@ -31,6 +31,7 @@ pub mod diag;
 pub mod queue;
 pub mod mem_queue;
 pub mod flatten;
+pub mod prior_children;
 pub mod expand;
 
 pub use next::Next;
@@ -55,7 +56,8 @@ pub use sqlite_queue::SqliteQueue;
 pub use hybrid_queue::{HybridCfg, HybridQueue};
 pub use node::Node;
 pub use component::{par_render, Component, DynComponent, RenderCtx};
-pub use flatten::splice_into;
+pub use flatten::{splice_into, splice_into_recorded};
+pub use prior_children::{diff_children, ChildDiff, ContentHash, PriorChildIndex};
 pub use queue::{ExpandTick, InstanceId, PipeHash, QueueBackend, QueueId, QueueRow};
 pub use mem_queue::MemQueue;
 pub use expand::{expand, ExpandOpts, ExpandStats, Pipe, PipeInstance, DEFAULT_BATCH_CAP};

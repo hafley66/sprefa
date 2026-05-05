@@ -9,7 +9,7 @@
 
 use super::next::Next;
 use super::node::Node;
-use super::queue::{ExpandTick, QueueBackend, QueueRow};
+use super::queue::{ExpandTick, QueueBackend, QueueId, QueueRow};
 use super::wake::Wake;
 
 /// Splice helper for `Component::dispatch` overrides. Flattens `node`
@@ -29,6 +29,27 @@ pub fn splice_into<N: Next>(
     let n = children.len();
     for child in children { queue.enqueue(child); }
     n
+}
+
+/// Like `splice_into` but returns the per-child `(content_hash,
+/// QueueId)` pairs as enqueued. Used by `Memoize::dispatch` to feed
+/// the `PriorChildIndex` for diff-based reconcile.
+///
+/// Children are flattened and enqueued in the same order as
+/// `splice_into`, so paths/batch_idx assignment is identical.
+pub fn splice_into_recorded<N: Next>(
+    parent:     &QueueRow<N>,
+    node:       Node<N>,
+    next_depth: u32,
+    expand_tick: ExpandTick,
+    queue:      &dyn QueueBackend<N>,
+) -> Vec<([u8; 32], QueueId)> {
+    let children = flatten(node, parent, next_depth, expand_tick);
+    children.into_iter().map(|child| {
+        let h  = child.value.content_hash();
+        let id = queue.enqueue(child);
+        (h, id)
+    }).collect()
 }
 
 // PHASE E (deferred): flatten is the natural place to compute the
