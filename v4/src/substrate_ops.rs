@@ -519,6 +519,150 @@ impl Component for ReComponent {
     }
 }
 
+/// Seed source: emit a fixed Vec<Cursor> once. Useful as a chain head
+/// when the first real op is per-cursor but you want it to fire once.
+pub struct SeedComponent { pub rows: Vec<Cursor> }
+impl SeedComponent {
+    pub fn one() -> Self { Self { rows: vec![Cursor::default()] } }
+    pub fn new(rows: Vec<Cursor>) -> Self { Self { rows } }
+}
+impl Component for SeedComponent {
+    type Next = Cursor;
+    fn dispatch(
+        &self,
+        ctx:   &RenderCtx,
+        rows:  &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let parent = match rows.first() { Some(r) => r, None => return };
+        let many: Vec<Node<Cursor>> = self.rows.iter()
+            .map(|c| Node::Emit(Arc::new(c.clone())))
+            .collect();
+        if many.is_empty() { return; }
+        splice_into_at(parent, Node::Many(many), ctx.depth + 1, ctx.expand_tick, queue, 0);
+    }
+}
+
+/// Multi-root walker. For each `(slug, root)`, walks files matching
+/// `exts` and emits a Cursor with `REPO=slug` and `FS=path`. Streams
+/// flushes across roots using `next_idx` to keep child paths unique.
+/// Optional Interner shares Arc<str> heap across emitted REPO/FS terms.
+pub struct RepoComponent {
+    roots:    Vec<(String, PathBuf)>,
+    exts:     Vec<String>,
+    batch:    usize,
+    interner: Option<Arc<Interner>>,
+}
+impl RepoComponent {
+    pub fn new(roots: Vec<(String, PathBuf)>, exts: Vec<String>) -> Self {
+        Self { roots, exts, batch: 4096, interner: None }
+    }
+    pub fn auto(roots: &[PathBuf], exts: Vec<String>) -> Self {
+        let labelled: Vec<(String, PathBuf)> = roots.iter().map(|p| {
+            let slug = p.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| p.display().to_string());
+            (slug, p.clone())
+        }).collect();
+        Self::new(labelled, exts)
+    }
+    pub fn with_batch(mut self, n: usize) -> Self { self.batch = n; self }
+    pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
+        self.interner = Some(i); self
+    }
+}
+impl Component for RepoComponent {
+    type Next = Cursor;
+    fn dispatch(
+        &self,
+        ctx:   &RenderCtx,
+        rows:  &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let parent = match rows.first() { Some(r) => r, None => return };
+        let mut buf: Vec<Node<Cursor>> = Vec::with_capacity(self.batch);
+        let mut next_idx: u32 = 0;
+        let mut flush = |buf: &mut Vec<Node<Cursor>>, next_idx: &mut u32| {
+            if buf.is_empty() { return; }
+            let many = Node::Many(std::mem::take(buf));
+            let n = splice_into_at(parent, many, ctx.depth + 1, ctx.expand_tick, queue, *next_idx);
+            *next_idx += n as u32;
+        };
+
+        for (slug, root) in &self.roots {
+            let slug_arc: Arc<str> = match &self.interner {
+                Some(i) => i.intern(slug),
+                None    => Arc::from(slug.as_str()),
+            };
+            for entry in WalkBuilder::new(root).hidden(true).git_ignore(false).build() {
+                let Ok(e) = entry else { continue };
+                if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
+                let p = e.into_path();
+                let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+                if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+                let mut c = Cursor::default();
+                c.set_arc("REPO", slug_arc.clone());
+                let fs_arc: Arc<str> = match &self.interner {
+                    Some(i) => i.intern(&p.display().to_string()),
+                    None    => Arc::from(p.display().to_string().as_str()),
+                };
+                c.set_arc("FS", fs_arc);
+                buf.push(Node::Emit(Arc::new(c)));
+                if buf.len() >= self.batch { flush(&mut buf, &mut next_idx); }
+            }
+        }
+        flush(&mut buf, &mut next_idx);
+    }
+}
+
+/// Per-input-cursor: read the path at `term`, walk it, emit one child
+/// Cursor per matching file with `REPO=basename(term)` + `FS=path`.
+/// Preserves all upstream terms on each emitted child.
+pub struct RepoFromTermComponent {
+    term:     String,
+    exts:     Vec<String>,
+    interner: Option<Arc<Interner>>,
+}
+impl RepoFromTermComponent {
+    pub fn new(term: impl Into<String>, exts: Vec<String>) -> Self {
+        Self { term: term.into(), exts, interner: None }
+    }
+    pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
+        self.interner = Some(i); self
+    }
+}
+impl Component for RepoFromTermComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let Some(root_str) = c.get(&self.term) else { return Node::Done };
+        let root = PathBuf::from(root_str);
+        let slug = root.file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| root.display().to_string());
+        let slug_arc: Arc<str> = match &self.interner {
+            Some(i) => i.intern(&slug),
+            None    => Arc::from(slug.as_str()),
+        };
+        let mut hits: Vec<Node<Cursor>> = Vec::new();
+        for entry in WalkBuilder::new(&root).hidden(true).git_ignore(false).build() {
+            let Ok(e) = entry else { continue };
+            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
+            let p = e.into_path();
+            let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+            if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+            let mut child = c.clone();
+            child.set_arc("REPO", slug_arc.clone());
+            let fs_arc: Arc<str> = match &self.interner {
+                Some(i) => i.intern(&p.display().to_string()),
+                None    => Arc::from(p.display().to_string().as_str()),
+            };
+            child.set_arc("FS", fs_arc);
+            hits.push(Node::Emit(Arc::new(child)));
+        }
+        if hits.is_empty() { Node::Done } else { Node::Many(hits) }
+    }
+}
+
 /// Render a `{TERM}` template per cursor and println! the result.
 /// Side-effect terminal — emits `Done` after printing. (v4 native uses
 /// the Hooks effect channel; the bench's only consumer is a sink that
