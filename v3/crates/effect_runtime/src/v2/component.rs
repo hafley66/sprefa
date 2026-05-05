@@ -29,6 +29,7 @@
 
 use std::sync::Arc;
 
+use super::diag::{DiagSink, NoopDiagSink};
 use super::event_bus::EventBus;
 use super::flatten::splice_into;
 use super::next::Next;
@@ -55,13 +56,13 @@ pub trait Component: Send + Sync + 'static {
     /// Tier 3. Full substrate-interaction surface. Default = call
     /// `render_batch` and splice each child row into `queue` with
     /// `Wake::Immediate` via `flatten`. Override to control fanout
-    /// shape, parker enqueue, domain dispatch, etc.
+    /// shape, parker enqueue, domain dispatch, etc. The bus and diag
+    /// sink hang off `ctx`.
     fn dispatch(
         &self,
         ctx:   &RenderCtx,
         rows:  &[QueueRow<Self::Next>],
         queue: &dyn QueueBackend<Self::Next>,
-        _bus:  &EventBus,
     ) {
         let inputs: Vec<&Self::Next> =
             rows.iter().map(|r| r.value.as_ref()).collect();
@@ -77,19 +78,38 @@ pub trait Component: Send + Sync + 'static {
     fn batch_hint(&self) -> Option<usize> { None }
 }
 
-/// Render-call context. Carries the pipe identity, the depth being
-/// rendered, and the current drive tick (needed by `flatten` to mint
-/// child `enqueued_at_ns` and stamp `expand_tick`).
-#[derive(Clone, Debug)]
+/// Render-call context. Per-call handle that every Component sees.
+/// Carries pipe identity, the depth being rendered, the current expand
+/// tick, plus the cross-cutting handles (`bus`, `diag`). Arc-shaped so
+/// it clones cheaply across `flatten` and override sites.
+#[derive(Clone)]
 pub struct RenderCtx {
-    pub pipe:       PipeHash,
-    pub depth:      u32,
+    pub pipe:        PipeHash,
+    pub depth:       u32,
     pub expand_tick: ExpandTick,
+    pub bus:         Arc<EventBus>,
+    pub diag:        Arc<dyn DiagSink>,
 }
 
 impl RenderCtx {
     pub fn new(pipe: PipeHash, depth: u32, expand_tick: ExpandTick) -> Self {
-        Self { pipe, depth, expand_tick }
+        Self {
+            pipe,
+            depth,
+            expand_tick,
+            bus:  Arc::new(EventBus::new()),
+            diag: Arc::new(NoopDiagSink),
+        }
+    }
+
+    pub fn with_bus(mut self, bus: Arc<EventBus>) -> Self {
+        self.bus = bus;
+        self
+    }
+
+    pub fn with_diag(mut self, diag: Arc<dyn DiagSink>) -> Self {
+        self.diag = diag;
+        self
     }
 }
 

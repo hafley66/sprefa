@@ -56,7 +56,6 @@ impl Component for FsComponent {
         ctx:   &RenderCtx,
         rows:  &[QueueRow<Cursor>],
         queue: &dyn QueueBackend<Cursor>,
-        _bus:  &EventBus,
     ) {
         // One bootstrap row produces all children. Extra seeds (if
         // any) are ignored — not the model here.

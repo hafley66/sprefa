@@ -1168,7 +1168,6 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
             ctx:   &RenderCtx,
             rows:  &[QueueRow<LabCursor>],
             queue: &dyn QueueBackend<LabCursor>,
-            _bus:  &EventBus,
         ) {
             for row in rows {
                 let new_key = self.bus.fresh_key();

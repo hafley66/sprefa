@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::component::{DynComponent, RenderCtx};
+use super::diag::{DiagSink, NoopDiagSink};
 use super::event_bus::EventBus;
 use super::next::Next;
 use super::queue::{
@@ -39,6 +40,7 @@ impl<N: Next> PipeInstance<N> {
 #[derive(Clone)]
 pub struct ExpandOpts {
     pub bus:       Arc<EventBus>,
+    pub diag:      Arc<dyn DiagSink>,
     pub batch_cap: usize,
 }
 
@@ -48,6 +50,7 @@ impl Default for ExpandOpts {
     fn default() -> Self {
         Self {
             bus:       Arc::new(EventBus::new()),
+            diag:      Arc::new(NoopDiagSink),
             batch_cap: DEFAULT_BATCH_CAP,
         }
     }
@@ -58,6 +61,11 @@ impl ExpandOpts {
 
     pub fn with_bus(mut self, bus: Arc<EventBus>) -> Self {
         self.bus = bus;
+        self
+    }
+
+    pub fn with_diag(mut self, diag: Arc<dyn DiagSink>) -> Self {
+        self.diag = diag;
         self
     }
 
@@ -123,7 +131,9 @@ pub fn expand<N: Next>(
         }
 
         let comp = &pipe.components[head_depth as usize];
-        let ctx  = RenderCtx::new(batch[0].pipe_hash, head_depth, expand_tick);
+        let ctx  = RenderCtx::new(batch[0].pipe_hash, head_depth, expand_tick)
+            .with_bus(opts.bus.clone())
+            .with_diag(opts.diag.clone());
 
         // PHASE E (deferred): reconciliation hook lives inside
         // `dispatch`. Before enqueueing new children, an override can
@@ -134,7 +144,7 @@ pub fn expand<N: Next>(
 
         let depth_before = queue.depth();
         let batch_len    = batch.len() as u64;
-        comp.dispatch(&ctx, &batch, queue.as_ref(), opts.bus.as_ref());
+        comp.dispatch(&ctx, &batch, queue.as_ref());
         let depth_after  = queue.depth();
 
         stats.rendered += batch_len;

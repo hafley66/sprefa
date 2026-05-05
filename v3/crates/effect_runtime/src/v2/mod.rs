@@ -27,6 +27,7 @@ pub mod sqlite_queue;
 pub mod hybrid_queue;
 pub mod node;
 pub mod component;
+pub mod diag;
 pub mod queue;
 pub mod mem_queue;
 pub mod flatten;
@@ -40,6 +41,7 @@ pub use mutation_store::MutationStore;
 #[cfg(feature = "sqlite")]
 pub use sqlite_mutation_store::SqliteMutationStore;
 pub use codec::Codec;
+pub use diag::{ByteRange, Diag, DiagSink, NoopDiagSink, Severity};
 pub use effect_dispatch::{EffectDispatch, Spawner, ThreadSpawner, TokioSpawner};
 pub use event_bus::BusListener;
 pub use memoize::{attach_cache_to_bus, MemoCache, MemoKey, Memoize};
