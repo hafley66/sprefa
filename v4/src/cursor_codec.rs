@@ -4,6 +4,7 @@
 //   - any future cross-process cursor transport
 //
 // Format (little-endian throughout):
+//   [u32 value_len][value_bytes]              ← &.value
 //   [u32 n_terms]
 //   for each term (already sorted by Cursor's invariant):
 //     [u32 name_len][name_bytes]
@@ -15,11 +16,13 @@
 use crate::Cursor;
 
 pub fn encode(c: &Cursor) -> Vec<u8> {
-    let mut sz = 4;
+    let mut sz = 4 + c.value.len() + 4;
     for (n, v) in &c.terms {
         sz += 4 + n.len() + 4 + v.len();
     }
     let mut buf = Vec::with_capacity(sz);
+    buf.extend_from_slice(&(c.value.len() as u32).to_le_bytes());
+    buf.extend_from_slice(c.value.as_bytes());
     buf.extend_from_slice(&(c.terms.len() as u32).to_le_bytes());
     for (n, v) in &c.terms {
         buf.extend_from_slice(&(n.len() as u32).to_le_bytes());
@@ -31,9 +34,16 @@ pub fn encode(c: &Cursor) -> Vec<u8> {
 }
 
 pub fn decode(buf: &[u8]) -> Result<Cursor, &'static str> {
-    if buf.len() < 4 { return Err("buf too short for n_terms"); }
-    let n_terms = u32::from_le_bytes(buf[0..4].try_into().unwrap()) as usize;
+    if buf.len() < 4 { return Err("buf too short for value_len"); }
+    let vl = u32::from_le_bytes(buf[0..4].try_into().unwrap()) as usize;
     let mut p = 4;
+    if p + vl > buf.len() { return Err("truncated value"); }
+    let value: std::sync::Arc<str> =
+        std::str::from_utf8(&buf[p..p+vl]).map_err(|_| "value not utf8")?.into();
+    p += vl;
+    if p + 4 > buf.len() { return Err("buf too short for n_terms"); }
+    let n_terms = u32::from_le_bytes(buf[p..p+4].try_into().unwrap()) as usize;
+    p += 4;
     let mut terms = Vec::with_capacity(n_terms);
     for _ in 0..n_terms {
         if p + 4 > buf.len() { return Err("truncated name_len"); }
@@ -50,7 +60,7 @@ pub fn decode(buf: &[u8]) -> Result<Cursor, &'static str> {
         p += vl;
         terms.push((name.into(), val.into()));
     }
-    Ok(Cursor { terms })
+    Ok(Cursor { value, terms })
 }
 
 /// Stable u64 hash of a cursor — used for mount keys and lineage IDs.
@@ -70,13 +80,13 @@ mod tests {
 
     #[test]
     fn roundtrip_empty() {
-        let c = Cursor { terms: vec![] };
+        let c = Cursor { value: "".into(), terms: vec![] };
         assert_eq!(decode(&encode(&c)).unwrap(), c);
     }
 
     #[test]
     fn roundtrip_simple() {
-        let c = Cursor { terms: vec![
+        let c = Cursor { value: "".into(), terms: vec![
             term(":FS", "/tmp/a.rs"),
             term(":REPO", "myrepo"),
         ]};
@@ -85,20 +95,20 @@ mod tests {
 
     #[test]
     fn roundtrip_unicode() {
-        let c = Cursor { terms: vec![term(":k", "héllo 🌊")]};
+        let c = Cursor { value: "".into(), terms: vec![term(":k", "héllo 🌊")]};
         assert_eq!(decode(&encode(&c)).unwrap(), c);
     }
 
     #[test]
     fn hash_is_stable_across_calls() {
-        let c = Cursor { terms: vec![term(":a", "1"), term(":b", "2")]};
+        let c = Cursor { value: "".into(), terms: vec![term(":a", "1"), term(":b", "2")]};
         assert_eq!(hash_u64(&c), hash_u64(&c));
     }
 
     #[test]
     fn hash_differs_on_value_change() {
-        let a = Cursor { terms: vec![term(":k", "1")]};
-        let b = Cursor { terms: vec![term(":k", "2")]};
+        let a = Cursor { value: "".into(), terms: vec![term(":k", "1")]};
+        let b = Cursor { value: "".into(), terms: vec![term(":k", "2")]};
         assert_ne!(hash_u64(&a), hash_u64(&b));
     }
 

@@ -2,6 +2,7 @@ pub mod cst;
 pub mod cursor_codec;
 pub mod runtime_bridge;
 pub mod substrate_ops;
+pub mod term;
 
 // sprefa v4 — runtime lib. shared by v4-proto (demo) and v4-bench (perf).
 //
@@ -52,7 +53,15 @@ pub enum ActionKind {
 // ╚═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╝
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
-pub struct Cursor { pub terms: Vec<(Arc<str>, Arc<str>)> }
+pub struct Cursor {
+    /// Focal value `&.value`. Default for Term::Bind. Source ops set
+    /// this to the per-row payload (path, hit text, etc.); cursor
+    /// mutators rewrite it; Term::Read pulls from `terms` into here.
+    pub value: Arc<str>,
+    /// Sorted bag of (name, value) captures. ALL-CAPS keys = user
+    /// captures (`X`), colon-prefixed keys = internal terms (`:fan_idx`).
+    pub terms: Vec<(Arc<str>, Arc<str>)>,
+}
 
 impl Cursor {
     pub fn set(&mut self, name: &str, value: impl Into<Arc<str>>) {
@@ -79,6 +88,8 @@ impl Cursor {
             self.terms.remove(i);
         }
     }
+    /// `&.value`. The focal value of the current cursor.
+    pub fn value(&self) -> &str { &self.value }
 }
 
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
