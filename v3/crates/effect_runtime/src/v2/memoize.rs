@@ -242,29 +242,40 @@ impl<C: Component> Component for Memoize<C> {
                 Some(idx) => {
                     // B2 reconcile: diff new children against prior at row.path.
                     let new_children = flatten(node, row, ctx.depth + 1, ctx.expand_tick);
-                    let new_hashes: Vec<[u8; 32]> = new_children
-                        .iter()
-                        .map(|c| c.value.content_hash())
-                        .collect();
-
                     let prior = idx.take(&row.path);
-                    let diff  = diff_children(&prior, &new_hashes);
 
-                    for id in &diff.doomed_ids { queue.cascade_delete(*id); }
-
-                    // Walk new_children once, consuming. For each index
-                    // not in added_idx, drop the child (kept slot
-                    // already covered by prior id).
-                    let added: std::collections::HashSet<usize> =
-                        diff.added_idx.iter().copied().collect();
-                    let mut merged = diff.kept;
-                    for (i, child) in new_children.into_iter().enumerate() {
-                        if added.contains(&i) {
-                            let h  = new_hashes[i];
+                    let merged = if prior.is_empty() {
+                        // First-run shortcut: nothing to diff against.
+                        // Skip the HashMap-pool build + per-child lookup
+                        // dance from diff_children. Still hash + record
+                        // each child so the index is populated for any
+                        // future re-render at this path.
+                        new_children.into_iter().map(|child| {
+                            let h  = child.value.content_hash();
                             let id = queue.enqueue(child);
-                            merged.push((h, id));
+                            (h, id)
+                        }).collect()
+                    } else {
+                        let new_hashes: Vec<[u8; 32]> = new_children
+                            .iter()
+                            .map(|c| c.value.content_hash())
+                            .collect();
+                        let diff = diff_children(&prior, &new_hashes);
+
+                        for id in &diff.doomed_ids { queue.cascade_delete(*id); }
+
+                        let added: std::collections::HashSet<usize> =
+                            diff.added_idx.iter().copied().collect();
+                        let mut merged = diff.kept;
+                        for (i, child) in new_children.into_iter().enumerate() {
+                            if added.contains(&i) {
+                                let h  = new_hashes[i];
+                                let id = queue.enqueue(child);
+                                merged.push((h, id));
+                            }
                         }
-                    }
+                        merged
+                    };
                     idx.put(row.path.clone(), merged);
                 }
             }
