@@ -13,13 +13,13 @@ rule(:greet) {
 }
 
 # regex DSL — captures (?P<NAME>) + alternation + escapes
-re`\b(?P<WORD>[a-zA-Z]+)\s+\d+\b`
+re`\b(?P<WORD>[a-zA-Z]+)\s+\d+\b`;
 
 # glob DSL — globstar, alternation, char-class, capture
 glob`**/<DIR>/*.{ts,tsx,rs}`
 
 # ast-grep DSL with [lang] arg, $METAVAR + $$$REST
-ast[rust]`fn $NAME($$$ARGS) -> $RET { $$$BODY }`
+ast`fn $NAME($$$ARGS) -> $RET { $$$BODY }`
 
 # json DSL — structural shape
 json`{ "kind": "User", "id": ${UID}, "tags": [ ] }`
