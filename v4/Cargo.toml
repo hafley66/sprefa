@@ -48,3 +48,7 @@ tree-sitter-rust = "0.23"
 [[bin]]
 name = "v4-bench"
 path = "src/bin/v4_bench.rs"
+
+[[bin]]
+name = "sprefa-run"
+path = "src/bin/sprefa-run.rs"
