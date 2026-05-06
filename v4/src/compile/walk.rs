@@ -169,6 +169,23 @@ pub fn classify_slot(
                 .with_span(slot.span.lo, slot.span.hi));
         return None;
     }
+    // `${X}` and `${X?}` are template-literal interpolation holes —
+    // valid ONLY inside backtick DSL bodies (re/glob/ast/json/plain `` ` ``),
+    // never at host-arg position. Like JS: `\`hello ${name}\`` is a hole;
+    // `f(${name})` is not. Emit a clear diag so the fallthrough doesn't
+    // bury the real cause.
+    if let Some(idx) = raw.find("${") {
+        let lo = slot.span.lo.saturating_add(idx as u32);
+        let hi_rel = raw[idx..].find('}').map(|j| idx + j + 1).unwrap_or(raw.len());
+        let hi = slot.span.lo.saturating_add(hi_rel as u32).min(slot.span.hi);
+        diags.push(
+            Diag::error("lang/host-hole-illegal",
+                "`${X}` interpolation is only valid inside a backtick DSL body. \
+                 Use a bareword (`X`) or `:atom` here, or move the hole inside \
+                 a `` ` `` template.".to_string())
+                .with_span(lo, hi));
+        return None;
+    }
     // `:foo` colon-prefixed atom.
     if let Some(rest) = raw.strip_prefix(':') {
         if !rest.is_empty() {

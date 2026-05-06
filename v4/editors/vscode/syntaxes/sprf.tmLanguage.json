@@ -9,7 +9,6 @@
     { "include": "#dsl-ast"          },
     { "include": "#dsl-json"         },
     { "include": "#dsl-plain"        },
-    { "include": "#hole"             },
     { "include": "#atom"             },
     { "include": "#number"           },
     { "include": "#predicate-suffix" },

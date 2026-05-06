@@ -1,13 +1,15 @@
 # every DSL covered + host syntax. Open in VS Code with the v4
 # extension installed; tmGrammar should render this without LSP help.
 #
-# v4 string rule: backticks only. No `"..."` and no `r#"..."#`. A bare
-# backtick at pipe-step position lowers to `str` (so `\`hello\`` reads
-# as `str\`hello\``). Adjacency rule: NO whitespace between op name and
-# `?` / `[` / `(` / `` ` ``; only `{ … }` may be space-separated.
+# v4 host syntax rules:
+#   1. Strings = backticks only. No `"..."`, no `r#"..."#`.
+#   2. `${X}` is template-literal interpolation — valid ONLY inside a
+#      backtick body. Outside, use barewords or `:atom`.
+#   3. Slot openers `?`, `[`, `(`, `` ` `` must immediately follow the
+#      op name (no whitespace). Block `{ … }` is the only space-OK slot.
 
 rule(:greet) {
-    `hello ${NAME?}, today is ${DAY?}`
+    `hello ${NAME}, today is ${DAY}`
 }
 
 # regex DSL — captures (?P<NAME>) + alternation + escapes
@@ -20,14 +22,13 @@ glob`**/<DIR>/*.{ts,tsx,rs}`
 ast[rust]`fn $NAME($$$ARGS) -> $RET { $$$BODY }`
 
 # json DSL — structural shape
-json`{ "kind": "User", "id": ${UID?}, "tags": [ ] }`
+json`{ "kind": "User", "id": ${UID}, "tags": [ ] }`
 
-# bare backticks = str sugar (pipe-step position)
-`plain template with ${X?} hole`
+# bare backticks at pipe-step = `str` op sugar
+`plain template with ${X} hole`
 
-# atoms, numbers, predicate-suffix, fork
-fact?(:user, ${UID?}, `alice`)
-12.34 ; -7
+# atoms, barewords, predicate-suffix, fork
+fact?(:user, UID, `alice`)
 
-# pipes
-glob`**/*.rs` > re`fn (?P<NAME>\w+)` > fact(:rust_fn, ${NAME?})
+# pipe — barewords flow as term refs/binders at host level
+glob`**/*.rs` > re`fn (?P<NAME>\w+)` > fact(:rust_fn, NAME)
