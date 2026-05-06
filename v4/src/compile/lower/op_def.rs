@@ -91,6 +91,13 @@ pub trait OperatorDef: Send + Sync + 'static {
     fn brace_block(&self) -> Option<BlockShape>  { None }
     fn dsl_body(&self)    -> Option<DslShape>    { None }
 
+    /// Walk-time DSL parser. Default: scan for `${IDENT}` holes and emit
+    /// one `DslInterp` per hole with byte ranges relative to `raw`. Ops
+    /// with sub-grammars (regex, glob, ast) override.
+    fn parse_dsl(&self, raw: &str) -> Result<Vec<DslInterp>, LowerError> {
+        Ok(default_plain_dsl_parse(raw))
+    }
+
     fn lower(
         &self,
         ctx:   &LowerCtx,
@@ -99,4 +106,42 @@ pub trait OperatorDef: Send + Sync + 'static {
         block: Option<Pipe<Cursor>>,
         dsl:   Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError>;
+}
+
+/// Default `${IDENT}` interp scanner. IDENT = ASCII letters / digits /
+/// underscore, first char non-digit. Returns `DslInterp { name, range }`
+/// where `range` covers the full `${IDENT}` span (including the sigils)
+/// in byte offsets relative to `raw`. `name` is just the IDENT body.
+pub fn default_plain_dsl_parse(raw: &str) -> Vec<DslInterp> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'$' && bytes[i + 1] == b'{' {
+            let lo = i;
+            let mut j = i + 2;
+            // first char of IDENT must be non-digit
+            if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+                let name_lo = j;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                {
+                    j += 1;
+                }
+                let name_hi = j;
+                if j < bytes.len() && bytes[j] == b'}' {
+                    let hi = j + 1;
+                    let name = &raw[name_lo..name_hi];
+                    out.push(DslInterp {
+                        name:  Arc::<str>::from(name),
+                        range: ByteRange { lo: lo as u32, hi: hi as u32 },
+                    });
+                    i = hi;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out
 }

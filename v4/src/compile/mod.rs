@@ -12,4 +12,4 @@
 pub mod ast;
 pub mod lower;
 // pub mod parse;   // dispatched: tree-sitter-sprefa + parse.rs port
-// pub mod walk;    // dispatched: AST → Registry::lower
+pub mod walk;
