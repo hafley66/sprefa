@@ -15,7 +15,7 @@
 #        ALL_CAPS?  → `term_bind(:CAPS)`   (introduce / bind capture)
 #        lower-case → `Value::Atom`         (named atom)
 
-rule(:greet) {
+rule(:greet, NAME?, DAY?) {
     `hello ${NAME}, today is ${DAY}`
 };
 

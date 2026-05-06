@@ -23,7 +23,7 @@ use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBody, DslShape, OperatorDef,
 };
 use crate::compile::lower::value::{run_once_const, Value};
-use crate::pipeline::{GlobComponent, StrConstComponent};
+use crate::pipeline::{GlobComponent, StrConstComponent, StrTemplateComponent};
 use crate::rule::Rule;
 
 // ─── str ──────────────────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ impl OperatorDef for StrDef {
 
     fn lower(
         &self,
-        ctx:    &LowerCtx,
+        _ctx:   &LowerCtx,
         _flow:  Option<Value>,
         _args:  &[Value],
         _block: Option<Pipe<Cursor>>,
@@ -48,28 +48,15 @@ impl OperatorDef for StrDef {
                 literal: body.raw.clone(),
             })));
         }
-        let raw = body.raw.as_ref();
+        // Runtime template: ${X} resolves per-cursor against c.terms at
+        // render time. Unbound terms emit `term/unbound-at-interp` and
+        // splice empty. Compile-time `LowerCtx::bindings` is no longer
+        // consulted; binding flows through cursor.terms (the runtime).
         let mut interps = body.interps.clone();
         interps.sort_by_key(|i| i.range.lo);
-        let mut out = String::with_capacity(raw.len());
-        let mut cursor: usize = 0;
-        for interp in &interps {
-            let lo = interp.range.lo as usize;
-            let hi = interp.range.hi as usize;
-            if lo < cursor || hi > raw.len() || lo > hi {
-                return Err(LowerError::Unknown(format!(
-                    "str: bad interp range for ${{{}}}: {}..{}",
-                    interp.name, lo, hi)));
-            }
-            out.push_str(&raw[cursor..lo]);
-            let pipe = ctx.bindings.get(&interp.name).ok_or_else(||
-                LowerError::UnboundCapture(interp.name.clone()))?;
-            out.push_str(&run_once_const(pipe, ctx)?);
-            cursor = hi;
-        }
-        out.push_str(&raw[cursor..]);
-        Ok(Pipe::new().step(Arc::new(StrConstComponent {
-            literal: Arc::from(out.as_str()),
+        Ok(Pipe::new().step(Arc::new(StrTemplateComponent {
+            raw:     body.raw.clone(),
+            interps: Arc::new(interps),
         })))
     }
 }
@@ -84,7 +71,14 @@ const RULE_SPEC: &[ArgSig] = &[
         doc: "rule + sink table name", required: true,
     },
     ArgSig {
-        kind: ArgKind::Variadic(&ArgKind::Atom),
+        // Variadic(Any) so `rule(:name, COL_A, COL_B?)` accepts the two
+        // bareword-desugar shapes:
+        //   COL  → Value::Pipe(term(:COL))      (declares output column;
+        //                                        runtime read on each row)
+        //   COL? → Value::Pipe(term_bind(:COL)) (declares + introduces the
+        //                                        column at run time)
+        // Plain `Value::Atom` strings are still accepted for backward shape.
+        kind: ArgKind::Variadic(&ArgKind::Any),
         name: "cols", doc: "sink columns", required: false,
     },
 ];
@@ -106,11 +100,14 @@ impl OperatorDef for RuleDef {
             Value::Atom(s) => s.clone(),
             _ => unreachable!("validate ensured Atom"),
         };
+        // Column args. Plain atoms become declared sink columns; pipe
+        // args (the ALL_CAPS bareword desugar — `NAME` / `NAME?`) are
+        // schema-silent for now; the runtime read/bind still happens
+        // through the pipeline expansion via cursor.terms.
         let mut col_strings: Vec<String> = Vec::with_capacity(args.len().saturating_sub(1));
         for a in &args[1..] {
-            match a {
-                Value::Atom(s) => col_strings.push(s.to_string()),
-                _ => unreachable!("validate ensured Atom"),
+            if let Value::Atom(s) = a {
+                col_strings.push(s.to_string());
             }
         }
         let cols: Vec<&str> = col_strings.iter().map(|s| s.as_str()).collect();

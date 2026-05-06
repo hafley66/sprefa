@@ -31,6 +31,47 @@ impl Component for StrConstComponent {
     }
 }
 
+/// Runtime template variant of `str`. Each `${X}` interp is resolved
+/// per-cursor against `c.terms` at render time. Unbound terms emit a
+/// `term/unbound-at-interp` diag and splice empty.
+///
+/// `interps` are pre-sorted by `range.lo`; ranges are byte offsets into
+/// `raw` covering the full `${IDENT}` span (inclusive of the braces).
+pub struct StrTemplateComponent {
+    pub raw:     Arc<str>,
+    pub interps: Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
+}
+
+impl Component for StrTemplateComponent {
+    type Next = Cursor;
+
+    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let raw = self.raw.as_ref();
+        let mut out = String::with_capacity(raw.len());
+        let mut head: usize = 0;
+        for interp in self.interps.iter() {
+            let lo = interp.range.lo as usize;
+            let hi = interp.range.hi as usize;
+            if lo > raw.len() || hi > raw.len() || lo < head { continue; }
+            out.push_str(&raw[head..lo]);
+            match c.get(&interp.name) {
+                Some(v) => out.push_str(v),
+                None    => ctx.diag.emit(
+                    effect_runtime::v2::Diag::error(
+                        "term/unbound-at-interp",
+                        format!("${{{}}} not bound at str interp", interp.name),
+                    ),
+                ),
+            }
+            head = hi;
+        }
+        out.push_str(&raw[head..]);
+        let mut next = c.clone();
+        next.value = Arc::from(out);
+        Node::Emit(Arc::new(next))
+    }
+}
+
 /// Convenience builder: a constant-emitting `Pipe<Cursor>`.
 pub fn str_pipe(s: &str) -> Pipe<Cursor> {
     Pipe::new().step(Arc::new(StrConstComponent { literal: Arc::from(s) }))

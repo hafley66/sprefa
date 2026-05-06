@@ -36,26 +36,27 @@ fn four_slot_lower_smoke() {
     assert_eq!(&*out[0].value, "hello world");
 
     // ── 2. interpolated literal ───────────────────────────────────
-    // raw = "hello ${WHO}", ${WHO} occupies bytes 6..12 (the literal
-    // '${WHO}'). Lower-time ctx binding grounds WHO → "world".
+    // raw = "hello ${WHO}". `${WHO}` is now resolved per-cursor at
+    // render time against `cursor.terms`, NOT compile-time bindings.
+    // Seed the cursor with WHO=world and expand.
     let raw = "hello ${WHO}";
     let interp_dsl = DslBody {
         raw: Arc::from(raw),
         interps: vec![DslInterp { name: Arc::from("WHO"), range: br(6, 12) }],
     };
-    let ctx1 = LowerCtx::new(store.clone(), dir.clone())
-        .with_binding("WHO", str_pipe("world"));
+    let ctx1 = LowerCtx::new(store.clone(), dir.clone());
     let interp = str_def.lower(&ctx1, None, &[], None, Some(&interp_dsl)).unwrap();
-    let out = collect(interp);
+    let mut seed = Cursor::default();
+    seed.set("WHO", "world");
+    let out = collect_with_seed(interp, Arc::new(seed));
     assert_eq!(out.len(), 1);
     assert_eq!(&*out[0].value, "hello world");
 
     // ── 3. rule sink ──────────────────────────────────────────────
-    // Build the body via str_def.lower again, then hand to rule_def
-    // through Registry::lower with byte ranges (validates clean).
+    // Build body via str_def.lower; rule's runtime substitutes WHO from
+    // each seed cursor's `terms` map at expand time.
     let body = str_def.lower(
-        &LowerCtx::new(store.clone(), dir.clone())
-            .with_binding("WHO", str_pipe("world")),
+        &LowerCtx::new(store.clone(), dir.clone()),
         None, &[], None, Some(&DslBody {
             raw: Arc::from("hello ${WHO}"),
             interps: vec![DslInterp { name: Arc::from("WHO"), range: br(6, 12) }],
@@ -74,7 +75,9 @@ fn four_slot_lower_smoke() {
 
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     let inst  = rule_pipe.into_instance();
-    expand(&inst, queue, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    let mut seed = Cursor::default();
+    seed.set("WHO", "world");
+    expand(&inst, queue, vec![Arc::new(seed)], ExpandOpts::default());
 
     assert_eq!(store.len("greet"), 1, "rule wrote one row");
     let rows = store.rows_of("greet");
@@ -132,6 +135,29 @@ fn four_slot_lower_smoke() {
     // BlockShape is exposed for downstream introspection.
     assert_eq!(reg.get("rule").unwrap().brace_block(), Some(BlockShape::Pipe));
     assert_eq!(reg.get("str").unwrap().dsl_body(),    Some(DslShape::Plain));
+}
+
+// helper: drain a lowered Pipe<Cursor> into Vec<Cursor> using the
+// caller-supplied seed cursor (so per-cursor terms can be tested).
+fn collect_with_seed(p: Pipe<Cursor>, seed: Arc<Cursor>) -> Vec<Cursor> {
+    use std::sync::Mutex;
+    use effect_runtime::v2::{Component, Node, PipeInstance, RenderCtx};
+    let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
+    struct Sink(Arc<Mutex<Vec<Cursor>>>);
+    impl Component for Sink {
+        type Next = Cursor;
+        fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.0.lock().unwrap().push(c.clone()); Node::Done
+        }
+    }
+    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> =
+        p.steps.iter().cloned().collect();
+    steps.push(Arc::new(Sink(sink.clone())));
+    let inst = PipeInstance::new(steps);
+    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(&inst, q, vec![seed], ExpandOpts::default());
+    let v = sink.lock().unwrap().clone();
+    v
 }
 
 // helper: drain a lowered Pipe<Cursor> into Vec<Cursor>.
