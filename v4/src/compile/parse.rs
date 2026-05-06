@@ -73,6 +73,16 @@ fn lower_pipe(pipe_node: Node<'_>, src: &str) -> Option<PipeAst> {
                     block:     None,
                 });
             }
+            "parenthesized" => {
+                // `( a > b > c )` flattens its inner pipe steps into the
+                // outer pipe at the position the group occupied.
+                let inner_pipe = step.named_child(0).filter(|c| c.kind() == "pipe");
+                if let Some(inner_pipe) = inner_pipe {
+                    if let Some(inner) = lower_pipe(inner_pipe, src) {
+                        steps.extend(inner.steps);
+                    }
+                }
+            }
             _ => continue, // line_comment, ERROR, etc.
         }
     }
@@ -124,7 +134,18 @@ fn lower_brace_block(brace: Node<'_>, src: &str) -> Option<PipeAst> {
     if r.end < r.start + 2 { return None; }
     let inner_lo = r.start + 1;
     let inner_hi = r.end - 1;
-    let inner = &src[inner_lo..inner_hi];
+    let inner_owned = {
+        // The grammar requires top-level statements to be `;`-terminated.
+        // Brace bodies in source omit it; synthesize one so the inner
+        // re-parse produces a clean `pipe`. The synthetic `;` sits past
+        // the original body's bytes; downstream rebase still uses
+        // `inner_lo` for the original body's source coords.
+        let mut s = String::with_capacity((inner_hi - inner_lo) + 1);
+        s.push_str(&src[inner_lo..inner_hi]);
+        s.push(';');
+        s
+    };
+    let inner: &str = &inner_owned;
 
     let mut parser = Parser::new();
     parser
@@ -151,6 +172,16 @@ fn lower_brace_block(brace: Node<'_>, src: &str) -> Option<PipeAst> {
             "dsl_body" => {
                 let mut span = node_range(step);
                 shift_range(&mut span, inner_lo);
+                // Strip the leading/trailing backtick fences. dsl_body is a
+                // single token covering `\`...\``; raw should be just the body.
+                let r = step.byte_range();
+                let body_lo = r.start.saturating_add(1);
+                let body_hi = r.end.saturating_sub(1).max(body_lo);
+                let mut body_span = ByteRange {
+                    lo: body_lo as u32,
+                    hi: body_hi as u32,
+                };
+                shift_range(&mut body_span, inner_lo);
                 steps.push(OpCall {
                     name:      Arc::<str>::from("str"),
                     predicate: false,
@@ -158,11 +189,25 @@ fn lower_brace_block(brace: Node<'_>, src: &str) -> Option<PipeAst> {
                     flow:      None,
                     args:      Vec::new(),
                     dsl:       Some(DslText {
-                        raw:  Arc::<str>::from(&inner[step.byte_range()]),
-                        span,
+                        raw:  Arc::<str>::from(&inner[body_lo..body_hi]),
+                        span: body_span,
                     }),
                     block:     None,
                 });
+            }
+            "parenthesized" => {
+                let inner_pipe_node = step.named_child(0).filter(|c| c.kind() == "pipe");
+                if let Some(inner_pipe) = inner_pipe_node {
+                    let mut wq = inner_pipe.walk();
+                    for sub in inner_pipe.named_children(&mut wq) {
+                        if sub.kind() == "op_invocation" {
+                            if let Some(mut call) = lower_op_invocation(sub, inner) {
+                                rebase_op_call(&mut call, inner_lo);
+                                steps.push(call);
+                            }
+                        }
+                    }
+                }
             }
             _ => continue,
         }

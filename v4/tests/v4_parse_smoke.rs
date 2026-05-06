@@ -11,7 +11,7 @@ fn host_parse_four_slot_and_diag_shape() {
     //
     //    Outer op:   name=rule, paren=[":greet"], dsl=Some("hi"),
     //                brace=PipeAst with one OpCall name=str, dsl=Some("world").
-    let src = "rule(:greet) `hi` { str `world` }";
+    let src = "rule(:greet)`hi`{ str`world` };";
     let (pipes, diags) = host_parse(src);
     assert!(diags.is_empty(), "expected clean parse, got diags: {diags:?}");
     assert_eq!(pipes.len(), 1, "one top-level pipe");
@@ -41,7 +41,7 @@ fn host_parse_four_slot_and_diag_shape() {
     //    grammar is permissive on bare-identifier soup — most "oops syntax
     //    error" word salads parse as a sequence of pipes — so we pick a
     //    structurally illegal shape.)
-    let src_bad = "foo > > bar";
+    let src_bad = "foo > > bar;";
     let (_pipes_bad, diags_bad) = host_parse(src_bad);
     assert!(
         diags_bad.iter().any(|d| &*d.code == "parse/syntax-error"),

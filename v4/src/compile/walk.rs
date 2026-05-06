@@ -192,6 +192,23 @@ pub fn classify_slot(
             return Some(Value::Atom(Arc::<str>::from(rest)));
         }
     }
+    // ALL_CAPS bareword → term-ref desugar.
+    //   `NAME`  → sub-pipe `term(:NAME)`      (read existing capture)
+    //   `NAME?` → sub-pipe `term_bind(:NAME)` (introduce/bind capture)
+    // CAPS convention: `[A-Z][A-Z0-9_]*`. Mixed-case / lowercase barewords
+    // remain `Value::Atom` for ops that take atom-shaped args by name.
+    if let Some(stripped) = raw.strip_suffix('?') {
+        if is_caps_ident(stripped) {
+            let term = crate::term::Term::bind(Arc::<str>::from(stripped));
+            let pipe = Pipe::new().step(Arc::new(term));
+            return Some(Value::Pipe(pipe));
+        }
+    }
+    if is_caps_ident(raw) {
+        let term = crate::term::Term::read(Arc::<str>::from(raw));
+        let pipe = Pipe::new().step(Arc::new(term));
+        return Some(Value::Pipe(pipe));
+    }
     // Bare identifier (ASCII letter/underscore start, alnum/underscore body).
     if is_ident(raw) {
         return Some(Value::Atom(Arc::<str>::from(raw)));
@@ -207,10 +224,14 @@ pub fn classify_slot(
         }
     }
     // Inline-pipe fallback: re-parse the slot body as a sprf fragment.
-    // The grammar's root is `program = stmt*`, so `foo > bar` parses as
-    // one stmt with one pipe. Anything other than exactly-one pipe is
-    // malformed at this layer.
-    let (sub_pipes, sub_diags) = crate::compile::parse::host_parse(slot.raw.as_ref());
+    // Top-level stmts now require a trailing `;`; slot fragments don't
+    // carry one, so synthesize it. The appended `;` sits at byte
+    // slot.raw.len(); any diag pointing there gets shifted to slot.span.hi
+    // when we rebase below.
+    let mut frag = String::with_capacity(slot.raw.len() + 1);
+    frag.push_str(slot.raw.as_ref());
+    frag.push(';');
+    let (sub_pipes, sub_diags) = crate::compile::parse::host_parse(&frag);
     let base = slot.span.lo;
     for mut d in sub_diags {
         if let Some(r) = d.span.as_mut() {
@@ -247,4 +268,13 @@ fn is_ident(s: &str) -> bool {
     if bytes.is_empty() { return false; }
     if !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') { return false; }
     bytes[1..].iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+}
+
+/// `[A-Z][A-Z0-9_]*` — ALL_CAPS identifier convention. Used to mark a
+/// bareword in an arg slot as a term-ref (capture) rather than an atom.
+fn is_caps_ident(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() { return false; }
+    if !bytes[0].is_ascii_uppercase() { return false; }
+    bytes[1..].iter().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
 }

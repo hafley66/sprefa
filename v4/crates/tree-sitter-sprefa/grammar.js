@@ -52,9 +52,12 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat($._stmt),
 
+    // Top-level statements are `;`-terminated. Pipes inside `( … )`
+    // grouping or `{ … }` blocks are NOT terminated — only the outer
+    // top-level statement is.
     _stmt: $ => seq(
       $.pipe,
-      optional(';'),
+      ';',
     ),
 
     pipe: $ => seq(
@@ -64,13 +67,16 @@ module.exports = grammar({
 
     _pipe_step: $ => choice(
       $.op_invocation,
+      $.parenthesized,
       // Bare backtick at step position — naked string-literal step.
       // Lowers as `str` op with no slots; dsl_body is the backtick text.
-      // (token.immediate is fine here: with no preceding identifier or
-      // open-bracket, extras still precede the backtick at the start of
-      // a step because there's nothing for "immediate" to attach to.)
       $.dsl_body,
     ),
+
+    // Parenthesized pipe — host-level grouping. `(a > b > c)` parses as
+    // a sub-pipe and inlines into the outer pipe at lower-time. No `;`
+    // permitted inside; `;` is a top-level statement terminator only.
+    parenthesized: $ => seq('(', $.pipe, ')'),
 
     // ---- op invocation ----------------------------------------------------
 

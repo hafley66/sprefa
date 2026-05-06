@@ -18,7 +18,9 @@ fn e2e_source_to_fact_store() {
     // ── 1. source ─────────────────────────────────────────────────────
     // Mirrors v4_parse_smoke / v4_walk_smoke shape. `rule(:greet)` opens
     // the sink, the `{ str `hello world` }` body emits one row.
-    let src = "rule(:greet) { str `hello world` }";
+    // Bare backtick at pipe-step lowers to `str` sugar (no whitespace
+    // permitted between an op name and its `` ` `` slot opener).
+    let src = "rule(:greet) { `hello world` };";
 
     // ── 2. parse ──────────────────────────────────────────────────────
     let (program, parse_diags) = host_parse(src);

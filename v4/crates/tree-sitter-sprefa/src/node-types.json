@@ -159,6 +159,21 @@
     }
   },
   {
+    "type": "parenthesized",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "pipe",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "pipe",
     "named": true,
     "fields": {},
@@ -172,6 +187,10 @@
         },
         {
           "type": "op_invocation",
+          "named": true
+        },
+        {
+          "type": "parenthesized",
           "named": true
         }
       ]
