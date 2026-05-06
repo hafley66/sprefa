@@ -37,6 +37,15 @@ pub fn walk_program(
 ) -> (Vec<Pipe<Cursor>>, Vec<Diag>) {
     let mut pipes = Vec::with_capacity(program.len());
     let mut diags = Vec::new();
+
+    // ── pass 1: compile-time binding-graph analysis ────────────────
+    // Walks each PipeAst tracking which captures are bound at each
+    // step. Emits `lang/use-before-bind` and `lang/term-self-cycle`
+    // diagnostics. Independent of lowering — runs once on the AST,
+    // produces diags the LSP can surface alongside lower-time diags.
+    diags.extend(super::binding_graph::analyze_program(program, reg));
+
+    // ── pass 2: lower per-pipe ────────────────────────────────────
     for p in program {
         if let Some(pipe) = walk_pipe(p, reg, ctx, &mut diags) {
             pipes.push(pipe);

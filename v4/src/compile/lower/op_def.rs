@@ -77,6 +77,17 @@ pub struct DslInterp {
     pub range: ByteRange,
 }
 
+/// Names this op's dsl body binds at runtime (e.g. `re`'s
+/// `(?P<NAME>…)`, `glob`'s `<NAME>` capture sigil). Populated per-op
+/// by `OperatorDef::binders_in_dsl`. Used by `binding_graph` so the
+/// compile-time analyzer doesn't emit false-positive
+/// `lang/use-before-bind` diags for names introduced by DSL syntax.
+#[derive(Clone, Debug)]
+pub struct DslBinder {
+    pub name:  Arc<str>,
+    pub range: ByteRange,
+}
+
 #[derive(Clone, Debug)]
 pub struct DslBody {
     pub raw:     Arc<str>,
@@ -97,6 +108,16 @@ pub trait OperatorDef: Send + Sync + 'static {
     fn parse_dsl(&self, raw: &str) -> Result<Vec<DslInterp>, LowerError> {
         Ok(default_plain_dsl_parse(raw))
     }
+
+    /// Names this op's dsl body BINDS at runtime. Used by the
+    /// compile-time binding-graph analyzer to suppress
+    /// `lang/use-before-bind` diags for captures introduced by
+    /// DSL-internal syntax.
+    ///   re   — `(?P<NAME>…)` named groups
+    ///   glob — `<NAME>` directory capture
+    ///   ast  — `$NAME` / `$$$REST` metavars
+    /// Default: empty. Op-specific scanners override.
+    fn binders_in_dsl(&self, _raw: &str) -> Vec<DslBinder> { Vec::new() }
 
     fn lower(
         &self,

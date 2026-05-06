@@ -20,8 +20,9 @@ use crate::term::Term;
 use crate::v2_ops::{FsComponent, ReComponent};
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
-    ArgKind, ArgSig, BlockShape, DslBody, DslShape, OperatorDef,
+    ArgKind, ArgSig, BlockShape, DslBinder, DslBody, DslShape, OperatorDef,
 };
+use effect_runtime::v2::ByteRange;
 use crate::compile::lower::value::{run_once_const, Value};
 use crate::pipeline::{GlobComponent, StrConstComponent, StrTemplateComponent};
 use crate::rule::Rule;
@@ -244,9 +245,50 @@ const GLOB_SPEC: &[ArgSig] = &[
     },
 ];
 
+/// Scan a regex body for `(?P<NAME>...)` named groups. Returns each
+/// captured name with the byte range of the full sigil.
+fn scan_re_named_groups(raw: &str) -> Vec<DslBinder> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 4 < bytes.len() {
+        // look for `(?P<` or `(?<`  (Rust regex accepts both shapes)
+        let lo = i;
+        let prefix_len = if bytes[i] == b'(' && bytes[i+1] == b'?' && bytes[i+2] == b'P' && bytes[i+3] == b'<' {
+            4
+        } else if bytes[i] == b'(' && bytes[i+1] == b'?' && bytes[i+2] == b'<' {
+            3
+        } else {
+            i += 1; continue;
+        };
+        let name_lo = i + prefix_len;
+        let mut j = name_lo;
+        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+            j += 1;
+        }
+        if j > name_lo && j < bytes.len() && bytes[j] == b'>' {
+            let name = &raw[name_lo..j];
+            out.push(DslBinder {
+                name:  Arc::<str>::from(name),
+                range: ByteRange { lo: lo as u32, hi: (j + 1) as u32 },
+            });
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 impl OperatorDef for GlobDef {
     fn name(&self) -> &'static str { "glob" }
     fn paren_args(&self) -> &[ArgSig] { GLOB_SPEC }
+
+    /// `<NAME>` glob capture sigil. Each occurrence binds NAME at
+    /// runtime; the analyzer treats them as bound at the glob step.
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
+        scan_glob_captures(raw)
+    }
 
     fn lower(
         &self,
@@ -263,6 +305,38 @@ impl OperatorDef for GlobDef {
     }
 }
 
+/// Scan a glob body for `<NAME>` directory-capture sigils.
+fn scan_glob_captures(raw: &str) -> Vec<DslBinder> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            let lo = i;
+            let mut j = i + 1;
+            if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+                let name_lo = j;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'>' {
+                    let name = &raw[name_lo..j];
+                    out.push(DslBinder {
+                        name:  Arc::<str>::from(name),
+                        range: ByteRange { lo: lo as u32, hi: (j + 1) as u32 },
+                    });
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 // ─── ast ──────────────────────────────────────────────────────────────────
 // `AstNmComponent::new(pat_src, lang)` needs a `SupportLang` that
 // `OperatorDef::lower` can't surface today. Lane C's `parse_dsl`
@@ -275,6 +349,11 @@ pub struct AstDef;
 impl OperatorDef for AstDef {
     fn name(&self) -> &'static str { "ast" }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+
+    /// ast-grep metavars: `$NAME`, `$$$REST`. Both bind at runtime.
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
+        scan_ast_metavars(raw)
+    }
 
     fn lower(
         &self,
@@ -292,6 +371,39 @@ impl OperatorDef for AstDef {
     }
 }
 
+/// Scan an ast-grep body for `$NAME` and `$$$REST` metavars. Both are
+/// runtime binders.
+fn scan_ast_metavars(raw: &str) -> Vec<DslBinder> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            let lo = i;
+            let mut j = i + 1;
+            // skip up to two extra `$` for the $$$REST form
+            while j < bytes.len() && bytes[j] == b'$' && j - i < 3 { j += 1; }
+            if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+                let name_lo = j;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                {
+                    j += 1;
+                }
+                let name = &raw[name_lo..j];
+                out.push(DslBinder {
+                    name:  Arc::<str>::from(name),
+                    range: ByteRange { lo: lo as u32, hi: j as u32 },
+                });
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 // ─── re ───────────────────────────────────────────────────────────────────
 
 pub struct ReDef;
@@ -299,6 +411,13 @@ pub struct ReDef;
 impl OperatorDef for ReDef {
     fn name(&self) -> &'static str { "re" }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+
+    /// Scan the regex body for `(?P<NAME>...)` named groups. Each name
+    /// is a runtime binder; the binding graph treats them as bound at
+    /// the step of this `re` op.
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
+        scan_re_named_groups(raw)
+    }
 
     fn lower(
         &self,

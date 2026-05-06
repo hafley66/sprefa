@@ -10,6 +10,7 @@
 //!   lower/     — OperatorDef trait + Registry + validate_call + per-op wrappers.
 
 pub mod ast;
+pub mod binding_graph;
 pub mod lower;
 pub mod parse;
 pub mod probe_wrap;
