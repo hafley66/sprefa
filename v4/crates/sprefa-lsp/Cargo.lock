@@ -1482,6 +1482,8 @@ name = "sprefa-lsp"
 version = "0.1.0"
 dependencies = [
  "effect_runtime",
+ "lsp-types 0.97.0",
+ "serde",
  "serde_json",
  "tokio",
  "tower-lsp",
@@ -2266,6 +2268,8 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
  "tree-sitter",
  "tree-sitter-json 0.24.8",
  "tree-sitter-sprefa",

@@ -99,8 +99,10 @@ impl Component for FsComponent {
             let Ok(e) = entry else { continue };
             if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
             let p = e.into_path();
-            let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
-            if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+            if !self.exts.is_empty() {
+                let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+                if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+            }
 
             let mut c = Cursor::default();
             c.set("FS", p.display().to_string());
@@ -254,21 +256,37 @@ impl Component for CountComponent {
 //   Pure cursor mutators (former SimpleOp variants)
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 
-/// Split `from` term's value by `sep`, emit one child cursor per
-/// non-empty piece, bound to `into` term.
-pub struct SplitComponent { pub from: String, pub sep: String, pub into: String }
+/// Split a string by `sep`, emit one child cursor per non-empty piece.
+///   from = None  → reads `cursor.value`
+///   from = Some  → reads named term
+///   into = None  → writes `cursor.value`
+///   into = Some  → also writes named term (value is rebound regardless)
+pub struct SplitComponent { pub from: Option<String>, pub sep: String, pub into: Option<String> }
 impl SplitComponent {
     pub fn new(from: &str, sep: &str, into: &str) -> Self {
-        Self { from: from.into(), sep: sep.into(), into: into.into() }
+        Self { from: Some(from.into()), sep: sep.into(), into: Some(into.into()) }
     }
+    pub fn on_value(sep: &str) -> Self {
+        Self { from: None, sep: sep.into(), into: None }
+    }
+    pub fn from_term(mut self, name: &str) -> Self { self.from = Some(name.into()); self }
+    pub fn into_term(mut self, name: &str) -> Self { self.into = Some(name.into()); self }
 }
 impl Component for SplitComponent {
     type Next = Cursor;
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        let Some(s) = c.get(&self.from) else { return Node::Done };
-        let out: Vec<Cursor> = s.split(self.sep.as_str())
+        let src: &str = match &self.from {
+            Some(name) => match c.get(name) { Some(s) => s, None => return Node::Done },
+            None       => &c.value,
+        };
+        let out: Vec<Cursor> = src.split(self.sep.as_str())
             .filter(|p| !p.is_empty())
-            .map(|p| { let mut k = c.clone(); k.set(&self.into, p); k })
+            .map(|p| {
+                let mut k = c.clone();
+                k.value = Arc::<str>::from(p);
+                if let Some(into) = &self.into { k.set(into, p); }
+                k
+            })
             .collect();
         nodes_from(out)
     }
@@ -450,7 +468,9 @@ impl Component for ReComponent {
     }
 }
 
-/// Sh modes — same surface as v4 native.
+/// Sh modes. EmitLines retained for back-compat but the language
+/// surface no longer exposes it: `sh\`cmd\` > split\`\n\`` is the
+/// idiomatic combo.
 #[derive(Debug, Clone, Copy)]
 pub enum ShMode { EmitLines, FilterByExit, CaptureStdout }
 
@@ -488,6 +508,11 @@ impl ShComponent {
     pub fn capture(cmd: &str, bind: &str) -> Self {
         Self { cmd_template: cmd.into(), mode: ShMode::CaptureStdout, bind: Some(bind.into()) }
     }
+    /// Capture stdout into `cursor.value` only (no named term). Use
+    /// when the next op operates on `&.value` (e.g. `> split\`\n\``).
+    pub fn capture_value(cmd: &str) -> Self {
+        Self { cmd_template: cmd.into(), mode: ShMode::CaptureStdout, bind: None }
+    }
 }
 impl Component for ShComponent {
     type Next = Cursor;
@@ -519,6 +544,9 @@ impl Component for ShComponent {
                 ShMode::CaptureStdout => {
                     let stdout = String::from_utf8_lossy(&o.stdout).trim_end().to_string();
                     let mut child = c.clone();
+                    // Always rebind cursor.value so `> split` and
+                    // friends can chain off &.value with no named term.
+                    child.value = Arc::<str>::from(stdout.as_str());
                     if let Some(b) = &bind { child.set(b, stdout.as_str()); }
                     Node::Emit(Arc::new(child))
                 }
@@ -626,8 +654,10 @@ impl Component for RepoComponent {
                 let Ok(e) = entry else { continue };
                 if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
                 let p = e.into_path();
-                let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
-                if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+                if !self.exts.is_empty() {
+                    let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+                    if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+                }
                 let mut c = Cursor::default();
                 c.set_arc("REPO", slug_arc.clone());
                 let fs_arc: Arc<str> = match &self.interner {
@@ -691,23 +721,235 @@ impl Component for RepoFromTermComponent {
     }
 }
 
-/// Render a `{TERM}` template per cursor and println! the result.
-/// Side-effect terminal — emits `Done` after printing. (v4 native uses
-/// the Hooks effect channel; the bench's only consumer is a sink that
-/// drains it, so a direct println is equivalent for v2 runtime scope.)
-pub struct PrintComponent { pub template: String }
+/// Render a `${TERM}` template per cursor, prepend optional prefix,
+/// and println! the result. Cursor flows through unchanged — print is
+/// a side-tap, not a sink. `template = None` prints a debug dump of
+/// the cursor.terms (every binding) so `print()` with no args is
+/// useful for ad-hoc tracing.
+pub struct PrintComponent {
+    pub template: Option<String>,
+    pub prefix:   Option<String>,
+}
 impl PrintComponent {
-    pub fn new(template: impl Into<String>) -> Self { Self { template: template.into() } }
+    pub fn new(template: impl Into<String>) -> Self {
+        Self { template: Some(template.into()), prefix: None }
+    }
+    pub fn dump() -> Self { Self { template: None, prefix: None } }
+    pub fn with_prefix(mut self, p: impl Into<String>) -> Self {
+        self.prefix = Some(p.into()); self
+    }
 }
 impl Component for PrintComponent {
     type Next = Cursor;
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        let mut s = self.template.clone();
-        for (n, v) in &c.terms {
-            s = s.replace(&format!("{{{}}}", n), v);
+        let body = match &self.template {
+            Some(t) => {
+                let re = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+                re.replace_all(t, |caps: &regex::Captures| {
+                    c.get(&caps[1]).unwrap_or("").to_string()
+                }).into_owned()
+            }
+            None => {
+                let mut s = String::new();
+                for (i, (n, v)) in c.terms.iter().enumerate() {
+                    if i > 0 { s.push(' '); }
+                    s.push_str(n); s.push('='); s.push_str(v);
+                }
+                s
+            }
+        };
+        match &self.prefix {
+            Some(p) => println!("{p}: {body}"),
+            None    => println!("{body}"),
         }
-        println!("{}", s);
-        Node::Done
+        Node::Emit(Arc::new(c.clone()))
+    }
+}
+
+/// `> void` — drop the cursor.
+pub struct VoidComponent;
+impl Component for VoidComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, _c: &Cursor) -> Node<Cursor> { Node::Done }
+}
+
+/// `> read` — load file bytes (UTF-8) at cursor.FS into cursor.value.
+/// No-FS cursors pass through unchanged. UTF-8 errors fall through to
+/// from_utf8_lossy so we never drop a row on encoding.
+pub struct ReadComponent;
+impl Component for ReadComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let Some(path) = c.get("FS") else { return Node::Emit(Arc::new(c.clone())) };
+        let bytes = match std::fs::read(path) { Ok(b) => b, Err(_) => return Node::Done };
+        let s = String::from_utf8_lossy(&bytes).into_owned();
+        let mut child = c.clone();
+        child.value = Arc::<str>::from(s.as_str());
+        Node::Emit(Arc::new(child))
+    }
+}
+
+/// `> comment(open_re, close_re?)` — narrow cursor.value to regions
+/// bounded by comment markers. Reads `cursor.value` as the haystack.
+/// Single-arg = sequential; two-arg = paired (LIFO nesting). Each
+/// emitted cursor has LO/HI byte offsets stamped (relative to the
+/// original value) and `value` rebound to the inner slice.
+pub struct CommentComponent {
+    open:  Arc<regex::Regex>,
+    close: Option<Arc<regex::Regex>>,
+}
+impl CommentComponent {
+    pub fn sequential(open_re: &str) -> Result<Self, regex::Error> {
+        Ok(Self { open: Arc::new(regex::Regex::new(open_re)?), close: None })
+    }
+    pub fn paired(open_re: &str, close_re: &str) -> Result<Self, regex::Error> {
+        Ok(Self {
+            open:  Arc::new(regex::Regex::new(open_re)?),
+            close: Some(Arc::new(regex::Regex::new(close_re)?)),
+        })
+    }
+}
+impl Component for CommentComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let hay = c.value.clone();
+        let opens: Vec<(usize, usize)> = self.open.find_iter(&hay)
+            .map(|m| (m.start(), m.end())).collect();
+        if opens.is_empty() { return Node::Done; }
+
+        let regions: Vec<(usize, usize)> = match &self.close {
+            None => {
+                // Sequential: [open[i].end, open[i+1].start) — last → EOF.
+                let mut out = Vec::with_capacity(opens.len());
+                for (i, (_, oe)) in opens.iter().enumerate() {
+                    let next_lo = opens.get(i + 1).map(|(s, _)| *s).unwrap_or(hay.len());
+                    out.push((*oe, next_lo));
+                }
+                out
+            }
+            Some(cre) => {
+                // Paired LIFO: walk opens + closes in source order, push opens,
+                // pop on close → [open.end, close.start).
+                let closes: Vec<(usize, usize)> = cre.find_iter(&hay)
+                    .map(|m| (m.start(), m.end())).collect();
+                let mut events: Vec<(usize, bool, usize)> = Vec::new(); // (pos, is_open, end)
+                for (s, e) in &opens   { events.push((*s, true,  *e)); }
+                for (s, e) in &closes  { events.push((*s, false, *e)); }
+                events.sort_by_key(|e| e.0);
+                let mut stack: Vec<usize> = Vec::new();
+                let mut out: Vec<(usize, usize)> = Vec::new();
+                for (pos, is_open, end) in events {
+                    if is_open { stack.push(end); }
+                    else if let Some(open_end) = stack.pop() {
+                        out.push((open_end, pos));
+                    }
+                }
+                // unpaired opens → collapse to the marker line itself
+                while let Some(open_end) = stack.pop() {
+                    out.push((open_end, open_end));
+                }
+                out
+            }
+        };
+
+        let hits: Vec<Node<Cursor>> = regions.into_iter().map(|(lo, hi)| {
+            let mut child = c.clone();
+            child.set("LO", lo.to_string());
+            child.set("HI", hi.to_string());
+            child.value = Arc::<str>::from(&hay[lo..hi]);
+            Node::Emit(Arc::new(child))
+        }).collect();
+        if hits.is_empty() { Node::Done } else { Node::Many(hits) }
+    }
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//   Writers — reverse polarity. cursor → bytes on disk.
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteMode { Replace, Append, Prepend, Wrap }
+
+/// `> write_cursor(mode?)` — splice `cursor.value` into file at
+/// (FS, [LO, HI)). Aggregates per file and applies right-to-left so
+/// multi-cursor splices stay correct (left edits would shift right
+/// offsets). One file open + one write per (file, batch).
+pub struct WriteCursorComponent { pub mode: WriteMode }
+impl WriteCursorComponent {
+    pub fn new(mode: WriteMode) -> Self { Self { mode } }
+}
+impl Component for WriteCursorComponent {
+    type Next = Cursor;
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        use std::collections::BTreeMap;
+        // Group hits by FS.
+        let mut by_file: BTreeMap<String, Vec<(usize, usize, Arc<str>)>> = BTreeMap::new();
+        let mut out: Vec<Node<Cursor>> = Vec::with_capacity(batch.len());
+        for c in batch {
+            let (Some(fs), Some(lo_s), Some(hi_s)) = (c.get("FS"), c.get("LO"), c.get("HI")) else {
+                out.push(Node::Emit(Arc::new((*c).clone()))); continue;
+            };
+            let (Ok(lo), Ok(hi)) = (lo_s.parse::<usize>(), hi_s.parse::<usize>()) else {
+                out.push(Node::Emit(Arc::new((*c).clone()))); continue;
+            };
+            by_file.entry(fs.to_string()).or_default().push((lo, hi, c.value.clone()));
+            out.push(Node::Emit(Arc::new((*c).clone())));
+        }
+        for (path, mut hits) in by_file {
+            // Right-to-left order so earlier splice offsets remain valid.
+            hits.sort_by(|a, b| b.0.cmp(&a.0));
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let mut buf: Vec<u8> = bytes;
+            for (lo, hi, ins) in hits {
+                let lo = lo.min(buf.len());
+                let hi = hi.min(buf.len()).max(lo);
+                let (slice_lo, slice_hi) = match self.mode {
+                    WriteMode::Replace => (lo, hi),
+                    WriteMode::Append  => (hi, hi),
+                    WriteMode::Prepend => (lo, lo),
+                    WriteMode::Wrap    => {
+                        // Wrap = ${ins}<original>${ins}. Splice prepend then
+                        // skip — handled inline so the loop still runs once.
+                        let ins_b = ins.as_bytes();
+                        // append at hi
+                        buf.splice(hi..hi, ins_b.iter().copied());
+                        // prepend at lo
+                        buf.splice(lo..lo, ins_b.iter().copied());
+                        continue;
+                    }
+                };
+                buf.splice(slice_lo..slice_hi, ins.as_bytes().iter().copied());
+            }
+            let _ = std::fs::write(&path, &buf);
+        }
+        out
+    }
+}
+
+/// `> write_file(path?)` — write `cursor.value` to a file. Path is
+/// resolved as: explicit arg (atom or term-read) overrides cursor.FS.
+/// Emits the cursor through unchanged. Per-cursor immediate write —
+/// caller's responsibility to ensure unique paths if multiple cursors
+/// fan out (otherwise last-writer-wins).
+pub struct WriteFileComponent {
+    /// Pre-resolved path. If `None`, reads `cursor.FS` at run time.
+    pub path: Option<PathBuf>,
+}
+impl WriteFileComponent {
+    pub fn new(path: Option<PathBuf>) -> Self { Self { path } }
+}
+impl Component for WriteFileComponent {
+    type Next = Cursor;
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let path: PathBuf = match &self.path {
+            Some(p) => p.clone(),
+            None    => match c.get("FS") {
+                Some(s) => PathBuf::from(s),
+                None    => return Node::Emit(Arc::new(c.clone())),
+            },
+        };
+        let _ = std::fs::write(&path, c.value.as_bytes());
+        Node::Emit(Arc::new(c.clone()))
     }
 }
 

@@ -57,6 +57,16 @@ pub enum ActionKind {
 // ║         § 2   cursor — dynamic-scope term-capture bag         ║
 // ╚═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╝
 
+// TODO(cursor-bytes-vs-strings): revisit once SprfStore lands. v0 stored
+// every capture as a Ref(file_id, lo, hi) + StringId, sharing content
+// across rows and freeing the row of stringly LO/HI/FS columns. Today
+// the bag holds Arc<str> per term — fine at 4k cursors, painful at
+// linux-bench scale (~36k files × ~80 matches). Candidates: (a) keep
+// Arc<str> bag and add `_REF` columns alongside (cheap port), (b) flip
+// `terms` to a typed enum `TermVal::{Text(Arc<str>), Ref(RefId),
+// String(StringId)}` and let SprfStore resolve at read time (deeper
+// port, bigger mem win). Decided after the SprfStore port lands and we
+// can measure both shapes against linux-bench.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Cursor {
     /// Focal value `&.value`. Default for Term::Bind. Source ops set

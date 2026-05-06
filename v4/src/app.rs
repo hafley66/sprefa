@@ -34,7 +34,7 @@ use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
 
-use crate::compile::ast::PipeAst;
+use crate::compile::ast::{OpCall, PipeAst};
 use crate::compile::parse::host_parse;
 use crate::compile::walk::walk_program;
 use crate::lower::{default_registry, LowerCtx, Registry};
@@ -124,6 +124,27 @@ pub struct RunReport    {
     pub pipes:       usize,
     /// Rule-table names harvested from the AST (one per `rule(:NAME)`).
     pub tables:      Vec<String>,
+}
+
+/// Locate the dsl-body span enclosing a host byte by walking the
+/// CACHED `DocState.program`. No re-parse: the program is built once
+/// per `lsp_open` / `lsp_change` and read here.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspLocateDslReq {
+    pub uri:  String,
+    /// Host-source byte offset (the LSP server resolves line/utf16-col
+    /// to bytes before crossing this boundary).
+    pub byte: u32,
+}
+
+/// `op_name` is `None` when `byte` falls outside every dsl body in the
+/// cached program — host position, not a dsl position.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspLocateDslResp {
+    pub op_name:   Option<String>,
+    pub body_raw:  Option<String>,
+    pub body_off:  u32,
+    pub body_byte: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -303,6 +324,7 @@ sprf_rpc! {
     fn lsp_close   (LspCloseReq)  -> ()                  => "/lsp/close";
     fn get_diags   (GetDiagsReq)  -> Vec<SprfDiag>       => "/lsp/diags";
     fn get_inlays  (GetInlaysReq) -> Vec<InlayProbe>     => "/lsp/inlays";
+    fn lsp_locate_dsl (LspLocateDslReq) -> LspLocateDslResp => "/lsp/locate-dsl";
     fn run            (RunReq)          -> RunReport     => "/run";
     fn get_fact_table (GetFactTableReq) -> FactTable     => "/facts";
 }
@@ -391,6 +413,29 @@ impl SprfHandlers for SprfState {
         let d = docs.get(&req.uri).ok_or(SprfError::UnknownDoc(req.uri))?;
         Ok(d.probes.clone())
     }
+    async fn lsp_locate_dsl(&self, req: LspLocateDslReq) -> Result<LspLocateDslResp, SprfError> {
+        let docs = self.docs.lock().unwrap();
+        let d = docs.get(&req.uri).ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
+        let mut hit: Option<(OpCall, usize)> = None;
+        for p in &d.program { walk_pipe_for_dsl(p, req.byte as usize, &mut hit); }
+        Ok(match hit {
+            Some((call, body_byte)) => match &call.dsl {
+                Some(dsl) => LspLocateDslResp {
+                    op_name:   Some(call.name.to_string()),
+                    body_raw:  Some(dsl.raw.to_string()),
+                    body_off:  dsl.span.lo,
+                    body_byte: body_byte as u32,
+                },
+                None => LspLocateDslResp {
+                    op_name: None, body_raw: None, body_off: 0, body_byte: 0,
+                },
+            },
+            None => LspLocateDslResp {
+                op_name: None, body_raw: None, body_off: 0, body_byte: 0,
+            },
+        })
+    }
+
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
         let src = std::fs::read_to_string(&req.path)
             .map_err(|e| SprfError::Io(e.to_string()))?;
@@ -434,6 +479,24 @@ impl SprfHandlers for SprfState {
                 .collect(),
         }).collect();
         Ok(FactTable { name: req.name, total, rows })
+    }
+}
+
+fn walk_pipe_for_dsl(p: &PipeAst, host_byte: usize, hit: &mut Option<(OpCall, usize)>) {
+    for step in &p.steps { walk_step_for_dsl(step, host_byte, hit); }
+}
+
+fn walk_step_for_dsl(call: &OpCall, host_byte: usize, hit: &mut Option<(OpCall, usize)>) {
+    if let Some(dsl) = &call.dsl {
+        let lo = dsl.span.lo as usize;
+        let hi = dsl.span.hi as usize;
+        if host_byte >= lo && host_byte < hi {
+            // Deepest containing body wins (overwrites outer hits).
+            *hit = Some((call.clone(), host_byte - lo));
+        }
+    }
+    if let Some(block) = &call.block {
+        walk_pipe_for_dsl(block, host_byte, hit);
     }
 }
 

@@ -17,12 +17,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result as RpcResult;
 use tower_lsp::lsp_types::{
+    CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams,
-    InitializeResult, InitializedParams, InlayHint, InlayHintLabel,
-    InlayHintParams, MessageType, NumberOrString, OneOf, Position, Range,
-    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, Hover,
+    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+    InitializedParams, InlayHint, InlayHintLabel, InlayHintParams,
+    MessageType, NumberOrString, OneOf, Position, Range, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensResult,
     SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
     TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     WorkDoneProgressOptions,
@@ -30,12 +32,14 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use tracing_subscriber::EnvFilter;
 
+mod dsl_lookup;
 mod inlay;
 mod semantic;
 
 use v4::app::{
     build_in_process, GetDiagsReq, GetInlaysReq, InProcessClient,
-    LspChangeReq, LspCloseReq, LspOpenReq, SprfClient, SprfDiag,
+    LspChangeReq, LspCloseReq, LspLocateDslReq, LspLocateDslResp, LspOpenReq,
+    SprfClient, SprfDiag,
 };
 
 struct Backend {
@@ -117,6 +121,20 @@ impl LanguageServer for Backend {
                     ),
                 ),
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
+                completion_provider: Some(CompletionOptions {
+                    // `$` opens host pipe-holes; `:` opens atoms; `.` is
+                    // reserved future "field access". Triggering on these
+                    // keystrokes makes type-ahead feel native instead of
+                    // ctrl-space-only.
+                    trigger_characters: Some(vec![
+                        "$".into(), ":".into(), ".".into(),
+                    ]),
+                    resolve_provider: Some(false),
+                    all_commit_characters: None,
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                    completion_item: None,
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -180,6 +198,82 @@ impl LanguageServer for Backend {
         Ok(Some(hints))
     }
 
+    async fn hover(&self, params: HoverParams) -> RpcResult<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let text = {
+            let g = self.docs.lock().await;
+            match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
+        };
+        let host_byte = position_to_byte(&text, pos);
+        let hit: LspLocateDslResp = match self.sprf.lsp_locate_dsl(LspLocateDslReq {
+            uri:  uri.to_string(),
+            byte: host_byte as u32,
+        }).await {
+            Ok(h)  => h,
+            Err(_) => return Ok(None),
+        };
+        let (Some(op_name), Some(body_raw)) = (hit.op_name, hit.body_raw) else {
+            return Ok(None);
+        };
+        let Some(handle) = dsl_lookup::provider_for(&op_name) else {
+            return Ok(None);
+        };
+        let Some(lsp) = handle.lsp() else { return Ok(None); };
+        let v4_hov: v4_lsp_types::Hover = match lsp.hover(body_raw.as_bytes(), hit.body_byte as usize) {
+            Some(h) => h,
+            None    => return Ok(None),
+        };
+        // tower-lsp 0.20 carries lsp-types 0.94; v4 lib carries 0.97.
+        // The two share JSON shape, so a serde round-trip is the cheapest
+        // bridge until both packages converge. Cost is one Hover per call.
+        let mut hov: Hover = match crosswalk(&v4_hov) {
+            Some(h) => h,
+            None    => return Ok(None),
+        };
+        if let Some(body_range) = hov.range.take() {
+            hov.range = Some(shift_body_range_to_host(
+                &text, hit.body_off as usize, &body_raw, body_range,
+            ));
+        }
+        Ok(Some(hov))
+    }
+
+    async fn completion(
+        &self, params: CompletionParams,
+    ) -> RpcResult<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let text = {
+            let g = self.docs.lock().await;
+            match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
+        };
+        let host_byte = position_to_byte(&text, pos);
+        let hit: LspLocateDslResp = match self.sprf.lsp_locate_dsl(LspLocateDslReq {
+            uri:  uri.to_string(),
+            byte: host_byte as u32,
+        }).await {
+            Ok(h)  => h,
+            // Outside any dsl body, or unopened uri — host-level
+            // completion (op names, atoms, term refs) lives later.
+            Err(_) => return Ok(Some(CompletionResponse::Array(Vec::new()))),
+        };
+        let v4_items: Vec<v4_lsp_types::CompletionItem> = match (hit.op_name, hit.body_raw) {
+            (Some(op_name), Some(body_raw)) => match dsl_lookup::provider_for(&op_name) {
+                Some(handle) => match handle.lsp() {
+                    Some(lsp) => lsp.completions(body_raw.as_bytes(), hit.body_byte as usize),
+                    None      => Vec::new(),
+                },
+                None => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        let items: Vec<CompletionItem> = v4_items.iter()
+            .filter_map(|it| crosswalk::<_, CompletionItem>(it))
+            .collect();
+        Ok(Some(CompletionResponse::Array(items)))
+    }
+
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let td = params.text_document;
         self.refresh(td.uri, td.text, td.version, true).await;
@@ -232,6 +326,67 @@ fn map_severity(s: &str) -> DiagnosticSeverity {
         "warning" => DiagnosticSeverity::WARNING,
         "info"    => DiagnosticSeverity::INFORMATION,
         _         => DiagnosticSeverity::HINT,
+    }
+}
+
+/// `lsp_types` v0.97 (used by v4 lib) ↔ v0.94 (used by tower-lsp 0.20).
+/// They share JSON shape, so serde round-trip is the cheapest bridge.
+/// Returns `None` only if the source value fails to serialize, which
+/// is essentially never for the structures we cross.
+fn crosswalk<S: serde::Serialize, D: serde::de::DeserializeOwned>(src: &S) -> Option<D> {
+    serde_json::from_value(serde_json::to_value(src).ok()?).ok()
+}
+
+/// Re-export of v4 lib's lsp-types under a non-clashing name. Hover
+/// and CompletionItem returned by `DslBodyLsp` are 0.97 types; main.rs
+/// otherwise speaks 0.94 (tower-lsp's vendored version).
+mod v4_lsp_types {
+    pub use lsp_types::{CompletionItem, Hover};
+}
+
+/// Convert an LSP (line, utf16-col) position into a host-source byte
+/// offset. Inverse of `byte_to_position`. Saturates at end-of-line on
+/// past-end columns and at end-of-document on past-end lines.
+fn position_to_byte(src: &str, p: Position) -> usize {
+    let bytes = src.as_bytes();
+    let mut line: u32 = 0;
+    let mut line_start: usize = 0;
+    let mut i: usize = 0;
+    while i < bytes.len() && line < p.line {
+        if bytes[i] == b'\n' { line += 1; line_start = i + 1; }
+        i += 1;
+    }
+    if line < p.line { return bytes.len(); }
+    let line_end = (line_start..bytes.len()).find(|&j| bytes[j] == b'\n').unwrap_or(bytes.len());
+    let line_str = &src[line_start..line_end];
+    let mut col_left: u32 = p.character;
+    let mut byte = line_start;
+    if line_str.is_ascii() {
+        byte += (col_left as usize).min(line_str.len());
+    } else {
+        for ch in line_str.chars() {
+            let w = ch.len_utf16() as u32;
+            if col_left < w { break; }
+            col_left -= w;
+            byte += ch.len_utf8();
+        }
+    }
+    byte
+}
+
+/// DslBodyLsp returns Ranges computed against body bytes alone (its
+/// Position(line, col) is body-local). Re-derive the body-relative byte
+/// span from those Positions, then shift to the host range using the
+/// shared helper. This keeps multi-line dsl bodies aligned in the host
+/// document.
+fn shift_body_range_to_host(
+    host_src: &str, body_off: usize, body_raw: &str, body_range: Range,
+) -> Range {
+    let lo = position_to_byte(body_raw, body_range.start);
+    let hi = position_to_byte(body_raw, body_range.end);
+    Range {
+        start: byte_to_position(host_src, body_off + lo),
+        end:   byte_to_position(host_src, body_off + hi),
     }
 }
 

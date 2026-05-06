@@ -39,6 +39,16 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::FactWriteDef));
     r.register(Arc::new(ops::NextDef));
     r.register(Arc::new(ops::NextQDef));
+    r.register(Arc::new(ops::VoidDef));
+    r.register(Arc::new(ops::PrintDef));
+    r.register(Arc::new(ops::ShDef));
+    r.register(Arc::new(ops::ShBangDef));
+    r.register(Arc::new(ops::RepoDef));
+    r.register(Arc::new(ops::SplitDef));
+    r.register(Arc::new(ops::ReadDef));
+    r.register(Arc::new(ops::CommentDef));
+    r.register(Arc::new(ops::WriteCursorDef));
+    r.register(Arc::new(ops::WriteFileDef));
     r.register(Arc::new(crate::lsp::LspErrorDef));
     r.register(Arc::new(crate::lsp::LspWarnDef));
     r.register(Arc::new(crate::lsp::LspInfoDef));

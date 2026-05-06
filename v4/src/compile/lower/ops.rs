@@ -17,7 +17,12 @@ use crate::Cursor;
 use crate::chan::{Next, NextQ};
 use crate::fact::{FactRead, FactWrite};
 use crate::term::Term;
-use crate::v2_ops::{AstNmComponent, FsComponent, JsonComponent, ReComponent};
+use crate::v2_ops::{
+    AstNmComponent, CommentComponent, FsComponent, JsonComponent, PrintComponent,
+    ReComponent, ReadComponent, RepoComponent, ShBangComponent, ShComponent,
+    SplitComponent, VoidComponent, WriteCursorComponent, WriteFileComponent,
+    WriteMode,
+};
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBinder, DslBody, DslShape, OperatorDef,
@@ -767,6 +772,452 @@ impl OperatorDef for FactWriteDef {
         // until FactWrite grows column projection.
         let table = atom_arg(args, 0);
         Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))))
+    }
+}
+
+// ─── void ─────────────────────────────────────────────────────────────────
+
+pub struct VoidDef;
+
+impl OperatorDef for VoidDef {
+    fn name(&self) -> &'static str { "void" }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        Ok(Pipe::new().step(Arc::new(VoidComponent)))
+    }
+}
+
+// ─── print ────────────────────────────────────────────────────────────────
+// `print` / `print(:prefix)` / `` print`hello ${X}` `` / `` print(:tag)`${X}` ``
+// Side-tap: cursor flows through unchanged; one line per cursor.
+
+pub struct PrintDef;
+
+const PRINT_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "prefix",
+        doc: "label prepended to each printed line", required: false,
+    },
+];
+
+impl OperatorDef for PrintDef {
+    fn name(&self) -> &'static str { "print" }
+    fn paren_args(&self) -> &[ArgSig] { PRINT_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn dsl_required(&self) -> bool { false }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let prefix: Option<String> = args.first().and_then(|v| match v {
+            Value::Atom(s) => Some(s.to_string()),
+            _ => None,
+        });
+        let mut comp = match dsl {
+            Some(b) => PrintComponent::new(b.raw.as_ref()),
+            None    => PrintComponent::dump(),
+        };
+        if let Some(p) = prefix { comp = comp.with_prefix(p); }
+        Ok(Pipe::new().step(Arc::new(comp)))
+    }
+}
+
+// ─── sh / sh! ─────────────────────────────────────────────────────────────
+// `sh\`cmd\``                           — capture stdout into &.value
+// `sh(OUT?)\`cmd\``                     — capture into &.value AND bind OUT
+// `sh(:filter)\`cmd\``                  — keep cursor only if exit == 0
+// `sh!\`cmd\``                          — fire-and-forget side effect; passes through
+// (`sh > split\`\n\`` replaces the previous :lines mode.)
+
+pub struct ShDef;
+
+const SH_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Variadic(&ArgKind::Any),
+        name: "modifier",
+        doc: "either :lines (emit one cursor per stdout line) or BIND? (capture stdout into BIND)",
+        required: false,
+    },
+];
+
+impl OperatorDef for ShDef {
+    fn name(&self) -> &'static str { "sh" }
+    fn paren_args(&self) -> &[ArgSig] { SH_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn cursor_binds(&self) -> &'static [&'static str] { &[] }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        use crate::sprf_introspect::PipeIntrospect;
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "sh: dsl body required (e.g. sh`echo ${X}`)".into()
+        ))?;
+        let cmd = body.raw.to_string();
+
+        // Classify modifier: :filter atom, or BIND? capture term.
+        let mut bind_term: Option<String> = None;
+        let mut filter_only = false;
+        for a in args {
+            match a {
+                Value::Atom(s) if s.as_ref() == "filter" => { filter_only = true; }
+                Value::Atom(other) => {
+                    return Err(LowerError::Unknown(format!(
+                        "sh: unknown atom :{} (try :filter or BIND? for capture)", other
+                    )));
+                }
+                Value::Pipe(p) => {
+                    if let Some(name) = p.binds_terms().first() {
+                        bind_term = Some(name.to_string());
+                    } else if let Some(name) = p.reads_terms().first() {
+                        bind_term = Some(name.to_string());
+                    }
+                }
+            }
+        }
+
+        let comp: Arc<dyn effect_runtime::v2::Component<Next = Cursor>> = if filter_only {
+            Arc::new(ShComponent::filter(&cmd))
+        } else if let Some(bind) = bind_term {
+            Arc::new(ShComponent::capture(&cmd, &bind))
+        } else {
+            // Default: capture stdout into &.value (no named term).
+            Arc::new(ShComponent::capture_value(&cmd))
+        };
+        Ok(Pipe::new().step(comp))
+    }
+}
+
+pub struct ShBangDef;
+
+impl OperatorDef for ShBangDef {
+    fn name(&self) -> &'static str { "sh!" }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "sh!: dsl body required".into()
+        ))?;
+        Ok(Pipe::new().step(Arc::new(ShBangComponent::new(body.raw.as_ref()))))
+    }
+}
+
+// ─── repo ─────────────────────────────────────────────────────────────────
+// `repo(:slug, :path)+ … ` — multi-repo source. Variadic atoms in
+// (slug, path) pairs. Emits one cursor per matching file with REPO=slug
+// and FS=path. Default exts: empty (no filter — caller composes a glob
+// or fs-shaped follow-up if they want to narrow).
+
+pub struct RepoDef;
+
+const REPO_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Variadic(&ArgKind::Atom),
+        name: "args",
+        doc: "alternating :slug :path atoms",
+        required: true,
+    },
+];
+
+impl OperatorDef for RepoDef {
+    fn name(&self) -> &'static str { "repo" }
+    fn paren_args(&self) -> &[ArgSig] { REPO_SPEC }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["REPO", "FS"] }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        if args.is_empty() || args.len() % 2 != 0 {
+            return Err(LowerError::Unknown(
+                "repo: requires alternating (:slug, :path) atom pairs".into()
+            ));
+        }
+        let mut roots: Vec<(String, std::path::PathBuf)> = Vec::with_capacity(args.len() / 2);
+        let mut i = 0;
+        while i < args.len() {
+            let slug = match &args[i] {
+                Value::Atom(s) => s.to_string(),
+                _ => return Err(LowerError::Unknown(
+                    "repo: slug must be :atom".into()
+                )),
+            };
+            let path = match &args[i + 1] {
+                Value::Atom(s) => std::path::PathBuf::from(s.as_ref()),
+                _ => return Err(LowerError::Unknown(
+                    "repo: path must be :atom (filesystem path)".into()
+                )),
+            };
+            roots.push((slug, path));
+            i += 2;
+        }
+        Ok(Pipe::new().step(Arc::new(RepoComponent::new(roots, Vec::new()))))
+    }
+}
+
+// ─── split ────────────────────────────────────────────────────────────────
+// `split\`sep\``                  — split &.value, rebind value per piece
+// `split(INTO?)\`sep\``           — also bind INTO term
+// `split(FROM, INTO?)\`sep\``     — read FROM term, bind INTO
+
+pub struct SplitDef;
+
+const SPLIT_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Variadic(&ArgKind::Any),
+        name: "terms",
+        doc: "0 args = on &.value; 1 arg = INTO?; 2 args = FROM, INTO?",
+        required: false,
+    },
+];
+
+impl OperatorDef for SplitDef {
+    fn name(&self) -> &'static str { "split" }
+    fn paren_args(&self) -> &[ArgSig] { SPLIT_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        use crate::sprf_introspect::PipeIntrospect;
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "split: dsl body required (separator string)".into()
+        ))?;
+        let sep = body.raw.to_string();
+
+        // Pull a term name from a Value::Pipe (the X / X? bareword desugar).
+        let pipe_term = |p: &Pipe<Cursor>| -> Option<String> {
+            if let Some(n) = p.binds_terms().first() { return Some(n.to_string()); }
+            if let Some(n) = p.reads_terms().first() { return Some(n.to_string()); }
+            None
+        };
+
+        let comp = match args.len() {
+            0 => SplitComponent::on_value(&sep),
+            1 => match &args[0] {
+                Value::Pipe(p) => {
+                    let into = pipe_term(p).ok_or_else(|| LowerError::Unknown(
+                        "split: arg must be a term (INTO?)".into()
+                    ))?;
+                    SplitComponent::on_value(&sep).into_term(&into)
+                }
+                Value::Atom(s) => SplitComponent::on_value(&sep).into_term(s),
+            },
+            2 => {
+                let from = match &args[0] {
+                    Value::Pipe(p) => pipe_term(p),
+                    Value::Atom(s) => Some(s.to_string()),
+                };
+                let into = match &args[1] {
+                    Value::Pipe(p) => pipe_term(p),
+                    Value::Atom(s) => Some(s.to_string()),
+                };
+                let from = from.ok_or_else(|| LowerError::Unknown(
+                    "split: 1st arg must be FROM term".into()
+                ))?;
+                let into = into.ok_or_else(|| LowerError::Unknown(
+                    "split: 2nd arg must be INTO? term".into()
+                ))?;
+                SplitComponent::new(&from, &sep, &into)
+            }
+            n => return Err(LowerError::Unknown(format!(
+                "split: takes 0, 1, or 2 args (got {n})"
+            ))),
+        };
+        Ok(Pipe::new().step(Arc::new(comp)))
+    }
+}
+
+// ─── read ─────────────────────────────────────────────────────────────────
+// `read` — load file bytes at cursor.FS into cursor.value. Cursors
+// without FS pass through; downstream ops can read &.value as the
+// file content.
+
+pub struct ReadDef;
+
+impl OperatorDef for ReadDef {
+    fn name(&self) -> &'static str { "read" }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        Ok(Pipe::new().step(Arc::new(ReadComponent)))
+    }
+}
+
+// ─── comment ──────────────────────────────────────────────────────────────
+// `comment\`open_re\``                   — sequential markers
+// `comment(:close)\`open|close\``        — paired (single body, two patterns
+//                                          separated by `|`); v3-style two-arg
+//                                          paired form lands later
+//
+// Reads cursor.value as the haystack. Stamps LO/HI per region and rebinds
+// value to the inner slice.
+
+pub struct CommentDef;
+
+const COMMENT_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "close",
+        doc: "optional close-pattern atom (e.g. :@end). When set, comment \
+              uses paired LIFO mode and the dsl body is the OPEN regex.",
+        required: false,
+    },
+];
+
+impl OperatorDef for CommentDef {
+    fn name(&self) -> &'static str { "comment" }
+    fn paren_args(&self) -> &[ArgSig] { COMMENT_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI"] }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "comment: dsl body required (open regex)".into()
+        ))?;
+        let comp = match args.first() {
+            Some(Value::Atom(close)) => CommentComponent::paired(body.raw.as_ref(), close.as_ref())
+                .map_err(|e| LowerError::Unknown(format!("comment: bad close regex: {e}")))?,
+            Some(_) => return Err(LowerError::Unknown(
+                "comment: arg must be :atom (close pattern)".into()
+            )),
+            None => CommentComponent::sequential(body.raw.as_ref())
+                .map_err(|e| LowerError::Unknown(format!("comment: bad open regex: {e}")))?,
+        };
+        Ok(Pipe::new().step(Arc::new(comp)))
+    }
+}
+
+// ─── write_cursor ─────────────────────────────────────────────────────────
+// `write_cursor`                — :replace at (FS, [LO, HI))
+// `write_cursor(:replace)`      — explicit
+// `write_cursor(:append)`       — insert at HI
+// `write_cursor(:prepend)`      — insert at LO
+// `write_cursor(:wrap)`         — surround [LO, HI) with cursor.value on both sides
+//
+// Aggregates per-FS in render_batch and applies right-to-left so
+// multi-cursor splices stay correct.
+
+pub struct WriteCursorDef;
+
+const WRITE_CURSOR_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "mode",
+        doc: ":replace (default) | :append | :prepend | :wrap",
+        required: false,
+    },
+];
+
+impl OperatorDef for WriteCursorDef {
+    fn name(&self) -> &'static str { "write_cursor" }
+    fn paren_args(&self) -> &[ArgSig] { WRITE_CURSOR_SPEC }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let mode = match args.first() {
+            None => WriteMode::Replace,
+            Some(Value::Atom(s)) => match s.as_ref() {
+                "replace" => WriteMode::Replace,
+                "append"  => WriteMode::Append,
+                "prepend" => WriteMode::Prepend,
+                "wrap"    => WriteMode::Wrap,
+                other => return Err(LowerError::Unknown(format!(
+                    "write_cursor: unknown mode :{} (try :replace, :append, :prepend, :wrap)", other
+                ))),
+            },
+            Some(_) => return Err(LowerError::Unknown(
+                "write_cursor: mode must be :atom".into()
+            )),
+        };
+        Ok(Pipe::new().step(Arc::new(WriteCursorComponent::new(mode))))
+    }
+}
+
+// ─── write_file ───────────────────────────────────────────────────────────
+// `write_file`                   — write &.value to cursor.FS
+// `write_file(:path/to.out)`     — write &.value to literal path
+
+pub struct WriteFileDef;
+
+const WRITE_FILE_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "path",
+        doc: "explicit output path; overrides cursor.FS when present",
+        required: false,
+    },
+];
+
+impl OperatorDef for WriteFileDef {
+    fn name(&self) -> &'static str { "write_file" }
+    fn paren_args(&self) -> &[ArgSig] { WRITE_FILE_SPEC }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let path = match args.first() {
+            None => None,
+            Some(Value::Atom(s)) => Some(std::path::PathBuf::from(s.as_ref())),
+            Some(_) => return Err(LowerError::Unknown(
+                "write_file: path arg must be :atom".into()
+            )),
+        };
+        Ok(Pipe::new().step(Arc::new(WriteFileComponent::new(path))))
     }
 }
 
