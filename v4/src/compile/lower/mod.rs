@@ -28,5 +28,13 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::StrDef));
     r.register(Arc::new(ops::RuleDef));
     r.register(Arc::new(ops::FactReadDef));
+    r.register(Arc::new(ops::FsDef));
+    r.register(Arc::new(ops::AstDef));
+    r.register(Arc::new(ops::ReDef));
+    r.register(Arc::new(ops::TermReadDef));
+    r.register(Arc::new(ops::TermBindDef));
+    r.register(Arc::new(ops::FactWriteDef));
+    r.register(Arc::new(ops::NextDef));
+    r.register(Arc::new(ops::NextQDef));
     r
 }
