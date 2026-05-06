@@ -1,0 +1,20 @@
+[package]
+name        = "sprefa-lsp"
+version     = "0.1.0"
+edition     = "2021"
+description = "sprefa v4 LSP server. Diagnostics-only first slice (parse + walk)."
+publish     = false
+
+[[bin]]
+name = "sprefa-lsp"
+path = "src/main.rs"
+
+[dependencies]
+v4             = { path = "../.." }
+effect_runtime = { path = "../../../v3/crates/effect_runtime", default-features = false, features = ["sqlite"] }
+tower-lsp      = "0.20"
+tokio          = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync"] }
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json     = "1"
+url            = "2"
