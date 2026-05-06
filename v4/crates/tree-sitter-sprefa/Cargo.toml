@@ -1,0 +1,28 @@
+[package]
+name        = "tree-sitter-sprefa"
+version     = "0.0.0"
+edition     = "2021"
+description = "tree-sitter grammar for sprefa v4 .sprf source files (four-slot lowering shape)"
+publish     = false
+build       = "build.rs"
+include = [
+    "/build.rs",
+    "/grammar.js",
+    "/src/parser.c",
+    "/src/grammar.json",
+    "/src/node-types.json",
+    "/src/tree_sitter/*",
+    "/bindings/rust/*",
+]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[dev-dependencies]
+tree-sitter = "0.24"
+
+[build-dependencies]
+cc = "1"

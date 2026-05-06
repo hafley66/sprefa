@@ -1465,6 +1465,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-sprefa"
+version = "0.0.0"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-swift"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1565,6 +1573,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-json 0.24.8",
  "tree-sitter-rust",
+ "tree-sitter-sprefa",
  "tree-sitter-toml-ng",
  "tree-sitter-yaml",
 ]

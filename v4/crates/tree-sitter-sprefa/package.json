@@ -1,0 +1,16 @@
+{
+  "name": "tree-sitter-sprefa",
+  "version": "0.0.0",
+  "description": "tree-sitter grammar for sprefa v3 .sprf source files",
+  "main": "bindings/node",
+  "tree-sitter": [
+    {
+      "scope": "source.sprf",
+      "file-types": ["sprf"],
+      "injection-regex": "^sprf$"
+    }
+  ],
+  "dependencies": {
+    "nan": "^2.17.0"
+  }
+}
