@@ -37,6 +37,13 @@ streaming-iterator = "0.1"
 serde_json        = "1"
 cc                = "1"
 effect_runtime    = { path = "../v3/crates/effect_runtime", default-features = false, features = ["sqlite"] }
+app_host          = { path = "app_host" }
+tower             = { version = "0.5", features = ["util"] }
+thiserror         = "1"
+axum              = "0.8"
+http-body-util    = "0.1"
+bytes             = "1"
+serde             = { version = "1", features = ["derive"] }
 
 [build-dependencies]
 cc = "1"

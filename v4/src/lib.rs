@@ -1,3 +1,4 @@
+pub mod app;
 pub mod chan;
 pub mod compile;
 pub mod cst;

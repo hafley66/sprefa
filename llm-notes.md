@@ -962,3 +962,87 @@ Each step ships a passing workspace. No big-bang.
 - Diag bus split — currently inside cst. Promote to `libs/diag` only when
   effect_runtime + store + sprefa_main all want an external consumer
   contract for it
+
+---
+
+## Codegen plane: facts + render = the substrate
+
+`render` from v3 == backtick string with `${X}` interpolation in v4. Same op, new sigil. Holes today are read-only of cursor captures; making them accept sub-pipes (`${re($X) > take(1)}`) turns the template into a real codegen primitive.
+
+Four ops are the whole plane:
+
+| op family       | role                                             |
+|-----------------|--------------------------------------------------|
+| `glob` / `fs`   | source: paths → cursors                          |
+| `ast[$LANG]`    | structural match: cursor → narrowed cursors + captures |
+| `fact(:name, …)`| sink + source: cursors ↔ rows                    |
+| `` `…${X}…` ``  | template: cursor → string-valued cursor (was `render`) |
+
+### Direction 1 — reconstruct types from source
+
+Extract Rust structs into a fact table, then re-emit as TS interfaces:
+
+```
+glob(**/*.rs)
+  > ast[rust](struct $NAME { $$FIELDS })
+  > fact(:rs_struct, ${NAME}, ${FIELDS})
+
+fact(:rs_struct, ${NAME?}, ${FIELDS?})
+  > `interface ${NAME} { ${FIELDS} }`
+  > fs_write(`./gen/${NAME}.ts`)
+```
+
+Same shape works for proto → anything, OpenAPI → SDKs, sql schema → DTOs. The fact table is the lingua franca.
+
+### Direction 2 — type-as-query-seed
+
+Point at a name in source; that becomes the seed for a recursive walk:
+
+```
+from_position(${URI}, ${LINE}, ${COL})    // 1 cursor with byte_range
+  > ast[rust](`$NAME`)                    // bind whatever ident is at point
+  > fact?(:rs_struct, ${NAME}, ${_})      // confirm it's a struct
+  > rule(:dependents, ${NAME})            // recursive walk
+```
+
+`rule(:dependents, ${NAME?})` body scans `fact(:ref, ${SRC?}, ${NAME})` across all repos. Cross-repo follow because cursors carry `(repo, rev, fs)` — swap rev → re-glob → re-match → emit more `:ref` rows. The reference graph emerges as drain accumulates rows.
+
+### Missing primitives to unlock Direction 2
+
+1. **`from_position(uri, line, col)`** — source op, single cursor with byte_range from disk + parse cache. LSP `goto-definition` calls a sprf rule with this seed.
+2. **Sub-pipe holes inside backtick render** — `` `${pipe-expr}` `` evaluates the pipe in DSL context. Today `${X}` is read-only of a cursor capture; expanding to allow `${re($X) > take(1)}` makes the template a real codegen primitive.
+3. **`gen[$LANG]`** as an output sink — sugar over `` `…` `` + formatter + write target. Nice-to-have, not required.
+
+### Mental model
+
+A type in this model is a fact. A reference is a fact. A signature is a fact. A render template is the rule that joins facts and emits text. "Point at a type" = "materialize a cursor for that position and seed a rule." The language is the configuration.
+
+Step 1 = language + substrate (where v4 is). Step 2 = the recipe library that proves cross-repo type reconstruction, goto-def-as-query, hover-as-rule, codegen-into-comment-zones. Each is a 5–20 line .sprf program once the two missing primitives land.
+
+---
+
+## Codegen rungs (Rust + cross-language)
+
+Three Rust rungs, escalating cost/power:
+
+| rung           | trigger              | strengths                                     | costs                                    |
+|----------------|----------------------|-----------------------------------------------|------------------------------------------|
+| `macro_rules!` | `name! { tokens }`   | zero build deps, hygienic, in-tree            | pattern syntax limits, no logic          |
+| proc-macro     | `#[derive]` / fn-like| full Rust at compile time, parses with `syn` | own crate, slow first-build              |
+| `build.rs`     | external file        | reads any input, writes any Rust source       | runs every dirty rebuild, side-channel   |
+
+Move up only when the lower rung fights you. Type inspection / field traversal / user-code execution at compile time = `syn` + proc-macro.
+
+Cross-language analogues map onto the same axis:
+
+| approach          | input               | output                  | runtime model                  |
+|-------------------|---------------------|-------------------------|--------------------------------|
+| TypeSpec          | TypeSpec DSL        | OpenAPI / proto / clients | external CLI, watches files  |
+| OpenAPI / Smithy  | YAML / Smithy IDL   | per-target codegen      | external CLI                   |
+| protobuf / capnp  | `.proto` IDL        | bindings in N langs     | `protoc` + plugin              |
+| Zig `comptime`    | Zig itself          | values & types at compile | embedded in language        |
+| Rust proc-macro   | Rust tokens         | Rust tokens             | embedded in compiler frontend  |
+
+Zig is the outlier: comptime erases the line between "macro" and "function." Rust never gets there because of separate compilation; const-eval stays bounded.
+
+Sprefa relevance: facts + render + the language layer reconstructs the same declarative-then-emit shape that each ecosystem rebuilds ad-hoc. One indexer, many codegen sinks, all driven by facts.
