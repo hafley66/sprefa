@@ -20,14 +20,38 @@ use std::time::Instant;
 use ast_grep_language::SupportLang;
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, MemQueue, MemoCache, Memoize,
-    PipeInstance, PriorChildIndex, QueueBackend,
+    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue,
+    MemoCache, Memoize, Node, PipeInstance, PriorChildIndex, QueueBackend,
+    RenderCtx, SqliteFactStore,
 };
 use v4::v2_ops::{
-    AstNmComponent, CommitEveryComponent, CountComponent,
-    FactWriteComponent, FsComponent, MultiAstNmComponent,
+    AstNmComponent, CountComponent, FsComponent, MultiAstNmComponent,
     SinglePathComponent,
 };
+use v4::fact::FactWrite;
+
+/// Bench-local: emit each cursor through, and call `store.commit(gen, None)`
+/// every Nth render_batch. Drives commit-cost telemetry in Insert mode.
+struct CommitEveryComponent {
+    store: Arc<dyn FactStore<v4::Cursor>>,
+    every: usize,
+    seen:  std::sync::atomic::AtomicUsize,
+}
+impl CommitEveryComponent {
+    fn new(store: Arc<dyn FactStore<v4::Cursor>>, every: usize) -> Self {
+        Self { store, every: every.max(1), seen: std::sync::atomic::AtomicUsize::new(0) }
+    }
+}
+impl Component for CommitEveryComponent {
+    type Next = v4::Cursor;
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&v4::Cursor]) -> Vec<Node<v4::Cursor>> {
+        let n = self.seen.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % self.every == 0 {
+            self.store.commit(ctx.expand_tick, None);
+        }
+        batch.iter().map(|c| Node::Emit(Arc::new((*c).clone()))).collect()
+    }
+}
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -174,43 +198,40 @@ async fn main() {
             }
         };
 
-        // Optional Store for Insert mode.
-        let store_opt: Option<Arc<dyn v4::Store>> =
+        // Optional FactStore for Insert mode. Schema is declared once
+        // up front so SqliteFactStore can materialize the table.
+        let store_opt: Option<Arc<dyn FactStore<v4::Cursor>>> =
             if matches!(mode, Mode::Insert) {
-                use v4::{MemStore, SqliteStore};
-                Some(match store_kind.as_str() {
-                    "mem"            => MemStore::new() as Arc<dyn v4::Store>,
-                    "sqlite-mem"     => SqliteStore::open_memory() as Arc<dyn v4::Store>,
-                    "sqlite-disk" | "sqlite-fast" => {
+                let store: Arc<dyn FactStore<v4::Cursor>> = match store_kind.as_str() {
+                    "mem"        => Arc::new(MemFactStore::<v4::Cursor>::new()),
+                    "sqlite-mem" => Arc::new(
+                        SqliteFactStore::<v4::Cursor>::open_in_memory()
+                            .expect("sqlite open_in_memory")),
+                    "sqlite-disk" => {
                         let path = sqlite_path.clone().unwrap_or_else(|| {
                             let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                            let name = if store_kind == "sqlite-fast" { "v4-bench-fast.db" } else { "v4-bench.db" };
-                            PathBuf::from(home).join(".cache/sprefa").join(name)
+                            PathBuf::from(home).join(".cache/sprefa").join("v4-bench.db")
                         });
                         if trial == 1 {
                             let _ = std::fs::remove_file(&path);
                             let _ = std::fs::remove_file(format!("{}-wal", path.display()));
                             let _ = std::fs::remove_file(format!("{}-shm", path.display()));
                         }
-                        if store_kind == "sqlite-fast" {
-                            SqliteStore::open_path_fast(&path) as Arc<dyn v4::Store>
-                        } else {
-                            SqliteStore::open_path(&path) as Arc<dyn v4::Store>
-                        }
+                        Arc::new(
+                            SqliteFactStore::<v4::Cursor>::open_file(&path)
+                                .expect("sqlite open_file"))
                     }
-                    other => panic!("--store must be mem|sqlite-mem|sqlite-disk|sqlite-fast, got {}", other),
-                })
+                    other => panic!("--store must be mem|sqlite-mem|sqlite-disk, got {}", other),
+                };
+                store.declare("matches", &["FS", "CONTENT_HASH", "LO", "HI"]);
+                Some(store)
             } else { None };
 
         // Build chain: source > matcher > Count > [FactWrite] > [CommitEvery].
         let mut steps: Vec<Arc<dyn Component<Next = v4::Cursor>>> = vec![source, matcher];
         if matches!(mode, Mode::Insert) {
             let store = store_opt.as_ref().unwrap().clone();
-            steps.push(Arc::new(FactWriteComponent::new(
-                store.clone(),
-                "matches",
-                &["FS", "CONTENT_HASH", "LO", "HI"],
-            )));
+            steps.push(Arc::new(FactWrite::new(store.clone(), "matches")));
             if commit_every > 0 {
                 steps.push(Arc::new(CommitEveryComponent::new(store.clone(), commit_every)));
             }
@@ -226,7 +247,7 @@ async fn main() {
         let t_run = Instant::now();
         let stats = expand(&pipe, queue, vec![Arc::new(v4::Cursor::default())], opts);
         if let Some(store) = &store_opt {
-            store.commit(trial as u64).await;
+            store.commit(trial as u64, None);
         }
         let wall = t_run.elapsed();
 
