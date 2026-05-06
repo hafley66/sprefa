@@ -1,0 +1,98 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "sprf",
+  "scopeName": "source.sprf",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#dsl-body" },
+    { "include": "#raw-string" },
+    { "include": "#string" },
+    { "include": "#atom" },
+    { "include": "#number" },
+    { "include": "#predicate-suffix" },
+    { "include": "#op-name" },
+    { "include": "#chain-separator" },
+    { "include": "#fork-separator" },
+    { "include": "#delimiters" }
+  ],
+  "repository": {
+    "comment": {
+      "match": "#.*$",
+      "name": "comment.line.number-sign.sprf"
+    },
+
+    "dsl-body": {
+      "begin": "`",
+      "end": "`",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sprf" } },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf" } },
+      "name": "string.quoted.other.dsl.sprf",
+      "patterns": [
+        { "match": ".", "name": "string.quoted.other.dsl.sprf" }
+      ]
+    },
+
+    "raw-string": {
+      "begin": "r#*\"",
+      "end": "\"#*",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sprf" } },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf" } },
+      "name": "string.quoted.other.raw.sprf"
+    },
+
+    "string": {
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sprf" } },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf" } },
+      "name": "string.quoted.double.sprf",
+      "patterns": [
+        { "match": "\\\\.", "name": "constant.character.escape.sprf" }
+      ]
+    },
+
+    "atom": {
+      "match": ":[A-Za-z_][A-Za-z0-9_]*",
+      "name": "constant.other.atom.sprf"
+    },
+
+    "number": {
+      "match": "-?\\b\\d+(?:\\.\\d+)?\\b",
+      "name": "constant.numeric.sprf"
+    },
+
+    "predicate-suffix": {
+      "match": "([A-Za-z_][A-Za-z0-9_]*)(\\?)(?=[\\[(`{])",
+      "captures": {
+        "1": { "name": "entity.name.function.op.sprf" },
+        "2": { "name": "keyword.operator.predicate.sprf" }
+      }
+    },
+
+    "op-name": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*[\\[(`{])",
+      "captures": {
+        "1": { "name": "entity.name.function.op.sprf" }
+      }
+    },
+
+    "chain-separator": {
+      "match": ">",
+      "name": "keyword.operator.chain.sprf"
+    },
+
+    "fork-separator": {
+      "match": ";",
+      "name": "punctuation.terminator.sprf"
+    },
+
+    "delimiters": {
+      "patterns": [
+        { "match": "[\\[\\]]", "name": "punctuation.bracket.square.sprf" },
+        { "match": "[()]",     "name": "punctuation.bracket.round.sprf" },
+        { "match": "[{}]",     "name": "punctuation.bracket.curly.sprf" },
+        { "match": ",",        "name": "punctuation.separator.comma.sprf" }
+      ]
+    }
+  }
+}

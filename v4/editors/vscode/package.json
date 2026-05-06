@@ -1,0 +1,54 @@
+{
+  "//install": [
+    "Pure declarative language registration for .sprf files. No LSP client.",
+    "Lane C will add an LSP client once v4 ships sprefa-lsp.",
+    "",
+    "Install (development install from folder):",
+    "  ./install.sh",
+    "",
+    "Or build a .vsix:",
+    "  vsce package --allow-missing-repository --no-git-tag-version",
+    "  code --install-extension sprefa-v4-0.1.0.vsix --force",
+    "",
+    "Verify by opening any .sprf file. The example",
+    "    rule(:greet) { str `hello world` }",
+    "should color `rule`/`str` as op names, `:greet` as atom, the backtick body",
+    "as a string, and brace/paren delimiters as bracket pairs."
+  ],
+  "name": "sprefa-v4",
+  "displayName": "sprefa v4",
+  "description": "Syntax highlighting for .sprf rule files (v4 host grammar). Installable alongside the v3 sprf extension.",
+  "version": "0.1.0",
+  "publisher": "sprefa",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:sprf"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "sprf",
+        "aliases": [
+          "sprf",
+          "SPRF"
+        ],
+        "extensions": [
+          ".sprf"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sprf",
+        "scopeName": "source.sprf",
+        "path": "./syntaxes/sprf.tmLanguage.json"
+      }
+    ]
+  }
+}
