@@ -119,9 +119,29 @@ impl From<&effect_runtime::v2::Diag> for SprfDiag {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunReport    {
-    pub parse_diags: usize,
-    pub walk_diags:  usize,
+    pub parse_diags: Vec<SprfDiag>,
+    pub walk_diags:  Vec<SprfDiag>,
     pub pipes:       usize,
+    /// Rule-table names harvested from the AST (one per `rule(:NAME)`).
+    pub tables:      Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GetFactTableReq {
+    pub name:  String,
+    /// Cap on rows returned. None = no cap (still bounded by store).
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FactRow { pub fields: Vec<(String, String)> }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FactTable {
+    pub name:  String,
+    /// Total rows in the store (pre-limit).
+    pub total: usize,
+    pub rows:  Vec<FactRow>,
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -233,6 +253,43 @@ macro_rules! sprf_rpc {
                 }
             )*
         }
+
+        // ── HTTP client (talks to a remote sprefa-daemon) ─────────
+        #[derive(Clone)]
+        pub struct HttpClient {
+            pub base: String,
+            pub http: reqwest::Client,
+        }
+
+        impl HttpClient {
+            pub fn new(base: impl Into<String>) -> Self {
+                Self { base: base.into(), http: reqwest::Client::new() }
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl SprfClient for HttpClient {
+            $(
+                async fn $method(&self, req: $req) -> Result<$resp, SprfError> {
+                    let url = format!("{}{}", self.base, $path);
+                    let resp = self.http.post(&url).json(&req).send().await
+                        .map_err(|e| SprfError::Wire(e.to_string()))?;
+                    let status = resp.status();
+                    let bytes  = resp.bytes().await
+                        .map_err(|e| SprfError::Wire(e.to_string()))?;
+                    if !status.is_success() {
+                        if let Ok(err) = serde_json::from_slice::<SprfError>(&bytes) {
+                            return Err(err);
+                        }
+                        return Err(SprfError::Internal(format!(
+                            "http {status}: {}", String::from_utf8_lossy(&bytes),
+                        )));
+                    }
+                    serde_json::from_slice(&bytes)
+                        .map_err(|e| SprfError::Wire(e.to_string()))
+                }
+            )*
+        }
     };
 }
 
@@ -246,7 +303,8 @@ sprf_rpc! {
     fn lsp_close   (LspCloseReq)  -> ()                  => "/lsp/close";
     fn get_diags   (GetDiagsReq)  -> Vec<SprfDiag>       => "/lsp/diags";
     fn get_inlays  (GetInlaysReq) -> Vec<InlayProbe>     => "/lsp/inlays";
-    fn run         (RunReq)       -> RunReport           => "/run";
+    fn run            (RunReq)          -> RunReport     => "/run";
+    fn get_fact_table (GetFactTableReq) -> FactTable     => "/facts";
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -350,11 +408,49 @@ impl SprfHandlers for SprfState {
             n += 1;
         }
         self.facts.commit(1, None);
+
+        let mut tables: Vec<String> = Vec::new();
+        collect_rule_tables(&program, &mut tables);
+
         Ok(RunReport {
-            parse_diags: parse_diags.len(),
-            walk_diags:  walk_diags.len(),
+            parse_diags: parse_diags.iter().map(SprfDiag::from).collect(),
+            walk_diags:  walk_diags.iter().map(SprfDiag::from).collect(),
             pipes:       n,
+            tables,
         })
+    }
+
+    async fn get_fact_table(&self, req: GetFactTableReq) -> Result<FactTable, SprfError> {
+        let total = self.facts.len(&req.name);
+        let raw   = self.facts.rows_of(&req.name);
+        let take  = req.limit.unwrap_or(usize::MAX).min(raw.len());
+        let rows  = raw.iter().take(take).map(|c| FactRow {
+            fields: c.terms.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }).collect();
+        Ok(FactTable { name: req.name, total, rows })
+    }
+}
+
+/// Walk the AST scanning for `rule(:NAME, …)` ops; collects unique
+/// table names. Recurses into block bodies because rules can nest.
+fn collect_rule_tables(program: &[PipeAst], out: &mut Vec<String>) {
+    for p in program {
+        for op in &p.steps {
+            if &*op.name == "rule" {
+                if let Some(first) = op.args.first() {
+                    let raw = first.raw.trim();
+                    let name = raw.strip_prefix(':').unwrap_or(raw).trim();
+                    if !name.is_empty() && !out.iter().any(|n| n == name) {
+                        out.push(name.to_string());
+                    }
+                }
+            }
+            if let Some(block) = &op.block {
+                collect_rule_tables(std::slice::from_ref(block), out);
+            }
+        }
     }
 }
 

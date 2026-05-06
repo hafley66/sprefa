@@ -11,7 +11,7 @@ path = "src/lib.rs"
 ast-grep-core     = "0.36"
 ast-grep-language = { version = "0.36", default-features = false, features = ["builtin-parser", "tree-sitter-rust", "tree-sitter-c", "tree-sitter-cpp"] }
 blake3            = "1"
-tokio             = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util"] }
+tokio             = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "net", "signal"] }
 futures           = "0.3"
 async-trait       = "0.1"
 async-stream      = "0.3"
@@ -44,6 +44,7 @@ axum              = "0.8"
 http-body-util    = "0.1"
 bytes             = "1"
 serde             = { version = "1", features = ["derive"] }
+reqwest           = { version = "0.12", default-features = false, features = ["json"] }
 
 [build-dependencies]
 cc = "1"
@@ -59,3 +60,7 @@ path = "src/bin/v4_bench.rs"
 [[bin]]
 name = "sprefa-run"
 path = "src/bin/sprefa-run.rs"
+
+[[bin]]
+name = "sprefa-daemon"
+path = "src/bin/sprefa-daemon.rs"

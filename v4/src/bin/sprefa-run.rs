@@ -1,71 +1,43 @@
-// sprefa-run — single-file v4 driver: parse → walk → expand → dump FactStore.
+// sprefa-run — single-file v4 driver dispatching every action through
+// the unified `SprfClient` (axum::Router via tower::oneshot in-process,
+// or reqwest at a URL with --remote).
 //
 // Usage:
-//   sprefa-run <path-to-sprf-file> [--store mem|sqlite] [--show-rows]
-//                                  [--max-diags N] [--no-show-rows]
-//
-// Flags:
-//   --store mem|sqlite   FactStore backend. Default: mem.
-//   --show-rows          Print sample rows per table at the end (default on).
-//   --no-show-rows       Suppress per-row sample.
-//   --max-diags N        Cap diags printed per phase. Default: 50.
+//   sprefa-run <path-to-sprf-file> [--show-rows | --no-show-rows]
+//                                  [--max-diags N]
+//                                  [--remote http://host:port]
 //
 // Diag format (one per line, suitable for VS Code problem matchers):
 //   <path>:<line>:<col>:<severity>:<code>: <message>
 //
-// Exit codes:
-//   0   no errors
-//   1   parse, walk, or fs error (all diags still flushed first)
-//   2   bad CLI usage
-//
-// VS Code wiring lives in v4/.vscode/tasks.json. The "sprefa-run: current
-// file" task runs this against ${file} on Cmd-Shift-B.
+// Exit codes: 0 ok, 1 io/parse/walk error (after diags flushed), 2 cli usage.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 
-use effect_runtime::v2::{
-    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
-    Severity, SqliteFactStore,
+use v4::app::{
+    build_in_process, GetFactTableReq, HttpClient, RunReq,
+    SprfClient, SprfDiag, SprfError,
 };
-
-use v4::Cursor;
-use v4::compile::ast::PipeAst;
-use v4::compile::parse::host_parse;
-use v4::compile::walk::walk_program;
-use v4::lower::{default_registry, LowerCtx};
 
 #[derive(Debug)]
 struct Args {
-    path:       PathBuf,
-    store_kind: StoreKind,
-    show_rows:  bool,
-    max_diags:  usize,
+    path:      PathBuf,
+    show_rows: bool,
+    max_diags: usize,
+    remote:    Option<String>,
 }
-
-#[derive(Debug, Clone, Copy)]
-enum StoreKind { Mem, Sqlite }
 
 fn parse_args() -> Result<Args, String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
-    let mut path:       Option<PathBuf> = None;
-    let mut store_kind: StoreKind        = StoreKind::Mem;
-    let mut show_rows:  bool             = true;
-    let mut max_diags:  usize            = 50;
+    let mut path:      Option<PathBuf> = None;
+    let mut show_rows: bool            = true;
+    let mut max_diags: usize           = 50;
+    let mut remote:    Option<String>  = None;
 
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
-            "--store" => {
-                let v = raw.get(i+1).ok_or("--store needs a value")?;
-                store_kind = match v.as_str() {
-                    "mem"    => StoreKind::Mem,
-                    "sqlite" => StoreKind::Sqlite,
-                    other    => return Err(format!("--store must be mem|sqlite, got {other}")),
-                };
-                i += 2;
-            }
             "--show-rows"    => { show_rows = true;  i += 1; }
             "--no-show-rows" => { show_rows = false; i += 1; }
             "--max-diags" => {
@@ -73,10 +45,12 @@ fn parse_args() -> Result<Args, String> {
                 max_diags = v.parse().map_err(|_| format!("bad --max-diags: {v}"))?;
                 i += 2;
             }
-            "-h" | "--help" => {
-                print_usage();
-                std::process::exit(0);
+            "--remote" => {
+                let v = raw.get(i+1).ok_or("--remote needs URL")?;
+                remote = Some(v.clone());
+                i += 2;
             }
+            "-h" | "--help" => { print_usage(); std::process::exit(0); }
             other if other.starts_with("--") => {
                 return Err(format!("unknown flag: {other}"));
             }
@@ -89,18 +63,18 @@ fn parse_args() -> Result<Args, String> {
             }
         }
     }
-
-    let path = path.ok_or("missing <path-to-sprf-file>")?;
-    Ok(Args { path, store_kind, show_rows, max_diags })
+    Ok(Args {
+        path: path.ok_or("missing <path-to-sprf-file>")?,
+        show_rows, max_diags, remote,
+    })
 }
 
 fn print_usage() {
-    eprintln!("sprefa-run <path-to-sprf-file> [--store mem|sqlite] \
-[--show-rows|--no-show-rows] [--max-diags N]");
+    eprintln!("sprefa-run <path-to-sprf-file> \
+[--show-rows|--no-show-rows] [--max-diags N] [--remote URL]");
 }
 
-/// 1-indexed (line, col) for byte offset `off` in `src`. Tabs count as 1.
-/// Out-of-range offsets clamp to the final line/col.
+/// 1-indexed (line, col) for byte offset `off` in `src`.
 fn line_col(src: &str, off: u32) -> (u32, u32) {
     let off = (off as usize).min(src.len());
     let mut line: u32 = 1;
@@ -112,69 +86,27 @@ fn line_col(src: &str, off: u32) -> (u32, u32) {
     (line, col)
 }
 
-fn sev_str(s: Severity) -> &'static str {
-    match s {
-        Severity::Error => "error",
-        Severity::Warn  => "warning",
-        Severity::Info  => "info",
-        Severity::Hint  => "info",
-    }
-}
-
-fn print_diags(
-    path:  &str,
-    src:   &str,
-    diags: &[effect_runtime::v2::Diag],
-    cap:   usize,
-) -> usize {
-    let n_err = diags.iter().filter(|d| d.severity == Severity::Error).count();
-    let printed_max = diags.len().min(cap);
-    for d in diags.iter().take(printed_max) {
-        let (line, col) = match d.span {
-            Some(s) => line_col(src, s.lo),
-            None    => (1, 1),
+fn print_diags(path: &str, src: &str, diags: &[SprfDiag], cap: usize) -> usize {
+    let n_err = diags.iter().filter(|d| d.severity == "error").count();
+    let printed = diags.len().min(cap);
+    for d in diags.iter().take(printed) {
+        let (line, col) = match d.lo {
+            Some(lo) => line_col(src, lo),
+            None     => (1, 1),
         };
-        println!(
-            "{path}:{line}:{col}:{sev}:{code}: {msg}",
-            sev  = sev_str(d.severity),
-            code = d.code,
-            msg  = d.message,
-        );
+        println!("{path}:{line}:{col}:{sev}:{code}: {msg}",
+                 sev = d.severity, code = d.code, msg = d.message);
     }
     if diags.len() > cap {
-        println!(
-            "{path}:1:1:info:sprefa-run/diag-truncated: \
-             omitted {n} more diagnostic(s) (--max-diags {cap})",
-            n = diags.len() - cap,
-        );
+        println!("{path}:1:1:info:sprefa-run/diag-truncated: \
+                  omitted {n} more diagnostic(s) (--max-diags {cap})",
+                 n = diags.len() - cap);
     }
     n_err
 }
 
-/// Pull rule-table names from the AST. The walker registers a sink
-/// table per `rule(:NAME, ...)` op, and the rule's first arg is an
-/// Atom that becomes the table name. Scan recursively because rules
-/// can nest other rules in their block.
-fn collect_rule_tables(program: &[PipeAst], out: &mut Vec<String>) {
-    for p in program {
-        for op in &p.steps {
-            if &*op.name == "rule" {
-                if let Some(first) = op.args.first() {
-                    let raw = first.raw.trim();
-                    let name = raw.strip_prefix(':').unwrap_or(raw).trim();
-                    if !name.is_empty() && !out.iter().any(|n| n == name) {
-                        out.push(name.to_string());
-                    }
-                }
-            }
-            if let Some(block) = &op.block {
-                collect_rule_tables(std::slice::from_ref(block), out);
-            }
-        }
-    }
-}
-
-fn main() -> ExitCode {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(a)  => a,
         Err(e) => { eprintln!("sprefa-run: {e}"); print_usage(); return ExitCode::from(2); }
@@ -189,68 +121,48 @@ fn main() -> ExitCode {
         }
     };
 
-    // 1. parse
-    let (program, parse_diags) = host_parse(&src);
-    let parse_errs = print_diags(&path_disp, &src, &parse_diags, args.max_diags);
-    if parse_errs > 0 {
-        return ExitCode::from(1);
-    }
-
-    // 2. walk
-    let store: Arc<dyn FactStore<Cursor>> = match args.store_kind {
-        StoreKind::Mem    => Arc::new(MemFactStore::<Cursor>::new()),
-        StoreKind::Sqlite => Arc::new(
-            SqliteFactStore::<Cursor>::open_in_memory()
-                .expect("sqlite open_in_memory")
-        ),
-    };
-    let dir = args.path.parent().map(|p| p.to_path_buf())
+    // One client interface, two transports. Same call sites.
+    let root = args.path.parent().map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let reg = default_registry();
-    let mut ctx = LowerCtx::new(store.clone(), dir);
+    let client: Box<dyn SprfClient> = match args.remote.clone() {
+        Some(url) => Box::new(HttpClient::new(url)),
+        None => {
+            let (_state, c) = build_in_process(root);
+            Box::new(c)
+        }
+    };
 
-    let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
-    let walk_errs = print_diags(&path_disp, &src, &walk_diags, args.max_diags);
-    if walk_errs > 0 {
-        return ExitCode::from(1);
-    }
+    let report = match client.run(RunReq { path: args.path.clone() }).await {
+        Ok(r)  => r,
+        Err(e) => { println!("{path_disp}:1:1:error:sprefa-run/run: {e}"); return ExitCode::from(1); }
+    };
 
-    // 3. expand each pipe
-    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    let opts = ExpandOpts::default();
-    for pipe in pipes {
-        let inst = pipe.into_instance();
-        expand(
-            &inst,
-            queue.clone(),
-            vec![Arc::new(Cursor::default())],
-            opts.clone(),
-        );
-    }
-    // Flush any buffered store writes (sqlite path needs this).
-    store.commit(1, None);
+    let parse_errs = print_diags(&path_disp, &src, &report.parse_diags, args.max_diags);
+    let walk_errs  = print_diags(&path_disp, &src, &report.walk_diags,  args.max_diags);
+    if parse_errs + walk_errs > 0 { return ExitCode::from(1); }
 
-    // 4. dump FactStore. Tables harvested from rule ops in the AST.
-    let mut tables: Vec<String> = Vec::new();
-    collect_rule_tables(&program, &mut tables);
-    if tables.is_empty() {
+    if report.tables.is_empty() {
         println!("(no rules — FactStore not introspected)");
-    } else {
-        println!("── facts ──");
-        for t in &tables {
-            let n = store.len(t);
-            println!("{t}: {n} rows");
-            if args.show_rows && n > 0 {
-                let rows = store.rows_of(t);
-                for (i, r) in rows.iter().take(5).enumerate() {
-                    println!("  [{i}] {:?}", r);
-                }
-                if n > 5 {
-                    println!("  … {} more", n - 5);
-                }
+        return ExitCode::from(0);
+    }
+    println!("── facts ──");
+    for name in &report.tables {
+        let tbl = match client.get_fact_table(GetFactTableReq {
+            name: name.clone(), limit: Some(5),
+        }).await {
+            Ok(t)  => t,
+            Err(SprfError::UnknownDoc(_)) => continue,
+            Err(e) => { eprintln!("get_fact_table {name}: {e}"); continue; }
+        };
+        println!("{}: {} rows", tbl.name, tbl.total);
+        if args.show_rows {
+            for (i, r) in tbl.rows.iter().enumerate() {
+                println!("  [{i}] {:?}", r.fields);
+            }
+            if tbl.total > tbl.rows.len() {
+                println!("  … {} more", tbl.total - tbl.rows.len());
             }
         }
     }
-
     ExitCode::from(0)
 }
