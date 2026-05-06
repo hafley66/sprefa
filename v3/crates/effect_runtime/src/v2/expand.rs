@@ -198,11 +198,49 @@ pub fn expand<N: Next>(
 
         let depth_before = queue.depth();
         let batch_len    = batch.len() as u64;
-        comp.dispatch(&ctx, &batch, queue.as_ref());
-        let depth_after  = queue.depth();
 
-        stats.rendered += batch_len;
-        stats.emitted  += depth_after.saturating_sub(depth_before);
+        // Gate every tracing-related cost on whether a subscriber wants
+        // it. `event_enabled!` is one atomic load when no subscriber is
+        // installed; the Instant::now() and span allocation only run
+        // when DEBUG events on the `expand` target are sampled.
+        let trace_on = tracing::event_enabled!(
+            target: "expand", tracing::Level::DEBUG
+        );
+
+        if trace_on {
+            let kind = comp.kind();
+            let span = tracing::debug_span!(
+                target: "expand",
+                "render_batch",
+                op    = kind,
+                depth = head_depth as u32,
+                n     = batch_len,
+            );
+            let _g = span.enter();
+            let t0 = std::time::Instant::now();
+            comp.dispatch(&ctx, &batch, queue.as_ref());
+            let elapsed = t0.elapsed();
+            let depth_after = queue.depth();
+            let emitted_in_batch = depth_after.saturating_sub(depth_before);
+
+            tracing::debug!(
+                target: "expand",
+                op       = kind,
+                depth    = head_depth as u32,
+                n        = batch_len,
+                emitted  = emitted_in_batch,
+                wall_us  = elapsed.as_micros() as u64,
+                "batch"
+            );
+
+            stats.rendered += batch_len;
+            stats.emitted  += emitted_in_batch;
+        } else {
+            comp.dispatch(&ctx, &batch, queue.as_ref());
+            let depth_after = queue.depth();
+            stats.rendered += batch_len;
+            stats.emitted  += depth_after.saturating_sub(depth_before);
+        }
     }
 
     stats

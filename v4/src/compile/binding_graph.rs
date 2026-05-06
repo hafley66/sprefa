@@ -119,9 +119,13 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
         slot_terms(arg.raw.as_ref(), &mut reads, &mut binds);
     }
     if let Some(dsl) = &op.dsl {
-        // ${IDENT} interps — host-level reads
+        // Host pipe-hole scanner: ${X} = read, ${X?} = bind.
+        use crate::compile::lower::op_def::InterpMode;
         for interp in default_plain_dsl_parse(dsl.raw.as_ref()) {
-            reads.push(interp.name);
+            match interp.mode {
+                InterpMode::Read => reads.push(interp.name),
+                InterpMode::Bind => binds.push(interp.name),
+            }
         }
         // Op-declared DSL binders — `re`'s `(?P<NAME>)`, `glob`'s
         // `<NAME>`, `ast`'s `$NAME` / `$$$REST`. The op tells us what
@@ -133,6 +137,19 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
             }
         }
     }
+    // Op-declared imperative cursor binds (fs sets FS, ast sets LO/HI, etc.)
+    if let Some(def) = reg.get(&op.name) {
+        for name in def.cursor_binds() {
+            binds.push(Arc::<str>::from(*name));
+        }
+    }
+    // If a name appears in both reads and binds for the SAME step (e.g.
+    // a json body where `${UID}` is a binder and the host-style interp
+    // scanner also sees it as a read), the bind wins — the op's grammar
+    // is authoritative for what its body does with the name. Without
+    // this, every capture in a non-template dsl false-positives as
+    // term-self-cycle.
+    reads.retain(|r| !binds.iter().any(|b| b == r));
     (reads, binds)
 }
 

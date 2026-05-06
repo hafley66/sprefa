@@ -59,6 +59,26 @@ impl Diag {
         }
     }
 
+    pub fn info(code: impl Into<Arc<str>>, message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Info,
+            code:     code.into(),
+            message:  message.into(),
+            span:     None,
+            op_path:  Vec::new(),
+        }
+    }
+
+    pub fn hint(code: impl Into<Arc<str>>, message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Hint,
+            code:     code.into(),
+            message:  message.into(),
+            span:     None,
+            op_path:  Vec::new(),
+        }
+    }
+
     pub fn with_span(mut self, lo: u32, hi: u32) -> Self {
         self.span = Some(ByteRange { lo, hi });
         self

@@ -17,7 +17,7 @@ use crate::Cursor;
 use crate::chan::{Next, NextQ};
 use crate::fact::{FactRead, FactWrite};
 use crate::term::Term;
-use crate::v2_ops::{FsComponent, ReComponent};
+use crate::v2_ops::{AstNmComponent, FsComponent, JsonComponent, ReComponent};
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBinder, DslBody, DslShape, OperatorDef,
@@ -131,7 +131,111 @@ impl OperatorDef for RuleDef {
     }
 }
 
-// ─── fact_read ────────────────────────────────────────────────────────────
+// ─── fact ─────────────────────────────────────────────────────────────────
+// One op that dispatches by argument binding-mode at lower time:
+//   fact(:t, ${A}, ${B})    all bound  → INSERT (FactWrite)
+//   fact(:t, ${A?}, ${B?})  all unbound → SELECT * (FactRead, drain+subscribe)
+//   fact(:t, ${A}, ${B?})   mixed       → SELECT B WHERE col0=A
+// Args carry binding mode through the bareword desugar in walk.rs:
+//   COL  → Value::Pipe with `term(:COL)` step  (Read)
+//   COL? → Value::Pipe with `term_bind(:COL)` step (Bind)
+// Plain `Value::Atom` is treated as a literal bound value.
+
+pub struct FactDef;
+
+const FACT_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "table",
+        doc: "fact table name", required: true,
+    },
+    ArgSig {
+        kind: ArgKind::Variadic(&ArgKind::Any),
+        name: "cols",
+        doc: "column args; bound (X / :a) = filter or insert value, unbound (X?) = select target",
+        required: false,
+    },
+];
+
+impl OperatorDef for FactDef {
+    fn name(&self) -> &'static str { "fact" }
+    fn paren_args(&self) -> &[ArgSig] { FACT_SPEC }
+
+    fn lower(
+        &self,
+        ctx:    &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        use crate::sprf_introspect::PipeIntrospect;
+
+        let table = match &args[0] {
+            Value::Atom(s) => s.clone(),
+            _ => return Err(LowerError::Unknown(
+                "fact: first arg must be a :table atom".into()
+            )),
+        };
+        let col_args = &args[1..];
+
+        // Classify each col arg as Bound (Read/Atom) or Unbound (Bind).
+        #[derive(Debug)]
+        enum ColMode { BoundLiteral(Arc<str>), BoundRead(Arc<str>), Unbound(Arc<str>) }
+        let modes: Vec<ColMode> = col_args.iter().map(|v| -> Result<ColMode, LowerError> {
+            match v {
+                Value::Atom(s) => Ok(ColMode::BoundLiteral(s.clone())),
+                Value::Pipe(p) => {
+                    let binds = p.binds_terms();
+                    let reads = p.reads_terms();
+                    if let Some(name) = binds.first() {
+                        Ok(ColMode::Unbound(name.clone()))
+                    } else if let Some(name) = reads.first() {
+                        Ok(ColMode::BoundRead(name.clone()))
+                    } else {
+                        // No term in the pipe (e.g. a backtick literal).
+                        // Treat as a bound literal value with a synthetic
+                        // anonymous name. Today FactRead/FactWrite ignore
+                        // literal-value cols at runtime; surface a stable
+                        // placeholder so dispatch still works.
+                        Ok(ColMode::BoundLiteral(Arc::<str>::from("$lit")))
+                    }
+                }
+            }
+        }).collect::<Result<_, _>>()?;
+
+        let any_unbound = modes.iter().any(|m| matches!(m, ColMode::Unbound(_)));
+
+        if !any_unbound {
+            // Pure write — table + (no col surface yet on FactWrite).
+            return Ok(Pipe::new().step(Arc::new(FactWrite::new(
+                ctx.store.clone(), table,
+            ))));
+        }
+
+        // Read shape: pick first bound col as key_term (if any), project the
+        // unbound names. With no bound cols, key_term is "" (drain+subscribe
+        // semantics — but FactRead today requires a key. Surface the gap as
+        // a clear error rather than silently mismatching.)
+        let key_term: Arc<str> = modes.iter().find_map(|m| match m {
+            ColMode::BoundRead(n) | ColMode::BoundLiteral(n) => Some(n.clone()),
+            _ => None,
+        }).ok_or_else(|| LowerError::Unknown(
+            "fact: SELECT * (all-unbound args) not yet wired; \
+             at least one bound col is required as the join key".into()
+        ))?;
+        let project: Vec<String> = modes.iter().filter_map(|m| match m {
+            ColMode::Unbound(n) => Some(n.to_string()),
+            _ => None,
+        }).collect();
+        let project_refs: Vec<&str> = project.iter().map(|s| s.as_str()).collect();
+        Ok(Pipe::new().step(Arc::new(FactRead::new(
+            ctx.store.clone(), table, key_term, &project_refs,
+        ))))
+    }
+}
+
+// ─── fact_read (legacy) ───────────────────────────────────────────────────
+// Kept registered for now; the unified `fact` op is the preferred surface.
 
 pub struct FactReadDef;
 
@@ -215,6 +319,7 @@ const FS_SPEC: &[ArgSig] = &[
 impl OperatorDef for FsDef {
     fn name(&self) -> &'static str { "fs" }
     fn paren_args(&self) -> &[ArgSig] { FS_SPEC }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["FS"] }
 
     fn lower(
         &self,
@@ -239,9 +344,8 @@ pub struct GlobDef;
 const GLOB_SPEC: &[ArgSig] = &[
     ArgSig {
         kind: ArgKind::Atom, name: "pattern",
-        doc: "glob pattern (e.g. **/*.rs); matched against paths \
-              relative to ctx.root",
-        required: true,
+        doc: "glob pattern (e.g. :*.rs). Optional — prefer dsl body form glob`**/*.rs`.",
+        required: false,
     },
 ];
 
@@ -283,6 +387,9 @@ fn scan_re_named_groups(raw: &str) -> Vec<DslBinder> {
 impl OperatorDef for GlobDef {
     fn name(&self) -> &'static str { "glob" }
     fn paren_args(&self) -> &[ArgSig] { GLOB_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn dsl_required(&self) -> bool { false }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["FS"] }
 
     /// `<NAME>` glob capture sigil. Each occurrence binds NAME at
     /// runtime; the analyzer treats them as bound at the glob step.
@@ -296,9 +403,17 @@ impl OperatorDef for GlobDef {
         _flow:  Option<Value>,
         args:   &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let pattern = atom_arg(args, 0);
+        let pattern: Arc<str> = if let Some(body) = dsl {
+            body.raw.clone()
+        } else if let Some(Value::Atom(s)) = args.first() {
+            s.clone()
+        } else {
+            return Err(LowerError::Unknown(
+                "glob: pattern required (dsl body `**/*.rs` or :atom arg)".into()
+            ));
+        };
         Ok(Pipe::new().step(Arc::new(GlobComponent::new(
             ctx.root.clone(), pattern,
         ))))
@@ -338,17 +453,24 @@ fn scan_glob_captures(raw: &str) -> Vec<DslBinder> {
 }
 
 // ─── ast ──────────────────────────────────────────────────────────────────
-// `AstNmComponent::new(pat_src, lang)` needs a `SupportLang` that
-// `OperatorDef::lower` can't surface today. Lane C's `parse_dsl`
-// extension should carry a Lang alongside the pattern source. Until
-// then the wrapper registers the name (so the LSP/Registry sees it)
-// and errors at lower time.
+// `ast(:lang)\`pattern\`` — lang as paren-arg atom, pattern in dsl body.
+// Default lang `:rs` if omitted.
 
 pub struct AstDef;
 
+const AST_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "lang",
+        doc: "language atom (:rs, :c, :cpp, :ts, :tsx, :js, :py, :go, :java)",
+        required: false,
+    },
+];
+
 impl OperatorDef for AstDef {
     fn name(&self) -> &'static str { "ast" }
+    fn paren_args(&self) -> &[ArgSig] { AST_SPEC }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI"] }
 
     /// ast-grep metavars: `$NAME`, `$$$REST`. Both bind at runtime.
     fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
@@ -359,16 +481,45 @@ impl OperatorDef for AstDef {
         &self,
         _ctx:   &LowerCtx,
         _flow:  Option<Value>,
-        _args:  &[Value],
+        args:   &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        // TODO: LowerCtx needs a Lang threading mechanism; awaiting
-        // Lane C parse_dsl extension on OperatorDef.
-        Err(LowerError::Unknown(
-            "ast: Lang threading not yet wired (Lane C parse_dsl pending)".into()
-        ))
+        let lang_atom: Option<&str> = args.first().and_then(|v| match v {
+            Value::Atom(s) => Some(s.as_ref()),
+            _ => None,
+        });
+        let lang = parse_lang_atom(lang_atom.unwrap_or("rs"))
+            .ok_or_else(|| LowerError::Unknown(format!(
+                "ast: unknown lang atom :{} (try :rs, :c, :cpp, :ts, :tsx, :js, :py, :go, :java)",
+                lang_atom.unwrap_or("?")
+            )))?;
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "ast: dsl body required (e.g. ast(:rs)`fn ${NAME?}($$ARGS)`)".into()
+        ))?;
+        Ok(Pipe::new().step(Arc::new(AstNmComponent::new(
+            body.raw.to_string(),
+            lang,
+        ))))
     }
+}
+
+fn parse_lang_atom(s: &str) -> Option<ast_grep_language::SupportLang> {
+    use ast_grep_language::SupportLang as L;
+    Some(match s {
+        "rs" | "rust"        => L::Rust,
+        // ast-grep's C grammar is stricter than its C++ one; the C++
+        // parser cleanly handles C source too. v4-bench picks Cpp for
+        // both. Match that so the kernel walks the same on both paths.
+        "c" | "cpp" | "c++" | "cc" => L::Cpp,
+        "ts" | "typescript"  => L::TypeScript,
+        "tsx"                => L::Tsx,
+        "js" | "javascript"  => L::JavaScript,
+        "py" | "python"      => L::Python,
+        "go" | "golang"      => L::Go,
+        "java"               => L::Java,
+        _ => return None,
+    })
 }
 
 /// Scan an ast-grep body for `$NAME` and `$$$REST` metavars. Both are
@@ -404,6 +555,102 @@ fn scan_ast_metavars(raw: &str) -> Vec<DslBinder> {
     out
 }
 
+// ─── json ─────────────────────────────────────────────────────────────────
+// `json(:fmt)\`{ key: $V }\`` — brace-pattern walk over a parsed
+// JSON/YAML/TOML document. fmt = :json (default), :yaml, :toml.
+
+pub struct JsonDef;
+
+const JSON_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "fmt",
+        doc: "target format atom (:json, :yaml, :toml). Default :json.",
+        required: false,
+    },
+];
+
+impl OperatorDef for JsonDef {
+    fn name(&self) -> &'static str { "json" }
+    fn paren_args(&self) -> &[ArgSig] { JSON_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+
+    /// json brace-pattern bindings: `$NAME` only (no braces). The braced
+    /// form `${NAME}` is host territory — it's a host-pipe hole that
+    /// applies to every dsl body universally. The host pre-scans those
+    /// via `default_plain_dsl_parse` and treats them as reads/binds at
+    /// the host level. Per-dsl `binders_in_dsl` must NOT see them.
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
+        scan_bare_dollar_idents(raw)
+    }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        use crate::cst::dsls::json::{JsonDsl, TargetFormat};
+
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "json: dsl body required (e.g. json`{ name: $N }`)".into()
+        ))?;
+        let fmt_atom: Option<&str> = args.first().and_then(|v| match v {
+            Value::Atom(s) => Some(s.as_ref()),
+            _ => None,
+        });
+        let fmt = match fmt_atom.unwrap_or("json") {
+            "json" => TargetFormat::Json,
+            "yaml" | "yml" => TargetFormat::Yaml,
+            "toml" => TargetFormat::Toml,
+            other => return Err(LowerError::Unknown(format!(
+                "json: unknown fmt atom :{} (try :json, :yaml, :toml)", other
+            ))),
+        };
+        let compiled = JsonDsl::compile_typed(body.raw.as_bytes())
+            .map_err(|d| LowerError::Unknown(format!(
+                "json: compile failed: {}", d.message
+            )))?;
+        let compiled = compiled.with_format(fmt);
+        Ok(Pipe::new().step(Arc::new(JsonComponent::new(compiled))))
+    }
+}
+
+/// Scan a body for the dsl-internal capture form `$IDENT` (no braces).
+/// The braced form `${IDENT}` is a host pipe-hole and is NOT scanned
+/// here — the host pre-pass owns it.
+fn scan_bare_dollar_idents(raw: &str) -> Vec<DslBinder> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            // skip braced form — host owns `${...}`
+            if i + 1 < bytes.len() && bytes[i + 1] == b'{' { i += 2; continue; }
+            let lo = i;
+            let mut j = i + 1;
+            if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+                let name_lo = j;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                {
+                    j += 1;
+                }
+                let name = &raw[name_lo..j];
+                out.push(DslBinder {
+                    name:  Arc::<str>::from(name),
+                    range: ByteRange { lo: lo as u32, hi: j as u32 },
+                });
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 // ─── re ───────────────────────────────────────────────────────────────────
 
 pub struct ReDef;
@@ -411,6 +658,7 @@ pub struct ReDef;
 impl OperatorDef for ReDef {
     fn name(&self) -> &'static str { "re" }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI", "MATCH"] }
 
     /// Scan the regex body for `(?P<NAME>...)` named groups. Each name
     /// is a runtime binder; the binding graph treats them as bound at

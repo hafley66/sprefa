@@ -83,7 +83,7 @@ pub struct GetDiagsReq  { pub uri: String }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetInlaysReq { pub uri: String }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RunReq       { pub path: PathBuf }
+pub struct RunReq       { pub path: PathBuf, pub root: Option<PathBuf> }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InlayProbe   { pub lo: u32, pub hi: u32, pub count: u32 }
@@ -395,12 +395,16 @@ impl SprfHandlers for SprfState {
         let src = std::fs::read_to_string(&req.path)
             .map_err(|e| SprfError::Io(e.to_string()))?;
         let (program, parse_diags) = host_parse(&src);
-        let dir = req.path.parent().map(|p| p.to_path_buf()).unwrap_or(self.root.clone());
+        let dir = req.root.clone()
+            .or_else(|| req.path.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| self.root.clone());
         let mut ctx = LowerCtx::new(self.facts.clone(), dir);
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let opts = ExpandOpts::default();
+        // 4096 matches v4-bench. Smaller caps multiply per-batch lock
+        // overhead in batched sinks (FactWrite et al.).
+        let opts = ExpandOpts::default().with_batch_cap(4096);
         let mut n = 0;
         for pipe in pipes {
             let inst = pipe.into_instance();
@@ -438,7 +442,7 @@ impl SprfHandlers for SprfState {
 fn collect_rule_tables(program: &[PipeAst], out: &mut Vec<String>) {
     for p in program {
         for op in &p.steps {
-            if &*op.name == "rule" {
+            if matches!(&*op.name, "rule" | "fact" | "fact_write") {
                 if let Some(first) = op.args.first() {
                     let raw = first.raw.trim();
                     let name = raw.strip_prefix(':').unwrap_or(raw).trim();

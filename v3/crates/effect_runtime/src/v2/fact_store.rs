@@ -38,7 +38,7 @@
 //! tables. Listeners filter on `domain == "row"`; per-row keys
 //! disambiguate.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use super::event_bus::EventBus;
@@ -72,6 +72,13 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// (re-insert paths) but the stored value is the freshly-computed
     /// content id. May buffer until `commit`.
     fn insert(&self, table: &str, row: Arc<R>);
+
+    /// Bulk insert. Default falls back to per-row `insert`. Stores
+    /// override to take ONE lock + ONE transaction for the whole batch
+    /// — the difference between O(rows) lock acquisitions and 1.
+    fn insert_batch(&self, table: &str, rows: Vec<Arc<R>>) {
+        for r in rows { self.insert(table, r); }
+    }
 
     /// Read rows where column `col` equals `value`.
     fn read_where(&self, table: &str, col: &str, value: &str) -> Vec<Arc<R>>;
@@ -116,13 +123,7 @@ pub fn content_id<R: Row>(table: &str, row: &R) -> String {
         h.update(v.as_bytes());
         h.update(b"\0");
     }
-    let bytes = h.finalize();
-    let mut s = String::with_capacity(64);
-    for b in bytes.as_bytes() {
-        use std::fmt::Write;
-        let _ = write!(&mut s, "{:02x}", b);
-    }
-    s
+    h.finalize().to_hex().to_string()
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -130,11 +131,24 @@ pub fn content_id<R: Row>(table: &str, row: &R) -> String {
 // ───────────────────────────────────────────────────────────────────
 
 pub struct MemFactStore<R: Row> {
-    tables:  Mutex<HashMap<String, Vec<Arc<R>>>>,
+    tables:  Mutex<HashMap<String, MemTable<R>>>,
     schemas: Mutex<HashMap<String, Vec<String>>>,
     /// Pending inserts (table, row) since the last commit. Consumed by
     /// `commit` to publish dirty events.
     pending: Mutex<Vec<(String, Arc<R>)>>,
+}
+
+/// In-memory bucket for one table. Carries an `_id`-keyed HashSet
+/// alongside the row Vec so insert dedup is O(1) instead of O(n).
+struct MemTable<R: Row> {
+    rows:    Vec<Arc<R>>,
+    seen:    HashSet<String>,
+    _phant:  std::marker::PhantomData<R>,
+}
+impl<R: Row> Default for MemTable<R> {
+    fn default() -> Self {
+        Self { rows: Vec::new(), seen: HashSet::new(), _phant: std::marker::PhantomData }
+    }
 }
 
 impl<R: Row> Default for MemFactStore<R> {
@@ -171,37 +185,61 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
         let id = content_id(table, &owned);
         owned.set(ID_COL, &id);
         let arced = Arc::new(owned);
-        // Dedup on `_id`: re-insert of identical content is a no-op.
         let mut tables = self.tables.lock().unwrap();
         let bucket = tables.entry(table.to_string()).or_default();
-        if bucket.iter().any(|r| r.get(ID_COL) == Some(id.as_str())) {
-            return;
-        }
-        bucket.push(arced.clone());
+        if !bucket.seen.insert(id) { return; } // O(1) dedup
+        bucket.rows.push(arced.clone());
         drop(tables);
         self.pending.lock().unwrap().push((table.to_string(), arced));
     }
 
+    fn insert_batch(&self, table: &str, rows: Vec<Arc<R>>) {
+        if rows.is_empty() { return; }
+        // ID minting + content_id is per-row; do it OUTSIDE the lock.
+        let mut prepared: Vec<(String, Arc<R>)> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut owned: R = Arc::unwrap_or_clone(row);
+            let id = content_id(table, &owned);
+            owned.set(ID_COL, &id);
+            prepared.push((id, Arc::new(owned)));
+        }
+        // ONE lock for the whole batch.
+        let mut tables = self.tables.lock().unwrap();
+        let bucket = tables.entry(table.to_string()).or_default();
+        bucket.rows.reserve(prepared.len());
+        let mut accepted: Vec<Arc<R>> = Vec::with_capacity(prepared.len());
+        for (id, row) in prepared {
+            if bucket.seen.insert(id) {
+                bucket.rows.push(row.clone());
+                accepted.push(row);
+            }
+        }
+        drop(tables);
+        if !accepted.is_empty() {
+            let mut pending = self.pending.lock().unwrap();
+            pending.reserve(accepted.len());
+            for row in accepted { pending.push((table.to_string(), row)); }
+        }
+    }
+
     fn read_where(&self, table: &str, col: &str, value: &str) -> Vec<Arc<R>> {
         let g = self.tables.lock().unwrap();
-        let Some(rows) = g.get(table) else { return Vec::new() };
-        rows.iter()
+        let Some(b) = g.get(table) else { return Vec::new() };
+        b.rows.iter()
             .filter(|r| r.get(col).map(|v| v == value).unwrap_or(false))
             .cloned()
             .collect()
     }
 
     fn rows_of(&self, table: &str) -> Vec<Arc<R>> {
-        self.tables
-            .lock()
-            .unwrap()
+        self.tables.lock().unwrap()
             .get(table)
-            .cloned()
+            .map(|b| b.rows.clone())
             .unwrap_or_default()
     }
 
     fn len(&self, table: &str) -> usize {
-        self.tables.lock().unwrap().get(table).map(|v| v.len()).unwrap_or(0)
+        self.tables.lock().unwrap().get(table).map(|b| b.rows.len()).unwrap_or(0)
     }
 
     fn commit(&self, _gen: u64, bus: Option<&EventBus>) {

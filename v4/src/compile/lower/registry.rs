@@ -156,7 +156,7 @@ pub fn validate_call(
             Diag::error("lower/slot-not-allowed",
                 format!("op `{}` does not accept a `` dsl body", def.name()))
                 .with_span(r.lo, r.hi)),
-        (Some(_), None) => diags.push(
+        (Some(_), None) if def.dsl_required() => diags.push(
             Diag::error("lower/missing-slot",
                 format!("op `{}` requires a `` dsl body", def.name()))
                 .with_span(call_span.lo, call_span.hi)),

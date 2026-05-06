@@ -711,6 +711,46 @@ impl Component for PrintComponent {
     }
 }
 
+/// Json/Yaml/Toml brace-pattern matcher Component. Reads
+/// `cursor.get("FS")` as a file path, parses with the configured
+/// `TargetFormat`, runs the compiled pattern, and emits one child
+/// cursor per matched row with each capture set as a term plus
+/// `LO`/`HI` byte offsets pointing at the row's first capture.
+pub struct JsonComponent {
+    compiled: Arc<crate::cst::dsls::json::JsonCompiled>,
+}
+
+impl JsonComponent {
+    pub fn new(compiled: crate::cst::dsls::json::JsonCompiled) -> Self {
+        Self { compiled: Arc::new(compiled) }
+    }
+}
+
+impl Component for JsonComponent {
+    type Next = Cursor;
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let compiled = self.compiled.clone();
+        par_render(batch, move |c| {
+            let Some(path) = c.get("FS") else { return Node::Done };
+            let Ok(bytes)  = std::fs::read(path) else { return Node::Done };
+            let rows = compiled.match_grouped(&bytes, 0);
+            if rows.is_empty() { return Node::Done; }
+            let hits: Vec<Node<Cursor>> = rows.into_iter().filter_map(|caps| {
+                if caps.is_empty() { return None; }
+                let mut child = c.clone();
+                let (_, lo0, hi0, _) = &caps[0];
+                child.set("LO", lo0.to_string());
+                child.set("HI", hi0.to_string());
+                for (name, _lo, _hi, value) in caps {
+                    child.set(name.as_ref(), value.as_ref());
+                }
+                Some(Node::Emit(Arc::new(child)))
+            }).collect();
+            if hits.is_empty() { Node::Done } else { Node::Many(hits) }
+        })
+    }
+}
+
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 //   tests — smoke for each ported Component
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░

@@ -33,9 +33,14 @@ impl FactWrite {
 impl Component for FactWrite {
     type Next = Cursor;
 
-    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        self.store.insert(&self.table, Arc::new(c.clone()));
-        Node::Emit(Arc::new(c.clone()))
+    /// Batch path — ONE store lock per component invocation, not per
+    /// cursor. The batch is also the splice unit, so no per-row Node::Emit
+    /// wrapping; we hand back exactly what came in.
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        if batch.is_empty() { return Vec::new(); }
+        let arced: Vec<Arc<Cursor>> = batch.iter().map(|c| Arc::new((*c).clone())).collect();
+        self.store.insert_batch(&self.table, arced.clone());
+        arced.into_iter().map(Node::Emit).collect()
     }
 }
 

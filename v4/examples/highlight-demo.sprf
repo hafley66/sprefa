@@ -26,16 +26,13 @@ re`\b(?P<WORD>[a-zA-Z]+)\s+\d+\b`;
 glob`**/<DIR>/*.{ts,tsx,rs}`;
 
 # ast-grep DSL with [lang] arg, $METAVAR + $$$REST
-ast`fn $NAME($$$ARGS) -> $RET { $$$BODY }`;
+ast(:rs)`fn ${NAME?}($$${ARGS?}) -> $RET { $$$BODY }`;
 
-# json DSL — structural shape
-json`{ "kind": "User", "id": ${UID}, "tags": [ ] }`;
+# json DSL — structural shape; $UID binds UID at runtime
+json`{ kind: "User", id: $UID }` > fact?(:user, UID, `alice`);
 
 # bare backticks at pipe-step = `str` op sugar; X? introduces capture X
 rule(:x, X?) { `plain template with ${X} hole` };
-
-# atoms, barewords, predicate-suffix, fork; UID reads an existing capture
-fact?(:user, UID, `alice`);
 
 # pipe — ALL_CAPS barewords flow as term refs/binders at host level
 glob`**/*.rs` > re`fn (?P<NAME>\w+)` > fact(:rust_fn, NAME);

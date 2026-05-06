@@ -26,6 +26,7 @@ struct Args {
     show_rows: bool,
     max_diags: usize,
     remote:    Option<String>,
+    root:      Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -34,6 +35,7 @@ fn parse_args() -> Result<Args, String> {
     let mut show_rows: bool            = true;
     let mut max_diags: usize           = 50;
     let mut remote:    Option<String>  = None;
+    let mut root:      Option<PathBuf> = None;
 
     let mut i = 0;
     while i < raw.len() {
@@ -48,6 +50,11 @@ fn parse_args() -> Result<Args, String> {
             "--remote" => {
                 let v = raw.get(i+1).ok_or("--remote needs URL")?;
                 remote = Some(v.clone());
+                i += 2;
+            }
+            "--root" => {
+                let v = raw.get(i+1).ok_or("--root needs a path")?;
+                root = Some(PathBuf::from(v));
                 i += 2;
             }
             "-h" | "--help" => { print_usage(); std::process::exit(0); }
@@ -65,7 +72,7 @@ fn parse_args() -> Result<Args, String> {
     }
     Ok(Args {
         path: path.ok_or("missing <path-to-sprf-file>")?,
-        show_rows, max_diags, remote,
+        show_rows, max_diags, remote, root,
     })
 }
 
@@ -107,6 +114,19 @@ fn print_diags(path: &str, src: &str, diags: &[SprfDiag], cap: usize) -> usize {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    // Tracing: only initialize a subscriber when the env var is set.
+    // No subscriber = `event_enabled!` returns false everywhere, the
+    // runtime skips Instant::now() and span allocation. Activate with:
+    //   SPREFA_LOG=expand=debug ./sprefa-run …
+    //   SPREFA_LOG=trace ./sprefa-run …
+    if let Ok(filter) = std::env::var("SPREFA_LOG") {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
+            .with_target(true)
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
+
     let args = match parse_args() {
         Ok(a)  => a,
         Err(e) => { eprintln!("sprefa-run: {e}"); print_usage(); return ExitCode::from(2); }
@@ -132,7 +152,7 @@ async fn main() -> ExitCode {
         }
     };
 
-    let report = match client.run(RunReq { path: args.path.clone() }).await {
+    let report = match client.run(RunReq { path: args.path.clone(), root: args.root.clone() }).await {
         Ok(r)  => r,
         Err(e) => { println!("{path_disp}:1:1:error:sprefa-run/run: {e}"); return ExitCode::from(1); }
     };

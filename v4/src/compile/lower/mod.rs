@@ -27,15 +27,21 @@ pub fn default_registry() -> Registry {
     let mut r = Registry::new();
     r.register(Arc::new(ops::StrDef));
     r.register(Arc::new(ops::RuleDef));
+    r.register(Arc::new(ops::FactDef));
     r.register(Arc::new(ops::FactReadDef));
     r.register(Arc::new(ops::FsDef));
     r.register(Arc::new(ops::GlobDef));
     r.register(Arc::new(ops::AstDef));
+    r.register(Arc::new(ops::JsonDef));
     r.register(Arc::new(ops::ReDef));
     r.register(Arc::new(ops::TermReadDef));
     r.register(Arc::new(ops::TermBindDef));
     r.register(Arc::new(ops::FactWriteDef));
     r.register(Arc::new(ops::NextDef));
     r.register(Arc::new(ops::NextQDef));
+    r.register(Arc::new(crate::lsp::LspErrorDef));
+    r.register(Arc::new(crate::lsp::LspWarnDef));
+    r.register(Arc::new(crate::lsp::LspInfoDef));
+    r.register(Arc::new(crate::lsp::LspHintDef));
     r
 }

@@ -71,10 +71,19 @@ pub enum DslShape {
     // Future: Regex / Glob / Ast(Lang) / Cst(Lang).
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterpMode {
+    /// `${X}` — read X from cursor.terms; sub-pipe = `term(:X)`.
+    Read,
+    /// `${X?}` — bind X = cursor.value; sub-pipe = `term?(:X)`.
+    Bind,
+}
+
 #[derive(Clone, Debug)]
 pub struct DslInterp {
     pub name:  Arc<str>,
     pub range: ByteRange,
+    pub mode:  InterpMode,
 }
 
 /// Names this op's dsl body binds at runtime (e.g. `re`'s
@@ -102,6 +111,11 @@ pub trait OperatorDef: Send + Sync + 'static {
     fn brace_block(&self) -> Option<BlockShape>  { None }
     fn dsl_body(&self)    -> Option<DslShape>    { None }
 
+    /// When `dsl_body()` is `Some`, is the body required at every call?
+    /// Default true. Ops that accept either paren-arg OR dsl form
+    /// (e.g. `glob(:pattern)` or `` glob`pat` ``) override to false.
+    fn dsl_required(&self) -> bool { true }
+
     /// Walk-time DSL parser. Default: scan for `${IDENT}` holes and emit
     /// one `DslInterp` per hole with byte ranges relative to `raw`. Ops
     /// with sub-grammars (regex, glob, ast) override.
@@ -119,6 +133,18 @@ pub trait OperatorDef: Send + Sync + 'static {
     /// Default: empty. Op-specific scanners override.
     fn binders_in_dsl(&self, _raw: &str) -> Vec<DslBinder> { Vec::new() }
 
+    /// Cursor-term keys this op sets imperatively at runtime regardless
+    /// of dsl content. Used by the binding-graph analyzer so downstream
+    /// ops can read these without `use-before-bind` false positives.
+    /// Examples:
+    ///   fs        → ["FS"]
+    ///   glob      → ["FS"]
+    ///   ast/re    → ["LO", "HI"]
+    ///   re        → ["LO", "HI", "MATCH"]
+    /// Default: empty. Op authors declare here so consumers don't have
+    /// to know runtime details.
+    fn cursor_binds(&self) -> &'static [&'static str] { &[] }
+
     fn lower(
         &self,
         ctx:   &LowerCtx,
@@ -129,10 +155,13 @@ pub trait OperatorDef: Send + Sync + 'static {
     ) -> Result<Pipe<Cursor>, LowerError>;
 }
 
-/// Default `${IDENT}` interp scanner. IDENT = ASCII letters / digits /
-/// underscore, first char non-digit. Returns `DslInterp { name, range }`
-/// where `range` covers the full `${IDENT}` span (including the sigils)
-/// in byte offsets relative to `raw`. `name` is just the IDENT body.
+/// Default `${IDENT}` / `${IDENT?}` host pipe-hole scanner. IDENT =
+/// ASCII letters / digits / underscore, first char non-digit. Returns
+/// `DslInterp { name, range, mode }` per hole. `range` covers the full
+/// `${...}` span; `mode` distinguishes `${X}` (Read) from `${X?}` (Bind).
+/// This is the host carveout — every dsl body is scanned for these
+/// regardless of the dsl's own grammar. Per-dsl `binders_in_dsl` is
+/// orthogonal and handles the dsl-internal capture form (e.g. `$X`).
 pub fn default_plain_dsl_parse(raw: &str) -> Vec<DslInterp> {
     let bytes = raw.as_bytes();
     let mut out = Vec::new();
@@ -141,7 +170,6 @@ pub fn default_plain_dsl_parse(raw: &str) -> Vec<DslInterp> {
         if bytes[i] == b'$' && bytes[i + 1] == b'{' {
             let lo = i;
             let mut j = i + 2;
-            // first char of IDENT must be non-digit
             if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
                 let name_lo = j;
                 while j < bytes.len()
@@ -150,12 +178,19 @@ pub fn default_plain_dsl_parse(raw: &str) -> Vec<DslInterp> {
                     j += 1;
                 }
                 let name_hi = j;
+                let mode = if j < bytes.len() && bytes[j] == b'?' {
+                    j += 1;
+                    InterpMode::Bind
+                } else {
+                    InterpMode::Read
+                };
                 if j < bytes.len() && bytes[j] == b'}' {
                     let hi = j + 1;
                     let name = &raw[name_lo..name_hi];
                     out.push(DslInterp {
                         name:  Arc::<str>::from(name),
                         range: ByteRange { lo: lo as u32, hi: hi as u32 },
+                        mode,
                     });
                     i = hi;
                     continue;

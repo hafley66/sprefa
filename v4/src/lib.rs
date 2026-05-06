@@ -4,6 +4,7 @@ pub mod compile;
 pub mod cst;
 pub mod cursor_codec;
 pub mod fact;
+pub mod lsp;
 pub mod pipeline;
 pub mod rule;
 pub mod runtime_bridge;

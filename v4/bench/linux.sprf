@@ -1,0 +1,14 @@
+# bench/linux.sprf — bench-as-language
+#
+# Mirrors the shape of v4_bench's `bare` mode:
+#   FsComponent > AstNmComponent(:c, "printk($$$)") > Count
+#
+# Run with:
+#   cargo run --release --bin sprefa-run -- v4/bench/linux.sprf \
+#     --root v3/tests/smoke/.fixtures/linux --no-show-rows
+#
+# Each row carries FILE / LO / HI for the printk match site. Add
+# rule(:hits, FILE, LO, HI) to drain into a fact table; `sprefa-run`
+# reports the row count via the FactTable surface.
+
+fs(:c) > ast(:c)`printk($$$)` > fact(:hits, FS, LO, HI);

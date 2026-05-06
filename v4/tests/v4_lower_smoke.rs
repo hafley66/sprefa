@@ -42,7 +42,7 @@ fn four_slot_lower_smoke() {
     let raw = "hello ${WHO}";
     let interp_dsl = DslBody {
         raw: Arc::from(raw),
-        interps: vec![DslInterp { name: Arc::from("WHO"), range: br(6, 12) }],
+        interps: vec![DslInterp { name: Arc::from("WHO"), range: br(6, 12), mode: v4::lower::op_def::InterpMode::Read }],
     };
     let ctx1 = LowerCtx::new(store.clone(), dir.clone());
     let interp = str_def.lower(&ctx1, None, &[], None, Some(&interp_dsl)).unwrap();
@@ -59,7 +59,7 @@ fn four_slot_lower_smoke() {
         &LowerCtx::new(store.clone(), dir.clone()),
         None, &[], None, Some(&DslBody {
             raw: Arc::from("hello ${WHO}"),
-            interps: vec![DslInterp { name: Arc::from("WHO"), range: br(6, 12) }],
+            interps: vec![DslInterp { name: Arc::from("WHO"), range: br(6, 12), mode: v4::lower::op_def::InterpMode::Read }],
         }),
     ).unwrap();
 

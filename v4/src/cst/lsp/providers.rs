@@ -13,8 +13,8 @@
 use std::ops::Range;
 
 use lsp_types::{
-    ColorInformation, ColorPresentation, DocumentHighlight, DocumentLink, DocumentSymbol,
-    FoldingRange, Hover, InlayHint, SelectionRange, TextEdit,
+    ColorInformation, ColorPresentation, CompletionItem, DocumentHighlight, DocumentLink,
+    DocumentSymbol, FoldingRange, Hover, InlayHint, SelectionRange, TextEdit,
 };
 
 use crate::cst::diag::DiagSink;
@@ -34,6 +34,10 @@ pub trait DslBodyLsp: Send + Sync {
     fn diagnostics(&self, _body: &[u8], _diags: &dyn DiagSink) {}
 
     fn semantic_tokens(&self, _body: &[u8]) -> Vec<SemanticToken> { vec![] }
+
+    /// Type-ahead suggestions at `byte` inside the body. Default empty.
+    /// Each dsl decides what to surface (keywords, captured names, etc.).
+    fn completions(&self, _body: &[u8], _byte: usize) -> Vec<CompletionItem> { vec![] }
 
     fn folding_ranges(&self, _body: &[u8]) -> Vec<FoldingRange> { vec![] }
 
