@@ -12,4 +12,5 @@
 pub mod ast;
 pub mod lower;
 pub mod parse;
+pub mod probe_wrap;
 pub mod walk;

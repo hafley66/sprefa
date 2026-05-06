@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use effect_runtime::v2::{FactStore, Pipe};
+use effect_runtime::v2::{FactStore, Pipe, ProbeSink};
 
 use crate::{Cursor, Interner};
 
@@ -16,6 +16,11 @@ pub struct LowerCtx {
     /// Capture name → Pipe that grounds to a constant string. Used by
     /// `str` to substitute `${X}` at lower-time.
     pub bindings: HashMap<Arc<str>, Pipe<Cursor>>,
+    /// Optional per-emit probe sink. When set, the walker wraps every
+    /// lowered Component in a `SpannedComponent` that fires a probe on
+    /// each emitted cursor, tagged with the source op's byte range.
+    /// Default = `None` = zero overhead beyond a single Option check.
+    pub probe:    Option<Arc<dyn ProbeSink<Cursor>>>,
 }
 
 impl LowerCtx {
@@ -25,10 +30,14 @@ impl LowerCtx {
             interner: None,
             root,
             bindings: HashMap::new(),
+            probe:    None,
         }
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
         self.interner = Some(i); self
+    }
+    pub fn with_probe(mut self, p: Arc<dyn ProbeSink<Cursor>>) -> Self {
+        self.probe = Some(p); self
     }
     pub fn with_binding(mut self, name: impl Into<Arc<str>>, pipe: Pipe<Cursor>) -> Self {
         self.bindings.insert(name.into(), pipe); self

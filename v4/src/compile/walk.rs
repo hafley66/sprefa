@@ -131,7 +131,17 @@ pub fn walk_op(
 
     // Dispatch.
     match reg.lower(ctx, &op.name, flow, args, block, dsl, op.span) {
-        Ok(pipe) => Some(pipe),
+        Ok(pipe) => {
+            // If a probe sink is configured on the LowerCtx, wrap each
+            // step of the lowered pipe with `SpannedComponent` so every
+            // emit is tagged with this op's source byte range. With
+            // `probe = None` the lowered pipe is returned unchanged.
+            let pipe = match &ctx.probe {
+                Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
+                None    => pipe,
+            };
+            Some(pipe)
+        }
         Err(ds)  => { diags.extend(ds); None }
     }
 }
