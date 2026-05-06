@@ -3,6 +3,7 @@ pub mod cst;
 pub mod cursor_codec;
 pub mod fact;
 pub mod lower;
+pub mod pipeline;
 pub mod rule;
 pub mod runtime_bridge;
 pub mod v2_ops;
