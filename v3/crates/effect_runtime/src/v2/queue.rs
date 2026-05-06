@@ -33,7 +33,7 @@ pub struct QueueRow<N: Next> {
     pub enqueued_at_ns: u64,
 }
 
-pub trait QueueBackend<N: Next>: Send + Sync + 'static {
+pub trait QueueBackend<N: Next>: Send + Sync {
     /// Insert a new row. Backend assigns the QueueId. Returns it.
     fn enqueue(&self, row: QueueRow<N>) -> QueueId;
 

@@ -27,6 +27,7 @@ pub mod hybrid_queue;
 pub mod node;
 pub mod component;
 pub mod diag;
+pub mod probe;
 pub mod queue;
 pub mod mem_queue;
 pub mod flatten;
@@ -43,6 +44,7 @@ pub use fact_store::{FactStore, MemFactStore, ID_COL, ROW_DOMAIN, content_id, ro
 pub use fact_store::SqliteFactStore;
 pub use codec::Codec;
 pub use diag::{ByteRange, Diag, DiagSink, NoopDiagSink, Severity};
+pub use probe::{BufferProbeSink, NoopProbeSink, Probe, ProbeSink};
 pub use effect_dispatch::{EffectDispatch, Spawner, ThreadSpawner, TokioSpawner};
 pub use event_bus::BusListener;
 pub use memoize::{
