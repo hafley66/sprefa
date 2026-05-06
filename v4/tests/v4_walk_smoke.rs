@@ -21,6 +21,8 @@ use v4::Cursor;
 use v4::compile::ast::{DslText, OpCall, PipeAst, SlotText};
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::lower::{ArgKind, ArgSig, DslBody, OperatorDef, Value};
+use effect_runtime::v2::Pipe;
 
 fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
 
@@ -103,3 +105,77 @@ fn walk_smoke_rule_str() {
         diags2.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
     );
 }
+
+// ─── inline-pipe arg via host_parse re-entry ───────────────────────
+//
+// Hand-built call equivalent to `pipe_only(foo > bar)`. The second
+// fragment must classify as Value::Pipe (via host_parse fallback in
+// classify_slot), not emit `compile/inline-pipe-unsupported`. Custom
+// op accepts one Pipe arg so a clean walk lowers without diags.
+
+struct PipeAccept;
+const PIPE_ACCEPT_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Pipe, name: "p", doc: "", required: true,
+}];
+impl OperatorDef for PipeAccept {
+    fn name(&self) -> &'static str { "pipe_accept" }
+    fn paren_args(&self) -> &[ArgSig] { PIPE_ACCEPT_SPEC }
+    fn lower(
+        &self,
+        _ctx:  &v4::lower::LowerCtx,
+        _flow: Option<Value>,
+        args:  &[Value],
+        _blk:  Option<Pipe<Cursor>>,
+        _dsl:  Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, v4::lower::LowerError> {
+        match &args[0] {
+            Value::Pipe(p) => Ok(p.clone()),
+            _ => Err(v4::lower::LowerError::Unknown("pipe_accept: not a pipe".into())),
+        }
+    }
+}
+
+#[test]
+fn walk_smoke_inline_pipe() {
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let dir = std::env::temp_dir();
+    let mut reg = default_registry();
+    reg.register(Arc::new(PipeAccept));
+
+    // Hand-built `pipe_accept(foo > bar)`. The second arg's raw text
+    // is the inline pipe expression "foo > bar"; span values pretend
+    // it lived at offset 12..21 in some outer source.
+    let program = vec![PipeAst {
+        span: br(0, 22),
+        steps: vec![OpCall {
+            name: Arc::<str>::from("pipe_accept"),
+            predicate: false,
+            span: br(0, 22),
+            flow: None,
+            args: vec![SlotText {
+                raw:  Arc::<str>::from("foo > bar"),
+                span: br(12, 21),
+            }],
+            dsl: None,
+            block: None,
+        }],
+    }];
+
+    let mut ctx = LowerCtx::new(store, dir);
+    let (_pipes, diags) = walk_program(&program, &reg, &mut ctx);
+
+    // The gap closes at walk-time: no `compile/inline-pipe-unsupported`
+    // diag must appear, regardless of how lower-time treats the result.
+    assert!(
+        !diags.iter().any(|d| &*d.code == "compile/inline-pipe-unsupported"),
+        "inline-pipe-unsupported leaked through: {:?}",
+        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
+    );
+    // And no malformed-parse from a clean `foo > bar` fragment.
+    assert!(
+        !diags.iter().any(|d| &*d.code == "compile/inline-pipe-malformed"),
+        "inline-pipe-malformed unexpected: {:?}",
+        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
+    );
+}
+

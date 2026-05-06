@@ -9,10 +9,11 @@
 //! Diag posture: never bail on first failure. The LSP needs every
 //! call-site error in one pass.
 //!
-//! Inline-pipe args (`name | next`-style positional values) are not yet
-//! supported here — the parser lane has not landed. Slots that don't
-//! classify as Atom or `:Atom` emit `compile/inline-pipe-unsupported`
-//! and the call is skipped; the rest of the program continues to walk.
+//! Inline-pipe args (`foo > bar`-style positional values) are handled
+//! by re-entering `host_parse` on the slot body. If the fragment parses
+//! as exactly one `PipeAst`, walk it recursively into a `Value::Pipe`.
+//! Zero or more-than-one top-level pipes from a single arg slot is
+//! malformed and emits `compile/inline-pipe-malformed`.
 
 use std::sync::Arc;
 
@@ -137,13 +138,17 @@ pub fn walk_op(
 
 /// Classify a `SlotText` into `Value::Atom` or `Value::Pipe`.
 ///
-/// Today: `:foo` → Atom("foo"); bare identifier / quoted string → Atom.
-/// Anything else → emit `compile/inline-pipe-unsupported` and return
-/// `None`. The full inline-pipe parser is parser-lane work.
+/// Literal classifiers fire first: `:foo` → Atom("foo"), bare ident →
+/// Atom, quoted string → Atom (outer quotes stripped). If none match,
+/// re-enter `host_parse` on the slot body and treat the result as an
+/// inline pipe expression. Span-shift strategy: per-diag at the seam.
+/// Inner walk_pipe writes into a fresh local `Vec<Diag>` so its byte
+/// ranges (which are relative to `slot.raw`) can be rebased into outer
+/// source coords by adding `slot.span.lo`, then merged into `diags`.
 pub fn classify_slot(
     slot:  &SlotText,
-    _reg:  &Registry,
-    _ctx:  &mut LowerCtx,
+    reg:   &Registry,
+    ctx:   &mut LowerCtx,
     diags: &mut Vec<Diag>,
 ) -> Option<Value> {
     let raw = slot.raw.as_ref().trim();
@@ -174,13 +179,40 @@ pub fn classify_slot(
             return Some(Value::Atom(Arc::<str>::from(inner)));
         }
     }
-    // Anything else looks like an inline pipe. Not implemented in this
-    // lane.
-    diags.push(
-        Diag::error("compile/inline-pipe-unsupported",
-            format!("inline pipe args not yet supported: `{raw}`"))
-            .with_span(slot.span.lo, slot.span.hi));
-    None
+    // Inline-pipe fallback: re-parse the slot body as a sprf fragment.
+    // The grammar's root is `program = stmt*`, so `foo > bar` parses as
+    // one stmt with one pipe. Anything other than exactly-one pipe is
+    // malformed at this layer.
+    let (sub_pipes, sub_diags) = crate::compile::parse::host_parse(slot.raw.as_ref());
+    let base = slot.span.lo;
+    for mut d in sub_diags {
+        if let Some(r) = d.span.as_mut() {
+            r.lo = r.lo.saturating_add(base);
+            r.hi = r.hi.saturating_add(base);
+        }
+        diags.push(d);
+    }
+    if sub_pipes.len() != 1 {
+        diags.push(
+            Diag::error("compile/inline-pipe-malformed",
+                format!("inline pipe arg parsed to {} pipes (expected 1)",
+                    sub_pipes.len()))
+                .with_span(slot.span.lo, slot.span.hi));
+        return None;
+    }
+    // Recurse into walk_pipe with a fresh diag buffer so we can rebase
+    // its ranges (which are relative to slot.raw) into outer source
+    // coords before merging.
+    let mut inner_diags: Vec<Diag> = Vec::new();
+    let pipe = walk_pipe(&sub_pipes[0], reg, ctx, &mut inner_diags);
+    for mut d in inner_diags {
+        if let Some(r) = d.span.as_mut() {
+            r.lo = r.lo.saturating_add(base);
+            r.hi = r.hi.saturating_add(base);
+        }
+        diags.push(d);
+    }
+    pipe.map(Value::Pipe)
 }
 
 fn is_ident(s: &str) -> bool {
