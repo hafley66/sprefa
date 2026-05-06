@@ -15,11 +15,11 @@ use effect_runtime::v2::Pipe;
 
 use crate::Cursor;
 use crate::fact::FactRead;
-use crate::lower::ctx::{LowerCtx, LowerError};
-use crate::lower::op_def::{
+use crate::compile::lower::ctx::{LowerCtx, LowerError};
+use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBody, DslShape, OperatorDef,
 };
-use crate::lower::value::{run_once_const, Value};
+use crate::compile::lower::value::{run_once_const, Value};
 use crate::pipeline::StrConstComponent;
 use crate::rule::Rule;
 

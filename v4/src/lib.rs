@@ -1,13 +1,15 @@
 pub mod chan;
+pub mod compile;
 pub mod cst;
 pub mod cursor_codec;
 pub mod fact;
-pub mod lower;
 pub mod pipeline;
 pub mod rule;
 pub mod runtime_bridge;
 pub mod v2_ops;
 pub mod term;
+
+pub use compile::lower;
 
 // sprefa v4 — runtime lib. shared by v4-proto (demo) and v4-bench (perf).
 //
