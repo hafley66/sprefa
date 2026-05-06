@@ -29,9 +29,10 @@ use tower_lsp::jsonrpc::Result as RpcResult;
 use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams,
-    InitializeResult, InitializedParams, MessageType, NumberOrString, Position,
-    Range, SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    InitializeResult, InitializedParams, InlayHint, InlayHintParams,
+    MessageType, NumberOrString, OneOf, Position, Range, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensResult,
     SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
     TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     WorkDoneProgressOptions,
@@ -39,6 +40,7 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use tracing_subscriber::EnvFilter;
 
+mod inlay;
 mod semantic;
 
 use v4::compile::parse::host_parse;
@@ -127,6 +129,7 @@ impl LanguageServer for Backend {
                         },
                     ),
                 ),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -161,6 +164,22 @@ impl LanguageServer for Backend {
             result_id: None,
             data,
         })))
+    }
+
+    async fn inlay_hint(
+        &self,
+        params: InlayHintParams,
+    ) -> RpcResult<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let g = self.docs.lock().await;
+            match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
+        };
+        let dir = uri.to_file_path().ok()
+            .and_then(|p| p.parent().map(|q| q.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from(".")));
+        Ok(Some(inlay::inlays_for(&text, dir)))
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
