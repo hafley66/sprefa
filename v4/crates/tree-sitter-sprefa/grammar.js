@@ -66,34 +66,47 @@ module.exports = grammar({
       $.op_invocation,
       // Bare backtick at step position — naked string-literal step.
       // Lowers as `str` op with no slots; dsl_body is the backtick text.
+      // (token.immediate is fine here: with no preceding identifier or
+      // open-bracket, extras still precede the backtick at the start of
+      // a step because there's nothing for "immediate" to attach to.)
       $.dsl_body,
     ),
 
     // ---- op invocation ----------------------------------------------------
 
+    // Slot openers (`?`, `[`, `(`, `` ` ``) attach IMMEDIATELY to the op
+    // name — no whitespace allowed in between. Block `{ … }` is the only
+    // slot that may follow whitespace.
+    //
+    // This forbids `re \`...\`` and `fact (…)`. `re\`...\``, `fact(…)`, and
+    // `rule(:foo) { … }` all lex correctly.
     op_invocation: $ => prec(1, seq(
       field('name', $.identifier),
-      // `?` op suffix flips push/pull. e.g. `fact?(...)`, `<rule>?(...)`.
-      optional(field('predicate', '?')),
+      optional(field('predicate', token.immediate('?'))),
       repeat(field('bracket', $.bracket_slot)),
       optional(field('paren', $.paren_slot)),
-      optional(field('dsl', $.dsl_body)),
+      optional(field('dsl', alias($._dsl_body_attached, $.dsl_body))),
       optional(field('brace', $.brace_slot)),
     )),
 
-    bracket_slot: $ => seq('[', optional($._slot_body), ']'),
-    paren_slot:   $ => seq('(', optional($._slot_body), ')'),
+    bracket_slot: $ => seq(token.immediate('['), optional($._slot_body), ']'),
+    paren_slot:   $ => seq(token.immediate('('), optional($._slot_body), ')'),
     brace_slot:   $ => seq('{', optional($._slot_body), '}'),
 
-    // dsl_body — single-backtick fence. Body is opaque to host grammar.
-    // No embedded backticks at this layer (markdown-fence with run-counting
-    // is a TODO requiring an external scanner). At lower-time, the op's
-    // `parse_dsl(raw)` re-parses the body for `${X}` interp etc.
-    dsl_body: $ => token(seq(
-      '`',
-      /[^`]*/,
-      '`',
-    )),
+    // dsl_body — single-backtick fence.
+    //
+    // Two flavors:
+    //   - `dsl_body`             : extras may precede. Used at pipe-step
+    //                              position (`` `hello` `` lowers to str).
+    //   - `_dsl_body_attached`   : `token.immediate`; used inside an
+    //                              op_invocation's `dsl` field so that
+    //                              `re\`…\`` is allowed but `re \`…\``
+    //                              fails to parse as a re-with-dsl.
+    //
+    // The op_invocation rule aliases `_dsl_body_attached` back to
+    // `dsl_body` so downstream consumers see one node kind.
+    dsl_body:           $ => token(seq('`', /[^`]*/, '`')),
+    _dsl_body_attached: $ => token.immediate(seq('`', /[^`]*/, '`')),
 
     // Slot body is a sequence of opaque tokens that the walker classifies
     // per-arg via top-level comma split. Nested parens/braces/brackets stay
@@ -102,8 +115,6 @@ module.exports = grammar({
 
     _slot_atom: $ => choice(
       $.op_invocation,
-      $.string_literal,
-      $.raw_string_literal,
       $.atom_literal,
       $.dsl_body,
       $.identifier,
@@ -129,20 +140,10 @@ module.exports = grammar({
 
     atom_literal: $ => token(seq(':', /[A-Za-z_][A-Za-z0-9_]*/)),
 
-    string_literal: $ => seq(
-      '"',
-      repeat(choice(
-        /[^"\\]+/,
-        seq('\\', /./),
-      )),
-      '"',
-    ),
-
-    raw_string_literal: $ => token(choice(
-      seq('r"', /[^"]*/, '"'),
-      seq('r#"', /([^"]|"[^#])*/, '"#'),
-      seq('r##"', /([^"]|"[^#]|"#[^#])*/, '"##'),
-    )),
+    // v4 has NO `"…"` / `r#"…"#` strings. All string-shaped values use
+    // backticks (`` `text` ``). At pipe-step position the bare backtick
+    // lowers to `str`; in arg-slot position it remains a `dsl_body` value
+    // that the walker classifies as a constant-string sub-pipe.
 
     number_literal: $ => token(choice(
       /-?\d+/,

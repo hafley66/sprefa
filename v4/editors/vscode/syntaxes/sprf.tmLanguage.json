@@ -9,8 +9,6 @@
     { "include": "#dsl-ast"          },
     { "include": "#dsl-json"         },
     { "include": "#dsl-plain"        },
-    { "include": "#raw-string"       },
-    { "include": "#string"           },
     { "include": "#hole"             },
     { "include": "#atom"             },
     { "include": "#number"           },
@@ -36,7 +34,7 @@
     },
 
     "dsl-re": {
-      "begin":         "\\b(re)(\\?)?\\s*(`)",
+      "begin":         "\\b(re)(\\?)?(`)",
       "end":           "`",
       "beginCaptures": {
         "1": { "name": "entity.name.function.op.dsl-tag.re.sprf"     },
@@ -67,7 +65,7 @@
     },
 
     "dsl-glob": {
-      "begin":         "\\b(glob)(\\?)?\\s*(`)",
+      "begin":         "\\b(glob)(\\?)?(`)",
       "end":           "`",
       "beginCaptures": {
         "1": { "name": "entity.name.function.op.dsl-tag.glob.sprf"   },
@@ -89,7 +87,7 @@
     },
 
     "dsl-ast": {
-      "begin":         "\\b(ast)(\\[[^\\]]*\\])?(\\?)?\\s*(`)",
+      "begin":         "\\b(ast)(\\[[^\\]]*\\])?(\\?)?(`)",
       "end":           "`",
       "beginCaptures": {
         "1": { "name": "entity.name.function.op.dsl-tag.ast.sprf"     },
@@ -108,7 +106,7 @@
     },
 
     "dsl-json": {
-      "begin":         "\\b(json)(\\?)?\\s*(`)",
+      "begin":         "\\b(json)(\\?)?(`)",
       "end":           "`",
       "beginCaptures": {
         "1": { "name": "entity.name.function.op.dsl-tag.json.sprf"    },
@@ -141,25 +139,6 @@
       ]
     },
 
-    "raw-string": {
-      "begin":         "r#*\"",
-      "end":           "\"#*",
-      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sprf" } },
-      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf"   } },
-      "name":          "string.quoted.other.raw.sprf"
-    },
-
-    "string": {
-      "begin":         "\"",
-      "end":           "\"",
-      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sprf" } },
-      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf"   } },
-      "name":          "string.quoted.double.sprf",
-      "patterns": [
-        { "match": "\\\\.", "name": "constant.character.escape.sprf" }
-      ]
-    },
-
     "atom": {
       "match": ":[A-Za-z_][A-Za-z0-9_]*",
       "name":  "constant.other.atom.sprf"
@@ -171,7 +150,7 @@
     },
 
     "predicate-suffix": {
-      "match": "([A-Za-z_][A-Za-z0-9_]*)(\\?)(?=[\\[(`{])",
+      "match": "([A-Za-z_][A-Za-z0-9_]*)(\\?)(?=[\\[(`]|\\s*\\{)",
       "captures": {
         "1": { "name": "entity.name.function.op.sprf"        },
         "2": { "name": "keyword.operator.predicate.sprf"     }
@@ -179,7 +158,7 @@
     },
 
     "op-name": {
-      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*[\\[(`{])",
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\??[\\[(`]|\\s*\\{)",
       "captures": {
         "1": { "name": "entity.name.function.op.sprf" }
       }

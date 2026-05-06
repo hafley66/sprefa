@@ -26,14 +26,6 @@
         {
           "type": "op_invocation",
           "named": true
-        },
-        {
-          "type": "raw_string_literal",
-          "named": true
-        },
-        {
-          "type": "string_literal",
-          "named": true
         }
       ]
     }
@@ -64,14 +56,6 @@
         },
         {
           "type": "op_invocation",
-          "named": true
-        },
-        {
-          "type": "raw_string_literal",
-          "named": true
-        },
-        {
-          "type": "string_literal",
           "named": true
         }
       ]
@@ -170,14 +154,6 @@
         {
           "type": "op_invocation",
           "named": true
-        },
-        {
-          "type": "raw_string_literal",
-          "named": true
-        },
-        {
-          "type": "string_literal",
-          "named": true
         }
       ]
     }
@@ -218,15 +194,6 @@
     }
   },
   {
-    "type": "string_literal",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "\"",
-    "named": false
-  },
-  {
     "type": "(",
     "named": false
   },
@@ -248,10 +215,6 @@
   },
   {
     "type": "[",
-    "named": false
-  },
-  {
-    "type": "\\",
     "named": false
   },
   {
@@ -277,10 +240,6 @@
   },
   {
     "type": "number_literal",
-    "named": true
-  },
-  {
-    "type": "raw_string_literal",
     "named": true
   },
   {
