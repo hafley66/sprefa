@@ -1,28 +1,28 @@
 {
   "//install": [
-    "Pure declarative language registration for .sprf files. No LSP client.",
-    "Lane C will add an LSP client once v4 ships sprefa-lsp.",
+    "Declarative language registration + LSP client for .sprf files.",
     "",
     "Install (development install from folder):",
     "  ./install.sh",
     "",
     "Or build a .vsix:",
+    "  npm install && npm run compile",
     "  vsce package --allow-missing-repository --no-git-tag-version",
     "  code --install-extension sprefa-v4-0.1.0.vsix --force",
     "",
-    "Verify by opening any .sprf file. The example",
-    "    rule(:greet) { str `hello world` }",
-    "should color `rule`/`str` as op names, `:greet` as atom, the backtick body",
-    "as a string, and brace/paren delimiters as bracket pairs."
+    "The extension spawns `sprefa-lsp` from PATH by default. Override",
+    "with the `sprefa-v4.serverPath` setting if your binary lives elsewhere",
+    "(e.g. point at `cargo run --bin sprefa-lsp`)."
   ],
   "name": "sprefa-v4",
   "displayName": "sprefa v4",
-  "description": "Syntax highlighting for .sprf rule files (v4 host grammar). Installable alongside the v3 sprf extension.",
+  "description": "Syntax + diagnostics for .sprf rule files (v4 host grammar). Spawns sprefa-lsp.",
   "version": "0.1.0",
   "publisher": "sprefa",
   "engines": {
     "vscode": "^1.75.0"
   },
+  "main": "./out/extension.js",
   "categories": [
     "Programming Languages"
   ],
@@ -49,6 +49,40 @@
         "scopeName": "source.sprf",
         "path": "./syntaxes/sprf.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "sprefa v4",
+      "properties": {
+        "sprefa-v4.serverPath": {
+          "type": "string",
+          "default": "sprefa-lsp",
+          "description": "Path to the sprefa-lsp binary. Defaults to 'sprefa-lsp' on PATH."
+        },
+        "sprefa-v4.serverArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra args passed to sprefa-lsp."
+        },
+        "sprefa-v4.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP traffic in the Output panel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.3.0"
   }
 }

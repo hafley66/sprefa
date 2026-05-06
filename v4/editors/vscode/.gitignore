@@ -1,2 +1,4 @@
 node_modules/
+out/
 sprefa-v4-*.vsix
+package-lock.json
