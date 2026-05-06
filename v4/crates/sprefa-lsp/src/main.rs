@@ -30,11 +30,16 @@ use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams,
     InitializeResult, InitializedParams, MessageType, NumberOrString, Position,
-    Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Url,
+    Range, SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend,
+    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    WorkDoneProgressOptions,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use tracing_subscriber::EnvFilter;
+
+mod semantic;
 
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
@@ -109,6 +114,19 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            work_done_progress_options: WorkDoneProgressOptions::default(),
+                            legend: SemanticTokensLegend {
+                                token_types:     semantic::legend_token_types(),
+                                token_modifiers: semantic::legend_token_modifiers(),
+                            },
+                            range: Some(false),
+                            full:  Some(SemanticTokensFullOptions::Bool(true)),
+                        },
+                    ),
+                ),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -125,6 +143,25 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> RpcResult<()> { Ok(()) }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> RpcResult<Option<SemanticTokensResult>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let g = self.docs.lock().await;
+            match g.get(&uri) {
+                Some(e) => e.text.clone(),
+                None    => return Ok(None),
+            }
+        };
+        let data = semantic::tokens_for(&text);
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data,
+        })))
+    }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let td = params.text_document;

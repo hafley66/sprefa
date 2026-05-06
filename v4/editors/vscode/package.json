@@ -50,6 +50,26 @@
         "path": "./syntaxes/sprf.tmLanguage.json"
       }
     ],
+    "semanticTokenTypes": [
+      { "id": "regexp",     "superType": "string",   "description": "DSL regex metachar / literal" },
+      { "id": "macro",      "superType": "function", "description": "DSL macro-like construct" },
+      { "id": "enumMember", "superType": "variable", "description": "DSL enum member" }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "sprf",
+        "scopes": {
+          "keyword":   ["keyword.control.dsl.sprf"],
+          "variable":  ["variable.other.dsl.sprf"],
+          "parameter": ["variable.parameter.dsl.sprf"],
+          "string":    ["string.regexp.dsl.sprf"],
+          "function":  ["entity.name.function.dsl.sprf"],
+          "operator":  ["keyword.operator.dsl.sprf"],
+          "regexp":    ["string.regexp.dsl.sprf"],
+          "macro":     ["entity.name.macro.dsl.sprf"]
+        }
+      }
+    ],
     "configuration": {
       "title": "sprefa v4",
       "properties": {
