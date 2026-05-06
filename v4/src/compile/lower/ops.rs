@@ -101,13 +101,20 @@ impl OperatorDef for RuleDef {
             _ => unreachable!("validate ensured Atom"),
         };
         // Column args. Plain atoms become declared sink columns; pipe
-        // args (the ALL_CAPS bareword desugar — `NAME` / `NAME?`) are
-        // schema-silent for now; the runtime read/bind still happens
-        // through the pipeline expansion via cursor.terms.
+        // args (the ALL_CAPS bareword desugar — `NAME` / `NAME?`) walk
+        // through `PipeIntrospect` to recover the term names declared
+        // by `Term::bind` / `Term::read` steps inside the sub-pipe.
+        // No downcast on Component; the column-name flow is data via
+        // `Component::describe()` (sprf-blind upstream).
+        use crate::sprf_introspect::PipeIntrospect;
         let mut col_strings: Vec<String> = Vec::with_capacity(args.len().saturating_sub(1));
         for a in &args[1..] {
-            if let Value::Atom(s) = a {
-                col_strings.push(s.to_string());
+            match a {
+                Value::Atom(s) => col_strings.push(s.to_string()),
+                Value::Pipe(p) => {
+                    for n in p.binds_terms() { col_strings.push(n.to_string()); }
+                    for n in p.reads_terms() { col_strings.push(n.to_string()); }
+                }
             }
         }
         let cols: Vec<&str> = col_strings.iter().map(|s| s.as_str()).collect();

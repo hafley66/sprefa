@@ -66,6 +66,14 @@ impl Component for Term {
             }
         }
     }
+
+    fn kind(&self) -> &'static str { "term" }
+
+    fn purity(&self) -> effect_runtime::v2::Purity {
+        effect_runtime::v2::Purity::Pure
+    }
+
+    fn describe(&self) -> Option<&dyn std::any::Any> { Some(self) }
 }
 
 #[cfg(test)]

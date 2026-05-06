@@ -7,6 +7,7 @@ pub mod fact;
 pub mod pipeline;
 pub mod rule;
 pub mod runtime_bridge;
+pub mod sprf_introspect;
 pub mod v2_ops;
 pub mod term;
 

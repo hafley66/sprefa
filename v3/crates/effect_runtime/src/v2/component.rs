@@ -27,6 +27,8 @@
 //! `dispatch` → `render_batch` → `render`. No recursion: `render`'s
 //! terminal default is `Node::Done`.
 
+use std::any::Any;
+use std::hash::Hasher;
 use std::sync::Arc;
 
 use super::diag::{DiagSink, NoopDiagSink};
@@ -76,6 +78,48 @@ pub trait Component: Send + Sync + 'static {
     /// `dispatch` at once. `None` lets the driver pick a default.
     /// `Some(1)` forces per-row.
     fn batch_hint(&self) -> Option<usize> { None }
+
+    // ── introspection (default-empty, framework-neutral) ──────────────
+    //
+    // Mirrors saga effect descriptors / react hook deps — analysis is
+    // data, not a closure. Userland (sprf, etc.) downcasts `describe()`
+    // to its own typed descriptors; effect_runtime stays sprf-blind.
+
+    /// Stable kind tag for tooling. Mirrors saga effect.type / redux
+    /// action.type / react devtools hook kind. Default = Rust type
+    /// name (debug-only — author-supplied override is preferred for
+    /// tools that surface this label).
+    fn kind(&self) -> &'static str { std::any::type_name::<Self>() }
+
+    /// Coarse purity tag. Drives downstream memoize/replay/cancellation.
+    ///   `Pure`      — render = f(input). Memoizable.
+    ///   `Read`      — observes external state but emits no effect.
+    ///   `Effectful` — emits writes / IO descriptions.
+    fn purity(&self) -> Purity { Purity::Pure }
+
+    /// Fold this component's identity into a hasher. Returns `true` if
+    /// the component contributed identity bytes; `false` if it declines
+    /// (callers treat that as "do not memoize across this step"). v3's
+    /// `Op::cache_key` shape, generalized.
+    fn cache_key(&self, _h: &mut dyn Hasher) -> bool { false }
+
+    /// Static-analysis blob. Userland trait extensions downcast to
+    /// recover strongly-typed configuration. Mirror of react devtools'
+    /// `_debugHookType` + `memoizedState`. `None` = no descriptor.
+    ///
+    /// Components that compute a descriptor lazily must cache it on
+    /// `self` (e.g. via `OnceLock`); the borrow is `&self`-bound.
+    fn describe(&self) -> Option<&dyn Any> { None }
+}
+
+/// Coarse purity classification. Three levels for now; widen to the
+/// 6-level Pure/Param/Relational/IO/Effectful/Stateful taxonomy when
+/// the closure-analysis / SQL-hoist work needs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Purity {
+    Pure,
+    Read,
+    Effectful,
 }
 
 /// Render-call context. Per-call handle that every Component sees.
