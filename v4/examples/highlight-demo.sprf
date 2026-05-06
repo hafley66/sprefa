@@ -1,0 +1,29 @@
+# every DSL covered, plus host syntax. open in VS Code with the v4
+# extension installed; tmGrammar should render this without LSP help.
+
+rule(:greet) {
+    str `hello ${NAME?}, today is ${DAY}`
+}
+
+# regex DSL — captures (?P<NAME>) + alternation + escapes
+re`\b(?P<WORD>[a-zA-Z]+)\s+\d+\b`
+
+# glob DSL — globstar, alternation, char-class, capture
+glob`**/<DIR>/*.{ts,tsx,rs}`
+
+# ast-grep DSL with [lang] arg, $METAVAR + $$$REST
+ast[rust]`fn $NAME($$$ARGS) -> $RET { $$$BODY }`
+
+# json DSL — structural shape
+json`{ "kind": "User", "id": ${UID?}, "tags": [ ] }`
+
+# raw + double strings still work
+"plain string with \n escapes"
+r#"raw "quoted" string"#
+
+# atoms, numbers, predicate-suffix, fork
+fact?(:user, ${UID}, "alice")
+12.34 ; -7
+
+# pipes
+glob`**/*.rs` > re`fn (?P<NAME>\w+)` > fact(:rust_fn, ${NAME})

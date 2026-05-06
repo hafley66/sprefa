@@ -3,49 +3,158 @@
   "name": "sprf",
   "scopeName": "source.sprf",
   "patterns": [
-    { "include": "#comment" },
-    { "include": "#dsl-body" },
-    { "include": "#raw-string" },
-    { "include": "#string" },
-    { "include": "#atom" },
-    { "include": "#number" },
+    { "include": "#comment"          },
+    { "include": "#dsl-re"           },
+    { "include": "#dsl-glob"         },
+    { "include": "#dsl-ast"          },
+    { "include": "#dsl-json"         },
+    { "include": "#dsl-plain"        },
+    { "include": "#raw-string"       },
+    { "include": "#string"           },
+    { "include": "#hole"             },
+    { "include": "#atom"             },
+    { "include": "#number"           },
     { "include": "#predicate-suffix" },
-    { "include": "#op-name" },
-    { "include": "#chain-separator" },
-    { "include": "#fork-separator" },
-    { "include": "#delimiters" }
+    { "include": "#op-name"          },
+    { "include": "#chain-separator"  },
+    { "include": "#fork-separator"   },
+    { "include": "#delimiters"       }
   ],
   "repository": {
     "comment": {
       "match": "#.*$",
-      "name": "comment.line.number-sign.sprf"
+      "name":  "comment.line.number-sign.sprf"
     },
 
-    "dsl-body": {
-      "begin": "`",
-      "end": "`",
-      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sprf" } },
-      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf" } },
-      "name": "string.quoted.other.dsl.sprf",
+    "hole": {
+      "match": "\\$\\{([A-Za-z_][A-Za-z0-9_]*)(\\??)\\}",
+      "name":  "meta.embedded.hole.sprf",
+      "captures": {
+        "1": { "name": "variable.other.capture.sprf"   },
+        "2": { "name": "keyword.operator.unbound.sprf" }
+      }
+    },
+
+    "dsl-re": {
+      "begin":         "\\b(re)(\\?)?\\s*(`)",
+      "end":           "`",
+      "beginCaptures": {
+        "1": { "name": "entity.name.function.op.dsl-tag.re.sprf"     },
+        "2": { "name": "keyword.operator.predicate.sprf"             },
+        "3": { "name": "punctuation.definition.string.begin.dsl.sprf" }
+      },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.dsl.sprf" } },
+      "name":          "string.regexp.dsl.re.sprf",
+      "contentName":   "string.regexp.dsl.re.sprf",
       "patterns": [
-        { "match": ".", "name": "string.quoted.other.dsl.sprf" }
+        { "include": "#hole"     },
+        { "include": "#re-body"  }
+      ]
+    },
+    "re-body": {
+      "patterns": [
+        { "match": "\\\\.",                 "name": "constant.character.escape.regexp.sprf"  },
+        { "match": "\\(\\?P?<[^>]+>",       "name": "entity.name.function.capture.regexp.sprf" },
+        { "match": "\\(\\?[:=!]",           "name": "punctuation.definition.group.regexp.sprf" },
+        { "match": "[()|]",                 "name": "keyword.operator.regexp.sprf"           },
+        { "match": "\\[\\^?",               "name": "punctuation.character.class.regexp.sprf" },
+        { "match": "\\]",                   "name": "punctuation.character.class.regexp.sprf" },
+        { "match": "[*+?]\\??",             "name": "keyword.operator.quantifier.regexp.sprf" },
+        { "match": "\\{\\d+(?:,\\d*)?\\}",  "name": "keyword.operator.quantifier.regexp.sprf" },
+        { "match": "[\\^$]",                "name": "keyword.operator.anchor.regexp.sprf"    },
+        { "match": "\\.",                   "name": "constant.character.wildcard.regexp.sprf" }
+      ]
+    },
+
+    "dsl-glob": {
+      "begin":         "\\b(glob)(\\?)?\\s*(`)",
+      "end":           "`",
+      "beginCaptures": {
+        "1": { "name": "entity.name.function.op.dsl-tag.glob.sprf"   },
+        "2": { "name": "keyword.operator.predicate.sprf"             },
+        "3": { "name": "punctuation.definition.string.begin.dsl.sprf" }
+      },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.dsl.sprf" } },
+      "name":          "string.unquoted.dsl.glob.sprf",
+      "contentName":   "string.unquoted.dsl.glob.sprf",
+      "patterns": [
+        { "include": "#hole" },
+        { "match": "\\*\\*",                          "name": "keyword.operator.globstar.glob.sprf"      },
+        { "match": "[*?]",                            "name": "keyword.operator.wildcard.glob.sprf"      },
+        { "match": "\\{[^}]*\\}",                     "name": "string.unquoted.alternation.glob.sprf"    },
+        { "match": "\\[!?[^\\]]*\\]",                 "name": "constant.other.character-class.glob.sprf" },
+        { "match": "<[A-Za-z_][A-Za-z0-9_]*>",        "name": "entity.name.function.capture.glob.sprf"   },
+        { "match": "/",                               "name": "punctuation.separator.path.glob.sprf"     }
+      ]
+    },
+
+    "dsl-ast": {
+      "begin":         "\\b(ast)(\\[[^\\]]*\\])?(\\?)?\\s*(`)",
+      "end":           "`",
+      "beginCaptures": {
+        "1": { "name": "entity.name.function.op.dsl-tag.ast.sprf"     },
+        "2": { "name": "support.type.language-arg.ast.sprf"           },
+        "3": { "name": "keyword.operator.predicate.sprf"              },
+        "4": { "name": "punctuation.definition.string.begin.dsl.sprf" }
+      },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.dsl.sprf" } },
+      "name":          "string.template.dsl.ast.sprf",
+      "contentName":   "string.template.dsl.ast.sprf",
+      "patterns": [
+        { "include": "#hole" },
+        { "match": "\\$\\$\\$[A-Za-z_][A-Za-z0-9_]*", "name": "variable.parameter.metavar-rest.ast.sprf" },
+        { "match": "\\$[A-Za-z_][A-Za-z0-9_]*",       "name": "variable.parameter.metavar.ast.sprf"      }
+      ]
+    },
+
+    "dsl-json": {
+      "begin":         "\\b(json)(\\?)?\\s*(`)",
+      "end":           "`",
+      "beginCaptures": {
+        "1": { "name": "entity.name.function.op.dsl-tag.json.sprf"    },
+        "2": { "name": "keyword.operator.predicate.sprf"              },
+        "3": { "name": "punctuation.definition.string.begin.dsl.sprf" }
+      },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.dsl.sprf" } },
+      "name":          "string.template.dsl.json.sprf",
+      "contentName":   "string.template.dsl.json.sprf",
+      "patterns": [
+        { "include": "#hole" },
+        { "match": "\"(?:\\\\.|[^\"\\\\])*\"",        "name": "string.quoted.double.json.sprf"   },
+        { "match": "\\b(?:true|false|null)\\b",       "name": "constant.language.json.sprf"      },
+        { "match": "-?\\b\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?\\b", "name": "constant.numeric.json.sprf" },
+        { "match": "[{}\\[\\]]",                      "name": "punctuation.bracket.json.sprf"    },
+        { "match": "[,:]",                            "name": "punctuation.separator.json.sprf"  }
+      ]
+    },
+
+    "dsl-plain": {
+      "begin":         "`",
+      "end":           "`",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.dsl.sprf" } },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.dsl.sprf"   } },
+      "name":          "string.template.plain.sprf",
+      "contentName":   "string.template.plain.sprf",
+      "patterns": [
+        { "include": "#hole" },
+        { "match": "\\\\.", "name": "constant.character.escape.sprf" }
       ]
     },
 
     "raw-string": {
-      "begin": "r#*\"",
-      "end": "\"#*",
+      "begin":         "r#*\"",
+      "end":           "\"#*",
       "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sprf" } },
-      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf" } },
-      "name": "string.quoted.other.raw.sprf"
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf"   } },
+      "name":          "string.quoted.other.raw.sprf"
     },
 
     "string": {
-      "begin": "\"",
-      "end": "\"",
+      "begin":         "\"",
+      "end":           "\"",
       "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.sprf" } },
-      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf" } },
-      "name": "string.quoted.double.sprf",
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.sprf"   } },
+      "name":          "string.quoted.double.sprf",
       "patterns": [
         { "match": "\\\\.", "name": "constant.character.escape.sprf" }
       ]
@@ -53,19 +162,19 @@
 
     "atom": {
       "match": ":[A-Za-z_][A-Za-z0-9_]*",
-      "name": "constant.other.atom.sprf"
+      "name":  "constant.other.atom.sprf"
     },
 
     "number": {
       "match": "-?\\b\\d+(?:\\.\\d+)?\\b",
-      "name": "constant.numeric.sprf"
+      "name":  "constant.numeric.sprf"
     },
 
     "predicate-suffix": {
       "match": "([A-Za-z_][A-Za-z0-9_]*)(\\?)(?=[\\[(`{])",
       "captures": {
-        "1": { "name": "entity.name.function.op.sprf" },
-        "2": { "name": "keyword.operator.predicate.sprf" }
+        "1": { "name": "entity.name.function.op.sprf"        },
+        "2": { "name": "keyword.operator.predicate.sprf"     }
       }
     },
 
@@ -78,19 +187,19 @@
 
     "chain-separator": {
       "match": ">",
-      "name": "keyword.operator.chain.sprf"
+      "name":  "keyword.operator.chain.sprf"
     },
 
     "fork-separator": {
       "match": ";",
-      "name": "punctuation.terminator.sprf"
+      "name":  "punctuation.terminator.sprf"
     },
 
     "delimiters": {
       "patterns": [
         { "match": "[\\[\\]]", "name": "punctuation.bracket.square.sprf" },
-        { "match": "[()]",     "name": "punctuation.bracket.round.sprf" },
-        { "match": "[{}]",     "name": "punctuation.bracket.curly.sprf" },
+        { "match": "[()]",     "name": "punctuation.bracket.round.sprf"  },
+        { "match": "[{}]",     "name": "punctuation.bracket.curly.sprf"  },
         { "match": ",",        "name": "punctuation.separator.comma.sprf" }
       ]
     }
