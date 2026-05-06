@@ -11,5 +11,5 @@
 
 pub mod ast;
 pub mod lower;
-// pub mod parse;   // dispatched: tree-sitter-sprefa + parse.rs port
+pub mod parse;
 pub mod walk;
