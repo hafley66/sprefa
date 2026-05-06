@@ -23,7 +23,7 @@ use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBody, DslShape, OperatorDef,
 };
 use crate::compile::lower::value::{run_once_const, Value};
-use crate::pipeline::StrConstComponent;
+use crate::pipeline::{GlobComponent, StrConstComponent};
 use crate::rule::Rule;
 
 // ─── str ──────────────────────────────────────────────────────────────────
@@ -228,9 +228,36 @@ impl OperatorDef for FsDef {
 }
 
 // ─── glob ─────────────────────────────────────────────────────────────────
-// SKIPPED: no `GlobComponent` in v4 src yet (only the parser-side
-// `GlobDsl` in src/cst/dsls/glob/). When the runtime Component lands,
-// add the wrapper here.
+
+pub struct GlobDef;
+
+const GLOB_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "pattern",
+        doc: "glob pattern (e.g. **/*.rs); matched against paths \
+              relative to ctx.root",
+        required: true,
+    },
+];
+
+impl OperatorDef for GlobDef {
+    fn name(&self) -> &'static str { "glob" }
+    fn paren_args(&self) -> &[ArgSig] { GLOB_SPEC }
+
+    fn lower(
+        &self,
+        ctx:    &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let pattern = atom_arg(args, 0);
+        Ok(Pipe::new().step(Arc::new(GlobComponent::new(
+            ctx.root.clone(), pattern,
+        ))))
+    }
+}
 
 // ─── ast ──────────────────────────────────────────────────────────────────
 // `AstNmComponent::new(pat_src, lang)` needs a `SupportLang` that
