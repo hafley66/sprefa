@@ -100,7 +100,7 @@ mod tests {
     }
 
     fn cursor_with_value(v: &str) -> Arc<Cursor> {
-        Arc::new(Cursor { value: v.into(), terms: Vec::new() })
+        Arc::new(Cursor { value: v.into(), ..Default::default() })
     }
 
     #[test]

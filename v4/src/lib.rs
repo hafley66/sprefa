@@ -30,8 +30,10 @@ pub use compile::lower;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
+
+use crate::store::SprfStore;
 
 // ░░░▒▒▒▓▓▓██████████████████████████████████████████████████████▓▓▓▒▒▒░░░
 // ░░░▒                  § 1   actions / dispatch                    ▒░░░
@@ -212,60 +214,153 @@ mod coord_tests {
 // ║         § 2   cursor — dynamic-scope term-capture bag         ║
 // ╚═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╝
 //
-// CURRENT SHAPE — string-bag. Layer 0c will flip this to
-//   pub struct Cursor {
-//       pub value: StringId,
-//       pub at:    Ref,
-//       pub terms: Vec<Term>,
-//   }
-// against the primitives above. Doing it in a separate commit so the
-// type-sig change is contained and reviewable independently of the
-// type primitives themselves.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+// LAYER 0c.1 — DUAL-MODE shape.
+//
+// Legacy bare-string surface (`value: Arc<str>`, `raw_terms: Vec<(Arc<str>,
+// Arc<str>)>`) is preserved verbatim so SprfStore's own meta-table writers
+// (sentinel + intern row builders in store.rs) keep operating bare-string
+// without recursing into the store. Row::get / Row::set hit `raw_terms`,
+// not `terms`.
+//
+// New coord-space fields (`value_id: StringId`, `at: Ref`, `terms:
+// Vec<Term>`) are populated by Layer 0c.2's emitter migration. In 0c.1
+// they default to SYNTHETIC sentinels and are not yet read on any code
+// path. The `store: Option<Weak<SprfStore>>` weak handle lets cursor
+// methods reach the intern store on demand without keeping the store
+// alive past program shutdown.
+#[derive(Clone, Debug, Default)]
 pub struct Cursor {
-    /// Focal value `&.value`. Default for Term::Bind. Source ops set
-    /// this to the per-row payload (path, hit text, etc.); cursor
-    /// mutators rewrite it; Term::Read pulls from `terms` into here.
+    /// Focal value `&.value` (legacy bare-string mode). Default for
+    /// Term::Bind. Source ops set this to the per-row payload (path,
+    /// hit text, etc.); cursor mutators rewrite it; Term::Read pulls
+    /// from `raw_terms` into here.
     pub value: Arc<str>,
-    /// Sorted bag of (name, value) captures. ALL-CAPS keys = user
-    /// captures (`X`), colon-prefixed keys = internal terms (`:fan_idx`).
-    pub terms: Vec<(Arc<str>, Arc<str>)>,
+    /// Layer 0c coord-space focal-value FK. SYNTHETIC in 0c.1.
+    pub value_id: StringId,
+    /// Layer 0c coord-space focal-byte ref. SYNTHETIC in 0c.1.
+    pub at: Ref,
+    /// Layer 0c coord-space term bag (24-byte structs). Empty in 0c.1.
+    pub terms: Vec<Term>,
+    /// Sorted bag of (name, value) bare-string captures. ALL-CAPS keys
+    /// = user captures (`X`), colon-prefixed keys = internal terms
+    /// (`:fan_idx`). Backs Row::get/Row::set so SprfStore's own writes
+    /// don't recurse into the intern path.
+    pub raw_terms: Vec<(Arc<str>, Arc<str>)>,
+    /// Process-local handle into the intern store. Codec-skipped (Weak
+    /// is not portable). Constructors that have an `Arc<SprfStore>`
+    /// can opt in via `with_store`; default is None.
+    store: Option<Weak<SprfStore>>,
+}
+
+// Manual eq/hash/ord — the Weak<SprfStore> handle is process-local and
+// must not participate in identity. Identity is the four data fields
+// (value, value_id, at, terms, raw_terms).
+impl PartialEq for Cursor {
+    fn eq(&self, o: &Self) -> bool {
+        self.value == o.value
+            && self.value_id == o.value_id
+            && self.at == o.at
+            && self.terms == o.terms
+            && self.raw_terms == o.raw_terms
+    }
+}
+impl Eq for Cursor {}
+impl std::hash::Hash for Cursor {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.value.hash(h);
+        self.value_id.hash(h);
+        self.at.hash(h);
+        self.terms.hash(h);
+        self.raw_terms.hash(h);
+    }
+}
+impl PartialOrd for Cursor {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(o)) }
+}
+impl Ord for Cursor {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.value.cmp(&o.value)
+            .then_with(|| self.value_id.cmp(&o.value_id))
+            .then_with(|| self.at.cmp(&o.at))
+            .then_with(|| self.terms.cmp(&o.terms))
+            .then_with(|| self.raw_terms.cmp(&o.raw_terms))
+    }
 }
 
 impl Cursor {
     pub fn set(&mut self, name: &str, value: impl Into<Arc<str>>) {
         let v = value.into();
-        match self.terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
-            Ok(i)  => self.terms[i].1 = v,
-            Err(i) => self.terms.insert(i, (Arc::<str>::from(name), v)),
+        match self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
+            Ok(i)  => self.raw_terms[i].1 = v,
+            Err(i) => self.raw_terms.insert(i, (Arc::<str>::from(name), v)),
         }
     }
     /// Set with a pre-built Arc<str> value. Use this with Interner so
     /// repeated values (e.g. file paths) share heap.
     pub fn set_arc(&mut self, name: &str, value: Arc<str>) {
-        match self.terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
-            Ok(i)  => self.terms[i].1 = value,
-            Err(i) => self.terms.insert(i, (Arc::<str>::from(name), value)),
+        match self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
+            Ok(i)  => self.raw_terms[i].1 = value,
+            Err(i) => self.raw_terms.insert(i, (Arc::<str>::from(name), value)),
         }
     }
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.terms.binary_search_by(|(n, _)| (**n).cmp(name))
-            .ok().map(|i| &*self.terms[i].1)
+        self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name))
+            .ok().map(|i| &*self.raw_terms[i].1)
     }
     pub fn unset(&mut self, name: &str) {
-        if let Ok(i) = self.terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
-            self.terms.remove(i);
+        if let Ok(i) = self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
+            self.raw_terms.remove(i);
         }
     }
     /// `&.value`. The focal value of the current cursor.
     pub fn value(&self) -> &str { &self.value }
+
+    // ── Layer 0c coord-space accessors (no live callers in 0c.1; live
+    // ── in 0c.2 when emitters migrate to set_at). Allowed-dead so the
+    // ── lib.rs build stays clean while these remain unused.
+
+    /// Insert/replace a coord-space term. Interns name + slice through
+    /// the store, derives `at` from the child coord. Idempotent on name.
+    #[allow(dead_code)]
+    pub fn set_at(&mut self, name: &str, slice: &str, child_coord: Coord, store: &SprfStore) {
+        let name_id  = store.intern_string(name);
+        let value_id = store.intern_string(slice);
+        let at       = store.intern_ref(child_coord);
+        self.terms.retain(|t| t.name != name_id);
+        self.terms.push(Term { name: name_id, value: value_id, at });
+    }
+
+    /// Insert/replace a synthetic coord-space term. Interns name+text
+    /// through the store; the `at` slot stays SYNTHETIC.
+    #[allow(dead_code)]
+    pub fn set_synthetic(&mut self, name: &str, text: &str, store: &SprfStore) {
+        let name_id  = store.intern_string(name);
+        let value_id = store.intern_string(text);
+        self.terms.retain(|t| t.name != name_id);
+        self.terms.push(Term::synthetic(name_id, value_id));
+    }
+
+    /// Look up a coord-space term by interned name id.
+    #[allow(dead_code)]
+    pub fn term(&self, name_id: StringId) -> Option<&Term> {
+        self.terms.iter().find(|t| t.name == name_id)
+    }
+
+    /// Builder: attach a process-local Weak handle to the intern store.
+    /// Round-trips through the codec as None (Weak is not portable);
+    /// callers that need the store re-attach explicitly.
+    #[allow(dead_code)]
+    pub fn with_store(mut self, store: &Arc<SprfStore>) -> Self {
+        self.store = Some(Arc::downgrade(store));
+        self
+    }
 }
 
 impl effect_runtime::v2::Row for Cursor {
     fn get(&self, col: &str) -> Option<&str> { Cursor::get(self, col) }
     fn set(&mut self, col: &str, value: &str) { Cursor::set(self, col, value); }
     fn fields(&self) -> Vec<(&str, &str)> {
-        self.terms.iter().map(|(n, v)| (n.as_ref(), v.as_ref())).collect()
+        self.raw_terms.iter().map(|(n, v)| (n.as_ref(), v.as_ref())).collect()
     }
 }
 

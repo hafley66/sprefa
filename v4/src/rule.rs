@@ -122,7 +122,7 @@ mod tests {
     }
 
     fn cursor(value: &str, kvs: &[(&str, &str)]) -> Arc<Cursor> {
-        let mut c = Cursor { value: value.into(), terms: Vec::new() };
+        let mut c = Cursor { value: value.into(), ..Default::default() };
         for (k, v) in kvs { c.set(k, *v); }
         Arc::new(c)
     }

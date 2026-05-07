@@ -474,7 +474,7 @@ impl SprfHandlers for SprfState {
         let raw   = self.facts.rows_of(&req.name);
         let take  = req.limit.unwrap_or(usize::MAX).min(raw.len());
         let rows  = raw.iter().take(take).map(|c| FactRow {
-            fields: c.terms.iter()
+            fields: c.raw_terms.iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         }).collect();

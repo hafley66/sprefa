@@ -751,7 +751,7 @@ impl Component for PrintComponent {
             }
             None => {
                 let mut s = String::new();
-                for (i, (n, v)) in c.terms.iter().enumerate() {
+                for (i, (n, v)) in c.raw_terms.iter().enumerate() {
                     if i > 0 { s.push(' '); }
                     s.push_str(n); s.push('='); s.push_str(v);
                 }
