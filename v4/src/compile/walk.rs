@@ -66,8 +66,8 @@ pub fn walk_pipe(
 ) -> Option<Pipe<Cursor>> {
     let mut acc: Pipe<Cursor> = Pipe::new();
     let mut any = false;
-    for op in &p.steps {
-        match walk_op(op, reg, ctx, diags) {
+    for (idx, op) in p.steps.iter().enumerate() {
+        match walk_op(op, reg, ctx, diags, idx) {
             Some(piece) => { acc = acc.extend(piece); any = true; }
             None => {} // diag already pushed
         }
@@ -79,10 +79,11 @@ pub fn walk_pipe(
 /// through the registry. On any classification or lower failure, push a
 /// diag and return `None` so the caller can skip past it.
 pub fn walk_op(
-    op:    &OpCall,
-    reg:   &Registry,
-    ctx:   &mut LowerCtx,
-    diags: &mut Vec<Diag>,
+    op:        &OpCall,
+    reg:       &Registry,
+    ctx:       &mut LowerCtx,
+    diags:     &mut Vec<Diag>,
+    chain_pos: usize,
 ) -> Option<Pipe<Cursor>> {
     // Resolve flow slot.
     let flow: Option<(Value, ByteRange)> = match &op.flow {
@@ -139,7 +140,7 @@ pub fn walk_op(
     };
 
     // Dispatch.
-    match reg.lower(ctx, &op.name, flow, args, block, dsl, op.span) {
+    match reg.lower_at(ctx, &op.name, flow, args, block, dsl, op.span, chain_pos) {
         Ok(pipe) => {
             // If a probe sink is configured on the LowerCtx, wrap each
             // step of the lowered pipe with `SpannedComponent` so every

@@ -78,8 +78,11 @@ fn walk_smoke_rule_str() {
     let rows = store.rows_of("greet");
     assert_eq!(&*rows[0].value, "hello world");
 
-    // ── broken: rule with no block → missing-slot diag ─────────────
-    let broken = vec![PipeAst {
+    // ── empty-body decl: rule(:greet) at chain_pos 0 with no block ─
+    // Pure declaration form. Lowers to an empty Pipe (zero steps);
+    // the cursor seed has nothing to drain into → zero rows. The
+    // table is still declared with no columns.
+    let decl_only = vec![PipeAst {
         span: br(0, 12),
         steps: vec![OpCall {
             name: Arc::<str>::from("rule"),
@@ -96,14 +99,17 @@ fn walk_smoke_rule_str() {
     }];
 
     let store2: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let mut ctx2 = LowerCtx::new(store2, dir);
-    let (pipes2, diags2) = walk_program(&broken, &reg, &mut ctx2);
-    assert!(pipes2.is_empty(), "broken pipe should not lower");
-    assert!(
-        diags2.iter().any(|d| &*d.code == "lower/missing-slot"),
-        "expected missing-slot, got: {:?}",
-        diags2.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
-    );
+    let mut ctx2 = LowerCtx::new(store2.clone(), dir);
+    let (pipes2, diags2) = walk_program(&decl_only, &reg, &mut ctx2);
+    assert!(diags2.is_empty(), "decl-only diags: {:?}",
+        diags2.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>());
+    assert_eq!(pipes2.len(), 1, "decl-only lowers to one (empty) pipe");
+
+    let pipe2 = pipes2.into_iter().next().unwrap();
+    let inst2 = pipe2.into_instance();
+    let q2: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(&inst2, q2, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    assert_eq!(store2.len("greet"), 0, "decl-only writes zero rows");
 }
 
 // ─── inline-pipe arg via host_parse re-entry ───────────────────────

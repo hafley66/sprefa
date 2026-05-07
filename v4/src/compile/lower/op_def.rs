@@ -125,6 +125,11 @@ pub trait OperatorDef: Send + Sync + 'static {
     /// (e.g. `glob(:pattern)` or `` glob`pat` ``) override to false.
     fn dsl_required(&self) -> bool { true }
 
+    /// When `brace_block()` is `Some`, is the block required at every call?
+    /// Default true. Ops that accept declaration-only form (e.g.
+    /// empty-body `rule(:x, A?, B?);`) override to false.
+    fn brace_block_required(&self) -> bool { true }
+
     /// Walk-time DSL parser. Default: scan for `${IDENT}` holes and emit
     /// one `DslInterp` per hole with byte ranges relative to `raw`. Ops
     /// with sub-grammars (regex, glob, ast) override.
@@ -162,6 +167,24 @@ pub trait OperatorDef: Send + Sync + 'static {
         block: Option<Pipe<Cursor>>,
         dsl:   Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError>;
+
+    /// Chain-position-aware lower. `chain_pos = 0` ⇒ head-of-pipe (no
+    /// upstream cursors); `>= 1` ⇒ sink position downstream of `>` chaining.
+    /// Default delegates to `lower(...)`; override only when the op's
+    /// shape differs by position (e.g. `rule` distinguishes standalone-decl
+    /// from sink form).
+    #[allow(clippy::too_many_arguments)]
+    fn lower_with_chain(
+        &self,
+        ctx:        &LowerCtx,
+        flow:       Option<Value>,
+        args:       &[Value],
+        block:      Option<Pipe<Cursor>>,
+        dsl:        Option<&DslBody>,
+        _chain_pos: usize,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        self.lower(ctx, flow, args, block, dsl)
+    }
 }
 
 /// Default host pipe-hole scanner. Recognized forms:

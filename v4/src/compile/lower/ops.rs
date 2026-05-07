@@ -93,25 +93,65 @@ impl OperatorDef for RuleDef {
     fn name(&self) -> &'static str { "rule" }
     fn paren_args(&self) -> &[ArgSig] { RULE_SPEC }
     fn brace_block(&self) -> Option<BlockShape> { Some(BlockShape::Pipe) }
+    fn brace_block_required(&self) -> bool { false }
 
     fn lower(
         &self,
         ctx:   &LowerCtx,
-        _flow: Option<Value>,
+        flow:  Option<Value>,
         args:  &[Value],
         block: Option<Pipe<Cursor>>,
-        _dsl:  Option<&DslBody>,
+        dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        // Default chain_pos is 0 (head-of-pipe) for tests / any caller
+        // that doesn't pass position info. The walker uses
+        // `lower_with_chain` to thread real chain_pos.
+        self.lower_with_chain(ctx, flow, args, block, dsl, 0)
+    }
+
+    /// Three-state dispatch on chain position × block presence:
+    ///
+    ///   chain_pos == 0 && block.is_none()  → pure decl. `store.declare`
+    ///       for its side-effect, return an empty `Pipe` (zero steps).
+    ///       Cursor seed flows through nothing → zero rows; the table
+    ///       is registered with its declared columns.
+    ///
+    ///   chain_pos >= 1 && block.is_none()  → sink position. Splice a
+    ///       `FactWrite` ONLY. No `store.declare` — the rule must have
+    ///       been declared earlier by a head-of-pipe `rule(:name, …);`.
+    ///       Re-declaring with mismatched cols would panic; the
+    ///       discipline is "cols live on the decl; sink form references
+    ///       by name only".
+    ///
+    ///   block.is_some()  → bodied form. `store.declare` + body steps +
+    ///       `FactWrite` (the existing behavior).
+    fn lower_with_chain(
+        &self,
+        ctx:        &LowerCtx,
+        _flow:      Option<Value>,
+        args:       &[Value],
+        block:      Option<Pipe<Cursor>>,
+        _dsl:       Option<&DslBody>,
+        chain_pos:  usize,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let name = match &args[0] {
             Value::Atom(s) => s.clone(),
             _ => unreachable!("validate ensured Atom"),
         };
-        // Column args. Plain atoms become declared sink columns; pipe
-        // args (the ALL_CAPS bareword desugar — `NAME` / `NAME?`) walk
+
+        // Sink position, no body: pure FactWrite, no declare. Discards
+        // any extra positional args (cols don't apply at the sink site).
+        if chain_pos >= 1 && block.is_none() {
+            return Ok(Pipe::new().step(Arc::new(FactWrite::new(
+                ctx.store.clone(), name,
+            ))));
+        }
+
+        // Head-of-pipe forms (decl-only or bodied) collect col args and
+        // declare. Plain atoms become declared sink columns; pipe args
+        // (the ALL_CAPS bareword desugar — `NAME` / `NAME?`) walk
         // through `PipeIntrospect` to recover the term names declared
         // by `Term::bind` / `Term::read` steps inside the sub-pipe.
-        // No downcast on Component; the column-name flow is data via
-        // `Component::describe()` (sprf-blind upstream).
         use crate::sprf_introspect::PipeIntrospect;
         let mut col_strings: Vec<String> = Vec::with_capacity(args.len().saturating_sub(1));
         for a in &args[1..] {
@@ -124,7 +164,16 @@ impl OperatorDef for RuleDef {
             }
         }
         let cols: Vec<&str> = col_strings.iter().map(|s| s.as_str()).collect();
-        let body = block.expect("validate ensured Pipe block");
+
+        // Pure decl: declare for side-effect, return empty Pipe so the
+        // cursor seed has nothing to drain into.
+        if block.is_none() {
+            ctx.store.declare(&name, &cols);
+            return Ok(Pipe::new());
+        }
+
+        // Bodied form: existing behavior — declare + body + FactWrite.
+        let body = block.unwrap();
         let rule = Rule::new(
             name.clone(),
             ctx.store.clone(),

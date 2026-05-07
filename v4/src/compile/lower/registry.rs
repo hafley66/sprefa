@@ -26,6 +26,11 @@ impl Registry {
     /// Validate then lower. The four-slot tuple shape mirrors what the
     /// host parser will hand in: every slot carries an optional value
     /// and the byte range it occupied in source.
+    ///
+    /// Default chain_pos is 0 (head-of-pipe, no upstream cursors). For
+    /// chain-position-aware dispatch (e.g. `rule` distinguishing standalone
+    /// decl vs sink form), the walker calls `lower_at` and passes the
+    /// op's index in its containing PipeAst.
     #[allow(clippy::too_many_arguments)]
     pub fn lower(
         &self,
@@ -37,6 +42,24 @@ impl Registry {
         dsl:       Option<(DslBody, ByteRange)>,
         call_span: ByteRange,
     ) -> Result<Pipe<Cursor>, Vec<Diag>> {
+        self.lower_at(ctx, name, flow, args, block, dsl, call_span, 0)
+    }
+
+    /// Like `lower`, with explicit chain position. `chain_pos = 0` ⇒
+    /// head-of-pipe (standalone or source); `chain_pos >= 1` ⇒ sink
+    /// position downstream of `>` chaining.
+    #[allow(clippy::too_many_arguments)]
+    pub fn lower_at(
+        &self,
+        ctx:       &LowerCtx,
+        name:      &str,
+        flow:      Option<(Value, ByteRange)>,
+        args:      Vec<(Value, ByteRange)>,
+        block:     Option<(Pipe<Cursor>, ByteRange)>,
+        dsl:       Option<(DslBody, ByteRange)>,
+        call_span: ByteRange,
+        chain_pos: usize,
+    ) -> Result<Pipe<Cursor>, Vec<Diag>> {
         let def = self.get(name).ok_or_else(|| vec![
             Diag::error("lower/unknown-op", format!("unknown op: {name}"))
                 .with_span(call_span.lo, call_span.hi),
@@ -47,7 +70,7 @@ impl Registry {
         let arg_vals: Vec<Value> = args.into_iter().map(|(v, _)| v).collect();
         let block_val = block.map(|(p, _)| p);
         let dsl_ref   = dsl.as_ref().map(|(d, _)| d);
-        def.lower(ctx, flow_val, &arg_vals, block_val, dsl_ref).map_err(|e| match e {
+        def.lower_with_chain(ctx, flow_val, &arg_vals, block_val, dsl_ref, chain_pos).map_err(|e| match e {
             LowerError::Validate(ds) => ds,
             LowerError::UnboundCapture(n) => vec![
                 Diag::error("lower/unbound-capture",
@@ -143,7 +166,7 @@ pub fn validate_call(
             Diag::error("lower/slot-not-allowed",
                 format!("op `{}` does not accept a {{}} block", def.name()))
                 .with_span(r.lo, r.hi)),
-        (Some(_), None) => diags.push(
+        (Some(_), None) if def.brace_block_required() => diags.push(
             Diag::error("lower/missing-slot",
                 format!("op `{}` requires a {{}} block", def.name()))
                 .with_span(call_span.lo, call_span.hi)),
