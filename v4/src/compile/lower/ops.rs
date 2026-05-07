@@ -336,9 +336,9 @@ impl OperatorDef for FsDef {
     ) -> Result<Pipe<Cursor>, LowerError> {
         // TODO: LowerCtx batch-size knob; hardcoded for now.
         let exts = atom_string_vec(args);
-        Ok(Pipe::new().step(Arc::new(FsComponent::new(
-            ctx.root.clone(), exts, 1024,
-        ))))
+        let mut comp = FsComponent::new(ctx.root.clone(), exts, 1024);
+        if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
@@ -419,9 +419,9 @@ impl OperatorDef for GlobDef {
                 "glob: pattern required (dsl body `**/*.rs` or :atom arg)".into()
             ));
         };
-        Ok(Pipe::new().step(Arc::new(GlobComponent::new(
-            ctx.root.clone(), pattern,
-        ))))
+        let mut comp = GlobComponent::new(ctx.root.clone(), pattern);
+        if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
@@ -502,10 +502,9 @@ impl OperatorDef for AstDef {
         let body = dsl.ok_or_else(|| LowerError::Unknown(
             "ast: dsl body required (e.g. ast(:rs)`fn ${NAME?}($$ARGS)`)".into()
         ))?;
-        Ok(Pipe::new().step(Arc::new(AstNmComponent::new(
-            body.raw.to_string(),
-            lang,
-        ))))
+        let mut comp = AstNmComponent::new(body.raw.to_string(), lang);
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
@@ -618,7 +617,9 @@ impl OperatorDef for JsonDef {
                 "json: compile failed: {}", d.message
             )))?;
         let compiled = compiled.with_format(fmt);
-        Ok(Pipe::new().step(Arc::new(JsonComponent::new(compiled))))
+        let mut comp = JsonComponent::new(compiled);
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
@@ -683,7 +684,9 @@ impl OperatorDef for ReDef {
         let body = dsl.expect("re: dsl body present (validate)");
         // TODO: surface named captures via Lane C parse_dsl so
         // ReComponent's `capture_names` can be populated.
-        Ok(Pipe::new().step(Arc::new(ReComponent::new(body.raw.as_ref(), &[]))))
+        let mut comp = ReComponent::new(body.raw.as_ref(), &[]);
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
@@ -979,7 +982,9 @@ impl OperatorDef for RepoDef {
             roots.push((slug, path));
             i += 2;
         }
-        Ok(Pipe::new().step(Arc::new(RepoComponent::new(roots, Vec::new()))))
+        let mut comp = RepoComponent::new(roots, Vec::new());
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
@@ -1079,7 +1084,9 @@ impl OperatorDef for ReadDef {
         _block: Option<Pipe<Cursor>>,
         _dsl:   Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        Ok(Pipe::new().step(Arc::new(ReadComponent)))
+        let mut comp = ReadComponent::new();
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
@@ -1120,7 +1127,7 @@ impl OperatorDef for CommentDef {
         let body = dsl.ok_or_else(|| LowerError::Unknown(
             "comment: dsl body required (open regex)".into()
         ))?;
-        let comp = match args.first() {
+        let mut comp = match args.first() {
             Some(Value::Atom(close)) => CommentComponent::paired(body.raw.as_ref(), close.as_ref())
                 .map_err(|e| LowerError::Unknown(format!("comment: bad close regex: {e}")))?,
             Some(_) => return Err(LowerError::Unknown(
@@ -1129,6 +1136,7 @@ impl OperatorDef for CommentDef {
             None => CommentComponent::sequential(body.raw.as_ref())
                 .map_err(|e| LowerError::Unknown(format!("comment: bad open regex: {e}")))?,
         };
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }

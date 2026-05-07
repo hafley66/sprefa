@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use effect_runtime::v2::{FactStore, Pipe, ProbeSink};
 
+use crate::store::SprfStore;
 use crate::{Cursor, Interner};
 
 /// Lower-time context. Carries the fact store, optional Interner, root
@@ -21,6 +22,12 @@ pub struct LowerCtx {
     /// each emitted cursor, tagged with the source op's byte range.
     /// Default = `None` = zero overhead beyond a single Option check.
     pub probe:    Option<Arc<dyn ProbeSink<Cursor>>>,
+    /// Optional content-derived intern store. Set via
+    /// `with_sprf_store(...)` from the host (`SprfState::run` or
+    /// equivalent). When present, source/pattern emitters stamp the
+    /// coord-space side of Cursor (`value_id`, `at`, `terms`) alongside
+    /// legacy `raw_terms` writes. When absent, only legacy writes fire.
+    pub sprf_store: Option<Arc<SprfStore>>,
 }
 
 impl LowerCtx {
@@ -31,6 +38,7 @@ impl LowerCtx {
             root,
             bindings: HashMap::new(),
             probe:    None,
+            sprf_store: None,
         }
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
@@ -41,6 +49,11 @@ impl LowerCtx {
     }
     pub fn with_binding(mut self, name: impl Into<Arc<str>>, pipe: Pipe<Cursor>) -> Self {
         self.bindings.insert(name.into(), pipe); self
+    }
+    /// Attach the content-derived intern store. Emitters lowered after
+    /// this call stamp coord-space terms alongside legacy raw_terms.
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.sprf_store = Some(s); self
     }
 }
 

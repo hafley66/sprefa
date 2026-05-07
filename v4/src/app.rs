@@ -344,17 +344,25 @@ pub struct DocState {
 }
 
 pub struct SprfState {
-    pub docs:     Mutex<HashMap<String, DocState>>,
-    pub facts:    Arc<dyn FactStore<Cursor>>,
-    pub registry: Arc<Registry>,
-    pub root:     PathBuf,
+    pub docs:       Mutex<HashMap<String, DocState>>,
+    pub facts:      Arc<dyn FactStore<Cursor>>,
+    /// Layer 0c.2 — content-derived intern store wrapping `facts`.
+    /// Threaded into `LowerCtx` so source/pattern emitters stamp the
+    /// coord-space side of Cursor (`value_id`, `at`, `terms`) alongside
+    /// legacy `raw_terms` writes.
+    pub sprf_store: Arc<crate::store::SprfStore>,
+    pub registry:   Arc<Registry>,
+    pub root:       PathBuf,
 }
 
 impl SprfState {
     pub fn new(root: PathBuf) -> Self {
+        let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let sprf_store = crate::store::SprfStore::new(facts.clone());
         Self {
-            docs:     Mutex::new(HashMap::new()),
-            facts:    Arc::new(MemFactStore::<Cursor>::new()),
+            docs: Mutex::new(HashMap::new()),
+            facts,
+            sprf_store,
             registry: Arc::new(default_registry()),
             root,
         }
@@ -364,7 +372,8 @@ impl SprfState {
         let (program, parse_diags) = host_parse(&text);
         let probe_sink: Arc<BufferProbeSink<Cursor>> = Arc::new(BufferProbeSink::new());
         let mut ctx = LowerCtx::new(self.facts.clone(), self.root.clone())
-            .with_probe(probe_sink.clone() as Arc<dyn ProbeSink<Cursor>>);
+            .with_probe(probe_sink.clone() as Arc<dyn ProbeSink<Cursor>>)
+            .with_sprf_store(self.sprf_store.clone());
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
@@ -443,7 +452,8 @@ impl SprfHandlers for SprfState {
         let dir = req.root.clone()
             .or_else(|| req.path.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| self.root.clone());
-        let mut ctx = LowerCtx::new(self.facts.clone(), dir);
+        let mut ctx = LowerCtx::new(self.facts.clone(), dir)
+            .with_sprf_store(self.sprf_store.clone());
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());

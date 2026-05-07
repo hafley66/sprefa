@@ -29,7 +29,8 @@ use effect_runtime::v2::{
 };
 use ignore::WalkBuilder;
 
-use crate::{Cursor, Interner};
+use crate::store::SprfStore;
+use crate::{Coord, Cursor, Interner};
 
 /// Helper: pack a Vec of cursors into the right Node shape.
 /// 0 -> Done, 1 -> Emit, N -> Many of Emit.
@@ -57,11 +58,21 @@ pub struct FsComponent {
     pub root:  PathBuf,
     pub exts:  Vec<String>,
     pub batch: usize,
+    /// Layer 0c.2 — content-derived intern store. When `Some`, each
+    /// emitted Cursor also stamps the FS term in coord-space via
+    /// `set_at` alongside the legacy `raw_terms` write. SYNTHETIC
+    /// coord because no file content has been read yet at source-op
+    /// time; the path string still dedupes through `_strings`.
+    store:     Option<Arc<SprfStore>>,
 }
 
 impl FsComponent {
     pub fn new(root: PathBuf, exts: Vec<String>, batch: usize) -> Self {
-        Self { root, exts, batch }
+        Self { root, exts, batch, store: None }
+    }
+    /// Attach the intern store for coord-space stamping.
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 
@@ -104,8 +115,15 @@ impl Component for FsComponent {
                 if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
             }
 
+            let path_str = p.display().to_string();
             let mut c = Cursor::default();
-            c.set("FS", p.display().to_string());
+            c.set("FS", path_str.as_str());
+            // Layer 0c.2 — coord-space mate for the FS term. Path-only
+            // (no content read yet); coord stays SYNTHETIC, but the path
+            // string interns into `_strings`.
+            if let Some(store) = &self.store {
+                c.set_synthetic("FS", path_str.as_str(), store);
+            }
             buf.push(Node::Emit(Arc::new(c)));
 
             if buf.len() >= self.batch { flush(&mut buf, &mut next_idx); }
@@ -122,13 +140,20 @@ pub struct AstNmComponent {
     lang:    SupportLang,
     pattern: Arc<Pattern<SupportLang>>,
     fixed:   Arc<str>,
+    /// Layer 0c.2 — content-derived intern store. When `Some`, each
+    /// match cursor stamps focal `value_id`/`at` and per-match coord
+    /// terms alongside legacy `LO`/`HI`/raw_terms writes.
+    store:   Option<Arc<SprfStore>>,
 }
 
 impl AstNmComponent {
     pub fn new(pat_src: String, lang: SupportLang) -> Self {
         let pattern = Arc::new(Pattern::new(&pat_src, lang));
         let fixed: Arc<str> = Arc::from(pattern.fixed_string().to_string().as_str());
-        Self { lang, pattern, fixed }
+        Self { lang, pattern, fixed, store: None }
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 
@@ -136,10 +161,17 @@ impl Component for AstNmComponent {
     type Next = Cursor;
 
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
-        par_render(batch, |c| {
+        let store = self.store.clone();
+        par_render(batch, move |c| {
             let Some(path) = c.get("FS") else { return Node::Done };
             let Ok(bytes)  = std::fs::read(path) else { return Node::Done };
             // tree-sitter takes any bytes; UTF-8 errors → ERROR nodes.
+            // Layer 0c.2 — intern file (content-keyed) once per parsed
+            // file when a store is attached; reuse the FileId across
+            // every match cursor emitted from this parse.
+            let file_id = store.as_ref()
+                .map(|s| s.intern_file(&bytes, path))
+                .unwrap_or(0);
             let src: String = unsafe { String::from_utf8_unchecked(bytes) };
             if !self.fixed.is_empty() && !src.contains(&*self.fixed) {
                 return Node::Done;
@@ -150,6 +182,19 @@ impl Component for AstNmComponent {
                 let mut child = c.clone();
                 child.set("LO", (r.start as u64).to_string());
                 child.set("HI", (r.end   as u64).to_string());
+                if let Some(store) = &store {
+                    let coord = Coord {
+                        repo: 0, rev: 0, fs: file_id,
+                        lo: r.start as u32, hi: r.end as u32,
+                    };
+                    let slice = src.get(r.start..r.end).unwrap_or("");
+                    // Focal coord identifies the match itself.
+                    child.at = store.intern_ref(coord);
+                    child.value_id = store.intern_string(slice);
+                    // Per-match coord term — `MATCH.at`/`MATCH.value`
+                    // reach through one Term entry instead of LO/HI cols.
+                    child.set_at("MATCH", slice, coord, store);
+                }
                 Node::Emit(Arc::new(child))
             }).collect();
             if hits.is_empty() { Node::Done } else { Node::Many(hits) }
@@ -164,6 +209,8 @@ impl Component for AstNmComponent {
 pub struct MultiAstNmComponent {
     lang:     SupportLang,
     patterns: Arc<Vec<(Arc<str>, Arc<Pattern<SupportLang>>, Arc<str>)>>,
+    /// Layer 0c.2 — content-derived intern store. See `AstNmComponent`.
+    store:    Option<Arc<SprfStore>>,
 }
 
 impl MultiAstNmComponent {
@@ -176,7 +223,10 @@ impl MultiAstNmComponent {
                 (Arc::<str>::from(label.as_str()), Arc::new(p), fx)
             })
             .collect();
-        Self { lang, patterns: Arc::new(pats) }
+        Self { lang, patterns: Arc::new(pats), store: None }
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 
@@ -186,9 +236,13 @@ impl Component for MultiAstNmComponent {
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let pats = self.patterns.clone();
         let lang = self.lang;
+        let store = self.store.clone();
         par_render(batch, move |c| {
             let Some(path) = c.get("FS") else { return Node::Done };
             let Ok(bytes)  = std::fs::read(path) else { return Node::Done };
+            let file_id = store.as_ref()
+                .map(|s| s.intern_file(&bytes, path))
+                .unwrap_or(0);
             let src: String = unsafe { String::from_utf8_unchecked(bytes) };
             let any_fires = pats.iter().any(|(_, _, fx)| fx.is_empty() || src.contains(&**fx));
             if !any_fires { return Node::Done; }
@@ -202,6 +256,19 @@ impl Component for MultiAstNmComponent {
                     child.set_arc("PAT", label.clone());
                     child.set("LO",  (r.start as u64).to_string());
                     child.set("HI",  (r.end   as u64).to_string());
+                    if let Some(store) = &store {
+                        let coord = Coord {
+                            repo: 0, rev: 0, fs: file_id,
+                            lo: r.start as u32, hi: r.end as u32,
+                        };
+                        let slice = src.get(r.start..r.end).unwrap_or("");
+                        child.at = store.intern_ref(coord);
+                        child.value_id = store.intern_string(slice);
+                        child.set_at("MATCH", slice, coord, store);
+                        // PAT label is synthetic (no source coord; it
+                        // names the pattern not a span of source).
+                        child.set_synthetic("PAT", label.as_ref(), store);
+                    }
                     hits.push(Node::Emit(Arc::new(child)));
                 }
             }
@@ -214,10 +281,15 @@ impl Component for MultiAstNmComponent {
 /// the bench's --file mode (single-file scaling probe).
 pub struct SinglePathComponent {
     pub path: PathBuf,
+    /// Layer 0c.2 — content-derived intern store.
+    store:    Option<Arc<SprfStore>>,
 }
 
 impl SinglePathComponent {
-    pub fn new(path: PathBuf) -> Self { Self { path } }
+    pub fn new(path: PathBuf) -> Self { Self { path, store: None } }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
+    }
 }
 
 impl Component for SinglePathComponent {
@@ -230,8 +302,12 @@ impl Component for SinglePathComponent {
         queue: &dyn QueueBackend<Cursor>,
     ) {
         let parent = match rows.first() { Some(r) => r, None => return };
+        let path_str = self.path.display().to_string();
         let mut c = Cursor::default();
-        c.set("FS", self.path.display().to_string());
+        c.set("FS", path_str.as_str());
+        if let Some(store) = &self.store {
+            c.set_synthetic("FS", path_str.as_str(), store);
+        }
         let node = Node::Emit(Arc::new(c));
         splice_into_at(parent, node, ctx.depth + 1, ctx.expand_tick, queue, 0);
     }
@@ -403,6 +479,8 @@ pub struct ReComponent {
     want_match:    bool,
     re:            Arc<regex::Regex>,
     interner:      Option<Arc<Interner>>,
+    /// Layer 0c.2 — content-derived intern store.
+    store:         Option<Arc<SprfStore>>,
 }
 impl ReComponent {
     pub fn new(pat: &str, captures: &[&str]) -> Self {
@@ -412,12 +490,16 @@ impl ReComponent {
             want_match:    true,
             re:            Arc::new(regex::Regex::new(pat).expect("compile regex")),
             interner:      None,
+            store:         None,
         }
     }
     pub fn on_term(mut self, term: &str) -> Self { self.on = term.to_string(); self }
     pub fn with_match_text(mut self, on: bool) -> Self { self.want_match = on; self }
     pub fn with_interner(mut self, interner: Arc<Interner>) -> Self {
         self.interner = Some(interner); self
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 impl Component for ReComponent {
@@ -428,18 +510,26 @@ impl Component for ReComponent {
         let capture_names = self.capture_names.clone();
         let want_match = self.want_match;
         let interner = self.interner.clone();
+        let store = self.store.clone();
         par_render(batch, move |c| {
+            // file_id stays SYNTHETIC unless we actually read a file
+            // (on == FS). Term matches work on cursor.value text and
+            // don't carry a coord-fs on the parent today.
+            let mut file_id: crate::FileId = 0;
             let (haystack, content_hash_arc): (String, Option<Arc<str>>) =
                 if on == "FS" {
                     let Some(path) = c.get("FS") else { return Node::Done };
                     let Ok(bytes) = std::fs::read(path) else { return Node::Done };
                     let h_hex = blake3::hash(&bytes).to_hex().to_string();
                     let h_arc: Option<Arc<str>> = interner.as_ref().map(|i| i.intern(&h_hex));
-                    let s = match String::from_utf8(bytes) {
+                    if let Some(s) = &store {
+                        file_id = s.intern_file(&bytes, path);
+                    }
+                    let s_text = match String::from_utf8(bytes) {
                         Ok(s) => s,
                         Err(e) => unsafe { String::from_utf8_unchecked(e.into_bytes()) },
                     };
-                    (s, h_arc)
+                    (s_text, h_arc)
                 } else {
                     match c.get(&on) {
                         Some(s) => (s.to_string(), None),
@@ -459,6 +549,31 @@ impl Component for ReComponent {
                 for (i, name) in capture_names.iter().enumerate() {
                     if let Some(g) = caps.get(i + 1) {
                         child.set(name, g.as_str());
+                    }
+                }
+                if let Some(store) = &store {
+                    let match_coord = Coord {
+                        repo: 0, rev: 0, fs: file_id,
+                        lo: m0.start() as u32, hi: m0.end() as u32,
+                    };
+                    child.at = store.intern_ref(match_coord);
+                    child.value_id = store.intern_string(m0.as_str());
+                    if want_match {
+                        child.set_at("MATCH", m0.as_str(), match_coord, store);
+                    }
+                    if let Some(arc) = &content_hash_arc {
+                        // CONTENT_HASH is per-file metadata, not a span;
+                        // synthetic so it dedupes globally.
+                        child.set_synthetic("CONTENT_HASH", arc.as_ref(), store);
+                    }
+                    for (i, name) in capture_names.iter().enumerate() {
+                        if let Some(g) = caps.get(i + 1) {
+                            let group_coord = Coord {
+                                repo: 0, rev: 0, fs: file_id,
+                                lo: g.start() as u32, hi: g.end() as u32,
+                            };
+                            child.set_at(name, g.as_str(), group_coord, store);
+                        }
                     }
                 }
                 hits.push(Node::Emit(Arc::new(child)));
@@ -608,10 +723,12 @@ pub struct RepoComponent {
     exts:     Vec<String>,
     batch:    usize,
     interner: Option<Arc<Interner>>,
+    /// Layer 0c.2 — content-derived intern store.
+    store:    Option<Arc<SprfStore>>,
 }
 impl RepoComponent {
     pub fn new(roots: Vec<(String, PathBuf)>, exts: Vec<String>) -> Self {
-        Self { roots, exts, batch: 4096, interner: None }
+        Self { roots, exts, batch: 4096, interner: None, store: None }
     }
     pub fn auto(roots: &[PathBuf], exts: Vec<String>) -> Self {
         let labelled: Vec<(String, PathBuf)> = roots.iter().map(|p| {
@@ -625,6 +742,9 @@ impl RepoComponent {
     pub fn with_batch(mut self, n: usize) -> Self { self.batch = n; self }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
         self.interner = Some(i); self
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 impl Component for RepoComponent {
@@ -658,13 +778,21 @@ impl Component for RepoComponent {
                     let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
                     if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
                 }
+                let path_str = p.display().to_string();
                 let mut c = Cursor::default();
                 c.set_arc("REPO", slug_arc.clone());
                 let fs_arc: Arc<str> = match &self.interner {
-                    Some(i) => i.intern(&p.display().to_string()),
-                    None    => Arc::from(p.display().to_string().as_str()),
+                    Some(i) => i.intern(&path_str),
+                    None    => Arc::from(path_str.as_str()),
                 };
                 c.set_arc("FS", fs_arc);
+                if let Some(store) = &self.store {
+                    // Repo and FS are pre-file metadata at this stage —
+                    // no content read yet, so coord stays SYNTHETIC.
+                    // Both strings still intern through `_strings`.
+                    c.set_synthetic("REPO", slug_arc.as_ref(), store);
+                    c.set_synthetic("FS", path_str.as_str(), store);
+                }
                 buf.push(Node::Emit(Arc::new(c)));
                 if buf.len() >= self.batch { flush(&mut buf, &mut next_idx); }
             }
@@ -680,13 +808,18 @@ pub struct RepoFromTermComponent {
     term:     String,
     exts:     Vec<String>,
     interner: Option<Arc<Interner>>,
+    /// Layer 0c.2 — content-derived intern store.
+    store:    Option<Arc<SprfStore>>,
 }
 impl RepoFromTermComponent {
     pub fn new(term: impl Into<String>, exts: Vec<String>) -> Self {
-        Self { term: term.into(), exts, interner: None }
+        Self { term: term.into(), exts, interner: None, store: None }
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
         self.interner = Some(i); self
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 impl Component for RepoFromTermComponent {
@@ -708,13 +841,18 @@ impl Component for RepoFromTermComponent {
             let p = e.into_path();
             let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
             if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+            let path_str = p.display().to_string();
             let mut child = c.clone();
             child.set_arc("REPO", slug_arc.clone());
             let fs_arc: Arc<str> = match &self.interner {
-                Some(i) => i.intern(&p.display().to_string()),
-                None    => Arc::from(p.display().to_string().as_str()),
+                Some(i) => i.intern(&path_str),
+                None    => Arc::from(path_str.as_str()),
             };
             child.set_arc("FS", fs_arc);
+            if let Some(store) = &self.store {
+                child.set_synthetic("REPO", slug_arc.as_ref(), store);
+                child.set_synthetic("FS", path_str.as_str(), store);
+            }
             hits.push(Node::Emit(Arc::new(child)));
         }
         if hits.is_empty() { Node::Done } else { Node::Many(hits) }
@@ -776,7 +914,20 @@ impl Component for VoidComponent {
 /// `> read` — load file bytes (UTF-8) at cursor.FS into cursor.value.
 /// No-FS cursors pass through unchanged. UTF-8 errors fall through to
 /// from_utf8_lossy so we never drop a row on encoding.
-pub struct ReadComponent;
+pub struct ReadComponent {
+    /// Layer 0c.2 — content-derived intern store. When set, focal
+    /// `value_id`/`at` stamp the file content + a whole-file coord.
+    store: Option<Arc<SprfStore>>,
+}
+impl ReadComponent {
+    pub fn new() -> Self { Self { store: None } }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
+    }
+}
+impl Default for ReadComponent {
+    fn default() -> Self { Self::new() }
+}
 impl Component for ReadComponent {
     type Next = Cursor;
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
@@ -785,6 +936,16 @@ impl Component for ReadComponent {
         let s = String::from_utf8_lossy(&bytes).into_owned();
         let mut child = c.clone();
         child.value = Arc::<str>::from(s.as_str());
+        if let Some(store) = &self.store {
+            // Focal coord covers the whole file (lo=0, hi=len).
+            let file_id = store.intern_file(&bytes, path);
+            let coord = Coord {
+                repo: 0, rev: 0, fs: file_id,
+                lo: 0, hi: bytes.len() as u32,
+            };
+            child.at = store.intern_ref(coord);
+            child.value_id = store.intern_string(&s);
+        }
         Node::Emit(Arc::new(child))
     }
 }
@@ -797,16 +958,22 @@ impl Component for ReadComponent {
 pub struct CommentComponent {
     open:  Arc<regex::Regex>,
     close: Option<Arc<regex::Regex>>,
+    /// Layer 0c.2 — content-derived intern store.
+    store: Option<Arc<SprfStore>>,
 }
 impl CommentComponent {
     pub fn sequential(open_re: &str) -> Result<Self, regex::Error> {
-        Ok(Self { open: Arc::new(regex::Regex::new(open_re)?), close: None })
+        Ok(Self { open: Arc::new(regex::Regex::new(open_re)?), close: None, store: None })
     }
     pub fn paired(open_re: &str, close_re: &str) -> Result<Self, regex::Error> {
         Ok(Self {
             open:  Arc::new(regex::Regex::new(open_re)?),
             close: Some(Arc::new(regex::Regex::new(close_re)?)),
+            store: None,
         })
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 impl Component for CommentComponent {
@@ -856,7 +1023,21 @@ impl Component for CommentComponent {
             let mut child = c.clone();
             child.set("LO", lo.to_string());
             child.set("HI", hi.to_string());
-            child.value = Arc::<str>::from(&hay[lo..hi]);
+            let slice = &hay[lo..hi];
+            child.value = Arc::<str>::from(slice);
+            if let Some(store) = &self.store {
+                // Comment operates on cursor.value, not a file. fs slot
+                // inherits from the parent cursor's coord (synthetic if
+                // unset). Lo/hi address bytes inside the value text.
+                let parent_fs = store.coord_of(c.at).map(|c| c.fs).unwrap_or(0);
+                let coord = Coord {
+                    repo: 0, rev: 0, fs: parent_fs,
+                    lo: lo as u32, hi: hi as u32,
+                };
+                child.at = store.intern_ref(coord);
+                child.value_id = store.intern_string(slice);
+                child.set_at("MATCH", slice, coord, store);
+            }
             Node::Emit(Arc::new(child))
         }).collect();
         if hits.is_empty() { Node::Done } else { Node::Many(hits) }
@@ -960,11 +1141,16 @@ impl Component for WriteFileComponent {
 /// `LO`/`HI` byte offsets pointing at the row's first capture.
 pub struct JsonComponent {
     compiled: Arc<crate::cst::dsls::json::JsonCompiled>,
+    /// Layer 0c.2 — content-derived intern store.
+    store:    Option<Arc<SprfStore>>,
 }
 
 impl JsonComponent {
     pub fn new(compiled: crate::cst::dsls::json::JsonCompiled) -> Self {
-        Self { compiled: Arc::new(compiled) }
+        Self { compiled: Arc::new(compiled), store: None }
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 
@@ -972,9 +1158,13 @@ impl Component for JsonComponent {
     type Next = Cursor;
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let compiled = self.compiled.clone();
+        let store = self.store.clone();
         par_render(batch, move |c| {
             let Some(path) = c.get("FS") else { return Node::Done };
             let Ok(bytes)  = std::fs::read(path) else { return Node::Done };
+            let file_id = store.as_ref()
+                .map(|s| s.intern_file(&bytes, path))
+                .unwrap_or(0);
             let rows = compiled.match_grouped(&bytes, 0);
             if rows.is_empty() { return Node::Done; }
             let hits: Vec<Node<Cursor>> = rows.into_iter().filter_map(|caps| {
@@ -983,8 +1173,26 @@ impl Component for JsonComponent {
                 let (_, lo0, hi0, _) = &caps[0];
                 child.set("LO", lo0.to_string());
                 child.set("HI", hi0.to_string());
-                for (name, _lo, _hi, value) in caps {
+                for (name, _lo, _hi, value) in &caps {
                     child.set(name.as_ref(), value.as_ref());
+                }
+                if let Some(store) = &store {
+                    // Focal coord = first capture's span (current
+                    // legacy LO/HI semantics).
+                    let focal = Coord {
+                        repo: 0, rev: 0, fs: file_id,
+                        lo: *lo0 as u32, hi: *hi0 as u32,
+                    };
+                    child.at = store.intern_ref(focal);
+                    let focal_slice = caps[0].3.as_ref();
+                    child.value_id = store.intern_string(focal_slice);
+                    for (name, lo, hi, value) in &caps {
+                        let coord = Coord {
+                            repo: 0, rev: 0, fs: file_id,
+                            lo: *lo as u32, hi: *hi as u32,
+                        };
+                        child.set_at(name.as_ref(), value.as_ref(), coord, store);
+                    }
                 }
                 Some(Node::Emit(Arc::new(child)))
             }).collect();

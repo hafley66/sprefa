@@ -97,6 +97,9 @@ pub struct GlobComponent {
     pub pattern: Arc<str>,
     matcher:     GlobMatcher,
     batch:       usize,
+    /// Layer 0c.2 — content-derived intern store. When set, FS terms
+    /// stamp coord-space alongside legacy raw_terms.
+    store:       Option<Arc<crate::store::SprfStore>>,
 }
 
 impl GlobComponent {
@@ -104,7 +107,10 @@ impl GlobComponent {
         let matcher = Glob::new(&pattern)
             .unwrap_or_else(|e| panic!("glob: invalid pattern {pattern:?}: {e}"))
             .compile_matcher();
-        Self { root, pattern, matcher, batch: 1024 }
+        Self { root, pattern, matcher, batch: 1024, store: None }
+    }
+    pub fn with_sprf_store(mut self, s: Arc<crate::store::SprfStore>) -> Self {
+        self.store = Some(s); self
     }
 }
 
@@ -137,8 +143,12 @@ impl Component for GlobComponent {
             let rel = p.strip_prefix(&self.root).unwrap_or(&p);
             if !self.matcher.is_match(rel) { continue; }
 
+            let path_str = p.display().to_string();
             let mut c = Cursor::default();
-            c.set("FS", p.display().to_string());
+            c.set("FS", path_str.as_str());
+            if let Some(store) = &self.store {
+                c.set_synthetic("FS", path_str.as_str(), store);
+            }
             buf.push(Node::Emit(Arc::new(c)));
             if buf.len() >= self.batch { flush(&mut buf, &mut next_idx); }
         }
