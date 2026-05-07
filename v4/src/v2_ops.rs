@@ -10,7 +10,7 @@
 //! use v4::v2_ops::{FsComponent, AstNmComponent, CountComponent};
 //!
 //! let pipe = PipeInstance::new(vec![
-//!     Arc::new(FsComponent::new(root, exts, batch))     as Arc<dyn Component<Next = Cursor>>,
+//!     Arc::new(FsComponent::new(root, batch))           as Arc<dyn Component<Next = Cursor>>,
 //!     Arc::new(AstNmComponent::new(pat_src, lang)),
 //!     Arc::new(CountComponent { count: counter.clone() }),
 //! ]);
@@ -57,7 +57,6 @@ fn nodes_from(out: Vec<Cursor>) -> Node<Cursor> {
 /// optimization.
 pub struct FsComponent {
     pub root:  PathBuf,
-    pub exts:  Vec<String>,
     pub batch: usize,
     /// Layer 0c.2 — content-derived intern store. When `Some`, each
     /// emitted Cursor also stamps the FS term in coord-space via
@@ -72,8 +71,8 @@ pub struct FsComponent {
 }
 
 impl FsComponent {
-    pub fn new(root: PathBuf, exts: Vec<String>, batch: usize) -> Self {
-        Self { root, exts, batch, store: None, config: None }
+    pub fn new(root: PathBuf, batch: usize) -> Self {
+        Self { root, batch, store: None, config: None }
     }
     /// Attach the intern store for coord-space stamping.
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
@@ -128,12 +127,6 @@ impl Component for FsComponent {
                 if entries.is_empty() { continue; }
                 let mut emitted: Vec<Node<Cursor>> = Vec::with_capacity(entries.len());
                 for (path, _blob_oid) in entries {
-                    if !self.exts.is_empty() {
-                        let ext = std::path::Path::new(&path)
-                            .extension().and_then(|s| s.to_str());
-                        let Some(ext) = ext else { continue };
-                        if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
-                    }
                     let mut child = parent.value.as_ref().clone();
                     // cursor.value = path (legacy bare-string surface).
                     child.value    = Arc::<str>::from(path.as_str());
@@ -174,23 +167,42 @@ impl Component for FsComponent {
             *next_idx += n as u32;
         };
 
+        // Inherit Coord (repo/rev/fs=0) from the bootstrap parent so a
+        // bare `fs` rooted at a non-zero rev would still be reachable.
+        // Today the rev branch above runs for any non-zero rev; this WT
+        // path runs only when all upstream rows have rev == 0.
+        let parent_coord = self.store.as_ref()
+            .and_then(|s| s.coord_of(parent.value.at));
+
         for entry in WalkBuilder::new(&self.root).hidden(true).git_ignore(false).build() {
             let Ok(e) = entry else { continue };
             if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
             let p = e.into_path();
-            if !self.exts.is_empty() {
-                let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
-                if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
-            }
 
             let path_str = p.display().to_string();
-            let mut c = Cursor::default();
+            let mut c = parent.value.as_ref().clone();
+            // Pure-query contract: cursor.value carries the path string.
+            // glob/re downstream match against it; read uses it as the
+            // source path.
+            c.value = Arc::<str>::from(path_str.as_str());
+            // Legacy raw_terms FS write so `${FS}` reads still resolve
+            // until call-sites finish migrating to ${&.value}.
             c.set("FS", path_str.as_str());
-            // Layer 0c.2 — coord-space mate for the FS term. Path-only
-            // (no content read yet); coord stays SYNTHETIC, but the path
-            // string interns into `_strings`.
+            // Layer 0c.2 — coord-space mate for the FS term + focal
+            // value_id. Path-only (no content read yet); coord stays
+            // SYNTHETIC for FS term, focal Coord stamps fs=0/lo=0/hi=0
+            // because no file content has been read.
             if let Some(store) = &self.store {
                 c.set_synthetic("FS", path_str.as_str(), store);
+                c.value_id = store.intern_string(path_str.as_str());
+                let coord = Coord {
+                    repo: parent_coord.map(|c| c.repo).unwrap_or(0),
+                    rev:  parent_coord.map(|c| c.rev).unwrap_or(0),
+                    fs:   0,
+                    lo:   0,
+                    hi:   0,
+                };
+                c.at = store.intern_ref(coord);
             }
             buf.push(Node::Emit(Arc::new(c)));
 
@@ -1335,7 +1347,12 @@ impl Component for ReadComponent {
             }
         }
 
-        let Some(path) = c.get("FS") else { return Node::Emit(Arc::new(c.clone())) };
+        // Substrate cleanup: cursor.value is the path source. Empty
+        // value → no path → drop the row. Upstream `fs` always stamps
+        // value, so the only way to land here empty is a misconfigured
+        // chain.
+        let path: &str = c.value.as_ref();
+        if path.is_empty() { return Node::Done; }
         let bytes = match std::fs::read(path) { Ok(b) => b, Err(_) => return Node::Done };
         let s = String::from_utf8_lossy(&bytes).into_owned();
         let mut child = c.clone();

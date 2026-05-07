@@ -361,14 +361,11 @@ fn atom_string_vec(args: &[Value]) -> Vec<String> {
 
 pub struct FsDef;
 
-const FS_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Variadic(&ArgKind::Atom),
-        name: "exts",
-        doc: "extensions to include (e.g. rs, ts). Empty = no filter.",
-        required: false,
-    },
-];
+/// `fs` is a pure path query — bare form only, no atom args, no dsl
+/// body, no block. Emits one cursor per file under `ctx.root`,
+/// `cursor.value = path string`. Filtering is the job of `glob` / `re`
+/// downstream. Reading content is the job of `read`.
+const FS_SPEC: &[ArgSig] = &[];
 
 impl OperatorDef for FsDef {
     fn name(&self) -> &'static str { "fs" }
@@ -379,13 +376,12 @@ impl OperatorDef for FsDef {
         &self,
         ctx:    &LowerCtx,
         _flow:  Option<Value>,
-        args:   &[Value],
+        _args:  &[Value],
         _block: Option<Pipe<Cursor>>,
         _dsl:   Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         // TODO: LowerCtx batch-size knob; hardcoded for now.
-        let exts = atom_string_vec(args);
-        let mut comp = FsComponent::new(ctx.root.clone(), exts, 1024);
+        let mut comp = FsComponent::new(ctx.root.clone(), 1024);
         if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         if let Some(c) = &ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
@@ -396,13 +392,10 @@ impl OperatorDef for FsDef {
 
 pub struct GlobDef;
 
-const GLOB_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom, name: "pattern",
-        doc: "glob pattern (e.g. :*.rs). Optional — prefer dsl body form glob`**/*.rs`.",
-        required: false,
-    },
-];
+/// `glob` is a pure text matcher over `cursor.value`. Backtick body
+/// only — the paren-atom form was removed during the substrate
+/// cleanup. Use `glob`**/*.rs`` etc.
+const GLOB_SPEC: &[ArgSig] = &[];
 
 /// Scan a regex body for `(?P<NAME>...)` named groups. Returns each
 /// captured name with the byte range of the full sigil.
@@ -443,8 +436,7 @@ impl OperatorDef for GlobDef {
     fn name(&self) -> &'static str { "glob" }
     fn paren_args(&self) -> &[ArgSig] { GLOB_SPEC }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { false }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["FS"] }
+    fn dsl_required(&self) -> bool { true }
 
     /// `<NAME>` glob capture sigil. Each occurrence binds NAME at
     /// runtime; the analyzer treats them as bound at the glob step.
@@ -454,23 +446,18 @@ impl OperatorDef for GlobDef {
 
     fn lower(
         &self,
-        ctx:    &LowerCtx,
+        _ctx:   &LowerCtx,
         _flow:  Option<Value>,
-        args:   &[Value],
+        _args:  &[Value],
         _block: Option<Pipe<Cursor>>,
         dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let pattern: Arc<str> = if let Some(body) = dsl {
-            body.raw.clone()
-        } else if let Some(Value::Atom(s)) = args.first() {
-            s.clone()
-        } else {
-            return Err(LowerError::Unknown(
-                "glob: pattern required (dsl body `**/*.rs` or :atom arg)".into()
-            ));
-        };
-        let mut comp = GlobComponent::new(ctx.root.clone(), pattern);
-        if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "glob: pattern required — use backtick body, e.g. glob`**/*.rs`".into()
+        ))?;
+        let pattern: Arc<str> = body.raw.clone();
+        let mut comp = GlobComponent::new(pattern);
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }

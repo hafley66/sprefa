@@ -11,4 +11,4 @@
 # rule(:hits, FILE, LO, HI) to drain into a fact table; `sprefa-run`
 # reports the row count via the FactTable surface.
 
-fs(:c) > ast(:c)`printk($$$)` > fact(:hits, FS, LO, HI);
+fs > glob`**/*.c` > ast(:c)`printk($$$)` > fact(:hits, FS, LO, HI);

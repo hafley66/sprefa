@@ -22,8 +22,8 @@ rule(:greet, NAME?, DAY?) {
 # regex DSL — captures (?P<NAME>) + alternation + escapes
 re`\b(?P<WORD>[a-zA-Z]+)\s+\d+\b`;
 
-# glob DSL — globstar, alternation, char-class, capture
-glob`**/<DIR>/*.{ts,tsx,rs}`;
+# glob DSL — globstar, alternation, char-class, capture (filters cursor.value)
+fs > glob`**/<DIR>/*.{ts,tsx,rs}`;
 
 # ast-grep DSL with [lang] arg, $METAVAR + $$$REST
 ast(:rs)`fn ${NAME?}($$${ARGS?}) -> $RET { $$$BODY }`;
@@ -35,7 +35,7 @@ json`{ kind: "User", id: $UID }` > fact?(:user, UID, `alice`);
 rule(:x, X?) { `plain template with ${X} hole` };
 
 # pipe — ALL_CAPS barewords flow as term refs/binders at host level
-glob`**/*.rs` > re`fn (?P<NAME>\w+)` > fact(:rust_fn, NAME);
+fs > glob`**/*.rs` > re`fn (?P<NAME>\w+)` > fact(:rust_fn, NAME);
 
 # parens — host-level grouping. Inner pipe steps inline into the outer.
-( glob`**/*.rs` > re`fn (?P<NAME>\w+)` ) > fact(:rust_fn, NAME);
+( fs > glob`**/*.rs` > re`fn (?P<NAME>\w+)` ) > fact(:rust_fn, NAME);

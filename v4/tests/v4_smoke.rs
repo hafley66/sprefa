@@ -27,7 +27,6 @@ fn fs_astnm_count_v2_pipeline() {
     let steps: Vec<Arc<dyn Component<Next = v4::Cursor>>> = vec![
         Arc::new(FsComponent::new(
             dir.path().to_path_buf(),
-            vec!["rs".into()],
             64,
         )),
         Arc::new(AstNmComponent::new("fn $NAME".to_string(), SupportLang::Rust)),

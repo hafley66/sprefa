@@ -166,8 +166,11 @@ fn read_loads_file_bytes_into_value() {
         &LowerCtx::new(store.clone(), std::env::temp_dir()),
         "read", None, vec![], None, None, br(0, 4),
     ).unwrap();
+    // Substrate cleanup (2026-05-07): `read` reads `cursor.value` as
+    // the path source. The legacy `cursor.get("FS")` fallback was
+    // removed; producers (fs / glob) now set value directly.
     let mut seed = Cursor::default();
-    seed.set("FS", path.display().to_string());
+    seed.value = Arc::<str>::from(path.display().to_string().as_str());
     let out = run(p, seed);
     assert_eq!(out.len(), 1);
     assert_eq!(&*out[0].value, "alpha-bravo");

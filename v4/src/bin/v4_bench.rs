@@ -161,7 +161,7 @@ async fn main() {
         // Source: SinglePath (--file) or Fs (bulk corpus).
         let source: Arc<dyn Component<Next = v4::Cursor>> = match &file {
             Some(p) => Arc::new(SinglePathComponent::new(p.clone())),
-            None    => Arc::new(FsComponent::new(root.clone(), exts.clone(), batch)),
+            None    => Arc::new(FsComponent::new(root.clone(), batch)),
         };
 
         // Matcher: Multi(Ast)Nm if --multi/--pattern-each, else AstNm
