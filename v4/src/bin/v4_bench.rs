@@ -25,7 +25,7 @@ use effect_runtime::v2::{
     RenderCtx, SqliteFactStore,
 };
 use v4::v2_ops::{
-    AstNmComponent, CountComponent, FsComponent, MultiAstNmComponent,
+    AstNmComponent, CountComponent, FsComponent, MultiAstNmComponent, ReadComponent,
     SinglePathComponent,
 };
 use v4::fact::FactWrite;
@@ -227,8 +227,11 @@ async fn main() {
                 Some(store)
             } else { None };
 
-        // Build chain: source > matcher > Count > [FactWrite] > [CommitEvery].
-        let mut steps: Vec<Arc<dyn Component<Next = v4::Cursor>>> = vec![source, matcher];
+        // Build chain: source > read > matcher > Count > [FactWrite] > [CommitEvery].
+        // `read` is the byte-load gate; matchers consume cursor.value
+        // bytes that arrived through it (substrate purification 2026-05-07).
+        let read: Arc<dyn Component<Next = v4::Cursor>> = Arc::new(ReadComponent::new());
+        let mut steps: Vec<Arc<dyn Component<Next = v4::Cursor>>> = vec![source, read, matcher];
         if matches!(mode, Mode::Insert) {
             let store = store_opt.as_ref().unwrap().clone();
             steps.push(Arc::new(FactWrite::new(store.clone(), "matches")));

@@ -34,8 +34,10 @@ json`{ kind: "User", id: $UID }` > fact?(:user, UID, `alice`);
 # bare backticks at pipe-step = `str` op sugar; X? introduces capture X
 rule(:x, X?) { `plain template with ${X} hole` };
 
-# pipe — ALL_CAPS barewords flow as term refs/binders at host level
-fs > glob`**/*.rs` > re`fn (?P<NAME>\w+)` > fact(:rust_fn, NAME);
+# pipe — ALL_CAPS barewords flow as term refs/binders at host level.
+# `read` is the byte-load gate; matchers (re/ast/json) consume
+# cursor.value bytes that arrived via that op.
+fs > glob`**/*.rs` > read > re`fn (?P<NAME>\w+)` > fact(:rust_fn, NAME);
 
 # parens — host-level grouping. Inner pipe steps inline into the outer.
-( fs > glob`**/*.rs` > re`fn (?P<NAME>\w+)` ) > fact(:rust_fn, NAME);
+( fs > glob`**/*.rs` > read > re`fn (?P<NAME>\w+)` ) > fact(:rust_fn, NAME);
