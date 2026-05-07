@@ -79,6 +79,7 @@ pub type RepoId   = u32;
 pub type RevId    = u32;
 pub type FileId   = u64;
 pub type RefId    = u64;
+pub type PathId   = u64;
 
 /// A coordinate in the (repo × rev × file × byte-range) space.
 /// All zeros = SYNTHETIC. Source-located = nonzero ids + real bytes.

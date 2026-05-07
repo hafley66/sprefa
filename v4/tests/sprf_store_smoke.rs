@@ -6,7 +6,10 @@
 use std::sync::Arc;
 
 use effect_runtime::v2::{FactStore, MemFactStore};
-use v4::store::{FILES_TABLE, REFS_TABLE, STRINGS_TABLE, SprfStore};
+use v4::store::{
+    FILES_TABLE, PATHS_TABLE, REFS_TABLE, REPOS_TABLE, REVS_TABLE,
+    STRINGS_TABLE, SprfStore,
+};
 use v4::{Coord, Cursor, Ref, StringId};
 
 fn fresh_store() -> Arc<SprfStore> {
@@ -107,6 +110,122 @@ fn content_stable_across_instances() {
     let id_a = a.intern_string("portable");
     let id_b = b.intern_string("portable");
     assert_eq!(id_a, id_b, "ids are content-derived; no sequential leak");
+}
+
+#[test]
+fn intern_repo_dedups_and_seeds_sentinel() {
+    let s = fresh_store();
+    let a = s.intern_repo("sprefa", "git@github.com:hafley/sprefa");
+    let b = s.intern_repo("sprefa", "git@github.com:hafley/sprefa");
+    assert_ne!(a, 0, "real repo must not collide with sentinel");
+    assert_eq!(a, b, "same (slug, remote) must hash to same RepoId");
+
+    let (slug0, remote0) = s.lookup_repo(0).expect("sentinel repo resolves");
+    assert_eq!(&*slug0, "");
+    assert_eq!(&*remote0, "");
+
+    let (slug, remote) = s.lookup_repo(a).expect("interned repo resolves");
+    assert_eq!(&*slug, "sprefa");
+    assert_eq!(&*remote, "git@github.com:hafley/sprefa");
+
+    assert_eq!(s.inner().len(REPOS_TABLE), 2, "sentinel + one repo");
+}
+
+#[test]
+fn intern_rev_dedups_per_repo() {
+    let s = fresh_store();
+    let r1 = s.intern_repo("sprefa", "git@github.com:hafley/sprefa");
+    let r2 = s.intern_repo("other",  "git@github.com:hafley/other");
+    assert_ne!(r1, r2);
+
+    let oid = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    let v1  = s.intern_rev(r1, oid, 100);
+    let v1b = s.intern_rev(r1, oid, 100);
+    let v2  = s.intern_rev(r2, oid, 100);
+
+    assert_eq!(v1, v1b, "same (repo, oid) must dedup");
+    assert_ne!(v1, v2, "same oid under different repos must not collide");
+
+    let (got_repo, got_oid, got_ts) = s.lookup_rev(v1).expect("rev resolves");
+    assert_eq!(got_repo, r1);
+    assert_eq!(&*got_oid, oid);
+    assert_eq!(got_ts, 100);
+
+    assert_eq!(s.inner().len(REVS_TABLE), 3, "sentinel + two revs");
+}
+
+#[test]
+fn intern_path_dedups_on_full_tuple() {
+    let s = fresh_store();
+    let repo = s.intern_repo("sprefa", "remote");
+    let rev  = s.intern_rev(repo, "abc", 0);
+    let file = s.intern_file(b"contents", "/a/b.rs");
+
+    let p1  = s.intern_path(repo, rev, file, "/a/b.rs");
+    let p1b = s.intern_path(repo, rev, file, "/a/b.rs");
+    let p2  = s.intern_path(repo, rev, file, "/a/c.rs");
+    let p3  = s.intern_path(repo, rev + 1, file, "/a/b.rs");
+
+    assert_eq!(p1, p1b, "same (repo, rev, file, path) must dedup");
+    assert_ne!(p1, p2, "differing path → different PathId");
+    assert_ne!(p1, p3, "differing rev → different PathId");
+
+    // Sentinel + 3 distinct rows.
+    assert_eq!(s.inner().len(PATHS_TABLE), 4);
+}
+
+#[test]
+fn find_refs_in_returns_covering_refs() {
+    let s = fresh_store();
+    let f = s.intern_file(b"some bytes for indexing", "/x.rs");
+
+    let r1 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo:  0, hi: 10 });
+    let r2 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo:  5, hi: 15 });
+    let r3 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo: 20, hi: 30 });
+
+    // byte=7 is inside r1 (0..10) and r2 (5..15).
+    let mut at_7 = s.find_refs_in(f, 7);
+    at_7.sort();
+    let mut want = vec![r1, r2];
+    want.sort();
+    assert_eq!(at_7, want);
+
+    // byte=25 is inside r3 only.
+    assert_eq!(s.find_refs_in(f, 25), vec![r3]);
+
+    // byte=100 covers nothing.
+    assert!(s.find_refs_in(f, 100).is_empty());
+
+    // unknown file is empty.
+    assert!(s.find_refs_in(0xdead_beef_dead_beef, 7).is_empty());
+}
+
+#[test]
+fn find_file_by_path_first_match() {
+    let s = fresh_store();
+    let repo = s.intern_repo("sprefa", "remote");
+    let rev  = s.intern_rev(repo, "abc", 0);
+    let f    = s.intern_file(b"contents", "/a/b.rs");
+
+    // Two _paths rows pointing at the same FileId.
+    let _p1 = s.intern_path(repo, rev, f, "/a/b.rs");
+    let _p2 = s.intern_path(repo, rev, f, "/a/c.rs");
+
+    assert_eq!(s.find_file_by_path("/a/b.rs"), Some(f));
+    assert_eq!(s.find_file_by_path("/a/c.rs"), Some(f));
+    assert_eq!(s.find_file_by_path("/nope"), None);
+}
+
+#[test]
+fn path_of_returns_first_seen() {
+    let s = fresh_store();
+    let f = s.intern_file(b"contents", "/first/seen.rs");
+    // A second intern_file with a different path must NOT overwrite
+    // the first-seen path on the _files row.
+    let _ = s.intern_file(b"contents", "/second/seen.rs");
+
+    let path = s.path_of(f).expect("path_of resolves first-seen path");
+    assert_eq!(&*path, "/first/seen.rs");
 }
 
 #[test]
