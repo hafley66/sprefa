@@ -1055,13 +1055,15 @@ impl OperatorDef for ShDef {
             }
         }
 
+        let mut interps = body.interps.clone();
+        interps.sort_by_key(|i| i.range.lo);
         let comp: Arc<dyn effect_runtime::v2::Component<Next = Cursor>> = if filter_only {
-            Arc::new(ShComponent::filter(&cmd))
+            Arc::new(ShComponent::filter(&cmd).with_interps(interps))
         } else if let Some(bind) = bind_term {
-            Arc::new(ShComponent::capture(&cmd, &bind))
+            Arc::new(ShComponent::capture(&cmd, &bind).with_interps(interps))
         } else {
             // Default: capture stdout into &.value (no named term).
-            Arc::new(ShComponent::capture_value(&cmd))
+            Arc::new(ShComponent::capture_value(&cmd).with_interps(interps))
         };
         Ok(Pipe::new().step(comp))
     }
@@ -1084,7 +1086,11 @@ impl OperatorDef for ShBangDef {
         let body = dsl.ok_or_else(|| LowerError::Unknown(
             "sh!: dsl body required".into()
         ))?;
-        Ok(Pipe::new().step(Arc::new(ShBangComponent::new(body.raw.as_ref()))))
+        let mut interps = body.interps.clone();
+        interps.sort_by_key(|i| i.range.lo);
+        Ok(Pipe::new().step(Arc::new(
+            ShBangComponent::new(body.raw.as_ref()).with_interps(interps),
+        )))
     }
 }
 

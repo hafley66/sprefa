@@ -749,25 +749,49 @@ fn shell_quote(s: &str) -> String {
     out.push('\'');
     out
 }
-fn render_template(template: &str, cur: &Cursor) -> String {
-    // Layer 0c.3 — accept the four host carveout forms:
-    //   ${X}       ${X?}      ${X.field}      ${&.field}
-    // The regex captures the full inner key (stem + optional `?` + optional
-    // `.field`); the lookup helper builds the Cursor::get-shaped key.
-    let re = regex::Regex::new(
-        r"\$\{(&\.[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*\??(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\}"
-    ).unwrap();
-    re.replace_all(template, |caps: &regex::Captures| {
-        let raw = &caps[1];
-        // Strip Bind-mode `?` from a bare `X?` for the lookup; field-form
-        // `X?.field` is illegal upstream and won't reach here, but defend
-        // by routing `X?` → `X` lookup (treating bind-at-render as read).
-        let key: std::borrow::Cow<'_, str> = match raw.split_once('.') {
-            None => match raw.strip_suffix('?') { Some(s) => s.into(), None => raw.into() },
-            Some(_) => raw.into(),
+/// Render a sh command body per cursor through the universal carveout
+/// renderer, then shell-quote each splice. The renderer emits raw
+/// (unquoted) values; this wrapper post-quotes Term + SubPipe slices so
+/// the resulting command line is shell-safe.
+///
+/// Quoting strategy: re-render with empty interp values to find the
+/// literal scaffolding; then walk interps and shell-quote each
+/// per-cursor render. We instead splice and quote inline to keep one
+/// pass: collect (lo, hi, rendered) triples and assemble.
+fn render_sh_template(
+    body: &str,
+    interps: &[crate::compile::lower::op_def::DslInterp],
+    cur: &Cursor,
+) -> String {
+    use crate::compile::lower::op_def::InterpKind;
+    use crate::template::drain_subpipe;
+    let mut out = String::with_capacity(body.len());
+    let mut head: usize = 0;
+    for interp in interps.iter() {
+        let lo = interp.range.lo as usize;
+        let hi = interp.range.hi as usize;
+        if lo > body.len() || hi > body.len() || lo < head { continue; }
+        out.push_str(&body[head..lo]);
+        let value: String = match &interp.kind {
+            InterpKind::Term { mode: _, field } => {
+                let key: std::borrow::Cow<'_, str> = match field {
+                    None    => (&*interp.name).into(),
+                    Some(f) => format!("{}.{}", interp.name, f).into(),
+                };
+                cur.get(&key).unwrap_or("").to_string()
+            }
+            InterpKind::SubPipe { lowered, .. } => {
+                match lowered {
+                    Some(p) => drain_subpipe(p.clone(), cur),
+                    None    => String::new(),
+                }
+            }
         };
-        shell_quote(cur.get(&key).unwrap_or(""))
-    }).into_owned()
+        out.push_str(&shell_quote(&value));
+        head = hi;
+    }
+    out.push_str(&body[head..]);
+    out
 }
 
 /// Run `sh -c <rendered>` per input cursor; act on stdout per `mode`.
@@ -775,33 +799,45 @@ fn render_template(template: &str, cur: &Cursor) -> String {
 /// per-batch parallelism). Tokio not needed.
 pub struct ShComponent {
     cmd_template: String,
+    interps:      Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
     mode:         ShMode,
     bind:         Option<String>,
 }
 impl ShComponent {
     pub fn emit_lines(cmd: &str) -> Self {
-        Self { cmd_template: cmd.into(), mode: ShMode::EmitLines, bind: None }
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()),
+               mode: ShMode::EmitLines, bind: None }
     }
     pub fn filter(cmd: &str) -> Self {
-        Self { cmd_template: cmd.into(), mode: ShMode::FilterByExit, bind: None }
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()),
+               mode: ShMode::FilterByExit, bind: None }
     }
     pub fn capture(cmd: &str, bind: &str) -> Self {
-        Self { cmd_template: cmd.into(), mode: ShMode::CaptureStdout, bind: Some(bind.into()) }
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()),
+               mode: ShMode::CaptureStdout, bind: Some(bind.into()) }
     }
     /// Capture stdout into `cursor.value` only (no named term). Use
     /// when the next op operates on `&.value` (e.g. `> split\`\n\``).
     pub fn capture_value(cmd: &str) -> Self {
-        Self { cmd_template: cmd.into(), mode: ShMode::CaptureStdout, bind: None }
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()),
+               mode: ShMode::CaptureStdout, bind: None }
     }
+    /// Stamp pre-walked interps. `ShDef::lower` calls this to thread
+    /// `${...}` carveouts through `render_sh_template`.
+    pub fn with_interps(
+        mut self,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self { self.interps = Arc::new(interps); self }
 }
 impl Component for ShComponent {
     type Next = Cursor;
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let template = self.cmd_template.clone();
+        let interps  = self.interps.clone();
         let mode     = self.mode;
         let bind     = self.bind.clone();
         par_render(batch, move |c| {
-            let cmd = render_template(&template, c);
+            let cmd = render_sh_template(&template, &interps, c);
             let res = std::process::Command::new("sh")
                 .arg("-c").arg(&cmd)
                 .output();
@@ -837,16 +873,26 @@ impl Component for ShComponent {
 
 /// `sh!` — author-declared impure shell. Per-cursor cmd run, stdout
 /// dropped, cursor passes through. Never cacheable.
-pub struct ShBangComponent { cmd_template: String }
+pub struct ShBangComponent {
+    cmd_template: String,
+    interps:      Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
+}
 impl ShBangComponent {
-    pub fn new(cmd: &str) -> Self { Self { cmd_template: cmd.into() } }
+    pub fn new(cmd: &str) -> Self {
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()) }
+    }
+    pub fn with_interps(
+        mut self,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self { self.interps = Arc::new(interps); self }
 }
 impl Component for ShBangComponent {
     type Next = Cursor;
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let template = self.cmd_template.clone();
+        let interps  = self.interps.clone();
         par_render(batch, move |c| {
-            let cmd = render_template(&template, c);
+            let cmd = render_sh_template(&template, &interps, c);
             let _ = std::process::Command::new("sh")
                 .arg("-c").arg(&cmd)
                 .status();
