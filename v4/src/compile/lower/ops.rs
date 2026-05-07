@@ -338,6 +338,7 @@ impl OperatorDef for FsDef {
         let exts = atom_string_vec(args);
         let mut comp = FsComponent::new(ctx.root.clone(), exts, 1024);
         if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(c) = &ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1159,6 +1160,7 @@ impl OperatorDef for ReadDef {
     ) -> Result<Pipe<Cursor>, LowerError> {
         let mut comp = ReadComponent::new();
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }

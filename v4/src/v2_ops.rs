@@ -65,15 +65,24 @@ pub struct FsComponent {
     /// coord because no file content has been read yet at source-op
     /// time; the path string still dedupes through `_strings`.
     store:     Option<Arc<SprfStore>>,
+    /// Layer 5b.2 — config handle. Required when upstream cursor's
+    /// Coord.rev != 0 so the (slug, root) tuple can be resolved for
+    /// `git ls-tree`.
+    config:    Option<Arc<SprfConfig>>,
 }
 
 impl FsComponent {
     pub fn new(root: PathBuf, exts: Vec<String>, batch: usize) -> Self {
-        Self { root, exts, batch, store: None }
+        Self { root, exts, batch, store: None, config: None }
     }
     /// Attach the intern store for coord-space stamping.
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
+    }
+    /// Attach the config handle. Needed for the `Coord.rev != 0`
+    /// branch which resolves `(slug, root)` per repo for ls-tree.
+    pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
+        self.config = Some(c); self
     }
 }
 
@@ -92,6 +101,64 @@ impl Component for FsComponent {
             Some(r) => r,
             None    => return,
         };
+
+        // Layer 5b.2 — git rev branch. Each upstream row may carry a
+        // distinct `Coord.rev`, so iterate per-row and dispatch
+        // independently when any row has rev != 0.
+        let any_rev = self.store.as_ref().map(|s| {
+            rows.iter().any(|r| s.coord_of(r.value.at).map(|c| c.rev != 0).unwrap_or(false))
+        }).unwrap_or(false);
+        if any_rev {
+            for parent in rows {
+                let store  = match self.store.as_ref()  { Some(s) => s.clone(), None => continue };
+                let config = match self.config.as_ref() { Some(c) => c.clone(), None => continue };
+                let parent_coord = match store.coord_of(parent.value.at) {
+                    Some(c) => c,
+                    None    => continue,
+                };
+                if parent_coord.rev == 0 { continue; }
+
+                // Resolve (slug, root) and the rev's oid hex.
+                let Some((slug, _remote)) = store.lookup_repo(parent_coord.repo) else { continue };
+                let slug_str: &str = slug.as_ref();
+                let Some(root_pb) = config.repos.iter().find(|r| r.slug == slug_str).map(|r| r.root.clone()) else { continue };
+                let Some((_repo_id, oid_arc, _ts)) = store.lookup_rev(parent_coord.rev) else { continue };
+
+                let entries = walk_via_ls_tree(&root_pb, oid_arc.as_ref());
+                if entries.is_empty() { continue; }
+                let mut emitted: Vec<Node<Cursor>> = Vec::with_capacity(entries.len());
+                for (path, _blob_oid) in entries {
+                    if !self.exts.is_empty() {
+                        let ext = std::path::Path::new(&path)
+                            .extension().and_then(|s| s.to_str());
+                        let Some(ext) = ext else { continue };
+                        if !self.exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) { continue; }
+                    }
+                    let mut child = parent.value.as_ref().clone();
+                    // cursor.value = path (legacy bare-string surface).
+                    child.value    = Arc::<str>::from(path.as_str());
+                    child.value_id = crate::StringId::of(&path);
+                    // Legacy raw_terms FS write so `${FS}` reads still resolve.
+                    child.set("FS", path.as_str());
+                    // Coord-space FS term (synthetic — no content read).
+                    child.set_synthetic("FS", path.as_str(), &store);
+                    // Coord preserves repo+rev, fs=0 (no file id until read).
+                    let coord = Coord {
+                        repo: parent_coord.repo,
+                        rev:  parent_coord.rev,
+                        fs:   0,
+                        lo:   0,
+                        hi:   0,
+                    };
+                    child.at = store.intern_ref(coord);
+                    emitted.push(Node::Emit(Arc::new(child)));
+                }
+                if emitted.is_empty() { continue; }
+                let many = Node::Many(emitted);
+                splice_into_at(parent, many, ctx.depth + 1, ctx.expand_tick, queue, 0);
+            }
+            return;
+        }
 
         // Streaming flushes share one parent — must thread a running
         // batch_idx offset across calls so sibling paths stay unique.
@@ -131,6 +198,53 @@ impl Component for FsComponent {
         }
         flush(&mut buf, &mut next_idx);
     }
+}
+
+/// Layer 5b.2 — shell `git ls-tree -r -z <oid>` and parse null-delimited
+/// `<mode> <type> <oid>\t<path>\0` blob entries. Ported from
+/// `v3/crates/sprefa/src/readers/git.rs::walk_wt_with_ls_tree`. Returns
+/// `(path, raw_oid)` pairs; non-blob entries (trees, commits) are
+/// skipped. libgit2 tree walk is forbidden by memory
+/// `project_v4_git_blob_walk_uses_shell` — shell ls-tree is the proven
+/// fast path at sprefa scale.
+fn walk_via_ls_tree(root: &std::path::Path, rev: &str) -> Vec<(String, [u8; 20])> {
+    let out = match std::process::Command::new("git")
+        .args(["ls-tree", "-r", "-z", rev])
+        .current_dir(root)
+        .output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return Vec::new(),
+    };
+    let mut result = Vec::new();
+    for entry in out.split(|&b| b == 0) {
+        if entry.is_empty() { continue; }
+        let Some(tab) = entry.iter().position(|&b| b == b'\t') else { continue };
+        let header = &entry[..tab];
+        let path   = match std::str::from_utf8(&entry[tab + 1..]) {
+            Ok(s) => s.to_string(),
+            Err(_) => continue,
+        };
+        let parts: Vec<&[u8]> = header.splitn(3, |&b| b == b' ').collect();
+        if parts.len() != 3 || parts[1] != b"blob" { continue; }
+        let oid_hex = match std::str::from_utf8(parts[2]) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if oid_hex.len() != 40 { continue; }
+        let mut oid = [0u8; 20];
+        let ok = oid_hex.as_bytes().chunks(2).zip(oid.iter_mut()).all(|(pair, byte)| {
+            let hi = (pair[0] as char).to_digit(16);
+            let lo = (pair[1] as char).to_digit(16);
+            match (hi, lo) {
+                (Some(h), Some(l)) => { *byte = (h * 16 + l) as u8; true }
+                _ => false,
+            }
+        });
+        if !ok { continue; }
+        result.push((path, oid));
+    }
+    result
 }
 
 /// Tier-2 op. ast-grep matcher. Pattern compiled once at construction;
@@ -1159,12 +1273,19 @@ impl Component for VoidComponent {
 pub struct ReadComponent {
     /// Layer 0c.2 — content-derived intern store. When set, focal
     /// `value_id`/`at` stamp the file content + a whole-file coord.
-    store: Option<Arc<SprfStore>>,
+    store:  Option<Arc<SprfStore>>,
+    /// Layer 5b.2 — config handle. Required when upstream cursor's
+    /// Coord.rev != 0 so the (slug, root) tuple can be resolved for
+    /// `git show <oid>:<path>`.
+    config: Option<Arc<SprfConfig>>,
 }
 impl ReadComponent {
-    pub fn new() -> Self { Self { store: None } }
+    pub fn new() -> Self { Self { store: None, config: None } }
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
+    }
+    pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
+        self.config = Some(c); self
     }
 }
 impl Default for ReadComponent {
@@ -1173,6 +1294,47 @@ impl Default for ReadComponent {
 impl Component for ReadComponent {
     type Next = Cursor;
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        // Layer 5b.2 — git rev branch. When upstream cursor's coord
+        // has rev != 0, fetch the blob via `git show <oid>:<path>`
+        // instead of std::fs::read. cursor.value (set by fs() in the
+        // rev branch) is the path string.
+        if let (Some(store), Some(config)) = (self.store.as_ref(), self.config.as_ref()) {
+            if let Some(parent_coord) = store.coord_of(c.at) {
+                if parent_coord.rev != 0 {
+                    let path: &str = c.value.as_ref();
+                    let Some((slug, _)) = store.lookup_repo(parent_coord.repo) else { return Node::Done };
+                    let slug_str: &str = slug.as_ref();
+                    let Some(root_pb) = config.repos.iter().find(|r| r.slug == slug_str).map(|r| r.root.clone()) else { return Node::Done };
+                    let Some((_repo_id, oid_arc, _ts)) = store.lookup_rev(parent_coord.rev) else { return Node::Done };
+
+                    let spec = format!("{}:{}", oid_arc.as_ref(), path);
+                    let bytes = match std::process::Command::new("git")
+                        .args(["show", spec.as_str()])
+                        .current_dir(&root_pb)
+                        .output()
+                    {
+                        Ok(o) if o.status.success() => o.stdout,
+                        _ => return Node::Done,
+                    };
+                    let content_str = String::from_utf8_lossy(&bytes).into_owned();
+                    let file_id = store.intern_file(&bytes, path);
+                    let _path_id = store.intern_path(parent_coord.repo, parent_coord.rev, file_id, path);
+                    let coord = Coord {
+                        repo: parent_coord.repo,
+                        rev:  parent_coord.rev,
+                        fs:   file_id,
+                        lo:   0,
+                        hi:   bytes.len() as u32,
+                    };
+                    let mut child = c.clone();
+                    child.value    = Arc::<str>::from(content_str.as_str());
+                    child.value_id = store.intern_string(&content_str);
+                    child.at       = store.intern_ref(coord);
+                    return Node::Emit(Arc::new(child));
+                }
+            }
+        }
+
         let Some(path) = c.get("FS") else { return Node::Emit(Arc::new(c.clone())) };
         let bytes = match std::fs::read(path) { Ok(b) => b, Err(_) => return Node::Done };
         let s = String::from_utf8_lossy(&bytes).into_owned();
