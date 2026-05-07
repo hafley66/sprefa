@@ -119,12 +119,19 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
         slot_terms(arg.raw.as_ref(), &mut reads, &mut binds);
     }
     if let Some(dsl) = &op.dsl {
-        // Host pipe-hole scanner: ${X} = read, ${X?} = bind.
-        use crate::compile::lower::op_def::InterpMode;
+        // Host pipe-hole scanner: ${X} = read, ${X?} = bind. SubPipe-
+        // shape interps (`${ <pipe> }`, task #10) are opaque to the
+        // binding analyzer for now — the inner pipe is self-contained
+        // and walk_op runs binding_graph recursively on it via its own
+        // walk_pipe entry.
+        use crate::compile::lower::op_def::{InterpKind, InterpMode};
         for interp in default_plain_dsl_parse(dsl.raw.as_ref()) {
-            match interp.mode {
-                InterpMode::Read => reads.push(interp.name),
-                InterpMode::Bind => binds.push(interp.name),
+            match interp.kind {
+                InterpKind::Term { mode, .. } => match mode {
+                    InterpMode::Read => reads.push(interp.name),
+                    InterpMode::Bind => binds.push(interp.name),
+                },
+                InterpKind::SubPipe { .. } => {}
             }
         }
         // Op-declared DSL binders — `re`'s `(?P<NAME>)`, `glob`'s

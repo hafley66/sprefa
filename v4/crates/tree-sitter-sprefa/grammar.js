@@ -111,8 +111,17 @@ module.exports = grammar({
     //
     // The op_invocation rule aliases `_dsl_body_attached` back to
     // `dsl_body` so downstream consumers see one node kind.
-    dsl_body:           $ => token(seq('`', /[^`]*/, '`')),
-    _dsl_body_attached: $ => token.immediate(seq('`', /[^`]*/, '`')),
+    //
+    // The body regex accepts one level of `${...}` carveout containing a
+    // single backtick-fenced sub-body. That covers `${ str`hi` }` /
+    // `${ ast`x` }` style sub-pipe holes (#10). Deeper nesting still
+    // requires an external scanner.
+    //   - any non-backtick / non-`$` char, OR
+    //   - `$` not followed by `{`, OR
+    //   - `${` ... `}` where the body is non-`}`/non-backtick chars or a
+    //     balanced `` `…` `` (one level)
+    dsl_body:           $ => token(seq('`', /([^`$]|\$[^{]|\$\{([^}`]|`[^`]*`)*\})*/, '`')),
+    _dsl_body_attached: $ => token.immediate(seq('`', /([^`$]|\$[^{]|\$\{([^}`]|`[^`]*`)*\})*/, '`')),
 
     // Slot body is a sequence of opaque tokens that the walker classifies
     // per-arg via top-level comma split. Nested parens/braces/brackets stay

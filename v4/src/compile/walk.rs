@@ -23,7 +23,7 @@ use crate::Cursor;
 
 use super::ast::{OpCall, PipeAst, SlotText};
 use super::lower::ctx::LowerCtx;
-use super::lower::op_def::{DslBody, DslInterp};
+use super::lower::op_def::{DslBody, DslInterp, InterpKind};
 use super::lower::registry::Registry;
 use super::lower::value::Value;
 
@@ -109,7 +109,7 @@ pub fn walk_op(
     // will emit `lower/unknown-op` below; here we just skip dsl parse.
     let dsl: Option<(DslBody, ByteRange)> = match &op.dsl {
         Some(dsl_text) => {
-            let interps: Vec<DslInterp> = match reg.get(&op.name) {
+            let mut interps: Vec<DslInterp> = match reg.get(&op.name) {
                 Some(def) => match def.parse_dsl(&dsl_text.raw) {
                     Ok(v)  => v,
                     Err(e) => {
@@ -122,6 +122,66 @@ pub fn walk_op(
                 },
                 None => Vec::new(),
             };
+            // Task #10 — for any SubPipe-shape carveout, walk the inner
+            // pipe source into a `Pipe<Cursor>` and stamp it onto the
+            // interp's `lowered` slot. Diags from the inner walk are
+            // rebased into outer source coords using the dsl body's
+            // origin (dsl_text.span.lo) plus the interp's relative
+            // offset within the body.
+            for interp in interps.iter_mut() {
+                if let InterpKind::SubPipe { src, lowered } = &mut interp.kind {
+                    if lowered.is_none() {
+                        // Synthesize `;` so host_parse sees a complete stmt.
+                        let mut frag = String::with_capacity(src.len() + 1);
+                        frag.push_str(src);
+                        frag.push(';');
+                        let (sub_pipes, sub_diags) =
+                            crate::compile::parse::host_parse(&frag);
+                        // Rebase diag spans into outer source coordinates.
+                        // Interp.range.lo is relative to dsl_text.raw; the
+                        // SubPipe body sits at +2 (skip `${`). Errors are
+                        // best-effort here: the inner_diags from walk_pipe
+                        // get the same shift.
+                        let body_offset = dsl_text.span.lo
+                            .saturating_add(interp.range.lo + 2);
+                        for mut d in sub_diags {
+                            if let Some(r) = d.span.as_mut() {
+                                r.lo = r.lo.saturating_add(body_offset);
+                                r.hi = r.hi.saturating_add(body_offset);
+                            }
+                            diags.push(d);
+                        }
+                        if sub_pipes.len() != 1 {
+                            diags.push(
+                                Diag::error(
+                                    "compile/sub-pipe-malformed",
+                                    format!(
+                                        "${{ … }} sub-pipe parsed to {} pipes (expected 1)",
+                                        sub_pipes.len()
+                                    ),
+                                )
+                                .with_span(
+                                    dsl_text.span.lo + interp.range.lo,
+                                    dsl_text.span.lo + interp.range.hi,
+                                ),
+                            );
+                            continue;
+                        }
+                        let mut inner_diags: Vec<Diag> = Vec::new();
+                        let pipe = walk_pipe(&sub_pipes[0], reg, ctx, &mut inner_diags);
+                        for mut d in inner_diags {
+                            if let Some(r) = d.span.as_mut() {
+                                r.lo = r.lo.saturating_add(body_offset);
+                                r.hi = r.hi.saturating_add(body_offset);
+                            }
+                            diags.push(d);
+                        }
+                        if let Some(p) = pipe {
+                            *lowered = Some(p);
+                        }
+                    }
+                }
+            }
             Some((
                 DslBody { raw: dsl_text.raw.clone(), interps },
                 dsl_text.span,

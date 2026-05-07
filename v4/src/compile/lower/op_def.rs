@@ -79,19 +79,64 @@ pub enum InterpMode {
     Bind,
 }
 
+/// Kind of carveout body. Term-shape is the term-ref/dot-access surface
+/// from Layer 0c.3. SubPipe-shape is task #10 — the body parses as a full
+/// sprf pipe expression and drains per outer cursor at render time.
+#[derive(Clone)]
+pub enum InterpKind {
+    /// `${X}` / `${X?}` / `${X.field}` / `${&.field}`.
+    /// `mode` and `field` are populated by the scanner; `name` is the
+    /// stem (IDENT or `&`). `subpipe_src` is unused.
+    Term { mode: InterpMode, field: Option<Arc<str>> },
+    /// `${ <op-shape body> }` — the inner text is a sprf pipe fragment.
+    /// `subpipe_src` is the trimmed inner body (no surrounding `${`/`}`),
+    /// to be re-parsed and walked by the walker. `lowered` is set after
+    /// the walker recurses; render-time drains it per outer cursor and
+    /// uses the drained cursor's focal `value` as the slot value.
+    SubPipe {
+        src:     Arc<str>,
+        /// Set by the walker after `walk_pipe` lowers `src`. None at
+        /// parse-time (parse_dsl can't see LowerCtx/Registry), Some after
+        /// walk_op runs. Render-time relies on this being populated.
+        ///
+        /// `Pipe<Cursor>` doesn't implement `Debug`; manual impl below
+        /// hides the contents.
+        lowered: Option<Pipe<Cursor>>,
+    },
+}
+
+impl std::fmt::Debug for InterpKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InterpKind::Term { mode, field } => f.debug_struct("Term")
+                .field("mode", mode)
+                .field("field", field)
+                .finish(),
+            InterpKind::SubPipe { src, lowered } => f.debug_struct("SubPipe")
+                .field("src", src)
+                .field("lowered_steps", &lowered.as_ref().map(|p| p.len()))
+                .finish(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DslInterp {
     /// Stem name. IDENT (e.g. `NAME`) or the literal `&` for the focal-
-    /// cursor self-op. Always present.
+    /// cursor self-op. For SubPipe interps this is a synthetic
+    /// `$pipe` placeholder.
     pub name:  Arc<str>,
     /// Byte span of the full `${...}` form in the dsl body.
     pub range: ByteRange,
-    /// `${X}` (Read) vs `${X?}` (Bind). `${&}` is always Read; `${&?}` /
-    /// `${&?.field}` are illegal and skipped by the scanner.
+    /// Term vs SubPipe shape (task #10). The legacy `mode`/`field` fields
+    /// are preserved for back-compat reads on Term-shape interps;
+    /// SubPipe interps default `mode = Read` / `field = None`.
+    pub kind:  InterpKind,
+    /// Back-compat alias for `kind = Term { mode, .. }`. Reads return
+    /// `Read` for SubPipe interps (the carveout itself doesn't bind).
     pub mode:  InterpMode,
-    /// Optional `.field` projection. Layer 0c.3 — `${X.field}` /
-    /// `${&.field}`. None = bare `${X}` / `${X?}`. Field access requires
-    /// bound mode (`${X?.field}` is illegal and skipped by the scanner).
+    /// Back-compat alias for `kind = Term { field, .. }`. Reads return
+    /// `None` for SubPipe interps.
     pub field: Option<Arc<str>>,
 }
 
@@ -213,83 +258,125 @@ pub fn default_plain_dsl_parse(raw: &str) -> Vec<DslInterp> {
     while i + 1 < bytes.len() {
         if !(bytes[i] == b'$' && bytes[i + 1] == b'{') { i += 1; continue; }
         let lo = i;
-        let mut j = i + 2;
 
-        // Stem: `&` (focal) or IDENT.
-        let (stem_str, is_focal): (Arc<str>, bool) =
-            if j < bytes.len() && bytes[j] == b'&' {
-                j += 1;
-                (Arc::<str>::from("&"), true)
-            } else if j < bytes.len()
-                && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_')
-            {
-                let name_lo = j;
-                while j < bytes.len()
-                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
-                {
+        // Find the matching `}` for this `${`. Handles one level of
+        // nested `` `…` `` (the parser already enforces that nesting via
+        // the dsl_body regex). We scan byte-by-byte so we don't trip on
+        // backticks inside the carveout body.
+        let body_lo = i + 2;
+        let mut j = body_lo;
+        let mut closed_at: Option<usize> = None;
+        while j < bytes.len() {
+            match bytes[j] {
+                b'`' => {
                     j += 1;
+                    while j < bytes.len() && bytes[j] != b'`' { j += 1; }
+                    if j < bytes.len() { j += 1; } // skip closing backtick
                 }
-                (Arc::<str>::from(&raw[name_lo..j]), false)
-            } else {
-                i += 1;
-                continue;
-            };
+                b'}' => { closed_at = Some(j); break; }
+                _ => j += 1,
+            }
+        }
+        let Some(close_idx) = closed_at else { i += 1; continue; };
+        let hi = close_idx + 1;
+        let inner = &raw[body_lo..close_idx];
 
-        // Optional `?` (Bind mode, only legal on IDENT stems).
-        let mode = if j < bytes.len() && bytes[j] == b'?' {
-            j += 1;
-            InterpMode::Bind
-        } else {
-            InterpMode::Read
-        };
-
-        // Optional `.field`.
-        let mut field: Option<Arc<str>> = None;
-        if j < bytes.len() && bytes[j] == b'.' {
-            j += 1;
-            if j < bytes.len()
-                && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_')
-            {
-                let f_lo = j;
-                while j < bytes.len()
-                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
-                {
-                    j += 1;
-                }
-                field = Some(Arc::<str>::from(&raw[f_lo..j]));
-            } else {
-                // `${X.}` with no field name — malformed, skip.
+        // First: try to match the term-shape grammar:
+        //   `&.field`  |  `IDENT`  |  `IDENT?`  |  `IDENT.field`
+        // (no leading/trailing whitespace, no other characters).
+        if let Some((mode, field, name, is_focal)) = parse_term_shape(inner) {
+            // Reject illegal combinations (mirrors the original guard).
+            let illegal = (is_focal && field.is_none())
+                || (is_focal && matches!(mode, InterpMode::Bind))
+                || (matches!(mode, InterpMode::Bind) && field.is_some());
+            if illegal {
                 i += 1;
                 continue;
             }
-        }
-
-        // Closing `}` required.
-        if !(j < bytes.len() && bytes[j] == b'}') {
-            i += 1;
-            continue;
-        }
-        let hi = j + 1;
-
-        // Reject illegal combinations (skip → treated as literal).
-        // 1. Bare focal: `${&}` (no field).
-        // 2. Focal with bind: `${&?...}`.
-        // 3. Bind mode + field: `${X?.field}`.
-        let illegal = (is_focal && field.is_none())
-            || (is_focal && matches!(mode, InterpMode::Bind))
-            || (matches!(mode, InterpMode::Bind) && field.is_some());
-        if illegal {
-            i += 1;
+            out.push(DslInterp {
+                name,
+                range: ByteRange { lo: lo as u32, hi: hi as u32 },
+                kind:  InterpKind::Term { mode, field: field.clone() },
+                mode,
+                field,
+            });
+            i = hi;
             continue;
         }
 
+        // Op-shape (task #10): the inner text is a sprf pipe fragment.
+        // Trim outer whitespace; empty bodies remain illegal (skip).
+        let trimmed = inner.trim();
+        if trimmed.is_empty() {
+            i += 1;
+            continue;
+        }
         out.push(DslInterp {
-            name:  stem_str,
+            name:  Arc::<str>::from("$pipe"),
             range: ByteRange { lo: lo as u32, hi: hi as u32 },
-            mode,
-            field,
+            kind:  InterpKind::SubPipe {
+                src:     Arc::<str>::from(trimmed),
+                lowered: None,
+            },
+            mode:  InterpMode::Read,
+            field: None,
         });
         i = hi;
     }
     out
+}
+
+/// Try to parse `inner` as the term-shape grammar:
+///   `&.field`         — focal + field
+///   `IDENT`           — read
+///   `IDENT?`          — bind
+///   `IDENT.field`     — read + dot
+///   `IDENT?.field`    — bind + dot (rejected as illegal upstream)
+///
+/// Returns `Some((mode, field, name, is_focal))` on full match, `None` if
+/// the inner text contains anything else (e.g. backticks, parens, spaces
+/// other than around the stem alone). `None` triggers the SubPipe arm.
+fn parse_term_shape(inner: &str) -> Option<(InterpMode, Option<Arc<str>>, Arc<str>, bool)> {
+    // No surrounding whitespace allowed in term-shape (`${ X }` is op-shape
+    // by contract — author writes `${X}` for term-shape).
+    if inner.is_empty() { return None; }
+    let bytes = inner.as_bytes();
+    let mut j: usize;
+
+    let (stem_str, is_focal): (Arc<str>, bool) = if bytes[0] == b'&' {
+        j = 1;
+        (Arc::<str>::from("&"), true)
+    } else if bytes[0].is_ascii_alphabetic() || bytes[0] == b'_' {
+        j = 1;
+        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+            j += 1;
+        }
+        (Arc::<str>::from(&inner[..j]), false)
+    } else {
+        return None;
+    };
+
+    let mode = if j < bytes.len() && bytes[j] == b'?' {
+        j += 1;
+        InterpMode::Bind
+    } else {
+        InterpMode::Read
+    };
+
+    let mut field: Option<Arc<str>> = None;
+    if j < bytes.len() && bytes[j] == b'.' {
+        j += 1;
+        if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+            let f_lo = j;
+            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                j += 1;
+            }
+            field = Some(Arc::<str>::from(&inner[f_lo..j]));
+        } else {
+            return None;
+        }
+    }
+
+    if j != bytes.len() { return None; }
+    Some((mode, field, stem_str, is_focal))
 }

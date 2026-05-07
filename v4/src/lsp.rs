@@ -68,12 +68,21 @@ impl LspDiagComponent {
             let hi = interp.range.hi as usize;
             if lo > raw.len() || hi > raw.len() || lo < head { continue; }
             out.push_str(&raw[head..lo]);
-            // Layer 0c.3 — dot-access aware lookup; mirrors StrTemplateComponent.
-            let key: std::borrow::Cow<'_, str> = match &interp.field {
-                None    => (&*interp.name).into(),
-                Some(f) => format!("{}.{}", interp.name, f).into(),
-            };
-            if let Some(v) = c.get(&key) { out.push_str(v); }
+            match &interp.kind {
+                crate::compile::lower::op_def::InterpKind::Term { field, .. } => {
+                    // Layer 0c.3 — dot-access aware lookup; mirrors StrTemplateComponent.
+                    let key: std::borrow::Cow<'_, str> = match field {
+                        None    => (&*interp.name).into(),
+                        Some(f) => format!("{}.{}", interp.name, f).into(),
+                    };
+                    if let Some(v) = c.get(&key) { out.push_str(v); }
+                }
+                crate::compile::lower::op_def::InterpKind::SubPipe { .. } => {
+                    // Diag templates render messages, not pipe values; skip
+                    // sub-pipe carveouts (today they're a parse-shape used
+                    // by `str`, not a diag-message form).
+                }
+            }
             head = hi;
         }
         out.push_str(&raw[head..]);
