@@ -1,1 +1,1 @@
-20260507.0.hafley-v4-coord-space-and-generator-topology.md
+20260507.1.hafley-v4-rule-unification-and-glob-purification.md
