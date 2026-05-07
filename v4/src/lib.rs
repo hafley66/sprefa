@@ -55,19 +55,172 @@ pub enum ActionKind {
 }
 
 // ╔═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╗
+// ║   § 2a  coordinate primitives — Coord, Ref, StringId, Term    ║
+// ╚═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╝
+//
+// Foundation for the coordinate-space cursor. See
+// ~/.claude/plans/glittery-napping-whisper.md.
+//
+// Ids are CONTENT-DERIVED via blake3 truncated to u64. Same content =>
+// same id across runs, machines, processes. This makes the strings/refs
+// stores lazy-stable: no central allocator, no fwd-map needed, restart
+// preserves ids, sqlite cold tier is the source of truth, in-memory
+// LRU is the hot cache.
+//
+// SYNTHETIC sentinels: Coord::default() / Ref(0) / StringId(0) / etc.
+// `_strings(0)` is the empty string, pre-interned. `_refs(0)` covers
+// no real bytes. Synthetic terms (str/sh/internal) carry SYNTHETIC at
+// the coord position but a real StringId at the value position so
+// `_strings` dedupes synthetic and source-located text uniformly.
+
+pub type RepoId   = u32;
+pub type RevId    = u32;
+pub type FileId   = u64;
+pub type RefId    = u64;
+
+/// A coordinate in the (repo × rev × file × byte-range) space.
+/// All zeros = SYNTHETIC. Source-located = nonzero ids + real bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct Coord {
+    pub repo: RepoId,
+    pub rev:  RevId,
+    pub fs:   FileId,
+    pub lo:   u32,
+    pub hi:   u32,
+}
+
+/// FK handle into `_refs`. `Ref(0)` is the SYNTHETIC sentinel. Coord
+/// is the value, Ref is the identity. Derive via `Ref::of(coord)` so
+/// the id is content-stable across processes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct Ref(pub RefId);
+
+impl Ref {
+    /// Synthetic Ref. Resolves to `_refs(0)` which covers no bytes.
+    pub const SYNTHETIC: Ref = Ref(0);
+
+    /// Content-derived id from a Coord. blake3 truncated to u64. Stable
+    /// across runs/machines because the inputs (repo/rev/file/lo/hi)
+    /// are themselves content-derived ids.
+    pub fn of(c: Coord) -> Ref {
+        if c == Coord::default() { return Ref::SYNTHETIC; }
+        let mut h = blake3::Hasher::new();
+        h.update(&c.repo.to_be_bytes());
+        h.update(&c.rev.to_be_bytes());
+        h.update(&c.fs.to_be_bytes());
+        h.update(&c.lo.to_be_bytes());
+        h.update(&c.hi.to_be_bytes());
+        let bytes = h.finalize();
+        Ref(u64::from_be_bytes(bytes.as_bytes()[..8].try_into().unwrap()))
+    }
+}
+
+/// FK handle into `_strings`. `StringId(0)` is the empty string,
+/// pre-interned at startup so Default round-trips without a row write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct StringId(pub u64);
+
+impl StringId {
+    /// The empty string. Pre-interned at id 0.
+    pub const EMPTY: StringId = StringId(0);
+
+    /// Content-derived id. `blake3(text)[..8]`. Same text => same id
+    /// everywhere, every run, every process.
+    pub fn of(text: &str) -> StringId {
+        if text.is_empty() { return StringId::EMPTY; }
+        let h = blake3::hash(text.as_bytes());
+        StringId(u64::from_be_bytes(h.as_bytes()[..8].try_into().unwrap()))
+    }
+}
+
+/// Content-derived FileId from raw bytes.
+pub fn file_id_of(content: &[u8]) -> FileId {
+    if content.is_empty() { return 0; }
+    let h = blake3::hash(content);
+    u64::from_be_bytes(h.as_bytes()[..8].try_into().unwrap())
+}
+
+/// A captured slice with a name. The atomic unit of a fact.
+/// 24 bytes total. NO Arc<str> for the value or coord — those live
+/// once each in `_strings` / `_refs` and are reached through SprfStore
+/// at the call site that has both the cursor and the store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Term {
+    pub name:  StringId,
+    pub value: StringId,
+    pub at:    Ref,
+}
+
+impl Term {
+    /// Synthetic Term: real StringId on name+value, SYNTHETIC ref.
+    /// `_strings` still dedupes the text against source-located captures.
+    pub fn synthetic(name: StringId, value: StringId) -> Self {
+        Self { name, value, at: Ref::SYNTHETIC }
+    }
+}
+
+#[cfg(test)]
+mod coord_tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_sentinels_are_zero() {
+        assert_eq!(Ref::SYNTHETIC.0, 0);
+        assert_eq!(StringId::EMPTY.0, 0);
+        assert_eq!(file_id_of(b""), 0);
+        assert_eq!(Coord::default(), Coord { repo: 0, rev: 0, fs: 0, lo: 0, hi: 0 });
+        assert_eq!(Ref::of(Coord::default()), Ref::SYNTHETIC);
+    }
+
+    #[test]
+    fn ids_are_content_derived_and_stable() {
+        // Same content => same id every time.
+        let a = StringId::of("alpha");
+        let b = StringId::of("alpha");
+        let c = StringId::of("beta");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        // Empty content uses the pre-interned sentinel without hashing.
+        assert_eq!(StringId::of(""), StringId::EMPTY);
+
+        // Coord -> Ref likewise stable.
+        let coord = Coord { repo: 1, rev: 2, fs: 3, lo: 100, hi: 200 };
+        assert_eq!(Ref::of(coord), Ref::of(coord));
+
+        // Different coords -> different refs.
+        let other = Coord { repo: 1, rev: 2, fs: 3, lo: 101, hi: 200 };
+        assert_ne!(Ref::of(coord), Ref::of(other));
+    }
+
+    #[test]
+    fn term_synthetic_keeps_real_string() {
+        let name  = StringId::of(":fan_idx");
+        let value = StringId::of("0");
+        let t = Term::synthetic(name, value);
+        assert_eq!(t.at, Ref::SYNTHETIC);
+        assert_eq!(t.name, name);
+        assert_eq!(t.value, value);
+        // Same value text from a different synthetic term collapses to
+        // the same StringId (the dedup property the plan promises).
+        let t2 = Term::synthetic(StringId::of(":counter"), StringId::of("0"));
+        assert_eq!(t.value, t2.value);
+    }
+}
+
+// ╔═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╦═══╗
 // ║         § 2   cursor — dynamic-scope term-capture bag         ║
 // ╚═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╩═══╝
-
-// TODO(cursor-bytes-vs-strings): revisit once SprfStore lands. v0 stored
-// every capture as a Ref(file_id, lo, hi) + StringId, sharing content
-// across rows and freeing the row of stringly LO/HI/FS columns. Today
-// the bag holds Arc<str> per term — fine at 4k cursors, painful at
-// linux-bench scale (~36k files × ~80 matches). Candidates: (a) keep
-// Arc<str> bag and add `_REF` columns alongside (cheap port), (b) flip
-// `terms` to a typed enum `TermVal::{Text(Arc<str>), Ref(RefId),
-// String(StringId)}` and let SprfStore resolve at read time (deeper
-// port, bigger mem win). Decided after the SprfStore port lands and we
-// can measure both shapes against linux-bench.
+//
+// CURRENT SHAPE — string-bag. Layer 0c will flip this to
+//   pub struct Cursor {
+//       pub value: StringId,
+//       pub at:    Ref,
+//       pub terms: Vec<Term>,
+//   }
+// against the primitives above. Doing it in a separate commit so the
+// type-sig change is contained and reviewable independently of the
+// type primitives themselves.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Cursor {
     /// Focal value `&.value`. Default for Term::Bind. Source ops set
