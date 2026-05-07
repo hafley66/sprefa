@@ -52,88 +52,13 @@ impl Component for StrTemplateComponent {
     type Next = Cursor;
 
     fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        let raw = self.raw.as_ref();
-        let mut out = String::with_capacity(raw.len());
-        let mut head: usize = 0;
-        for interp in self.interps.iter() {
-            let lo = interp.range.lo as usize;
-            let hi = interp.range.hi as usize;
-            if lo > raw.len() || hi > raw.len() || lo < head { continue; }
-            out.push_str(&raw[head..lo]);
-            match &interp.kind {
-                crate::compile::lower::op_def::InterpKind::Term { mode: _, field } => {
-                    // Layer 0c.3 — dot-access aware lookup. `${X}` → `X`,
-                    // `${X.field}` → `X.field`, `${&.field}` → `&.field`.
-                    let key: std::borrow::Cow<'_, str> = match field {
-                        None    => (&*interp.name).into(),
-                        Some(f) => format!("{}.{}", interp.name, f).into(),
-                    };
-                    match c.get(&key) {
-                        Some(v) => out.push_str(v),
-                        None    => ctx.diag.emit(
-                            effect_runtime::v2::Diag::error(
-                                "term/unbound-at-interp",
-                                format!("${{{}}} not bound at str interp", key),
-                            ),
-                        ),
-                    }
-                }
-                crate::compile::lower::op_def::InterpKind::SubPipe { lowered, .. } => {
-                    if let Some(pipe) = lowered {
-                        let drained = drain_subpipe(pipe.clone(), c);
-                        out.push_str(&drained);
-                    } else {
-                        ctx.diag.emit(
-                            effect_runtime::v2::Diag::error(
-                                "subpipe/unlowered",
-                                "${ pipe } sub-pipe was not lowered (walk-time gap)",
-                            ),
-                        );
-                    }
-                }
-            }
-            head = hi;
-        }
-        out.push_str(&raw[head..]);
+        let out = crate::template::render_segments(
+            self.raw.as_ref(), &self.interps, c, ctx,
+        );
         let mut next = c.clone();
         next.value = Arc::from(out);
         Node::Emit(Arc::new(next))
     }
-}
-
-/// Drain a sub-pipe with `outer` as the seed cursor. Returns the focal
-/// `value` of the first emitted cursor (or empty string if the pipe
-/// produced none). Used by `StrTemplateComponent` to render
-/// `${ <pipe> }` carveouts inline at render time.
-///
-/// Drains via `effect_runtime::v2::expand` against a fresh `MemQueue`
-/// so the outer expand's queue isn't disturbed.
-fn drain_subpipe(pipe: Pipe<Cursor>, outer: &Cursor) -> String {
-    use effect_runtime::v2::{
-        expand, ExpandOpts, MemQueue, QueueBackend,
-    };
-    use std::sync::Mutex;
-
-    // A tiny capture sink at the tail of the pipe. The first cursor
-    // emitted past the last user step gets wrapped here; we record its
-    // value and stop.
-    struct Capture { sink: Arc<Mutex<Option<String>>> }
-    impl Component for Capture {
-        type Next = Cursor;
-        fn render(&self, _: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            let mut g = self.sink.lock().unwrap();
-            if g.is_none() { *g = Some(c.value.as_ref().to_string()); }
-            Node::Done
-        }
-    }
-
-    let sink: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let pipe = pipe.step(Arc::new(Capture { sink: sink.clone() }));
-    let inst = pipe.into_instance();
-    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    expand(&inst, q, vec![Arc::new(outer.clone())], ExpandOpts::default());
-    let mut g = sink.lock().unwrap();
-    g.take().unwrap_or_default()
 }
 
 /// Convenience builder: a constant-emitting `Pipe<Cursor>`.
