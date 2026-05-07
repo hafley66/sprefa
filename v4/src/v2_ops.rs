@@ -29,6 +29,7 @@ use effect_runtime::v2::{
 };
 use ignore::WalkBuilder;
 
+use crate::config::SprfConfig;
 use crate::store::SprfStore;
 use crate::{Coord, Cursor, Interner};
 
@@ -752,21 +753,58 @@ impl Component for SeedComponent {
     }
 }
 
-/// Multi-root walker. For each `(slug, root)`, walks files matching
-/// `exts` and emits a Cursor with `REPO=slug` and `FS=path`. Streams
-/// flushes across roots using `next_idx` to keep child paths unique.
-/// Optional Interner shares Arc<str> heap across emitted REPO/FS terms.
+/// `repo` op modes.
+///
+/// Args form (`Roots`) walks the filesystem under each `(slug, root)`
+/// pair as today. Bare form (`FromConfig`) is the Layer 5a generator:
+/// emit one synthetic cursor per `RepoConfig` entry — no walk, no read.
+/// The bare form is the canonical "all repos sprefa knows about" source
+/// per the user-locked design; downstream ops (`> rev() > fs()`) do
+/// the actual filesystem work in 5b.
+pub enum RepoMode {
+    /// Args form: explicit (slug, root) pairs walked as today.
+    Roots(Vec<(String, PathBuf)>),
+    /// Bare form: one cursor per configured repo. No filesystem walk.
+    FromConfig,
+}
+
+/// Multi-source repo op. Two shapes:
+///
+///  1. `repo(:slug, :path) ...` — walks the filesystem under each pair
+///     and emits a cursor with `REPO=slug` and `FS=path` per matching
+///     file. Behavior identical to pre-Layer-5a.
+///  2. `repo()` — reads `LowerCtx::config` (XDG repos.toml) and emits
+///     one synthetic cursor per `RepoConfig` entry: `cursor.value =
+///     slug`, `REPO` term = slug, `Coord { repo: intern_repo(slug, ""),
+///     rest: 0 }`. No fs walk; the cursor is the seed for downstream
+///     `> rev() > fs()` chains.
 pub struct RepoComponent {
-    roots:    Vec<(String, PathBuf)>,
+    mode:     RepoMode,
     exts:     Vec<String>,
     batch:    usize,
     interner: Option<Arc<Interner>>,
     /// Layer 0c.2 — content-derived intern store.
     store:    Option<Arc<SprfStore>>,
+    /// Layer 5a — config handle for the FromConfig generator. Ignored
+    /// in the Roots variant.
+    config:   Option<Arc<SprfConfig>>,
 }
 impl RepoComponent {
     pub fn new(roots: Vec<(String, PathBuf)>, exts: Vec<String>) -> Self {
-        Self { roots, exts, batch: 4096, interner: None, store: None }
+        Self {
+            mode: RepoMode::Roots(roots),
+            exts, batch: 4096,
+            interner: None, store: None, config: None,
+        }
+    }
+    /// Bare-form ctor: no roots, no walk. The cursor stream is driven
+    /// by `LowerCtx::config` plumbed in via `with_config`.
+    pub fn from_config() -> Self {
+        Self {
+            mode: RepoMode::FromConfig,
+            exts: Vec::new(), batch: 4096,
+            interner: None, store: None, config: None,
+        }
     }
     pub fn auto(roots: &[PathBuf], exts: Vec<String>) -> Self {
         let labelled: Vec<(String, PathBuf)> = roots.iter().map(|p| {
@@ -783,6 +821,9 @@ impl RepoComponent {
     }
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
+    }
+    pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
+        self.config = Some(c); self
     }
 }
 impl Component for RepoComponent {
@@ -803,7 +844,40 @@ impl Component for RepoComponent {
             *next_idx += n as u32;
         };
 
-        for (slug, root) in &self.roots {
+        match &self.mode {
+            RepoMode::FromConfig => {
+                let Some(cfg) = self.config.as_ref() else { return };
+                for entry in &cfg.repos {
+                    if entry.slug.is_empty() { continue; }
+                    let slug_arc: Arc<str> = match &self.interner {
+                        Some(i) => i.intern(&entry.slug),
+                        None    => Arc::from(entry.slug.as_str()),
+                    };
+                    let mut c = Cursor::default();
+                    // Legacy bare-string surface: REPO term + cursor.value
+                    // = slug so `&.value` and `${REPO}` both resolve.
+                    c.value = slug_arc.clone();
+                    c.set_arc("REPO", slug_arc.clone());
+                    if let Some(store) = &self.store {
+                        let repo_id = store.intern_repo(&entry.slug, "");
+                        let coord = Coord {
+                            repo: repo_id, rev: 0, fs: 0, lo: 0, hi: 0,
+                        };
+                        c.value_id = crate::StringId::of(slug_arc.as_ref());
+                        c.at       = store.intern_ref(coord);
+                        c.set_synthetic("REPO", slug_arc.as_ref(), store);
+                    }
+                    buf.push(Node::Emit(Arc::new(c)));
+                    if buf.len() >= self.batch { flush(&mut buf, &mut next_idx); }
+                }
+                flush(&mut buf, &mut next_idx);
+                return;
+            }
+            RepoMode::Roots(_) => { /* fall through */ }
+        }
+
+        let RepoMode::Roots(roots) = &self.mode else { unreachable!() };
+        for (slug, root) in roots {
             let slug_arc: Arc<str> = match &self.interner {
                 Some(i) => i.intern(slug),
                 None    => Arc::from(slug.as_str()),

@@ -930,10 +930,20 @@ impl OperatorDef for ShBangDef {
 }
 
 // ─── repo ─────────────────────────────────────────────────────────────────
-// `repo(:slug, :path)+ … ` — multi-repo source. Variadic atoms in
-// (slug, path) pairs. Emits one cursor per matching file with REPO=slug
-// and FS=path. Default exts: empty (no filter — caller composes a glob
-// or fs-shaped follow-up if they want to narrow).
+// Two shapes:
+//   `repo()`                    — bare-form generator. Reads
+//                                 `~/.config/sprefa/repos.toml` via
+//                                 `LowerCtx::config` and emits one
+//                                 cursor per `RepoConfig` entry with
+//                                 cursor.value = slug, REPO = slug,
+//                                 Coord { repo: intern_repo(slug, ""),
+//                                 rest: 0 }. No filesystem walk; the
+//                                 cursor is the seed for downstream
+//                                 `> rev() > fs()` chains.
+//   `repo(:slug, :path)+`       — args form. Walks the filesystem
+//                                 under each (slug, path) pair and
+//                                 emits one cursor per matching file
+//                                 with REPO=slug and FS=path.
 
 pub struct RepoDef;
 
@@ -941,8 +951,8 @@ const REPO_SPEC: &[ArgSig] = &[
     ArgSig {
         kind: ArgKind::Variadic(&ArgKind::Atom),
         name: "args",
-        doc: "alternating :slug :path atoms",
-        required: true,
+        doc: "0 args = bare-form (read repos.toml); else alternating :slug :path atoms",
+        required: false,
     },
 ];
 
@@ -959,7 +969,15 @@ impl OperatorDef for RepoDef {
         _block: Option<Pipe<Cursor>>,
         _dsl:   Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        if args.is_empty() || args.len() % 2 != 0 {
+        // Bare form `repo()`: drive the generator from `LowerCtx::config`.
+        // One synthetic cursor per `RepoConfig` entry. No filesystem walk.
+        if args.is_empty() {
+            let mut comp = RepoComponent::from_config();
+            if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+            if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
+            return Ok(Pipe::new().step(Arc::new(comp)));
+        }
+        if args.len() % 2 != 0 {
             return Err(LowerError::Unknown(
                 "repo: requires alternating (:slug, :path) atom pairs".into()
             ));

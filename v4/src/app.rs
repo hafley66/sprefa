@@ -388,6 +388,11 @@ pub struct SprfState {
     /// coord-space side of Cursor (`value_id`, `at`, `terms`) alongside
     /// legacy `raw_terms` writes.
     pub sprf_store: Arc<crate::store::SprfStore>,
+    /// Layer 5a — XDG repos config. Bare `repo()` reads from this.
+    /// `SprfState::new` loads from `~/.config/sprefa/repos.toml` via
+    /// `SprfConfig::load_default`; tests inject explicit configs via
+    /// `with_config`.
+    pub config:     Arc<crate::config::SprfConfig>,
     pub registry:   Arc<Registry>,
     pub root:       PathBuf,
 }
@@ -396,13 +401,22 @@ impl SprfState {
     pub fn new(root: PathBuf) -> Self {
         let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
         let sprf_store = crate::store::SprfStore::new(facts.clone());
+        let config = Arc::new(crate::config::SprfConfig::load_default());
         Self {
             docs: Mutex::new(HashMap::new()),
             facts,
             sprf_store,
+            config,
             registry: Arc::new(default_registry()),
             root,
         }
+    }
+
+    /// Test-side builder: replace the config loaded from disk with an
+    /// explicit one. Returns `Self` so tests can chain.
+    pub fn with_config(mut self, c: crate::config::SprfConfig) -> Self {
+        self.config = Arc::new(c);
+        self
     }
 
     fn ingest(&self, uri: String, text: String, version: i32) {
@@ -410,7 +424,8 @@ impl SprfState {
         let probe_sink: Arc<BufferProbeSink<Cursor>> = Arc::new(BufferProbeSink::new());
         let mut ctx = LowerCtx::new(self.facts.clone(), self.root.clone())
             .with_probe(probe_sink.clone() as Arc<dyn ProbeSink<Cursor>>)
-            .with_sprf_store(self.sprf_store.clone());
+            .with_sprf_store(self.sprf_store.clone())
+            .with_config(self.config.clone());
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
@@ -490,7 +505,8 @@ impl SprfHandlers for SprfState {
             .or_else(|| req.path.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| self.root.clone());
         let mut ctx = LowerCtx::new(self.facts.clone(), dir)
-            .with_sprf_store(self.sprf_store.clone());
+            .with_sprf_store(self.sprf_store.clone())
+            .with_config(self.config.clone());
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());

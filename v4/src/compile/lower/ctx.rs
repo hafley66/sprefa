@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use effect_runtime::v2::{FactStore, Pipe, ProbeSink};
 
+use crate::config::SprfConfig;
 use crate::store::SprfStore;
 use crate::{Cursor, Interner};
 
@@ -28,6 +29,11 @@ pub struct LowerCtx {
     /// coord-space side of Cursor (`value_id`, `at`, `terms`) alongside
     /// legacy `raw_terms` writes. When absent, only legacy writes fire.
     pub sprf_store: Option<Arc<SprfStore>>,
+    /// Layer 5a — XDG-style repo config used by the bare `repo()` op
+    /// to drive a generator over `SprfConfig.repos`. Threaded by the
+    /// host (`SprfState::run` / `SprfState::ingest`); call sites that
+    /// don't set it leave the bare-form generator emitting zero rows.
+    pub config: Option<Arc<SprfConfig>>,
 }
 
 impl LowerCtx {
@@ -39,6 +45,7 @@ impl LowerCtx {
             bindings: HashMap::new(),
             probe:    None,
             sprf_store: None,
+            config:   None,
         }
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
@@ -54,6 +61,11 @@ impl LowerCtx {
     /// this call stamp coord-space terms alongside legacy raw_terms.
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.sprf_store = Some(s); self
+    }
+    /// Attach the XDG repo config so the bare `repo()` generator can
+    /// emit one cursor per configured repo at lower time.
+    pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
+        self.config = Some(c); self
     }
 }
 

@@ -1,6 +1,7 @@
 pub mod app;
 pub mod chan;
 pub mod compile;
+pub mod config;
 pub mod cst;
 pub mod cursor_codec;
 pub mod fact;
@@ -14,6 +15,7 @@ pub mod v2_ops;
 pub mod term;
 
 pub use compile::lower;
+pub use config::{RepoConfig, SprfConfig};
 
 // sprefa v4 — runtime lib. shared by v4-proto (demo) and v4-bench (perf).
 //
