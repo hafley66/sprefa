@@ -52,88 +52,13 @@ impl Component for StrTemplateComponent {
     type Next = Cursor;
 
     fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        let raw = self.raw.as_ref();
-        let mut out = String::with_capacity(raw.len());
-        let mut head: usize = 0;
-        for interp in self.interps.iter() {
-            let lo = interp.range.lo as usize;
-            let hi = interp.range.hi as usize;
-            if lo > raw.len() || hi > raw.len() || lo < head { continue; }
-            out.push_str(&raw[head..lo]);
-            match &interp.kind {
-                crate::compile::lower::op_def::InterpKind::Term { mode: _, field } => {
-                    // Layer 0c.3 — dot-access aware lookup. `${X}` → `X`,
-                    // `${X.field}` → `X.field`, `${&.field}` → `&.field`.
-                    let key: std::borrow::Cow<'_, str> = match field {
-                        None    => (&*interp.name).into(),
-                        Some(f) => format!("{}.{}", interp.name, f).into(),
-                    };
-                    match c.get(&key) {
-                        Some(v) => out.push_str(v),
-                        None    => ctx.diag.emit(
-                            effect_runtime::v2::Diag::error(
-                                "term/unbound-at-interp",
-                                format!("${{{}}} not bound at str interp", key),
-                            ),
-                        ),
-                    }
-                }
-                crate::compile::lower::op_def::InterpKind::SubPipe { lowered, .. } => {
-                    if let Some(pipe) = lowered {
-                        let drained = drain_subpipe(pipe.clone(), c);
-                        out.push_str(&drained);
-                    } else {
-                        ctx.diag.emit(
-                            effect_runtime::v2::Diag::error(
-                                "subpipe/unlowered",
-                                "${ pipe } sub-pipe was not lowered (walk-time gap)",
-                            ),
-                        );
-                    }
-                }
-            }
-            head = hi;
-        }
-        out.push_str(&raw[head..]);
+        let out = crate::template::render_segments(
+            self.raw.as_ref(), &self.interps, c, ctx,
+        );
         let mut next = c.clone();
         next.value = Arc::from(out);
         Node::Emit(Arc::new(next))
     }
-}
-
-/// Drain a sub-pipe with `outer` as the seed cursor. Returns the focal
-/// `value` of the first emitted cursor (or empty string if the pipe
-/// produced none). Used by `StrTemplateComponent` to render
-/// `${ <pipe> }` carveouts inline at render time.
-///
-/// Drains via `effect_runtime::v2::expand` against a fresh `MemQueue`
-/// so the outer expand's queue isn't disturbed.
-fn drain_subpipe(pipe: Pipe<Cursor>, outer: &Cursor) -> String {
-    use effect_runtime::v2::{
-        expand, ExpandOpts, MemQueue, QueueBackend,
-    };
-    use std::sync::Mutex;
-
-    // A tiny capture sink at the tail of the pipe. The first cursor
-    // emitted past the last user step gets wrapped here; we record its
-    // value and stop.
-    struct Capture { sink: Arc<Mutex<Option<String>>> }
-    impl Component for Capture {
-        type Next = Cursor;
-        fn render(&self, _: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            let mut g = self.sink.lock().unwrap();
-            if g.is_none() { *g = Some(c.value.as_ref().to_string()); }
-            Node::Done
-        }
-    }
-
-    let sink: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let pipe = pipe.step(Arc::new(Capture { sink: sink.clone() }));
-    let inst = pipe.into_instance();
-    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    expand(&inst, q, vec![Arc::new(outer.clone())], ExpandOpts::default());
-    let mut g = sink.lock().unwrap();
-    g.take().unwrap_or_default()
 }
 
 /// Convenience builder: a constant-emitting `Pipe<Cursor>`.
@@ -211,4 +136,190 @@ impl Component for GlobComponent {
         }
         Node::Emit(Arc::new(child))
     }
+}
+
+/// Slow-path glob with per-cursor body recompile. Used when the body
+/// contains a `${ <pipe> }` SubPipe carveout: the inner pipe drains per
+/// cursor, the carveout span is replaced by the drained value, the
+/// resulting body is translated body→regex via the same scheme as the
+/// static path, and the regex is matched against `cursor.value`.
+///
+/// Term-only carveouts already route through the static `GlobComponent`
+/// because their semantics (named-capture / read) are encoded in the
+/// pre-compiled regex. SubPipe is the only trigger that requires
+/// per-cursor recompile today.
+pub struct GlobDynamicComponent {
+    /// Original glob body source (with `${ ... }` spans intact).
+    body:    Arc<str>,
+    /// Pre-walked interps (Term + SubPipe) sorted by `range.lo`.
+    interps: Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
+    /// Sprf store — passed through to children if needed for set_synthetic.
+    store:   Option<Arc<crate::store::SprfStore>>,
+}
+
+impl GlobDynamicComponent {
+    pub fn new(
+        body:    Arc<str>,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self {
+        Self { body, interps: Arc::new(interps), store: None }
+    }
+    pub fn with_sprf_store(mut self, s: Arc<crate::store::SprfStore>) -> Self {
+        self.store = Some(s); self
+    }
+}
+
+impl Component for GlobDynamicComponent {
+    type Next = Cursor;
+
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let hay: &str = c.value.as_ref();
+        if hay.is_empty() { return Node::Done; }
+
+        // Build the regex per-cursor. SubPipe spans drain to literals
+        // (regex-escaped); Term-Bind spans become named capture groups
+        // (same shape as the static path); Term-Read spans resolve via
+        // Cursor::get and regex-escape; literal text follows the glob
+        // metachar table.
+        let (regex_src, capture_names) = match build_dynamic_glob_regex(
+            &self.body, &self.interps, c,
+        ) {
+            Ok(t) => t,
+            Err(_) => return Node::Done,
+        };
+        let re = match regex::Regex::new(&regex_src) {
+            Ok(r) => r,
+            Err(_) => return Node::Done,
+        };
+        let Some(caps) = re.captures(hay) else { return Node::Done; };
+
+        let mut child = c.clone();
+        // capture_names is the explicit name list we emitted; group i+1
+        // in the regex aligns 1:1 with capture_names[i]. (Group 0 is the
+        // full match.)
+        for (i, name) in capture_names.iter().enumerate() {
+            let Some(g) = caps.get(i + 1) else { continue };
+            child.set(name.as_ref(), g.as_str());
+            if let Some(store) = &self.store {
+                child.set_synthetic(name.as_ref(), g.as_str(), store);
+            }
+        }
+        Node::Emit(Arc::new(child))
+    }
+}
+
+/// Per-cursor body→regex builder for `GlobDynamicComponent`.
+///
+/// Walks `body` interleaving the literal glob translation with interp
+/// resolution. Returns `(regex_src, capture_names)` — same calling
+/// convention as the static `glob_body_to_regex` path but with SubPipe
+/// segments resolved to literal regex-escaped text.
+///
+/// Carveout shapes:
+///   `${X?}`           — named capture `(?P<X>[^/]*)`
+///   `$$${X?}`         — multi-segment `(?P<X>.*)` (3-`$` prefix)
+///   `${X}`            — Term Read; resolved via `cur.get("X")`,
+///                       regex-escaped into the pattern.
+///   `${X.field}`      — same as above (key is `X.field`).
+///   `${ <pipe> }`     — drain pipe with `cur` as seed; regex-escape
+///                       the drained value into the pattern.
+fn build_dynamic_glob_regex(
+    body:    &str,
+    interps: &[crate::compile::lower::op_def::DslInterp],
+    cur:     &Cursor,
+) -> Result<(String, Vec<Arc<str>>), ()> {
+    use crate::compile::lower::op_def::{InterpKind, InterpMode};
+    use crate::template::drain_subpipe;
+
+    let bytes = body.as_bytes();
+    let by_lo: std::collections::BTreeMap<u32, &crate::compile::lower::op_def::DslInterp> =
+        interps.iter().map(|i| (i.range.lo, i)).collect();
+
+    let mut out = String::with_capacity(body.len() + 8);
+    let mut names: Vec<Arc<str>> = Vec::new();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        let triple_dollar = i + 3 < bytes.len()
+            && bytes[i] == b'$' && bytes[i + 1] == b'$'
+            && bytes[i + 2] == b'$' && bytes[i + 3] == b'{';
+        let interp_lo = if triple_dollar { (i + 2) as u32 } else { i as u32 };
+
+        if let Some(interp) = by_lo.get(&interp_lo) {
+            match &interp.kind {
+                InterpKind::Term { mode, field } => {
+                    let key: std::borrow::Cow<'_, str> = match field {
+                        None    => (&*interp.name).into(),
+                        Some(f) => format!("{}.{}", interp.name, f).into(),
+                    };
+                    match mode {
+                        InterpMode::Bind => {
+                            if triple_dollar {
+                                out.push_str("(?P<");
+                                out.push_str(interp.name.as_ref());
+                                out.push_str(">.*)");
+                            } else {
+                                out.push_str("(?P<");
+                                out.push_str(interp.name.as_ref());
+                                out.push_str(">[^/]*)");
+                            }
+                            names.push(interp.name.clone());
+                        }
+                        InterpMode::Read => {
+                            if let Some(v) = cur.get(&key) {
+                                out.push_str(&regex::escape(v));
+                            }
+                        }
+                    }
+                }
+                InterpKind::SubPipe { lowered, .. } => {
+                    if let Some(p) = lowered {
+                        let drained = drain_subpipe(p.clone(), cur);
+                        out.push_str(&regex::escape(&drained));
+                    }
+                }
+            }
+            i = interp.range.hi as usize;
+            continue;
+        }
+
+        // Literal glob → regex.
+        let b = bytes[i];
+        match b {
+            b'*' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                    out.push_str(".*"); i += 2;
+                } else {
+                    out.push_str("[^/]*"); i += 1;
+                }
+            }
+            b'?' => { out.push_str("[^/]"); i += 1; }
+            b'[' => {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j] != b']' { j += 1; }
+                if j >= bytes.len() { return Err(()); }
+                out.push_str(&body[i..=j]);
+                i = j + 1;
+            }
+            b'{' => {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j] != b'}' { j += 1; }
+                if j >= bytes.len() { return Err(()); }
+                out.push_str("(?:");
+                let inner = &body[i + 1..j];
+                let parts: Vec<&str> = inner.split(',').collect();
+                for (k, part) in parts.iter().enumerate() {
+                    if k > 0 { out.push('|'); }
+                    out.push_str(&regex::escape(part));
+                }
+                out.push(')');
+                i = j + 1;
+            }
+            _ => {
+                out.push_str(&regex::escape(&body[i..i + 1]));
+                i += 1;
+            }
+        }
+    }
+    out.push('$');
+    Ok((out, names))
 }

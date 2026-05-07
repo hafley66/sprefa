@@ -11,6 +11,7 @@ pub mod rule;
 pub mod runtime_bridge;
 pub mod sprf_introspect;
 pub mod store;
+pub mod template;
 pub mod v2_ops;
 pub mod term;
 

@@ -267,6 +267,14 @@ pub struct AstNmComponent {
     lang:    SupportLang,
     pattern: Arc<Pattern<SupportLang>>,
     fixed:   Arc<str>,
+    /// Slow path: when Some, the body contains a SubPipe carveout and
+    /// the ast-grep Pattern is rebuilt per cursor against
+    /// `template::render_segments`. `pattern` / `fixed` are unused on
+    /// this path. Pattern recompile is more expensive than regex (full
+    /// tree-sitter Query build); v0 takes the cost — a future commit
+    /// can introduce a Pattern cache if usage warrants. (See bd note:
+    /// subpipe-pattern-recompile-cache.)
+    dyn_body: Option<(Arc<str>, Arc<Vec<crate::compile::lower::op_def::DslInterp>>)>,
     /// Layer 0c.2 — content-derived intern store. When `Some`, each
     /// match cursor stamps focal `value_id`/`at` and per-match coord
     /// terms alongside legacy `LO`/`HI`/raw_terms writes.
@@ -277,10 +285,20 @@ impl AstNmComponent {
     pub fn new(pat_src: String, lang: SupportLang) -> Self {
         let pattern = Arc::new(Pattern::new(&pat_src, lang));
         let fixed: Arc<str> = Arc::from(pattern.fixed_string().to_string().as_str());
-        Self { lang, pattern, fixed, store: None }
+        Self { lang, pattern, fixed, dyn_body: None, store: None }
     }
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
+    }
+    /// Slow path: route every cursor through render_segments → recompile.
+    /// Used when the body's interps include a SubPipe carveout.
+    pub fn with_dyn_body(
+        mut self,
+        body:    Arc<str>,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self {
+        self.dyn_body = Some((body, Arc::new(interps)));
+        self
     }
 }
 
@@ -289,6 +307,10 @@ impl Component for AstNmComponent {
 
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let store = self.store.clone();
+        let lang = self.lang;
+        let pattern = self.pattern.clone();
+        let fixed = self.fixed.clone();
+        let dyn_body = self.dyn_body.clone();
         par_render(batch, move |c| {
             // Substrate purification: matchers consume cursor.value bytes
             // (populated by an upstream `read`). No file IO here.
@@ -301,11 +323,25 @@ impl Component for AstNmComponent {
             let file_id = store.as_ref()
                 .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
                 .unwrap_or(0);
-            if !self.fixed.is_empty() && !src.contains(&*self.fixed) {
+            // Per-cursor pattern selection: static for term-only bodies,
+            // SubPipe-bearing bodies recompile the ast-grep Pattern per
+            // cursor against the rendered body.
+            let (cur_pat, cur_fixed): (Arc<Pattern<SupportLang>>, Arc<str>) = match &dyn_body {
+                None => (pattern.clone(), fixed.clone()),
+                Some((body, interps)) => {
+                    let pat_src = crate::template::render_segments_no_diag(
+                        body.as_ref(), interps, c,
+                    );
+                    let p = Pattern::new(&pat_src, lang);
+                    let fx: Arc<str> = Arc::from(p.fixed_string().to_string().as_str());
+                    (Arc::new(p), fx)
+                }
+            };
+            if !cur_fixed.is_empty() && !src.contains(&*cur_fixed) {
                 return Node::Done;
             }
-            let grep: AstGrep<StrDoc<SupportLang>> = self.lang.ast_grep(&src);
-            let hits: Vec<Node<Cursor>> = grep.root().find_all(&*self.pattern).map(|nm| {
+            let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
+            let hits: Vec<Node<Cursor>> = grep.root().find_all(&*cur_pat).map(|nm| {
                 let r = nm.range();
                 let mut child = c.clone();
                 child.set("LO", (r.start as u64).to_string());
@@ -619,7 +655,12 @@ pub struct ReComponent {
     on:            String,
     capture_names: Vec<String>,
     want_match:    bool,
+    /// Static path: pre-compiled regex shared across cursors.
     re:            Arc<regex::Regex>,
+    /// Slow path: when Some, the body contains a SubPipe carveout and
+    /// is recompiled per cursor against `template::render_segments`.
+    /// `re` is unused on this path.
+    dyn_body:      Option<(Arc<str>, Arc<Vec<crate::compile::lower::op_def::DslInterp>>)>,
     interner:      Option<Arc<Interner>>,
     /// Layer 0c.2 — content-derived intern store.
     store:         Option<Arc<SprfStore>>,
@@ -631,6 +672,7 @@ impl ReComponent {
             capture_names: captures.iter().map(|s| s.to_string()).collect(),
             want_match:    true,
             re:            Arc::new(regex::Regex::new(pat).expect("compile regex")),
+            dyn_body:      None,
             interner:      None,
             store:         None,
         }
@@ -643,24 +685,44 @@ impl ReComponent {
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
     }
+    /// Slow path: route every cursor through render_segments → recompile.
+    /// Used when the body's interps include a SubPipe carveout.
+    pub fn with_dyn_body(
+        mut self,
+        body:    Arc<str>,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self {
+        self.dyn_body = Some((body, Arc::new(interps)));
+        self
+    }
 }
 impl Component for ReComponent {
     type Next = Cursor;
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let re = self.re.clone();
+        let dyn_body = self.dyn_body.clone();
         let on = self.on.clone();
         let capture_names = self.capture_names.clone();
         let want_match = self.want_match;
         let interner = self.interner.clone();
         let store = self.store.clone();
         par_render(batch, move |c| {
-            // Substrate purification: re is pure. Default haystack is
-            // cursor.value bytes (populated by upstream `read` when the
-            // user wants file content; by any value-binding op
-            // otherwise). Explicit on-term form keeps the legacy
-            // term-text matcher route. file_id stays SYNTHETIC unless
-            // a downstream lookup resolves the value path; here we
-            // intern from the bytes we actually saw.
+            // Per-cursor regex selection: static `re` for term-only
+            // bodies, dynamic recompile when the body has a SubPipe
+            // carveout. Recompile failure drops the cursor.
+            let cur_re: std::borrow::Cow<'_, regex::Regex> = match &dyn_body {
+                None => std::borrow::Cow::Borrowed(re.as_ref()),
+                Some((body, interps)) => {
+                    let pat = crate::template::render_segments_no_diag(
+                        body.as_ref(), interps, c,
+                    );
+                    match regex::Regex::new(&pat) {
+                        Ok(r)  => std::borrow::Cow::Owned(r),
+                        Err(_) => return Node::Done,
+                    }
+                }
+            };
+            let re: &regex::Regex = cur_re.as_ref();
             let mut file_id: crate::FileId = 0;
             let (haystack, content_hash_arc): (String, Option<Arc<str>>) =
                 if on.is_empty() || on == "FS" {
@@ -753,25 +815,49 @@ fn shell_quote(s: &str) -> String {
     out.push('\'');
     out
 }
-fn render_template(template: &str, cur: &Cursor) -> String {
-    // Layer 0c.3 — accept the four host carveout forms:
-    //   ${X}       ${X?}      ${X.field}      ${&.field}
-    // The regex captures the full inner key (stem + optional `?` + optional
-    // `.field`); the lookup helper builds the Cursor::get-shaped key.
-    let re = regex::Regex::new(
-        r"\$\{(&\.[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*\??(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\}"
-    ).unwrap();
-    re.replace_all(template, |caps: &regex::Captures| {
-        let raw = &caps[1];
-        // Strip Bind-mode `?` from a bare `X?` for the lookup; field-form
-        // `X?.field` is illegal upstream and won't reach here, but defend
-        // by routing `X?` → `X` lookup (treating bind-at-render as read).
-        let key: std::borrow::Cow<'_, str> = match raw.split_once('.') {
-            None => match raw.strip_suffix('?') { Some(s) => s.into(), None => raw.into() },
-            Some(_) => raw.into(),
+/// Render a sh command body per cursor through the universal carveout
+/// renderer, then shell-quote each splice. The renderer emits raw
+/// (unquoted) values; this wrapper post-quotes Term + SubPipe slices so
+/// the resulting command line is shell-safe.
+///
+/// Quoting strategy: re-render with empty interp values to find the
+/// literal scaffolding; then walk interps and shell-quote each
+/// per-cursor render. We instead splice and quote inline to keep one
+/// pass: collect (lo, hi, rendered) triples and assemble.
+fn render_sh_template(
+    body: &str,
+    interps: &[crate::compile::lower::op_def::DslInterp],
+    cur: &Cursor,
+) -> String {
+    use crate::compile::lower::op_def::InterpKind;
+    use crate::template::drain_subpipe;
+    let mut out = String::with_capacity(body.len());
+    let mut head: usize = 0;
+    for interp in interps.iter() {
+        let lo = interp.range.lo as usize;
+        let hi = interp.range.hi as usize;
+        if lo > body.len() || hi > body.len() || lo < head { continue; }
+        out.push_str(&body[head..lo]);
+        let value: String = match &interp.kind {
+            InterpKind::Term { mode: _, field } => {
+                let key: std::borrow::Cow<'_, str> = match field {
+                    None    => (&*interp.name).into(),
+                    Some(f) => format!("{}.{}", interp.name, f).into(),
+                };
+                cur.get(&key).unwrap_or("").to_string()
+            }
+            InterpKind::SubPipe { lowered, .. } => {
+                match lowered {
+                    Some(p) => drain_subpipe(p.clone(), cur),
+                    None    => String::new(),
+                }
+            }
         };
-        shell_quote(cur.get(&key).unwrap_or(""))
-    }).into_owned()
+        out.push_str(&shell_quote(&value));
+        head = hi;
+    }
+    out.push_str(&body[head..]);
+    out
 }
 
 /// Run `sh -c <rendered>` per input cursor; act on stdout per `mode`.
@@ -779,33 +865,45 @@ fn render_template(template: &str, cur: &Cursor) -> String {
 /// per-batch parallelism). Tokio not needed.
 pub struct ShComponent {
     cmd_template: String,
+    interps:      Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
     mode:         ShMode,
     bind:         Option<String>,
 }
 impl ShComponent {
     pub fn emit_lines(cmd: &str) -> Self {
-        Self { cmd_template: cmd.into(), mode: ShMode::EmitLines, bind: None }
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()),
+               mode: ShMode::EmitLines, bind: None }
     }
     pub fn filter(cmd: &str) -> Self {
-        Self { cmd_template: cmd.into(), mode: ShMode::FilterByExit, bind: None }
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()),
+               mode: ShMode::FilterByExit, bind: None }
     }
     pub fn capture(cmd: &str, bind: &str) -> Self {
-        Self { cmd_template: cmd.into(), mode: ShMode::CaptureStdout, bind: Some(bind.into()) }
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()),
+               mode: ShMode::CaptureStdout, bind: Some(bind.into()) }
     }
     /// Capture stdout into `cursor.value` only (no named term). Use
     /// when the next op operates on `&.value` (e.g. `> split\`\n\``).
     pub fn capture_value(cmd: &str) -> Self {
-        Self { cmd_template: cmd.into(), mode: ShMode::CaptureStdout, bind: None }
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()),
+               mode: ShMode::CaptureStdout, bind: None }
     }
+    /// Stamp pre-walked interps. `ShDef::lower` calls this to thread
+    /// `${...}` carveouts through `render_sh_template`.
+    pub fn with_interps(
+        mut self,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self { self.interps = Arc::new(interps); self }
 }
 impl Component for ShComponent {
     type Next = Cursor;
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let template = self.cmd_template.clone();
+        let interps  = self.interps.clone();
         let mode     = self.mode;
         let bind     = self.bind.clone();
         par_render(batch, move |c| {
-            let cmd = render_template(&template, c);
+            let cmd = render_sh_template(&template, &interps, c);
             let res = std::process::Command::new("sh")
                 .arg("-c").arg(&cmd)
                 .output();
@@ -841,16 +939,26 @@ impl Component for ShComponent {
 
 /// `sh!` — author-declared impure shell. Per-cursor cmd run, stdout
 /// dropped, cursor passes through. Never cacheable.
-pub struct ShBangComponent { cmd_template: String }
+pub struct ShBangComponent {
+    cmd_template: String,
+    interps:      Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
+}
 impl ShBangComponent {
-    pub fn new(cmd: &str) -> Self { Self { cmd_template: cmd.into() } }
+    pub fn new(cmd: &str) -> Self {
+        Self { cmd_template: cmd.into(), interps: Arc::new(Vec::new()) }
+    }
+    pub fn with_interps(
+        mut self,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self { self.interps = Arc::new(interps); self }
 }
 impl Component for ShBangComponent {
     type Next = Cursor;
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let template = self.cmd_template.clone();
+        let interps  = self.interps.clone();
         par_render(batch, move |c| {
-            let cmd = render_template(&template, c);
+            let cmd = render_sh_template(&template, &interps, c);
             let _ = std::process::Command::new("sh")
                 .arg("-c").arg(&cmd)
                 .status();
@@ -1682,16 +1790,36 @@ impl Component for WriteFileComponent {
 /// `LO`/`HI` byte offsets pointing at the row's first capture.
 pub struct JsonComponent {
     compiled: Arc<crate::cst::dsls::json::JsonCompiled>,
+    /// Slow path: when Some, body+interps recompile per cursor. The
+    /// `compiled` slot is unused on this path. Recompile cost: full
+    /// brace-pattern compile. v0 takes the cost; cache when warranted.
+    dyn_body: Option<(
+        Arc<str>,
+        Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
+        crate::cst::dsls::json::TargetFormat,
+    )>,
     /// Layer 0c.2 — content-derived intern store.
     store:    Option<Arc<SprfStore>>,
 }
 
 impl JsonComponent {
     pub fn new(compiled: crate::cst::dsls::json::JsonCompiled) -> Self {
-        Self { compiled: Arc::new(compiled), store: None }
+        Self { compiled: Arc::new(compiled), dyn_body: None, store: None }
     }
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
+    }
+    /// Slow path: route every cursor through render_segments → recompile.
+    /// Fmt is captured here so the per-cursor compile rebuilds with the
+    /// same TargetFormat the static path would have used.
+    pub fn with_dyn_body(
+        mut self,
+        body:    Arc<str>,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+        fmt:     crate::cst::dsls::json::TargetFormat,
+    ) -> Self {
+        self.dyn_body = Some((body, Arc::new(interps), fmt));
+        self
     }
 }
 
@@ -1699,6 +1827,7 @@ impl Component for JsonComponent {
     type Next = Cursor;
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let compiled = self.compiled.clone();
+        let dyn_body = self.dyn_body.clone();
         let store = self.store.clone();
         par_render(batch, move |c| {
             // Substrate purification: cursor.value carries the bytes;
@@ -1709,7 +1838,28 @@ impl Component for JsonComponent {
             let file_id = store.as_ref()
                 .map(|s| s.intern_file(bytes, path_for_intern))
                 .unwrap_or(0);
-            let rows = compiled.match_grouped(bytes, 0);
+            // Per-cursor pattern selection: SubPipe-bearing bodies
+            // recompile JsonCompiled per cursor. JsonCompiled isn't Clone,
+            // so the dynamic arm builds owned; the static arm references
+            // the shared `compiled` Arc.
+            let dyn_built: Option<crate::cst::dsls::json::JsonCompiled> = match &dyn_body {
+                None => None,
+                Some((body, interps, fmt)) => {
+                    let pat_src = crate::template::render_segments_no_diag(
+                        body.as_ref(), interps, c,
+                    );
+                    let built = match crate::cst::dsls::json::JsonDsl::compile_typed(
+                        pat_src.as_bytes(),
+                    ) {
+                        Ok(b)  => b.with_format(*fmt),
+                        Err(_) => return Node::Done,
+                    };
+                    Some(built)
+                }
+            };
+            let cur_compiled: &crate::cst::dsls::json::JsonCompiled =
+                dyn_built.as_ref().unwrap_or_else(|| compiled.as_ref());
+            let rows = cur_compiled.match_grouped(bytes, 0);
             if rows.is_empty() { return Node::Done; }
             let hits: Vec<Node<Cursor>> = rows.into_iter().filter_map(|caps| {
                 if caps.is_empty() { return None; }
