@@ -913,6 +913,136 @@ impl Component for RepoComponent {
     }
 }
 
+/// Layer 5b.1 — `rev` op. Reads each upstream cursor's `Coord.repo`,
+/// resolves a list of revspecs (`:HEAD`, `:HEAD~5`, `:main`, `:v1.0`,
+/// …) against the `git2::Repository` at the configured `(slug, root)`,
+/// and emits one child cursor per (upstream cursor × revspec).
+///
+/// libgit2 is the right tool here: `revparse_single` is an O(1) hot
+/// path. The blob-walking ban (memory: project_v4_git_blob_walk_uses_shell)
+/// targets tree iteration, which lives in 5b.2 (shell `ls-tree`).
+///
+/// Bare form `rev()` defaults to `[":HEAD"]`. Multi-spec form
+/// `rev(:HEAD, :HEAD~1)` emits two cursors per upstream repo cursor.
+///
+/// Output cursor:
+///   - `cursor.value`    = oid hex (legacy Arc<str>)
+///   - `cursor.value_id` = StringId::of(oid hex)
+///   - `cursor.at`       = intern_ref(Coord { repo: parent.repo, rev,
+///                                            fs: 0, lo: 0, hi: 0 })
+///   - synthetic REV term = oid hex (when store attached)
+///   - legacy raw_terms REV = oid hex (back-compat for `${REV}` reads)
+pub struct RevComponent {
+    /// Atom revspecs to resolve per upstream cursor. Empty in the
+    /// constructor is sugared to `["HEAD"]` so bare `rev()` defaults
+    /// to HEAD.
+    revspecs: Vec<String>,
+    config:   Option<Arc<SprfConfig>>,
+    store:    Option<Arc<SprfStore>>,
+    /// Cache opened repos by slug. `git2::Repository` is `Send + !Sync`;
+    /// hence `Mutex`. The outer `Mutex<HashMap>` guards the cache itself.
+    repos: std::sync::Mutex<
+        std::collections::HashMap<String, Arc<std::sync::Mutex<git2::Repository>>>,
+    >,
+}
+
+impl RevComponent {
+    pub fn new(revspecs: Vec<String>) -> Self {
+        let revspecs = if revspecs.is_empty() {
+            vec!["HEAD".to_string()]
+        } else { revspecs };
+        Self {
+            revspecs, config: None, store: None,
+            repos: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+    pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
+        self.config = Some(c); self
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
+    }
+
+    fn open(&self, slug: &str, root: &PathBuf) -> Option<Arc<std::sync::Mutex<git2::Repository>>> {
+        let mut cache = self.repos.lock().unwrap();
+        if let Some(r) = cache.get(slug) { return Some(r.clone()); }
+        let repo = git2::Repository::open(root).ok()?;
+        let arc  = Arc::new(std::sync::Mutex::new(repo));
+        cache.insert(slug.to_string(), arc.clone());
+        Some(arc)
+    }
+}
+
+impl Component for RevComponent {
+    type Next = Cursor;
+    fn dispatch(
+        &self,
+        ctx:   &RenderCtx,
+        rows:  &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let Some(store) = self.store.as_ref() else { return };
+        let Some(cfg)   = self.config.as_ref() else { return };
+
+        for parent in rows {
+            // Resolve upstream Coord.repo via the intern store.
+            let parent_coord = match store.coord_of(parent.value.at) {
+                Some(c) => c,
+                None    => continue,
+            };
+            let repo_id = parent_coord.repo;
+            if repo_id == 0 { continue; }
+            let (slug, _remote) = match store.lookup_repo(repo_id) {
+                Some(m) => m,
+                None    => continue,
+            };
+            let slug_str: &str = slug.as_ref();
+            // Find (slug, root) in SprfConfig.
+            let root: PathBuf = match cfg.repos.iter().find(|r| r.slug == slug_str) {
+                Some(rc) => rc.root.clone(),
+                None     => continue,
+            };
+            let Some(repo_arc) = self.open(slug_str, &root) else { continue };
+
+            let mut emitted: Vec<Node<Cursor>> = Vec::with_capacity(self.revspecs.len());
+            {
+                let repo = repo_arc.lock().unwrap();
+                for spec in &self.revspecs {
+                    let obj = match repo.revparse_single(spec) {
+                        Ok(o)  => o,
+                        Err(_) => continue, // skip bad spec; no panic
+                    };
+                    let commit = match obj.peel_to_commit() {
+                        Ok(c)  => c,
+                        Err(_) => continue,
+                    };
+                    let oid_hex = commit.id().to_string();
+                    let ts      = commit.time().seconds();
+                    let rev_id  = store.intern_rev(repo_id, &oid_hex, ts);
+                    let coord   = Coord {
+                        repo: repo_id, rev: rev_id,
+                        fs: 0, lo: 0, hi: 0,
+                    };
+                    let oid_arc: Arc<str> = Arc::from(oid_hex.as_str());
+                    let mut child = parent.value.as_ref().clone();
+                    child.value    = oid_arc.clone();
+                    child.value_id = crate::StringId::of(&oid_hex);
+                    child.at       = store.intern_ref(coord);
+                    // Legacy raw_terms surface so `${REV}` reads still
+                    // resolve through Cursor::get.
+                    child.set_arc("REV", oid_arc.clone());
+                    child.set_synthetic("REV", &oid_hex, store);
+                    emitted.push(Node::Emit(Arc::new(child)));
+                }
+            }
+
+            if emitted.is_empty() { continue; }
+            let many = Node::Many(emitted);
+            splice_into_at(parent, many, ctx.depth + 1, ctx.expand_tick, queue, 0);
+        }
+    }
+}
+
 /// Per-input-cursor: read the path at `term`, walk it, emit one child
 /// Cursor per matching file with `REPO=basename(term)` + `FS=path`.
 /// Preserves all upstream terms on each emitted child.

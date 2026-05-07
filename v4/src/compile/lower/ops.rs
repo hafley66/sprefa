@@ -19,9 +19,9 @@ use crate::fact::{FactRead, FactWrite};
 use crate::term::Term;
 use crate::v2_ops::{
     AstNmComponent, CommentComponent, FsComponent, JsonComponent, PrintComponent,
-    ReComponent, ReadComponent, RepoComponent, ShBangComponent, ShComponent,
-    SplitComponent, VoidComponent, WriteCursorComponent, WriteFileComponent,
-    WriteMode,
+    ReComponent, ReadComponent, RepoComponent, RevComponent, ShBangComponent,
+    ShComponent, SplitComponent, VoidComponent, WriteCursorComponent,
+    WriteFileComponent, WriteMode,
 };
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
@@ -1002,6 +1002,61 @@ impl OperatorDef for RepoDef {
         }
         let mut comp = RepoComponent::new(roots, Vec::new());
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
+    }
+}
+
+// ─── rev ──────────────────────────────────────────────────────────────────
+// `rev()`              — defaults to :HEAD; one cursor per upstream repo.
+// `rev(:HEAD)`         — single revspec.
+// `rev(:HEAD, :HEAD~1)`— cartesian: one cursor per (upstream × spec).
+//
+// Reads upstream `Coord.repo` to find `(slug, root)` in `LowerCtx::config`,
+// opens the repo via `git2::Repository::open(root)`, resolves each spec
+// via `revparse_single` + `peel_to_commit`, interns `(repo, oid, ts) →
+// RevId`, emits cursor with `value = oid_hex`, REV term, Coord{repo, rev}.
+
+pub struct RevDef;
+
+const REV_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Variadic(&ArgKind::Atom),
+        name: "specs",
+        doc: "0 args = :HEAD; else atom revspecs (:HEAD, :HEAD~5, :main, :v1.0)",
+        required: false,
+    },
+];
+
+impl OperatorDef for RevDef {
+    fn name(&self) -> &'static str { "rev" }
+    fn paren_args(&self) -> &[ArgSig] { REV_SPEC }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["REV"] }
+
+    fn lower(
+        &self,
+        ctx:    &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let specs: Vec<String> = if args.is_empty() {
+            Vec::new() // ctor sugars to ["HEAD"]
+        } else {
+            let mut out = Vec::with_capacity(args.len());
+            for v in args {
+                match v {
+                    Value::Atom(s) => out.push(s.to_string()),
+                    _ => return Err(LowerError::Unknown(
+                        "rev: args must be :atom revspecs (e.g. :HEAD, :HEAD~5, :main)".into()
+                    )),
+                }
+            }
+            out
+        };
+        let mut comp = RevComponent::new(specs);
+        if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(c) = &ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
