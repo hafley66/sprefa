@@ -290,49 +290,65 @@ fn scene_c_cross_repo_render_with_template() {
 }
 
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-// SCENE D — Language-level form, BLOCKED ON #10
+// SCENE D — Language-level form, ACTIVE as of #10
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-// The same picture as scene C, written as sprf source. Today the host
-// parser carveout grammar inside backtick bodies accepts only term
-// refs (${X} / ${X.field} / ${&.field}), not arbitrary sub-pipelines.
-// Once #10 lands, ${...} can hold a full pipe; this test should flip
-// from `#[ignore]` to active.
+// The same picture as scenes B/C, written as sprf source. With #10
+// landed, ${...} accepts full sub-pipes; the host parser + walker
+// lower nested op chains; drain semantics fire at render time.
 //
-// Source intent (what we're building towards):
-//
-//   ```
-//   repo() > rev > fs`host.ts` > read >
-//     ast`comment`/* ${ MARK?(${&.value}) } */`` >
-//     write_cursor(:replace, :MARK) value=`type ${
-//         repo(:donor) > rev(:HEAD) > fs > read > ast`type $T = $V` > term(:T)
-//       } = u32;`
-//   ```
-//
-// What the language has to do:
-//   1. Recognize ${...} carveouts whose body is op-shaped (not term-shaped).
-//   2. Lower each such body into a nested Pipeline.
-//   3. At render-time, drain the nested pipe per outer cursor; the
-//      last_bound or focal value is the slot value.
-//   4. The rendered template becomes write_cursor's splice payload.
-//   5. Drift detection (already in Layer 3) gates the final write.
-//
-// References for the implementation:
-//   v4/src/compile/parse.rs           — host parser carveout grammar
-//   v4/src/compile/lower/dsl.rs       — DSL body lowering
-//   v4/src/v2_ops.rs (render_template) — template render today
-//   v4/src/v2_ops.rs (StrComponent)    — string-literal carveout
+// Two transclusion sources land into one rendered document. The doc
+// is the row written into rule(:doc)_facts. Asserts the substrate
+// composes file-source pipes inside a single render.
 #[test]
-#[ignore = "blocked on #10 (${pipe} sub-pipe lowering)"]
 fn scene_d_language_form_transclusion() {
-    // Intentionally body-less. When #10 lands, populate with:
-    //   1. A two-repo / one-rev fixture.
-    //   2. A host file with a `/* REPLACE_ME */` marker.
-    //   3. The sprf source above, parsed via host_parse + walk_program.
-    //   4. expand against a Cursor::default seed.
-    //   5. Assert the host file's marker bytes have been replaced by
-    //      a rendered "type Foo = u32;" string.
-    //
-    // The shape mirrors scene C's assertions; the unlock is purely the
-    // parser + lowerer accepting op-shaped carveout bodies.
-    panic!("scene D is aspirational — body unwritten until #10 lands");
+    use v4::compile::parse::host_parse;
+    use v4::compile::walk::walk_program;
+    use v4::lower::{default_registry, LowerCtx};
+    use effect_runtime::v2::{expand, ExpandOpts, MemQueue};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    std::fs::write(dir.join("a.txt"), b"alpha").unwrap();
+    std::fs::write(dir.join("b.txt"), b"bravo").unwrap();
+
+    // Source — language-level transclusion via two ${pipe} carveouts.
+    // Each carveout enumerates one file via `fs` + reads its content
+    // via `read`; the drained cursor's focal value renders into the
+    // outer template slot. The outer rule writes one row whose value
+    // is the rendered document.
+    let src = "rule(:doc) { `# A\n${ glob`a.txt` > read }\n# B\n${ glob`b.txt` > read }` };";
+
+    let (program, parse_diags) = host_parse(src);
+    assert!(parse_diags.is_empty(), "parse: {:?}", parse_diags);
+
+    let facts: Arc<dyn FactStore<Cursor>> = Arc::new(
+        effect_runtime::v2::MemFactStore::<Cursor>::new()
+    );
+    let reg = default_registry();
+    let mut ctx = LowerCtx::new(facts.clone(), dir.to_path_buf());
+
+    let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
+    assert!(
+        walk_diags.is_empty(),
+        "walk: {:?}",
+        walk_diags.iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
+
+    let queue: Arc<dyn effect_runtime::v2::QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    for pipe in pipes {
+        let inst = pipe.into_instance();
+        expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    }
+
+    assert_eq!(facts.len("doc"), 1, "expected one row in doc_facts");
+    let rows = facts.rows_of("doc");
+    let value = &*rows[0].value;
+
+    // Both transclusion targets resolved into the rendered doc.
+    assert!(value.contains("# A"), "missing # A header in: {:?}", value);
+    assert!(value.contains("alpha"), "missing alpha content: {:?}", value);
+    assert!(value.contains("# B"), "missing # B header in: {:?}", value);
+    assert!(value.contains("bravo"), "missing bravo content: {:?}", value);
 }
