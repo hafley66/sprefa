@@ -1223,6 +1223,17 @@ impl OperatorDef for CommentDef {
 // `write_cursor(:prepend)`      — insert at LO
 // `write_cursor(:wrap)`         — surround [LO, HI) with cursor.value on both sides
 //
+// Layer 3 — capture-internal mode. A second positional atom whose name
+// starts with an uppercase letter is treated as the NAME of a coord-
+// space capture; the splice byte range comes from `cursor.term(NAME).at`
+// instead of the legacy focal `FS`/`LO`/`HI` raw_terms. Mirrors v4's
+// existing convention that ALL-CAPS atoms = capture names, lowercase
+// atoms = mode/option keywords.
+//
+// `write_cursor(:replace, :NAME)`  — replace NAME's bytes with &.value
+// `write_cursor(:append,  :NAME)`  — insert &.value at NAME.HI
+// `write_cursor(:prepend, :NAME)`  — insert &.value at NAME.LO
+//
 // Aggregates per-FS in render_batch and applies right-to-left so
 // multi-cursor splices stay correct.
 
@@ -1232,6 +1243,11 @@ const WRITE_CURSOR_SPEC: &[ArgSig] = &[
     ArgSig {
         kind: ArgKind::Atom, name: "mode",
         doc: ":replace (default) | :append | :prepend | :wrap",
+        required: false,
+    },
+    ArgSig {
+        kind: ArgKind::Atom, name: "capture",
+        doc: ":NAME (uppercase) — splice into NAME's coord-space range",
         required: false,
     },
 ];
@@ -1263,7 +1279,28 @@ impl OperatorDef for WriteCursorDef {
                 "write_cursor: mode must be :atom".into()
             )),
         };
-        Ok(Pipe::new().step(Arc::new(WriteCursorComponent::new(mode))))
+        // Layer 3 — second positional atom is the capture name when its
+        // first char is uppercase.
+        let capture: Option<Arc<str>> = match args.get(1) {
+            None => None,
+            Some(Value::Atom(s)) => {
+                let first = s.chars().next();
+                if first.map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
+                    Some(s.clone())
+                } else {
+                    return Err(LowerError::Unknown(format!(
+                        "write_cursor: second atom must be an uppercase capture name, got :{}", s
+                    )));
+                }
+            }
+            Some(_) => return Err(LowerError::Unknown(
+                "write_cursor: second arg must be :atom".into()
+            )),
+        };
+        let mut comp = WriteCursorComponent::new(mode);
+        if let Some(name) = capture { comp = comp.on_capture(name); }
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 

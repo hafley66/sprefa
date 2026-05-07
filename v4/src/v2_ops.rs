@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
-    par_render, splice_into_at, Component, Node, QueueBackend,
+    par_render, splice_into_at, Component, Diag, Node, QueueBackend,
     QueueRow, RenderCtx,
 };
 use ignore::WalkBuilder;
@@ -1461,35 +1461,145 @@ impl Component for CommentComponent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteMode { Replace, Append, Prepend, Wrap }
 
-/// `> write_cursor(mode?)` — splice `cursor.value` into file at
-/// (FS, [LO, HI)). Aggregates per file and applies right-to-left so
+/// `> write_cursor(mode?, :NAME?)` — splice `cursor.value` into file
+/// at (FS, [LO, HI)). Aggregates per file and applies right-to-left so
 /// multi-cursor splices stay correct (left edits would shift right
 /// offsets). One file open + one write per (file, batch).
-pub struct WriteCursorComponent { pub mode: WriteMode }
+///
+/// Layer 3 — `:on=NAME` capture-internal mode. When `on_capture` is
+/// `Some(NAME)`, the splice byte range comes from `cursor.term(NAME).at`
+/// resolved through the SprfStore (`coord_of`) instead of the legacy
+/// `FS`/`LO`/`HI` raw_terms. Falls back to focal `FS`/`LO`/`HI` when no
+/// capture is named (existing behavior).
+///
+/// Drift-detection — before splicing, the on-disk file is hashed and
+/// compared to the FileId's `content_hash` from `intern_file`. Mismatch
+/// emits `write/file-drift` and skips the write to avoid clobbering.
+pub struct WriteCursorComponent {
+    pub mode:        WriteMode,
+    /// Layer 3 — NAME of a coord-space term to splice into. `None` =
+    /// focal-cursor splice (legacy behavior).
+    pub on_capture:  Option<Arc<str>>,
+    /// Layer 3 — coord-space store handle. Required for `on_capture`
+    /// resolution and drift-detection.
+    store:           Option<Arc<SprfStore>>,
+}
 impl WriteCursorComponent {
-    pub fn new(mode: WriteMode) -> Self { Self { mode } }
+    pub fn new(mode: WriteMode) -> Self {
+        Self { mode, on_capture: None, store: None }
+    }
+    /// Builder: set capture name for `:on=NAME` mode.
+    pub fn on_capture(mut self, name: impl Into<Arc<str>>) -> Self {
+        self.on_capture = Some(name.into()); self
+    }
+    /// Builder: attach the SprfStore. Required when `on_capture` is set
+    /// and powers drift-detection in either mode.
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s); self
+    }
 }
 impl Component for WriteCursorComponent {
     type Next = Cursor;
-    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         use std::collections::BTreeMap;
-        // Group hits by FS.
-        let mut by_file: BTreeMap<String, Vec<(usize, usize, Arc<str>)>> = BTreeMap::new();
+        // Group hits by FS path string. Each hit also carries its
+        // FileId (Some(_) when the capture/focal coord was resolved
+        // through the store; None on the legacy raw_terms path) so
+        // drift-detection can run per file.
+        let mut by_file: BTreeMap<String, (Option<crate::FileId>, Vec<(usize, usize, Arc<str>)>)>
+            = BTreeMap::new();
         let mut out: Vec<Node<Cursor>> = Vec::with_capacity(batch.len());
         for c in batch {
-            let (Some(fs), Some(lo_s), Some(hi_s)) = (c.get("FS"), c.get("LO"), c.get("HI")) else {
-                out.push(Node::Emit(Arc::new((*c).clone()))); continue;
-            };
-            let (Ok(lo), Ok(hi)) = (lo_s.parse::<usize>(), hi_s.parse::<usize>()) else {
-                out.push(Node::Emit(Arc::new((*c).clone()))); continue;
-            };
-            by_file.entry(fs.to_string()).or_default().push((lo, hi, c.value.clone()));
+            // Always pass the cursor through unchanged.
             out.push(Node::Emit(Arc::new((*c).clone())));
+
+            // ── capture-internal mode (Layer 3) ────────────────────
+            if let Some(name) = &self.on_capture {
+                let Some(store) = self.store.as_ref() else {
+                    ctx.diag.emit(Diag::warn(
+                        "write/no-store",
+                        format!("write_cursor(:on={}) requires SprfStore wiring", name),
+                    ));
+                    continue;
+                };
+                let name_id = crate::StringId::of(name.as_ref());
+                let Some(term) = c.term(name_id) else {
+                    ctx.diag.emit(Diag::warn(
+                        "write/missing-capture",
+                        format!("write_cursor(:on={}): cursor has no term named {}", name, name),
+                    ));
+                    continue;
+                };
+                let coord = match store.coord_of(term.at) {
+                    Some(c) => c,
+                    None => {
+                        ctx.diag.emit(Diag::warn(
+                            "write/no-coord",
+                            format!("write_cursor(:on={}): unknown Ref id", name),
+                        ));
+                        continue;
+                    }
+                };
+                if coord.fs == 0 {
+                    ctx.diag.emit(Diag::warn(
+                        "write/synthetic-target",
+                        format!("write_cursor(:on={}): capture has synthetic coord (no file)", name),
+                    ));
+                    continue;
+                }
+                let Some((_hash, path)) = store.lookup_file(coord.fs) else {
+                    ctx.diag.emit(Diag::warn(
+                        "write/no-coord",
+                        format!("write_cursor(:on={}): FileId {} not in _files", name, coord.fs),
+                    ));
+                    continue;
+                };
+                let entry = by_file.entry(path.to_string())
+                    .or_insert_with(|| (Some(coord.fs), Vec::new()));
+                entry.1.push((coord.lo as usize, coord.hi as usize, c.value.clone()));
+                continue;
+            }
+
+            // ── focal mode (legacy raw_terms path) ─────────────────
+            let (Some(fs), Some(lo_s), Some(hi_s)) =
+                (c.get("FS"), c.get("LO"), c.get("HI"))
+            else { continue };
+            let (Ok(lo), Ok(hi)) = (lo_s.parse::<usize>(), hi_s.parse::<usize>())
+            else { continue };
+            // Try to attach a FileId for drift-detection if the cursor
+            // has a focal coord registered with the store.
+            let file_id_opt: Option<crate::FileId> = self.store.as_ref()
+                .and_then(|s| s.coord_of(c.at))
+                .filter(|coord| coord.fs != 0)
+                .map(|coord| coord.fs);
+            let entry = by_file.entry(fs.to_string())
+                .or_insert((file_id_opt, Vec::new()));
+            // If different cursors on the same path disagree on FileId,
+            // first-seen wins; mismatches are unusual for the legacy
+            // path and the drift check still runs against that one.
+            if entry.0.is_none() { entry.0 = file_id_opt; }
+            entry.1.push((lo, hi, c.value.clone()));
         }
-        for (path, mut hits) in by_file {
+        for (path, (file_id_opt, mut hits)) in by_file {
             // Right-to-left order so earlier splice offsets remain valid.
             hits.sort_by(|a, b| b.0.cmp(&a.0));
             let Ok(bytes) = std::fs::read(&path) else { continue };
+            // ── drift-detection ──────────────────────────────────
+            // When the cursor came through intern_file we have a
+            // recorded content_hash. Re-hash the file on disk and skip
+            // the write if it has changed since intern.
+            if let (Some(file_id), Some(store)) = (file_id_opt, self.store.as_ref()) {
+                if let Some((expected_hash, _)) = store.lookup_file(file_id) {
+                    let on_disk_hash = *blake3::hash(&bytes).as_bytes();
+                    if on_disk_hash != expected_hash {
+                        ctx.diag.emit(Diag::warn(
+                            "write/file-drift",
+                            format!("{}: on-disk content changed since intern_file; skipping write", path),
+                        ));
+                        continue;
+                    }
+                }
+            }
             let mut buf: Vec<u8> = bytes;
             for (lo, hi, ins) in hits {
                 let lo = lo.min(buf.len());
