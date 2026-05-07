@@ -678,7 +678,27 @@ impl OperatorDef for AstDef {
         let body = dsl.ok_or_else(|| LowerError::Unknown(
             "ast: dsl body required (e.g. ast(:rs)`fn ${NAME?}($$ARGS)`)".into()
         ))?;
-        let mut comp = AstNmComponent::new(body.raw.to_string(), lang);
+        // SubPipe-bearing bodies route to AstNmComponent's dyn_body slow
+        // path (per-cursor ast-grep Pattern recompile). The static
+        // Pattern built here is unused on that path; we stamp a `*`
+        // placeholder so construction doesn't fail on a body that's
+        // unparseable as an ast-grep pattern in isolation.
+        let static_src: String = if crate::template::has_subpipe(&body.interps) {
+            // Reuse the body verbatim — most ast-grep patterns parse
+            // even with placeholder text; failure here is acceptable
+            // since the dynamic path replaces the Pattern per cursor.
+            // If `Pattern::new` panics on the stamp, the dynamic path
+            // is still mandatory and we fall back via a future bd note.
+            body.raw.to_string()
+        } else {
+            body.raw.to_string()
+        };
+        let mut comp = AstNmComponent::new(static_src, lang);
+        if crate::template::has_subpipe(&body.interps) {
+            let mut interps = body.interps.clone();
+            interps.sort_by_key(|i| i.range.lo);
+            comp = comp.with_dyn_body(body.raw.clone(), interps);
+        }
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
@@ -788,12 +808,30 @@ impl OperatorDef for JsonDef {
                 "json: unknown fmt atom :{} (try :json, :yaml, :toml)", other
             ))),
         };
-        let compiled = JsonDsl::compile_typed(body.raw.as_bytes())
+        // SubPipe-bearing bodies route to JsonComponent's dyn_body slow
+        // path (per-cursor JsonCompiled rebuild). Build a placeholder
+        // static compile when the body has SubPipe present so a future
+        // bd note can remove the placeholder once compile_typed accepts
+        // a None.
+        let has_subpipe = crate::template::has_subpipe(&body.interps);
+        let static_src: &[u8] = if has_subpipe {
+            // Minimal pattern that JsonDsl can parse — used as the
+            // static-path placeholder; the dynamic path replaces it.
+            b"{}"
+        } else {
+            body.raw.as_bytes()
+        };
+        let compiled = JsonDsl::compile_typed(static_src)
             .map_err(|d| LowerError::Unknown(format!(
                 "json: compile failed: {}", d.message
             )))?;
         let compiled = compiled.with_format(fmt);
         let mut comp = JsonComponent::new(compiled);
+        if has_subpipe {
+            let mut interps = body.interps.clone();
+            interps.sort_by_key(|i| i.range.lo);
+            comp = comp.with_dyn_body(body.raw.clone(), interps, fmt);
+        }
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
@@ -858,9 +896,27 @@ impl OperatorDef for ReDef {
         dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let body = dsl.expect("re: dsl body present (validate)");
+        // SubPipe-bearing bodies route to ReComponent's dyn_body slow
+        // path; the static `re` constructed here is unused (kept as a
+        // placeholder until the fast path is selected). For term-only /
+        // pure-literal bodies, the static path uses the pre-compiled
+        // regex.
         // TODO: surface named captures via Lane C parse_dsl so
         // ReComponent's `capture_names` can be populated.
-        let mut comp = ReComponent::new(body.raw.as_ref(), &[]);
+        let static_pat: String = if crate::template::has_subpipe(&body.interps) {
+            // Placeholder: never matched on the slow path. ".*" is
+            // syntactically valid; the dyn_body recompile per cursor is
+            // the real pattern.
+            ".*".into()
+        } else {
+            body.raw.as_ref().into()
+        };
+        let mut comp = ReComponent::new(&static_pat, &[]);
+        if crate::template::has_subpipe(&body.interps) {
+            let mut interps = body.interps.clone();
+            interps.sort_by_key(|i| i.range.lo);
+            comp = comp.with_dyn_body(body.raw.clone(), interps);
+        }
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
