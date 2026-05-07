@@ -1,6 +1,11 @@
-//! End-to-end v2-pipeline smoke. Builds Fs > AstNm > Count over a
-//! tmpdir of .rs files containing a known pattern. One assertion:
+//! End-to-end v2-pipeline smoke. Builds Fs > Read > AstNm > Count over
+//! a tmpdir of .rs files containing a known pattern. One assertion:
 //! the count matches what we planted.
+//!
+//! Substrate purification (2026-05-07): matchers consume cursor.value
+//! bytes. `read` is the gate that materializes them; the explicit
+//! `Read` step replaces the implicit FS-load that used to live inside
+//! AstNmComponent.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,7 +14,7 @@ use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
     expand, Component, ExpandOpts, MemQueue, PipeInstance, QueueBackend,
 };
-use v4::v2_ops::{AstNmComponent, CountComponent, FsComponent};
+use v4::v2_ops::{AstNmComponent, CountComponent, FsComponent, ReadComponent};
 
 #[test]
 fn fs_astnm_count_v2_pipeline() {
@@ -29,6 +34,7 @@ fn fs_astnm_count_v2_pipeline() {
             dir.path().to_path_buf(),
             64,
         )),
+        Arc::new(ReadComponent::new()),
         Arc::new(AstNmComponent::new("fn $NAME".to_string(), SupportLang::Rust)),
         Arc::new(CountComponent { count: counter.clone() }),
     ];

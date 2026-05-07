@@ -290,16 +290,17 @@ impl Component for AstNmComponent {
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let store = self.store.clone();
         par_render(batch, move |c| {
-            let Some(path) = c.get("FS") else { return Node::Done };
-            let Ok(bytes)  = std::fs::read(path) else { return Node::Done };
-            // tree-sitter takes any bytes; UTF-8 errors → ERROR nodes.
-            // Layer 0c.2 — intern file (content-keyed) once per parsed
-            // file when a store is attached; reuse the FileId across
-            // every match cursor emitted from this parse.
+            // Substrate purification: matchers consume cursor.value bytes
+            // (populated by an upstream `read`). No file IO here.
+            if c.value.is_empty() { return Node::Done; }
+            let src: String = c.value.as_ref().to_string();
+            // FS term, when present, names the originating path; used as
+            // the first_path for content-keyed file intern. Absence is OK
+            // (file_id falls back to 0 / empty path).
+            let path_for_intern: &str = c.get("FS").unwrap_or("");
             let file_id = store.as_ref()
-                .map(|s| s.intern_file(&bytes, path))
+                .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
                 .unwrap_or(0);
-            let src: String = unsafe { String::from_utf8_unchecked(bytes) };
             if !self.fixed.is_empty() && !src.contains(&*self.fixed) {
                 return Node::Done;
             }
@@ -371,12 +372,14 @@ impl Component for MultiAstNmComponent {
         let lang = self.lang;
         let store = self.store.clone();
         par_render(batch, move |c| {
-            let Some(path) = c.get("FS") else { return Node::Done };
-            let Ok(bytes)  = std::fs::read(path) else { return Node::Done };
+            // Substrate purification: cursor.value carries the bytes;
+            // upstream `read` is the gate that materializes them.
+            if c.value.is_empty() { return Node::Done; }
+            let src: String = c.value.as_ref().to_string();
+            let path_for_intern: &str = c.get("FS").unwrap_or("");
             let file_id = store.as_ref()
-                .map(|s| s.intern_file(&bytes, path))
+                .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
                 .unwrap_or(0);
-            let src: String = unsafe { String::from_utf8_unchecked(bytes) };
             let any_fires = pats.iter().any(|(_, _, fx)| fx.is_empty() || src.contains(&**fx));
             if !any_fires { return Node::Done; }
             let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
@@ -651,24 +654,25 @@ impl Component for ReComponent {
         let interner = self.interner.clone();
         let store = self.store.clone();
         par_render(batch, move |c| {
-            // file_id stays SYNTHETIC unless we actually read a file
-            // (on == FS). Term matches work on cursor.value text and
-            // don't carry a coord-fs on the parent today.
+            // Substrate purification: re is pure. Default haystack is
+            // cursor.value bytes (populated by upstream `read` when the
+            // user wants file content; by any value-binding op
+            // otherwise). Explicit on-term form keeps the legacy
+            // term-text matcher route. file_id stays SYNTHETIC unless
+            // a downstream lookup resolves the value path; here we
+            // intern from the bytes we actually saw.
             let mut file_id: crate::FileId = 0;
             let (haystack, content_hash_arc): (String, Option<Arc<str>>) =
-                if on == "FS" {
-                    let Some(path) = c.get("FS") else { return Node::Done };
-                    let Ok(bytes) = std::fs::read(path) else { return Node::Done };
-                    let h_hex = blake3::hash(&bytes).to_hex().to_string();
+                if on.is_empty() || on == "FS" {
+                    if c.value.is_empty() { return Node::Done; }
+                    let bytes = c.value.as_bytes();
+                    let h_hex = blake3::hash(bytes).to_hex().to_string();
                     let h_arc: Option<Arc<str>> = interner.as_ref().map(|i| i.intern(&h_hex));
                     if let Some(s) = &store {
-                        file_id = s.intern_file(&bytes, path);
+                        let path_for_intern: &str = c.get("FS").unwrap_or("");
+                        file_id = s.intern_file(bytes, path_for_intern);
                     }
-                    let s_text = match String::from_utf8(bytes) {
-                        Ok(s) => s,
-                        Err(e) => unsafe { String::from_utf8_unchecked(e.into_bytes()) },
-                    };
-                    (s_text, h_arc)
+                    (c.value.as_ref().to_string(), h_arc)
                 } else {
                     match c.get(&on) {
                         Some(s) => (s.to_string(), None),
@@ -1697,12 +1701,15 @@ impl Component for JsonComponent {
         let compiled = self.compiled.clone();
         let store = self.store.clone();
         par_render(batch, move |c| {
-            let Some(path) = c.get("FS") else { return Node::Done };
-            let Ok(bytes)  = std::fs::read(path) else { return Node::Done };
+            // Substrate purification: cursor.value carries the bytes;
+            // upstream `read` is the gate that materializes them.
+            if c.value.is_empty() { return Node::Done; }
+            let bytes = c.value.as_bytes();
+            let path_for_intern: &str = c.get("FS").unwrap_or("");
             let file_id = store.as_ref()
-                .map(|s| s.intern_file(&bytes, path))
+                .map(|s| s.intern_file(bytes, path_for_intern))
                 .unwrap_or(0);
-            let rows = compiled.match_grouped(&bytes, 0);
+            let rows = compiled.match_grouped(bytes, 0);
             if rows.is_empty() { return Node::Done; }
             let hits: Vec<Node<Cursor>> = rows.into_iter().filter_map(|caps| {
                 if caps.is_empty() { return None; }

@@ -162,8 +162,14 @@ fn re_component_backfills_named_group_lo_hi_fs() {
             .with_sprf_store(store.clone()),
     );
 
+    // Substrate purification: ReComponent consumes cursor.value bytes.
+    // Upstream of `re` would normally be `... > read`; here we seed
+    // value directly to the file content.
     let mut seed = Cursor::default();
     seed.set("FS", path.to_string_lossy().as_ref());
+    seed.value = std::sync::Arc::<str>::from(
+        std::fs::read_to_string(&path).unwrap().as_str(),
+    );
 
     let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     struct Sink(Arc<Mutex<Vec<Cursor>>>);
