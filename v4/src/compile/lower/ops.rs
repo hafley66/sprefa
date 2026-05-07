@@ -438,12 +438,6 @@ impl OperatorDef for GlobDef {
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
     fn dsl_required(&self) -> bool { true }
 
-    /// `<NAME>` glob capture sigil. Each occurrence binds NAME at
-    /// runtime; the analyzer treats them as bound at the glob step.
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        scan_glob_captures(raw)
-    }
-
     fn lower(
         &self,
         _ctx:   &LowerCtx,
@@ -455,43 +449,171 @@ impl OperatorDef for GlobDef {
         let body = dsl.ok_or_else(|| LowerError::Unknown(
             "glob: pattern required — use backtick body, e.g. glob`**/*.rs`".into()
         ))?;
-        let pattern: Arc<str> = body.raw.clone();
-        let mut comp = GlobComponent::new(pattern);
+        let regex_src = glob_body_to_regex(body)?;
+        let re = regex::Regex::new(&regex_src).map_err(|e| LowerError::Unknown(
+            format!("glob: regex compile failure for translated pattern {regex_src:?}: {e}")
+        ))?;
+        let mut comp = GlobComponent::new(re);
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
-/// Scan a glob body for `<NAME>` directory-capture sigils.
-fn scan_glob_captures(raw: &str) -> Vec<DslBinder> {
+/// Translate a glob body (with universal `${X?}` carveouts) to an
+/// anchored Rust regex string.
+///
+/// Glob → regex table:
+///   `*`        → `[^/]*`
+///   `**`       → `.*`
+///   `?`        → `[^/]`
+///   `[abc]`    → `[abc]`        (passed through, glob char-class shape)
+///   `{a,b}`    → `(?:a|b)`      (alternation)
+///   literal    → escaped (regex::escape one char at a time)
+///   `${X?}`    → `(?P<X>[^/]*)`
+///   `$$${X?}`  → `(?P<X>.*)`    (3 leading `$` chars consumed in walk)
+///   `${X}`     → rejected for now (`lower/glob-read-not-supported`)
+///   `${...}`   → SubPipe form rejected (`lower/glob-subpipe-not-supported`)
+///
+/// The result is end-anchored via trailing `$` (so the pattern's tail
+/// must align with the value's end), but not start-anchored — the regex
+/// engine walks for the leftmost match. This mirrors globset's
+/// "match the path's basename / trailing segments" semantics: a bare
+/// `${STEM?}.${EXT?}` matches the trailing basename of a path-shape
+/// value, while `**/*.rs` matches `^.*/[^/]*\.rs$`-style suffix.
+/// Interps come pre-extracted by the universal carveout pre-pass on
+/// `DslBody.interps`; the literal walk skips their byte ranges (and the
+/// `$$$` prefix when present).
+fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
+    use crate::compile::lower::op_def::{InterpKind, InterpMode};
+
+    let raw = body.raw.as_ref();
     let bytes = raw.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0usize;
+
+    // Index interps by their lo offset for O(1) lookup at the literal
+    // walk's current position. Each entry remembers whether this interp
+    // is preceded by `$$$` (multi-segment greedy).
+    let mut by_lo: std::collections::BTreeMap<u32, &crate::compile::lower::op_def::DslInterp>
+        = std::collections::BTreeMap::new();
+    for it in &body.interps { by_lo.insert(it.range.lo, it); }
+
+    let mut out = String::with_capacity(raw.len() + 8);
+
+    let mut i: usize = 0;
     while i < bytes.len() {
-        if bytes[i] == b'<' {
-            let lo = i;
-            let mut j = i + 1;
-            if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
-                let name_lo = j;
-                while j < bytes.len()
-                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
-                {
-                    j += 1;
+        // Detect interp at this position. Two cases:
+        //   • `${...}` directly at i.
+        //   • `$$${...}` — three `$` then `${...}`. The interp starts
+        //     at i + 3 (the inner `${`); we consume the leading `$$$`
+        //     here and let the inner interp branch run.
+        // `$$${X?}` form. The body literally has 3 `$` chars then `{X?}`.
+        // The universal pre-pass treats only the trailing `${X?}` as an
+        // interp (because `${` is the trigger); its `lo` points at the
+        // third `$`. From this walk's standpoint, the leading two `$`
+        // chars at positions [i, i+1] live in the literal stream and
+        // signal "promote this Bind interp to multi-segment".
+        let triple_dollar = i + 3 < bytes.len()
+            && bytes[i] == b'$' && bytes[i + 1] == b'$'
+            && bytes[i + 2] == b'$' && bytes[i + 3] == b'{';
+        let interp_lo = if triple_dollar { (i + 2) as u32 } else { i as u32 };
+        if let Some(interp) = by_lo.get(&interp_lo) {
+            // Range covers the full `${...}` span (no $$$ prefix).
+            match &interp.kind {
+                InterpKind::Term { mode, field } => {
+                    if field.is_some() {
+                        return Err(LowerError::Unknown(format!(
+                            "glob: dot-access in body not supported (`${{{}.{}}}`); \
+                             use a separate term step",
+                            interp.name,
+                            field.as_ref().map(|f| f.as_ref()).unwrap_or("")
+                        )));
+                    }
+                    match mode {
+                        InterpMode::Bind => {
+                            // `${X?}` → named capture; multi-segment if `$$$`.
+                            if triple_dollar {
+                                out.push_str("(?P<");
+                                out.push_str(interp.name.as_ref());
+                                out.push_str(">.*)");
+                            } else {
+                                out.push_str("(?P<");
+                                out.push_str(interp.name.as_ref());
+                                out.push_str(">[^/]*)");
+                            }
+                        }
+                        InterpMode::Read => {
+                            return Err(LowerError::Unknown(format!(
+                                "lower/glob-read-not-supported: `${{{}}}` Read \
+                                 mode in glob body not supported in this slice",
+                                interp.name
+                            )));
+                        }
+                    }
                 }
-                if j < bytes.len() && bytes[j] == b'>' {
-                    let name = &raw[name_lo..j];
-                    out.push(DslBinder {
-                        name:  Arc::<str>::from(name),
-                        range: ByteRange { lo: lo as u32, hi: (j + 1) as u32 },
-                    });
-                    i = j + 1;
-                    continue;
+                InterpKind::SubPipe { .. } => {
+                    return Err(LowerError::Unknown(
+                        "lower/glob-subpipe-not-supported: `${ <pipe> }` in glob \
+                         body not supported in this slice".into()
+                    ));
                 }
             }
+            // Advance past the `$$$` (if any) plus the full interp span.
+            i = interp.range.hi as usize;
+            continue;
         }
-        i += 1;
+
+        // Literal walk: glob metachar translation table.
+        let b = bytes[i];
+        match b {
+            b'*' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                    out.push_str(".*");
+                    i += 2;
+                } else {
+                    out.push_str("[^/]*");
+                    i += 1;
+                }
+            }
+            b'?' => { out.push_str("[^/]"); i += 1; }
+            b'[' => {
+                // Pass through char-class verbatim until matching `]`.
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j] != b']' { j += 1; }
+                if j >= bytes.len() {
+                    return Err(LowerError::Unknown(
+                        "glob: unterminated `[`".into()
+                    ));
+                }
+                out.push_str(&raw[i..=j]);
+                i = j + 1;
+            }
+            b'{' => {
+                // `{a,b,c}` → `(?:a|b|c)`. No nested `{...}` recognized.
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j] != b'}' { j += 1; }
+                if j >= bytes.len() {
+                    return Err(LowerError::Unknown(
+                        "glob: unterminated `{`".into()
+                    ));
+                }
+                out.push_str("(?:");
+                let inner = &raw[i + 1..j];
+                let parts: Vec<&str> = inner.split(',').collect();
+                for (k, part) in parts.iter().enumerate() {
+                    if k > 0 { out.push('|'); }
+                    out.push_str(&regex::escape(part));
+                }
+                out.push(')');
+                i = j + 1;
+            }
+            _ => {
+                // Single-char escape.
+                out.push_str(&regex::escape(&raw[i..i + 1]));
+                i += 1;
+            }
+        }
     }
-    out
+    out.push('$');
+    Ok(out)
 }
 
 // ─── ast ──────────────────────────────────────────────────────────────────
