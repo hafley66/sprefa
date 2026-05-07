@@ -165,6 +165,42 @@ pub struct FactTable {
     pub rows:  Vec<FactRow>,
 }
 
+// ── refs_at — Layer 4 (subset) ───────────────────────────────────────
+//
+// Given (path, byte) resolve every `_refs` row whose coord covers the
+// byte under the FileId that `path` resolves to. Each hit echoes the
+// content-derived `ref_id` plus a wire copy of the resolved coord with
+// `path_of(fs)` projected back to its first-seen path.
+//
+// Auto-views (CREATE VIEW <rule>_resolved) and LSP hover side-rail
+// enrichment of these hits are deferred until rule emission to
+// <rule>_facts is verified live in v4.
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RefsAtReq  { pub path: String, pub byte: u32 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RefsAtResp { pub hits: Vec<RefHit> }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RefHit {
+    pub ref_id: u64,
+    pub coord:  CoordWire,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CoordWire {
+    pub repo:    u32,
+    pub rev:     u32,
+    pub fs:      u64,
+    /// `path_of(fs)` resolution. None if the FileId has no `_files` row
+    /// (e.g. the synthetic sentinel never gets surfaced here, but a
+    /// foreign FileId in a stripped store would).
+    pub fs_path: Option<String>,
+    pub lo:      u32,
+    pub hi:      u32,
+}
+
 // ───────────────────────────────────────────────────────────────────
 // Codegen macro
 // ───────────────────────────────────────────────────────────────────
@@ -327,6 +363,7 @@ sprf_rpc! {
     fn lsp_locate_dsl (LspLocateDslReq) -> LspLocateDslResp => "/lsp/locate-dsl";
     fn run            (RunReq)          -> RunReport     => "/run";
     fn get_fact_table (GetFactTableReq) -> FactTable     => "/facts";
+    fn refs_at        (RefsAtReq)       -> RefsAtResp    => "/refs-at";
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -477,6 +514,35 @@ impl SprfHandlers for SprfState {
             pipes:       n,
             tables,
         })
+    }
+
+    async fn refs_at(&self, req: RefsAtReq) -> Result<RefsAtResp, SprfError> {
+        let store = &self.sprf_store;
+        let file = match store.find_file_by_path(&req.path) {
+            Some(f) => f,
+            None    => return Ok(RefsAtResp { hits: Vec::new() }),
+        };
+        let refs = store.find_refs_in(file, req.byte);
+        let mut hits = Vec::with_capacity(refs.len());
+        for r in refs {
+            let coord = match store.coord_of(r) {
+                Some(c) => c,
+                None    => continue,
+            };
+            let fs_path = store.path_of(coord.fs).map(|a| a.to_string());
+            hits.push(RefHit {
+                ref_id: r.0,
+                coord: CoordWire {
+                    repo:    coord.repo,
+                    rev:     coord.rev,
+                    fs:      coord.fs,
+                    fs_path,
+                    lo:      coord.lo,
+                    hi:      coord.hi,
+                },
+            });
+        }
+        Ok(RefsAtResp { hits })
     }
 
     async fn get_fact_table(&self, req: GetFactTableReq) -> Result<FactTable, SprfError> {
