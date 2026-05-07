@@ -22,9 +22,13 @@ use effect_runtime::v2::{
     QueueBackend, RenderCtx,
 };
 
-use v4::Cursor;
+use effect_runtime::v2::{FactStore, MemFactStore};
+
+use v4::{Coord, Cursor};
 use v4::lower::op_def::{default_plain_dsl_parse, InterpMode};
 use v4::pipeline::StrTemplateComponent;
+use v4::store::SprfStore;
+use v4::v2_ops::ReComponent;
 
 #[test]
 fn scanner_parses_dot_access_and_focal_forms() {
@@ -105,6 +109,98 @@ fn template_renders_focal_fs_and_term_value() {
     let out = collect(pipe, cur);
     assert_eq!(out.len(), 1);
     assert_eq!(&*out[0].value, "/tmp/foo.rs :: foobar");
+}
+
+#[test]
+fn term_dot_access_lo_hi_fs_resolve_via_raw_terms() {
+    // Replicates the emit-site pattern: set_at + parallel <NAME>_LO/HI/FS
+    // raw_terms writes. Verifies Cursor::get dot-access dispatches to the
+    // backfilled columns.
+    let inner: Arc<dyn FactStore<Cursor>> =
+        Arc::new(MemFactStore::<Cursor>::new());
+    let store = SprfStore::new(inner);
+    let file_id = store.intern_file(b"hello world", "/tmp/x.rs");
+    let coord = Coord { repo: 0, rev: 0, fs: file_id, lo: 10, hi: 15 };
+
+    let mut cur = Cursor::default();
+    cur.set_at("NAME", "value", coord, &store);
+    cur.set("NAME_LO", coord.lo.to_string());
+    cur.set("NAME_HI", coord.hi.to_string());
+    if let Some(path) = store.path_of(coord.fs) {
+        cur.set("NAME_FS", &*path);
+    }
+
+    assert_eq!(cur.get("NAME.lo"), Some("10"));
+    assert_eq!(cur.get("NAME.hi"), Some("15"));
+    assert_eq!(cur.get("NAME.fs"), Some("/tmp/x.rs"));
+    // Bare term value still readable via legacy raw_terms (set_at does
+    // NOT write the bare <NAME> column; emitters separately call set).
+    assert!(cur.get("NAME.zorp").is_none());
+}
+
+#[test]
+fn re_component_backfills_named_group_lo_hi_fs() {
+    use std::io::Write;
+    use effect_runtime::v2::{
+        expand, ExpandOpts, MemQueue, PipeInstance, QueueBackend,
+    };
+
+    // Tempfile holding `fn foo` and `fn bar`. ReComponent named group X
+    // captures the identifier after `fn `.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.rs");
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(b"fn foo() {}\nfn bar() {}\n").unwrap();
+    drop(f);
+
+    let inner: Arc<dyn FactStore<Cursor>> =
+        Arc::new(MemFactStore::<Cursor>::new());
+    let store = SprfStore::new(inner);
+
+    let re = Arc::new(
+        ReComponent::new(r"fn (?P<X>\w+)", &["X"])
+            .with_sprf_store(store.clone()),
+    );
+
+    let mut seed = Cursor::default();
+    seed.set("FS", path.to_string_lossy().as_ref());
+
+    let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
+    struct Sink(Arc<Mutex<Vec<Cursor>>>);
+    impl Component for Sink {
+        type Next = Cursor;
+        fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.0.lock().unwrap().push(c.clone()); Node::Done
+        }
+    }
+    let steps: Vec<Arc<dyn Component<Next = Cursor>>> =
+        vec![re, Arc::new(Sink(sink.clone()))];
+    let inst = PipeInstance::new(steps);
+    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(&inst, q, vec![Arc::new(seed)], ExpandOpts::default());
+
+    let hits = sink.lock().unwrap().clone();
+    assert_eq!(hits.len(), 2, "two `fn <name>` matches");
+
+    // First match: `fn foo` at bytes 0..6, group X at 3..6.
+    let h0 = &hits[0];
+    assert_eq!(h0.get("X"),    Some("foo"));
+    assert_eq!(h0.get("X.lo"), Some("3"));
+    assert_eq!(h0.get("X.hi"), Some("6"));
+    assert_eq!(h0.get("X.fs"), Some(path.to_string_lossy().as_ref()));
+
+    // MATCH backfill too.
+    assert_eq!(h0.get("MATCH.lo"), Some("0"));
+    assert_eq!(h0.get("MATCH.hi"), Some("6"));
+    assert_eq!(h0.get("MATCH.fs"), Some(path.to_string_lossy().as_ref()));
+
+    // Second match: `fn bar` at bytes 12..18, group X at 15..18.
+    let h1 = &hits[1];
+    assert_eq!(h1.get("X.lo"), Some("15"));
+    assert_eq!(h1.get("X.hi"), Some("18"));
+
+    // Negative: an unstamped sub-field stays None.
+    assert!(h0.get("X.zorp").is_none());
 }
 
 fn collect(p: Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {

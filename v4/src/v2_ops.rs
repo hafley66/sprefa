@@ -194,6 +194,12 @@ impl Component for AstNmComponent {
                     // Per-match coord term — `MATCH.at`/`MATCH.value`
                     // reach through one Term entry instead of LO/HI cols.
                     child.set_at("MATCH", slice, coord, store);
+                    // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
+                    child.set("MATCH_LO", coord.lo.to_string());
+                    child.set("MATCH_HI", coord.hi.to_string());
+                    if let Some(path) = store.path_of(coord.fs) {
+                        child.set("MATCH_FS", &*path);
+                    }
                 }
                 Node::Emit(Arc::new(child))
             }).collect();
@@ -265,6 +271,12 @@ impl Component for MultiAstNmComponent {
                         child.at = store.intern_ref(coord);
                         child.value_id = store.intern_string(slice);
                         child.set_at("MATCH", slice, coord, store);
+                        // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
+                        child.set("MATCH_LO", coord.lo.to_string());
+                        child.set("MATCH_HI", coord.hi.to_string());
+                        if let Some(path) = store.path_of(coord.fs) {
+                            child.set("MATCH_FS", &*path);
+                        }
                         // PAT label is synthetic (no source coord; it
                         // names the pattern not a span of source).
                         child.set_synthetic("PAT", label.as_ref(), store);
@@ -560,6 +572,12 @@ impl Component for ReComponent {
                     child.value_id = store.intern_string(m0.as_str());
                     if want_match {
                         child.set_at("MATCH", m0.as_str(), match_coord, store);
+                        // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
+                        child.set("MATCH_LO", match_coord.lo.to_string());
+                        child.set("MATCH_HI", match_coord.hi.to_string());
+                        if let Some(path) = store.path_of(match_coord.fs) {
+                            child.set("MATCH_FS", &*path);
+                        }
                     }
                     if let Some(arc) = &content_hash_arc {
                         // CONTENT_HASH is per-file metadata, not a span;
@@ -573,6 +591,12 @@ impl Component for ReComponent {
                                 lo: g.start() as u32, hi: g.end() as u32,
                             };
                             child.set_at(name, g.as_str(), group_coord, store);
+                            // Term-side coord projection for ${<name>.lo}/${<name>.hi}/${<name>.fs}.
+                            child.set(&format!("{}_LO", name), group_coord.lo.to_string());
+                            child.set(&format!("{}_HI", name), group_coord.hi.to_string());
+                            if let Some(path) = store.path_of(group_coord.fs) {
+                                child.set(&format!("{}_FS", name), &*path);
+                            }
                         }
                     }
                 }
@@ -1051,6 +1075,12 @@ impl Component for CommentComponent {
                 child.at = store.intern_ref(coord);
                 child.value_id = store.intern_string(slice);
                 child.set_at("MATCH", slice, coord, store);
+                // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
+                child.set("MATCH_LO", coord.lo.to_string());
+                child.set("MATCH_HI", coord.hi.to_string());
+                if let Some(path) = store.path_of(coord.fs) {
+                    child.set("MATCH_FS", &*path);
+                }
             }
             Node::Emit(Arc::new(child))
         }).collect();
@@ -1206,6 +1236,12 @@ impl Component for JsonComponent {
                             lo: *lo as u32, hi: *hi as u32,
                         };
                         child.set_at(name.as_ref(), value.as_ref(), coord, store);
+                        // Term-side coord projection for ${<name>.lo}/${<name>.hi}/${<name>.fs}.
+                        child.set(&format!("{}_LO", name), coord.lo.to_string());
+                        child.set(&format!("{}_HI", name), coord.hi.to_string());
+                        if let Some(path) = store.path_of(coord.fs) {
+                            child.set(&format!("{}_FS", name), &*path);
+                        }
                     }
                 }
                 Some(Node::Emit(Arc::new(child)))
