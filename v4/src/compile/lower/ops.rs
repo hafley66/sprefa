@@ -449,6 +449,18 @@ impl OperatorDef for GlobDef {
         let body = dsl.ok_or_else(|| LowerError::Unknown(
             "glob: pattern required — use backtick body, e.g. glob`**/*.rs`".into()
         ))?;
+        // SubPipe-bearing bodies route through the dynamic Component.
+        // Per-cursor: drain inner pipes, render body, re-translate to
+        // regex, match. Term-only bodies stay on the static fast path.
+        if crate::template::has_subpipe(&body.interps) {
+            let mut interps = body.interps.clone();
+            interps.sort_by_key(|i| i.range.lo);
+            let mut comp = crate::pipeline::GlobDynamicComponent::new(
+                body.raw.clone(), interps,
+            );
+            if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+            return Ok(Pipe::new().step(Arc::new(comp)));
+        }
         let regex_src = glob_body_to_regex(body)?;
         let re = regex::Regex::new(&regex_src).map_err(|e| LowerError::Unknown(
             format!("glob: regex compile failure for translated pattern {regex_src:?}: {e}")
@@ -458,6 +470,7 @@ impl OperatorDef for GlobDef {
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
+
 
 /// Translate a glob body (with universal `${X?}` carveouts) to an
 /// anchored Rust regex string.
@@ -472,7 +485,8 @@ impl OperatorDef for GlobDef {
 ///   `${X?}`    → `(?P<X>[^/]*)`
 ///   `$$${X?}`  → `(?P<X>.*)`    (3 leading `$` chars consumed in walk)
 ///   `${X}`     → rejected for now (`lower/glob-read-not-supported`)
-///   `${...}`   → SubPipe form rejected (`lower/glob-subpipe-not-supported`)
+///   `${...}`   → SubPipe form: handled by `GlobDynamicComponent` path
+///                in `GlobDef::lower`; never reaches this translator.
 ///
 /// The result is end-anchored via trailing `$` (so the pattern's tail
 /// must align with the value's end), but not start-anchored — the regex
@@ -550,9 +564,12 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
                     }
                 }
                 InterpKind::SubPipe { .. } => {
+                    // Unreachable in the static path: GlobDef::lower
+                    // routes SubPipe-bearing bodies to GlobDynamicComponent
+                    // before this translator runs. Defensive bail-out.
                     return Err(LowerError::Unknown(
-                        "lower/glob-subpipe-not-supported: `${ <pipe> }` in glob \
-                         body not supported in this slice".into()
+                        "glob: internal — SubPipe interp reached static \
+                         translator (should have routed to dynamic path)".into()
                     ));
                 }
             }
