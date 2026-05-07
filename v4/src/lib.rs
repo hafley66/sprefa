@@ -304,8 +304,40 @@ impl Cursor {
         }
     }
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name))
-            .ok().map(|i| &*self.raw_terms[i].1)
+        // Direct raw_terms hit covers every legacy bare key (`X`, `FS`,
+        // `LO`, `HI`, internal `:fan_idx`, etc.) AND any explicit dotted
+        // key a writer chose to set (e.g. a future emitter that stamps
+        // `X_LO` directly under that name).
+        if let Ok(i) = self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
+            return Some(&self.raw_terms[i].1);
+        }
+        // Layer 0c.3 dot-access dispatch.
+        //   `&.value`     → focal value (cursor.value Arc<str>).
+        //   `&.<f>`       → raw_terms `<F>` (focal coord legacy column).
+        //   `<X>.value`   → raw_terms `<X>` (bare term value).
+        //   `<X>.<f>`     → raw_terms `<X>_<F>` (term coord legacy column;
+        //                    not yet stamped by 0c.2 emitters; will return
+        //                    None until a follow-up writer lands).
+        if let Some((stem, field)) = name.split_once('.') {
+            if stem == "&" {
+                return match field {
+                    "value" => Some(&self.value),
+                    other   => {
+                        let key = other.to_ascii_uppercase();
+                        self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(key.as_str()))
+                            .ok().map(|i| &*self.raw_terms[i].1)
+                    }
+                };
+            }
+            if field == "value" {
+                return self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(stem))
+                    .ok().map(|i| &*self.raw_terms[i].1);
+            }
+            let key = format!("{}_{}", stem, field.to_ascii_uppercase());
+            return self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(key.as_str()))
+                .ok().map(|i| &*self.raw_terms[i].1);
+        }
+        None
     }
     pub fn unset(&mut self, name: &str) {
         if let Ok(i) = self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {

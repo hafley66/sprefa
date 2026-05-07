@@ -599,9 +599,23 @@ fn shell_quote(s: &str) -> String {
     out
 }
 fn render_template(template: &str, cur: &Cursor) -> String {
-    let re = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+    // Layer 0c.3 — accept the four host carveout forms:
+    //   ${X}       ${X?}      ${X.field}      ${&.field}
+    // The regex captures the full inner key (stem + optional `?` + optional
+    // `.field`); the lookup helper builds the Cursor::get-shaped key.
+    let re = regex::Regex::new(
+        r"\$\{(&\.[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*\??(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\}"
+    ).unwrap();
     re.replace_all(template, |caps: &regex::Captures| {
-        shell_quote(cur.get(&caps[1]).unwrap_or(""))
+        let raw = &caps[1];
+        // Strip Bind-mode `?` from a bare `X?` for the lookup; field-form
+        // `X?.field` is illegal upstream and won't reach here, but defend
+        // by routing `X?` → `X` lookup (treating bind-at-render as read).
+        let key: std::borrow::Cow<'_, str> = match raw.split_once('.') {
+            None => match raw.strip_suffix('?') { Some(s) => s.into(), None => raw.into() },
+            Some(_) => raw.into(),
+        };
+        shell_quote(cur.get(&key).unwrap_or(""))
     }).into_owned()
 }
 

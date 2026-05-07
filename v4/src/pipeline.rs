@@ -54,12 +54,19 @@ impl Component for StrTemplateComponent {
             let hi = interp.range.hi as usize;
             if lo > raw.len() || hi > raw.len() || lo < head { continue; }
             out.push_str(&raw[head..lo]);
-            match c.get(&interp.name) {
+            // Layer 0c.3 — dot-access aware lookup. `${X}` → `X`,
+            // `${X.field}` → `X.field`, `${&.field}` → `&.field`. Cursor's
+            // Row::get dispatches dotted keys to focal or term resolution.
+            let key: std::borrow::Cow<'_, str> = match &interp.field {
+                None    => (&*interp.name).into(),
+                Some(f) => format!("{}.{}", interp.name, f).into(),
+            };
+            match c.get(&key) {
                 Some(v) => out.push_str(v),
                 None    => ctx.diag.emit(
                     effect_runtime::v2::Diag::error(
                         "term/unbound-at-interp",
-                        format!("${{{}}} not bound at str interp", interp.name),
+                        format!("${{{}}} not bound at str interp", key),
                     ),
                 ),
             }

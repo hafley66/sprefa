@@ -81,9 +81,18 @@ pub enum InterpMode {
 
 #[derive(Clone, Debug)]
 pub struct DslInterp {
+    /// Stem name. IDENT (e.g. `NAME`) or the literal `&` for the focal-
+    /// cursor self-op. Always present.
     pub name:  Arc<str>,
+    /// Byte span of the full `${...}` form in the dsl body.
     pub range: ByteRange,
+    /// `${X}` (Read) vs `${X?}` (Bind). `${&}` is always Read; `${&?}` /
+    /// `${&?.field}` are illegal and skipped by the scanner.
     pub mode:  InterpMode,
+    /// Optional `.field` projection. Layer 0c.3 — `${X.field}` /
+    /// `${&.field}`. None = bare `${X}` / `${X?}`. Field access requires
+    /// bound mode (`${X?.field}` is illegal and skipped by the scanner).
+    pub field: Option<Arc<str>>,
 }
 
 /// Names this op's dsl body binds at runtime (e.g. `re`'s
@@ -155,10 +164,22 @@ pub trait OperatorDef: Send + Sync + 'static {
     ) -> Result<Pipe<Cursor>, LowerError>;
 }
 
-/// Default `${IDENT}` / `${IDENT?}` host pipe-hole scanner. IDENT =
-/// ASCII letters / digits / underscore, first char non-digit. Returns
-/// `DslInterp { name, range, mode }` per hole. `range` covers the full
-/// `${...}` span; `mode` distinguishes `${X}` (Read) from `${X?}` (Bind).
+/// Default host pipe-hole scanner. Recognized forms:
+///   `${IDENT}`         — Read X (term value)
+///   `${IDENT?}`        — Bind X = focal value
+///   `${IDENT.field}`   — Read X's `.field` (field requires bound mode)
+///   `${&.field}`       — Read focal cursor's `.field` (always bound)
+///
+/// IDENT = ASCII letter or `_` lead, then alnum/`_`. Field = same shape.
+/// Returns `DslInterp { name, range, mode, field }` per hole. `range`
+/// covers the full `${...}` span.
+///
+/// Illegal forms are skipped (treated as literal text) for now; future
+/// surface-level passes may turn these into parse-time diagnostics:
+///   `${&}`         — bare focal stem, no field
+///   `${&?...}`     — focal stem with bind mark
+///   `${X?.field}`  — bind mark + field access
+///
 /// This is the host carveout — every dsl body is scanned for these
 /// regardless of the dsl's own grammar. Per-dsl `binders_in_dsl` is
 /// orthogonal and handles the dsl-internal capture form (e.g. `$X`).
@@ -167,37 +188,85 @@ pub fn default_plain_dsl_parse(raw: &str) -> Vec<DslInterp> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i + 1 < bytes.len() {
-        if bytes[i] == b'$' && bytes[i + 1] == b'{' {
-            let lo = i;
-            let mut j = i + 2;
-            if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+        if !(bytes[i] == b'$' && bytes[i + 1] == b'{') { i += 1; continue; }
+        let lo = i;
+        let mut j = i + 2;
+
+        // Stem: `&` (focal) or IDENT.
+        let (stem_str, is_focal): (Arc<str>, bool) =
+            if j < bytes.len() && bytes[j] == b'&' {
+                j += 1;
+                (Arc::<str>::from("&"), true)
+            } else if j < bytes.len()
+                && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_')
+            {
                 let name_lo = j;
                 while j < bytes.len()
                     && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
                 {
                     j += 1;
                 }
-                let name_hi = j;
-                let mode = if j < bytes.len() && bytes[j] == b'?' {
+                (Arc::<str>::from(&raw[name_lo..j]), false)
+            } else {
+                i += 1;
+                continue;
+            };
+
+        // Optional `?` (Bind mode, only legal on IDENT stems).
+        let mode = if j < bytes.len() && bytes[j] == b'?' {
+            j += 1;
+            InterpMode::Bind
+        } else {
+            InterpMode::Read
+        };
+
+        // Optional `.field`.
+        let mut field: Option<Arc<str>> = None;
+        if j < bytes.len() && bytes[j] == b'.' {
+            j += 1;
+            if j < bytes.len()
+                && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_')
+            {
+                let f_lo = j;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                {
                     j += 1;
-                    InterpMode::Bind
-                } else {
-                    InterpMode::Read
-                };
-                if j < bytes.len() && bytes[j] == b'}' {
-                    let hi = j + 1;
-                    let name = &raw[name_lo..name_hi];
-                    out.push(DslInterp {
-                        name:  Arc::<str>::from(name),
-                        range: ByteRange { lo: lo as u32, hi: hi as u32 },
-                        mode,
-                    });
-                    i = hi;
-                    continue;
                 }
+                field = Some(Arc::<str>::from(&raw[f_lo..j]));
+            } else {
+                // `${X.}` with no field name — malformed, skip.
+                i += 1;
+                continue;
             }
         }
-        i += 1;
+
+        // Closing `}` required.
+        if !(j < bytes.len() && bytes[j] == b'}') {
+            i += 1;
+            continue;
+        }
+        let hi = j + 1;
+
+        // Reject illegal combinations (skip → treated as literal).
+        // 1. Bare focal: `${&}` (no field).
+        // 2. Focal with bind: `${&?...}`.
+        // 3. Bind mode + field: `${X?.field}`.
+        let illegal = (is_focal && field.is_none())
+            || (is_focal && matches!(mode, InterpMode::Bind))
+            || (matches!(mode, InterpMode::Bind) && field.is_some());
+        if illegal {
+            i += 1;
+            continue;
+        }
+
+        out.push(DslInterp {
+            name:  stem_str,
+            range: ByteRange { lo: lo as u32, hi: hi as u32 },
+            mode,
+            field,
+        });
+        i = hi;
     }
     out
 }

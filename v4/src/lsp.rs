@@ -68,7 +68,12 @@ impl LspDiagComponent {
             let hi = interp.range.hi as usize;
             if lo > raw.len() || hi > raw.len() || lo < head { continue; }
             out.push_str(&raw[head..lo]);
-            if let Some(v) = c.get(&interp.name) { out.push_str(v); }
+            // Layer 0c.3 — dot-access aware lookup; mirrors StrTemplateComponent.
+            let key: std::borrow::Cow<'_, str> = match &interp.field {
+                None    => (&*interp.name).into(),
+                Some(f) => format!("{}.{}", interp.name, f).into(),
+            };
+            if let Some(v) = c.get(&key) { out.push_str(v); }
             head = hi;
         }
         out.push_str(&raw[head..]);
