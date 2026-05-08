@@ -16,6 +16,10 @@ use v4::lower::{default_registry, DslBody, LowerCtx, Value};
 fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
 
 fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
+    run_many(p, vec![seed])
+}
+
+fn run_many(p: effect_runtime::v2::Pipe<Cursor>, seed: Vec<Cursor>) -> Vec<Cursor> {
     use std::sync::Mutex;
     let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     struct Sink(Arc<Mutex<Vec<Cursor>>>);
@@ -29,7 +33,8 @@ fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
     steps.push(Arc::new(Sink(sink.clone())));
     let inst = PipeInstance::new(steps);
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    expand(&inst, q, vec![Arc::new(seed)], ExpandOpts::default());
+    let seed = seed.into_iter().map(Arc::new).collect();
+    expand(&inst, q, seed, ExpandOpts::default());
     let v = sink.lock().unwrap().clone();
     v
 }
@@ -254,6 +259,82 @@ fn write_file_writes_value_to_path_arg() {
     seed.value = Arc::from("payload");
     let _ = run(p, seed);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "payload");
+}
+
+#[test]
+fn collect_emits_one_cursor_after_batch_completion() {
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg   = default_registry();
+    let p = reg.lower(
+        &LowerCtx::new(store.clone(), std::env::temp_dir()),
+        "collect", None,
+        vec![],
+        None, None, br(0, 9),
+    ).unwrap();
+
+    let mut a = Cursor::default();
+    a.value = Arc::from("a");
+    let mut b = Cursor::default();
+    b.value = Arc::from("b");
+    b.set("K", "from-b");
+
+    let out = run_many(p, vec![a, b]);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].value.as_ref(), "ab");
+}
+
+#[test]
+fn collect_then_write_file_writes_aggregate_value_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.txt");
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg   = default_registry();
+    let collect = reg.lower(
+        &LowerCtx::new(store.clone(), std::env::temp_dir()),
+        "collect", None,
+        vec![],
+        None, None, br(0, 9),
+    ).unwrap();
+    let write_file = reg.lower(
+        &LowerCtx::new(store.clone(), std::env::temp_dir()),
+        "write_file", None,
+        vec![(Value::atom(path.display().to_string().as_str()), br(11, 30))],
+        None, None, br(0, 32),
+    ).unwrap();
+
+    let p = collect.extend(write_file);
+    let mut a = Cursor::default();
+    a.value = Arc::from("hello ");
+    let mut b = Cursor::default();
+    b.value = Arc::from("world");
+
+    let out = run_many(p, vec![a, b]);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].value.as_ref(), "hello world");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello world");
+}
+
+#[test]
+fn collect_ready_accepts_snapshot_and_append_modes() {
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg   = default_registry();
+    for mode in ["snapshot", "append"] {
+        let p = reg.lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "collect_ready", None,
+            vec![(Value::atom(mode), br(14, 22))],
+            None, None, br(0, 23),
+        ).unwrap();
+
+        let mut a = Cursor::default();
+        a.value = Arc::from("x");
+        let mut b = Cursor::default();
+        b.value = Arc::from("y");
+
+        let out = run_many(p, vec![a, b]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].value.as_ref(), "xy");
+    }
 }
 
 #[test]

@@ -50,6 +50,8 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::CommentDef));
     r.register(Arc::new(ops::WriteCursorDef));
     r.register(Arc::new(ops::WriteFileDef));
+    r.register(Arc::new(ops::CollectDef));
+    r.register(Arc::new(ops::CollectReadyDef));
     r.register(Arc::new(crate::sql::SqlDef));
     r.register(Arc::new(crate::lsp::LspErrorDef));
     r.register(Arc::new(crate::lsp::LspWarnDef));

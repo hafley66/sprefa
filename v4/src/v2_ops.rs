@@ -18,14 +18,14 @@
 //! ```
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
-    par_render, splice_into_at, Component, Diag, Node, QueueBackend,
-    QueueRow, RenderCtx,
+    par_render, splice_into_at, BarrierScope, Component, ComponentLifecycle,
+    Diag, Node, PendingSummary, QueueBackend, QueueRow, RenderCtx, Wake,
 };
 use ignore::WalkBuilder;
 
@@ -1783,6 +1783,134 @@ impl Component for WriteFileComponent {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CollectMode {
+    Complete,
+    ReadySnapshot,
+    ReadyAppend,
+}
+
+struct CollectState {
+    rows: Vec<Cursor>,
+    flushed_len: usize,
+}
+
+pub struct CollectComponent {
+    mode: CollectMode,
+    state: Mutex<CollectState>,
+}
+
+impl CollectComponent {
+    pub fn new(mode: CollectMode) -> Self {
+        Self {
+            mode,
+            state: Mutex::new(CollectState {
+                rows: Vec::new(),
+                flushed_len: 0,
+            }),
+        }
+    }
+
+    fn emit_rows(
+        &self,
+        scope: BarrierScope,
+        queue: &dyn QueueBackend<Cursor>,
+        rows: &[Cursor],
+    ) {
+        if rows.is_empty() {
+            return;
+        }
+
+        let mut out = rows[0].clone();
+        let mut value = String::new();
+        for row in rows {
+            value.push_str(row.value.as_ref());
+        }
+        out.value = Arc::from(value);
+
+        queue.enqueue(QueueRow {
+            id:             0,
+            parent_id:      None,
+            batch_idx:      0,
+            path:           Vec::new(),
+            pipe_hash:      scope.pipe_hash,
+            instance_id:    scope.instance_id,
+            depth:          scope.depth + 1,
+            value:          Arc::new(out),
+            wake:           Wake::Immediate,
+            expand_tick:    scope.expand_tick,
+            enqueued_at_ns: 0,
+        });
+    }
+}
+
+impl Component for CollectComponent {
+    type Next = Cursor;
+
+    fn dispatch(
+        &self,
+        _ctx: &RenderCtx,
+        rows: &[QueueRow<Cursor>],
+        _queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let mut state = self.state.lock().unwrap();
+        for row in rows {
+            state.rows.push(row.value.as_ref().clone());
+        }
+    }
+
+    fn lifecycle(&self) -> ComponentLifecycle { ComponentLifecycle::Barrier }
+
+    fn idle(
+        &self,
+        _ctx: &RenderCtx,
+        scope: BarrierScope,
+        _pending: PendingSummary,
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let mut state = self.state.lock().unwrap();
+        match self.mode {
+            CollectMode::Complete => {}
+            CollectMode::ReadySnapshot => {
+                if state.rows.len() == state.flushed_len {
+                    return;
+                }
+                self.emit_rows(scope, queue, &state.rows);
+                state.flushed_len = state.rows.len();
+            }
+            CollectMode::ReadyAppend => {
+                if state.rows.len() == state.flushed_len {
+                    return;
+                }
+                self.emit_rows(scope, queue, &state.rows[state.flushed_len..]);
+                state.flushed_len = state.rows.len();
+            }
+        }
+    }
+
+    fn complete(
+        &self,
+        _ctx: &RenderCtx,
+        scope: BarrierScope,
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let mut state = self.state.lock().unwrap();
+        match self.mode {
+            CollectMode::Complete => {
+                self.emit_rows(scope, queue, &state.rows);
+            }
+            CollectMode::ReadySnapshot => {
+                self.emit_rows(scope, queue, &state.rows);
+            }
+            CollectMode::ReadyAppend => {
+                self.emit_rows(scope, queue, &state.rows[state.flushed_len..]);
+            }
+        }
+        state.rows.clear();
+        state.flushed_len = 0;
+    }
+}
+
 /// Json/Yaml/Toml brace-pattern matcher Component. Reads
 /// `cursor.get("FS")` as a file path, parses with the configured
 /// `TargetFormat`, runs the compiled pattern, and emits one child
@@ -2047,4 +2175,3 @@ mod tests {
         assert!(out.is_empty());
     }
 }
-

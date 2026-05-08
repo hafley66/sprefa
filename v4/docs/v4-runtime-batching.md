@@ -102,6 +102,56 @@ diagnostic file
 
 Dirty publish should happen after commit, not during per-row writes.
 
+## Barrier Lifecycle
+
+The runtime has streaming ops and barrier ops.
+
+Streaming op:
+
+```text
+dispatch(batch) -> enqueue downstream rows immediately
+```
+
+Barrier op:
+
+```text
+dispatch(batch) -> buffer rows
+idle(pending parked upstream) -> optional partial flush
+complete(no pending upstream) -> final flush
+```
+
+`collect()` is completion-only. It buffers cursor rows and emits one aggregate cursor after every upstream row has passed, dropped, or completed.
+
+`collect_ready(:snapshot)` can emit a partial full snapshot when the scheduler has no runnable rows but upstream is parked.
+
+`collect_ready(:append)` can emit only newly buffered rows at the same idle point.
+
+Parked upstream rows block `complete`. A later `next`/wake promotes the parked row, the scheduler resumes normal batched dispatch, and the barrier completes after upstream drains.
+
+```text
+row A reaches collect -> buffered
+row B parks upstream
+idle fires, complete waits
+next wakes row B
+row B reaches collect -> buffered
+complete fires -> aggregate cursor
+```
+
+## Write Boundary
+
+`write_file(PATH)` writes `cursor.value` to one path. It does not own batching, ticks, completion, or aggregation.
+
+Use a barrier upstream when one write should happen after a batch or generation:
+
+```sprf
+render(:markdown)`- ${NAME}
+`
+> collect()
+> write_file(PATH)
+```
+
+`PATH` is the write target argument or cursor `FS` term. The write op remains a per-cursor effect. `collect()` controls how many cursors reach it.
+
 ## Next / Next?
 
 `next` and `next?` are event/yield primitives, separate from SQL relations.

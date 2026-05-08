@@ -149,6 +149,13 @@ just v4-lsp-test
 
 `v4-lsp-test` currently has a known failing semantic-token test for glob body tokens.
 
+Implemented since this tracker was written:
+
+- runtime barrier lifecycle for `dispatch` / `idle` / `complete`
+- `collect()` as completion-only aggregate over cursor values
+- `collect_ready(:snapshot)` and `collect_ready(:append)` as partial barrier flush modes
+- `collect() > write_file(PATH)` writes one aggregate value when the upstream batch completes
+
 ## Red Target Tests
 
 Target tests live in:

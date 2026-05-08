@@ -18,10 +18,10 @@ use crate::chan::{Next, NextQ};
 use crate::fact::{FactRead, FactWrite};
 use crate::term::Term;
 use crate::v2_ops::{
-    AstNmComponent, CommentComponent, FsComponent, JsonComponent, PrintComponent,
-    ReComponent, ReadComponent, RepoComponent, RevComponent, ShBangComponent,
-    ShComponent, SplitComponent, VoidComponent, WriteCursorComponent,
-    WriteFileComponent, WriteMode,
+    AstNmComponent, CollectComponent, CollectMode, CommentComponent,
+    FsComponent, JsonComponent, PrintComponent, ReComponent, ReadComponent,
+    RepoComponent, RevComponent, ShBangComponent, ShComponent, SplitComponent,
+    VoidComponent, WriteCursorComponent, WriteFileComponent, WriteMode,
 };
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
@@ -1575,6 +1575,68 @@ impl OperatorDef for WriteFileDef {
             )),
         };
         Ok(Pipe::new().step(Arc::new(WriteFileComponent::new(path))))
+    }
+}
+
+// ─── collect / collect_ready ──────────────────────────────────────────────
+
+pub struct CollectDef;
+
+impl OperatorDef for CollectDef {
+    fn name(&self) -> &'static str { "collect" }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        Ok(Pipe::new().step(Arc::new(CollectComponent::new(
+            CollectMode::Complete,
+        ))))
+    }
+}
+
+pub struct CollectReadyDef;
+
+const COLLECT_READY_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom, name: "mode",
+        doc: "partial flush mode: :snapshot or :append",
+        required: false,
+    },
+];
+
+impl OperatorDef for CollectReadyDef {
+    fn name(&self) -> &'static str { "collect_ready" }
+    fn paren_args(&self) -> &[ArgSig] { COLLECT_READY_SPEC }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let mode = match args.first() {
+            None => CollectMode::ReadySnapshot,
+            Some(Value::Atom(s)) if s.as_ref() == "snapshot" => {
+                CollectMode::ReadySnapshot
+            }
+            Some(Value::Atom(s)) if s.as_ref() == "append" => {
+                CollectMode::ReadyAppend
+            }
+            Some(Value::Atom(s)) => return Err(LowerError::Unknown(
+                format!("collect_ready: unknown mode :{}", s)
+            )),
+            Some(_) => return Err(LowerError::Unknown(
+                "collect_ready: mode arg must be :snapshot or :append".into()
+            )),
+        };
+        Ok(Pipe::new().step(Arc::new(CollectComponent::new(mode))))
     }
 }
 
