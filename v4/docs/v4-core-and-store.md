@@ -1,0 +1,113 @@
+# V4 Core And Store
+
+## Boundary
+
+`SprfStore` is core. It specializes the generic store idea into sprf semantics:
+
+```text
+strings
+norm
+refs
+repo/rev/fs coords
+rule rows
+fact rows
+provenance
+indexes
+memory/sqlite implementations
+```
+
+The effect runtime can define generic scheduling and batch machinery. It should not know what a cursor, term, ref, repo, rev, file, or LSP diagnostic means.
+
+```mermaid
+flowchart LR
+  ER["effect_runtime"] -->|"runs batches"| CORE["sprf_core"]
+  CORE -->|"owns meaning"| STORE["SprfStore"]
+  STORE --> SQLITE["SQLite / memory SQLite"]
+  STORE --> MEM["non-SQL memory store if useful"]
+```
+
+## Cursor
+
+A cursor is the flowing row-shaped value:
+
+```text
+cursor.value
+cursor terms
+cursor source ref / coord
+```
+
+Terms carry language bindings. Refs carry physical source location.
+
+## Ref
+
+Refs are physical coordinates descended from V0 refs and V2 scan pointers:
+
+```text
+repo
+rev
+file / fs
+byte range
+optional node/path metadata later
+```
+
+Refs are the bridge between rule rows and LSP/UI surfaces.
+
+## Strings And Norm
+
+Strings are stored once. `norm` is store-owned derived data on the strings table.
+
+Default `norm` intent:
+
+```text
+lowercase
+remove punctuation
+remove numbers
+compress hard enough for rough cross-repo matching
+```
+
+Other normalization schemes can be userland rules later. The core raw/norm path should not require users to call a `normalize(...)` op.
+
+## Rule Rows
+
+Rules produce relations. A rule row should contain user columns plus enough core metadata to support:
+
+```text
+source refs
+generation
+row identity
+derived-from links
+invalidating refs
+diagnostic/hover/link projections
+```
+
+SQL framing:
+
+```text
+rule = materialized view over source relations and pattern ops
+rule output = relation rows
+rule call = select/project/join over rule relation
+```
+
+## Row Identity
+
+Use content-derived identity where possible:
+
+```text
+row_id = hash(table name + canonical user columns + source identity policy)
+```
+
+Exact identity policy may differ by table, but the store needs stable dedupe and invalidation keys.
+
+## Generations
+
+Current-state behavior should be cheap:
+
+```text
+current rows
+current indexes
+current source refs
+dirty keys
+```
+
+History is optional storage policy. Avoid requiring a full in-memory historical trace for basic LSP behavior.
+
