@@ -429,4 +429,13 @@ OK, so wait. I have not read everything that you have sent but to give you an id
     <note>Dead config and env detection: extract env/config definitions and reads, join them across repo/rev/service facts, then surface definitions with no reads or reads with no definition.</note>
     <note>AI session to rule: capture a research session as structured notes, convert stable discoveries into rule facts or query patterns, and preserve the resulting graph so later agents and humans can address the same codebase relationships without replaying the whole session.</note>
   </topic>
+  <topic name="foundation-split">
+    <note>For V4, foundation means effect_runtime plus sprefa core plus store. These layers interact tightly enough that treating only the effect runtime as foundation hides important design work.</note>
+    <note>effect_runtime owns queue mechanics, batched dispatch, parked rows, yield/next wakeups, and barrier lifecycle. Its prior-art anchors are RxJS streams, Subject suspend/resume, Redux-style event dispatch, and React-like render/commit boundaries.</note>
+    <note>sprefa core owns cursor meaning, terms, rules, SQL-shaped query ops, collect, diagnostics ops, and write/render sinks. This layer is where language semantics become cursor rows and table rows.</note>
+    <note>store owns fact/rule tables, declared columns, snapshots, indexes, dirty publish, and the eventual materialized query subscription state. SQLite terms are the right vocabulary where SQLite has a direct matching concept.</note>
+    <note>Current foundation status: effect_runtime is close after barrier lifecycle landed; cursor/terms/rule tables/sql/collect are usable; store is usable for fact tables but still needs materialized subscriptions, invalidation, and diff/retraction semantics.</note>
+    <note>Remaining foundation slices: mounted query identity, generation rerun, old/new diff, retractions, runtime diagnostics bridge into app/LSP state, store dirty-key contract, rule apply/cache invalidation, barrier identity hardening, and render(:markdown) to collect() to write_file(PATH) as dogfood artifact path.</note>
+    <note>Design direction: later notes should be representable as sprf-addressable zones that can target refs, revs, files, rule rows, or whole revision graphs. The current XML llm-zone is a placeholder form for that future programmable note graph.</note>
+  </topic>
 </llm-zone>
