@@ -289,13 +289,20 @@ Core table exposure can wait until `_refs` column shape is stable enough for LSP
 
 ## LSP Plan
 
-`sql`` should get a SQL DSL provider.
+`sql`` has a CST SQL DSL provider for body-local editor features.
 
-Minimum LSP behavior:
+Implemented body-local behavior:
 
 ```text
 SQLite syntax highlighting
-completion for input
+completion for SQLite keywords
+completion for input.__cursor_idx and input.value
+hover for input, __cursor_idx, value, SQL keywords, and host holes
+```
+
+Remaining LSP behavior:
+
+```text
 completion for current input columns
 completion for rule names in current file
 completion for rule columns

@@ -1,4 +1,4 @@
-//! Cross-DSL trait-surface dogfood. Holds all four shipped DSLs behind
+//! Cross-DSL trait-surface dogfood. Holds shipped DSLs behind
 //! `Vec<Box<dyn Dsl>>` and runs compile + match_into via dynamic dispatch.
 //!
 //! Catches trait-surface drift: object-safety, Send+Sync+'static bounds,
@@ -13,6 +13,7 @@ use v4::cst::dsls::ast::AstDsl;
 use v4::cst::dsls::glob::GlobDsl;
 use v4::cst::dsls::json::JsonDsl;
 use v4::cst::dsls::re::ReDsl;
+use v4::cst::dsls::sql::SqlDsl;
 
 struct Case {
     dsl:           Box<dyn Dsl>,
@@ -57,11 +58,19 @@ fn cases() -> Vec<Case> {
             expected_caps: &["NAME"],
             expect_match:  true,
         },
+        Case {
+            dsl:           Box::new(SqlDsl::new()),
+            body:          b"SELECT input.__cursor_idx, input.OP FROM input",
+            target:        b"",
+            target_off:    0,
+            expected_caps: &[],
+            expect_match:  false,
+        },
     ]
 }
 
 #[test]
-fn all_four_dsls_compile_via_dyn_dispatch() {
+fn shipped_dsls_compile_via_dyn_dispatch() {
     for case in cases() {
         let dsl: &dyn Dsl = case.dsl.as_ref();
         // compile via the trait object — proves Dsl is object-safe and that
@@ -73,7 +82,7 @@ fn all_four_dsls_compile_via_dyn_dispatch() {
 }
 
 #[test]
-fn all_four_dsls_match_via_dyn_dispatch_with_offset() {
+fn shipped_dsls_match_via_dyn_dispatch_with_offset() {
     for case in cases() {
         let dsl: &dyn Dsl = case.dsl.as_ref();
         let compiled = dsl.compile(case.body, &SilentSink).unwrap();
