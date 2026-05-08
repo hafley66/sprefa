@@ -15,7 +15,7 @@ pub type InstanceId = u64;
 pub type ExpandTick  = u64;
 pub type PipeHash   = u64;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BarrierScope {
     pub pipe_hash:   PipeHash,
     pub instance_id: InstanceId,

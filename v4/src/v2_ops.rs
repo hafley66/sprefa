@@ -17,6 +17,7 @@
 //! expand(&pipe, queue, vec![Arc::new(Cursor::default())], ExpandOpts::default().with_batch_cap(batch));
 //! ```
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1797,17 +1798,14 @@ struct CollectState {
 
 pub struct CollectComponent {
     mode: CollectMode,
-    state: Mutex<CollectState>,
+    states: Mutex<BTreeMap<BarrierScope, CollectState>>,
 }
 
 impl CollectComponent {
     pub fn new(mode: CollectMode) -> Self {
         Self {
             mode,
-            state: Mutex::new(CollectState {
-                rows: Vec::new(),
-                flushed_len: 0,
-            }),
+            states: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -1849,11 +1847,21 @@ impl Component for CollectComponent {
 
     fn dispatch(
         &self,
-        _ctx: &RenderCtx,
+        ctx: &RenderCtx,
         rows: &[QueueRow<Cursor>],
         _queue: &dyn QueueBackend<Cursor>,
     ) {
-        let mut state = self.state.lock().unwrap();
+        let scope = BarrierScope {
+            pipe_hash: rows.first().map(|r| r.pipe_hash).unwrap_or(ctx.pipe),
+            instance_id: rows.first().map(|r| r.instance_id).unwrap_or(0),
+            expand_tick: ctx.expand_tick,
+            depth: ctx.depth,
+        };
+        let mut states = self.states.lock().unwrap();
+        let state = states.entry(scope).or_insert_with(|| CollectState {
+            rows: Vec::new(),
+            flushed_len: 0,
+        });
         for row in rows {
             state.rows.push(row.value.as_ref().clone());
         }
@@ -1868,7 +1876,10 @@ impl Component for CollectComponent {
         _pending: PendingSummary,
         queue: &dyn QueueBackend<Cursor>,
     ) {
-        let mut state = self.state.lock().unwrap();
+        let mut states = self.states.lock().unwrap();
+        let Some(state) = states.get_mut(&scope) else {
+            return;
+        };
         match self.mode {
             CollectMode::Complete => {}
             CollectMode::ReadySnapshot => {
@@ -1894,7 +1905,10 @@ impl Component for CollectComponent {
         scope: BarrierScope,
         queue: &dyn QueueBackend<Cursor>,
     ) {
-        let mut state = self.state.lock().unwrap();
+        let mut states = self.states.lock().unwrap();
+        let Some(state) = states.remove(&scope) else {
+            return;
+        };
         match self.mode {
             CollectMode::Complete => {
                 self.emit_rows(scope, queue, &state.rows);
@@ -1906,8 +1920,6 @@ impl Component for CollectComponent {
                 self.emit_rows(scope, queue, &state.rows[state.flushed_len..]);
             }
         }
-        state.rows.clear();
-        state.flushed_len = 0;
     }
 }
 
