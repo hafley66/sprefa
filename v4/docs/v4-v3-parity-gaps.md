@@ -135,9 +135,71 @@ Known failing target/health checks:
 
 ```bash
 just v4-target-tests
+just v4-v3-parity-targets
 just v4-lsp-test
 ```
 
 `v4-target-tests` fails because it encodes future runtime semantics.
 
+`v4-v3-parity-targets` fails because it encodes V3 parity targets that are not implemented yet:
+
+- runtime `lsp_warn` publication through app/LSP diagnostics
+- backtick path body for `write_file`
+- markdown aggregate render/write idempotence
+
 `v4-lsp-test` currently has a known failing semantic-token test for glob body tokens.
+
+## Red Target Tests
+
+Target tests live in:
+
+```text
+v4/tests/rule_future_semantics_target.rs
+v4/tests/v3_parity_target.rs
+```
+
+They are ignored by default so normal `just v4-test` stays green.
+
+Run them explicitly when working a parity slice:
+
+```bash
+just v4-target-tests
+just v4-v3-parity-targets
+```
+
+Expected current failures:
+
+| Test | Target |
+| --- | --- |
+| `empty_rule_fully_bound_apply_sends_identity` | old fact/send folded into empty rule |
+| `mounted_query_reacts_to_late_relation_write` | live query reactivity and retraction |
+| `bodied_rule_apply_runs_body_and_emits_outputs` | bodied rule apply/run/cache |
+| `runtime_lsp_warn_publishes_diagnostics_for_open_buffer` | runtime diagnostic effects collected into app/LSP diagnostics |
+| `write_file_backtick_path_writes_cursor_value` | path strings use backticks, not symbols |
+| `render_markdown_aggregate_writes_file` | render markdown from rows and idempotently write artifact |
+
+Current failure modes:
+
+| Test | Current failure |
+| --- | --- |
+| `runtime_lsp_warn_publishes_diagnostics_for_open_buffer` | `get_diags` returns parse/walk diagnostics only; runtime `RenderCtx` diagnostics are not collected into `DocState` |
+| `write_file_backtick_path_writes_cursor_value` | `write_file` rejects a DSL body with `lower/slot-not-allowed` |
+| `render_markdown_aggregate_writes_file` | `render` is an unknown op and `write_file` rejects a DSL body |
+
+## Review Before Implementation
+
+LSP, render, and write behavior are complex enough to review before locking code.
+
+Open decisions:
+
+| Topic | Review question |
+| --- | --- |
+| cursor-flow hover | Should hover show counts only, sample cursors, full rows, rule schema, refs/provenance, or dispatch to separate commands? |
+| runtime diagnostics | Should `lsp_warn` write diagnostic rows into a table, emit `RenderCtx` diags collected by app state, or both? |
+| diagnostic lifetime | Are runtime diagnostics recomputed per open buffer, per run generation, or per mounted query subscription? |
+| `write_file` path body | Is `write_file\`path\`` the final target syntax, and should interpolation in that path be allowed? |
+| write target address | Should writes target disk paths only first, or support repo/rev/file refs before parity? |
+| render op | Should `render(:markdown)\`...\`` emit one row per input, aggregate rows, or require an explicit aggregate op? |
+| aggregate ordering | Should render order preserve input order, SQL `ORDER BY`, source span order, or explicit group/order args? |
+| idempotence | Should render/write compare content before writing, or always write and emit dirty events? |
+| markdown recap | Should markdown generation be plain template rows first, SQL `group_concat` first, or a dedicated markdown renderer? |

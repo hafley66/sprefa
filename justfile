@@ -46,6 +46,9 @@ v4-test:
 v4-target-tests:
     CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml --test rule_future_semantics_target -- --ignored
 
+v4-v3-parity-targets:
+    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml --test v3_parity_target -- --ignored
+
 v4-flow-smoke:
     CARGO_BUILD_RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/lsp-flow-smoke.sprf --show-rows
 
