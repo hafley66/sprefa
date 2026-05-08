@@ -1,10 +1,14 @@
 use std::sync::Arc;
 
-use effect_runtime::v2::{expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend};
+use effect_runtime::v2::{
+    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, NextKey,
+    Node, PipeInstance, QueueBackend, RenderCtx, Wake,
+};
 
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::v2_ops::{CollectComponent, CollectMode};
 use v4::Cursor;
 
 fn run_into_store(src: &str, store: Arc<dyn FactStore<Cursor>>) {
@@ -97,6 +101,162 @@ fn mounted_query_reacts_to_late_relation_write() {
         store.rows_of("missing_hooks").len(),
         0,
         "live query mount should rerun/retract the missing row after frontend_hooks changes"
+    );
+}
+
+#[test]
+#[ignore = "target semantics: mounted query output rows should persist by mount/input/output hash"]
+fn mounted_query_persists_outputs_by_mount_and_input_key() {
+    let store = run_pipes(r#"
+        rule(:openapi_ops, OP!);
+        rule(:frontend_hooks, OP!, FILE!);
+        rule(:hook_hits, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > rule(:openapi_ops, OP: OP);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+
+        openapi_ops(OP: OP?)
+          > sql`
+              SELECT input.__cursor_idx, input.OP, frontend_hooks.FILE AS value
+              FROM input
+              JOIN frontend_hooks ON frontend_hooks.OP = ${OP}
+            `
+          > term_bind(:FILE)
+          > rule(:hook_hits, OP: OP, FILE: FILE);
+    "#);
+
+    assert_eq!(store.rows_of("hook_hits").len(), 1);
+    assert!(
+        store.rows_of("mounted_query_output").len() >= 1,
+        "mounted query output set should persist independently of the consumer rule table"
+    );
+}
+
+#[test]
+#[ignore = "target semantics: rerun should diff old/new mounted query outputs and emit only additions"]
+fn mounted_query_rerun_emits_only_new_output_hashes() {
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+
+    run_into_store(r#"
+        rule(:frontend_hooks, OP!, FILE!);
+        rule(:hook_hits, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+
+        `getUser`
+          > term_bind(:OP)
+          > sql`
+              SELECT input.__cursor_idx, input.OP, frontend_hooks.FILE AS value
+              FROM input
+              JOIN frontend_hooks ON frontend_hooks.OP = ${OP}
+            `
+          > term_bind(:FILE)
+          > rule(:hook_hits, OP: OP, FILE: FILE);
+    "#, store.clone());
+
+    assert_eq!(store.rows_of("hook_hits").len(), 1);
+
+    run_into_store(r#"
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks_extra.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+    "#, store.clone());
+
+    assert_eq!(
+        store.rows_of("hook_hits").len(),
+        2,
+        "mounted query rerun should add only the new output row while preserving the old one"
+    );
+}
+
+#[test]
+#[ignore = "target semantics: collect/barrier buffers should be keyed by mount scope, not component object"]
+fn collect_does_not_mix_two_pipe_instances() {
+    use std::sync::Mutex;
+
+    struct ParkValue;
+    impl Component for ParkValue {
+        type Next = Cursor;
+        fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            if c.value.as_ref() == "park" {
+                Node::Yield {
+                    value: Arc::new(c.clone()),
+                    wake: Wake::Key {
+                        domain: "barrier-scope-test".into(),
+                        key: NextKey([7; 32]),
+                    },
+                }
+            } else {
+                Node::Emit(Arc::new(c.clone()))
+            }
+        }
+    }
+
+    struct Sink(Arc<Mutex<Vec<Cursor>>>);
+    impl Component for Sink {
+        type Next = Cursor;
+        fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
+        }
+    }
+
+    fn cur(value: &str) -> Arc<Cursor> {
+        let mut c = Cursor::default();
+        c.value = Arc::from(value);
+        Arc::new(c)
+    }
+
+    let collect = Arc::new(CollectComponent::new(CollectMode::Complete));
+    let left_sink = Arc::new(Mutex::new(Vec::new()));
+    let right_sink = Arc::new(Mutex::new(Vec::new()));
+
+    let mut left = PipeInstance::new(vec![
+        Arc::new(ParkValue) as Arc<dyn Component<Next = Cursor>>,
+        collect.clone() as Arc<dyn Component<Next = Cursor>>,
+        Arc::new(Sink(left_sink.clone())),
+    ]);
+    left.pipe_hash = 1;
+    left.instance_id = 1;
+
+    let mut right = PipeInstance::new(vec![
+        collect as Arc<dyn Component<Next = Cursor>>,
+        Arc::new(Sink(right_sink.clone())),
+    ]);
+    right.pipe_hash = 2;
+    right.instance_id = 2;
+
+    let left_queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(
+        &left,
+        left_queue,
+        vec![cur("a"), cur("park")],
+        ExpandOpts::default(),
+    );
+    assert_eq!(left_sink.lock().unwrap().len(), 0);
+
+    let right_queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(&right, right_queue, vec![cur("b")], ExpandOpts::default());
+
+    let got = right_sink.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        got[0].value.as_ref(),
+        "b",
+        "right mount should not flush buffered rows from left mount"
     );
 }
 
