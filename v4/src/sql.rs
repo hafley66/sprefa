@@ -18,6 +18,7 @@ use rusqlite::{params_from_iter, Connection};
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{DslBody, DslShape, InterpKind, InterpMode, OperatorDef};
 use crate::compile::lower::value::Value;
+use crate::sprf_introspect::PipeIntrospect;
 use crate::Cursor;
 
 pub struct SqlQueryComponent {
@@ -450,6 +451,137 @@ impl OperatorDef for SqlDef {
         let sql = rewrite_sql_interps(dsl)?;
         Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(ctx.store.clone(), sql))))
     }
+}
+
+pub fn rule_table_call_pipe(
+    ctx:       &LowerCtx,
+    table:     &str,
+    predicate: bool,
+    args:      &[Value],
+) -> Result<Pipe<Cursor>, LowerError> {
+    let cols = ctx.store.declared_cols(table).ok_or_else(|| {
+        LowerError::Unknown(format!("rule table `{table}` is not declared"))
+    })?;
+    if args.len() > cols.len() {
+        return Err(LowerError::Unknown(format!(
+            "rule table `{table}` has {} column(s), call passed {} arg(s)",
+            cols.len(),
+            args.len(),
+        )));
+    }
+
+    #[derive(Debug)]
+    enum ArgMode {
+        BoundTerm { col: String, term: String },
+        BoundLiteral { col: String, value: String },
+        Project { col: String, term: String },
+    }
+
+    let mut modes = Vec::with_capacity(args.len());
+    for (idx, arg) in args.iter().enumerate() {
+        let col = cols[idx].clone();
+        match arg {
+            Value::Atom(value) => {
+                modes.push(ArgMode::BoundLiteral {
+                    col,
+                    value: value.to_string(),
+                });
+            }
+            Value::Pipe(pipe) => {
+                if let Some(term) = pipe.binds_terms().first() {
+                    modes.push(ArgMode::Project {
+                        col,
+                        term: term.to_string(),
+                    });
+                } else if let Some(term) = pipe.reads_terms().first() {
+                    modes.push(ArgMode::BoundTerm {
+                        col,
+                        term: term.to_string(),
+                    });
+                } else {
+                    return Err(LowerError::Unknown(
+                        "rule call args must be atoms or terms".into(),
+                    ));
+                }
+            }
+        }
+    }
+
+    if predicate && modes.iter().any(|m| matches!(m, ArgMode::Project { .. })) {
+        return Err(LowerError::Unknown(format!(
+            "{table}?: predicate calls require bound args; use `{table}(...)` to project outputs"
+        )));
+    }
+
+    let rule_alias = "__rule";
+    let mut select_cols = vec!["input.__cursor_idx".to_string()];
+    if !predicate {
+        if modes.is_empty() {
+            for col in &cols {
+                select_cols.push(format!(
+                    "{}.{} AS {}",
+                    quote_ident(rule_alias),
+                    quote_ident(col),
+                    quote_ident(col),
+                ));
+            }
+        } else {
+            for mode in &modes {
+                if let ArgMode::Project { col, term } = mode {
+                    select_cols.push(format!(
+                        "{}.{} AS {}",
+                        quote_ident(rule_alias),
+                        quote_ident(col),
+                        quote_ident(term),
+                    ));
+                }
+            }
+        }
+    }
+
+    let mut predicates = Vec::new();
+    for mode in &modes {
+        match mode {
+            ArgMode::BoundTerm { col, term } => {
+                predicates.push(format!(
+                    "{}.{} = input.{}",
+                    quote_ident(rule_alias),
+                    quote_ident(col),
+                    quote_ident(term),
+                ));
+            }
+            ArgMode::BoundLiteral { col, value } => {
+                predicates.push(format!(
+                    "{}.{} = {}",
+                    quote_ident(rule_alias),
+                    quote_ident(col),
+                    quote_sql_literal(value),
+                ));
+            }
+            ArgMode::Project { .. } => {}
+        }
+    }
+
+    let mut sql = format!(
+        "SELECT {}\nFROM input JOIN {} AS {} ON 1=1",
+        select_cols.join(", "),
+        table,
+        rule_alias,
+    );
+    if !predicates.is_empty() {
+        sql.push_str("\nWHERE ");
+        sql.push_str(&predicates.join(" AND "));
+    }
+
+    Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(
+        ctx.store.clone(),
+        sql,
+    ))))
+}
+
+fn quote_sql_literal(s: &str) -> String {
+    let escaped = s.replace('\'', "''");
+    format!("'{escaped}'")
 }
 
 #[cfg(test)]

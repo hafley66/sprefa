@@ -16,6 +16,17 @@ Terms declared in the rule signature are output columns. Captures inside the bod
 
 Rule calls should be explicit. Avoid positional guessing.
 
+Current executable shape is positional against the declared rule column order:
+
+```sprf
+frontend_hooks(OP, FILE?)   # join on OP, project FILE
+frontend_hooks?(OP, FILE)   # predicate/filter; all args must be bound
+```
+
+`rule_name(...)` is row-producing. It queries the rule table and emits one output cursor per matching row at that point in the pipe.
+
+`rule_name?(...)` is predicate form. It filters the current input batch with `EXISTS` semantics and projects no output columns. Use this for fully bound checks.
+
 Preferred target shape:
 
 ```sprf
@@ -134,4 +145,3 @@ This target proves:
 - batched rule-table lookup
 - anti-join / `NOT EXISTS`
 - diagnostic fact emission
-

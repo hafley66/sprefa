@@ -199,6 +199,32 @@ pub fn walk_op(
         None => None,
     };
 
+    // Declared rule-table calls. The parser keeps the `?` suffix on
+    // OpCall::predicate; the registry only stores concrete built-in op
+    // names. A declared table name in call position is therefore a
+    // relation read over that rule table:
+    //   rule_name(A, B?)  -> row-producing query/project
+    //   rule_name?(A, B)  -> predicate/filter
+    if reg.get(&op.name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+        let arg_vals: Vec<Value> = args.iter().map(|(v, _)| v.clone()).collect();
+        match crate::sql::rule_table_call_pipe(ctx, &op.name, op.predicate, &arg_vals) {
+            Ok(pipe) => {
+                let pipe = match &ctx.probe {
+                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
+                    None    => pipe,
+                };
+                return Some(pipe);
+            }
+            Err(e) => {
+                diags.push(
+                    Diag::error("lower/rule-call", e.to_string())
+                        .with_span(op.span.lo, op.span.hi)
+                );
+                return None;
+            }
+        }
+    }
+
     // Dispatch.
     match reg.lower_at(ctx, &op.name, flow, args, block, dsl, op.span, chain_pos) {
         Ok(pipe) => {

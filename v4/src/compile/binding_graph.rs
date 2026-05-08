@@ -118,6 +118,19 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
     for arg in &op.args {
         slot_terms(arg.raw.as_ref(), &mut reads, &mut binds);
     }
+    if op.name.as_ref() == "term" || op.name.as_ref() == "term_bind" {
+        if let Some(arg) = op.args.first() {
+            let raw = arg.raw.trim();
+            let name = raw.strip_prefix(':').unwrap_or(raw);
+            if is_caps_ident(name) {
+                if op.name.as_ref() == "term_bind" {
+                    binds.push(Arc::<str>::from(name));
+                } else {
+                    reads.push(Arc::<str>::from(name));
+                }
+            }
+        }
+    }
     if let Some(dsl) = &op.dsl {
         // Host pipe-hole scanner: ${X} = read, ${X?} = bind. SubPipe-
         // shape interps (`${ <pipe> }`, task #10) are opaque to the
