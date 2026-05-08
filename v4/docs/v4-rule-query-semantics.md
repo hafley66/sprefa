@@ -183,15 +183,20 @@ frontend_hooks.(OP, FILE?)  # dotted relation read target
 frontend_hooks?.(OP, FILE)  # dotted relation predicate target
 ```
 
-A rule with a body also writes to its relation. Reading the rule name reads the materialized relation rows. Inline body invocation for a caller cursor is a separate future feature.
+A rule with a body also writes to its relation. A non-predicate call to a
+bodied rule invokes the stored body over the current cursor and emits the
+body outputs at that point in the pipe.
 
-Future parametric body invocation can be specified separately. Until then, "call" in this document means relation call.
+Predicate calls keep relation/table meaning:
+
+```sprf
+derive_hook(OP, FILE?)   # invoke stored body
+derive_hook?(OP, FILE)   # predicate/filter materialized relation
+```
 
 ## Forced Body Invocation
 
-`rule_name!(...)` is reserved for forced bodied-rule invocation.
-
-Planned meaning:
+`rule_name!(...)` is forced bodied-rule invocation.
 
 ```text
 rule_name(...)
@@ -214,18 +219,24 @@ Current executable status:
 sh!`...`
   preserved as the impure shell builtin
 
+bodied_rule!(...)
+  skips the rule-call cache read and refreshes cache after execution
+
 declared_empty_rule!(...)
   emits lower/rule-force because table-only relation calls have no body
   to force
 ```
-
-First full implementation depends on bodied rule apply/cache support.
 
 ## Runtime State
 
 Current executable runtime state:
 
 ```text
+RuleInvokeComponent cache key =
+  rule name
+  input cursor content hash
+  call-site assignments
+
 SqlQueryComponent cache key =
   SQL text
   upstream cursor batch content hashes

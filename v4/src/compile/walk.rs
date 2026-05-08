@@ -240,6 +240,26 @@ pub fn walk_op(
     // relation read over that rule table:
     //   rule_name(A, B?)  -> row-producing query/project
     //   rule_name?(A, B)  -> predicate/filter
+    if reg.get(&lower_name).is_none() && !op.predicate && ctx.get_rule(&op.name).is_some() {
+        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
+        match crate::sql::rule_body_call_pipe(ctx, &op.name, op.force, &arg_vals) {
+            Ok(pipe) => {
+                let pipe = match &ctx.probe {
+                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
+                    None    => pipe,
+                };
+                return Some(pipe);
+            }
+            Err(e) => {
+                diags.push(
+                    Diag::error("lower/rule-body-call", e.to_string())
+                        .with_span(op.span.lo, op.span.hi)
+                );
+                return None;
+            }
+        }
+    }
+
     if reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
         if op.force {
             diags.push(

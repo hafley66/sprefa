@@ -266,7 +266,6 @@ fn collect_does_not_mix_two_pipe_instances() {
 }
 
 #[test]
-#[ignore = "target semantics: bodied rule apply should run body, cache outputs, and emit them"]
 fn bodied_rule_apply_runs_body_and_emits_outputs() {
     let store = run_pipes(r#"
         rule(:derive_hook, OP!, FILE?) {

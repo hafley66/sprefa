@@ -181,6 +181,7 @@ impl OperatorDef for RuleDef {
             &cols,
             body,
         );
+        ctx.register_rule(rule.clone());
         Ok(rule.into_pipe())
     }
 }

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{FactStore, Pipe, ProbeSink};
 
 use crate::config::SprfConfig;
+use crate::rule::Rule;
 use crate::store::SprfStore;
 use crate::{Cursor, Interner};
 
@@ -18,6 +19,9 @@ pub struct LowerCtx {
     /// Capture name → Pipe that grounds to a constant string. Used by
     /// `str` to substitute `${X}` at lower-time.
     pub bindings: HashMap<Arc<str>, Pipe<Cursor>>,
+    /// Lowered bodied rules available for body invocation at later call
+    /// sites in the same compile pass.
+    rules: Arc<Mutex<HashMap<Arc<str>, Rule>>>,
     /// Optional per-emit probe sink. When set, the walker wraps every
     /// lowered Component in a `SpannedComponent` that fires a probe on
     /// each emitted cursor, tagged with the source op's byte range.
@@ -43,6 +47,7 @@ impl LowerCtx {
             interner: None,
             root,
             bindings: HashMap::new(),
+            rules: Arc::new(Mutex::new(HashMap::new())),
             probe:    None,
             sprf_store: None,
             config:   None,
@@ -56,6 +61,12 @@ impl LowerCtx {
     }
     pub fn with_binding(mut self, name: impl Into<Arc<str>>, pipe: Pipe<Cursor>) -> Self {
         self.bindings.insert(name.into(), pipe); self
+    }
+    pub fn register_rule(&self, rule: Rule) {
+        self.rules.lock().unwrap().insert(rule.name.clone(), rule);
+    }
+    pub fn get_rule(&self, name: &str) -> Option<Rule> {
+        self.rules.lock().unwrap().get(name).cloned()
     }
     /// Attach the content-derived intern store. Emitters lowered after
     /// this call stamp coord-space terms alongside legacy raw_terms.

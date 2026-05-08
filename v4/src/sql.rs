@@ -20,6 +20,7 @@ use crate::compile::lower::op_def::{DslBody, DslShape, InterpKind, InterpMode, O
 use crate::compile::lower::value::{CallArg, Value};
 use crate::fact::{FactWrite, WriteAssign, WriteValue};
 use crate::mounted_query;
+use crate::rule::{RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
 use crate::sprf_introspect::PipeIntrospect;
 use crate::Cursor;
 
@@ -696,6 +697,54 @@ pub fn rule_write_pipe(
         table,
         assignments,
     ))))
+}
+
+pub fn rule_body_call_pipe(
+    ctx: &LowerCtx,
+    table: &str,
+    force: bool,
+    args: &[CallArg],
+) -> Result<Pipe<Cursor>, LowerError> {
+    let rule = ctx.get_rule(table).ok_or_else(|| {
+        LowerError::Unknown(format!("bodied rule `{table}` is not declared"))
+    })?;
+    let cols: Vec<String> = rule.sink_cols.iter().map(|col| col.to_string()).collect();
+    let resolved = resolve_rule_args(table, &cols, args)?;
+    let mut assignments = Vec::new();
+
+    for (col, value) in resolved {
+        let Some(value) = rule_invoke_value(value)? else {
+            continue;
+        };
+        assignments.push(RuleInvokeAssign {
+            col: Arc::<str>::from(col),
+            value,
+        });
+    }
+
+    Ok(Pipe::new().step(Arc::new(RuleInvokeComponent::new(
+        rule,
+        assignments,
+        force,
+    ))))
+}
+
+fn rule_invoke_value(value: Value) -> Result<Option<RuleInvokeValue>, LowerError> {
+    match value {
+        Value::Atom(value) if value.as_ref() == "&.value" => Ok(Some(RuleInvokeValue::Value)),
+        Value::Atom(value) => Ok(Some(RuleInvokeValue::Literal(value))),
+        Value::Pipe(pipe) => {
+            if let Some(term) = pipe.reads_terms().first() {
+                Ok(Some(RuleInvokeValue::Term(term.clone())))
+            } else if pipe.binds_terms().first().is_some() {
+                Ok(None)
+            } else {
+                Err(LowerError::Unknown(
+                    "bodied rule call args must be atoms or terms".into(),
+                ))
+            }
+        }
+    }
 }
 
 fn resolve_rule_args(

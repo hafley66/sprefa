@@ -11,10 +11,12 @@
 //! Layer-2 input-set memoization (the `Op::probe` path) is deferred;
 //! arrives once Component grows a `probe()` shim.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, ExpandStats, Pipe, QueueBackend,
+    expand, Component, Diag, ExpandOpts, ExpandStats, MemQueue, Next, Node,
+    Pipe, PipeInstance, QueueBackend, RenderCtx,
 };
 
 use crate::Cursor;
@@ -104,9 +106,156 @@ impl Rule {
     }
 }
 
+#[derive(Clone)]
+pub enum RuleInvokeValue {
+    Term(Arc<str>),
+    Value,
+    Literal(Arc<str>),
+}
+
+#[derive(Clone)]
+pub struct RuleInvokeAssign {
+    pub col: Arc<str>,
+    pub value: RuleInvokeValue,
+}
+
+pub struct RuleInvokeComponent {
+    rule: Rule,
+    assignments: Arc<Vec<RuleInvokeAssign>>,
+    force: bool,
+    cache: Mutex<BTreeMap<[u8; 32], Node<Cursor>>>,
+}
+
+impl RuleInvokeComponent {
+    pub fn new(rule: Rule, assignments: Vec<RuleInvokeAssign>, force: bool) -> Self {
+        Self {
+            rule,
+            assignments: Arc::new(assignments),
+            force,
+            cache: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn cache_key(&self, c: &Cursor) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        h.update(self.rule.name.as_bytes());
+        h.update(b"\0");
+        h.update(&c.content_hash());
+        for assignment in self.assignments.iter() {
+            h.update(b"\0");
+            h.update(assignment.col.as_bytes());
+            h.update(b"=");
+            match &assignment.value {
+                RuleInvokeValue::Term(term) => {
+                    h.update(b"term:");
+                    h.update(term.as_bytes());
+                }
+                RuleInvokeValue::Value => {
+                    h.update(b"value");
+                }
+                RuleInvokeValue::Literal(value) => {
+                    h.update(b"literal:");
+                    h.update(value.as_bytes());
+                }
+            }
+        }
+        *h.finalize().as_bytes()
+    }
+
+    fn seed_for(&self, ctx: &RenderCtx, c: &Cursor) -> Option<Cursor> {
+        let mut seed = c.clone();
+        for assignment in self.assignments.iter() {
+            match &assignment.value {
+                RuleInvokeValue::Term(term) => {
+                    let Some(value) = c.get(term) else {
+                        ctx.diag.emit(Diag::error(
+                            "rule/missing-arg",
+                            format!(
+                                "{}: term `{term}` is required for column `{}`",
+                                self.rule.name, assignment.col,
+                            ),
+                        ));
+                        return None;
+                    };
+                    seed.set(&assignment.col, value);
+                }
+                RuleInvokeValue::Value => {
+                    seed.set_arc(&assignment.col, c.value.clone());
+                }
+                RuleInvokeValue::Literal(value) => {
+                    seed.set_arc(&assignment.col, value.clone());
+                }
+            }
+        }
+        Some(seed)
+    }
+
+    fn run_rule(&self, ctx: &RenderCtx, seed: Cursor) -> Node<Cursor> {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let mut steps = self.rule.clone().into_pipe().steps;
+        steps.push(Arc::new(InvokeCollector { sink: sink.clone() }));
+        let inst = PipeInstance::new(steps);
+        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        expand(
+            &inst,
+            queue,
+            vec![Arc::new(seed)],
+            ExpandOpts::default()
+                .with_bus(ctx.bus.clone())
+                .with_diag(ctx.diag.clone()),
+        );
+
+        let rows = sink.lock().unwrap();
+        match rows.len() {
+            0 => Node::Done,
+            1 => Node::Emit(Arc::new(rows[0].clone())),
+            _ => Node::Many(
+                rows.iter()
+                    .cloned()
+                    .map(|cursor| Node::Emit(Arc::new(cursor)))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl Component for RuleInvokeComponent {
+    type Next = Cursor;
+
+    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let key = self.cache_key(c);
+        if !self.force {
+            if let Some(cached) = self.cache.lock().unwrap().get(&key).cloned() {
+                return cached;
+            }
+        }
+
+        let result = match self.seed_for(ctx, c) {
+            Some(seed) => self.run_rule(ctx, seed),
+            None => Node::Done,
+        };
+        self.cache.lock().unwrap().insert(key, result.clone());
+        result
+    }
+}
+
+struct InvokeCollector {
+    sink: Arc<Mutex<Vec<Cursor>>>,
+}
+
+impl Component for InvokeCollector {
+    type Next = Cursor;
+
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        self.sink.lock().unwrap().push(c.clone());
+        Node::Done
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
     use effect_runtime::v2::{
         MemQueue, Node, PipeInstance, QueueBackend, RenderCtx,
@@ -199,5 +348,52 @@ mod tests {
 
         let got = sink.lock().unwrap();
         assert_eq!(got.len(), 2);
+    }
+
+    struct CountBody {
+        count: Arc<AtomicUsize>,
+    }
+
+    impl Component for CountBody {
+        type Next = Cursor;
+
+        fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            let n = self.count.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut next = c.clone();
+            next.set("COUNT", n.to_string());
+            Node::Emit(Arc::new(next))
+        }
+    }
+
+    #[test]
+    fn rule_invoke_cache_replays_unless_forced() {
+        let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let count = Arc::new(AtomicUsize::new(0));
+        let body = Pipe::new().step(Arc::new(CountBody { count: count.clone() }));
+        let rule = Rule::new("counted", store, "counted", &["COUNT"], body);
+        let input = cursor("seed", &[]);
+        let ctx = RenderCtx::new(0, 0, 0);
+
+        let cached = RuleInvokeComponent::new(rule.clone(), Vec::new(), false);
+        let first = cached.render(&ctx, &input);
+        let second = cached.render(&ctx, &input);
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert_eq!(node_count_value(&first), Some("1".to_string()));
+        assert_eq!(node_count_value(&second), Some("1".to_string()));
+
+        let forced = RuleInvokeComponent::new(rule, Vec::new(), true);
+        let third = forced.render(&ctx, &input);
+        let fourth = forced.render(&ctx, &input);
+        assert_eq!(count.load(Ordering::SeqCst), 3);
+        assert_eq!(node_count_value(&third), Some("2".to_string()));
+        assert_eq!(node_count_value(&fourth), Some("3".to_string()));
+    }
+
+    fn node_count_value(node: &Node<Cursor>) -> Option<String> {
+        match node {
+            Node::Emit(cursor) => cursor.get("COUNT").map(|s| s.to_string()),
+            Node::Many(nodes) => nodes.first().and_then(node_count_value),
+            Node::Done | Node::Yield { .. } => None,
+        }
     }
 }
