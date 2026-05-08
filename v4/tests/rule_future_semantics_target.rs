@@ -105,7 +105,6 @@ fn mounted_query_reacts_to_late_relation_write() {
 }
 
 #[test]
-#[ignore = "target semantics: mounted query output rows should persist by mount/input/output hash"]
 fn mounted_query_persists_outputs_by_mount_and_input_key() {
     let store = run_pipes(r#"
         rule(:openapi_ops, OP!);
@@ -133,10 +132,16 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
     "#);
 
     assert_eq!(store.rows_of("hook_hits").len(), 1);
+    let mounted_outputs = store.rows_of("mounted_query_output");
     assert!(
-        store.rows_of("mounted_query_output").len() >= 1,
+        mounted_outputs.len() >= 1,
         "mounted query output set should persist independently of the consumer rule table"
     );
+    assert!(mounted_outputs[0].get("mount_id").is_some());
+    assert!(mounted_outputs[0].get("input_key").is_some());
+    assert!(mounted_outputs[0].get("generation").is_some());
+    assert!(mounted_outputs[0].get("output_hash").is_some());
+    assert!(mounted_outputs[0].get("cursor_blob").is_some());
 }
 
 #[test]

@@ -23,12 +23,16 @@ Implemented:
 - rule declaration, writes, reads, predicates, and SQL batch-local query op
 - fact table row identity through `_id`
 - dirty row publish exists through `FactStore::commit`
+- SQL query outputs are persisted to `mounted_query_output` through
+  `FactStore` with `mount_id`, `input_key`, `generation`, `output_hash`,
+  and `cursor_blob`
 
 Current limitations:
 
 - `CollectComponent` buffers in a component `Mutex`, not durable store state
 - `SqlQueryComponent` caches by SQL, input batch, and referenced table row identities, but does not mount a live subscription
-- query outputs are not persisted as a materialized result set
+- `mounted_query_output` is append/dedup by full fact row today, not
+  replacement by `(mount_id, input_key, output_hash)`
 - dirty publish is row-oriented, not query-dependency-oriented
 - stale outputs are not retracted or cleared after later writes
 
@@ -196,8 +200,8 @@ collect_does_not_mix_two_pipe_instances
 First green slice:
 
 ```text
-scope-keyed barrier state
-durable mounted_query_output table in store
+scope-keyed barrier state [done]
+durable mounted_query_output table in store [first append-only slice done]
 whole-output-set replacement per mount/input_key
 table-level invalidation only
 ```
