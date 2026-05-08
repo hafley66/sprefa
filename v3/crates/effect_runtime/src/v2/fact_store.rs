@@ -66,6 +66,9 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// must NOT be included.
     fn declare(&self, _table: &str, _cols: &[&str]) {}
 
+    /// Declared user columns for `table`, excluding `_id`.
+    fn declared_cols(&self, _table: &str) -> Option<Vec<String>> { None }
+
     /// Insert a row into `table`. The store mints `_id =
     /// content_id(table, row)` and stamps it on the row before
     /// storage; rows arriving with `_id` already set are accepted
@@ -178,6 +181,10 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
             return;
         }
         s.insert(table.to_string(), cols_owned);
+    }
+
+    fn declared_cols(&self, table: &str) -> Option<Vec<String>> {
+        self.schemas.lock().unwrap().get(table).cloned()
     }
 
     fn insert(&self, table: &str, row: Arc<R>) {
@@ -435,6 +442,10 @@ mod sqlite {
             ).expect("schema insert");
 
             schemas.insert(table.to_string(), cols_owned);
+        }
+
+        fn declared_cols(&self, table: &str) -> Option<Vec<String>> {
+            self.schemas.lock().unwrap().get(table).cloned()
         }
 
         fn insert(&self, table: &str, row: Arc<R>) {

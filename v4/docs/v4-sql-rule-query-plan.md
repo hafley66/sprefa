@@ -29,6 +29,7 @@ rule(:name) { ... }       writes rows to that relation
 FactRead                  per-cursor relation read
 FactRead::anti            runtime anti-join primitive
 sql`...`                  batch-local SQLite relation op
+FactStore::declared_cols  declared table column metadata for SQL
 lsp_error/lsp_warn/...    runtime diagnostic ops
 cst::DslBodyLsp           body-level LSP hooks for DSLs
 ```
@@ -39,7 +40,6 @@ Missing pieces:
 rule schema metadata usable by SQL/LSP
 logical rule name -> physical table name rewrite
 direct execution against SqliteFactStore physical tables
-declared empty-table column materialization for SQL
 recursive CTE table detection
 SQL diagnostics surfaced back into document-level LSP state
 SQL LSP metadata for tables, columns, and input terms

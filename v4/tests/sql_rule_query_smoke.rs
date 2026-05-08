@@ -70,3 +70,29 @@ fn sql_anti_join_finds_missing_frontend_hook() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("OP"), Some("listPets"));
 }
+
+#[test]
+fn sql_anti_join_handles_declared_empty_rule_table() {
+    let src = r#"
+        rule(:frontend_hooks, OP?);
+        rule(:missing_frontend_hooks, OP?);
+
+        `listPets`
+          > split(OP?)`!`
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+              )
+            `
+          > rule(:missing_frontend_hooks);
+    "#;
+
+    let store = run_pipes(src);
+    let rows = store.rows_of("missing_frontend_hooks");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("OP"), Some("listPets"));
+}

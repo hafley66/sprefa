@@ -66,7 +66,8 @@ fn run_sql_batch(
 
     for table in referenced_fact_tables(sql) {
         let rows = store.rows_of(&table);
-        materialize_fact_table(&conn, &table, &rows)?;
+        let declared_cols = store.declared_cols(&table).unwrap_or_default();
+        materialize_fact_table(&conn, &table, &declared_cols, &rows)?;
     }
 
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
@@ -180,9 +181,15 @@ fn materialize_input(conn: &Connection, batch: &[&Cursor]) -> Result<(), String>
 fn materialize_fact_table(
     conn: &Connection,
     table: &str,
+    declared_cols: &[String],
     rows: &[Arc<Cursor>],
 ) -> Result<(), String> {
     let mut cols = BTreeSet::new();
+    for col in declared_cols {
+        if col != "value" {
+            cols.insert(col.to_string());
+        }
+    }
     for row in rows {
         for (name, _) in &row.raw_terms {
             if name.as_ref() != "value" {
@@ -500,6 +507,31 @@ mod tests {
         assert_eq!(nodes.len(), 2);
         assert!(matches!(nodes[0], Node::Done));
         match &nodes[1] {
+            Node::Emit(c) => assert_eq!(c.get("OP"), Some("listPets")),
+            other => panic!("expected one emitted cursor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn anti_join_against_declared_empty_table_keeps_declared_columns() {
+        let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        store.declare("frontend_hooks", &["OP"]);
+
+        let missing = cursor("missing", &[("OP", "listPets")]);
+        let batch = vec![&missing];
+        let nodes = run_sql_batch(
+            store.as_ref(),
+            "SELECT input.__cursor_idx, input.OP \
+             FROM input \
+             WHERE NOT EXISTS ( \
+               SELECT 1 FROM frontend_hooks \
+               WHERE frontend_hooks.OP = input.OP \
+             )",
+            &batch,
+        )
+        .unwrap();
+
+        match &nodes[0] {
             Node::Emit(c) => assert_eq!(c.get("OP"), Some("listPets")),
             other => panic!("expected one emitted cursor, got {other:?}"),
         }
