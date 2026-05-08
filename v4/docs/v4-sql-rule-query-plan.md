@@ -2,7 +2,15 @@
 
 ## Status
 
-This document is target design. Current v4 already has rule declaration/write behavior, `FactRead`, `FactRead::anti`, LSP diagnostic ops, and CST/LSP substrate. `sql`` is not executable yet.
+This document is target design plus the first executable slice. Current v4 already has rule declaration/write behavior, `FactRead`, `FactRead::anti`, LSP diagnostic ops, CST/LSP substrate, and a batch-local `sql`` operator.
+
+Implemented `sql`` status:
+
+```text
+upstream cursor batch -> temp input relation -> in-memory SQLite query -> output cursors
+```
+
+The first slice snapshots referenced fact tables through `FactStore::rows_of` into the per-batch SQLite connection. That keeps the implementation trait-backed while rule/query semantics stay SQLite-shaped.
 
 The goal is to make rule querying SQLite-shaped without expanding the host language into a second SQL.
 
@@ -20,6 +28,7 @@ rule(:name) { ... }       writes rows to that relation
 ... > rule(:name)         sink-position write
 FactRead                  per-cursor relation read
 FactRead::anti            runtime anti-join primitive
+sql`...`                  batch-local SQLite relation op
 lsp_error/lsp_warn/...    runtime diagnostic ops
 cst::DslBodyLsp           body-level LSP hooks for DSLs
 ```
@@ -28,11 +37,11 @@ Missing pieces:
 
 ```text
 rule schema metadata usable by SQL/LSP
-sql`...` operator and DSL body
-batch input relation ferrying
 logical rule name -> physical table name rewrite
-SQL result row -> cursor mapping
-SQL diagnostics for parse/prepare/schema errors
+direct execution against SqliteFactStore physical tables
+declared empty-table column materialization for SQL
+recursive CTE table detection
+SQL diagnostics surfaced back into document-level LSP state
 SQL LSP metadata for tables, columns, and input terms
 ```
 

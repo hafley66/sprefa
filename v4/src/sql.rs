@@ -1,0 +1,507 @@
+//! Batch-local `sql`` relation op.
+//!
+//! First executable slice of the V4 SQL rule query plan:
+//!
+//!   upstream cursor batch -> temp `input` table -> SQLite query -> cursors
+//!
+//! The component snapshots referenced fact tables through `FactStore`.
+//! That keeps the first implementation trait-backed while the language
+//! contract stays SQLite-shaped.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+use effect_runtime::v2::{Component, Diag, FactStore, Node, Pipe, Purity, RenderCtx};
+use rusqlite::types::{Value as SqlValue, ValueRef};
+use rusqlite::{params_from_iter, Connection};
+
+use crate::compile::lower::ctx::{LowerCtx, LowerError};
+use crate::compile::lower::op_def::{DslBody, DslShape, InterpKind, InterpMode, OperatorDef};
+use crate::compile::lower::value::Value;
+use crate::Cursor;
+
+pub struct SqlQueryComponent {
+    store: Arc<dyn FactStore<Cursor>>,
+    sql: Arc<str>,
+}
+
+impl SqlQueryComponent {
+    pub fn new(store: Arc<dyn FactStore<Cursor>>, sql: impl Into<Arc<str>>) -> Self {
+        Self {
+            store,
+            sql: sql.into(),
+        }
+    }
+}
+
+impl Component for SqlQueryComponent {
+    type Next = Cursor;
+
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        if batch.is_empty() {
+            return Vec::new();
+        }
+
+        match run_sql_batch(self.store.as_ref(), self.sql.as_ref(), batch) {
+            Ok(grouped) => grouped,
+            Err(e) => {
+                ctx.diag.emit(Diag::error("sql/runtime", e));
+                batch.iter().map(|_| Node::Done).collect()
+            }
+        }
+    }
+
+    fn purity(&self) -> Purity {
+        Purity::Read
+    }
+}
+
+fn run_sql_batch(
+    store: &dyn FactStore<Cursor>,
+    sql: &str,
+    batch: &[&Cursor],
+) -> Result<Vec<Node<Cursor>>, String> {
+    let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
+    materialize_input(&conn, batch)?;
+
+    for table in referenced_fact_tables(sql) {
+        let rows = store.rows_of(&table);
+        materialize_fact_table(&conn, &table, &rows)?;
+    }
+
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let col_count = col_names.len();
+
+    let mut grouped: Vec<Vec<Node<Cursor>>> = vec![Vec::new(); batch.len()];
+    let mut synthetic: Vec<Node<Cursor>> = Vec::new();
+
+    let rows = stmt
+        .query_map([], |row| {
+            let mut out = BTreeMap::new();
+            for (idx, name) in col_names.iter().enumerate().take(col_count) {
+                let value = sql_value_to_string(row.get_ref(idx)?);
+                out.insert(name.clone(), value);
+            }
+            Ok(out)
+        })
+        .map_err(|e| e.to_string())?;
+
+    for row in rows {
+        let row = row.map_err(|e| e.to_string())?;
+        let cursor_idx = row
+            .get("__cursor_idx")
+            .and_then(|s| s.parse::<usize>().ok());
+
+        let mut child = match cursor_idx.and_then(|idx| batch.get(idx).copied()) {
+            Some(source) => source.clone(),
+            None => Cursor::default(),
+        };
+
+        for (name, value) in &row {
+            if name == "__cursor_idx" {
+                continue;
+            }
+            if name == "value" {
+                child.value = Arc::<str>::from(value.as_str());
+                continue;
+            }
+            child.set(name, value.as_str());
+        }
+
+        let node = Node::Emit(Arc::new(child));
+        match cursor_idx {
+            Some(idx) if idx < grouped.len() => grouped[idx].push(node),
+            _ => synthetic.push(node),
+        }
+    }
+
+    let mut out: Vec<Node<Cursor>> = grouped.into_iter().map(nodes_to_node).collect();
+    if !synthetic.is_empty() {
+        if out.is_empty() {
+            out.push(nodes_to_node(synthetic));
+        } else {
+            match &mut out[0] {
+                Node::Done => out[0] = nodes_to_node(synthetic),
+                Node::Many(existing) => existing.extend(synthetic),
+                other => {
+                    let previous = other.clone();
+                    let mut nodes = vec![previous];
+                    nodes.extend(synthetic);
+                    out[0] = Node::Many(nodes);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn nodes_to_node(nodes: Vec<Node<Cursor>>) -> Node<Cursor> {
+    match nodes.len() {
+        0 => Node::Done,
+        1 => nodes.into_iter().next().unwrap(),
+        _ => Node::Many(nodes),
+    }
+}
+
+fn materialize_input(conn: &Connection, batch: &[&Cursor]) -> Result<(), String> {
+    let mut cols = BTreeSet::new();
+    for cursor in batch {
+        for (name, _) in &cursor.raw_terms {
+            if name.as_ref() != "__cursor_idx" && name.as_ref() != "value" {
+                cols.insert(name.to_string());
+            }
+        }
+    }
+
+    let mut ordered = vec!["__cursor_idx".to_string(), "value".to_string()];
+    ordered.extend(cols);
+    create_text_table(conn, "input", &ordered, Some("__cursor_idx"))?;
+
+    for (idx, cursor) in batch.iter().enumerate() {
+        let values: Vec<SqlValue> = ordered
+            .iter()
+            .map(|col| {
+                if col == "__cursor_idx" {
+                    SqlValue::Integer(idx as i64)
+                } else if col == "value" {
+                    SqlValue::Text(cursor.value.to_string())
+                } else {
+                    SqlValue::Text(cursor.get(col).unwrap_or("").to_string())
+                }
+            })
+            .collect();
+        insert_row(conn, "input", &ordered, values)?;
+    }
+
+    Ok(())
+}
+
+fn materialize_fact_table(
+    conn: &Connection,
+    table: &str,
+    rows: &[Arc<Cursor>],
+) -> Result<(), String> {
+    let mut cols = BTreeSet::new();
+    for row in rows {
+        for (name, _) in &row.raw_terms {
+            if name.as_ref() != "value" {
+                cols.insert(name.to_string());
+            }
+        }
+    }
+
+    let mut ordered = vec!["value".to_string()];
+    ordered.extend(cols);
+    create_text_table(conn, table, &ordered, None)?;
+
+    for row in rows {
+        let values: Vec<SqlValue> = ordered
+            .iter()
+            .map(|col| {
+                if col == "value" {
+                    SqlValue::Text(row.value.to_string())
+                } else {
+                    SqlValue::Text(row.get(col).unwrap_or("").to_string())
+                }
+            })
+            .collect();
+        insert_row(conn, table, &ordered, values)?;
+    }
+
+    Ok(())
+}
+
+fn create_text_table(
+    conn: &Connection,
+    table: &str,
+    cols: &[String],
+    integer_col: Option<&str>,
+) -> Result<(), String> {
+    let defs: Vec<String> = cols
+        .iter()
+        .map(|col| {
+            let ty = if Some(col.as_str()) == integer_col {
+                "INTEGER"
+            } else {
+                "TEXT"
+            };
+            format!("{} {ty}", quote_ident(col))
+        })
+        .collect();
+    let sql = format!(
+        "CREATE TEMP TABLE {} ({})",
+        quote_ident(table),
+        defs.join(", ")
+    );
+    conn.execute(&sql, []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn insert_row(
+    conn: &Connection,
+    table: &str,
+    cols: &[String],
+    values: Vec<SqlValue>,
+) -> Result<(), String> {
+    let col_sql = cols
+        .iter()
+        .map(|c| quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = (0..cols.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "INSERT INTO {} ({col_sql}) VALUES ({placeholders})",
+        quote_ident(table),
+    );
+    conn.execute(&sql, params_from_iter(values.iter()))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn sql_value_to_string(value: ValueRef<'_>) -> String {
+    match value {
+        ValueRef::Null => String::new(),
+        ValueRef::Integer(i) => i.to_string(),
+        ValueRef::Real(f) => f.to_string(),
+        ValueRef::Text(bytes) => String::from_utf8_lossy(bytes).to_string(),
+        ValueRef::Blob(bytes) => String::from_utf8_lossy(bytes).to_string(),
+    }
+}
+
+fn quote_ident(s: &str) -> String {
+    let escaped = s.replace('"', "\"\"");
+    format!("\"{escaped}\"")
+}
+
+fn referenced_fact_tables(sql: &str) -> BTreeSet<String> {
+    let tokens = sql_tokens(sql);
+    let mut out = BTreeSet::new();
+    let mut expect_table = false;
+
+    for token in tokens {
+        let upper = token.to_ascii_uppercase();
+        if expect_table {
+            expect_table = false;
+            if token == "(" || upper == "SELECT" {
+                continue;
+            }
+            if token != "input" && is_ident(&token) {
+                out.insert(token);
+            }
+            continue;
+        }
+        if upper == "FROM" || upper.ends_with("JOIN") {
+            expect_table = true;
+        }
+    }
+
+    out
+}
+
+fn sql_tokens(sql: &str) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == quote {
+                        i += 1;
+                        if i < bytes.len() && bytes[i] == quote {
+                            i += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+            }
+            b if b.is_ascii_alphabetic() || b == b'_' => {
+                let lo = i;
+                i += 1;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                out.push(sql[lo..i].to_string());
+            }
+            b'(' => {
+                out.push("(".to_string());
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+fn is_ident(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    if !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') {
+        return false;
+    }
+    bytes[1..]
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+}
+
+fn rewrite_sql_interps(dsl: &DslBody) -> Result<String, LowerError> {
+    let mut interps = dsl.interps.clone();
+    interps.sort_by_key(|i| i.range.lo);
+
+    let mut out = String::with_capacity(dsl.raw.len());
+    let mut cursor = 0usize;
+    for interp in interps {
+        let lo = interp.range.lo as usize;
+        let hi = interp.range.hi as usize;
+        if lo < cursor || hi > dsl.raw.len() {
+            return Err(LowerError::Unknown(
+                "sql: interpolation span out of bounds".into(),
+            ));
+        }
+        out.push_str(&dsl.raw[cursor..lo]);
+        match &interp.kind {
+            InterpKind::Term {
+                mode: InterpMode::Read,
+                field,
+            } => {
+                if interp.name.as_ref() == "&" {
+                    if field.as_ref().map(|f| f.as_ref()) == Some("value") {
+                        out.push_str("\"input\".\"value\"");
+                    } else {
+                        return Err(LowerError::Unknown(
+                            "sql: only ${&.value} focal interpolation is supported".into(),
+                        ));
+                    }
+                } else if field.is_none() {
+                    out.push_str("\"input\".");
+                    out.push_str(&quote_ident(&interp.name));
+                } else {
+                    return Err(LowerError::Unknown(
+                        "sql: field interpolation must be explicit SQL over input columns".into(),
+                    ));
+                }
+            }
+            InterpKind::Term {
+                mode: InterpMode::Bind,
+                ..
+            } => {
+                return Err(LowerError::Unknown(
+                    "sql: bind interpolation is not valid inside sql bodies".into(),
+                ));
+            }
+            InterpKind::SubPipe { .. } => {
+                return Err(LowerError::Unknown(
+                    "sql: identifier or sub-pipe interpolation is rejected".into(),
+                ));
+            }
+        }
+        cursor = hi;
+    }
+    out.push_str(&dsl.raw[cursor..]);
+    Ok(out)
+}
+
+pub struct SqlDef;
+
+impl OperatorDef for SqlDef {
+    fn name(&self) -> &'static str {
+        "sql"
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+
+    fn lower(
+        &self,
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let dsl = dsl.ok_or_else(|| LowerError::Unknown("sql: dsl body required".into()))?;
+        let sql = rewrite_sql_interps(dsl)?;
+        Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(ctx.store.clone(), sql))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use effect_runtime::v2::MemFactStore;
+
+    fn cursor(value: &str, kvs: &[(&str, &str)]) -> Cursor {
+        let mut c = Cursor {
+            value: Arc::from(value),
+            ..Default::default()
+        };
+        for (k, v) in kvs {
+            c.set(k, *v);
+        }
+        c
+    }
+
+    #[test]
+    fn referenced_fact_table_scan_reads_from_and_join() {
+        let got = referenced_fact_tables(
+            "SELECT input.OP FROM input WHERE NOT EXISTS \
+             (SELECT 1 FROM frontend_hooks WHERE frontend_hooks.OP = input.OP) \
+             JOIN other_rule ON other_rule.OP = input.OP",
+        );
+        assert_eq!(
+            got.into_iter().collect::<Vec<_>>(),
+            vec!["frontend_hooks".to_string(), "other_rule".to_string()],
+        );
+    }
+
+    #[test]
+    fn anti_join_emits_only_missing_input_rows() {
+        let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        store.insert(
+            "frontend_hooks",
+            Arc::new(cursor("hook", &[("OP", "getUser")])),
+        );
+
+        let present = cursor("present", &[("OP", "getUser")]);
+        let missing = cursor("missing", &[("OP", "listPets")]);
+        let batch = vec![&present, &missing];
+        let nodes = run_sql_batch(
+            store.as_ref(),
+            "SELECT input.__cursor_idx, input.OP \
+             FROM input \
+             WHERE NOT EXISTS ( \
+               SELECT 1 FROM frontend_hooks \
+               WHERE frontend_hooks.OP = input.OP \
+             )",
+            &batch,
+        )
+        .unwrap();
+
+        assert_eq!(nodes.len(), 2);
+        assert!(matches!(nodes[0], Node::Done));
+        match &nodes[1] {
+            Node::Emit(c) => assert_eq!(c.get("OP"), Some("listPets")),
+            other => panic!("expected one emitted cursor, got {other:?}"),
+        }
+    }
+}
