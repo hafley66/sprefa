@@ -9,7 +9,8 @@ Reading order for getting back into v4 without replaying chat logs:
 5. [V4 SQL Rule Query Plan](./v4-sql-rule-query-plan.md)
 6. [V4 Runtime Batching](./v4-runtime-batching.md)
 7. [V4 Primitive Examples Plan](./v4-primitive-examples-plan.md)
-8. [V4 Next Slices](./v4-next-slices.md)
+8. [V4 V3 Parity Gaps](./v4-v3-parity-gaps.md)
+9. [V4 Next Slices](./v4-next-slices.md)
 
 Doc posture:
 

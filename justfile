@@ -35,3 +35,33 @@ test:
 
 build:
     cd v3 && cargo build --tests
+
+# -----------------------------------------------------------------------------
+# v4 smoke / dogfood shortcuts
+# -----------------------------------------------------------------------------
+
+v4-test:
+    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml
+
+v4-target-tests:
+    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml --test rule_future_semantics_target -- --ignored
+
+v4-flow-smoke:
+    CARGO_BUILD_RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/lsp-flow-smoke.sprf --show-rows
+
+v4-lsp-build:
+    CARGO_BUILD_RUSTC_WRAPPER= cargo build --manifest-path v4/crates/sprefa-lsp/Cargo.toml --bin sprefa-lsp
+
+v4-lsp-test:
+    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/crates/sprefa-lsp/Cargo.toml
+
+v4-app-host-test:
+    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/app_host/Cargo.toml
+
+v4-vscode-compile:
+    cd v4/editors/vscode && npm run compile
+
+v4-vscode-install:
+    cd v4/editors/vscode && ./install.sh
+
+v4-dogfood: v4-flow-smoke v4-lsp-build
