@@ -25,7 +25,7 @@ use super::ast::{OpCall, PipeAst, SlotText};
 use super::lower::ctx::LowerCtx;
 use super::lower::op_def::{DslBody, DslInterp, InterpKind};
 use super::lower::registry::Registry;
-use super::lower::value::Value;
+use super::lower::value::{CallArg, Value};
 
 /// Walk a whole program. Each `PipeAst` becomes one `Pipe<Cursor>` on
 /// success; on failure that pipe is dropped and its diags accumulated.
@@ -95,10 +95,10 @@ pub fn walk_op(
     };
 
     // Resolve paren args.
-    let mut args: Vec<(Value, ByteRange)> = Vec::with_capacity(op.args.len());
+    let mut args: Vec<(CallArg, ByteRange)> = Vec::with_capacity(op.args.len());
     let mut had_arg_err = false;
     for slot in &op.args {
-        match classify_slot(slot, reg, ctx, diags) {
+        match classify_call_arg(slot, reg, ctx, diags) {
             Some(v) => args.push((v, slot.span)),
             None    => { had_arg_err = true; }
         }
@@ -199,6 +199,26 @@ pub fn walk_op(
         None => None,
     };
 
+    if op.name.as_ref() == "rule" && chain_pos >= 1 && block.is_none() {
+        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
+        match crate::sql::rule_write_pipe(ctx, &arg_vals) {
+            Ok(pipe) => {
+                let pipe = match &ctx.probe {
+                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
+                    None    => pipe,
+                };
+                return Some(pipe);
+            }
+            Err(e) => {
+                diags.push(
+                    Diag::error("lower/rule-write", e.to_string())
+                        .with_span(op.span.lo, op.span.hi)
+                );
+                return None;
+            }
+        }
+    }
+
     // Declared rule-table calls. The parser keeps the `?` suffix on
     // OpCall::predicate; the registry only stores concrete built-in op
     // names. A declared table name in call position is therefore a
@@ -206,7 +226,7 @@ pub fn walk_op(
     //   rule_name(A, B?)  -> row-producing query/project
     //   rule_name?(A, B)  -> predicate/filter
     if reg.get(&op.name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
-        let arg_vals: Vec<Value> = args.iter().map(|(v, _)| v.clone()).collect();
+        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
         match crate::sql::rule_table_call_pipe(ctx, &op.name, op.predicate, &arg_vals) {
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
@@ -226,7 +246,7 @@ pub fn walk_op(
     }
 
     // Dispatch.
-    match reg.lower_at(ctx, &op.name, flow, args, block, dsl, op.span, chain_pos) {
+    match reg.lower_call_at(ctx, &op.name, flow, args, block, dsl, op.span, chain_pos) {
         Ok(pipe) => {
             // If a probe sink is configured on the LowerCtx, wrap each
             // step of the lowered pipe with `SpannedComponent` so every
@@ -240,6 +260,77 @@ pub fn walk_op(
         }
         Err(ds)  => { diags.extend(ds); None }
     }
+}
+
+fn classify_call_arg(
+    slot:  &SlotText,
+    reg:   &Registry,
+    ctx:   &mut LowerCtx,
+    diags: &mut Vec<Diag>,
+) -> Option<CallArg> {
+    if let Some((keyword, value_slot)) = split_keyword_arg(slot) {
+        classify_slot(&value_slot, reg, ctx, diags).map(|value| CallArg::keyword(keyword, value))
+    } else {
+        classify_slot(slot, reg, ctx, diags).map(CallArg::positional)
+    }
+}
+
+fn split_keyword_arg(slot: &SlotText) -> Option<(Arc<str>, SlotText)> {
+    let raw = slot.raw.as_ref();
+    let trimmed = raw.trim();
+    let leading = raw.len().saturating_sub(raw.trim_start().len());
+    let colon = find_top_level_keyword_colon(trimmed)?;
+    let key = trimmed[..colon].trim();
+    if !is_ident(key) {
+        return None;
+    }
+    let value = trimmed[colon + 1..].trim();
+    if value.is_empty() {
+        return None;
+    }
+    let value_start_in_trimmed = colon + 1 + trimmed[colon + 1..].len().saturating_sub(trimmed[colon + 1..].trim_start().len());
+    let value_end_in_trimmed = value_start_in_trimmed + value.len();
+    let lo = slot.span.lo.saturating_add((leading + value_start_in_trimmed) as u32);
+    let hi = slot.span.lo.saturating_add((leading + value_end_in_trimmed) as u32);
+    Some((
+        Arc::<str>::from(key),
+        SlotText {
+            raw: Arc::<str>::from(value),
+            span: ByteRange { lo, hi },
+        },
+    ))
+}
+
+fn find_top_level_keyword_colon(raw: &str) -> Option<usize> {
+    let bytes = raw.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'`' | b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b':' if depth == 0 && i > 0 => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Classify a `SlotText` into `Value::Atom` or `Value::Pipe`.
@@ -288,6 +379,9 @@ pub fn classify_slot(
             return Some(Value::Atom(Arc::<str>::from(rest)));
         }
     }
+    if raw == "&.value" {
+        return Some(Value::Atom(Arc::<str>::from("&.value")));
+    }
     // ALL_CAPS bareword → term-ref desugar.
     //   `NAME`  → sub-pipe `term(:NAME)`      (read existing capture)
     //   `NAME?` → sub-pipe `term_bind(:NAME)` (introduce/bind capture)
@@ -296,6 +390,13 @@ pub fn classify_slot(
     if let Some(stripped) = raw.strip_suffix('?') {
         if is_caps_ident(stripped) {
             let term = crate::term::Term::bind(Arc::<str>::from(stripped));
+            let pipe = Pipe::new().step(Arc::new(term));
+            return Some(Value::Pipe(pipe));
+        }
+    }
+    if let Some(stripped) = raw.strip_suffix('!') {
+        if is_caps_ident(stripped) {
+            let term = crate::term::Term::read(Arc::<str>::from(stripped));
             let pipe = Pipe::new().step(Arc::new(term));
             return Some(Value::Pipe(pipe));
         }

@@ -7,7 +7,7 @@ use crate::Cursor;
 
 use super::ctx::{LowerCtx, LowerError};
 use super::op_def::{ArgKind, DslBody, OperatorDef};
-use super::value::Value;
+use super::value::{CallArg, Value};
 
 pub struct Registry {
     map: HashMap<&'static str, Arc<dyn OperatorDef>>,
@@ -60,17 +60,37 @@ impl Registry {
         call_span: ByteRange,
         chain_pos: usize,
     ) -> Result<Pipe<Cursor>, Vec<Diag>> {
+        let args = args
+            .into_iter()
+            .map(|(value, range)| (CallArg::positional(value), range))
+            .collect();
+        self.lower_call_at(ctx, name, flow, args, block, dsl, call_span, chain_pos)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn lower_call_at(
+        &self,
+        ctx:       &LowerCtx,
+        name:      &str,
+        flow:      Option<(Value, ByteRange)>,
+        args:      Vec<(CallArg, ByteRange)>,
+        block:     Option<(Pipe<Cursor>, ByteRange)>,
+        dsl:       Option<(DslBody, ByteRange)>,
+        call_span: ByteRange,
+        chain_pos: usize,
+    ) -> Result<Pipe<Cursor>, Vec<Diag>> {
         let def = self.get(name).ok_or_else(|| vec![
             Diag::error("lower/unknown-op", format!("unknown op: {name}"))
                 .with_span(call_span.lo, call_span.hi),
         ])?;
+        let args = normalize_call_args(&*def, args, call_span)?;
         let diags = validate_call(&*def, &flow, &args, &block, &dsl, call_span);
         if !diags.is_empty() { return Err(diags); }
         let flow_val  = flow.map(|(v, _)| v);
-        let arg_vals: Vec<Value> = args.into_iter().map(|(v, _)| v).collect();
+        let arg_vals: Vec<CallArg> = args.into_iter().map(|(v, _)| v).collect();
         let block_val = block.map(|(p, _)| p);
         let dsl_ref   = dsl.as_ref().map(|(d, _)| d);
-        def.lower_with_chain(ctx, flow_val, &arg_vals, block_val, dsl_ref, chain_pos).map_err(|e| match e {
+        def.lower_call_with_chain(ctx, flow_val, &arg_vals, block_val, dsl_ref, chain_pos).map_err(|e| match e {
             LowerError::Validate(ds) => ds,
             LowerError::UnboundCapture(n) => vec![
                 Diag::error("lower/unbound-capture",
@@ -96,7 +116,7 @@ impl Default for Registry { fn default() -> Self { Self::new() } }
 pub fn validate_call(
     def:       &dyn OperatorDef,
     flow:      &Option<(Value, ByteRange)>,
-    args:      &[(Value, ByteRange)],
+    args:      &[(CallArg, ByteRange)],
     block:     &Option<(Pipe<Cursor>, ByteRange)>,
     dsl:       &Option<(DslBody, ByteRange)>,
     call_span: ByteRange,
@@ -139,11 +159,12 @@ pub fn validate_call(
             diags.push(
                 Diag::error("lower/slot-not-allowed",
                     format!("op `{}` does not accept arg #{} ({})",
-                        def.name(), spec.len(), extra.kind_str()))
+                        def.name(), spec.len(), extra.value.kind_str()))
                     .with_span(r.lo, r.hi));
         }
     }
-    for (i, (val, r)) in args.iter().enumerate() {
+    for (i, (arg, r)) in args.iter().enumerate() {
+        let val = &arg.value;
         let sig = if i < n_fixed { &spec[i] }
                   else if has_variadic { &spec[spec.len() - 1] }
                   else { break };
@@ -187,4 +208,83 @@ pub fn validate_call(
     }
 
     diags
+}
+
+fn normalize_call_args(
+    def:       &dyn OperatorDef,
+    args:      Vec<(CallArg, ByteRange)>,
+    _call_span: ByteRange,
+) -> Result<Vec<(CallArg, ByteRange)>, Vec<Diag>> {
+    let mut diags = Vec::new();
+    let spec = def.paren_args();
+    let variadic = spec.last().filter(|s| matches!(s.kind, ArgKind::Variadic(_)));
+    let fixed_len = if variadic.is_some() { spec.len().saturating_sub(1) } else { spec.len() };
+
+    let mut saw_kw = false;
+    let mut out: Vec<Option<(CallArg, ByteRange)>> = vec![None; fixed_len];
+    let mut variadic_out: Vec<(CallArg, ByteRange)> = Vec::new();
+    let mut positional_idx = 0usize;
+
+    for (arg, range) in args {
+        match arg.keyword {
+            None => {
+                if saw_kw {
+                    diags.push(
+                        Diag::error(
+                            "lower/positional-after-kwarg",
+                            format!("op `{}` has positional arg after keyword arg", def.name()),
+                        )
+                        .with_span(range.lo, range.hi),
+                    );
+                    continue;
+                }
+                if positional_idx < fixed_len {
+                    out[positional_idx] = Some((arg, range));
+                } else if variadic.is_some() {
+                    variadic_out.push((arg, range));
+                } else {
+                    variadic_out.push((arg, range));
+                }
+                positional_idx += 1;
+            }
+            Some(ref keyword) => {
+                saw_kw = true;
+                let Some(idx) = spec[..fixed_len].iter().position(|s| s.name == keyword.as_ref()) else {
+                    diags.push(
+                        Diag::error(
+                            "lower/unknown-kwarg",
+                            format!("op `{}` has no keyword arg `{}`", def.name(), keyword),
+                        )
+                        .with_span(range.lo, range.hi),
+                    );
+                    continue;
+                };
+                if out[idx].is_some() {
+                    diags.push(
+                        Diag::error(
+                            "lower/duplicate-arg",
+                            format!("op `{}` arg `{}` assigned more than once", def.name(), keyword),
+                        )
+                        .with_span(range.lo, range.hi),
+                    );
+                    continue;
+                }
+                out[idx] = Some((arg, range));
+            }
+        }
+    }
+
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+
+    let mut normalized = Vec::new();
+    for item in out {
+        if let Some(item) = item {
+            normalized.push(item);
+        }
+    }
+    normalized.extend(variadic_out);
+
+    Ok(normalized)
 }

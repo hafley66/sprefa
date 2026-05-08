@@ -66,6 +66,7 @@ fn lower_pipe(pipe_node: Node<'_>, src: &str) -> Option<PipeAst> {
                 steps.push(OpCall {
                     name:      Arc::<str>::from("str"),
                     predicate: false,
+                    apply:     false,
                     span:      node_range(step),
                     flow:      None,
                     args:      Vec::new(),
@@ -96,6 +97,7 @@ fn lower_op_invocation(node: Node<'_>, src: &str) -> Option<OpCall> {
     let name_node = node.child_by_field_name("name")?;
     let name = Arc::<str>::from(&src[name_node.byte_range()]);
     let predicate = node.child_by_field_name("predicate").is_some();
+    let apply = node.child_by_field_name("apply").is_some();
 
     // bracket: take the first bracket_slot if any (multiple are tolerated
     // by the grammar's `repeat(field('bracket', …))`; v4 lowers the first).
@@ -116,6 +118,7 @@ fn lower_op_invocation(node: Node<'_>, src: &str) -> Option<OpCall> {
     Some(OpCall {
         name,
         predicate,
+        apply,
         span: node_range(node),
         flow,
         args,
@@ -185,6 +188,7 @@ fn lower_brace_block(brace: Node<'_>, src: &str) -> Option<PipeAst> {
                 steps.push(OpCall {
                     name:      Arc::<str>::from("str"),
                     predicate: false,
+                    apply:     false,
                     span,
                     flow:      None,
                     args:      Vec::new(),

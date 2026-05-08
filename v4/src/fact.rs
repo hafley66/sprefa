@@ -20,13 +20,35 @@ pub use effect_runtime::v2::{MemFactStore, FactStore as FactStoreTrait, SqliteFa
 
 /// `fact(:name) > FactWrite { cols }`. Row-INSERT. Pass-through.
 pub struct FactWrite {
-    pub store: Arc<dyn FactStore<Cursor>>,
-    pub table: Arc<str>,
+    pub store:       Arc<dyn FactStore<Cursor>>,
+    pub table:       Arc<str>,
+    pub assignments: Option<Arc<Vec<WriteAssign>>>,
+}
+
+#[derive(Clone)]
+pub enum WriteValue {
+    Term(Arc<str>),
+    Value,
+    Literal(Arc<str>),
+}
+
+#[derive(Clone)]
+pub struct WriteAssign {
+    pub col: Arc<str>,
+    pub value: WriteValue,
 }
 
 impl FactWrite {
     pub fn new(store: Arc<dyn FactStore<Cursor>>, table: impl Into<Arc<str>>) -> Self {
-        Self { store, table: table.into() }
+        Self { store, table: table.into(), assignments: None }
+    }
+
+    pub fn projected(
+        store: Arc<dyn FactStore<Cursor>>,
+        table: impl Into<Arc<str>>,
+        assignments: Vec<WriteAssign>,
+    ) -> Self {
+        Self { store, table: table.into(), assignments: Some(Arc::new(assignments)) }
     }
 }
 
@@ -39,7 +61,29 @@ impl Component for FactWrite {
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         if batch.is_empty() { return Vec::new(); }
         let arced: Vec<Arc<Cursor>> = batch.iter().map(|c| Arc::new((*c).clone())).collect();
-        self.store.insert_batch(&self.table, arced.clone());
+        let rows: Vec<Arc<Cursor>> = match &self.assignments {
+            Some(assignments) => batch.iter().map(|c| {
+                let mut row = Cursor::default();
+                for assignment in assignments.iter() {
+                    match &assignment.value {
+                        WriteValue::Term(term) => {
+                            if let Some(value) = c.get(term) {
+                                row.set(&assignment.col, value);
+                            }
+                        }
+                        WriteValue::Value => {
+                            row.set_arc(&assignment.col, c.value.clone());
+                        }
+                        WriteValue::Literal(value) => {
+                            row.set_arc(&assignment.col, value.clone());
+                        }
+                    }
+                }
+                Arc::new(row)
+            }).collect(),
+            None => arced.clone(),
+        };
+        self.store.insert_batch(&self.table, rows);
         arced.into_iter().map(Node::Emit).collect()
     }
 }

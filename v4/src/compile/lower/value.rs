@@ -15,6 +15,22 @@ pub enum Value {
     Pipe(Pipe<Cursor>),
 }
 
+#[derive(Clone)]
+pub struct CallArg {
+    pub keyword: Option<Arc<str>>,
+    pub value:   Value,
+}
+
+impl CallArg {
+    pub fn positional(value: Value) -> Self {
+        Self { keyword: None, value }
+    }
+
+    pub fn keyword(name: impl Into<Arc<str>>, value: Value) -> Self {
+        Self { keyword: Some(name.into()), value }
+    }
+}
+
 impl Value {
     pub fn atom(s: impl Into<Arc<str>>) -> Self { Value::Atom(s.into()) }
     pub fn pipe(p: Pipe<Cursor>) -> Self { Value::Pipe(p) }

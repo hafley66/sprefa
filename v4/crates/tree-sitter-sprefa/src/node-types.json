@@ -65,6 +65,16 @@
     "type": "op_invocation",
     "named": true,
     "fields": {
+      "apply": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": ".",
+            "named": false
+          }
+        ]
+      },
       "brace": {
         "multiple": false,
         "required": false,
@@ -218,6 +228,10 @@
   },
   {
     "type": ")",
+    "named": false
+  },
+  {
+    "type": ".",
     "named": false
   },
   {

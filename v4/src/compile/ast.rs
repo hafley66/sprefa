@@ -34,6 +34,10 @@ pub struct OpCall {
     /// `?` op suffix presence — predicate / push-pull inversion sigil
     /// (`fact?(...)`, `<rule>?(...)`).
     pub predicate: bool,
+    /// Immediate dotted apply marker after the name / predicate suffix.
+    /// Target relation-call syntax uses `rule_name.(...)` and
+    /// `rule_name?.(...)`.
+    pub apply:     bool,
     /// Full call extent, used as the span tag for ProbeSink.
     pub span:      ByteRange,
     /// `[flow]` body. Optional source override. Defaults to `&.value`.

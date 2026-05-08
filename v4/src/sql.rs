@@ -9,21 +9,23 @@
 //! contract stays SQLite-shaped.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use effect_runtime::v2::{Component, Diag, FactStore, Node, Pipe, Purity, RenderCtx};
+use effect_runtime::v2::{Component, Diag, FactStore, Next, Node, Pipe, Purity, RenderCtx};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection};
 
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{DslBody, DslShape, InterpKind, InterpMode, OperatorDef};
-use crate::compile::lower::value::Value;
+use crate::compile::lower::value::{CallArg, Value};
+use crate::fact::{FactWrite, WriteAssign, WriteValue};
 use crate::sprf_introspect::PipeIntrospect;
 use crate::Cursor;
 
 pub struct SqlQueryComponent {
     store: Arc<dyn FactStore<Cursor>>,
     sql: Arc<str>,
+    cache: Mutex<BTreeMap<[u8; 32], Vec<Node<Cursor>>>>,
 }
 
 impl SqlQueryComponent {
@@ -31,6 +33,7 @@ impl SqlQueryComponent {
         Self {
             store,
             sql: sql.into(),
+            cache: Mutex::new(BTreeMap::new()),
         }
     }
 }
@@ -43,18 +46,52 @@ impl Component for SqlQueryComponent {
             return Vec::new();
         }
 
-        match run_sql_batch(self.store.as_ref(), self.sql.as_ref(), batch) {
+        let key = sql_batch_cache_key(self.store.as_ref(), self.sql.as_ref(), batch);
+        if let Some(cached) = self.cache.lock().unwrap().get(&key).cloned() {
+            return cached;
+        }
+
+        let result = match run_sql_batch(self.store.as_ref(), self.sql.as_ref(), batch) {
             Ok(grouped) => grouped,
             Err(e) => {
                 ctx.diag.emit(Diag::error("sql/runtime", e));
                 batch.iter().map(|_| Node::Done).collect()
             }
-        }
+        };
+        self.cache.lock().unwrap().insert(key, result.clone());
+        result
     }
 
     fn purity(&self) -> Purity {
         Purity::Read
     }
+}
+
+fn sql_batch_cache_key(
+    store: &dyn FactStore<Cursor>,
+    sql: &str,
+    batch: &[&Cursor],
+) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(sql.as_bytes());
+    h.update(b"\0input\0");
+    for cursor in batch {
+        h.update(&cursor.content_hash());
+    }
+    h.update(b"\0tables\0");
+    for table in referenced_fact_tables(sql) {
+        h.update(table.as_bytes());
+        h.update(b"\0");
+        for row in store.rows_of(&table) {
+            if let Some(id) = row.get("_id") {
+                h.update(id.as_bytes());
+            } else {
+                h.update(&row.content_hash());
+            }
+            h.update(b"\0");
+        }
+    }
+    *h.finalize().as_bytes()
 }
 
 fn run_sql_batch(
@@ -457,7 +494,7 @@ pub fn rule_table_call_pipe(
     ctx:       &LowerCtx,
     table:     &str,
     predicate: bool,
-    args:      &[Value],
+    args:      &[CallArg],
 ) -> Result<Pipe<Cursor>, LowerError> {
     let cols = ctx.store.declared_cols(table).ok_or_else(|| {
         LowerError::Unknown(format!("rule table `{table}` is not declared"))
@@ -477,15 +514,19 @@ pub fn rule_table_call_pipe(
         Project { col: String, term: String },
     }
 
-    let mut modes = Vec::with_capacity(args.len());
-    for (idx, arg) in args.iter().enumerate() {
-        let col = cols[idx].clone();
+    let resolved = resolve_rule_args(table, &cols, args)?;
+    let mut modes = Vec::with_capacity(resolved.len());
+    for (col, arg) in resolved {
         match arg {
             Value::Atom(value) => {
-                modes.push(ArgMode::BoundLiteral {
-                    col,
-                    value: value.to_string(),
-                });
+                if value.as_ref() == "&.value" {
+                    modes.push(ArgMode::BoundTerm { col, term: "value".to_string() });
+                } else {
+                    modes.push(ArgMode::BoundLiteral {
+                        col,
+                        value: value.to_string(),
+                    });
+                }
             }
             Value::Pipe(pipe) => {
                 if let Some(term) = pipe.binds_terms().first() {
@@ -587,6 +628,115 @@ pub fn rule_table_call_pipe(
         ctx.store.clone(),
         sql,
     ))))
+}
+
+pub fn rule_write_pipe(
+    ctx:  &LowerCtx,
+    args: &[CallArg],
+) -> Result<Pipe<Cursor>, LowerError> {
+    let Some((first, rest)) = args.split_first() else {
+        return Err(LowerError::Unknown("rule write requires a :table arg".into()));
+    };
+    if first.keyword.is_some() {
+        return Err(LowerError::Unknown("rule write table arg must be positional".into()));
+    }
+    let table = match &first.value {
+        Value::Atom(s) => s.clone(),
+        _ => return Err(LowerError::Unknown("rule write first arg must be a :table atom".into())),
+    };
+    if rest.is_empty() {
+        return Ok(Pipe::new().step(Arc::new(FactWrite::new(
+            ctx.store.clone(),
+            table,
+        ))));
+    }
+    let cols = ctx.store.declared_cols(&table).ok_or_else(|| {
+        LowerError::Unknown(format!("rule table `{table}` is not declared"))
+    })?;
+    let resolved = resolve_rule_args(&table, &cols, rest)?;
+    let mut assignments = Vec::with_capacity(resolved.len());
+    for (col, value) in resolved {
+        let value = match value {
+            Value::Atom(value) if value.as_ref() == "&.value" => WriteValue::Value,
+            Value::Atom(value) => WriteValue::Literal(value),
+            Value::Pipe(pipe) => {
+                if let Some(term) = pipe.reads_terms().first() {
+                    WriteValue::Term(term.clone())
+                } else if let Some(term) = pipe.binds_terms().first() {
+                    WriteValue::Term(term.clone())
+                } else {
+                    return Err(LowerError::Unknown(
+                        "rule write args must be atoms or terms".into(),
+                    ));
+                }
+            }
+        };
+        assignments.push(WriteAssign {
+            col: Arc::<str>::from(col),
+            value,
+        });
+    }
+    Ok(Pipe::new().step(Arc::new(FactWrite::projected(
+        ctx.store.clone(),
+        table,
+        assignments,
+    ))))
+}
+
+fn resolve_rule_args(
+    table: &str,
+    cols: &[String],
+    args: &[CallArg],
+) -> Result<Vec<(String, Value)>, LowerError> {
+    let mut out: Vec<Option<Value>> = vec![None; cols.len()];
+    let mut positional_idx = 0usize;
+    let mut saw_kw = false;
+
+    for arg in args {
+        match &arg.keyword {
+            None => {
+                if saw_kw {
+                    return Err(LowerError::Unknown(format!(
+                        "{table}: positional arg after keyword arg"
+                    )));
+                }
+                if positional_idx >= cols.len() {
+                    return Err(LowerError::Unknown(format!(
+                        "rule table `{table}` has {} column(s), call passed too many positional arg(s)",
+                        cols.len(),
+                    )));
+                }
+                if out[positional_idx].is_some() {
+                    return Err(LowerError::Unknown(format!(
+                        "{table}: column `{}` assigned more than once",
+                        cols[positional_idx],
+                    )));
+                }
+                out[positional_idx] = Some(arg.value.clone());
+                positional_idx += 1;
+            }
+            Some(keyword) => {
+                saw_kw = true;
+                let Some(idx) = cols.iter().position(|col| col == keyword.as_ref()) else {
+                    return Err(LowerError::Unknown(format!(
+                        "{table}: unknown column `{keyword}`"
+                    )));
+                };
+                if out[idx].is_some() {
+                    return Err(LowerError::Unknown(format!(
+                        "{table}: column `{keyword}` assigned more than once"
+                    )));
+                }
+                out[idx] = Some(arg.value.clone());
+            }
+        }
+    }
+
+    Ok(cols.iter()
+        .cloned()
+        .zip(out)
+        .filter_map(|(col, value)| value.map(|value| (col, value)))
+        .collect())
 }
 
 fn quote_sql_literal(s: &str) -> String {

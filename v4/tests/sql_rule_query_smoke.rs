@@ -123,6 +123,37 @@ fn declared_rule_call_projects_matching_rows() {
 }
 
 #[test]
+fn declared_rule_dotted_apply_projects_matching_rows_with_kwargs() {
+    let src = r#"
+        rule(:frontend_hooks, OP!, FILE?);
+        rule(:hook_hits, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+
+        `getUser`
+          > term_bind(:OP)
+          > frontend_hooks.(OP: OP, FILE: FILE?)
+          > rule(:hook_hits, OP: OP, FILE: FILE);
+    "#;
+
+    let store = run_pipes(src);
+    let frontend_rows = store.rows_of("frontend_hooks");
+    assert_eq!(frontend_rows.len(), 1);
+    assert_eq!(frontend_rows[0].get("OP"), Some("getUser"));
+    assert_eq!(frontend_rows[0].get("FILE"), Some("src/hooks.ts"));
+    assert!(frontend_rows[0].get("_id").is_some());
+
+    let rows = store.rows_of("hook_hits");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("OP"), Some("getUser"));
+    assert_eq!(rows[0].get("FILE"), Some("src/hooks.ts"));
+}
+
+#[test]
 fn declared_rule_predicate_call_filters_fully_bound_input() {
     let src = r#"
         rule(:frontend_hooks, OP?, FILE?);
@@ -180,4 +211,26 @@ fn declared_rule_predicate_call_does_not_duplicate_matching_input() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("OP"), Some("getUser"));
     assert_eq!(rows[0].get("FILE"), Some("src/hooks.ts"));
+}
+
+#[test]
+fn declared_rule_dotted_predicate_empty_args_is_table_nonempty_gate() {
+    let src = r#"
+        rule(:frontend_hooks, OP!);
+        rule(:checked_hooks, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > rule(:frontend_hooks, OP: OP);
+
+        `listPets`
+          > term_bind(:OP)
+          > frontend_hooks?.()
+          > rule(:checked_hooks, OP: OP);
+    "#;
+
+    let store = run_pipes(src);
+    let rows = store.rows_of("checked_hooks");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("OP"), Some("listPets"));
 }

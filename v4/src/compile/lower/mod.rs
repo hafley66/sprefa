@@ -19,7 +19,7 @@ pub use op_def::{
 };
 pub use crate::pipeline::{str_pipe, StrConstComponent};
 pub use registry::{validate_call, Registry};
-pub use value::{run_once_const, Value};
+pub use value::{run_once_const, CallArg, Value};
 
 use std::sync::Arc;
 

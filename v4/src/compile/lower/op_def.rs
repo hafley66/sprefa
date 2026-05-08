@@ -18,7 +18,7 @@ use effect_runtime::v2::{ByteRange, Pipe};
 use crate::Cursor;
 
 use super::ctx::{LowerCtx, LowerError};
-use super::value::Value;
+use super::value::{CallArg, Value};
 
 /// Variadic carries a `&'static ArgKind` rather than a Box so the
 /// trait's `paren_args()` can return a `const` slice. Build with
@@ -229,6 +229,32 @@ pub trait OperatorDef: Send + Sync + 'static {
         _chain_pos: usize,
     ) -> Result<Pipe<Cursor>, LowerError> {
         self.lower(ctx, flow, args, block, dsl)
+    }
+
+    fn lower_call(
+        &self,
+        ctx:   &LowerCtx,
+        flow:  Option<Value>,
+        args:  &[CallArg],
+        block: Option<Pipe<Cursor>>,
+        dsl:   Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let values: Vec<Value> = args.iter().map(|arg| arg.value.clone()).collect();
+        self.lower(ctx, flow, &values, block, dsl)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_call_with_chain(
+        &self,
+        ctx:        &LowerCtx,
+        flow:       Option<Value>,
+        args:       &[CallArg],
+        block:      Option<Pipe<Cursor>>,
+        dsl:        Option<&DslBody>,
+        chain_pos:  usize,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let values: Vec<Value> = args.iter().map(|arg| arg.value.clone()).collect();
+        self.lower_with_chain(ctx, flow, &values, block, dsl, chain_pos)
     }
 }
 

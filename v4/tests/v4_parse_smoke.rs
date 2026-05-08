@@ -21,6 +21,7 @@ fn host_parse_four_slot_and_diag_shape() {
     let outer = &pipe.steps[0];
     assert_eq!(&*outer.name, "rule");
     assert!(!outer.predicate);
+    assert!(!outer.apply);
 
     let args = &outer.args;
     assert_eq!(args.len(), 1, "one paren arg, got {args:?}");
@@ -47,4 +48,13 @@ fn host_parse_four_slot_and_diag_shape() {
         diags_bad.iter().any(|d| &*d.code == "parse/syntax-error"),
         "expected at least one parse/syntax-error diag, got: {diags_bad:?}"
     );
+
+    let src_apply = "frontend_hooks?.(OP, FILE);";
+    let (pipes_apply, diags_apply) = host_parse(src_apply);
+    assert!(diags_apply.is_empty(), "expected clean dotted apply parse, got diags: {diags_apply:?}");
+    let call = &pipes_apply[0].steps[0];
+    assert_eq!(&*call.name, "frontend_hooks");
+    assert!(call.predicate);
+    assert!(call.apply);
+    assert_eq!(call.args.len(), 2);
 }

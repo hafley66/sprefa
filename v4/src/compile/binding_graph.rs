@@ -180,6 +180,13 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
 fn slot_terms(raw: &str, reads: &mut Vec<Arc<str>>, binds: &mut Vec<Arc<str>>) {
     let raw = raw.trim();
     if raw.is_empty() { return; }
+    let raw = split_keyword_value(raw).unwrap_or(raw).trim();
+    if let Some(stripped) = raw.strip_suffix('!') {
+        if is_caps_ident(stripped) {
+            binds.push(Arc::<str>::from(stripped));
+            return;
+        }
+    }
     if let Some(stripped) = raw.strip_suffix('?') {
         if is_caps_ident(stripped) {
             binds.push(Arc::<str>::from(stripped));
@@ -189,6 +196,18 @@ fn slot_terms(raw: &str, reads: &mut Vec<Arc<str>>, binds: &mut Vec<Arc<str>>) {
     if is_caps_ident(raw) {
         reads.push(Arc::<str>::from(raw));
     }
+}
+
+fn split_keyword_value(raw: &str) -> Option<&str> {
+    let (key, value) = raw.split_once(':')?;
+    if is_ident(key.trim()) { Some(value) } else { None }
+}
+
+fn is_ident(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() { return false; }
+    if !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') { return false; }
+    bytes[1..].iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
 fn is_caps_ident(s: &str) -> bool {

@@ -14,7 +14,7 @@ use effect_runtime::v2::{
 use v4::Cursor;
 use v4::lower::{
     default_registry, str_pipe, validate_call, BlockShape, DslBody, DslInterp,
-    DslShape, LowerCtx, OperatorDef, Value,
+    CallArg, DslShape, LowerCtx, OperatorDef, Value,
 };
 use v4::lower::op_def::{ArgKind, ArgSig};
 
@@ -103,7 +103,7 @@ fn four_slot_lower_smoke() {
     let def = PipeOnly;
     let diags: Vec<Diag> = validate_call(
         &def, &None,
-        &[(Value::atom("nope"), br(10, 14))],
+        &[(CallArg::positional(Value::atom("nope")), br(10, 14))],
         &None, &None, br(0, 20),
     );
     assert!(
@@ -117,7 +117,7 @@ fn four_slot_lower_smoke() {
     let body_pipe = str_pipe("anything");
     let diags = validate_call(
         &def, &None,
-        &[(Value::pipe(str_pipe("x")), br(10, 14))],
+        &[(CallArg::positional(Value::pipe(str_pipe("x"))), br(10, 14))],
         &Some((body_pipe, br(15, 20))),
         &None, br(0, 25),
     );
@@ -125,6 +125,13 @@ fn four_slot_lower_smoke() {
         diags.iter().any(|d| &*d.code == "lower/slot-not-allowed"),
         "expected slot-not-allowed, got: {:?}", diags
     );
+
+    let diags = validate_call(
+        &def, &None,
+        &[(CallArg::keyword("p", Value::pipe(str_pipe("x"))), br(10, 14))],
+        &None, &None, br(0, 20),
+    );
+    assert!(diags.is_empty(), "expected keyword arg p to validate, got: {:?}", diags);
 
     // Block + DSL absent on a def that requires both: missing-slot
     // emitted twice for `rule` (no block) and `str` (no dsl).

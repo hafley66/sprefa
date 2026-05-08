@@ -47,7 +47,7 @@ Rule calls use Python-style positional and keyword binding against declared colu
 frontend_hooks(OP, FILE?, REF: REF?)
 ```
 
-Current executable syntax applies relation names directly. Target syntax uses dotted apply for relation calls:
+Executable syntax accepts direct relation calls and dotted apply relation calls:
 
 ```sprf
 frontend_hooks.(OP, FILE?, REF: REF?)
@@ -56,7 +56,7 @@ frontend_hooks.()
 frontend_hooks?.()
 ```
 
-Under dotted apply, bare `frontend_hooks` is the relation symbol and `frontend_hooks.(...)` applies it to the current cursor batch. The dot is pronounced "apply". Lowering is the same as the direct form. Parser support needs one host grammar change: allow an immediate `.` apply marker between the op name or predicate suffix and the slot list.
+Under dotted apply, bare `frontend_hooks` is the relation symbol and `frontend_hooks.(...)` applies it to the current cursor batch. The dot is pronounced "apply". Lowering is the same as the direct form.
 
 | Direct current form | Dotted target form | Meaning |
 | --- | --- | --- |
@@ -128,6 +128,8 @@ rule(:frontend_hooks, OP: &.value, REF: REF)
 
 Sink-position writes should not copy the whole cursor term bag. Cursor terms only enter a row when assigned by position or kwarg.
 
+The executable implementation keeps legacy `... > rule(:name)` as a whole-cursor write when no assignments are given. Assigned writes are projected rows.
+
 ## Read And Predicate Calls
 
 `rule_name(...)` is row-producing. It queries the rule table and emits one output cursor per matching row at that point in the pipe.
@@ -184,6 +186,32 @@ frontend_hooks?.(OP, FILE)  # dotted relation predicate target
 A rule with a body also writes to its relation. Reading the rule name reads the materialized relation rows. Inline body invocation for a caller cursor is a separate future feature.
 
 Future parametric body invocation can be specified separately. Until then, "call" in this document means relation call.
+
+## Runtime State
+
+Current executable runtime state:
+
+```text
+SqlQueryComponent cache key =
+  SQL text
+  upstream cursor batch content hashes
+  referenced relation row identities
+```
+
+Cache hits replay output cursors without rerunning SQLite. When a referenced table gains rows, the row identity portion of the key changes, so the next relation read computes a new result while older cache entries remain available.
+
+Future live subscription state:
+
+```text
+query mount =
+  source op span / pipe position
+  normalized relation call or sql body
+  upstream cursor batch identity
+  referenced relation tables / row keys
+  last output cursor ids
+```
+
+That state should be a sprf-core layer over the effect runtime. The effect runtime already has `EventBus`, `Memoize`, `Query`, dirty events, and queue cascade deletion. Sprf-core should own rule-table dependencies, SQL/table invalidation, and LSP/query mount identity because those concepts depend on sprf relations and cursors.
 
 This gives LSP a clear signature surface: known column names, expected binding modes, and missing arguments.
 

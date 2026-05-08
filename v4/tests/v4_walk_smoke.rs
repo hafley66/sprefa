@@ -38,6 +38,7 @@ fn walk_smoke_rule_str() {
         steps: vec![OpCall {
             name: Arc::<str>::from("rule"),
             predicate: false,
+            apply: false,
             span: br(0, 30),
             flow: None,
             args: vec![SlotText {
@@ -50,6 +51,7 @@ fn walk_smoke_rule_str() {
                 steps: vec![OpCall {
                     name: Arc::<str>::from("str"),
                     predicate: false,
+                    apply: false,
                     span: br(15, 28),
                     flow: None,
                     args: vec![],
@@ -87,6 +89,7 @@ fn walk_smoke_rule_str() {
         steps: vec![OpCall {
             name: Arc::<str>::from("rule"),
             predicate: false,
+            apply: false,
             span: br(0, 12),
             flow: None,
             args: vec![SlotText {
@@ -156,6 +159,7 @@ fn walk_smoke_inline_pipe() {
         steps: vec![OpCall {
             name: Arc::<str>::from("pipe_accept"),
             predicate: false,
+            apply: false,
             span: br(0, 22),
             flow: None,
             args: vec![SlotText {
@@ -184,4 +188,3 @@ fn walk_smoke_inline_pipe() {
         diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
     );
 }
-
