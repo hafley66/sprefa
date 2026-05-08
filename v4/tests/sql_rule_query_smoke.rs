@@ -148,3 +148,36 @@ fn declared_rule_predicate_call_filters_fully_bound_input() {
     assert_eq!(rows[0].get("OP"), Some("getUser"));
     assert_eq!(rows[0].get("FILE"), Some("src/hooks.ts"));
 }
+
+#[test]
+fn declared_rule_predicate_call_does_not_duplicate_matching_input() {
+    let src = r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:checked_hooks, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > frontend_hooks?(OP, FILE)
+          > rule(:checked_hooks);
+    "#;
+
+    let store = run_pipes(src);
+    let rows = store.rows_of("checked_hooks");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("OP"), Some("getUser"));
+    assert_eq!(rows[0].get("FILE"), Some("src/hooks.ts"));
+}

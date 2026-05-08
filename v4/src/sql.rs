@@ -562,16 +562,26 @@ pub fn rule_table_call_pipe(
         }
     }
 
-    let mut sql = format!(
-        "SELECT {}\nFROM input JOIN {} AS {} ON 1=1",
-        select_cols.join(", "),
-        table,
-        rule_alias,
-    );
-    if !predicates.is_empty() {
-        sql.push_str("\nWHERE ");
-        sql.push_str(&predicates.join(" AND "));
-    }
+    let sql = if predicate {
+        let mut subquery = format!("SELECT 1 FROM {} AS {}", table, rule_alias);
+        if !predicates.is_empty() {
+            subquery.push_str(" WHERE ");
+            subquery.push_str(&predicates.join(" AND "));
+        }
+        format!("SELECT input.__cursor_idx\nFROM input\nWHERE EXISTS ({subquery})")
+    } else {
+        let mut sql = format!(
+            "SELECT {}\nFROM input JOIN {} AS {} ON 1=1",
+            select_cols.join(", "),
+            table,
+            rule_alias,
+        );
+        if !predicates.is_empty() {
+            sql.push_str("\nWHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+        sql
+    };
 
     Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(
         ctx.store.clone(),
