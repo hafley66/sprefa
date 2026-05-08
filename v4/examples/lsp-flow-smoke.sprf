@@ -1,0 +1,22 @@
+# Open this file with the v4 VS Code extension and `sprefa-lsp` on PATH.
+# Current cursor-flow visibility is inlay hints, not hover.
+# Expected inlays:
+#   - the literal emits 1 cursor
+#   - split emits 3 cursors
+#   - rule write sees the split outputs
+
+rule(:flow_words, WORD?);
+rule(:flow_echo, WORD?);
+
+rule(:produce_flow_words) {
+  `alpha beta gamma`
+  > split(WORD?)` `
+  > rule(:flow_words, WORD: WORD)
+};
+
+# Current relation read path. This should read rows materialized above
+# when run in a single app state.
+rule(:produce_flow_echo) {
+  flow_words(WORD?)
+  > rule(:flow_echo, WORD: WORD)
+};
