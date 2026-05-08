@@ -57,10 +57,15 @@ pub use sqlite_queue::SqliteQueue;
 #[cfg(feature = "sqlite")]
 pub use hybrid_queue::{HybridCfg, HybridQueue};
 pub use node::Node;
-pub use component::{par_render, Component, DynComponent, Purity, RenderCtx};
+pub use component::{
+    par_render, Component, ComponentLifecycle, DynComponent, Purity, RenderCtx,
+};
 pub use flatten::{splice_into, splice_into_at, splice_into_recorded, splice_into_recorded_at};
 pub use prior_children::{diff_children, ChildDiff, ContentHash, PriorChildIndex};
-pub use queue::{ExpandTick, InstanceId, PipeHash, QueueBackend, QueueId, QueueRow};
+pub use queue::{
+    BarrierScope, ExpandTick, InstanceId, PendingSummary, PipeHash,
+    QueueBackend, QueueId, QueueRow,
+};
 pub use mem_queue::MemQueue;
 pub use expand::{expand, ExpandOpts, ExpandStats, Pipe, PipeInstance, DEFAULT_BATCH_CAP};
 

@@ -10,12 +10,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::component::{DynComponent, RenderCtx};
+use super::component::{ComponentLifecycle, DynComponent, RenderCtx};
 use super::diag::{DiagSink, NoopDiagSink};
 use super::event_bus::EventBus;
 use super::next::Next;
 use super::queue::{
-    ExpandTick, InstanceId, PipeHash, QueueBackend, QueueRow,
+    BarrierScope, ExpandTick, InstanceId, PipeHash, QueueBackend, QueueRow,
 };
 use super::wake::Wake;
 
@@ -174,6 +174,9 @@ pub fn expand<N: Next>(
     loop {
         let batch = queue.pull_runnable_batch(expand_tick, opts.batch_cap);
         if batch.is_empty() {
+            if drive_barriers(pipe, queue.as_ref(), expand_tick, &opts) {
+                continue;
+            }
             stats.parked = queue.depth();
             break;
         }
@@ -244,4 +247,46 @@ pub fn expand<N: Next>(
     }
 
     stats
+}
+
+fn drive_barriers<N: Next>(
+    pipe:        &PipeInstance<N>,
+    queue:       &dyn QueueBackend<N>,
+    expand_tick: ExpandTick,
+    opts:        &ExpandOpts,
+) -> bool {
+    let mut emitted = false;
+
+    for (depth, comp) in pipe.components.iter().enumerate() {
+        if comp.lifecycle() != ComponentLifecycle::Barrier {
+            continue;
+        }
+
+        let depth = depth as u32;
+        let scope = BarrierScope {
+            pipe_hash: pipe.pipe_hash,
+            instance_id: pipe.instance_id,
+            expand_tick,
+            depth,
+        };
+        let ctx = RenderCtx::new(pipe.pipe_hash, depth, expand_tick)
+            .with_bus(opts.bus.clone())
+            .with_diag(opts.diag.clone());
+        let pending = queue.pending_summary_before_or_at(
+            pipe.pipe_hash,
+            pipe.instance_id,
+            expand_tick,
+            depth,
+        );
+
+        let before = queue.depth();
+        if pending.parked > 0 {
+            comp.idle(&ctx, scope, pending, queue);
+        } else if pending.total() == 0 {
+            comp.complete(&ctx, scope, queue);
+        }
+        emitted |= queue.depth() > before;
+    }
+
+    emitted
 }

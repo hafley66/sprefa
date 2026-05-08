@@ -15,6 +15,24 @@ pub type InstanceId = u64;
 pub type ExpandTick  = u64;
 pub type PipeHash   = u64;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BarrierScope {
+    pub pipe_hash:   PipeHash,
+    pub instance_id: InstanceId,
+    pub expand_tick: ExpandTick,
+    pub depth:       u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PendingSummary {
+    pub runnable: u64,
+    pub parked:   u64,
+}
+
+impl PendingSummary {
+    pub fn total(self) -> u64 { self.runnable + self.parked }
+}
+
 /// One in-flight or parked value. `path` is the position trail from the
 /// pipe root: each segment is the `batch_idx` taken at that depth. Roots
 /// have `path = vec![]`.
@@ -81,6 +99,19 @@ pub trait QueueBackend<N: Next>: Send + Sync {
             Some(r) => vec![r],
             None    => Vec::new(),
         }
+    }
+
+    /// Count rows in the same mounted pipe before or at `max_depth`.
+    /// Used by barrier components (`collect`, materialized query sinks)
+    /// to decide whether upstream has completed or is parked.
+    fn pending_summary_before_or_at(
+        &self,
+        _pipe_hash:   PipeHash,
+        _instance_id: InstanceId,
+        _global_tick: ExpandTick,
+        _max_depth:   u32,
+    ) -> PendingSummary {
+        PendingSummary::default()
     }
 
     /// Delete `root` (if present) and every descendant reachable

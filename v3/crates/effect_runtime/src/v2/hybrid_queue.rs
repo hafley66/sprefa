@@ -27,7 +27,10 @@ use super::codec::Codec;
 use super::mem_queue::MemQueue;
 use super::next::Next;
 use super::next_key::NextKey;
-use super::queue::{ExpandTick, QueueBackend, QueueId, QueueRow};
+use super::queue::{
+    ExpandTick, InstanceId, PendingSummary, PipeHash, QueueBackend, QueueId,
+    QueueRow,
+};
 use super::sqlite_queue::SqliteQueue;
 
 #[derive(Clone, Debug)]
@@ -173,6 +176,25 @@ impl<N: Next + Codec> QueueBackend<N> for HybridQueue<N> {
         let h = self.hot.dispatch_park(domain, key);
         let c = self.cold.dispatch_park(domain, key);
         h + c
+    }
+
+    fn pending_summary_before_or_at(
+        &self,
+        pipe_hash:   PipeHash,
+        instance_id: InstanceId,
+        global_tick: ExpandTick,
+        max_depth:   u32,
+    ) -> PendingSummary {
+        let h = self.hot.pending_summary_before_or_at(
+            pipe_hash, instance_id, global_tick, max_depth,
+        );
+        let c = self.cold.pending_summary_before_or_at(
+            pipe_hash, instance_id, global_tick, max_depth,
+        );
+        PendingSummary {
+            runnable: h.runnable + c.runnable,
+            parked:   h.parked + c.parked,
+        }
     }
 
     fn cascade_delete(&self, root: QueueId) -> u64 {

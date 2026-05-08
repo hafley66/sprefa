@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::next::Next;
 use super::next_key::NextKey;
 use super::queue::{
-    ExpandTick, QueueBackend, QueueId, QueueRow,
+    ExpandTick, PendingSummary, PipeHash, InstanceId, QueueBackend, QueueId,
+    QueueRow,
 };
 use super::wake::Wake;
 
@@ -120,6 +121,53 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         n:           usize,
     ) -> Vec<QueueRow<N>> {
         self.pull_runnable_batch_impl(global_tick, n)
+    }
+
+    fn pending_summary_before_or_at(
+        &self,
+        pipe_hash:   PipeHash,
+        instance_id: InstanceId,
+        global_tick: ExpandTick,
+        max_depth:   u32,
+    ) -> PendingSummary {
+        let s = self.state.lock().unwrap();
+        let mut pending = PendingSummary::default();
+
+        for row in s.runnable.iter() {
+            if row.pipe_hash == pipe_hash
+                && row.instance_id == instance_id
+                && row.depth <= max_depth
+            {
+                pending.runnable += 1;
+            }
+        }
+
+        for row in s.tick_parked.iter() {
+            if row.pipe_hash == pipe_hash
+                && row.instance_id == instance_id
+                && row.depth <= max_depth
+            {
+                match row.wake {
+                    Wake::Tick { past_tick } if past_tick < global_tick => {
+                        pending.runnable += 1;
+                    }
+                    _ => pending.parked += 1,
+                }
+            }
+        }
+
+        for bucket in s.by_key.values() {
+            for row in bucket {
+                if row.pipe_hash == pipe_hash
+                    && row.instance_id == instance_id
+                    && row.depth <= max_depth
+                {
+                    pending.parked += 1;
+                }
+            }
+        }
+
+        pending
     }
 
     fn cascade_delete(&self, root: QueueId) -> u64 {

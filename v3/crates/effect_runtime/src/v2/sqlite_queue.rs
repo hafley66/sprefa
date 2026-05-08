@@ -44,7 +44,8 @@ use super::codec::Codec;
 use super::next::Next;
 use super::next_key::NextKey;
 use super::queue::{
-    ExpandTick, QueueBackend, QueueId, QueueRow,
+    ExpandTick, InstanceId, PendingSummary, PipeHash, QueueBackend, QueueId,
+    QueueRow,
 };
 use super::wake::Wake;
 
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS sprf_v3_queue (
 CREATE INDEX IF NOT EXISTS sprf_v3_queue_parent      ON sprf_v3_queue(parent_id);
 CREATE INDEX IF NOT EXISTS sprf_v3_queue_kind_id     ON sprf_v3_queue(wake_kind, id);
 CREATE INDEX IF NOT EXISTS sprf_v3_queue_park_lookup ON sprf_v3_queue(wake_kind, wake_domain, wake_key);
+CREATE INDEX IF NOT EXISTS sprf_v3_queue_barrier     ON sprf_v3_queue(pipe_hash, instance_id, depth, wake_kind);
 ";
 
 const WAKE_KIND_IMMEDIATE: i64 = 0;
@@ -325,6 +327,58 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
             ).expect("dispatch_park update (domain)"),
         };
         n as u64
+    }
+
+    fn pending_summary_before_or_at(
+        &self,
+        pipe_hash:   PipeHash,
+        instance_id: InstanceId,
+        global_tick: ExpandTick,
+        max_depth:   u32,
+    ) -> PendingSummary {
+        let conn = self.conn.lock().unwrap();
+        let runnable: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sprf_v3_queue
+             WHERE pipe_hash = ?1
+               AND instance_id = ?2
+               AND depth <= ?3
+               AND (
+                    wake_kind = ?4
+                    OR (wake_kind = ?5 AND wake_tick < ?6)
+               )",
+            params![
+                pipe_hash as i64,
+                instance_id as i64,
+                max_depth as i64,
+                WAKE_KIND_IMMEDIATE,
+                WAKE_KIND_TICK,
+                global_tick as i64,
+            ],
+            |r| r.get(0),
+        ).expect("barrier runnable count");
+        let parked: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sprf_v3_queue
+             WHERE pipe_hash = ?1
+               AND instance_id = ?2
+               AND depth <= ?3
+               AND (
+                    wake_kind = ?4
+                    OR (wake_kind = ?5 AND wake_tick >= ?6)
+               )",
+            params![
+                pipe_hash as i64,
+                instance_id as i64,
+                max_depth as i64,
+                WAKE_KIND_KEY,
+                WAKE_KIND_TICK,
+                global_tick as i64,
+            ],
+            |r| r.get(0),
+        ).expect("barrier parked count");
+        PendingSummary {
+            runnable: runnable as u64,
+            parked:   parked as u64,
+        }
     }
 
     fn cascade_delete(&self, root: QueueId) -> u64 {

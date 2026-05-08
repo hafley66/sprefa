@@ -36,7 +36,16 @@ use super::event_bus::EventBus;
 use super::flatten::splice_into;
 use super::next::Next;
 use super::node::Node;
-use super::queue::{ExpandTick, PipeHash, QueueBackend, QueueRow};
+use super::queue::{
+    BarrierScope, ExpandTick, PendingSummary, PipeHash, QueueBackend,
+    QueueRow,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ComponentLifecycle {
+    Streaming,
+    Barrier,
+}
 
 pub trait Component: Send + Sync + 'static {
     type Next: Next;
@@ -78,6 +87,33 @@ pub trait Component: Send + Sync + 'static {
     /// `dispatch` at once. `None` lets the driver pick a default.
     /// `Some(1)` forces per-row.
     fn batch_hint(&self) -> Option<usize> { None }
+
+    /// Barrier components buffer rows during `dispatch`, then flush
+    /// from `idle` or `complete` once the scheduler observes upstream
+    /// state. Streaming components ignore both hooks.
+    fn lifecycle(&self) -> ComponentLifecycle { ComponentLifecycle::Streaming }
+
+    /// Called when the scheduler has no runnable rows but upstream rows
+    /// before this barrier are still parked.
+    fn idle(
+        &self,
+        _ctx:     &RenderCtx,
+        _scope:   BarrierScope,
+        _pending: PendingSummary,
+        _queue:   &dyn QueueBackend<Self::Next>,
+    ) {
+    }
+
+    /// Called when the scheduler has no upstream rows before this
+    /// barrier. Barrier implementations usually flush buffered rows
+    /// to `depth + 1` here.
+    fn complete(
+        &self,
+        _ctx:   &RenderCtx,
+        _scope: BarrierScope,
+        _queue: &dyn QueueBackend<Self::Next>,
+    ) {
+    }
 
     // ── introspection (default-empty, framework-neutral) ──────────────
     //

@@ -124,6 +124,106 @@ impl Component for Collector {
     }
 }
 
+struct BarrierCollect {
+    buffered: Arc<Mutex<Vec<String>>>,
+    idle_out: bool,
+    last_idle_len: Arc<Mutex<usize>>,
+    idle_count: Arc<Mutex<u64>>,
+    complete_count: Arc<Mutex<u64>>,
+}
+impl BarrierCollect {
+    fn new(idle_out: bool) -> Self {
+        Self {
+            buffered: Arc::new(Mutex::new(Vec::new())),
+            idle_out,
+            last_idle_len: Arc::new(Mutex::new(0)),
+            idle_count: Arc::new(Mutex::new(0)),
+            complete_count: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    fn emit_snapshot(
+        &self,
+        scope: BarrierScope,
+        queue: &dyn QueueBackend<LabCursor>,
+        label: &str,
+    ) {
+        let values = self.buffered.lock().unwrap().clone();
+        if values.is_empty() {
+            return;
+        }
+        let mut out = LabCursor::new();
+        out.set(":kind", label);
+        out.set(":joined", values.join(","));
+        queue.enqueue(QueueRow {
+            id:             0,
+            parent_id:      None,
+            batch_idx:      0,
+            path:           Vec::new(),
+            pipe_hash:      scope.pipe_hash,
+            instance_id:    scope.instance_id,
+            depth:          scope.depth + 1,
+            value:          Arc::new(out),
+            wake:           Wake::Immediate,
+            expand_tick:    scope.expand_tick,
+            enqueued_at_ns: 0,
+        });
+    }
+}
+impl Component for BarrierCollect {
+    type Next = LabCursor;
+
+    fn dispatch(
+        &self,
+        _ctx: &RenderCtx,
+        rows: &[QueueRow<LabCursor>],
+        _queue: &dyn QueueBackend<LabCursor>,
+    ) {
+        let mut buffered = self.buffered.lock().unwrap();
+        for row in rows {
+            if let Some(raw) = row.value.get(":raw") {
+                buffered.push(raw.to_string());
+            }
+        }
+    }
+
+    fn lifecycle(&self) -> ComponentLifecycle { ComponentLifecycle::Barrier }
+
+    fn idle(
+        &self,
+        _ctx: &RenderCtx,
+        scope: BarrierScope,
+        _pending: PendingSummary,
+        queue: &dyn QueueBackend<LabCursor>,
+    ) {
+        *self.idle_count.lock().unwrap() += 1;
+        if self.idle_out {
+            let len = self.buffered.lock().unwrap().len();
+            let mut last = self.last_idle_len.lock().unwrap();
+            if len == *last {
+                return;
+            }
+            *last = len;
+            self.emit_snapshot(scope, queue, "idle");
+        }
+    }
+
+    fn complete(
+        &self,
+        _ctx: &RenderCtx,
+        scope: BarrierScope,
+        queue: &dyn QueueBackend<LabCursor>,
+    ) {
+        if self.buffered.lock().unwrap().is_empty() {
+            return;
+        }
+        *self.complete_count.lock().unwrap() += 1;
+        self.emit_snapshot(scope, queue, "complete");
+        self.buffered.lock().unwrap().clear();
+        *self.last_idle_len.lock().unwrap() = 0;
+    }
+}
+
 struct FanOut { n: usize }
 impl Component for FanOut {
     type Next = LabCursor;
@@ -302,6 +402,112 @@ fn background_thread_wake_no_async_runtime() {
     expand(&pipe, queue.clone(), Vec::new(), opts);
     assert_eq!(sink.lock().unwrap().len(), 1);
     assert_eq!(queue.depth(), 0);
+}
+
+#[test]
+fn barrier_complete_fires_after_upstream_drain() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let barrier = Arc::new(BarrierCollect::new(false));
+
+    let pipe = PipeInstance::new(vec![
+        barrier.clone() as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+
+    let stats = expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "a"), lc(":raw", "b")],
+        ExpandOpts::default(),
+    );
+
+    let got = sink.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].get(":kind"), Some("complete"));
+    assert_eq!(got[0].get(":joined"), Some("a,b"));
+    assert_eq!(*barrier.complete_count.lock().unwrap(), 1);
+    assert_eq!(*barrier.idle_count.lock().unwrap(), 0);
+    assert_eq!(stats.parked, 0);
+}
+
+#[test]
+fn barrier_complete_waits_for_parked_upstream_then_next_wake_finishes() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let bus   = Arc::new(EventBus::new());
+    let key   = bus.fresh_key();
+    let barrier = Arc::new(BarrierCollect::new(false));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
+        barrier.clone() as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+    let opts = ExpandOpts::default().with_bus(bus.clone());
+
+    let stats = expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "parked"), lc(":raw", "ready")],
+        opts.clone(),
+    );
+
+    assert_eq!(stats.parked, 1);
+    assert_eq!(sink.lock().unwrap().len(), 0);
+    assert_eq!(*barrier.idle_count.lock().unwrap(), 1);
+    assert_eq!(*barrier.complete_count.lock().unwrap(), 0);
+
+    let promoted = queue.dispatch_park(TEST_DOMAIN, Some(key));
+    assert_eq!(promoted, 1);
+
+    let stats = expand(&pipe, queue.clone(), Vec::new(), opts);
+    assert_eq!(stats.parked, 0);
+
+    let got = sink.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].get(":kind"), Some("complete"));
+    assert_eq!(got[0].get(":joined"), Some("ready,parked"));
+    assert_eq!(*barrier.complete_count.lock().unwrap(), 1);
+}
+
+#[test]
+fn barrier_idle_can_emit_partial_snapshot_while_upstream_is_parked() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let bus   = Arc::new(EventBus::new());
+    let key   = bus.fresh_key();
+    let barrier = Arc::new(BarrierCollect::new(true));
+
+    let pipe = PipeInstance::new(vec![
+        Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
+        barrier.clone() as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Collector { sink: sink.clone() }),
+    ]);
+    let opts = ExpandOpts::default().with_bus(bus.clone());
+
+    let stats = expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "parked"), lc(":raw", "ready")],
+        opts.clone(),
+    );
+
+    assert_eq!(stats.parked, 1);
+    {
+        let got = sink.lock().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].get(":kind"), Some("idle"));
+        assert_eq!(got[0].get(":joined"), Some("ready"));
+    }
+
+    queue.dispatch_park(TEST_DOMAIN, Some(key));
+    expand(&pipe, queue.clone(), Vec::new(), opts);
+
+    let got = sink.lock().unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[1].get(":kind"), Some("complete"));
+    assert_eq!(got[1].get(":joined"), Some("ready,parked"));
 }
 
 /// End-to-end: a Component dispatches "work" to a background thread,
