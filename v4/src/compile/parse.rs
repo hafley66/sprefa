@@ -65,6 +65,7 @@ fn lower_pipe(pipe_node: Node<'_>, src: &str) -> Option<PipeAst> {
                 // op call with no slots, dsl set to the body.
                 steps.push(OpCall {
                     name:      Arc::<str>::from("str"),
+                    force:     false,
                     predicate: false,
                     apply:     false,
                     span:      node_range(step),
@@ -96,6 +97,7 @@ fn lower_pipe(pipe_node: Node<'_>, src: &str) -> Option<PipeAst> {
 fn lower_op_invocation(node: Node<'_>, src: &str) -> Option<OpCall> {
     let name_node = node.child_by_field_name("name")?;
     let name = Arc::<str>::from(&src[name_node.byte_range()]);
+    let force = node.child_by_field_name("force").is_some();
     let predicate = node.child_by_field_name("predicate").is_some();
     let apply = node.child_by_field_name("apply").is_some();
 
@@ -117,6 +119,7 @@ fn lower_op_invocation(node: Node<'_>, src: &str) -> Option<OpCall> {
 
     Some(OpCall {
         name,
+        force,
         predicate,
         apply,
         span: node_range(node),
@@ -187,6 +190,7 @@ fn lower_brace_block(brace: Node<'_>, src: &str) -> Option<PipeAst> {
                 shift_range(&mut body_span, inner_lo);
                 steps.push(OpCall {
                     name:      Arc::<str>::from("str"),
+                    force:     false,
                     predicate: false,
                     apply:     false,
                     span,

@@ -20,6 +20,7 @@ fn host_parse_four_slot_and_diag_shape() {
 
     let outer = &pipe.steps[0];
     assert_eq!(&*outer.name, "rule");
+    assert!(!outer.force);
     assert!(!outer.predicate);
     assert!(!outer.apply);
 
@@ -54,7 +55,17 @@ fn host_parse_four_slot_and_diag_shape() {
     assert!(diags_apply.is_empty(), "expected clean dotted apply parse, got diags: {diags_apply:?}");
     let call = &pipes_apply[0].steps[0];
     assert_eq!(&*call.name, "frontend_hooks");
+    assert!(!call.force);
     assert!(call.predicate);
     assert!(call.apply);
     assert_eq!(call.args.len(), 2);
+
+    let src_force = "db_size_over!(PATH, LIMIT);";
+    let (pipes_force, diags_force) = host_parse(src_force);
+    assert!(diags_force.is_empty(), "expected clean force parse, got diags: {diags_force:?}");
+    let call = &pipes_force[0].steps[0];
+    assert_eq!(&*call.name, "db_size_over");
+    assert!(call.force);
+    assert!(!call.predicate);
+    assert!(!call.apply);
 }

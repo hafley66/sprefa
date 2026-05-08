@@ -101,6 +101,25 @@
             "members": [
               {
                 "type": "FIELD",
+                "name": "force",
+                "content": {
+                  "type": "IMMEDIATE_TOKEN",
+                  "content": {
+                    "type": "STRING",
+                    "value": "!"
+                  }
+                }
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
+          },
+          {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "FIELD",
                 "name": "predicate",
                 "content": {
                   "type": "IMMEDIATE_TOKEN",

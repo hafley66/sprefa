@@ -85,6 +85,12 @@ pub fn walk_op(
     diags:     &mut Vec<Diag>,
     chain_pos: usize,
 ) -> Option<Pipe<Cursor>> {
+    let lower_name: Arc<str> = if op.force && op.name.as_ref() == "sh" {
+        Arc::<str>::from("sh!")
+    } else {
+        op.name.clone()
+    };
+
     // Resolve flow slot.
     let flow: Option<(Value, ByteRange)> = match &op.flow {
         Some(slot) => match classify_slot(slot, reg, ctx, diags) {
@@ -109,13 +115,13 @@ pub fn walk_op(
     // will emit `lower/unknown-op` below; here we just skip dsl parse.
     let dsl: Option<(DslBody, ByteRange)> = match &op.dsl {
         Some(dsl_text) => {
-            let mut interps: Vec<DslInterp> = match reg.get(&op.name) {
+            let mut interps: Vec<DslInterp> = match reg.get(&lower_name) {
                 Some(def) => match def.parse_dsl(&dsl_text.raw) {
                     Ok(v)  => v,
                     Err(e) => {
                         diags.push(
                             Diag::error("compile/dsl-parse",
-                                format!("op `{}` dsl parse: {e}", op.name))
+                                format!("op `{lower_name}` dsl parse: {e}"))
                                 .with_span(dsl_text.span.lo, dsl_text.span.hi));
                         return None;
                     }
@@ -199,6 +205,15 @@ pub fn walk_op(
         None => None,
     };
 
+    if op.name.as_ref() == "rule" && op.force {
+        diags.push(
+            Diag::error("lower/force-unsupported",
+                "rule!: force applies to bodied rule calls, not rule declarations or writes")
+                .with_span(op.span.lo, op.span.hi)
+        );
+        return None;
+    }
+
     if op.name.as_ref() == "rule" && chain_pos >= 1 && block.is_none() {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
         match crate::sql::rule_write_pipe(ctx, &arg_vals) {
@@ -225,7 +240,15 @@ pub fn walk_op(
     // relation read over that rule table:
     //   rule_name(A, B?)  -> row-producing query/project
     //   rule_name?(A, B)  -> predicate/filter
-    if reg.get(&op.name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+    if reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+        if op.force {
+            diags.push(
+                Diag::error("lower/rule-force",
+                    format!("{}!: force requires a bodied callable rule; declared table calls are relation reads", op.name))
+                    .with_span(op.span.lo, op.span.hi)
+            );
+            return None;
+        }
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
         match crate::sql::rule_table_call_pipe(ctx, &op.name, op.predicate, &arg_vals) {
             Ok(pipe) => {
@@ -246,7 +269,7 @@ pub fn walk_op(
     }
 
     // Dispatch.
-    match reg.lower_call_at(ctx, &op.name, flow, args, block, dsl, op.span, chain_pos) {
+    match reg.lower_call_at(ctx, &lower_name, flow, args, block, dsl, op.span, chain_pos) {
         Ok(pipe) => {
             // If a probe sink is configured on the LowerCtx, wrap each
             // step of the lowered pipe with `SpannedComponent` so every

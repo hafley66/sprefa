@@ -31,6 +31,9 @@ pub struct PipeAst {
 pub struct OpCall {
     /// Op name (without the `?` suffix).
     pub name:      Arc<str>,
+    /// `!` op suffix presence. For declared rules this is force-run /
+    /// cache-bypass intent. Builtin `sh!` is preserved by lowering.
+    pub force:     bool,
     /// `?` op suffix presence — predicate / push-pull inversion sigil
     /// (`fact?(...)`, `<rule>?(...)`).
     pub predicate: bool,

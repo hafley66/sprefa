@@ -7,6 +7,17 @@ use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
 use v4::Cursor;
 
+fn walk_diags(src: &str) -> Vec<effect_runtime::v2::Diag> {
+    let (program, parse_diags) = host_parse(src);
+    assert!(parse_diags.is_empty(), "parse diags: {parse_diags:?}");
+
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg = default_registry();
+    let mut ctx = LowerCtx::new(store, std::env::temp_dir());
+    let (_pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
+    walk_diags
+}
+
 fn run_pipes(src: &str) -> Arc<dyn FactStore<Cursor>> {
     let (program, parse_diags) = host_parse(src);
     assert!(parse_diags.is_empty(), "parse diags: {parse_diags:?}");
@@ -28,6 +39,19 @@ fn run_pipes(src: &str) -> Arc<dyn FactStore<Cursor>> {
     }
 
     store
+}
+
+#[test]
+fn declared_rule_force_call_requires_bodied_rule() {
+    let diags = walk_diags(r#"
+        rule(:frontend_hooks);
+        frontend_hooks!();
+    "#);
+
+    assert!(
+        diags.iter().any(|d| d.code.as_ref() == "lower/rule-force"),
+        "expected lower/rule-force diag, got {diags:?}"
+    );
 }
 
 #[test]

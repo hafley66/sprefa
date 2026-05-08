@@ -187,6 +187,40 @@ A rule with a body also writes to its relation. Reading the rule name reads the 
 
 Future parametric body invocation can be specified separately. Until then, "call" in this document means relation call.
 
+## Forced Body Invocation
+
+`rule_name!(...)` is reserved for forced bodied-rule invocation.
+
+Planned meaning:
+
+```text
+rule_name(...)
+  cache read allowed
+
+rule_name!(...)
+  skip rule-call cache read
+  execute the rule body for this dispatch
+  write refreshed outputs back to the rule-call cache
+  keep normal generation and commit boundaries
+```
+
+The bang affects execution cache behavior only. Storage policy remains
+owned by the destination relation/table. Subscription behavior remains
+owned by mounted query or watch state.
+
+Current executable status:
+
+```text
+sh!`...`
+  preserved as the impure shell builtin
+
+declared_empty_rule!(...)
+  emits lower/rule-force because table-only relation calls have no body
+  to force
+```
+
+First full implementation depends on bodied rule apply/cache support.
+
 ## Runtime State
 
 Current executable runtime state:

@@ -37,6 +37,7 @@ fn walk_smoke_rule_str() {
         span: br(0, 30),
         steps: vec![OpCall {
             name: Arc::<str>::from("rule"),
+            force: false,
             predicate: false,
             apply: false,
             span: br(0, 30),
@@ -50,6 +51,7 @@ fn walk_smoke_rule_str() {
                 span: br(13, 30),
                 steps: vec![OpCall {
                     name: Arc::<str>::from("str"),
+                    force: false,
                     predicate: false,
                     apply: false,
                     span: br(15, 28),
@@ -88,6 +90,7 @@ fn walk_smoke_rule_str() {
         span: br(0, 12),
         steps: vec![OpCall {
             name: Arc::<str>::from("rule"),
+            force: false,
             predicate: false,
             apply: false,
             span: br(0, 12),
@@ -158,6 +161,7 @@ fn walk_smoke_inline_pipe() {
         span: br(0, 22),
         steps: vec![OpCall {
             name: Arc::<str>::from("pipe_accept"),
+            force: false,
             predicate: false,
             apply: false,
             span: br(0, 22),

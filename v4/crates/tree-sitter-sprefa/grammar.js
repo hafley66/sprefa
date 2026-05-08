@@ -2,7 +2,7 @@
  * tree-sitter-sprefa (v4) — host grammar for .sprf source files.
  *
  * v4 four-slot lowering shape:
- *   op = IDENT '?'? '.'? ('[' flow ']')? ('(' args ')')? ('`' dsl '`')? ('{' block '}')?
+ *   op = IDENT '!'? '?'? '.'? ('[' flow ']')? ('(' args ')')? ('`' dsl '`')? ('{' block '}')?
  *
  * Slots:
  *   - bracket = `flow` slot (cursor field override; defaults to `&.value`)
@@ -88,6 +88,7 @@ module.exports = grammar({
     // `rule(:foo) { … }` all lex correctly.
     op_invocation: $ => prec(1, seq(
       field('name', $.identifier),
+      optional(field('force', token.immediate('!'))),
       optional(field('predicate', token.immediate('?'))),
       optional(field('apply', token.immediate('.'))),
       repeat(field('bracket', $.bracket_slot)),
