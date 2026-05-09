@@ -1,0 +1,13 @@
+# Implemented syntax. Requires config with at least one repo entry.
+# Example:
+#   SPREFA_CONFIG=v4/examples/sprefa.config.example.toml sprefa-run v4/examples/repo-rev-fs-read.sprf
+
+rule(:cargo_name_lines, FS?, MATCH?);
+
+repo()
+  > rev(:HEAD)
+  > fs
+  > glob`**/Cargo.toml`
+  > read
+  > re`(?m)^name\s*=\s*"[^"]+"`
+  > cargo_name_lines.(FS, MATCH);

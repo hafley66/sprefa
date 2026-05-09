@@ -2,6 +2,13 @@ use std::process::Command;
 
 use effect_runtime::v2::{FactStore, SqliteFactStore};
 
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
 #[test]
 fn sprefa_run_prints_runtime_diags_and_fact_rows() {
     let bin = env!("CARGO_BIN_EXE_sprefa-run");
@@ -85,4 +92,64 @@ fn sprefa_run_accepts_sqlite_fact_db() {
     let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
     assert_eq!(facts.len("openapi_ops"), 2);
     assert_eq!(facts.len("missing_frontend_hooks"), 1);
+}
+
+#[test]
+fn primitive_examples_run_through_cli() {
+    let bin = env!("CARGO_BIN_EXE_sprefa-run");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let root = repo_root();
+    let cases = [
+        ("str-rule.sprf", "greet: 1 rows", "MSG"),
+        ("json-extract.sprf", "people: 1 rows", "NAME"),
+        ("rule-sink-fact.sprf", "echo_words: 2 rows", "WORD"),
+        ("fs-glob-read-re.sprf", "rule_mentions:", "MATCH"),
+    ];
+
+    for (file, table, field) in cases {
+        let sprf = format!("{manifest_dir}/examples/{file}");
+        let output = Command::new(bin)
+            .current_dir(&root)
+            .arg(&sprf)
+            .arg("--show-rows")
+            .output()
+            .unwrap_or_else(|e| panic!("sprefa-run {file} failed to spawn: {e}"));
+
+        assert!(
+            output.status.success(),
+            "sprefa-run {file} failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains(table), "{file} missing {table:?}\n{stdout}");
+        assert!(stdout.contains(field), "{file} missing {field:?}\n{stdout}");
+    }
+}
+
+#[test]
+fn repo_rev_fs_read_example_runs_with_example_config() {
+    let bin = env!("CARGO_BIN_EXE_sprefa-run");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let root = repo_root();
+    let sprf = format!("{manifest_dir}/examples/repo-rev-fs-read.sprf");
+    let config = format!("{manifest_dir}/examples/sprefa.config.example.toml");
+
+    let output = Command::new(bin)
+        .current_dir(&root)
+        .env("SPREFA_CONFIG", config)
+        .arg(&sprf)
+        .arg("--show-rows")
+        .output()
+        .expect("sprefa-run repo-rev-fs-read spawns");
+
+    assert!(
+        output.status.success(),
+        "sprefa-run repo-rev-fs-read failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("cargo_name_lines:"), "stdout missing table:\n{stdout}");
+    assert!(stdout.contains("MATCH"), "stdout missing match field:\n{stdout}");
 }

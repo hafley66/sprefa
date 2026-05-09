@@ -15,7 +15,16 @@ These should only use behavior that current v4 supports.
 | `repo-rev-fs-read.sprf` | configured repo, rev resolution, file walk, read |
 | `json-extract.sprf` | JSON/YAML/TOML structural extraction |
 | `rule-sink-fact.sprf` | empty rule declaration, sink-position write, fact table rows |
-| `lsp-basic.sprf` | current `lsp.warn`/`lsp.error` shape if already executable |
+
+Smoke test:
+
+```bash
+RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml --test sprefa_run_cli_smoke -- --nocapture
+```
+
+`repo-rev-fs-read.sprf` uses `repo()`, so it needs a config with at least one
+repo. The shipped example config is memory-backed by default and is used by the
+smoke test through `SPREFA_CONFIG`.
 
 ## Target Examples
 

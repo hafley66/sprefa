@@ -1,6 +1,9 @@
-[store]
-fact_db = "/tmp/sprefa/facts.db"
-queue_db = "/tmp/sprefa/queue.db"
+# Uncomment these when a durable local store is desired.
+# Keeping the example memory-backed avoids stale scratch DB schemas.
+#
+# [store]
+# fact_db = "/tmp/sprefa/facts.db"
+# queue_db = "/tmp/sprefa/queue.db"
 
 [run]
 root = "."

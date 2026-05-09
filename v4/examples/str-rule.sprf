@@ -1,0 +1,7 @@
+# Implemented syntax. Minimal literal to rule row.
+
+rule(:greet, MSG?);
+
+`hello world`
+  > term_bind(:MSG)
+  > greet.(MSG);
