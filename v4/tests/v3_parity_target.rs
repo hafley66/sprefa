@@ -23,7 +23,6 @@ fn report_lines(report: &RunReport) -> String {
 }
 
 #[tokio::test]
-#[ignore = "v3 parity target: runtime lsp_warn rows should publish through app/LSP diagnostics"]
 async fn runtime_lsp_warn_publishes_diagnostics_for_open_buffer() {
     let root = tempfile::tempdir().unwrap();
     let (_state, client) = build_in_process(root.path().to_path_buf());
@@ -54,7 +53,6 @@ async fn runtime_lsp_warn_publishes_diagnostics_for_open_buffer() {
 }
 
 #[tokio::test]
-#[ignore = "v3 parity target: write_file should accept a backtick path body and write cursor.value"]
 async fn write_file_backtick_path_writes_cursor_value() {
     let root = tempfile::tempdir().unwrap();
     let out = root.path().join("out.md");
@@ -82,7 +80,6 @@ async fn write_file_backtick_path_writes_cursor_value() {
 }
 
 #[tokio::test]
-#[ignore = "v3 parity target: markdown aggregate render should write an idempotent artifact"]
 async fn render_markdown_aggregate_writes_file() {
     let root = tempfile::tempdir().unwrap();
     let out = root.path().join("RECAP.md");

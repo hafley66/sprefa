@@ -31,6 +31,7 @@ use effect_runtime::v2::{
 use ignore::WalkBuilder;
 
 use crate::config::SprfConfig;
+use crate::compile::lower::op_def::DslInterp;
 use crate::store::SprfStore;
 use crate::{Coord, Cursor, Interner};
 
@@ -552,6 +553,44 @@ pub struct FormatComponent { pub template: String, pub into: String }
 impl FormatComponent {
     pub fn new(template: &str, into: &str) -> Self {
         Self { template: template.into(), into: into.into() }
+    }
+}
+
+/// Render markdown rows by applying a template to every cursor in the
+/// current runtime batch, then concatenating those rows into one output
+/// cursor value.
+pub struct RenderMarkdownComponent {
+    pub template: Arc<str>,
+    pub interps:  Arc<Vec<DslInterp>>,
+}
+
+impl RenderMarkdownComponent {
+    pub fn new(template: Arc<str>, interps: Vec<DslInterp>) -> Self {
+        Self { template, interps: Arc::new(interps) }
+    }
+}
+
+impl Component for RenderMarkdownComponent {
+    type Next = Cursor;
+
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let Some(first) = batch.first() else { return Vec::new(); };
+        let mut out = (*first).clone();
+        let mut value = String::new();
+        for cursor in batch {
+            let rendered = crate::template::render_segments(
+                self.template.as_ref(),
+                &self.interps,
+                cursor,
+                ctx,
+            );
+            value.push_str(&rendered);
+            if !rendered.ends_with('\n') {
+                value.push('\n');
+            }
+        }
+        out.value = Arc::from(value);
+        vec![Node::Emit(Arc::new(out))]
     }
 }
 impl Component for FormatComponent {
@@ -1757,23 +1796,35 @@ impl Component for WriteCursorComponent {
     }
 }
 
+#[derive(Clone)]
+pub enum WriteFilePath {
+    Static(PathBuf),
+    Template {
+        raw:     Arc<str>,
+        interps: Arc<Vec<DslInterp>>,
+    },
+}
+
 /// `> write_file(path?)` — write `cursor.value` to a file. Path is
-/// resolved as: explicit arg (atom or term-read) overrides cursor.FS.
+/// resolved as: explicit arg/body overrides cursor.FS.
 /// Emits the cursor through unchanged. Per-cursor immediate write —
 /// caller's responsibility to ensure unique paths if multiple cursors
 /// fan out (otherwise last-writer-wins).
 pub struct WriteFileComponent {
-    /// Pre-resolved path. If `None`, reads `cursor.FS` at run time.
-    pub path: Option<PathBuf>,
+    /// Pre-resolved or templated path. If `None`, reads `cursor.FS` at run time.
+    pub path: Option<WriteFilePath>,
 }
 impl WriteFileComponent {
-    pub fn new(path: Option<PathBuf>) -> Self { Self { path } }
+    pub fn new(path: Option<WriteFilePath>) -> Self { Self { path } }
 }
 impl Component for WriteFileComponent {
     type Next = Cursor;
-    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
         let path: PathBuf = match &self.path {
-            Some(p) => p.clone(),
+            Some(WriteFilePath::Static(p)) => p.clone(),
+            Some(WriteFilePath::Template { raw, interps }) => PathBuf::from(
+                crate::template::render_segments(raw.as_ref(), interps, c, ctx)
+            ),
             None    => match c.get("FS") {
                 Some(s) => PathBuf::from(s),
                 None    => return Node::Emit(Arc::new(c.clone())),

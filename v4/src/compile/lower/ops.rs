@@ -20,15 +20,16 @@ use crate::term::Term;
 use crate::v2_ops::{
     AstNmComponent, CollectComponent, CollectMode, CommentComponent,
     FsComponent, JsonComponent, PrintComponent, ReComponent, ReadComponent,
-    RepoComponent, RevComponent, ShBangComponent, ShComponent, SplitComponent,
-    VoidComponent, WriteCursorComponent, WriteFileComponent, WriteMode,
+    RenderMarkdownComponent, RepoComponent, RevComponent, ShBangComponent,
+    ShComponent, SplitComponent, VoidComponent, WriteCursorComponent,
+    WriteFileComponent, WriteFilePath, WriteMode,
 };
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBinder, DslBody, DslShape, OperatorDef,
 };
 use effect_runtime::v2::ByteRange;
-use crate::compile::lower::value::{run_once_const, Value};
+use crate::compile::lower::value::Value;
 use crate::pipeline::{GlobComponent, StrConstComponent, StrTemplateComponent};
 use crate::rule::Rule;
 
@@ -1559,6 +1560,8 @@ const WRITE_FILE_SPEC: &[ArgSig] = &[
 impl OperatorDef for WriteFileDef {
     fn name(&self) -> &'static str { "write_file" }
     fn paren_args(&self) -> &[ArgSig] { WRITE_FILE_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn dsl_required(&self) -> bool { false }
 
     fn lower(
         &self,
@@ -1566,16 +1569,80 @@ impl OperatorDef for WriteFileDef {
         _flow:  Option<Value>,
         args:   &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
+        if !args.is_empty() && dsl.is_some() {
+            return Err(LowerError::Unknown(
+                "write_file: use either a path arg or backtick path body, not both".into()
+            ));
+        }
         let path = match args.first() {
-            None => None,
-            Some(Value::Atom(s)) => Some(std::path::PathBuf::from(s.as_ref())),
+            None => dsl.map(|body| {
+                let mut interps = body.interps.clone();
+                interps.sort_by_key(|i| i.range.lo);
+                if interps.is_empty() {
+                    WriteFilePath::Static(std::path::PathBuf::from(body.raw.as_ref()))
+                } else {
+                    WriteFilePath::Template {
+                        raw: body.raw.clone(),
+                        interps: Arc::new(interps),
+                    }
+                }
+            }),
+            Some(Value::Atom(s)) => Some(WriteFilePath::Static(
+                std::path::PathBuf::from(s.as_ref())
+            )),
             Some(_) => return Err(LowerError::Unknown(
                 "write_file: path arg must be :atom".into()
             )),
         };
         Ok(Pipe::new().step(Arc::new(WriteFileComponent::new(path))))
+    }
+}
+
+// ─── render ──────────────────────────────────────────────────────────────
+
+pub struct RenderDef;
+
+const RENDER_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom,
+        name: "format",
+        doc: ":markdown",
+        required: true,
+    },
+];
+
+impl OperatorDef for RenderDef {
+    fn name(&self) -> &'static str { "render" }
+    fn paren_args(&self) -> &[ArgSig] { RENDER_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn dsl_required(&self) -> bool { true }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let format = atom_arg(args, 0);
+        if format.as_ref() != "markdown" {
+            return Err(LowerError::Unknown(format!(
+                "render: unknown format :{} (try :markdown)",
+                format
+            )));
+        }
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "render(:markdown): template body required".into()
+        ))?;
+        let mut interps = body.interps.clone();
+        interps.sort_by_key(|i| i.range.lo);
+        Ok(Pipe::new().step(Arc::new(RenderMarkdownComponent::new(
+            body.raw.clone(),
+            interps,
+        ))))
     }
 }
 

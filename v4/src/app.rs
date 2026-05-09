@@ -398,6 +398,7 @@ pub struct DocState {
     pub program:     Vec<PipeAst>,
     pub parse_diags: Vec<Diag>,
     pub walk_diags:  Vec<Diag>,
+    pub runtime_diags: Vec<Diag>,
     pub probes:      Vec<InlayProbe>,
 }
 
@@ -443,6 +444,7 @@ impl SprfState {
     fn ingest(&self, uri: String, text: String, version: i32) {
         let (program, parse_diags) = host_parse(&text);
         let probe_sink: Arc<BufferProbeSink<Cursor>> = Arc::new(BufferProbeSink::new());
+        let runtime_diags = Arc::new(BufferDiagSink::new());
         let mut ctx = LowerCtx::new(self.facts.clone(), self.root.clone())
             .with_probe(probe_sink.clone() as Arc<dyn ProbeSink<Cursor>>)
             .with_sprf_store(self.sprf_store.clone())
@@ -450,7 +452,7 @@ impl SprfState {
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let opts = ExpandOpts::default();
+        let opts = ExpandOpts::default().with_diag(runtime_diags.clone());
         for pipe in pipes {
             let inst = pipe.into_instance();
             expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], opts.clone());
@@ -464,7 +466,13 @@ impl SprfState {
         probes.sort_by_key(|p| (p.lo, p.hi));
 
         self.docs.lock().unwrap().insert(uri, DocState {
-            text, version, program, parse_diags, walk_diags, probes,
+            text,
+            version,
+            program,
+            parse_diags,
+            walk_diags,
+            runtime_diags: runtime_diags.snapshot(),
+            probes,
         });
     }
 }
@@ -486,7 +494,9 @@ impl SprfHandlers for SprfState {
     async fn get_diags(&self, req: GetDiagsReq) -> Result<Vec<SprfDiag>, SprfError> {
         let docs = self.docs.lock().unwrap();
         let d = docs.get(&req.uri).ok_or(SprfError::UnknownDoc(req.uri))?;
-        let out: Vec<SprfDiag> = d.parse_diags.iter().chain(d.walk_diags.iter())
+        let out: Vec<SprfDiag> = d.parse_diags.iter()
+            .chain(d.walk_diags.iter())
+            .chain(d.runtime_diags.iter())
             .map(SprfDiag::from).collect();
         Ok(out)
     }
