@@ -8,6 +8,10 @@
 //   insert  Fs > AstNm > FactWrite [+ CommitEvery]
 //   full    not yet ported (rule infra still landing)
 //
+// Default bulk shape is now source-aware `fs > ast`; file bodies stay
+// behind the ast operator. Use `--materialize-read` to measure the old
+// explicit `fs > read > ast` materialization boundary.
+//
 // Usage:
 //   cargo run --release --bin v4-bench -- --root <linux> \
 //     --workers 8 --trials 3 --pattern 'printk($$$)' --lang c --mode bare
@@ -20,15 +24,154 @@ use std::time::Instant;
 use ast_grep_language::SupportLang;
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue,
-    MemoCache, Memoize, Node, PipeInstance, PriorChildIndex, QueueBackend,
-    RenderCtx, SqliteFactStore,
+    expand, BarrierScope, Component, ComponentLifecycle, ExpandOpts, FactStore,
+    MemFactStore, MemQueue, MemoCache, Memoize, Node, PendingSummary,
+    PipeInstance, PriorChildIndex, QueueBackend, QueueRow, RenderCtx,
+    SqliteFactStore,
 };
 use v4::v2_ops::{
     AstNmComponent, CountComponent, FsComponent, MultiAstNmComponent, ReadComponent,
     SinglePathComponent,
 };
 use v4::fact::FactWrite;
+
+#[derive(Default)]
+struct BenchCounters {
+    source_rows:  Arc<AtomicU64>,
+    ext_kept:     Arc<AtomicU64>,
+    ext_dropped:  Arc<AtomicU64>,
+    read_rows:    Arc<AtomicU64>,
+    read_bytes:   Arc<AtomicU64>,
+}
+
+#[derive(Default)]
+struct StageTiming {
+    name:    &'static str,
+    calls:   AtomicU64,
+    rows:    AtomicU64,
+    wall_ns: AtomicU64,
+}
+
+impl StageTiming {
+    fn new(name: &'static str) -> Self {
+        Self { name, ..Default::default() }
+    }
+}
+
+struct TimedComponent {
+    inner:  Arc<dyn Component<Next = v4::Cursor>>,
+    timing: Arc<StageTiming>,
+}
+
+impl TimedComponent {
+    fn new(
+        name: &'static str,
+        inner: Arc<dyn Component<Next = v4::Cursor>>,
+        timings: &mut Vec<Arc<StageTiming>>,
+    ) -> Arc<dyn Component<Next = v4::Cursor>> {
+        let timing = Arc::new(StageTiming::new(name));
+        timings.push(timing.clone());
+        Arc::new(Self { inner, timing })
+    }
+}
+
+impl Component for TimedComponent {
+    type Next = v4::Cursor;
+
+    fn dispatch(
+        &self,
+        ctx:   &RenderCtx,
+        rows:  &[QueueRow<v4::Cursor>],
+        queue: &dyn QueueBackend<v4::Cursor>,
+    ) {
+        let t0 = Instant::now();
+        self.inner.dispatch(ctx, rows, queue);
+        let dt = t0.elapsed();
+        self.timing.calls.fetch_add(1, Ordering::Relaxed);
+        self.timing.rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+        self.timing.wall_ns.fetch_add(dt.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    fn batch_hint(&self) -> Option<usize> { self.inner.batch_hint() }
+    fn lifecycle(&self) -> ComponentLifecycle { self.inner.lifecycle() }
+    fn idle(
+        &self,
+        ctx:     &RenderCtx,
+        scope:   BarrierScope,
+        pending: PendingSummary,
+        queue:   &dyn QueueBackend<v4::Cursor>,
+    ) {
+        self.inner.idle(ctx, scope, pending, queue);
+    }
+    fn complete(
+        &self,
+        ctx:   &RenderCtx,
+        scope: BarrierScope,
+        queue: &dyn QueueBackend<v4::Cursor>,
+    ) {
+        self.inner.complete(ctx, scope, queue);
+    }
+    fn kind(&self) -> &'static str { self.timing.name }
+}
+
+/// Bench-local pass-through counter. Keeps telemetry out of the core
+/// runtime while still exposing row counts at pipeline boundaries.
+struct RowCountComponent {
+    rows: Arc<AtomicU64>,
+}
+
+impl Component for RowCountComponent {
+    type Next = v4::Cursor;
+
+    fn render(&self, _ctx: &RenderCtx, c: &v4::Cursor) -> Node<v4::Cursor> {
+        self.rows.fetch_add(1, Ordering::Relaxed);
+        Node::Emit(Arc::new(c.clone()))
+    }
+}
+
+/// Bench-local extension filter. V3 enumerates `.c/.h` before dispatch;
+/// this keeps the v4 bench measuring the same corpus without changing
+/// language-level `fs` semantics.
+struct ExtFilterComponent {
+    exts:    Arc<Vec<String>>,
+    kept:    Arc<AtomicU64>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl Component for ExtFilterComponent {
+    type Next = v4::Cursor;
+
+    fn render(&self, _ctx: &RenderCtx, c: &v4::Cursor) -> Node<v4::Cursor> {
+        let path = std::path::Path::new(c.value.as_ref());
+        let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            return Node::Done;
+        };
+        let keep = self.exts.iter().any(|want| want.eq_ignore_ascii_case(ext));
+        if keep {
+            self.kept.fetch_add(1, Ordering::Relaxed);
+            Node::Emit(Arc::new(c.clone()))
+        } else {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            Node::Done
+        }
+    }
+}
+
+struct ReadTelemetryComponent {
+    rows:  Arc<AtomicU64>,
+    bytes: Arc<AtomicU64>,
+}
+
+impl Component for ReadTelemetryComponent {
+    type Next = v4::Cursor;
+
+    fn render(&self, _ctx: &RenderCtx, c: &v4::Cursor) -> Node<v4::Cursor> {
+        self.rows.fetch_add(1, Ordering::Relaxed);
+        self.bytes.fetch_add(c.value.len() as u64, Ordering::Relaxed);
+        Node::Emit(Arc::new(c.clone()))
+    }
+}
 
 /// Bench-local: emit each cursor through, and call `store.commit(gen, None)`
 /// every Nth render_batch. Drives commit-cost telemetry in Insert mode.
@@ -96,6 +239,7 @@ async fn main() {
     let mut commit_every: usize = 0;
     let mut store_kind = String::from("mem");
     let mut sqlite_path: Option<PathBuf> = None;
+    let mut materialize_read = false;
     // --memoize off|on|reconcile. Wraps AstNm in Memoize.
     let mut memoize = String::from("off");
     let mut memoize_share = false;
@@ -117,6 +261,7 @@ async fn main() {
             "--commit-every" => { commit_every = args[i+1].parse().unwrap(); i += 2; }
             "--store"        => { store_kind   = args[i+1].clone(); i += 2; }
             "--sqlite-path"  => { sqlite_path  = Some(PathBuf::from(&args[i+1])); i += 2; }
+            "--materialize-read" => { materialize_read = true; i += 1; }
             "--memoize"      => { memoize      = args[i+1].clone(); i += 2; }
             "--memoize-share"=> { memoize_share= true; i += 1; }
             other       => panic!("unknown arg: {}", other),
@@ -136,13 +281,16 @@ async fn main() {
         "mode={:?} workers={} batch={} trials={} pattern={:?} lang={:?} root={} memoize={} memoize_share={}",
         mode, workers, batch, trials, pattern_src, lang, root.display(), memoize, memoize_share,
     );
+    eprintln!(
+        "ext_filter={:?} materialize_read={}",
+        exts, materialize_read,
+    );
     if !matches!(memoize.as_str(), "off" | "on" | "reconcile") {
         panic!("--memoize must be off|on|reconcile, got {memoize:?}");
     }
     if matches!(mode, Mode::Full) {
         panic!("--mode full not yet ported (rule infra not yet landed on v2)");
     }
-
     // Shared cache + index across trials when --memoize-share.
     let shared_cache: Option<Arc<MemoCache<v4::Cursor>>> =
         if memoize_share && memoize != "off" {
@@ -157,6 +305,8 @@ async fn main() {
     let mut last_matches: u64 = 0;
     for trial in 1..=trials {
         let counter = Arc::new(AtomicU64::new(0));
+        let bench = Arc::new(BenchCounters::default());
+        let mut timings: Vec<Arc<StageTiming>> = Vec::new();
 
         // Source: SinglePath (--file) or Fs (bulk corpus).
         let source: Arc<dyn Component<Next = v4::Cursor>> = match &file {
@@ -227,20 +377,70 @@ async fn main() {
                 Some(store)
             } else { None };
 
-        // Build chain: source > read > matcher > Count > [FactWrite] > [CommitEvery].
-        // `read` is the byte-load gate; matchers consume cursor.value
-        // bytes that arrived through it (substrate purification 2026-05-07).
-        let read: Arc<dyn Component<Next = v4::Cursor>> = Arc::new(ReadComponent::new());
-        let mut steps: Vec<Arc<dyn Component<Next = v4::Cursor>>> = vec![source, read, matcher];
+        // Build chain:
+        //   default             source > matcher > Count
+        //   --materialize-read  source > read > matcher > Count
+        //
+        // The default exercises the source-aware matcher path: source
+        // bytes stay behind ast instead of being serialized through
+        // cursor.value between queue stages.
+        let mut steps: Vec<Arc<dyn Component<Next = v4::Cursor>>> = vec![
+            TimedComponent::new("fs", source, &mut timings),
+            TimedComponent::new(
+                "count_fs_rows",
+                Arc::new(RowCountComponent { rows: bench.source_rows.clone() }),
+                &mut timings,
+            ),
+        ];
+        if file.is_none() {
+            steps.push(TimedComponent::new(
+                "ext_filter",
+                Arc::new(ExtFilterComponent {
+                    exts: Arc::new(exts.clone()),
+                    kept: bench.ext_kept.clone(),
+                    dropped: bench.ext_dropped.clone(),
+                }),
+                &mut timings,
+            ));
+        }
+        if materialize_read {
+            let read: Arc<dyn Component<Next = v4::Cursor>> = Arc::new(ReadComponent::new());
+            steps.push(TimedComponent::new("read", read, &mut timings));
+            steps.push(TimedComponent::new(
+                "read_telemetry",
+                Arc::new(ReadTelemetryComponent {
+                    rows: bench.read_rows.clone(),
+                    bytes: bench.read_bytes.clone(),
+                }),
+                &mut timings,
+            ));
+        }
+        steps.push(TimedComponent::new("ast", matcher, &mut timings));
         if matches!(mode, Mode::Insert) {
             let store = store_opt.as_ref().unwrap().clone();
-            steps.push(Arc::new(FactWrite::new(store.clone(), "matches")));
+            steps.push(TimedComponent::new(
+                "fact_write",
+                Arc::new(FactWrite::new(store.clone(), "matches")),
+                &mut timings,
+            ));
             if commit_every > 0 {
-                steps.push(Arc::new(CommitEveryComponent::new(store.clone(), commit_every)));
+                steps.push(TimedComponent::new(
+                    "commit_every",
+                    Arc::new(CommitEveryComponent::new(store.clone(), commit_every)),
+                    &mut timings,
+                ));
             }
-            steps.push(Arc::new(CountComponent { count: counter.clone() }));
+            steps.push(TimedComponent::new(
+                "count_matches",
+                Arc::new(CountComponent { count: counter.clone() }),
+                &mut timings,
+            ));
         } else {
-            steps.push(Arc::new(CountComponent { count: counter.clone() }));
+            steps.push(TimedComponent::new(
+                "count_matches",
+                Arc::new(CountComponent { count: counter.clone() }),
+                &mut timings,
+            ));
         }
 
         let pipe = PipeInstance::new(steps);
@@ -257,9 +457,29 @@ async fn main() {
         let m = counter.load(Ordering::Relaxed);
         let rss = rss_peak_kb() / 1024;
         eprintln!(
-            "trial {}: wall={:.3}s  matches={:>9}  rendered={}  emitted={}  rss_peak_MB={}",
-            trial, wall.as_secs_f64(), m, stats.rendered, stats.emitted, rss,
+            "trial {}: wall={:.3}s  matches={:>9}  fs_rows={}  ext_kept={}  ext_dropped={}  read_rows={}  read_MB={:.1}  rendered={}  emitted={}  rss_peak_MB={}",
+            trial,
+            wall.as_secs_f64(),
+            m,
+            bench.source_rows.load(Ordering::Relaxed),
+            bench.ext_kept.load(Ordering::Relaxed),
+            bench.ext_dropped.load(Ordering::Relaxed),
+            bench.read_rows.load(Ordering::Relaxed),
+            bench.read_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
+            stats.rendered,
+            stats.emitted,
+            rss,
         );
+        for timing in &timings {
+            let wall_ms = timing.wall_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0;
+            eprintln!(
+                "  stage {:>14}: calls={} rows={} wall_ms={:.1}",
+                timing.name,
+                timing.calls.load(Ordering::Relaxed),
+                timing.rows.load(Ordering::Relaxed),
+                wall_ms,
+            );
+        }
         walls.push(wall);
         last_matches = m;
     }
