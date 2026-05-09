@@ -154,6 +154,61 @@ async fn render_markdown_aggregate_writes_file() {
 }
 
 #[tokio::test]
+async fn render_markdown_interpolates_subpipe_links() {
+    let root = tempfile::tempdir().unwrap();
+    let out = root.path().join("TYPE_LINKS.md");
+    let sprf = root.path().join("render_markdown_subpipe_links.sprf");
+    let src = format!(
+        r#"
+        rule(:important_types, TYPE?, FILE?, LO?);
+
+        `UserService`
+          > term_bind(:TYPE)
+          > `src/user.rs`
+          > term_bind(:FILE)
+          > `42`
+          > term_bind(:LO)
+          > important_types.(TYPE, FILE, LO);
+
+        `OrderStore`
+          > term_bind(:TYPE)
+          > `src/order.rs`
+          > term_bind(:FILE)
+          > `7`
+          > term_bind(:LO)
+          > important_types.(TYPE, FILE, LO);
+
+        important_types(TYPE?, FILE?, LO?)
+        > render_markdown`- ${{ term(:TYPE) > `**${{&.value}}**` }} at ${{ term(:FILE) > `[${{&.value}}:${{LO}}](${{&.value}}#L${{LO}})` }}
+`
+        > write_file`{}`;
+        "#,
+        out.display()
+    );
+    fs::write(&sprf, src).unwrap();
+
+    let (_state, client) = build_in_process(root.path().to_path_buf());
+    let report = client
+        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .await
+        .unwrap();
+
+    assert!(
+        report.parse_diags.is_empty()
+            && report.walk_diags.is_empty()
+            && report.runtime_diags.is_empty(),
+        "subpipe markdown render should stay clean:\n{}",
+        report_lines(&report)
+    );
+
+    let got = fs::read_to_string(&out).expect("render should create markdown file");
+    assert_eq!(
+        got,
+        "- **UserService** at [src/user.rs:42](src/user.rs#L42)\n- **OrderStore** at [src/order.rs:7](src/order.rs#L7)\n"
+    );
+}
+
+#[tokio::test]
 async fn render_markdown_replaces_comment_range_only() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("ARCH.md");

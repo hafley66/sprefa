@@ -1,0 +1,30 @@
+# Demonstrates pipe-valued interpolation inside render_markdown.
+#
+# Run from repo root:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/render-markdown-subpipe-links.sprf --root . --show-rows
+
+rule(:important_types, TYPE?, FILE?, LO?);
+rule(:doc_rows, BODY?);
+
+`UserService`
+  > term_bind(:TYPE)
+  > `src/user.rs`
+  > term_bind(:FILE)
+  > `42`
+  > term_bind(:LO)
+  > important_types.(TYPE, FILE, LO);
+
+`OrderStore`
+  > term_bind(:TYPE)
+  > `src/order.rs`
+  > term_bind(:FILE)
+  > `7`
+  > term_bind(:LO)
+  > important_types.(TYPE, FILE, LO);
+
+important_types(TYPE?, FILE?, LO?)
+  > render_markdown`- ${ term(:TYPE) > `**${&.value}**` } at ${ term(:FILE) > `[${&.value}:${LO}](${&.value}#L${LO})` }
+`
+  > term_bind(:BODY)
+  > doc_rows.(BODY);
