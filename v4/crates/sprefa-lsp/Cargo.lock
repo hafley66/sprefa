@@ -2390,6 +2390,7 @@ dependencies = [
  "libc",
  "lru",
  "lsp-types 0.97.0",
+ "memchr",
  "rayon",
  "regex",
  "reqwest",
