@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, NextKey,
-    Node, PipeInstance, QueueBackend, RenderCtx, Wake,
+    attach_dirty_to_queue, expand, Component, EventBus, ExpandOpts, FactStore,
+    MemFactStore, MemQueue, NextKey, Node, PipeInstance, QueueBackend, RenderCtx,
+    Wake,
 };
 
 use v4::compile::parse::host_parse;
@@ -10,6 +11,90 @@ use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
 use v4::v2_ops::{CollectComponent, CollectMode};
 use v4::Cursor;
+
+struct LiveHarness {
+    store: Arc<dyn FactStore<Cursor>>,
+    queue: Arc<dyn QueueBackend<Cursor>>,
+    bus: Arc<EventBus>,
+    instances: Vec<PipeInstance<Cursor>>,
+    next_instance_id: u64,
+}
+
+impl LiveHarness {
+    fn new() -> Self {
+        let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        let bus = Arc::new(EventBus::new());
+        attach_dirty_to_queue(&bus, queue.clone());
+        Self {
+            store,
+            queue,
+            bus,
+            instances: Vec::new(),
+            next_instance_id: 1,
+        }
+    }
+
+    fn run(&mut self, src: &str) {
+        let (program, parse_diags) = host_parse(src);
+        assert!(parse_diags.is_empty(), "parse diags: {parse_diags:?}");
+
+        let reg = default_registry();
+        let mut ctx = LowerCtx::new(self.store.clone(), std::env::temp_dir());
+        let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
+        assert!(walk_diags.is_empty(), "walk diags: {walk_diags:?}");
+
+        let opts = ExpandOpts::default().with_bus(self.bus.clone());
+        for pipe in pipes {
+            let mut inst = pipe.into_instance();
+            inst.pipe_hash = self.next_instance_id;
+            inst.instance_id = self.next_instance_id;
+            self.next_instance_id += 1;
+            expand(
+                &inst,
+                self.queue.clone(),
+                vec![Arc::new(Cursor::default())],
+                opts.clone(),
+            );
+            self.instances.push(inst);
+        }
+
+        self.store.commit(self.next_instance_id, Some(&self.bus));
+        self.resume(opts);
+    }
+
+    fn resume(&self, opts: ExpandOpts) {
+        for _ in 0..8 {
+            let mut rendered = 0;
+            for inst in self.instances.iter().filter(|inst| has_sql_component(inst)) {
+                rendered += expand(
+                    inst,
+                    self.queue.clone(),
+                    Vec::new(),
+                    opts.clone(),
+                ).rendered;
+            }
+            for inst in self.instances.iter().filter(|inst| !has_sql_component(inst)) {
+                rendered += expand(
+                    inst,
+                    self.queue.clone(),
+                    Vec::new(),
+                    opts.clone(),
+                ).rendered;
+            }
+            if rendered == 0 {
+                break;
+            }
+            self.store.commit(self.next_instance_id, Some(&self.bus));
+        }
+    }
+}
+
+fn has_sql_component(inst: &PipeInstance<Cursor>) -> bool {
+    inst.components
+        .iter()
+        .any(|component| component.kind().contains("SqlQueryComponent"))
+}
 
 fn run_into_store(src: &str, store: Arc<dyn FactStore<Cursor>>) {
     let (program, parse_diags) = host_parse(src);
@@ -61,11 +146,10 @@ fn empty_rule_fully_bound_apply_sends_identity() {
 }
 
 #[test]
-#[ignore = "target semantics: mounted anti-join should retract stale missing rows after later writes"]
 fn mounted_query_reacts_to_late_relation_write() {
-    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let mut runtime = LiveHarness::new();
 
-    run_into_store(r#"
+    runtime.run(r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:missing_hooks, OP?);
 
@@ -84,20 +168,24 @@ fn mounted_query_reacts_to_late_relation_write() {
               )
             `
           > rule(:missing_hooks, OP: OP);
-    "#, store.clone());
+    "#);
 
-    assert_eq!(store.rows_of("missing_hooks").len(), 1, "initial anti-join should report missing hook");
+    assert_eq!(
+        runtime.store.rows_of("missing_hooks").len(),
+        1,
+        "initial anti-join should report missing hook",
+    );
 
-    run_into_store(r#"
+    runtime.run(r#"
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
           > rule(:frontend_hooks, OP: OP, FILE: FILE);
-    "#, store.clone());
+    "#);
 
     assert_eq!(
-        store.rows_of("missing_hooks").len(),
+        runtime.store.rows_of("missing_hooks").len(),
         0,
         "live query mount should rerun/retract the missing row after frontend_hooks changes"
     );
@@ -170,11 +258,10 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
 }
 
 #[test]
-#[ignore = "target semantics: rerun should diff old/new mounted query outputs and emit only additions"]
 fn mounted_query_rerun_emits_only_new_output_hashes() {
-    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let mut runtime = LiveHarness::new();
 
-    run_into_store(r#"
+    runtime.run(r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
 
@@ -193,20 +280,20 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
             `
           > term_bind(:FILE)
           > rule(:hook_hits, OP: OP, FILE: FILE);
-    "#, store.clone());
+    "#);
 
-    assert_eq!(store.rows_of("hook_hits").len(), 1);
+    assert_eq!(runtime.store.rows_of("hook_hits").len(), 1);
 
-    run_into_store(r#"
+    runtime.run(r#"
         `getUser`
           > term_bind(:OP)
           > `src/hooks_extra.ts`
           > term_bind(:FILE)
           > rule(:frontend_hooks, OP: OP, FILE: FILE);
-    "#, store.clone());
+    "#);
 
     assert_eq!(
-        store.rows_of("hook_hits").len(),
+        runtime.store.rows_of("hook_hits").len(),
         2,
         "mounted query rerun should add only the new output row while preserving the old one"
     );

@@ -11,7 +11,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use effect_runtime::v2::{Component, Diag, FactStore, Next, Node, Pipe, Purity, RenderCtx};
+use effect_runtime::v2::{
+    splice_into, table_dirty_key, Component, Diag, FactStore, Next, Node, Pipe, Purity,
+    QueueBackend, QueueRow, RenderCtx, TABLE_DOMAIN, Wake,
+};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection};
 
@@ -46,6 +49,34 @@ impl SqlQueryComponent {
 
 impl Component for SqlQueryComponent {
     type Next = Cursor;
+
+    fn dispatch(
+        &self,
+        ctx: &RenderCtx,
+        rows: &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let inputs: Vec<&Cursor> = rows.iter().map(|r| r.value.as_ref()).collect();
+        let nodes = self.render_batch(ctx, &inputs);
+        for (row, node) in rows.iter().zip(nodes) {
+            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+            for table in self.referenced_tables.iter() {
+                splice_into(
+                    row,
+                    Node::Yield {
+                        value: row.value.clone(),
+                        wake: Wake::Key {
+                            domain: TABLE_DOMAIN.into(),
+                            key: table_dirty_key(table),
+                        },
+                    },
+                    ctx.depth + 1,
+                    ctx.expand_tick,
+                    queue,
+                );
+            }
+        }
+    }
 
     fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         if batch.is_empty() {

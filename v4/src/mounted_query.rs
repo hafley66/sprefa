@@ -14,6 +14,8 @@ pub const OUTPUT_TABLE: &str = "mounted_query_output";
 pub const CURSOR_TABLE: &str = "mounted_query_cursor";
 pub const MOUNT_TABLE: &str = "mounted_query_mount";
 pub const DEP_TABLE: &str = "mounted_query_dep";
+pub const SUPPORT_TABLE: &str = "mounted_query_support";
+pub const SUPPORT_CURSOR_ID: &str = "__support_cursor_id";
 
 const MOUNT_ID: &str = "mount_id";
 const INPUT_KEY: &str = "input_key";
@@ -22,6 +24,8 @@ const CURSOR_ID: &str = "cursor_id";
 const CURSOR_BLOB: &str = "cursor_blob";
 const SQL: &str = "sql";
 const DEP_TABLE_NAME: &str = "dep_table";
+const SUPPORT_TABLE_NAME: &str = "support_table";
+const SUPPORT_ROW_ID: &str = "support_row_id";
 
 pub trait MountedQueryStorage {
     fn record_sql_outputs(
@@ -53,6 +57,10 @@ impl FactMountedQueryStorage {
         self.store.declare(OUTPUT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, CURSOR_ID]);
         self.store.declare(MOUNT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, SQL]);
         self.store.declare(DEP_TABLE, &[MOUNT_ID, INPUT_KEY, DEP_TABLE_NAME]);
+        self.store.declare(
+            SUPPORT_TABLE,
+            &[SUPPORT_CURSOR_ID, SUPPORT_TABLE_NAME, SUPPORT_ROW_ID],
+        );
     }
 
     fn existing_cursor_ids(
@@ -137,19 +145,27 @@ impl MountedQueryStorage for FactMountedQueryStorage {
     ) -> Vec<Node<Cursor>> {
         let outputs = output_cursors(nodes);
         let persisted = persist_output_cursors(outputs);
+        let stamped_nodes = stamp_support_nodes(nodes);
         self.declare_tables();
 
         let mount_id = mount_id_for_sql(sql);
         let input_key = input_key_for_batch(batch);
         self.record_mount(sql, generation, &mount_id, &input_key, dep_tables);
         let existing_cursor_ids = self.existing_cursor_ids(&mount_id, &input_key);
+        let current_cursor_ids: std::collections::HashSet<String> =
+            persisted.iter().map(|p| p.cursor_id.clone()).collect();
+        let removed_cursor_ids: Vec<String> = existing_cursor_ids
+            .difference(&current_cursor_ids)
+            .cloned()
+            .collect();
+        retract_supported_rows(self.store.as_ref(), &removed_cursor_ids);
         self.store.delete_matching(
             OUTPUT_TABLE,
             &[(MOUNT_ID, mount_id.as_str()), (INPUT_KEY, input_key.as_str())],
         );
 
         if persisted.is_empty() {
-            return nodes_added_since(nodes, &existing_cursor_ids);
+            return nodes_added_since(&stamped_nodes, &existing_cursor_ids);
         }
 
         self.intern_output_cursors(&persisted);
@@ -167,7 +183,7 @@ impl MountedQueryStorage for FactMountedQueryStorage {
         }
 
         self.store.insert_batch(OUTPUT_TABLE, rows);
-        nodes_added_since(nodes, &existing_cursor_ids)
+        nodes_added_since(&stamped_nodes, &existing_cursor_ids)
     }
 }
 
@@ -248,9 +264,91 @@ fn filter_node_added_since(
 }
 
 fn cursor_storage_parts(cursor: &Cursor) -> (String, Vec<u8>) {
-    let encoded = cursor_codec::encode(cursor);
+    let encoded = cursor_codec::encode(&cursor_without_support(cursor));
     let cursor_id = hex(blake3::hash(&encoded).as_bytes());
     (cursor_id, encoded)
+}
+
+fn cursor_without_support(cursor: &Cursor) -> Cursor {
+    let mut cursor = cursor.clone();
+    cursor.unset(SUPPORT_CURSOR_ID);
+    cursor
+}
+
+fn stamp_support_nodes(nodes: &[Node<Cursor>]) -> Vec<Node<Cursor>> {
+    nodes.iter().map(stamp_support_node).collect()
+}
+
+fn stamp_support_node(node: &Node<Cursor>) -> Node<Cursor> {
+    match node {
+        Node::Emit(cursor) => {
+            let (cursor_id, _) = cursor_storage_parts(cursor);
+            let mut stamped = cursor.as_ref().clone();
+            stamped.set(SUPPORT_CURSOR_ID, cursor_id);
+            Node::Emit(Arc::new(stamped))
+        }
+        Node::Many(nodes) => Node::Many(nodes.iter().map(stamp_support_node).collect()),
+        Node::Yield { value, wake } => Node::Yield {
+            value: value.clone(),
+            wake: wake.clone(),
+        },
+        Node::Done => Node::Done,
+    }
+}
+
+pub fn record_fact_supports(
+    store: &dyn FactStore<Cursor>,
+    support_cursor_id: &str,
+    table: &str,
+    row_id: &str,
+) {
+    store.declare(
+        SUPPORT_TABLE,
+        &[SUPPORT_CURSOR_ID, SUPPORT_TABLE_NAME, SUPPORT_ROW_ID],
+    );
+    let mut row = Cursor::default();
+    row.set(SUPPORT_CURSOR_ID, support_cursor_id);
+    row.set(SUPPORT_TABLE_NAME, table);
+    row.set(SUPPORT_ROW_ID, row_id);
+    store.insert_batch(SUPPORT_TABLE, vec![Arc::new(row)]);
+}
+
+fn retract_supported_rows(store: &dyn FactStore<Cursor>, removed_cursor_ids: &[String]) {
+    if removed_cursor_ids.is_empty() {
+        return;
+    }
+
+    let removed: std::collections::HashSet<&str> =
+        removed_cursor_ids.iter().map(|s| s.as_str()).collect();
+    let support_rows = store.rows_of(SUPPORT_TABLE);
+    let mut doomed = Vec::new();
+
+    for row in &support_rows {
+        let Some(support_id) = row.get(SUPPORT_CURSOR_ID) else { continue };
+        if !removed.contains(support_id) {
+            continue;
+        }
+        let Some(table) = row.get(SUPPORT_TABLE_NAME) else { continue };
+        let Some(row_id) = row.get(SUPPORT_ROW_ID) else { continue };
+
+        let still_supported = support_rows.iter().any(|other| {
+            other.get(SUPPORT_CURSOR_ID).map(|id| !removed.contains(id)).unwrap_or(false)
+                && other.get(SUPPORT_TABLE_NAME) == Some(table)
+                && other.get(SUPPORT_ROW_ID) == Some(row_id)
+        });
+        if !still_supported {
+            doomed.push((table.to_string(), row_id.to_string()));
+        }
+    }
+
+    doomed.sort();
+    doomed.dedup();
+    for (table, row_id) in doomed {
+        store.delete_matching(&table, &[(effect_runtime::v2::ID_COL, row_id.as_str())]);
+    }
+    for support_id in removed_cursor_ids {
+        store.delete_matching(SUPPORT_TABLE, &[(SUPPORT_CURSOR_ID, support_id.as_str())]);
+    }
 }
 
 fn persist_output_cursors(outputs: Vec<Arc<Cursor>>) -> Vec<PersistedCursor> {

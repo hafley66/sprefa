@@ -7,8 +7,9 @@
 
 use std::sync::Arc;
 
-use effect_runtime::v2::{Component, FactStore, Node, RenderCtx};
+use effect_runtime::v2::{content_id, Component, FactStore, Node, RenderCtx};
 
+use crate::mounted_query;
 use crate::Cursor;
 
 // Re-exports so existing call sites keep compiling.
@@ -83,7 +84,29 @@ impl Component for FactWrite {
             }).collect(),
             None => arced.clone(),
         };
+        let support_rows: Vec<(String, String)> = batch
+            .iter()
+            .zip(rows.iter())
+            .filter_map(|(cursor, row)| {
+                cursor
+                    .get(mounted_query::SUPPORT_CURSOR_ID)
+                    .map(|support_id| {
+                        (
+                            support_id.to_string(),
+                            content_id(self.table.as_ref(), row.as_ref()),
+                        )
+                    })
+            })
+            .collect();
         self.store.insert_batch(&self.table, rows);
+        for (support_id, row_id) in support_rows {
+            mounted_query::record_fact_supports(
+                self.store.as_ref(),
+                &support_id,
+                self.table.as_ref(),
+                &row_id,
+            );
+        }
         arced.into_iter().map(Node::Emit).collect()
     }
 }
