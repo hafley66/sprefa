@@ -265,3 +265,62 @@ async fn app_can_use_sqlite_queue_for_mounted_sql_parks() {
         "sqlite-backed app queue should revive the mounted SQL park by table dirty key",
     );
 }
+
+#[tokio::test]
+async fn app_write_file_wakes_mounted_read_pipeline() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data.txt");
+    let reader = root.path().join("reader.sprf");
+    let writer = root.path().join("writer.sprf");
+
+    fs::write(&data, "alpha").unwrap();
+    fs::write(&reader, format!(r#"
+        rule(:contents, BODY?);
+
+        `{}`
+          > read
+          > term_bind(:BODY)
+          > rule(:contents, BODY: BODY);
+    "#, data.display())).unwrap();
+    fs::write(&writer, format!(r#"
+        `bravo` > write_file`{}`;
+    "#, data.display())).unwrap();
+
+    let (_state, client) = build_in_process(root.path().to_path_buf());
+    client.run(RunReq {
+        path: reader,
+        root: Some(root.path().to_path_buf()),
+    }).await.unwrap();
+
+    let table = client.get_fact_table(GetFactTableReq {
+        name: "contents".into(),
+        limit: None,
+    }).await.unwrap();
+    assert_eq!(table.total, 1);
+    assert_eq!(
+        table.rows[0].fields.iter()
+            .find(|(name, _)| name == "BODY")
+            .map(|(_, value)| value.as_str()),
+        Some("alpha"),
+    );
+
+    client.run(RunReq {
+        path: writer,
+        root: Some(root.path().to_path_buf()),
+    }).await.unwrap();
+
+    let table = client.get_fact_table(GetFactTableReq {
+        name: "contents".into(),
+        limit: None,
+    }).await.unwrap();
+    let mut bodies: Vec<&str> = table.rows
+        .iter()
+        .filter_map(|row| {
+            row.fields.iter()
+                .find(|(name, _)| name == "BODY")
+                .map(|(_, value)| value.as_str())
+        })
+        .collect();
+    bodies.sort();
+    assert_eq!(bodies, vec!["alpha", "bravo"]);
+}

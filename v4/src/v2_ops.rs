@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
-    par_render, splice_into_at, BarrierScope, Component, ComponentLifecycle,
+    par_render, splice_into, splice_into_at, BarrierScope, Component, ComponentLifecycle,
     Diag, NextKey, Node, PendingSummary, Purity, QueueBackend, QueueRow, RenderCtx, Wake,
 };
 use ignore::WalkBuilder;
@@ -1462,12 +1462,55 @@ impl ReadComponent {
     pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
         self.config = Some(c); self
     }
+
+    fn file_subscription_path(&self, c: &Cursor) -> Option<String> {
+        if c.value.is_empty() {
+            return None;
+        }
+        if let Some(store) = self.store.as_ref() {
+            if store.coord_of(c.at).map(|coord| coord.rev != 0).unwrap_or(false) {
+                return None;
+            }
+        }
+        Some(c.value.to_string())
+    }
 }
 impl Default for ReadComponent {
     fn default() -> Self { Self::new() }
 }
 impl Component for ReadComponent {
     type Next = Cursor;
+
+    fn dispatch(
+        &self,
+        ctx:   &RenderCtx,
+        rows:  &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let inputs: Vec<&Cursor> = rows.iter().map(|r| r.value.as_ref()).collect();
+        let nodes = self.render_batch(ctx, &inputs);
+        for (row, node) in rows.iter().zip(nodes) {
+            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+            let Some(path) = self.file_subscription_path(row.value.as_ref()) else { continue };
+            queue.enqueue_replacing_parked(QueueRow {
+                id: 0,
+                parent_id: Some(row.id),
+                batch_idx: row.batch_idx,
+                path: row.path.clone(),
+                pipe_hash: row.pipe_hash,
+                instance_id: row.instance_id,
+                depth: row.depth,
+                value: row.value.clone(),
+                wake: Wake::Key {
+                    domain: FILE_DOMAIN.into(),
+                    key: file_dirty_key(path),
+                },
+                expand_tick: ctx.expand_tick,
+                enqueued_at_ns: row.enqueued_at_ns,
+            });
+        }
+    }
+
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
         // Layer 5b.2 — git rev branch. When upstream cursor's coord
         // has rev != 0, fetch the blob via `git show <oid>:<path>`

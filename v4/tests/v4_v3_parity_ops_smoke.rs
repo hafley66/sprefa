@@ -192,6 +192,59 @@ fn read_loads_file_bytes_into_value() {
 }
 
 #[test]
+fn read_reruns_after_file_dirty_wake() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hello.txt");
+    let mut f = std::fs::File::create(&path).unwrap();
+    write!(f, "alpha").unwrap();
+
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg = default_registry();
+    let p = reg.lower(
+        &LowerCtx::new(store.clone(), std::env::temp_dir()),
+        "read", None, vec![], None, None, br(0, 4),
+    ).unwrap();
+
+    let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
+    struct Sink(Arc<Mutex<Vec<Cursor>>>);
+    impl Component for Sink {
+        type Next = Cursor;
+        fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
+        }
+    }
+
+    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = p.steps.iter().cloned().collect();
+    steps.push(Arc::new(Sink(sink.clone())));
+    let inst = PipeInstance::new(steps);
+    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+
+    let mut seed = Cursor::default();
+    seed.value = Arc::<str>::from(path.display().to_string().as_str());
+    expand(&inst, q.clone(), vec![Arc::new(seed)], ExpandOpts::default());
+
+    assert_eq!(sink.lock().unwrap()[0].value.as_ref(), "alpha");
+    assert_eq!(q.depth(), 1, "read should park one file-dirty continuation");
+
+    std::fs::write(&path, "bravo").unwrap();
+    assert_eq!(
+        q.dispatch_park(FILE_DOMAIN, Some(file_dirty_key(&path))),
+        1,
+        "file dirty should wake the parked read cursor",
+    );
+    expand(&inst, q.clone(), Vec::new(), ExpandOpts::default());
+
+    let values: Vec<String> = sink.lock().unwrap()
+        .iter()
+        .map(|c| c.value.to_string())
+        .collect();
+    assert_eq!(values, vec!["alpha".to_string(), "bravo".to_string()]);
+    assert_eq!(q.depth(), 1, "read should replace the file-dirty park after rerun");
+}
+
+#[test]
 fn comment_sequential_narrows_value_between_markers() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let reg   = default_registry();
