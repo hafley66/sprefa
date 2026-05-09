@@ -310,6 +310,10 @@ pub struct Cursor {
     /// hit text, etc.); cursor mutators rewrite it; Term::Read pulls
     /// from `raw_terms` into here.
     pub value: Arc<str>,
+    /// Small typed payload handle. This is the migration target for
+    /// source/table/runtime values; `value` remains the legacy display
+    /// text/body lane until operators finish moving over.
+    pub cursor_value: CursorValue,
     /// Layer 0c coord-space focal-value FK. SYNTHETIC in 0c.1.
     pub value_id: StringId,
     /// Layer 0c coord-space focal-byte ref. SYNTHETIC in 0c.1.
@@ -329,10 +333,11 @@ pub struct Cursor {
 
 // Manual eq/hash/ord — the Weak<SprfStore> handle is process-local and
 // must not participate in identity. Identity is the four data fields
-// (value, value_id, at, terms, raw_terms).
+// (value, cursor_value, value_id, at, terms, raw_terms).
 impl PartialEq for Cursor {
     fn eq(&self, o: &Self) -> bool {
         self.value == o.value
+            && self.cursor_value == o.cursor_value
             && self.value_id == o.value_id
             && self.at == o.at
             && self.terms == o.terms
@@ -343,6 +348,7 @@ impl Eq for Cursor {}
 impl std::hash::Hash for Cursor {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         self.value.hash(h);
+        self.cursor_value.hash(h);
         self.value_id.hash(h);
         self.at.hash(h);
         self.terms.hash(h);
@@ -355,6 +361,7 @@ impl PartialOrd for Cursor {
 impl Ord for Cursor {
     fn cmp(&self, o: &Self) -> std::cmp::Ordering {
         self.value.cmp(&o.value)
+            .then_with(|| self.cursor_value.cmp(&o.cursor_value))
             .then_with(|| self.value_id.cmp(&o.value_id))
             .then_with(|| self.at.cmp(&o.at))
             .then_with(|| self.terms.cmp(&o.terms))

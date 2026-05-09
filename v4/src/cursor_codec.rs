@@ -7,6 +7,7 @@
 // include the coord-space fields next to the legacy bare-string bag:
 //
 //   [u32 value_len][value_bytes]              ← &.value (legacy Arc<str>)
+//   [u8 cursor_value_tag][u64 payload]        ← compact runtime payload handle
 //   [u64 value_id]                            ← StringId FK
 //   [u64 at_ref]                              ← Ref FK
 //   [u32 n_terms]                             ← coord-space terms
@@ -24,10 +25,36 @@
 // No Arc identity, no pointers, no mtimes. Bytes-only. Deterministic
 // across processes. Hashes of the encoding are stable.
 
-use crate::{Cursor, Ref, StringId, Term};
+use crate::{Cursor, CursorValue, Ref, StringId, Term, WhereBytesId};
+
+fn encode_cursor_value(value: CursorValue) -> (u8, u64) {
+    match value {
+        CursorValue::Null => (0, 0),
+        CursorValue::Bool(v) => (1, u64::from(v)),
+        CursorValue::Int(v) => (2, u64::from_le_bytes(v.to_le_bytes())),
+        CursorValue::Float(v) => (3, v),
+        CursorValue::String(v) => (4, v.0),
+        CursorValue::WhereBytes(v) => (5, v.0),
+        CursorValue::Blob(v) => (6, v),
+    }
+}
+
+fn decode_cursor_value(tag: u8, payload: u64) -> Result<CursorValue, &'static str> {
+    Ok(match tag {
+        0 => CursorValue::Null,
+        1 => CursorValue::Bool(payload != 0),
+        2 => CursorValue::Int(i64::from_le_bytes(payload.to_le_bytes())),
+        3 => CursorValue::Float(payload),
+        4 => CursorValue::String(StringId(payload)),
+        5 => CursorValue::WhereBytes(WhereBytesId(payload)),
+        6 => CursorValue::Blob(payload),
+        _ => return Err("unknown cursor_value tag"),
+    })
+}
 
 pub fn encode(c: &Cursor) -> Vec<u8> {
     let mut sz = 4 + c.value.len()        // value
+        + 1 + 8                            // cursor_value
         + 8 + 8                            // value_id + at
         + 4 + c.terms.len() * (8 * 3)      // coord-space terms
         + 4;                               // n_raw header
@@ -38,6 +65,10 @@ pub fn encode(c: &Cursor) -> Vec<u8> {
     // legacy &.value
     buf.extend_from_slice(&(c.value.len() as u32).to_le_bytes());
     buf.extend_from_slice(c.value.as_bytes());
+    // compact cursor value
+    let (tag, payload) = encode_cursor_value(c.cursor_value);
+    buf.push(tag);
+    buf.extend_from_slice(&payload.to_le_bytes());
     // coord-space scalars
     buf.extend_from_slice(&c.value_id.0.to_le_bytes());
     buf.extend_from_slice(&c.at.0.to_le_bytes());
@@ -67,6 +98,10 @@ pub fn decode(buf: &[u8]) -> Result<Cursor, &'static str> {
     let value: std::sync::Arc<str> =
         std::str::from_utf8(&buf[p..p+vl]).map_err(|_| "value not utf8")?.into();
     p += vl;
+
+    if p + 9 > buf.len() { return Err("buf too short for cursor_value"); }
+    let cursor_value = decode_cursor_value(buf[p], u64::from_le_bytes(buf[p+1..p+9].try_into().unwrap()))?;
+    p += 9;
 
     if p + 16 > buf.len() { return Err("buf too short for value_id+at"); }
     let value_id = StringId(u64::from_le_bytes(buf[p..p+8].try_into().unwrap()));
@@ -108,6 +143,7 @@ pub fn decode(buf: &[u8]) -> Result<Cursor, &'static str> {
     }
     Ok(Cursor {
         value,
+        cursor_value,
         value_id,
         at,
         terms,
@@ -195,6 +231,7 @@ mod tests {
     fn roundtrip_coord_space_fields() {
         let c = Cursor {
             value: "hi".into(),
+            cursor_value: crate::CursorValue::WhereBytes(crate::WhereBytesId(0x1234_5678)),
             value_id: StringId(0xDEADBEEF),
             at: Ref(0x1234_5678),
             terms: vec![
@@ -206,5 +243,39 @@ mod tests {
         };
         let got = decode(&encode(&c)).unwrap();
         assert_eq!(got, c);
+    }
+
+    #[test]
+    fn roundtrip_cursor_value_scalars() {
+        for cursor_value in [
+            crate::CursorValue::Null,
+            crate::CursorValue::Bool(true),
+            crate::CursorValue::Int(-42),
+            crate::CursorValue::Float(42.5f64.to_bits()),
+            crate::CursorValue::String(StringId(7)),
+            crate::CursorValue::WhereBytes(crate::WhereBytesId(8)),
+            crate::CursorValue::Blob(9),
+        ] {
+            let c = Cursor {
+                cursor_value,
+                ..Default::default()
+            };
+            assert_eq!(decode(&encode(&c)).unwrap(), c);
+        }
+    }
+
+    #[test]
+    fn source_handle_encoding_does_not_include_source_body() {
+        let mut c = Cursor {
+            cursor_value: crate::CursorValue::WhereBytes(crate::WhereBytesId(99)),
+            ..Default::default()
+        };
+        c.set("FS", "/tmp/huge.rs");
+
+        let encoded = encode(&c);
+        assert!(
+            !encoded.windows(b"fn huge_body".len()).any(|w| w == b"fn huge_body"),
+            "source cursors encode handles, not file bodies",
+        );
     }
 }
