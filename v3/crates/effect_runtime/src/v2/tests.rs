@@ -165,6 +165,34 @@ fn fact_store_delete_matching_publishes_table_dirty() {
     )));
 }
 
+#[test]
+fn mem_fact_store_table_version_changes_on_visible_writes() {
+    let store = MemFactStore::<LabCursor>::new();
+
+    assert_eq!(store.table_version("alpha"), 0);
+    store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
+    assert_eq!(store.table_version("alpha"), 1);
+    store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
+    assert_eq!(store.table_version("alpha"), 1, "duplicate row should not change version");
+    assert_eq!(store.delete_matching("alpha", &[("name", "one")]), 1);
+    assert_eq!(store.table_version("alpha"), 2);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_fact_store_table_version_changes_on_visible_writes() {
+    let store = SqliteFactStore::<LabCursor>::open_in_memory().unwrap();
+    store.declare("alpha", &["name"]);
+
+    assert_eq!(store.table_version("alpha"), 0);
+    store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
+    assert_eq!(store.table_version("alpha"), 1);
+    store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
+    assert_eq!(store.table_version("alpha"), 1, "duplicate row should not change version");
+    assert_eq!(store.delete_matching("alpha", &[("name", "one")]), 1);
+    assert_eq!(store.table_version("alpha"), 2);
+}
+
 // --- demo components -------------------------------------------------
 
 struct Trim { from: String, to: String }

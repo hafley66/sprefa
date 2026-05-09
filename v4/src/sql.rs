@@ -148,14 +148,8 @@ fn sql_batch_cache_key(
     for table in referenced_tables {
         h.update(table.as_bytes());
         h.update(b"\0");
-        for row in store.rows_of(&table) {
-            if let Some(id) = row.get("_id") {
-                h.update(id.as_bytes());
-            } else {
-                h.update(&row.content_hash());
-            }
-            h.update(b"\0");
-        }
+        h.update(&store.table_version(table).to_le_bytes());
+        h.update(b"\0");
     }
     *h.finalize().as_bytes()
 }

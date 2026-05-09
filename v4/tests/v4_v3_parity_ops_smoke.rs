@@ -3,15 +3,16 @@
 //! Each op lowers cleanly via the registry and produces the expected
 //! cursor stream when expanded against a seed.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, ByteRange, Component, ExpandOpts, FactStore, MemFactStore, MemQueue,
-    Node, PipeInstance, QueueBackend, RenderCtx,
+    expand, BusListener, ByteRange, Component, Event, EventBus, ExpandOpts, FactStore,
+    MemFactStore, MemQueue, Node, PipeInstance, QueueBackend, RenderCtx,
 };
 
 use v4::Cursor;
 use v4::lower::{default_registry, DslBody, LowerCtx, Value};
+use v4::v2_ops::{file_dirty_key, FILE_DOMAIN};
 
 fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
 
@@ -20,7 +21,6 @@ fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
 }
 
 fn run_many(p: effect_runtime::v2::Pipe<Cursor>, seed: Vec<Cursor>) -> Vec<Cursor> {
-    use std::sync::Mutex;
     let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     struct Sink(Arc<Mutex<Vec<Cursor>>>);
     impl Component for Sink {
@@ -37,6 +37,16 @@ fn run_many(p: effect_runtime::v2::Pipe<Cursor>, seed: Vec<Cursor>) -> Vec<Curso
     expand(&inst, q, seed, ExpandOpts::default());
     let v = sink.lock().unwrap().clone();
     v
+}
+
+struct RecordingListener {
+    events: Arc<Mutex<Vec<Event>>>,
+}
+
+impl BusListener for RecordingListener {
+    fn on_event(&self, ev: &Event) {
+        self.events.lock().unwrap().push(ev.clone());
+    }
 }
 
 #[test]
@@ -244,6 +254,48 @@ fn write_cursor_replace_splices_value_into_byte_range() {
 }
 
 #[test]
+fn write_cursor_publishes_file_dirty_after_splice() {
+    use std::io::Write;
+    let dir  = tempfile::tempdir().unwrap();
+    let path = dir.path().join("w.txt");
+    let mut f = std::fs::File::create(&path).unwrap();
+    write!(f, "abcdef").unwrap();
+
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg = default_registry();
+    let p = reg.lower(
+        &LowerCtx::new(store.clone(), std::env::temp_dir()),
+        "write_cursor", None, vec![], None, None, br(0, 12),
+    ).unwrap();
+
+    let mut seed = Cursor::default();
+    seed.set("FS", path.display().to_string());
+    seed.set("LO", "2");
+    seed.set("HI", "4");
+    seed.value = Arc::from("XX");
+
+    let bus = Arc::new(EventBus::new());
+    let events = Arc::new(Mutex::new(Vec::new()));
+    bus.add_listener(Arc::new(RecordingListener { events: events.clone() }));
+
+    let inst = p.into_instance();
+    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(
+        &inst,
+        q,
+        vec![Arc::new(seed)],
+        ExpandOpts::default().with_bus(bus),
+    );
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "abXXef");
+    assert!(events.lock().unwrap().iter().any(|ev| matches!(
+        ev,
+        Event::Dirty { domain, key }
+            if domain.as_ref() == FILE_DOMAIN && *key == Some(file_dirty_key(&path))
+    )));
+}
+
+#[test]
 fn write_file_writes_value_to_path_arg() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.txt");
@@ -259,6 +311,42 @@ fn write_file_writes_value_to_path_arg() {
     seed.value = Arc::from("payload");
     let _ = run(p, seed);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "payload");
+}
+
+#[test]
+fn write_file_publishes_file_dirty_after_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.txt");
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg = default_registry();
+    let p = reg.lower(
+        &LowerCtx::new(store.clone(), std::env::temp_dir()),
+        "write_file", None,
+        vec![(Value::atom(path.display().to_string().as_str()), br(11, 30))],
+        None, None, br(0, 32),
+    ).unwrap();
+    let mut seed = Cursor::default();
+    seed.value = Arc::from("payload");
+
+    let bus = Arc::new(EventBus::new());
+    let events = Arc::new(Mutex::new(Vec::new()));
+    bus.add_listener(Arc::new(RecordingListener { events: events.clone() }));
+
+    let inst = p.into_instance();
+    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(
+        &inst,
+        q,
+        vec![Arc::new(seed)],
+        ExpandOpts::default().with_bus(bus),
+    );
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "payload");
+    assert!(events.lock().unwrap().iter().any(|ev| matches!(
+        ev,
+        Event::Dirty { domain, key }
+            if domain.as_ref() == FILE_DOMAIN && *key == Some(file_dirty_key(&path))
+    )));
 }
 
 #[test]

@@ -26,7 +26,7 @@ use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
     par_render, splice_into_at, BarrierScope, Component, ComponentLifecycle,
-    Diag, Node, PendingSummary, QueueBackend, QueueRow, RenderCtx, Wake,
+    Diag, NextKey, Node, PendingSummary, QueueBackend, QueueRow, RenderCtx, Wake,
 };
 use ignore::WalkBuilder;
 
@@ -34,6 +34,13 @@ use crate::config::SprfConfig;
 use crate::compile::lower::op_def::DslInterp;
 use crate::store::SprfStore;
 use crate::{Coord, Cursor, Interner};
+
+pub const FILE_DOMAIN: &str = "file";
+
+pub fn file_dirty_key(path: impl AsRef<std::path::Path>) -> NextKey {
+    let path = path.as_ref().to_string_lossy();
+    NextKey(*blake3::hash(path.as_bytes()).as_bytes())
+}
 
 /// Helper: pack a Vec of cursors into the right Node shape.
 /// 0 -> Done, 1 -> Emit, N -> Many of Emit.
@@ -1790,7 +1797,9 @@ impl Component for WriteCursorComponent {
                 };
                 buf.splice(slice_lo..slice_hi, ins.as_bytes().iter().copied());
             }
-            let _ = std::fs::write(&path, &buf);
+            if std::fs::write(&path, &buf).is_ok() {
+                ctx.bus.dispatch_dirty(FILE_DOMAIN, Some(file_dirty_key(&path)));
+            }
         }
         out
     }
@@ -1830,7 +1839,9 @@ impl Component for WriteFileComponent {
                 None    => return Node::Emit(Arc::new(c.clone())),
             },
         };
-        let _ = std::fs::write(&path, c.value.as_bytes());
+        if std::fs::write(&path, c.value.as_bytes()).is_ok() {
+            ctx.bus.dispatch_dirty(FILE_DOMAIN, Some(file_dirty_key(&path)));
+        }
         Node::Emit(Arc::new(c.clone()))
     }
 }

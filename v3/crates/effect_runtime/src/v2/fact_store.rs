@@ -95,6 +95,11 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// Row count for `table`.
     fn len(&self, table: &str) -> usize;
 
+    /// Monotonic table change token. Used by query caches to avoid
+    /// hashing whole relation contents on every batch. Stores should
+    /// bump this when accepted inserts or deletes change visible rows.
+    fn table_version(&self, _table: &str) -> u64 { 0 }
+
     /// Delete rows from `table` where every `(col, value)` predicate
     /// matches. Returns the number of removed rows. Stores that do not
     /// support deletion can keep the default no-op.
@@ -153,6 +158,7 @@ pub struct MemFactStore<R: Row> {
     /// `commit` to publish dirty events.
     pending: Mutex<Vec<(String, Arc<R>)>>,
     dirty_tables: Mutex<HashSet<String>>,
+    table_versions: Mutex<HashMap<String, u64>>,
 }
 
 /// In-memory bucket for one table. Carries an `_id`-keyed HashSet
@@ -175,6 +181,7 @@ impl<R: Row> Default for MemFactStore<R> {
             schemas: Mutex::new(HashMap::new()),
             pending: Mutex::new(Vec::new()),
             dirty_tables: Mutex::new(HashSet::new()),
+            table_versions: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -212,6 +219,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
         if !bucket.seen.insert(id) { return; } // O(1) dedup
         bucket.rows.push(arced.clone());
         drop(tables);
+        bump_table_version(&self.table_versions, table);
         self.pending.lock().unwrap().push((table.to_string(), arced));
         self.dirty_tables.lock().unwrap().insert(table.to_string());
     }
@@ -239,6 +247,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
         }
         drop(tables);
         if !accepted.is_empty() {
+            bump_table_version(&self.table_versions, table);
             let mut pending = self.pending.lock().unwrap();
             pending.reserve(accepted.len());
             for row in accepted { pending.push((table.to_string(), row)); }
@@ -264,6 +273,10 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
 
     fn len(&self, table: &str) -> usize {
         self.tables.lock().unwrap().get(table).map(|b| b.rows.len()).unwrap_or(0)
+    }
+
+    fn table_version(&self, table: &str) -> u64 {
+        *self.table_versions.lock().unwrap().get(table).unwrap_or(&0)
     }
 
     fn delete_matching(&self, table: &str, predicates: &[(&str, &str)]) -> usize {
@@ -293,6 +306,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
         drop(tables);
 
         if removed > 0 {
+            bump_table_version(&self.table_versions, table);
             self.pending.lock().unwrap().retain(|(pending_table, row)| {
                 if pending_table != table {
                     return true;
@@ -321,6 +335,12 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
             bus.dispatch_dirty(TABLE_DOMAIN, Some(table_dirty_key(&table)));
         }
     }
+}
+
+fn bump_table_version(versions: &Mutex<HashMap<String, u64>>, table: &str) {
+    let mut versions = versions.lock().unwrap();
+    let version = versions.entry(table.to_string()).or_insert(0);
+    *version = version.saturating_add(1);
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -368,6 +388,7 @@ mod sqlite {
         /// batching is a future change.
         pub(crate) pending: Mutex<Vec<(String, Arc<R>)>>,
         pub(crate) dirty_tables: Mutex<HashSet<String>>,
+        pub(crate) table_versions: Mutex<HashMap<String, u64>>,
         _marker: PhantomData<fn() -> R>,
     }
 
@@ -381,6 +402,7 @@ mod sqlite {
                 schemas: Mutex::new(schemas),
                 pending: Mutex::new(Vec::new()),
                 dirty_tables: Mutex::new(HashSet::new()),
+                table_versions: Mutex::new(HashMap::new()),
                 _marker: PhantomData,
             })
         }
@@ -395,6 +417,7 @@ mod sqlite {
                 schemas: Mutex::new(schemas),
                 pending: Mutex::new(Vec::new()),
                 dirty_tables: Mutex::new(HashSet::new()),
+                table_versions: Mutex::new(HashMap::new()),
                 _marker: PhantomData,
             })
         }
@@ -555,6 +578,7 @@ mod sqlite {
             // do not republish dirty.
             if changed == 0 { return; }
 
+            bump_table_version(&self.table_versions, table);
             self.pending.lock().unwrap().push((table.to_string(), Arc::new(owned)));
             self.dirty_tables.lock().unwrap().insert(table.to_string());
         }
@@ -623,6 +647,10 @@ mod sqlite {
             ).map(|n| n as usize).unwrap_or(0)
         }
 
+        fn table_version(&self, table: &str) -> u64 {
+            *self.table_versions.lock().unwrap().get(table).unwrap_or(&0)
+        }
+
         fn delete_matching(&self, table: &str, predicates: &[(&str, &str)]) -> usize {
             if predicates.is_empty() { return 0; }
 
@@ -662,6 +690,7 @@ mod sqlite {
             drop(conn);
 
             if changed > 0 {
+                bump_table_version(&self.table_versions, table);
                 self.pending.lock().unwrap().retain(|(pending_table, row)| {
                     if pending_table != table {
                         return true;
