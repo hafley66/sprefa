@@ -77,11 +77,27 @@ pub struct FsComponent {
     /// Coord.rev != 0 so the (slug, root) tuple can be resolved for
     /// `git ls-tree`.
     config:    Option<Arc<SprfConfig>>,
+    include_exts: Option<Arc<Vec<String>>>,
+    telemetry: Option<Arc<FsTelemetry>>,
+}
+
+#[derive(Default)]
+pub struct FsTelemetry {
+    pub seen_files:  AtomicU64,
+    pub emitted:     AtomicU64,
+    pub ext_skipped: AtomicU64,
 }
 
 impl FsComponent {
     pub fn new(root: PathBuf, batch: usize) -> Self {
-        Self { root, batch, store: None, config: None }
+        Self {
+            root,
+            batch,
+            store: None,
+            config: None,
+            include_exts: None,
+            telemetry: None,
+        }
     }
     /// Attach the intern store for coord-space stamping.
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
@@ -91,6 +107,17 @@ impl FsComponent {
     /// branch which resolves `(slug, root)` per repo for ls-tree.
     pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
         self.config = Some(c); self
+    }
+    pub fn with_include_exts(mut self, exts: Vec<String>) -> Self {
+        self.include_exts = Some(Arc::new(exts)); self
+    }
+    pub fn with_telemetry(mut self, telemetry: Arc<FsTelemetry>) -> Self {
+        self.telemetry = Some(telemetry); self
+    }
+    fn include_path(&self, path: impl AsRef<std::path::Path>) -> bool {
+        let Some(exts) = &self.include_exts else { return true };
+        let Some(ext) = path.as_ref().extension().and_then(|s| s.to_str()) else { return false };
+        exts.iter().any(|want| want.eq_ignore_ascii_case(ext))
     }
 }
 
@@ -136,6 +163,15 @@ impl Component for FsComponent {
                 if entries.is_empty() { continue; }
                 let mut emitted: Vec<Node<Cursor>> = Vec::with_capacity(entries.len());
                 for (path, _blob_oid) in entries {
+                    if let Some(t) = &self.telemetry {
+                        t.seen_files.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if !self.include_path(&path) {
+                        if let Some(t) = &self.telemetry {
+                            t.ext_skipped.fetch_add(1, Ordering::Relaxed);
+                        }
+                        continue;
+                    }
                     let mut child = parent.value.as_ref().clone();
                     // cursor.value = path (legacy bare-string surface).
                     child.value    = Arc::<str>::from(path.as_str());
@@ -154,6 +190,9 @@ impl Component for FsComponent {
                         hi:   0,
                     };
                     child.at = store.intern_ref(coord);
+                    if let Some(t) = &self.telemetry {
+                        t.emitted.fetch_add(1, Ordering::Relaxed);
+                    }
                     emitted.push(Node::Emit(Arc::new(child)));
                 }
                 if emitted.is_empty() { continue; }
@@ -188,6 +227,15 @@ impl Component for FsComponent {
             let Ok(e) = entry else { continue };
             if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
             let p = e.into_path();
+            if let Some(t) = &self.telemetry {
+                t.seen_files.fetch_add(1, Ordering::Relaxed);
+            }
+            if !self.include_path(&p) {
+                if let Some(t) = &self.telemetry {
+                    t.ext_skipped.fetch_add(1, Ordering::Relaxed);
+                }
+                continue;
+            }
 
             let path_str = p.display().to_string();
             let mut c = parent.value.as_ref().clone();
@@ -214,6 +262,9 @@ impl Component for FsComponent {
                     hi:   0,
                 };
                 c.at = store.intern_ref(coord);
+            }
+            if let Some(t) = &self.telemetry {
+                t.emitted.fetch_add(1, Ordering::Relaxed);
             }
             buf.push(Node::Emit(Arc::new(c)));
 

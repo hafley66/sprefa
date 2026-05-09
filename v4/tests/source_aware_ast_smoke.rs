@@ -7,7 +7,7 @@ use effect_runtime::v2::{
     PipeInstance, QueueBackend, RenderCtx,
 };
 use v4::store::SprfStore;
-use v4::v2_ops::{AstNmComponent, AstTelemetry, FsComponent};
+use v4::v2_ops::{AstNmComponent, AstTelemetry, FsComponent, FsTelemetry};
 use v4::{Cursor, WhereBytesId};
 
 #[derive(Clone)]
@@ -67,4 +67,33 @@ fn fs_ast_reads_source_without_read_materializing_full_body() {
     assert_eq!(telemetry.prefilter_skips.load(Ordering::Relaxed), 0);
     assert_eq!(telemetry.parses.load(Ordering::Relaxed), 1);
     assert_eq!(telemetry.matches.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn fs_include_exts_filters_before_emitting_cursors() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "text").unwrap();
+
+    let rows = Arc::new(Mutex::new(Vec::new()));
+    let telemetry = Arc::new(FsTelemetry::default());
+    let steps: Vec<Arc<dyn Component<Next = Cursor>>> = vec![
+        Arc::new(
+            FsComponent::new(dir.path().to_path_buf(), 64)
+                .with_include_exts(vec!["rs".to_string()])
+                .with_telemetry(telemetry.clone()),
+        ),
+        Arc::new(CaptureSink { rows: rows.clone() }),
+    ];
+    let pipe = PipeInstance::new(steps);
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+
+    expand(&pipe, queue, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+
+    let rows = rows.lock().unwrap().clone();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].value.ends_with("a.rs"));
+    assert_eq!(telemetry.seen_files.load(Ordering::Relaxed), 2);
+    assert_eq!(telemetry.emitted.load(Ordering::Relaxed), 1);
+    assert_eq!(telemetry.ext_skipped.load(Ordering::Relaxed), 1);
 }

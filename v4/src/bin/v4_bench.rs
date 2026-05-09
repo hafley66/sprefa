@@ -30,16 +30,14 @@ use effect_runtime::v2::{
     SqliteFactStore,
 };
 use v4::v2_ops::{
-    AstNmComponent, AstTelemetry, CountComponent, FsComponent, MultiAstNmComponent, ReadComponent,
-    SinglePathComponent,
+    AstNmComponent, AstTelemetry, CountComponent, FsComponent, FsTelemetry,
+    MultiAstNmComponent, ReadComponent, SinglePathComponent,
 };
 use v4::fact::FactWrite;
 
 #[derive(Default)]
 struct BenchCounters {
     source_rows:  Arc<AtomicU64>,
-    ext_kept:     Arc<AtomicU64>,
-    ext_dropped:  Arc<AtomicU64>,
     read_rows:    Arc<AtomicU64>,
     read_bytes:   Arc<AtomicU64>,
 }
@@ -126,35 +124,6 @@ impl Component for RowCountComponent {
     fn render(&self, _ctx: &RenderCtx, c: &v4::Cursor) -> Node<v4::Cursor> {
         self.rows.fetch_add(1, Ordering::Relaxed);
         Node::Emit(Arc::new(c.clone()))
-    }
-}
-
-/// Bench-local extension filter. V3 enumerates `.c/.h` before dispatch;
-/// this keeps the v4 bench measuring the same corpus without changing
-/// language-level `fs` semantics.
-struct ExtFilterComponent {
-    exts:    Arc<Vec<String>>,
-    kept:    Arc<AtomicU64>,
-    dropped: Arc<AtomicU64>,
-}
-
-impl Component for ExtFilterComponent {
-    type Next = v4::Cursor;
-
-    fn render(&self, _ctx: &RenderCtx, c: &v4::Cursor) -> Node<v4::Cursor> {
-        let path = std::path::Path::new(c.value.as_ref());
-        let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-            return Node::Done;
-        };
-        let keep = self.exts.iter().any(|want| want.eq_ignore_ascii_case(ext));
-        if keep {
-            self.kept.fetch_add(1, Ordering::Relaxed);
-            Node::Emit(Arc::new(c.clone()))
-        } else {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-            Node::Done
-        }
     }
 }
 
@@ -306,13 +275,18 @@ async fn main() {
     for trial in 1..=trials {
         let counter = Arc::new(AtomicU64::new(0));
         let bench = Arc::new(BenchCounters::default());
+        let fs_telemetry = Arc::new(FsTelemetry::default());
         let ast_telemetry = Arc::new(AstTelemetry::default());
         let mut timings: Vec<Arc<StageTiming>> = Vec::new();
 
         // Source: SinglePath (--file) or Fs (bulk corpus).
         let source: Arc<dyn Component<Next = v4::Cursor>> = match &file {
             Some(p) => Arc::new(SinglePathComponent::new(p.clone())),
-            None    => Arc::new(FsComponent::new(root.clone(), batch)),
+            None    => Arc::new(
+                FsComponent::new(root.clone(), batch)
+                    .with_include_exts(exts.clone())
+                    .with_telemetry(fs_telemetry.clone()),
+            ),
         };
 
         // Matcher: Multi(Ast)Nm if --multi/--pattern-each, else AstNm
@@ -398,17 +372,6 @@ async fn main() {
                 &mut timings,
             ),
         ];
-        if file.is_none() {
-            steps.push(TimedComponent::new(
-                "ext_filter",
-                Arc::new(ExtFilterComponent {
-                    exts: Arc::new(exts.clone()),
-                    kept: bench.ext_kept.clone(),
-                    dropped: bench.ext_dropped.clone(),
-                }),
-                &mut timings,
-            ));
-        }
         if materialize_read {
             let read: Arc<dyn Component<Next = v4::Cursor>> = Arc::new(ReadComponent::new());
             steps.push(TimedComponent::new("read", read, &mut timings));
@@ -463,13 +426,13 @@ async fn main() {
         let m = counter.load(Ordering::Relaxed);
         let rss = rss_peak_kb() / 1024;
         eprintln!(
-            "trial {}: wall={:.3}s  matches={:>9}  fs_rows={}  ext_kept={}  ext_dropped={}  read_rows={}  read_MB={:.1}  rendered={}  emitted={}  rss_peak_MB={}",
+            "trial {}: wall={:.3}s  matches={:>9}  fs_seen={}  fs_rows={}  fs_ext_skipped={}  read_rows={}  read_MB={:.1}  rendered={}  emitted={}  rss_peak_MB={}",
             trial,
             wall.as_secs_f64(),
             m,
+            fs_telemetry.seen_files.load(Ordering::Relaxed),
             bench.source_rows.load(Ordering::Relaxed),
-            bench.ext_kept.load(Ordering::Relaxed),
-            bench.ext_dropped.load(Ordering::Relaxed),
+            fs_telemetry.ext_skipped.load(Ordering::Relaxed),
             bench.read_rows.load(Ordering::Relaxed),
             bench.read_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
             stats.rendered,

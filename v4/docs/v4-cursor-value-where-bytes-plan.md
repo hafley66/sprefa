@@ -121,6 +121,9 @@ Queue rows should not carry whole source bytes unless a program explicitly asks 
 - Legacy surface: `cursor.value` remains the path string during migration.
 - Target surface: `cursor_value` should identify source location or path string handle.
 - Does not read file body.
+- Default language semantics still enumerate files under the root. Bench code can
+  attach an explicit source-side extension filter so perf comparisons can avoid
+  dispatching non-candidate files.
 
 `read`
 
@@ -231,10 +234,15 @@ This is back near the V3 shape but still above the older sub-4s target. The rema
 Telemetry added after that p50 run exposed the matcher-internal shape:
 
 ```text
-V4 source-aware fs > ast, workers=8, trials=1
+V4 source-aware fs > ast, source-side ext filter, workers=8, trials=1
   files after ext filter=63482
   matches=16627
-  wall=6.142s after release rebuild
+  wall=5.361s after release rebuild
+  fs_seen=93299
+  fs_ext_skipped=29817
+  rendered=143592
+  emitted=143591
+  rss_peak_MB=158
   source_reads=63482
   source_MB=1342.2
   source_errors=0
@@ -247,6 +255,11 @@ The current AST fast path now has the same coarse cardinality as the V3
 shape: read every candidate source file, skip most files through the fixed
 string prefilter, parse only the remaining source set, emit match cursors
 without explicit `read` queue rows.
+
+Before the source-side extension filter, the bench emitted `93299` file cursors
+and then dropped `29817` through a downstream `ext_filter` component. The new
+bench path keeps default `fs` semantics unchanged but lets the benchmark match
+V3's pre-dispatch corpus filtering.
 
 ## Dirty Worktree Notes
 
