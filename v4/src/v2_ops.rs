@@ -33,7 +33,7 @@ use ignore::WalkBuilder;
 use crate::config::SprfConfig;
 use crate::compile::lower::op_def::DslInterp;
 use crate::store::SprfStore;
-use crate::{Coord, Cursor, Interner};
+use crate::{Coord, Cursor, CursorValue, Interner, WhereBytesId};
 
 pub const FILE_DOMAIN: &str = "file";
 
@@ -140,6 +140,7 @@ impl Component for FsComponent {
                     // cursor.value = path (legacy bare-string surface).
                     child.value    = Arc::<str>::from(path.as_str());
                     child.value_id = crate::StringId::of(&path);
+                    child.cursor_value = CursorValue::String(child.value_id);
                     // Legacy raw_terms FS write so `${FS}` reads still resolve.
                     child.set("FS", path.as_str());
                     // Coord-space FS term (synthetic — no content read).
@@ -204,6 +205,7 @@ impl Component for FsComponent {
             if let Some(store) = &self.store {
                 c.set_synthetic("FS", path_str.as_str(), store);
                 c.value_id = store.intern_string(path_str.as_str());
+                c.cursor_value = CursorValue::String(c.value_id);
                 let coord = Coord {
                     repo: parent_coord.map(|c| c.repo).unwrap_or(0),
                     rev:  parent_coord.map(|c| c.rev).unwrap_or(0),
@@ -321,17 +323,39 @@ impl Component for AstNmComponent {
         let fixed = self.fixed.clone();
         let dyn_body = self.dyn_body.clone();
         par_render(batch, move |c| {
-            // Substrate purification: matchers consume cursor.value bytes
-            // (populated by an upstream `read`). No file IO here.
             if c.value.is_empty() { return Node::Done; }
-            let src: String = c.value.as_ref().to_string();
-            // FS term, when present, names the originating path; used as
-            // the first_path for content-keyed file intern. Absence is OK
-            // (file_id falls back to 0 / empty path).
             let path_for_intern: &str = c.get("FS").unwrap_or("");
-            let file_id = store.as_ref()
-                .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
-                .unwrap_or(0);
+            let parent_coord = store.as_ref().and_then(|s| s.coord_of(c.at));
+            let should_read_source = !path_for_intern.is_empty()
+                && c.value.as_ref() == path_for_intern
+                && std::path::Path::new(path_for_intern).is_file();
+            let (src, file_id, repo, rev): (String, crate::FileId, crate::RepoId, crate::RevId) =
+                if should_read_source {
+                    let Ok(bytes) = std::fs::read(path_for_intern) else {
+                        return Node::Done;
+                    };
+                    let src = String::from_utf8_lossy(&bytes).into_owned();
+                    let (repo, rev) = parent_coord
+                        .map(|c| (c.repo, c.rev))
+                        .unwrap_or((0, 0));
+                    let file_id = store.as_ref()
+                        .map(|s| {
+                            let file_id = s.intern_file(&bytes, path_for_intern);
+                            let _ = s.intern_path(repo, rev, file_id, path_for_intern);
+                            file_id
+                        })
+                        .unwrap_or(0);
+                    (src, file_id, repo, rev)
+                } else {
+                    let src: String = c.value.as_ref().to_string();
+                    let (repo, rev) = parent_coord
+                        .map(|c| (c.repo, c.rev))
+                        .unwrap_or((0, 0));
+                    let file_id = store.as_ref()
+                        .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
+                        .unwrap_or(0);
+                    (src, file_id, repo, rev)
+                };
             // Per-cursor pattern selection: static for term-only bodies,
             // SubPipe-bearing bodies recompile the ast-grep Pattern per
             // cursor against the rendered body.
@@ -357,13 +381,22 @@ impl Component for AstNmComponent {
                 child.set("HI", (r.end   as u64).to_string());
                 if let Some(store) = &store {
                     let coord = Coord {
-                        repo: 0, rev: 0, fs: file_id,
+                        repo, rev, fs: file_id,
                         lo: r.start as u32, hi: r.end as u32,
                     };
                     let slice = src.get(r.start..r.end).unwrap_or("");
                     // Focal coord identifies the match itself.
                     child.at = store.intern_ref(coord);
+                    child.cursor_value = CursorValue::WhereBytes(WhereBytesId::from(child.at));
+                    child.value = Arc::<str>::from(slice);
                     child.value_id = store.intern_string(slice);
+                    store.observe_string(
+                        child.value_id,
+                        "ast_match",
+                        WhereBytesId::from(child.at),
+                        "",
+                        0,
+                    );
                     // Per-match coord term — `MATCH.at`/`MATCH.value`
                     // reach through one Term entry instead of LO/HI cols.
                     child.set_at("MATCH", slice, coord, store);
@@ -1480,6 +1513,14 @@ impl Default for ReadComponent {
 }
 impl Component for ReadComponent {
     type Next = Cursor;
+
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let this = Self {
+            store: self.store.clone(),
+            config: self.config.clone(),
+        };
+        par_render(batch, move |c| this.render(ctx, c))
+    }
 
     fn dispatch(
         &self,
