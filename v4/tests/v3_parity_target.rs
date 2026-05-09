@@ -168,7 +168,6 @@ async fn render_markdown_replaces_comment_range_only() {
     )).unwrap();
     let src = format!(
         r#"`{}`
-> term_bind(:FS)
 > read
 > comment(`<!-- sprf:self-doc:start -->\n`, `\n<!-- sprf:self-doc:end -->`)
 > render(:markdown)`## Generated

@@ -31,7 +31,6 @@ bounded by HTML comments so normal prose can live around it.
 ## Target Shape
 
     docs/ARCHITECTURE.md
-      > term_bind(:FS)
       > read
       > comment(open_marker_regex, close_marker_regex)
       > render(:markdown) ...generated architecture rows...

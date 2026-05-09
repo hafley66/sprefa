@@ -12,8 +12,12 @@ use effect_runtime::v2::{
 
 use v4::Cursor;
 use v4::lower::{default_registry, DslBody, LowerCtx, Value};
-use v4::pipeline::str_pipe;
-use v4::v2_ops::{file_dirty_key, CollectComponent, CollectMode, FILE_DOMAIN};
+use v4::pipeline::{str_pipe, StrConstComponent};
+use v4::store::SprfStore;
+use v4::v2_ops::{
+    file_dirty_key, CollectComponent, CollectMode, CommentComponent, ReadComponent,
+    WriteCursorComponent, WriteMode, FILE_DOMAIN,
+};
 
 fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
 
@@ -328,6 +332,50 @@ fn write_cursor_replace_splices_value_into_byte_range() {
         ExpandOpts::default());
     let written = std::fs::read_to_string(&path).unwrap();
     assert_eq!(written, "abXXefgYYj");
+}
+
+#[test]
+fn write_cursor_replace_uses_focal_coord_without_fs_term() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("doc.md");
+    let mut f = std::fs::File::create(&path).unwrap();
+    write!(f, "before\n<!-- start -->old<!-- end -->\nafter\n").unwrap();
+
+    let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let sprf_store = SprfStore::new(facts);
+    let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
+    struct Sink(Arc<Mutex<Vec<Cursor>>>);
+    impl Component for Sink {
+        type Next = Cursor;
+        fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
+        }
+    }
+
+    let inst = PipeInstance::new(vec![
+        Arc::new(ReadComponent::new().with_sprf_store(sprf_store.clone())),
+        Arc::new(CommentComponent::paired("<!-- start -->", "<!-- end -->").unwrap()
+            .with_sprf_store(sprf_store.clone())),
+        Arc::new(StrConstComponent { literal: Arc::from("new") }),
+        Arc::new(WriteCursorComponent::new(WriteMode::Replace)
+            .with_sprf_store(sprf_store.clone())),
+        Arc::new(Sink(sink.clone())),
+    ]);
+    let mut seed = Cursor::default();
+    seed.value = Arc::from(path.display().to_string());
+    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+
+    expand(&inst, q, vec![Arc::new(seed)], ExpandOpts::default());
+
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "before\n<!-- start -->new<!-- end -->\nafter\n"
+    );
+    let rows = sink.lock().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("FS"), None);
 }
 
 #[test]

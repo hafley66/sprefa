@@ -5,7 +5,6 @@
 #     v4/examples/self-doc-markdown-inject.sprf --root . --show-rows
 
 `v4/docs/v4-self-doc-architecture.md`
-  > term_bind(:FS)
   > read
   > comment(`<!-- sprf:self-doc:start -->\n`, `\n<!-- sprf:self-doc:end -->`)
   > render(:markdown)`## Generated Formula
@@ -35,7 +34,6 @@
 ## Target Shape
 
     docs/ARCHITECTURE.md
-      > term_bind(:FS)
       > read
       > comment(open_marker_regex, close_marker_regex)
       > render(:markdown) ...generated architecture rows...

@@ -1958,19 +1958,31 @@ impl Component for WriteCursorComponent {
                 continue;
             }
 
-            // ── focal mode (legacy raw_terms path) ─────────────────
-            let (Some(fs), Some(lo_s), Some(hi_s)) =
-                (c.get("FS"), c.get("LO"), c.get("HI"))
-            else { continue };
-            let (Ok(lo), Ok(hi)) = (lo_s.parse::<usize>(), hi_s.parse::<usize>())
-            else { continue };
-            // Try to attach a FileId for drift-detection if the cursor
-            // has a focal coord registered with the store.
-            let file_id_opt: Option<crate::FileId> = self.store.as_ref()
-                .and_then(|s| s.coord_of(c.at))
-                .filter(|coord| coord.fs != 0)
-                .map(|coord| coord.fs);
-            let entry = by_file.entry(fs.to_string())
+            // ── focal mode ─────────────────────────────────────────
+            // Prefer the coord stamped by source-aware producers such
+            // as read/comment/ast. Legacy FS/LO/HI raw terms stay as a
+            // compatibility path for older tests and hand-built cursors.
+            let target = self.store.as_ref()
+                .and_then(|s| {
+                    let coord = s.coord_of(c.at)?;
+                    if coord.fs == 0 { return None; }
+                    let path = s.path_of(coord.fs)?;
+                    Some((path.to_string(), Some(coord.fs), coord.lo as usize, coord.hi as usize))
+                })
+                .or_else(|| {
+                    let (Some(fs), Some(lo_s), Some(hi_s)) =
+                        (c.get("FS"), c.get("LO"), c.get("HI"))
+                    else { return None; };
+                    let (Ok(lo), Ok(hi)) = (lo_s.parse::<usize>(), hi_s.parse::<usize>())
+                    else { return None; };
+                    let file_id_opt: Option<crate::FileId> = self.store.as_ref()
+                        .and_then(|s| s.coord_of(c.at))
+                        .filter(|coord| coord.fs != 0)
+                        .map(|coord| coord.fs);
+                    Some((fs.to_string(), file_id_opt, lo, hi))
+                });
+            let Some((path, file_id_opt, lo, hi)) = target else { continue };
+            let entry = by_file.entry(path)
                 .or_insert((file_id_opt, Vec::new()));
             // If different cursors on the same path disagree on FileId,
             // first-seen wins; mismatches are unusual for the legacy
