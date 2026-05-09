@@ -31,6 +31,15 @@
 - Surrounding handwritten markdown remains untouched.
 - Drift detection can skip the write when the source changed after it was indexed.
 
+## Nested Pipe Output
+
+${ `Runtime batching|v4/docs/v4-runtime-batching.md|generation and collection boundaries;;SQL rule queries|v4/docs/v4-sql-rule-query-plan.md|SQLite-shaped rule querying;;V3 parity gaps|v4/docs/v4-v3-parity-gaps.md|remaining parity surface`
+  > split`;;`
+  > re`(?P<LABEL>[^|]+)\|(?P<FILE>[^|]+)\|(?P<TITLE>.+)`
+  > render_markdown`- **${LABEL}**: [${TITLE}](${FILE})
+`
+}
+
 ## Target Shape
 
     docs/ARCHITECTURE.md

@@ -28,6 +28,13 @@ bounded by HTML comments so normal prose can live around it.
 - Surrounding handwritten markdown remains untouched.
 - Drift detection can skip the write when the source changed after it was indexed.
 
+## Nested Pipe Output
+
+- **Runtime batching**: [generation and collection boundaries](v4/docs/v4-runtime-batching.md)
+- **SQL rule queries**: [SQLite-shaped rule querying](v4/docs/v4-sql-rule-query-plan.md)
+- **V3 parity gaps**: [remaining parity surface](v4/docs/v4-v3-parity-gaps.md)
+
+
 ## Target Shape
 
     docs/ARCHITECTURE.md
