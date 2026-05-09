@@ -285,24 +285,8 @@ pub fn default_plain_dsl_parse(raw: &str) -> Vec<DslInterp> {
         if !(bytes[i] == b'$' && bytes[i + 1] == b'{') { i += 1; continue; }
         let lo = i;
 
-        // Find the matching `}` for this `${`. Handles one level of
-        // nested `` `…` `` (the parser already enforces that nesting via
-        // the dsl_body regex). We scan byte-by-byte so we don't trip on
-        // backticks inside the carveout body.
         let body_lo = i + 2;
-        let mut j = body_lo;
-        let mut closed_at: Option<usize> = None;
-        while j < bytes.len() {
-            match bytes[j] {
-                b'`' => {
-                    j += 1;
-                    while j < bytes.len() && bytes[j] != b'`' { j += 1; }
-                    if j < bytes.len() { j += 1; } // skip closing backtick
-                }
-                b'}' => { closed_at = Some(j); break; }
-                _ => j += 1,
-            }
-        }
+        let closed_at = scan_interp_close(bytes, body_lo);
         let Some(close_idx) = closed_at else { i += 1; continue; };
         let hi = close_idx + 1;
         let inner = &raw[body_lo..close_idx];
@@ -350,6 +334,45 @@ pub fn default_plain_dsl_parse(raw: &str) -> Vec<DslInterp> {
         i = hi;
     }
     out
+}
+
+fn scan_interp_close(bytes: &[u8], body_lo: usize) -> Option<usize> {
+    let mut j = body_lo;
+    let mut depth = 1usize;
+    while j < bytes.len() {
+        if starts_interp(bytes, j) {
+            depth += 1;
+            j += 2;
+            continue;
+        }
+        match bytes[j] {
+            b'`' => j = scan_dsl_body(bytes, j + 1)?,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 { return Some(j); }
+                j += 1;
+            }
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+fn scan_dsl_body(bytes: &[u8], body_lo: usize) -> Option<usize> {
+    let mut j = body_lo;
+    while j < bytes.len() {
+        if starts_interp(bytes, j) {
+            j = scan_interp_close(bytes, j + 2)? + 1;
+            continue;
+        }
+        if bytes[j] == b'`' { return Some(j + 1); }
+        j += 1;
+    }
+    None
+}
+
+fn starts_interp(bytes: &[u8], i: usize) -> bool {
+    i + 1 < bytes.len() && bytes[i] == b'$' && bytes[i + 1] == b'{'
 }
 
 /// Try to parse `inner` as the term-shape grammar:

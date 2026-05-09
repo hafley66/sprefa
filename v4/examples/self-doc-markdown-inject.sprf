@@ -36,7 +36,7 @@
 ${ `Runtime batching|v4/docs/v4-runtime-batching.md|generation and collection boundaries;;SQL rule queries|v4/docs/v4-sql-rule-query-plan.md|SQLite-shaped rule querying;;V3 parity gaps|v4/docs/v4-v3-parity-gaps.md|remaining parity surface`
   > split`;;`
   > re`(?P<LABEL>[^|]+)\|(?P<FILE>[^|]+)\|(?P<TITLE>.+)`
-  > render_markdown`- **${LABEL}**: [${TITLE}](${FILE})
+  > render_markdown`- ${ LABEL > `**${&.value}**` }: [${TITLE}](${FILE})
 `
 }
 

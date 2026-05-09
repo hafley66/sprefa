@@ -73,6 +73,23 @@ fn subpipe_can_start_with_term_sugar_step() {
     assert_eq!(rows[0].get("BODY"), Some("**UserService**\n"));
 }
 
+#[test]
+fn render_holes_can_nest_multiple_levels() {
+    let src = r#"
+        rule(:docs, BODY?);
+
+        `leaf`
+          > NAME?
+          > render_markdown`outer ${ NAME > render_markdown`mid ${ NAME > render_markdown`inner ${&.value}` }` }`
+          > BODY?
+          > docs.(BODY);
+    "#;
+    let store = run(src);
+    let rows = store.rows_of("docs");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("BODY"), Some("outer mid inner leaf\n"));
+}
+
 /// Term-shape carveouts must keep working — regression sentinel.
 #[test]
 fn rule_body_term_carveout_still_works() {

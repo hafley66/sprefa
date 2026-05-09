@@ -6,8 +6,17 @@
     "source_file": {
       "type": "REPEAT",
       "content": {
-        "type": "SYMBOL",
-        "name": "_stmt"
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "_stmt"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "line_comment"
+          }
+        ]
       }
     },
     "_stmt": {
@@ -302,43 +311,119 @@
       ]
     },
     "dsl_body": {
-      "type": "TOKEN",
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "STRING",
-            "value": "`"
-          },
-          {
-            "type": "PATTERN",
-            "value": "([^`$]|\\$[^{]|\\$\\{([^}`]|`[^`]*`)*\\})*"
-          },
-          {
-            "type": "STRING",
-            "value": "`"
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "`"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_dsl_text"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "dsl_interp"
+              }
+            ]
           }
-        ]
-      }
+        },
+        {
+          "type": "STRING",
+          "value": "`"
+        }
+      ]
     },
     "_dsl_body_attached": {
-      "type": "IMMEDIATE_TOKEN",
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "STRING",
-            "value": "`"
-          },
-          {
-            "type": "PATTERN",
-            "value": "([^`$]|\\$[^{]|\\$\\{([^}`]|`[^`]*`)*\\})*"
-          },
-          {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "IMMEDIATE_TOKEN",
+          "content": {
             "type": "STRING",
             "value": "`"
           }
-        ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_dsl_text"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "dsl_interp"
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "`"
+        }
+      ]
+    },
+    "dsl_interp": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "${"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_dsl_interp_text"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "dsl_body"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "dsl_interp"
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "}"
+        }
+      ]
+    },
+    "_dsl_text": {
+      "type": "IMMEDIATE_TOKEN",
+      "content": {
+        "type": "PREC",
+        "value": 10,
+        "content": {
+          "type": "PATTERN",
+          "value": "([^`$]|\\$[^{])+"
+        }
+      }
+    },
+    "_dsl_interp_text": {
+      "type": "IMMEDIATE_TOKEN",
+      "content": {
+        "type": "PREC",
+        "value": 10,
+        "content": {
+          "type": "PATTERN",
+          "value": "([^}`$`]|\\$[^{])+"
+        }
       }
     },
     "_slot_body": {
@@ -617,10 +702,6 @@
     {
       "type": "PATTERN",
       "value": "\\s+"
-    },
-    {
-      "type": "SYMBOL",
-      "name": "line_comment"
     }
   ],
   "conflicts": [

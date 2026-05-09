@@ -37,7 +37,6 @@ module.exports = grammar({
 
   extras: $ => [
     /\s+/,
-    $.line_comment,
   ],
 
   word: $ => $.identifier,
@@ -50,7 +49,7 @@ module.exports = grammar({
   ],
 
   rules: {
-    source_file: $ => repeat($._stmt),
+    source_file: $ => repeat(choice($._stmt, $.line_comment)),
 
     // Top-level statements are `;`-terminated. Pipes inside `( … )`
     // grouping or `{ … }` blocks are NOT terminated — only the outer
@@ -114,16 +113,25 @@ module.exports = grammar({
     // The op_invocation rule aliases `_dsl_body_attached` back to
     // `dsl_body` so downstream consumers see one node kind.
     //
-    // The body regex accepts one level of `${...}` carveout containing a
-    // single backtick-fenced sub-body. That covers `${ str`hi` }` /
-    // `${ ast`x` }` style sub-pipe holes (#10). Deeper nesting still
-    // requires an external scanner.
-    //   - any non-backtick / non-`$` char, OR
-    //   - `$` not followed by `{`, OR
-    //   - `${` ... `}` where the body is non-`}`/non-backtick chars or a
-    //     balanced `` `…` `` (one level)
-    dsl_body:           $ => token(seq('`', /([^`$]|\$[^{]|\$\{([^}`]|`[^`]*`)*\})*/, '`')),
-    _dsl_body_attached: $ => token.immediate(seq('`', /([^`$]|\$[^{]|\$\{([^}`]|`[^`]*`)*\})*/, '`')),
+    // DSL bodies are recursive so render/template holes can contain
+    // sub-pipes whose own DSL bodies contain more holes.
+    dsl_body: $ => seq(
+      '`',
+      repeat(choice($._dsl_text, $.dsl_interp)),
+      '`',
+    ),
+    _dsl_body_attached: $ => seq(
+      token.immediate('`'),
+      repeat(choice($._dsl_text, $.dsl_interp)),
+      '`',
+    ),
+    dsl_interp: $ => seq(
+      '${',
+      repeat(choice($._dsl_interp_text, $.dsl_body, $.dsl_interp)),
+      '}',
+    ),
+    _dsl_text:        $ => token.immediate(prec(10, /([^`$]|\$[^{])+/)),
+    _dsl_interp_text: $ => token.immediate(prec(10, /([^}`$`]|\$[^{])+/)),
 
     // Slot body is a sequence of opaque tokens that the walker classifies
     // per-arg via top-level comma split. Nested parens/braces/brackets stay
