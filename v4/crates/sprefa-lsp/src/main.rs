@@ -20,11 +20,12 @@ use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, Hover,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
-    InitializedParams, InlayHint, InlayHintLabel, InlayHintParams,
-    MessageType, NumberOrString, OneOf, Position, Range, SemanticTokens,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult,
+    HoverContents, HoverParams, HoverProviderCapability, InitializeParams,
+    InitializeResult, InitializedParams, InlayHint, InlayHintLabel,
+    InlayHintParams, MarkedString, MessageType, NumberOrString, OneOf,
+    Position, Range, SemanticTokens, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult,
     SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
     TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     WorkDoneProgressOptions,
@@ -38,8 +39,8 @@ mod semantic;
 
 use v4::app::{
     build_in_process, GetDiagsReq, GetInlaysReq, InProcessClient,
-    LspChangeReq, LspCloseReq, LspLocateDslReq, LspLocateDslResp, LspOpenReq,
-    SprfClient, SprfDiag,
+    LspChangeReq, LspCloseReq, LspHoverReq, LspLocateDslReq, LspLocateDslResp,
+    LspOpenReq, SprfClient, SprfDiag,
 };
 
 struct Backend {
@@ -206,37 +207,18 @@ impl LanguageServer for Backend {
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
         let host_byte = position_to_byte(&text, pos);
-        let hit: LspLocateDslResp = match self.sprf.lsp_locate_dsl(LspLocateDslReq {
+        let resp = match self.sprf.lsp_hover(LspHoverReq {
             uri:  uri.to_string(),
             byte: host_byte as u32,
         }).await {
             Ok(h)  => h,
             Err(_) => return Ok(None),
         };
-        let (Some(op_name), Some(body_raw)) = (hit.op_name, hit.body_raw) else {
-            return Ok(None);
-        };
-        let Some(handle) = dsl_lookup::provider_for(&op_name) else {
-            return Ok(None);
-        };
-        let Some(lsp) = handle.lsp() else { return Ok(None); };
-        let v4_hov: v4_lsp_types::Hover = match lsp.hover(body_raw.as_bytes(), hit.body_byte as usize) {
-            Some(h) => h,
-            None    => return Ok(None),
-        };
-        // tower-lsp 0.20 carries lsp-types 0.94; v4 lib carries 0.97.
-        // The two share JSON shape, so a serde round-trip is the cheapest
-        // bridge until both packages converge. Cost is one Hover per call.
-        let mut hov: Hover = match crosswalk(&v4_hov) {
-            Some(h) => h,
-            None    => return Ok(None),
-        };
-        if let Some(body_range) = hov.range.take() {
-            hov.range = Some(shift_body_range_to_host(
-                &text, hit.body_off as usize, &body_raw, body_range,
-            ));
-        }
-        Ok(Some(hov))
+        let Some(contents) = resp.contents else { return Ok(None); };
+        Ok(Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::String(contents)),
+            range: None,
+        }))
     }
 
     async fn completion(
@@ -341,7 +323,7 @@ fn crosswalk<S: serde::Serialize, D: serde::de::DeserializeOwned>(src: &S) -> Op
 /// and CompletionItem returned by `DslBodyLsp` are 0.97 types; main.rs
 /// otherwise speaks 0.94 (tower-lsp's vendored version).
 mod v4_lsp_types {
-    pub use lsp_types::{CompletionItem, Hover};
+    pub use lsp_types::CompletionItem;
 }
 
 /// Convert an LSP (line, utf16-col) position into a host-source byte
@@ -372,22 +354,6 @@ fn position_to_byte(src: &str, p: Position) -> usize {
         }
     }
     byte
-}
-
-/// DslBodyLsp returns Ranges computed against body bytes alone (its
-/// Position(line, col) is body-local). Re-derive the body-relative byte
-/// span from those Positions, then shift to the host range using the
-/// shared helper. This keeps multi-line dsl bodies aligned in the host
-/// document.
-fn shift_body_range_to_host(
-    host_src: &str, body_off: usize, body_raw: &str, body_range: Range,
-) -> Range {
-    let lo = position_to_byte(body_raw, body_range.start);
-    let hi = position_to_byte(body_raw, body_range.end);
-    Range {
-        start: byte_to_position(host_src, body_off + lo),
-        end:   byte_to_position(host_src, body_off + hi),
-    }
 }
 
 fn byte_to_position(src: &str, off: usize) -> Position {

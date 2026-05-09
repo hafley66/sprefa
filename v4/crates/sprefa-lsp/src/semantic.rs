@@ -213,19 +213,19 @@ mod tests {
 
     #[test]
     fn glob_body_emits_tokens_within_body_range() {
-        // step 1 of pipe: `glob \`src/**/*.rs\``.
-        let src = "glob `src/**/*.rs`";
+        // step 1 of pipe: `glob`src/**/*.rs``.
+        let src = "glob`src/**/*.rs`";
         let toks = tokens_for(src);
         assert!(!toks.is_empty(), "expected glob tokens, got {:?}", toks);
-        // dsl_body inner offset is 6 (after "glob ` "), inner ends at 17.
-        // Confirm first token's absolute column lands inside [6, 17].
+        // dsl_body inner offset is 5 (after "glob`"), inner ends at 16.
+        // Confirm first token's absolute column lands inside [5, 16].
         // Reconstruct absolute col of first token from delta encoding (single
         // line, deltas chain from 0).
         let first = &toks[0];
         assert_eq!(first.delta_line, 0);
         let col = first.delta_start;
-        assert!(col >= 6 && col + first.length <= 17,
-            "first token col={} length={} not in [6,17]", col, first.length);
+        assert!(col >= 5 && col + first.length <= 16,
+            "first token col={} length={} not in [5,16]", col, first.length);
     }
 
     #[test]

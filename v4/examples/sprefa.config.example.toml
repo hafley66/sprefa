@@ -1,0 +1,18 @@
+[store]
+fact_db = "/tmp/sprefa/facts.db"
+queue_db = "/tmp/sprefa/queue.db"
+
+[run]
+root = "."
+show_rows = true
+max_diags = 50
+
+[daemon]
+bind = "127.0.0.1:8787"
+root = "."
+ghcache_db = "/tmp/ghcache/gh.db"
+ghcache_interval_ms = 500
+
+[[repos]]
+slug = "local/sprefa"
+root = "."

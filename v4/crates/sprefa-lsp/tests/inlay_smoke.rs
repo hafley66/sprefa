@@ -20,7 +20,7 @@ use v4::Cursor;
 
 #[test]
 fn inlay_smoke_rule_str_emits_one_cursor_per_op() {
-    let src = "rule(:greet) { str `hello world` }";
+    let src = "rule(:greet) { str`hello world` };";
 
     let (program, parse_diags) = host_parse(src);
     assert!(parse_diags.is_empty(), "parse diags: {:?}", parse_diags);

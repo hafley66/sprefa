@@ -694,11 +694,33 @@ impl SprfHandlers for SprfState {
         for p in &d.program {
             walk_pipe_for_dsl(p, req.byte as usize, &mut hit);
         }
-        let contents = hit.and_then(|(call, body_byte)| {
+        if let Some(contents) = hit.and_then(|(call, body_byte)| {
             let dsl = call.dsl.as_ref()?;
             dsl_hover(call.name.as_ref(), dsl.raw.as_bytes(), body_byte)
-        });
-        Ok(LspHoverResp { contents })
+        }) {
+            return Ok(LspHoverResp { contents: Some(contents) });
+        }
+
+        let host_byte = req.byte;
+        let Some(probe) = d.probes.iter()
+            .filter(|p| p.lo <= host_byte && host_byte <= p.hi)
+            .min_by_key(|p| (p.hi - p.lo, p.lo, p.hi))
+        else {
+            return Ok(LspHoverResp { contents: None });
+        };
+        let mut op: Option<OpCall> = None;
+        for p in &d.program {
+            walk_pipe_for_op(p, host_byte as usize, &mut op);
+        }
+        let op_name = op
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| "<op>".to_string());
+        Ok(LspHoverResp {
+            contents: Some(format!(
+                "{op_name}\n{} cursor(s)\nspan {}..{}",
+                probe.count, probe.lo, probe.hi,
+            )),
+        })
     }
 
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
@@ -885,6 +907,22 @@ fn hash_op_call(h: &mut blake3::Hasher, call: &OpCall) {
 
 fn walk_pipe_for_dsl(p: &PipeAst, host_byte: usize, hit: &mut Option<(OpCall, usize)>) {
     for step in &p.steps { walk_step_for_dsl(step, host_byte, hit); }
+}
+
+fn walk_pipe_for_op(p: &PipeAst, host_byte: usize, hit: &mut Option<OpCall>) {
+    for step in &p.steps {
+        let lo = step.span.lo as usize;
+        let hi = step.span.hi as usize;
+        if lo <= host_byte && host_byte <= hi {
+            match hit {
+                Some(prev) if (prev.span.hi - prev.span.lo) <= (step.span.hi - step.span.lo) => {}
+                _ => *hit = Some(step.clone()),
+            }
+        }
+        if let Some(block) = &step.block {
+            walk_pipe_for_op(block, host_byte, hit);
+        }
+    }
 }
 
 fn walk_step_for_dsl(call: &OpCall, host_byte: usize, hit: &mut Option<(OpCall, usize)>) {

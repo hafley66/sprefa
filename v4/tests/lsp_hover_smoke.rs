@@ -60,3 +60,25 @@ async fn lsp_hover_outside_dsl_returns_empty() {
 
     assert_eq!(hover.contents, None);
 }
+
+#[tokio::test]
+async fn lsp_hover_on_host_op_reports_cursor_flow_count() {
+    let (_state, client) = build_in_process(std::env::temp_dir());
+
+    let src = "rule(:words, WORD?) { `alpha beta` > split(WORD?)` ` };";
+    client.lsp_open(LspOpenReq {
+        uri: "file:///cursor-flow-hover.sprf".into(),
+        text: src.into(),
+        version: 1,
+    }).await.unwrap();
+
+    let hover = client.lsp_hover(LspHoverReq {
+        uri: "file:///cursor-flow-hover.sprf".into(),
+        byte: src.find("split").unwrap() as u32,
+    }).await.unwrap();
+
+    assert_eq!(
+        hover.contents.as_deref(),
+        Some("split\n2 cursor(s)\nspan 37..52"),
+    );
+}

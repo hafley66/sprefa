@@ -19,7 +19,7 @@ sql = relational escape hatch over current batch + rule tables
 | basic editor | VS Code extension registers `.sprf` syntax and starts `sprefa-lsp` |
 | syntax highlighting | TextMate grammar covers host, `re`, `glob`, `ast`, `json`, plain backticks |
 | parse/walk diagnostics | LSP publishes parse/lower diagnostics for open buffers |
-| cursor-flow visibility | inlay hints show probe cursor counts per op span |
+| cursor-flow visibility | inlay hints and host-op hover show probe cursor counts per op span |
 | DSL hover/completion | provider path exists for supported DSL bodies |
 | file read | `read` loads `cursor.value` path into `cursor.value` bytes/text |
 | git rev reads | `repo() > rev(...) > fs > read` uses `git ls-tree` and `git show` |
@@ -43,21 +43,28 @@ sql = relational escape hatch over current batch + rule tables
 | unified config | `$SPREFA_CONFIG` / `~/.config/sprefa/config.toml` provide repo, store, run, daemon defaults |
 | ghcacher dirty seam | default-on `ghcache` feature maps `change_log` rows to dirty wake keys |
 | daemon ghcache polling | `sprefa-daemon --ghcache-db` polls ghcacher and drains ready continuations |
+| config examples | `v4/examples/sprefa.config.example.toml` plus just recipes cover config smoke paths |
+| LSP test health | `just v4-lsp-test`, `just v4-lsp-build`, and `just v4-vscode-compile` pass |
 
 Human smoke commands live in the root `justfile`:
 
 ```bash
 just v4-flow-smoke
 just v4-test
+just v4-config-test
+just v4-run-with-config
 just v4-lsp-build
+just v4-lsp-test
 just v4-app-host-test
+just v4-ghcache-test
+just v4-no-ghcache-test
 ```
 
 ## Known Gaps
 
 | Gap | Current status | Lock-in needed |
 | --- | --- | --- |
-| cursor-flow hover | inlay counts only | hover shape: row samples, count, schema, or provenance |
+| cursor-flow hover | count/span hover exists | row samples, schema, and provenance payloads |
 | SQL TextMate highlighting | missing from VS Code grammar | scope strategy for nested SQL |
 | SQL LSP completions from rule schemas | partial body provider, no full schema intelligence | rule namespace and column metadata surface |
 | full V3 AST hover parity | partial/missing | AST DSL hover payload and capture positions |
@@ -70,7 +77,7 @@ just v4-app-host-test
 | write invalidates read/fs caches | basic file dirty path exists | git/blob/cache dependency keys |
 | cross-rev write/worktree materialization | missing | worktree policy and target address form |
 | full V3 server parity | partial | whether HTTP daemon or generic app_host is canonical |
-| LSP test suite health | needs current check | run `just v4-lsp-test` before claiming extension parity |
+| LSP test suite health | green | keep `just v4-lsp-test` and `just v4-vscode-compile` in the release gate |
 
 ## Drive Order
 
@@ -111,25 +118,26 @@ cross-repo dependency graph
 
 ## Closest Tasks Out Of 10
 
-1. **Refresh parity docs after every green slice**
+1. **Done: refresh parity docs after every green slice**
 
    Current tracker had stale ghcacher/config rows. Keep this file aligned with tests before starting larger work.
 
-2. **Add config examples and justfile commands**
+2. **Done: add config examples and justfile commands**
 
-   Add a sample `v4/examples/sprefa.config.toml` and commands for:
+   Added `v4/examples/sprefa.config.example.toml` and commands for:
 
    ```bash
-   sprefa-run --config-equivalent-via-SPREFA_CONFIG
-   sprefa-daemon --ghcache-db from config
-   cargo test --no-default-features ...
+   just v4-config-test
+   just v4-run-with-config
+   just v4-ghcache-test
+   just v4-no-ghcache-test
    ```
 
    Current config loader uses `$SPREFA_CONFIG`, but the CLI has no explicit `--config` flag.
 
-3. **Run and update LSP test health**
+3. **Done: run and update LSP test health**
 
-   Verify:
+   Verified:
 
    ```bash
    just v4-lsp-test
@@ -137,19 +145,25 @@ cross-repo dependency graph
    just v4-vscode-compile
    ```
 
-   Update the LSP health row with actual current failures.
+   Stale glob semantic-token syntax fixture is fixed.
 
-4. **Route app `/lsp/hover` through `sprefa-lsp`**
+4. **Done: route app `/lsp/hover` through `sprefa-lsp`**
 
-   App has `lsp_hover`; `sprefa-lsp` still locally calls `lsp_locate_dsl` plus body providers. Wire the app RPC path so hover behavior has one source.
+   `sprefa-lsp` hover now calls the app `lsp_hover` RPC. Completion still uses `lsp_locate_dsl` for body-local DSL providers.
 
-5. **Cursor-flow hover payload**
+5. **Done: first cursor-flow hover payload**
 
-   Decide and implement first hover payload shape:
+   Implemented first payload:
 
    ```text
-   op span
+   op name
    cursor count
+   source span
+   ```
+
+   Next payload fields:
+
+   ```text
    bounded sample rows
    known terms
    source refs when present
@@ -239,6 +253,12 @@ Passing:
 just v4-test
 just v4-app-host-test
 just v4-flow-smoke
+just v4-config-test
+just v4-run-with-config
+just v4-ghcache-test
+just v4-no-ghcache-test
+just v4-vscode-compile
+just v4-lsp-test
 just v4-lsp-build
 ```
 
@@ -251,7 +271,7 @@ just v4-lsp-test
 
 `v4-target-tests` currently includes promoted mounted-query and rule-apply targets.
 
-`v4-lsp-test` currently has a known failing semantic-token test for glob body tokens.
+`v4-lsp-test` now passes. The previous glob body token failure was a stale `glob \`...\`` fixture; the current host syntax is `glob\`...\``.
 
 Implemented since this tracker was written:
 
@@ -282,6 +302,10 @@ Implemented since this tracker was written:
 - `sprefa-daemon --ghcache-db` tails ghcacher `change_log` and dispatches dirty keys
 - `/git/ghcache-change` RPC dispatches one ghcacher change into the dirty wake path
 - `/lsp/hover` RPC resolves cached DSL hover payloads in app state
+- `sprefa-lsp` hover calls the app `/lsp/hover` RPC
+- host-op hover reports cursor-flow count and source span from app probe state
+- `v4/examples/sprefa.config.example.toml` documents runnable config shape
+- root just recipes pin `RUSTC_WRAPPER=""` and `CC="cc"` so smoke commands avoid sandbox-blocked `sccache`
 
 ## Target Tests
 

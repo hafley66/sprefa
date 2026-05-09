@@ -12,6 +12,12 @@ $SPREFA_CONFIG
 
 Missing config loads as empty config. Current load path swallows parse/read errors because app construction does not have a diagnostics channel yet.
 
+Example config:
+
+```text
+v4/examples/sprefa.config.example.toml
+```
+
 ## Config Shape
 
 ```toml
@@ -116,3 +122,20 @@ sprefa-v4.trace.server
 ```
 
 Future config hook: let LSP reuse the same `SprfConfig` root/store defaults as `sprefa-run` and `sprefa-daemon`.
+
+## Just Recipes
+
+```bash
+just v4-config-test
+just v4-run-with-config
+just v4-ghcache-test
+just v4-no-ghcache-test
+just v4-lsp-test
+just v4-lsp-build
+```
+
+`v4-run-with-config` defaults to:
+
+```bash
+SPREFA_CONFIG=v4/examples/sprefa.config.example.toml
+```
