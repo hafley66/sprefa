@@ -1998,7 +1998,8 @@ impl Component for WriteCursorComponent {
                     }
                 }
             }
-            let mut buf: Vec<u8> = bytes;
+            let original = bytes;
+            let mut buf: Vec<u8> = original.clone();
             for (lo, hi, ins) in hits {
                 let lo = lo.min(buf.len());
                 let hi = hi.min(buf.len()).max(lo);
@@ -2019,7 +2020,7 @@ impl Component for WriteCursorComponent {
                 };
                 buf.splice(slice_lo..slice_hi, ins.as_bytes().iter().copied());
             }
-            if std::fs::write(&path, &buf).is_ok() {
+            if buf != original && std::fs::write(&path, &buf).is_ok() {
                 ctx.bus.dispatch_dirty(FILE_DOMAIN, Some(file_dirty_key(&path)));
             }
         }
@@ -2063,6 +2064,9 @@ impl Component for WriteFileComponent {
                 None    => return Node::Emit(Arc::new(c.clone())),
             },
         };
+        if std::fs::read(&path).ok().as_deref() == Some(c.value.as_bytes()) {
+            return Node::Emit(Arc::new(c.clone()));
+        }
         if std::fs::write(&path, c.value.as_bytes()).is_ok() {
             ctx.bus.dispatch_dirty(FILE_DOMAIN, Some(file_dirty_key(&path)));
         }

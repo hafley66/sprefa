@@ -913,7 +913,12 @@ impl OperatorDef for ReDef {
         } else {
             body.raw.as_ref().into()
         };
-        let mut comp = ReComponent::new(&static_pat, &[]);
+        let capture_names = scan_re_named_groups(body.raw.as_ref());
+        let capture_name_refs: Vec<&str> = capture_names
+            .iter()
+            .map(|b| b.name.as_ref())
+            .collect();
+        let mut comp = ReComponent::new(&static_pat, &capture_name_refs);
         if crate::template::has_subpipe(&body.interps) {
             let mut interps = body.interps.clone();
             interps.sort_by_key(|i| i.range.lo);

@@ -154,6 +154,71 @@ async fn render_markdown_aggregate_writes_file() {
 }
 
 #[tokio::test]
+async fn render_markdown_replaces_named_capture_range_only() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("ARCH.md");
+    let sprf = root.path().join("self_doc_range_replace.sprf");
+    fs::write(&target, concat!(
+        "# Architecture\n\n",
+        "handwritten before\n",
+        "<!-- sprf:self-doc:start -->\n",
+        "old generated body\n",
+        "<!-- sprf:self-doc:end -->\n",
+        "handwritten after\n",
+    )).unwrap();
+    let src = format!(
+        r#"`{}`
+> read
+> re`(?s)<!-- sprf:self-doc:start -->\n(?P<BODY>.*?)\n<!-- sprf:self-doc:end -->`
+> render(:markdown)`## Generated
+range-safe markdown`
+> write_cursor(:replace, :BODY);
+"#,
+        target.display(),
+    );
+    fs::write(&sprf, src).unwrap();
+
+    let (_state, client) = build_in_process(root.path().to_path_buf());
+    let report = client
+        .run(RunReq { path: sprf.clone(), root: Some(root.path().to_path_buf()) })
+        .await
+        .unwrap();
+
+    assert!(
+        report.parse_diags.is_empty()
+            && report.walk_diags.is_empty()
+            && report.runtime_diags.is_empty(),
+        "range render/write should stay clean:\n{}",
+        report_lines(&report)
+    );
+
+    let written = fs::read_to_string(&target).unwrap();
+    assert_eq!(written, concat!(
+        "# Architecture\n\n",
+        "handwritten before\n",
+        "<!-- sprf:self-doc:start -->\n",
+        "## Generated\n",
+        "range-safe markdown\n",
+        "\n",
+        "<!-- sprf:self-doc:end -->\n",
+        "handwritten after\n",
+    ));
+
+    let report = client
+        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .await
+        .unwrap();
+    assert!(
+        report.parse_diags.is_empty()
+            && report.walk_diags.is_empty()
+            && report.runtime_diags.is_empty(),
+        "second range render/write should stay clean:\n{}",
+        report_lines(&report)
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), written);
+}
+
+#[tokio::test]
 async fn app_run_keeps_queue_and_wakes_mounted_sql() {
     let root = tempfile::tempdir().unwrap();
     let missing = root.path().join("missing.sprf");
