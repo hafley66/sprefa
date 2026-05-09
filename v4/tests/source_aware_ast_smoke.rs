@@ -62,6 +62,8 @@ fn fs_ast_reads_source_without_read_materializing_full_body() {
     assert_eq!(telemetry.input_rows.load(Ordering::Relaxed), 1);
     assert_eq!(telemetry.source_read_rows.load(Ordering::Relaxed), 1);
     assert_eq!(telemetry.source_read_bytes.load(Ordering::Relaxed), body.len() as u64);
+    assert_eq!(telemetry.source_utf8_rows.load(Ordering::Relaxed), 1);
+    assert_eq!(telemetry.source_utf8_bytes.load(Ordering::Relaxed), body.len() as u64);
     assert_eq!(telemetry.source_read_errors.load(Ordering::Relaxed), 0);
     assert_eq!(telemetry.legacy_rows.load(Ordering::Relaxed), 0);
     assert_eq!(telemetry.prefilter_skips.load(Ordering::Relaxed), 0);

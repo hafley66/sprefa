@@ -186,11 +186,13 @@ Status: passed on 2026-05-09.
    - rows in/out per stage
    - queue encoded bytes later
    - source bytes resolved
+   - source bytes materialized as UTF-8
    - prefilter skipped files
    - parse count
    - wall time per stage
    - Status: `AstTelemetry` reports input rows, source read rows, source bytes,
-     source errors, legacy rows, fixed-prefilter skips, parses, and matches.
+     source UTF-8 rows, source UTF-8 bytes, source errors, legacy rows,
+     fixed-prefilter skips, parses, and matches.
 
 5. Clean up old names after behavior is green.
    - Replace docs and comments that say `_refs`.
@@ -245,6 +247,8 @@ V4 source-aware fs > ast, source-side ext filter, workers=8, trials=1
   rss_peak_MB=158
   source_reads=63482
   source_MB=1342.2
+  source_utf8=4495
+  source_utf8_MB=109.3
   source_errors=0
   legacy_rows=0
   prefilter_skips=58987
@@ -255,6 +259,10 @@ The current AST fast path now has the same coarse cardinality as the V3
 shape: read every candidate source file, skip most files through the fixed
 string prefilter, parse only the remaining source set, emit match cursors
 without explicit `read` queue rows.
+
+After the raw-byte fixed prefilter, skipped files do not become UTF-8 strings
+and do not get interned as source bodies by `ast`; only the `4495` parse
+candidates are materialized for ast-grep.
 
 Before the source-side extension filter, the bench emitted `93299` file cursors
 and then dropped `29817` through a downstream `ext_filter` component. The new

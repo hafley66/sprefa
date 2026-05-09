@@ -349,6 +349,8 @@ pub struct AstTelemetry {
     pub input_rows:         AtomicU64,
     pub source_read_rows:   AtomicU64,
     pub source_read_bytes:  AtomicU64,
+    pub source_utf8_rows:   AtomicU64,
+    pub source_utf8_bytes:  AtomicU64,
     pub source_read_errors: AtomicU64,
     pub legacy_rows:        AtomicU64,
     pub prefilter_skips:    AtomicU64,
@@ -399,7 +401,27 @@ impl Component for AstNmComponent {
             let parent_coord = store.as_ref().and_then(|s| s.coord_of(c.at));
             let should_read_source = !path_for_intern.is_empty()
                 && c.value.as_ref() == path_for_intern;
-            let (src, file_id, repo, rev): (String, crate::FileId, crate::RepoId, crate::RevId) =
+            // Per-cursor pattern selection: static for term-only bodies,
+            // SubPipe-bearing bodies recompile the ast-grep Pattern per
+            // cursor against the rendered body.
+            let (cur_pat, cur_fixed): (Arc<Pattern<SupportLang>>, Arc<str>) = match &dyn_body {
+                None => (pattern.clone(), fixed.clone()),
+                Some((body, interps)) => {
+                    let pat_src = crate::template::render_segments_no_diag(
+                        body.as_ref(), interps, c,
+                    );
+                    let p = Pattern::new(&pat_src, lang);
+                    let fx: Arc<str> = Arc::from(p.fixed_string().to_string().as_str());
+                    (Arc::new(p), fx)
+                }
+            };
+            let (src, file_id, repo, rev, prefiltered_bytes): (
+                String,
+                crate::FileId,
+                crate::RepoId,
+                crate::RevId,
+                bool,
+            ) =
                 if should_read_source {
                     let (repo, rev) = parent_coord
                         .map(|c| (c.repo, c.rev))
@@ -415,15 +437,27 @@ impl Component for AstNmComponent {
                             t.source_read_rows.fetch_add(1, Ordering::Relaxed);
                             t.source_read_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
                         }
+                        if !cur_fixed.is_empty()
+                            && memchr::memmem::find(&bytes, cur_fixed.as_bytes()).is_none()
+                        {
+                            if let Some(t) = &telemetry {
+                                t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
+                            }
+                            return Node::Done;
+                        }
                         let src = String::from_utf8_lossy(&bytes).into_owned();
+                        if let Some(t) = &telemetry {
+                            t.source_utf8_rows.fetch_add(1, Ordering::Relaxed);
+                            t.source_utf8_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                        }
                         let file_id = {
                             let file_id = s.intern_file(&bytes, path_for_intern);
                             let _ = s.intern_path(repo, rev, file_id, path_for_intern);
                             file_id
                         };
-                        (src, file_id, repo, rev)
+                        (src, file_id, repo, rev, !cur_fixed.is_empty())
                     } else {
-                        let Ok(src) = std::fs::read_to_string(path_for_intern) else {
+                        let Ok(bytes) = std::fs::read(path_for_intern) else {
                             if let Some(t) = &telemetry {
                                 t.source_read_errors.fetch_add(1, Ordering::Relaxed);
                             }
@@ -431,9 +465,22 @@ impl Component for AstNmComponent {
                         };
                         if let Some(t) = &telemetry {
                             t.source_read_rows.fetch_add(1, Ordering::Relaxed);
-                            t.source_read_bytes.fetch_add(src.len() as u64, Ordering::Relaxed);
+                            t.source_read_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
                         }
-                        (src, 0, repo, rev)
+                        if !cur_fixed.is_empty()
+                            && memchr::memmem::find(&bytes, cur_fixed.as_bytes()).is_none()
+                        {
+                            if let Some(t) = &telemetry {
+                                t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
+                            }
+                            return Node::Done;
+                        }
+                        let src = String::from_utf8_lossy(&bytes).into_owned();
+                        if let Some(t) = &telemetry {
+                            t.source_utf8_rows.fetch_add(1, Ordering::Relaxed);
+                            t.source_utf8_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                        }
+                        (src, 0, repo, rev, !cur_fixed.is_empty())
                     }
                 } else {
                     if let Some(t) = &telemetry {
@@ -446,23 +493,9 @@ impl Component for AstNmComponent {
                     let file_id = store.as_ref()
                         .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
                         .unwrap_or(0);
-                    (src, file_id, repo, rev)
+                    (src, file_id, repo, rev, false)
                 };
-            // Per-cursor pattern selection: static for term-only bodies,
-            // SubPipe-bearing bodies recompile the ast-grep Pattern per
-            // cursor against the rendered body.
-            let (cur_pat, cur_fixed): (Arc<Pattern<SupportLang>>, Arc<str>) = match &dyn_body {
-                None => (pattern.clone(), fixed.clone()),
-                Some((body, interps)) => {
-                    let pat_src = crate::template::render_segments_no_diag(
-                        body.as_ref(), interps, c,
-                    );
-                    let p = Pattern::new(&pat_src, lang);
-                    let fx: Arc<str> = Arc::from(p.fixed_string().to_string().as_str());
-                    (Arc::new(p), fx)
-                }
-            };
-            if !cur_fixed.is_empty() && !src.contains(&*cur_fixed) {
+            if !prefiltered_bytes && !cur_fixed.is_empty() && !src.contains(&*cur_fixed) {
                 if let Some(t) = &telemetry {
                     t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
                 }

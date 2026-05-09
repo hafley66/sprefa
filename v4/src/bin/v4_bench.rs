@@ -450,10 +450,12 @@ async fn main() {
             );
         }
         eprintln!(
-            "  ast telemetry: inputs={} source_reads={} source_MB={:.1} source_errors={} legacy_rows={} prefilter_skips={} parses={} matches={}",
+            "  ast telemetry: inputs={} source_reads={} source_MB={:.1} source_utf8={} source_utf8_MB={:.1} source_errors={} legacy_rows={} prefilter_skips={} parses={} matches={}",
             ast_telemetry.input_rows.load(Ordering::Relaxed),
             ast_telemetry.source_read_rows.load(Ordering::Relaxed),
             ast_telemetry.source_read_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
+            ast_telemetry.source_utf8_rows.load(Ordering::Relaxed),
+            ast_telemetry.source_utf8_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
             ast_telemetry.source_read_errors.load(Ordering::Relaxed),
             ast_telemetry.legacy_rows.load(Ordering::Relaxed),
             ast_telemetry.prefilter_skips.load(Ordering::Relaxed),
