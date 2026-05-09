@@ -10,8 +10,11 @@ This plan records the refactor started after the Linux ast-grep performance regr
 - `f02cafa refactor: encode cursor value handles`
 - `b9a193d docs: add cursor value refactor plan`
 - `758e656 feat: make ast consume source paths`
+- `3bded1d docs: mark source aware ast complete`
+- `fc516ee feat: make v4 bench source aware`
+- `36401a8 perf: tighten source aware ast read path`
 
-These commits are local on `main` at the time this note was updated.
+These commits were pushed from local `main` to `origin/master` on 2026-05-09.
 
 ## Problem
 
@@ -178,11 +181,13 @@ Status: passed on 2026-05-09.
 
 4. Add telemetry intentionally.
    - rows in/out per stage
-   - queue encoded bytes
+   - queue encoded bytes later
    - source bytes resolved
    - prefilter skipped files
    - parse count
    - wall time per stage
+   - Status: `AstTelemetry` reports input rows, source read rows, source bytes,
+     source errors, legacy rows, fixed-prefilter skips, parses, and matches.
 
 5. Clean up old names after behavior is green.
    - Replace docs and comments that say `_refs`.
@@ -223,6 +228,26 @@ V4 source-aware fs > ast, workers=8, trials=3
 
 This is back near the V3 shape but still above the older sub-4s target. The remaining measured cost is in the `ast` stage, not in explicit `read`, because the default benchmark now keeps source body materialization inside the matcher.
 
+Telemetry added after that p50 run exposed the matcher-internal shape:
+
+```text
+V4 source-aware fs > ast, workers=8, trials=1
+  files after ext filter=63482
+  matches=16627
+  wall=6.142s after release rebuild
+  source_reads=63482
+  source_MB=1342.2
+  source_errors=0
+  legacy_rows=0
+  prefilter_skips=58987
+  parses=4495
+```
+
+The current AST fast path now has the same coarse cardinality as the V3
+shape: read every candidate source file, skip most files through the fixed
+string prefilter, parse only the remaining source set, emit match cursors
+without explicit `read` queue rows.
+
 ## Dirty Worktree Notes
 
 Known unrelated dirty files at time of note:
@@ -235,10 +260,12 @@ chat_log/LATEST.md
 chat_log/20260507.2.v4-rule-engine-respec-and-memory-audit.md
 ```
 
-Earlier bench experiment file:
+Bench telemetry file:
 
 ```text
 v4/src/bin/v4_bench.rs
 ```
 
-That file contains telemetry experiments and should be reviewed before committing as product code.
+That file now contains the intended benchmark telemetry surface for this
+slice. It is still bench-local; runtime-wide telemetry and queue encoded-byte
+telemetry remain later work.

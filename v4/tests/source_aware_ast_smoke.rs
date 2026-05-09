@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
@@ -6,7 +7,7 @@ use effect_runtime::v2::{
     PipeInstance, QueueBackend, RenderCtx,
 };
 use v4::store::SprfStore;
-use v4::v2_ops::{AstNmComponent, FsComponent};
+use v4::v2_ops::{AstNmComponent, AstTelemetry, FsComponent};
 use v4::{Cursor, WhereBytesId};
 
 #[derive(Clone)]
@@ -32,9 +33,14 @@ fn fs_ast_reads_source_without_read_materializing_full_body() {
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let sprf = SprfStore::new(facts);
     let rows = Arc::new(Mutex::new(Vec::new()));
+    let telemetry = Arc::new(AstTelemetry::default());
     let steps: Vec<Arc<dyn Component<Next = Cursor>>> = vec![
         Arc::new(FsComponent::new(dir.path().to_path_buf(), 64).with_sprf_store(sprf.clone())),
-        Arc::new(AstNmComponent::new("fn $NAME".to_string(), SupportLang::Rust).with_sprf_store(sprf.clone())),
+        Arc::new(
+            AstNmComponent::new("fn $NAME".to_string(), SupportLang::Rust)
+                .with_sprf_store(sprf.clone())
+                .with_telemetry(telemetry.clone()),
+        ),
         Arc::new(CaptureSink { rows: rows.clone() }),
     ];
     let pipe = PipeInstance::new(steps);
@@ -53,4 +59,12 @@ fn fs_ast_reads_source_without_read_materializing_full_body() {
         .expect("match cursor has source byte range");
     assert_ne!(where_bytes.file, 0);
     assert!(where_bytes.hi > where_bytes.lo);
+    assert_eq!(telemetry.input_rows.load(Ordering::Relaxed), 1);
+    assert_eq!(telemetry.source_read_rows.load(Ordering::Relaxed), 1);
+    assert_eq!(telemetry.source_read_bytes.load(Ordering::Relaxed), body.len() as u64);
+    assert_eq!(telemetry.source_read_errors.load(Ordering::Relaxed), 0);
+    assert_eq!(telemetry.legacy_rows.load(Ordering::Relaxed), 0);
+    assert_eq!(telemetry.prefilter_skips.load(Ordering::Relaxed), 0);
+    assert_eq!(telemetry.parses.load(Ordering::Relaxed), 1);
+    assert_eq!(telemetry.matches.load(Ordering::Relaxed), 1);
 }

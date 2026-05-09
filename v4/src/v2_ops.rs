@@ -290,16 +290,32 @@ pub struct AstNmComponent {
     /// match cursor stamps focal `value_id`/`at` and per-match coord
     /// terms alongside legacy `LO`/`HI`/raw_terms writes.
     store:   Option<Arc<SprfStore>>,
+    telemetry: Option<Arc<AstTelemetry>>,
+}
+
+#[derive(Default)]
+pub struct AstTelemetry {
+    pub input_rows:         AtomicU64,
+    pub source_read_rows:   AtomicU64,
+    pub source_read_bytes:  AtomicU64,
+    pub source_read_errors: AtomicU64,
+    pub legacy_rows:        AtomicU64,
+    pub prefilter_skips:    AtomicU64,
+    pub parses:             AtomicU64,
+    pub matches:            AtomicU64,
 }
 
 impl AstNmComponent {
     pub fn new(pat_src: String, lang: SupportLang) -> Self {
         let pattern = Arc::new(Pattern::new(&pat_src, lang));
         let fixed: Arc<str> = Arc::from(pattern.fixed_string().to_string().as_str());
-        Self { lang, pattern, fixed, dyn_body: None, store: None }
+        Self { lang, pattern, fixed, dyn_body: None, store: None, telemetry: None }
     }
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
+    }
+    pub fn with_telemetry(mut self, telemetry: Arc<AstTelemetry>) -> Self {
+        self.telemetry = Some(telemetry); self
     }
     /// Slow path: route every cursor through render_segments → recompile.
     /// Used when the body's interps include a SubPipe carveout.
@@ -322,8 +338,12 @@ impl Component for AstNmComponent {
         let pattern = self.pattern.clone();
         let fixed = self.fixed.clone();
         let dyn_body = self.dyn_body.clone();
+        let telemetry = self.telemetry.clone();
         par_render(batch, move |c| {
             if c.value.is_empty() { return Node::Done; }
+            if let Some(t) = &telemetry {
+                t.input_rows.fetch_add(1, Ordering::Relaxed);
+            }
             let path_for_intern: &str = c.get("FS").unwrap_or("");
             let parent_coord = store.as_ref().and_then(|s| s.coord_of(c.at));
             let should_read_source = !path_for_intern.is_empty()
@@ -335,8 +355,15 @@ impl Component for AstNmComponent {
                         .unwrap_or((0, 0));
                     if let Some(s) = store.as_ref() {
                         let Ok(bytes) = std::fs::read(path_for_intern) else {
+                            if let Some(t) = &telemetry {
+                                t.source_read_errors.fetch_add(1, Ordering::Relaxed);
+                            }
                             return Node::Done;
                         };
+                        if let Some(t) = &telemetry {
+                            t.source_read_rows.fetch_add(1, Ordering::Relaxed);
+                            t.source_read_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                        }
                         let src = String::from_utf8_lossy(&bytes).into_owned();
                         let file_id = {
                             let file_id = s.intern_file(&bytes, path_for_intern);
@@ -346,11 +373,21 @@ impl Component for AstNmComponent {
                         (src, file_id, repo, rev)
                     } else {
                         let Ok(src) = std::fs::read_to_string(path_for_intern) else {
+                            if let Some(t) = &telemetry {
+                                t.source_read_errors.fetch_add(1, Ordering::Relaxed);
+                            }
                             return Node::Done;
                         };
+                        if let Some(t) = &telemetry {
+                            t.source_read_rows.fetch_add(1, Ordering::Relaxed);
+                            t.source_read_bytes.fetch_add(src.len() as u64, Ordering::Relaxed);
+                        }
                         (src, 0, repo, rev)
                     }
                 } else {
+                    if let Some(t) = &telemetry {
+                        t.legacy_rows.fetch_add(1, Ordering::Relaxed);
+                    }
                     let src: String = c.value.as_ref().to_string();
                     let (repo, rev) = parent_coord
                         .map(|c| (c.repo, c.rev))
@@ -375,7 +412,13 @@ impl Component for AstNmComponent {
                 }
             };
             if !cur_fixed.is_empty() && !src.contains(&*cur_fixed) {
+                if let Some(t) = &telemetry {
+                    t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
+                }
                 return Node::Done;
+            }
+            if let Some(t) = &telemetry {
+                t.parses.fetch_add(1, Ordering::Relaxed);
             }
             let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
             let hits: Vec<Node<Cursor>> = grep.root().find_all(&*cur_pat).map(|nm| {
@@ -413,6 +456,9 @@ impl Component for AstNmComponent {
                 }
                 Node::Emit(Arc::new(child))
             }).collect();
+            if let Some(t) = &telemetry {
+                t.matches.fetch_add(hits.len() as u64, Ordering::Relaxed);
+            }
             if hits.is_empty() { Node::Done } else { Node::Many(hits) }
         })
     }

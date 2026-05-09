@@ -30,7 +30,7 @@ use effect_runtime::v2::{
     SqliteFactStore,
 };
 use v4::v2_ops::{
-    AstNmComponent, CountComponent, FsComponent, MultiAstNmComponent, ReadComponent,
+    AstNmComponent, AstTelemetry, CountComponent, FsComponent, MultiAstNmComponent, ReadComponent,
     SinglePathComponent,
 };
 use v4::fact::FactWrite;
@@ -306,6 +306,7 @@ async fn main() {
     for trial in 1..=trials {
         let counter = Arc::new(AtomicU64::new(0));
         let bench = Arc::new(BenchCounters::default());
+        let ast_telemetry = Arc::new(AstTelemetry::default());
         let mut timings: Vec<Arc<StageTiming>> = Vec::new();
 
         // Source: SinglePath (--file) or Fs (bulk corpus).
@@ -326,11 +327,15 @@ async fn main() {
             Arc::new(MultiAstNmComponent::new(pats, lang))
         } else {
             match memoize.as_str() {
-                "off" => Arc::new(AstNmComponent::new(pattern_src.clone(), lang)),
+                "off" => Arc::new(
+                    AstNmComponent::new(pattern_src.clone(), lang)
+                        .with_telemetry(ast_telemetry.clone()),
+                ),
                 "on"  => {
                     let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
                     Arc::new(Memoize::new(
-                        AstNmComponent::new(pattern_src.clone(), lang),
+                        AstNmComponent::new(pattern_src.clone(), lang)
+                            .with_telemetry(ast_telemetry.clone()),
                         "astnm",
                         cache,
                     ).with_domain("fs"))
@@ -339,7 +344,8 @@ async fn main() {
                     let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
                     let idx   = shared_idx.clone().unwrap_or_else(|| Arc::new(PriorChildIndex::new()));
                     Arc::new(Memoize::new(
-                        AstNmComponent::new(pattern_src.clone(), lang),
+                        AstNmComponent::new(pattern_src.clone(), lang)
+                            .with_telemetry(ast_telemetry.clone()),
                         "astnm",
                         cache,
                     ).with_domain("fs").with_prior_children(idx))
@@ -480,6 +486,17 @@ async fn main() {
                 wall_ms,
             );
         }
+        eprintln!(
+            "  ast telemetry: inputs={} source_reads={} source_MB={:.1} source_errors={} legacy_rows={} prefilter_skips={} parses={} matches={}",
+            ast_telemetry.input_rows.load(Ordering::Relaxed),
+            ast_telemetry.source_read_rows.load(Ordering::Relaxed),
+            ast_telemetry.source_read_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
+            ast_telemetry.source_read_errors.load(Ordering::Relaxed),
+            ast_telemetry.legacy_rows.load(Ordering::Relaxed),
+            ast_telemetry.prefilter_skips.load(Ordering::Relaxed),
+            ast_telemetry.parses.load(Ordering::Relaxed),
+            ast_telemetry.matches.load(Ordering::Relaxed),
+        );
         walls.push(wall);
         last_matches = m;
     }
