@@ -46,6 +46,7 @@ fn repo_bare_form_emits_one_cursor_per_configured_repo() {
             RepoConfig { slug: "alpha/one".into(), root: PathBuf::from("/tmp/alpha") },
             RepoConfig { slug: "beta/two".into(),  root: PathBuf::from("/tmp/beta") },
         ],
+        ..Default::default()
     };
 
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());

@@ -129,6 +129,7 @@ fn cross_rev_dedupes_unchanged_content_across_revs() {
     let root: PathBuf = tmp.path().to_path_buf();
     let cfg  = SprfConfig {
         repos: vec![RepoConfig { slug: "t/r".into(), root: root.clone() }],
+        ..Default::default()
     };
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
@@ -186,6 +187,7 @@ fn fs_over_rev_emits_path_cursors() {
     let root: PathBuf = tmp.path().to_path_buf();
     let cfg  = SprfConfig {
         repos: vec![RepoConfig { slug: "t/r".into(), root: root.clone() }],
+        ..Default::default()
     };
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
@@ -218,6 +220,7 @@ fn read_over_rev_populates_intern_file_and_flips_value() {
     let root: PathBuf = tmp.path().to_path_buf();
     let cfg  = SprfConfig {
         repos: vec![RepoConfig { slug: "t/r".into(), root: root.clone() }],
+        ..Default::default()
     };
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());

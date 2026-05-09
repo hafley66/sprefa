@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use v4::app::{build_router, SprfState};
+use v4::config::SprfConfig;
 #[cfg(feature = "ghcache")]
 use v4::git_watch::{latest_ghcache_change_id, poll_ghcache_changes};
 
@@ -32,15 +33,25 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    let mut bind = "127.0.0.1:8787".to_string();
-    let mut root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut fact_db: Option<PathBuf> = None;
-    let mut queue_db: Option<PathBuf> = None;
+    parse_args_from(std::env::args().skip(1), &SprfConfig::load_default())
+}
+
+fn parse_args_from<I, S>(raw: I, cfg: &SprfConfig) -> Result<Args, String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let raw: Vec<String> = raw.into_iter().map(Into::into).collect();
+    let mut bind = cfg.daemon.bind.clone()
+        .unwrap_or_else(|| "127.0.0.1:8787".to_string());
+    let mut root = cfg.daemon.root.clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let mut fact_db: Option<PathBuf> = cfg.daemon_fact_db();
+    let mut queue_db: Option<PathBuf> = cfg.daemon_queue_db();
     #[cfg(feature = "ghcache")]
-    let mut ghcache_db: Option<PathBuf> = None;
+    let mut ghcache_db: Option<PathBuf> = cfg.daemon.ghcache_db.clone();
     #[cfg(feature = "ghcache")]
-    let mut ghcache_interval_ms = 500;
+    let mut ghcache_interval_ms = cfg.daemon.ghcache_interval_ms.unwrap_or(500);
 
     let mut i = 0;
     while i < raw.len() {
@@ -210,4 +221,67 @@ fn spawn_ghcache_watcher(state: Arc<SprfState>, db_path: PathBuf, interval: Dura
             state.drain_ready();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use v4::config::{DaemonConfig, StoreConfig};
+
+    #[test]
+    fn parse_args_uses_config_defaults() {
+        let cfg = SprfConfig {
+            store: StoreConfig {
+                fact_db: Some(PathBuf::from("/tmp/facts.db")),
+                queue_db: Some(PathBuf::from("/tmp/queue.db")),
+            },
+            daemon: DaemonConfig {
+                bind: Some("127.0.0.1:9999".into()),
+                root: Some(PathBuf::from("/tmp/root")),
+                #[cfg(feature = "ghcache")]
+                ghcache_db: Some(PathBuf::from("/tmp/gh.db")),
+                #[cfg(feature = "ghcache")]
+                ghcache_interval_ms: Some(250),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let args = parse_args_from(std::iter::empty::<&str>(), &cfg).unwrap();
+        assert_eq!(args.bind, "127.0.0.1:9999");
+        assert_eq!(args.root, PathBuf::from("/tmp/root"));
+        assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/facts.db")));
+        assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));
+        #[cfg(feature = "ghcache")]
+        {
+            assert_eq!(args.ghcache_db, Some(PathBuf::from("/tmp/gh.db")));
+            assert_eq!(args.ghcache_interval_ms, 250);
+        }
+    }
+
+    #[test]
+    fn parse_args_cli_overrides_config_defaults() {
+        let cfg = SprfConfig {
+            store: StoreConfig {
+                fact_db: Some(PathBuf::from("/tmp/facts.db")),
+                queue_db: Some(PathBuf::from("/tmp/queue.db")),
+            },
+            daemon: DaemonConfig {
+                bind: Some("127.0.0.1:9999".into()),
+                root: Some(PathBuf::from("/tmp/root")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let args = parse_args_from([
+            "--bind", "127.0.0.1:7777",
+            "--root", "/tmp/cli-root",
+            "--fact-db", "/tmp/cli-facts.db",
+        ], &cfg).unwrap();
+        assert_eq!(args.bind, "127.0.0.1:7777");
+        assert_eq!(args.root, PathBuf::from("/tmp/cli-root"));
+        assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/cli-facts.db")));
+        assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));
+    }
 }

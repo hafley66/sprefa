@@ -130,6 +130,9 @@ sprefa-run file.sprf --fact-db facts.db
 sprefa-daemon --queue-db queue.db --fact-db facts.db
 ```
 
+These paths can also come from `~/.config/sprefa/config.toml`; see
+[V4 Config And CLI](./v4-config-and-cli.md).
+
 `SqliteQueue` stores parked continuations:
 
 ```text

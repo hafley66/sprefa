@@ -88,6 +88,7 @@ fn rev_head_resolves_oid_and_intern_rev() {
 
     let cfg = SprfConfig {
         repos: vec![RepoConfig { slug: "test/repo".into(), root: root.clone() }],
+        ..Default::default()
     };
 
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
@@ -121,6 +122,7 @@ fn rev_bare_form_defaults_to_head() {
 
     let cfg = SprfConfig {
         repos: vec![RepoConfig { slug: "test/repo".into(), root: root.clone() }],
+        ..Default::default()
     };
 
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
@@ -168,6 +170,7 @@ fn rev_multi_spec_emits_one_cursor_per_spec() {
 
     let cfg = SprfConfig {
         repos: vec![RepoConfig { slug: "test/repo".into(), root: root.clone() }],
+        ..Default::default()
     };
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());

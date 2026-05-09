@@ -21,6 +21,7 @@ use v4::app::{
     build_in_process, build_router, GetFactTableReq, HttpClient, InProcessClient, RunReq,
     SprfClient, SprfDiag, SprfError, SprfState,
 };
+use v4::config::SprfConfig;
 
 #[derive(Debug)]
 struct Args {
@@ -34,14 +35,22 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
+    parse_args_from(std::env::args().skip(1), &SprfConfig::load_default())
+}
+
+fn parse_args_from<I, S>(raw: I, cfg: &SprfConfig) -> Result<Args, String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let raw: Vec<String> = raw.into_iter().map(Into::into).collect();
     let mut path:      Option<PathBuf> = None;
-    let mut show_rows: bool            = true;
-    let mut max_diags: usize           = 50;
-    let mut remote:    Option<String>  = None;
-    let mut root:      Option<PathBuf> = None;
-    let mut fact_db:   Option<PathBuf> = None;
-    let mut queue_db:  Option<PathBuf> = None;
+    let mut show_rows: bool            = cfg.run.show_rows.unwrap_or(true);
+    let mut max_diags: usize           = cfg.run.max_diags.unwrap_or(50);
+    let mut remote:    Option<String>  = cfg.run.remote.clone();
+    let mut root:      Option<PathBuf> = cfg.run.root.clone();
+    let mut fact_db:   Option<PathBuf> = cfg.run_fact_db();
+    let mut queue_db:  Option<PathBuf> = cfg.run_queue_db();
 
     let mut i = 0;
     while i < raw.len() {
@@ -94,7 +103,7 @@ fn parse_args() -> Result<Args, String> {
 
 fn print_usage() {
     eprintln!("sprefa-run <path-to-sprf-file> \
-[--show-rows|--no-show-rows] [--max-diags N] [--remote URL] [--fact-db PATH] [--queue-db PATH]");
+[--show-rows|--no-show-rows] [--max-diags N] [--remote URL] [--root PATH] [--fact-db PATH] [--queue-db PATH]");
 }
 
 /// 1-indexed (line, col) for byte offset `off` in `src`.
@@ -158,7 +167,8 @@ async fn main() -> ExitCode {
     };
 
     // One client interface, two transports. Same call sites.
-    let root = args.path.parent().map(|p| p.to_path_buf())
+    let root = args.root.clone()
+        .or_else(|| args.path.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let client: Box<dyn SprfClient> = match args.remote.clone() {
         Some(url) => Box::new(HttpClient::new(url)),
@@ -225,4 +235,65 @@ async fn main() -> ExitCode {
         }
     }
     ExitCode::from(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use v4::config::{RunConfig, StoreConfig};
+
+    #[test]
+    fn parse_args_uses_config_defaults() {
+        let cfg = SprfConfig {
+            store: StoreConfig {
+                fact_db: Some(PathBuf::from("/tmp/facts.db")),
+                queue_db: Some(PathBuf::from("/tmp/queue.db")),
+            },
+            run: RunConfig {
+                root: Some(PathBuf::from("/tmp/root")),
+                remote: Some("http://127.0.0.1:8787".into()),
+                show_rows: Some(false),
+                max_diags: Some(7),
+                fact_db: None,
+                queue_db: None,
+            },
+            ..Default::default()
+        };
+
+        let args = parse_args_from(["dev.sprf"], &cfg).unwrap();
+        assert_eq!(args.path, PathBuf::from("dev.sprf"));
+        assert!(!args.show_rows);
+        assert_eq!(args.max_diags, 7);
+        assert_eq!(args.remote.as_deref(), Some("http://127.0.0.1:8787"));
+        assert_eq!(args.root, Some(PathBuf::from("/tmp/root")));
+        assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/facts.db")));
+        assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));
+    }
+
+    #[test]
+    fn parse_args_cli_overrides_config_defaults() {
+        let cfg = SprfConfig {
+            store: StoreConfig {
+                fact_db: Some(PathBuf::from("/tmp/facts.db")),
+                queue_db: Some(PathBuf::from("/tmp/queue.db")),
+            },
+            run: RunConfig {
+                show_rows: Some(false),
+                max_diags: Some(7),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let args = parse_args_from([
+            "dev.sprf",
+            "--show-rows",
+            "--max-diags", "3",
+            "--fact-db", "/tmp/cli-facts.db",
+        ], &cfg).unwrap();
+        assert!(args.show_rows);
+        assert_eq!(args.max_diags, 3);
+        assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/cli-facts.db")));
+        assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));
+    }
 }
