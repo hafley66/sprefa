@@ -29,7 +29,11 @@ sql = relational escape hatch over current batch + rule tables
 | shell escape | `sh`, `sh(:filter)`, `sh(OUT?)`, `sh!` exist |
 | rule writes | declaration plus projected writes work |
 | rule reads | `rule_name(...)` relation reads work; `rule_name?(...)` is rejected by the locked V4 surface |
-| SQL query | batch-local `sql`` supports joins and anti-joins |
+| SQL query | batch-local SQL DSL supports joins and anti-joins |
+| runtime diagnostics | `lsp_warn` rows are collected for CLI run reports and open-buffer LSP diagnostics |
+| write file | `write_file(:path)` and `write_file` backtick paths write `cursor.value` |
+| markdown render | `render(:markdown)` renders the current batch into one markdown value |
+| aggregate write | `render(:markdown)` / `collect()` can feed `write_file` for one artifact write |
 
 Human smoke commands live in the root `justfile`:
 
@@ -45,19 +49,15 @@ just v4-app-host-test
 | Gap | Current status | Lock-in needed |
 | --- | --- | --- |
 | cursor-flow hover | inlay counts only | hover shape: row samples, count, schema, or provenance |
-| runtime `lsp_warn` publication | op exists, app/CLI/LSP collection path missing | diagnostic row schema and collection timing |
 | SQL TextMate highlighting | missing from VS Code grammar | scope strategy for nested SQL |
 | SQL LSP completions from rule schemas | partial body provider, no full schema intelligence | rule namespace and column metadata surface |
 | full V3 AST hover parity | partial/missing | AST DSL hover payload and capture positions |
-| empty-rule send identity | ignored target test | direct call syntax and write/query disambiguation |
-| bodied rule apply | ignored target test | cache key, output table behavior, tail-call behavior |
-| mounted query reactivity | ignored target test | subscription identity, invalidation, retraction |
+| mounted query reactivity | ignored target tests | subscription identity, invalidation, retraction |
 | `next` workflow parity | substrate exists | channel names, persistence, wake/replay rules |
 | live invalidation kernel | missing | generation boundary and dirty-key model |
 | file/git watcher | missing | watch source, debounce, branch/rev invalidation |
 | ghcacher integration | missing | cache ownership and import path from V2/V3 |
-| markdown render | not rebuilt cleanly | render op surface and aggregate semantics |
-| aggregate render | weaker than V3 | grouping key, ordering, idempotent writes |
+| aggregate render policy | basic batch markdown works | grouping key, ordering, idempotent write policy |
 | write invalidates read/fs caches | missing | write event and cache dependency keys |
 | cross-rev write/worktree materialization | missing | worktree policy and target address form |
 | full V3 server parity | partial | whether HTTP daemon or generic app_host is canonical |
@@ -82,11 +82,7 @@ open sprf -> syntax highlight -> diagnostics -> inlay cursor counts -> DSL hover
 3. V3 parity loop
 
 ```text
-runtime lsp_warn publication
 cursor-flow hover
-markdown/aggregate render
-empty-rule send identity
-bodied rule apply
 mounted query reactivity
 next workflows
 watch/invalidation
@@ -111,12 +107,8 @@ Bring these back for human decision before implementation:
 | Topic | Decision needed |
 | --- | --- |
 | cursor-flow hover payload | count-only, sample rows, full rows, schema, provenance, or all behind commands |
-| runtime diagnostics | collect from `lsp_warn` components directly, or require diagnostic rule tables |
-| empty-rule send syntax | dotted `frontend_hooks.(OP, FILE)` sends/writes; `frontend_hooks(OP, FILE)` queries relation rows |
-| bodied rule apply | dotted `rule_name.(...)` runs body; `rule_name(...)` always reads materialized relation rows |
 | mounted query | whether subscriptions are automatic at rule read sites or explicit through an op |
 | `next` storage | transient event queue vs durable event table |
-| markdown render | SQL aggregation first vs host `render` op first |
 | daemon canon | keep current HTTP `sprefa-daemon` as canonical or migrate to generic `app_host` |
 | watcher source | filesystem watcher first, git polling first, or ghcacher first |
 
@@ -135,17 +127,13 @@ Known failing target/health checks:
 
 ```bash
 just v4-target-tests
-just v4-v3-parity-targets
 just v4-lsp-test
 ```
 
-`v4-target-tests` fails because it encodes future runtime semantics.
+`v4-target-tests` still runs ignored future runtime semantics:
 
-`v4-v3-parity-targets` fails because it encodes V3 parity targets that are not implemented yet:
-
-- runtime `lsp_warn` publication through app/LSP diagnostics
-- backtick path body for `write_file`
-- markdown aggregate render/write idempotence
+- mounted anti-join should retract stale missing rows after later writes
+- mounted query rerun should diff old/new mounted query outputs and emit only additions
 
 `v4-lsp-test` currently has a known failing semantic-token test for glob body tokens.
 
@@ -155,6 +143,11 @@ Implemented since this tracker was written:
 - `collect()` as completion-only aggregate over cursor values
 - `collect_ready(:snapshot)` and `collect_ready(:append)` as partial barrier flush modes
 - `collect() > write_file(PATH)` writes one aggregate value when the upstream batch completes
+- runtime `lsp_warn` diagnostics publish through `RunReport` and open-buffer `get_diags`
+- `write_file` accepts a backtick path body and interpolated path template
+- `render(:markdown)` emits one batch aggregate markdown cursor
+- `render(:markdown) > write_file` writes an idempotent markdown artifact in the parity smoke
+- collect/barrier buffers are keyed by mount scope, so shared component objects do not mix pipe instances
 
 ## Red Target Tests
 
@@ -178,20 +171,19 @@ Expected current failures:
 
 | Test | Target |
 | --- | --- |
-| `empty_rule_fully_bound_apply_sends_identity` | old fact/send folded into empty rule |
 | `mounted_query_reacts_to_late_relation_write` | live query reactivity and retraction |
-| `bodied_rule_apply_runs_body_and_emits_outputs` | bodied rule apply/run/cache |
-| `runtime_lsp_warn_publishes_diagnostics_for_open_buffer` | runtime diagnostic effects collected into app/LSP diagnostics |
-| `write_file_backtick_path_writes_cursor_value` | path strings use backticks, not symbols |
-| `render_markdown_aggregate_writes_file` | render markdown from rows and idempotently write artifact |
+| `mounted_query_rerun_emits_only_new_output_hashes` | mounted query diffing should emit additions without replaying old outputs |
 
-Current failure modes:
+Promoted target tests now run green in the normal suite:
 
-| Test | Current failure |
+| Test | Locked behavior |
 | --- | --- |
-| `runtime_lsp_warn_publishes_diagnostics_for_open_buffer` | `get_diags` returns parse/walk diagnostics only; runtime `RenderCtx` diagnostics are not collected into `DocState` |
-| `write_file_backtick_path_writes_cursor_value` | `write_file` rejects a DSL body with `lower/slot-not-allowed` |
-| `render_markdown_aggregate_writes_file` | `render` is an unknown op and `write_file` rejects a DSL body |
+| `empty_rule_fully_bound_apply_sends_identity` | old fact/send folded into empty rule apply |
+| `bodied_rule_apply_runs_body_and_emits_outputs` | dotted rule apply runs the stored body |
+| `runtime_lsp_warn_publishes_diagnostics_for_open_buffer` | runtime diagnostics flow into open-buffer diagnostics |
+| `write_file_backtick_path_writes_cursor_value` | path strings can use backtick bodies |
+| `render_markdown_aggregate_writes_file` | markdown rows render and write an idempotent artifact |
+| `collect_does_not_mix_two_pipe_instances` | barrier state is keyed by mount scope |
 
 ## Review Before Implementation
 
@@ -204,9 +196,7 @@ Open decisions:
 | cursor-flow hover | Should hover show counts only, sample cursors, full rows, rule schema, refs/provenance, or dispatch to separate commands? |
 | runtime diagnostics | Should `lsp_warn` write diagnostic rows into a table, emit `RenderCtx` diags collected by app state, or both? |
 | diagnostic lifetime | Are runtime diagnostics recomputed per open buffer, per run generation, or per mounted query subscription? |
-| `write_file` path body | Is `write_file\`path\`` the final target syntax, and should interpolation in that path be allowed? |
 | write target address | Should writes target disk paths only first, or support repo/rev/file refs before parity? |
-| render op | Should `render(:markdown)\`...\`` emit one row per input, aggregate rows, or require an explicit aggregate op? |
 | aggregate ordering | Should render order preserve input order, SQL `ORDER BY`, source span order, or explicit group/order args? |
 | idempotence | Should render/write compare content before writing, or always write and emit dirty events? |
-| markdown recap | Should markdown generation be plain template rows first, SQL `group_concat` first, or a dedicated markdown renderer? |
+| markdown recap | Should markdown generation stay host-template first, move to SQL `group_concat`, or grow a dedicated markdown renderer? |

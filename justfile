@@ -47,7 +47,7 @@ v4-target-tests:
     cargo test --manifest-path v4/Cargo.toml --test rule_future_semantics_target -- --ignored
 
 v4-v3-parity-targets:
-    cargo test --manifest-path v4/Cargo.toml --test v3_parity_target -- --ignored
+    cargo test --manifest-path v4/Cargo.toml --test v3_parity_target
 
 v4-flow-smoke:
     cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/lsp-flow-smoke.sprf --show-rows

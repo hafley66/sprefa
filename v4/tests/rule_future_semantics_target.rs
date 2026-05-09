@@ -187,7 +187,6 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
 }
 
 #[test]
-#[ignore = "target semantics: collect/barrier buffers should be keyed by mount scope, not component object"]
 fn collect_does_not_mix_two_pipe_instances() {
     use std::sync::Mutex;
 
