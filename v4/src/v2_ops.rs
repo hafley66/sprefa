@@ -327,25 +327,29 @@ impl Component for AstNmComponent {
             let path_for_intern: &str = c.get("FS").unwrap_or("");
             let parent_coord = store.as_ref().and_then(|s| s.coord_of(c.at));
             let should_read_source = !path_for_intern.is_empty()
-                && c.value.as_ref() == path_for_intern
-                && std::path::Path::new(path_for_intern).is_file();
+                && c.value.as_ref() == path_for_intern;
             let (src, file_id, repo, rev): (String, crate::FileId, crate::RepoId, crate::RevId) =
                 if should_read_source {
-                    let Ok(bytes) = std::fs::read(path_for_intern) else {
-                        return Node::Done;
-                    };
-                    let src = String::from_utf8_lossy(&bytes).into_owned();
                     let (repo, rev) = parent_coord
                         .map(|c| (c.repo, c.rev))
                         .unwrap_or((0, 0));
-                    let file_id = store.as_ref()
-                        .map(|s| {
+                    if let Some(s) = store.as_ref() {
+                        let Ok(bytes) = std::fs::read(path_for_intern) else {
+                            return Node::Done;
+                        };
+                        let src = String::from_utf8_lossy(&bytes).into_owned();
+                        let file_id = {
                             let file_id = s.intern_file(&bytes, path_for_intern);
                             let _ = s.intern_path(repo, rev, file_id, path_for_intern);
                             file_id
-                        })
-                        .unwrap_or(0);
-                    (src, file_id, repo, rev)
+                        };
+                        (src, file_id, repo, rev)
+                    } else {
+                        let Ok(src) = std::fs::read_to_string(path_for_intern) else {
+                            return Node::Done;
+                        };
+                        (src, 0, repo, rev)
+                    }
                 } else {
                     let src: String = c.value.as_ref().to_string();
                     let (repo, rev) = parent_coord

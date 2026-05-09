@@ -205,6 +205,24 @@ printk($$$)
 
 The system should get back near the V3/direct-scan shape. The exact threshold should be pinned after telemetry is no longer bench-local.
 
+2026-05-09 current-machine results:
+
+```text
+V3 batch, workers=8, trials=3
+  files=63482
+  matches=16627
+  p50=4.832s
+
+V4 source-aware fs > ast, workers=8, trials=3
+  files after ext filter=63482
+  matches=16627
+  p50=5.099s
+  read_rows=0
+  peak RSS max across trials=220 MB
+```
+
+This is back near the V3 shape but still above the older sub-4s target. The remaining measured cost is in the `ast` stage, not in explicit `read`, because the default benchmark now keeps source body materialization inside the matcher.
+
 ## Dirty Worktree Notes
 
 Known unrelated dirty files at time of note:
