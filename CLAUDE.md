@@ -1,5 +1,66 @@
 # sprefa
 
+## V4 locked rule semantics
+
+This section overrides older rule notes in this file and in chat logs.
+Do not reinterpret these semantics without explicit user lock-in.
+
+Core markers:
+
+- `TERM?` means hole, setter, output projection. The current step writes this term into the cursor.
+- `TERM` means grounded read or constraint. The current step reads this term from the cursor.
+- `rule_name(...)` means query or replay the materialized relation/table.
+- `rule_name.(...)` means apply/send/run.
+- `rule_name!.(...)` means apply/send/run while bypassing apply-cache read.
+- `rule_name?(...)` is not part of the locked V4 surface. Predicate behavior is a grounded query with no holes.
+
+Empty rule:
+
+```sprf
+rule(:r, X?, Y?);
+```
+
+Means replay channel plus imperative table:
+
+- `r.(X, Y)` sends/writes grounded `X` and `Y` into relation `r`, then passes the cursor through.
+- `r(X?, Y)` queries rows where `Y = cursor.Y`, projects row `X` into cursor term `X`.
+- `r(X, Y)` queries rows where both match and emits the distinct resulting cursor set.
+- `r.(X?, Y)` is invalid because apply/send cannot accept holes.
+
+Bodied rule:
+
+```sprf
+rule(:r, X?, Y?) { ... }
+```
+
+Means relation plus derivation body:
+
+- Top-level rule execution materializes rows into relation `r`.
+- `r(...)` still queries materialized rows only. It does not run the body.
+- `r.(X, Y)` applies/runs the body with grounded args only.
+- `r!.(X, Y)` applies/runs the body and skips apply-cache read.
+
+Cursor/reconciler invariant:
+
+- Every cursor and rule row is a keyed element. The key is content-derived unless a later table policy says otherwise.
+- Query/apply output candidates are reconciled by output cursor content hash.
+- Duplicate supports for the same output cursor produce one visible cursor.
+- Retraction propagates only when support count for an output key reaches zero.
+- Runtime is queued and progressive. Do not require a live full tree or whole result tree in memory.
+- Store durable support/mount state when needed; keep runtime memory to active batches plus bounded caches.
+
+Required invariant tests before changing rule semantics:
+
+- `r(X?, Y)` projects `X` and constrains `Y`.
+- `r(X, Y)` constrains both and emits distinct pass-through cursors.
+- `r(...)` never runs a body.
+- `r.(...)` never queries stored rows as fallback.
+- `r.(X?, Y)` produces a compile/lower diagnostic.
+- `r?(...)` produces a parse/lower diagnostic or is unsupported.
+- Duplicate matching rows that produce the same output cursor emit one visible cursor.
+- Removing one of multiple supports does not retract the visible cursor.
+- Removing the final support retracts the visible cursor.
+
 Single line: `v3/` only. v1 and v2 archived to `~/projects/sprefa-archive-20260428/`. Treat that path as out-of-tree historical reference; do not import from it, do not link to chat_log there.
 
 ## What sprefa is (post-clearing)

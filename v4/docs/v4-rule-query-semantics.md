@@ -13,17 +13,18 @@ rule(:name, A?, B?) {
 The rule signature declares the relation schema. The body, when present, is a producer for that relation. Empty-body rules are relation subjects: declare a table, accept explicit writes, and replay/query rows later.
 
 ```sprf
-rule(:frontend_hooks, OP!, FILE?, REF?);
+rule(:frontend_hooks, OP?, FILE?, REF?);
 ```
 
 This means:
 
 | Surface | Meaning |
 | --- | --- |
-| `rule(:frontend_hooks, OP!, FILE?, REF?);` | declare relation/table |
+| `rule(:frontend_hooks, OP?, FILE?, REF?);` | declare relation/table |
 | `... > rule(:frontend_hooks, OP, FILE)` | write/next into relation |
-| `... > frontend_hooks(OP, FILE?)` | read/query relation rows |
-| `... > frontend_hooks?(OP, FILE)` | predicate/filter with `EXISTS` |
+| `... > frontend_hooks.(OP, FILE)` | apply/send grounded values into relation |
+| `... > frontend_hooks(FILE?, OP)` | query relation rows |
+| `... > frontend_hooks(OP, FILE)` | grounded query, predicate-like pass/drop |
 
 The old `fact` idea maps to an empty-body `rule`: declaration plus imperative row signal/write plus replay/query of the table.
 
@@ -37,33 +38,52 @@ Rule column sigils are schema metadata.
 | `NAME?` | nullable/projectable column |
 | `NAME!` | key/unique/upsert identity column |
 
-`!` is target metadata first. SQLite-backed execution should lower it to a uniqueness/upsert key once store schemas carry richer column metadata.
+Declaration sigils are not call direction. `!` is target metadata first.
+SQLite-backed execution should lower it to a uniqueness/upsert key once
+store schemas carry richer column metadata.
 
-## Rule Calls
+## Locked Rule Calls
 
-Rule calls use Python-style positional and keyword binding against declared columns.
+This section is locked design intent. Implementation may temporarily lag
+behind it, but new tests and code should converge here.
+
+Markers:
+
+| Marker | Meaning |
+| --- | --- |
+| `TERM?` | hole / setter / output projection. This step writes the term. |
+| `TERM` | grounded read / constraint. This step reads the term. |
+| `rule_name(...)` | query or replay materialized relation rows. |
+| `rule_name.(...)` | apply/send/run. Args must be grounded. |
+| `rule_name!.(...)` | apply/send/run and bypass apply-cache read. |
+
+`rule_name?(...)` is not part of the locked V4 surface. Predicate
+behavior is a normal query with no projected holes.
+
+Rule calls use Python-style positional and keyword binding against
+declared columns. Positional args bind declared columns by order; kwargs
+bind declared columns by name.
 
 ```sprf
-frontend_hooks(OP, FILE?, REF: REF?)
+frontend_hooks(FILE?, OP)
+frontend_hooks(FILE: FILE?, OP: OP)
 ```
 
-Executable syntax accepts direct relation calls and dotted apply relation calls:
+Query examples:
 
-```sprf
-frontend_hooks.(OP, FILE?, REF: REF?)
-frontend_hooks?.(OP, FILE)
-frontend_hooks.()
-frontend_hooks?.()
-```
+| Surface | Meaning |
+| --- | --- |
+| `frontend_hooks(FILE?, OP)` | query rows where row `OP = cursor.OP`, project row `FILE` into cursor `FILE` |
+| `frontend_hooks(OP, FILE)` | query rows where both match; emits distinct pass-through output cursors |
+| `frontend_hooks(FILE?, OP: OP)` | same as positional, normalized to column assignments |
 
-Under dotted apply, bare `frontend_hooks` is the relation symbol and `frontend_hooks.(...)` applies it to the current cursor batch. The dot is pronounced "apply". Lowering is the same as the direct form.
+Apply examples:
 
-| Direct current form | Dotted target form | Meaning |
-| --- | --- | --- |
-| `frontend_hooks(OP, FILE?)` | `frontend_hooks.(OP, FILE?)` | read/query relation |
-| `frontend_hooks?(OP, FILE)` | `frontend_hooks?.(OP, FILE)` | predicate/filter relation |
-| `frontend_hooks()` | `frontend_hooks.()` | replay all rows for each input cursor |
-| `frontend_hooks?()` | `frontend_hooks?.()` | table-nonempty predicate |
+| Surface | Meaning |
+| --- | --- |
+| `frontend_hooks.(OP, FILE)` | apply/send/run with grounded `OP` and `FILE` |
+| `frontend_hooks!.(OP, FILE)` | same, skipping apply-cache read |
+| `frontend_hooks.(FILE?, OP)` | invalid: apply cannot accept holes |
 
 Rules:
 
@@ -75,17 +95,19 @@ Rules:
 | duplicate column assignment is rejected | `frontend_hooks(OP, OP: OTHER)` is invalid |
 | unknown kwarg column is rejected | `frontend_hooks(NOPE: X)` is invalid |
 | positional overflow is rejected | more positional args than declared columns is invalid |
+| apply args must be grounded | `frontend_hooks.(OP, FILE)` |
+| apply args cannot be holes | `frontend_hooks.(OP, FILE?)` is invalid |
 
 Positional args are authoring sugar. Lowering should normalize every call into named column assignments before producing SQL or a store write.
 
 ```text
-rule(:frontend_hooks, OP!, FILE?, REF?)
+rule(:frontend_hooks, OP, FILE, REF)
 
-frontend_hooks(OP, FILE?)
-=> OP: OP, FILE: FILE?
+frontend_hooks(FILE?, OP)
+=> FILE: FILE?, OP: OP
 
-frontend_hooks(OP, REF: REF?)
-=> OP: OP, REF: REF?
+frontend_hooks(FILE?, REF: REF)
+=> FILE: FILE?, REF: REF
 ```
 
 ## Call Arg Meanings
@@ -94,12 +116,12 @@ frontend_hooks(OP, REF: REF?)
 frontend_hooks(OP: OP, FILE: FILE?, REF: :source)
 ```
 
-| Arg shape | SQL meaning |
+| Arg shape | Query meaning |
 | --- | --- |
 | omitted | no predicate and no projection for that column |
-| `OP: OP` | predicate: column `OP` equals current term `OP` |
+| `OP: OP` | constraint: column `OP` equals current term `OP` |
 | `OP: OP?` | projection: bind column `OP` into term `OP` |
-| `OP: null` | predicate: column `OP IS NULL` |
+| `OP: null` | constraint: column `OP IS NULL` |
 | `OP: OTHER?` | projection: bind column `OP` into term `OTHER` |
 | `OP: :literal` | predicate/write literal value |
 | `OP: &.value` | predicate/write cursor value |
@@ -109,7 +131,7 @@ frontend_hooks(OP: OP, FILE: FILE?, REF: :source)
 Sink-position `rule(:name, ...)` writes only the assigned columns.
 
 ```sprf
-rule(:frontend_hooks, OP!, FILE?, REF?);
+rule(:frontend_hooks, OP?, FILE?, REF?);
 
 ... > rule(:frontend_hooks, OP, FILE)
 ... > rule(:frontend_hooks, OP: OP, FILE: FILE)
@@ -130,13 +152,12 @@ Sink-position writes should not copy the whole cursor term bag. Cursor terms onl
 
 The executable implementation keeps legacy `... > rule(:name)` as a whole-cursor write when no assignments are given. Assigned writes are projected rows.
 
-## Read And Predicate Calls
+## Query Calls
 
 `rule_name(...)` is row-producing. It queries the rule table and emits one output cursor per matching row at that point in the pipe.
 
 ```sprf
-frontend_hooks(OP, FILE?)
-frontend_hooks.(OP, FILE?)
+frontend_hooks(FILE?, OP)
 ```
 
 Plain meaning:
@@ -144,88 +165,55 @@ Plain meaning:
 ```text
 for each input cursor:
   find rows where frontend_hooks.OP = input.OP
-  emit one output cursor per matching row
-  bind output FILE from the matched row
+  bind output FILE from matching rows
+  emit distinct output cursors by cursor content hash
 ```
 
-`rule_name?(...)` is predicate form. It filters the current input batch with `EXISTS` semantics and projects no output columns. Use this for fully bound checks.
+Grounded query is predicate-like:
 
 ```sprf
-frontend_hooks?(OP, FILE)
-frontend_hooks?.(OP, FILE)
+frontend_hooks(OP, FILE)
 ```
 
 Plain meaning:
 
 ```text
-pass the input cursor through once when a matching row exists
-drop the input cursor when no matching row exists
+find rows where both columns match the input cursor
+emit the distinct pass-through output cursor set
+zero rows means failure/drop
 ```
 
-`frontend_hooks?()` / `frontend_hooks?.()` with no args is a table-nonempty gate:
+## Apply Send Run
+
+`rule_name.(...)` is apply/send/run. All args must be grounded. Holes are
+illegal at this boundary.
+
+For an empty-body rule:
 
 ```text
-pass each input cursor once if frontend_hooks has at least one row
-drop each input cursor if frontend_hooks has zero rows
+rule(:r, X?, Y?);
+
+r.(X, Y)
+  write/send grounded X and Y into relation r
+  pass cursor through
 ```
 
-This is still a relation predicate. If `frontend_hooks` was declared as an empty-body rule, the predicate checks rows that were written into the table.
-
-## Relation Read vs Body Invocation
-
-Direct `rule_name(...)` and `rule_name?(...)` calls target the rule relation/table.
-
-```sprf
-frontend_hooks(OP, FILE?)   # relation read
-frontend_hooks?(OP, FILE)   # relation predicate
-
-frontend_hooks.(OP, FILE?)  # dotted relation read target
-frontend_hooks?.(OP, FILE)  # dotted relation predicate target
-```
-
-A rule with a body also writes to its relation. A non-predicate call to a
-bodied rule invokes the stored body over the current cursor and emits the
-body outputs at that point in the pipe.
-
-Predicate calls keep relation/table meaning:
-
-```sprf
-derive_hook(OP, FILE?)   # invoke stored body
-derive_hook?(OP, FILE)   # predicate/filter materialized relation
-```
-
-## Forced Body Invocation
-
-`rule_name!(...)` is forced bodied-rule invocation.
+For a bodied rule:
 
 ```text
-rule_name(...)
+rule(:r, X?, Y?) { ... }
+
+r.(X, Y)
+  run/apply the body with grounded args
   cache read allowed
 
-rule_name!(...)
-  skip rule-call cache read
-  execute the rule body for this dispatch
-  write refreshed outputs back to the rule-call cache
-  keep normal generation and commit boundaries
+r!.(X, Y)
+  run/apply the body with grounded args
+  skip apply-cache read
 ```
 
-The bang affects execution cache behavior only. Storage policy remains
-owned by the destination relation/table. Subscription behavior remains
-owned by mounted query or watch state.
-
-Current executable status:
-
-```text
-sh!`...`
-  preserved as the impure shell builtin
-
-bodied_rule!(...)
-  skips the rule-call cache read and refreshes cache after execution
-
-declared_empty_rule!(...)
-  emits lower/rule-force because table-only relation calls have no body
-  to force
-```
+`!` affects cache policy only. It does not change storage, query,
+subscription, or projection semantics.
 
 ## Runtime State
 
