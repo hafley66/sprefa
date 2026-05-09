@@ -4,7 +4,7 @@
 // surface for free.
 //
 // Usage:
-//   sprefa-daemon [--bind 127.0.0.1:8787] [--root <dir>]
+//   sprefa-daemon [--bind 127.0.0.1:8787] [--root <dir>] [--queue-db <path>]
 //
 // The exposed endpoints are whatever is in `v4::app::sprf_rpc!{...}`.
 // Adding routes here is zero work — the macro generates them.
@@ -18,12 +18,14 @@ use v4::app::{build_router, SprfState};
 struct Args {
     bind: String,
     root: PathBuf,
+    queue_db: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut bind = "127.0.0.1:8787".to_string();
     let mut root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut queue_db: Option<PathBuf> = None;
 
     let mut i = 0;
     while i < raw.len() {
@@ -36,14 +38,18 @@ fn parse_args() -> Result<Args, String> {
                 root = PathBuf::from(raw.get(i+1).ok_or("--root needs dir")?);
                 i += 2;
             }
+            "--queue-db" => {
+                queue_db = Some(PathBuf::from(raw.get(i+1).ok_or("--queue-db needs path")?));
+                i += 2;
+            }
             "-h" | "--help" => {
-                eprintln!("sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR]");
+                eprintln!("sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR] [--queue-db PATH]");
                 std::process::exit(0);
             }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
-    Ok(Args { bind, root })
+    Ok(Args { bind, root, queue_db })
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -53,7 +59,10 @@ async fn main() {
         Err(e) => { eprintln!("sprefa-daemon: {e}"); std::process::exit(2); }
     };
 
-    let state  = Arc::new(SprfState::new(args.root));
+    let state = Arc::new(match args.queue_db {
+        Some(path) => SprfState::new_with_sqlite_queue(args.root, path),
+        None       => SprfState::new(args.root),
+    });
     let router = build_router(state);
 
     let listener = match tokio::net::TcpListener::bind(&args.bind).await {

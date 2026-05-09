@@ -1,8 +1,11 @@
 use std::fs;
+use std::sync::Arc;
+
+use effect_runtime::v2::{table_dirty_key, QueueBackend, SqliteQueue, TABLE_DOMAIN};
 
 use v4::app::{
-    build_in_process, GetDiagsReq, GetFactTableReq, LspOpenReq, RunReq, SprfClient, SprfDiag,
-    RunReport,
+    build_in_process, build_router, GetDiagsReq, GetFactTableReq, InProcessClient, LspOpenReq,
+    RunReq, SprfClient, SprfDiag, SprfState, RunReport,
 };
 
 fn diag_lines(diags: &[SprfDiag]) -> String {
@@ -206,4 +209,59 @@ async fn app_run_keeps_queue_and_wakes_mounted_sql() {
         limit: None,
     }).await.unwrap();
     assert_eq!(table.total, 0);
+}
+
+#[tokio::test]
+async fn app_can_use_sqlite_queue_for_mounted_sql_parks() {
+    let root = tempfile::tempdir().unwrap();
+    let db = root.path().join("queue.db");
+    let missing = root.path().join("missing.sprf");
+
+    fs::write(&missing, r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:missing_hooks, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+                  AND frontend_hooks.FILE = ${FILE}
+              )
+            `
+          > rule(:missing_hooks, OP: OP);
+    "#).unwrap();
+
+    {
+        let state = Arc::new(SprfState::new_with_sqlite_queue(
+            root.path().to_path_buf(),
+            &db,
+        ));
+        let client = InProcessClient::new(build_router(state.clone()));
+        client.run(RunReq {
+            path: missing,
+            root: Some(root.path().to_path_buf()),
+        }).await.unwrap();
+
+        assert_eq!(
+            state.queue.depth(),
+            1,
+            "mounted sql should park one table-dirty continuation in sqlite queue",
+        );
+    }
+
+    let queue: Arc<dyn QueueBackend<v4::Cursor>> =
+        Arc::new(SqliteQueue::<v4::Cursor>::open_file(&db));
+    assert_eq!(queue.depth(), 1);
+    assert_eq!(
+        queue.dispatch_park(TABLE_DOMAIN, Some(table_dirty_key("frontend_hooks"))),
+        1,
+        "sqlite-backed app queue should revive the mounted SQL park by table dirty key",
+    );
 }

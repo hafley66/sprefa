@@ -6,6 +6,7 @@
 //   sprefa-run <path-to-sprf-file> [--show-rows | --no-show-rows]
 //                                  [--max-diags N]
 //                                  [--remote http://host:port]
+//                                  [--queue-db path]
 //
 // Diag format (one per line, suitable for VS Code problem matchers):
 //   <path>:<line>:<col>:<severity>:<code>: <message>
@@ -16,8 +17,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use v4::app::{
-    build_in_process, GetFactTableReq, HttpClient, RunReq,
-    SprfClient, SprfDiag, SprfError,
+    build_in_process, build_router, GetFactTableReq, HttpClient, InProcessClient, RunReq,
+    SprfClient, SprfDiag, SprfError, SprfState,
 };
 
 #[derive(Debug)]
@@ -27,6 +28,7 @@ struct Args {
     max_diags: usize,
     remote:    Option<String>,
     root:      Option<PathBuf>,
+    queue_db:  Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -36,6 +38,7 @@ fn parse_args() -> Result<Args, String> {
     let mut max_diags: usize           = 50;
     let mut remote:    Option<String>  = None;
     let mut root:      Option<PathBuf> = None;
+    let mut queue_db:  Option<PathBuf> = None;
 
     let mut i = 0;
     while i < raw.len() {
@@ -57,6 +60,11 @@ fn parse_args() -> Result<Args, String> {
                 root = Some(PathBuf::from(v));
                 i += 2;
             }
+            "--queue-db" => {
+                let v = raw.get(i+1).ok_or("--queue-db needs a path")?;
+                queue_db = Some(PathBuf::from(v));
+                i += 2;
+            }
             "-h" | "--help" => { print_usage(); std::process::exit(0); }
             other if other.starts_with("--") => {
                 return Err(format!("unknown flag: {other}"));
@@ -72,13 +80,13 @@ fn parse_args() -> Result<Args, String> {
     }
     Ok(Args {
         path: path.ok_or("missing <path-to-sprf-file>")?,
-        show_rows, max_diags, remote, root,
+        show_rows, max_diags, remote, root, queue_db,
     })
 }
 
 fn print_usage() {
     eprintln!("sprefa-run <path-to-sprf-file> \
-[--show-rows|--no-show-rows] [--max-diags N] [--remote URL]");
+[--show-rows|--no-show-rows] [--max-diags N] [--remote URL] [--queue-db PATH]");
 }
 
 /// 1-indexed (line, col) for byte offset `off` in `src`.
@@ -147,8 +155,18 @@ async fn main() -> ExitCode {
     let client: Box<dyn SprfClient> = match args.remote.clone() {
         Some(url) => Box::new(HttpClient::new(url)),
         None => {
-            let (_state, c) = build_in_process(root);
-            Box::new(c)
+            match args.queue_db.as_ref() {
+                Some(queue_db) => {
+                    let state = std::sync::Arc::new(
+                        SprfState::new_with_sqlite_queue(root, queue_db)
+                    );
+                    Box::new(InProcessClient::new(build_router(state)))
+                }
+                None => {
+                    let (_state, c) = build_in_process(root);
+                    Box::new(c)
+                }
+            }
         }
     };
 
