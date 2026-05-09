@@ -515,11 +515,11 @@ impl SprfState {
         self
     }
 
-    fn mount_pipe(&self, pipe: Pipe<Cursor>) -> Arc<PipeInstance<Cursor>> {
+    fn mount_pipe(&self, pipe: Pipe<Cursor>, identity: u64) -> Arc<PipeInstance<Cursor>> {
         let mut inst = pipe.into_instance();
         let mut next = self.next_instance_id.lock().unwrap();
-        inst.pipe_hash = *next;
-        inst.instance_id = *next;
+        inst.pipe_hash = identity;
+        inst.instance_id = identity;
         *next += 1;
         let inst = Arc::new(inst);
         self.instances.lock().unwrap().push(inst.clone());
@@ -666,8 +666,12 @@ impl SprfHandlers for SprfState {
             .with_bus(self.bus.clone())
             .with_diag(runtime_diags.clone());
         let mut n = 0;
-        for pipe in pipes {
-            let inst = self.mount_pipe(pipe);
+        for (idx, pipe) in pipes.into_iter().enumerate() {
+            let identity = program
+                .get(idx)
+                .map(|pipe_ast| stable_pipe_identity(&req.path, pipe_ast))
+                .unwrap_or_else(|| fallback_pipe_identity(&req.path, idx));
+            let inst = self.mount_pipe(pipe, identity);
             expand(
                 inst.as_ref(),
                 self.queue.clone(),
@@ -731,6 +735,57 @@ impl SprfHandlers for SprfState {
                 .collect(),
         }).collect();
         Ok(FactTable { name: req.name, total, rows })
+    }
+}
+
+fn stable_pipe_identity(path: &std::path::Path, pipe: &PipeAst) -> u64 {
+    let mut h = blake3::Hasher::new();
+    h.update(path.to_string_lossy().as_bytes());
+    h.update(b"\0pipe\0");
+    hash_pipe_ast(&mut h, pipe);
+    hash_to_nonzero_u64(h.finalize().as_bytes())
+}
+
+fn fallback_pipe_identity(path: &std::path::Path, idx: usize) -> u64 {
+    let mut h = blake3::Hasher::new();
+    h.update(path.to_string_lossy().as_bytes());
+    h.update(b"\0pipe-index\0");
+    h.update(&idx.to_le_bytes());
+    hash_to_nonzero_u64(h.finalize().as_bytes())
+}
+
+fn hash_to_nonzero_u64(bytes: &[u8; 32]) -> u64 {
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&bytes[..8]);
+    u64::from_le_bytes(out).max(1)
+}
+
+fn hash_pipe_ast(h: &mut blake3::Hasher, pipe: &PipeAst) {
+    h.update(&(pipe.steps.len() as u64).to_le_bytes());
+    for step in &pipe.steps {
+        hash_op_call(h, step);
+    }
+}
+
+fn hash_op_call(h: &mut blake3::Hasher, call: &OpCall) {
+    h.update(call.name.as_bytes());
+    h.update(&[call.force as u8, call.predicate as u8, call.apply as u8]);
+    if let Some(flow) = &call.flow {
+        h.update(b"\0flow\0");
+        h.update(flow.raw.as_bytes());
+    }
+    h.update(&(call.args.len() as u64).to_le_bytes());
+    for arg in &call.args {
+        h.update(b"\0arg\0");
+        h.update(arg.raw.as_bytes());
+    }
+    if let Some(dsl) = &call.dsl {
+        h.update(b"\0dsl\0");
+        h.update(dsl.raw.as_bytes());
+    }
+    if let Some(block) = &call.block {
+        h.update(b"\0block\0");
+        hash_pipe_ast(h, block);
     }
 }
 

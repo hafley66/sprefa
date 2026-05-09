@@ -79,6 +79,13 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// content id. May buffer until `commit`.
     fn insert(&self, table: &str, row: Arc<R>);
 
+    /// Store-specific visible row identity. Memory stores use the full
+    /// row. SQLite stores use the declared physical columns, because
+    /// undeclared cursor fields are not persisted in the wide table.
+    fn row_id_for(&self, table: &str, row: &R) -> String {
+        content_id(table, row)
+    }
+
     /// Bulk insert. Default falls back to per-row `insert`. Stores
     /// override to take ONE lock + ONE transaction for the whole batch
     /// — the difference between O(rows) lock acquisitions and 1.
@@ -230,7 +237,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
         let mut prepared: Vec<(String, Arc<R>)> = Vec::with_capacity(rows.len());
         for row in rows {
             let mut owned: R = Arc::unwrap_or_clone(row);
-            let id = content_id(table, &owned);
+            let id = self.row_id_for(table, &owned);
             owned.set(ID_COL, &id);
             prepared.push((id, Arc::new(owned)));
         }
@@ -294,7 +301,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
                 if let Some(id) = row.get(ID_COL) {
                     removed_ids.insert(id.to_string());
                 } else {
-                    removed_ids.insert(content_id(table, row.as_ref()));
+                    removed_ids.insert(self.row_id_for(table, row.as_ref()));
                 }
             }
             !matched
@@ -313,7 +320,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
                 }
                 let id = row.get(ID_COL)
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| content_id(table, row.as_ref()));
+                    .unwrap_or_else(|| self.row_id_for(table, row.as_ref()));
                 !removed_ids.contains(&id)
             });
             self.dirty_tables.lock().unwrap().insert(table.to_string());
@@ -546,7 +553,7 @@ mod sqlite {
             drop(schemas);
 
             let mut owned: R = Arc::unwrap_or_clone(row);
-            let id_hex = content_id(table, &owned);
+            let id_hex = self.row_id_for(table, &owned);
             owned.set(ID_COL, &id_hex);
 
             let conn = self.conn.lock().unwrap();
@@ -581,6 +588,23 @@ mod sqlite {
             bump_table_version(&self.table_versions, table);
             self.pending.lock().unwrap().push((table.to_string(), Arc::new(owned)));
             self.dirty_tables.lock().unwrap().insert(table.to_string());
+        }
+
+        fn row_id_for(&self, table: &str, row: &R) -> String {
+            let schemas = self.schemas.lock().unwrap();
+            let cols = schemas
+                .get(table)
+                .unwrap_or_else(|| panic!("row_id_for before declare: {table:?}"))
+                .clone();
+            drop(schemas);
+
+            let mut projected = R::default();
+            for col in cols {
+                if let Some(value) = row.get(&col) {
+                    projected.set(&col, value);
+                }
+            }
+            content_id(table, &projected)
         }
 
         fn read_where(&self, table: &str, col: &str, value: &str) -> Vec<Arc<R>> {

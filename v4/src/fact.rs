@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use effect_runtime::v2::{content_id, Component, FactStore, Node, RenderCtx};
+use effect_runtime::v2::{Component, FactStore, Node, RenderCtx};
 
 use crate::mounted_query;
 use crate::Cursor;
@@ -93,7 +93,7 @@ impl Component for FactWrite {
                     .map(|support_id| {
                         (
                             support_id.to_string(),
-                            content_id(self.table.as_ref(), row.as_ref()),
+                            self.store.row_id_for(self.table.as_ref(), row.as_ref()),
                         )
                     })
             })

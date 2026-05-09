@@ -36,6 +36,11 @@ Implemented:
 - app drivers can use `--queue-db`, `--fact-db`, or both
 - `SqliteFactStore` supports core/internal tables and mounted-query columns
   such as `_strings`, `generation`, and `__support_cursor_id`
+- app-mounted pipe identity is content-stable for a source path and pipe
+  structure, so queued continuations do not resume in the wrong pipe after
+  source edits shift statement order
+- `SqliteFactStore` row identity uses declared persisted columns, so hidden
+  cursor fields do not create duplicate visible rows
 
 Current limitations:
 
@@ -43,7 +48,8 @@ Current limitations:
 - mounted query definitions and outputs persist in the fact store, but query
   continuations are only durable when the queue backend is `SqliteQueue`
 - mount recovery across a full process restart needs an integration driver that
-  reopens both `SqliteFactStore` and `SqliteQueue`, then resumes parked rows
+  watches and reruns source files after reopening both `SqliteFactStore` and
+  `SqliteQueue`
 - dirty publish is table-level for mounted SQL dependencies
 - stale output rows are replaced for a mount/input key; broader negative-diff
   propagation is limited to support rows recorded by rule writes
@@ -229,6 +235,7 @@ mounted_query_retraction_cascades_to_supported_rule_rows
 sqlite_queue_revive_smoke
 app_can_use_sqlite_queue_for_mounted_sql_parks
 app_can_use_sqlite_fact_store_for_rule_rows
+app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs
 sprefa_run_accepts_sqlite_queue_db
 sprefa_run_accepts_sqlite_fact_db
 ```
@@ -236,7 +243,6 @@ sprefa_run_accepts_sqlite_fact_db
 Remaining target tests:
 
 ```text
-mounted_query_survives_full_sqlite_backend_reopen
 store_backed_collect_buffers
 ```
 

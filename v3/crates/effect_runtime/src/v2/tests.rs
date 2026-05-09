@@ -223,6 +223,40 @@ fn sqlite_fact_store_allows_generation_user_column() {
     assert_eq!(rows[0].get("__support_cursor_id"), Some("c1"));
 }
 
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_fact_store_identity_uses_declared_columns() {
+    let store = SqliteFactStore::<LabCursor>::open_in_memory().unwrap();
+    store.declare("frontend_hooks", &["OP", "FILE"]);
+
+    store.insert(
+        "frontend_hooks",
+        Arc::new(
+            LabCursor::new()
+                .with("OP", "getUser")
+                .with("FILE", "src/hooks.ts")
+                .with("value", "first")
+                .with("__support_cursor_id", "a"),
+        ),
+    );
+    store.insert(
+        "frontend_hooks",
+        Arc::new(
+            LabCursor::new()
+                .with("OP", "getUser")
+                .with("FILE", "src/hooks.ts")
+                .with("value", "second")
+                .with("__support_cursor_id", "b"),
+        ),
+    );
+
+    assert_eq!(
+        store.len("frontend_hooks"),
+        1,
+        "SQLite identity should match the declared persisted columns",
+    );
+}
+
 // --- demo components -------------------------------------------------
 
 struct Trim { from: String, to: String }

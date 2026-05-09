@@ -150,4 +150,6 @@ generation
 __support_cursor_id
 ```
 
+SQLite fact-row identity is based on declared persisted columns. Extra cursor fields can flow through the runtime without changing the visible row identity of a declared SQLite table.
+
 The effect runtime owns the generic traits and queue mechanics. `SprfStore` owns the sprf-specific core tables and declares them before inserting sentinels so memory and SQLite fact stores share the same app path.

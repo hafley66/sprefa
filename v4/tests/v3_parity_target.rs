@@ -301,6 +301,111 @@ async fn app_can_use_sqlite_fact_store_for_rule_rows() {
 }
 
 #[tokio::test]
+async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
+    let root = tempfile::tempdir().unwrap();
+    let fact_db = root.path().join("facts.db");
+    let queue_db = root.path().join("queue.db");
+    let sprf = root.path().join("mounted_reopen.sprf");
+
+    fs::write(&sprf, r#"
+        rule(:openapi_ops, OP?, SPEC?);
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:missing_hooks, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `openapi.yaml`
+          > term_bind(:SPEC)
+          > openapi_ops.(OP, SPEC);
+
+        openapi_ops(OP?, SPEC?)
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+              )
+            `
+          > missing_hooks.(OP);
+    "#).unwrap();
+
+    {
+        let state = Arc::new(SprfState::new_with_sqlite_backends(
+            root.path().to_path_buf(),
+            &fact_db,
+            &queue_db,
+        ));
+        let client = InProcessClient::new(build_router(state));
+        client.run(RunReq {
+            path: sprf.clone(),
+            root: Some(root.path().to_path_buf()),
+        }).await.unwrap();
+    }
+
+    let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
+    assert_eq!(facts.rows_of("missing_hooks").len(), 1);
+
+    let queue: Arc<dyn QueueBackend<v4::Cursor>> =
+        Arc::new(SqliteQueue::<v4::Cursor>::open_file(&queue_db));
+    assert!(
+        queue.depth() >= 1,
+        "first run should leave mounted SQL continuations parked in SQLite",
+    );
+
+    fs::write(&sprf, r#"
+        rule(:openapi_ops, OP?, SPEC?);
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:missing_hooks, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `openapi.yaml`
+          > term_bind(:SPEC)
+          > openapi_ops.(OP, SPEC);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > frontend_hooks.(OP, FILE);
+
+        openapi_ops(OP?, SPEC?)
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+              )
+            `
+          > missing_hooks.(OP);
+    "#).unwrap();
+
+    {
+        let state = Arc::new(SprfState::new_with_sqlite_backends(
+            root.path().to_path_buf(),
+            &fact_db,
+            &queue_db,
+        ));
+        let client = InProcessClient::new(build_router(state));
+        client.run(RunReq {
+            path: sprf,
+            root: Some(root.path().to_path_buf()),
+        }).await.unwrap();
+    }
+
+    let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
+    assert_eq!(
+        facts.rows_of("missing_hooks").len(),
+        0,
+        "reopened SQLite facts should retain mounted output state and retract stale anti-join rows",
+    );
+}
+
+#[tokio::test]
 async fn app_write_file_wakes_mounted_read_pipeline() {
     let root = tempfile::tempdir().unwrap();
     let data = root.path().join("data.txt");

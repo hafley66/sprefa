@@ -156,6 +156,8 @@ Implemented since this tracker was written:
 - mounted SQL reruns emit only newly visible output cursor hashes
 - anti-join outputs disappearing retract downstream supported rule rows
 - `SqliteQueue` can persist, reopen, wake, and resume parked rows
+- app-mounted pipe identity is stable across source edits that shift statement order
+- `SqliteFactStore` identity follows declared columns, not hidden cursor fields
 - `sprefa-run --queue-db` creates a durable queue database
 - `sprefa-run --fact-db` creates a durable fact database
 - `sprefa-daemon` accepts `--queue-db` and `--fact-db`
@@ -201,6 +203,7 @@ Promoted target tests now run green in the normal suite:
 | `sqlite_queue_revive_smoke` | parked continuations survive SQLite queue reopen |
 | `app_can_use_sqlite_queue_for_mounted_sql_parks` | app driver can park mounted SQL work in SQLite queue |
 | `app_can_use_sqlite_fact_store_for_rule_rows` | app driver can persist rule rows in SQLite facts |
+| `app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs` | reopened SQLite facts/queue retain mounted output state and retract stale rows |
 | `sprefa_run_accepts_sqlite_queue_db` | CLI accepts durable queue DB |
 | `sprefa_run_accepts_sqlite_fact_db` | CLI accepts durable fact DB |
 
