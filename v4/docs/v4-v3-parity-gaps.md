@@ -40,6 +40,9 @@ sql = relational escape hatch over current batch + rule tables
 | aggregate write | `render(:markdown)` / `collect()` can feed `write_file` for one artifact write |
 | durable queue | `SqliteQueue` can revive parked continuations after reopen |
 | app SQLite backends | `sprefa-run` and `sprefa-daemon` accept `--queue-db` and `--fact-db` |
+| unified config | `$SPREFA_CONFIG` / `~/.config/sprefa/config.toml` provide repo, store, run, daemon defaults |
+| ghcacher dirty seam | default-on `ghcache` feature maps `change_log` rows to dirty wake keys |
+| daemon ghcache polling | `sprefa-daemon --ghcache-db` polls ghcacher and drains ready continuations |
 
 Human smoke commands live in the root `justfile`:
 
@@ -61,13 +64,13 @@ just v4-app-host-test
 | mounted query restart | partial | reopen app with both SQLite backends and resume existing mounts |
 | `next` workflow parity | substrate exists | channel names, persistence, wake/replay rules |
 | live invalidation kernel | table/file dirty keys exist | column-value dirty keys and watcher sources |
-| file/git watcher | missing | watch source, debounce, branch/rev invalidation |
-| ghcacher integration | missing | cache ownership and import path from V2/V3 |
+| file/git watcher | partial | ghcacher source exists; direct fs watcher and git blob invalidation policy still missing |
+| ghcacher integration | partial | dirty source and daemon polling exist; repo subscription/config ownership still missing |
 | aggregate render policy | basic batch markdown works | grouping key, ordering, idempotent write policy |
 | write invalidates read/fs caches | basic file dirty path exists | git/blob/cache dependency keys |
 | cross-rev write/worktree materialization | missing | worktree policy and target address form |
 | full V3 server parity | partial | whether HTTP daemon or generic app_host is canonical |
-| LSP test suite health | one known failing semantic-token test | fix glob token provider or update test expectation |
+| LSP test suite health | needs current check | run `just v4-lsp-test` before claiming extension parity |
 
 ## Drive Order
 
@@ -106,6 +109,115 @@ blast radius
 cross-repo dependency graph
 ```
 
+## Closest Tasks Out Of 10
+
+1. **Refresh parity docs after every green slice**
+
+   Current tracker had stale ghcacher/config rows. Keep this file aligned with tests before starting larger work.
+
+2. **Add config examples and justfile commands**
+
+   Add a sample `v4/examples/sprefa.config.toml` and commands for:
+
+   ```bash
+   sprefa-run --config-equivalent-via-SPREFA_CONFIG
+   sprefa-daemon --ghcache-db from config
+   cargo test --no-default-features ...
+   ```
+
+   Current config loader uses `$SPREFA_CONFIG`, but the CLI has no explicit `--config` flag.
+
+3. **Run and update LSP test health**
+
+   Verify:
+
+   ```bash
+   just v4-lsp-test
+   just v4-lsp-build
+   just v4-vscode-compile
+   ```
+
+   Update the LSP health row with actual current failures.
+
+4. **Route app `/lsp/hover` through `sprefa-lsp`**
+
+   App has `lsp_hover`; `sprefa-lsp` still locally calls `lsp_locate_dsl` plus body providers. Wire the app RPC path so hover behavior has one source.
+
+5. **Cursor-flow hover payload**
+
+   Decide and implement first hover payload shape:
+
+   ```text
+   op span
+   cursor count
+   bounded sample rows
+   known terms
+   source refs when present
+   ```
+
+   Keep sample bounded so hover never dumps a V0-sized blast radius.
+
+6. **SQL schema completions**
+
+   Surface rule declarations and columns to SQL body completions:
+
+   ```text
+   input
+   input.<term>
+   rule table names
+   rule columns
+   core tables later
+   ```
+
+7. **Ghcacher repo subscription/config ownership**
+
+   Current daemon polls a known DB. Next slice should define how sprefa config says:
+
+   ```toml
+   [daemon]
+   ghcache_db = "..."
+
+   [[repos]]
+   slug = "owner/name"
+   root = "..."
+   ghcache = true
+   ```
+
+   Then decide whether sprefa calls ghcacher `/subscribe` or only tails existing cache.
+
+8. **File watcher source**
+
+   Add direct filesystem watcher or polling source for local worktree file changes, mapped to existing `FILE_DOMAIN` dirty keys. This is separate from ghcacher branch/repo dirty.
+
+9. **`next` language workflows**
+
+   Lock the smallest user-facing `next` pattern:
+
+   ```text
+   emit event
+   park waiting cursor
+   wake by channel/key
+   persist through SQLite queue
+   ```
+
+   Runtime substrate exists; language surface is the gap.
+
+10. **Dogfood invariant pack**
+
+   Build one real `.sprf` pack that uses current primitives:
+
+   ```text
+   repo config
+   fs/read
+   json/ast/re
+   rule rows
+   SQL anti-join
+   lsp_warn
+   render markdown recap
+   ```
+
+   Target: one command that proves a repo-local invariant and produces both diagnostics and a recap file.
+
 ## Under-Specified Lock-In Points
 
 Bring these back for human decision before implementation:
@@ -116,7 +228,8 @@ Bring these back for human decision before implementation:
 | mounted query | whether subscriptions are automatic at rule read sites or explicit through an op |
 | `next` storage | transient event queue vs durable event table |
 | daemon canon | keep current HTTP `sprefa-daemon` as canonical or migrate to generic `app_host` |
-| watcher source | filesystem watcher first, git polling first, or ghcacher first |
+| watcher source | ghcacher exists first; decide direct filesystem watcher and git blob invalidation policy |
+| config flag | keep `$SPREFA_CONFIG` only or add explicit `--config` to run/daemon/LSP |
 
 ## Current Test Notes
 
@@ -163,6 +276,12 @@ Implemented since this tracker was written:
 - `sprefa-run --fact-db` creates a durable fact database
 - `sprefa-daemon` accepts `--queue-db` and `--fact-db`
 - `SprfState` can run with memory facts/queue, SQLite queue only, SQLite facts only, or both SQLite backends
+- `SprfConfig` loads unified store/run/daemon/repo config from `$SPREFA_CONFIG` or XDG path
+- `sprefa-run` and `sprefa-daemon` use config defaults with CLI flag override
+- `ghcache` feature gates ghcacher code; default build includes it
+- `sprefa-daemon --ghcache-db` tails ghcacher `change_log` and dispatches dirty keys
+- `/git/ghcache-change` RPC dispatches one ghcacher change into the dirty wake path
+- `/lsp/hover` RPC resolves cached DSL hover payloads in app state
 
 ## Target Tests
 
