@@ -187,6 +187,65 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
 }
 
 #[test]
+fn mounted_query_manual_rerun_emits_only_new_output_hashes() {
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+
+    run_into_store(r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:hook_hits, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+
+        `getUser`
+          > term_bind(:OP)
+          > sql`
+              SELECT input.__cursor_idx, input.OP, frontend_hooks.FILE AS value
+              FROM input
+              JOIN frontend_hooks ON frontend_hooks.OP = ${OP}
+            `
+          > term_bind(:FILE)
+          > rule(:hook_hits, OP: OP, FILE: FILE);
+    "#, store.clone());
+
+    assert_eq!(store.rows_of("hook_hits").len(), 1);
+
+    run_into_store(r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:hook_hits, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks_extra.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+
+        `getUser`
+          > term_bind(:OP)
+          > sql`
+              SELECT input.__cursor_idx, input.OP, frontend_hooks.FILE AS value
+              FROM input
+              JOIN frontend_hooks ON frontend_hooks.OP = ${OP}
+            `
+          > term_bind(:FILE)
+          > rule(:hook_hits, OP: OP, FILE: FILE);
+    "#, store.clone());
+
+    let rows = store.rows_of("hook_hits");
+    assert_eq!(
+        rows.len(),
+        2,
+        "manual rerun should pass only the new mounted query output downstream"
+    );
+    let mut files: Vec<&str> = rows.iter().filter_map(|row| row.get("FILE")).collect();
+    files.sort();
+    assert_eq!(files, vec!["src/hooks.ts", "src/hooks_extra.ts"]);
+}
+
+#[test]
 fn collect_does_not_mix_two_pipe_instances() {
     use std::sync::Mutex;
 

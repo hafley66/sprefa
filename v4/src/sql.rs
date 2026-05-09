@@ -50,14 +50,13 @@ impl Component for SqlQueryComponent {
 
         let key = sql_batch_cache_key(self.store.as_ref(), self.sql.as_ref(), batch);
         if let Some(cached) = self.cache.lock().unwrap().get(&key).cloned() {
-            mounted_query::record_sql_outputs(
+            return mounted_query::record_sql_outputs(
                 &self.store,
                 self.sql.as_ref(),
                 ctx.expand_tick,
                 batch,
                 &cached,
             );
-            return cached;
         }
 
         let result = match run_sql_batch(self.store.as_ref(), self.sql.as_ref(), batch) {
@@ -67,7 +66,7 @@ impl Component for SqlQueryComponent {
                 batch.iter().map(|_| Node::Done).collect()
             }
         };
-        mounted_query::record_sql_outputs(
+        let added = mounted_query::record_sql_outputs(
             &self.store,
             self.sql.as_ref(),
             ctx.expand_tick,
@@ -75,7 +74,7 @@ impl Component for SqlQueryComponent {
             &result,
         );
         self.cache.lock().unwrap().insert(key, result.clone());
-        result
+        added
     }
 
     fn purity(&self) -> Purity {

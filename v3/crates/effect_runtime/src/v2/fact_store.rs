@@ -92,6 +92,11 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// Row count for `table`.
     fn len(&self, table: &str) -> usize;
 
+    /// Delete rows from `table` where every `(col, value)` predicate
+    /// matches. Returns the number of removed rows. Stores that do not
+    /// support deletion can keep the default no-op.
+    fn delete_matching(&self, _table: &str, _predicates: &[(&str, &str)]) -> usize { 0 }
+
     /// Drain any buffered writes and (if `bus` is provided) publish
     /// dirty events for each newly-inserted row, keyed by the FIRST
     /// declared column of the table.
@@ -247,6 +252,47 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
 
     fn len(&self, table: &str) -> usize {
         self.tables.lock().unwrap().get(table).map(|b| b.rows.len()).unwrap_or(0)
+    }
+
+    fn delete_matching(&self, table: &str, predicates: &[(&str, &str)]) -> usize {
+        if predicates.is_empty() { return 0; }
+
+        let mut removed_ids = HashSet::new();
+        let mut tables = self.tables.lock().unwrap();
+        let Some(bucket) = tables.get_mut(table) else { return 0 };
+        let before = bucket.rows.len();
+        bucket.rows.retain(|row| {
+            let matched = predicates.iter().all(|(col, value)| {
+                row.get(col).map(|got| got == *value).unwrap_or(false)
+            });
+            if matched {
+                if let Some(id) = row.get(ID_COL) {
+                    removed_ids.insert(id.to_string());
+                } else {
+                    removed_ids.insert(content_id(table, row.as_ref()));
+                }
+            }
+            !matched
+        });
+        for id in &removed_ids {
+            bucket.seen.remove(id);
+        }
+        let removed = before - bucket.rows.len();
+        drop(tables);
+
+        if removed > 0 {
+            self.pending.lock().unwrap().retain(|(pending_table, row)| {
+                if pending_table != table {
+                    return true;
+                }
+                let id = row.get(ID_COL)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| content_id(table, row.as_ref()));
+                !removed_ids.contains(&id)
+            });
+        }
+
+        removed
     }
 
     fn commit(&self, _gen: u64, bus: Option<&EventBus>) {
@@ -553,6 +599,58 @@ mod sqlite {
                 [],
                 |r| r.get::<_, i64>(0),
             ).map(|n| n as usize).unwrap_or(0)
+        }
+
+        fn delete_matching(&self, table: &str, predicates: &[(&str, &str)]) -> usize {
+            if predicates.is_empty() { return 0; }
+
+            let schemas = self.schemas.lock().unwrap();
+            let cols = match schemas.get(table) { Some(c) => c.clone(), None => return 0 };
+            drop(schemas);
+
+            let mut clauses = Vec::with_capacity(predicates.len());
+            let mut values = Vec::with_capacity(predicates.len());
+            for (idx, (col, value)) in predicates.iter().enumerate() {
+                if *col == ID_COL {
+                    clauses.push(format!("_id = ?{}", idx + 1));
+                    values.push((*value).to_string());
+                    continue;
+                }
+                if !cols.iter().any(|c| c == col) {
+                    return 0;
+                }
+                clauses.push(format!(
+                    "{}_id = (SELECT id FROM sprf_strings WHERE value = ?{})",
+                    col_sql(col),
+                    idx + 1,
+                ));
+                values.push((*value).to_string());
+            }
+
+            let sql = format!(
+                "DELETE FROM {table}_facts WHERE {}",
+                clauses.join(" AND "),
+            );
+            let conn = self.conn.lock().unwrap();
+            let params: Vec<&dyn rusqlite::ToSql> = values
+                .iter()
+                .map(|v| v as &dyn rusqlite::ToSql)
+                .collect();
+            let changed = conn.execute(&sql, params.as_slice()).expect("fact delete");
+            drop(conn);
+
+            if changed > 0 {
+                self.pending.lock().unwrap().retain(|(pending_table, row)| {
+                    if pending_table != table {
+                        return true;
+                    }
+                    !predicates.iter().all(|(col, value)| {
+                        row.get(col).map(|got| got == *value).unwrap_or(false)
+                    })
+                });
+            }
+
+            changed
         }
 
         fn commit(&self, _gen: u64, bus: Option<&EventBus>) {
