@@ -160,6 +160,8 @@ async fn main() -> ExitCode {
     let parse_errs = print_diags(&path_disp, &src, &report.parse_diags, args.max_diags);
     let walk_errs  = print_diags(&path_disp, &src, &report.walk_diags,  args.max_diags);
     if parse_errs + walk_errs > 0 { return ExitCode::from(1); }
+    let runtime_errs = print_diags(&path_disp, &src, &report.runtime_diags, args.max_diags);
+    if runtime_errs > 0 { return ExitCode::from(1); }
 
     if report.tables.is_empty() {
         println!("(no rules — FactStore not introspected)");

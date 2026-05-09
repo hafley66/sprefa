@@ -1,0 +1,12 @@
+# Git grep TODO/FIXME index.
+#
+# This is intentionally shell-backed: the language keeps the relationship
+# programmable while delegating the cheap repo scan to git.
+
+rule(:todo_hits, HIT?);
+
+sh`git grep -n -E 'TODO|FIXME' -- ':!.beads' ':!chat_log' ':!v4/target' ':!target' || true`
+  > split(HIT?)`
+`
+  > todo_hits.(HIT)
+  > lsp_info(:todo_hit)`todo/fixme: ${HIT}`;

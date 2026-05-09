@@ -1,0 +1,31 @@
+# Repo-local docs drift check.
+#
+# Expected docs are declared by hand. Actual docs come from shell.
+# SQL anti-join emits docs that are expected but missing on disk.
+
+rule(:expected_docs, DOC?);
+rule(:actual_docs, DOC?);
+rule(:missing_docs, DOC?);
+
+`v4-rule-query-semantics.md` > term_bind(:DOC) > expected_docs.(DOC);
+`v4-sql-rule-query-plan.md` > term_bind(:DOC) > expected_docs.(DOC);
+`v4-runtime-batching.md` > term_bind(:DOC) > expected_docs.(DOC);
+`v4-made-up-required-doc.md` > term_bind(:DOC) > expected_docs.(DOC);
+
+sh`find v4/docs -maxdepth 1 -name '*.md' | sed 's#v4/docs/##'`
+  > split(DOC?)`
+`
+  > actual_docs.(DOC);
+
+expected_docs(DOC?)
+  > sql`
+      SELECT input.__cursor_idx, input.DOC
+      FROM input
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM actual_docs
+        WHERE actual_docs.DOC = ${DOC}
+      )
+    `
+  > missing_docs.(DOC)
+  > lsp_warn(:missing_doc)`expected doc is missing: ${DOC}`;

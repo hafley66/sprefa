@@ -52,6 +52,20 @@ v4-v3-parity-targets:
 v4-flow-smoke:
     CARGO_BUILD_RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/lsp-flow-smoke.sprf --show-rows
 
+v4-dev-missing-hook:
+    RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-missing-frontend-hook.sprf --show-rows
+
+v4-dev-doc-drift:
+    RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-doc-drift.sprf --show-rows --root .
+
+v4-dev-git-todo-index:
+    RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-git-todo-index.sprf --show-rows --root .
+
+v4-dev-rust-panic-map:
+    RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-rust-panic-map.sprf --show-rows --root .
+
+v4-dev-dogfood: v4-dev-missing-hook v4-dev-doc-drift v4-dev-git-todo-index v4-dev-rust-panic-map
+
 v4-lsp-build:
     CARGO_BUILD_RUSTC_WRAPPER= cargo build --manifest-path v4/crates/sprefa-lsp/Cargo.toml --bin sprefa-lsp
 

@@ -27,8 +27,8 @@ use axum::{
 };
 use bytes::Bytes;
 use effect_runtime::v2::{
-    expand, BufferProbeSink, Diag, ExpandOpts, FactStore, MemFactStore, MemQueue, ProbeSink,
-    QueueBackend,
+    expand, BufferProbeSink, Diag, DiagSink, ExpandOpts, FactStore, MemFactStore, MemQueue,
+    ProbeSink, QueueBackend,
 };
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
@@ -121,9 +121,30 @@ impl From<&effect_runtime::v2::Diag> for SprfDiag {
 pub struct RunReport    {
     pub parse_diags: Vec<SprfDiag>,
     pub walk_diags:  Vec<SprfDiag>,
+    pub runtime_diags: Vec<SprfDiag>,
     pub pipes:       usize,
     /// Rule-table names harvested from the AST (one per `rule(:NAME)`).
     pub tables:      Vec<String>,
+}
+
+struct BufferDiagSink {
+    rows: Mutex<Vec<Diag>>,
+}
+
+impl BufferDiagSink {
+    fn new() -> Self {
+        Self { rows: Mutex::new(Vec::new()) }
+    }
+
+    fn snapshot(&self) -> Vec<Diag> {
+        self.rows.lock().unwrap().clone()
+    }
+}
+
+impl DiagSink for BufferDiagSink {
+    fn emit(&self, diag: Diag) {
+        self.rows.lock().unwrap().push(diag);
+    }
 }
 
 /// Locate the dsl-body span enclosing a host byte by walking the
@@ -512,7 +533,10 @@ impl SprfHandlers for SprfState {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         // 4096 matches v4-bench. Smaller caps multiply per-batch lock
         // overhead in batched sinks (FactWrite et al.).
-        let opts = ExpandOpts::default().with_batch_cap(4096);
+        let runtime_diags = Arc::new(BufferDiagSink::new());
+        let opts = ExpandOpts::default()
+            .with_batch_cap(4096)
+            .with_diag(runtime_diags.clone());
         let mut n = 0;
         for pipe in pipes {
             let inst = pipe.into_instance();
@@ -527,6 +551,7 @@ impl SprfHandlers for SprfState {
         Ok(RunReport {
             parse_diags: parse_diags.iter().map(SprfDiag::from).collect(),
             walk_diags:  walk_diags.iter().map(SprfDiag::from).collect(),
+            runtime_diags: runtime_diags.snapshot().iter().map(SprfDiag::from).collect(),
             pipes:       n,
             tables,
         })
@@ -668,5 +693,27 @@ mod tests {
             .await.unwrap();
         let _ = client.get_inlays(GetInlaysReq { uri: "file:///hello.sprf".into() })
             .await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_report_includes_runtime_diags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("warn.sprf");
+        std::fs::write(
+            &path,
+            "`hello` > term_bind(:WORD) > lsp_warn(:demo_warn)`word ${WORD}`;",
+        )
+        .unwrap();
+
+        let (_state, client) = build_in_process(dir.path().to_path_buf());
+        let report = client.run(RunReq {
+            path,
+            root: Some(dir.path().to_path_buf()),
+        }).await.unwrap();
+
+        assert_eq!(report.runtime_diags.len(), 1);
+        assert_eq!(report.runtime_diags[0].severity, "warning");
+        assert_eq!(report.runtime_diags[0].code, "demo_warn");
+        assert_eq!(report.runtime_diags[0].message, "word hello");
     }
 }
