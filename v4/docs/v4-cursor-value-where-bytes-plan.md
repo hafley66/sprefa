@@ -8,8 +8,10 @@ This plan records the refactor started after the Linux ast-grep performance regr
 
 - `0daddc7 refactor: add where-bytes store names`
 - `f02cafa refactor: encode cursor value handles`
+- `b9a193d docs: add cursor value refactor plan`
+- `758e656 feat: make ast consume source paths`
 
-These commits are local on `main` at the time this note was written.
+These commits are local on `main` at the time this note was updated.
 
 ## Problem
 
@@ -137,35 +139,23 @@ Legacy fallback:
 - `read > ast` keeps working while tests and examples migrate.
 - If input has no source handle, `ast` may still consume legacy `cursor.value` text.
 
-## In-Progress Slice
+## Completed Slice
 
-Uncommitted at this handoff:
-
-- `v4/tests/source_aware_ast_smoke.rs`
-- `v4/src/v2_ops.rs`
-
-Target test:
+Committed in `758e656`:
 
 ```text
 fs > ast
 ```
 
-should match a Rust function without `read`, and the emitted match cursor should not contain the whole file body.
+matches a Rust function without `read`, and the emitted match cursor does not contain the whole file body.
 
-Suggested test command:
+Test command:
 
 ```bash
 RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml --test source_aware_ast_smoke -- --nocapture
 ```
 
-The latest known red result before implementation was:
-
-```text
-left: 0
-right: 1
-```
-
-meaning `ast` emitted no matches from `fs` without `read`.
+Status: passed on 2026-05-09.
 
 ## Implementation Steps
 
@@ -174,11 +164,13 @@ meaning `ast` emitted no matches from `fs` without `read`.
    - Intern file content and path through `SprfStore`.
    - Preserve repo/rev from upstream `WhereBytes` when present.
    - Emit match cursor with `CursorValue::WhereBytes`.
+   - Status: committed in `758e656`.
 
 2. Make `fs` stamp a small cursor value.
    - During migration, keep `cursor.value = path`.
    - Set `cursor_value = CursorValue::String(path_string_id)` at minimum.
    - Later, use a full-file `WhereBytesId` if source length/file id is known cheaply.
+   - Status: minimum path-string handle committed in `758e656`.
 
 3. Keep `read` as explicit materialization.
    - It can still set legacy `cursor.value` to body text.
@@ -223,13 +215,6 @@ chat_log/LATEST.md
 .agents/
 .codex/
 chat_log/20260507.2.v4-rule-engine-respec-and-memory-audit.md
-```
-
-Known related dirty files at time of note:
-
-```text
-v4/src/v2_ops.rs
-v4/tests/source_aware_ast_smoke.rs
 ```
 
 Earlier bench experiment file:
