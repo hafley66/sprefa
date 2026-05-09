@@ -33,6 +33,11 @@ pub struct FactMountedQueryStorage {
     store: Arc<dyn FactStore<Cursor>>,
 }
 
+struct PersistedCursor {
+    cursor_id:  String,
+    blob_hex:   String,
+}
+
 impl FactMountedQueryStorage {
     pub fn new(store: Arc<dyn FactStore<Cursor>>) -> Self {
         Self { store }
@@ -47,7 +52,7 @@ impl FactMountedQueryStorage {
         &self,
         mount_id: &str,
         input_key: &str,
-    ) -> std::collections::BTreeSet<String> {
+    ) -> std::collections::HashSet<String> {
         self.store
             .rows_of(OUTPUT_TABLE)
             .into_iter()
@@ -59,14 +64,13 @@ impl FactMountedQueryStorage {
             .collect()
     }
 
-    fn intern_output_cursors(&self, outputs: &[Cursor]) {
+    fn intern_output_cursors(&self, outputs: &[PersistedCursor]) {
         let rows: Vec<Arc<Cursor>> = outputs
             .iter()
-            .map(|cursor| {
-                let (cursor_id, encoded) = cursor_storage_parts(cursor);
+            .map(|persisted| {
                 let mut row = Cursor::default();
-                row.set(CURSOR_ID, cursor_id);
-                row.set(CURSOR_BLOB, hex(&encoded));
+                row.set(CURSOR_ID, persisted.cursor_id.clone());
+                row.set(CURSOR_BLOB, persisted.blob_hex.clone());
                 Arc::new(row)
             })
             .collect();
@@ -83,6 +87,7 @@ impl MountedQueryStorage for FactMountedQueryStorage {
         nodes: &[Node<Cursor>],
     ) -> Vec<Node<Cursor>> {
         let outputs = output_cursors(nodes);
+        let persisted = persist_output_cursors(outputs);
         self.declare_tables();
 
         let mount_id = mount_id_for_sql(sql);
@@ -93,22 +98,21 @@ impl MountedQueryStorage for FactMountedQueryStorage {
             &[(MOUNT_ID, mount_id.as_str()), (INPUT_KEY, input_key.as_str())],
         );
 
-        if outputs.is_empty() {
+        if persisted.is_empty() {
             return nodes_added_since(nodes, &existing_cursor_ids);
         }
 
-        self.intern_output_cursors(&outputs);
+        self.intern_output_cursors(&persisted);
 
         let generation = generation.to_string();
-        let mut rows = Vec::with_capacity(outputs.len());
+        let mut rows = Vec::with_capacity(persisted.len());
 
-        for cursor in outputs {
-            let (cursor_id, _) = cursor_storage_parts(&cursor);
+        for persisted in &persisted {
             let mut row = Cursor::default();
             row.set(MOUNT_ID, mount_id.clone());
             row.set(INPUT_KEY, input_key.clone());
             row.set(GENERATION, generation.clone());
-            row.set(CURSOR_ID, cursor_id);
+            row.set(CURSOR_ID, persisted.cursor_id.clone());
             rows.push(Arc::new(row));
         }
 
@@ -141,7 +145,7 @@ pub fn input_key_for_batch(batch: &[&Cursor]) -> String {
     hex(h.finalize().as_bytes())
 }
 
-fn output_cursors(nodes: &[Node<Cursor>]) -> Vec<Cursor> {
+fn output_cursors(nodes: &[Node<Cursor>]) -> Vec<Arc<Cursor>> {
     let mut out = Vec::new();
     for node in nodes {
         collect_node_outputs(node, &mut out);
@@ -151,7 +155,7 @@ fn output_cursors(nodes: &[Node<Cursor>]) -> Vec<Cursor> {
 
 fn nodes_added_since(
     nodes: &[Node<Cursor>],
-    existing_cursor_ids: &std::collections::BTreeSet<String>,
+    existing_cursor_ids: &std::collections::HashSet<String>,
 ) -> Vec<Node<Cursor>> {
     nodes
         .iter()
@@ -161,7 +165,7 @@ fn nodes_added_since(
 
 fn filter_node_added_since(
     node: &Node<Cursor>,
-    existing_cursor_ids: &std::collections::BTreeSet<String>,
+    existing_cursor_ids: &std::collections::HashSet<String>,
 ) -> Node<Cursor> {
     match node {
         Node::Emit(cursor) => {
@@ -198,9 +202,22 @@ fn cursor_storage_parts(cursor: &Cursor) -> (String, Vec<u8>) {
     (cursor_id, encoded)
 }
 
-fn collect_node_outputs(node: &Node<Cursor>, out: &mut Vec<Cursor>) {
+fn persist_output_cursors(outputs: Vec<Arc<Cursor>>) -> Vec<PersistedCursor> {
+    outputs
+        .into_iter()
+        .map(|cursor| {
+            let (cursor_id, encoded) = cursor_storage_parts(&cursor);
+            PersistedCursor {
+                cursor_id,
+                blob_hex: hex(&encoded),
+            }
+        })
+        .collect()
+}
+
+fn collect_node_outputs(node: &Node<Cursor>, out: &mut Vec<Arc<Cursor>>) {
     match node {
-        Node::Emit(cursor) => out.push((**cursor).clone()),
+        Node::Emit(cursor) => out.push(cursor.clone()),
         Node::Many(nodes) => {
             for child in nodes {
                 collect_node_outputs(child, out);
