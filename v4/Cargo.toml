@@ -3,6 +3,10 @@ name = "v4"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["ghcache"]
+ghcache = []
+
 [lib]
 name = "v4"
 path = "src/lib.rs"

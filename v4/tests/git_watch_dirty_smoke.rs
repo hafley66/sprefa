@@ -1,3 +1,5 @@
+#![cfg(feature = "ghcache")]
+
 use std::borrow::Cow;
 use std::sync::Arc;
 

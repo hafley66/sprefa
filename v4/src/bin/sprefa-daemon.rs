@@ -12,9 +12,11 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(feature = "ghcache")]
 use std::time::Duration;
 
 use v4::app::{build_router, SprfState};
+#[cfg(feature = "ghcache")]
 use v4::git_watch::{latest_ghcache_change_id, poll_ghcache_changes};
 
 #[derive(Debug)]
@@ -23,7 +25,9 @@ struct Args {
     root: PathBuf,
     fact_db: Option<PathBuf>,
     queue_db: Option<PathBuf>,
+    #[cfg(feature = "ghcache")]
     ghcache_db: Option<PathBuf>,
+    #[cfg(feature = "ghcache")]
     ghcache_interval_ms: u64,
 }
 
@@ -33,7 +37,9 @@ fn parse_args() -> Result<Args, String> {
     let mut root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut fact_db: Option<PathBuf> = None;
     let mut queue_db: Option<PathBuf> = None;
+    #[cfg(feature = "ghcache")]
     let mut ghcache_db: Option<PathBuf> = None;
+    #[cfg(feature = "ghcache")]
     let mut ghcache_interval_ms = 500;
 
     let mut i = 0;
@@ -55,10 +61,12 @@ fn parse_args() -> Result<Args, String> {
                 queue_db = Some(PathBuf::from(raw.get(i+1).ok_or("--queue-db needs path")?));
                 i += 2;
             }
+            #[cfg(feature = "ghcache")]
             "--ghcache-db" => {
                 ghcache_db = Some(PathBuf::from(raw.get(i+1).ok_or("--ghcache-db needs path")?));
                 i += 2;
             }
+            #[cfg(feature = "ghcache")]
             "--ghcache-interval-ms" => {
                 ghcache_interval_ms = raw
                     .get(i+1)
@@ -67,14 +75,38 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|_| "--ghcache-interval-ms must be an integer")?;
                 i += 2;
             }
+            #[cfg(not(feature = "ghcache"))]
+            "--ghcache-db" | "--ghcache-interval-ms" => {
+                return Err("ghcache support was compiled out".into());
+            }
             "-h" | "--help" => {
-                eprintln!("sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR] [--fact-db PATH] [--queue-db PATH] [--ghcache-db PATH]");
+                eprintln!("{}", daemon_help());
                 std::process::exit(0);
             }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
-    Ok(Args { bind, root, fact_db, queue_db, ghcache_db, ghcache_interval_ms })
+    Ok(Args {
+        bind,
+        root,
+        fact_db,
+        queue_db,
+        #[cfg(feature = "ghcache")]
+        ghcache_db,
+        #[cfg(feature = "ghcache")]
+        ghcache_interval_ms,
+    })
+}
+
+fn daemon_help() -> &'static str {
+    #[cfg(feature = "ghcache")]
+    {
+        "sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR] [--fact-db PATH] [--queue-db PATH] [--ghcache-db PATH]"
+    }
+    #[cfg(not(feature = "ghcache"))]
+    {
+        "sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR] [--fact-db PATH] [--queue-db PATH]"
+    }
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -92,6 +124,7 @@ async fn main() {
         (None, Some(queue_db)) => SprfState::new_with_sqlite_queue(args.root, queue_db),
         (None, None) => SprfState::new(args.root),
     });
+    #[cfg(feature = "ghcache")]
     if let Some(db_path) = args.ghcache_db {
         spawn_ghcache_watcher(
             state.clone(),
@@ -135,6 +168,7 @@ async fn shutdown_signal() {
     eprintln!("shutting down");
 }
 
+#[cfg(feature = "ghcache")]
 fn spawn_ghcache_watcher(state: Arc<SprfState>, db_path: PathBuf, interval: Duration) {
     tokio::spawn(async move {
         let mut last_id = match tokio::task::spawn_blocking({

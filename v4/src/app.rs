@@ -39,7 +39,9 @@ use crate::compile::ast::{OpCall, PipeAst};
 use crate::compile::parse::host_parse;
 use crate::compile::walk::walk_program;
 use crate::cst::dsl::Dsl;
+#[cfg(feature = "ghcache")]
 pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq};
+#[cfg(feature = "ghcache")]
 use crate::git_watch::{dirty_notice, ghcache_dirty_notices};
 use crate::lower::{default_registry, LowerCtx, Registry};
 use crate::Cursor;
@@ -251,6 +253,7 @@ pub struct CoordWire {
 macro_rules! sprf_rpc {
     (
         $(
+            $(#[$meta:meta])*
             fn $method:ident ( $req:ty ) -> $resp:ty => $path:literal ;
         )*
     ) => {
@@ -258,6 +261,7 @@ macro_rules! sprf_rpc {
         #[async_trait::async_trait]
         pub trait SprfHandlers: Send + Sync + 'static {
             $(
+                $(#[$meta])*
                 async fn $method(&self, req: $req) -> Result<$resp, SprfError>;
             )*
         }
@@ -266,6 +270,7 @@ macro_rules! sprf_rpc {
         #[async_trait::async_trait]
         pub trait SprfClient: Send + Sync {
             $(
+                $(#[$meta])*
                 async fn $method(&self, req: $req) -> Result<$resp, SprfError>;
             )*
         }
@@ -276,6 +281,7 @@ macro_rules! sprf_rpc {
         pub mod _routes {
             use super::*;
             $(
+                $(#[$meta])*
                 pub async fn $method<H: SprfHandlers>(
                     State(h):   State<Arc<H>>,
                     Json(req):  Json<$req>,
@@ -286,11 +292,12 @@ macro_rules! sprf_rpc {
         }
 
         pub fn build_router<H: SprfHandlers>(h: Arc<H>) -> Router {
-            Router::new()
-                $(
-                    .route($path, post(_routes::$method::<H>))
-                )*
-                .with_state(h)
+            let router = Router::new();
+            $(
+                $(#[$meta])*
+                let router = router.route($path, post(_routes::$method::<H>));
+            )*
+            router.with_state(h)
         }
 
         // ── in-process client (oneshot the router) ────────────────
@@ -341,6 +348,7 @@ macro_rules! sprf_rpc {
         #[async_trait::async_trait]
         impl SprfClient for InProcessClient {
             $(
+                $(#[$meta])*
                 async fn $method(&self, req: $req) -> Result<$resp, SprfError> {
                     self.call_json($path, req).await
                 }
@@ -363,6 +371,7 @@ macro_rules! sprf_rpc {
         #[async_trait::async_trait]
         impl SprfClient for HttpClient {
             $(
+                $(#[$meta])*
                 async fn $method(&self, req: $req) -> Result<$resp, SprfError> {
                     let url = format!("{}{}", self.base, $path);
                     let resp = self.http.post(&url).json(&req).send().await
@@ -401,6 +410,7 @@ sprf_rpc! {
     fn run            (RunReq)          -> RunReport     => "/run";
     fn get_fact_table (GetFactTableReq) -> FactTable     => "/facts";
     fn refs_at        (RefsAtReq)       -> RefsAtResp    => "/refs-at";
+    #[cfg(feature = "ghcache")]
     fn notify_ghcache_change (NotifyGhcacheChangeReq) -> Vec<DirtyNotice> => "/git/ghcache-change";
 }
 
@@ -562,6 +572,7 @@ impl SprfState {
         }
     }
 
+    #[cfg(feature = "ghcache")]
     pub fn dispatch_ghcache_change(&self, change: &GhcacheChangeReq) -> Vec<DirtyNotice> {
         let mut notices = Vec::new();
         for (domain, key) in ghcache_dirty_notices(change) {
@@ -769,6 +780,7 @@ impl SprfHandlers for SprfState {
         Ok(RefsAtResp { hits })
     }
 
+    #[cfg(feature = "ghcache")]
     async fn notify_ghcache_change(
         &self,
         req: NotifyGhcacheChangeReq,

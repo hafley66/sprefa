@@ -5,6 +5,7 @@ pub mod config;
 pub mod cst;
 pub mod cursor_codec;
 pub mod fact;
+#[cfg(feature = "ghcache")]
 pub mod git_watch;
 pub mod lsp;
 pub mod mounted_query;
