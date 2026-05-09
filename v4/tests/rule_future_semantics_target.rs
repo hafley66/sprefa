@@ -310,6 +310,64 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
 }
 
 #[test]
+fn mounted_query_retraction_cascades_through_dependent_query() {
+    let mut runtime = LiveHarness::new();
+
+    runtime.run(r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:missing_ops, OP?);
+        rule(:warnings, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+                  AND frontend_hooks.FILE = ${FILE}
+              )
+            `
+          > rule(:missing_ops, OP: OP);
+
+        `seed`
+          > sql`
+              SELECT input.__cursor_idx, missing_ops.OP AS value
+              FROM input
+              JOIN missing_ops ON 1=1
+            `
+          > term_bind(:OP)
+          > rule(:warnings, OP: OP);
+    "#);
+
+    assert_eq!(runtime.store.rows_of("missing_ops").len(), 1);
+    assert_eq!(runtime.store.rows_of("warnings").len(), 1);
+
+    runtime.run(r#"
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+    "#);
+
+    assert_eq!(
+        runtime.store.rows_of("missing_ops").len(),
+        0,
+        "first mounted anti-join should retract missing_ops",
+    );
+    assert_eq!(
+        runtime.store.rows_of("warnings").len(),
+        0,
+        "missing_ops table dirty should wake dependent mounted SQL and retract warnings",
+    );
+}
+
+#[test]
 fn mounted_query_manual_rerun_emits_only_new_output_hashes() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
 
