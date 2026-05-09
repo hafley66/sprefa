@@ -34,12 +34,11 @@ pub struct OpCall {
     /// `!` op suffix presence. For declared rules this is force-run /
     /// cache-bypass intent. Builtin `sh!` is preserved by lowering.
     pub force:     bool,
-    /// `?` op suffix presence — predicate / push-pull inversion sigil
-    /// (`fact?(...)`, `<rule>?(...)`).
+    /// `?` op suffix presence. Kept in the host AST for legacy built-ins
+    /// and diagnostics; locked V4 rule calls reject `rule_name?(...)`.
     pub predicate: bool,
     /// Immediate dotted apply marker after the name / predicate suffix.
-    /// Target relation-call syntax uses `rule_name.(...)` and
-    /// `rule_name?.(...)`.
+    /// Locked V4 rule apply uses `rule_name.(...)` or `rule_name!.(...)`.
     pub apply:     bool,
     /// Full call extent, used as the span tag for ProbeSink.
     pub span:      ByteRange,

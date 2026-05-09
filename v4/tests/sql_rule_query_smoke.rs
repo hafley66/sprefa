@@ -42,15 +42,15 @@ fn run_pipes(src: &str) -> Arc<dyn FactStore<Cursor>> {
 }
 
 #[test]
-fn declared_rule_force_call_requires_bodied_rule() {
+fn declared_rule_force_without_apply_is_rejected() {
     let diags = walk_diags(r#"
         rule(:frontend_hooks);
         frontend_hooks!();
     "#);
 
     assert!(
-        diags.iter().any(|d| d.code.as_ref() == "lower/rule-force"),
-        "expected lower/rule-force diag, got {diags:?}"
+        diags.iter().any(|d| d.code.as_ref() == "lower/rule-force-unsupported"),
+        "expected lower/rule-force-unsupported diag, got {diags:?}"
     );
 }
 
@@ -147,20 +147,37 @@ fn declared_rule_call_projects_matching_rows() {
 }
 
 #[test]
-fn declared_rule_dotted_apply_projects_matching_rows_with_kwargs() {
+fn declared_empty_rule_apply_rejects_holes() {
     let src = r#"
-        rule(:frontend_hooks, OP!, FILE?);
+        rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
 
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+          > frontend_hooks.(OP: OP, FILE: FILE?)
+          > rule(:hook_hits, OP: OP, FILE: FILE);
+    "#;
+
+    let diags = walk_diags(src);
+    assert!(
+        diags.iter().any(|d| d.code.as_ref() == "lower/rule-apply"),
+        "expected lower/rule-apply diag for TERM? in dotted apply, got {diags:?}"
+    );
+}
+
+#[test]
+fn declared_empty_rule_apply_writes_and_passes_through_with_grounded_args() {
+    let src = r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:hook_hits, OP?, FILE?);
 
         `getUser`
           > term_bind(:OP)
-          > frontend_hooks.(OP: OP, FILE: FILE?)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > frontend_hooks.(OP: OP, FILE: FILE)
           > rule(:hook_hits, OP: OP, FILE: FILE);
     "#;
 
@@ -178,7 +195,7 @@ fn declared_rule_dotted_apply_projects_matching_rows_with_kwargs() {
 }
 
 #[test]
-fn declared_rule_predicate_call_filters_fully_bound_input() {
+fn declared_rule_query_does_not_write_empty_rule() {
     let src = r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:checked_hooks, OP?, FILE?);
@@ -187,13 +204,39 @@ fn declared_rule_predicate_call_filters_fully_bound_input() {
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > rule(:frontend_hooks);
+          > frontend_hooks(OP, FILE)
+          > rule(:checked_hooks);
+    "#;
+
+    let store = run_pipes(src);
+    assert_eq!(store.rows_of("frontend_hooks").len(), 0);
+    let rows = store.rows_of("checked_hooks");
+    assert_eq!(rows.len(), 0);
+}
+
+#[test]
+fn declared_rule_grounded_query_dedupes_same_output_cursor() {
+    let src = r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:checked_hooks, OP?, FILE?);
 
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks?(OP, FILE)
+          > frontend_hooks.(OP, FILE);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > frontend_hooks.(OP, FILE);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > frontend_hooks(OP, FILE)
           > rule(:checked_hooks);
     "#;
 
@@ -205,56 +248,14 @@ fn declared_rule_predicate_call_filters_fully_bound_input() {
 }
 
 #[test]
-fn declared_rule_predicate_call_does_not_duplicate_matching_input() {
-    let src = r#"
-        rule(:frontend_hooks, OP?, FILE?);
-        rule(:checked_hooks, OP?, FILE?);
+fn declared_rule_predicate_syntax_is_rejected() {
+    let diags = walk_diags(r#"
+        rule(:frontend_hooks, OP?);
+        `getUser` > term_bind(:OP) > frontend_hooks?(OP);
+    "#);
 
-        `getUser`
-          > term_bind(:OP)
-          > `src/hooks.ts`
-          > term_bind(:FILE)
-          > rule(:frontend_hooks);
-
-        `getUser`
-          > term_bind(:OP)
-          > `src/hooks.ts`
-          > term_bind(:FILE)
-          > rule(:frontend_hooks);
-
-        `getUser`
-          > term_bind(:OP)
-          > `src/hooks.ts`
-          > term_bind(:FILE)
-          > frontend_hooks?(OP, FILE)
-          > rule(:checked_hooks);
-    "#;
-
-    let store = run_pipes(src);
-    let rows = store.rows_of("checked_hooks");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get("OP"), Some("getUser"));
-    assert_eq!(rows[0].get("FILE"), Some("src/hooks.ts"));
-}
-
-#[test]
-fn declared_rule_dotted_predicate_empty_args_is_table_nonempty_gate() {
-    let src = r#"
-        rule(:frontend_hooks, OP!);
-        rule(:checked_hooks, OP?);
-
-        `getUser`
-          > term_bind(:OP)
-          > rule(:frontend_hooks, OP: OP);
-
-        `listPets`
-          > term_bind(:OP)
-          > frontend_hooks?.()
-          > rule(:checked_hooks, OP: OP);
-    "#;
-
-    let store = run_pipes(src);
-    let rows = store.rows_of("checked_hooks");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get("OP"), Some("listPets"));
+    assert!(
+        diags.iter().any(|d| d.code.as_ref() == "lower/rule-predicate-unsupported"),
+        "expected lower/rule-predicate-unsupported diag, got {diags:?}"
+    );
 }

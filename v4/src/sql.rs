@@ -192,11 +192,28 @@ fn run_sql_batch(
 }
 
 fn nodes_to_node(nodes: Vec<Node<Cursor>>) -> Node<Cursor> {
+    let nodes = dedupe_nodes_by_cursor_hash(nodes);
     match nodes.len() {
         0 => Node::Done,
         1 => nodes.into_iter().next().unwrap(),
         _ => Node::Many(nodes),
     }
+}
+
+fn dedupe_nodes_by_cursor_hash(nodes: Vec<Node<Cursor>>) -> Vec<Node<Cursor>> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for node in nodes {
+        match &node {
+            Node::Emit(cursor) => {
+                if seen.insert(cursor.content_hash()) {
+                    out.push(node);
+                }
+            }
+            _ => out.push(node),
+        }
+    }
+    out
 }
 
 fn materialize_input(conn: &Connection, batch: &[&Cursor]) -> Result<(), String> {
@@ -512,6 +529,11 @@ pub fn rule_table_call_pipe(
     predicate: bool,
     args:      &[CallArg],
 ) -> Result<Pipe<Cursor>, LowerError> {
+    if predicate {
+        return Err(LowerError::Unknown(format!(
+            "{table}?(...): rule predicate syntax is outside the locked V4 surface; use a grounded {table}(...) relation query"
+        )));
+    }
     let cols = ctx.store.declared_cols(table).ok_or_else(|| {
         LowerError::Unknown(format!("rule table `{table}` is not declared"))
     })?;
@@ -564,34 +586,26 @@ pub fn rule_table_call_pipe(
         }
     }
 
-    if predicate && modes.iter().any(|m| matches!(m, ArgMode::Project { .. })) {
-        return Err(LowerError::Unknown(format!(
-            "{table}?: predicate calls require bound args; use `{table}(...)` to project outputs"
-        )));
-    }
-
     let rule_alias = "__rule";
     let mut select_cols = vec!["input.__cursor_idx".to_string()];
-    if !predicate {
-        if modes.is_empty() {
-            for col in &cols {
+    if modes.is_empty() {
+        for col in &cols {
+            select_cols.push(format!(
+                "{}.{} AS {}",
+                quote_ident(rule_alias),
+                quote_ident(col),
+                quote_ident(col),
+            ));
+        }
+    } else {
+        for mode in &modes {
+            if let ArgMode::Project { col, term } = mode {
                 select_cols.push(format!(
                     "{}.{} AS {}",
                     quote_ident(rule_alias),
                     quote_ident(col),
-                    quote_ident(col),
+                    quote_ident(term),
                 ));
-            }
-        } else {
-            for mode in &modes {
-                if let ArgMode::Project { col, term } = mode {
-                    select_cols.push(format!(
-                        "{}.{} AS {}",
-                        quote_ident(rule_alias),
-                        quote_ident(col),
-                        quote_ident(term),
-                    ));
-                }
             }
         }
     }
@@ -619,30 +633,54 @@ pub fn rule_table_call_pipe(
         }
     }
 
-    let sql = if predicate {
-        let mut subquery = format!("SELECT 1 FROM {} AS {}", table, rule_alias);
-        if !predicates.is_empty() {
-            subquery.push_str(" WHERE ");
-            subquery.push_str(&predicates.join(" AND "));
-        }
-        format!("SELECT input.__cursor_idx\nFROM input\nWHERE EXISTS ({subquery})")
-    } else {
-        let mut sql = format!(
-            "SELECT {}\nFROM input JOIN {} AS {} ON 1=1",
-            select_cols.join(", "),
-            table,
-            rule_alias,
-        );
-        if !predicates.is_empty() {
-            sql.push_str("\nWHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
-        sql
-    };
+    let all_grounded = !modes.is_empty() && modes.iter().all(|m| !matches!(m, ArgMode::Project { .. }));
+    let select_prefix = if all_grounded { "SELECT DISTINCT" } else { "SELECT" };
+    let mut sql = format!(
+        "{select_prefix} {}\nFROM input JOIN {} AS {} ON 1=1",
+        select_cols.join(", "),
+        table,
+        rule_alias,
+    );
+    if !predicates.is_empty() {
+        sql.push_str("\nWHERE ");
+        sql.push_str(&predicates.join(" AND "));
+    }
 
     Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(
         ctx.store.clone(),
         sql,
+    ))))
+}
+
+pub fn rule_apply_write_pipe(
+    ctx:   &LowerCtx,
+    table: &str,
+    args:  &[CallArg],
+) -> Result<Pipe<Cursor>, LowerError> {
+    let cols = ctx.store.declared_cols(table).ok_or_else(|| {
+        LowerError::Unknown(format!("rule table `{table}` is not declared"))
+    })?;
+    let resolved = resolve_rule_args(table, &cols, args)?;
+    if resolved.is_empty() {
+        return Ok(Pipe::new().step(Arc::new(FactWrite::new(
+            ctx.store.clone(),
+            Arc::<str>::from(table),
+        ))));
+    }
+
+    let mut assignments = Vec::with_capacity(resolved.len());
+    for (col, value) in resolved {
+        let value = grounded_write_value(table, value)?;
+        assignments.push(WriteAssign {
+            col: Arc::<str>::from(col),
+            value,
+        });
+    }
+
+    Ok(Pipe::new().step(Arc::new(FactWrite::projected(
+        ctx.store.clone(),
+        Arc::<str>::from(table),
+        assignments,
     ))))
 }
 
@@ -729,6 +767,26 @@ pub fn rule_body_call_pipe(
     ))))
 }
 
+fn grounded_write_value(table: &str, value: Value) -> Result<WriteValue, LowerError> {
+    match value {
+        Value::Atom(value) if value.as_ref() == "&.value" => Ok(WriteValue::Value),
+        Value::Atom(value) => Ok(WriteValue::Literal(value)),
+        Value::Pipe(pipe) => {
+            if let Some(term) = pipe.reads_terms().first() {
+                Ok(WriteValue::Term(term.clone()))
+            } else if pipe.binds_terms().first().is_some() {
+                Err(LowerError::Unknown(format!(
+                    "{table}.(...): rule apply args must be grounded; TERM? holes are only valid in relation queries"
+                )))
+            } else {
+                Err(LowerError::Unknown(
+                    "rule apply args must be atoms or terms".into(),
+                ))
+            }
+        }
+    }
+}
+
 fn rule_invoke_value(value: Value) -> Result<Option<RuleInvokeValue>, LowerError> {
     match value {
         Value::Atom(value) if value.as_ref() == "&.value" => Ok(Some(RuleInvokeValue::Value)),
@@ -737,10 +795,12 @@ fn rule_invoke_value(value: Value) -> Result<Option<RuleInvokeValue>, LowerError
             if let Some(term) = pipe.reads_terms().first() {
                 Ok(Some(RuleInvokeValue::Term(term.clone())))
             } else if pipe.binds_terms().first().is_some() {
-                Ok(None)
+                Err(LowerError::Unknown(
+                    "bodied rule apply args must be grounded; TERM? holes are only valid in relation queries".into(),
+                ))
             } else {
                 Err(LowerError::Unknown(
-                    "bodied rule call args must be atoms or terms".into(),
+                    "bodied rule apply args must be atoms or terms".into(),
                 ))
             }
         }

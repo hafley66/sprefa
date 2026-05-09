@@ -18,7 +18,7 @@
 //! diverge from `walk.rs::classify_slot`. The analyzer is a *separate*
 //! pass — it does not lower; it only reads spans + names off the AST.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use effect_runtime::v2::Diag;
@@ -32,21 +32,61 @@ use crate::compile::lower::registry::Registry;
 /// binding scope).
 pub fn analyze_program(program: &[PipeAst], reg: &Registry) -> Vec<Diag> {
     let mut diags = Vec::new();
+    let rule_decls = collect_rule_decls(program);
     for pipe in program {
         let mut bound: HashSet<Arc<str>> = HashSet::new();
-        analyze_pipe(pipe, reg, &mut bound, &mut diags);
+        analyze_pipe(pipe, reg, &rule_decls, &mut bound, &mut diags);
     }
     diags
 }
 
+#[derive(Clone, Debug)]
+struct RuleDecl {
+    cols: Vec<Arc<str>>,
+    has_body: bool,
+}
+
+fn collect_rule_decls(program: &[PipeAst]) -> HashMap<Arc<str>, RuleDecl> {
+    let mut out = HashMap::new();
+    for pipe in program {
+        for op in &pipe.steps {
+            if op.name.as_ref() != "rule" {
+                continue;
+            }
+            let Some(first) = op.args.first() else { continue; };
+            let raw_name = first.raw.trim();
+            let Some(name) = raw_name.strip_prefix(':') else { continue; };
+            if !is_ident(name) {
+                continue;
+            }
+            let mut cols = Vec::new();
+            for arg in op.args.iter().skip(1) {
+                let raw = arg.raw.trim();
+                let raw = raw.strip_suffix('?')
+                    .or_else(|| raw.strip_suffix('!'))
+                    .unwrap_or(raw);
+                if is_caps_ident(raw) {
+                    cols.push(Arc::<str>::from(raw));
+                }
+            }
+            out.insert(Arc::<str>::from(name), RuleDecl {
+                cols,
+                has_body: op.block.is_some(),
+            });
+        }
+    }
+    out
+}
+
 fn analyze_pipe(
-    pipe:  &PipeAst,
-    reg:   &Registry,
-    bound: &mut HashSet<Arc<str>>,
-    diags: &mut Vec<Diag>,
+    pipe:       &PipeAst,
+    reg:        &Registry,
+    rule_decls: &HashMap<Arc<str>, RuleDecl>,
+    bound:      &mut HashSet<Arc<str>>,
+    diags:      &mut Vec<Diag>,
 ) {
     for op in &pipe.steps {
-        let (reads, binds) = collect_term_refs(op, reg);
+        let (reads, mut binds) = collect_term_refs(op, reg);
 
         for r in &reads {
             if !bound.contains(r) {
@@ -90,6 +130,14 @@ fn analyze_pipe(
             }
         }
 
+        if op.apply {
+            if let Some(decl) = rule_decls.get(&op.name) {
+                if decl.has_body {
+                    binds.extend(decl.cols.iter().cloned());
+                }
+            }
+        }
+
         for b in binds {
             bound.insert(b);
         }
@@ -97,7 +145,7 @@ fn analyze_pipe(
         // {block} — inherits outer bound set. Binds inside don't leak.
         if let Some(block) = &op.block {
             let mut local = bound.clone();
-            analyze_pipe(block, reg, &mut local, diags);
+            analyze_pipe(block, reg, rule_decls, &mut local, diags);
         }
     }
 }

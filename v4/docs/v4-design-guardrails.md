@@ -66,7 +66,8 @@ Semantics can be explained in SQLite terms:
 
 ```text
 rule rows form relations
-rule calls lower to joins / projections / predicates
+rule queries lower to joins / projections / grounded filters
+dotted rule apply lowers to send/run/write
 missing lowers to anti-join / NOT EXISTS
 generation commit behaves like a transaction
 ```

@@ -28,7 +28,7 @@ sql = relational escape hatch over current batch + rule tables
 | AST extraction | `ast` ast-grep slice exists |
 | shell escape | `sh`, `sh(:filter)`, `sh(OUT?)`, `sh!` exist |
 | rule writes | declaration plus projected writes work |
-| rule reads | `rule_name(...)`, `rule_name?(...)`, dotted forms work |
+| rule reads | `rule_name(...)` relation reads work; `rule_name?(...)` is rejected by the locked V4 surface |
 | SQL query | batch-local `sql`` supports joins and anti-joins |
 
 Human smoke commands live in the root `justfile`:
@@ -112,8 +112,8 @@ Bring these back for human decision before implementation:
 | --- | --- |
 | cursor-flow hover payload | count-only, sample rows, full rows, schema, provenance, or all behind commands |
 | runtime diagnostics | collect from `lsp_warn` components directly, or require diagnostic rule tables |
-| empty-rule send syntax | direct `frontend_hooks(OP, FILE)` send vs explicit `rule(:frontend_hooks, ...)` write only |
-| bodied rule apply | whether `rule_name(...)` ever runs body or always reads relation rows |
+| empty-rule send syntax | dotted `frontend_hooks.(OP, FILE)` sends/writes; `frontend_hooks(OP, FILE)` queries relation rows |
+| bodied rule apply | dotted `rule_name.(...)` runs body; `rule_name(...)` always reads materialized relation rows |
 | mounted query | whether subscriptions are automatic at rule read sites or explicit through an op |
 | `next` storage | transient event queue vs durable event table |
 | markdown render | SQL aggregation first vs host `render` op first |

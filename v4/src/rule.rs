@@ -4,9 +4,9 @@
 //! table. Calling the rule = building `body > FactWrite(sink)` and
 //! expanding it over a caller-supplied seed.
 //!
-//! `rule?(:name, KEY, [PROJ])` reads the rule's sink table — a
-//! `FactRead` aimed at the same store/table. Constructor sugar lives
-//! here as `Rule::query(...)`.
+//! Relation reads target the rule's sink table. The old `rule?` surface
+//! is no longer part of the locked V4 rule-call syntax; grounded
+//! `rule_name(...)` and projected `rule_name(X?, Y)` lower through SQL.
 //!
 //! Layer-2 input-set memoization (the `Op::probe` path) is deferred;
 //! arrives once Component grows a `probe()` shim.

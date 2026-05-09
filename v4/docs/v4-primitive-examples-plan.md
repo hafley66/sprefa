@@ -23,7 +23,7 @@ Target examples should use `.target.sprf` suffix until implemented.
 
 | Example file | Purpose |
 | --- | --- |
-| `keyword-rule-call.target.sprf` | explicit rule call projection and predicates |
+| `keyword-rule-call.target.sprf` | explicit rule call projection, grounded relation queries, and dotted apply |
 | `missing-antijoin.target.sprf` | `missing(...)` as anti-join / `NOT EXISTS` |
 | `lsp-warn-missing-hook.target.sprf` | OpenAPI op without frontend hook emits diagnostic fact |
 | `blast-radius.target.sprf` | symbol/span action reads precomputed facts |

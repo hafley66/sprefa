@@ -208,7 +208,7 @@ pub fn walk_op(
     if op.name.as_ref() == "rule" && op.force {
         diags.push(
             Diag::error("lower/force-unsupported",
-                "rule!: force applies to bodied rule calls, not rule declarations or writes")
+                "rule!: force applies to dotted rule apply, not rule declarations or writes")
                 .with_span(op.span.lo, op.span.hi)
         );
         return None;
@@ -234,13 +234,25 @@ pub fn walk_op(
         }
     }
 
-    // Declared rule-table calls. The parser keeps the `?` suffix on
-    // OpCall::predicate; the registry only stores concrete built-in op
-    // names. A declared table name in call position is therefore a
-    // relation read over that rule table:
-    //   rule_name(A, B?)  -> row-producing query/project
-    //   rule_name?(A, B)  -> predicate/filter
-    if reg.get(&lower_name).is_none() && !op.predicate && ctx.get_rule(&op.name).is_some() {
+    if op.predicate && reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+        diags.push(
+            Diag::error("lower/rule-predicate-unsupported",
+                format!("{}?(...): rule predicate syntax is outside the locked V4 surface; use a grounded {}(...) relation query", op.name, op.name))
+                .with_span(op.span.lo, op.span.hi)
+        );
+        return None;
+    }
+
+    if op.force && !op.apply && reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+        diags.push(
+            Diag::error("lower/rule-force-unsupported",
+                format!("{}!: force is only valid with dotted apply as {}!.(...)", op.name, op.name))
+                .with_span(op.span.lo, op.span.hi)
+        );
+        return None;
+    }
+
+    if op.apply && reg.get(&lower_name).is_none() && ctx.get_rule(&op.name).is_some() {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
         match crate::sql::rule_body_call_pipe(ctx, &op.name, op.force, &arg_vals) {
             Ok(pipe) => {
@@ -260,17 +272,33 @@ pub fn walk_op(
         }
     }
 
-    if reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
-        if op.force {
-            diags.push(
-                Diag::error("lower/rule-force",
-                    format!("{}!: force requires a bodied callable rule; declared table calls are relation reads", op.name))
-                    .with_span(op.span.lo, op.span.hi)
-            );
-            return None;
-        }
+    if op.apply && reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
-        match crate::sql::rule_table_call_pipe(ctx, &op.name, op.predicate, &arg_vals) {
+        match crate::sql::rule_apply_write_pipe(ctx, &op.name, &arg_vals) {
+            Ok(pipe) => {
+                let pipe = match &ctx.probe {
+                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
+                    None    => pipe,
+                };
+                return Some(pipe);
+            }
+            Err(e) => {
+                diags.push(
+                    Diag::error("lower/rule-apply", e.to_string())
+                        .with_span(op.span.lo, op.span.hi)
+                );
+                return None;
+            }
+        }
+    }
+
+    // Declared rule-table calls. A declared table name in call position
+    // is a relation read over that rule table:
+    //   rule_name(A, B?)  -> row-producing query/project
+    //   rule_name(A, B)   -> grounded relation query
+    if reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
+        match crate::sql::rule_table_call_pipe(ctx, &op.name, false, &arg_vals) {
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
                     Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),

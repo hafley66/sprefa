@@ -38,17 +38,16 @@ fn run_pipes(src: &str) -> Arc<dyn FactStore<Cursor>> {
 }
 
 #[test]
-#[ignore = "target semantics: empty-rule fully-bound apply should send/write identity"]
 fn empty_rule_fully_bound_apply_sends_identity() {
     let store = run_pipes(r#"
-        rule(:frontend_hooks, OP!, FILE!);
+        rule(:frontend_hooks, OP?, FILE?);
         rule(:seen, OP?, FILE?);
 
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks(OP, FILE)
+          > frontend_hooks.(OP, FILE)
           > rule(:seen, OP: OP, FILE: FILE);
     "#);
 
@@ -67,7 +66,7 @@ fn mounted_query_reacts_to_late_relation_write() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
 
     run_into_store(r#"
-        rule(:frontend_hooks, OP!, FILE!);
+        rule(:frontend_hooks, OP?, FILE?);
         rule(:missing_hooks, OP?);
 
         `getUser`
@@ -107,8 +106,8 @@ fn mounted_query_reacts_to_late_relation_write() {
 #[test]
 fn mounted_query_persists_outputs_by_mount_and_input_key() {
     let store = run_pipes(r#"
-        rule(:openapi_ops, OP!);
-        rule(:frontend_hooks, OP!, FILE!);
+        rule(:openapi_ops, OP?);
+        rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
 
         `getUser`
@@ -150,7 +149,7 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
 
     run_into_store(r#"
-        rule(:frontend_hooks, OP!, FILE!);
+        rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
 
         `getUser`
@@ -268,7 +267,27 @@ fn collect_does_not_mix_two_pipe_instances() {
 #[test]
 fn bodied_rule_apply_runs_body_and_emits_outputs() {
     let store = run_pipes(r#"
-        rule(:derive_hook, OP!, FILE?) {
+        rule(:derive_hook, OP?, FILE?) {
+          `src/hooks.ts` > term_bind(:FILE)
+        };
+        rule(:hook_hits, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > derive_hook.(OP)
+          > rule(:hook_hits, OP: OP, FILE: FILE);
+    "#);
+
+    let rows = store.rows_of("hook_hits");
+    assert_eq!(rows.len(), 1, "bodied rule apply should run the body for the input cursor");
+    assert_eq!(rows[0].get("OP"), Some("getUser"));
+    assert_eq!(rows[0].get("FILE"), Some("src/hooks.ts"));
+}
+
+#[test]
+fn bodied_rule_query_reads_table_without_running_body() {
+    let store = run_pipes(r#"
+        rule(:derive_hook, OP?, FILE?) {
           `src/hooks.ts` > term_bind(:FILE)
         };
         rule(:hook_hits, OP?, FILE?);
@@ -280,7 +299,5 @@ fn bodied_rule_apply_runs_body_and_emits_outputs() {
     "#);
 
     let rows = store.rows_of("hook_hits");
-    assert_eq!(rows.len(), 1, "bodied rule apply should run the body for the input cursor");
-    assert_eq!(rows[0].get("OP"), Some("getUser"));
-    assert_eq!(rows[0].get("FILE"), Some("src/hooks.ts"));
+    assert_eq!(rows.len(), 0, "non-dotted rule query should not run the body");
 }
