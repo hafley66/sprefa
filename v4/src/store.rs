@@ -13,14 +13,16 @@ use effect_runtime::v2::FactStore;
 use lru::LruCache;
 
 use crate::Cursor;
-pub use crate::{FileId, PathId, Ref, RepoId, RevId, StringId};
+pub use crate::{FileId, PathId, Ref, RepoId, RevId, StringId, WhereBytes, WhereBytesId};
 
 pub const STRINGS_TABLE: &str = "_strings";
 pub const FILES_TABLE:   &str = "_files";
-pub const REFS_TABLE:    &str = "_refs";
+pub const WHERE_BYTES_TABLE: &str = "_where_bytes";
+pub const REFS_TABLE:    &str = WHERE_BYTES_TABLE;
 pub const REPOS_TABLE:   &str = "_repos";
 pub const REVS_TABLE:    &str = "_revs";
 pub const PATHS_TABLE:   &str = "_paths";
+pub const STRING_OBSERVATIONS_TABLE: &str = "_string_observations";
 
 /// Default LRU caps. Single knob per family; can be overridden in tests.
 const DEFAULT_STRINGS_CAP: usize = 16_384;
@@ -30,8 +32,12 @@ const DEFAULT_REPOS_CAP:   usize =  1_024;
 const DEFAULT_REVS_CAP:    usize =  4_096;
 const DEFAULT_PATHS_CAP:   usize = 16_384;
 
-fn norm_ws(s: &str) -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") }
-fn norm_case(s: &str) -> String { s.to_lowercase() }
+fn norm(s: &str) -> String {
+    s.chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
 
 pub struct SprfStore {
     inner:        Arc<dyn FactStore<Cursor>>,
@@ -47,6 +53,7 @@ pub struct SprfStore {
     seen_repos:   Mutex<HashSet<u64>>,
     seen_revs:    Mutex<HashSet<u64>>,
     seen_paths:   Mutex<HashSet<u64>>,
+    seen_string_observations: Mutex<HashSet<u64>>,
 }
 
 impl SprfStore {
@@ -78,6 +85,7 @@ impl SprfStore {
             seen_repos:   Mutex::new(HashSet::new()),
             seen_revs:    Mutex::new(HashSet::new()),
             seen_paths:   Mutex::new(HashSet::new()),
+            seen_string_observations: Mutex::new(HashSet::new()),
         });
         store.declare_core_tables();
         store.preinsert_sentinels();
@@ -88,12 +96,16 @@ impl SprfStore {
     pub fn inner(&self) -> &Arc<dyn FactStore<Cursor>> { &self.inner }
 
     fn declare_core_tables(&self) {
-        self.inner.declare(STRINGS_TABLE, &["id", "content", "norm_ws", "norm_case"]);
+        self.inner.declare(STRINGS_TABLE, &["id", "content", "norm"]);
         self.inner.declare(FILES_TABLE, &["id", "content_hash", "path", "size"]);
-        self.inner.declare(REFS_TABLE, &["id", "file_id", "lo", "hi", "repo", "rev"]);
+        self.inner.declare(WHERE_BYTES_TABLE, &["id", "file_id", "lo", "hi", "repo", "rev"]);
         self.inner.declare(REPOS_TABLE, &["id", "slug", "remote"]);
         self.inner.declare(REVS_TABLE, &["id", "repo_id", "oid", "ts"]);
         self.inner.declare(PATHS_TABLE, &["id", "repo_id", "rev_id", "file_id", "path"]);
+        self.inner.declare(
+            STRING_OBSERVATIONS_TABLE,
+            &["id", "string_id", "role", "where_bytes_id", "context_kind", "context_id"],
+        );
     }
 
     // ── sentinels ────────────────────────────────────────────────────
@@ -103,8 +115,7 @@ impl SprfStore {
         let mut row = Cursor::default();
         row.set("id",        "0");
         row.set("content",   "");
-        row.set("norm_ws",   "");
-        row.set("norm_case", "");
+        row.set("norm",      "");
         self.inner.insert(STRINGS_TABLE, Arc::new(row));
         self.seen_strings.lock().unwrap().insert(0);
         self.strings_lru.lock().unwrap().put(StringId::EMPTY, Arc::<str>::from(""));
@@ -121,7 +132,7 @@ impl SprfStore {
         self.files_lru.lock().unwrap()
             .put(0 as FileId, (synth_hash, Arc::<str>::from("\u{2205}")));
 
-        // _refs(0) = synthetic
+        // _where_bytes(0) = synthetic
         let mut row = Cursor::default();
         row.set("id",      "0");
         row.set("file_id", "0");
@@ -129,7 +140,7 @@ impl SprfStore {
         row.set("hi",      "0");
         row.set("repo",    "0");
         row.set("rev",     "0");
-        self.inner.insert(REFS_TABLE, Arc::new(row));
+        self.inner.insert(WHERE_BYTES_TABLE, Arc::new(row));
         self.seen_refs.lock().unwrap().insert(0);
         self.refs_lru.lock().unwrap().put(Ref::SYNTHETIC, crate::Coord::default());
 
@@ -167,6 +178,16 @@ impl SprfStore {
             0 as PathId,
             (0 as RepoId, 0 as RevId, 0 as FileId, Arc::<str>::from("\u{2205}")),
         );
+
+        let mut row = Cursor::default();
+        row.set("id",             "0");
+        row.set("string_id",      "0");
+        row.set("role",           "");
+        row.set("where_bytes_id", "0");
+        row.set("context_kind",   "");
+        row.set("context_id",     "0");
+        self.inner.insert(STRING_OBSERVATIONS_TABLE, Arc::new(row));
+        self.seen_string_observations.lock().unwrap().insert(0);
     }
 
     // ── strings ──────────────────────────────────────────────────────
@@ -184,8 +205,7 @@ impl SprfStore {
         let mut row = Cursor::default();
         row.set("id",        id.0.to_string());
         row.set("content",   s);
-        row.set("norm_ws",   norm_ws(s));
-        row.set("norm_case", norm_case(s));
+        row.set("norm",      norm(s));
         self.inner.insert(STRINGS_TABLE, Arc::new(row));
         self.strings_lru.lock().unwrap().put(id, Arc::<str>::from(s));
         id
@@ -273,9 +293,13 @@ impl SprfStore {
         row.set("hi",      c.hi.to_string());
         row.set("repo",    c.repo.to_string());
         row.set("rev",     c.rev.to_string());
-        self.inner.insert(REFS_TABLE, Arc::new(row));
+        self.inner.insert(WHERE_BYTES_TABLE, Arc::new(row));
         self.refs_lru.lock().unwrap().put(r, c);
         r
+    }
+
+    pub fn intern_where_bytes(&self, w: WhereBytes) -> WhereBytesId {
+        WhereBytesId::from(self.intern_ref(w.into()))
     }
 
     pub fn coord_of(&self, r: Ref) -> Option<crate::Coord> {
@@ -283,7 +307,7 @@ impl SprfStore {
             return Some(*c);
         }
         let id_str = r.0.to_string();
-        for row in self.inner.rows_of(REFS_TABLE) {
+        for row in self.inner.rows_of(WHERE_BYTES_TABLE) {
             if row.get("id").as_deref() == Some(id_str.as_str()) {
                 let c = crate::Coord {
                     repo: row.get("repo").unwrap_or("0").parse().unwrap_or(0),
@@ -297,6 +321,45 @@ impl SprfStore {
             }
         }
         None
+    }
+
+    pub fn where_bytes_of(&self, r: WhereBytesId) -> Option<WhereBytes> {
+        self.coord_of(r.into()).map(WhereBytes::from)
+    }
+
+    pub fn observe_string(
+        &self,
+        string: StringId,
+        role: &str,
+        where_bytes: WhereBytesId,
+        context_kind: &str,
+        context_id: u64,
+    ) -> u64 {
+        let mut h = blake3::Hasher::new();
+        h.update(&string.0.to_be_bytes());
+        h.update(b"\0");
+        h.update(role.as_bytes());
+        h.update(b"\0");
+        h.update(&where_bytes.0.to_be_bytes());
+        h.update(b"\0");
+        h.update(context_kind.as_bytes());
+        h.update(b"\0");
+        h.update(&context_id.to_be_bytes());
+        let bytes = h.finalize();
+        let id = u64::from_be_bytes(bytes.as_bytes()[..8].try_into().unwrap());
+        if !self.seen_string_observations.lock().unwrap().insert(id) {
+            return id;
+        }
+
+        let mut row = Cursor::default();
+        row.set("id",             id.to_string());
+        row.set("string_id",      string.0.to_string());
+        row.set("role",           role);
+        row.set("where_bytes_id", where_bytes.0.to_string());
+        row.set("context_kind",   context_kind);
+        row.set("context_id",     context_id.to_string());
+        self.inner.insert(STRING_OBSERVATIONS_TABLE, Arc::new(row));
+        id
     }
 
     // ── repos ────────────────────────────────────────────────────────
@@ -460,7 +523,7 @@ impl SprfStore {
     /// Layer 4 alongside auto-views. Acceptable at sprefa scale.
     pub fn find_refs_in(&self, file: FileId, byte: u32) -> Vec<Ref> {
         let mut out = Vec::new();
-        for row in self.inner.rows_of(REFS_TABLE) {
+        for row in self.inner.rows_of(WHERE_BYTES_TABLE) {
             let f: FileId = row.get("file_id").unwrap_or("0")
                 .parse().unwrap_or(0);
             if f != file { continue; }
@@ -472,5 +535,9 @@ impl SprfStore {
             }
         }
         out
+    }
+
+    pub fn find_where_bytes_covering(&self, file: FileId, byte: u32) -> Vec<WhereBytesId> {
+        self.find_refs_in(file, byte).into_iter().map(WhereBytesId::from).collect()
     }
 }

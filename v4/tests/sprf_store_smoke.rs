@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use effect_runtime::v2::{FactStore, MemFactStore};
 use v4::store::{
-    FILES_TABLE, PATHS_TABLE, REFS_TABLE, REPOS_TABLE, REVS_TABLE,
-    STRINGS_TABLE, SprfStore,
+    FILES_TABLE, PATHS_TABLE, REPOS_TABLE, REVS_TABLE, STRING_OBSERVATIONS_TABLE,
+    STRINGS_TABLE, WHERE_BYTES_TABLE, SprfStore,
 };
-use v4::{Coord, Cursor, Ref, StringId};
+use v4::{Cursor, StringId, WhereBytes, WhereBytesId};
 
 fn fresh_store() -> Arc<SprfStore> {
     let inner: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
@@ -60,19 +60,19 @@ fn intern_file_is_content_addressable() {
 }
 
 #[test]
-fn intern_ref_dedups_on_span_tuple() {
+fn intern_where_bytes_dedups_on_span_tuple() {
     let s = fresh_store();
     let f = s.intern_file(b"abc", "/x");
 
-    let r1 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo: 0, hi: 3 });
-    let r2 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo: 0, hi: 3 });
-    let r3 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo: 1, hi: 3 });
+    let r1 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo: 0, hi: 3 });
+    let r2 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo: 0, hi: 3 });
+    let r3 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo: 1, hi: 3 });
     assert_eq!(r1, r2);
     assert_ne!(r1, r3);
-    assert_eq!(s.inner().len(REFS_TABLE), 3, "sentinel + 2 unique coords");
+    assert_eq!(s.inner().len(WHERE_BYTES_TABLE), 3, "sentinel + 2 unique byte ranges");
     assert_eq!(
-        s.coord_of(r1),
-        Some(Coord { repo: 0, rev: 0, fs: f, lo: 0, hi: 3 }),
+        s.where_bytes_of(r1),
+        Some(WhereBytes { repo: 0, rev: 0, file: f, lo: 0, hi: 3 }),
     );
 }
 
@@ -80,7 +80,7 @@ fn intern_ref_dedups_on_span_tuple() {
 fn sentinels_pre_inserted() {
     let s = fresh_store();
     assert_eq!(s.lookup_string(StringId::EMPTY).as_deref(), Some(""));
-    assert_eq!(s.coord_of(Ref::SYNTHETIC), Some(Coord::default()));
+    assert_eq!(s.where_bytes_of(WhereBytesId::SYNTHETIC), Some(WhereBytes::default()));
     let (hash, path) = s.lookup_file(0).expect("synthetic file resolves");
     assert_eq!(hash, [0u8; 32], "synthetic file_id has zero hash");
     assert_eq!(&*path, "\u{2205}");
@@ -89,7 +89,7 @@ fn sentinels_pre_inserted() {
 #[test]
 fn norm_columns_populated() {
     let s = fresh_store();
-    let raw = "  Hello   World  ";
+    let raw = "ApiService/api_service/api-service";
     let id = s.intern_string(raw);
 
     let id_str = id.0.to_string();
@@ -99,8 +99,28 @@ fn norm_columns_populated() {
         .expect("row exists for interned id");
 
     assert_eq!(row.get("content").as_deref(), Some(raw));
-    assert_eq!(row.get("norm_ws").as_deref(), Some("Hello World"));
-    assert_eq!(row.get("norm_case").as_deref(), Some("  hello   world  "));
+    assert_eq!(row.get("norm").as_deref(), Some("apiserviceapiserviceapiservice"));
+}
+
+#[test]
+fn string_observations_are_role_rows() {
+    let s = fresh_store();
+    let file = s.intern_file(b"const ApiService = 1;", "/src/api.ts");
+    let where_bytes = s.intern_where_bytes(WhereBytes {
+        repo: 0,
+        rev: 0,
+        file,
+        lo: 6,
+        hi: 16,
+    });
+    let string = s.intern_string("ApiService");
+
+    s.observe_string(string, "identifier", where_bytes, "", 0);
+    s.observe_string(string, "identifier", where_bytes, "", 0);
+    s.observe_string(string, "string_literal", where_bytes, "", 0);
+
+    let rows = s.inner().rows_of(STRING_OBSERVATIONS_TABLE);
+    assert_eq!(rows.len(), 3, "sentinel + 2 distinct role observations");
 }
 
 #[test]
@@ -175,29 +195,29 @@ fn intern_path_dedups_on_full_tuple() {
 }
 
 #[test]
-fn find_refs_in_returns_covering_refs() {
+fn find_where_bytes_covering_returns_covering_ids() {
     let s = fresh_store();
     let f = s.intern_file(b"some bytes for indexing", "/x.rs");
 
-    let r1 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo:  0, hi: 10 });
-    let r2 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo:  5, hi: 15 });
-    let r3 = s.intern_ref(Coord { repo: 0, rev: 0, fs: f, lo: 20, hi: 30 });
+    let r1 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo:  0, hi: 10 });
+    let r2 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo:  5, hi: 15 });
+    let r3 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo: 20, hi: 30 });
 
     // byte=7 is inside r1 (0..10) and r2 (5..15).
-    let mut at_7 = s.find_refs_in(f, 7);
+    let mut at_7 = s.find_where_bytes_covering(f, 7);
     at_7.sort();
     let mut want = vec![r1, r2];
     want.sort();
     assert_eq!(at_7, want);
 
     // byte=25 is inside r3 only.
-    assert_eq!(s.find_refs_in(f, 25), vec![r3]);
+    assert_eq!(s.find_where_bytes_covering(f, 25), vec![r3]);
 
     // byte=100 covers nothing.
-    assert!(s.find_refs_in(f, 100).is_empty());
+    assert!(s.find_where_bytes_covering(f, 100).is_empty());
 
     // unknown file is empty.
-    assert!(s.find_refs_in(0xdead_beef_dead_beef, 7).is_empty());
+    assert!(s.find_where_bytes_covering(0xdead_beef_dead_beef, 7).is_empty());
 }
 
 #[test]

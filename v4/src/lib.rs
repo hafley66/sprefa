@@ -87,6 +87,7 @@ pub type RevId    = u32;
 pub type FileId   = u64;
 pub type RefId    = u64;
 pub type PathId   = u64;
+pub type BlobId   = u64;
 
 /// A coordinate in the (repo × rev × file × byte-range) space.
 /// All zeros = SYNTHETIC. Source-located = nonzero ids + real bytes.
@@ -97,6 +98,32 @@ pub struct Coord {
     pub fs:   FileId,
     pub lo:   u32,
     pub hi:   u32,
+}
+
+/// Physical byte span in a repo/rev/file source.
+///
+/// This is the clearer successor name for `Coord`. The old `Coord`
+/// remains during migration because many operators still use the `fs`
+/// field name directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct WhereBytes {
+    pub repo: RepoId,
+    pub rev:  RevId,
+    pub file: FileId,
+    pub lo:   u32,
+    pub hi:   u32,
+}
+
+impl From<Coord> for WhereBytes {
+    fn from(c: Coord) -> Self {
+        Self { repo: c.repo, rev: c.rev, file: c.fs, lo: c.lo, hi: c.hi }
+    }
+}
+
+impl From<WhereBytes> for Coord {
+    fn from(w: WhereBytes) -> Self {
+        Self { repo: w.repo, rev: w.rev, fs: w.file, lo: w.lo, hi: w.hi }
+    }
 }
 
 /// FK handle into `_refs`. `Ref(0)` is the SYNTHETIC sentinel. Coord
@@ -123,6 +150,44 @@ impl Ref {
         let bytes = h.finalize();
         Ref(u64::from_be_bytes(bytes.as_bytes()[..8].try_into().unwrap()))
     }
+}
+
+/// Id for a persisted `WhereBytes` row.
+///
+/// This is the clearer successor name for `Ref`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct WhereBytesId(pub RefId);
+
+impl WhereBytesId {
+    pub const SYNTHETIC: WhereBytesId = WhereBytesId(0);
+
+    pub fn of(w: WhereBytes) -> WhereBytesId {
+        let r = Ref::of(w.into());
+        WhereBytesId(r.0)
+    }
+}
+
+impl From<Ref> for WhereBytesId {
+    fn from(r: Ref) -> Self { WhereBytesId(r.0) }
+}
+
+impl From<WhereBytesId> for Ref {
+    fn from(r: WhereBytesId) -> Self { Ref(r.0) }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CursorValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(u64),
+    String(StringId),
+    WhereBytes(WhereBytesId),
+    Blob(BlobId),
+}
+
+impl Default for CursorValue {
+    fn default() -> Self { CursorValue::String(StringId::EMPTY) }
 }
 
 /// FK handle into `_strings`. `StringId(0)` is the empty string,
@@ -160,6 +225,8 @@ pub struct Term {
     pub value: StringId,
     pub at:    Ref,
 }
+
+pub type CursorTerm = Term;
 
 impl Term {
     /// Synthetic Term: real StringId on name+value, SYNTHETIC ref.
