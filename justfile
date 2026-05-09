@@ -41,42 +41,42 @@ build:
 # -----------------------------------------------------------------------------
 
 v4-test:
-    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml
+    cargo test --manifest-path v4/Cargo.toml
 
 v4-target-tests:
-    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml --test rule_future_semantics_target -- --ignored
+    cargo test --manifest-path v4/Cargo.toml --test rule_future_semantics_target -- --ignored
 
 v4-v3-parity-targets:
-    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml --test v3_parity_target -- --ignored
+    cargo test --manifest-path v4/Cargo.toml --test v3_parity_target -- --ignored
 
 v4-flow-smoke:
-    CARGO_BUILD_RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/lsp-flow-smoke.sprf --show-rows
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/lsp-flow-smoke.sprf --show-rows
 
 v4-dev-missing-hook:
-    RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-missing-frontend-hook.sprf --show-rows
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-missing-frontend-hook.sprf --show-rows
 
 v4-dev-doc-drift:
-    RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-doc-drift.sprf --show-rows --root .
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-doc-drift.sprf --show-rows --root .
 
 v4-dev-git-todo-index:
-    RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-git-todo-index.sprf --show-rows --root .
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-git-todo-index.sprf --show-rows --root .
 
 v4-dev-rust-panic-map:
-    RUSTC_WRAPPER= cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-rust-panic-map.sprf --show-rows --root .
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-rust-panic-map.sprf --show-rows --root .
 
 v4-dev-dogfood: v4-dev-missing-hook v4-dev-doc-drift v4-dev-git-todo-index v4-dev-rust-panic-map
 
 v4-cli-smoke:
-    RUSTC_WRAPPER= cargo test --manifest-path v4/Cargo.toml --test sprefa_run_cli_smoke -- --nocapture
+    cargo test --manifest-path v4/Cargo.toml --test sprefa_run_cli_smoke -- --nocapture
 
 v4-lsp-build:
-    CARGO_BUILD_RUSTC_WRAPPER= cargo build --manifest-path v4/crates/sprefa-lsp/Cargo.toml --bin sprefa-lsp
+    cargo build --manifest-path v4/crates/sprefa-lsp/Cargo.toml --bin sprefa-lsp
 
 v4-lsp-test:
-    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/crates/sprefa-lsp/Cargo.toml
+    cargo test --manifest-path v4/crates/sprefa-lsp/Cargo.toml
 
 v4-app-host-test:
-    CARGO_BUILD_RUSTC_WRAPPER= cargo test --manifest-path v4/app_host/Cargo.toml
+    cargo test --manifest-path v4/app_host/Cargo.toml
 
 v4-vscode-compile:
     cd v4/editors/vscode && npm run compile
