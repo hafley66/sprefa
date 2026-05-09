@@ -12,8 +12,10 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use v4::app::{build_router, SprfState};
+use v4::git_watch::{latest_ghcache_change_id, poll_ghcache_changes};
 
 #[derive(Debug)]
 struct Args {
@@ -21,6 +23,8 @@ struct Args {
     root: PathBuf,
     fact_db: Option<PathBuf>,
     queue_db: Option<PathBuf>,
+    ghcache_db: Option<PathBuf>,
+    ghcache_interval_ms: u64,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -29,6 +33,8 @@ fn parse_args() -> Result<Args, String> {
     let mut root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut fact_db: Option<PathBuf> = None;
     let mut queue_db: Option<PathBuf> = None;
+    let mut ghcache_db: Option<PathBuf> = None;
+    let mut ghcache_interval_ms = 500;
 
     let mut i = 0;
     while i < raw.len() {
@@ -49,14 +55,26 @@ fn parse_args() -> Result<Args, String> {
                 queue_db = Some(PathBuf::from(raw.get(i+1).ok_or("--queue-db needs path")?));
                 i += 2;
             }
+            "--ghcache-db" => {
+                ghcache_db = Some(PathBuf::from(raw.get(i+1).ok_or("--ghcache-db needs path")?));
+                i += 2;
+            }
+            "--ghcache-interval-ms" => {
+                ghcache_interval_ms = raw
+                    .get(i+1)
+                    .ok_or("--ghcache-interval-ms needs milliseconds")?
+                    .parse()
+                    .map_err(|_| "--ghcache-interval-ms must be an integer")?;
+                i += 2;
+            }
             "-h" | "--help" => {
-                eprintln!("sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR] [--fact-db PATH] [--queue-db PATH]");
+                eprintln!("sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR] [--fact-db PATH] [--queue-db PATH] [--ghcache-db PATH]");
                 std::process::exit(0);
             }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
-    Ok(Args { bind, root, fact_db, queue_db })
+    Ok(Args { bind, root, fact_db, queue_db, ghcache_db, ghcache_interval_ms })
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -74,6 +92,13 @@ async fn main() {
         (None, Some(queue_db)) => SprfState::new_with_sqlite_queue(args.root, queue_db),
         (None, None) => SprfState::new(args.root),
     });
+    if let Some(db_path) = args.ghcache_db {
+        spawn_ghcache_watcher(
+            state.clone(),
+            db_path,
+            Duration::from_millis(args.ghcache_interval_ms),
+        );
+    }
     let router = build_router(state);
 
     let listener = match tokio::net::TcpListener::bind(&args.bind).await {
@@ -108,4 +133,47 @@ async fn shutdown_signal() {
 
     tokio::select! { _ = ctrl_c => {}, _ = term => {} }
     eprintln!("shutting down");
+}
+
+fn spawn_ghcache_watcher(state: Arc<SprfState>, db_path: PathBuf, interval: Duration) {
+    tokio::spawn(async move {
+        let mut last_id = match tokio::task::spawn_blocking({
+            let db_path = db_path.clone();
+            move || latest_ghcache_change_id(&db_path)
+        }).await {
+            Ok(Ok(id)) => id,
+            Ok(Err(e)) => {
+                eprintln!("ghcache watch disabled: {e}");
+                return;
+            }
+            Err(e) => {
+                eprintln!("ghcache watch task failed: {e}");
+                return;
+            }
+        };
+
+        loop {
+            tokio::time::sleep(interval).await;
+            let result = tokio::task::spawn_blocking({
+                let db_path = db_path.clone();
+                move || poll_ghcache_changes(&db_path, last_id)
+            }).await;
+            let changes = match result {
+                Ok(Ok(changes)) => changes,
+                Ok(Err(e)) => {
+                    eprintln!("ghcache poll error: {e}");
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("ghcache poll task failed: {e}");
+                    continue;
+                }
+            };
+            for change in changes {
+                last_id = change.id;
+                state.dispatch_ghcache_change(&change);
+            }
+            state.drain_ready();
+        }
+    });
 }

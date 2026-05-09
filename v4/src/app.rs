@@ -38,6 +38,9 @@ use tower::ServiceExt;
 use crate::compile::ast::{OpCall, PipeAst};
 use crate::compile::parse::host_parse;
 use crate::compile::walk::walk_program;
+use crate::cst::dsl::Dsl;
+pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq};
+use crate::git_watch::{dirty_notice, ghcache_dirty_notices};
 use crate::lower::{default_registry, LowerCtx, Registry};
 use crate::Cursor;
 
@@ -167,6 +170,17 @@ pub struct LspLocateDslResp {
     pub body_raw:  Option<String>,
     pub body_off:  u32,
     pub body_byte: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspHoverReq {
+    pub uri:  String,
+    pub byte: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspHoverResp {
+    pub contents: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -383,9 +397,11 @@ sprf_rpc! {
     fn get_diags   (GetDiagsReq)  -> Vec<SprfDiag>       => "/lsp/diags";
     fn get_inlays  (GetInlaysReq) -> Vec<InlayProbe>     => "/lsp/inlays";
     fn lsp_locate_dsl (LspLocateDslReq) -> LspLocateDslResp => "/lsp/locate-dsl";
+    fn lsp_hover      (LspHoverReq) -> LspHoverResp      => "/lsp/hover";
     fn run            (RunReq)          -> RunReport     => "/run";
     fn get_fact_table (GetFactTableReq) -> FactTable     => "/facts";
     fn refs_at        (RefsAtReq)       -> RefsAtResp    => "/refs-at";
+    fn notify_ghcache_change (NotifyGhcacheChangeReq) -> Vec<DirtyNotice> => "/git/ghcache-change";
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -546,6 +562,20 @@ impl SprfState {
         }
     }
 
+    pub fn dispatch_ghcache_change(&self, change: &GhcacheChangeReq) -> Vec<DirtyNotice> {
+        let mut notices = Vec::new();
+        for (domain, key) in ghcache_dirty_notices(change) {
+            self.bus.dispatch_dirty(domain.clone(), key);
+            notices.push(dirty_notice(domain, key));
+        }
+        notices
+    }
+
+    pub fn drain_ready(&self) {
+        let opts = ExpandOpts::default().with_bus(self.bus.clone());
+        self.resume_mounted(opts);
+    }
+
     fn ingest(&self, uri: String, text: String, version: i32) {
         let (program, parse_diags) = host_parse(&text);
         let probe_sink: Arc<BufferProbeSink<Cursor>> = Arc::new(BufferProbeSink::new());
@@ -646,6 +676,20 @@ impl SprfHandlers for SprfState {
         })
     }
 
+    async fn lsp_hover(&self, req: LspHoverReq) -> Result<LspHoverResp, SprfError> {
+        let docs = self.docs.lock().unwrap();
+        let d = docs.get(&req.uri).ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
+        let mut hit: Option<(OpCall, usize)> = None;
+        for p in &d.program {
+            walk_pipe_for_dsl(p, req.byte as usize, &mut hit);
+        }
+        let contents = hit.and_then(|(call, body_byte)| {
+            let dsl = call.dsl.as_ref()?;
+            dsl_hover(call.name.as_ref(), dsl.raw.as_bytes(), body_byte)
+        });
+        Ok(LspHoverResp { contents })
+    }
+
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
         let src = std::fs::read_to_string(&req.path)
             .map_err(|e| SprfError::Io(e.to_string()))?;
@@ -725,6 +769,15 @@ impl SprfHandlers for SprfState {
         Ok(RefsAtResp { hits })
     }
 
+    async fn notify_ghcache_change(
+        &self,
+        req: NotifyGhcacheChangeReq,
+    ) -> Result<Vec<DirtyNotice>, SprfError> {
+        let notices = self.dispatch_ghcache_change(&req.change);
+        self.drain_ready();
+        Ok(notices)
+    }
+
     async fn get_fact_table(&self, req: GetFactTableReq) -> Result<FactTable, SprfError> {
         let total = self.facts.len(&req.name);
         let raw   = self.facts.rows_of(&req.name);
@@ -752,6 +805,35 @@ fn fallback_pipe_identity(path: &std::path::Path, idx: usize) -> u64 {
     h.update(b"\0pipe-index\0");
     h.update(&idx.to_le_bytes());
     hash_to_nonzero_u64(h.finalize().as_bytes())
+}
+
+fn dsl_hover(op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {
+    let dsl: Box<dyn Dsl> = match op_name {
+        "sql"  => Box::new(crate::cst::dsls::sql::SqlDsl::new()),
+        "json" => Box::new(crate::cst::dsls::json::JsonDsl::new()),
+        "re"   => Box::new(crate::cst::dsls::re::ReDsl::new()),
+        "glob" => Box::new(crate::cst::dsls::glob::GlobDsl::new()),
+        _ => return None,
+    };
+    let hover = dsl.lsp()?.hover(body, body_byte)?;
+    Some(hover_contents_to_string(hover.contents))
+}
+
+fn hover_contents_to_string(contents: lsp_types::HoverContents) -> String {
+    match contents {
+        lsp_types::HoverContents::Scalar(marked) => marked_string_to_string(marked),
+        lsp_types::HoverContents::Array(items) => {
+            items.into_iter().map(marked_string_to_string).collect::<Vec<_>>().join("\n")
+        }
+        lsp_types::HoverContents::Markup(markup) => markup.value,
+    }
+}
+
+fn marked_string_to_string(marked: lsp_types::MarkedString) -> String {
+    match marked {
+        lsp_types::MarkedString::String(s) => s,
+        lsp_types::MarkedString::LanguageString(s) => s.value,
+    }
 }
 
 fn hash_to_nonzero_u64(bytes: &[u8; 32]) -> u64 {
