@@ -28,7 +28,8 @@ use axum::{
 use bytes::Bytes;
 use effect_runtime::v2::{
     attach_dirty_to_queue, expand, BufferProbeSink, Diag, DiagSink, EventBus, ExpandOpts,
-    FactStore, MemFactStore, MemQueue, Pipe, PipeInstance, ProbeSink, QueueBackend,
+    Component, FactStore, MemFactStore, MemQueue, Node, Pipe, PipeInstance, ProbeSink, Purity,
+    QueueBackend,
 };
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
@@ -423,6 +424,18 @@ pub struct SprfState {
     pub root:       PathBuf,
 }
 
+struct AnalysisPassThrough;
+
+impl Component for AnalysisPassThrough {
+    type Next = Cursor;
+
+    fn render(&self, _ctx: &effect_runtime::v2::RenderCtx, c: &Cursor) -> Node<Cursor> {
+        Node::Emit(Arc::new(c.clone()))
+    }
+
+    fn kind(&self) -> &'static str { "analysis_pass_through" }
+}
+
 impl SprfState {
     pub fn new(root: PathBuf) -> Self {
         let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
@@ -496,7 +509,7 @@ impl SprfState {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let opts = ExpandOpts::default().with_diag(runtime_diags.clone());
         for pipe in pipes {
-            let inst = pipe.into_instance();
+            let inst = analysis_safe_pipe(pipe).into_instance();
             expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], opts.clone());
         }
 
@@ -517,6 +530,19 @@ impl SprfState {
             probes,
         });
     }
+}
+
+fn analysis_safe_pipe(pipe: Pipe<Cursor>) -> Pipe<Cursor> {
+    let steps = pipe.steps.into_iter()
+        .map(|component| {
+            if component.purity() == Purity::Effectful {
+                Arc::new(AnalysisPassThrough) as Arc<dyn Component<Next = Cursor>>
+            } else {
+                component
+            }
+        })
+        .collect();
+    Pipe::from_steps(steps)
 }
 
 #[async_trait::async_trait]

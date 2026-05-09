@@ -80,6 +80,27 @@ async fn write_file_backtick_path_writes_cursor_value() {
 }
 
 #[tokio::test]
+async fn lsp_open_does_not_execute_write_file() {
+    let root = tempfile::tempdir().unwrap();
+    let out = root.path().join("open-buffer-side-effect.txt");
+    let uri = "file:///analysis-write-file.sprf".to_string();
+    let src = format!("`from lsp_open` > write_file`{}`;", out.display());
+
+    let (_state, client) = build_in_process(root.path().to_path_buf());
+    client
+        .lsp_open(LspOpenReq { uri: uri.clone(), text: src, version: 1 })
+        .await
+        .unwrap();
+
+    assert!(
+        !out.exists(),
+        "lsp_open analysis mode should not execute write_file side effects",
+    );
+    let diags = client.get_diags(GetDiagsReq { uri }).await.unwrap();
+    assert_eq!(diag_lines(&diags), "");
+}
+
+#[tokio::test]
 async fn render_markdown_aggregate_writes_file() {
     let root = tempfile::tempdir().unwrap();
     let out = root.path().join("RECAP.md");

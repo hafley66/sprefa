@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use effect_runtime::v2::{
     ByteRange, Component, DynComponent, ExpandTick, Node, Probe,
-    ProbeSink, QueueBackend, QueueId, QueueRow, RenderCtx,
+    ProbeSink, Purity, QueueBackend, QueueId, QueueRow, RenderCtx,
 };
 use effect_runtime::v2::next_key::NextKey;
 
@@ -66,6 +66,8 @@ impl Component for SpannedComponent {
     }
 
     fn batch_hint(&self) -> Option<usize> { self.inner.batch_hint() }
+
+    fn purity(&self) -> Purity { self.inner.purity() }
 }
 
 /// `&dyn QueueBackend<Cursor>` adaptor that fires a probe on every
@@ -143,4 +145,3 @@ pub fn wrap_pipe_with_span(
         .collect();
     effect_runtime::v2::Pipe::from_steps(wrapped)
 }
-

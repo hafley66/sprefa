@@ -26,7 +26,7 @@ use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
     par_render, splice_into_at, BarrierScope, Component, ComponentLifecycle,
-    Diag, NextKey, Node, PendingSummary, QueueBackend, QueueRow, RenderCtx, Wake,
+    Diag, NextKey, Node, PendingSummary, Purity, QueueBackend, QueueRow, RenderCtx, Wake,
 };
 use ignore::WalkBuilder;
 
@@ -982,6 +982,8 @@ impl Component for ShComponent {
             }
         })
     }
+
+    fn purity(&self) -> Purity { Purity::Effectful }
 }
 
 /// `sh!` — author-declared impure shell. Per-cursor cmd run, stdout
@@ -1012,6 +1014,8 @@ impl Component for ShBangComponent {
             Node::Emit(Arc::new(c.clone()))
         })
     }
+
+    fn purity(&self) -> Purity { Purity::Effectful }
 }
 
 /// Seed source: emit a fixed Vec<Cursor> once. Useful as a chain head
@@ -1803,6 +1807,8 @@ impl Component for WriteCursorComponent {
         }
         out
     }
+
+    fn purity(&self) -> Purity { Purity::Effectful }
 }
 
 #[derive(Clone)]
@@ -1844,6 +1850,8 @@ impl Component for WriteFileComponent {
         }
         Node::Emit(Arc::new(c.clone()))
     }
+
+    fn purity(&self) -> Purity { Purity::Effectful }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
