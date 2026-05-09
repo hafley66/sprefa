@@ -139,8 +139,16 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
     assert!(mounted_outputs[0].get("mount_id").is_some());
     assert!(mounted_outputs[0].get("input_key").is_some());
     assert!(mounted_outputs[0].get("generation").is_some());
-    assert!(mounted_outputs[0].get("output_hash").is_some());
-    assert!(mounted_outputs[0].get("cursor_blob").is_some());
+    let cursor_id = mounted_outputs[0].get("cursor_id").expect("mounted output should reference interned cursor");
+
+    let mounted_cursors = store.rows_of("mounted_query_cursor");
+    assert!(
+        mounted_cursors.iter().any(|row| {
+            row.get("cursor_id") == Some(cursor_id)
+                && row.get("cursor_blob").is_some()
+        }),
+        "mounted output cursor payload should be interned once in mounted_query_cursor"
+    );
 }
 
 #[test]

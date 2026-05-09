@@ -1,8 +1,7 @@
 //! Durable query mount helpers.
 //!
 //! First slice: persist the output set from a batch-local SQL relation op
-//! through the existing `FactStore`. Replacement/diff/retraction semantics
-//! remain separate follow-up work.
+//! through the existing `FactStore`.
 
 use std::sync::Arc;
 
@@ -12,12 +11,111 @@ use crate::cursor_codec;
 use crate::Cursor;
 
 pub const OUTPUT_TABLE: &str = "mounted_query_output";
+pub const CURSOR_TABLE: &str = "mounted_query_cursor";
 
 const MOUNT_ID: &str = "mount_id";
 const INPUT_KEY: &str = "input_key";
 const GENERATION: &str = "generation";
-const OUTPUT_HASH: &str = "output_hash";
+const CURSOR_ID: &str = "cursor_id";
 const CURSOR_BLOB: &str = "cursor_blob";
+
+pub trait MountedQueryStorage {
+    fn record_sql_outputs(
+        &self,
+        sql: &str,
+        generation: u64,
+        batch: &[&Cursor],
+        nodes: &[Node<Cursor>],
+    ) -> Vec<Node<Cursor>>;
+}
+
+pub struct FactMountedQueryStorage {
+    store: Arc<dyn FactStore<Cursor>>,
+}
+
+impl FactMountedQueryStorage {
+    pub fn new(store: Arc<dyn FactStore<Cursor>>) -> Self {
+        Self { store }
+    }
+
+    fn declare_tables(&self) {
+        self.store.declare(CURSOR_TABLE, &[CURSOR_ID, CURSOR_BLOB]);
+        self.store.declare(OUTPUT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, CURSOR_ID]);
+    }
+
+    fn existing_cursor_ids(
+        &self,
+        mount_id: &str,
+        input_key: &str,
+    ) -> std::collections::BTreeSet<String> {
+        self.store
+            .rows_of(OUTPUT_TABLE)
+            .into_iter()
+            .filter(|row| {
+                row.get(MOUNT_ID) == Some(mount_id)
+                    && row.get(INPUT_KEY) == Some(input_key)
+            })
+            .filter_map(|row| row.get(CURSOR_ID).map(|s| s.to_string()))
+            .collect()
+    }
+
+    fn intern_output_cursors(&self, outputs: &[Cursor]) {
+        let rows: Vec<Arc<Cursor>> = outputs
+            .iter()
+            .map(|cursor| {
+                let (cursor_id, encoded) = cursor_storage_parts(cursor);
+                let mut row = Cursor::default();
+                row.set(CURSOR_ID, cursor_id);
+                row.set(CURSOR_BLOB, hex(&encoded));
+                Arc::new(row)
+            })
+            .collect();
+        self.store.insert_batch(CURSOR_TABLE, rows);
+    }
+}
+
+impl MountedQueryStorage for FactMountedQueryStorage {
+    fn record_sql_outputs(
+        &self,
+        sql: &str,
+        generation: u64,
+        batch: &[&Cursor],
+        nodes: &[Node<Cursor>],
+    ) -> Vec<Node<Cursor>> {
+        let outputs = output_cursors(nodes);
+        self.declare_tables();
+
+        let mount_id = mount_id_for_sql(sql);
+        let input_key = input_key_for_batch(batch);
+        let existing_cursor_ids = self.existing_cursor_ids(&mount_id, &input_key);
+        self.store.delete_matching(
+            OUTPUT_TABLE,
+            &[(MOUNT_ID, mount_id.as_str()), (INPUT_KEY, input_key.as_str())],
+        );
+
+        if outputs.is_empty() {
+            return nodes_added_since(nodes, &existing_cursor_ids);
+        }
+
+        self.intern_output_cursors(&outputs);
+
+        let generation = generation.to_string();
+        let mut rows = Vec::with_capacity(outputs.len());
+
+        for cursor in outputs {
+            let (cursor_id, _) = cursor_storage_parts(&cursor);
+            let mut row = Cursor::default();
+            row.set(MOUNT_ID, mount_id.clone());
+            row.set(INPUT_KEY, input_key.clone());
+            row.set(GENERATION, generation.clone());
+            row.set(CURSOR_ID, cursor_id);
+            rows.push(Arc::new(row));
+        }
+
+        self.store.insert_batch(OUTPUT_TABLE, rows);
+        nodes_added_since(nodes, &existing_cursor_ids)
+    }
+}
 
 pub fn record_sql_outputs(
     store: &Arc<dyn FactStore<Cursor>>,
@@ -26,40 +124,8 @@ pub fn record_sql_outputs(
     batch: &[&Cursor],
     nodes: &[Node<Cursor>],
 ) -> Vec<Node<Cursor>> {
-    let outputs = output_cursors(nodes);
-    store.declare(
-        OUTPUT_TABLE,
-        &[MOUNT_ID, INPUT_KEY, GENERATION, OUTPUT_HASH, CURSOR_BLOB],
-    );
-
-    let mount_id = mount_id_for_sql(sql);
-    let input_key = input_key_for_batch(batch);
-    let existing_hashes = existing_output_hashes(store, &mount_id, &input_key);
-    store.delete_matching(
-        OUTPUT_TABLE,
-        &[(MOUNT_ID, mount_id.as_str()), (INPUT_KEY, input_key.as_str())],
-    );
-
-    if outputs.is_empty() {
-        return nodes_added_since(nodes, &existing_hashes);
-    }
-
-    let generation = generation.to_string();
-    let mut rows = Vec::with_capacity(outputs.len());
-
-    for cursor in outputs {
-        let encoded = cursor_codec::encode(&cursor);
-        let mut row = Cursor::default();
-        row.set(MOUNT_ID, mount_id.clone());
-        row.set(INPUT_KEY, input_key.clone());
-        row.set(GENERATION, generation.clone());
-        row.set(OUTPUT_HASH, hex(blake3::hash(&encoded).as_bytes()));
-        row.set(CURSOR_BLOB, hex(&encoded));
-        rows.push(Arc::new(row));
-    }
-
-    store.insert_batch(OUTPUT_TABLE, rows);
-    nodes_added_since(nodes, &existing_hashes)
+    FactMountedQueryStorage::new(store.clone())
+        .record_sql_outputs(sql, generation, batch, nodes)
 }
 
 pub fn mount_id_for_sql(sql: &str) -> String {
@@ -83,41 +149,24 @@ fn output_cursors(nodes: &[Node<Cursor>]) -> Vec<Cursor> {
     out
 }
 
-fn existing_output_hashes(
-    store: &Arc<dyn FactStore<Cursor>>,
-    mount_id: &str,
-    input_key: &str,
-) -> std::collections::BTreeSet<String> {
-    store
-        .rows_of(OUTPUT_TABLE)
-        .into_iter()
-        .filter(|row| {
-            row.get(MOUNT_ID) == Some(mount_id)
-                && row.get(INPUT_KEY) == Some(input_key)
-        })
-        .filter_map(|row| row.get(OUTPUT_HASH).map(|s| s.to_string()))
-        .collect()
-}
-
 fn nodes_added_since(
     nodes: &[Node<Cursor>],
-    existing_hashes: &std::collections::BTreeSet<String>,
+    existing_cursor_ids: &std::collections::BTreeSet<String>,
 ) -> Vec<Node<Cursor>> {
     nodes
         .iter()
-        .map(|node| filter_node_added_since(node, existing_hashes))
+        .map(|node| filter_node_added_since(node, existing_cursor_ids))
         .collect()
 }
 
 fn filter_node_added_since(
     node: &Node<Cursor>,
-    existing_hashes: &std::collections::BTreeSet<String>,
+    existing_cursor_ids: &std::collections::BTreeSet<String>,
 ) -> Node<Cursor> {
     match node {
         Node::Emit(cursor) => {
-            let encoded = cursor_codec::encode(cursor);
-            let hash = hex(blake3::hash(&encoded).as_bytes());
-            if existing_hashes.contains(&hash) {
+            let (cursor_id, _) = cursor_storage_parts(cursor);
+            if existing_cursor_ids.contains(&cursor_id) {
                 Node::Done
             } else {
                 Node::Emit(cursor.clone())
@@ -126,7 +175,7 @@ fn filter_node_added_since(
         Node::Many(nodes) => {
             let kept: Vec<Node<Cursor>> = nodes
                 .iter()
-                .map(|node| filter_node_added_since(node, existing_hashes))
+                .map(|node| filter_node_added_since(node, existing_cursor_ids))
                 .filter(|node| !matches!(node, Node::Done))
                 .collect();
             match kept.len() {
@@ -141,6 +190,12 @@ fn filter_node_added_since(
         },
         Node::Done => Node::Done,
     }
+}
+
+fn cursor_storage_parts(cursor: &Cursor) -> (String, Vec<u8>) {
+    let encoded = cursor_codec::encode(cursor);
+    let cursor_id = hex(blake3::hash(&encoded).as_bytes());
+    (cursor_id, encoded)
 }
 
 fn collect_node_outputs(node: &Node<Cursor>, out: &mut Vec<Cursor>) {
@@ -197,6 +252,8 @@ mod tests {
         let rows = store.rows_of(OUTPUT_TABLE);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get(GENERATION), Some("2"));
+        assert!(rows[0].get(CURSOR_ID).is_some());
+        assert_eq!(store.rows_of(CURSOR_TABLE).len(), 2);
     }
 
     #[test]
@@ -214,6 +271,7 @@ mod tests {
         let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &empty);
         assert!(matches!(added.as_slice(), [Node::Done]));
         assert_eq!(store.rows_of(OUTPUT_TABLE).len(), 0);
+        assert_eq!(store.rows_of(CURSOR_TABLE).len(), 1);
     }
 
     #[test]
@@ -234,6 +292,7 @@ mod tests {
         ])];
         let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &rerun);
         assert_eq!(store.rows_of(OUTPUT_TABLE).len(), 2);
+        assert_eq!(store.rows_of(CURSOR_TABLE).len(), 2);
         match added.as_slice() {
             [Node::Emit(cursor)] => assert_eq!(cursor.value.as_ref(), "new"),
             other => panic!("expected only the new output cursor, got {other:?}"),
