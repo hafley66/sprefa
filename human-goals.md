@@ -438,4 +438,13 @@ OK, so wait. I have not read everything that you have sent but to give you an id
     <note>Remaining foundation slices: mounted query identity, generation rerun, old/new diff, retractions, runtime diagnostics bridge into app/LSP state, store dirty-key contract, rule apply/cache invalidation, barrier identity hardening, and render(:markdown) to collect() to write_file(PATH) as dogfood artifact path.</note>
     <note>Design direction: later notes should be representable as sprf-addressable zones that can target refs, revs, files, rule rows, or whole revision graphs. The current XML llm-zone is a placeholder form for that future programmable note graph.</note>
   </topic>
+  <topic name="v4-rule-semantics-lock" source="codex-session-2026-05-09">
+    <note>Locked V4 rule surface: TERM? is a hole/setter/output projection. TERM is a grounded read/constraint from the current cursor term bag.</note>
+    <note>rule_name(...) queries/replays materialized relation rows. rule_name.(...) applies/sends/runs with grounded args. rule_name!.(...) applies/sends/runs while bypassing apply-cache read. rule_name?(...) is outside the locked V4 surface.</note>
+    <note>Empty rule is replay channel plus imperative table: r.(X, Y) sends grounded values and passes the cursor through; r(X?, Y) queries by Y and projects X; r(X, Y) is a grounded query that emits distinct surviving cursors.</note>
+    <note>Bodied rule is relation plus derivation body: top-level execution materializes rows; r(...) only queries materialized rows; r.(...) runs the body with grounded args; r!.(...) runs the body while bypassing apply-cache read.</note>
+    <note>Cursor/reconciler invariant: cursors and rule rows are keyed elements; query/apply outputs reconcile by output cursor content hash; duplicate supports produce one visible cursor; retraction propagates only when support count reaches zero.</note>
+    <note>Runtime shape: queued and progressive, with active batches plus bounded caches in memory. Durable support, mount, and materialized query state should live in the store when needed.</note>
+    <note>Before changing implementation, write invariant tests for query/apply split, apply grounding, removal of rule_name?(...), duplicate support dedupe, and final-support retraction.</note>
+  </topic>
 </llm-zone>
