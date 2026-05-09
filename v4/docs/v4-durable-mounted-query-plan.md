@@ -10,7 +10,7 @@ sprefa core
 store
 ```
 
-The next foundation slice is durable mounted query state. The runtime can now pause, wake, idle, and complete. Core and store need a durable layer that can survive shutdown, rerun affected query mounts after dirty events, and publish only output additions/retractions.
+The foundation slice now has durable queue state and durable mounted SQL output state. The remaining mounted-query work is narrower: make more state survive process restart, shrink dirty matching, and move any remaining component-local buffers into store-backed scopes when needed.
 
 ## Current State
 
@@ -23,18 +23,30 @@ Implemented:
 - rule declaration, writes, reads, predicates, and SQL batch-local query op
 - fact table row identity through `_id`
 - dirty row publish exists through `FactStore::commit`
-- SQL query outputs are persisted to `mounted_query_output` through
-  `FactStore` with `mount_id`, `input_key`, `generation`, `output_hash`,
-  and `cursor_blob`
+- SQL query outputs are persisted through `mounted_query_output` and
+  `mounted_query_cursor`
+- SQL mounts record dependencies in `mounted_query_dep`
+- mounted SQL parks continuations on referenced table dirty keys
+- late writes to referenced rule tables wake parked SQL continuations
+- mounted query reruns diff outputs and emit only new output cursor hashes
+- anti-join disappearance retracts downstream supported rule rows through
+  `mounted_query_support`
+- `SqliteQueue` serializes parked continuations and can revive them after
+  reopen
+- app drivers can use `--queue-db`, `--fact-db`, or both
+- `SqliteFactStore` supports core/internal tables and mounted-query columns
+  such as `_strings`, `generation`, and `__support_cursor_id`
 
 Current limitations:
 
 - `CollectComponent` buffers in a component `Mutex`, not durable store state
-- `SqlQueryComponent` caches by SQL, input batch, and referenced table row identities, but does not mount a live subscription
-- `mounted_query_output` is append/dedup by full fact row today, not
-  replacement by `(mount_id, input_key, output_hash)`
-- dirty publish is row-oriented, not query-dependency-oriented
-- stale outputs are not retracted or cleared after later writes
+- mounted query definitions and outputs persist in the fact store, but query
+  continuations are only durable when the queue backend is `SqliteQueue`
+- mount recovery across a full process restart needs an integration driver that
+  reopens both `SqliteFactStore` and `SqliteQueue`, then resumes parked rows
+- dirty publish is table-level for mounted SQL dependencies
+- stale output rows are replaced for a mount/input key; broader negative-diff
+  propagation is limited to support rows recorded by rule writes
 
 ## Durable Tables
 
@@ -77,6 +89,16 @@ CREATE TABLE barrier_buffer (
   cursor_blob BLOB NOT NULL,
   PRIMARY KEY (pipe_hash, instance_id, generation, depth, row_idx)
 );
+```
+
+Current executable store tables:
+
+```text
+mounted_query_mount(mount_id, input_key, generation, sql)
+mounted_query_dep(mount_id, input_key, dep_table)
+mounted_query_output(mount_id, input_key, generation, cursor_id)
+mounted_query_cursor(cursor_id, cursor_blob)
+mounted_query_support(__support_cursor_id, support_table, support_row_id)
 ```
 
 ## Query Execution
@@ -124,6 +146,18 @@ row inserted into table T
 -> wake all mounts that depend on table T
 ```
 
+Current executable behavior:
+
+```text
+FactStore::commit(gen, bus)
+-> table dirty event for each changed relation
+-> attached queue wakes parked rows by TABLE_DOMAIN/table_dirty_key(T)
+-> SqlQueryComponent reruns the batch
+-> mounted_query_output is replaced for mount_id + input_key
+-> newly added output cursors continue downstream
+-> removed supported output cursors retract supported rule rows
+```
+
 Later implementation:
 
 ```text
@@ -154,11 +188,11 @@ publish additions/retractions downstream
 
 For LSP diagnostics, retraction means clearing diagnostics whose source output row disappeared.
 
-For downstream rule rows, retraction policy can start as replacement of the mounted output set. Full negative-diff propagation can come after the mount store exists.
+For downstream rule rows, current retraction uses explicit support rows. Rule writes downstream of mounted SQL record which output cursor supported each written row. When that output disappears and no remaining support row points to the same fact row, the fact row is deleted.
 
 ## Recovery
 
-On shutdown:
+On shutdown with SQLite backends:
 
 ```text
 mounted_query
@@ -170,40 +204,40 @@ dirty queue
 
 must be enough to recover:
 
-- what queries were mounted
-- which tables or keys can wake them
+- what queries were mounted in the fact store
+- which tables can wake them
 - what outputs were last visible
-- which parked/barrier states were mid-generation if durable queue mode is active
+- which parked rows were mid-pipe in the queue
 
 On startup:
 
 ```text
 load mounted_query rows
-rebuild dirty dependency index
-resume queued/parked rows
+resume queued/parked rows from SqliteQueue
+wake by table dirty keys as commits arrive
 optionally rerun mounts marked dirty before shutdown
 ```
 
 ## Tests To Add
 
-Red target tests:
+Locked tests:
 
 ```text
-mounted_query_persists_outputs_by_mount_and_input_key
-mounted_query_rerun_retracts_missing_row_after_late_insert
+mounted_query_reacts_to_late_relation_write
 mounted_query_rerun_emits_only_new_output_hashes
-mounted_query_survives_store_reopen
-barrier_buffer_keys_by_scope_not_component_object
-collect_does_not_mix_two_pipe_instances
+mounted_query_retraction_cascades_to_supported_rule_rows
+sqlite_queue_revive_smoke
+app_can_use_sqlite_queue_for_mounted_sql_parks
+app_can_use_sqlite_fact_store_for_rule_rows
+sprefa_run_accepts_sqlite_queue_db
+sprefa_run_accepts_sqlite_fact_db
 ```
 
-First green slice:
+Remaining target tests:
 
 ```text
-scope-keyed barrier state [done]
-durable mounted_query_output table in store [first append-only slice done]
-whole-output-set replacement per mount/input_key
-table-level invalidation only
+mounted_query_survives_full_sqlite_backend_reopen
+store_backed_collect_buffers
 ```
 
 Later slices:
@@ -213,5 +247,6 @@ column-value dirty keys
 row-level additions/retractions through downstream queues
 durable dirty queue
 store-backed collect buffers
-query dependency extraction from SQL lowering
+query dependency extraction from SQL lowering for CTE-heavy SQL
+restart integration for reopened fact store + queue + app state
 ```

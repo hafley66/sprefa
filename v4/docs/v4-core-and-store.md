@@ -111,3 +111,43 @@ dirty keys
 
 History is optional storage policy. Avoid requiring a full in-memory historical trace for basic LSP behavior.
 
+## Durable Backends
+
+Current app constructors support these combinations:
+
+```text
+memory facts + memory queue
+memory facts + SqliteQueue
+SqliteFactStore + memory queue
+SqliteFactStore + SqliteQueue
+```
+
+CLI/daemon flags:
+
+```bash
+sprefa-run file.sprf --queue-db queue.db
+sprefa-run file.sprf --fact-db facts.db
+sprefa-daemon --queue-db queue.db --fact-db facts.db
+```
+
+`SqliteQueue` stores parked continuations:
+
+```text
+serialized cursor payload
+cursor content hash
+pipe_hash
+instance_id
+depth
+wake domain/key
+```
+
+`SqliteFactStore` stores rule rows, core rows, and mounted query bookkeeping with interned string cells. Current store validation permits core/internal names such as:
+
+```text
+_strings
+_refs
+generation
+__support_cursor_id
+```
+
+The effect runtime owns the generic traits and queue mechanics. `SprfStore` owns the sprf-specific core tables and declares them before inserting sentinels so memory and SQLite fact stores share the same app path.

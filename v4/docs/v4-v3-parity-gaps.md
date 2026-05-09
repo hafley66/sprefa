@@ -30,10 +30,16 @@ sql = relational escape hatch over current batch + rule tables
 | rule writes | declaration plus projected writes work |
 | rule reads | `rule_name(...)` relation reads work; `rule_name?(...)` is rejected by the locked V4 surface |
 | SQL query | batch-local SQL DSL supports joins and anti-joins |
+| mounted SQL reactivity | SQL reads park on referenced table dirty keys and rerun after late writes |
+| mounted SQL diffing | reruns emit only newly visible output cursor hashes |
+| mounted SQL retraction | disappearing anti-join outputs retract supported downstream rule rows |
 | runtime diagnostics | `lsp_warn` rows are collected for CLI run reports and open-buffer LSP diagnostics |
 | write file | `write_file(:path)` and `write_file` backtick paths write `cursor.value` |
+| write invalidation | `write_file` / `write_cursor` publish file dirty events for dependent reads |
 | markdown render | `render(:markdown)` renders the current batch into one markdown value |
 | aggregate write | `render(:markdown)` / `collect()` can feed `write_file` for one artifact write |
+| durable queue | `SqliteQueue` can revive parked continuations after reopen |
+| app SQLite backends | `sprefa-run` and `sprefa-daemon` accept `--queue-db` and `--fact-db` |
 
 Human smoke commands live in the root `justfile`:
 
@@ -52,13 +58,13 @@ just v4-app-host-test
 | SQL TextMate highlighting | missing from VS Code grammar | scope strategy for nested SQL |
 | SQL LSP completions from rule schemas | partial body provider, no full schema intelligence | rule namespace and column metadata surface |
 | full V3 AST hover parity | partial/missing | AST DSL hover payload and capture positions |
-| mounted query reactivity | ignored target tests | subscription identity, invalidation, retraction |
+| mounted query restart | partial | reopen app with both SQLite backends and resume existing mounts |
 | `next` workflow parity | substrate exists | channel names, persistence, wake/replay rules |
-| live invalidation kernel | missing | generation boundary and dirty-key model |
+| live invalidation kernel | table/file dirty keys exist | column-value dirty keys and watcher sources |
 | file/git watcher | missing | watch source, debounce, branch/rev invalidation |
 | ghcacher integration | missing | cache ownership and import path from V2/V3 |
 | aggregate render policy | basic batch markdown works | grouping key, ordering, idempotent write policy |
-| write invalidates read/fs caches | missing | write event and cache dependency keys |
+| write invalidates read/fs caches | basic file dirty path exists | git/blob/cache dependency keys |
 | cross-rev write/worktree materialization | missing | worktree policy and target address form |
 | full V3 server parity | partial | whether HTTP daemon or generic app_host is canonical |
 | LSP test suite health | one known failing semantic-token test | fix glob token provider or update test expectation |
@@ -123,17 +129,14 @@ just v4-flow-smoke
 just v4-lsp-build
 ```
 
-Known failing target/health checks:
+Health checks to run when changing targets or LSP:
 
 ```bash
 just v4-target-tests
 just v4-lsp-test
 ```
 
-`v4-target-tests` still runs ignored future runtime semantics:
-
-- mounted anti-join should retract stale missing rows after later writes
-- mounted query rerun should diff old/new mounted query outputs and emit only additions
+`v4-target-tests` currently includes promoted mounted-query and rule-apply targets.
 
 `v4-lsp-test` currently has a known failing semantic-token test for glob body tokens.
 
@@ -148,8 +151,17 @@ Implemented since this tracker was written:
 - `render(:markdown)` emits one batch aggregate markdown cursor
 - `render(:markdown) > write_file` writes an idempotent markdown artifact in the parity smoke
 - collect/barrier buffers are keyed by mount scope, so shared component objects do not mix pipe instances
+- mounted SQL parks on table dirty keys and reruns after late relation writes
+- mounted SQL output sets are replaced per `mount_id + input_key`
+- mounted SQL reruns emit only newly visible output cursor hashes
+- anti-join outputs disappearing retract downstream supported rule rows
+- `SqliteQueue` can persist, reopen, wake, and resume parked rows
+- `sprefa-run --queue-db` creates a durable queue database
+- `sprefa-run --fact-db` creates a durable fact database
+- `sprefa-daemon` accepts `--queue-db` and `--fact-db`
+- `SprfState` can run with memory facts/queue, SQLite queue only, SQLite facts only, or both SQLite backends
 
-## Red Target Tests
+## Target Tests
 
 Target tests live in:
 
@@ -158,7 +170,7 @@ v4/tests/rule_future_semantics_target.rs
 v4/tests/v3_parity_target.rs
 ```
 
-They are ignored by default so normal `just v4-test` stays green.
+Some future tests are ignored by default so normal `just v4-test` stays green.
 
 Run them explicitly when working a parity slice:
 
@@ -167,12 +179,11 @@ just v4-target-tests
 just v4-v3-parity-targets
 ```
 
-Expected current failures:
+Expected remaining failures should be checked with the current test output before editing this list. The mounted-query reactivity tests listed below have been promoted and should pass in the normal suite.
 
 | Test | Target |
 | --- | --- |
-| `mounted_query_reacts_to_late_relation_write` | live query reactivity and retraction |
-| `mounted_query_rerun_emits_only_new_output_hashes` | mounted query diffing should emit additions without replaying old outputs |
+| future ignored rule semantics in `rule_future_semantics_target.rs` | design targets not yet promoted |
 
 Promoted target tests now run green in the normal suite:
 
@@ -184,6 +195,14 @@ Promoted target tests now run green in the normal suite:
 | `write_file_backtick_path_writes_cursor_value` | path strings can use backtick bodies |
 | `render_markdown_aggregate_writes_file` | markdown rows render and write an idempotent artifact |
 | `collect_does_not_mix_two_pipe_instances` | barrier state is keyed by mount scope |
+| `mounted_query_reacts_to_late_relation_write` | late table writes wake mounted SQL and clear missing rows |
+| `mounted_query_rerun_emits_only_new_output_hashes` | rerun emits additions without replaying unchanged outputs |
+| `mounted_query_retraction_cascades_to_supported_rule_rows` | stale downstream fact rows retract when support disappears |
+| `sqlite_queue_revive_smoke` | parked continuations survive SQLite queue reopen |
+| `app_can_use_sqlite_queue_for_mounted_sql_parks` | app driver can park mounted SQL work in SQLite queue |
+| `app_can_use_sqlite_fact_store_for_rule_rows` | app driver can persist rule rows in SQLite facts |
+| `sprefa_run_accepts_sqlite_queue_db` | CLI accepts durable queue DB |
+| `sprefa_run_accepts_sqlite_fact_db` | CLI accepts durable fact DB |
 
 ## Review Before Implementation
 

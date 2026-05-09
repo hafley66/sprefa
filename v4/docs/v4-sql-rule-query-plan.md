@@ -2,15 +2,18 @@
 
 ## Status
 
-This document is target design plus the first executable slice. Current v4 already has rule declaration/write behavior, `FactRead`, `FactRead::anti`, LSP diagnostic ops, CST/LSP substrate, and a batch-local `sql`` operator.
+This document is target design plus the current executable slice. Current v4 already has rule declaration/write behavior, `FactRead`, `FactRead::anti`, LSP diagnostic ops, CST/LSP substrate, and a batch-local `sql`` operator.
 
 Implemented `sql`` status:
 
 ```text
 upstream cursor batch -> temp input relation -> in-memory SQLite query -> output cursors
+-> mounted output diff -> generation commit
 ```
 
 The first slice snapshots referenced fact tables through `FactStore::rows_of` into the per-batch SQLite connection. That keeps the implementation trait-backed while rule/query semantics stay SQLite-shaped.
+
+Mounted SQL parks continuations on referenced table dirty keys. A later write to a referenced rule table wakes the parked SQL rows, reruns the batch, replaces the mounted output set for `mount_id + input_key`, and emits only newly visible output cursor hashes.
 
 The goal is to make rule querying SQLite-shaped without expanding the host language into a second SQL.
 
@@ -30,6 +33,8 @@ FactRead                  per-cursor relation read
 FactRead::anti            runtime anti-join primitive
 sql`...`                  batch-local SQLite relation op
 FactStore::declared_cols  declared table column metadata for SQL
+FactStore::table_version  table-version cache keys for SQL reruns
+mounted_query_*           durable output diff tables
 lsp_error/lsp_warn/...    runtime diagnostic ops
 cst::DslBodyLsp           body-level LSP hooks for DSLs
 ```
@@ -39,10 +44,10 @@ Missing pieces:
 ```text
 rule schema metadata usable by SQL/LSP
 logical rule name -> physical table name rewrite
-direct execution against SqliteFactStore physical tables
 recursive CTE table detection
 SQL diagnostics surfaced back into document-level LSP state
 SQL LSP metadata for tables, columns, and input terms
+cross-process mounted query restart with reopened fact + queue stores
 ```
 
 ## SQL DSL Contract
@@ -183,10 +188,13 @@ The first implementation can reject qualified rule names until imports/namespace
 4. rewrite `${TERM}` input-column references
 5. prepare/execute SQLite query
 6. map SQL result rows back to cursors
-7. emit output cursor batch
+7. record mounted output diff
+8. emit output cursor batch
 ```
 
 Generation/tick remains the consistency and commit boundary. `sql`` does not automatically buffer every cursor in a full generation.
+
+Referenced table writes wake the parked SQL continuation in a later generation.
 
 Whole-generation queries require a later explicit barrier:
 
@@ -332,6 +340,8 @@ declare rule columns
 index rule columns
 use temp input relation
 batch inserts into input
+include referenced table versions in SQL cache keys
+avoid whole-table hashing for cache invalidation
 prepare query once per SQL op shape when possible
 surface prepare/query errors as diagnostics
 ```
