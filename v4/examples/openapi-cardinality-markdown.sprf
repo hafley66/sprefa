@@ -1,0 +1,57 @@
+# Demo: JSON OpenAPI spec -> nested markdown via render_markdown holes.
+#
+# Run from repo root:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/openapi-cardinality-markdown.sprf --root . --show-rows
+
+rule(:api_info, TITLE?, VERSION?);
+rule(:api_ops, PATH?, METHOD?, OP?, SUMMARY?);
+rule(:api_responses, PATH?, METHOD?, STATUS?, DESC?);
+
+`v4/examples/openapi-cardinality.json`
+  > read
+  > json`{ info: { title: $TITLE, version: $VERSION } }`
+  > api_info.(TITLE, VERSION);
+
+`v4/examples/openapi-cardinality.json`
+  > read
+  > json`{ paths: { $PATH: { $METHOD: { operationId: $OP, summary: $SUMMARY } } } }`
+  > api_ops.(PATH, METHOD, OP, SUMMARY);
+
+`v4/examples/openapi-cardinality.json`
+  > read
+  > json`{ paths: { $PATH: { $METHOD: { responses: { $STATUS: { description: $DESC } } } } } }`
+  > api_responses.(PATH, METHOD, STATUS, DESC);
+
+`v4/examples/openapi-cardinality.md`
+  > render_markdown`# OpenAPI Cardinality Demo
+
+${ api_info(TITLE?, VERSION?)
+  > render_markdown`> **${TITLE}** version ${VERSION}
+`
+}
+
+## Operations
+
+${ api_ops(PATH?, METHOD?, OP?, SUMMARY?)
+  > render_markdown`### ${ METHOD > `**${&.value}**` } ${ PATH > `**${&.value}**` }
+
+- Operation: ${ OP > `**${&.value}**` }
+- Summary: ${SUMMARY}
+- Response count is the number of rows produced by the nested response query below.
+
+${ sql`
+      SELECT input.__cursor_idx, api_responses.STATUS, api_responses.DESC
+      FROM input
+      JOIN api_responses
+        ON api_responses.PATH = ${PATH}
+       AND api_responses.METHOD = ${METHOD}
+      ORDER BY api_responses.STATUS
+    `
+  > render_markdown`  - ${ STATUS > `**${&.value}**` }: ${DESC}
+`
+}
+`
+}
+`
+  > write_file`v4/examples/openapi-cardinality.md`;
