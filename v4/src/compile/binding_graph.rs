@@ -160,6 +160,21 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
     let mut reads: Vec<Arc<str>> = Vec::new();
     let mut binds: Vec<Arc<str>> = Vec::new();
 
+    if op.flow.is_none()
+        && op.args.is_empty()
+        && op.dsl.is_none()
+        && op.block.is_none()
+        && !op.force
+        && !op.apply
+        && is_caps_ident(op.name.as_ref())
+    {
+        if op.predicate {
+            binds.push(op.name.clone());
+        } else {
+            reads.push(op.name.clone());
+        }
+    }
+
     if let Some(flow) = &op.flow {
         slot_terms(flow.raw.as_ref(), &mut reads, &mut binds);
     }

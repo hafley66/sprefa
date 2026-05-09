@@ -179,7 +179,7 @@ async fn render_markdown_interpolates_subpipe_links() {
           > important_types.(TYPE, FILE, LO);
 
         important_types(TYPE?, FILE?, LO?)
-        > render_markdown`- ${{ term(:TYPE) > `**${{&.value}}**` }} at ${{ term(:FILE) > `[${{&.value}}:${{LO}}](${{&.value}}#L${{LO}})` }}
+        > render_markdown`- ${{ TYPE > `**${{&.value}}**` }} at ${{ FILE > `[${{&.value}}:${{LO}}](${{&.value}}#L${{LO}})` }}
 `
         > write_file`{}`;
         "#,

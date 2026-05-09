@@ -24,7 +24,7 @@ rule(:doc_rows, BODY?);
   > important_types.(TYPE, FILE, LO);
 
 important_types(TYPE?, FILE?, LO?)
-  > render_markdown`- ${ term(:TYPE) > `**${&.value}**` } at ${ term(:FILE) > `[${&.value}:${LO}](${&.value}#L${LO})` }
+  > render_markdown`- ${ TYPE > `**${&.value}**` } at ${ FILE > `[${&.value}:${LO}](${&.value}#L${LO})` }
 `
   > term_bind(:BODY)
   > doc_rows.(BODY);

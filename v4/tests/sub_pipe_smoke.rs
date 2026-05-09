@@ -55,6 +55,24 @@ fn rule_body_renders_multiple_subpipes() {
     assert_eq!(&*rows[0].value, "a-b");
 }
 
+#[test]
+fn subpipe_can_start_with_term_sugar_step() {
+    let src = r#"
+        rule(:types, TYPE?);
+        rule(:docs, BODY?);
+
+        `UserService` > TYPE? > types.(TYPE);
+        types(TYPE?)
+          > render_markdown`${ TYPE > `**${&.value}**` }`
+          > BODY?
+          > docs.(BODY);
+    "#;
+    let store = run(src);
+    let rows = store.rows_of("docs");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("BODY"), Some("**UserService**\n"));
+}
+
 /// Term-shape carveouts must keep working — regression sentinel.
 #[test]
 fn rule_body_term_carveout_still_works() {

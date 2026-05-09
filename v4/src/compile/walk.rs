@@ -85,6 +85,22 @@ pub fn walk_op(
     diags:     &mut Vec<Diag>,
     chain_pos: usize,
 ) -> Option<Pipe<Cursor>> {
+    if op.flow.is_none()
+        && op.args.is_empty()
+        && op.dsl.is_none()
+        && op.block.is_none()
+        && !op.force
+        && !op.apply
+        && is_caps_ident(op.name.as_ref())
+    {
+        let term = if op.predicate {
+            crate::term::Term::bind(op.name.clone())
+        } else {
+            crate::term::Term::read(op.name.clone())
+        };
+        return Some(Pipe::new().step(Arc::new(term)));
+    }
+
     let lower_name: Arc<str> = if op.force && op.name.as_ref() == "sh" {
         Arc::<str>::from("sh!")
     } else {
