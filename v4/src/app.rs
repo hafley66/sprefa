@@ -92,7 +92,13 @@ pub struct GetInlaysReq { pub uri: String }
 pub struct RunReq       { pub path: PathBuf, pub root: Option<PathBuf> }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InlayProbe   { pub lo: u32, pub hi: u32, pub count: u32 }
+pub struct InlayProbe {
+    pub lo: u32,
+    pub hi: u32,
+    pub count: u32,
+    pub sample_value: Option<String>,
+    pub sample_terms: Vec<(String, String)>,
+}
 
 /// Wire shape for `effect_runtime::v2::Diag` — that crate intentionally
 /// has no serde dep, so we ferry diags through this DTO at the seam.
@@ -605,10 +611,26 @@ impl SprfState {
         }
 
         let raw = probe_sink.drain();
-        let mut by_span: HashMap<(u32,u32), u32> = HashMap::new();
-        for p in &raw { *by_span.entry((p.span.lo, p.span.hi)).or_insert(0) += 1; }
+        let mut by_span: HashMap<(u32,u32), ProbeAgg> = HashMap::new();
+        for p in &raw {
+            let entry = by_span.entry((p.span.lo, p.span.hi)).or_default();
+            entry.count += 1;
+            if entry.sample_value.is_none() {
+                entry.sample_value = sample_text(p.cursor.value.as_ref(), 80);
+                entry.sample_terms = p.cursor.raw_terms.iter()
+                    .take(8)
+                    .map(|(k, v)| (k.to_string(), sample_text(v.as_ref(), 48).unwrap_or_default()))
+                    .collect();
+            }
+        }
         let mut probes: Vec<InlayProbe> = by_span.into_iter()
-            .map(|((lo,hi),count)| InlayProbe { lo, hi, count }).collect();
+            .map(|((lo,hi),agg)| InlayProbe {
+                lo,
+                hi,
+                count: agg.count,
+                sample_value: agg.sample_value,
+                sample_terms: agg.sample_terms,
+            }).collect();
         probes.sort_by_key(|p| (p.lo, p.hi));
 
         self.docs.lock().unwrap().insert(uri, DocState {
@@ -715,12 +737,7 @@ impl SprfHandlers for SprfState {
         let op_name = op
             .map(|c| c.name.to_string())
             .unwrap_or_else(|| "<op>".to_string());
-        Ok(LspHoverResp {
-            contents: Some(format!(
-                "{op_name}\n{} cursor(s)\nspan {}..{}",
-                probe.count, probe.lo, probe.hi,
-            )),
-        })
+        Ok(LspHoverResp { contents: Some(host_hover(&op_name, probe)) })
     }
 
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
@@ -825,6 +842,47 @@ impl SprfHandlers for SprfState {
     }
 }
 
+#[derive(Default)]
+struct ProbeAgg {
+    count: u32,
+    sample_value: Option<String>,
+    sample_terms: Vec<(String, String)>,
+}
+
+fn host_hover(op_name: &str, probe: &InlayProbe) -> String {
+    let mut lines = vec![
+        format!("`{op_name}`"),
+        format!("cursors: {}", probe.count),
+        format!("span: {}..{}", probe.lo, probe.hi),
+    ];
+    if let Some(value) = &probe.sample_value {
+        if !value.is_empty() {
+            lines.push(format!("value: `{value}`"));
+        }
+    }
+    if !probe.sample_terms.is_empty() {
+        let terms = probe.sample_terms.iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("terms: `{terms}`"));
+    }
+    lines.join("\n")
+}
+
+fn sample_text(s: &str, max: usize) -> Option<String> {
+    if s.is_empty() {
+        return None;
+    }
+    let compact = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= max {
+        return Some(compact);
+    }
+    let mut out = compact.chars().take(max.saturating_sub(3)).collect::<String>();
+    out.push_str("...");
+    Some(out)
+}
+
 fn stable_pipe_identity(path: &std::path::Path, pipe: &PipeAst) -> u64 {
     let mut h = blake3::Hasher::new();
     h.update(path.to_string_lossy().as_bytes());
@@ -845,6 +903,7 @@ fn dsl_hover(op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {
     let dsl: Box<dyn Dsl> = match op_name {
         "sql"  => Box::new(crate::cst::dsls::sql::SqlDsl::new()),
         "json" => Box::new(crate::cst::dsls::json::JsonDsl::new()),
+        "render" => Box::new(crate::cst::dsls::markdown::MarkdownDsl::new()),
         "re"   => Box::new(crate::cst::dsls::re::ReDsl::new()),
         "glob" => Box::new(crate::cst::dsls::glob::GlobDsl::new()),
         _ => return None,

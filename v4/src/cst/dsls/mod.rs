@@ -10,3 +10,4 @@ pub mod glob;
 pub mod json;
 pub mod ast;
 pub mod sql;
+pub mod markdown;

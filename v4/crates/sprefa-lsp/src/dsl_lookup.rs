@@ -6,7 +6,7 @@
 //! Mirrors the pattern in `semantic.rs::dsl_tokens_for`.
 
 use v4::cst::dsl::Dsl;
-use v4::cst::dsls::{glob::GlobDsl, json::JsonDsl, re::ReDsl};
+use v4::cst::dsls::{glob::GlobDsl, json::JsonDsl, markdown::MarkdownDsl, re::ReDsl};
 use v4::cst::lsp::providers::DslBodyLsp;
 
 /// `None` for op names without a `DslBodyLsp` impl (host-rendered by default).
@@ -15,6 +15,7 @@ pub fn provider_for(op_name: &str) -> Option<Box<dyn ProviderHandle>> {
         "re"   => Some(Box::new(ReHandle(ReDsl::new()))),
         "glob" => Some(Box::new(GlobHandle(GlobDsl::new()))),
         "json" => Some(Box::new(JsonHandle(JsonDsl::new()))),
+        "render" => Some(Box::new(MarkdownHandle(MarkdownDsl::new()))),
         // ast — TODO once AstDsl gains a DslBodyLsp impl (#8).
         _ => None,
     }
@@ -30,7 +31,9 @@ pub trait ProviderHandle: Send + Sync {
 struct ReHandle(ReDsl);
 struct GlobHandle(GlobDsl);
 struct JsonHandle(JsonDsl);
+struct MarkdownHandle(MarkdownDsl);
 
 impl ProviderHandle for ReHandle   { fn lsp(&self) -> Option<&dyn DslBodyLsp> { self.0.lsp() } }
 impl ProviderHandle for GlobHandle { fn lsp(&self) -> Option<&dyn DslBodyLsp> { self.0.lsp() } }
 impl ProviderHandle for JsonHandle { fn lsp(&self) -> Option<&dyn DslBodyLsp> { self.0.lsp() } }
+impl ProviderHandle for MarkdownHandle { fn lsp(&self) -> Option<&dyn DslBodyLsp> { self.0.lsp() } }

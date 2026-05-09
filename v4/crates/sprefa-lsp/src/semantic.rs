@@ -22,7 +22,7 @@ use tower_lsp::lsp_types::{
 
 use v4::compile::ast::{OpCall, PipeAst};
 use v4::compile::parse::host_parse;
-use v4::cst::dsls::{glob::GlobDsl, re::ReDsl};
+use v4::cst::dsls::{glob::GlobDsl, markdown::MarkdownDsl, re::ReDsl};
 use v4::cst::dsl::Dsl;
 
 /// Token-type legend. Order MUST match `cst::lsp::highlights::Legend::standard()`
@@ -109,6 +109,7 @@ fn dsl_tokens_for(op_name: &str, body: &[u8]) -> Option<Vec<v4::cst::SemanticTok
     match op_name {
         "re"   => Some(ReDsl::new().lsp()?.semantic_tokens(body)),
         "glob" => Some(GlobDsl::new().lsp()?.semantic_tokens(body)),
+        "render" => Some(MarkdownDsl::new().lsp()?.semantic_tokens(body)),
         // "ast" — ast-grep DSL has no DslBodyLsp impl yet (no metavar/keyword
         // node kinds exposed); revisit when the v4 ast grammar lands queries.
         // "json" — no `json` op in v4 op registry yet.
@@ -232,6 +233,12 @@ mod tests {
     fn unknown_op_emits_nothing() {
         let toks = tokens_for("str `hello world`");
         assert!(toks.is_empty(), "str body should not emit dsl tokens, got {:?}", toks);
+    }
+
+    #[test]
+    fn render_markdown_body_emits_tokens() {
+        let toks = tokens_for("render(:markdown)`## ${TITLE}\n| A | B |`");
+        assert!(!toks.is_empty(), "expected markdown tokens, got {:?}", toks);
     }
 
     #[test]

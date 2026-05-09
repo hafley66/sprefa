@@ -12,6 +12,7 @@ use v4::cst::dsl::CaptureKind;
 use v4::cst::dsls::ast::AstDsl;
 use v4::cst::dsls::glob::GlobDsl;
 use v4::cst::dsls::json::JsonDsl;
+use v4::cst::dsls::markdown::MarkdownDsl;
 use v4::cst::dsls::re::ReDsl;
 use v4::cst::dsls::sql::SqlDsl;
 
@@ -61,6 +62,14 @@ fn cases() -> Vec<Case> {
         Case {
             dsl:           Box::new(SqlDsl::new()),
             body:          b"SELECT input.__cursor_idx, input.OP FROM input",
+            target:        b"",
+            target_off:    0,
+            expected_caps: &[],
+            expect_match:  false,
+        },
+        Case {
+            dsl:           Box::new(MarkdownDsl::new()),
+            body:          b"## ${TITLE}",
             target:        b"",
             target_off:    0,
             expected_caps: &[],
