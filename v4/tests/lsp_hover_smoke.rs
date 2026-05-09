@@ -46,7 +46,7 @@ async fn lsp_hover_inside_sql_body_uses_dsl_provider() {
 async fn lsp_hover_inside_render_markdown_body_uses_markdown_provider() {
     let (_state, client) = build_in_process(std::env::temp_dir());
 
-    let src = "render(:markdown)`## ${TITLE}\n| A | B |`";
+    let src = "render_markdown`## ${TITLE}\n| A | B |`";
     let body_lo = src.find('`').unwrap() + 1;
     let probe = body_lo + src[body_lo..].find("${TITLE}").unwrap() + 3;
 

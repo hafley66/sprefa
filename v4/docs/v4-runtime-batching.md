@@ -144,7 +144,7 @@ complete fires -> aggregate cursor
 Use a barrier upstream when one write should happen after a batch or generation:
 
 ```sprf
-render(:markdown)`- ${NAME}
+render_markdown`- ${NAME}
 `
 > collect()
 > write_file(PATH)

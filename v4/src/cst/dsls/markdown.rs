@@ -1,7 +1,7 @@
-//! `markdown` — render-template body support for `render(:markdown)`.
+//! `markdown` — render-template body support for `render_markdown`.
 //!
 //! This DSL is body-LSP first. Runtime rendering still lives in the
-//! `render(:markdown)` op; this provider gives VS Code enough nested
+//! `render_markdown` op; this provider gives VS Code enough nested
 //! language behavior for headings, lists, tables, fences, and `${TERM}`
 //! interpolation holes.
 
@@ -113,7 +113,7 @@ impl DslBodyLsp for MarkdownDsl {
             .into_iter()
             .map(|label| CompletionItem {
                 label: label.into(),
-                detail: Some("render(:markdown) interpolation".into()),
+                detail: Some("render_markdown interpolation".into()),
                 ..Default::default()
             })
             .collect()

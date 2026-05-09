@@ -51,6 +51,7 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::WriteCursorDef));
     r.register(Arc::new(ops::WriteFileDef));
     r.register(Arc::new(ops::RenderDef));
+    r.register(Arc::new(ops::RenderMarkdownDef));
     r.register(Arc::new(ops::CollectDef));
     r.register(Arc::new(ops::CollectReadyDef));
     r.register(Arc::new(crate::sql::SqlDef));

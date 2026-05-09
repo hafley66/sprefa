@@ -36,8 +36,8 @@ sql = relational escape hatch over current batch + rule tables
 | runtime diagnostics | `lsp_warn` rows are collected for CLI run reports and open-buffer LSP diagnostics |
 | write file | `write_file(:path)` and `write_file` backtick paths write `cursor.value` |
 | write invalidation | `write_file` / `write_cursor` publish file dirty events for dependent reads |
-| markdown render | `render(:markdown)` renders the current batch into one markdown value |
-| aggregate write | `render(:markdown)` / `collect()` can feed `write_file` for one artifact write |
+| markdown render | `render_markdown` renders the current batch into one markdown value |
+| aggregate write | `render_markdown` / `collect()` can feed `write_file` for one artifact write |
 | durable queue | `SqliteQueue` can revive parked continuations after reopen |
 | app SQLite backends | `sprefa-run` and `sprefa-daemon` accept `--queue-db` and `--fact-db` |
 | unified config | `$SPREFA_CONFIG` / `~/.config/sprefa/config.toml` provide repo, store, run, daemon defaults |
@@ -281,8 +281,8 @@ Implemented since this tracker was written:
 - `collect() > write_file(PATH)` writes one aggregate value when the upstream batch completes
 - runtime `lsp_warn` diagnostics publish through `RunReport` and open-buffer `get_diags`
 - `write_file` accepts a backtick path body and interpolated path template
-- `render(:markdown)` emits one batch aggregate markdown cursor
-- `render(:markdown) > write_file` writes an idempotent markdown artifact in the parity smoke
+- `render_markdown` emits one batch aggregate markdown cursor
+- `render_markdown > write_file` writes an idempotent markdown artifact in the parity smoke
 - collect/barrier buffers are keyed by mount scope, so shared component objects do not mix pipe instances
 - mounted SQL parks on table dirty keys and reruns after late relation writes
 - mounted SQL output sets are replaced per `mount_id + input_key`

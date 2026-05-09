@@ -118,7 +118,7 @@ async fn render_markdown_aggregate_writes_file() {
         `beta`  > term_bind(:NAME) > rule(:items, NAME: NAME);
 
         items(NAME?)
-        > render(:markdown)`- ${{NAME}}`
+        > render_markdown`- ${{NAME}}`
         > write_file`{}`;
         "#,
         out.display()
@@ -170,7 +170,7 @@ async fn render_markdown_replaces_comment_range_only() {
         r#"`{}`
 > read
 > comment(`<!-- sprf:self-doc:start -->\n`, `\n<!-- sprf:self-doc:end -->`)
-> render(:markdown)`## Generated
+> render_markdown`## Generated
 range-safe markdown`
 > write_cursor(:replace);
 "#,

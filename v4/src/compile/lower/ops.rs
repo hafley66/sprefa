@@ -1633,6 +1633,7 @@ impl OperatorDef for WriteFileDef {
 // ─── render ──────────────────────────────────────────────────────────────
 
 pub struct RenderDef;
+pub struct RenderMarkdownDef;
 
 const RENDER_SPEC: &[ArgSig] = &[
     ArgSig {
@@ -1667,13 +1668,37 @@ impl OperatorDef for RenderDef {
         let body = dsl.ok_or_else(|| LowerError::Unknown(
             "render(:markdown): template body required".into()
         ))?;
+        lower_render_markdown_body(body)
+    }
+}
+
+impl OperatorDef for RenderMarkdownDef {
+    fn name(&self) -> &'static str { "render_markdown" }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn dsl_required(&self) -> bool { true }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "render_markdown: template body required".into()
+        ))?;
+        lower_render_markdown_body(body)
+    }
+}
+
+fn lower_render_markdown_body(body: &DslBody) -> Result<Pipe<Cursor>, LowerError> {
         let mut interps = body.interps.clone();
         interps.sort_by_key(|i| i.range.lo);
         Ok(Pipe::new().step(Arc::new(RenderMarkdownComponent::new(
             body.raw.clone(),
             interps,
         ))))
-    }
 }
 
 // ─── collect / collect_ready ──────────────────────────────────────────────
