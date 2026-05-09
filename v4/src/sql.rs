@@ -864,25 +864,33 @@ fn resolve_rule_args(
     for arg in args {
         match &arg.keyword {
             None => {
-                if saw_kw {
+                let shorthand_idx = same_name_rule_arg_col(cols, &arg.value);
+                if saw_kw && shorthand_idx.is_none() {
                     return Err(LowerError::Unknown(format!(
                         "{table}: positional arg after keyword arg"
                     )));
                 }
-                if positional_idx >= cols.len() {
-                    return Err(LowerError::Unknown(format!(
-                        "rule table `{table}` has {} column(s), call passed too many positional arg(s)",
-                        cols.len(),
-                    )));
-                }
-                if out[positional_idx].is_some() {
+                let idx = match shorthand_idx {
+                    Some(idx) => idx,
+                    None => {
+                        if positional_idx >= cols.len() {
+                            return Err(LowerError::Unknown(format!(
+                                "rule table `{table}` has {} column(s), call passed too many positional arg(s)",
+                                cols.len(),
+                            )));
+                        }
+                        let idx = positional_idx;
+                        positional_idx += 1;
+                        idx
+                    }
+                };
+                if out[idx].is_some() {
                     return Err(LowerError::Unknown(format!(
                         "{table}: column `{}` assigned more than once",
-                        cols[positional_idx],
+                        cols[idx],
                     )));
                 }
-                out[positional_idx] = Some(arg.value.clone());
-                positional_idx += 1;
+                out[idx] = Some(arg.value.clone());
             }
             Some(keyword) => {
                 saw_kw = true;
@@ -906,6 +914,16 @@ fn resolve_rule_args(
         .zip(out)
         .filter_map(|(col, value)| value.map(|value| (col, value)))
         .collect())
+}
+
+fn same_name_rule_arg_col(cols: &[String], value: &Value) -> Option<usize> {
+    let Value::Pipe(pipe) = value else {
+        return None;
+    };
+    let binds = pipe.binds_terms();
+    let reads = pipe.reads_terms();
+    let term = binds.first().or_else(|| reads.first())?;
+    cols.iter().position(|col| col == term.as_ref())
 }
 
 fn quote_sql_literal(s: &str) -> String {

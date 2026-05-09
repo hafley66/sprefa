@@ -62,7 +62,8 @@ behavior is a normal query with no projected holes.
 
 Rule calls use Python-style positional and keyword binding against
 declared columns. Positional args bind declared columns by order; kwargs
-bind declared columns by name.
+bind declared columns by name. A bare same-name `TERM` or `TERM?`
+also binds the declared column with that name, even after kwargs.
 
 ```sprf
 frontend_hooks(FILE?, OP)
@@ -91,7 +92,8 @@ Rules:
 | --- | --- |
 | positional args bind declared columns by order | `frontend_hooks(OP, FILE?)` |
 | kwargs bind declared columns by name | `frontend_hooks(OP: OP, FILE: FILE?)` |
-| once a kwarg appears, later positional args are rejected | `frontend_hooks(OP: OP, FILE?)` is invalid |
+| same-name shorthand can follow kwargs | `rule_a(X?, Y, OUT_A: OUT_A?, OUT_B?)` |
+| once a kwarg appears, later non-shorthand positional args are rejected | `frontend_hooks(OP: OP, :literal)` is invalid |
 | duplicate column assignment is rejected | `frontend_hooks(OP, OP: OTHER)` is invalid |
 | unknown kwarg column is rejected | `frontend_hooks(NOPE: X)` is invalid |
 | positional overflow is rejected | more positional args than declared columns is invalid |
@@ -108,6 +110,9 @@ frontend_hooks(FILE?, OP)
 
 frontend_hooks(FILE?, REF: REF)
 => FILE: FILE?, REF: REF
+
+rule_a(X?, Y, OUT_A: OUT_A?, OUT_B?)
+=> X: X?, Y: Y, OUT_A: OUT_A?, OUT_B: OUT_B?
 ```
 
 ## Call Arg Meanings

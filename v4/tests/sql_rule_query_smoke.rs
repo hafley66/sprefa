@@ -147,6 +147,55 @@ fn declared_rule_call_projects_matching_rows() {
 }
 
 #[test]
+fn rule_call_allows_kwarg_then_same_name_shorthand() {
+    let src = r#"
+        rule(:rule_a, X?, Y?, OUT_A?, OUT_B?);
+        rule(:hits, X?, Y?, OUT_A?, OUT_B?);
+
+        `x-val`
+          > term_bind(:X)
+          > `y-val`
+          > term_bind(:Y)
+          > `a-val`
+          > term_bind(:OUT_A)
+          > `b-val`
+          > term_bind(:OUT_B)
+          > rule_a.(X, Y, OUT_A, OUT_B);
+
+        `y-val`
+          > term_bind(:Y)
+          > rule_a(X?, Y, OUT_A: OUT_A?, OUT_B?)
+          > hits.(X, Y, OUT_A, OUT_B);
+    "#;
+
+    let store = run_pipes(src);
+    let rows = store.rows_of("hits");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("X"), Some("x-val"));
+    assert_eq!(rows[0].get("Y"), Some("y-val"));
+    assert_eq!(rows[0].get("OUT_A"), Some("a-val"));
+    assert_eq!(rows[0].get("OUT_B"), Some("b-val"));
+}
+
+#[test]
+fn rule_call_rejects_non_shorthand_positional_after_kwarg() {
+    let diags = walk_diags(r#"
+        rule(:rule_a, X?, Y?, OUT_A?);
+
+        `y-val`
+          > term_bind(:Y)
+          > rule_a(Y: Y, `literal`);
+    "#);
+
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("positional arg after keyword arg")),
+        "expected positional arg after keyword arg diag, got {diags:?}"
+    );
+}
+
+#[test]
 fn declared_empty_rule_apply_rejects_holes() {
     let src = r#"
         rule(:frontend_hooks, OP?, FILE?);
