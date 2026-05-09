@@ -193,6 +193,36 @@ fn sqlite_fact_store_table_version_changes_on_visible_writes() {
     assert_eq!(store.table_version("alpha"), 2);
 }
 
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_fact_store_allows_generation_user_column() {
+    let store = SqliteFactStore::<LabCursor>::open_in_memory().unwrap();
+    store.declare(
+        "mounted_query_mount",
+        &["mount_id", "input_key", "generation", "sql", "__support_cursor_id"],
+    );
+
+    store.insert(
+        "mounted_query_mount",
+        Arc::new(
+            LabCursor::new()
+                .with("mount_id", "m1")
+                .with("input_key", "i1")
+                .with("generation", "7")
+                .with("sql", "SELECT 1")
+                .with("__support_cursor_id", "c1"),
+        ),
+    );
+
+    let rows = store.rows_of("mounted_query_mount");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("mount_id"), Some("m1"));
+    assert_eq!(rows[0].get("input_key"), Some("i1"));
+    assert_eq!(rows[0].get("generation"), Some("7"));
+    assert_eq!(rows[0].get("sql"), Some("SELECT 1"));
+    assert_eq!(rows[0].get("__support_cursor_id"), Some("c1"));
+}
+
 // --- demo components -------------------------------------------------
 
 struct Trim { from: String, to: String }

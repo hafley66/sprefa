@@ -1,7 +1,9 @@
 use std::fs;
 use std::sync::Arc;
 
-use effect_runtime::v2::{table_dirty_key, QueueBackend, SqliteQueue, TABLE_DOMAIN};
+use effect_runtime::v2::{
+    table_dirty_key, FactStore, QueueBackend, SqliteFactStore, SqliteQueue, TABLE_DOMAIN,
+};
 
 use v4::app::{
     build_in_process, build_router, GetDiagsReq, GetFactTableReq, InProcessClient, LspOpenReq,
@@ -264,6 +266,38 @@ async fn app_can_use_sqlite_queue_for_mounted_sql_parks() {
         1,
         "sqlite-backed app queue should revive the mounted SQL park by table dirty key",
     );
+}
+
+#[tokio::test]
+async fn app_can_use_sqlite_fact_store_for_rule_rows() {
+    let root = tempfile::tempdir().unwrap();
+    let fact_db = root.path().join("facts.db");
+    let sprf = root.path().join("facts.sprf");
+
+    fs::write(&sprf, r#"
+        rule(:seen, WORD?);
+
+        `alpha`
+          > term_bind(:WORD)
+          > rule(:seen, WORD: WORD);
+    "#).unwrap();
+
+    {
+        let state = Arc::new(SprfState::new_with_sqlite_facts(
+            root.path().to_path_buf(),
+            &fact_db,
+        ));
+        let client = InProcessClient::new(build_router(state));
+        client.run(RunReq {
+            path: sprf,
+            root: Some(root.path().to_path_buf()),
+        }).await.unwrap();
+    }
+
+    let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
+    let rows = facts.rows_of("seen");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("WORD"), Some("alpha"));
 }
 
 #[tokio::test]

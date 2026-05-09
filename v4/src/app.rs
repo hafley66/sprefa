@@ -29,7 +29,7 @@ use bytes::Bytes;
 use effect_runtime::v2::{
     attach_dirty_to_queue, expand, BufferProbeSink, Diag, DiagSink, EventBus, ExpandOpts,
     Component, FactStore, MemFactStore, MemQueue, Node, Pipe, PipeInstance, ProbeSink, Purity,
-    QueueBackend, SqliteQueue,
+    QueueBackend, SqliteFactStore, SqliteQueue,
 };
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
@@ -438,18 +438,58 @@ impl Component for AnalysisPassThrough {
 
 impl SprfState {
     pub fn new(root: PathBuf) -> Self {
-        Self::new_with_queue(root, Arc::new(MemQueue::new()))
+        Self::new_with_backends(
+            root,
+            Arc::new(MemFactStore::<Cursor>::new()),
+            Arc::new(MemQueue::new()),
+        )
     }
 
     pub fn new_with_sqlite_queue(
         root: PathBuf,
         queue_path: impl AsRef<std::path::Path>,
     ) -> Self {
-        Self::new_with_queue(root, Arc::new(SqliteQueue::<Cursor>::open_file(queue_path.as_ref())))
+        Self::new_with_backends(
+            root,
+            Arc::new(MemFactStore::<Cursor>::new()),
+            Arc::new(SqliteQueue::<Cursor>::open_file(queue_path.as_ref())),
+        )
     }
 
-    pub fn new_with_queue(root: PathBuf, queue: Arc<dyn QueueBackend<Cursor>>) -> Self {
-        let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    pub fn new_with_sqlite_facts(
+        root: PathBuf,
+        fact_path: impl AsRef<std::path::Path>,
+    ) -> Self {
+        Self::new_with_backends(
+            root,
+            Arc::new(
+                SqliteFactStore::<Cursor>::open_file(fact_path.as_ref())
+                    .expect("open sqlite fact store")
+            ),
+            Arc::new(MemQueue::new()),
+        )
+    }
+
+    pub fn new_with_sqlite_backends(
+        root: PathBuf,
+        fact_path: impl AsRef<std::path::Path>,
+        queue_path: impl AsRef<std::path::Path>,
+    ) -> Self {
+        Self::new_with_backends(
+            root,
+            Arc::new(
+                SqliteFactStore::<Cursor>::open_file(fact_path.as_ref())
+                    .expect("open sqlite fact store")
+            ),
+            Arc::new(SqliteQueue::<Cursor>::open_file(queue_path.as_ref())),
+        )
+    }
+
+    pub fn new_with_backends(
+        root: PathBuf,
+        facts: Arc<dyn FactStore<Cursor>>,
+        queue: Arc<dyn QueueBackend<Cursor>>,
+    ) -> Self {
         let bus = Arc::new(EventBus::new());
         attach_dirty_to_queue(&bus, queue.clone());
         let sprf_store = crate::store::SprfStore::new(facts.clone());

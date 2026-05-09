@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use effect_runtime::v2::{FactStore, SqliteFactStore};
+
 #[test]
 fn sprefa_run_prints_runtime_diags_and_fact_rows() {
     let bin = env!("CARGO_BIN_EXE_sprefa-run");
@@ -55,4 +57,32 @@ fn sprefa_run_accepts_sqlite_queue_db() {
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(queue_db.exists(), "sqlite queue db should be created");
+}
+
+#[test]
+fn sprefa_run_accepts_sqlite_fact_db() {
+    let bin = env!("CARGO_BIN_EXE_sprefa-run");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let sprf = format!("{manifest_dir}/examples/dev-missing-frontend-hook.sprf");
+    let dir = tempfile::tempdir().unwrap();
+    let fact_db = dir.path().join("facts.db");
+
+    let output = Command::new(bin)
+        .arg(&sprf)
+        .arg("--fact-db")
+        .arg(&fact_db)
+        .arg("--no-show-rows")
+        .output()
+        .expect("sprefa-run executes with sqlite facts");
+
+    assert!(
+        output.status.success(),
+        "sprefa-run --fact-db failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
+    assert_eq!(facts.len("openapi_ops"), 2);
+    assert_eq!(facts.len("missing_frontend_hooks"), 1);
 }

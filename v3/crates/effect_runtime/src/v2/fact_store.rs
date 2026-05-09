@@ -22,9 +22,9 @@
 //!
 //! Sqlite shape: `declare(table, cols)` emits
 //!   CREATE TABLE <table>_facts (
-//!       id            INTEGER PRIMARY KEY AUTOINCREMENT,
-//!       generation_id INTEGER NOT NULL DEFAULT 0,
-//!       _id           TEXT NOT NULL UNIQUE,
+//!       id               INTEGER PRIMARY KEY AUTOINCREMENT,
+//!       __generation_id  INTEGER NOT NULL DEFAULT 0,
+//!       _id              TEXT NOT NULL UNIQUE,
 //!       <c>_id        INTEGER NOT NULL REFERENCES sprf_strings(id),
 //!       ...
 //!   );
@@ -356,9 +356,9 @@ mod sqlite {
 
     fn validate_table(name: &str) {
         let ok = !name.is_empty()
-            && name.chars().next().unwrap().is_ascii_alphabetic()
+            && name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
             && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        assert!(ok, "fact table must match [A-Za-z][A-Za-z0-9_]*: {name:?}");
+        assert!(ok, "fact table must match [A-Za-z_][A-Za-z0-9_]*: {name:?}");
     }
 
     /// Column identifier: same as table, plus a leading `:` is allowed
@@ -368,9 +368,9 @@ mod sqlite {
     fn validate_col(name: &str) {
         let stripped = name.strip_prefix(':').unwrap_or(name);
         let ok = !stripped.is_empty()
-            && stripped.chars().next().unwrap().is_ascii_alphabetic()
+            && stripped.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
             && stripped.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        assert!(ok, "fact column must match :?[A-Za-z][A-Za-z0-9_]*: {name:?}");
+        assert!(ok, "fact column must match :?[A-Za-z_][A-Za-z0-9_]*: {name:?}");
     }
 
     /// On-disk column safe form (sqlite identifier). The schema map
@@ -505,9 +505,9 @@ mod sqlite {
             let conn = self.conn.lock().unwrap();
             let mut create = format!(
                 "CREATE TABLE IF NOT EXISTS {table}_facts (\n\
-                 \x20  id            INTEGER PRIMARY KEY AUTOINCREMENT,\n\
-                 \x20  generation_id INTEGER NOT NULL DEFAULT 0,\n\
-                 \x20  _id           TEXT NOT NULL UNIQUE"
+                 \x20  id              INTEGER PRIMARY KEY AUTOINCREMENT,\n\
+                 \x20  __generation_id INTEGER NOT NULL DEFAULT 0,\n\
+                 \x20  _id             TEXT NOT NULL UNIQUE"
             );
             for c in &cols_owned {
                 let cs = col_sql(c);

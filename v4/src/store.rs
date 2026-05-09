@@ -79,12 +79,22 @@ impl SprfStore {
             seen_revs:    Mutex::new(HashSet::new()),
             seen_paths:   Mutex::new(HashSet::new()),
         });
+        store.declare_core_tables();
         store.preinsert_sentinels();
         store
     }
 
     /// Underlying FactStore — for ops/tests that read the cold tables.
     pub fn inner(&self) -> &Arc<dyn FactStore<Cursor>> { &self.inner }
+
+    fn declare_core_tables(&self) {
+        self.inner.declare(STRINGS_TABLE, &["id", "content", "norm_ws", "norm_case"]);
+        self.inner.declare(FILES_TABLE, &["id", "content_hash", "path", "size"]);
+        self.inner.declare(REFS_TABLE, &["id", "file_id", "lo", "hi", "repo", "rev"]);
+        self.inner.declare(REPOS_TABLE, &["id", "slug", "remote"]);
+        self.inner.declare(REVS_TABLE, &["id", "repo_id", "oid", "ts"]);
+        self.inner.declare(PATHS_TABLE, &["id", "repo_id", "rev_id", "file_id", "path"]);
+    }
 
     // ── sentinels ────────────────────────────────────────────────────
 

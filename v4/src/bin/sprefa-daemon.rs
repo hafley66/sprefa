@@ -4,7 +4,8 @@
 // surface for free.
 //
 // Usage:
-//   sprefa-daemon [--bind 127.0.0.1:8787] [--root <dir>] [--queue-db <path>]
+//   sprefa-daemon [--bind 127.0.0.1:8787] [--root <dir>]
+//                 [--fact-db <path>] [--queue-db <path>]
 //
 // The exposed endpoints are whatever is in `v4::app::sprf_rpc!{...}`.
 // Adding routes here is zero work — the macro generates them.
@@ -18,6 +19,7 @@ use v4::app::{build_router, SprfState};
 struct Args {
     bind: String,
     root: PathBuf,
+    fact_db: Option<PathBuf>,
     queue_db: Option<PathBuf>,
 }
 
@@ -25,6 +27,7 @@ fn parse_args() -> Result<Args, String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut bind = "127.0.0.1:8787".to_string();
     let mut root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut fact_db: Option<PathBuf> = None;
     let mut queue_db: Option<PathBuf> = None;
 
     let mut i = 0;
@@ -38,18 +41,22 @@ fn parse_args() -> Result<Args, String> {
                 root = PathBuf::from(raw.get(i+1).ok_or("--root needs dir")?);
                 i += 2;
             }
+            "--fact-db" => {
+                fact_db = Some(PathBuf::from(raw.get(i+1).ok_or("--fact-db needs path")?));
+                i += 2;
+            }
             "--queue-db" => {
                 queue_db = Some(PathBuf::from(raw.get(i+1).ok_or("--queue-db needs path")?));
                 i += 2;
             }
             "-h" | "--help" => {
-                eprintln!("sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR] [--queue-db PATH]");
+                eprintln!("sprefa-daemon [--bind 127.0.0.1:8787] [--root DIR] [--fact-db PATH] [--queue-db PATH]");
                 std::process::exit(0);
             }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
-    Ok(Args { bind, root, queue_db })
+    Ok(Args { bind, root, fact_db, queue_db })
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -59,9 +66,13 @@ async fn main() {
         Err(e) => { eprintln!("sprefa-daemon: {e}"); std::process::exit(2); }
     };
 
-    let state = Arc::new(match args.queue_db {
-        Some(path) => SprfState::new_with_sqlite_queue(args.root, path),
-        None       => SprfState::new(args.root),
+    let state = Arc::new(match (args.fact_db, args.queue_db) {
+        (Some(fact_db), Some(queue_db)) => {
+            SprfState::new_with_sqlite_backends(args.root, fact_db, queue_db)
+        }
+        (Some(fact_db), None) => SprfState::new_with_sqlite_facts(args.root, fact_db),
+        (None, Some(queue_db)) => SprfState::new_with_sqlite_queue(args.root, queue_db),
+        (None, None) => SprfState::new(args.root),
     });
     let router = build_router(state);
 

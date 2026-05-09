@@ -6,6 +6,7 @@
 //   sprefa-run <path-to-sprf-file> [--show-rows | --no-show-rows]
 //                                  [--max-diags N]
 //                                  [--remote http://host:port]
+//                                  [--fact-db path]
 //                                  [--queue-db path]
 //
 // Diag format (one per line, suitable for VS Code problem matchers):
@@ -28,6 +29,7 @@ struct Args {
     max_diags: usize,
     remote:    Option<String>,
     root:      Option<PathBuf>,
+    fact_db:   Option<PathBuf>,
     queue_db:  Option<PathBuf>,
 }
 
@@ -38,6 +40,7 @@ fn parse_args() -> Result<Args, String> {
     let mut max_diags: usize           = 50;
     let mut remote:    Option<String>  = None;
     let mut root:      Option<PathBuf> = None;
+    let mut fact_db:   Option<PathBuf> = None;
     let mut queue_db:  Option<PathBuf> = None;
 
     let mut i = 0;
@@ -60,6 +63,11 @@ fn parse_args() -> Result<Args, String> {
                 root = Some(PathBuf::from(v));
                 i += 2;
             }
+            "--fact-db" => {
+                let v = raw.get(i+1).ok_or("--fact-db needs a path")?;
+                fact_db = Some(PathBuf::from(v));
+                i += 2;
+            }
             "--queue-db" => {
                 let v = raw.get(i+1).ok_or("--queue-db needs a path")?;
                 queue_db = Some(PathBuf::from(v));
@@ -80,13 +88,13 @@ fn parse_args() -> Result<Args, String> {
     }
     Ok(Args {
         path: path.ok_or("missing <path-to-sprf-file>")?,
-        show_rows, max_diags, remote, root, queue_db,
+        show_rows, max_diags, remote, root, fact_db, queue_db,
     })
 }
 
 fn print_usage() {
     eprintln!("sprefa-run <path-to-sprf-file> \
-[--show-rows|--no-show-rows] [--max-diags N] [--remote URL] [--queue-db PATH]");
+[--show-rows|--no-show-rows] [--max-diags N] [--remote URL] [--fact-db PATH] [--queue-db PATH]");
 }
 
 /// 1-indexed (line, col) for byte offset `off` in `src`.
@@ -155,14 +163,26 @@ async fn main() -> ExitCode {
     let client: Box<dyn SprfClient> = match args.remote.clone() {
         Some(url) => Box::new(HttpClient::new(url)),
         None => {
-            match args.queue_db.as_ref() {
-                Some(queue_db) => {
+            match (args.fact_db.as_ref(), args.queue_db.as_ref()) {
+                (Some(fact_db), Some(queue_db)) => {
+                    let state = std::sync::Arc::new(
+                        SprfState::new_with_sqlite_backends(root, fact_db, queue_db)
+                    );
+                    Box::new(InProcessClient::new(build_router(state)))
+                }
+                (Some(fact_db), None) => {
+                    let state = std::sync::Arc::new(
+                        SprfState::new_with_sqlite_facts(root, fact_db)
+                    );
+                    Box::new(InProcessClient::new(build_router(state)))
+                }
+                (None, Some(queue_db)) => {
                     let state = std::sync::Arc::new(
                         SprfState::new_with_sqlite_queue(root, queue_db)
                     );
                     Box::new(InProcessClient::new(build_router(state)))
                 }
-                None => {
+                (None, None) => {
                     let (_state, c) = build_in_process(root);
                     Box::new(c)
                 }
