@@ -12,12 +12,16 @@ use crate::Cursor;
 
 pub const OUTPUT_TABLE: &str = "mounted_query_output";
 pub const CURSOR_TABLE: &str = "mounted_query_cursor";
+pub const MOUNT_TABLE: &str = "mounted_query_mount";
+pub const DEP_TABLE: &str = "mounted_query_dep";
 
 const MOUNT_ID: &str = "mount_id";
 const INPUT_KEY: &str = "input_key";
 const GENERATION: &str = "generation";
 const CURSOR_ID: &str = "cursor_id";
 const CURSOR_BLOB: &str = "cursor_blob";
+const SQL: &str = "sql";
+const DEP_TABLE_NAME: &str = "dep_table";
 
 pub trait MountedQueryStorage {
     fn record_sql_outputs(
@@ -25,6 +29,7 @@ pub trait MountedQueryStorage {
         sql: &str,
         generation: u64,
         batch: &[&Cursor],
+        dep_tables: &[String],
         nodes: &[Node<Cursor>],
     ) -> Vec<Node<Cursor>>;
 }
@@ -46,6 +51,8 @@ impl FactMountedQueryStorage {
     fn declare_tables(&self) {
         self.store.declare(CURSOR_TABLE, &[CURSOR_ID, CURSOR_BLOB]);
         self.store.declare(OUTPUT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, CURSOR_ID]);
+        self.store.declare(MOUNT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, SQL]);
+        self.store.declare(DEP_TABLE, &[MOUNT_ID, INPUT_KEY, DEP_TABLE_NAME]);
     }
 
     fn existing_cursor_ids(
@@ -76,6 +83,47 @@ impl FactMountedQueryStorage {
             .collect();
         self.store.insert_batch(CURSOR_TABLE, rows);
     }
+
+    fn record_mount(
+        &self,
+        sql: &str,
+        generation: u64,
+        mount_id: &str,
+        input_key: &str,
+        dep_tables: &[String],
+    ) {
+        self.store.delete_matching(
+            MOUNT_TABLE,
+            &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)],
+        );
+        self.store.delete_matching(
+            DEP_TABLE,
+            &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)],
+        );
+
+        let mut mount = Cursor::default();
+        mount.set(MOUNT_ID, mount_id);
+        mount.set(INPUT_KEY, input_key);
+        mount.set(GENERATION, generation.to_string());
+        mount.set(SQL, sql);
+        self.store.insert_batch(MOUNT_TABLE, vec![Arc::new(mount)]);
+
+        if dep_tables.is_empty() {
+            return;
+        }
+
+        let rows: Vec<Arc<Cursor>> = dep_tables
+            .iter()
+            .map(|dep_table| {
+                let mut row = Cursor::default();
+                row.set(MOUNT_ID, mount_id);
+                row.set(INPUT_KEY, input_key);
+                row.set(DEP_TABLE_NAME, dep_table.as_str());
+                Arc::new(row)
+            })
+            .collect();
+        self.store.insert_batch(DEP_TABLE, rows);
+    }
 }
 
 impl MountedQueryStorage for FactMountedQueryStorage {
@@ -84,6 +132,7 @@ impl MountedQueryStorage for FactMountedQueryStorage {
         sql: &str,
         generation: u64,
         batch: &[&Cursor],
+        dep_tables: &[String],
         nodes: &[Node<Cursor>],
     ) -> Vec<Node<Cursor>> {
         let outputs = output_cursors(nodes);
@@ -92,6 +141,7 @@ impl MountedQueryStorage for FactMountedQueryStorage {
 
         let mount_id = mount_id_for_sql(sql);
         let input_key = input_key_for_batch(batch);
+        self.record_mount(sql, generation, &mount_id, &input_key, dep_tables);
         let existing_cursor_ids = self.existing_cursor_ids(&mount_id, &input_key);
         self.store.delete_matching(
             OUTPUT_TABLE,
@@ -126,10 +176,11 @@ pub fn record_sql_outputs(
     sql: &str,
     generation: u64,
     batch: &[&Cursor],
+    dep_tables: &[String],
     nodes: &[Node<Cursor>],
 ) -> Vec<Node<Cursor>> {
     FactMountedQueryStorage::new(store.clone())
-        .record_sql_outputs(sql, generation, batch, nodes)
+        .record_sql_outputs(sql, generation, batch, dep_tables, nodes)
 }
 
 pub fn mount_id_for_sql(sql: &str) -> String {
@@ -260,11 +311,12 @@ mod tests {
         let first = vec![Node::Emit(Arc::new(cursor("old")))];
         let second = vec![Node::Emit(Arc::new(cursor("new")))];
 
-        let added = record_sql_outputs(&store, "SELECT value FROM input", 1, &batch, &first);
+        let deps = Vec::new();
+        let added = record_sql_outputs(&store, "SELECT value FROM input", 1, &batch, &deps, &first);
         assert!(matches!(added.as_slice(), [Node::Emit(_)]));
         assert_eq!(store.rows_of(OUTPUT_TABLE).len(), 1);
 
-        let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &second);
+        let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &deps, &second);
         assert!(matches!(added.as_slice(), [Node::Emit(_)]));
         let rows = store.rows_of(OUTPUT_TABLE);
         assert_eq!(rows.len(), 1);
@@ -281,11 +333,12 @@ mod tests {
         let first = vec![Node::Emit(Arc::new(cursor("old")))];
         let empty = vec![Node::Done];
 
-        let added = record_sql_outputs(&store, "SELECT value FROM input", 1, &batch, &first);
+        let deps = Vec::new();
+        let added = record_sql_outputs(&store, "SELECT value FROM input", 1, &batch, &deps, &first);
         assert!(matches!(added.as_slice(), [Node::Emit(_)]));
         assert_eq!(store.rows_of(OUTPUT_TABLE).len(), 1);
 
-        let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &empty);
+        let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &deps, &empty);
         assert!(matches!(added.as_slice(), [Node::Done]));
         assert_eq!(store.rows_of(OUTPUT_TABLE).len(), 0);
         assert_eq!(store.rows_of(CURSOR_TABLE).len(), 1);
@@ -300,19 +353,60 @@ mod tests {
         let new = Arc::new(cursor("new"));
 
         let first = vec![Node::Emit(old.clone())];
-        let added = record_sql_outputs(&store, "SELECT value FROM input", 1, &batch, &first);
+        let deps = Vec::new();
+        let added = record_sql_outputs(&store, "SELECT value FROM input", 1, &batch, &deps, &first);
         assert!(matches!(added.as_slice(), [Node::Emit(_)]));
 
         let rerun = vec![Node::Many(vec![
             Node::Emit(old),
             Node::Emit(new.clone()),
         ])];
-        let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &rerun);
+        let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &deps, &rerun);
         assert_eq!(store.rows_of(OUTPUT_TABLE).len(), 2);
         assert_eq!(store.rows_of(CURSOR_TABLE).len(), 2);
         match added.as_slice() {
             [Node::Emit(cursor)] => assert_eq!(cursor.value.as_ref(), "new"),
             other => panic!("expected only the new output cursor, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn record_sql_outputs_records_mount_and_dependencies() {
+        let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let input = cursor("seed");
+        let batch = vec![&input];
+        let deps = vec!["frontend_hooks".to_string(), "openapi_ops".to_string()];
+        let outputs = vec![Node::Emit(Arc::new(cursor("hit")))];
+
+        let added = record_sql_outputs(
+            &store,
+            "SELECT value FROM input JOIN frontend_hooks ON 1=1",
+            7,
+            &batch,
+            &deps,
+            &outputs,
+        );
+
+        assert!(matches!(added.as_slice(), [Node::Emit(_)]));
+        let mounts = store.rows_of(MOUNT_TABLE);
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].get(GENERATION), Some("7"));
+        assert_eq!(
+            mounts[0].get(SQL),
+            Some("SELECT value FROM input JOIN frontend_hooks ON 1=1"),
+        );
+
+        let deps = store.rows_of(DEP_TABLE);
+        let dep_names: std::collections::BTreeSet<String> = deps
+            .iter()
+            .filter_map(|row| row.get(DEP_TABLE_NAME).map(|value| value.to_string()))
+            .collect();
+        assert_eq!(
+            dep_names,
+            std::collections::BTreeSet::from([
+                "frontend_hooks".to_string(),
+                "openapi_ops".to_string(),
+            ]),
+        );
     }
 }

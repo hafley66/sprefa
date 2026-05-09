@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use super::event_bus::{BusListener, Event, EventBus};
 use super::next::Next;
 use super::next_key::NextKey;
 use super::wake::Wake;
@@ -126,4 +127,28 @@ pub trait QueueBackend<N: Next>: Send + Sync {
     /// `id = root OR parent_id = root` so descendants are found even
     /// when the root row is absent.
     fn cascade_delete(&self, _root: QueueId) -> u64 { 0 }
+}
+
+pub struct DirtyQueuePromoter<N: Next> {
+    queue: Arc<dyn QueueBackend<N>>,
+}
+
+impl<N: Next> DirtyQueuePromoter<N> {
+    pub fn new(queue: Arc<dyn QueueBackend<N>>) -> Self {
+        Self { queue }
+    }
+}
+
+impl<N: Next> BusListener for DirtyQueuePromoter<N> {
+    fn on_event(&self, ev: &Event) {
+        let Event::Dirty { domain, key } = ev;
+        self.queue.dispatch_park(domain.as_ref(), *key);
+    }
+}
+
+pub fn attach_dirty_to_queue<N: Next>(
+    bus: &EventBus,
+    queue: Arc<dyn QueueBackend<N>>,
+) {
+    bus.add_listener(Arc::new(DirtyQueuePromoter::new(queue)));
 }

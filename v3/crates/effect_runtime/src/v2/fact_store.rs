@@ -34,9 +34,9 @@
 //!
 //! Dirty-publish convention: `commit(gen, bus)` drains pending inserts
 //! and publishes `Event::Dirty { domain: "row", key:
-//! row_dirty_key(_id) }` per inserted row — uniform domain across all
-//! tables. Listeners filter on `domain == "row"`; per-row keys
-//! disambiguate.
+//! row_dirty_key(_id) }` per inserted row, plus one
+//! `Event::Dirty { domain: "table", key: table_dirty_key(table) }`
+//! per changed table. Listeners filter by domain.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -53,6 +53,9 @@ pub const ID_COL: &str = "_id";
 /// Universal dirty-publish domain. All fact-table commits publish on
 /// this single domain; per-row uniqueness comes from the key.
 pub const ROW_DOMAIN: &str = "row";
+
+/// Dirty-publish domain for relation/table-level invalidation.
+pub const TABLE_DOMAIN: &str = "table";
 
 // ───────────────────────────────────────────────────────────────────
 // trait FactStore
@@ -112,6 +115,11 @@ pub fn row_dirty_key(id: &str) -> NextKey {
     NextKey(*blake3::hash(id.as_bytes()).as_bytes())
 }
 
+/// Per-table dirty key. `H(table_name)`.
+pub fn table_dirty_key(table: &str) -> NextKey {
+    NextKey(*blake3::hash(table.as_bytes()).as_bytes())
+}
+
 /// Compute the content-derived `_id` for a row destined for `table`.
 /// Canonical form: collect `row.fields()` into a Vec, sort by key,
 /// concatenate `k || \0 || v || \0 || ...`. Stable across field
@@ -144,6 +152,7 @@ pub struct MemFactStore<R: Row> {
     /// Pending inserts (table, row) since the last commit. Consumed by
     /// `commit` to publish dirty events.
     pending: Mutex<Vec<(String, Arc<R>)>>,
+    dirty_tables: Mutex<HashSet<String>>,
 }
 
 /// In-memory bucket for one table. Carries an `_id`-keyed HashSet
@@ -165,6 +174,7 @@ impl<R: Row> Default for MemFactStore<R> {
             tables:  Mutex::new(HashMap::new()),
             schemas: Mutex::new(HashMap::new()),
             pending: Mutex::new(Vec::new()),
+            dirty_tables: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -203,6 +213,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
         bucket.rows.push(arced.clone());
         drop(tables);
         self.pending.lock().unwrap().push((table.to_string(), arced));
+        self.dirty_tables.lock().unwrap().insert(table.to_string());
     }
 
     fn insert_batch(&self, table: &str, rows: Vec<Arc<R>>) {
@@ -231,6 +242,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
             let mut pending = self.pending.lock().unwrap();
             pending.reserve(accepted.len());
             for row in accepted { pending.push((table.to_string(), row)); }
+            self.dirty_tables.lock().unwrap().insert(table.to_string());
         }
     }
 
@@ -290,6 +302,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
                     .unwrap_or_else(|| content_id(table, row.as_ref()));
                 !removed_ids.contains(&id)
             });
+            self.dirty_tables.lock().unwrap().insert(table.to_string());
         }
 
         removed
@@ -297,10 +310,15 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
 
     fn commit(&self, _gen: u64, bus: Option<&EventBus>) {
         let drained: Vec<(String, Arc<R>)> = std::mem::take(&mut *self.pending.lock().unwrap());
+        let dirty_tables: HashSet<String> =
+            std::mem::take(&mut *self.dirty_tables.lock().unwrap());
         let Some(bus) = bus else { return };
         for (_table, row) in &drained {
             let Some(id) = row.get(ID_COL) else { continue };
             bus.dispatch_dirty(ROW_DOMAIN, Some(row_dirty_key(id)));
+        }
+        for table in dirty_tables {
+            bus.dispatch_dirty(TABLE_DOMAIN, Some(table_dirty_key(&table)));
         }
     }
 }
@@ -349,6 +367,7 @@ mod sqlite {
         /// inline at `insert` time today — buffering for transaction
         /// batching is a future change.
         pub(crate) pending: Mutex<Vec<(String, Arc<R>)>>,
+        pub(crate) dirty_tables: Mutex<HashSet<String>>,
         _marker: PhantomData<fn() -> R>,
     }
 
@@ -361,6 +380,7 @@ mod sqlite {
                 conn: Mutex::new(conn),
                 schemas: Mutex::new(schemas),
                 pending: Mutex::new(Vec::new()),
+                dirty_tables: Mutex::new(HashSet::new()),
                 _marker: PhantomData,
             })
         }
@@ -374,6 +394,7 @@ mod sqlite {
                 conn: Mutex::new(conn),
                 schemas: Mutex::new(schemas),
                 pending: Mutex::new(Vec::new()),
+                dirty_tables: Mutex::new(HashSet::new()),
                 _marker: PhantomData,
             })
         }
@@ -535,6 +556,7 @@ mod sqlite {
             if changed == 0 { return; }
 
             self.pending.lock().unwrap().push((table.to_string(), Arc::new(owned)));
+            self.dirty_tables.lock().unwrap().insert(table.to_string());
         }
 
         fn read_where(&self, table: &str, col: &str, value: &str) -> Vec<Arc<R>> {
@@ -648,6 +670,7 @@ mod sqlite {
                         row.get(col).map(|got| got == *value).unwrap_or(false)
                     })
                 });
+                self.dirty_tables.lock().unwrap().insert(table.to_string());
             }
 
             changed
@@ -656,10 +679,15 @@ mod sqlite {
         fn commit(&self, _gen: u64, bus: Option<&EventBus>) {
             let drained: Vec<(String, Arc<R>)> =
                 std::mem::take(&mut *self.pending.lock().unwrap());
+            let dirty_tables: HashSet<String> =
+                std::mem::take(&mut *self.dirty_tables.lock().unwrap());
             let Some(bus) = bus else { return };
             for (_table, row) in &drained {
                 let Some(id) = row.get(ID_COL) else { continue };
                 bus.dispatch_dirty(ROW_DOMAIN, Some(row_dirty_key(id)));
+            }
+            for table in dirty_tables {
+                bus.dispatch_dirty(TABLE_DOMAIN, Some(table_dirty_key(&table)));
             }
         }
     }

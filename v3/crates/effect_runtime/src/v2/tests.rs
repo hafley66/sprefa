@@ -102,6 +102,69 @@ fn lc(name: &str, val: &str) -> Arc<LabCursor> {
     Arc::new(LabCursor::new().with(name, val))
 }
 
+struct RecordingListener {
+    events: Arc<Mutex<Vec<Event>>>,
+}
+
+impl super::event_bus::BusListener for RecordingListener {
+    fn on_event(&self, ev: &Event) {
+        self.events.lock().unwrap().push(ev.clone());
+    }
+}
+
+#[test]
+fn fact_store_commit_publishes_row_and_table_dirty() {
+    let store = MemFactStore::<LabCursor>::new();
+    let bus = EventBus::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    bus.add_listener(Arc::new(RecordingListener { events: events.clone() }));
+
+    let row = LabCursor::new().with("name", "one");
+    let expected_row_key = row_dirty_key(&content_id("alpha", &row));
+    let expected_table_key = table_dirty_key("alpha");
+
+    store.insert("alpha", Arc::new(row));
+    store.commit(1, Some(&bus));
+
+    let got = events.lock().unwrap().clone();
+    assert!(got.iter().any(|ev| matches!(
+        ev,
+        Event::Dirty { domain, key }
+            if domain.as_ref() == ROW_DOMAIN && *key == Some(expected_row_key)
+    )));
+    assert!(got.iter().any(|ev| matches!(
+        ev,
+        Event::Dirty { domain, key }
+            if domain.as_ref() == TABLE_DOMAIN && *key == Some(expected_table_key)
+    )));
+}
+
+#[test]
+fn fact_store_delete_matching_publishes_table_dirty() {
+    let store = MemFactStore::<LabCursor>::new();
+    let bus = EventBus::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    bus.add_listener(Arc::new(RecordingListener { events: events.clone() }));
+
+    store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
+    store.commit(1, Some(&bus));
+    events.lock().unwrap().clear();
+
+    assert_eq!(store.delete_matching("alpha", &[("name", "one")]), 1);
+    store.commit(2, Some(&bus));
+
+    let got = events.lock().unwrap().clone();
+    assert!(got.iter().any(|ev| matches!(
+        ev,
+        Event::Dirty { domain, key }
+            if domain.as_ref() == TABLE_DOMAIN && *key == Some(table_dirty_key("alpha"))
+    )));
+    assert!(!got.iter().any(|ev| matches!(
+        ev,
+        Event::Dirty { domain, .. } if domain.as_ref() == ROW_DOMAIN
+    )));
+}
+
 // --- demo components -------------------------------------------------
 
 struct Trim { from: String, to: String }
@@ -719,6 +782,20 @@ fn mem_queue_dispatch_park_works() {
     // After promotion, the row is runnable.
     let r = queue.pull_runnable(1);
     assert!(r.is_some());
+    assert_eq!(queue.depth(), 0);
+}
+
+#[test]
+fn dirty_bus_event_promotes_matching_queue_park() {
+    let bus = EventBus::new();
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    attach_dirty_to_queue(&bus, queue.clone());
+    let key = table_dirty_key("frontend_hooks");
+
+    park_row(queue.as_ref(), TABLE_DOMAIN, key, lc(":raw", "a"));
+    bus.dispatch_dirty(TABLE_DOMAIN, Some(key));
+
+    assert!(queue.pull_runnable(1).is_some());
     assert_eq!(queue.depth(), 0);
 }
 

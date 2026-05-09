@@ -149,6 +149,24 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
         }),
         "mounted output cursor payload should be interned once in mounted_query_cursor"
     );
+
+    let mounted_deps = store.rows_of("mounted_query_dep");
+    assert!(
+        mounted_deps.iter().any(|row| row.get("dep_table") == Some("frontend_hooks")),
+        "mounted query should persist referenced relation deps for future table-dirty wakeups",
+    );
+
+    let mounted_mounts = store.rows_of("mounted_query_mount");
+    let frontend_hook_mounts: Vec<_> = mounted_mounts
+        .iter()
+        .filter(|row| {
+            row.get("sql")
+                .map(|sql| sql.contains("frontend_hooks"))
+                .unwrap_or(false)
+        })
+        .collect();
+    assert_eq!(frontend_hook_mounts.len(), 1);
+    assert!(frontend_hook_mounts[0].get("sql").is_some());
 }
 
 #[test]

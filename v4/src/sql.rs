@@ -27,14 +27,18 @@ use crate::Cursor;
 pub struct SqlQueryComponent {
     store: Arc<dyn FactStore<Cursor>>,
     sql: Arc<str>,
+    referenced_tables: Arc<Vec<String>>,
     cache: Mutex<BTreeMap<[u8; 32], Vec<Node<Cursor>>>>,
 }
 
 impl SqlQueryComponent {
     pub fn new(store: Arc<dyn FactStore<Cursor>>, sql: impl Into<Arc<str>>) -> Self {
+        let sql = sql.into();
+        let referenced_tables = Arc::new(referenced_fact_tables(sql.as_ref()).into_iter().collect());
         Self {
             store,
-            sql: sql.into(),
+            sql,
+            referenced_tables,
             cache: Mutex::new(BTreeMap::new()),
         }
     }
@@ -48,18 +52,29 @@ impl Component for SqlQueryComponent {
             return Vec::new();
         }
 
-        let key = sql_batch_cache_key(self.store.as_ref(), self.sql.as_ref(), batch);
+        let key = sql_batch_cache_key(
+            self.store.as_ref(),
+            self.sql.as_ref(),
+            &self.referenced_tables,
+            batch,
+        );
         if let Some(cached) = self.cache.lock().unwrap().get(&key).cloned() {
             return mounted_query::record_sql_outputs(
                 &self.store,
                 self.sql.as_ref(),
                 ctx.expand_tick,
                 batch,
+                &self.referenced_tables,
                 &cached,
             );
         }
 
-        let result = match run_sql_batch(self.store.as_ref(), self.sql.as_ref(), batch) {
+        let result = match run_sql_batch(
+            self.store.as_ref(),
+            self.sql.as_ref(),
+            &self.referenced_tables,
+            batch,
+        ) {
             Ok(grouped) => grouped,
             Err(e) => {
                 ctx.diag.emit(Diag::error("sql/runtime", e));
@@ -71,6 +86,7 @@ impl Component for SqlQueryComponent {
             self.sql.as_ref(),
             ctx.expand_tick,
             batch,
+            &self.referenced_tables,
             &result,
         );
         self.cache.lock().unwrap().insert(key, result.clone());
@@ -85,6 +101,7 @@ impl Component for SqlQueryComponent {
 fn sql_batch_cache_key(
     store: &dyn FactStore<Cursor>,
     sql: &str,
+    referenced_tables: &[String],
     batch: &[&Cursor],
 ) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
@@ -94,7 +111,7 @@ fn sql_batch_cache_key(
         h.update(&cursor.content_hash());
     }
     h.update(b"\0tables\0");
-    for table in referenced_fact_tables(sql) {
+    for table in referenced_tables {
         h.update(table.as_bytes());
         h.update(b"\0");
         for row in store.rows_of(&table) {
@@ -112,12 +129,13 @@ fn sql_batch_cache_key(
 fn run_sql_batch(
     store: &dyn FactStore<Cursor>,
     sql: &str,
+    referenced_tables: &[String],
     batch: &[&Cursor],
 ) -> Result<Vec<Node<Cursor>>, String> {
     let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
     materialize_input(&conn, batch)?;
 
-    for table in referenced_fact_tables(sql) {
+    for table in referenced_tables {
         let rows = store.rows_of(&table);
         let declared_cols = store.declared_cols(&table).unwrap_or_default();
         materialize_fact_table(&conn, &table, &declared_cols, &rows)?;
@@ -915,6 +933,7 @@ mod tests {
                SELECT 1 FROM frontend_hooks \
                WHERE frontend_hooks.OP = input.OP \
              )",
+            &vec!["frontend_hooks".to_string()],
             &batch,
         )
         .unwrap();
@@ -942,6 +961,7 @@ mod tests {
                SELECT 1 FROM frontend_hooks \
                WHERE frontend_hooks.OP = input.OP \
              )",
+            &vec!["frontend_hooks".to_string()],
             &batch,
         )
         .unwrap();

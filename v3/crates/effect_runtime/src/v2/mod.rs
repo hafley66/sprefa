@@ -39,7 +39,10 @@ pub use next_key::{compute_key, NextKey};
 pub use event_bus::{Event, EventBus};
 pub use wake::Wake;
 pub use row::Row;
-pub use fact_store::{FactStore, MemFactStore, ID_COL, ROW_DOMAIN, content_id, row_dirty_key};
+pub use fact_store::{
+    content_id, row_dirty_key, table_dirty_key, FactStore, MemFactStore, ID_COL, ROW_DOMAIN,
+    TABLE_DOMAIN,
+};
 #[cfg(feature = "sqlite")]
 pub use fact_store::SqliteFactStore;
 pub use codec::Codec;
@@ -63,8 +66,8 @@ pub use component::{
 pub use flatten::{splice_into, splice_into_at, splice_into_recorded, splice_into_recorded_at};
 pub use prior_children::{diff_children, ChildDiff, ContentHash, PriorChildIndex};
 pub use queue::{
-    BarrierScope, ExpandTick, InstanceId, PendingSummary, PipeHash,
-    QueueBackend, QueueId, QueueRow,
+    attach_dirty_to_queue, BarrierScope, DirtyQueuePromoter, ExpandTick, InstanceId,
+    PendingSummary, PipeHash, QueueBackend, QueueId, QueueRow,
 };
 pub use mem_queue::MemQueue;
 pub use expand::{expand, ExpandOpts, ExpandStats, Pipe, PipeInstance, DEFAULT_BATCH_CAP};

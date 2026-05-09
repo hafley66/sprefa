@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, NextKey, Node, PipeInstance, QueueBackend,
-    QueueRow, RenderCtx, SqliteQueue, Wake,
+    expand, table_dirty_key, Component, ExpandOpts, Node, PipeInstance, QueueBackend,
+    QueueRow, RenderCtx, SqliteQueue, Wake, TABLE_DOMAIN,
 };
 use v4::Cursor;
 
@@ -28,7 +28,7 @@ fn cursor(value: &str) -> Arc<Cursor> {
 fn sqlite_queue_revives_parked_cursor_after_reopen_and_wake() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("queue.sqlite");
-    let wake_key = NextKey([9; 32]);
+    let wake_key = table_dirty_key("frontend_hooks");
 
     {
         let queue = SqliteQueue::<Cursor>::open_file(&db);
@@ -42,7 +42,7 @@ fn sqlite_queue_revives_parked_cursor_after_reopen_and_wake() {
             depth: 0,
             value: cursor("revived"),
             wake: Wake::Key {
-                domain: Cow::Borrowed("table_dirty"),
+                domain: Cow::Borrowed(TABLE_DOMAIN),
                 key: wake_key,
             },
             expand_tick: 1,
@@ -53,7 +53,7 @@ fn sqlite_queue_revives_parked_cursor_after_reopen_and_wake() {
 
     let queue: Arc<dyn QueueBackend<Cursor>> =
         Arc::new(SqliteQueue::<Cursor>::open_file(&db));
-    assert_eq!(queue.dispatch_park("table_dirty", Some(wake_key)), 1);
+    assert_eq!(queue.dispatch_park(TABLE_DOMAIN, Some(wake_key)), 1);
 
     let sink = Arc::new(Mutex::new(Vec::new()));
     let mut pipe = PipeInstance::new(vec![
