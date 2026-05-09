@@ -12,6 +12,7 @@ use effect_runtime::v2::{
 
 use v4::Cursor;
 use v4::lower::{default_registry, DslBody, LowerCtx, Value};
+use v4::pipeline::str_pipe;
 use v4::v2_ops::{file_dirty_key, CollectComponent, CollectMode, FILE_DOMAIN};
 
 fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
@@ -248,10 +249,11 @@ fn read_reruns_after_file_dirty_wake() {
 fn comment_sequential_narrows_value_between_markers() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let reg   = default_registry();
-    let dsl = DslBody { raw: Arc::from(r"# SECTION:.*\n"), interps: vec![] };
     let p = reg.lower(
         &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "comment", None, vec![], None, Some((dsl, br(0, 14))), br(0, 14),
+        "comment", None,
+        vec![(Value::Pipe(str_pipe(r"# SECTION:.*\n")), br(0, 14))],
+        None, None, br(0, 14),
     ).unwrap();
     let mut seed = Cursor::default();
     seed.value = Arc::from("# SECTION: a\nlineA\n# SECTION: b\nlineB\n");
@@ -259,6 +261,28 @@ fn comment_sequential_narrows_value_between_markers() {
     assert_eq!(out.len(), 2);
     assert_eq!(&*out[0].value, "lineA\n");
     assert_eq!(&*out[1].value, "lineB\n");
+}
+
+#[test]
+fn comment_paired_narrows_between_two_pipe_args() {
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg   = default_registry();
+    let p = reg.lower(
+        &LowerCtx::new(store.clone(), std::env::temp_dir()),
+        "comment", None,
+        vec![
+            (Value::Pipe(str_pipe(r"<!-- sprf:start -->\n")), br(0, 23)),
+            (Value::Pipe(str_pipe(r"\n<!-- sprf:end -->")), br(25, 46)),
+        ],
+        None, None, br(0, 46),
+    ).unwrap();
+    let mut seed = Cursor::default();
+    seed.value = Arc::from("before\n<!-- sprf:start -->\nbody\n<!-- sprf:end -->\nafter\n");
+    let out = run(p, seed);
+    assert_eq!(out.len(), 1);
+    assert_eq!(&*out[0].value, "body");
+    assert_eq!(out[0].get("LO"), Some("27"));
+    assert_eq!(out[0].get("HI"), Some("31"));
 }
 
 #[test]

@@ -8,18 +8,18 @@ bounded by HTML comments so normal prose can live around it.
 
     source file cursor
       > read
-      > match comment range and bind BODY as an addressable byte span
+      > comment(open, close) narrows cursor.value to the generated region
       > render markdown into cursor.value
-      > write_cursor(:replace, :BODY)
+      > write_cursor(:replace)
 
 ## Current Cursor Contract
 
 | Step | Cursor value | Address used for write |
 | --- | --- | --- |
 | read | whole file bytes as text | whole-file coord |
-| re with (?P<BODY>...) | matched comment block | BODY term coord points at inside bytes |
-| render(:markdown) | generated markdown | preserves BODY term coord |
-| write_cursor(:replace, :BODY) | generated markdown | replaces only BODY byte range |
+| comment(open, close) | bytes inside marker pair | focal LO/HI point at inside bytes |
+| render(:markdown) | generated markdown | preserves FS/LO/HI |
+| write_cursor(:replace) | generated markdown | replaces only focal byte range |
 
 ## Why This Is Less Blunt
 
@@ -33,8 +33,8 @@ bounded by HTML comments so normal prose can live around it.
     docs/ARCHITECTURE.md
       > term_bind(:FS)
       > read
-      > re (?s)<!-- sprf:start -->\n(?P<BODY>.*?)\n<!-- sprf:end -->
+      > comment(open_marker_regex, close_marker_regex)
       > render(:markdown) ...generated architecture rows...
-      > write_cursor(:replace, :BODY)
+      > write_cursor(:replace)
 
 <!-- sprf:self-doc:end -->

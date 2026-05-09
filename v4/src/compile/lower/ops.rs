@@ -29,7 +29,7 @@ use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBinder, DslBody, DslShape, OperatorDef,
 };
 use effect_runtime::v2::ByteRange;
-use crate::compile::lower::value::Value;
+use crate::compile::lower::value::{run_once_const, Value};
 use crate::pipeline::{GlobComponent, StrConstComponent, StrTemplateComponent};
 use crate::rule::Rule;
 
@@ -1410,10 +1410,8 @@ impl OperatorDef for ReadDef {
 }
 
 // ─── comment ──────────────────────────────────────────────────────────────
-// `comment\`open_re\``                   — sequential markers
-// `comment(:close)\`open|close\``        — paired (single body, two patterns
-//                                          separated by `|`); v3-style two-arg
-//                                          paired form lands later
+// `comment(`open_re`)`                 — sequential markers
+// `comment(`open_re`, `close_re`)`     — paired markers
 //
 // Reads cursor.value as the haystack. Stamps LO/HI per region and rebinds
 // value to the inner slice.
@@ -1422,9 +1420,13 @@ pub struct CommentDef;
 
 const COMMENT_SPEC: &[ArgSig] = &[
     ArgSig {
-        kind: ArgKind::Atom, name: "close",
-        doc: "optional close-pattern atom (e.g. :@end). When set, comment \
-              uses paired LIFO mode and the dsl body is the OPEN regex.",
+        kind: ArgKind::Any, name: "open",
+        doc: "open-pattern pipe, usually a backtick literal",
+        required: false,
+    },
+    ArgSig {
+        kind: ArgKind::Any, name: "close",
+        doc: "optional close-pattern pipe, usually a backtick literal",
         required: false,
     },
 ];
@@ -1433,6 +1435,7 @@ impl OperatorDef for CommentDef {
     fn name(&self) -> &'static str { "comment" }
     fn paren_args(&self) -> &[ArgSig] { COMMENT_SPEC }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn dsl_required(&self) -> bool { false }
     fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI"] }
 
     fn lower(
@@ -1443,17 +1446,39 @@ impl OperatorDef for CommentDef {
         _block: Option<Pipe<Cursor>>,
         dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "comment: dsl body required (open regex)".into()
-        ))?;
-        let mut comp = match args.first() {
-            Some(Value::Atom(close)) => CommentComponent::paired(body.raw.as_ref(), close.as_ref())
-                .map_err(|e| LowerError::Unknown(format!("comment: bad close regex: {e}")))?,
-            Some(_) => return Err(LowerError::Unknown(
-                "comment: arg must be :atom (close pattern)".into()
-            )),
-            None => CommentComponent::sequential(body.raw.as_ref())
-                .map_err(|e| LowerError::Unknown(format!("comment: bad open regex: {e}")))?,
+        if args.len() > 2 {
+            return Err(LowerError::Unknown(format!(
+                "comment: takes 1 or 2 args (got {})",
+                args.len()
+            )));
+        }
+        if dsl.is_some() && !args.is_empty() {
+            return Err(LowerError::Unknown(
+                "comment: use either pipe args or a legacy backtick body, not both".into()
+            ));
+        }
+        let arg_pattern = |idx: usize| -> Result<Option<String>, LowerError> {
+            match args.get(idx) {
+                Some(Value::Pipe(p)) => run_once_const(p, _ctx).map(Some),
+                Some(Value::Atom(a)) => Ok(Some(a.to_string())),
+                None => Ok(None),
+            }
+        };
+        let open = match arg_pattern(0)? {
+            Some(open) => open,
+            None => match dsl {
+                Some(body) => body.raw.to_string(),
+                None => return Err(LowerError::Unknown(
+                    "comment: open regex required, e.g. comment(`<!-- start -->`, `<!-- end -->`)".into()
+                )),
+            },
+        };
+        let close = arg_pattern(1)?;
+        let mut comp = match close {
+            Some(close) => CommentComponent::paired(&open, &close)
+                .map_err(|e| LowerError::Unknown(format!("comment: bad regex: {e}")))?,
+            None => CommentComponent::sequential(&open)
+                .map_err(|e| LowerError::Unknown(format!("comment: bad regex: {e}")))?,
         };
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))

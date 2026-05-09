@@ -68,4 +68,13 @@ fn host_parse_four_slot_and_diag_shape() {
     assert!(call.force);
     assert!(!call.predicate);
     assert!(!call.apply);
+
+    let src_comment = "comment(`<!-- start -->`, `<!-- end -->`);";
+    let (pipes_comment, diags_comment) = host_parse(src_comment);
+    assert!(diags_comment.is_empty(), "expected clean comment arg parse, got diags: {diags_comment:?}");
+    let call = &pipes_comment[0].steps[0];
+    assert_eq!(&*call.name, "comment");
+    assert_eq!(call.args.len(), 2);
+    assert_eq!(&*call.args[0].raw, "`<!-- start -->`");
+    assert_eq!(&*call.args[1].raw, "`<!-- end -->`");
 }

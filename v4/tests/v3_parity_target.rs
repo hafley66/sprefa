@@ -154,7 +154,7 @@ async fn render_markdown_aggregate_writes_file() {
 }
 
 #[tokio::test]
-async fn render_markdown_replaces_named_capture_range_only() {
+async fn render_markdown_replaces_comment_range_only() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("ARCH.md");
     let sprf = root.path().join("self_doc_range_replace.sprf");
@@ -168,11 +168,12 @@ async fn render_markdown_replaces_named_capture_range_only() {
     )).unwrap();
     let src = format!(
         r#"`{}`
+> term_bind(:FS)
 > read
-> re`(?s)<!-- sprf:self-doc:start -->\n(?P<BODY>.*?)\n<!-- sprf:self-doc:end -->`
+> comment(`<!-- sprf:self-doc:start -->\n`, `\n<!-- sprf:self-doc:end -->`)
 > render(:markdown)`## Generated
 range-safe markdown`
-> write_cursor(:replace, :BODY);
+> write_cursor(:replace);
 "#,
         target.display(),
     );
