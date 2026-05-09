@@ -172,7 +172,12 @@ pub fn expand<N: Next>(
     let mut stats = ExpandStats::default();
 
     loop {
-        let batch = queue.pull_runnable_batch(expand_tick, opts.batch_cap);
+        let batch = queue.pull_runnable_batch_for(
+            pipe.pipe_hash,
+            pipe.instance_id,
+            expand_tick,
+            opts.batch_cap,
+        );
         if batch.is_empty() {
             if drive_barriers(pipe, queue.as_ref(), expand_tick, &opts) {
                 continue;

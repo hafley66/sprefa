@@ -27,8 +27,8 @@ use axum::{
 };
 use bytes::Bytes;
 use effect_runtime::v2::{
-    expand, BufferProbeSink, Diag, DiagSink, ExpandOpts, FactStore, MemFactStore, MemQueue,
-    ProbeSink, QueueBackend,
+    attach_dirty_to_queue, expand, BufferProbeSink, Diag, DiagSink, EventBus, ExpandOpts,
+    FactStore, MemFactStore, MemQueue, Pipe, PipeInstance, ProbeSink, QueueBackend,
 };
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
@@ -405,6 +405,10 @@ pub struct DocState {
 pub struct SprfState {
     pub docs:       Mutex<HashMap<String, DocState>>,
     pub facts:      Arc<dyn FactStore<Cursor>>,
+    pub queue:      Arc<dyn QueueBackend<Cursor>>,
+    pub bus:        Arc<EventBus>,
+    instances:      Mutex<Vec<Arc<PipeInstance<Cursor>>>>,
+    next_instance_id: Mutex<u64>,
     /// Layer 0c.2 — content-derived intern store wrapping `facts`.
     /// Threaded into `LowerCtx` so source/pattern emitters stamp the
     /// coord-space side of Cursor (`value_id`, `at`, `terms`) alongside
@@ -422,11 +426,18 @@ pub struct SprfState {
 impl SprfState {
     pub fn new(root: PathBuf) -> Self {
         let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        let bus = Arc::new(EventBus::new());
+        attach_dirty_to_queue(&bus, queue.clone());
         let sprf_store = crate::store::SprfStore::new(facts.clone());
         let config = Arc::new(crate::config::SprfConfig::load_default());
         Self {
             docs: Mutex::new(HashMap::new()),
             facts,
+            queue,
+            bus,
+            instances: Mutex::new(Vec::new()),
+            next_instance_id: Mutex::new(1),
             sprf_store,
             config,
             registry: Arc::new(default_registry()),
@@ -439,6 +450,37 @@ impl SprfState {
     pub fn with_config(mut self, c: crate::config::SprfConfig) -> Self {
         self.config = Arc::new(c);
         self
+    }
+
+    fn mount_pipe(&self, pipe: Pipe<Cursor>) -> Arc<PipeInstance<Cursor>> {
+        let mut inst = pipe.into_instance();
+        let mut next = self.next_instance_id.lock().unwrap();
+        inst.pipe_hash = *next;
+        inst.instance_id = *next;
+        *next += 1;
+        let inst = Arc::new(inst);
+        self.instances.lock().unwrap().push(inst.clone());
+        inst
+    }
+
+    fn resume_mounted(&self, opts: ExpandOpts) {
+        for _ in 0..8 {
+            let instances = self.instances.lock().unwrap().clone();
+            let mut rendered = 0;
+            for inst in instances {
+                rendered += expand(
+                    inst.as_ref(),
+                    self.queue.clone(),
+                    Vec::new(),
+                    opts.clone(),
+                ).rendered;
+            }
+            if rendered == 0 {
+                break;
+            }
+            let generation = *self.next_instance_id.lock().unwrap();
+            self.facts.commit(generation, Some(&self.bus));
+        }
     }
 
     fn ingest(&self, uri: String, text: String, version: i32) {
@@ -540,20 +582,27 @@ impl SprfHandlers for SprfState {
             .with_config(self.config.clone());
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
 
-        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         // 4096 matches v4-bench. Smaller caps multiply per-batch lock
         // overhead in batched sinks (FactWrite et al.).
         let runtime_diags = Arc::new(BufferDiagSink::new());
         let opts = ExpandOpts::default()
             .with_batch_cap(4096)
+            .with_bus(self.bus.clone())
             .with_diag(runtime_diags.clone());
         let mut n = 0;
         for pipe in pipes {
-            let inst = pipe.into_instance();
-            expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], opts.clone());
+            let inst = self.mount_pipe(pipe);
+            expand(
+                inst.as_ref(),
+                self.queue.clone(),
+                vec![Arc::new(Cursor::default())],
+                opts.clone(),
+            );
             n += 1;
         }
-        self.facts.commit(1, None);
+        let generation = *self.next_instance_id.lock().unwrap();
+        self.facts.commit(generation, Some(&self.bus));
+        self.resume_mounted(opts);
 
         let mut tables: Vec<String> = Vec::new();
         collect_rule_tables(&program, &mut tables);

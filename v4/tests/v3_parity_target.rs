@@ -1,8 +1,8 @@
 use std::fs;
 
 use v4::app::{
-    build_in_process, GetDiagsReq, RunReq, SprfClient, SprfDiag, RunReport,
-    LspOpenReq,
+    build_in_process, GetDiagsReq, GetFactTableReq, LspOpenReq, RunReq, SprfClient, SprfDiag,
+    RunReport,
 };
 
 fn diag_lines(diags: &[SprfDiag]) -> String {
@@ -125,4 +125,64 @@ async fn render_markdown_aggregate_writes_file() {
     );
     let second = fs::read_to_string(&out).expect("render output should still exist");
     assert_eq!(second, first, "render/write should be idempotent");
+}
+
+#[tokio::test]
+async fn app_run_keeps_queue_and_wakes_mounted_sql() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root.path().join("missing.sprf");
+    let hook = root.path().join("hook.sprf");
+
+    fs::write(&missing, r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:missing_hooks, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+                  AND frontend_hooks.FILE = ${FILE}
+              )
+            `
+          > rule(:missing_hooks, OP: OP);
+    "#).unwrap();
+    fs::write(&hook, r#"
+        rule(:frontend_hooks, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+    "#).unwrap();
+
+    let (_state, client) = build_in_process(root.path().to_path_buf());
+    client.run(RunReq {
+        path: missing,
+        root: Some(root.path().to_path_buf()),
+    }).await.unwrap();
+
+    let table = client.get_fact_table(GetFactTableReq {
+        name: "missing_hooks".into(),
+        limit: None,
+    }).await.unwrap();
+    assert_eq!(table.total, 1);
+
+    client.run(RunReq {
+        path: hook,
+        root: Some(root.path().to_path_buf()),
+    }).await.unwrap();
+
+    let table = client.get_fact_table(GetFactTableReq {
+        name: "missing_hooks".into(),
+        limit: None,
+    }).await.unwrap();
+    assert_eq!(table.total, 0);
 }

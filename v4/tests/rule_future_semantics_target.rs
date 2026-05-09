@@ -189,6 +189,11 @@ fn mounted_query_reacts_to_late_relation_write() {
         0,
         "live query mount should rerun/retract the missing row after frontend_hooks changes"
     );
+    assert_eq!(
+        runtime.queue.depth(),
+        1,
+        "mounted sql should keep one parked continuation for this table/input",
+    );
 }
 
 #[test]
@@ -296,6 +301,11 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
         runtime.store.rows_of("hook_hits").len(),
         2,
         "mounted query rerun should add only the new output row while preserving the old one"
+    );
+    assert_eq!(
+        runtime.queue.depth(),
+        1,
+        "mounted sql should replace its prior parked continuation on rerun",
     );
 }
 

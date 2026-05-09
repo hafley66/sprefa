@@ -56,6 +56,13 @@ pub trait QueueBackend<N: Next>: Send + Sync {
     /// Insert a new row. Backend assigns the QueueId. Returns it.
     fn enqueue(&self, row: QueueRow<N>) -> QueueId;
 
+    /// Insert a parked row after removing an older parked row with the
+    /// same subscription identity. Default preserves legacy append
+    /// behavior for ad-hoc queues.
+    fn enqueue_replacing_parked(&self, row: QueueRow<N>) -> QueueId {
+        self.enqueue(row)
+    }
+
     /// Pull one runnable row. "Runnable" means:
     ///   - `Wake::Immediate`, OR
     ///   - `Wake::Tick { past_tick }` AND `past_tick < global_tick`.
@@ -100,6 +107,20 @@ pub trait QueueBackend<N: Next>: Send + Sync {
             Some(r) => vec![r],
             None    => Vec::new(),
         }
+    }
+
+    /// Pull runnable rows for one mounted pipe instance only. Shared
+    /// queue runners use this so a resumed row cannot be dispatched
+    /// through the wrong pipe's component vector.
+    fn pull_runnable_batch_for(
+        &self,
+        pipe_hash:   PipeHash,
+        instance_id: InstanceId,
+        global_tick: ExpandTick,
+        n:           usize,
+    ) -> Vec<QueueRow<N>> {
+        let _ = (pipe_hash, instance_id);
+        self.pull_runnable_batch(global_tick, n)
     }
 
     /// Count rows in the same mounted pipe before or at `max_depth`.

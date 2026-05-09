@@ -786,6 +786,68 @@ fn mem_queue_dispatch_park_works() {
 }
 
 #[test]
+fn mem_queue_replaces_duplicate_parked_subscription() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    let key = fresh_key(11);
+
+    let mut first = QueueRow {
+        id:             0,
+        parent_id:      None,
+        batch_idx:      0,
+        path:           Vec::new(),
+        pipe_hash:      7,
+        instance_id:    8,
+        depth:          2,
+        value:          lc(":raw", "same"),
+        wake:           Wake::Key { domain: "table".into(), key },
+        expand_tick:     0,
+        enqueued_at_ns: 0,
+    };
+    queue.enqueue_replacing_parked(first.clone());
+    first.parent_id = Some(99);
+    queue.enqueue_replacing_parked(first);
+
+    assert_eq!(queue.depth(), 1);
+    assert_eq!(queue.dispatch_park("table", Some(key)), 1);
+}
+
+#[test]
+fn mem_queue_scoped_pull_skips_other_pipe_rows() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+    queue.enqueue(QueueRow {
+        id:             0,
+        parent_id:      None,
+        batch_idx:      0,
+        path:           Vec::new(),
+        pipe_hash:      1,
+        instance_id:    1,
+        depth:          0,
+        value:          lc(":raw", "one"),
+        wake:           Wake::Immediate,
+        expand_tick:     0,
+        enqueued_at_ns: 0,
+    });
+    queue.enqueue(QueueRow {
+        id:             0,
+        parent_id:      None,
+        batch_idx:      0,
+        path:           Vec::new(),
+        pipe_hash:      2,
+        instance_id:    2,
+        depth:          0,
+        value:          lc(":raw", "two"),
+        wake:           Wake::Immediate,
+        expand_tick:     0,
+        enqueued_at_ns: 0,
+    });
+
+    let got = queue.pull_runnable_batch_for(2, 2, 1, 16);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].value.get(":raw"), Some("two"));
+    assert_eq!(queue.depth(), 1);
+}
+
+#[test]
 fn dirty_bus_event_promotes_matching_queue_park() {
     let bus = EventBus::new();
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
@@ -813,6 +875,70 @@ fn sqlite_dispatch_park_promotes_matching_rows() {
     assert_eq!(queue.dispatch_park("fs", Some(k1)), 3);
     assert_eq!(queue.dispatch_park("fs", None),     1); // k2 still parked
     assert_eq!(queue.dispatch_park("git", None),    1);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_queue_replaces_duplicate_parked_subscription() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
+    let key = fresh_key(13);
+    let mut row = QueueRow {
+        id:             0,
+        parent_id:      None,
+        batch_idx:      0,
+        path:           Vec::new(),
+        pipe_hash:      7,
+        instance_id:    8,
+        depth:          2,
+        value:          lc(":raw", "same"),
+        wake:           Wake::Key { domain: "table".into(), key },
+        expand_tick:     0,
+        enqueued_at_ns: 0,
+    };
+
+    queue.enqueue_replacing_parked(row.clone());
+    row.parent_id = Some(99);
+    queue.enqueue_replacing_parked(row);
+
+    assert_eq!(queue.depth(), 1);
+    assert_eq!(queue.dispatch_park("table", Some(key)), 1);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_queue_scoped_pull_skips_other_pipe_rows() {
+    let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
+    queue.enqueue(QueueRow {
+        id:             0,
+        parent_id:      None,
+        batch_idx:      0,
+        path:           Vec::new(),
+        pipe_hash:      1,
+        instance_id:    1,
+        depth:          0,
+        value:          lc(":raw", "one"),
+        wake:           Wake::Immediate,
+        expand_tick:     0,
+        enqueued_at_ns: 0,
+    });
+    queue.enqueue(QueueRow {
+        id:             0,
+        parent_id:      None,
+        batch_idx:      0,
+        path:           Vec::new(),
+        pipe_hash:      2,
+        instance_id:    2,
+        depth:          0,
+        value:          lc(":raw", "two"),
+        wake:           Wake::Immediate,
+        expand_tick:     0,
+        enqueued_at_ns: 0,
+    });
+
+    let got = queue.pull_runnable_batch_for(2, 2, 1, 16);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].value.get(":raw"), Some("two"));
+    assert_eq!(queue.depth(), 1);
 }
 
 /// Park-as-row's RSS guarantee: 10k parked rows in SqliteQueue do not

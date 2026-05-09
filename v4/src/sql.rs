@@ -61,19 +61,22 @@ impl Component for SqlQueryComponent {
         for (row, node) in rows.iter().zip(nodes) {
             splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
             for table in self.referenced_tables.iter() {
-                splice_into(
-                    row,
-                    Node::Yield {
-                        value: row.value.clone(),
-                        wake: Wake::Key {
-                            domain: TABLE_DOMAIN.into(),
-                            key: table_dirty_key(table),
-                        },
+                queue.enqueue_replacing_parked(QueueRow {
+                    id: 0,
+                    parent_id: Some(row.id),
+                    batch_idx: row.batch_idx,
+                    path: row.path.clone(),
+                    pipe_hash: row.pipe_hash,
+                    instance_id: row.instance_id,
+                    depth: row.depth,
+                    value: row.value.clone(),
+                    wake: Wake::Key {
+                        domain: TABLE_DOMAIN.into(),
+                        key: table_dirty_key(table),
                     },
-                    ctx.depth + 1,
-                    ctx.expand_tick,
-                    queue,
-                );
+                    expand_tick: ctx.expand_tick,
+                    enqueued_at_ns: row.enqueued_at_ns,
+                });
             }
         }
     }

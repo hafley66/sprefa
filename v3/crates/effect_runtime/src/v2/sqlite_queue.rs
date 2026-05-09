@@ -262,6 +262,59 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
         conn.last_insert_rowid() as u64
     }
 
+    fn enqueue_replacing_parked(&self, row: QueueRow<N>) -> QueueId {
+        let Wake::Key { domain, key } = &row.wake else {
+            return self.enqueue(row);
+        };
+
+        let conn = self.conn.lock().unwrap();
+        let next_hash = row.value.content_hash().to_vec();
+        conn.execute(
+            "DELETE FROM sprf_v3_queue
+              WHERE wake_kind = ?1
+                AND wake_domain = ?2
+                AND wake_key = ?3
+                AND pipe_hash = ?4
+                AND instance_id = ?5
+                AND depth = ?6
+                AND next_hash = ?7",
+            params![
+                WAKE_KIND_KEY,
+                domain.as_ref(),
+                key.0.to_vec(),
+                row.pipe_hash as i64,
+                row.instance_id as i64,
+                row.depth as i64,
+                next_hash,
+            ],
+        ).expect("queue replace parked delete");
+
+        conn.execute(
+            "INSERT INTO sprf_v3_queue (
+                parent_id, batch_idx, path, pipe_hash, instance_id, depth,
+                next_blob, next_hash, wake_kind, wake_tick, wake_domain,
+                wake_key, expand_tick, enqueued_at_ns
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            params![
+                row.parent_id.map(|p| p as i64),
+                row.batch_idx as i64,
+                encode_path(&row.path),
+                row.pipe_hash as i64,
+                row.instance_id as i64,
+                row.depth as i64,
+                row.value.encode(),
+                row.value.content_hash().to_vec(),
+                WAKE_KIND_KEY,
+                Option::<i64>::None,
+                domain.as_ref(),
+                key.0.to_vec(),
+                row.expand_tick as i64,
+                row.enqueued_at_ns as i64,
+            ],
+        ).expect("queue replace parked insert");
+        conn.last_insert_rowid() as u64
+    }
+
     fn pull_runnable(
         &self,
         global_tick: ExpandTick,
@@ -379,6 +432,82 @@ impl<N: Next + Codec> QueueBackend<N> for SqliteQueue<N> {
             runnable: runnable as u64,
             parked:   parked as u64,
         }
+    }
+
+    fn pull_runnable_batch_for(
+        &self,
+        pipe_hash:   PipeHash,
+        instance_id: InstanceId,
+        global_tick: ExpandTick,
+        n:           usize,
+    ) -> Vec<QueueRow<N>> {
+        if n == 0 { return Vec::new(); }
+        let conn = self.conn.lock().unwrap();
+        let first = conn.query_row(
+            "SELECT * FROM sprf_v3_queue
+             WHERE pipe_hash = ?1
+               AND instance_id = ?2
+               AND wake_kind = ?3
+             ORDER BY id ASC
+             LIMIT 1",
+            params![pipe_hash as i64, instance_id as i64, WAKE_KIND_IMMEDIATE],
+            row_to_queue::<N>,
+        ).optional().expect("query scoped immediate");
+
+        if let Some(first) = first {
+            let depth = first.depth;
+            let mut stmt = conn.prepare(
+                "SELECT * FROM sprf_v3_queue
+                 WHERE pipe_hash = ?1
+                   AND instance_id = ?2
+                   AND depth = ?3
+                   AND wake_kind = ?4
+                 ORDER BY id ASC
+                 LIMIT ?5",
+            ).expect("prepare scoped runnable batch");
+            let rows = stmt.query_map(
+                params![
+                    pipe_hash as i64,
+                    instance_id as i64,
+                    depth as i64,
+                    WAKE_KIND_IMMEDIATE,
+                    n as i64,
+                ],
+                row_to_queue::<N>,
+            ).expect("query scoped runnable batch");
+            let out: Vec<QueueRow<N>> = rows
+                .map(|row| row.expect("scoped runnable row"))
+                .collect();
+            for row in &out {
+                conn.execute("DELETE FROM sprf_v3_queue WHERE id = ?1", params![row.id as i64])
+                    .expect("delete scoped runnable row");
+            }
+            return out;
+        }
+
+        let tick = conn.query_row(
+            "SELECT * FROM sprf_v3_queue
+             WHERE pipe_hash = ?1
+               AND instance_id = ?2
+               AND wake_kind = ?3
+               AND wake_tick < ?4
+             ORDER BY id ASC
+             LIMIT 1",
+            params![
+                pipe_hash as i64,
+                instance_id as i64,
+                WAKE_KIND_TICK,
+                global_tick as i64,
+            ],
+            row_to_queue::<N>,
+        ).optional().expect("query scoped tick");
+        if let Some(row) = tick {
+            conn.execute("DELETE FROM sprf_v3_queue WHERE id = ?1", params![row.id as i64])
+                .expect("delete scoped tick row");
+            return vec![row];
+        }
+
+        Vec::new()
     }
 
     fn cascade_delete(&self, root: QueueId) -> u64 {

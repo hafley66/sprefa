@@ -65,6 +65,42 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         id
     }
 
+    fn enqueue_replacing_parked(&self, mut row: QueueRow<N>) -> QueueId {
+        let Wake::Key { domain, key } = &row.wake else {
+            return self.enqueue(row);
+        };
+
+        if row.id == 0 {
+            row.id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        }
+        let id = row.id;
+        let identity = (
+            domain.clone(),
+            *key,
+            row.pipe_hash,
+            row.instance_id,
+            row.depth,
+            row.value.content_hash(),
+        );
+
+        let mut s = self.state.lock().unwrap();
+        let bucket_key = (identity.0.clone(), identity.1);
+        if let Some(bucket) = s.by_key.get_mut(&bucket_key) {
+            let before = bucket.len();
+            bucket.retain(|existing| {
+                existing.pipe_hash != identity.2
+                    || existing.instance_id != identity.3
+                    || existing.depth != identity.4
+                    || existing.value.content_hash() != identity.5
+            });
+            let removed = before - bucket.len();
+            s.depth = s.depth.saturating_sub(removed as u64);
+        }
+        s.by_key.entry(bucket_key).or_default().push(row);
+        s.depth += 1;
+        id
+    }
+
     fn pull_runnable(
         &self,
         global_tick: ExpandTick,
@@ -121,6 +157,16 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         n:           usize,
     ) -> Vec<QueueRow<N>> {
         self.pull_runnable_batch_impl(global_tick, n)
+    }
+
+    fn pull_runnable_batch_for(
+        &self,
+        pipe_hash:   PipeHash,
+        instance_id: InstanceId,
+        global_tick: ExpandTick,
+        n:           usize,
+    ) -> Vec<QueueRow<N>> {
+        self.pull_runnable_batch_for_impl(pipe_hash, instance_id, global_tick, n)
     }
 
     fn pending_summary_before_or_at(
@@ -292,5 +338,48 @@ impl<N: Next> MemQueue<N> {
             Some(r) => vec![r],
             None    => Vec::new(),
         }
+    }
+
+    fn pull_runnable_batch_for_impl(
+        &self,
+        pipe_hash:   PipeHash,
+        instance_id: InstanceId,
+        global_tick: ExpandTick,
+        n:           usize,
+    ) -> Vec<QueueRow<N>> {
+        if n == 0 { return Vec::new(); }
+        let mut s = self.state.lock().unwrap();
+
+        let Some(head_idx) = s.runnable.iter().position(|row| {
+            row.pipe_hash == pipe_hash && row.instance_id == instance_id
+        }) else {
+            let tick_idx = s.tick_parked.iter().position(|row| {
+                row.pipe_hash == pipe_hash
+                    && row.instance_id == instance_id
+                    && matches!(&row.wake, Wake::Tick { past_tick } if *past_tick < global_tick)
+            });
+            if let Some(i) = tick_idx {
+                let row = s.tick_parked.swap_remove(i);
+                s.depth -= 1;
+                return vec![row];
+            }
+            return Vec::new();
+        };
+
+        let head_depth = s.runnable[head_idx].depth;
+        let mut out = Vec::with_capacity(n);
+        let mut idx = 0;
+        while idx < s.runnable.len() && out.len() < n {
+            let matches = s.runnable[idx].pipe_hash == pipe_hash
+                && s.runnable[idx].instance_id == instance_id
+                && s.runnable[idx].depth == head_depth;
+            if matches {
+                out.push(s.runnable.remove(idx).unwrap());
+                s.depth -= 1;
+            } else {
+                idx += 1;
+            }
+        }
+        out
     }
 }
