@@ -157,6 +157,7 @@ Implemented since this tracker was written:
 - anti-join outputs disappearing retract downstream supported rule rows
 - `SqliteQueue` can persist, reopen, wake, and resume parked rows
 - app-mounted pipe identity is stable across source edits that shift statement order
+- barrier scope identity is stable across later `expand_tick` resumes
 - `SqliteFactStore` identity follows declared columns, not hidden cursor fields
 - `sprefa-run --queue-db` creates a durable queue database
 - `sprefa-run --fact-db` creates a durable fact database

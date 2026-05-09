@@ -39,6 +39,9 @@ Implemented:
 - app-mounted pipe identity is content-stable for a source path and pipe
   structure, so queued continuations do not resume in the wrong pipe after
   source edits shift statement order
+- barrier scope identity excludes `expand_tick`, so `collect()` buffers stay
+  attached to the mounted pipe when upstream parks and resumes in a later
+  driver tick
 - `SqliteFactStore` row identity uses declared persisted columns, so hidden
   cursor fields do not create duplicate visible rows
 

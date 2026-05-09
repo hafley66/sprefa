@@ -7,12 +7,12 @@ use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
     expand, BusListener, ByteRange, Component, Event, EventBus, ExpandOpts, FactStore,
-    MemFactStore, MemQueue, Node, PipeInstance, QueueBackend, RenderCtx,
+    MemFactStore, MemQueue, NextKey, Node, PipeInstance, QueueBackend, RenderCtx, Wake,
 };
 
 use v4::Cursor;
 use v4::lower::{default_registry, DslBody, LowerCtx, Value};
-use v4::v2_ops::{file_dirty_key, FILE_DOMAIN};
+use v4::v2_ops::{file_dirty_key, CollectComponent, CollectMode, FILE_DOMAIN};
 
 fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
 
@@ -476,6 +476,70 @@ fn collect_ready_accepts_snapshot_and_append_modes() {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].value.as_ref(), "xy");
     }
+}
+
+#[test]
+fn collect_keeps_buffer_when_upstream_resumes_in_later_expand_tick() {
+    struct ParkOnce {
+        seen: Arc<Mutex<bool>>,
+        key: NextKey,
+    }
+
+    impl Component for ParkOnce {
+        type Next = Cursor;
+
+        fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            if c.value.as_ref() == "b" {
+                let mut seen = self.seen.lock().unwrap();
+                if !*seen {
+                    *seen = true;
+                    return Node::Yield {
+                        value: Arc::new(c.clone()),
+                        wake: Wake::Key {
+                            domain: std::borrow::Cow::Borrowed("test"),
+                            key: self.key,
+                        },
+                    };
+                }
+            }
+            Node::Emit(Arc::new(c.clone()))
+        }
+    }
+
+    struct Sink(Arc<Mutex<Vec<Cursor>>>);
+    impl Component for Sink {
+        type Next = Cursor;
+
+        fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
+        }
+    }
+
+    let key = NextKey([7; 32]);
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let pipe = PipeInstance::new(vec![
+        Arc::new(ParkOnce { seen: Arc::new(Mutex::new(false)), key }),
+        Arc::new(CollectComponent::new(CollectMode::Complete)),
+        Arc::new(Sink(sink.clone())),
+    ]);
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    let opts = ExpandOpts::default();
+
+    let mut a = Cursor::default();
+    a.value = Arc::from("a");
+    let mut b = Cursor::default();
+    b.value = Arc::from("b");
+
+    expand(&pipe, queue.clone(), vec![Arc::new(a), Arc::new(b)], opts.clone());
+    assert_eq!(sink.lock().unwrap().len(), 0);
+
+    assert_eq!(queue.dispatch_park("test", Some(key)), 1);
+    expand(&pipe, queue, Vec::new(), opts);
+
+    let out = sink.lock().unwrap().clone();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].value.as_ref(), "ab");
 }
 
 #[test]

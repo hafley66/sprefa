@@ -268,4 +268,16 @@ cardinality defines queue/retraction mechanics.
 effect defines scheduling/reordering boundaries.
 ```
 
+## Barrier Scope Determinism
+
+Barrier state is keyed by mounted pipe identity and barrier depth:
+
+```text
+pipe_hash
+instance_id
+depth
+```
+
+`expand_tick` is still carried on `BarrierScope` so emitted rows can inherit the current driver tick, but it is not part of barrier-buffer identity. A parked upstream row can resume in a later `expand()` call with a later tick; `collect()` must keep the rows already buffered for that mounted pipe instead of splitting the buffer by tick.
+
 Disabling a lift/cache optimization must not change emitted rows, term bindings, diagnostics, writes, or generation visibility.

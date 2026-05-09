@@ -16,12 +16,47 @@ pub type InstanceId = u64;
 pub type ExpandTick  = u64;
 pub type PipeHash   = u64;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BarrierScope {
     pub pipe_hash:   PipeHash,
     pub instance_id: InstanceId,
     pub expand_tick: ExpandTick,
     pub depth:       u32,
+}
+
+impl BarrierScope {
+    /// Barrier buffers are mounted-pipe state. `expand_tick` stays on
+    /// the value for emitted rows, but is not part of buffer identity
+    /// because parked rows can resume in a later driver tick.
+    fn stable_key(self) -> (PipeHash, InstanceId, u32) {
+        (self.pipe_hash, self.instance_id, self.depth)
+    }
+}
+
+impl PartialEq for BarrierScope {
+    fn eq(&self, other: &Self) -> bool {
+        self.stable_key() == other.stable_key()
+    }
+}
+
+impl Eq for BarrierScope {}
+
+impl PartialOrd for BarrierScope {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BarrierScope {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.stable_key().cmp(&other.stable_key())
+    }
+}
+
+impl std::hash::Hash for BarrierScope {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.stable_key().hash(state);
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
