@@ -1,4 +1,7 @@
 [build]
+# Local Codex sandbox cannot execute the global sccache rustc-wrapper.
+# Keep repo cargo commands deterministic without requiring RUSTC_WRAPPER=.
+rustc-wrapper = ""
 # Parallel frontend: rustc splits type/borrow checking across threads.
 # Requires nightly toolchain (set via `rustup override set nightly`).
 rustflags = ["-Z", "threads=8"]
