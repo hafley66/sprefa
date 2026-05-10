@@ -1,11 +1,15 @@
 # sprefa v4 VS Code extension
 
-Declarative `.sprf` syntax highlighting for the v4 host grammar (four-slot
-`name '?'? [flow]* (args)? \`dsl\`? { block }?` shape).
+Declarative `.sprf` syntax highlighting plus LSP support for the v4 host
+grammar.
 
-No LSP client. Lane C will add `sprefa-lsp` once v4 ships a server. This
-extension can be installed alongside the v3 `sprf` extension; the two share
-the language id `sprf` so VS Code will use whichever is enabled.
+The extension spawns `sprefa-lsp` by default. `sprefa-lsp` uses the shared
+`v4::app::SprfClient` RPC surface with an in-process backend today. The app
+layer also has an HTTP client for `sprefa-daemon`; wiring VS Code to a remote
+daemon is a client-selection change, not a new LSP feature.
+
+This extension can be installed alongside the v3 `sprf` extension; the two
+share the language id `sprf` so VS Code will use whichever is enabled.
 
 ## Install
 
@@ -46,12 +50,12 @@ will come from a tree-sitter or tokens provider later.
 
 ## Verify
 
-Open `v4/tests/v4_e2e_smoke.rs` source's literal sprf string in a `.sprf`
-file:
+Open a `.sprf` file:
 
 ```
 rule(:greet) { str `hello world` }
 ```
 
 `rule` and `str` should color as op names, `:greet` as atom, the backtick
-body as string, and parens/braces as bracket pairs.
+body as string, and parens/braces as bracket pairs. Hover, inlay hints,
+diagnostics, completions, and semantic tokens should come from `sprefa-lsp`.
