@@ -89,6 +89,7 @@ fn sprefa_run_telemetry_flag_prints_runtime_counters() {
     assert!(stdout.contains("── telemetry ──"), "stdout missing telemetry:\n{stdout}");
     assert!(stdout.contains("rendered="), "stdout missing expand counters:\n{stdout}");
     assert!(stdout.contains("stage"), "stdout missing stage counters:\n{stdout}");
+    assert!(stdout.contains("store insert_calls="), "stdout missing fact store counters:\n{stdout}");
 }
 
 #[test]

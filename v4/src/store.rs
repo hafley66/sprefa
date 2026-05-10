@@ -5,7 +5,7 @@
 //! seen-set per id family. Cold tier is the underlying FactStore;
 //! lookups miss-rehydrate through the LRU.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
@@ -31,6 +31,7 @@ const DEFAULT_REFS_CAP:    usize = 16_384;
 const DEFAULT_REPOS_CAP:   usize =  1_024;
 const DEFAULT_REVS_CAP:    usize =  4_096;
 const DEFAULT_PATHS_CAP:   usize = 16_384;
+const CORE_FLUSH_ROWS:     usize = 16_384;
 
 fn norm(s: &str) -> String {
     s.chars()
@@ -54,6 +55,7 @@ pub struct SprfStore {
     seen_revs:    Mutex<HashSet<u64>>,
     seen_paths:   Mutex<HashSet<u64>>,
     seen_string_observations: Mutex<HashSet<u64>>,
+    pending_core: Mutex<HashMap<&'static str, Vec<Arc<Cursor>>>>,
 }
 
 impl SprfStore {
@@ -86,6 +88,7 @@ impl SprfStore {
             seen_revs:    Mutex::new(HashSet::new()),
             seen_paths:   Mutex::new(HashSet::new()),
             seen_string_observations: Mutex::new(HashSet::new()),
+            pending_core: Mutex::new(HashMap::new()),
         });
         store.declare_core_tables();
         store.preinsert_sentinels();
@@ -93,7 +96,30 @@ impl SprfStore {
     }
 
     /// Underlying FactStore — for ops/tests that read the cold tables.
-    pub fn inner(&self) -> &Arc<dyn FactStore<Cursor>> { &self.inner }
+    pub fn inner(&self) -> &Arc<dyn FactStore<Cursor>> {
+        self.flush();
+        &self.inner
+    }
+
+    pub fn flush(&self) {
+        let pending = std::mem::take(&mut *self.pending_core.lock().unwrap());
+        for (table, rows) in pending {
+            if rows.is_empty() { continue; }
+            self.inner.insert_batch(table, rows);
+        }
+    }
+
+    fn insert_core(&self, table: &'static str, row: Cursor) {
+        let should_flush = {
+            let mut pending = self.pending_core.lock().unwrap();
+            let rows = pending.entry(table).or_default();
+            rows.push(Arc::new(row));
+            rows.len() >= CORE_FLUSH_ROWS
+        };
+        if should_flush {
+            self.flush();
+        }
+    }
 
     fn declare_core_tables(&self) {
         self.inner.declare(STRINGS_TABLE, &["id", "content", "norm"]);
@@ -116,7 +142,7 @@ impl SprfStore {
         row.set("id",        "0");
         row.set("content",   "");
         row.set("norm",      "");
-        self.inner.insert(STRINGS_TABLE, Arc::new(row));
+        self.insert_core(STRINGS_TABLE, row);
         self.seen_strings.lock().unwrap().insert(0);
         self.strings_lru.lock().unwrap().put(StringId::EMPTY, Arc::<str>::from(""));
 
@@ -126,7 +152,7 @@ impl SprfStore {
         row.set("content_hash", "0".repeat(64));
         row.set("path",         "\u{2205}");
         row.set("size",         "0");
-        self.inner.insert(FILES_TABLE, Arc::new(row));
+        self.insert_core(FILES_TABLE, row);
         self.seen_files.lock().unwrap().insert(0);
         let synth_hash = [0u8; 32];
         self.files_lru.lock().unwrap()
@@ -140,7 +166,7 @@ impl SprfStore {
         row.set("hi",      "0");
         row.set("repo",    "0");
         row.set("rev",     "0");
-        self.inner.insert(WHERE_BYTES_TABLE, Arc::new(row));
+        self.insert_core(WHERE_BYTES_TABLE, row);
         self.seen_refs.lock().unwrap().insert(0);
         self.refs_lru.lock().unwrap().put(Ref::SYNTHETIC, crate::Coord::default());
 
@@ -149,7 +175,7 @@ impl SprfStore {
         row.set("id",     "0");
         row.set("slug",   "");
         row.set("remote", "");
-        self.inner.insert(REPOS_TABLE, Arc::new(row));
+        self.insert_core(REPOS_TABLE, row);
         self.seen_repos.lock().unwrap().insert(0);
         self.repos_lru.lock().unwrap()
             .put(0 as RepoId, (Arc::<str>::from(""), Arc::<str>::from("")));
@@ -160,7 +186,7 @@ impl SprfStore {
         row.set("repo_id", "0");
         row.set("oid",     "");
         row.set("ts",      "0");
-        self.inner.insert(REVS_TABLE, Arc::new(row));
+        self.insert_core(REVS_TABLE, row);
         self.seen_revs.lock().unwrap().insert(0);
         self.revs_lru.lock().unwrap()
             .put(0 as RevId, (0 as RepoId, Arc::<str>::from(""), 0i64));
@@ -172,7 +198,7 @@ impl SprfStore {
         row.set("rev_id",  "0");
         row.set("file_id", "0");
         row.set("path",    "\u{2205}");
-        self.inner.insert(PATHS_TABLE, Arc::new(row));
+        self.insert_core(PATHS_TABLE, row);
         self.seen_paths.lock().unwrap().insert(0);
         self.paths_lru.lock().unwrap().put(
             0 as PathId,
@@ -186,7 +212,7 @@ impl SprfStore {
         row.set("where_bytes_id", "0");
         row.set("context_kind",   "");
         row.set("context_id",     "0");
-        self.inner.insert(STRING_OBSERVATIONS_TABLE, Arc::new(row));
+        self.insert_core(STRING_OBSERVATIONS_TABLE, row);
         self.seen_string_observations.lock().unwrap().insert(0);
     }
 
@@ -206,7 +232,7 @@ impl SprfStore {
         row.set("id",        id.0.to_string());
         row.set("content",   s);
         row.set("norm",      norm(s));
-        self.inner.insert(STRINGS_TABLE, Arc::new(row));
+        self.insert_core(STRINGS_TABLE, row);
         self.strings_lru.lock().unwrap().put(id, Arc::<str>::from(s));
         id
     }
@@ -216,6 +242,7 @@ impl SprfStore {
             return Some(arc.clone());
         }
         let id_str = id.0.to_string();
+        self.flush();
         for row in self.inner.rows_of(STRINGS_TABLE) {
             if row.get("id").as_deref() == Some(id_str.as_str()) {
                 let content = row.get("content").unwrap_or("").to_string();
@@ -245,7 +272,7 @@ impl SprfStore {
         row.set("content_hash", full_hash.to_hex().to_string());
         row.set("path",         first_path);
         row.set("size",         content.len().to_string());
-        self.inner.insert(FILES_TABLE, Arc::new(row));
+        self.insert_core(FILES_TABLE, row);
         self.files_lru.lock().unwrap()
             .put(id, (hash_bytes, Arc::<str>::from(first_path)));
         id
@@ -256,6 +283,7 @@ impl SprfStore {
             return Some(meta.clone());
         }
         let id_str = id.to_string();
+        self.flush();
         for row in self.inner.rows_of(FILES_TABLE) {
             if row.get("id").as_deref() == Some(id_str.as_str()) {
                 let hash_hex = row.get("content_hash").unwrap_or("").to_string();
@@ -293,7 +321,7 @@ impl SprfStore {
         row.set("hi",      c.hi.to_string());
         row.set("repo",    c.repo.to_string());
         row.set("rev",     c.rev.to_string());
-        self.inner.insert(WHERE_BYTES_TABLE, Arc::new(row));
+        self.insert_core(WHERE_BYTES_TABLE, row);
         self.refs_lru.lock().unwrap().put(r, c);
         r
     }
@@ -307,6 +335,7 @@ impl SprfStore {
             return Some(*c);
         }
         let id_str = r.0.to_string();
+        self.flush();
         for row in self.inner.rows_of(WHERE_BYTES_TABLE) {
             if row.get("id").as_deref() == Some(id_str.as_str()) {
                 let c = crate::Coord {
@@ -358,7 +387,7 @@ impl SprfStore {
         row.set("where_bytes_id", where_bytes.0.to_string());
         row.set("context_kind",   context_kind);
         row.set("context_id",     context_id.to_string());
-        self.inner.insert(STRING_OBSERVATIONS_TABLE, Arc::new(row));
+        self.insert_core(STRING_OBSERVATIONS_TABLE, row);
         id
     }
 
@@ -386,7 +415,7 @@ impl SprfStore {
         row.set("id",     id.to_string());
         row.set("slug",   slug);
         row.set("remote", remote);
-        self.inner.insert(REPOS_TABLE, Arc::new(row));
+        self.insert_core(REPOS_TABLE, row);
         self.repos_lru.lock().unwrap()
             .put(id, (Arc::<str>::from(slug), Arc::<str>::from(remote)));
         id
@@ -397,6 +426,7 @@ impl SprfStore {
             return Some(meta.clone());
         }
         let id_str = id.to_string();
+        self.flush();
         for row in self.inner.rows_of(REPOS_TABLE) {
             if row.get("id").as_deref() == Some(id_str.as_str()) {
                 let slug   = row.get("slug").unwrap_or("").to_string();
@@ -434,7 +464,7 @@ impl SprfStore {
         row.set("repo_id", repo.to_string());
         row.set("oid",     oid);
         row.set("ts",      ts.to_string());
-        self.inner.insert(REVS_TABLE, Arc::new(row));
+        self.insert_core(REVS_TABLE, row);
         self.revs_lru.lock().unwrap()
             .put(id, (repo, Arc::<str>::from(oid), ts));
         id
@@ -445,6 +475,7 @@ impl SprfStore {
             return Some(meta.clone());
         }
         let id_str = id.to_string();
+        self.flush();
         for row in self.inner.rows_of(REVS_TABLE) {
             if row.get("id").as_deref() == Some(id_str.as_str()) {
                 let repo = row.get("repo_id").unwrap_or("0").parse().unwrap_or(0);
@@ -488,7 +519,7 @@ impl SprfStore {
         row.set("rev_id",  rev.to_string());
         row.set("file_id", file.to_string());
         row.set("path",    path);
-        self.inner.insert(PATHS_TABLE, Arc::new(row));
+        self.insert_core(PATHS_TABLE, row);
         self.paths_lru.lock().unwrap()
             .put(id, (repo, rev, file, Arc::<str>::from(path)));
         id
@@ -507,6 +538,7 @@ impl SprfStore {
     /// SQL index over `(repo_id, rev_id, path)` lands in Layer 4
     /// alongside auto-views.
     pub fn find_file_by_path(&self, path: &str) -> Option<FileId> {
+        self.flush();
         for row in self.inner.rows_of(PATHS_TABLE) {
             if row.get("path").as_deref() == Some(path) {
                 let file: FileId = row.get("file_id").unwrap_or("0")
@@ -522,6 +554,7 @@ impl SprfStore {
     /// today; SqliteFactStore index over `(file_id, lo)` lands in
     /// Layer 4 alongside auto-views. Acceptable at sprefa scale.
     pub fn find_refs_in(&self, file: FileId, byte: u32) -> Vec<Ref> {
+        self.flush();
         let mut out = Vec::new();
         for row in self.inner.rows_of(WHERE_BYTES_TABLE) {
             let f: FileId = row.get("file_id").unwrap_or("0")

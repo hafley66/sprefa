@@ -577,6 +577,7 @@ impl SprfState {
                 break;
             }
             let generation = *self.next_instance_id.lock().unwrap();
+            self.sprf_store.flush();
             self.facts.commit(generation, Some(&self.bus));
         }
     }
@@ -809,10 +810,12 @@ impl SprfHandlers for SprfState {
         }
         let generation = *self.next_instance_id.lock().unwrap();
         let t = std::time::Instant::now();
+        self.sprf_store.flush();
         self.facts.commit(generation, Some(&self.bus));
         phases.commit_ms = t.elapsed().as_secs_f64() * 1000.0;
         let t = std::time::Instant::now();
         self.resume_mounted(opts);
+        self.sprf_store.flush();
         phases.resume_ms = t.elapsed().as_secs_f64() * 1000.0;
 
         let t = std::time::Instant::now();
@@ -826,13 +829,20 @@ impl SprfHandlers for SprfState {
         let runtime_diags = runtime_diags.snapshot().iter().map(SprfDiag::from).collect();
         phases.report_ms = t.elapsed().as_secs_f64() * 1000.0;
 
+        let telemetry = telemetry.map(|t| {
+            let mut snapshot =
+                t.snapshot_with_phases(run_start.elapsed(), run_stats, phases);
+            snapshot.fact_store = self.facts.stats().map(Into::into);
+            snapshot
+        });
+
         Ok(RunReport {
             parse_diags,
             walk_diags,
             runtime_diags,
             pipes:       n,
             tables,
-            telemetry: telemetry.map(|t| t.snapshot_with_phases(run_start.elapsed(), run_stats, phases)),
+            telemetry,
         })
     }
 

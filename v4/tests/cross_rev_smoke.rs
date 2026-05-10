@@ -145,6 +145,7 @@ fn cross_rev_dedupes_unchanged_content_across_revs() {
     );
 
     let cursors = run(pipe, Cursor::default());
+    store.flush();
 
     // 2 revs × 2 blobs = 4 cursor instances.
     assert_eq!(
@@ -281,6 +282,7 @@ fn fs_over_wt_preserves_walkbuilder_behavior() {
     let p_fs = reg.lower(&ctx, "fs", None, vec![], None, None, br(0, 4))
         .expect("fs()");
     let cursors = run(p_fs, Cursor::default());
+    store.flush();
 
     let mut paths: Vec<String> = cursors.iter()
         .filter_map(|c| c.get("FS").map(|s| s.to_string()))

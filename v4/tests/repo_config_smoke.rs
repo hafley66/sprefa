@@ -75,6 +75,7 @@ fn repo_bare_form_emits_one_cursor_per_configured_repo() {
     }
 
     // _repos table: sentinel (0) + 2 configured repos.
+    store.flush();
     let repo_rows = facts.rows_of(REPOS_TABLE);
     assert_eq!(repo_rows.len(), 3, "sentinel + 2 configured repos in _repos");
 }

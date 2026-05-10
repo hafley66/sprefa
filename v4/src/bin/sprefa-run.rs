@@ -323,6 +323,19 @@ fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
             s.rows_per_sec,
         );
     }
+    if let Some(s) = &t.fact_store {
+        println!(
+            "store insert_calls={} insert_rows={} insert_batch_calls={} insert_batch_rows={} commit_calls={} string_intern_calls={} string_intern_rows={} transactions={}",
+            s.insert_calls,
+            s.insert_rows,
+            s.insert_batch_calls,
+            s.insert_batch_rows,
+            s.commit_calls,
+            s.string_intern_calls,
+            s.string_intern_rows,
+            s.transactions,
+        );
+    }
 }
 
 #[cfg(test)]

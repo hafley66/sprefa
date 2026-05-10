@@ -40,6 +40,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::event_bus::EventBus;
 use super::next_key::NextKey;
@@ -119,6 +120,47 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// Default impl publishes nothing — stores that buffer (sqlite)
     /// override.
     fn commit(&self, _gen: u64, _bus: Option<&EventBus>) {}
+
+    fn stats(&self) -> Option<FactStoreStats> { None }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FactStoreStats {
+    pub insert_calls:        u64,
+    pub insert_rows:         u64,
+    pub insert_batch_calls:  u64,
+    pub insert_batch_rows:   u64,
+    pub commit_calls:        u64,
+    pub string_intern_calls: u64,
+    pub string_intern_rows:  u64,
+    pub transactions:        u64,
+}
+
+#[derive(Default)]
+struct FactStoreAtomicStats {
+    insert_calls:        AtomicU64,
+    insert_rows:         AtomicU64,
+    insert_batch_calls:  AtomicU64,
+    insert_batch_rows:   AtomicU64,
+    commit_calls:        AtomicU64,
+    string_intern_calls: AtomicU64,
+    string_intern_rows:  AtomicU64,
+    transactions:        AtomicU64,
+}
+
+impl FactStoreAtomicStats {
+    fn snapshot(&self) -> FactStoreStats {
+        FactStoreStats {
+            insert_calls:        self.insert_calls.load(Ordering::Relaxed),
+            insert_rows:         self.insert_rows.load(Ordering::Relaxed),
+            insert_batch_calls:  self.insert_batch_calls.load(Ordering::Relaxed),
+            insert_batch_rows:   self.insert_batch_rows.load(Ordering::Relaxed),
+            commit_calls:        self.commit_calls.load(Ordering::Relaxed),
+            string_intern_calls: self.string_intern_calls.load(Ordering::Relaxed),
+            string_intern_rows:  self.string_intern_rows.load(Ordering::Relaxed),
+            transactions:        self.transactions.load(Ordering::Relaxed),
+        }
+    }
 }
 
 /// Per-row dirty key. `H(_id_hex)`. Same value any consumer can
@@ -166,6 +208,7 @@ pub struct MemFactStore<R: Row> {
     pending: Mutex<Vec<(String, Arc<R>)>>,
     dirty_tables: Mutex<HashSet<String>>,
     table_versions: Mutex<HashMap<String, u64>>,
+    stats: FactStoreAtomicStats,
 }
 
 /// In-memory bucket for one table. Carries an `_id`-keyed HashSet
@@ -189,6 +232,7 @@ impl<R: Row> Default for MemFactStore<R> {
             pending: Mutex::new(Vec::new()),
             dirty_tables: Mutex::new(HashSet::new()),
             table_versions: Mutex::new(HashMap::new()),
+            stats: FactStoreAtomicStats::default(),
         }
     }
 }
@@ -217,6 +261,8 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
     }
 
     fn insert(&self, table: &str, row: Arc<R>) {
+        self.stats.insert_calls.fetch_add(1, Ordering::Relaxed);
+        self.stats.insert_rows.fetch_add(1, Ordering::Relaxed);
         let mut owned: R = Arc::unwrap_or_clone(row);
         let id = content_id(table, &owned);
         owned.set(ID_COL, &id);
@@ -233,6 +279,8 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
 
     fn insert_batch(&self, table: &str, rows: Vec<Arc<R>>) {
         if rows.is_empty() { return; }
+        self.stats.insert_batch_calls.fetch_add(1, Ordering::Relaxed);
+        self.stats.insert_batch_rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
         // ID minting + content_id is per-row; do it OUTSIDE the lock.
         let mut prepared: Vec<(String, Arc<R>)> = Vec::with_capacity(rows.len());
         for row in rows {
@@ -330,6 +378,7 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
     }
 
     fn commit(&self, _gen: u64, bus: Option<&EventBus>) {
+        self.stats.commit_calls.fetch_add(1, Ordering::Relaxed);
         let drained: Vec<(String, Arc<R>)> = std::mem::take(&mut *self.pending.lock().unwrap());
         let dirty_tables: HashSet<String> =
             std::mem::take(&mut *self.dirty_tables.lock().unwrap());
@@ -341,6 +390,10 @@ impl<R: Row> FactStore<R> for MemFactStore<R> {
         for table in dirty_tables {
             bus.dispatch_dirty(TABLE_DOMAIN, Some(table_dirty_key(&table)));
         }
+    }
+
+    fn stats(&self) -> Option<FactStoreStats> {
+        Some(self.stats.snapshot())
     }
 }
 
@@ -359,7 +412,7 @@ mod sqlite {
     use super::*;
     use std::marker::PhantomData;
     use std::path::Path;
-    use rusqlite::{params, Connection};
+    use rusqlite::{params, params_from_iter, Connection, Transaction};
 
     fn validate_table(name: &str) {
         let ok = !name.is_empty()
@@ -396,6 +449,7 @@ mod sqlite {
         pub(crate) pending: Mutex<Vec<(String, Arc<R>)>>,
         pub(crate) dirty_tables: Mutex<HashSet<String>>,
         pub(crate) table_versions: Mutex<HashMap<String, u64>>,
+        stats: FactStoreAtomicStats,
         _marker: PhantomData<fn() -> R>,
     }
 
@@ -410,6 +464,7 @@ mod sqlite {
                 pending: Mutex::new(Vec::new()),
                 dirty_tables: Mutex::new(HashSet::new()),
                 table_versions: Mutex::new(HashMap::new()),
+                stats: FactStoreAtomicStats::default(),
                 _marker: PhantomData,
             })
         }
@@ -425,6 +480,7 @@ mod sqlite {
                 pending: Mutex::new(Vec::new()),
                 dirty_tables: Mutex::new(HashSet::new()),
                 table_versions: Mutex::new(HashMap::new()),
+                stats: FactStoreAtomicStats::default(),
                 _marker: PhantomData,
             })
         }
@@ -468,6 +524,62 @@ mod sqlite {
                 params![value],
                 |r| r.get::<_, i64>(0),
             ).expect("intern lookup")
+        }
+
+        fn intern_many(tx: &Transaction<'_>, values: &[String]) -> HashMap<String, i64> {
+            if values.is_empty() {
+                return HashMap::new();
+            }
+
+            let mut unique = HashSet::new();
+            let mut ordered = Vec::new();
+            for value in values {
+                if unique.insert(value.clone()) {
+                    ordered.push(value.clone());
+                }
+            }
+
+            {
+                let mut insert = tx
+                    .prepare("INSERT OR IGNORE INTO sprf_strings (value) VALUES (?1)")
+                    .expect("prepare string batch insert");
+                for value in &ordered {
+                    insert.execute(params![value]).expect("string batch insert");
+                }
+            }
+
+            let mut out = HashMap::with_capacity(ordered.len());
+            for chunk in ordered.chunks(900) {
+                let placeholders = std::iter::repeat("?")
+                    .take(chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let sql = format!(
+                    "SELECT id, value FROM sprf_strings WHERE value IN ({placeholders})",
+                );
+                let mut stmt = tx.prepare(&sql).expect("prepare string id batch lookup");
+                let rows = stmt
+                    .query_map(params_from_iter(chunk.iter().map(|s| s.as_str())), |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                    })
+                    .expect("string id batch lookup");
+                for row in rows {
+                    let (id, value) = row.expect("string id row");
+                    out.insert(value, id);
+                }
+            }
+
+            out
+        }
+
+        fn row_id_for_cols(table: &str, row: &R, cols: &[String]) -> String {
+            let mut projected = R::default();
+            for col in cols {
+                if let Some(value) = row.get(col) {
+                    projected.set(col, value);
+                }
+            }
+            content_id(table, &projected)
         }
 
         fn select_all_sql(table: &str, cols: &[String], where_clause: Option<&str>) -> String {
@@ -546,6 +658,8 @@ mod sqlite {
         }
 
         fn insert(&self, table: &str, row: Arc<R>) {
+            self.stats.insert_calls.fetch_add(1, Ordering::Relaxed);
+            self.stats.insert_rows.fetch_add(1, Ordering::Relaxed);
             let schemas = self.schemas.lock().unwrap();
             let cols = schemas.get(table)
                 .unwrap_or_else(|| panic!("insert before declare: {table:?}"))
@@ -557,6 +671,8 @@ mod sqlite {
             owned.set(ID_COL, &id_hex);
 
             let conn = self.conn.lock().unwrap();
+            self.stats.string_intern_calls.fetch_add(cols.len() as u64, Ordering::Relaxed);
+            self.stats.string_intern_rows.fetch_add(cols.len() as u64, Ordering::Relaxed);
             let ids: Vec<i64> = cols.iter()
                 .map(|c| Self::intern(&conn, owned.get(c).unwrap_or("")))
                 .collect();
@@ -590,6 +706,87 @@ mod sqlite {
             self.dirty_tables.lock().unwrap().insert(table.to_string());
         }
 
+        fn insert_batch(&self, table: &str, rows: Vec<Arc<R>>) {
+            if rows.is_empty() { return; }
+            self.stats.insert_batch_calls.fetch_add(1, Ordering::Relaxed);
+            self.stats.insert_batch_rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+
+            let schemas = self.schemas.lock().unwrap();
+            let cols = schemas.get(table)
+                .unwrap_or_else(|| panic!("insert before declare: {table:?}"))
+                .clone();
+            drop(schemas);
+
+            let mut prepared: Vec<(String, R, Vec<String>)> = Vec::with_capacity(rows.len());
+            let mut all_values = Vec::with_capacity(rows.len() * cols.len());
+            for row in rows {
+                let mut owned: R = Arc::unwrap_or_clone(row);
+                let id_hex = Self::row_id_for_cols(table, &owned, &cols);
+                owned.set(ID_COL, &id_hex);
+                let values: Vec<String> = cols
+                    .iter()
+                    .map(|c| owned.get(c).unwrap_or("").to_string())
+                    .collect();
+                all_values.extend(values.iter().cloned());
+                prepared.push((id_hex, owned, values));
+            }
+
+            let mut conn = self.conn.lock().unwrap();
+            self.stats.transactions.fetch_add(1, Ordering::Relaxed);
+            let tx = conn.transaction().expect("fact batch transaction");
+            self.stats.string_intern_calls.fetch_add(1, Ordering::Relaxed);
+            self.stats.string_intern_rows.fetch_add(all_values.len() as u64, Ordering::Relaxed);
+            let interned = Self::intern_many(&tx, &all_values);
+
+            let mut placeholders: Vec<String> = vec!["?1".to_string()];
+            for i in 0..cols.len() {
+                placeholders.push(format!("?{}", i + 2));
+            }
+            let mut col_list = String::from("_id");
+            for c in &cols {
+                col_list.push_str(", ");
+                col_list.push_str(&format!("{}_id", col_sql(c)));
+            }
+            let sql = format!(
+                "INSERT OR IGNORE INTO {table}_facts ({col_list}) VALUES ({})",
+                placeholders.join(", ")
+            );
+
+            let mut accepted = Vec::new();
+            {
+                let mut insert = tx.prepare(&sql).expect("prepare fact batch insert");
+                for (id_hex, owned, values) in prepared {
+                    let ids: Vec<i64> = values
+                        .iter()
+                        .map(|v| *interned.get(v).expect("interned value id"))
+                        .collect();
+                    let mut params: Vec<&dyn rusqlite::ToSql> =
+                        Vec::with_capacity(1 + ids.len());
+                    params.push(&id_hex as &dyn rusqlite::ToSql);
+                    for id in &ids {
+                        params.push(id as &dyn rusqlite::ToSql);
+                    }
+                    let changed = insert
+                        .execute(params.as_slice())
+                        .expect("fact batch insert");
+                    if changed > 0 {
+                        accepted.push(Arc::new(owned));
+                    }
+                }
+            }
+            tx.commit().expect("fact batch commit");
+            drop(conn);
+
+            if accepted.is_empty() { return; }
+            bump_table_version(&self.table_versions, table);
+            let mut pending = self.pending.lock().unwrap();
+            pending.reserve(accepted.len());
+            for row in accepted {
+                pending.push((table.to_string(), row));
+            }
+            self.dirty_tables.lock().unwrap().insert(table.to_string());
+        }
+
         fn row_id_for(&self, table: &str, row: &R) -> String {
             let schemas = self.schemas.lock().unwrap();
             let cols = schemas
@@ -598,13 +795,7 @@ mod sqlite {
                 .clone();
             drop(schemas);
 
-            let mut projected = R::default();
-            for col in cols {
-                if let Some(value) = row.get(&col) {
-                    projected.set(&col, value);
-                }
-            }
-            content_id(table, &projected)
+            Self::row_id_for_cols(table, row, &cols)
         }
 
         fn read_where(&self, table: &str, col: &str, value: &str) -> Vec<Arc<R>> {
@@ -730,6 +921,7 @@ mod sqlite {
         }
 
         fn commit(&self, _gen: u64, bus: Option<&EventBus>) {
+            self.stats.commit_calls.fetch_add(1, Ordering::Relaxed);
             let drained: Vec<(String, Arc<R>)> =
                 std::mem::take(&mut *self.pending.lock().unwrap());
             let dirty_tables: HashSet<String> =
@@ -742,6 +934,10 @@ mod sqlite {
             for table in dirty_tables {
                 bus.dispatch_dirty(TABLE_DOMAIN, Some(table_dirty_key(&table)));
             }
+        }
+
+        fn stats(&self) -> Option<FactStoreStats> {
+            Some(self.stats.snapshot())
         }
     }
 }

@@ -110,6 +110,7 @@ fn rev_head_resolves_oid_and_intern_rev() {
         "REV term mirrors cursor.value");
 
     // _revs table: sentinel + 1 resolved rev.
+    store.flush();
     let rev_rows = facts.rows_of(REVS_TABLE);
     assert_eq!(rev_rows.len(), 2, "sentinel + 1 rev in _revs");
 }
@@ -188,6 +189,7 @@ fn rev_multi_spec_emits_one_cursor_per_spec() {
     assert_ne!(out[0].value, out[1].value, "two distinct oids");
 
     // _revs: sentinel + 2 resolved revs.
+    store.flush();
     let rev_rows = facts.rows_of(REVS_TABLE);
     assert_eq!(rev_rows.len(), 3, "sentinel + 2 revs in _revs");
 }

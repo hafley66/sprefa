@@ -6,6 +6,7 @@ use effect_runtime::v2::{
     BarrierScope, Component, ComponentLifecycle, ExpandStats, PendingSummary,
     QueueBackend, QueueRow, RenderCtx,
 };
+use effect_runtime::v2::fact_store::FactStoreStats;
 use serde::{Deserialize, Serialize};
 
 use crate::v2_ops::{AstTelemetry, FsTelemetry};
@@ -136,6 +137,7 @@ impl PipelineTelemetry {
                     rows_per_sec: rows_per_sec(rows, wall_ms),
                 }
             }).collect(),
+            fact_store: None,
             fs: FsTelemetrySnapshot {
                 seen_files:     self.fs.seen_files.load(Ordering::Relaxed),
                 emitted:        self.fs.emitted.load(Ordering::Relaxed),
@@ -183,8 +185,37 @@ pub struct RunTelemetry {
     pub terminal: u64,
     pub parked:   u64,
     pub stages: Vec<StageTelemetry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact_store: Option<FactStoreTelemetry>,
     pub fs: FsTelemetrySnapshot,
     pub ast: AstTelemetrySnapshot,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FactStoreTelemetry {
+    pub insert_calls:        u64,
+    pub insert_rows:         u64,
+    pub insert_batch_calls:  u64,
+    pub insert_batch_rows:   u64,
+    pub commit_calls:        u64,
+    pub string_intern_calls: u64,
+    pub string_intern_rows:  u64,
+    pub transactions:        u64,
+}
+
+impl From<FactStoreStats> for FactStoreTelemetry {
+    fn from(s: FactStoreStats) -> Self {
+        Self {
+            insert_calls:        s.insert_calls,
+            insert_rows:         s.insert_rows,
+            insert_batch_calls:  s.insert_batch_calls,
+            insert_batch_rows:   s.insert_batch_rows,
+            commit_calls:        s.commit_calls,
+            string_intern_calls: s.string_intern_calls,
+            string_intern_rows:  s.string_intern_rows,
+            transactions:        s.transactions,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
