@@ -90,7 +90,10 @@ v4-dev-git-todo-index:
 v4-dev-rust-panic-map:
     cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/dev-rust-panic-map.sprf --show-rows --root .
 
-v4-dev-dogfood: v4-dev-missing-hook v4-dev-doc-drift v4-dev-git-todo-index v4-dev-rust-panic-map
+v4-dev-config-repos:
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/config-repos-from-toml.sprf --show-rows --root .
+
+v4-dev-dogfood: v4-dev-missing-hook v4-dev-doc-drift v4-dev-git-todo-index v4-dev-rust-panic-map v4-dev-config-repos
 
 v4-cli-smoke:
     cargo test --manifest-path v4/Cargo.toml --test sprefa_run_cli_smoke -- --nocapture
