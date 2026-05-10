@@ -1,0 +1,16 @@
+# Dogfood: comment-region cursors can drive LSP diagnostics.
+#
+# This proves the comment op's focal cursor range is useful outside
+# write_cursor. The diagnostic anchors to the generated self-doc region.
+#
+# Run:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/dogfood-comment-region-lsp.sprf --root . --show-rows
+
+rule(:doc_regions, FS?, LO?, HI?);
+
+path`v4/docs/v4-self-doc-architecture.md`
+  > read
+  > comment(`<!-- sprf:self-doc:start -->\n`, `\n<!-- sprf:self-doc:end -->`)
+  > doc_regions.(FS, LO, HI)
+  > lsp_info(:self_doc_region)`self-doc generated region ${FS}:${LO}-${HI}`;

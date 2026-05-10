@@ -1,0 +1,25 @@
+# Dogfood: config data can render documentation without a Rust config op.
+#
+# The TOML walker currently exposes [[repos]] as repeated root entries
+# named repos, so this uses `{ repos: { ... } }`.
+#
+# Run:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/config-repos-markdown.sprf --root . --show-rows
+
+rule(:config_repos, SLUG?, ROOT?);
+
+path`v4/examples/sprefa.config.example.toml`
+  > read
+  > json(:toml)`{ repos: { slug: ${SLUG?}, root: ${ROOT?} } }`
+  > config_repos.(SLUG, ROOT);
+
+`v4/examples/config-repos.md`
+  > render.markdown`# Config Repos
+
+${ config_repos(SLUG?, ROOT?)
+  > render.markdown`- ${SLUG}: ${ROOT}
+`
+}
+`
+  > write_file`v4/examples/config-repos.md`;

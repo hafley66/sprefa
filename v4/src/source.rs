@@ -60,7 +60,7 @@ impl SourceReader {
     fn read_worktree_path(&self, path: &str, repo: RepoId, rev: RevId) -> Option<SourceBytes> {
         let resolved = resolve_path_text(&self.root, path);
         let bytes = std::fs::read(&resolved).ok()?;
-        let path_arc: Arc<str> = Arc::from(resolved.to_string_lossy().as_ref());
+        let path_arc: Arc<str> = Arc::from(path);
         let file = self.store.as_ref()
             .map(|s| {
                 let file = s.intern_file(&bytes, path_arc.as_ref());
@@ -186,4 +186,3 @@ fn normalize_lexical(path: &Path) -> PathBuf {
     }
     out
 }
-

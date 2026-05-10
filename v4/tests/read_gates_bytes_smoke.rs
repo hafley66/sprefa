@@ -19,6 +19,7 @@ use v4::Cursor;
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::source::SourceReader;
 
 fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
     let (program, parse_diags) = host_parse(src);
@@ -35,6 +36,21 @@ fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
         expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], ExpandOpts::default());
     }
     store
+}
+
+#[test]
+fn source_reader_preserves_relative_cursor_path_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), b"hello").unwrap();
+
+    let mut cursor = Cursor::default();
+    cursor.value = Arc::from("a.txt");
+
+    let source = SourceReader::new(tmp.path(), None, None)
+        .read_cursor(&cursor)
+        .expect("relative path cursor should read through root");
+    assert_eq!(source.bytes, b"hello");
+    assert_eq!(source.path.as_ref(), "a.txt");
 }
 
 /// `fs > glob > read > re` - green. read materializes bytes, re matches
