@@ -1,10 +1,11 @@
 //! sprefa-lsp — every LSP method shims into the unified `SprfClient`.
 //!
-//! Backend holds an `InProcessClient` (the same `axum::Router` that
-//! `sprefa-run` and `sprefa-daemon` consume). Every domain operation
-//! goes through one of the registered RPCs in `v4::app::sprf_rpc!`.
-//! Backend's only local state is a text cache so byte-offset diags can
-//! be converted to LSP line/col.
+//! Backend holds a `SprfClient`. By default this is the in-process
+//! `axum::Router` used by `sprefa-run`; when `SPREFA_LSP_DAEMON_URL`
+//! is set it becomes an HTTP client for `sprefa-daemon`. Every domain
+//! operation goes through one of the registered RPCs in
+//! `v4::app::sprf_rpc!`. Backend's only local state is a text cache so
+//! byte-offset diags can be converted to LSP line/col.
 //!
 //! The shim is mechanical: LSP request → SprfClient method → LSP reply.
 //! Adding a new sprf RPC adds zero LSP code unless a new LSP request
@@ -38,14 +39,14 @@ mod inlay;
 mod semantic;
 
 use v4::app::{
-    build_in_process, GetDiagsReq, GetInlaysReq, InProcessClient,
+    build_in_process, GetDiagsReq, GetInlaysReq, HttpClient,
     LspChangeReq, LspCloseReq, LspHoverReq, LspLocateDslReq, LspLocateDslResp,
     LspOpenReq, SprfClient, SprfDiag,
 };
 
 struct Backend {
     client: Client,
-    sprf:   InProcessClient,
+    sprf:   Arc<dyn SprfClient>,
     docs:   Mutex<HashMap<Url, DocEntry>>,
 }
 
@@ -57,8 +58,14 @@ struct DocEntry {
 
 impl Backend {
     fn new(client: Client) -> Self {
-        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let (_state, sprf) = build_in_process(root);
+        let sprf: Arc<dyn SprfClient> = match std::env::var("SPREFA_LSP_DAEMON_URL") {
+            Ok(base) if !base.trim().is_empty() => Arc::new(HttpClient::new(base)),
+            _ => {
+                let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let (_state, sprf) = build_in_process(root);
+                Arc::new(sprf)
+            }
+        };
         Self { client, sprf, docs: Mutex::new(HashMap::new()) }
     }
 

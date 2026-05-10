@@ -5,8 +5,9 @@ grammar.
 
 The extension spawns `sprefa-lsp` by default. `sprefa-lsp` uses the shared
 `v4::app::SprfClient` RPC surface with an in-process backend today. The app
-layer also has an HTTP client for `sprefa-daemon`; wiring VS Code to a remote
-daemon is a client-selection change, not a new LSP feature.
+layer also has an HTTP client for `sprefa-daemon`; set
+`SPREFA_LSP_DAEMON_URL=http://127.0.0.1:8787` before launching VS Code to make
+the LSP consult that daemon instead of creating an in-process backend.
 
 This extension can be installed alongside the v3 `sprf` extension; the two
 share the language id `sprf` so VS Code will use whichever is enabled.
