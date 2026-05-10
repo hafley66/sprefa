@@ -87,6 +87,11 @@ fn analyze_pipe(
 ) {
     for op in &pipe.steps {
         let (reads, mut binds) = collect_term_refs(op, reg);
+        if op.predicate && reg.get(&op.name).is_none() {
+            if let Some(decl) = rule_decls.get(&op.name) {
+                binds.extend(rule_query_literal_binds(op, decl));
+            }
+        }
 
         for r in &reads {
             if !bound.contains(r) {
@@ -272,6 +277,59 @@ fn slot_terms(raw: &str, reads: &mut Vec<Arc<str>>, binds: &mut Vec<Arc<str>>) {
 fn split_keyword_value(raw: &str) -> Option<&str> {
     let (key, value) = raw.split_once(':')?;
     if is_ident(key.trim()) { Some(value) } else { None }
+}
+
+fn rule_query_literal_binds(op: &OpCall, decl: &RuleDecl) -> Vec<Arc<str>> {
+    let mut out = Vec::new();
+    let mut positional_idx = 0usize;
+    let mut saw_kw = false;
+    for arg in &op.args {
+        let raw = arg.raw.trim();
+        let (col, value) = match split_keyword_pair(raw) {
+            Some((key, value)) => {
+                saw_kw = true;
+                (key, value)
+            }
+            None => {
+                if saw_kw {
+                    continue;
+                }
+                let Some(col) = decl.cols.get(positional_idx).map(|s| s.as_ref()) else {
+                    continue;
+                };
+                positional_idx += 1;
+                (col, raw)
+            }
+        };
+        let value = value.trim();
+        if is_literal_slot(value) && decl.cols.iter().any(|c| c.as_ref() == col) {
+            out.push(Arc::<str>::from(col));
+        }
+    }
+    out
+}
+
+fn split_keyword_pair(raw: &str) -> Option<(&str, &str)> {
+    let (key, value) = raw.split_once(':')?;
+    let key = key.trim();
+    if is_ident(key) { Some((key, value)) } else { None }
+}
+
+fn is_literal_slot(raw: &str) -> bool {
+    if raw == "&.value" {
+        return false;
+    }
+    if raw.starts_with(':') {
+        return true;
+    }
+    if raw.len() >= 2 {
+        let bytes = raw.as_bytes();
+        let q = bytes[0];
+        if (q == b'`' || q == b'"' || q == b'\'') && bytes[bytes.len() - 1] == q {
+            return true;
+        }
+    }
+    is_ident(raw) && !is_caps_ident(raw)
 }
 
 fn is_ident(s: &str) -> bool {

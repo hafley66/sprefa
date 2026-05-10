@@ -473,6 +473,16 @@ pub fn classify_slot(
     if raw == "&.value" {
         return Some(Value::Atom(Arc::<str>::from("&.value")));
     }
+    // Plain backtick literal in host-arg position. This lets rule calls
+    // accept direct literal kwargs, e.g. `some_rule(NAME: `Cursor`)`,
+    // without compiling and executing a const sub-pipe at lower time.
+    if raw.len() >= 2 {
+        let bytes = raw.as_bytes();
+        if bytes[0] == b'`' && bytes[bytes.len() - 1] == b'`' {
+            let inner = &raw[1..raw.len() - 1];
+            return Some(Value::Atom(Arc::<str>::from(inner)));
+        }
+    }
     // ALL_CAPS bareword → term-ref desugar.
     //   `NAME`  → sub-pipe `term(:NAME)`      (read existing capture)
     //   `NAME?` → sub-pipe `term_bind(:NAME)` (introduce/bind capture)

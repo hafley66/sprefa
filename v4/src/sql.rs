@@ -638,13 +638,23 @@ pub fn rule_table_call_pipe(
         }
     } else {
         for mode in &modes {
-            if let ArgMode::Project { col, term } = mode {
-                select_cols.push(format!(
-                    "{}.{} AS {}",
-                    quote_ident(rule_alias),
-                    quote_ident(col),
-                    quote_ident(term),
-                ));
+            match mode {
+                ArgMode::Project { col, term } => {
+                    select_cols.push(format!(
+                        "{}.{} AS {}",
+                        quote_ident(rule_alias),
+                        quote_ident(col),
+                        quote_ident(term),
+                    ));
+                }
+                ArgMode::BoundLiteral { col, value } => {
+                    select_cols.push(format!(
+                        "{} AS {}",
+                        quote_sql_literal(value),
+                        quote_ident(col),
+                    ));
+                }
+                ArgMode::BoundTerm { .. } => {}
             }
         }
     }

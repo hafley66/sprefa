@@ -257,6 +257,40 @@ fn declared_empty_rule_apply_writes_and_passes_through_with_grounded_args() {
 }
 
 #[test]
+fn declared_empty_rule_apply_accepts_backtick_literal_kwargs() {
+    let src = r#"
+        rule(:runtime_specs, NAME?, FILE?);
+
+        runtime_specs(NAME: `Cursor`, FILE: `v4/src/lib.rs`);
+    "#;
+
+    let store = run_pipes(src);
+    let rows = store.rows_of("runtime_specs");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("NAME"), Some("Cursor"));
+    assert_eq!(rows[0].get("FILE"), Some("v4/src/lib.rs"));
+}
+
+#[test]
+fn declared_rule_query_accepts_backtick_literal_kwargs() {
+    let src = r#"
+        rule(:runtime_specs, NAME?, FILE?);
+        rule(:hits, NAME?, FILE?);
+
+        runtime_specs(NAME: `Cursor`, FILE: `v4/src/lib.rs`);
+
+        runtime_specs?(NAME: `Cursor`, FILE?)
+          > hits(NAME, FILE);
+    "#;
+
+    let store = run_pipes(src);
+    let rows = store.rows_of("hits");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("NAME"), Some("Cursor"));
+    assert_eq!(rows[0].get("FILE"), Some("v4/src/lib.rs"));
+}
+
+#[test]
 fn declared_rule_query_does_not_write_empty_rule() {
     let src = r#"
         rule(:frontend_hooks, OP?, FILE?);
