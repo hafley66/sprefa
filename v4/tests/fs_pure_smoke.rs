@@ -4,12 +4,14 @@
 
 use std::sync::Arc;
 use effect_runtime::v2::{
-    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
+    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, PipeInstance, QueueBackend,
 };
 use v4::Cursor;
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::store::{SprfStore, STRINGS_TABLE, WHERE_BYTES_TABLE};
+use v4::v2_ops::FsComponent;
 
 fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
     let (program, parse_diags) = host_parse(src);
@@ -115,4 +117,23 @@ fn fs_accepts_glob_filter_arg() {
     assert_eq!(values.len(), 2, "expected only Rust source files: {values:?}");
     assert!(values[0].ends_with("src/lib.rs"), "got {values:?}");
     assert!(values[1].ends_with("src/main.rs"), "got {values:?}");
+}
+
+#[test]
+fn fs_with_store_does_not_materialize_worktree_path_coords() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), b"alpha").unwrap();
+    std::fs::write(tmp.path().join("b.txt"), b"bravo").unwrap();
+
+    let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let sprf = SprfStore::new(facts.clone());
+    let pipe = PipeInstance::new(vec![
+        Arc::new(FsComponent::new(tmp.path().to_path_buf(), 64).with_sprf_store(sprf.clone())),
+    ]);
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(&pipe, queue, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    sprf.flush();
+
+    assert_eq!(facts.len(STRINGS_TABLE), 1, "only sentinel string row");
+    assert_eq!(facts.len(WHERE_BYTES_TABLE), 1, "only sentinel coord row");
 }

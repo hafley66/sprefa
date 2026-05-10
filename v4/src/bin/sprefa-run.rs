@@ -23,6 +23,9 @@ use v4::app::{
 };
 use v4::config::SprfConfig;
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[derive(Debug)]
 struct Args {
     path:      PathBuf,

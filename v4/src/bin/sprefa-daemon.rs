@@ -20,6 +20,9 @@ use v4::config::SprfConfig;
 #[cfg(feature = "ghcache")]
 use v4::git_watch::{latest_ghcache_change_id, poll_ghcache_changes};
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[derive(Debug)]
 struct Args {
     bind: String,

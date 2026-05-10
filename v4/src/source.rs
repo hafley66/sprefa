@@ -30,21 +30,29 @@ impl SourceReader {
     }
 
     pub fn read_cursor(&self, c: &Cursor) -> Option<SourceBytes> {
+        self.read_cursor_with_intern(c, true)
+    }
+
+    pub fn read_cursor_uninterned(&self, c: &Cursor) -> Option<SourceBytes> {
+        self.read_cursor_with_intern(c, false)
+    }
+
+    fn read_cursor_with_intern(&self, c: &Cursor, intern: bool) -> Option<SourceBytes> {
         if c.value.is_empty() {
-            return self.read_cursor_coord(c);
+            return self.read_cursor_coord(c, intern);
         }
         let parent = self.store.as_ref().and_then(|s| s.coord_of(c.at)).unwrap_or_default();
         if parent.rev != 0 {
-            return self.read_git_path(c.value.as_ref(), parent);
+            return self.read_git_path(c.value.as_ref(), parent, intern);
         }
-        self.read_worktree_path(c.value.as_ref(), parent.repo, parent.rev)
+        self.read_worktree_path(c.value.as_ref(), parent.repo, parent.rev, intern)
     }
 
     pub fn read_path(&self, path: &str) -> Option<SourceBytes> {
-        self.read_worktree_path(path, 0, 0)
+        self.read_worktree_path(path, 0, 0, true)
     }
 
-    fn read_cursor_coord(&self, c: &Cursor) -> Option<SourceBytes> {
+    fn read_cursor_coord(&self, c: &Cursor, intern: bool) -> Option<SourceBytes> {
         let store = self.store.as_ref()?;
         let coord = store.coord_of(c.at)?;
         if coord.fs == 0 {
@@ -52,16 +60,23 @@ impl SourceReader {
         }
         let path = store.path_of(coord.fs)?;
         if coord.rev != 0 {
-            return self.read_git_path(path.as_ref(), coord);
+            return self.read_git_path(path.as_ref(), coord, intern);
         }
-        self.read_worktree_path(path.as_ref(), coord.repo, coord.rev)
+        self.read_worktree_path(path.as_ref(), coord.repo, coord.rev, intern)
     }
 
-    fn read_worktree_path(&self, path: &str, repo: RepoId, rev: RevId) -> Option<SourceBytes> {
+    fn read_worktree_path(
+        &self,
+        path: &str,
+        repo: RepoId,
+        rev: RevId,
+        intern: bool,
+    ) -> Option<SourceBytes> {
         let resolved = resolve_source_path(&self.root, path);
         let bytes = std::fs::read(&resolved).ok()?;
         let path_arc: Arc<str> = Arc::from(path);
-        let file = self.store.as_ref()
+        let file = intern.then(|| self.store.as_ref())
+            .flatten()
             .map(|s| {
                 let file = s.intern_file(&bytes, path_arc.as_ref());
                 let _ = s.intern_path(repo, rev, file, path_arc.as_ref());
@@ -72,7 +87,7 @@ impl SourceReader {
         Some(SourceBytes { bytes, coord, path: path_arc, file })
     }
 
-    fn read_git_path(&self, path: &str, coord: Coord) -> Option<SourceBytes> {
+    fn read_git_path(&self, path: &str, coord: Coord, intern: bool) -> Option<SourceBytes> {
         let store = self.store.as_ref()?;
         let config = self.config.as_ref()?;
         let Some((slug, _remote)) = store.lookup_repo(coord.repo) else { return None };
@@ -89,8 +104,13 @@ impl SourceReader {
         if !out.status.success() {
             return None;
         }
-        let file = store.intern_file(&out.stdout, path);
-        let _ = store.intern_path(coord.repo, coord.rev, file, path);
+        let file = if intern {
+            let file = store.intern_file(&out.stdout, path);
+            let _ = store.intern_path(coord.repo, coord.rev, file, path);
+            file
+        } else {
+            0
+        };
         let full = Coord {
             repo: coord.repo,
             rev:  coord.rev,

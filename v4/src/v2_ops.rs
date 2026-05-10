@@ -329,22 +329,23 @@ impl Component for FsComponent {
             // Legacy raw_terms FS write so `${FS}` reads still resolve
             // until call-sites finish migrating to ${&.value}.
             c.set("FS", path_str.as_str());
-            // Layer 0c.2 — coord-space mate for the FS term + focal
-            // value_id. Path-only (no content read yet); coord stays
-            // SYNTHETIC for FS term, focal Coord stamps fs=0/lo=0/hi=0
-            // because no file content has been read.
-            if let Some(store) = &self.store {
-                c.set_synthetic("FS", path_str.as_str(), store);
-                c.value_id = store.intern_string(path_str.as_str());
-                c.cursor_value = CursorValue::String(c.value_id);
-                let coord = Coord {
-                    repo: parent_coord.map(|c| c.repo).unwrap_or(0),
-                    rev:  parent_coord.map(|c| c.rev).unwrap_or(0),
-                    fs:   0,
-                    lo:   0,
-                    hi:   0,
-                };
-                c.at = store.intern_ref(coord);
+            // Worktree path cursors keep coord-space cold. `read` or a
+            // downstream matcher materializes durable file/ref rows only
+            // after bytes are actually needed.
+            c.value_id = crate::StringId::of(path_str.as_str());
+            c.cursor_value = CursorValue::String(c.value_id);
+            if let (Some(store), Some(parent_coord)) = (&self.store, parent_coord) {
+                if parent_coord.repo != 0 || parent_coord.rev != 0 {
+                    c.set_synthetic("FS", path_str.as_str(), store);
+                    let coord = Coord {
+                        repo: parent_coord.repo,
+                        rev:  parent_coord.rev,
+                        fs:   0,
+                        lo:   0,
+                        hi:   0,
+                    };
+                    c.at = store.intern_ref(coord);
+                }
             }
             if let Some(t) = &self.telemetry {
                 t.emitted.fetch_add(1, Ordering::Relaxed);
@@ -544,13 +545,23 @@ impl Component for AstNmComponent {
                 });
             let reader = SourceReader::new(root.clone(), store.clone(), config.clone());
             let source = ast_timed(&telemetry, |t| &t.source_read_ns, || {
-                reader.read_cursor(c)
+                reader.read_cursor_uninterned(c)
             });
-            let (src, file_id, repo, rev, prefiltered_bytes): (
+            let (
+                src,
+                file_id,
+                repo,
+                rev,
+                source_path,
+                source_bytes,
+                prefiltered_bytes,
+            ): (
                 String,
                 crate::FileId,
                 crate::RepoId,
                 crate::RevId,
+                Option<Arc<str>>,
+                Option<Vec<u8>>,
                 bool,
             ) = if let Some(source) = source.filter(|s| s.path.as_ref() == c.value.as_ref()) {
                     if let Some(t) = &telemetry {
@@ -568,14 +579,24 @@ impl Component for AstNmComponent {
                             return Node::Done;
                         }
                     }
+                    let source_path = source.path.clone();
+                    let source_bytes = source.bytes;
                     let src = ast_timed(&telemetry, |t| &t.utf8_ns, || {
-                        String::from_utf8_lossy(&source.bytes).into_owned()
+                        String::from_utf8_lossy(&source_bytes).into_owned()
                     });
                     if let Some(t) = &telemetry {
                         t.source_utf8_rows.fetch_add(1, Ordering::Relaxed);
-                        t.source_utf8_bytes.fetch_add(source.bytes.len() as u64, Ordering::Relaxed);
+                        t.source_utf8_bytes.fetch_add(source_bytes.len() as u64, Ordering::Relaxed);
                     }
-                    (src, source.file, source.coord.repo, source.coord.rev, !cur_fixed.is_empty())
+                    (
+                        src,
+                        source.file,
+                        source.coord.repo,
+                        source.coord.rev,
+                        Some(source_path),
+                        Some(source_bytes),
+                        !cur_fixed.is_empty(),
+                    )
                 } else {
                     ast_timed(&telemetry, |t| &t.legacy_ns, || {
                         if let Some(t) = &telemetry {
@@ -589,7 +610,7 @@ impl Component for AstNmComponent {
                         let file_id = store.as_ref()
                             .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
                             .unwrap_or(0);
-                        (src, file_id, repo, rev, false)
+                        (src, file_id, repo, rev, None, None, false)
                     })
                 };
             if !prefiltered_bytes && !cur_fixed.is_empty() {
@@ -608,16 +629,36 @@ impl Component for AstNmComponent {
             }
             let grep: AstGrep<StrDoc<SupportLang>> =
                 ast_timed(&telemetry, |t| &t.parse_ns, || lang.ast_grep(&src));
-            let hits: Vec<Node<Cursor>> = ast_timed(&telemetry, |t| &t.match_ns, || {
-                grep.root().find_all(&*cur_pat).map(|nm| {
-                let r = nm.range();
+            let ranges: Vec<std::ops::Range<usize>> = ast_timed(&telemetry, |t| &t.match_ns, || {
+                grep.root().find_all(&*cur_pat).map(|nm| nm.range()).collect()
+            });
+            if ranges.is_empty() {
+                return Node::Done;
+            }
+            let match_file_id = if let Some(store) = &store {
+                if file_id == 0 {
+                    match (source_path.as_ref(), source_bytes.as_ref()) {
+                        (Some(path), Some(bytes)) => {
+                            let file = store.intern_file(bytes, path);
+                            let _ = store.intern_path(repo, rev, file, path);
+                            file
+                        }
+                        _ => file_id,
+                    }
+                } else {
+                    file_id
+                }
+            } else {
+                file_id
+            };
+            let hits: Vec<Node<Cursor>> = ranges.into_iter().map(|r| {
                 let mut child = c.clone();
                 child.set("LO", (r.start as u64).to_string());
                 child.set("HI", (r.end   as u64).to_string());
                 if let Some(store) = &store {
                     ast_timed(&telemetry, |t| &t.emit_stamp_ns, || {
                         let coord = Coord {
-                            repo, rev, fs: file_id,
+                            repo, rev, fs: match_file_id,
                             lo: r.start as u32, hi: r.end as u32,
                         };
                         let slice = src.get(r.start..r.end).unwrap_or("");
@@ -645,12 +686,11 @@ impl Component for AstNmComponent {
                     });
                 }
                 Node::Emit(Arc::new(child))
-                }).collect()
-            });
+            }).collect();
             if let Some(t) = &telemetry {
                 t.matches.fetch_add(hits.len() as u64, Ordering::Relaxed);
             }
-            if hits.is_empty() { Node::Done } else { Node::Many(hits) }
+            Node::Many(hits)
         })
     }
 }
