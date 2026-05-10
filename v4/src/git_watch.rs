@@ -42,8 +42,8 @@ pub fn ghcache_dirty_notices(change: &GhcacheChangeReq) -> Vec<(String, Option<N
     out.push((GIT_REPO_DOMAIN.to_string(), Some(git_repo_dirty_key(repo))));
     match change.entity_type.as_str() {
         "branch" => {
-            if let Some(branch) = json_str(&change.payload, "name")
-                .or_else(|| json_str(&change.payload, "branch"))
+            if let Some(branch) =
+                json_str(&change.payload, "name").or_else(|| json_str(&change.payload, "branch"))
             {
                 out.push((
                     GIT_BRANCH_DOMAIN.to_string(),
@@ -52,8 +52,12 @@ pub fn ghcache_dirty_notices(change: &GhcacheChangeReq) -> Vec<(String, Option<N
             }
         }
         "pull_request" => {
+            out.push((GIT_PR_DOMAIN.to_string(), None));
             if let Some(number) = json_i64(&change.payload, "number") {
-                out.push((GIT_PR_DOMAIN.to_string(), Some(git_pr_dirty_key(repo, number))));
+                out.push((
+                    GIT_PR_DOMAIN.to_string(),
+                    Some(git_pr_dirty_key(repo, number)),
+                ));
             }
         }
         "checkout" => {
@@ -67,13 +71,21 @@ pub fn ghcache_dirty_notices(change: &GhcacheChangeReq) -> Vec<(String, Option<N
         "notification" => {
             out.push((
                 GIT_NOTIFICATION_DOMAIN.to_string(),
-                Some(git_entity_dirty_key(GIT_NOTIFICATION_DOMAIN, repo, change.entity_id)),
+                Some(git_entity_dirty_key(
+                    GIT_NOTIFICATION_DOMAIN,
+                    repo,
+                    change.entity_id,
+                )),
             ));
         }
         "repo_event" => {
             out.push((
                 GIT_REPO_EVENT_DOMAIN.to_string(),
-                Some(git_entity_dirty_key(GIT_REPO_EVENT_DOMAIN, repo, change.entity_id)),
+                Some(git_entity_dirty_key(
+                    GIT_REPO_EVENT_DOMAIN,
+                    repo,
+                    change.entity_id,
+                )),
             ));
         }
         _ => out.push(entity_notice(&change.entity_type, change.entity_id)),
@@ -125,7 +137,9 @@ pub fn latest_ghcache_change_id(db_path: &Path) -> Result<i64, rusqlite::Error> 
         db_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    conn.query_row("SELECT COALESCE(MAX(id), 0) FROM change_log", [], |row| row.get(0))
+    conn.query_row("SELECT COALESCE(MAX(id), 0) FROM change_log", [], |row| {
+        row.get(0)
+    })
 }
 
 pub fn git_repo_dirty_key(repo: &str) -> NextKey {
@@ -195,8 +209,14 @@ mod tests {
         assert_eq!(
             ghcache_dirty_notices(&change),
             vec![
-                (GIT_REPO_DOMAIN.to_string(), Some(git_repo_dirty_key("acme/api"))),
-                (GIT_BRANCH_DOMAIN.to_string(), Some(git_branch_dirty_key("acme/api", "main"))),
+                (
+                    GIT_REPO_DOMAIN.to_string(),
+                    Some(git_repo_dirty_key("acme/api"))
+                ),
+                (
+                    GIT_BRANCH_DOMAIN.to_string(),
+                    Some(git_branch_dirty_key("acme/api", "main"))
+                ),
             ],
         );
     }
@@ -223,7 +243,8 @@ mod tests {
                 ('branch', 1, 'inserted', 'acme/api', '{"name":"main"}', '2026-05-09T00:00:00Z'),
                 ('pull_request', 2, 'updated', 'acme/api', '{"number":17}', '2026-05-09T00:01:00Z');
             "#,
-        ).unwrap();
+        )
+        .unwrap();
         drop(conn);
 
         let rows = poll_ghcache_changes(&db, 1).unwrap();

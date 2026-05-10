@@ -57,7 +57,7 @@ pub fn encode(c: &Cursor) -> Vec<u8> {
         + 1 + 8                            // cursor_value
         + 8 + 8                            // value_id + at
         + 4 + c.terms.len() * (8 * 3)      // coord-space terms
-        + 4;                               // n_raw header
+        + 4; // n_raw header
     for (n, v) in &c.raw_terms {
         sz += 4 + n.len() + 4 + v.len();
     }
@@ -91,53 +91,83 @@ pub fn encode(c: &Cursor) -> Vec<u8> {
 }
 
 pub fn decode(buf: &[u8]) -> Result<Cursor, &'static str> {
-    if buf.len() < 4 { return Err("buf too short for value_len"); }
+    if buf.len() < 4 {
+        return Err("buf too short for value_len");
+    }
     let vl = u32::from_le_bytes(buf[0..4].try_into().unwrap()) as usize;
     let mut p = 4;
-    if p + vl > buf.len() { return Err("truncated value"); }
-    let value: std::sync::Arc<str> =
-        std::str::from_utf8(&buf[p..p+vl]).map_err(|_| "value not utf8")?.into();
+    if p + vl > buf.len() {
+        return Err("truncated value");
+    }
+    let value: std::sync::Arc<str> = std::str::from_utf8(&buf[p..p + vl])
+        .map_err(|_| "value not utf8")?
+        .into();
     p += vl;
 
-    if p + 9 > buf.len() { return Err("buf too short for cursor_value"); }
-    let cursor_value = decode_cursor_value(buf[p], u64::from_le_bytes(buf[p+1..p+9].try_into().unwrap()))?;
+    if p + 9 > buf.len() {
+        return Err("buf too short for cursor_value");
+    }
+    let cursor_value = decode_cursor_value(
+        buf[p],
+        u64::from_le_bytes(buf[p + 1..p + 9].try_into().unwrap()),
+    )?;
     p += 9;
 
-    if p + 16 > buf.len() { return Err("buf too short for value_id+at"); }
-    let value_id = StringId(u64::from_le_bytes(buf[p..p+8].try_into().unwrap()));
+    if p + 16 > buf.len() {
+        return Err("buf too short for value_id+at");
+    }
+    let value_id = StringId(u64::from_le_bytes(buf[p..p + 8].try_into().unwrap()));
     p += 8;
-    let at = Ref(u64::from_le_bytes(buf[p..p+8].try_into().unwrap()));
+    let at = Ref(u64::from_le_bytes(buf[p..p + 8].try_into().unwrap()));
     p += 8;
 
-    if p + 4 > buf.len() { return Err("buf too short for n_terms"); }
-    let n_terms = u32::from_le_bytes(buf[p..p+4].try_into().unwrap()) as usize;
+    if p + 4 > buf.len() {
+        return Err("buf too short for n_terms");
+    }
+    let n_terms = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
     p += 4;
     let mut terms = Vec::with_capacity(n_terms);
     for _ in 0..n_terms {
-        if p + 24 > buf.len() { return Err("truncated coord term"); }
-        let name  = StringId(u64::from_le_bytes(buf[p..p+8].try_into().unwrap()));
-        let value = StringId(u64::from_le_bytes(buf[p+8..p+16].try_into().unwrap()));
-        let at_r  = Ref(u64::from_le_bytes(buf[p+16..p+24].try_into().unwrap()));
-        terms.push(Term { name, value, at: at_r });
+        if p + 24 > buf.len() {
+            return Err("truncated coord term");
+        }
+        let name = StringId(u64::from_le_bytes(buf[p..p + 8].try_into().unwrap()));
+        let value = StringId(u64::from_le_bytes(buf[p + 8..p + 16].try_into().unwrap()));
+        let at_r = Ref(u64::from_le_bytes(buf[p + 16..p + 24].try_into().unwrap()));
+        terms.push(Term {
+            name,
+            value,
+            at: at_r,
+        });
         p += 24;
     }
 
-    if p + 4 > buf.len() { return Err("buf too short for n_raw"); }
-    let n_raw = u32::from_le_bytes(buf[p..p+4].try_into().unwrap()) as usize;
+    if p + 4 > buf.len() {
+        return Err("buf too short for n_raw");
+    }
+    let n_raw = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
     p += 4;
     let mut raw_terms = Vec::with_capacity(n_raw);
     for _ in 0..n_raw {
-        if p + 4 > buf.len() { return Err("truncated name_len"); }
-        let nl = u32::from_le_bytes(buf[p..p+4].try_into().unwrap()) as usize;
+        if p + 4 > buf.len() {
+            return Err("truncated name_len");
+        }
+        let nl = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
         p += 4;
-        if p + nl > buf.len() { return Err("truncated name"); }
-        let name = std::str::from_utf8(&buf[p..p+nl]).map_err(|_| "name not utf8")?;
+        if p + nl > buf.len() {
+            return Err("truncated name");
+        }
+        let name = std::str::from_utf8(&buf[p..p + nl]).map_err(|_| "name not utf8")?;
         p += nl;
-        if p + 4 > buf.len() { return Err("truncated value_len"); }
-        let vl = u32::from_le_bytes(buf[p..p+4].try_into().unwrap()) as usize;
+        if p + 4 > buf.len() {
+            return Err("truncated value_len");
+        }
+        let vl = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
         p += 4;
-        if p + vl > buf.len() { return Err("truncated value"); }
-        let val = std::str::from_utf8(&buf[p..p+vl]).map_err(|_| "value not utf8")?;
+        if p + vl > buf.len() {
+            return Err("truncated value");
+        }
+        let val = std::str::from_utf8(&buf[p..p + vl]).map_err(|_| "value not utf8")?;
         p += vl;
         raw_terms.push((name.into(), val.into()));
     }
@@ -165,11 +195,17 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    fn term(n: &str, v: &str) -> (Arc<str>, Arc<str>) { (n.into(), v.into()) }
+    fn term(n: &str, v: &str) -> (Arc<str>, Arc<str>) {
+        (n.into(), v.into())
+    }
 
     #[test]
     fn roundtrip_empty() {
-        let c = Cursor { value: "".into(), raw_terms: vec![], ..Default::default() };
+        let c = Cursor {
+            value: "".into(),
+            raw_terms: vec![],
+            ..Default::default()
+        };
         assert_eq!(decode(&encode(&c)).unwrap(), c);
     }
 
@@ -177,10 +213,7 @@ mod tests {
     fn roundtrip_simple() {
         let c = Cursor {
             value: "".into(),
-            raw_terms: vec![
-                term(":FS", "/tmp/a.rs"),
-                term(":REPO", "myrepo"),
-            ],
+            raw_terms: vec![term(":FS", "/tmp/a.rs"), term(":REPO", "myrepo")],
             ..Default::default()
         };
         assert_eq!(decode(&encode(&c)).unwrap(), c);
@@ -223,7 +256,7 @@ mod tests {
 
     #[test]
     fn rejects_truncated() {
-        assert!(decode(&[1,0,0,0]).is_err()); // claims 1-byte value, no body
+        assert!(decode(&[1, 0, 0, 0]).is_err()); // claims 1-byte value, no body
         assert!(decode(&[]).is_err());
     }
 
@@ -235,8 +268,16 @@ mod tests {
             value_id: StringId(0xDEADBEEF),
             at: Ref(0x1234_5678),
             terms: vec![
-                Term { name: StringId(1), value: StringId(2), at: Ref(3) },
-                Term { name: StringId(4), value: StringId(5), at: Ref(0) },
+                Term {
+                    name: StringId(1),
+                    value: StringId(2),
+                    at: Ref(3),
+                },
+                Term {
+                    name: StringId(4),
+                    value: StringId(5),
+                    at: Ref(0),
+                },
             ],
             raw_terms: vec![term("LO", "100")],
             ..Default::default()
@@ -274,7 +315,9 @@ mod tests {
 
         let encoded = encode(&c);
         assert!(
-            !encoded.windows(b"fn huge_body".len()).any(|w| w == b"fn huge_body"),
+            !encoded
+                .windows(b"fn huge_body".len())
+                .any(|w| w == b"fn huge_body"),
             "source cursors encode handles, not file bodies",
         );
     }

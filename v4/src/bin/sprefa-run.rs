@@ -28,13 +28,13 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[derive(Debug)]
 struct Args {
-    path:      PathBuf,
+    path: PathBuf,
     show_rows: bool,
     max_diags: usize,
-    remote:    Option<String>,
-    root:      Option<PathBuf>,
-    fact_db:   Option<PathBuf>,
-    queue_db:  Option<PathBuf>,
+    remote: Option<String>,
+    root: Option<PathBuf>,
+    fact_db: Option<PathBuf>,
+    queue_db: Option<PathBuf>,
     telemetry: bool,
     batch_cap: Option<usize>,
 }
@@ -49,53 +49,65 @@ where
     S: Into<String>,
 {
     let raw: Vec<String> = raw.into_iter().map(Into::into).collect();
-    let mut path:      Option<PathBuf> = None;
-    let mut show_rows: bool            = cfg.run.show_rows.unwrap_or(true);
-    let mut max_diags: usize           = cfg.run.max_diags.unwrap_or(50);
-    let mut remote:    Option<String>  = cfg.run.remote.clone();
-    let mut root:      Option<PathBuf> = cfg.run.root.clone();
-    let mut fact_db:   Option<PathBuf> = cfg.run_fact_db();
-    let mut queue_db:  Option<PathBuf> = cfg.run_queue_db();
-    let mut telemetry: bool            = false;
-    let mut batch_cap: Option<usize>   = None;
+    let mut path: Option<PathBuf> = None;
+    let mut show_rows: bool = cfg.run.show_rows.unwrap_or(true);
+    let mut max_diags: usize = cfg.run.max_diags.unwrap_or(50);
+    let mut remote: Option<String> = cfg.run.remote.clone();
+    let mut root: Option<PathBuf> = cfg.run.root.clone();
+    let mut fact_db: Option<PathBuf> = cfg.run_fact_db();
+    let mut queue_db: Option<PathBuf> = cfg.run_queue_db();
+    let mut telemetry: bool = false;
+    let mut batch_cap: Option<usize> = None;
 
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
-            "--show-rows"    => { show_rows = true;  i += 1; }
-            "--no-show-rows" => { show_rows = false; i += 1; }
+            "--show-rows" => {
+                show_rows = true;
+                i += 1;
+            }
+            "--no-show-rows" => {
+                show_rows = false;
+                i += 1;
+            }
             "--max-diags" => {
-                let v = raw.get(i+1).ok_or("--max-diags needs a value")?;
+                let v = raw.get(i + 1).ok_or("--max-diags needs a value")?;
                 max_diags = v.parse().map_err(|_| format!("bad --max-diags: {v}"))?;
                 i += 2;
             }
             "--remote" => {
-                let v = raw.get(i+1).ok_or("--remote needs URL")?;
+                let v = raw.get(i + 1).ok_or("--remote needs URL")?;
                 remote = Some(v.clone());
                 i += 2;
             }
             "--root" => {
-                let v = raw.get(i+1).ok_or("--root needs a path")?;
+                let v = raw.get(i + 1).ok_or("--root needs a path")?;
                 root = Some(PathBuf::from(v));
                 i += 2;
             }
             "--fact-db" => {
-                let v = raw.get(i+1).ok_or("--fact-db needs a path")?;
+                let v = raw.get(i + 1).ok_or("--fact-db needs a path")?;
                 fact_db = Some(PathBuf::from(v));
                 i += 2;
             }
             "--queue-db" => {
-                let v = raw.get(i+1).ok_or("--queue-db needs a path")?;
+                let v = raw.get(i + 1).ok_or("--queue-db needs a path")?;
                 queue_db = Some(PathBuf::from(v));
                 i += 2;
             }
             "--batch" | "--batch-cap" => {
-                let v = raw.get(i+1).ok_or("--batch needs a value")?;
+                let v = raw.get(i + 1).ok_or("--batch needs a value")?;
                 batch_cap = Some(v.parse().map_err(|_| format!("bad --batch: {v}"))?);
                 i += 2;
             }
-            "--telemetry" => { telemetry = true; i += 1; }
-            "-h" | "--help" => { print_usage(); std::process::exit(0); }
+            "--telemetry" => {
+                telemetry = true;
+                i += 1;
+            }
+            "-h" | "--help" => {
+                print_usage();
+                std::process::exit(0);
+            }
             other if other.starts_with("--") => {
                 return Err(format!("unknown flag: {other}"));
             }
@@ -110,7 +122,14 @@ where
     }
     Ok(Args {
         path: path.ok_or("missing <path-to-sprf-file>")?,
-        show_rows, max_diags, remote, root, fact_db, queue_db, telemetry, batch_cap,
+        show_rows,
+        max_diags,
+        remote,
+        root,
+        fact_db,
+        queue_db,
+        telemetry,
+        batch_cap,
     })
 }
 
@@ -123,10 +142,17 @@ fn print_usage() {
 fn line_col(src: &str, off: u32) -> (u32, u32) {
     let off = (off as usize).min(src.len());
     let mut line: u32 = 1;
-    let mut col:  u32 = 1;
+    let mut col: u32 = 1;
     for (i, b) in src.as_bytes().iter().enumerate() {
-        if i == off { break; }
-        if *b == b'\n' { line += 1; col = 1; } else { col += 1; }
+        if i == off {
+            break;
+        }
+        if *b == b'\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
     }
     (line, col)
 }
@@ -137,15 +163,21 @@ fn print_diags(path: &str, src: &str, diags: &[SprfDiag], cap: usize) -> usize {
     for d in diags.iter().take(printed) {
         let (line, col) = match d.lo {
             Some(lo) => line_col(src, lo),
-            None     => (1, 1),
+            None => (1, 1),
         };
-        println!("{path}:{line}:{col}:{sev}:{code}: {msg}",
-                 sev = d.severity, code = d.code, msg = d.message);
+        println!(
+            "{path}:{line}:{col}:{sev}:{code}: {msg}",
+            sev = d.severity,
+            code = d.code,
+            msg = d.message
+        );
     }
     if diags.len() > cap {
-        println!("{path}:1:1:info:sprefa-run/diag-truncated: \
+        println!(
+            "{path}:1:1:info:sprefa-run/diag-truncated: \
                   omitted {n} more diagnostic(s) (--max-diags {cap})",
-                 n = diags.len() - cap);
+            n = diags.len() - cap
+        );
     }
     n_err
 }
@@ -166,8 +198,12 @@ async fn main() -> ExitCode {
     }
 
     let args = match parse_args() {
-        Ok(a)  => a,
-        Err(e) => { eprintln!("sprefa-run: {e}"); print_usage(); return ExitCode::from(2); }
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("sprefa-run: {e}");
+            print_usage();
+            return ExitCode::from(2);
+        }
     };
     if args.telemetry {
         std::env::set_var("SPREFA_TELEMETRY", "1");
@@ -178,7 +214,7 @@ async fn main() -> ExitCode {
 
     let path_disp = args.path.display().to_string();
     let src = match std::fs::read_to_string(&args.path) {
-        Ok(s)  => s,
+        Ok(s) => s,
         Err(e) => {
             println!("{path_disp}:1:1:error:sprefa-run/io: {e}");
             return ExitCode::from(1);
@@ -186,49 +222,58 @@ async fn main() -> ExitCode {
     };
 
     // One client interface, two transports. Same call sites.
-    let root = args.root.clone()
+    let root = args
+        .root
+        .clone()
         .or_else(|| args.path.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let client: Box<dyn SprfClient> = match args.remote.clone() {
         Some(url) => Box::new(HttpClient::new(url)),
-        None => {
-            match (args.fact_db.as_ref(), args.queue_db.as_ref()) {
-                (Some(fact_db), Some(queue_db)) => {
-                    let state = std::sync::Arc::new(
-                        SprfState::new_with_sqlite_backends(root, fact_db, queue_db)
-                    );
-                    Box::new(InProcessClient::new(build_router(state)))
-                }
-                (Some(fact_db), None) => {
-                    let state = std::sync::Arc::new(
-                        SprfState::new_with_sqlite_facts(root, fact_db)
-                    );
-                    Box::new(InProcessClient::new(build_router(state)))
-                }
-                (None, Some(queue_db)) => {
-                    let state = std::sync::Arc::new(
-                        SprfState::new_with_sqlite_queue(root, queue_db)
-                    );
-                    Box::new(InProcessClient::new(build_router(state)))
-                }
-                (None, None) => {
-                    let (_state, c) = build_in_process(root);
-                    Box::new(c)
-                }
+        None => match (args.fact_db.as_ref(), args.queue_db.as_ref()) {
+            (Some(fact_db), Some(queue_db)) => {
+                let state = std::sync::Arc::new(SprfState::new_with_sqlite_backends(
+                    root, fact_db, queue_db,
+                ));
+                Box::new(InProcessClient::new(build_router(state)))
             }
+            (Some(fact_db), None) => {
+                let state = std::sync::Arc::new(SprfState::new_with_sqlite_facts(root, fact_db));
+                Box::new(InProcessClient::new(build_router(state)))
+            }
+            (None, Some(queue_db)) => {
+                let state = std::sync::Arc::new(SprfState::new_with_sqlite_queue(root, queue_db));
+                Box::new(InProcessClient::new(build_router(state)))
+            }
+            (None, None) => {
+                let (_state, c) = build_in_process(root);
+                Box::new(c)
+            }
+        },
+    };
+
+    let report = match client
+        .run(RunReq {
+            path: args.path.clone(),
+            root: args.root.clone(),
+        })
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            println!("{path_disp}:1:1:error:sprefa-run/run: {e}");
+            return ExitCode::from(1);
         }
     };
 
-    let report = match client.run(RunReq { path: args.path.clone(), root: args.root.clone() }).await {
-        Ok(r)  => r,
-        Err(e) => { println!("{path_disp}:1:1:error:sprefa-run/run: {e}"); return ExitCode::from(1); }
-    };
-
     let parse_errs = print_diags(&path_disp, &src, &report.parse_diags, args.max_diags);
-    let walk_errs  = print_diags(&path_disp, &src, &report.walk_diags,  args.max_diags);
-    if parse_errs + walk_errs > 0 { return ExitCode::from(1); }
+    let walk_errs = print_diags(&path_disp, &src, &report.walk_diags, args.max_diags);
+    if parse_errs + walk_errs > 0 {
+        return ExitCode::from(1);
+    }
     let runtime_errs = print_diags(&path_disp, &src, &report.runtime_diags, args.max_diags);
-    if runtime_errs > 0 { return ExitCode::from(1); }
+    if runtime_errs > 0 {
+        return ExitCode::from(1);
+    }
 
     if let Some(t) = &report.telemetry {
         print_telemetry(t);
@@ -241,12 +286,19 @@ async fn main() -> ExitCode {
     println!("── facts ──");
     for name in &report.tables {
         let fetch_t = std::time::Instant::now();
-        let tbl = match client.get_fact_table(GetFactTableReq {
-            name: name.clone(), limit: Some(5),
-        }).await {
-            Ok(t)  => t,
+        let tbl = match client
+            .get_fact_table(GetFactTableReq {
+                name: name.clone(),
+                limit: Some(5),
+            })
+            .await
+        {
+            Ok(t) => t,
             Err(SprfError::UnknownDoc(_)) => continue,
-            Err(e) => { eprintln!("get_fact_table {name}: {e}"); continue; }
+            Err(e) => {
+                eprintln!("get_fact_table {name}: {e}");
+                continue;
+            }
         };
         if args.telemetry {
             println!(
@@ -391,14 +443,21 @@ mod tests {
             ..Default::default()
         };
 
-        let args = parse_args_from([
-            "dev.sprf",
-            "--show-rows",
-            "--telemetry",
-            "--batch", "65536",
-            "--max-diags", "3",
-            "--fact-db", "/tmp/cli-facts.db",
-        ], &cfg).unwrap();
+        let args = parse_args_from(
+            [
+                "dev.sprf",
+                "--show-rows",
+                "--telemetry",
+                "--batch",
+                "65536",
+                "--max-diags",
+                "3",
+                "--fact-db",
+                "/tmp/cli-facts.db",
+            ],
+            &cfg,
+        )
+        .unwrap();
         assert!(args.show_rows);
         assert!(args.telemetry);
         assert_eq!(args.batch_cap, Some(65536));

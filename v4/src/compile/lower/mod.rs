@@ -13,11 +13,9 @@ pub mod ops;
 pub mod registry;
 pub mod value;
 
-pub use ctx::{LowerCtx, LowerError};
-pub use op_def::{
-    ArgKind, ArgSig, BlockShape, DslBody, DslInterp, DslShape, OperatorDef,
-};
 pub use crate::pipeline::{str_pipe, StrConstComponent};
+pub use ctx::{LowerCtx, LowerError};
+pub use op_def::{ArgKind, ArgSig, BlockShape, DslBody, DslInterp, DslShape, OperatorDef};
 pub use registry::{validate_call, Registry};
 pub use value::{run_once_const, CallArg, Value};
 
@@ -58,6 +56,8 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::CollectDef));
     r.register(Arc::new(ops::CollectReadyDef));
     r.register(Arc::new(crate::sql::SqlDef));
+    #[cfg(feature = "ghcache")]
+    r.register(Arc::new(crate::ghcache::GhPrsDef));
     r.register(Arc::new(crate::lsp::LspErrorDef));
     r.register(Arc::new(crate::lsp::LspWarnDef));
     r.register(Arc::new(crate::lsp::LspInfoDef));

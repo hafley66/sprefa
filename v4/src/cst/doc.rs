@@ -9,14 +9,18 @@ use crate::cst::injected::Injected;
 pub struct DocId(pub Arc<str>);
 
 impl DocId {
-    pub fn new(s: impl Into<Arc<str>>) -> Self { Self(s.into()) }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn new(s: impl Into<Arc<str>>) -> Self {
+        Self(s.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 pub struct Doc {
-    pub doc_id:   DocId,
-    pub source:   Arc<str>,
-    pub tree:     tree_sitter::Tree,
+    pub doc_id: DocId,
+    pub source: Arc<str>,
+    pub tree: tree_sitter::Tree,
     pub injected: Vec<Injected>,
-    pub version:  i32,
+    pub version: i32,
 }

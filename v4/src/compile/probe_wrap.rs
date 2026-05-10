@@ -19,11 +19,11 @@
 
 use std::sync::Arc;
 
-use effect_runtime::v2::{
-    ByteRange, Component, DynComponent, ExpandTick, Node, Probe,
-    ProbeSink, Purity, QueueBackend, QueueId, QueueRow, RenderCtx,
-};
 use effect_runtime::v2::next_key::NextKey;
+use effect_runtime::v2::{
+    ByteRange, Component, DynComponent, ExpandTick, Node, Probe, ProbeSink, Purity, QueueBackend,
+    QueueId, QueueRow, RenderCtx,
+};
 
 use crate::Cursor;
 
@@ -32,7 +32,7 @@ use crate::Cursor;
 /// `ProbingQueue` that fires `probe.on_emit(Probe { span, cursor })`.
 pub struct SpannedComponent {
     pub inner: DynComponent<Cursor>,
-    pub span:  ByteRange,
+    pub span: ByteRange,
     pub probe: Arc<dyn ProbeSink<Cursor>>,
 }
 
@@ -43,31 +43,31 @@ impl Component for SpannedComponent {
         self.inner.render(ctx, c)
     }
 
-    fn render_batch(
-        &self,
-        ctx:   &RenderCtx,
-        batch: &[&Cursor],
-    ) -> Vec<Node<Cursor>> {
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         self.inner.render_batch(ctx, batch)
     }
 
     fn dispatch(
         &self,
-        ctx:   &RenderCtx,
-        rows:  &[QueueRow<Cursor>],
+        ctx: &RenderCtx,
+        rows: &[QueueRow<Cursor>],
         queue: &dyn QueueBackend<Cursor>,
     ) {
         let wrapped = ProbingQueue {
             inner: queue,
             probe: self.probe.as_ref(),
-            span:  self.span,
+            span: self.span,
         };
         self.inner.dispatch(ctx, rows, &wrapped);
     }
 
-    fn batch_hint(&self) -> Option<usize> { self.inner.batch_hint() }
+    fn batch_hint(&self) -> Option<usize> {
+        self.inner.batch_hint()
+    }
 
-    fn purity(&self) -> Purity { self.inner.purity() }
+    fn purity(&self) -> Purity {
+        self.inner.purity()
+    }
 }
 
 /// `&dyn QueueBackend<Cursor>` adaptor that fires a probe on every
@@ -76,36 +76,31 @@ impl Component for SpannedComponent {
 struct ProbingQueue<'a> {
     inner: &'a dyn QueueBackend<Cursor>,
     probe: &'a dyn ProbeSink<Cursor>,
-    span:  ByteRange,
+    span: ByteRange,
 }
 
 impl<'a> QueueBackend<Cursor> for ProbingQueue<'a> {
     fn enqueue(&self, row: QueueRow<Cursor>) -> QueueId {
         self.probe.on_emit(Probe {
-            span:   self.span,
+            span: self.span,
             cursor: row.value.clone(),
         });
         self.inner.enqueue(row)
     }
 
-    fn pull_runnable(
-        &self,
-        global_tick: ExpandTick,
-    ) -> Option<QueueRow<Cursor>> {
+    fn pull_runnable(&self, global_tick: ExpandTick) -> Option<QueueRow<Cursor>> {
         self.inner.pull_runnable(global_tick)
     }
 
-    fn depth(&self) -> u64 { self.inner.depth() }
+    fn depth(&self) -> u64 {
+        self.inner.depth()
+    }
 
     fn dispatch_park(&self, domain: &str, key: Option<NextKey>) -> u64 {
         self.inner.dispatch_park(domain, key)
     }
 
-    fn pull_runnable_batch(
-        &self,
-        global_tick: ExpandTick,
-        n:           usize,
-    ) -> Vec<QueueRow<Cursor>> {
+    fn pull_runnable_batch(&self, global_tick: ExpandTick, n: usize) -> Vec<QueueRow<Cursor>> {
         self.inner.pull_runnable_batch(global_tick, n)
     }
 
@@ -129,11 +124,13 @@ impl<'a> QueueBackend<Cursor> for ProbingQueue<'a> {
 /// Wrap each step in `pipe.steps` with a `SpannedComponent` carrying
 /// `span`. Used at walk-time when `LowerCtx::probe` is set.
 pub fn wrap_pipe_with_span(
-    pipe:  effect_runtime::v2::Pipe<Cursor>,
-    span:  ByteRange,
+    pipe: effect_runtime::v2::Pipe<Cursor>,
+    span: ByteRange,
     probe: Arc<dyn ProbeSink<Cursor>>,
 ) -> effect_runtime::v2::Pipe<Cursor> {
-    let wrapped: Vec<DynComponent<Cursor>> = pipe.steps.into_iter()
+    let wrapped: Vec<DynComponent<Cursor>> = pipe
+        .steps
+        .into_iter()
         .map(|inner| {
             let sc: Arc<dyn Component<Next = Cursor>> = Arc::new(SpannedComponent {
                 inner,

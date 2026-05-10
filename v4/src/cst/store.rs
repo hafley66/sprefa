@@ -13,7 +13,8 @@ pub trait Store: Send + Sync {
     fn get(&self, path: &Path) -> Option<Arc<[u8]>>;
     fn put(&self, path: &Path, value: Arc<[u8]>);
     fn delete_prefix(&self, prefix: &Path) -> usize;
-    fn iter_prefix<'a>(&'a self, prefix: &Path) -> Box<dyn Iterator<Item = (Path, Arc<[u8]>)> + 'a>;
+    fn iter_prefix<'a>(&'a self, prefix: &Path)
+        -> Box<dyn Iterator<Item = (Path, Arc<[u8]>)> + 'a>;
 }
 
 /// Simple in-memory Store. Uses a `BTreeMap` keyed by a stringified path so
@@ -24,15 +25,23 @@ pub struct MemStore {
 }
 
 impl Default for MemStore {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MemStore {
     pub fn new() -> Self {
-        Self { inner: RwLock::new(BTreeMap::new()) }
+        Self {
+            inner: RwLock::new(BTreeMap::new()),
+        }
     }
-    pub fn len(&self) -> usize { self.inner.read().unwrap().len() }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn len(&self) -> usize {
+        self.inner.read().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 fn key_of(path: &Path) -> String {
@@ -66,7 +75,10 @@ impl Store for MemStore {
         to_drop.len()
     }
 
-    fn iter_prefix<'a>(&'a self, prefix: &Path) -> Box<dyn Iterator<Item = (Path, Arc<[u8]>)> + 'a> {
+    fn iter_prefix<'a>(
+        &'a self,
+        prefix: &Path,
+    ) -> Box<dyn Iterator<Item = (Path, Arc<[u8]>)> + 'a> {
         let pk = key_of(prefix);
         let g = self.inner.read().unwrap();
         let pk_slash = format!("{pk}/");
@@ -86,7 +98,9 @@ mod tests {
 
     fn p<I: IntoIterator<Item = Box<dyn PathItem>>>(items: I) -> Path {
         let mut b = PathBuilder::new();
-        for it in items { b.push_boxed(it); }
+        for it in items {
+            b.push_boxed(it);
+        }
         b.build()
     }
 
@@ -95,7 +109,11 @@ mod tests {
         let s = MemStore::new();
         let a = p([Box::new(Name::new("a")) as _]);
         let ab = p([Box::new(Name::new("a")) as _, Box::new(Name::new("b")) as _]);
-        let abc = p([Box::new(Name::new("a")) as _, Box::new(Name::new("b")) as _, Box::new(Name::new("c")) as _]);
+        let abc = p([
+            Box::new(Name::new("a")) as _,
+            Box::new(Name::new("b")) as _,
+            Box::new(Name::new("c")) as _,
+        ]);
         let z = p([Box::new(Name::new("z")) as _]);
 
         s.put(&a, Arc::from([1u8].as_slice()));

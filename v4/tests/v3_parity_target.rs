@@ -7,7 +7,7 @@ use effect_runtime::v2::{
 
 use v4::app::{
     build_in_process, build_router, GetDiagsReq, GetFactTableReq, InProcessClient, LspOpenReq,
-    RunReq, SprfClient, SprfDiag, SprfState, RunReport,
+    RunReport, RunReq, SprfClient, SprfDiag, SprfState,
 };
 
 fn diag_lines(diags: &[SprfDiag]) -> String {
@@ -41,16 +41,18 @@ async fn runtime_lsp_warn_publishes_diagnostics_for_open_buffer() {
     "#;
 
     client
-        .lsp_open(LspOpenReq { uri: uri.clone(), text: src.to_string(), version: 1 })
+        .lsp_open(LspOpenReq {
+            uri: uri.clone(),
+            text: src.to_string(),
+            version: 1,
+        })
         .await
         .unwrap();
 
     let diags = client.get_diags(GetDiagsReq { uri }).await.unwrap();
     assert!(
         diags.iter().any(|d| {
-            d.severity == "warning"
-                && d.code == "v3_parity"
-                && d.message == "runtime warning"
+            d.severity == "warning" && d.code == "v3_parity" && d.message == "runtime warning"
         }),
         "runtime lsp_warn should surface through get_diags, got:\n{}",
         diag_lines(&diags)
@@ -70,7 +72,10 @@ async fn runtime_lsp_warn_bracket_term_focuses_capture_span() {
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
     let report = client
-        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .run(RunReq {
+            path: sprf,
+            root: Some(root.path().to_path_buf()),
+        })
         .await
         .unwrap();
 
@@ -93,15 +98,15 @@ async fn write_file_backtick_path_writes_cursor_value() {
     let root = tempfile::tempdir().unwrap();
     let out = root.path().join("out.md");
     let sprf = root.path().join("write_file_backtick_path.sprf");
-    let src = format!(
-        "`hello from sprf` > write_file`{}`;",
-        out.display()
-    );
+    let src = format!("`hello from sprf` > write_file`{}`;", out.display());
     fs::write(&sprf, src).unwrap();
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
     let report = client
-        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .run(RunReq {
+            path: sprf,
+            root: Some(root.path().to_path_buf()),
+        })
         .await
         .unwrap();
 
@@ -124,7 +129,11 @@ async fn lsp_open_does_not_execute_write_file() {
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
     client
-        .lsp_open(LspOpenReq { uri: uri.clone(), text: src, version: 1 })
+        .lsp_open(LspOpenReq {
+            uri: uri.clone(),
+            text: src,
+            version: 1,
+        })
         .await
         .unwrap();
 
@@ -158,7 +167,10 @@ async fn render_markdown_aggregate_writes_file() {
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
     let report = client
-        .run(RunReq { path: sprf.clone(), root: Some(root.path().to_path_buf()) })
+        .run(RunReq {
+            path: sprf.clone(),
+            root: Some(root.path().to_path_buf()),
+        })
         .await
         .unwrap();
 
@@ -172,7 +184,10 @@ async fn render_markdown_aggregate_writes_file() {
     assert_eq!(first, "- alpha\n- beta\n");
 
     let report = client
-        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .run(RunReq {
+            path: sprf,
+            root: Some(root.path().to_path_buf()),
+        })
         .await
         .unwrap();
     assert!(
@@ -220,7 +235,10 @@ async fn render_markdown_interpolates_subpipe_links() {
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
     let report = client
-        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .run(RunReq {
+            path: sprf,
+            root: Some(root.path().to_path_buf()),
+        })
         .await
         .unwrap();
 
@@ -244,14 +262,18 @@ async fn render_markdown_replaces_comment_range_only() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("ARCH.md");
     let sprf = root.path().join("self_doc_range_replace.sprf");
-    fs::write(&target, concat!(
-        "# Architecture\n\n",
-        "handwritten before\n",
-        "<!-- sprf:self-doc:start -->\n",
-        "old generated body\n",
-        "<!-- sprf:self-doc:end -->\n",
-        "handwritten after\n",
-    )).unwrap();
+    fs::write(
+        &target,
+        concat!(
+            "# Architecture\n\n",
+            "handwritten before\n",
+            "<!-- sprf:self-doc:start -->\n",
+            "old generated body\n",
+            "<!-- sprf:self-doc:end -->\n",
+            "handwritten after\n",
+        ),
+    )
+    .unwrap();
     let src = format!(
         r#"`{}`
 > read
@@ -266,7 +288,10 @@ range-safe markdown`
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
     let report = client
-        .run(RunReq { path: sprf.clone(), root: Some(root.path().to_path_buf()) })
+        .run(RunReq {
+            path: sprf.clone(),
+            root: Some(root.path().to_path_buf()),
+        })
         .await
         .unwrap();
 
@@ -279,19 +304,25 @@ range-safe markdown`
     );
 
     let written = fs::read_to_string(&target).unwrap();
-    assert_eq!(written, concat!(
-        "# Architecture\n\n",
-        "handwritten before\n",
-        "<!-- sprf:self-doc:start -->\n",
-        "## Generated\n",
-        "range-safe markdown\n",
-        "\n",
-        "<!-- sprf:self-doc:end -->\n",
-        "handwritten after\n",
-    ));
+    assert_eq!(
+        written,
+        concat!(
+            "# Architecture\n\n",
+            "handwritten before\n",
+            "<!-- sprf:self-doc:start -->\n",
+            "## Generated\n",
+            "range-safe markdown\n",
+            "\n",
+            "<!-- sprf:self-doc:end -->\n",
+            "handwritten after\n",
+        )
+    );
 
     let report = client
-        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .run(RunReq {
+            path: sprf,
+            root: Some(root.path().to_path_buf()),
+        })
         .await
         .unwrap();
     assert!(
@@ -320,7 +351,10 @@ async fn render_dot_markdown_alias_writes_file() {
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
     let report = client
-        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .run(RunReq {
+            path: sprf,
+            root: Some(root.path().to_path_buf()),
+        })
         .await
         .unwrap();
 
@@ -341,7 +375,9 @@ async fn app_run_keeps_queue_and_wakes_mounted_sql() {
     let missing = root.path().join("missing.sprf");
     let hook = root.path().join("hook.sprf");
 
-    fs::write(&missing, r#"
+    fs::write(
+        &missing,
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:missing_hooks, OP?);
 
@@ -360,8 +396,12 @@ async fn app_run_keeps_queue_and_wakes_mounted_sql() {
               )
             `
           > rule(:missing_hooks, OP: OP);
-    "#).unwrap();
-    fs::write(&hook, r#"
+    "#,
+    )
+    .unwrap();
+    fs::write(
+        &hook,
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
 
         `getUser`
@@ -369,29 +409,43 @@ async fn app_run_keeps_queue_and_wakes_mounted_sql() {
           > `src/hooks.ts`
           > term_bind(:FILE)
           > rule(:frontend_hooks, OP: OP, FILE: FILE);
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
-    client.run(RunReq {
-        path: missing,
-        root: Some(root.path().to_path_buf()),
-    }).await.unwrap();
+    client
+        .run(RunReq {
+            path: missing,
+            root: Some(root.path().to_path_buf()),
+        })
+        .await
+        .unwrap();
 
-    let table = client.get_fact_table(GetFactTableReq {
-        name: "missing_hooks".into(),
-        limit: None,
-    }).await.unwrap();
+    let table = client
+        .get_fact_table(GetFactTableReq {
+            name: "missing_hooks".into(),
+            limit: None,
+        })
+        .await
+        .unwrap();
     assert_eq!(table.total, 1);
 
-    client.run(RunReq {
-        path: hook,
-        root: Some(root.path().to_path_buf()),
-    }).await.unwrap();
+    client
+        .run(RunReq {
+            path: hook,
+            root: Some(root.path().to_path_buf()),
+        })
+        .await
+        .unwrap();
 
-    let table = client.get_fact_table(GetFactTableReq {
-        name: "missing_hooks".into(),
-        limit: None,
-    }).await.unwrap();
+    let table = client
+        .get_fact_table(GetFactTableReq {
+            name: "missing_hooks".into(),
+            limit: None,
+        })
+        .await
+        .unwrap();
     assert_eq!(table.total, 0);
 }
 
@@ -401,7 +455,9 @@ async fn app_can_use_sqlite_queue_for_mounted_sql_parks() {
     let db = root.path().join("queue.db");
     let missing = root.path().join("missing.sprf");
 
-    fs::write(&missing, r#"
+    fs::write(
+        &missing,
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:missing_hooks, OP?);
 
@@ -420,7 +476,9 @@ async fn app_can_use_sqlite_queue_for_mounted_sql_parks() {
               )
             `
           > rule(:missing_hooks, OP: OP);
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     {
         let state = Arc::new(SprfState::new_with_sqlite_queue(
@@ -428,10 +486,13 @@ async fn app_can_use_sqlite_queue_for_mounted_sql_parks() {
             &db,
         ));
         let client = InProcessClient::new(build_router(state.clone()));
-        client.run(RunReq {
-            path: missing,
-            root: Some(root.path().to_path_buf()),
-        }).await.unwrap();
+        client
+            .run(RunReq {
+                path: missing,
+                root: Some(root.path().to_path_buf()),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(
             state.queue.depth(),
@@ -456,13 +517,17 @@ async fn app_can_use_sqlite_fact_store_for_rule_rows() {
     let fact_db = root.path().join("facts.db");
     let sprf = root.path().join("facts.sprf");
 
-    fs::write(&sprf, r#"
+    fs::write(
+        &sprf,
+        r#"
         rule(:seen, WORD?);
 
         `alpha`
           > term_bind(:WORD)
           > rule(:seen, WORD: WORD);
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     {
         let state = Arc::new(SprfState::new_with_sqlite_facts(
@@ -470,10 +535,13 @@ async fn app_can_use_sqlite_fact_store_for_rule_rows() {
             &fact_db,
         ));
         let client = InProcessClient::new(build_router(state));
-        client.run(RunReq {
-            path: sprf,
-            root: Some(root.path().to_path_buf()),
-        }).await.unwrap();
+        client
+            .run(RunReq {
+                path: sprf,
+                root: Some(root.path().to_path_buf()),
+            })
+            .await
+            .unwrap();
     }
 
     let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
@@ -489,7 +557,9 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
     let queue_db = root.path().join("queue.db");
     let sprf = root.path().join("mounted_reopen.sprf");
 
-    fs::write(&sprf, r#"
+    fs::write(
+        &sprf,
+        r#"
         rule(:openapi_ops, OP?, SPEC?);
         rule(:frontend_hooks, OP?, FILE?);
         rule(:missing_hooks, OP?);
@@ -511,7 +581,9 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
               )
             `
           > missing_hooks(OP);
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     {
         let state = Arc::new(SprfState::new_with_sqlite_backends(
@@ -520,10 +592,13 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
             &queue_db,
         ));
         let client = InProcessClient::new(build_router(state));
-        client.run(RunReq {
-            path: sprf.clone(),
-            root: Some(root.path().to_path_buf()),
-        }).await.unwrap();
+        client
+            .run(RunReq {
+                path: sprf.clone(),
+                root: Some(root.path().to_path_buf()),
+            })
+            .await
+            .unwrap();
     }
 
     let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
@@ -536,7 +611,9 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
         "first run should leave mounted SQL continuations parked in SQLite",
     );
 
-    fs::write(&sprf, r#"
+    fs::write(
+        &sprf,
+        r#"
         rule(:openapi_ops, OP?, SPEC?);
         rule(:frontend_hooks, OP?, FILE?);
         rule(:missing_hooks, OP?);
@@ -564,7 +641,9 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
               )
             `
           > missing_hooks(OP);
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     {
         let state = Arc::new(SprfState::new_with_sqlite_backends(
@@ -573,10 +652,13 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
             &queue_db,
         ));
         let client = InProcessClient::new(build_router(state));
-        client.run(RunReq {
-            path: sprf,
-            root: Some(root.path().to_path_buf()),
-        }).await.unwrap();
+        client
+            .run(RunReq {
+                path: sprf,
+                root: Some(root.path().to_path_buf()),
+            })
+            .await
+            .unwrap();
     }
 
     let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
@@ -595,49 +677,79 @@ async fn app_write_file_wakes_mounted_read_pipeline() {
     let writer = root.path().join("writer.sprf");
 
     fs::write(&data, "alpha").unwrap();
-    fs::write(&reader, format!(r#"
+    fs::write(
+        &reader,
+        format!(
+            r#"
         rule(:contents, BODY?);
 
         `{}`
           > read
           > term_bind(:BODY)
           > rule(:contents, BODY: BODY);
-    "#, data.display())).unwrap();
-    fs::write(&writer, format!(r#"
+    "#,
+            data.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &writer,
+        format!(
+            r#"
         `bravo` > write_file`{}`;
-    "#, data.display())).unwrap();
+    "#,
+            data.display()
+        ),
+    )
+    .unwrap();
 
     let (_state, client) = build_in_process(root.path().to_path_buf());
-    client.run(RunReq {
-        path: reader,
-        root: Some(root.path().to_path_buf()),
-    }).await.unwrap();
+    client
+        .run(RunReq {
+            path: reader,
+            root: Some(root.path().to_path_buf()),
+        })
+        .await
+        .unwrap();
 
-    let table = client.get_fact_table(GetFactTableReq {
-        name: "contents".into(),
-        limit: None,
-    }).await.unwrap();
+    let table = client
+        .get_fact_table(GetFactTableReq {
+            name: "contents".into(),
+            limit: None,
+        })
+        .await
+        .unwrap();
     assert_eq!(table.total, 1);
     assert_eq!(
-        table.rows[0].fields.iter()
+        table.rows[0]
+            .fields
+            .iter()
             .find(|(name, _)| name == "BODY")
             .map(|(_, value)| value.as_str()),
         Some("alpha"),
     );
 
-    client.run(RunReq {
-        path: writer,
-        root: Some(root.path().to_path_buf()),
-    }).await.unwrap();
+    client
+        .run(RunReq {
+            path: writer,
+            root: Some(root.path().to_path_buf()),
+        })
+        .await
+        .unwrap();
 
-    let table = client.get_fact_table(GetFactTableReq {
-        name: "contents".into(),
-        limit: None,
-    }).await.unwrap();
-    let mut bodies: Vec<&str> = table.rows
+    let table = client
+        .get_fact_table(GetFactTableReq {
+            name: "contents".into(),
+            limit: None,
+        })
+        .await
+        .unwrap();
+    let mut bodies: Vec<&str> = table
+        .rows
         .iter()
         .filter_map(|row| {
-            row.fields.iter()
+            row.fields
+                .iter()
                 .find(|(name, _)| name == "BODY")
                 .map(|(_, value)| value.as_str())
         })

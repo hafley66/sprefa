@@ -10,38 +10,54 @@
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, FactStore, MemFactStore,
-    MemQueue, Node, Pipe, PipeInstance, QueueBackend, RenderCtx,
+    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, Node, Pipe, PipeInstance,
+    QueueBackend, RenderCtx,
 };
 
-use v4::Cursor;
 use v4::lower::{default_registry, LowerCtx};
+use v4::Cursor;
 
 #[test]
 fn glob_emits_one_cursor_per_matching_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().to_path_buf();
-    std::fs::write(root.join("a.rs"),  b"fn a() {}").unwrap();
-    std::fs::write(root.join("b.rs"),  b"fn b() {}").unwrap();
+    std::fs::write(root.join("a.rs"), b"fn a() {}").unwrap();
+    std::fs::write(root.join("b.rs"), b"fn b() {}").unwrap();
     std::fs::write(root.join("c.txt"), b"hello").unwrap();
 
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let ctx   = LowerCtx::new(store, root.clone());
+    let reg = default_registry();
+    let ctx = LowerCtx::new(store, root.clone());
 
     // fs emits one cursor per file (value=path); glob filters to .rs.
-    let fs_pipe = reg.lower(
-        &ctx, "fs", None, vec![], None, None,
-        effect_runtime::v2::ByteRange { lo: 0, hi: 2 },
-    ).expect("fs lowers");
-    let glob_pipe = reg.lower(
-        &ctx, "glob", None, vec![], None,
-        Some((v4::compile::lower::op_def::DslBody {
-            raw:     Arc::<str>::from("**/*.rs"),
-            interps: vec![],
-        }, effect_runtime::v2::ByteRange { lo: 5, hi: 14 })),
-        effect_runtime::v2::ByteRange { lo: 3, hi: 14 },
-    ).expect("glob lowers");
+    let fs_pipe = reg
+        .lower(
+            &ctx,
+            "fs",
+            None,
+            vec![],
+            None,
+            None,
+            effect_runtime::v2::ByteRange { lo: 0, hi: 2 },
+        )
+        .expect("fs lowers");
+    let glob_pipe = reg
+        .lower(
+            &ctx,
+            "glob",
+            None,
+            vec![],
+            None,
+            Some((
+                v4::compile::lower::op_def::DslBody {
+                    raw: Arc::<str>::from("**/*.rs"),
+                    interps: vec![],
+                },
+                effect_runtime::v2::ByteRange { lo: 5, hi: 14 },
+            )),
+            effect_runtime::v2::ByteRange { lo: 3, hi: 14 },
+        )
+        .expect("glob lowers");
 
     let combined = combine(fs_pipe, glob_pipe);
     let out = collect(combined);
@@ -60,7 +76,9 @@ fn glob_emits_one_cursor_per_matching_file() {
 
 fn combine(a: Pipe<Cursor>, b: Pipe<Cursor>) -> Pipe<Cursor> {
     let mut out = a;
-    for step in b.steps.iter().cloned() { out = out.step(step); }
+    for step in b.steps.iter().cloned() {
+        out = out.step(step);
+    }
     out
 }
 
@@ -70,15 +88,20 @@ fn collect(p: Pipe<Cursor>) -> Vec<Cursor> {
     impl Component for Sink {
         type Next = Cursor;
         fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            self.0.lock().unwrap().push(c.clone()); Node::Done
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
         }
     }
-    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> =
-        p.steps.iter().cloned().collect();
+    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = p.steps.iter().cloned().collect();
     steps.push(Arc::new(Sink(sink.clone())));
     let inst = PipeInstance::new(steps);
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    expand(&inst, q, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    expand(
+        &inst,
+        q,
+        vec![Arc::new(Cursor::default())],
+        ExpandOpts::default(),
+    );
     let v = sink.lock().unwrap().clone();
     v
 }

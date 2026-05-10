@@ -43,8 +43,8 @@ pub struct FactMountedQueryStorage {
 }
 
 struct PersistedCursor {
-    cursor_id:  String,
-    blob_hex:   String,
+    cursor_id: String,
+    blob_hex: String,
 }
 
 impl FactMountedQueryStorage {
@@ -54,9 +54,12 @@ impl FactMountedQueryStorage {
 
     fn declare_tables(&self) {
         self.store.declare(CURSOR_TABLE, &[CURSOR_ID, CURSOR_BLOB]);
-        self.store.declare(OUTPUT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, CURSOR_ID]);
-        self.store.declare(MOUNT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, SQL]);
-        self.store.declare(DEP_TABLE, &[MOUNT_ID, INPUT_KEY, DEP_TABLE_NAME]);
+        self.store
+            .declare(OUTPUT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, CURSOR_ID]);
+        self.store
+            .declare(MOUNT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, SQL]);
+        self.store
+            .declare(DEP_TABLE, &[MOUNT_ID, INPUT_KEY, DEP_TABLE_NAME]);
         self.store.declare(
             SUPPORT_TABLE,
             &[SUPPORT_CURSOR_ID, SUPPORT_TABLE_NAME, SUPPORT_ROW_ID],
@@ -72,8 +75,7 @@ impl FactMountedQueryStorage {
             .rows_of(OUTPUT_TABLE)
             .into_iter()
             .filter(|row| {
-                row.get(MOUNT_ID) == Some(mount_id)
-                    && row.get(INPUT_KEY) == Some(input_key)
+                row.get(MOUNT_ID) == Some(mount_id) && row.get(INPUT_KEY) == Some(input_key)
             })
             .filter_map(|row| row.get(CURSOR_ID).map(|s| s.to_string()))
             .collect()
@@ -100,14 +102,10 @@ impl FactMountedQueryStorage {
         input_key: &str,
         dep_tables: &[String],
     ) {
-        self.store.delete_matching(
-            MOUNT_TABLE,
-            &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)],
-        );
-        self.store.delete_matching(
-            DEP_TABLE,
-            &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)],
-        );
+        self.store
+            .delete_matching(MOUNT_TABLE, &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)]);
+        self.store
+            .delete_matching(DEP_TABLE, &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)]);
 
         let mut mount = Cursor::default();
         mount.set(MOUNT_ID, mount_id);
@@ -161,7 +159,10 @@ impl MountedQueryStorage for FactMountedQueryStorage {
         retract_supported_rows(self.store.as_ref(), &removed_cursor_ids);
         self.store.delete_matching(
             OUTPUT_TABLE,
-            &[(MOUNT_ID, mount_id.as_str()), (INPUT_KEY, input_key.as_str())],
+            &[
+                (MOUNT_ID, mount_id.as_str()),
+                (INPUT_KEY, input_key.as_str()),
+            ],
         );
 
         if persisted.is_empty() {
@@ -324,15 +325,24 @@ fn retract_supported_rows(store: &dyn FactStore<Cursor>, removed_cursor_ids: &[S
     let mut doomed = Vec::new();
 
     for row in &support_rows {
-        let Some(support_id) = row.get(SUPPORT_CURSOR_ID) else { continue };
+        let Some(support_id) = row.get(SUPPORT_CURSOR_ID) else {
+            continue;
+        };
         if !removed.contains(support_id) {
             continue;
         }
-        let Some(table) = row.get(SUPPORT_TABLE_NAME) else { continue };
-        let Some(row_id) = row.get(SUPPORT_ROW_ID) else { continue };
+        let Some(table) = row.get(SUPPORT_TABLE_NAME) else {
+            continue;
+        };
+        let Some(row_id) = row.get(SUPPORT_ROW_ID) else {
+            continue;
+        };
 
         let still_supported = support_rows.iter().any(|other| {
-            other.get(SUPPORT_CURSOR_ID).map(|id| !removed.contains(id)).unwrap_or(false)
+            other
+                .get(SUPPORT_CURSOR_ID)
+                .map(|id| !removed.contains(id))
+                .unwrap_or(false)
                 && other.get(SUPPORT_TABLE_NAME) == Some(table)
                 && other.get(SUPPORT_ROW_ID) == Some(row_id)
         });
@@ -414,7 +424,8 @@ mod tests {
         assert!(matches!(added.as_slice(), [Node::Emit(_)]));
         assert_eq!(store.rows_of(OUTPUT_TABLE).len(), 1);
 
-        let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &deps, &second);
+        let added =
+            record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &deps, &second);
         assert!(matches!(added.as_slice(), [Node::Emit(_)]));
         let rows = store.rows_of(OUTPUT_TABLE);
         assert_eq!(rows.len(), 1);
@@ -455,10 +466,7 @@ mod tests {
         let added = record_sql_outputs(&store, "SELECT value FROM input", 1, &batch, &deps, &first);
         assert!(matches!(added.as_slice(), [Node::Emit(_)]));
 
-        let rerun = vec![Node::Many(vec![
-            Node::Emit(old),
-            Node::Emit(new.clone()),
-        ])];
+        let rerun = vec![Node::Many(vec![Node::Emit(old), Node::Emit(new.clone())])];
         let added = record_sql_outputs(&store, "SELECT value FROM input", 2, &batch, &deps, &rerun);
         assert_eq!(store.rows_of(OUTPUT_TABLE).len(), 2);
         assert_eq!(store.rows_of(CURSOR_TABLE).len(), 2);

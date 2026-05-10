@@ -14,18 +14,18 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, ByteRange, Component, ExpandOpts, FactStore, MemFactStore, MemQueue,
-    Node, PipeInstance, QueueBackend, RenderCtx,
+    expand, ByteRange, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, Node,
+    PipeInstance, QueueBackend, RenderCtx,
 };
 
 use v4::config::{RepoConfig, SprfConfig};
 use v4::lower::{default_registry, LowerCtx, Value};
-use v4::store::{
-    SprfStore, FILES_TABLE, PATHS_TABLE, REPOS_TABLE, REVS_TABLE,
-};
+use v4::store::{SprfStore, FILES_TABLE, PATHS_TABLE, REPOS_TABLE, REVS_TABLE};
 use v4::Cursor;
 
-fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
+fn br(lo: u32, hi: u32) -> ByteRange {
+    ByteRange { lo, hi }
+}
 
 fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
     let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
@@ -33,11 +33,11 @@ fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
     impl Component for Sink {
         type Next = Cursor;
         fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            self.0.lock().unwrap().push(c.clone()); Node::Done
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
         }
     }
-    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> =
-        p.steps.iter().cloned().collect();
+    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = p.steps.iter().cloned().collect();
     steps.push(Arc::new(Sink(sink.clone())));
     let inst = PipeInstance::new(steps);
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
@@ -53,13 +53,15 @@ fn build_two_commit_repo() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let p = tmp.path().to_path_buf();
     let g = |args: &[&str], date: &str| {
-        let st = Command::new("git").args(args).current_dir(&p)
-            .env("GIT_AUTHOR_NAME",     "t")
-            .env("GIT_AUTHOR_EMAIL",    "t@t.com")
-            .env("GIT_COMMITTER_NAME",  "t")
+        let st = Command::new("git")
+            .args(args)
+            .current_dir(&p)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t.com")
+            .env("GIT_COMMITTER_NAME", "t")
             .env("GIT_COMMITTER_EMAIL", "t@t.com")
-            .env("GIT_AUTHOR_DATE",     date)
-            .env("GIT_COMMITTER_DATE",  date)
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
             .output()
             .expect("git");
         if !st.status.success() {
@@ -68,15 +70,15 @@ fn build_two_commit_repo() -> tempfile::TempDir {
     };
     g(&["init", "-b", "main"], "2026-01-01T00:00:00Z");
     g(&["config", "user.email", "t@t.com"], "2026-01-01T00:00:00Z");
-    g(&["config", "user.name",  "t"],       "2026-01-01T00:00:00Z");
+    g(&["config", "user.name", "t"], "2026-01-01T00:00:00Z");
     std::fs::create_dir_all(p.join("src")).unwrap();
     std::fs::write(p.join("src/main.rs"), b"fn main(){println!(\"hi\")}\n").unwrap();
-    std::fs::write(p.join("README.md"),   b"v1\n").unwrap();
-    g(&["add", "."],                       "2026-01-01T00:00:00Z");
-    g(&["commit", "-m", "c1"],             "2026-01-01T00:00:00Z");
-    std::fs::write(p.join("README.md"),   b"v2\n").unwrap();
-    g(&["add", "."],                       "2026-01-02T00:00:00Z");
-    g(&["commit", "-m", "c2"],             "2026-01-02T00:00:00Z");
+    std::fs::write(p.join("README.md"), b"v1\n").unwrap();
+    g(&["add", "."], "2026-01-01T00:00:00Z");
+    g(&["commit", "-m", "c1"], "2026-01-01T00:00:00Z");
+    std::fs::write(p.join("README.md"), b"v2\n").unwrap();
+    g(&["add", "."], "2026-01-02T00:00:00Z");
+    g(&["commit", "-m", "c2"], "2026-01-02T00:00:00Z");
     tmp
 }
 
@@ -84,35 +86,35 @@ fn build_two_commit_repo() -> tempfile::TempDir {
 /// reused across the three primary tests; building it once per test
 /// keeps the lower call-site explicit.
 fn build_pipe(
-    ctx:      &LowerCtx,
+    ctx: &LowerCtx,
     rev_args: Vec<(Value, ByteRange)>,
-    do_fs:    bool,
-    do_read:  bool,
+    do_fs: bool,
+    do_read: bool,
 ) -> effect_runtime::v2::Pipe<Cursor> {
     let reg = default_registry();
-    let p_repo = reg.lower(ctx, "repo", None, vec![],     None, None, br(0, 6))
+    let p_repo = reg
+        .lower(ctx, "repo", None, vec![], None, None, br(0, 6))
         .expect("repo()");
-    let p_rev  = reg.lower(ctx, "rev",  None, rev_args,   None, None, br(7, 30))
+    let p_rev = reg
+        .lower(ctx, "rev", None, rev_args, None, None, br(7, 30))
         .expect("rev(...)");
     let mut pipe = p_repo.extend(p_rev);
     if do_fs {
-        let p_fs = reg.lower(ctx, "fs", None, vec![], None, None, br(31, 35))
+        let p_fs = reg
+            .lower(ctx, "fs", None, vec![], None, None, br(31, 35))
             .expect("fs()");
         pipe = pipe.extend(p_fs);
     }
     if do_read {
-        let p_read = reg.lower(ctx, "read", None, vec![], None, None, br(36, 42))
+        let p_read = reg
+            .lower(ctx, "read", None, vec![], None, None, br(36, 42))
             .expect("read()");
         pipe = pipe.extend(p_read);
     }
     pipe
 }
 
-fn make_ctx(
-    facts: Arc<dyn FactStore<Cursor>>,
-    store: Arc<SprfStore>,
-    cfg:   SprfConfig,
-) -> LowerCtx {
+fn make_ctx(facts: Arc<dyn FactStore<Cursor>>, store: Arc<SprfStore>, cfg: SprfConfig) -> LowerCtx {
     LowerCtx::new(facts, std::env::temp_dir())
         .with_sprf_store(store)
         .with_config(Arc::new(cfg))
@@ -125,23 +127,27 @@ fn make_ctx(
 /// produces two FileIds).
 #[test]
 fn cross_rev_dedupes_unchanged_content_across_revs() {
-    let tmp  = build_two_commit_repo();
+    let tmp = build_two_commit_repo();
     let root: PathBuf = tmp.path().to_path_buf();
-    let cfg  = SprfConfig {
-        repos: vec![RepoConfig { slug: "t/r".into(), root: root.clone() }],
+    let cfg = SprfConfig {
+        repos: vec![RepoConfig {
+            slug: "t/r".into(),
+            root: root.clone(),
+        }],
         ..Default::default()
     };
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
-    let ctx   = make_ctx(facts.clone(), store.clone(), cfg);
+    let ctx = make_ctx(facts.clone(), store.clone(), cfg);
 
     let pipe = build_pipe(
         &ctx,
         vec![
-            (Value::atom("HEAD"),    br(8, 13)),
-            (Value::atom("HEAD~1"),  br(15, 22)),
+            (Value::atom("HEAD"), br(8, 13)),
+            (Value::atom("HEAD~1"), br(15, 22)),
         ],
-        /* fs */ true, /* read */ true,
+        /* fs */ true,
+        /* read */ true,
     );
 
     let cursors = run(pipe, Cursor::default());
@@ -149,7 +155,8 @@ fn cross_rev_dedupes_unchanged_content_across_revs() {
 
     // 2 revs × 2 blobs = 4 cursor instances.
     assert_eq!(
-        cursors.len(), 4,
+        cursors.len(),
+        4,
         "2 revs × 2 files = 4 emissions; got {}",
         cursors.len(),
     );
@@ -158,7 +165,8 @@ fn cross_rev_dedupes_unchanged_content_across_revs() {
     //   src/main.rs identical across both revs → one FileId
     //   README.md "v1\n" vs "v2\n" → two distinct FileIds
     assert_eq!(
-        facts.len(FILES_TABLE), 4,
+        facts.len(FILES_TABLE),
+        4,
         "_files: sentinel + 3 unique contents (src/main.rs dedupes; README differs across revs)",
     );
 
@@ -169,47 +177,51 @@ fn cross_rev_dedupes_unchanged_content_across_revs() {
     );
 
     // _revs = sentinel + 2.
-    assert_eq!(
-        facts.len(REVS_TABLE), 3,
-        "_revs: sentinel + HEAD + HEAD~1",
-    );
+    assert_eq!(facts.len(REVS_TABLE), 3, "_revs: sentinel + HEAD + HEAD~1",);
 
     // _repos = sentinel + 1.
-    assert_eq!(
-        facts.len(REPOS_TABLE), 2,
-        "_repos: sentinel + t/r",
-    );
+    assert_eq!(facts.len(REPOS_TABLE), 2, "_repos: sentinel + t/r",);
 }
 
 /// `fs()` over rev != 0 emits cursors with cursor.value = path string.
 #[test]
 fn fs_over_rev_emits_path_cursors() {
-    let tmp  = build_two_commit_repo();
+    let tmp = build_two_commit_repo();
     let root: PathBuf = tmp.path().to_path_buf();
-    let cfg  = SprfConfig {
-        repos: vec![RepoConfig { slug: "t/r".into(), root: root.clone() }],
+    let cfg = SprfConfig {
+        repos: vec![RepoConfig {
+            slug: "t/r".into(),
+            root: root.clone(),
+        }],
         ..Default::default()
     };
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
-    let ctx   = make_ctx(facts.clone(), store.clone(), cfg);
+    let ctx = make_ctx(facts.clone(), store.clone(), cfg);
 
     let pipe = build_pipe(
         &ctx,
         vec![(Value::atom("HEAD"), br(8, 13))],
-        /* fs */ true, /* read */ false,
+        /* fs */ true,
+        /* read */ false,
     );
     let cursors = run(pipe, Cursor::default());
 
     let mut paths: Vec<String> = cursors.iter().map(|c| c.value.to_string()).collect();
     paths.sort();
-    assert_eq!(paths, vec!["README.md".to_string(), "src/main.rs".to_string()]);
+    assert_eq!(
+        paths,
+        vec!["README.md".to_string(), "src/main.rs".to_string()]
+    );
 
     // Each cursor's coord has rev != 0, fs == 0 (read() not yet fired).
     for cursor in &cursors {
         let coord = store.coord_of(cursor.at).expect("coord_of");
         assert_ne!(coord.rev, 0, "fs() preserves upstream rev");
-        assert_eq!(coord.fs, 0, "fs() does not intern files; that's read()'s job");
+        assert_eq!(
+            coord.fs, 0,
+            "fs() does not intern files; that's read()'s job"
+        );
     }
 }
 
@@ -217,20 +229,24 @@ fn fs_over_rev_emits_path_cursors() {
 /// from path to content.
 #[test]
 fn read_over_rev_populates_intern_file_and_flips_value() {
-    let tmp  = build_two_commit_repo();
+    let tmp = build_two_commit_repo();
     let root: PathBuf = tmp.path().to_path_buf();
-    let cfg  = SprfConfig {
-        repos: vec![RepoConfig { slug: "t/r".into(), root: root.clone() }],
+    let cfg = SprfConfig {
+        repos: vec![RepoConfig {
+            slug: "t/r".into(),
+            root: root.clone(),
+        }],
         ..Default::default()
     };
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
-    let ctx   = make_ctx(facts.clone(), store.clone(), cfg);
+    let ctx = make_ctx(facts.clone(), store.clone(), cfg);
 
     let pipe = build_pipe(
         &ctx,
         vec![(Value::atom("HEAD"), br(8, 13))],
-        /* fs */ true, /* read */ true,
+        /* fs */ true,
+        /* read */ true,
     );
     let cursors = run(pipe, Cursor::default());
 
@@ -238,11 +254,15 @@ fn read_over_rev_populates_intern_file_and_flips_value() {
     assert_eq!(cursors.len(), 2);
 
     // Each cursor's value is the file content (not the path).
-    let main_cursor = cursors.iter().find(|c| c.value.contains("fn main"))
+    let main_cursor = cursors
+        .iter()
+        .find(|c| c.value.contains("fn main"))
         .expect("expected one cursor whose content contains `fn main`");
     assert_eq!(main_cursor.value.as_ref(), "fn main(){println!(\"hi\")}\n");
 
-    let readme_cursor = cursors.iter().find(|c| c.value.starts_with("v"))
+    let readme_cursor = cursors
+        .iter()
+        .find(|c| c.value.starts_with("v"))
         .expect("expected one cursor whose content starts with `v`");
     assert_eq!(readme_cursor.value.as_ref(), "v2\n");
 
@@ -250,7 +270,10 @@ fn read_over_rev_populates_intern_file_and_flips_value() {
     for cursor in &cursors {
         let coord = store.coord_of(cursor.at).expect("coord_of");
         assert_ne!(coord.rev, 0);
-        assert_ne!(coord.fs, 0, "read() interns the file; coord.fs is the FileId");
+        assert_ne!(
+            coord.fs, 0,
+            "read() interns the file; coord.fs is the FileId"
+        );
         assert!(coord.hi > 0, "coord.hi is the file byte length");
     }
 }
@@ -268,30 +291,38 @@ fn fs_over_wt_preserves_walkbuilder_behavior() {
     let root: PathBuf = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/main.rs"), b"fn main(){}\n").unwrap();
-    std::fs::write(root.join("README.md"),   b"hello\n").unwrap();
+    std::fs::write(root.join("README.md"), b"hello\n").unwrap();
 
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
-    let ctx   = LowerCtx::new(facts.clone(), root.clone())
+    let ctx = LowerCtx::new(facts.clone(), root.clone())
         .with_sprf_store(store.clone())
         .with_config(Arc::new(SprfConfig::empty()));
 
     // Bare `fs()`. With Cursor::default seed (rev == 0) the rev branch
     // skips and WalkBuilder enumerates ctx.root.
     let reg = default_registry();
-    let p_fs = reg.lower(&ctx, "fs", None, vec![], None, None, br(0, 4))
+    let p_fs = reg
+        .lower(&ctx, "fs", None, vec![], None, None, br(0, 4))
         .expect("fs()");
     let cursors = run(p_fs, Cursor::default());
     store.flush();
 
-    let mut paths: Vec<String> = cursors.iter()
+    let mut paths: Vec<String> = cursors
+        .iter()
         .filter_map(|c| c.get("FS").map(|s| s.to_string()))
         .collect();
     paths.sort();
-    let any_main   = paths.iter().any(|p| p.ends_with("src/main.rs"));
+    let any_main = paths.iter().any(|p| p.ends_with("src/main.rs"));
     let any_readme = paths.iter().any(|p| p.ends_with("README.md"));
-    assert!(any_main,   "expected an FS term ending in src/main.rs; got {paths:?}");
-    assert!(any_readme, "expected an FS term ending in README.md; got {paths:?}");
+    assert!(
+        any_main,
+        "expected an FS term ending in src/main.rs; got {paths:?}"
+    );
+    assert!(
+        any_readme,
+        "expected an FS term ending in README.md; got {paths:?}"
+    );
 
     // No rev was resolved → _revs untouched (sentinel only).
     assert_eq!(facts.len(REVS_TABLE), 1, "_revs: only the sentinel");

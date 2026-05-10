@@ -6,8 +6,7 @@
 //! interpolation holes.
 
 use lsp_types::{
-    CompletionItem, Hover, HoverContents, MarkedString, SemanticTokenModifier,
-    SemanticTokenType,
+    CompletionItem, Hover, HoverContents, MarkedString, SemanticTokenModifier, SemanticTokenType,
 };
 
 use crate::cst::diag::{Diag, DiagSink};
@@ -19,28 +18,29 @@ use crate::cst::lsp::providers::{DslBodyLsp, SemanticToken};
 pub struct MarkdownDsl;
 
 impl MarkdownDsl {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Dsl for MarkdownDsl {
-    fn id(&self) -> &'static str { "markdown" }
+    fn id(&self) -> &'static str {
+        "markdown"
+    }
 
     fn compile(&self, _body: &[u8], _diags: &dyn DiagSink) -> Result<Box<dyn Compiled>, Diag> {
         Ok(Box::new(MarkdownCompiled))
     }
 
-    fn lsp(&self) -> Option<&dyn DslBodyLsp> { Some(self) }
+    fn lsp(&self) -> Option<&dyn DslBodyLsp> {
+        Some(self)
+    }
 }
 
 struct MarkdownCompiled;
 
 impl Compiled for MarkdownCompiled {
-    fn match_into(
-        &self,
-        _target: &[u8],
-        _target_off: usize,
-        _sink: &mut dyn CaptureSink,
-    ) {}
+    fn match_into(&self, _target: &[u8], _target_off: usize, _sink: &mut dyn CaptureSink) {}
 }
 
 impl DslBodyLsp for MarkdownDsl {
@@ -49,7 +49,9 @@ impl DslBodyLsp for MarkdownDsl {
         let t_keyword = legend.type_index(&SemanticTokenType::KEYWORD).unwrap_or(3);
         let t_operator = legend.type_index(&SemanticTokenType::OPERATOR).unwrap_or(7);
         let t_string = legend.type_index(&SemanticTokenType::STRING).unwrap_or(4);
-        let t_parameter = legend.type_index(&SemanticTokenType::PARAMETER).unwrap_or(2);
+        let t_parameter = legend
+            .type_index(&SemanticTokenType::PARAMETER)
+            .unwrap_or(2);
         let t_macro = legend.type_index(&SemanticTokenType::MACRO).unwrap_or(12);
         let readonly = legend.modifier_bits(&[SemanticTokenModifier::READONLY]);
 
@@ -76,7 +78,9 @@ impl DslBodyLsp for MarkdownDsl {
             }
             push_interpolation_tokens(line, line_start, &mut out, t_parameter);
 
-            if line_end == body.len() { break; }
+            if line_end == body.len() {
+                break;
+            }
             line_start = line_end + 1;
         }
         out
@@ -131,9 +135,17 @@ fn push_markdown_line_tokens(
     let rest = &line[indent..];
     if rest.starts_with(b"#") {
         let n = rest.iter().take_while(|b| **b == b'#').count();
-        out.push(tok(line_start + indent..line_start + indent + n, t_keyword, 0));
+        out.push(tok(
+            line_start + indent..line_start + indent + n,
+            t_keyword,
+            0,
+        ));
     } else if rest.starts_with(b"- ") || rest.starts_with(b"* ") {
-        out.push(tok(line_start + indent..line_start + indent + 1, t_operator, 0));
+        out.push(tok(
+            line_start + indent..line_start + indent + 1,
+            t_operator,
+            0,
+        ));
     }
 
     for (i, b) in line.iter().enumerate() {
@@ -204,7 +216,11 @@ fn hover(value: String) -> Hover {
 }
 
 fn tok(range: std::ops::Range<usize>, token_type: u32, token_modifiers: u32) -> SemanticToken {
-    SemanticToken { byte_range: range, token_type, token_modifiers }
+    SemanticToken {
+        byte_range: range,
+        token_type,
+        token_modifiers,
+    }
 }
 
 #[cfg(test)]

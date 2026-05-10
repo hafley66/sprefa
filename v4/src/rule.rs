@@ -14,12 +14,12 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, Component, Diag, ExpandOpts, ExpandStats, MemQueue, Next, Node,
-    Pipe, PipeInstance, QueueBackend, RenderCtx,
+    expand, Component, Diag, ExpandOpts, ExpandStats, MemQueue, Next, Node, Pipe, PipeInstance,
+    QueueBackend, RenderCtx,
 };
 
-use crate::Cursor;
 use crate::fact::{FactRead, FactWrite};
+use crate::Cursor;
 use effect_runtime::v2::FactStore;
 #[cfg(test)]
 use effect_runtime::v2::MemFactStore;
@@ -31,29 +31,29 @@ use effect_runtime::v2::MemFactStore;
 /// is where they land. Cloning is cheap (Arc-shaped fields).
 #[derive(Clone)]
 pub struct Rule {
-    pub name:       Arc<str>,
-    pub store:      Arc<dyn FactStore<Cursor>>,
+    pub name: Arc<str>,
+    pub store: Arc<dyn FactStore<Cursor>>,
     pub sink_table: Arc<str>,
-    pub sink_cols:  Arc<Vec<Arc<str>>>,
-    body_steps:     Arc<Vec<Arc<dyn Component<Next = Cursor>>>>,
+    pub sink_cols: Arc<Vec<Arc<str>>>,
+    body_steps: Arc<Vec<Arc<dyn Component<Next = Cursor>>>>,
 }
 
 impl Rule {
     pub fn new(
-        name:       impl Into<Arc<str>>,
-        store:      Arc<dyn FactStore<Cursor>>,
+        name: impl Into<Arc<str>>,
+        store: Arc<dyn FactStore<Cursor>>,
         sink_table: impl Into<Arc<str>>,
-        sink_cols:  &[&str],
-        body:       Pipe<Cursor>,
+        sink_cols: &[&str],
+        body: Pipe<Cursor>,
     ) -> Self {
         let sink_table: Arc<str> = sink_table.into();
         store.declare(&sink_table, sink_cols);
         let cols: Vec<Arc<str>> = sink_cols.iter().map(|s| Arc::<str>::from(*s)).collect();
         Self {
-            name:       name.into(),
+            name: name.into(),
             store,
             sink_table,
-            sink_cols:  Arc::new(cols),
+            sink_cols: Arc::new(cols),
             body_steps: Arc::new(body.steps),
         }
     }
@@ -62,20 +62,21 @@ impl Rule {
     /// FactWrite still runs its insert side; `run_with` over an empty
     /// seed is a declaration no-op.
     pub fn passthrough(
-        name:       impl Into<Arc<str>>,
-        store:      Arc<dyn FactStore<Cursor>>,
+        name: impl Into<Arc<str>>,
+        store: Arc<dyn FactStore<Cursor>>,
         sink_table: impl Into<Arc<str>>,
-        sink_cols:  &[&str],
+        sink_cols: &[&str],
     ) -> Self {
         Self::new(name, store, sink_table, sink_cols, Pipe::new())
     }
 
-    pub fn is_passthrough(&self) -> bool { self.body_steps.is_empty() }
+    pub fn is_passthrough(&self) -> bool {
+        self.body_steps.is_empty()
+    }
 
     /// Build the executable pipe (`body > FactWrite(sink)`).
     pub fn into_pipe(self) -> Pipe<Cursor> {
-        let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> =
-            (*self.body_steps).clone();
+        let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = (*self.body_steps).clone();
         steps.push(Arc::new(FactWrite::new(self.store, self.sink_table)));
         Pipe::from_steps(steps)
     }
@@ -86,8 +87,8 @@ impl Rule {
     pub fn run_with(
         self,
         queue: Arc<dyn QueueBackend<Cursor>>,
-        seed:  Vec<Arc<Cursor>>,
-        opts:  ExpandOpts,
+        seed: Vec<Arc<Cursor>>,
+        opts: ExpandOpts,
     ) -> ExpandStats {
         let inst = self.into_pipe().into_instance();
         expand(&inst, queue, seed, opts)
@@ -96,10 +97,10 @@ impl Rule {
     /// `rule?` — produce a `FactRead` Component aimed at this rule's
     /// sink table. The Component slots into any pipe.
     pub fn query(
-        store:      Arc<dyn FactStore<Cursor>>,
+        store: Arc<dyn FactStore<Cursor>>,
         sink_table: impl Into<Arc<str>>,
-        key_term:   impl Into<Arc<str>>,
-        project:    &[&str],
+        key_term: impl Into<Arc<str>>,
+        project: &[&str],
     ) -> FactRead {
         FactRead::new(store, sink_table, key_term, project)
     }
@@ -254,13 +255,13 @@ impl Component for InvokeCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effect_runtime::v2::{MemQueue, Node, PipeInstance, QueueBackend, RenderCtx};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
-    use effect_runtime::v2::{
-        MemQueue, Node, PipeInstance, QueueBackend, RenderCtx,
-    };
 
-    struct Collector { sink: Arc<Mutex<Vec<Cursor>>> }
+    struct Collector {
+        sink: Arc<Mutex<Vec<Cursor>>>,
+    }
     impl Component for Collector {
         type Next = Cursor;
         fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
@@ -270,8 +271,13 @@ mod tests {
     }
 
     fn cursor(value: &str, kvs: &[(&str, &str)]) -> Arc<Cursor> {
-        let mut c = Cursor { value: value.into(), ..Default::default() };
-        for (k, v) in kvs { c.set(k, *v); }
+        let mut c = Cursor {
+            value: value.into(),
+            ..Default::default()
+        };
+        for (k, v) in kvs {
+            c.set(k, *v);
+        }
         Arc::new(c)
     }
 
@@ -308,8 +314,8 @@ mod tests {
 
         let store = Arc::new(MemFactStore::<Cursor>::new());
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let body  = Pipe::new().step(Arc::new(Upcase));
-        let rule  = Rule::new("upcase", store.clone(), "loud", &[], body);
+        let body = Pipe::new().step(Arc::new(Upcase));
+        let rule = Rule::new("upcase", store.clone(), "loud", &[], body);
 
         rule.run_with(queue, vec![cursor("hi", &[])], ExpandOpts::default());
 
@@ -324,11 +330,12 @@ mod tests {
         let store = Arc::new(MemFactStore::<Cursor>::new());
         let q1: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let rule = Rule::passthrough("strings", store.clone(), "strings", &["FILE", "HIT"]);
-        rule.run_with(q1,
+        rule.run_with(
+            q1,
             vec![
-                cursor("hi",  &[("FILE", "a.rs"), ("HIT", "hi")]),
+                cursor("hi", &[("FILE", "a.rs"), ("HIT", "hi")]),
                 cursor("bye", &[("FILE", "a.rs"), ("HIT", "bye")]),
-                cursor("z",   &[("FILE", "b.rs"), ("HIT", "z")]),
+                cursor("z", &[("FILE", "b.rs"), ("HIT", "z")]),
             ],
             ExpandOpts::default(),
         );
@@ -343,7 +350,12 @@ mod tests {
             Arc::new(Collector { sink: sink.clone() }),
         ]);
 
-        expand(&pipe, q2, vec![cursor("seed", &[("FILE", "a.rs")])], ExpandOpts::default());
+        expand(
+            &pipe,
+            q2,
+            vec![cursor("seed", &[("FILE", "a.rs")])],
+            ExpandOpts::default(),
+        );
 
         let got = sink.lock().unwrap();
         assert_eq!(got.len(), 2);
@@ -368,7 +380,9 @@ mod tests {
     fn rule_invoke_cache_replays_unless_forced() {
         let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
         let count = Arc::new(AtomicUsize::new(0));
-        let body = Pipe::new().step(Arc::new(CountBody { count: count.clone() }));
+        let body = Pipe::new().step(Arc::new(CountBody {
+            count: count.clone(),
+        }));
         let rule = Rule::new("counted", store, "counted", &["COUNT"], body);
         let input = cursor("seed", &[]);
         let ctx = RenderCtx::new(0, 0, 0);

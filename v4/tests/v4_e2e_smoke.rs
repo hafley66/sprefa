@@ -4,14 +4,12 @@
 
 use std::sync::Arc;
 
-use effect_runtime::v2::{
-    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
-};
+use effect_runtime::v2::{expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend};
 
-use v4::Cursor;
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::Cursor;
 
 #[test]
 fn e2e_source_to_fact_store() {
@@ -37,7 +35,8 @@ fn e2e_source_to_fact_store() {
     assert!(
         walk_diags.is_empty(),
         "walk diags: {:?}",
-        walk_diags.iter()
+        walk_diags
+            .iter()
             .map(|d| (d.code.as_ref(), d.message.as_str()))
             .collect::<Vec<_>>()
     );

@@ -5,8 +5,8 @@
 //! `MemQueue<Cursor>`). The encoding mirrors `cursor_codec` — one
 //! source of bytes for hashing and persistence.
 
-use crate::Cursor;
 use crate::cursor_codec;
+use crate::Cursor;
 
 impl effect_runtime::v2::Next for Cursor {
     // PERF TODO: cache the hash on the Cursor (Cell<Option<[u8;32]>>
@@ -23,7 +23,9 @@ impl effect_runtime::v2::Next for Cursor {
 }
 
 impl effect_runtime::v2::Codec for Cursor {
-    fn encode(&self) -> Vec<u8> { cursor_codec::encode(self) }
+    fn encode(&self) -> Vec<u8> {
+        cursor_codec::encode(self)
+    }
     fn decode(bytes: &[u8]) -> Self {
         cursor_codec::decode(bytes).expect("valid cursor codec bytes")
     }

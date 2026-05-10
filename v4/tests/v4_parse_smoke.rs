@@ -13,7 +13,10 @@ fn host_parse_four_slot_and_diag_shape() {
     //                brace=PipeAst with one OpCall name=str, dsl=Some("world").
     let src = "rule(:greet)`hi`{ str`world` };";
     let (pipes, diags) = host_parse(src);
-    assert!(diags.is_empty(), "expected clean parse, got diags: {diags:?}");
+    assert!(
+        diags.is_empty(),
+        "expected clean parse, got diags: {diags:?}"
+    );
     assert_eq!(pipes.len(), 1, "one top-level pipe");
     let pipe = &pipes[0];
     assert_eq!(pipe.steps.len(), 1, "one op step");
@@ -52,7 +55,10 @@ fn host_parse_four_slot_and_diag_shape() {
 
     let src_apply = "frontend_hooks!(OP, FILE);";
     let (pipes_apply, diags_apply) = host_parse(src_apply);
-    assert!(diags_apply.is_empty(), "expected clean force apply parse, got diags: {diags_apply:?}");
+    assert!(
+        diags_apply.is_empty(),
+        "expected clean force apply parse, got diags: {diags_apply:?}"
+    );
     let call = &pipes_apply[0].steps[0];
     assert_eq!(&*call.name, "frontend_hooks");
     assert!(call.force);
@@ -62,7 +68,10 @@ fn host_parse_four_slot_and_diag_shape() {
 
     let src_query = "frontend_hooks?(OP?, FILE);";
     let (pipes_query, diags_query) = host_parse(src_query);
-    assert!(diags_query.is_empty(), "expected clean rule query parse, got diags: {diags_query:?}");
+    assert!(
+        diags_query.is_empty(),
+        "expected clean rule query parse, got diags: {diags_query:?}"
+    );
     let call = &pipes_query[0].steps[0];
     assert_eq!(&*call.name, "frontend_hooks");
     assert!(!call.force);
@@ -72,7 +81,10 @@ fn host_parse_four_slot_and_diag_shape() {
 
     let src_force = "db_size_over!(PATH, LIMIT);";
     let (pipes_force, diags_force) = host_parse(src_force);
-    assert!(diags_force.is_empty(), "expected clean force parse, got diags: {diags_force:?}");
+    assert!(
+        diags_force.is_empty(),
+        "expected clean force parse, got diags: {diags_force:?}"
+    );
     let call = &pipes_force[0].steps[0];
     assert_eq!(&*call.name, "db_size_over");
     assert!(call.force);
@@ -81,7 +93,10 @@ fn host_parse_four_slot_and_diag_shape() {
 
     let src_comment = "comment(`<!-- start -->`, `<!-- end -->`);";
     let (pipes_comment, diags_comment) = host_parse(src_comment);
-    assert!(diags_comment.is_empty(), "expected clean comment arg parse, got diags: {diags_comment:?}");
+    assert!(
+        diags_comment.is_empty(),
+        "expected clean comment arg parse, got diags: {diags_comment:?}"
+    );
     let call = &pipes_comment[0].steps[0];
     assert_eq!(&*call.name, "comment");
     assert_eq!(call.args.len(), 2);
@@ -90,7 +105,10 @@ fn host_parse_four_slot_and_diag_shape() {
 
     let src_render = "render.markdown`## Title`;";
     let (pipes_render, diags_render) = host_parse(src_render);
-    assert!(diags_render.is_empty(), "expected clean dotted render parse, got diags: {diags_render:?}");
+    assert!(
+        diags_render.is_empty(),
+        "expected clean dotted render parse, got diags: {diags_render:?}"
+    );
     let call = &pipes_render[0].steps[0];
     assert_eq!(&*call.name, "render.markdown");
     assert!(!call.apply);

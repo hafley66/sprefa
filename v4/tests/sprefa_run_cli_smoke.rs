@@ -33,8 +33,14 @@ fn sprefa_run_prints_runtime_diags_and_fact_rows() {
         stdout.contains("warning:missing_frontend_hook: missing frontend hook for listPets"),
         "stdout missing runtime warning:\n{stdout}",
     );
-    assert!(stdout.contains("── facts ──"), "stdout missing facts header:\n{stdout}");
-    assert!(stdout.contains("openapi_ops: 2 rows"), "stdout missing openapi_ops rows:\n{stdout}");
+    assert!(
+        stdout.contains("── facts ──"),
+        "stdout missing facts header:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("openapi_ops: 2 rows"),
+        "stdout missing openapi_ops rows:\n{stdout}"
+    );
     assert!(
         stdout.contains("missing_frontend_hooks: 1 rows"),
         "stdout missing missing_frontend_hooks rows:\n{stdout}",
@@ -86,10 +92,22 @@ fn sprefa_run_telemetry_flag_prints_runtime_counters() {
         String::from_utf8_lossy(&output.stderr),
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("── telemetry ──"), "stdout missing telemetry:\n{stdout}");
-    assert!(stdout.contains("rendered="), "stdout missing expand counters:\n{stdout}");
-    assert!(stdout.contains("stage"), "stdout missing stage counters:\n{stdout}");
-    assert!(stdout.contains("store insert_calls="), "stdout missing fact store counters:\n{stdout}");
+    assert!(
+        stdout.contains("── telemetry ──"),
+        "stdout missing telemetry:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("rendered="),
+        "stdout missing expand counters:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("stage"),
+        "stdout missing stage counters:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("store insert_calls="),
+        "stdout missing fact store counters:\n{stdout}"
+    );
 }
 
 #[test]
@@ -182,13 +200,28 @@ fn runtime_map_example_writes_html_and_warns_on_missing_source_cursor() {
         stdout.contains("warning:missing_runtime_doc: runtime map expected source cursor is missing: CursorTerm"),
         "stdout missing CursorTerm drift warning:\n{stdout}",
     );
-    assert!(stdout.contains("runtime_nodes: 8 rows"), "stdout missing source rows:\n{stdout}");
-    assert!(stdout.contains("missing_runtime_nodes: 1 rows"), "stdout missing drift row:\n{stdout}");
+    assert!(
+        stdout.contains("runtime_nodes: 8 rows"),
+        "stdout missing source rows:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("missing_runtime_nodes: 1 rows"),
+        "stdout missing drift row:\n{stdout}"
+    );
 
     let body = std::fs::read_to_string(&html).expect("runtime map html should be written");
-    assert!(body.contains("<h1>sprefa runtime map</h1>"), "html missing heading:\n{body}");
-    assert!(body.contains(">QueueRow<"), "html missing QueueRow node:\n{body}");
-    assert!(body.contains(">RenderCtx<"), "html missing RenderCtx node:\n{body}");
+    assert!(
+        body.contains("<h1>sprefa runtime map</h1>"),
+        "html missing heading:\n{body}"
+    );
+    assert!(
+        body.contains(">QueueRow<"),
+        "html missing QueueRow node:\n{body}"
+    );
+    assert!(
+        body.contains(">RenderCtx<"),
+        "html missing RenderCtx node:\n{body}"
+    );
 }
 
 #[test]
@@ -214,6 +247,12 @@ fn repo_rev_fs_read_example_runs_with_example_config() {
         String::from_utf8_lossy(&output.stderr),
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("cargo_name_lines:"), "stdout missing table:\n{stdout}");
-    assert!(stdout.contains("MATCH"), "stdout missing match field:\n{stdout}");
+    assert!(
+        stdout.contains("cargo_name_lines:"),
+        "stdout missing table:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("MATCH"),
+        "stdout missing match field:\n{stdout}"
+    );
 }

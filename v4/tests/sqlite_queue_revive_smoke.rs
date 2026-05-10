@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, table_dirty_key, Component, ExpandOpts, Node, PipeInstance, QueueBackend,
-    QueueRow, RenderCtx, SqliteQueue, Wake, TABLE_DOMAIN,
+    expand, table_dirty_key, Component, ExpandOpts, Node, PipeInstance, QueueBackend, QueueRow,
+    RenderCtx, SqliteQueue, Wake, TABLE_DOMAIN,
 };
 use v4::Cursor;
 
@@ -51,13 +51,12 @@ fn sqlite_queue_revives_parked_cursor_after_reopen_and_wake() {
         assert_eq!(queue.depth(), 1);
     }
 
-    let queue: Arc<dyn QueueBackend<Cursor>> =
-        Arc::new(SqliteQueue::<Cursor>::open_file(&db));
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(SqliteQueue::<Cursor>::open_file(&db));
     assert_eq!(queue.dispatch_park(TABLE_DOMAIN, Some(wake_key)), 1);
 
     let sink = Arc::new(Mutex::new(Vec::new()));
     let mut pipe = PipeInstance::new(vec![
-        Arc::new(Sink(sink.clone())) as Arc<dyn Component<Next = Cursor>>,
+        Arc::new(Sink(sink.clone())) as Arc<dyn Component<Next = Cursor>>
     ]);
     pipe.pipe_hash = 42;
     pipe.instance_id = 7;

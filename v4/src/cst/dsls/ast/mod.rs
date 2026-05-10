@@ -24,24 +24,29 @@ pub struct AstDsl {
 }
 
 impl AstDsl {
-    pub fn new(lang: SupportLang) -> Self { Self { lang } }
-    pub fn lang(&self) -> SupportLang { self.lang }
+    pub fn new(lang: SupportLang) -> Self {
+        Self { lang }
+    }
+    pub fn lang(&self) -> SupportLang {
+        self.lang
+    }
 }
 
 impl Dsl for AstDsl {
-    fn id(&self) -> &'static str { "ast" }
+    fn id(&self) -> &'static str {
+        "ast"
+    }
 
-    fn compile(
-        &self,
-        body:  &[u8],
-        diags: &dyn DiagSink,
-    ) -> Result<Box<dyn Compiled>, Diag> {
-        let body_str = std::str::from_utf8(body).map_err(|e| {
-            Diag::error("ast.utf8", format!("body not utf-8: {e}"), 0..body.len())
-        })?;
+    fn compile(&self, body: &[u8], diags: &dyn DiagSink) -> Result<Box<dyn Compiled>, Diag> {
+        let body_str = std::str::from_utf8(body)
+            .map_err(|e| Diag::error("ast.utf8", format!("body not utf-8: {e}"), 0..body.len()))?;
 
         let pattern = Pattern::try_new(body_str, self.lang).map_err(|e| {
-            Diag::error("ast.pattern", format!("pattern compile failed: {e}"), 0..body.len())
+            Diag::error(
+                "ast.pattern",
+                format!("pattern compile failed: {e}"),
+                0..body.len(),
+            )
         })?;
 
         let metavars = scan_metavars(body_str);
@@ -56,7 +61,7 @@ impl Dsl for AstDsl {
 }
 
 pub struct AstCompiled {
-    lang:    SupportLang,
+    lang: SupportLang,
     pattern: Arc<Pattern<SupportLang>>,
     /// Metavar names scanned at compile time. Drives match-time env lookup;
     /// the resulting capture names emerge through `match_into`.
@@ -64,14 +69,18 @@ pub struct AstCompiled {
 }
 
 impl AstCompiled {
-    pub fn lang(&self)    -> SupportLang        { self.lang }
-    pub fn pattern(&self) -> &Pattern<SupportLang> { &self.pattern }
+    pub fn lang(&self) -> SupportLang {
+        self.lang
+    }
+    pub fn pattern(&self) -> &Pattern<SupportLang> {
+        &self.pattern
+    }
 }
 
 impl Compiled for AstCompiled {
     fn match_into(&self, target: &[u8], target_off: usize, sink: &mut dyn CaptureSink) {
         let target_str = match std::str::from_utf8(target) {
-            Ok(s)  => s,
+            Ok(s) => s,
             Err(_) => return,
         };
         let grep: AstGrep<StrDoc<SupportLang>> = AstGrep::new(target_str, self.lang);
@@ -89,7 +98,9 @@ impl Compiled for AstCompiled {
                             byte_range: (target_off + r.start)..(target_off + r.end),
                         },
                     };
-                    if let ControlFlow::Break(_) = sink.emit(row) { return; }
+                    if let ControlFlow::Break(_) = sink.emit(row) {
+                        return;
+                    }
                     continue;
                 }
                 let multi = env.get_multiple_matches(n);
@@ -101,9 +112,13 @@ impl Compiled for AstCompiled {
                         .join(" ");
                     let row = CaptureRow {
                         name: name.clone(),
-                        kind: CaptureKind::Literal { value: Arc::from(joined.into_bytes()) },
+                        kind: CaptureKind::Literal {
+                            value: Arc::from(joined.into_bytes()),
+                        },
                     };
-                    if let ControlFlow::Break(_) = sink.emit(row) { return; }
+                    if let ControlFlow::Break(_) = sink.emit(row) {
+                        return;
+                    }
                 }
             }
         }
@@ -115,9 +130,7 @@ impl Compiled for AstCompiled {
 /// duplicates collapsed.
 fn scan_metavars(body: &str) -> Vec<Arc<str>> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"\$\$?\$?([A-Z_][A-Z0-9_]*)").expect("metavar regex")
-    });
+    let re = RE.get_or_init(|| Regex::new(r"\$\$?\$?([A-Z_][A-Z0-9_]*)").expect("metavar regex"));
     let mut seen: Vec<Arc<str>> = Vec::new();
     for caps in re.captures_iter(body) {
         if let Some(m) = caps.get(1) {
@@ -207,7 +220,7 @@ mod tests {
         let bad: &[u8] = &[0xff, 0xfe, 0xfd];
         let err = match dsl.compile(bad, &SilentSink) {
             Err(d) => d,
-            Ok(_)  => panic!("expected utf8 failure"),
+            Ok(_) => panic!("expected utf8 failure"),
         };
         assert_eq!(err.code, "ast.utf8");
     }

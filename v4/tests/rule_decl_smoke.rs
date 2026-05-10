@@ -12,10 +12,10 @@ use effect_runtime::v2::{
     expand, Diag, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
 };
 
-use v4::Cursor;
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::Cursor;
 
 fn run_pipes(src: &str) -> (Arc<dyn FactStore<Cursor>>, Vec<Diag>) {
     let (program, parse_diags) = host_parse(src);
@@ -51,7 +51,10 @@ fn rule_empty_body_declares_table_zero_rows() {
     assert!(
         diags.is_empty(),
         "no walk diags expected, got {:?}",
-        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
     );
     assert_eq!(store.len("r"), 0, "empty-body rule produces no rows");
 }
@@ -63,7 +66,10 @@ fn rule_empty_body_with_param_captures_declares_columns() {
     assert!(
         diags.is_empty(),
         "no walk diags expected, got {:?}",
-        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
     );
     assert_eq!(store.len("r"), 0);
     // Deeper schema-introspection assertion (declared columns A, B) is a
@@ -77,7 +83,10 @@ fn rule_with_body_still_writes_rows() {
     assert!(
         diags.is_empty(),
         "no walk diags expected, got {:?}",
-        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
     );
     assert_eq!(store.len("greet"), 1);
     let rows = store.rows_of("greet");
@@ -99,7 +108,10 @@ fn rule_at_sink_position_drains_upstream_cursors() {
     assert!(
         diags.is_empty(),
         "no walk diags expected, got {:?}",
-        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
     );
     assert_eq!(store.len("items"), 2);
     let vals: Vec<_> = store

@@ -28,13 +28,17 @@ pub fn compile_grammars(grammars_dir: impl AsRef<StdPath>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() { continue; }
+        if !path.is_dir() {
+            continue;
+        }
         let dsl_name = match path.file_name().and_then(|s| s.to_str()) {
             Some(s) if !s.starts_with('.') => s,
             _ => continue,
         };
-        let parser_c  = path.join("src").join("parser.c");
-        if !parser_c.exists() { continue; }
+        let parser_c = path.join("src").join("parser.c");
+        if !parser_c.exists() {
+            continue;
+        }
         let scanner_c = path.join("src").join("scanner.c");
         let grammar_js = path.join("grammar.js");
 

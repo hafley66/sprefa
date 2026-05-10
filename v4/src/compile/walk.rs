@@ -32,8 +32,8 @@ use super::lower::value::{CallArg, Value};
 /// Continues past per-pipe errors to surface every diag in one pass.
 pub fn walk_program(
     program: &[PipeAst],
-    reg:     &Registry,
-    ctx:     &mut LowerCtx,
+    reg: &Registry,
+    ctx: &mut LowerCtx,
 ) -> (Vec<Pipe<Cursor>>, Vec<Diag>) {
     let mut pipes = Vec::with_capacity(program.len());
     let mut diags = Vec::new();
@@ -59,30 +59,37 @@ pub fn walk_program(
 /// (the rest of the chain still walks; the resulting pipe may be
 /// shorter than the source). Returns `None` only if every op failed.
 pub fn walk_pipe(
-    p:     &PipeAst,
-    reg:   &Registry,
-    ctx:   &mut LowerCtx,
+    p: &PipeAst,
+    reg: &Registry,
+    ctx: &mut LowerCtx,
     diags: &mut Vec<Diag>,
 ) -> Option<Pipe<Cursor>> {
     let mut acc: Pipe<Cursor> = Pipe::new();
     let mut any = false;
     for (idx, op) in p.steps.iter().enumerate() {
         match walk_op(op, reg, ctx, diags, idx) {
-            Some(piece) => { acc = acc.extend(piece); any = true; }
+            Some(piece) => {
+                acc = acc.extend(piece);
+                any = true;
+            }
             None => {} // diag already pushed
         }
     }
-    if any { Some(acc) } else { None }
+    if any {
+        Some(acc)
+    } else {
+        None
+    }
 }
 
 /// Walk one op: classify slots, recurse on block, parse dsl, dispatch
 /// through the registry. On any classification or lower failure, push a
 /// diag and return `None` so the caller can skip past it.
 pub fn walk_op(
-    op:        &OpCall,
-    reg:       &Registry,
-    ctx:       &mut LowerCtx,
-    diags:     &mut Vec<Diag>,
+    op: &OpCall,
+    reg: &Registry,
+    ctx: &mut LowerCtx,
+    diags: &mut Vec<Diag>,
     chain_pos: usize,
 ) -> Option<Pipe<Cursor>> {
     if op.flow.is_none()
@@ -111,7 +118,7 @@ pub fn walk_op(
     let flow: Option<(Value, ByteRange)> = match &op.flow {
         Some(slot) => match classify_slot(slot, reg, ctx, diags) {
             Some(v) => Some((v, slot.span)),
-            None    => return None,
+            None => return None,
         },
         None => None,
     };
@@ -122,10 +129,14 @@ pub fn walk_op(
     for slot in &op.args {
         match classify_call_arg(slot, reg, ctx, diags) {
             Some(v) => args.push((v, slot.span)),
-            None    => { had_arg_err = true; }
+            None => {
+                had_arg_err = true;
+            }
         }
     }
-    if had_arg_err { return None; }
+    if had_arg_err {
+        return None;
+    }
 
     // Resolve dsl body via the op's parse_dsl. Unknown op → registry
     // will emit `lower/unknown-op` below; here we just skip dsl parse.
@@ -133,12 +144,15 @@ pub fn walk_op(
         Some(dsl_text) => {
             let mut interps: Vec<DslInterp> = match reg.get(&lower_name) {
                 Some(def) => match def.parse_dsl(&dsl_text.raw) {
-                    Ok(v)  => v,
+                    Ok(v) => v,
                     Err(e) => {
                         diags.push(
-                            Diag::error("compile/dsl-parse",
-                                format!("op `{lower_name}` dsl parse: {e}"))
-                                .with_span(dsl_text.span.lo, dsl_text.span.hi));
+                            Diag::error(
+                                "compile/dsl-parse",
+                                format!("op `{lower_name}` dsl parse: {e}"),
+                            )
+                            .with_span(dsl_text.span.lo, dsl_text.span.hi),
+                        );
                         return None;
                     }
                 },
@@ -157,15 +171,13 @@ pub fn walk_op(
                         let mut frag = String::with_capacity(src.len() + 1);
                         frag.push_str(src);
                         frag.push(';');
-                        let (sub_pipes, sub_diags) =
-                            crate::compile::parse::host_parse(&frag);
+                        let (sub_pipes, sub_diags) = crate::compile::parse::host_parse(&frag);
                         // Rebase diag spans into outer source coordinates.
                         // Interp.range.lo is relative to dsl_text.raw; the
                         // SubPipe body sits at +2 (skip `${`). Errors are
                         // best-effort here: the inner_diags from walk_pipe
                         // get the same shift.
-                        let body_offset = dsl_text.span.lo
-                            .saturating_add(interp.range.lo + 2);
+                        let body_offset = dsl_text.span.lo.saturating_add(interp.range.lo + 2);
                         for mut d in sub_diags {
                             if let Some(r) = d.span.as_mut() {
                                 r.lo = r.lo.saturating_add(body_offset);
@@ -205,7 +217,10 @@ pub fn walk_op(
                 }
             }
             Some((
-                DslBody { raw: dsl_text.raw.clone(), interps },
+                DslBody {
+                    raw: dsl_text.raw.clone(),
+                    interps,
+                },
                 dsl_text.span,
             ))
         }
@@ -216,16 +231,18 @@ pub fn walk_op(
     let block: Option<(Pipe<Cursor>, ByteRange)> = match &op.block {
         Some(sub_ast) => match walk_pipe(sub_ast, reg, ctx, diags) {
             Some(pipe) => Some((pipe, sub_ast.span)),
-            None       => return None,
+            None => return None,
         },
         None => None,
     };
 
     if op.name.as_ref() == "rule" && op.force {
         diags.push(
-            Diag::error("lower/force-unsupported",
-                "rule!: force applies to dotted rule apply, not rule declarations or writes")
-                .with_span(op.span.lo, op.span.hi)
+            Diag::error(
+                "lower/force-unsupported",
+                "rule!: force applies to dotted rule apply, not rule declarations or writes",
+            )
+            .with_span(op.span.lo, op.span.hi),
         );
         return None;
     }
@@ -236,14 +253,14 @@ pub fn walk_op(
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
                     Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
-                    None    => pipe,
+                    None => pipe,
                 };
                 return Some(pipe);
             }
             Err(e) => {
                 diags.push(
                     Diag::error("lower/rule-write", e.to_string())
-                        .with_span(op.span.lo, op.span.hi)
+                        .with_span(op.span.lo, op.span.hi),
                 );
                 return None;
             }
@@ -264,9 +281,14 @@ pub fn walk_op(
 
     if op.apply && declared_rule_call {
         diags.push(
-            Diag::error("lower/rule-dotted-apply",
-                format!("{}.(...): dotted rule apply is retired; use {}(...) for default apply", op.name, op.name))
-                .with_span(op.span.lo, op.span.hi)
+            Diag::error(
+                "lower/rule-dotted-apply",
+                format!(
+                    "{}.(...): dotted rule apply is retired; use {}(...) for default apply",
+                    op.name, op.name
+                ),
+            )
+            .with_span(op.span.lo, op.span.hi),
         );
         return None;
     }
@@ -281,14 +303,13 @@ pub fn walk_op(
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
                     Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
-                    None    => pipe,
+                    None => pipe,
                 };
                 return Some(pipe);
             }
             Err(e) => {
                 diags.push(
-                    Diag::error("lower/rule-call", e.to_string())
-                        .with_span(op.span.lo, op.span.hi)
+                    Diag::error("lower/rule-call", e.to_string()).with_span(op.span.lo, op.span.hi),
                 );
                 return None;
             }
@@ -302,14 +323,14 @@ pub fn walk_op(
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
                     Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
-                    None    => pipe,
+                    None => pipe,
                 };
                 return Some(pipe);
             }
             Err(e) => {
                 diags.push(
                     Diag::error("lower/rule-body-call", e.to_string())
-                        .with_span(op.span.lo, op.span.hi)
+                        .with_span(op.span.lo, op.span.hi),
                 );
                 return None;
             }
@@ -322,14 +343,14 @@ pub fn walk_op(
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
                     Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
-                    None    => pipe,
+                    None => pipe,
                 };
                 return Some(pipe);
             }
             Err(e) => {
                 diags.push(
                     Diag::error("lower/rule-apply", e.to_string())
-                        .with_span(op.span.lo, op.span.hi)
+                        .with_span(op.span.lo, op.span.hi),
                 );
                 return None;
             }
@@ -345,18 +366,21 @@ pub fn walk_op(
             // `probe = None` the lowered pipe is returned unchanged.
             let pipe = match &ctx.probe {
                 Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
-                None    => pipe,
+                None => pipe,
             };
             Some(pipe)
         }
-        Err(ds)  => { diags.extend(ds); None }
+        Err(ds) => {
+            diags.extend(ds);
+            None
+        }
     }
 }
 
 fn classify_call_arg(
-    slot:  &SlotText,
-    reg:   &Registry,
-    ctx:   &mut LowerCtx,
+    slot: &SlotText,
+    reg: &Registry,
+    ctx: &mut LowerCtx,
     diags: &mut Vec<Diag>,
 ) -> Option<CallArg> {
     if let Some((keyword, value_slot)) = split_keyword_arg(slot) {
@@ -379,10 +403,20 @@ fn split_keyword_arg(slot: &SlotText) -> Option<(Arc<str>, SlotText)> {
     if value.is_empty() {
         return None;
     }
-    let value_start_in_trimmed = colon + 1 + trimmed[colon + 1..].len().saturating_sub(trimmed[colon + 1..].trim_start().len());
+    let value_start_in_trimmed = colon
+        + 1
+        + trimmed[colon + 1..]
+            .len()
+            .saturating_sub(trimmed[colon + 1..].trim_start().len());
     let value_end_in_trimmed = value_start_in_trimmed + value.len();
-    let lo = slot.span.lo.saturating_add((leading + value_start_in_trimmed) as u32);
-    let hi = slot.span.lo.saturating_add((leading + value_end_in_trimmed) as u32);
+    let lo = slot
+        .span
+        .lo
+        .saturating_add((leading + value_start_in_trimmed) as u32);
+    let hi = slot
+        .span
+        .lo
+        .saturating_add((leading + value_end_in_trimmed) as u32);
     Some((
         Arc::<str>::from(key),
         SlotText {
@@ -434,17 +468,17 @@ fn find_top_level_keyword_colon(raw: &str) -> Option<usize> {
 /// ranges (which are relative to `slot.raw`) can be rebased into outer
 /// source coords by adding `slot.span.lo`, then merged into `diags`.
 pub fn classify_slot(
-    slot:  &SlotText,
-    reg:   &Registry,
-    ctx:   &mut LowerCtx,
+    slot: &SlotText,
+    reg: &Registry,
+    ctx: &mut LowerCtx,
     diags: &mut Vec<Diag>,
 ) -> Option<Value> {
     let raw = slot.raw.as_ref().trim();
     if raw.is_empty() {
         diags.push(
-            Diag::error("compile/empty-slot",
-                "empty slot body".to_string())
-                .with_span(slot.span.lo, slot.span.hi));
+            Diag::error("compile/empty-slot", "empty slot body".to_string())
+                .with_span(slot.span.lo, slot.span.hi),
+        );
         return None;
     }
     // `${X}` and `${X?}` are template-literal interpolation holes —
@@ -454,14 +488,21 @@ pub fn classify_slot(
     // bury the real cause.
     if let Some(idx) = raw.find("${") {
         let lo = slot.span.lo.saturating_add(idx as u32);
-        let hi_rel = raw[idx..].find('}').map(|j| idx + j + 1).unwrap_or(raw.len());
+        let hi_rel = raw[idx..]
+            .find('}')
+            .map(|j| idx + j + 1)
+            .unwrap_or(raw.len());
         let hi = slot.span.lo.saturating_add(hi_rel as u32).min(slot.span.hi);
         diags.push(
-            Diag::error("lang/host-hole-illegal",
+            Diag::error(
+                "lang/host-hole-illegal",
                 "`${X}` interpolation is only valid inside a backtick DSL body. \
                  Use a bareword (`X`) or `:atom` here, or move the hole inside \
-                 a `` ` `` template.".to_string())
-                .with_span(lo, hi));
+                 a `` ` `` template."
+                    .to_string(),
+            )
+            .with_span(lo, hi),
+        );
         return None;
     }
     // `:foo` colon-prefixed atom.
@@ -540,10 +581,15 @@ pub fn classify_slot(
     }
     if sub_pipes.len() != 1 {
         diags.push(
-            Diag::error("compile/inline-pipe-malformed",
-                format!("inline pipe arg parsed to {} pipes (expected 1)",
-                    sub_pipes.len()))
-                .with_span(slot.span.lo, slot.span.hi));
+            Diag::error(
+                "compile/inline-pipe-malformed",
+                format!(
+                    "inline pipe arg parsed to {} pipes (expected 1)",
+                    sub_pipes.len()
+                ),
+            )
+            .with_span(slot.span.lo, slot.span.hi),
+        );
         return None;
     }
     // Recurse into walk_pipe with a fresh diag buffer so we can rebase
@@ -563,16 +609,28 @@ pub fn classify_slot(
 
 fn is_ident(s: &str) -> bool {
     let bytes = s.as_bytes();
-    if bytes.is_empty() { return false; }
-    if !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') { return false; }
-    bytes[1..].iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+    if bytes.is_empty() {
+        return false;
+    }
+    if !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') {
+        return false;
+    }
+    bytes[1..]
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
 /// `[A-Z][A-Z0-9_]*` — ALL_CAPS identifier convention. Used to mark a
 /// bareword in an arg slot as a term-ref (capture) rather than an atom.
 fn is_caps_ident(s: &str) -> bool {
     let bytes = s.as_bytes();
-    if bytes.is_empty() { return false; }
-    if !bytes[0].is_ascii_uppercase() { return false; }
-    bytes[1..].iter().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
+    if bytes.is_empty() {
+        return false;
+    }
+    if !bytes[0].is_ascii_uppercase() {
+        return false;
+    }
+    bytes[1..]
+        .iter()
+        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
 }

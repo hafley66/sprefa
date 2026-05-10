@@ -5,14 +5,12 @@
 //! This lands op-shape: ${ <pipe> } drains a nested Pipe per outer
 //! cursor and renders the drained cursor's value into the slot.
 
+use effect_runtime::v2::{expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend};
 use std::sync::Arc;
-use effect_runtime::v2::{
-    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
-};
-use v4::Cursor;
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::Cursor;
 
 fn run(src: &str) -> Arc<dyn FactStore<Cursor>> {
     let (program, parse_diags) = host_parse(src);
@@ -21,12 +19,23 @@ fn run(src: &str) -> Arc<dyn FactStore<Cursor>> {
     let reg = default_registry();
     let mut ctx = LowerCtx::new(store.clone(), std::env::temp_dir());
     let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
-    assert!(walk_diags.is_empty(), "walk: {:?}",
-        walk_diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>());
+    assert!(
+        walk_diags.is_empty(),
+        "walk: {:?}",
+        walk_diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     for pipe in pipes {
         let inst = pipe.into_instance();
-        expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], ExpandOpts::default());
+        expand(
+            &inst,
+            queue.clone(),
+            vec![Arc::new(Cursor::default())],
+            ExpandOpts::default(),
+        );
     }
     store
 }
@@ -41,8 +50,10 @@ fn rule_body_renders_nested_str_subpipe() {
     let store = run(src);
     assert_eq!(store.len("greet"), 1, "expected one row");
     let rows = store.rows_of("greet");
-    assert_eq!(&*rows[0].value, "out=hi",
-        "sub-pipe should drain to \"hi\" and splice into the slot");
+    assert_eq!(
+        &*rows[0].value, "out=hi",
+        "sub-pipe should drain to \"hi\" and splice into the slot"
+    );
 }
 
 /// Multiple carveouts in one template — each independently drained.

@@ -32,7 +32,7 @@ use crate::cst::lsp::providers::SemanticToken;
 /// `SemanticTokensLegend` the LSP server announces at initialization.
 #[derive(Clone, Debug)]
 pub struct Legend {
-    pub types:     Vec<SemanticTokenType>,
+    pub types: Vec<SemanticTokenType>,
     pub modifiers: Vec<SemanticTokenModifier>,
 }
 
@@ -81,8 +81,7 @@ impl Legend {
 }
 
 /// Mapping entry: `(SemanticTokenType, base modifiers always applied)`.
-pub type CaptureTable =
-    HashMap<&'static str, (SemanticTokenType, Vec<SemanticTokenModifier>)>;
+pub type CaptureTable = HashMap<&'static str, (SemanticTokenType, Vec<SemanticTokenModifier>)>;
 
 /// Standard nvim-treesitter / helix capture names → LSP types. Modifier
 /// suffixes (`.builtin`, `.readonly`, ...) are resolved at lookup time and
@@ -90,32 +89,50 @@ pub type CaptureTable =
 pub fn default_capture_table() -> CaptureTable {
     use SemanticTokenType as T;
     let mut m: CaptureTable = HashMap::new();
-    m.insert("function",       (T::FUNCTION,    vec![]));
-    m.insert("function.call",  (T::FUNCTION,    vec![]));
-    m.insert("function.macro", (T::MACRO,       vec![]));
-    m.insert("method",         (T::METHOD,      vec![]));
-    m.insert("constructor",    (T::FUNCTION,    vec![]));
-    m.insert("variable",       (T::VARIABLE,    vec![]));
-    m.insert("parameter",      (T::PARAMETER,   vec![]));
+    m.insert("function", (T::FUNCTION, vec![]));
+    m.insert("function.call", (T::FUNCTION, vec![]));
+    m.insert("function.macro", (T::MACRO, vec![]));
+    m.insert("method", (T::METHOD, vec![]));
+    m.insert("constructor", (T::FUNCTION, vec![]));
+    m.insert("variable", (T::VARIABLE, vec![]));
+    m.insert("parameter", (T::PARAMETER, vec![]));
     m.insert("variable.parameter", (T::PARAMETER, vec![]));
-    m.insert("variable.builtin", (T::VARIABLE, vec![SemanticTokenModifier::DEFAULT_LIBRARY]));
-    m.insert("constant",       (T::VARIABLE,    vec![SemanticTokenModifier::READONLY]));
-    m.insert("constant.builtin", (T::VARIABLE, vec![SemanticTokenModifier::READONLY, SemanticTokenModifier::DEFAULT_LIBRARY]));
-    m.insert("keyword",        (T::KEYWORD,     vec![]));
-    m.insert("keyword.operator", (T::KEYWORD,   vec![]));
-    m.insert("string",         (T::STRING,      vec![]));
-    m.insert("string.escape",  (T::STRING,      vec![]));
-    m.insert("string.special", (T::REGEXP,      vec![]));
-    m.insert("number",         (T::NUMBER,      vec![]));
-    m.insert("comment",        (T::COMMENT,     vec![]));
-    m.insert("operator",       (T::OPERATOR,    vec![]));
-    m.insert("type",           (T::TYPE,        vec![]));
-    m.insert("type.builtin",   (T::TYPE,        vec![SemanticTokenModifier::DEFAULT_LIBRARY]));
-    m.insert("property",       (T::PROPERTY,    vec![]));
-    m.insert("namespace",      (T::NAMESPACE,   vec![]));
-    m.insert("class",          (T::CLASS,       vec![]));
-    m.insert("enum_member",    (T::ENUM_MEMBER, vec![]));
-    m.insert("punctuation",    (T::OPERATOR,    vec![]));
+    m.insert(
+        "variable.builtin",
+        (T::VARIABLE, vec![SemanticTokenModifier::DEFAULT_LIBRARY]),
+    );
+    m.insert(
+        "constant",
+        (T::VARIABLE, vec![SemanticTokenModifier::READONLY]),
+    );
+    m.insert(
+        "constant.builtin",
+        (
+            T::VARIABLE,
+            vec![
+                SemanticTokenModifier::READONLY,
+                SemanticTokenModifier::DEFAULT_LIBRARY,
+            ],
+        ),
+    );
+    m.insert("keyword", (T::KEYWORD, vec![]));
+    m.insert("keyword.operator", (T::KEYWORD, vec![]));
+    m.insert("string", (T::STRING, vec![]));
+    m.insert("string.escape", (T::STRING, vec![]));
+    m.insert("string.special", (T::REGEXP, vec![]));
+    m.insert("number", (T::NUMBER, vec![]));
+    m.insert("comment", (T::COMMENT, vec![]));
+    m.insert("operator", (T::OPERATOR, vec![]));
+    m.insert("type", (T::TYPE, vec![]));
+    m.insert(
+        "type.builtin",
+        (T::TYPE, vec![SemanticTokenModifier::DEFAULT_LIBRARY]),
+    );
+    m.insert("property", (T::PROPERTY, vec![]));
+    m.insert("namespace", (T::NAMESPACE, vec![]));
+    m.insert("class", (T::CLASS, vec![]));
+    m.insert("enum_member", (T::ENUM_MEMBER, vec![]));
+    m.insert("punctuation", (T::OPERATOR, vec![]));
     m
 }
 
@@ -134,10 +151,8 @@ fn lookup<'a>(
     while let Some(dot) = cur.rfind('.') {
         let suffix = &cur[dot + 1..];
         match suffix {
-            "builtin" | "defaultLibrary" =>
-                extra_mods.push(SemanticTokenModifier::DEFAULT_LIBRARY),
-            "readonly" =>
-                extra_mods.push(SemanticTokenModifier::READONLY),
+            "builtin" | "defaultLibrary" => extra_mods.push(SemanticTokenModifier::DEFAULT_LIBRARY),
+            "readonly" => extra_mods.push(SemanticTokenModifier::READONLY),
             _ => {}
         }
         cur = &cur[..dot];
@@ -168,8 +183,12 @@ pub fn highlights_to_semantic_tokens(
     while let Some(m) = matches.next() {
         for cap in m.captures {
             let name = capture_names[cap.index as usize];
-            let Some((tt, mods)) = lookup(table, name) else { continue };
-            let Some(type_idx) = legend.type_index(&tt) else { continue };
+            let Some((tt, mods)) = lookup(table, name) else {
+                continue;
+            };
+            let Some(type_idx) = legend.type_index(&tt) else {
+                continue;
+            };
             let mod_bits = legend.modifier_bits(&mods);
             let r = cap.node.byte_range();
             tokens.push(SemanticToken {
@@ -214,7 +233,7 @@ mod tests {
     fn legend_type_index_lookup() {
         let legend = Legend::standard();
         assert_eq!(legend.type_index(&SemanticTokenType::FUNCTION), Some(0));
-        assert_eq!(legend.type_index(&SemanticTokenType::COMMENT),  Some(6));
+        assert_eq!(legend.type_index(&SemanticTokenType::COMMENT), Some(6));
         assert!(legend.type_index(&SemanticTokenType::EVENT).is_none());
     }
 }

@@ -13,13 +13,19 @@ pub fn position_to_byte(text: &str, pos: Position) -> Option<usize> {
     // Walk to the start of the requested line.
     while line < pos.line {
         match text[byte..].find('\n') {
-            Some(rel) => { byte += rel + 1; line += 1; }
+            Some(rel) => {
+                byte += rel + 1;
+                line += 1;
+            }
             None => return None,
         }
     }
 
     // Within the line, count UTF-16 code units.
-    let line_end = text[byte..].find('\n').map(|n| byte + n).unwrap_or(text.len());
+    let line_end = text[byte..]
+        .find('\n')
+        .map(|n| byte + n)
+        .unwrap_or(text.len());
     let line_slice = &text[byte..line_end];
     let mut units: u32 = 0;
     for (offset, ch) in line_slice.char_indices() {
@@ -41,15 +47,25 @@ pub fn byte_to_position(text: &str, byte: usize) -> Position {
     let mut line: u32 = 0;
     let mut line_start: usize = 0;
     for (i, c) in text.char_indices() {
-        if i >= byte { break; }
-        if c == '\n' { line += 1; line_start = i + 1; }
+        if i >= byte {
+            break;
+        }
+        if c == '\n' {
+            line += 1;
+            line_start = i + 1;
+        }
     }
     let mut units: u32 = 0;
     for (offset, ch) in text[line_start..].char_indices() {
-        if line_start + offset >= byte { break; }
+        if line_start + offset >= byte {
+            break;
+        }
         units += ch.len_utf16() as u32;
     }
-    Position { line, character: units }
+    Position {
+        line,
+        character: units,
+    }
 }
 
 #[cfg(test)]
@@ -62,7 +78,10 @@ mod tests {
         for byte in 0..s.len() {
             let pos = byte_to_position(s, byte);
             let back = position_to_byte(s, pos).unwrap();
-            assert_eq!(back, byte, "byte {byte} pos {pos:?} round-tripped to {back}");
+            assert_eq!(
+                back, byte,
+                "byte {byte} pos {pos:?} round-tripped to {back}"
+            );
         }
     }
 
@@ -71,7 +90,13 @@ mod tests {
         // 🦀 is 4 bytes UTF-8, 2 UTF-16 code units (surrogate pair).
         let s = "x🦀y";
         let pos_at_y = byte_to_position(s, 5); // 1 + 4 = 5
-        assert_eq!(pos_at_y, Position { line: 0, character: 3 });
+        assert_eq!(
+            pos_at_y,
+            Position {
+                line: 0,
+                character: 3
+            }
+        );
         let back = position_to_byte(s, pos_at_y).unwrap();
         assert_eq!(back, 5);
     }

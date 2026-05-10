@@ -29,20 +29,22 @@ extern "C" {
 const GLOB_UNBOUND_HOLE: &str = "[^/]+";
 
 pub struct GlobDsl {
-    legend:           Legend,
-    table:            CaptureTable,
+    legend: Legend,
+    table: CaptureTable,
     highlights_query: OnceLock<Query>,
 }
 
 impl Default for GlobDsl {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GlobDsl {
     pub fn new() -> Self {
         Self {
-            legend:           Legend::standard(),
-            table:            default_capture_table(),
+            legend: Legend::standard(),
+            table: default_capture_table(),
             highlights_query: OnceLock::new(),
         }
     }
@@ -50,42 +52,37 @@ impl GlobDsl {
     pub fn with_legend(legend: Legend) -> Self {
         Self {
             legend,
-            table:            default_capture_table(),
+            table: default_capture_table(),
             highlights_query: OnceLock::new(),
         }
     }
 
-    pub fn language(&self) -> Language { unsafe { tree_sitter_sprefa_glob() } }
+    pub fn language(&self) -> Language {
+        unsafe { tree_sitter_sprefa_glob() }
+    }
 
     fn highlights_query(&self) -> &Query {
         self.highlights_query.get_or_init(|| {
-            Query::new(
-                &self.language(),
-                include_str!("queries/highlights.scm"),
-            )
-            .expect("glob/queries/highlights.scm")
+            Query::new(&self.language(), include_str!("queries/highlights.scm"))
+                .expect("glob/queries/highlights.scm")
         })
     }
 }
 
 impl Dsl for GlobDsl {
-    fn id(&self) -> &'static str { "glob" }
+    fn id(&self) -> &'static str {
+        "glob"
+    }
 
-    fn compile(
-        &self,
-        body:  &[u8],
-        diags: &dyn DiagSink,
-    ) -> Result<Box<dyn Compiled>, Diag> {
-        let body_str = std::str::from_utf8(body).map_err(|e| {
-            Diag::error("glob.utf8", format!("body not utf-8: {e}"), 0..body.len())
-        })?;
+    fn compile(&self, body: &[u8], diags: &dyn DiagSink) -> Result<Box<dyn Compiled>, Diag> {
+        let body_str = std::str::from_utf8(body)
+            .map_err(|e| Diag::error("glob.utf8", format!("body not utf-8: {e}"), 0..body.len()))?;
         let mut p = TSParser::new();
-        p.set_language(&self.language()).map_err(|e| {
-            Diag::error("glob.language", format!("set_language failed: {e}"), 0..0)
-        })?;
-        let tree = p.parse(body_str, None).ok_or_else(|| {
-            Diag::error("glob.parse", "parser returned None", 0..0)
-        })?;
+        p.set_language(&self.language())
+            .map_err(|e| Diag::error("glob.language", format!("set_language failed: {e}"), 0..0))?;
+        let tree = p
+            .parse(body_str, None)
+            .ok_or_else(|| Diag::error("glob.parse", "parser returned None", 0..0))?;
 
         let (parts, _hole_names) = build_parts(&tree, body);
 
@@ -104,28 +101,35 @@ impl Dsl for GlobDsl {
         }
         rx.push('$');
 
-        let regex = Regex::new(&rx).map_err(|err| {
-            Diag::error("glob.syntax", err.to_string(), 0..body.len())
-        })?;
+        let regex = Regex::new(&rx)
+            .map_err(|err| Diag::error("glob.syntax", err.to_string(), 0..body.len()))?;
 
         let _ = diags;
 
         Ok(Box::new(GlobCompiled { regex, tree }))
     }
 
-    fn injection_grammar(&self) -> Option<Language> { Some(self.language()) }
+    fn injection_grammar(&self) -> Option<Language> {
+        Some(self.language())
+    }
 
-    fn lsp(&self) -> Option<&dyn DslBodyLsp> { Some(self) }
+    fn lsp(&self) -> Option<&dyn DslBodyLsp> {
+        Some(self)
+    }
 }
 
 pub struct GlobCompiled {
     regex: Regex,
-    tree:  Tree,
+    tree: Tree,
 }
 
 impl GlobCompiled {
-    pub fn regex(&self) -> &Regex { &self.regex }
-    pub fn tree(&self)  -> &Tree  { &self.tree }
+    pub fn regex(&self) -> &Regex {
+        &self.regex
+    }
+    pub fn tree(&self) -> &Tree {
+        &self.tree
+    }
 }
 
 impl Compiled for GlobCompiled {
@@ -141,7 +145,9 @@ impl Compiled for GlobCompiled {
                         byte_range: (target_off + m.start())..(target_off + m.end()),
                     },
                 };
-                if let ControlFlow::Break(_) = sink.emit(row) { return; }
+                if let ControlFlow::Break(_) = sink.emit(row) {
+                    return;
+                }
             }
         }
     }
@@ -154,12 +160,16 @@ impl Compiled for GlobCompiled {
 impl DslBodyLsp for GlobDsl {
     fn semantic_tokens(&self, body: &[u8]) -> Vec<SemanticToken> {
         let mut p = TSParser::new();
-        if p.set_language(&self.language()).is_err() { return vec![]; }
+        if p.set_language(&self.language()).is_err() {
+            return vec![];
+        }
         let body_str = match std::str::from_utf8(body) {
             Ok(s) => s,
             Err(_) => return vec![],
         };
-        let Some(tree) = p.parse(body_str, None) else { return vec![]; };
+        let Some(tree) = p.parse(body_str, None) else {
+            return vec![];
+        };
         highlights_to_semantic_tokens(
             self.highlights_query(),
             &tree,
@@ -170,11 +180,14 @@ impl DslBodyLsp for GlobDsl {
     }
 }
 
-enum Part { Frag(String), Term(Arc<str>) }
+enum Part {
+    Frag(String),
+    Term(Arc<str>),
+}
 
 fn build_parts(tree: &Tree, bytes: &[u8]) -> (Vec<Part>, Vec<Arc<str>>) {
     let root = tree.root_node();
-    let mut parts: Vec<Part>     = Vec::new();
+    let mut parts: Vec<Part> = Vec::new();
     let mut holes: Vec<Arc<str>> = Vec::new();
 
     let mut walker = root.walk();
@@ -184,10 +197,7 @@ fn build_parts(tree: &Tree, bytes: &[u8]) -> (Vec<Part>, Vec<Arc<str>>) {
     let mut i = 0;
     while i < kids.len() {
         // `**` segment recognizers — match ripgrep/globset semantics.
-        if kind_at(i) == "slash"
-            && kind_at(i + 1) == "double_star"
-            && kind_at(i + 2) == "slash"
-        {
+        if kind_at(i) == "slash" && kind_at(i + 1) == "double_star" && kind_at(i + 2) == "slash" {
             parts.push(Part::Frag("(?:/[^/]+)*/".to_string()));
             i += 3;
             continue;
@@ -206,9 +216,9 @@ fn build_parts(tree: &Tree, bytes: &[u8]) -> (Vec<Part>, Vec<Arc<str>>) {
         let child = kids[i];
         match child.kind() {
             "double_star" => parts.push(Part::Frag(".*".to_string())),
-            "star"        => parts.push(Part::Frag("[^/]*".to_string())),
-            "question"    => parts.push(Part::Frag("[^/]".to_string())),
-            "slash"       => parts.push(Part::Frag("/".to_string())),
+            "star" => parts.push(Part::Frag("[^/]*".to_string())),
+            "question" => parts.push(Part::Frag("[^/]".to_string())),
+            "slash" => parts.push(Part::Frag("/".to_string())),
             "term_ref" => {
                 let raw = std::str::from_utf8(&bytes[child.byte_range()]).unwrap_or("");
                 let name = raw.trim_start_matches('$').trim_end_matches('?');
@@ -225,7 +235,9 @@ fn build_parts(tree: &Tree, bytes: &[u8]) -> (Vec<Part>, Vec<Arc<str>>) {
                 let mut alt_walker = child.walk();
                 let mut alts: Vec<String> = Vec::new();
                 for item in child.named_children(&mut alt_walker) {
-                    if item.kind() != "brace_alt_item" { continue; }
+                    if item.kind() != "brace_alt_item" {
+                        continue;
+                    }
                     if let Ok(s) = std::str::from_utf8(&bytes[item.byte_range()]) {
                         alts.push(regex::escape(s));
                     }
@@ -300,7 +312,7 @@ mod tests {
             CaptureKind::Span { byte_range } => {
                 // "middle" begins at byte 4 of target → 50 + 4 = 54.
                 assert_eq!(byte_range.start, 54);
-                assert_eq!(byte_range.end,   60);
+                assert_eq!(byte_range.end, 60);
             }
             _ => panic!("expected Span"),
         }
@@ -351,7 +363,7 @@ mod tests {
         let bad: &[u8] = &[0xff, 0xfe];
         let err = match dsl.compile(bad, &SilentSink) {
             Err(d) => d,
-            Ok(_)  => panic!("expected compile failure"),
+            Ok(_) => panic!("expected compile failure"),
         };
         assert_eq!(err.code, "glob.utf8");
     }
@@ -360,6 +372,10 @@ mod tests {
     fn semantic_tokens_emit_for_literal_and_star() {
         let dsl = GlobDsl::new();
         let toks = dsl.semantic_tokens(b"src/**/*.rs");
-        assert!(!toks.is_empty(), "expected highlight tokens, got {:?}", toks);
+        assert!(
+            !toks.is_empty(),
+            "expected highlight tokens, got {:?}",
+            toks
+        );
     }
 }

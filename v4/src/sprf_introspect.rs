@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use effect_runtime::v2::{Component, Pipe};
 
-use crate::Cursor;
 use crate::term::{Term, TermMode};
+use crate::Cursor;
 
 /// Sprf-side shim over `Component::describe()`. Default-empty methods
 /// return `None`; the blanket impl runs the downcast for any Component.
@@ -45,7 +45,8 @@ pub trait PipeIntrospect {
 
 impl PipeIntrospect for Pipe<Cursor> {
     fn binds_terms(&self) -> Vec<Arc<str>> {
-        self.steps.iter()
+        self.steps
+            .iter()
             .filter_map(|s| s.as_term())
             .filter(|t| matches!(t.mode, TermMode::Bind))
             .map(|t| t.name.clone())
@@ -53,7 +54,8 @@ impl PipeIntrospect for Pipe<Cursor> {
     }
 
     fn reads_terms(&self) -> Vec<Arc<str>> {
-        self.steps.iter()
+        self.steps
+            .iter()
             .filter_map(|s| s.as_term())
             .filter(|t| matches!(t.mode, TermMode::Read))
             .map(|t| t.name.clone())
@@ -75,10 +77,14 @@ mod tests {
         let binds = p.binds_terms();
         let reads = p.reads_terms();
 
-        assert_eq!(binds.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
-                   vec!["X", "Z"]);
-        assert_eq!(reads.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
-                   vec!["Y"]);
+        assert_eq!(
+            binds.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
+            vec!["X", "Z"]
+        );
+        assert_eq!(
+            reads.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
+            vec!["Y"]
+        );
     }
 
     #[test]

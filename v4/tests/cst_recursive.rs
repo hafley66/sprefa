@@ -44,20 +44,20 @@ fn locate_descends_into_injected_subtree_and_resolve_round_trips() {
     let host_path = hp.build();
 
     let inj = Injected {
-        dsl_id:    Arc::from("json"),
+        dsl_id: Arc::from("json"),
         host_path: host_path.clone(),
-        host_off:  body_off,
-        tree:      json_tree,
-        source:    Arc::from(body),
-        injected:  vec![],
+        host_off: body_off,
+        tree: json_tree,
+        source: Arc::from(body),
+        injected: vec![],
     };
 
     let doc = Doc {
-        doc_id:   DocId::new("file:///t.rs"),
-        source:   Arc::from(host_src),
-        tree:     host_tree,
+        doc_id: DocId::new("file:///t.rs"),
+        source: Arc::from(host_src),
+        tree: host_tree,
         injected: vec![inj],
-        version:  0,
+        version: 0,
     };
 
     // Pick a host byte inside the injected body (the digit `4` of `42`).
@@ -65,15 +65,27 @@ fn locate_descends_into_injected_subtree_and_resolve_round_trips() {
     assert_eq!(host_src.as_bytes()[host_byte], b'4');
 
     let loc = locate(&doc, host_byte);
-    assert_eq!(loc.dsl_id.as_ref(), "json", "locate should land in the json injection");
+    assert_eq!(
+        loc.dsl_id.as_ref(),
+        "json",
+        "locate should land in the json injection"
+    );
     assert_eq!(loc.host_off, body_off);
     assert_eq!(loc.trail.len(), 1, "one descent step");
 
     // The path must include a Body item (the cross-into-content marker).
     let has_body = loc.path.iter().any(|it| it.kind_tag() == "Body");
-    assert!(has_body, "locate path should contain a Body marker, got {:?}", v4::cst::path::PathKey(loc.path.clone()));
+    assert!(
+        has_body,
+        "locate path should contain a Body marker, got {:?}",
+        v4::cst::path::PathKey(loc.path.clone())
+    );
 
     // Resolve back: should return the same node id within the json sub-tree.
     let resolved = resolve(&doc, &loc.path).expect("resolve across injection");
-    assert_eq!(resolved.id(), loc.node.id(), "round-trip node id must match");
+    assert_eq!(
+        resolved.id(),
+        loc.node.id(),
+        "round-trip node id must match"
+    );
 }

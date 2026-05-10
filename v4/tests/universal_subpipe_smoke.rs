@@ -10,14 +10,12 @@
 //! After: every dsl body routes through a shared render_segments util that
 //! resolves Term interps and drains SubPipe interps per cursor.
 
+use effect_runtime::v2::{expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend};
 use std::sync::Arc;
-use effect_runtime::v2::{
-    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
-};
-use v4::Cursor;
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::Cursor;
 
 fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
     let (program, parse_diags) = host_parse(src);
@@ -26,12 +24,23 @@ fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
     let reg = default_registry();
     let mut ctx = LowerCtx::new(store.clone(), root.to_path_buf());
     let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
-    assert!(walk_diags.is_empty(), "walk: {:?}",
-        walk_diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>());
+    assert!(
+        walk_diags.is_empty(),
+        "walk: {:?}",
+        walk_diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     for pipe in pipes {
         let inst = pipe.into_instance();
-        expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], ExpandOpts::default());
+        expand(
+            &inst,
+            queue.clone(),
+            vec![Arc::new(Cursor::default())],
+            ExpandOpts::default(),
+        );
     }
     store
 }
@@ -49,8 +58,10 @@ fn sh_body_renders_subpipe() {
     assert_eq!(store.len("greet"), 1, "expected one row");
     let rows = store.rows_of("greet");
     // sh captures stdout into &.value; trailing newline trimmed.
-    assert_eq!(&*rows[0].value, "hello-world",
-        "sh subpipe should drain `world` into the command");
+    assert_eq!(
+        &*rows[0].value, "hello-world",
+        "sh subpipe should drain `world` into the command"
+    );
 }
 
 /// glob body subpipe — driver pipe emits a literal stem; glob recompiles
@@ -64,8 +75,12 @@ fn glob_body_renders_subpipe() {
     let src = r#"rule(:hits, EXT?) { fs > glob`**/${ str`alpha` }.${EXT?}` };"#;
     let store = run_in(tmp.path(), src);
     let rows = store.rows_of("hits");
-    assert_eq!(rows.len(), 1, "expected exactly one alpha hit, got {:?}",
-        rows.iter().map(|r| &*r.value).collect::<Vec<_>>());
+    assert_eq!(
+        rows.len(),
+        1,
+        "expected exactly one alpha hit, got {:?}",
+        rows.iter().map(|r| &*r.value).collect::<Vec<_>>()
+    );
     assert_eq!(rows[0].get("EXT"), Some("txt"));
 }
 
@@ -79,12 +94,15 @@ fn re_body_renders_subpipe() {
     let path = tmp.path().join("hay.txt");
     std::fs::write(&path, b"the needle is here").unwrap();
 
-    let src = format!(
-        r#"rule(:hits) {{ fs > glob`**/hay.txt` > read > re`${{ str`needle` }}` }};"#
-    );
+    let src =
+        format!(r#"rule(:hits) {{ fs > glob`**/hay.txt` > read > re`${{ str`needle` }}` }};"#);
     let store = run_in(tmp.path(), &src);
     let rows = store.rows_of("hits");
-    assert_eq!(rows.len(), 1, "re subpipe should match `needle` in haystack");
+    assert_eq!(
+        rows.len(),
+        1,
+        "re subpipe should match `needle` in haystack"
+    );
 }
 
 /// Regression — str template subpipe still works (today's path).

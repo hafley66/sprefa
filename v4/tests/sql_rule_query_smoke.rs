@@ -43,13 +43,17 @@ fn run_pipes(src: &str) -> Arc<dyn FactStore<Cursor>> {
 
 #[test]
 fn declared_rule_force_apply_policy_is_reserved() {
-    let diags = walk_diags(r#"
+    let diags = walk_diags(
+        r#"
         rule(:frontend_hooks);
         frontend_hooks!();
-    "#);
+    "#,
+    );
 
     assert!(
-        diags.iter().any(|d| d.code.as_ref() == "lower/rule-force-reserved"),
+        diags
+            .iter()
+            .any(|d| d.code.as_ref() == "lower/rule-force-reserved"),
         "expected lower/rule-force-reserved diag, got {diags:?}"
     );
 }
@@ -179,13 +183,15 @@ fn rule_call_allows_kwarg_then_same_name_shorthand() {
 
 #[test]
 fn rule_call_rejects_non_shorthand_positional_after_kwarg() {
-    let diags = walk_diags(r#"
+    let diags = walk_diags(
+        r#"
         rule(:rule_a, X?, Y?, OUT_A?);
 
         `y-val`
           > term_bind(:Y)
           > rule_a?(Y: Y, `literal`);
-    "#);
+    "#,
+    );
 
     assert!(
         diags
@@ -218,13 +224,17 @@ fn declared_empty_rule_apply_rejects_holes() {
 
 #[test]
 fn declared_rule_dotted_apply_is_rejected() {
-    let diags = walk_diags(r#"
+    let diags = walk_diags(
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         `getUser` > term_bind(:OP) > `src/hooks.ts` > term_bind(:FILE) > frontend_hooks.(OP, FILE);
-    "#);
+    "#,
+    );
 
     assert!(
-        diags.iter().any(|d| d.code.as_ref() == "lower/rule-dotted-apply"),
+        diags
+            .iter()
+            .any(|d| d.code.as_ref() == "lower/rule-dotted-apply"),
         "expected lower/rule-dotted-apply diag, got {diags:?}"
     );
 }

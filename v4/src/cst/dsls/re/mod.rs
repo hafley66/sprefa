@@ -26,20 +26,22 @@ extern "C" {
 const RE_UNBOUND_HOLE: &str = ".*?";
 
 pub struct ReDsl {
-    legend:           Legend,
-    table:            CaptureTable,
+    legend: Legend,
+    table: CaptureTable,
     highlights_query: OnceLock<Query>,
 }
 
 impl Default for ReDsl {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ReDsl {
     pub fn new() -> Self {
         Self {
-            legend:           Legend::standard(),
-            table:            default_capture_table(),
+            legend: Legend::standard(),
+            table: default_capture_table(),
             highlights_query: OnceLock::new(),
         }
     }
@@ -47,48 +49,43 @@ impl ReDsl {
     pub fn with_legend(legend: Legend) -> Self {
         Self {
             legend,
-            table:            default_capture_table(),
+            table: default_capture_table(),
             highlights_query: OnceLock::new(),
         }
     }
 
-    pub fn language(&self) -> Language { unsafe { tree_sitter_sprefa_re() } }
+    pub fn language(&self) -> Language {
+        unsafe { tree_sitter_sprefa_re() }
+    }
 
     fn highlights_query(&self) -> &Query {
         self.highlights_query.get_or_init(|| {
-            Query::new(
-                &self.language(),
-                include_str!("queries/highlights.scm"),
-            )
-            .expect("re/queries/highlights.scm")
+            Query::new(&self.language(), include_str!("queries/highlights.scm"))
+                .expect("re/queries/highlights.scm")
         })
     }
 }
 
 impl Dsl for ReDsl {
-    fn id(&self) -> &'static str { "re" }
+    fn id(&self) -> &'static str {
+        "re"
+    }
 
-    fn compile(
-        &self,
-        body:  &[u8],
-        diags: &dyn DiagSink,
-    ) -> Result<Box<dyn Compiled>, Diag> {
-        let body_str = std::str::from_utf8(body).map_err(|e| {
-            Diag::error("re.utf8", format!("body not utf-8: {e}"), 0..body.len())
-        })?;
+    fn compile(&self, body: &[u8], diags: &dyn DiagSink) -> Result<Box<dyn Compiled>, Diag> {
+        let body_str = std::str::from_utf8(body)
+            .map_err(|e| Diag::error("re.utf8", format!("body not utf-8: {e}"), 0..body.len()))?;
         let mut p = TSParser::new();
-        p.set_language(&self.language()).map_err(|e| {
-            Diag::error("re.language", format!("set_language failed: {e}"), 0..0)
-        })?;
-        let tree = p.parse(body_str, None).ok_or_else(|| {
-            Diag::error("re.parse", "parser returned None", 0..0)
-        })?;
+        p.set_language(&self.language())
+            .map_err(|e| Diag::error("re.language", format!("set_language failed: {e}"), 0..0))?;
+        let tree = p
+            .parse(body_str, None)
+            .ok_or_else(|| Diag::error("re.parse", "parser returned None", 0..0))?;
 
         let (parts, _sugar_names) = build_parts(&tree, body);
         let mut rx = String::new();
         for part in &parts {
             match part {
-                Part::Lit(s)  => rx.push_str(s),
+                Part::Lit(s) => rx.push_str(s),
                 Part::Term(n) => {
                     rx.push_str("(?P<");
                     rx.push_str(n);
@@ -99,28 +96,35 @@ impl Dsl for ReDsl {
             }
         }
 
-        let regex = Regex::new(&rx).map_err(|err| {
-            Diag::error("re.syntax", err.to_string(), 0..body.len())
-        })?;
+        let regex = Regex::new(&rx)
+            .map_err(|err| Diag::error("re.syntax", err.to_string(), 0..body.len()))?;
 
         let _ = diags;
 
         Ok(Box::new(ReCompiled { regex, tree }))
     }
 
-    fn injection_grammar(&self) -> Option<Language> { Some(self.language()) }
+    fn injection_grammar(&self) -> Option<Language> {
+        Some(self.language())
+    }
 
-    fn lsp(&self) -> Option<&dyn DslBodyLsp> { Some(self) }
+    fn lsp(&self) -> Option<&dyn DslBodyLsp> {
+        Some(self)
+    }
 }
 
 pub struct ReCompiled {
-    regex:    Regex,
-    tree:     Tree,
+    regex: Regex,
+    tree: Tree,
 }
 
 impl ReCompiled {
-    pub fn regex(&self) -> &Regex { &self.regex }
-    pub fn tree(&self) -> &Tree { &self.tree }
+    pub fn regex(&self) -> &Regex {
+        &self.regex
+    }
+    pub fn tree(&self) -> &Tree {
+        &self.tree
+    }
 }
 
 impl Compiled for ReCompiled {
@@ -136,7 +140,9 @@ impl Compiled for ReCompiled {
                         byte_range: (target_off + m.start())..(target_off + m.end()),
                     },
                 };
-                if let ControlFlow::Break(_) = sink.emit(row) { return; }
+                if let ControlFlow::Break(_) = sink.emit(row) {
+                    return;
+                }
             }
         }
     }
@@ -149,12 +155,16 @@ impl Compiled for ReCompiled {
 impl DslBodyLsp for ReDsl {
     fn semantic_tokens(&self, body: &[u8]) -> Vec<SemanticToken> {
         let mut p = TSParser::new();
-        if p.set_language(&self.language()).is_err() { return vec![]; }
+        if p.set_language(&self.language()).is_err() {
+            return vec![];
+        }
         let body_str = match std::str::from_utf8(body) {
             Ok(s) => s,
             Err(_) => return vec![],
         };
-        let Some(tree) = p.parse(body_str, None) else { return vec![]; };
+        let Some(tree) = p.parse(body_str, None) else {
+            return vec![];
+        };
         highlights_to_semantic_tokens(
             self.highlights_query(),
             &tree,
@@ -165,11 +175,14 @@ impl DslBodyLsp for ReDsl {
     }
 }
 
-enum Part { Lit(String), Term(Arc<str>) }
+enum Part {
+    Lit(String),
+    Term(Arc<str>),
+}
 
 fn build_parts(tree: &Tree, bytes: &[u8]) -> (Vec<Part>, Vec<Arc<str>>) {
     let root = tree.root_node();
-    let mut parts: Vec<Part>     = Vec::new();
+    let mut parts: Vec<Part> = Vec::new();
     let mut sugar: Vec<Arc<str>> = Vec::new();
     let mut walker = root.walk();
     for child in root.named_children(&mut walker) {
@@ -220,7 +233,7 @@ mod tests {
             CaptureKind::Span { byte_range } => {
                 // "alice" starts at byte 12 of target → 100 + 12 = 112.
                 assert_eq!(byte_range.start, 112);
-                assert_eq!(byte_range.end,   117);
+                assert_eq!(byte_range.end, 117);
             }
             _ => panic!("expected Span"),
         }
@@ -243,8 +256,8 @@ mod tests {
     fn bad_regex_returns_fatal_diag() {
         let dsl = ReDsl::new();
         let err = match dsl.compile(b"[unclosed", &SilentSink) {
-            Err(d)  => d,
-            Ok(_)   => panic!("expected compile failure"),
+            Err(d) => d,
+            Ok(_) => panic!("expected compile failure"),
         };
         assert_eq!(err.code, "re.syntax");
     }
@@ -255,7 +268,10 @@ mod tests {
         let toks = dsl.semantic_tokens(br"TODO\($WHO\)");
         // Expect at least two tokens: literal + term_ref.
         assert!(toks.len() >= 2, "got {} tokens: {:?}", toks.len(), toks);
-        let function_idx = dsl.legend.type_index(&lsp_types::SemanticTokenType::FUNCTION).unwrap();
+        let function_idx = dsl
+            .legend
+            .type_index(&lsp_types::SemanticTokenType::FUNCTION)
+            .unwrap();
         let _ = function_idx;
     }
 }

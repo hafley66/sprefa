@@ -44,7 +44,7 @@ impl Component for StrConstComponent {
 /// `interps` are pre-sorted by `range.lo`; ranges are byte offsets into
 /// `raw` covering the full `${IDENT}` span (inclusive of the braces).
 pub struct StrTemplateComponent {
-    pub raw:     Arc<str>,
+    pub raw: Arc<str>,
     pub interps: Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
 }
 
@@ -52,9 +52,7 @@ impl Component for StrTemplateComponent {
     type Next = Cursor;
 
     fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        let out = crate::template::render_segments(
-            self.raw.as_ref(), &self.interps, c, ctx,
-        );
+        let out = crate::template::render_segments(self.raw.as_ref(), &self.interps, c, ctx);
         let mut next = c.clone();
         next.value = Arc::from(out);
         Node::Emit(Arc::new(next))
@@ -63,7 +61,9 @@ impl Component for StrTemplateComponent {
 
 /// Convenience builder: a constant-emitting `Pipe<Cursor>`.
 pub fn str_pipe(s: &str) -> Pipe<Cursor> {
-    Pipe::new().step(Arc::new(StrConstComponent { literal: Arc::from(s) }))
+    Pipe::new().step(Arc::new(StrConstComponent {
+        literal: Arc::from(s),
+    }))
 }
 
 // ─── glob ─────────────────────────────────────────────────────────────────
@@ -104,10 +104,15 @@ impl GlobComponent {
             .capture_names()
             .map(|n| n.map(Arc::<str>::from))
             .collect();
-        Self { re, capture_names, store: None }
+        Self {
+            re,
+            capture_names,
+            store: None,
+        }
     }
     pub fn with_sprf_store(mut self, s: Arc<crate::store::SprfStore>) -> Self {
-        self.store = Some(s); self
+        self.store = Some(s);
+        self
     }
     pub fn matches_value(&self, value: &str) -> bool {
         self.re.captures(value).is_some()
@@ -117,12 +122,18 @@ impl GlobComponent {
 impl Component for GlobComponent {
     type Next = Cursor;
 
-    fn describe(&self) -> Option<&dyn std::any::Any> { Some(self) }
+    fn describe(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
         let hay: &str = c.value.as_ref();
-        if hay.is_empty() { return Node::Done; }
-        let Some(caps) = self.re.captures(hay) else { return Node::Done; };
+        if hay.is_empty() {
+            return Node::Done;
+        }
+        let Some(caps) = self.re.captures(hay) else {
+            return Node::Done;
+        };
 
         let mut child = c.clone();
         // Walk the named-capture roster. Group 0 is the full match (no
@@ -155,22 +166,24 @@ impl Component for GlobComponent {
 /// per-cursor recompile today.
 pub struct GlobDynamicComponent {
     /// Original glob body source (with `${ ... }` spans intact).
-    body:    Arc<str>,
+    body: Arc<str>,
     /// Pre-walked interps (Term + SubPipe) sorted by `range.lo`.
     interps: Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
     /// Sprf store — passed through to children if needed for set_synthetic.
-    store:   Option<Arc<crate::store::SprfStore>>,
+    store: Option<Arc<crate::store::SprfStore>>,
 }
 
 impl GlobDynamicComponent {
-    pub fn new(
-        body:    Arc<str>,
-        interps: Vec<crate::compile::lower::op_def::DslInterp>,
-    ) -> Self {
-        Self { body, interps: Arc::new(interps), store: None }
+    pub fn new(body: Arc<str>, interps: Vec<crate::compile::lower::op_def::DslInterp>) -> Self {
+        Self {
+            body,
+            interps: Arc::new(interps),
+            store: None,
+        }
     }
     pub fn with_sprf_store(mut self, s: Arc<crate::store::SprfStore>) -> Self {
-        self.store = Some(s); self
+        self.store = Some(s);
+        self
     }
 }
 
@@ -179,24 +192,27 @@ impl Component for GlobDynamicComponent {
 
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
         let hay: &str = c.value.as_ref();
-        if hay.is_empty() { return Node::Done; }
+        if hay.is_empty() {
+            return Node::Done;
+        }
 
         // Build the regex per-cursor. SubPipe spans drain to literals
         // (regex-escaped); Term-Bind spans become named capture groups
         // (same shape as the static path); Term-Read spans resolve via
         // Cursor::get and regex-escape; literal text follows the glob
         // metachar table.
-        let (regex_src, capture_names) = match build_dynamic_glob_regex(
-            &self.body, &self.interps, c,
-        ) {
-            Ok(t) => t,
-            Err(_) => return Node::Done,
-        };
+        let (regex_src, capture_names) =
+            match build_dynamic_glob_regex(&self.body, &self.interps, c) {
+                Ok(t) => t,
+                Err(_) => return Node::Done,
+            };
         let re = match regex::Regex::new(&regex_src) {
             Ok(r) => r,
             Err(_) => return Node::Done,
         };
-        let Some(caps) = re.captures(hay) else { return Node::Done; };
+        let Some(caps) = re.captures(hay) else {
+            return Node::Done;
+        };
 
         let mut child = c.clone();
         // capture_names is the explicit name list we emitted; group i+1
@@ -229,9 +245,9 @@ impl Component for GlobDynamicComponent {
 ///   `${ <pipe> }`     — drain pipe with `cur` as seed; regex-escape
 ///                       the drained value into the pattern.
 fn build_dynamic_glob_regex(
-    body:    &str,
+    body: &str,
     interps: &[crate::compile::lower::op_def::DslInterp],
-    cur:     &Cursor,
+    cur: &Cursor,
 ) -> Result<(String, Vec<Arc<str>>), ()> {
     use crate::compile::lower::op_def::{InterpKind, InterpMode};
     use crate::template::drain_subpipe;
@@ -245,15 +261,21 @@ fn build_dynamic_glob_regex(
     let mut i: usize = 0;
     while i < bytes.len() {
         let triple_dollar = i + 3 < bytes.len()
-            && bytes[i] == b'$' && bytes[i + 1] == b'$'
-            && bytes[i + 2] == b'$' && bytes[i + 3] == b'{';
-        let interp_lo = if triple_dollar { (i + 2) as u32 } else { i as u32 };
+            && bytes[i] == b'$'
+            && bytes[i + 1] == b'$'
+            && bytes[i + 2] == b'$'
+            && bytes[i + 3] == b'{';
+        let interp_lo = if triple_dollar {
+            (i + 2) as u32
+        } else {
+            i as u32
+        };
 
         if let Some(interp) = by_lo.get(&interp_lo) {
             match &interp.kind {
                 InterpKind::Term { mode, field } => {
                     let key: std::borrow::Cow<'_, str> = match field {
-                        None    => (&*interp.name).into(),
+                        None => (&*interp.name).into(),
                         Some(f) => format!("{}.{}", interp.name, f).into(),
                     };
                     match mode {
@@ -292,28 +314,43 @@ fn build_dynamic_glob_regex(
         match b {
             b'*' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-                    out.push_str(".*"); i += 2;
+                    out.push_str(".*");
+                    i += 2;
                 } else {
-                    out.push_str("[^/]*"); i += 1;
+                    out.push_str("[^/]*");
+                    i += 1;
                 }
             }
-            b'?' => { out.push_str("[^/]"); i += 1; }
+            b'?' => {
+                out.push_str("[^/]");
+                i += 1;
+            }
             b'[' => {
                 let mut j = i + 1;
-                while j < bytes.len() && bytes[j] != b']' { j += 1; }
-                if j >= bytes.len() { return Err(()); }
+                while j < bytes.len() && bytes[j] != b']' {
+                    j += 1;
+                }
+                if j >= bytes.len() {
+                    return Err(());
+                }
                 out.push_str(&body[i..=j]);
                 i = j + 1;
             }
             b'{' => {
                 let mut j = i + 1;
-                while j < bytes.len() && bytes[j] != b'}' { j += 1; }
-                if j >= bytes.len() { return Err(()); }
+                while j < bytes.len() && bytes[j] != b'}' {
+                    j += 1;
+                }
+                if j >= bytes.len() {
+                    return Err(());
+                }
                 out.push_str("(?:");
                 let inner = &body[i + 1..j];
                 let parts: Vec<&str> = inner.split(',').collect();
                 for (k, part) in parts.iter().enumerate() {
-                    if k > 0 { out.push('|'); }
+                    if k > 0 {
+                        out.push('|');
+                    }
                     out.push_str(&regex::escape(part));
                 }
                 out.push(')');

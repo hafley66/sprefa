@@ -15,9 +15,7 @@
 
 use std::sync::Arc;
 
-use effect_runtime::v2::{
-    Component, NextKey, Node, QueueBackend, QueueRow, RenderCtx, Wake,
-};
+use effect_runtime::v2::{Component, NextKey, Node, QueueBackend, QueueRow, RenderCtx, Wake};
 
 use crate::Cursor;
 
@@ -32,10 +30,14 @@ fn mark_key(chan: &str) -> String {
 }
 
 /// `next(:chan)`. Side-effect publish. Wakes every parker on `chan`.
-pub struct Next { pub chan: Arc<str> }
+pub struct Next {
+    pub chan: Arc<str>,
+}
 
 impl Next {
-    pub fn new(chan: impl Into<Arc<str>>) -> Self { Self { chan: chan.into() } }
+    pub fn new(chan: impl Into<Arc<str>>) -> Self {
+        Self { chan: chan.into() }
+    }
 }
 
 impl Component for Next {
@@ -43,8 +45,8 @@ impl Component for Next {
 
     fn dispatch(
         &self,
-        ctx:   &RenderCtx,
-        rows:  &[QueueRow<Cursor>],
+        ctx: &RenderCtx,
+        rows: &[QueueRow<Cursor>],
         queue: &dyn QueueBackend<Cursor>,
     ) {
         let key = channel_key(&self.chan);
@@ -62,10 +64,14 @@ impl Component for Next {
 
 /// `next?(:chan)`. Subscribe-park. First render parks on the channel's
 /// wake-key. Wake re-renders the same cursor; the second pass emits.
-pub struct NextQ { pub chan: Arc<str> }
+pub struct NextQ {
+    pub chan: Arc<str>,
+}
 
 impl NextQ {
-    pub fn new(chan: impl Into<Arc<str>>) -> Self { Self { chan: chan.into() } }
+    pub fn new(chan: impl Into<Arc<str>>) -> Self {
+        Self { chan: chan.into() }
+    }
 }
 
 impl Component for NextQ {
@@ -86,7 +92,10 @@ impl Component for NextQ {
         parked.set(&mark, "1");
         Node::Yield {
             value: Arc::new(parked),
-            wake:  Wake::Key { domain: DOMAIN.into(), key },
+            wake: Wake::Key {
+                domain: DOMAIN.into(),
+                key,
+            },
         }
     }
 }
@@ -94,12 +103,12 @@ impl Component for NextQ {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effect_runtime::v2::{expand, ExpandOpts, MemQueue, PipeInstance, QueueBackend};
     use std::sync::Mutex;
-    use effect_runtime::v2::{
-        expand, ExpandOpts, MemQueue, PipeInstance, QueueBackend,
-    };
 
-    struct Collector { sink: Arc<Mutex<Vec<Cursor>>> }
+    struct Collector {
+        sink: Arc<Mutex<Vec<Cursor>>>,
+    }
     impl Component for Collector {
         type Next = Cursor;
         fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
@@ -109,20 +118,24 @@ mod tests {
     }
 
     fn cursor_with_value(v: &str) -> Arc<Cursor> {
-        Arc::new(Cursor { value: v.into(), ..Default::default() })
+        Arc::new(Cursor {
+            value: v.into(),
+            ..Default::default()
+        })
     }
 
     #[test]
     fn nextq_parks_until_dispatch_park_promotes() {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
-        let pipe  = PipeInstance::new(vec![
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let pipe = PipeInstance::new(vec![
             Arc::new(NextQ::new("alpha")) as Arc<dyn Component<Next = Cursor>>,
             Arc::new(Collector { sink: sink.clone() }),
         ]);
 
         let stats = expand(
-            &pipe, queue.clone(),
+            &pipe,
+            queue.clone(),
             vec![cursor_with_value("seed")],
             ExpandOpts::default(),
         );
@@ -142,13 +155,18 @@ mod tests {
     #[test]
     fn nextq_dispatch_only_wakes_matching_channel() {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
-        let pipe  = PipeInstance::new(vec![
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let pipe = PipeInstance::new(vec![
             Arc::new(NextQ::new("alpha")) as Arc<dyn Component<Next = Cursor>>,
             Arc::new(Collector { sink: sink.clone() }),
         ]);
 
-        expand(&pipe, queue.clone(), vec![cursor_with_value("a")], ExpandOpts::default());
+        expand(
+            &pipe,
+            queue.clone(),
+            vec![cursor_with_value("a")],
+            ExpandOpts::default(),
+        );
 
         let promoted = queue.dispatch_park(DOMAIN, Some(channel_key("beta")));
         assert_eq!(promoted, 0);
@@ -161,13 +179,18 @@ mod tests {
         // emits its input. With no parker in the queue, dispatch_park
         // is a no-op; the cursor still reaches downstream Collector.
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
-        let pipe  = PipeInstance::new(vec![
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let pipe = PipeInstance::new(vec![
             Arc::new(Next::new("delta")) as Arc<dyn Component<Next = Cursor>>,
             Arc::new(Collector { sink: sink.clone() }),
         ]);
 
-        expand(&pipe, queue, vec![cursor_with_value("payload")], ExpandOpts::default());
+        expand(
+            &pipe,
+            queue,
+            vec![cursor_with_value("payload")],
+            ExpandOpts::default(),
+        );
 
         let got = sink.lock().unwrap();
         assert_eq!(got.len(), 1);

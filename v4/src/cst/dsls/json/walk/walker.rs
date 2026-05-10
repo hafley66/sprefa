@@ -10,11 +10,11 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
+use super::super::data::{DataKind, DataNode};
 use super::compiled::{
     Captures, CompiledKeyMatcher, CompiledObjectEntry, CompiledStep, WalkCapture,
 };
 use super::pattern::match_segments_with_bindings;
-use super::super::data::{DataKind, DataNode};
 
 #[derive(Debug, Clone)]
 pub struct MatchResult {
@@ -23,23 +23,34 @@ pub struct MatchResult {
 
 #[derive(Debug, Clone)]
 pub struct WalkOutcome {
-    pub rows:        Vec<MatchResult>,
+    pub rows: Vec<MatchResult>,
     pub missed_keys: Vec<Arc<str>>,
 }
 
 #[derive(Clone)]
 struct Ctx {
-    depth:      u32,
+    depth: u32,
     parent_key: Option<Arc<str>>,
 }
 
 impl Ctx {
-    fn new() -> Self { Self { depth: 0, parent_key: None } }
+    fn new() -> Self {
+        Self {
+            depth: 0,
+            parent_key: None,
+        }
+    }
     fn descend_key(&self, key: &str) -> Self {
-        Self { depth: self.depth + 1, parent_key: Some(Arc::from(key)) }
+        Self {
+            depth: self.depth + 1,
+            parent_key: Some(Arc::from(key)),
+        }
     }
     fn descend_index(&self) -> Self {
-        Self { depth: self.depth + 1, parent_key: None }
+        Self {
+            depth: self.depth + 1,
+            parent_key: None,
+        }
     }
 }
 
@@ -48,21 +59,22 @@ pub fn walk<N: DataNode>(root: &N, steps: &[CompiledStep]) -> WalkOutcome {
 }
 
 pub fn walk_with_captures<N: DataNode>(
-    root:  &N,
+    root: &N,
     steps: &[CompiledStep],
-    seed:  Captures,
+    seed: Captures,
 ) -> WalkOutcome {
     let missed_keys = collect_top_level_missed_keys(root, steps);
     let rows = walk_inner(root, steps, &Ctx::new(), &seed);
     WalkOutcome { rows, missed_keys }
 }
 
-fn collect_top_level_missed_keys<N: DataNode>(
-    root: &N,
-    steps: &[CompiledStep],
-) -> Vec<Arc<str>> {
-    let Some(CompiledStep::Object { entries }) = steps.first() else { return vec![]; };
-    if root.kind() != DataKind::Object { return vec![]; }
+fn collect_top_level_missed_keys<N: DataNode>(root: &N, steps: &[CompiledStep]) -> Vec<Arc<str>> {
+    let Some(CompiledStep::Object { entries }) = steps.first() else {
+        return vec![];
+    };
+    if root.kind() != DataKind::Object {
+        return vec![];
+    }
     let mut missed = vec![];
     for entry in entries {
         match &entry.key {
@@ -83,13 +95,15 @@ fn collect_top_level_missed_keys<N: DataNode>(
 }
 
 fn walk_inner<N: DataNode>(
-    node:  &N,
+    node: &N,
     steps: &[CompiledStep],
-    ctx:   &Ctx,
-    caps:  &Captures,
+    ctx: &Ctx,
+    caps: &Captures,
 ) -> Vec<MatchResult> {
     if steps.is_empty() {
-        return vec![MatchResult { captures: caps.clone() }];
+        return vec![MatchResult {
+            captures: caps.clone(),
+        }];
     }
 
     let step = &steps[0];
@@ -117,7 +131,9 @@ fn walk_inner<N: DataNode>(
             out
         }
         CompiledStep::Key { name, capture } => {
-            if node.kind() != DataKind::Object { return vec![]; }
+            if node.kind() != DataKind::Object {
+                return vec![];
+            }
             for (k, v) in node.entries() {
                 let k_text = scalar_text(&k);
                 if k_text == *name {
@@ -128,9 +144,9 @@ fn walk_inner<N: DataNode>(
                         next_caps.insert(
                             Arc::from(cap.as_str()),
                             WalkCapture {
-                                text:       Arc::from(k_text),
+                                text: Arc::from(k_text),
                                 byte_start: ks,
-                                byte_end:   ke,
+                                byte_end: ke,
                             },
                         );
                     }
@@ -140,7 +156,9 @@ fn walk_inner<N: DataNode>(
             vec![]
         }
         CompiledStep::KeyMatch { matchers, capture } => {
-            if node.kind() != DataKind::Object { return vec![]; }
+            if node.kind() != DataKind::Object {
+                return vec![];
+            }
             let mut out = vec![];
             for (k, v) in node.entries() {
                 let k_text = scalar_text(&k);
@@ -152,9 +170,9 @@ fn walk_inner<N: DataNode>(
                         next_caps.insert(
                             Arc::from(cap.as_str()),
                             WalkCapture {
-                                text:       Arc::from(k_text.as_str()),
+                                text: Arc::from(k_text.as_str()),
                                 byte_start: ks,
-                                byte_end:   ke,
+                                byte_end: ke,
                             },
                         );
                     }
@@ -164,20 +182,36 @@ fn walk_inner<N: DataNode>(
             out
         }
         CompiledStep::DepthMin { n } => {
-            if ctx.depth >= *n { walk_inner(node, rest, ctx, caps) } else { vec![] }
+            if ctx.depth >= *n {
+                walk_inner(node, rest, ctx, caps)
+            } else {
+                vec![]
+            }
         }
         CompiledStep::DepthMax { n } => {
-            if ctx.depth <= *n { walk_inner(node, rest, ctx, caps) } else { vec![] }
+            if ctx.depth <= *n {
+                walk_inner(node, rest, ctx, caps)
+            } else {
+                vec![]
+            }
         }
         CompiledStep::DepthEq { n } => {
-            if ctx.depth == *n { walk_inner(node, rest, ctx, caps) } else { vec![] }
+            if ctx.depth == *n {
+                walk_inner(node, rest, ctx, caps)
+            } else {
+                vec![]
+            }
         }
         CompiledStep::ParentKey { matchers } => match &ctx.parent_key {
-            Some(pk) if matchers.iter().any(|m| m.is_match(pk)) => walk_inner(node, rest, ctx, caps),
+            Some(pk) if matchers.iter().any(|m| m.is_match(pk)) => {
+                walk_inner(node, rest, ctx, caps)
+            }
             _ => vec![],
         },
         CompiledStep::ArrayItem => {
-            if node.kind() != DataKind::Array { return vec![]; }
+            if node.kind() != DataKind::Array {
+                return vec![];
+            }
             let mut out = vec![];
             for v in node.items() {
                 let child_ctx = ctx.descend_index();
@@ -186,19 +220,23 @@ fn walk_inner<N: DataNode>(
             out
         }
         CompiledStep::Leaf { capture } => {
-            let Some(text) = node.as_scalar_text() else { return vec![]; };
+            let Some(text) = node.as_scalar_text() else {
+                return vec![];
+            };
             let mut next_caps = caps.clone();
             if let Some(cap) = capture {
                 if let Some(existing) = caps.get(cap.as_str()) {
-                    if existing.text.as_ref() != text.as_ref() { return vec![]; }
+                    if existing.text.as_ref() != text.as_ref() {
+                        return vec![];
+                    }
                 } else {
                     let (bs, be) = node.byte_range();
                     next_caps.insert(
                         Arc::from(cap.as_str()),
                         WalkCapture {
-                            text:       Arc::from(text.as_ref()),
+                            text: Arc::from(text.as_ref()),
                             byte_start: bs,
-                            byte_end:   be,
+                            byte_end: be,
                         },
                     );
                 }
@@ -220,14 +258,20 @@ fn walk_inner<N: DataNode>(
                 } else {
                     next_caps.insert(
                         Arc::from(cap.as_str()),
-                        WalkCapture { text, byte_start: bs, byte_end: be },
+                        WalkCapture {
+                            text,
+                            byte_start: bs,
+                            byte_end: be,
+                        },
                     );
                 }
             }
             walk_inner(node, rest, ctx, &next_caps)
         }
         CompiledStep::LeafPattern { segments } => {
-            let Some(text) = node.as_scalar_text() else { return vec![]; };
+            let Some(text) = node.as_scalar_text() else {
+                return vec![];
+            };
             let pre_bound: std::collections::HashMap<String, String> = caps
                 .iter()
                 .map(|(k, cv)| (k.to_string(), cv.text.to_string()))
@@ -242,9 +286,9 @@ fn walk_inner<N: DataNode>(
                     next_caps.insert(
                         Arc::from(name.as_str()),
                         WalkCapture {
-                            text:       Arc::from(value.as_str()),
+                            text: Arc::from(value.as_str()),
                             byte_start: bs,
-                            byte_end:   be,
+                            byte_end: be,
                         },
                     );
                 }
@@ -252,11 +296,15 @@ fn walk_inner<N: DataNode>(
             walk_inner(node, rest, ctx, &next_caps)
         }
         CompiledStep::Object { entries } => {
-            if node.kind() != DataKind::Object { return vec![]; }
+            if node.kind() != DataKind::Object {
+                return vec![];
+            }
             walk_object_entries(node, entries, rest, ctx, caps)
         }
         CompiledStep::Array { item } => {
-            if node.kind() != DataKind::Array { return vec![]; }
+            if node.kind() != DataKind::Array {
+                return vec![];
+            }
             let mut out = vec![];
             for v in node.items() {
                 let child_ctx = ctx.descend_index();
@@ -281,16 +329,20 @@ fn is_row_field(entry: &CompiledObjectEntry) -> bool {
 }
 
 fn walk_object_entries<N: DataNode>(
-    node:    &N,
+    node: &N,
     entries: &[CompiledObjectEntry],
-    rest:    &[CompiledStep],
-    ctx:     &Ctx,
-    caps:    &Captures,
+    rest: &[CompiledStep],
+    ctx: &Ctx,
+    caps: &Captures,
 ) -> Vec<MatchResult> {
     let mut row_fields: Vec<&CompiledObjectEntry> = vec![];
-    let mut descents:   Vec<&CompiledObjectEntry> = vec![];
+    let mut descents: Vec<&CompiledObjectEntry> = vec![];
     for e in entries {
-        if is_row_field(e) { row_fields.push(e); } else { descents.push(e); }
+        if is_row_field(e) {
+            row_fields.push(e);
+        } else {
+            descents.push(e);
+        }
     }
 
     // Row fields: each named key in the pattern is a hard structural
@@ -300,7 +352,9 @@ fn walk_object_entries<N: DataNode>(
     let mut row_templates: Vec<Captures> = vec![caps.clone()];
     for entry in &row_fields {
         let key_hits = resolve_keys(node, &entry.key);
-        if key_hits.is_empty() { return vec![]; }
+        if key_hits.is_empty() {
+            return vec![];
+        }
         let mut next_templates = vec![];
         for tmpl in &row_templates {
             for (k_text, k_range, v_node) in &key_hits {
@@ -308,10 +362,14 @@ fn walk_object_entries<N: DataNode>(
                 let mut seeded = tmpl.clone();
                 bind_key_captures(&entry.key, k_text, *k_range, &mut seeded);
                 let sub = walk_inner(v_node, &entry.value, &child_ctx, &seeded);
-                for r in sub { next_templates.push(r.captures); }
+                for r in sub {
+                    next_templates.push(r.captures);
+                }
             }
         }
-        if next_templates.is_empty() { return vec![]; }
+        if next_templates.is_empty() {
+            return vec![];
+        }
         row_templates = next_templates;
     }
 
@@ -329,7 +387,9 @@ fn walk_object_entries<N: DataNode>(
     let mut out = vec![];
     for descent in &descents {
         let key_hits = resolve_keys(node, &descent.key);
-        if key_hits.is_empty() { return vec![]; }
+        if key_hits.is_empty() {
+            return vec![];
+        }
         let mut produced = false;
         for (k_text, k_range, v_node) in &key_hits {
             let child_ctx = ctx.descend_key(k_text);
@@ -343,13 +403,17 @@ fn walk_object_entries<N: DataNode>(
                 }
             }
         }
-        if !produced { return vec![]; }
+        if !produced {
+            return vec![];
+        }
     }
     out
 }
 
 fn scalar_text<N: DataNode>(n: &N) -> String {
-    n.as_scalar_text().map(|c| c.into_owned()).unwrap_or_default()
+    n.as_scalar_text()
+        .map(|c| c.into_owned())
+        .unwrap_or_default()
 }
 
 fn resolve_keys<N: DataNode>(
@@ -358,31 +422,35 @@ fn resolve_keys<N: DataNode>(
 ) -> Vec<(String, (u32, u32), N)> {
     let mut out = vec![];
     for (k, v) in obj.entries() {
-        let Some(k_text) = k.as_scalar_text().map(|c| c.into_owned()) else { continue; };
+        let Some(k_text) = k.as_scalar_text().map(|c| c.into_owned()) else {
+            continue;
+        };
         let hit = match matcher {
             CompiledKeyMatcher::Exact(name) => k_text == *name,
             CompiledKeyMatcher::Glob(matchers) => matchers.iter().any(|m| m.is_match(&k_text)),
             CompiledKeyMatcher::Capture(_) | CompiledKeyMatcher::Wildcard => true,
         };
-        if hit { out.push((k_text, k.byte_range(), v)); }
+        if hit {
+            out.push((k_text, k.byte_range(), v));
+        }
     }
     out
 }
 
 fn bind_key_captures(
-    matcher:  &CompiledKeyMatcher,
+    matcher: &CompiledKeyMatcher,
     key_text: &str,
     key_range: (u32, u32),
-    caps:     &mut Captures,
+    caps: &mut Captures,
 ) {
     match matcher {
         CompiledKeyMatcher::Capture(name) => {
             caps.insert(
                 Arc::from(name.as_str()),
                 WalkCapture {
-                    text:       Arc::from(key_text),
+                    text: Arc::from(key_text),
                     byte_start: key_range.0,
-                    byte_end:   key_range.1,
+                    byte_end: key_range.1,
                 },
             );
         }
@@ -393,9 +461,9 @@ fn bind_key_captures(
                         caps.insert(
                             Arc::from(name.as_str()),
                             WalkCapture {
-                                text:       Arc::from(value.as_str()),
+                                text: Arc::from(value.as_str()),
                                 byte_start: key_range.0,
-                                byte_end:   key_range.1,
+                                byte_end: key_range.1,
                             },
                         );
                     }
@@ -408,10 +476,10 @@ fn bind_key_captures(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::super::data::JsonNode;
     use super::super::brace_parse::parse_body;
     use super::super::compile::compile_steps;
-    use super::super::super::data::JsonNode;
+    use super::*;
 
     fn parse_json(src: &str) -> JsonNode {
         JsonNode::parse(Arc::from(src.as_bytes())).unwrap()
@@ -438,11 +506,21 @@ mod tests {
         let steps = compile("{ users: [...{ name: $N, age: $A }] }");
         let out = walk(&json, &steps);
         assert_eq!(out.rows.len(), 2);
-        let mut pairs: Vec<_> = out.rows.iter()
-            .map(|r| (r.captures["N"].text.to_string(), r.captures["A"].text.to_string()))
+        let mut pairs: Vec<_> = out
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    r.captures["N"].text.to_string(),
+                    r.captures["A"].text.to_string(),
+                )
+            })
             .collect();
         pairs.sort();
-        assert_eq!(pairs, vec![("a".into(), "1".into()), ("b".into(), "2".into())]);
+        assert_eq!(
+            pairs,
+            vec![("a".into(), "1".into()), ("b".into(), "2".into())]
+        );
     }
 
     #[test]
@@ -451,11 +529,21 @@ mod tests {
         let steps = compile("{ deps: { $K: $V } }");
         let out = walk(&json, &steps);
         assert_eq!(out.rows.len(), 2);
-        let mut pairs: Vec<_> = out.rows.iter()
-            .map(|r| (r.captures["K"].text.to_string(), r.captures["V"].text.to_string()))
+        let mut pairs: Vec<_> = out
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    r.captures["K"].text.to_string(),
+                    r.captures["V"].text.to_string(),
+                )
+            })
             .collect();
         pairs.sort();
-        assert_eq!(pairs, vec![("bar".into(), "2.0".into()), ("foo".into(), "1.0".into())]);
+        assert_eq!(
+            pairs,
+            vec![("bar".into(), "2.0".into()), ("foo".into(), "1.0".into())]
+        );
     }
 
     #[test]
@@ -464,7 +552,9 @@ mod tests {
         let steps = compile("{ **: { image: $I } }");
         let out = walk(&json, &steps);
         // ** is recursive; should reach the image at any depth.
-        let imgs: Vec<_> = out.rows.iter()
+        let imgs: Vec<_> = out
+            .rows
+            .iter()
             .filter_map(|r| r.captures.get("I").map(|c| c.text.to_string()))
             .collect();
         assert!(imgs.contains(&"nginx".to_string()));

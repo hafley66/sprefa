@@ -30,9 +30,15 @@ pub struct PathBuilder {
 }
 
 impl PathBuilder {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    pub fn with_capacity(n: usize) -> Self { Self { items: Vec::with_capacity(n) } }
+    pub fn with_capacity(n: usize) -> Self {
+        Self {
+            items: Vec::with_capacity(n),
+        }
+    }
 
     pub fn push<I: PathItem>(&mut self, item: I) -> &mut Self {
         self.items.push(Box::new(item));
@@ -51,8 +57,12 @@ impl PathBuilder {
         self
     }
 
-    pub fn len(&self) -> usize { self.items.len() }
-    pub fn is_empty(&self) -> bool { self.items.is_empty() }
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
 
     pub fn build(self) -> Path {
         Arc::from(self.items.into_boxed_slice())
@@ -67,15 +77,24 @@ impl PathBuilder {
 fn clone_item(item: &dyn PathItem) -> Box<dyn PathItem> {
     match item.kind_tag() {
         "Index" => {
-            let v = item.as_any().downcast_ref::<items::Index>().expect("kind tag mismatch");
+            let v = item
+                .as_any()
+                .downcast_ref::<items::Index>()
+                .expect("kind tag mismatch");
             Box::new(v.clone())
         }
         "Name" => {
-            let v = item.as_any().downcast_ref::<items::Name>().expect("kind tag mismatch");
+            let v = item
+                .as_any()
+                .downcast_ref::<items::Name>()
+                .expect("kind tag mismatch");
             Box::new(v.clone())
         }
         "Field" => {
-            let v = item.as_any().downcast_ref::<items::Field>().expect("kind tag mismatch");
+            let v = item
+                .as_any()
+                .downcast_ref::<items::Field>()
+                .expect("kind tag mismatch");
             Box::new(v.clone())
         }
         "Body" => Box::new(items::Body),
@@ -89,7 +108,9 @@ fn clone_item(item: &dyn PathItem) -> Box<dyn PathItem> {
 // ─── Path operations ───────────────────────────────────────────────────────
 
 pub fn parent(p: &Path) -> Option<Path> {
-    if p.is_empty() { return None; }
+    if p.is_empty() {
+        return None;
+    }
     let mut b = PathBuilder::with_capacity(p.len() - 1);
     for it in &p[..p.len() - 1] {
         b.push_boxed(clone_item(it.as_ref()));
@@ -98,15 +119,21 @@ pub fn parent(p: &Path) -> Option<Path> {
 }
 
 pub fn is_prefix_of(prefix: &Path, p: &Path) -> bool {
-    if prefix.len() > p.len() { return false; }
+    if prefix.len() > p.len() {
+        return false;
+    }
     for (a, b) in prefix.iter().zip(p.iter()) {
-        if !a.dyn_eq(b.as_ref()) { return false; }
+        if !a.dyn_eq(b.as_ref()) {
+            return false;
+        }
     }
     true
 }
 
 pub fn strip_prefix(prefix: &Path, p: &Path) -> Option<Path> {
-    if !is_prefix_of(prefix, p) { return None; }
+    if !is_prefix_of(prefix, p) {
+        return None;
+    }
     let mut b = PathBuilder::with_capacity(p.len() - prefix.len());
     for it in &p[prefix.len()..] {
         b.push_boxed(clone_item(it.as_ref()));
@@ -135,8 +162,12 @@ pub struct PathKey(pub Path);
 
 impl PartialEq for PathKey {
     fn eq(&self, other: &Self) -> bool {
-        if self.0.len() != other.0.len() { return false; }
-        self.0.iter().zip(other.0.iter())
+        if self.0.len() != other.0.len() {
+            return false;
+        }
+        self.0
+            .iter()
+            .zip(other.0.iter())
             .all(|(a, b)| a.dyn_eq(b.as_ref()))
     }
 }
@@ -153,7 +184,9 @@ impl Hash for PathKey {
 
 impl Debug for PathKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self.0.iter().map(|it| it.render())).finish()
+        f.debug_list()
+            .entries(self.0.iter().map(|it| it.render()))
+            .finish()
     }
 }
 
@@ -162,14 +195,14 @@ impl Debug for PathKey {
 /// Walk from `tree.root_node()` down to the deepest descendant containing
 /// `body_byte`, emitting one `items::Field { kind_id, idx }` per step.
 /// Helper for TS-backed DSLs implementing `Compiled::emit_path_items`.
-pub fn ts_default_emit(
-    tree: &tree_sitter::Tree,
-    body_byte: usize,
-    builder: &mut PathBuilder,
-) {
+pub fn ts_default_emit(tree: &tree_sitter::Tree, body_byte: usize, builder: &mut PathBuilder) {
     let root = tree.root_node();
-    let target = root.descendant_for_byte_range(body_byte, body_byte).unwrap_or(root);
-    if target.id() == root.id() { return; }
+    let target = root
+        .descendant_for_byte_range(body_byte, body_byte)
+        .unwrap_or(root);
+    if target.id() == root.id() {
+        return;
+    }
     let mut chain: Vec<items::Field> = Vec::new();
     let mut cursor = target;
     while let Some(parent) = cursor.parent() {
@@ -183,11 +216,15 @@ pub fn ts_default_emit(
             }
         }
         chain.push(items::Field { kind_id, idx });
-        if parent.id() == root.id() { break; }
+        if parent.id() == root.id() {
+            break;
+        }
         cursor = parent;
     }
     chain.reverse();
-    for f in chain { builder.push(f); }
+    for f in chain {
+        builder.push(f);
+    }
 }
 
 // ─── Built-in items ────────────────────────────────────────────────────────
@@ -199,50 +236,83 @@ pub mod items {
     pub struct Index(pub u16);
 
     impl PathItem for Index {
-        fn render(&self) -> Cow<'_, str> { Cow::Owned(self.0.to_string()) }
-        fn kind_tag(&self) -> &'static str { "Index" }
-        fn dyn_hash(&self, h: &mut dyn Hasher) { h.write_u16(self.0); }
-        fn dyn_eq(&self, other: &dyn PathItem) -> bool {
-            other.as_any().downcast_ref::<Index>().map_or(false, |o| o.0 == self.0)
+        fn render(&self) -> Cow<'_, str> {
+            Cow::Owned(self.0.to_string())
         }
-        fn as_any(&self) -> &dyn Any { self }
+        fn kind_tag(&self) -> &'static str {
+            "Index"
+        }
+        fn dyn_hash(&self, h: &mut dyn Hasher) {
+            h.write_u16(self.0);
+        }
+        fn dyn_eq(&self, other: &dyn PathItem) -> bool {
+            other
+                .as_any()
+                .downcast_ref::<Index>()
+                .map_or(false, |o| o.0 == self.0)
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
     }
 
     #[derive(Clone, Debug)]
     pub struct Name(pub Arc<str>);
 
     impl Name {
-        pub fn new(s: impl Into<Arc<str>>) -> Self { Self(s.into()) }
+        pub fn new(s: impl Into<Arc<str>>) -> Self {
+            Self(s.into())
+        }
     }
 
     impl PathItem for Name {
-        fn render(&self) -> Cow<'_, str> { Cow::Borrowed(&self.0) }
-        fn kind_tag(&self) -> &'static str { "Name" }
-        fn dyn_hash(&self, h: &mut dyn Hasher) { h.write(self.0.as_bytes()); }
-        fn dyn_eq(&self, other: &dyn PathItem) -> bool {
-            other.as_any().downcast_ref::<Name>().map_or(false, |o| *o.0 == *self.0)
+        fn render(&self) -> Cow<'_, str> {
+            Cow::Borrowed(&self.0)
         }
-        fn as_any(&self) -> &dyn Any { self }
+        fn kind_tag(&self) -> &'static str {
+            "Name"
+        }
+        fn dyn_hash(&self, h: &mut dyn Hasher) {
+            h.write(self.0.as_bytes());
+        }
+        fn dyn_eq(&self, other: &dyn PathItem) -> bool {
+            other
+                .as_any()
+                .downcast_ref::<Name>()
+                .map_or(false, |o| *o.0 == *self.0)
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
     }
 
     /// Tree-sitter field+index. Default segment kind for TS-backed DSLs.
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-    pub struct Field { pub kind_id: u16, pub idx: u16 }
+    pub struct Field {
+        pub kind_id: u16,
+        pub idx: u16,
+    }
 
     impl PathItem for Field {
         fn render(&self) -> Cow<'_, str> {
             Cow::Owned(format!("{}[{}]", self.kind_id, self.idx))
         }
-        fn kind_tag(&self) -> &'static str { "Field" }
+        fn kind_tag(&self) -> &'static str {
+            "Field"
+        }
         fn dyn_hash(&self, h: &mut dyn Hasher) {
             h.write_u16(self.kind_id);
             h.write_u16(self.idx);
         }
         fn dyn_eq(&self, other: &dyn PathItem) -> bool {
-            other.as_any().downcast_ref::<Field>()
+            other
+                .as_any()
+                .downcast_ref::<Field>()
                 .map_or(false, |o| o.kind_id == self.kind_id && o.idx == self.idx)
         }
-        fn as_any(&self) -> &dyn Any { self }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
     }
 
     /// `$` — cross from container into content (e.g. file → file body).
@@ -250,13 +320,21 @@ pub mod items {
     pub struct Body;
 
     impl PathItem for Body {
-        fn render(&self) -> Cow<'_, str> { Cow::Borrowed("$") }
-        fn kind_tag(&self) -> &'static str { "Body" }
-        fn dyn_hash(&self, h: &mut dyn Hasher) { h.write_u8(0); }
+        fn render(&self) -> Cow<'_, str> {
+            Cow::Borrowed("$")
+        }
+        fn kind_tag(&self) -> &'static str {
+            "Body"
+        }
+        fn dyn_hash(&self, h: &mut dyn Hasher) {
+            h.write_u8(0);
+        }
         fn dyn_eq(&self, other: &dyn PathItem) -> bool {
             other.as_any().downcast_ref::<Body>().is_some()
         }
-        fn as_any(&self) -> &dyn Any { self }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
     }
 }
 
@@ -268,7 +346,9 @@ mod tests {
 
     fn p<I: IntoIterator<Item = Box<dyn PathItem>>>(items: I) -> Path {
         let mut b = PathBuilder::new();
-        for it in items { b.push_boxed(it); }
+        for it in items {
+            b.push_boxed(it);
+        }
         b.build()
     }
 
@@ -285,7 +365,11 @@ mod tests {
 
     #[test]
     fn parent_strips_one() {
-        let path = p([Box::new(Index(0)) as _, Box::new(Body) as _, Box::new(Name::new("k")) as _]);
+        let path = p([
+            Box::new(Index(0)) as _,
+            Box::new(Body) as _,
+            Box::new(Name::new("k")) as _,
+        ]);
         let par = parent(&path).unwrap();
         assert_eq!(par.len(), 2);
         let empty: Vec<Box<dyn PathItem>> = vec![];
@@ -295,7 +379,11 @@ mod tests {
     #[test]
     fn prefix_and_strip() {
         let pre = p([Box::new(Index(0)) as _, Box::new(Body) as _]);
-        let full = p([Box::new(Index(0)) as _, Box::new(Body) as _, Box::new(Name::new("k")) as _]);
+        let full = p([
+            Box::new(Index(0)) as _,
+            Box::new(Body) as _,
+            Box::new(Name::new("k")) as _,
+        ]);
         assert!(is_prefix_of(&pre, &full));
         let rest = strip_prefix(&pre, &full).unwrap();
         assert_eq!(rest.len(), 1);

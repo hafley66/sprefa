@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
     splice_into, table_dirty_key, Component, Diag, FactStore, Next, Node, Pipe, Purity,
-    QueueBackend, QueueRow, RenderCtx, TABLE_DOMAIN, Wake,
+    QueueBackend, QueueRow, RenderCtx, Wake, TABLE_DOMAIN,
 };
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection};
@@ -37,7 +37,8 @@ pub struct SqlQueryComponent {
 impl SqlQueryComponent {
     pub fn new(store: Arc<dyn FactStore<Cursor>>, sql: impl Into<Arc<str>>) -> Self {
         let sql = sql.into();
-        let referenced_tables = Arc::new(referenced_fact_tables(sql.as_ref()).into_iter().collect());
+        let referenced_tables =
+            Arc::new(referenced_fact_tables(sql.as_ref()).into_iter().collect());
         Self {
             store,
             sql,
@@ -569,13 +570,14 @@ impl OperatorDef for SqlDef {
 }
 
 pub fn rule_table_call_pipe(
-    ctx:   &LowerCtx,
+    ctx: &LowerCtx,
     table: &str,
-    args:  &[CallArg],
+    args: &[CallArg],
 ) -> Result<Pipe<Cursor>, LowerError> {
-    let cols = ctx.store.declared_cols(table).ok_or_else(|| {
-        LowerError::Unknown(format!("rule table `{table}` is not declared"))
-    })?;
+    let cols = ctx
+        .store
+        .declared_cols(table)
+        .ok_or_else(|| LowerError::Unknown(format!("rule table `{table}` is not declared")))?;
     if args.len() > cols.len() {
         return Err(LowerError::Unknown(format!(
             "rule table `{table}` has {} column(s), call passed {} arg(s)",
@@ -597,7 +599,10 @@ pub fn rule_table_call_pipe(
         match arg {
             Value::Atom(value) => {
                 if value.as_ref() == "&.value" {
-                    modes.push(ArgMode::BoundTerm { col, term: "value".to_string() });
+                    modes.push(ArgMode::BoundTerm {
+                        col,
+                        term: "value".to_string(),
+                    });
                 } else {
                     modes.push(ArgMode::BoundLiteral {
                         col,
@@ -682,8 +687,13 @@ pub fn rule_table_call_pipe(
         }
     }
 
-    let all_grounded = !modes.is_empty() && modes.iter().all(|m| !matches!(m, ArgMode::Project { .. }));
-    let select_prefix = if all_grounded { "SELECT DISTINCT" } else { "SELECT" };
+    let all_grounded =
+        !modes.is_empty() && modes.iter().all(|m| !matches!(m, ArgMode::Project { .. }));
+    let select_prefix = if all_grounded {
+        "SELECT DISTINCT"
+    } else {
+        "SELECT"
+    };
     let mut sql = format!(
         "{select_prefix} {}\nFROM input JOIN {} AS {} ON 1=1",
         select_cols.join(", "),
@@ -695,20 +705,18 @@ pub fn rule_table_call_pipe(
         sql.push_str(&predicates.join(" AND "));
     }
 
-    Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(
-        ctx.store.clone(),
-        sql,
-    ))))
+    Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(ctx.store.clone(), sql))))
 }
 
 pub fn rule_apply_write_pipe(
-    ctx:   &LowerCtx,
+    ctx: &LowerCtx,
     table: &str,
-    args:  &[CallArg],
+    args: &[CallArg],
 ) -> Result<Pipe<Cursor>, LowerError> {
-    let cols = ctx.store.declared_cols(table).ok_or_else(|| {
-        LowerError::Unknown(format!("rule table `{table}` is not declared"))
-    })?;
+    let cols = ctx
+        .store
+        .declared_cols(table)
+        .ok_or_else(|| LowerError::Unknown(format!("rule table `{table}` is not declared")))?;
     let resolved = resolve_rule_args(table, &cols, args)?;
     if resolved.is_empty() {
         return Ok(Pipe::new().step(Arc::new(FactWrite::new(
@@ -733,29 +741,32 @@ pub fn rule_apply_write_pipe(
     ))))
 }
 
-pub fn rule_write_pipe(
-    ctx:  &LowerCtx,
-    args: &[CallArg],
-) -> Result<Pipe<Cursor>, LowerError> {
+pub fn rule_write_pipe(ctx: &LowerCtx, args: &[CallArg]) -> Result<Pipe<Cursor>, LowerError> {
     let Some((first, rest)) = args.split_first() else {
-        return Err(LowerError::Unknown("rule write requires a :table arg".into()));
+        return Err(LowerError::Unknown(
+            "rule write requires a :table arg".into(),
+        ));
     };
     if first.keyword.is_some() {
-        return Err(LowerError::Unknown("rule write table arg must be positional".into()));
+        return Err(LowerError::Unknown(
+            "rule write table arg must be positional".into(),
+        ));
     }
     let table = match &first.value {
         Value::Atom(s) => s.clone(),
-        _ => return Err(LowerError::Unknown("rule write first arg must be a :table atom".into())),
+        _ => {
+            return Err(LowerError::Unknown(
+                "rule write first arg must be a :table atom".into(),
+            ))
+        }
     };
     if rest.is_empty() {
-        return Ok(Pipe::new().step(Arc::new(FactWrite::new(
-            ctx.store.clone(),
-            table,
-        ))));
+        return Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))));
     }
-    let cols = ctx.store.declared_cols(&table).ok_or_else(|| {
-        LowerError::Unknown(format!("rule table `{table}` is not declared"))
-    })?;
+    let cols = ctx
+        .store
+        .declared_cols(&table)
+        .ok_or_else(|| LowerError::Unknown(format!("rule table `{table}` is not declared")))?;
     let resolved = resolve_rule_args(&table, &cols, rest)?;
     let mut assignments = Vec::with_capacity(resolved.len());
     for (col, value) in resolved {
@@ -792,9 +803,9 @@ pub fn rule_body_call_pipe(
     force: bool,
     args: &[CallArg],
 ) -> Result<Pipe<Cursor>, LowerError> {
-    let rule = ctx.get_rule(table).ok_or_else(|| {
-        LowerError::Unknown(format!("bodied rule `{table}` is not declared"))
-    })?;
+    let rule = ctx
+        .get_rule(table)
+        .ok_or_else(|| LowerError::Unknown(format!("bodied rule `{table}` is not declared")))?;
     let cols: Vec<String> = rule.sink_cols.iter().map(|col| col.to_string()).collect();
     let resolved = resolve_rule_args(table, &cols, args)?;
     let mut assignments = Vec::new();
@@ -809,11 +820,7 @@ pub fn rule_body_call_pipe(
         });
     }
 
-    Ok(Pipe::new().step(Arc::new(RuleInvokeComponent::new(
-        rule,
-        assignments,
-        force,
-    ))))
+    Ok(Pipe::new().step(Arc::new(RuleInvokeComponent::new(rule, assignments, force))))
 }
 
 fn grounded_write_value(table: &str, value: Value) -> Result<WriteValue, LowerError> {
@@ -913,7 +920,8 @@ fn resolve_rule_args(
         }
     }
 
-    Ok(cols.iter()
+    Ok(cols
+        .iter()
         .cloned()
         .zip(out)
         .filter_map(|(col, value)| value.map(|value| (col, value)))

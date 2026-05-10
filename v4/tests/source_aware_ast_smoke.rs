@@ -1,10 +1,10 @@
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, Node,
-    PipeInstance, QueueBackend, RenderCtx,
+    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, Node, PipeInstance,
+    QueueBackend, RenderCtx,
 };
 use v4::store::SprfStore;
 use v4::v2_ops::{AstNmComponent, AstTelemetry, FsComponent, FsTelemetry};
@@ -46,7 +46,12 @@ fn fs_ast_reads_source_without_read_materializing_full_body() {
     let pipe = PipeInstance::new(steps);
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
 
-    expand(&pipe, queue, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    expand(
+        &pipe,
+        queue,
+        vec![Arc::new(Cursor::default())],
+        ExpandOpts::default(),
+    );
 
     let rows = rows.lock().unwrap().clone();
     assert_eq!(rows.len(), 1);
@@ -59,12 +64,21 @@ fn fs_ast_reads_source_without_read_materializing_full_body() {
         .expect("match cursor has source byte range");
     assert_ne!(where_bytes.file, 0);
     assert!(where_bytes.hi > where_bytes.lo);
-    assert_eq!(sprf.lookup_string(where_bytes.string).as_deref(), Some(rows[0].value()));
+    assert_eq!(
+        sprf.lookup_string(where_bytes.string).as_deref(),
+        Some(rows[0].value())
+    );
     assert_eq!(telemetry.input_rows.load(Ordering::Relaxed), 1);
     assert_eq!(telemetry.source_read_rows.load(Ordering::Relaxed), 1);
-    assert_eq!(telemetry.source_read_bytes.load(Ordering::Relaxed), body.len() as u64);
+    assert_eq!(
+        telemetry.source_read_bytes.load(Ordering::Relaxed),
+        body.len() as u64
+    );
     assert_eq!(telemetry.source_utf8_rows.load(Ordering::Relaxed), 1);
-    assert_eq!(telemetry.source_utf8_bytes.load(Ordering::Relaxed), body.len() as u64);
+    assert_eq!(
+        telemetry.source_utf8_bytes.load(Ordering::Relaxed),
+        body.len() as u64
+    );
     assert_eq!(telemetry.source_read_errors.load(Ordering::Relaxed), 0);
     assert_eq!(telemetry.legacy_rows.load(Ordering::Relaxed), 0);
     assert_eq!(telemetry.prefilter_skips.load(Ordering::Relaxed), 0);
@@ -91,7 +105,12 @@ fn fs_include_exts_filters_before_emitting_cursors() {
     let pipe = PipeInstance::new(steps);
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
 
-    expand(&pipe, queue, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    expand(
+        &pipe,
+        queue,
+        vec![Arc::new(Cursor::default())],
+        ExpandOpts::default(),
+    );
 
     let rows = rows.lock().unwrap().clone();
     assert_eq!(rows.len(), 1);

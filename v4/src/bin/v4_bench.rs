@@ -25,23 +25,22 @@ use ast_grep_language::SupportLang;
 use ignore::WalkBuilder;
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, MemoCache,
-    Memoize, Node, PipeInstance, PriorChildIndex, QueueBackend, RenderCtx,
-    SqliteFactStore,
-};
-use v4::v2_ops::{
-    AstNmComponent, AstTelemetry, CountComponent, FsComponent, FsTelemetry,
-    MultiAstNmComponent, ReadComponent, SinglePathComponent,
+    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, MemoCache, Memoize, Node,
+    PipeInstance, PriorChildIndex, QueueBackend, RenderCtx, SqliteFactStore,
 };
 use v4::fact::FactWrite;
 use v4::store::SprfStore;
 use v4::telemetry::{StageTiming, TimedComponent};
+use v4::v2_ops::{
+    AstNmComponent, AstTelemetry, CountComponent, FsComponent, FsTelemetry, MultiAstNmComponent,
+    ReadComponent, SinglePathComponent,
+};
 
 #[derive(Default)]
 struct BenchCounters {
-    source_rows:  Arc<AtomicU64>,
-    read_rows:    Arc<AtomicU64>,
-    read_bytes:   Arc<AtomicU64>,
+    source_rows: Arc<AtomicU64>,
+    read_rows: Arc<AtomicU64>,
+    read_bytes: Arc<AtomicU64>,
 }
 
 /// Bench-local pass-through counter. Keeps telemetry out of the core
@@ -60,7 +59,7 @@ impl Component for RowCountComponent {
 }
 
 struct ReadTelemetryComponent {
-    rows:  Arc<AtomicU64>,
+    rows: Arc<AtomicU64>,
     bytes: Arc<AtomicU64>,
 }
 
@@ -69,7 +68,8 @@ impl Component for ReadTelemetryComponent {
 
     fn render(&self, _ctx: &RenderCtx, c: &v4::Cursor) -> Node<v4::Cursor> {
         self.rows.fetch_add(1, Ordering::Relaxed);
-        self.bytes.fetch_add(c.value.len() as u64, Ordering::Relaxed);
+        self.bytes
+            .fetch_add(c.value.len() as u64, Ordering::Relaxed);
         Node::Emit(Arc::new(c.clone()))
     }
 }
@@ -79,11 +79,15 @@ impl Component for ReadTelemetryComponent {
 struct CommitEveryComponent {
     store: Arc<dyn FactStore<v4::Cursor>>,
     every: usize,
-    seen:  std::sync::atomic::AtomicUsize,
+    seen: std::sync::atomic::AtomicUsize,
 }
 impl CommitEveryComponent {
     fn new(store: Arc<dyn FactStore<v4::Cursor>>, every: usize) -> Self {
-        Self { store, every: every.max(1), seen: std::sync::atomic::AtomicUsize::new(0) }
+        Self {
+            store,
+            every: every.max(1),
+            seen: std::sync::atomic::AtomicUsize::new(0),
+        }
     }
 }
 impl Component for CommitEveryComponent {
@@ -93,7 +97,10 @@ impl Component for CommitEveryComponent {
         if n % self.every == 0 {
             self.store.commit(ctx.expand_tick, None);
         }
-        batch.iter().map(|c| Node::Emit(Arc::new((*c).clone()))).collect()
+        batch
+            .iter()
+            .map(|c| Node::Emit(Arc::new((*c).clone())))
+            .collect()
     }
 }
 
@@ -101,17 +108,26 @@ impl Component for CommitEveryComponent {
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[derive(Clone, Copy, Debug)]
-enum Mode { Bare, Insert, Full }
+enum Mode {
+    Bare,
+    Insert,
+    Full,
+}
 impl Mode {
     fn parse(s: &str) -> Self {
-        match s { "bare"=>Mode::Bare, "insert"=>Mode::Insert, "full"=>Mode::Full, _ => panic!("bad mode") }
+        match s {
+            "bare" => Mode::Bare,
+            "insert" => Mode::Insert,
+            "full" => Mode::Full,
+            _ => panic!("bad mode"),
+        }
     }
 }
 
 fn parse_lang(s: &str) -> SupportLang {
     match s {
         "c" | "cpp" | "c++" => SupportLang::Cpp,
-        "rust" | "rs"       => SupportLang::Rust,
+        "rust" | "rs" => SupportLang::Rust,
         other => panic!("unknown --lang: {}", other),
     }
 }
@@ -119,9 +135,17 @@ fn parse_lang(s: &str) -> SupportLang {
 fn rss_peak_kb() -> u64 {
     unsafe {
         let mut u: libc::rusage = std::mem::zeroed();
-        if libc::getrusage(libc::RUSAGE_SELF, &mut u) != 0 { return 0; }
-        #[cfg(target_os = "macos")] { (u.ru_maxrss as u64) / 1024 }
-        #[cfg(not(target_os = "macos"))] { u.ru_maxrss as u64 }
+        if libc::getrusage(libc::RUSAGE_SELF, &mut u) != 0 {
+            return 0;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            (u.ru_maxrss as u64) / 1024
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            u.ru_maxrss as u64
+        }
     }
 }
 
@@ -151,36 +175,93 @@ async fn main() {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--root"    => { root = PathBuf::from(&args[i+1]); i += 2; }
-            "--workers" => { workers = args[i+1].parse().unwrap(); i += 2; }
-            "--trials"  => { trials  = args[i+1].parse::<usize>().unwrap().max(1); i += 2; }
-            "--pattern" => { pattern_src = args[i+1].clone(); i += 2; }
-            "--lang"    => { lang_spec   = args[i+1].clone(); i += 2; }
-            "--mode"    => { mode_str    = args[i+1].clone(); i += 2; }
-            "--batch"   => { batch       = args[i+1].parse().unwrap(); i += 2; }
-            "--file"    => { file        = Some(PathBuf::from(&args[i+1])); i += 2; }
-            "--multi"   => { multi       = args[i+1].parse().unwrap(); i += 2; }
-            "--pattern-each" => { multi_each.push(args[i+1].clone()); i += 2; }
-            "--commit-every" => { commit_every = args[i+1].parse().unwrap(); i += 2; }
-            "--store"        => { store_kind   = args[i+1].clone(); i += 2; }
-            "--sqlite-path"  => { sqlite_path  = Some(PathBuf::from(&args[i+1])); i += 2; }
-            "--materialize-read" => { materialize_read = true; i += 1; }
-            "--sprf-store"  => { sprf_store_enabled = true; i += 1; }
-            "--warm-page-cache" => { warm_page_cache = true; i += 1; }
-            "--memoize"      => { memoize      = args[i+1].clone(); i += 2; }
-            "--memoize-share"=> { memoize_share= true; i += 1; }
-            other       => panic!("unknown arg: {}", other),
+            "--root" => {
+                root = PathBuf::from(&args[i + 1]);
+                i += 2;
+            }
+            "--workers" => {
+                workers = args[i + 1].parse().unwrap();
+                i += 2;
+            }
+            "--trials" => {
+                trials = args[i + 1].parse::<usize>().unwrap().max(1);
+                i += 2;
+            }
+            "--pattern" => {
+                pattern_src = args[i + 1].clone();
+                i += 2;
+            }
+            "--lang" => {
+                lang_spec = args[i + 1].clone();
+                i += 2;
+            }
+            "--mode" => {
+                mode_str = args[i + 1].clone();
+                i += 2;
+            }
+            "--batch" => {
+                batch = args[i + 1].parse().unwrap();
+                i += 2;
+            }
+            "--file" => {
+                file = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--multi" => {
+                multi = args[i + 1].parse().unwrap();
+                i += 2;
+            }
+            "--pattern-each" => {
+                multi_each.push(args[i + 1].clone());
+                i += 2;
+            }
+            "--commit-every" => {
+                commit_every = args[i + 1].parse().unwrap();
+                i += 2;
+            }
+            "--store" => {
+                store_kind = args[i + 1].clone();
+                i += 2;
+            }
+            "--sqlite-path" => {
+                sqlite_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--materialize-read" => {
+                materialize_read = true;
+                i += 1;
+            }
+            "--sprf-store" => {
+                sprf_store_enabled = true;
+                i += 1;
+            }
+            "--warm-page-cache" => {
+                warm_page_cache = true;
+                i += 1;
+            }
+            "--memoize" => {
+                memoize = args[i + 1].clone();
+                i += 2;
+            }
+            "--memoize-share" => {
+                memoize_share = true;
+                i += 1;
+            }
+            other => panic!("unknown arg: {}", other),
         }
     }
     let mode = Mode::parse(&mode_str);
     let lang = parse_lang(&lang_spec);
     let exts: Vec<String> = match lang_spec.as_str() {
         "c" | "cpp" | "c++" => vec!["c".into(), "h".into()],
-        "rust" | "rs"       => vec!["rs".into()],
+        "rust" | "rs" => vec!["rs".into()],
         _ => panic!(),
     };
 
-    rayon::ThreadPoolBuilder::new().num_threads(workers).build_global().ok();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build_global()
+        .ok();
 
     eprintln!(
         "mode={:?} workers={} batch={} trials={} pattern={:?} lang={:?} root={} memoize={} memoize_share={} sprf_store={} warm_page_cache={}",
@@ -217,14 +298,16 @@ async fn main() {
         );
     }
     // Shared cache + index across trials when --memoize-share.
-    let shared_cache: Option<Arc<MemoCache<v4::Cursor>>> =
-        if memoize_share && memoize != "off" {
-            Some(Arc::new(MemoCache::new()))
-        } else { None };
-    let shared_idx: Option<Arc<PriorChildIndex>> =
-        if memoize_share && memoize == "reconcile" {
-            Some(Arc::new(PriorChildIndex::new()))
-        } else { None };
+    let shared_cache: Option<Arc<MemoCache<v4::Cursor>>> = if memoize_share && memoize != "off" {
+        Some(Arc::new(MemoCache::new()))
+    } else {
+        None
+    };
+    let shared_idx: Option<Arc<PriorChildIndex>> = if memoize_share && memoize == "reconcile" {
+        Some(Arc::new(PriorChildIndex::new()))
+    } else {
+        None
+    };
 
     let mut walls = Vec::new();
     let mut last_matches: u64 = 0;
@@ -245,7 +328,7 @@ async fn main() {
         // Source: SinglePath (--file) or Fs (bulk corpus).
         let source: Arc<dyn Component<Next = v4::Cursor>> = match &file {
             Some(p) => Arc::new(SinglePathComponent::new(p.clone())),
-            None    => {
+            None => {
                 let mut comp = FsComponent::new(root.clone(), batch)
                     .with_include_exts(exts.clone())
                     .with_telemetry(fs_telemetry.clone());
@@ -259,12 +342,16 @@ async fn main() {
         // Matcher: Multi(Ast)Nm if --multi/--pattern-each, else AstNm
         // wrapped in optional Memoize.
         let matcher: Arc<dyn Component<Next = v4::Cursor>> = if !multi_each.is_empty() {
-            let pats: Vec<(String, String)> = multi_each.iter().enumerate()
-                .map(|(i, p)| (format!("p{}", i), p.clone())).collect();
+            let pats: Vec<(String, String)> = multi_each
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (format!("p{}", i), p.clone()))
+                .collect();
             Arc::new(MultiAstNmComponent::new(pats, lang))
         } else if multi > 0 {
             let pats: Vec<(String, String)> = (0..multi)
-                .map(|i| (format!("p{}", i), pattern_src.clone())).collect();
+                .map(|i| (format!("p{}", i), pattern_src.clone()))
+                .collect();
             Arc::new(MultiAstNmComponent::new(pats, lang))
         } else {
             match memoize.as_str() {
@@ -276,32 +363,34 @@ async fn main() {
                     }
                     Arc::new(comp)
                 }
-                "on"  => {
-                    let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
+                "on" => {
+                    let cache = shared_cache
+                        .clone()
+                        .unwrap_or_else(|| Arc::new(MemoCache::new()));
                     let mut comp = AstNmComponent::new(pattern_src.clone(), lang)
                         .with_telemetry(ast_telemetry.clone());
                     if let Some(s) = &sprf_store {
                         comp = comp.with_sprf_store(s.clone());
                     }
-                    Arc::new(Memoize::new(
-                        comp,
-                        "astnm",
-                        cache,
-                    ).with_domain("fs"))
+                    Arc::new(Memoize::new(comp, "astnm", cache).with_domain("fs"))
                 }
                 "reconcile" => {
-                    let cache = shared_cache.clone().unwrap_or_else(|| Arc::new(MemoCache::new()));
-                    let idx   = shared_idx.clone().unwrap_or_else(|| Arc::new(PriorChildIndex::new()));
+                    let cache = shared_cache
+                        .clone()
+                        .unwrap_or_else(|| Arc::new(MemoCache::new()));
+                    let idx = shared_idx
+                        .clone()
+                        .unwrap_or_else(|| Arc::new(PriorChildIndex::new()));
                     let mut comp = AstNmComponent::new(pattern_src.clone(), lang)
                         .with_telemetry(ast_telemetry.clone());
                     if let Some(s) = &sprf_store {
                         comp = comp.with_sprf_store(s.clone());
                     }
-                    Arc::new(Memoize::new(
-                        comp,
-                        "astnm",
-                        cache,
-                    ).with_domain("fs").with_prior_children(idx))
+                    Arc::new(
+                        Memoize::new(comp, "astnm", cache)
+                            .with_domain("fs")
+                            .with_prior_children(idx),
+                    )
                 }
                 _ => unreachable!(),
             }
@@ -309,32 +398,35 @@ async fn main() {
 
         // Optional FactStore for Insert mode. Schema is declared once
         // up front so SqliteFactStore can materialize the table.
-        let store_opt: Option<Arc<dyn FactStore<v4::Cursor>>> =
-            if matches!(mode, Mode::Insert) {
-                let store: Arc<dyn FactStore<v4::Cursor>> = match store_kind.as_str() {
-                    "mem"        => Arc::new(MemFactStore::<v4::Cursor>::new()),
-                    "sqlite-mem" => Arc::new(
-                        SqliteFactStore::<v4::Cursor>::open_in_memory()
-                            .expect("sqlite open_in_memory")),
-                    "sqlite-disk" => {
-                        let path = sqlite_path.clone().unwrap_or_else(|| {
-                            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                            PathBuf::from(home).join(".cache/sprefa").join("v4-bench.db")
-                        });
-                        if trial == 1 {
-                            let _ = std::fs::remove_file(&path);
-                            let _ = std::fs::remove_file(format!("{}-wal", path.display()));
-                            let _ = std::fs::remove_file(format!("{}-shm", path.display()));
-                        }
-                        Arc::new(
-                            SqliteFactStore::<v4::Cursor>::open_file(&path)
-                                .expect("sqlite open_file"))
+        let store_opt: Option<Arc<dyn FactStore<v4::Cursor>>> = if matches!(mode, Mode::Insert) {
+            let store: Arc<dyn FactStore<v4::Cursor>> = match store_kind.as_str() {
+                "mem" => Arc::new(MemFactStore::<v4::Cursor>::new()),
+                "sqlite-mem" => Arc::new(
+                    SqliteFactStore::<v4::Cursor>::open_in_memory().expect("sqlite open_in_memory"),
+                ),
+                "sqlite-disk" => {
+                    let path = sqlite_path.clone().unwrap_or_else(|| {
+                        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                        PathBuf::from(home)
+                            .join(".cache/sprefa")
+                            .join("v4-bench.db")
+                    });
+                    if trial == 1 {
+                        let _ = std::fs::remove_file(&path);
+                        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+                        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
                     }
-                    other => panic!("--store must be mem|sqlite-mem|sqlite-disk, got {}", other),
-                };
-                store.declare("matches", &["FS", "CONTENT_HASH", "LO", "HI"]);
-                Some(store)
-            } else { None };
+                    Arc::new(
+                        SqliteFactStore::<v4::Cursor>::open_file(&path).expect("sqlite open_file"),
+                    )
+                }
+                other => panic!("--store must be mem|sqlite-mem|sqlite-disk, got {}", other),
+            };
+            store.declare("matches", &["FS", "CONTENT_HASH", "LO", "HI"]);
+            Some(store)
+        } else {
+            None
+        };
 
         // Build chain:
         //   default             source > matcher > Count
@@ -347,7 +439,9 @@ async fn main() {
             TimedComponent::new("fs", source, &mut timings),
             TimedComponent::new(
                 "count_fs_rows",
-                Arc::new(RowCountComponent { rows: bench.source_rows.clone() }),
+                Arc::new(RowCountComponent {
+                    rows: bench.source_rows.clone(),
+                }),
                 &mut timings,
             ),
         ];
@@ -380,13 +474,17 @@ async fn main() {
             }
             steps.push(TimedComponent::new(
                 "count_matches",
-                Arc::new(CountComponent { count: counter.clone() }),
+                Arc::new(CountComponent {
+                    count: counter.clone(),
+                }),
                 &mut timings,
             ));
         } else {
             steps.push(TimedComponent::new(
                 "count_matches",
-                Arc::new(CountComponent { count: counter.clone() }),
+                Arc::new(CountComponent {
+                    count: counter.clone(),
+                }),
                 &mut timings,
             ));
         }
@@ -461,18 +559,30 @@ async fn main() {
         last_matches = m;
     }
     walls.sort();
-    let med = walls[walls.len()/2];
+    let med = walls[walls.len() / 2];
     eprintln!("───────────────────────────────────────────────────────────────────────────");
-    eprintln!("median:  wall={:.3}s  matches={}", med.as_secs_f64(), last_matches);
+    eprintln!(
+        "median:  wall={:.3}s  matches={}",
+        med.as_secs_f64(),
+        last_matches
+    );
 }
 
 fn enumerate_paths(root: &std::path::Path, exts: &[String]) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for entry in WalkBuilder::new(root).hidden(true).git_ignore(false).build() {
+    for entry in WalkBuilder::new(root)
+        .hidden(true)
+        .git_ignore(false)
+        .build()
+    {
         let Ok(e) = entry else { continue };
-        if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
+        if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
         let p = e.into_path();
-        let Some(ext) = p.extension().and_then(|s| s.to_str()) else { continue };
+        let Some(ext) = p.extension().and_then(|s| s.to_str()) else {
+            continue;
+        };
         if exts.iter().any(|want| want.eq_ignore_ascii_case(ext)) {
             out.push(p);
         }

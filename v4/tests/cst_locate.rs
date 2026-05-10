@@ -27,7 +27,10 @@ fn locate_returns_a_path_inside_function_body() {
     // Byte 11 is `l` of `let`.
     let loc = locate(&doc, 11);
     assert_eq!(loc.dsl_id.as_ref(), "");
-    assert!(!loc.path.is_empty(), "expected a non-empty path inside the file");
+    assert!(
+        !loc.path.is_empty(),
+        "expected a non-empty path inside the file"
+    );
     assert!(loc.node.byte_range().contains(&11));
 }
 
@@ -45,7 +48,11 @@ fn locate_then_resolve_round_trip() {
 
     let loc = locate(&doc, 15); // somewhere in `let x = 7;`
     let resolved = resolve(&doc, &loc.path).expect("resolve");
-    assert_eq!(resolved.id(), loc.node.id(), "resolve should land on the same node");
+    assert_eq!(
+        resolved.id(),
+        loc.node.id(),
+        "resolve should land on the same node"
+    );
     assert_eq!(resolved.kind(), loc.node.kind());
 }
 

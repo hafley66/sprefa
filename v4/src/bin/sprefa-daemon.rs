@@ -45,9 +45,15 @@ where
     S: Into<String>,
 {
     let raw: Vec<String> = raw.into_iter().map(Into::into).collect();
-    let mut bind = cfg.daemon.bind.clone()
+    let mut bind = cfg
+        .daemon
+        .bind
+        .clone()
         .unwrap_or_else(|| "127.0.0.1:8787".to_string());
-    let mut root = cfg.daemon.root.clone()
+    let mut root = cfg
+        .daemon
+        .root
+        .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let mut fact_db: Option<PathBuf> = cfg.daemon_fact_db();
     let mut queue_db: Option<PathBuf> = cfg.daemon_queue_db();
@@ -60,30 +66,34 @@ where
     while i < raw.len() {
         match raw[i].as_str() {
             "--bind" => {
-                bind = raw.get(i+1).ok_or("--bind needs addr")?.clone();
+                bind = raw.get(i + 1).ok_or("--bind needs addr")?.clone();
                 i += 2;
             }
             "--root" => {
-                root = PathBuf::from(raw.get(i+1).ok_or("--root needs dir")?);
+                root = PathBuf::from(raw.get(i + 1).ok_or("--root needs dir")?);
                 i += 2;
             }
             "--fact-db" => {
-                fact_db = Some(PathBuf::from(raw.get(i+1).ok_or("--fact-db needs path")?));
+                fact_db = Some(PathBuf::from(raw.get(i + 1).ok_or("--fact-db needs path")?));
                 i += 2;
             }
             "--queue-db" => {
-                queue_db = Some(PathBuf::from(raw.get(i+1).ok_or("--queue-db needs path")?));
+                queue_db = Some(PathBuf::from(
+                    raw.get(i + 1).ok_or("--queue-db needs path")?,
+                ));
                 i += 2;
             }
             #[cfg(feature = "ghcache")]
             "--ghcache-db" => {
-                ghcache_db = Some(PathBuf::from(raw.get(i+1).ok_or("--ghcache-db needs path")?));
+                ghcache_db = Some(PathBuf::from(
+                    raw.get(i + 1).ok_or("--ghcache-db needs path")?,
+                ));
                 i += 2;
             }
             #[cfg(feature = "ghcache")]
             "--ghcache-interval-ms" => {
                 ghcache_interval_ms = raw
-                    .get(i+1)
+                    .get(i + 1)
                     .ok_or("--ghcache-interval-ms needs milliseconds")?
                     .parse()
                     .map_err(|_| "--ghcache-interval-ms must be an integer")?;
@@ -126,8 +136,11 @@ fn daemon_help() -> &'static str {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let args = match parse_args() {
-        Ok(a)  => a,
-        Err(e) => { eprintln!("sprefa-daemon: {e}"); std::process::exit(2); }
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("sprefa-daemon: {e}");
+            std::process::exit(2);
+        }
     };
 
     let state = Arc::new(match (args.fact_db, args.queue_db) {
@@ -149,8 +162,11 @@ async fn main() {
     let router = build_router(state);
 
     let listener = match tokio::net::TcpListener::bind(&args.bind).await {
-        Ok(l)  => l,
-        Err(e) => { eprintln!("bind {}: {e}", args.bind); std::process::exit(1); }
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("bind {}: {e}", args.bind);
+            std::process::exit(1);
+        }
     };
     eprintln!("sprefa-daemon listening on http://{}", args.bind);
 
@@ -169,8 +185,7 @@ async fn shutdown_signal() {
     };
     #[cfg(unix)]
     let term = async {
-        if let Ok(mut s) = tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::terminate())
+        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         {
             s.recv().await;
         }
@@ -188,7 +203,9 @@ fn spawn_ghcache_watcher(state: Arc<SprfState>, db_path: PathBuf, interval: Dura
         let mut last_id = match tokio::task::spawn_blocking({
             let db_path = db_path.clone();
             move || latest_ghcache_change_id(&db_path)
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(id)) => id,
             Ok(Err(e)) => {
                 eprintln!("ghcache watch disabled: {e}");
@@ -205,7 +222,8 @@ fn spawn_ghcache_watcher(state: Arc<SprfState>, db_path: PathBuf, interval: Dura
             let result = tokio::task::spawn_blocking({
                 let db_path = db_path.clone();
                 move || poll_ghcache_changes(&db_path, last_id)
-            }).await;
+            })
+            .await;
             let changes = match result {
                 Ok(Ok(changes)) => changes,
                 Ok(Err(e)) => {
@@ -277,11 +295,18 @@ mod tests {
             ..Default::default()
         };
 
-        let args = parse_args_from([
-            "--bind", "127.0.0.1:7777",
-            "--root", "/tmp/cli-root",
-            "--fact-db", "/tmp/cli-facts.db",
-        ], &cfg).unwrap();
+        let args = parse_args_from(
+            [
+                "--bind",
+                "127.0.0.1:7777",
+                "--root",
+                "/tmp/cli-root",
+                "--fact-db",
+                "/tmp/cli-facts.db",
+            ],
+            &cfg,
+        )
+        .unwrap();
         assert_eq!(args.bind, "127.0.0.1:7777");
         assert_eq!(args.root, PathBuf::from("/tmp/cli-root"));
         assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/cli-facts.db")));

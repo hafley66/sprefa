@@ -56,7 +56,11 @@ impl PatternMatcher {
                         map.insert(name.to_string(), m.as_str().to_string());
                     }
                 }
-                if map.is_empty() { None } else { Some(map) }
+                if map.is_empty() {
+                    None
+                } else {
+                    Some(map)
+                }
             }
             Self::SegmentCapture(segs) => match_segments(segs, value),
         }
@@ -65,7 +69,7 @@ impl PatternMatcher {
 
 #[derive(Clone)]
 pub struct CompiledPattern {
-    pub src:      Arc<str>,
+    pub src: Arc<str>,
     pub matchers: Vec<PatternMatcher>,
 }
 
@@ -81,7 +85,7 @@ impl std::fmt::Debug for CompiledPattern {
 impl CompiledPattern {
     pub fn compile(src: &str) -> anyhow_lite::Result<Self> {
         Ok(Self {
-            src:      Arc::from(src),
+            src: Arc::from(src),
             matchers: compile_pattern(src)?,
         })
     }
@@ -108,13 +112,19 @@ pub fn parse_segment_pattern(pattern: &str) -> Vec<Segment> {
                 lookahead.peek() == Some(&'$')
             };
 
-            if multi { chars.next(); chars.next(); }
+            if multi {
+                chars.next();
+                chars.next();
+            }
 
             let name = if chars.peek() == Some(&'{') {
                 chars.next();
                 let mut n = String::new();
                 while let Some(&nc) = chars.peek() {
-                    if nc == '}' { chars.next(); break; }
+                    if nc == '}' {
+                        chars.next();
+                        break;
+                    }
                     n.push(nc);
                     chars.next();
                 }
@@ -125,14 +135,19 @@ pub fn parse_segment_pattern(pattern: &str) -> Vec<Segment> {
                     if nc.is_ascii_alphanumeric() || nc == '_' {
                         n.push(nc);
                         chars.next();
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
                 n
             };
 
             if name == "_" || name.is_empty() {
-                if multi { segments.push(Segment::MultiWild); }
-                else { segments.push(Segment::Wild); }
+                if multi {
+                    segments.push(Segment::MultiWild);
+                } else {
+                    segments.push(Segment::Wild);
+                }
             } else if multi {
                 segments.push(Segment::MultiCapture(name));
             } else {
@@ -144,13 +159,15 @@ pub fn parse_segment_pattern(pattern: &str) -> Vec<Segment> {
         }
     }
 
-    if !literal.is_empty() { segments.push(Segment::Literal(literal)); }
+    if !literal.is_empty() {
+        segments.push(Segment::Literal(literal));
+    }
     segments
 }
 
 pub fn match_segments_with_bindings(
     segments: &[Segment],
-    value:    &str,
+    value: &str,
     pre_bound: HashMap<String, String>,
 ) -> Option<HashMap<String, String>> {
     let mut captures = pre_bound;
@@ -207,17 +224,21 @@ fn match_segments(segments: &[Segment], value: &str) -> Option<HashMap<String, S
 }
 
 fn match_segments_inner(
-    segments:  &[Segment],
+    segments: &[Segment],
     remaining: &str,
-    captures:  &mut HashMap<String, String>,
+    captures: &mut HashMap<String, String>,
 ) -> bool {
-    if segments.is_empty() { return remaining.is_empty(); }
+    if segments.is_empty() {
+        return remaining.is_empty();
+    }
 
     match &segments[0] {
         Segment::Literal(lit) => {
             if let Some(rest) = remaining.strip_prefix(lit.as_str()) {
                 match_segments_inner(&segments[1..], rest, captures)
-            } else { false }
+            } else {
+                false
+            }
         }
         Segment::Capture(name) => {
             if let Some(bound) = captures.get(name).cloned() {
@@ -229,9 +250,13 @@ fn match_segments_inner(
             let next_lit = find_next_literal(&segments[1..]);
             let limit = remaining.find('/').unwrap_or(remaining.len());
             for end in 1..=limit {
-                if !remaining.is_char_boundary(end) { continue; }
+                if !remaining.is_char_boundary(end) {
+                    continue;
+                }
                 if let Some(ref lit) = next_lit {
-                    if !remaining[end..].starts_with(lit.as_str()) { continue; }
+                    if !remaining[end..].starts_with(lit.as_str()) {
+                        continue;
+                    }
                 }
                 let candidate = &remaining[..end];
                 let mut trial = captures.clone();
@@ -251,7 +276,9 @@ fn match_segments_inner(
                 return false;
             }
             for end in 0..=remaining.len() {
-                if !remaining.is_char_boundary(end) { continue; }
+                if !remaining.is_char_boundary(end) {
+                    continue;
+                }
                 let candidate = &remaining[..end];
                 let mut trial = captures.clone();
                 trial.insert(name.clone(), candidate.to_string());
@@ -265,15 +292,23 @@ fn match_segments_inner(
         Segment::Wild => {
             let limit = remaining.find('/').unwrap_or(remaining.len());
             for end in 1..=limit {
-                if !remaining.is_char_boundary(end) { continue; }
-                if match_segments_inner(&segments[1..], &remaining[end..], captures) { return true; }
+                if !remaining.is_char_boundary(end) {
+                    continue;
+                }
+                if match_segments_inner(&segments[1..], &remaining[end..], captures) {
+                    return true;
+                }
             }
             false
         }
         Segment::MultiWild => {
             for end in 0..=remaining.len() {
-                if !remaining.is_char_boundary(end) { continue; }
-                if match_segments_inner(&segments[1..], &remaining[end..], captures) { return true; }
+                if !remaining.is_char_boundary(end) {
+                    continue;
+                }
+                if match_segments_inner(&segments[1..], &remaining[end..], captures) {
+                    return true;
+                }
             }
             false
         }
@@ -282,7 +317,9 @@ fn match_segments_inner(
 
 fn find_next_literal(segments: &[Segment]) -> Option<String> {
     for seg in segments {
-        if let Segment::Literal(s) = seg { return Some(s.clone()); }
+        if let Segment::Literal(s) = seg {
+            return Some(s.clone());
+        }
     }
     None
 }
@@ -290,10 +327,18 @@ fn find_next_literal(segments: &[Segment]) -> Option<String> {
 fn has_dollar_capture(s: &str) -> bool {
     let bytes = s.as_bytes();
     for i in 0..bytes.len() {
-        if bytes[i] != b'$' { continue; }
-        if i > 0 && bytes[i - 1] == b'\\' { continue; }
-        let Some(&c) = bytes.get(i + 1) else { continue; };
-        if c.is_ascii_alphanumeric() || c == b'_' || c == b'{' || c == b'$' { return true; }
+        if bytes[i] != b'$' {
+            continue;
+        }
+        if i > 0 && bytes[i - 1] == b'\\' {
+            continue;
+        }
+        let Some(&c) = bytes.get(i + 1) else {
+            continue;
+        };
+        if c.is_ascii_alphanumeric() || c == b'_' || c == b'{' || c == b'$' {
+            return true;
+        }
     }
     false
 }
@@ -303,11 +348,11 @@ pub fn rewrite_re_dollar_captures(pattern: &str) -> String {
     let mut out = String::new();
     for seg in &segments {
         match seg {
-            Segment::Literal(s)         => out.push_str(s),
-            Segment::Capture(name)      => out.push_str(&format!("(?P<{}>[a-zA-Z0-9._/-]+)", name)),
+            Segment::Literal(s) => out.push_str(s),
+            Segment::Capture(name) => out.push_str(&format!("(?P<{}>[a-zA-Z0-9._/-]+)", name)),
             Segment::MultiCapture(name) => out.push_str(&format!("(?P<{}>.+)", name)),
-            Segment::Wild               => out.push_str("\\S+"),
-            Segment::MultiWild          => out.push_str(".+"),
+            Segment::Wild => out.push_str("\\S+"),
+            Segment::MultiWild => out.push_str(".+"),
         }
     }
     out
@@ -321,12 +366,16 @@ pub mod anyhow_lite {
     pub struct Error(pub String);
 
     impl fmt::Display for Error {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(&self.0) }
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
     }
     impl std::error::Error for Error {}
 
     pub type Result<T> = std::result::Result<T, Error>;
-    pub fn msg<S: Into<String>>(s: S) -> Error { Error(s.into()) }
+    pub fn msg<S: Into<String>>(s: S) -> Error {
+        Error(s.into())
+    }
 }
 
 #[cfg(test)]

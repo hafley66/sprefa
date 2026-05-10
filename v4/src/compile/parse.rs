@@ -64,15 +64,15 @@ fn lower_pipe(pipe_node: Node<'_>, src: &str) -> Option<PipeAst> {
                 // Naked backtick at pipe-step position: lower as `str`
                 // op call with no slots, dsl set to the body.
                 steps.push(OpCall {
-                    name:      Arc::<str>::from("str"),
-                    force:     false,
+                    name: Arc::<str>::from("str"),
+                    force: false,
                     predicate: false,
-                    apply:     false,
-                    span:      node_range(step),
-                    flow:      None,
-                    args:      Vec::new(),
-                    dsl:       Some(dsl_text(step, src)),
-                    block:     None,
+                    apply: false,
+                    span: node_range(step),
+                    flow: None,
+                    args: Vec::new(),
+                    dsl: Some(dsl_text(step, src)),
+                    block: None,
                 });
             }
             "parenthesized" => {
@@ -137,7 +137,9 @@ fn lower_op_invocation(node: Node<'_>, src: &str) -> Option<OpCall> {
 fn lower_brace_block(brace: Node<'_>, src: &str) -> Option<PipeAst> {
     // brace_slot covers `{ ... }`. Strip the braces.
     let r = brace.byte_range();
-    if r.end < r.start + 2 { return None; }
+    if r.end < r.start + 2 {
+        return None;
+    }
     let inner_lo = r.start + 1;
     let inner_hi = r.end - 1;
     let inner_owned = {
@@ -189,18 +191,18 @@ fn lower_brace_block(brace: Node<'_>, src: &str) -> Option<PipeAst> {
                 };
                 shift_range(&mut body_span, inner_lo);
                 steps.push(OpCall {
-                    name:      Arc::<str>::from("str"),
-                    force:     false,
+                    name: Arc::<str>::from("str"),
+                    force: false,
                     predicate: false,
-                    apply:     false,
+                    apply: false,
                     span,
-                    flow:      None,
-                    args:      Vec::new(),
-                    dsl:       Some(DslText {
-                        raw:  Arc::<str>::from(&inner[body_lo..body_hi]),
+                    flow: None,
+                    args: Vec::new(),
+                    dsl: Some(DslText {
+                        raw: Arc::<str>::from(&inner[body_lo..body_hi]),
                         span: body_span,
                     }),
-                    block:     None,
+                    block: None,
                 });
             }
             "parenthesized" => {
@@ -228,12 +230,20 @@ fn lower_brace_block(brace: Node<'_>, src: &str) -> Option<PipeAst> {
 
 fn rebase_op_call(call: &mut OpCall, offset: usize) {
     shift_range(&mut call.span, offset);
-    if let Some(s) = call.flow.as_mut() { shift_range(&mut s.span, offset); }
-    for a in call.args.iter_mut() { shift_range(&mut a.span, offset); }
-    if let Some(d) = call.dsl.as_mut() { shift_range(&mut d.span, offset); }
+    if let Some(s) = call.flow.as_mut() {
+        shift_range(&mut s.span, offset);
+    }
+    for a in call.args.iter_mut() {
+        shift_range(&mut a.span, offset);
+    }
+    if let Some(d) = call.dsl.as_mut() {
+        shift_range(&mut d.span, offset);
+    }
     if let Some(b) = call.block.as_mut() {
         shift_range(&mut b.span, offset);
-        for s in b.steps.iter_mut() { rebase_op_call(s, offset); }
+        for s in b.steps.iter_mut() {
+            rebase_op_call(s, offset);
+        }
     }
 }
 
@@ -252,8 +262,11 @@ fn slot_text_from_delimited(n: Node<'_>, src: &str) -> SlotText {
     let lo = lo.min(hi);
     let raw = &src[lo..hi];
     SlotText {
-        raw:  Arc::<str>::from(raw),
-        span: ByteRange { lo: lo as u32, hi: hi as u32 },
+        raw: Arc::<str>::from(raw),
+        span: ByteRange {
+            lo: lo as u32,
+            hi: hi as u32,
+        },
     }
 }
 
@@ -265,8 +278,11 @@ fn dsl_text(n: Node<'_>, src: &str) -> DslText {
     let hi = r.end.saturating_sub(1);
     let lo = lo.min(hi);
     DslText {
-        raw:  Arc::<str>::from(&src[lo..hi]),
-        span: ByteRange { lo: lo as u32, hi: hi as u32 },
+        raw: Arc::<str>::from(&src[lo..hi]),
+        span: ByteRange {
+            lo: lo as u32,
+            hi: hi as u32,
+        },
     }
 }
 
@@ -277,7 +293,9 @@ fn dsl_text(n: Node<'_>, src: &str) -> DslText {
 /// to byte-level here to handle the comma-split at top-level only.
 fn split_paren_args(paren: Node<'_>, src: &str) -> Vec<SlotText> {
     let r = paren.byte_range();
-    if r.end < r.start + 2 { return Vec::new(); }
+    if r.end < r.start + 2 {
+        return Vec::new();
+    }
     let body_lo = r.start + 1;
     let body_hi = r.end - 1;
     let body = &src[body_lo..body_hi];
@@ -293,13 +311,22 @@ fn split_paren_args(paren: Node<'_>, src: &str) -> Vec<SlotText> {
     while i < bytes.len() {
         let c = bytes[i];
         if in_string {
-            if c == b'\\' && i + 1 < bytes.len() { i += 2; continue; }
-            if c == b'"' { in_string = false; }
-            i += 1; continue;
+            if c == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
         }
         if in_backtick {
-            if c == b'`' { in_backtick = false; }
-            i += 1; continue;
+            if c == b'`' {
+                in_backtick = false;
+            }
+            i += 1;
+            continue;
         }
         match c {
             b'"' => in_string = true,
@@ -326,12 +353,18 @@ fn split_paren_args(paren: Node<'_>, src: &str) -> Vec<SlotText> {
         // Trim ASCII whitespace from both ends.
         let mut a = raw_lo;
         let mut b = raw_hi;
-        while a < b && (bytes[a] as char).is_ascii_whitespace() { a += 1; }
-        while b > a && (bytes[b - 1] as char).is_ascii_whitespace() { b -= 1; }
-        if a == b { continue; } // empty arg slot, skip
+        while a < b && (bytes[a] as char).is_ascii_whitespace() {
+            a += 1;
+        }
+        while b > a && (bytes[b - 1] as char).is_ascii_whitespace() {
+            b -= 1;
+        }
+        if a == b {
+            continue;
+        } // empty arg slot, skip
         let slice = &body[a..b];
         out.push(SlotText {
-            raw:  Arc::<str>::from(slice),
+            raw: Arc::<str>::from(slice),
             span: ByteRange {
                 lo: (body_lo + a) as u32,
                 hi: (body_lo + b) as u32,
@@ -351,7 +384,10 @@ fn first_field<'a>(node: Node<'a>, name: &str) -> Option<Node<'a>> {
 
 fn node_range(n: Node<'_>) -> ByteRange {
     let r = n.byte_range();
-    ByteRange { lo: r.start as u32, hi: r.end as u32 }
+    ByteRange {
+        lo: r.start as u32,
+        hi: r.end as u32,
+    }
 }
 
 /// Walk the tree collecting ERROR and MISSING nodes as `Diag`s.
@@ -367,17 +403,16 @@ fn collect_diags(cursor: &mut TreeCursor<'_>, out: &mut Vec<Diag>) {
         let r = n.byte_range();
         let expected = n.kind();
         out.push(
-            Diag::error(
-                "parse/missing-token",
-                format!("missing `{}`", expected),
-            )
-            .with_span(r.start as u32, r.end as u32),
+            Diag::error("parse/missing-token", format!("missing `{}`", expected))
+                .with_span(r.start as u32, r.end as u32),
         );
     }
     if cursor.goto_first_child() {
         loop {
             collect_diags(cursor, out);
-            if !cursor.goto_next_sibling() { break; }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
         cursor.goto_parent();
     }

@@ -44,8 +44,8 @@
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, Node,
-    PipeInstance, QueueBackend, RenderCtx,
+    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, Node, PipeInstance,
+    QueueBackend, RenderCtx,
 };
 
 use v4::app::{build_in_process, RefsAtReq, SprfClient};
@@ -55,7 +55,9 @@ use v4::{Coord, Cursor};
 
 // ──────────────────────── shared test plumbing ─────────────────────────
 
-struct Collector { sink: Arc<Mutex<Vec<Cursor>>> }
+struct Collector {
+    sink: Arc<Mutex<Vec<Cursor>>>,
+}
 impl Component for Collector {
     type Next = Cursor;
     fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
@@ -64,18 +66,18 @@ impl Component for Collector {
     }
 }
 
-fn run_one(
-    comp:  Arc<dyn Component<Next = Cursor>>,
-    seeds: Vec<Arc<Cursor>>,
-) -> Vec<Cursor> {
+fn run_one(comp: Arc<dyn Component<Next = Cursor>>, seeds: Vec<Arc<Cursor>>) -> Vec<Cursor> {
     let cursors: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     let pipe = PipeInstance::new(vec![
         comp,
-        Arc::new(Collector { sink: cursors.clone() }),
+        Arc::new(Collector {
+            sink: cursors.clone(),
+        }),
     ]);
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     expand(&pipe, q, seeds, ExpandOpts::default());
-    let v = cursors.lock().unwrap().clone(); v
+    let v = cursors.lock().unwrap().clone();
+    v
 }
 
 fn run_chain(
@@ -84,11 +86,14 @@ fn run_chain(
 ) -> Vec<Cursor> {
     let cursors: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     let mut steps = comps;
-    steps.push(Arc::new(Collector { sink: cursors.clone() }));
+    steps.push(Arc::new(Collector {
+        sink: cursors.clone(),
+    }));
     let pipe = PipeInstance::new(steps);
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     expand(&pipe, q, seeds, ExpandOpts::default());
-    let v = cursors.lock().unwrap().clone(); v
+    let v = cursors.lock().unwrap().clone();
+    v
 }
 
 fn write_fixture(dir: &std::path::Path, name: &str, body: &[u8]) -> String {
@@ -112,22 +117,55 @@ async fn scene_a_dom_of_facts_reverse_lookup() {
     //          0   3   8 10  12   17 19 23  27   32 38
     let path = "/tmp/scene_a_foo.rs";
     let file = store.intern_file(b"fn  greet ( name :  & str ) -> String { ... }", path);
-    let _    = store.intern_path(0, 0, file, path);
+    let _ = store.intern_path(0, 0, file, path);
 
     // Three rules' captures all cover byte 12 ("name"):
     //   rule_fnsig  → wide span [3, 38)   (the full fn signature)
     //   rule_param  → narrow span [12, 16) (just "name")
     //   rule_typing → mid span    [10, 26) ("( name : & str ")
-    let r_fnsig  = store.intern_ref(Coord { repo: 0, rev: 0, fs: file, lo: 3,  hi: 38 });
-    let r_param  = store.intern_ref(Coord { repo: 0, rev: 0, fs: file, lo: 12, hi: 16 });
-    let r_typing = store.intern_ref(Coord { repo: 0, rev: 0, fs: file, lo: 10, hi: 26 });
+    let r_fnsig = store.intern_ref(Coord {
+        repo: 0,
+        rev: 0,
+        fs: file,
+        lo: 3,
+        hi: 38,
+    });
+    let r_param = store.intern_ref(Coord {
+        repo: 0,
+        rev: 0,
+        fs: file,
+        lo: 12,
+        hi: 16,
+    });
+    let r_typing = store.intern_ref(Coord {
+        repo: 0,
+        rev: 0,
+        fs: file,
+        lo: 10,
+        hi: 26,
+    });
 
-    let resp = client.refs_at(RefsAtReq { path: path.into(), byte: 13 }).await.unwrap();
+    let resp = client
+        .refs_at(RefsAtReq {
+            path: path.into(),
+            byte: 13,
+        })
+        .await
+        .unwrap();
 
     let ids: Vec<u64> = resp.hits.iter().map(|h| h.ref_id).collect();
-    assert!(ids.contains(&r_fnsig.0),  "fnsig ref covers byte 13 — expected hit");
-    assert!(ids.contains(&r_param.0),  "param ref covers byte 13 — expected hit");
-    assert!(ids.contains(&r_typing.0), "typing ref covers byte 13 — expected hit");
+    assert!(
+        ids.contains(&r_fnsig.0),
+        "fnsig ref covers byte 13 — expected hit"
+    );
+    assert!(
+        ids.contains(&r_param.0),
+        "param ref covers byte 13 — expected hit"
+    );
+    assert!(
+        ids.contains(&r_typing.0),
+        "typing ref covers byte 13 — expected hit"
+    );
     assert_eq!(ids.len(), 3, "exactly the three covering refs; got {ids:?}");
 
     // The DOM property: every hit resolves to a coord with the same
@@ -155,8 +193,7 @@ async fn scene_a_dom_of_facts_reverse_lookup() {
 fn scene_b_cross_source_splice_via_capture() {
     let tmp = tempfile::tempdir().unwrap();
     let donor_path = write_fixture(tmp.path(), "donor.rs", b"DONOR_PAYLOAD");
-    let host_path  = write_fixture(tmp.path(), "host.rs",
-        b"prefix /* MARK */ suffix\n");
+    let host_path = write_fixture(tmp.path(), "host.rs", b"prefix /* MARK */ suffix\n");
 
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
@@ -164,22 +201,34 @@ fn scene_b_cross_source_splice_via_capture() {
     // Intern both files so the store has their FileIds and content
     // hashes for drift detection.
     let donor_bytes = std::fs::read(&donor_path).unwrap();
-    let _donor_fid  = store.intern_file(&donor_bytes, &donor_path);
-    let host_bytes  = std::fs::read(&host_path).unwrap();
-    let host_fid    = store.intern_file(&host_bytes, &host_path);
+    let _donor_fid = store.intern_file(&donor_bytes, &donor_path);
+    let host_bytes = std::fs::read(&host_path).unwrap();
+    let host_fid = store.intern_file(&host_bytes, &host_path);
 
     // Locate the marker in the host file. "/* MARK */" runs [7, 17).
-    let mark_lo = host_bytes.windows(10)
-        .position(|w| w == b"/* MARK */").expect("marker present") as u32;
+    let mark_lo = host_bytes
+        .windows(10)
+        .position(|w| w == b"/* MARK */")
+        .expect("marker present") as u32;
     let mark_hi = mark_lo + 10;
 
     // Build the splice cursor: focal value = donor payload; NAME term =
     // host marker bytes.
     let mut c = Cursor::default();
     c.value = Arc::from(String::from_utf8_lossy(&donor_bytes).into_owned());
-    let host_coord = Coord { repo: 0, rev: 0, fs: host_fid, lo: mark_lo, hi: mark_hi };
-    c.set_at("MARK", &String::from_utf8_lossy(&host_bytes[mark_lo as usize..mark_hi as usize]),
-             host_coord, &store);
+    let host_coord = Coord {
+        repo: 0,
+        rev: 0,
+        fs: host_fid,
+        lo: mark_lo,
+        hi: mark_hi,
+    };
+    c.set_at(
+        "MARK",
+        &String::from_utf8_lossy(&host_bytes[mark_lo as usize..mark_hi as usize]),
+        host_coord,
+        &store,
+    );
     let seed = Arc::new(c);
 
     let comp: Arc<dyn Component<Next = Cursor>> = Arc::new(
@@ -220,28 +269,42 @@ fn scene_b_cross_source_splice_via_capture() {
 #[test]
 fn scene_c_cross_repo_render_with_template() {
     let tmp = tempfile::tempdir().unwrap();
-    let host_path = write_fixture(tmp.path(), "host.ts",
-        b"// generated below\n/* REPLACE_ME */\n// generated above\n");
+    let host_path = write_fixture(
+        tmp.path(),
+        "host.ts",
+        b"// generated below\n/* REPLACE_ME */\n// generated above\n",
+    );
 
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
 
     let host_bytes = std::fs::read(&host_path).unwrap();
-    let host_fid   = store.intern_file(&host_bytes, &host_path);
+    let host_fid = store.intern_file(&host_bytes, &host_path);
 
     // Locate the host marker.
-    let lo = host_bytes.windows(16)
-        .position(|w| w == b"/* REPLACE_ME */").expect("marker present") as u32;
+    let lo = host_bytes
+        .windows(16)
+        .position(|w| w == b"/* REPLACE_ME */")
+        .expect("marker present") as u32;
     let hi = lo + 16;
 
     // Seed cursor: bind TYPE_NAME from a "donor" repo (synthetic here
     // — the value carries the captured name; coord is irrelevant for
     // host-side render).
     let mut c = Cursor::default();
-    c.set("TYPE_NAME", "Foo");                           // donor capture
-    c.set_at("MARK", "/* REPLACE_ME */",                 // host capture
-             Coord { repo: 0, rev: 0, fs: host_fid, lo, hi },
-             &store);
+    c.set("TYPE_NAME", "Foo"); // donor capture
+    c.set_at(
+        "MARK",
+        "/* REPLACE_ME */", // host capture
+        Coord {
+            repo: 0,
+            rev: 0,
+            fs: host_fid,
+            lo,
+            hi,
+        },
+        &store,
+    );
     let seed = Arc::new(c);
 
     // Step 1 — render template into focal cursor.value using ${TYPE_NAME}.
@@ -253,16 +316,20 @@ fn scene_c_cross_repo_render_with_template() {
     // run a Format that writes into a normal slot, then a thin
     // FocalSet helper. Rather than adding helpers, use a single-arm
     // Component that derives focal from the rendered bind.
-    struct FocalFromTemplate { template: String }
+    struct FocalFromTemplate {
+        template: String,
+    }
     impl Component for FocalFromTemplate {
         type Next = Cursor;
         fn render(&self, _: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            let re = regex::Regex::new(
-                r"\$\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\}"
-            ).unwrap();
-            let rendered = re.replace_all(&self.template, |caps: &regex::Captures| {
-                c.get(&caps[1]).unwrap_or("").to_string()
-            }).into_owned();
+            let re =
+                regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\}")
+                    .unwrap();
+            let rendered = re
+                .replace_all(&self.template, |caps: &regex::Captures| {
+                    c.get(&caps[1]).unwrap_or("").to_string()
+                })
+                .into_owned();
             let mut out = c.clone();
             out.value = Arc::from(rendered);
             Node::Emit(Arc::new(out))
@@ -283,8 +350,7 @@ fn scene_c_cross_repo_render_with_template() {
 
     let after = std::fs::read_to_string(&host_path).unwrap();
     assert_eq!(
-        after,
-        "// generated below\ntype Foo = u32;\n// generated above\n",
+        after, "// generated below\ntype Foo = u32;\n// generated above\n",
         "rendered donor name flows through template into the host's marker bytes",
     );
 }
@@ -301,10 +367,10 @@ fn scene_c_cross_repo_render_with_template() {
 // composes file-source pipes inside a single render.
 #[test]
 fn scene_d_language_form_transclusion() {
+    use effect_runtime::v2::{expand, ExpandOpts, MemQueue};
     use v4::compile::parse::host_parse;
     use v4::compile::walk::walk_program;
     use v4::lower::{default_registry, LowerCtx};
-    use effect_runtime::v2::{expand, ExpandOpts, MemQueue};
 
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
@@ -321,9 +387,8 @@ fn scene_d_language_form_transclusion() {
     let (program, parse_diags) = host_parse(src);
     assert!(parse_diags.is_empty(), "parse: {:?}", parse_diags);
 
-    let facts: Arc<dyn FactStore<Cursor>> = Arc::new(
-        effect_runtime::v2::MemFactStore::<Cursor>::new()
-    );
+    let facts: Arc<dyn FactStore<Cursor>> =
+        Arc::new(effect_runtime::v2::MemFactStore::<Cursor>::new());
     let reg = default_registry();
     let mut ctx = LowerCtx::new(facts.clone(), dir.to_path_buf());
 
@@ -331,7 +396,8 @@ fn scene_d_language_form_transclusion() {
     assert!(
         walk_diags.is_empty(),
         "walk: {:?}",
-        walk_diags.iter()
+        walk_diags
+            .iter()
             .map(|d| (d.code.as_ref(), d.message.as_str()))
             .collect::<Vec<_>>()
     );
@@ -339,7 +405,12 @@ fn scene_d_language_form_transclusion() {
     let queue: Arc<dyn effect_runtime::v2::QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     for pipe in pipes {
         let inst = pipe.into_instance();
-        expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], ExpandOpts::default());
+        expand(
+            &inst,
+            queue.clone(),
+            vec![Arc::new(Cursor::default())],
+            ExpandOpts::default(),
+        );
     }
 
     assert_eq!(facts.len("doc"), 1, "expected one row in doc_facts");
@@ -348,7 +419,15 @@ fn scene_d_language_form_transclusion() {
 
     // Both transclusion targets resolved into the rendered doc.
     assert!(value.contains("# A"), "missing # A header in: {:?}", value);
-    assert!(value.contains("alpha"), "missing alpha content: {:?}", value);
+    assert!(
+        value.contains("alpha"),
+        "missing alpha content: {:?}",
+        value
+    );
     assert!(value.contains("# B"), "missing # B header in: {:?}", value);
-    assert!(value.contains("bravo"), "missing bravo content: {:?}", value);
+    assert!(
+        value.contains("bravo"),
+        "missing bravo content: {:?}",
+        value
+    );
 }

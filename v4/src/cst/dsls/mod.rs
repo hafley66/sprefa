@@ -5,9 +5,9 @@
 //! implementation strategies (TS-backed grammar, hand-rolled, borrowed engine)
 //! without leaking any sprf vocabulary into the lib core.
 
-pub mod re;
+pub mod ast;
 pub mod glob;
 pub mod json;
-pub mod ast;
-pub mod sql;
 pub mod markdown;
+pub mod re;
+pub mod sql;

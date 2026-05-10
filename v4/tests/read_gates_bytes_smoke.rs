@@ -11,15 +11,13 @@
 //!   6. `fs > glob > json`          - match source-reads path cursor
 //!   7. `path`...` > read`          - path expands against run root
 
+use effect_runtime::v2::{expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend};
 use std::sync::Arc;
-use effect_runtime::v2::{
-    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
-};
-use v4::Cursor;
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
 use v4::source::SourceReader;
+use v4::Cursor;
 
 fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
     let (program, parse_diags) = host_parse(src);
@@ -28,12 +26,23 @@ fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
     let reg = default_registry();
     let mut ctx = LowerCtx::new(store.clone(), root.to_path_buf());
     let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
-    assert!(walk_diags.is_empty(), "walk: {:?}",
-        walk_diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>());
+    assert!(
+        walk_diags.is_empty(),
+        "walk: {:?}",
+        walk_diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     for pipe in pipes {
         let inst = pipe.into_instance();
-        expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], ExpandOpts::default());
+        expand(
+            &inst,
+            queue.clone(),
+            vec![Arc::new(Cursor::default())],
+            ExpandOpts::default(),
+        );
     }
     store
 }
@@ -59,7 +68,9 @@ fn source_reader_reads_relative_path_already_under_relative_root() {
         .read_path("tests/read_gates_bytes_smoke.rs")
         .expect("path emitted from a relative fs root should read directly");
     assert!(
-        source.bytes.starts_with(b"//! Source-aware matcher smoke tests."),
+        source
+            .bytes
+            .starts_with(b"//! Source-aware matcher smoke tests."),
         "unexpected file content prefix",
     );
     assert_eq!(source.path.as_ref(), "tests/read_gates_bytes_smoke.rs");
@@ -77,7 +88,8 @@ fn re_matches_after_read_loads_bytes() {
         "rule(:hits) { fs > glob`**/*.txt` > read > re`hello` };",
     );
     assert_eq!(
-        store.len("hits"), 1,
+        store.len("hits"),
+        1,
         "read makes bytes available to re; one match expected",
     );
 }
@@ -95,7 +107,8 @@ fn re_without_read_does_not_auto_load_bytes() {
         "rule(:hits) { fs > glob`**/*.txt` > re`hello` };",
     );
     assert_eq!(
-        store.len("hits"), 0,
+        store.len("hits"),
+        0,
         "re should only inspect cursor.value; explicit read is required",
     );
 }
@@ -109,7 +122,8 @@ fn path_literal_resolves_before_read() {
     std::fs::write(
         tmp.path().join("cfg/sprefa.toml"),
         br#"repos = [{ slug = "demo", root = "/tmp/demo", remote = "origin" }]"#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let store = run_in(
         tmp.path(),
@@ -133,14 +147,16 @@ fn ast_matches_after_read_loads_bytes() {
     std::fs::write(
         tmp.path().join("k.c"),
         b"int main(void) { printk(\"hi\"); return 0; }\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     let store = run_in(
         tmp.path(),
         "rule(:hits) { fs > glob`**/*.c` > read > ast(:c)`printk($$$)` };",
     );
     assert_eq!(
-        store.len("hits"), 1,
+        store.len("hits"),
+        1,
         "ast over read bytes; one printk call site",
     );
 }
@@ -153,14 +169,16 @@ fn ast_without_read_source_reads_path_cursor() {
     std::fs::write(
         tmp.path().join("k.c"),
         b"int main(void) { printk(\"hi\"); return 0; }\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     let store = run_in(
         tmp.path(),
         "rule(:hits) { fs > glob`**/*.c` > ast(:c)`printk($$$)` };",
     );
     assert_eq!(
-        store.len("hits"), 1,
+        store.len("hits"),
+        1,
         "ast should source-read file bytes from the path cursor",
     );
 }
@@ -171,18 +189,17 @@ fn ast_source_reads_after_fs_glob_filter_arg() {
     std::fs::write(
         tmp.path().join("k.c"),
         b"int main(void) { printk(\"hi\"); return 0; }\n",
-    ).unwrap();
-    std::fs::write(
-        tmp.path().join("skip.md"),
-        b"printk(\"not source\");\n",
-    ).unwrap();
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("skip.md"), b"printk(\"not source\");\n").unwrap();
 
     let store = run_in(
         tmp.path(),
         "rule(:hits) { fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)` };",
     );
     assert_eq!(
-        store.len("hits"), 1,
+        store.len("hits"),
+        1,
         "fs(glob) should filter source paths before ast source-read",
     );
 }
@@ -191,21 +208,19 @@ fn ast_source_reads_after_fs_glob_filter_arg() {
 #[test]
 fn json_matches_after_read_loads_bytes() {
     let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("u.json"),
-        br#"{"name":"alice","age":30}"#,
-    ).unwrap();
+    std::fs::write(tmp.path().join("u.json"), br#"{"name":"alice","age":30}"#).unwrap();
 
     let store = run_in(
         tmp.path(),
         "rule(:hits) { fs > glob`**/*.json` > read > json`{ name: $N, age: $AGE }` };",
     );
     assert_eq!(
-        store.len("hits"), 1,
+        store.len("hits"),
+        1,
         "json over read bytes; one matching object",
     );
     let rows = store.rows_of("hits");
-    assert_eq!(rows[0].get("N"),   Some("alice"));
+    assert_eq!(rows[0].get("N"), Some("alice"));
     assert_eq!(rows[0].get("AGE"), Some("30"));
 }
 
@@ -214,20 +229,18 @@ fn json_matches_after_read_loads_bytes() {
 #[test]
 fn json_without_read_source_reads_path_cursor() {
     let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("u.json"),
-        br#"{"name":"alice","age":30}"#,
-    ).unwrap();
+    std::fs::write(tmp.path().join("u.json"), br#"{"name":"alice","age":30}"#).unwrap();
 
     let store = run_in(
         tmp.path(),
         "rule(:hits) { fs > glob`**/*.json` > json`{ name: $N, age: $AGE }` };",
     );
     assert_eq!(
-        store.len("hits"), 1,
+        store.len("hits"),
+        1,
         "json should source-read file bytes from the path cursor",
     );
     let rows = store.rows_of("hits");
-    assert_eq!(rows[0].get("N"),   Some("alice"));
+    assert_eq!(rows[0].get("N"), Some("alice"));
     assert_eq!(rows[0].get("AGE"), Some("30"));
 }

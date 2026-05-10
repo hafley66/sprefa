@@ -7,8 +7,8 @@ use crate::{Coord, Cursor, FileId, RepoId, RevId};
 
 #[derive(Clone)]
 pub struct SourceReader {
-    root:   PathBuf,
-    store:  Option<Arc<SprfStore>>,
+    root: PathBuf,
+    store: Option<Arc<SprfStore>>,
     config: Option<Arc<SprfConfig>>,
 }
 
@@ -16,8 +16,8 @@ pub struct SourceReader {
 pub struct SourceBytes {
     pub bytes: Vec<u8>,
     pub coord: Coord,
-    pub path:  Arc<str>,
-    pub file:  FileId,
+    pub path: Arc<str>,
+    pub file: FileId,
 }
 
 impl SourceReader {
@@ -26,7 +26,11 @@ impl SourceReader {
         store: Option<Arc<SprfStore>>,
         config: Option<Arc<SprfConfig>>,
     ) -> Self {
-        Self { root: root.into(), store, config }
+        Self {
+            root: root.into(),
+            store,
+            config,
+        }
     }
 
     pub fn read_cursor(&self, c: &Cursor) -> Option<SourceBytes> {
@@ -41,7 +45,11 @@ impl SourceReader {
         if c.value.is_empty() {
             return self.read_cursor_coord(c, intern);
         }
-        let parent = self.store.as_ref().and_then(|s| s.coord_of(c.at)).unwrap_or_default();
+        let parent = self
+            .store
+            .as_ref()
+            .and_then(|s| s.coord_of(c.at))
+            .unwrap_or_default();
         if parent.rev != 0 {
             return self.read_git_path(c.value.as_ref(), parent, intern);
         }
@@ -75,7 +83,8 @@ impl SourceReader {
         let resolved = resolve_source_path(&self.root, path);
         let bytes = std::fs::read(&resolved).ok()?;
         let path_arc: Arc<str> = Arc::from(path);
-        let file = intern.then(|| self.store.as_ref())
+        let file = intern
+            .then(|| self.store.as_ref())
             .flatten()
             .map(|s| {
                 let file = s.intern_file(&bytes, path_arc.as_ref());
@@ -83,18 +92,35 @@ impl SourceReader {
                 file
             })
             .unwrap_or(0);
-        let coord = Coord { repo, rev, fs: file, lo: 0, hi: bytes.len() as u32 };
-        Some(SourceBytes { bytes, coord, path: path_arc, file })
+        let coord = Coord {
+            repo,
+            rev,
+            fs: file,
+            lo: 0,
+            hi: bytes.len() as u32,
+        };
+        Some(SourceBytes {
+            bytes,
+            coord,
+            path: path_arc,
+            file,
+        })
     }
 
     fn read_git_path(&self, path: &str, coord: Coord, intern: bool) -> Option<SourceBytes> {
         let store = self.store.as_ref()?;
         let config = self.config.as_ref()?;
-        let Some((slug, _remote)) = store.lookup_repo(coord.repo) else { return None };
-        let root = config.repos.iter()
+        let Some((slug, _remote)) = store.lookup_repo(coord.repo) else {
+            return None;
+        };
+        let root = config
+            .repos
+            .iter()
             .find(|r| r.slug == slug.as_ref())
             .map(|r| r.root.clone())?;
-        let Some((_repo_id, oid, _ts)) = store.lookup_rev(coord.rev) else { return None };
+        let Some((_repo_id, oid, _ts)) = store.lookup_rev(coord.rev) else {
+            return None;
+        };
         let spec = format!("{}:{}", oid.as_ref(), path);
         let out = std::process::Command::new("git")
             .args(["show", spec.as_str()])
@@ -113,10 +139,10 @@ impl SourceReader {
         };
         let full = Coord {
             repo: coord.repo,
-            rev:  coord.rev,
-            fs:   file,
-            lo:   0,
-            hi:   out.stdout.len() as u32,
+            rev: coord.rev,
+            fs: file,
+            lo: 0,
+            hi: out.stdout.len() as u32,
         };
         Some(SourceBytes {
             bytes: out.stdout,

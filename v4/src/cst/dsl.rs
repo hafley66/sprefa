@@ -15,8 +15,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::cst::diag::{Diag, DiagSink};
-use crate::cst::path::PathBuilder;
 use crate::cst::lsp::providers::DslBodyLsp;
+use crate::cst::path::PathBuilder;
 
 pub trait Dsl: Send + Sync + 'static {
     fn id(&self) -> &'static str;
@@ -27,10 +27,14 @@ pub trait Dsl: Send + Sync + 'static {
 
     /// Some when the DSL body is itself parsed by tree-sitter (re, glob).
     /// None when the DSL parses by hand or via a borrowed engine (json, ast).
-    fn injection_grammar(&self) -> Option<tree_sitter::Language> { None }
+    fn injection_grammar(&self) -> Option<tree_sitter::Language> {
+        None
+    }
 
     /// Optional LSP body-feature provider. Default: no LSP support.
-    fn lsp(&self) -> Option<&dyn DslBodyLsp> { None }
+    fn lsp(&self) -> Option<&dyn DslBodyLsp> {
+        None
+    }
 }
 
 pub trait Compiled: Send + Sync {
@@ -55,7 +59,7 @@ pub struct CaptureRow {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CaptureKind {
-    Span    { byte_range: Range<usize> },
+    Span { byte_range: Range<usize> },
     Literal { value: Arc<[u8]> },
 }
 
@@ -65,10 +69,14 @@ pub trait CaptureSink: Send {
 
 /// Vec-backed sink for tests and LSP collection paths.
 #[derive(Default)]
-pub struct VecCaptureSink { pub rows: Vec<CaptureRow> }
+pub struct VecCaptureSink {
+    pub rows: Vec<CaptureRow>,
+}
 
 impl VecCaptureSink {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 impl CaptureSink for VecCaptureSink {
@@ -91,7 +99,9 @@ mod tests {
         });
         let _ = sink.emit(CaptureRow {
             name: Arc::from("Y"),
-            kind: CaptureKind::Literal { value: Arc::from(b"hi".as_slice()) },
+            kind: CaptureKind::Literal {
+                value: Arc::from(b"hi".as_slice()),
+            },
         });
         assert_eq!(sink.rows.len(), 2);
     }

@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use effect_runtime::v2::{
-    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
-};
+use effect_runtime::v2::{expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend};
 
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;

@@ -18,17 +18,16 @@
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, ExpandOpts, Component, MemQueue, Node, Pipe, PipeInstance,
-    QueueBackend, RenderCtx,
+    expand, Component, ExpandOpts, MemQueue, Node, Pipe, PipeInstance, QueueBackend, RenderCtx,
 };
 
 use effect_runtime::v2::{FactStore, MemFactStore};
 
-use v4::{Coord, Cursor};
 use v4::lower::op_def::{default_plain_dsl_parse, InterpMode};
 use v4::pipeline::StrTemplateComponent;
 use v4::store::SprfStore;
 use v4::v2_ops::ReComponent;
+use v4::{Coord, Cursor};
 
 #[test]
 fn scanner_parses_dot_access_and_focal_forms() {
@@ -73,7 +72,12 @@ fn scanner_skips_illegal_dot_access_forms() {
     // emitted as interps. `${legal}` is the lone legal form here.
     let raw = "${&} ${&?.value} ${X?.value} ${legal}";
     let interps = default_plain_dsl_parse(raw);
-    assert_eq!(interps.len(), 1, "only ${{legal}} should parse, got {:?}", interps);
+    assert_eq!(
+        interps.len(),
+        1,
+        "only ${{legal}} should parse, got {:?}",
+        interps
+    );
     assert_eq!(&*interps[0].name, "legal");
     assert!(interps[0].field.is_none());
 }
@@ -90,8 +94,8 @@ fn template_renders_focal_fs_and_term_value() {
 
     // Direct Cursor::get dispatch.
     assert_eq!(cur.get("&.value"), Some("focal-text"));
-    assert_eq!(cur.get("&.fs"),    Some("/tmp/foo.rs"));
-    assert_eq!(cur.get("NAME"),    Some("foobar"));
+    assert_eq!(cur.get("&.fs"), Some("/tmp/foo.rs"));
+    assert_eq!(cur.get("NAME"), Some("foobar"));
     assert_eq!(cur.get("NAME.value"), Some("foobar"));
     // X.lo not stamped to raw_terms by 0c.2 emitters; resolves to None.
     assert!(cur.get("NAME.lo").is_none());
@@ -101,7 +105,7 @@ fn template_renders_focal_fs_and_term_value() {
     let raw = "${&.fs} :: ${NAME.value}";
     let interps = default_plain_dsl_parse(raw);
     let comp = Arc::new(StrTemplateComponent {
-        raw:     Arc::<str>::from(raw),
+        raw: Arc::<str>::from(raw),
         interps: Arc::new(interps),
     });
 
@@ -116,11 +120,16 @@ fn term_dot_access_lo_hi_fs_resolve_via_raw_terms() {
     // Replicates the emit-site pattern: set_at + parallel <NAME>_LO/HI/FS
     // raw_terms writes. Verifies Cursor::get dot-access dispatches to the
     // backfilled columns.
-    let inner: Arc<dyn FactStore<Cursor>> =
-        Arc::new(MemFactStore::<Cursor>::new());
+    let inner: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(inner);
     let file_id = store.intern_file(b"hello world", "/tmp/x.rs");
-    let coord = Coord { repo: 0, rev: 0, fs: file_id, lo: 10, hi: 15 };
+    let coord = Coord {
+        repo: 0,
+        rev: 0,
+        fs: file_id,
+        lo: 10,
+        hi: 15,
+    };
 
     let mut cur = Cursor::default();
     cur.set_at("NAME", "value", coord, &store);
@@ -140,10 +149,8 @@ fn term_dot_access_lo_hi_fs_resolve_via_raw_terms() {
 
 #[test]
 fn re_component_backfills_named_group_lo_hi_fs() {
+    use effect_runtime::v2::{expand, ExpandOpts, MemQueue, PipeInstance, QueueBackend};
     use std::io::Write;
-    use effect_runtime::v2::{
-        expand, ExpandOpts, MemQueue, PipeInstance, QueueBackend,
-    };
 
     // Tempfile holding `fn foo` and `fn bar`. ReComponent named group X
     // captures the identifier after `fn `.
@@ -153,34 +160,28 @@ fn re_component_backfills_named_group_lo_hi_fs() {
     f.write_all(b"fn foo() {}\nfn bar() {}\n").unwrap();
     drop(f);
 
-    let inner: Arc<dyn FactStore<Cursor>> =
-        Arc::new(MemFactStore::<Cursor>::new());
+    let inner: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(inner);
 
-    let re = Arc::new(
-        ReComponent::new(r"fn (?P<X>\w+)", &["X"])
-            .with_sprf_store(store.clone()),
-    );
+    let re = Arc::new(ReComponent::new(r"fn (?P<X>\w+)", &["X"]).with_sprf_store(store.clone()));
 
     // Substrate purification: ReComponent consumes cursor.value bytes.
     // Upstream of `re` would normally be `... > read`; here we seed
     // value directly to the file content.
     let mut seed = Cursor::default();
     seed.set("FS", path.to_string_lossy().as_ref());
-    seed.value = std::sync::Arc::<str>::from(
-        std::fs::read_to_string(&path).unwrap().as_str(),
-    );
+    seed.value = std::sync::Arc::<str>::from(std::fs::read_to_string(&path).unwrap().as_str());
 
     let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     struct Sink(Arc<Mutex<Vec<Cursor>>>);
     impl Component for Sink {
         type Next = Cursor;
         fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            self.0.lock().unwrap().push(c.clone()); Node::Done
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
         }
     }
-    let steps: Vec<Arc<dyn Component<Next = Cursor>>> =
-        vec![re, Arc::new(Sink(sink.clone()))];
+    let steps: Vec<Arc<dyn Component<Next = Cursor>>> = vec![re, Arc::new(Sink(sink.clone()))];
     let inst = PipeInstance::new(steps);
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     expand(&inst, q, vec![Arc::new(seed)], ExpandOpts::default());
@@ -190,7 +191,7 @@ fn re_component_backfills_named_group_lo_hi_fs() {
 
     // First match: `fn foo` at bytes 0..6, group X at 3..6.
     let h0 = &hits[0];
-    assert_eq!(h0.get("X"),    Some("foo"));
+    assert_eq!(h0.get("X"), Some("foo"));
     assert_eq!(h0.get("X.lo"), Some("3"));
     assert_eq!(h0.get("X.hi"), Some("6"));
     assert_eq!(h0.get("X.fs"), Some(path.to_string_lossy().as_ref()));
@@ -215,11 +216,11 @@ fn collect(p: Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
     impl Component for Sink {
         type Next = Cursor;
         fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            self.0.lock().unwrap().push(c.clone()); Node::Done
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
         }
     }
-    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> =
-        p.steps.iter().cloned().collect();
+    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = p.steps.iter().cloned().collect();
     steps.push(Arc::new(Sink(sink.clone())));
     let inst = PipeInstance::new(steps);
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());

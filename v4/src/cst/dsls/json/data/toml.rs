@@ -15,7 +15,7 @@ use tree_sitter::{Node, Parser, Tree};
 use super::types::{DataKind, DataNode, ParseError};
 
 struct Inner {
-    src:  Arc<[u8]>,
+    src: Arc<[u8]>,
     tree: Tree,
 }
 
@@ -24,8 +24,8 @@ unsafe impl Sync for Inner {}
 
 #[derive(Clone)]
 pub struct TomlNode {
-    inner:            Arc<Inner>,
-    node_id:          usize,
+    inner: Arc<Inner>,
+    node_id: usize,
     is_document_root: bool,
 }
 
@@ -42,8 +42,8 @@ impl TomlNode {
 
         let root_id = tree.root_node().id();
         Ok(TomlNode {
-            inner:            Arc::new(Inner { src, tree }),
-            node_id:          root_id,
+            inner: Arc::new(Inner { src, tree }),
+            node_id: root_id,
             is_document_root: true,
         })
     }
@@ -54,13 +54,19 @@ impl TomlNode {
     }
 
     fn wrap(&self, n: Node<'_>) -> TomlNode {
-        TomlNode { inner: self.inner.clone(), node_id: n.id(), is_document_root: false }
+        TomlNode {
+            inner: self.inner.clone(),
+            node_id: n.id(),
+            is_document_root: false,
+        }
     }
 }
 
 impl DataNode for TomlNode {
     fn kind(&self) -> DataKind {
-        if self.is_document_root { return DataKind::Object; }
+        if self.is_document_root {
+            return DataKind::Object;
+        }
         toml_kind(self.node())
     }
 
@@ -70,7 +76,9 @@ impl DataNode for TomlNode {
     }
 
     fn as_scalar_text(&self) -> Option<Cow<'_, str>> {
-        if self.is_document_root { return None; }
+        if self.is_document_root {
+            return None;
+        }
         toml_scalar_text(self.node(), &self.inner.src)
     }
 
@@ -97,7 +105,9 @@ impl DataNode for TomlNode {
         Box::new(items.into_iter())
     }
 
-    fn source(&self) -> &[u8] { &self.inner.src }
+    fn source(&self) -> &[u8] {
+        &self.inner.src
+    }
 }
 
 fn toml_kind(n: Node<'_>) -> DataKind {
@@ -123,11 +133,17 @@ fn toml_scalar_text<'a>(n: Node<'_>, src: &'a [u8]) -> Option<Cow<'a, str>> {
 }
 
 fn unescape_toml_string(s: &str) -> String {
-    if s.starts_with("\"\"\"")    { unescape_toml_basic(&s[3..s.len() - 3]) }
-    else if s.starts_with('"')     { unescape_toml_basic(&s[1..s.len() - 1]) }
-    else if s.starts_with("'''")   { s[3..s.len() - 3].to_owned() }
-    else if s.starts_with('\'')    { s[1..s.len() - 1].to_owned() }
-    else                            { s.to_owned() }
+    if s.starts_with("\"\"\"") {
+        unescape_toml_basic(&s[3..s.len() - 3])
+    } else if s.starts_with('"') {
+        unescape_toml_basic(&s[1..s.len() - 1])
+    } else if s.starts_with("'''") {
+        s[3..s.len() - 3].to_owned()
+    } else if s.starts_with('\'') {
+        s[1..s.len() - 1].to_owned()
+    } else {
+        s.to_owned()
+    }
 }
 
 fn unescape_toml_basic(s: &str) -> String {
@@ -136,26 +152,33 @@ fn unescape_toml_basic(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.next() {
-                Some('b')  => out.push('\x08'),
-                Some('t')  => out.push('\t'),
-                Some('n')  => out.push('\n'),
-                Some('f')  => out.push('\x0C'),
-                Some('r')  => out.push('\r'),
-                Some('"')  => out.push('"'),
+                Some('b') => out.push('\x08'),
+                Some('t') => out.push('\t'),
+                Some('n') => out.push('\n'),
+                Some('f') => out.push('\x0C'),
+                Some('r') => out.push('\r'),
+                Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
                 Some('u') => {
                     let hex: String = chars.by_ref().take(4).collect();
                     if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(cp) { out.push(ch); }
+                        if let Some(ch) = char::from_u32(cp) {
+                            out.push(ch);
+                        }
                     }
                 }
                 Some('U') => {
                     let hex: String = chars.by_ref().take(8).collect();
                     if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(cp) { out.push(ch); }
+                        if let Some(ch) = char::from_u32(cp) {
+                            out.push(ch);
+                        }
                     }
                 }
-                Some(c) => { out.push('\\'); out.push(c); }
+                Some(c) => {
+                    out.push('\\');
+                    out.push(c);
+                }
                 None => out.push('\\'),
             }
         } else {
@@ -168,10 +191,15 @@ fn unescape_toml_basic(s: &str) -> String {
 fn collect_document_entries(n: Node<'_>, owner: &TomlNode) -> Vec<(TomlNode, TomlNode)> {
     let mut pairs = Vec::new();
     for i in 0..n.named_child_count() {
-        let child = match n.named_child(i) { Some(c) => c, None => continue };
+        let child = match n.named_child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         match child.kind() {
             "pair" => {
-                if let Some(p) = extract_pair(child, owner) { pairs.push(p); }
+                if let Some(p) = extract_pair(child, owner) {
+                    pairs.push(p);
+                }
             }
             "table" | "table_array_element" => {
                 if let Some(key_node) = table_header_key(child, owner) {
@@ -187,9 +215,14 @@ fn collect_document_entries(n: Node<'_>, owner: &TomlNode) -> Vec<(TomlNode, Tom
 fn collect_table_entries(n: Node<'_>, owner: &TomlNode) -> Vec<(TomlNode, TomlNode)> {
     let mut pairs = Vec::new();
     for i in 0..n.named_child_count() {
-        let child = match n.named_child(i) { Some(c) => c, None => continue };
+        let child = match n.named_child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         if child.kind() == "pair" {
-            if let Some(p) = extract_pair(child, owner) { pairs.push(p); }
+            if let Some(p) = extract_pair(child, owner) {
+                pairs.push(p);
+            }
         }
     }
     pairs
@@ -198,9 +231,14 @@ fn collect_table_entries(n: Node<'_>, owner: &TomlNode) -> Vec<(TomlNode, TomlNo
 fn collect_inline_table_entries(n: Node<'_>, owner: &TomlNode) -> Vec<(TomlNode, TomlNode)> {
     let mut pairs = Vec::new();
     for i in 0..n.named_child_count() {
-        let child = match n.named_child(i) { Some(c) => c, None => continue };
+        let child = match n.named_child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         if child.kind() == "pair" {
-            if let Some(p) = extract_pair(child, owner) { pairs.push(p); }
+            if let Some(p) = extract_pair(child, owner) {
+                pairs.push(p);
+            }
         }
     }
     pairs
@@ -210,13 +248,20 @@ fn extract_pair(pair: Node<'_>, owner: &TomlNode) -> Option<(TomlNode, TomlNode)
     let mut key: Option<Node<'_>> = None;
     let mut val: Option<Node<'_>> = None;
     for i in 0..pair.named_child_count() {
-        let c = match pair.named_child(i) { Some(c) => c, None => continue };
+        let c = match pair.named_child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         match c.kind() {
             "bare_key" | "dotted_key" | "quoted_key" => {
-                if key.is_none() { key = Some(c); }
+                if key.is_none() {
+                    key = Some(c);
+                }
             }
             _ => {
-                if val.is_none() { val = Some(c); }
+                if val.is_none() {
+                    val = Some(c);
+                }
             }
         }
     }
@@ -225,7 +270,10 @@ fn extract_pair(pair: Node<'_>, owner: &TomlNode) -> Option<(TomlNode, TomlNode)
 
 fn table_header_key(table: Node<'_>, owner: &TomlNode) -> Option<TomlNode> {
     for i in 0..table.named_child_count() {
-        let c = match table.named_child(i) { Some(c) => c, None => continue };
+        let c = match table.named_child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         match c.kind() {
             "bare_key" | "dotted_key" | "quoted_key" => return Some(owner.wrap(c)),
             _ => {}
@@ -235,10 +283,14 @@ fn table_header_key(table: Node<'_>, owner: &TomlNode) -> Option<TomlNode> {
 }
 
 fn find_node_by_id<'a>(root: Node<'a>, id: usize) -> Option<Node<'a>> {
-    if root.id() == id { return Some(root); }
+    if root.id() == id {
+        return Some(root);
+    }
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
-        if let Some(found) = find_node_by_id(child, id) { return Some(found); }
+        if let Some(found) = find_node_by_id(child, id) {
+            return Some(found);
+        }
     }
     None
 }

@@ -27,8 +27,8 @@ use axum::{
 };
 use bytes::Bytes;
 use effect_runtime::v2::{
-    attach_dirty_to_queue, expand, BufferProbeSink, Diag, DiagSink, EventBus, ExpandOpts,
-    Component, FactStore, MemFactStore, MemQueue, Node, Pipe, PipeInstance, ProbeSink, Purity,
+    attach_dirty_to_queue, expand, BufferProbeSink, Component, Diag, DiagSink, EventBus,
+    ExpandOpts, FactStore, MemFactStore, MemQueue, Node, Pipe, PipeInstance, ProbeSink, Purity,
     QueueBackend, SqliteFactStore, SqliteQueue,
 };
 use http_body_util::BodyExt;
@@ -39,12 +39,12 @@ use crate::compile::ast::{OpCall, PipeAst};
 use crate::compile::parse::host_parse;
 use crate::compile::walk::walk_program;
 use crate::cst::dsl::Dsl;
-use crate::lsp::LSP_HOVER_CODE;
-#[cfg(feature = "ghcache")]
-pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq};
 #[cfg(feature = "ghcache")]
 use crate::git_watch::{dirty_notice, ghcache_dirty_notices};
+#[cfg(feature = "ghcache")]
+pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq};
 use crate::lower::{default_registry, LowerCtx, Registry};
+use crate::lsp::LSP_HOVER_CODE;
 use crate::telemetry::{PipelineTelemetry, RunPhaseTelemetry, RunTelemetry};
 use crate::Cursor;
 
@@ -68,9 +68,9 @@ impl IntoResponse for SprfError {
     fn into_response(self) -> axum::response::Response {
         let code = match &self {
             SprfError::UnknownDoc(_) => StatusCode::NOT_FOUND,
-            SprfError::Io(_)         => StatusCode::INTERNAL_SERVER_ERROR,
-            SprfError::Wire(_)       => StatusCode::BAD_REQUEST,
-            SprfError::Internal(_)   => StatusCode::INTERNAL_SERVER_ERROR,
+            SprfError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            SprfError::Wire(_) => StatusCode::BAD_REQUEST,
+            SprfError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (code, Json(self)).into_response()
     }
@@ -81,17 +81,34 @@ impl IntoResponse for SprfError {
 // ───────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LspOpenReq   { pub uri: String, pub text: String, pub version: i32 }
+pub struct LspOpenReq {
+    pub uri: String,
+    pub text: String,
+    pub version: i32,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LspChangeReq { pub uri: String, pub text: String, pub version: i32 }
+pub struct LspChangeReq {
+    pub uri: String,
+    pub text: String,
+    pub version: i32,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LspCloseReq  { pub uri: String }
+pub struct LspCloseReq {
+    pub uri: String,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GetDiagsReq  { pub uri: String }
+pub struct GetDiagsReq {
+    pub uri: String,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GetInlaysReq { pub uri: String }
+pub struct GetInlaysReq {
+    pub uri: String,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RunReq       { pub path: PathBuf, pub root: Option<PathBuf> }
+pub struct RunReq {
+    pub path: PathBuf,
+    pub root: Option<PathBuf>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InlayProbe {
@@ -106,11 +123,11 @@ pub struct InlayProbe {
 /// has no serde dep, so we ferry diags through this DTO at the seam.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SprfDiag {
-    pub lo:       Option<u32>,
-    pub hi:       Option<u32>,
-    pub severity: String,    // "error" | "warning" | "info" | "hint"
-    pub code:     String,
-    pub message:  String,
+    pub lo: Option<u32>,
+    pub hi: Option<u32>,
+    pub severity: String, // "error" | "warning" | "info" | "hint"
+    pub code: String,
+    pub message: String,
 }
 
 impl From<&effect_runtime::v2::Diag> for SprfDiag {
@@ -121,26 +138,27 @@ impl From<&effect_runtime::v2::Diag> for SprfDiag {
             hi: d.span.map(|s| s.hi),
             severity: match d.severity {
                 Severity::Error => "error",
-                Severity::Warn  => "warning",
-                Severity::Info  => "info",
-                Severity::Hint  => "hint",
-            }.into(),
-            code:    d.code.to_string(),
+                Severity::Warn => "warning",
+                Severity::Info => "info",
+                Severity::Hint => "hint",
+            }
+            .into(),
+            code: d.code.to_string(),
             message: d.message.clone(),
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RunReport    {
+pub struct RunReport {
     pub parse_diags: Vec<SprfDiag>,
-    pub walk_diags:  Vec<SprfDiag>,
+    pub walk_diags: Vec<SprfDiag>,
     pub runtime_diags: Vec<SprfDiag>,
-    pub pipes:       usize,
+    pub pipes: usize,
     /// Rule-table names harvested from the AST (one per `rule(:NAME)`).
-    pub tables:      Vec<String>,
+    pub tables: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telemetry:   Option<RunTelemetry>,
+    pub telemetry: Option<RunTelemetry>,
 }
 
 struct BufferDiagSink {
@@ -149,7 +167,9 @@ struct BufferDiagSink {
 
 impl BufferDiagSink {
     fn new() -> Self {
-        Self { rows: Mutex::new(Vec::new()) }
+        Self {
+            rows: Mutex::new(Vec::new()),
+        }
     }
 
     fn snapshot(&self) -> Vec<Diag> {
@@ -168,7 +188,7 @@ impl DiagSink for BufferDiagSink {
 /// per `lsp_open` / `lsp_change` and read here.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LspLocateDslReq {
-    pub uri:  String,
+    pub uri: String,
     /// Host-source byte offset (the LSP server resolves line/utf16-col
     /// to bytes before crossing this boundary).
     pub byte: u32,
@@ -178,15 +198,15 @@ pub struct LspLocateDslReq {
 /// cached program — host position, not a dsl position.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LspLocateDslResp {
-    pub op_name:   Option<String>,
-    pub body_raw:  Option<String>,
-    pub body_off:  u32,
+    pub op_name: Option<String>,
+    pub body_raw: Option<String>,
+    pub body_off: u32,
     pub body_byte: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LspHoverReq {
-    pub uri:  String,
+    pub uri: String,
     pub byte: u32,
 }
 
@@ -197,27 +217,29 @@ pub struct LspHoverResp {
 
 #[derive(Clone, Debug)]
 pub struct RuntimeHover {
-    pub lo:       u32,
-    pub hi:       u32,
+    pub lo: u32,
+    pub hi: u32,
     pub contents: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetFactTableReq {
-    pub name:  String,
+    pub name: String,
     /// Cap on rows returned. None = no cap (still bounded by store).
     pub limit: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FactRow { pub fields: Vec<(String, String)> }
+pub struct FactRow {
+    pub fields: Vec<(String, String)>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactTable {
-    pub name:  String,
+    pub name: String,
     /// Total rows in the store (pre-limit).
     pub total: usize,
-    pub rows:  Vec<FactRow>,
+    pub rows: Vec<FactRow>,
 }
 
 // ── refs_at — Layer 4 (subset) ───────────────────────────────────────
@@ -232,28 +254,33 @@ pub struct FactTable {
 // <rule>_facts is verified live in v4.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RefsAtReq  { pub path: String, pub byte: u32 }
+pub struct RefsAtReq {
+    pub path: String,
+    pub byte: u32,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RefsAtResp { pub hits: Vec<RefHit> }
+pub struct RefsAtResp {
+    pub hits: Vec<RefHit>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RefHit {
     pub ref_id: u64,
-    pub coord:  CoordWire,
+    pub coord: CoordWire,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CoordWire {
-    pub repo:    u32,
-    pub rev:     u32,
-    pub fs:      u64,
+    pub repo: u32,
+    pub rev: u32,
+    pub fs: u64,
     /// `path_of(fs)` resolution. None if the FileId has no `_files` row
     /// (e.g. the synthetic sentinel never gets surfaced here, but a
     /// foreign FileId in a stripped store would).
     pub fs_path: Option<String>,
-    pub lo:      u32,
-    pub hi:      u32,
+    pub lo: u32,
+    pub hi: u32,
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -437,22 +464,22 @@ sprf_rpc! {
 
 #[derive(Default)]
 pub struct DocState {
-    pub text:        String,
-    pub version:     i32,
-    pub program:     Vec<PipeAst>,
+    pub text: String,
+    pub version: i32,
+    pub program: Vec<PipeAst>,
     pub parse_diags: Vec<Diag>,
-    pub walk_diags:  Vec<Diag>,
+    pub walk_diags: Vec<Diag>,
     pub runtime_diags: Vec<Diag>,
     pub runtime_hovers: Vec<RuntimeHover>,
-    pub probes:      Vec<InlayProbe>,
+    pub probes: Vec<InlayProbe>,
 }
 
 pub struct SprfState {
-    pub docs:       Mutex<HashMap<String, DocState>>,
-    pub facts:      Arc<dyn FactStore<Cursor>>,
-    pub queue:      Arc<dyn QueueBackend<Cursor>>,
-    pub bus:        Arc<EventBus>,
-    instances:      Mutex<Vec<Arc<PipeInstance<Cursor>>>>,
+    pub docs: Mutex<HashMap<String, DocState>>,
+    pub facts: Arc<dyn FactStore<Cursor>>,
+    pub queue: Arc<dyn QueueBackend<Cursor>>,
+    pub bus: Arc<EventBus>,
+    instances: Mutex<Vec<Arc<PipeInstance<Cursor>>>>,
     next_instance_id: Mutex<u64>,
     /// Layer 0c.2 — content-derived intern store wrapping `facts`.
     /// Threaded into `LowerCtx` so source/pattern emitters stamp the
@@ -463,9 +490,9 @@ pub struct SprfState {
     /// `SprfState::new` loads from `~/.config/sprefa/repos.toml` via
     /// `SprfConfig::load_default`; tests inject explicit configs via
     /// `with_config`.
-    pub config:     Arc<crate::config::SprfConfig>,
-    pub registry:   Arc<Registry>,
-    pub root:       PathBuf,
+    pub config: Arc<crate::config::SprfConfig>,
+    pub registry: Arc<Registry>,
+    pub root: PathBuf,
 }
 
 struct AnalysisPassThrough;
@@ -477,7 +504,9 @@ impl Component for AnalysisPassThrough {
         Node::Emit(Arc::new(c.clone()))
     }
 
-    fn kind(&self) -> &'static str { "analysis_pass_through" }
+    fn kind(&self) -> &'static str {
+        "analysis_pass_through"
+    }
 }
 
 impl SprfState {
@@ -489,10 +518,7 @@ impl SprfState {
         )
     }
 
-    pub fn new_with_sqlite_queue(
-        root: PathBuf,
-        queue_path: impl AsRef<std::path::Path>,
-    ) -> Self {
+    pub fn new_with_sqlite_queue(root: PathBuf, queue_path: impl AsRef<std::path::Path>) -> Self {
         Self::new_with_backends(
             root,
             Arc::new(MemFactStore::<Cursor>::new()),
@@ -500,15 +526,12 @@ impl SprfState {
         )
     }
 
-    pub fn new_with_sqlite_facts(
-        root: PathBuf,
-        fact_path: impl AsRef<std::path::Path>,
-    ) -> Self {
+    pub fn new_with_sqlite_facts(root: PathBuf, fact_path: impl AsRef<std::path::Path>) -> Self {
         Self::new_with_backends(
             root,
             Arc::new(
                 SqliteFactStore::<Cursor>::open_file(fact_path.as_ref())
-                    .expect("open sqlite fact store")
+                    .expect("open sqlite fact store"),
             ),
             Arc::new(MemQueue::new()),
         )
@@ -523,7 +546,7 @@ impl SprfState {
             root,
             Arc::new(
                 SqliteFactStore::<Cursor>::open_file(fact_path.as_ref())
-                    .expect("open sqlite fact store")
+                    .expect("open sqlite fact store"),
             ),
             Arc::new(SqliteQueue::<Cursor>::open_file(queue_path.as_ref())),
         )
@@ -575,12 +598,8 @@ impl SprfState {
             let instances = self.instances.lock().unwrap().clone();
             let mut rendered = 0;
             for inst in instances {
-                rendered += expand(
-                    inst.as_ref(),
-                    self.queue.clone(),
-                    Vec::new(),
-                    opts.clone(),
-                ).rendered;
+                rendered +=
+                    expand(inst.as_ref(), self.queue.clone(), Vec::new(), opts.clone()).rendered;
             }
             if rendered == 0 {
                 break;
@@ -620,49 +639,69 @@ impl SprfState {
         let opts = ExpandOpts::default().with_diag(runtime_diags.clone());
         for pipe in pipes {
             let inst = analysis_safe_pipe(pipe).into_instance();
-            expand(&inst, queue.clone(), vec![Arc::new(Cursor::default())], opts.clone());
+            expand(
+                &inst,
+                queue.clone(),
+                vec![Arc::new(Cursor::default())],
+                opts.clone(),
+            );
         }
 
         let raw = probe_sink.drain();
-        let mut by_span: HashMap<(u32,u32), ProbeAgg> = HashMap::new();
+        let mut by_span: HashMap<(u32, u32), ProbeAgg> = HashMap::new();
         for p in &raw {
             let entry = by_span.entry((p.span.lo, p.span.hi)).or_default();
             entry.count += 1;
             if entry.sample_value.is_none() {
                 entry.sample_value = sample_text(p.cursor.value.as_ref(), 80);
-                entry.sample_terms = p.cursor.raw_terms.iter()
+                entry.sample_terms = p
+                    .cursor
+                    .raw_terms
+                    .iter()
                     .take(8)
-                    .map(|(k, v)| (k.to_string(), sample_text(v.as_ref(), 48).unwrap_or_default()))
+                    .map(|(k, v)| {
+                        (
+                            k.to_string(),
+                            sample_text(v.as_ref(), 48).unwrap_or_default(),
+                        )
+                    })
                     .collect();
             }
         }
-        let mut probes: Vec<InlayProbe> = by_span.into_iter()
-            .map(|((lo,hi),agg)| InlayProbe {
+        let mut probes: Vec<InlayProbe> = by_span
+            .into_iter()
+            .map(|((lo, hi), agg)| InlayProbe {
                 lo,
                 hi,
                 count: agg.count,
                 sample_value: agg.sample_value,
                 sample_terms: agg.sample_terms,
-            }).collect();
+            })
+            .collect();
         probes.sort_by_key(|p| (p.lo, p.hi));
 
         let (runtime_hovers, runtime_diags) = split_runtime_hovers(runtime_diags.snapshot());
 
-        self.docs.lock().unwrap().insert(uri, DocState {
-            text,
-            version,
-            program,
-            parse_diags,
-            walk_diags,
-            runtime_diags,
-            runtime_hovers,
-            probes,
-        });
+        self.docs.lock().unwrap().insert(
+            uri,
+            DocState {
+                text,
+                version,
+                program,
+                parse_diags,
+                walk_diags,
+                runtime_diags,
+                runtime_hovers,
+                probes,
+            },
+        );
     }
 }
 
 fn analysis_safe_pipe(pipe: Pipe<Cursor>) -> Pipe<Cursor> {
-    let steps = pipe.steps.into_iter()
+    let steps = pipe
+        .steps
+        .into_iter()
         .map(|component| {
             if component.purity() == Purity::Effectful {
                 Arc::new(AnalysisPassThrough) as Arc<dyn Component<Next = Cursor>>
@@ -691,10 +730,13 @@ impl SprfHandlers for SprfState {
     async fn get_diags(&self, req: GetDiagsReq) -> Result<Vec<SprfDiag>, SprfError> {
         let docs = self.docs.lock().unwrap();
         let d = docs.get(&req.uri).ok_or(SprfError::UnknownDoc(req.uri))?;
-        let out: Vec<SprfDiag> = d.parse_diags.iter()
+        let out: Vec<SprfDiag> = d
+            .parse_diags
+            .iter()
             .chain(d.walk_diags.iter())
             .chain(d.runtime_diags.iter())
-            .map(SprfDiag::from).collect();
+            .map(SprfDiag::from)
+            .collect();
         Ok(out)
     }
     async fn get_inlays(&self, req: GetInlaysReq) -> Result<Vec<InlayProbe>, SprfError> {
@@ -704,30 +746,42 @@ impl SprfHandlers for SprfState {
     }
     async fn lsp_locate_dsl(&self, req: LspLocateDslReq) -> Result<LspLocateDslResp, SprfError> {
         let docs = self.docs.lock().unwrap();
-        let d = docs.get(&req.uri).ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
+        let d = docs
+            .get(&req.uri)
+            .ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
         let mut hit: Option<(OpCall, usize)> = None;
-        for p in &d.program { walk_pipe_for_dsl(p, req.byte as usize, &mut hit); }
+        for p in &d.program {
+            walk_pipe_for_dsl(p, req.byte as usize, &mut hit);
+        }
         Ok(match hit {
             Some((call, body_byte)) => match &call.dsl {
                 Some(dsl) => LspLocateDslResp {
-                    op_name:   Some(call.name.to_string()),
-                    body_raw:  Some(dsl.raw.to_string()),
-                    body_off:  dsl.span.lo,
+                    op_name: Some(call.name.to_string()),
+                    body_raw: Some(dsl.raw.to_string()),
+                    body_off: dsl.span.lo,
                     body_byte: body_byte as u32,
                 },
                 None => LspLocateDslResp {
-                    op_name: None, body_raw: None, body_off: 0, body_byte: 0,
+                    op_name: None,
+                    body_raw: None,
+                    body_off: 0,
+                    body_byte: 0,
                 },
             },
             None => LspLocateDslResp {
-                op_name: None, body_raw: None, body_off: 0, body_byte: 0,
+                op_name: None,
+                body_raw: None,
+                body_off: 0,
+                body_byte: 0,
             },
         })
     }
 
     async fn lsp_hover(&self, req: LspHoverReq) -> Result<LspHoverResp, SprfError> {
         let docs = self.docs.lock().unwrap();
-        let d = docs.get(&req.uri).ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
+        let d = docs
+            .get(&req.uri)
+            .ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
         let mut hit: Option<(OpCall, usize)> = None;
         for p in &d.program {
             walk_pipe_for_dsl(p, req.byte as usize, &mut hit);
@@ -736,15 +790,21 @@ impl SprfHandlers for SprfState {
             let dsl = call.dsl.as_ref()?;
             dsl_hover(call.name.as_ref(), dsl.raw.as_bytes(), body_byte)
         }) {
-            return Ok(LspHoverResp { contents: Some(contents) });
+            return Ok(LspHoverResp {
+                contents: Some(contents),
+            });
         }
 
         let host_byte = req.byte;
         if let Some(contents) = runtime_hover_at(&d.runtime_hovers, host_byte) {
-            return Ok(LspHoverResp { contents: Some(contents) });
+            return Ok(LspHoverResp {
+                contents: Some(contents),
+            });
         }
 
-        let Some(probe) = d.probes.iter()
+        let Some(probe) = d
+            .probes
+            .iter()
             .filter(|p| p.lo <= host_byte && host_byte <= p.hi)
             .min_by_key(|p| (p.hi - p.lo, p.lo, p.hi))
         else {
@@ -757,21 +817,24 @@ impl SprfHandlers for SprfState {
         let op_name = op
             .map(|c| c.name.to_string())
             .unwrap_or_else(|| "<op>".to_string());
-        Ok(LspHoverResp { contents: Some(host_hover(&op_name, probe)) })
+        Ok(LspHoverResp {
+            contents: Some(host_hover(&op_name, probe)),
+        })
     }
 
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
         let run_start = std::time::Instant::now();
         let mut phases = RunPhaseTelemetry::default();
         let t = std::time::Instant::now();
-        let src = std::fs::read_to_string(&req.path)
-            .map_err(|e| SprfError::Io(e.to_string()))?;
+        let src = std::fs::read_to_string(&req.path).map_err(|e| SprfError::Io(e.to_string()))?;
         phases.read_sprf_ms = t.elapsed().as_secs_f64() * 1000.0;
 
         let t = std::time::Instant::now();
         let (program, parse_diags) = host_parse(&src);
         phases.parse_ms = t.elapsed().as_secs_f64() * 1000.0;
-        let dir = req.root.clone()
+        let dir = req
+            .root
+            .clone()
             .or_else(|| req.path.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| self.root.clone());
         let telemetry = std::env::var_os("SPREFA_TELEMETRY")
@@ -804,7 +867,7 @@ impl SprfHandlers for SprfState {
             let t = std::time::Instant::now();
             let pipe = match telemetry.as_ref() {
                 Some(t) => t.wrap_pipe(pipe),
-                None    => pipe,
+                None => pipe,
             };
             let identity = program
                 .get(idx)
@@ -842,12 +905,15 @@ impl SprfHandlers for SprfState {
         let t = std::time::Instant::now();
         let parse_diags = parse_diags.iter().map(SprfDiag::from).collect();
         let walk_diags = walk_diags.iter().map(SprfDiag::from).collect();
-        let runtime_diags = runtime_diags.snapshot().iter().map(SprfDiag::from).collect();
+        let runtime_diags = runtime_diags
+            .snapshot()
+            .iter()
+            .map(SprfDiag::from)
+            .collect();
         phases.report_ms = t.elapsed().as_secs_f64() * 1000.0;
 
         let telemetry = telemetry.map(|t| {
-            let mut snapshot =
-                t.snapshot_with_phases(run_start.elapsed(), run_stats, phases);
+            let mut snapshot = t.snapshot_with_phases(run_start.elapsed(), run_stats, phases);
             snapshot.fact_store = self.facts.stats().map(Into::into);
             snapshot
         });
@@ -856,7 +922,7 @@ impl SprfHandlers for SprfState {
             parse_diags,
             walk_diags,
             runtime_diags,
-            pipes:       n,
+            pipes: n,
             tables,
             telemetry,
         })
@@ -866,25 +932,25 @@ impl SprfHandlers for SprfState {
         let store = &self.sprf_store;
         let file = match store.find_file_by_path(&req.path) {
             Some(f) => f,
-            None    => return Ok(RefsAtResp { hits: Vec::new() }),
+            None => return Ok(RefsAtResp { hits: Vec::new() }),
         };
         let refs = store.find_refs_in(file, req.byte);
         let mut hits = Vec::with_capacity(refs.len());
         for r in refs {
             let coord = match store.coord_of(r) {
                 Some(c) => c,
-                None    => continue,
+                None => continue,
             };
             let fs_path = store.path_of(coord.fs).map(|a| a.to_string());
             hits.push(RefHit {
                 ref_id: r.0,
                 coord: CoordWire {
-                    repo:    coord.repo,
-                    rev:     coord.rev,
-                    fs:      coord.fs,
+                    repo: coord.repo,
+                    rev: coord.rev,
+                    fs: coord.fs,
                     fs_path,
-                    lo:      coord.lo,
-                    hi:      coord.hi,
+                    lo: coord.lo,
+                    hi: coord.hi,
                 },
             });
         }
@@ -903,14 +969,24 @@ impl SprfHandlers for SprfState {
 
     async fn get_fact_table(&self, req: GetFactTableReq) -> Result<FactTable, SprfError> {
         let total = self.facts.len(&req.name);
-        let raw   = self.facts.rows_of(&req.name);
-        let take  = req.limit.unwrap_or(usize::MAX).min(raw.len());
-        let rows  = raw.iter().take(take).map(|c| FactRow {
-            fields: c.raw_terms.iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
-        }).collect();
-        Ok(FactTable { name: req.name, total, rows })
+        let raw = self.facts.rows_of(&req.name);
+        let take = req.limit.unwrap_or(usize::MAX).min(raw.len());
+        let rows = raw
+            .iter()
+            .take(take)
+            .map(|c| FactRow {
+                fields: c
+                    .raw_terms
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            })
+            .collect();
+        Ok(FactTable {
+            name: req.name,
+            total,
+            rows,
+        })
     }
 }
 
@@ -942,7 +1018,8 @@ fn split_runtime_hovers(rows: Vec<Diag>) -> (Vec<RuntimeHover>, Vec<Diag>) {
 }
 
 fn runtime_hover_at(hovers: &[RuntimeHover], host_byte: u32) -> Option<String> {
-    hovers.iter()
+    hovers
+        .iter()
         .filter(|h| h.lo <= host_byte && host_byte <= h.hi)
         .min_by_key(|h| (h.hi - h.lo, h.lo, h.hi))
         .map(|h| h.contents.clone())
@@ -960,7 +1037,9 @@ fn host_hover(op_name: &str, probe: &InlayProbe) -> String {
         }
     }
     if !probe.sample_terms.is_empty() {
-        let terms = probe.sample_terms.iter()
+        let terms = probe
+            .sample_terms
+            .iter()
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(", ");
@@ -977,7 +1056,10 @@ fn sample_text(s: &str, max: usize) -> Option<String> {
     if compact.chars().count() <= max {
         return Some(compact);
     }
-    let mut out = compact.chars().take(max.saturating_sub(3)).collect::<String>();
+    let mut out = compact
+        .chars()
+        .take(max.saturating_sub(3))
+        .collect::<String>();
     out.push_str("...");
     Some(out)
 }
@@ -1003,19 +1085,19 @@ fn add_expand_stats(
     next: effect_runtime::v2::ExpandStats,
 ) {
     total.rendered += next.rendered;
-    total.emitted  += next.emitted;
+    total.emitted += next.emitted;
     total.terminal += next.terminal;
-    total.parked    = total.parked.max(next.parked);
+    total.parked = total.parked.max(next.parked);
 }
 
 fn dsl_hover(op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {
     let dsl: Box<dyn Dsl> = match op_name {
-        "sql"  => Box::new(crate::cst::dsls::sql::SqlDsl::new()),
+        "sql" => Box::new(crate::cst::dsls::sql::SqlDsl::new()),
         "json" => Box::new(crate::cst::dsls::json::JsonDsl::new()),
         "render" | "render_markdown" | "render.markdown" => {
             Box::new(crate::cst::dsls::markdown::MarkdownDsl::new())
         }
-        "re"   => Box::new(crate::cst::dsls::re::ReDsl::new()),
+        "re" => Box::new(crate::cst::dsls::re::ReDsl::new()),
         "glob" => Box::new(crate::cst::dsls::glob::GlobDsl::new()),
         _ => return None,
     };
@@ -1026,9 +1108,11 @@ fn dsl_hover(op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {
 fn hover_contents_to_string(contents: lsp_types::HoverContents) -> String {
     match contents {
         lsp_types::HoverContents::Scalar(marked) => marked_string_to_string(marked),
-        lsp_types::HoverContents::Array(items) => {
-            items.into_iter().map(marked_string_to_string).collect::<Vec<_>>().join("\n")
-        }
+        lsp_types::HoverContents::Array(items) => items
+            .into_iter()
+            .map(marked_string_to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
         lsp_types::HoverContents::Markup(markup) => markup.value,
     }
 }
@@ -1076,7 +1160,9 @@ fn hash_op_call(h: &mut blake3::Hasher, call: &OpCall) {
 }
 
 fn walk_pipe_for_dsl(p: &PipeAst, host_byte: usize, hit: &mut Option<(OpCall, usize)>) {
-    for step in &p.steps { walk_step_for_dsl(step, host_byte, hit); }
+    for step in &p.steps {
+        walk_step_for_dsl(step, host_byte, hit);
+    }
 }
 
 fn walk_pipe_for_op(p: &PipeAst, host_byte: usize, hit: &mut Option<OpCall>) {
@@ -1135,7 +1221,7 @@ fn collect_rule_tables(program: &[PipeAst], out: &mut Vec<String>) {
 // ───────────────────────────────────────────────────────────────────
 
 pub fn build_in_process(root: PathBuf) -> (Arc<SprfState>, InProcessClient) {
-    let state  = Arc::new(SprfState::new(root));
+    let state = Arc::new(SprfState::new(root));
     let router = build_router(state.clone());
     (state, InProcessClient::new(router))
 }
@@ -1152,25 +1238,44 @@ mod tests {
     async fn open_get_diags_close_roundtrip() {
         let (_state, client) = build_in_process(std::env::temp_dir());
 
-        client.lsp_open(LspOpenReq {
-            uri: "file:///x.sprf".into(), text: "".into(), version: 1,
-        }).await.unwrap();
+        client
+            .lsp_open(LspOpenReq {
+                uri: "file:///x.sprf".into(),
+                text: "".into(),
+                version: 1,
+            })
+            .await
+            .unwrap();
 
-        let diags = client.get_diags(GetDiagsReq {
-            uri: "file:///x.sprf".into(),
-        }).await.unwrap();
+        let diags = client
+            .get_diags(GetDiagsReq {
+                uri: "file:///x.sprf".into(),
+            })
+            .await
+            .unwrap();
         assert_eq!(diags.len(), 0);
 
-        let inlays = client.get_inlays(GetInlaysReq {
-            uri: "file:///x.sprf".into(),
-        }).await.unwrap();
+        let inlays = client
+            .get_inlays(GetInlaysReq {
+                uri: "file:///x.sprf".into(),
+            })
+            .await
+            .unwrap();
         assert!(inlays.is_empty());
 
-        client.lsp_close(LspCloseReq { uri: "file:///x.sprf".into() }).await.unwrap();
+        client
+            .lsp_close(LspCloseReq {
+                uri: "file:///x.sprf".into(),
+            })
+            .await
+            .unwrap();
 
-        let err = client.get_diags(GetDiagsReq {
-            uri: "file:///x.sprf".into(),
-        }).await.unwrap_err();
+        let err = client
+            .get_diags(GetDiagsReq {
+                uri: "file:///x.sprf".into(),
+            })
+            .await
+            .unwrap_err();
         assert!(matches!(err, SprfError::UnknownDoc(_)));
     }
 
@@ -1178,13 +1283,26 @@ mod tests {
     async fn real_source_through_router() {
         let (_state, client) = build_in_process(std::env::temp_dir());
         let src = "rule(:greet) { str `hello world` }";
-        client.lsp_open(LspOpenReq {
-            uri: "file:///hello.sprf".into(), text: src.into(), version: 1,
-        }).await.unwrap();
-        let _ = client.get_diags(GetDiagsReq { uri: "file:///hello.sprf".into() })
-            .await.unwrap();
-        let _ = client.get_inlays(GetInlaysReq { uri: "file:///hello.sprf".into() })
-            .await.unwrap();
+        client
+            .lsp_open(LspOpenReq {
+                uri: "file:///hello.sprf".into(),
+                text: src.into(),
+                version: 1,
+            })
+            .await
+            .unwrap();
+        let _ = client
+            .get_diags(GetDiagsReq {
+                uri: "file:///hello.sprf".into(),
+            })
+            .await
+            .unwrap();
+        let _ = client
+            .get_inlays(GetInlaysReq {
+                uri: "file:///hello.sprf".into(),
+            })
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1198,10 +1316,13 @@ mod tests {
         .unwrap();
 
         let (_state, client) = build_in_process(dir.path().to_path_buf());
-        let report = client.run(RunReq {
-            path,
-            root: Some(dir.path().to_path_buf()),
-        }).await.unwrap();
+        let report = client
+            .run(RunReq {
+                path,
+                root: Some(dir.path().to_path_buf()),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(report.runtime_diags.len(), 1);
         assert_eq!(report.runtime_diags[0].severity, "warning");

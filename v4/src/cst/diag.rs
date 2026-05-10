@@ -23,25 +23,53 @@ pub enum Severity {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diag {
-    pub severity:   Severity,
-    pub code:       &'static str,
-    pub message:    String,
+    pub severity: Severity,
+    pub code: &'static str,
+    pub message: String,
     pub byte_range: Range<usize>,
-    pub hint:       Option<String>,
+    pub hint: Option<String>,
 }
 
 impl Diag {
     pub fn error(code: &'static str, message: impl Into<String>, byte_range: Range<usize>) -> Self {
-        Self { severity: Severity::Error, code, message: message.into(), byte_range, hint: None }
+        Self {
+            severity: Severity::Error,
+            code,
+            message: message.into(),
+            byte_range,
+            hint: None,
+        }
     }
-    pub fn warning(code: &'static str, message: impl Into<String>, byte_range: Range<usize>) -> Self {
-        Self { severity: Severity::Warning, code, message: message.into(), byte_range, hint: None }
+    pub fn warning(
+        code: &'static str,
+        message: impl Into<String>,
+        byte_range: Range<usize>,
+    ) -> Self {
+        Self {
+            severity: Severity::Warning,
+            code,
+            message: message.into(),
+            byte_range,
+            hint: None,
+        }
     }
     pub fn info(code: &'static str, message: impl Into<String>, byte_range: Range<usize>) -> Self {
-        Self { severity: Severity::Info, code, message: message.into(), byte_range, hint: None }
+        Self {
+            severity: Severity::Info,
+            code,
+            message: message.into(),
+            byte_range,
+            hint: None,
+        }
     }
     pub fn hint(code: &'static str, message: impl Into<String>, byte_range: Range<usize>) -> Self {
-        Self { severity: Severity::Hint, code, message: message.into(), byte_range, hint: None }
+        Self {
+            severity: Severity::Hint,
+            code,
+            message: message.into(),
+            byte_range,
+            hint: None,
+        }
     }
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
@@ -59,7 +87,9 @@ pub struct BufferSink {
 }
 
 impl BufferSink {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     pub fn drain(&self) -> Vec<Diag> {
         std::mem::take(&mut *self.buf.lock().unwrap())
     }
@@ -69,7 +99,9 @@ impl BufferSink {
     pub fn len(&self) -> usize {
         self.buf.lock().unwrap().len()
     }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl DiagSink for BufferSink {
@@ -86,7 +118,10 @@ impl DiagSink for SilentSink {
 pub struct LogSink;
 impl DiagSink for LogSink {
     fn push(&self, d: Diag) {
-        eprintln!("[{:?}] {} ({}): {}", d.severity, d.code, d.message, d.byte_range.start);
+        eprintln!(
+            "[{:?}] {} ({}): {}",
+            d.severity, d.code, d.message, d.byte_range.start
+        );
     }
 }
 
@@ -102,7 +137,11 @@ mod tests {
             }
             for (i, c) in input.char_indices() {
                 if c == '?' {
-                    sink.push(Diag::warning("question", "question mark looks suspicious", i..i+1));
+                    sink.push(Diag::warning(
+                        "question",
+                        "question mark looks suspicious",
+                        i..i + 1,
+                    ));
                 }
             }
             Ok(input.len())

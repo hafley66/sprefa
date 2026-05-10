@@ -92,7 +92,9 @@ pub struct DaemonConfig {
 impl SprfConfig {
     /// Empty config; equivalent to `Default::default()`. Provided for
     /// readability at call sites.
-    pub fn empty() -> Self { Self::default() }
+    pub fn empty() -> Self {
+        Self::default()
+    }
 
     /// Load from `$SPREFA_CONFIG`, `$HOME/.config/sprefa/config.toml`,
     /// or legacy `$HOME/.config/sprefa/repos.toml`. Missing file or
@@ -126,25 +128,37 @@ impl SprfConfig {
     /// string on either IO or parse failure so the caller can decide
     /// whether to surface or swallow.
     pub fn load_from_path(path: &std::path::Path) -> Result<Self, String> {
-        let bytes = std::fs::read_to_string(path)
-            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        let bytes =
+            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
         toml::from_str(&bytes).map_err(|e| format!("parse {}: {e}", path.display()))
     }
 
     pub fn run_fact_db(&self) -> Option<PathBuf> {
-        self.run.fact_db.clone().or_else(|| self.store.fact_db.clone())
+        self.run
+            .fact_db
+            .clone()
+            .or_else(|| self.store.fact_db.clone())
     }
 
     pub fn run_queue_db(&self) -> Option<PathBuf> {
-        self.run.queue_db.clone().or_else(|| self.store.queue_db.clone())
+        self.run
+            .queue_db
+            .clone()
+            .or_else(|| self.store.queue_db.clone())
     }
 
     pub fn daemon_fact_db(&self) -> Option<PathBuf> {
-        self.daemon.fact_db.clone().or_else(|| self.store.fact_db.clone())
+        self.daemon
+            .fact_db
+            .clone()
+            .or_else(|| self.store.fact_db.clone())
     }
 
     pub fn daemon_queue_db(&self) -> Option<PathBuf> {
-        self.daemon.queue_db.clone().or_else(|| self.store.queue_db.clone())
+        self.daemon
+            .queue_db
+            .clone()
+            .or_else(|| self.store.queue_db.clone())
     }
 }
 
@@ -224,8 +238,17 @@ mod tests {
         "#;
         let cfg: SprfConfig = toml::from_str(src).unwrap();
         assert_eq!(cfg.run_fact_db(), Some(PathBuf::from("/tmp/run-facts.db")));
-        assert_eq!(cfg.run_queue_db(), Some(PathBuf::from("/tmp/store-queue.db")));
-        assert_eq!(cfg.daemon_fact_db(), Some(PathBuf::from("/tmp/store-facts.db")));
-        assert_eq!(cfg.daemon_queue_db(), Some(PathBuf::from("/tmp/daemon-queue.db")));
+        assert_eq!(
+            cfg.run_queue_db(),
+            Some(PathBuf::from("/tmp/store-queue.db"))
+        );
+        assert_eq!(
+            cfg.daemon_fact_db(),
+            Some(PathBuf::from("/tmp/store-facts.db"))
+        );
+        assert_eq!(
+            cfg.daemon_queue_db(),
+            Some(PathBuf::from("/tmp/daemon-queue.db"))
+        );
     }
 }

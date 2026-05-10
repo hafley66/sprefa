@@ -6,7 +6,7 @@ use std::sync::Arc;
 use effect_runtime::v2::{NextKey, QueueBackend, QueueRow, Wake};
 use serde_json::json;
 use v4::app::{
-    build_router, GhcacheChangeReq, NotifyGhcacheChangeReq, InProcessClient, SprfClient, SprfState,
+    build_router, GhcacheChangeReq, InProcessClient, NotifyGhcacheChangeReq, SprfClient, SprfState,
 };
 use v4::git_watch::{git_branch_dirty_key, git_repo_dirty_key, GIT_BRANCH_DOMAIN, GIT_REPO_DOMAIN};
 
@@ -21,19 +21,23 @@ async fn ghcache_branch_change_dispatches_repo_and_branch_dirty_keys() {
     park_probe(state.queue.as_ref(), GIT_REPO_DOMAIN, repo_key);
     park_probe(state.queue.as_ref(), GIT_BRANCH_DOMAIN, branch_key);
 
-    let notices = client.notify_ghcache_change(NotifyGhcacheChangeReq {
-        change: GhcacheChangeReq {
-            id: 9,
-            entity_type: "branch".into(),
-            entity_id: 7,
-            event: "updated".into(),
-            repo_slug: Some("acme/api".into()),
-            payload: json!({"name": "main", "sha": "abc123"}),
-            occurred_at: "2026-05-09T00:00:00Z".into(),
-        },
-    }).await.unwrap();
+    let notices = client
+        .notify_ghcache_change(NotifyGhcacheChangeReq {
+            change: GhcacheChangeReq {
+                id: 9,
+                entity_type: "branch".into(),
+                entity_id: 7,
+                event: "updated".into(),
+                repo_slug: Some("acme/api".into()),
+                payload: json!({"name": "main", "sha": "abc123"}),
+                occurred_at: "2026-05-09T00:00:00Z".into(),
+            },
+        })
+        .await
+        .unwrap();
 
-    let pairs: Vec<(&str, Option<String>)> = notices.iter()
+    let pairs: Vec<(&str, Option<String>)> = notices
+        .iter()
         .map(|n| (n.domain.as_str(), n.key_hex.clone()))
         .collect();
     assert_eq!(
@@ -57,7 +61,10 @@ fn park_probe(queue: &dyn QueueBackend<v4::Cursor>, domain: &'static str, key: N
         instance_id: 1,
         depth: 0,
         value: Arc::new(v4::Cursor::default()),
-        wake: Wake::Key { domain: Cow::Borrowed(domain), key },
+        wake: Wake::Key {
+            domain: Cow::Borrowed(domain),
+            key,
+        },
         expand_tick: 0,
         enqueued_at_ns: 0,
     });

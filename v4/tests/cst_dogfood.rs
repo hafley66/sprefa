@@ -6,8 +6,8 @@
 //! test individual DSL semantics — those live in each DSL's unit tests.
 
 use ast_grep_language::SupportLang;
-use v4::cst::{Compiled, Dsl, SilentSink, VecCaptureSink};
 use v4::cst::dsl::CaptureKind;
+use v4::cst::{Compiled, Dsl, SilentSink, VecCaptureSink};
 
 use v4::cst::dsls::ast::AstDsl;
 use v4::cst::dsls::glob::GlobDsl;
@@ -17,63 +17,63 @@ use v4::cst::dsls::re::ReDsl;
 use v4::cst::dsls::sql::SqlDsl;
 
 struct Case {
-    dsl:           Box<dyn Dsl>,
-    body:          &'static [u8],
-    target:        &'static [u8],
-    target_off:    usize,
+    dsl: Box<dyn Dsl>,
+    body: &'static [u8],
+    target: &'static [u8],
+    target_off: usize,
     expected_caps: &'static [&'static str],
-    expect_match:  bool,
+    expect_match: bool,
 }
 
 fn cases() -> Vec<Case> {
     vec![
         Case {
-            dsl:           Box::new(ReDsl::new()),
-            body:          br"TODO\($WHO\)",
-            target:        b"prefix TODO(alice) suffix",
-            target_off:    1000,
+            dsl: Box::new(ReDsl::new()),
+            body: br"TODO\($WHO\)",
+            target: b"prefix TODO(alice) suffix",
+            target_off: 1000,
             expected_caps: &["WHO"],
-            expect_match:  true,
+            expect_match: true,
         },
         Case {
-            dsl:           Box::new(GlobDsl::new()),
-            body:          b"**/$DIR/file.txt",
-            target:        b"a/b/middle/file.txt",
-            target_off:    2000,
+            dsl: Box::new(GlobDsl::new()),
+            body: b"**/$DIR/file.txt",
+            target: b"a/b/middle/file.txt",
+            target_off: 2000,
             expected_caps: &["DIR"],
-            expect_match:  true,
+            expect_match: true,
         },
         Case {
-            dsl:           Box::new(JsonDsl::new()),
-            body:          b"{ name: $N }",
-            target:        br#"{"name":"alice"}"#,
-            target_off:    3000,
+            dsl: Box::new(JsonDsl::new()),
+            body: b"{ name: $N }",
+            target: br#"{"name":"alice"}"#,
+            target_off: 3000,
             expected_caps: &["N"],
-            expect_match:  true,
+            expect_match: true,
         },
         Case {
-            dsl:           Box::new(AstDsl::new(SupportLang::Rust)),
-            body:          b"fn $NAME() {}",
-            target:        b"fn alpha() {}",
-            target_off:    4000,
+            dsl: Box::new(AstDsl::new(SupportLang::Rust)),
+            body: b"fn $NAME() {}",
+            target: b"fn alpha() {}",
+            target_off: 4000,
             expected_caps: &["NAME"],
-            expect_match:  true,
+            expect_match: true,
         },
         Case {
-            dsl:           Box::new(SqlDsl::new()),
-            body:          b"SELECT input.__cursor_idx, input.OP FROM input",
-            target:        b"",
-            target_off:    0,
+            dsl: Box::new(SqlDsl::new()),
+            body: b"SELECT input.__cursor_idx, input.OP FROM input",
+            target: b"",
+            target_off: 0,
             expected_caps: &[],
-            expect_match:  false,
+            expect_match: false,
         },
         Case {
-            dsl:           Box::new(MarkdownDsl::new()),
-            body:          b"## ${TITLE}",
-            target:        b"",
-            target_off:    0,
+            dsl: Box::new(MarkdownDsl::new()),
+            body: b"## ${TITLE}",
+            target: b"",
+            target_off: 0,
             expected_caps: &[],
-            expect_match:  false,
+            expect_match: false,
         },
     ]
 }

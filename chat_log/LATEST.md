@@ -1,1 +1,1 @@
-20260507.1.hafley-v4-rule-unification-and-glob-purification.md
+20260507.2.v4-rule-engine-respec-and-memory-audit.md

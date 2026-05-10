@@ -1,15 +1,16 @@
-use v4::app::{
-    build_in_process, GetDiagsReq, LspHoverReq, LspOpenReq, SprfClient, SprfError,
-};
+use v4::app::{build_in_process, GetDiagsReq, LspHoverReq, LspOpenReq, SprfClient, SprfError};
 
 #[tokio::test]
 async fn lsp_hover_unknown_doc_errors() {
     let (_state, client) = build_in_process(std::env::temp_dir());
 
-    let err = client.lsp_hover(LspHoverReq {
-        uri: "file:///never-opened.sprf".into(),
-        byte: 0,
-    }).await.unwrap_err();
+    let err = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///never-opened.sprf".into(),
+            byte: 0,
+        })
+        .await
+        .unwrap_err();
 
     assert!(
         matches!(err, SprfError::UnknownDoc(_)),
@@ -25,16 +26,22 @@ async fn lsp_hover_inside_sql_body_uses_dsl_provider() {
     let body_lo = src.find('`').unwrap() + 1;
     let probe = body_lo + src[body_lo..].find("input").unwrap();
 
-    client.lsp_open(LspOpenReq {
-        uri: "file:///sql-hover.sprf".into(),
-        text: src.into(),
-        version: 1,
-    }).await.unwrap();
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///sql-hover.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
 
-    let hover = client.lsp_hover(LspHoverReq {
-        uri: "file:///sql-hover.sprf".into(),
-        byte: probe as u32,
-    }).await.unwrap();
+    let hover = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///sql-hover.sprf".into(),
+            byte: probe as u32,
+        })
+        .await
+        .unwrap();
 
     assert_eq!(
         hover.contents.as_deref(),
@@ -50,16 +57,22 @@ async fn lsp_hover_inside_render_markdown_body_uses_markdown_provider() {
     let body_lo = src.find('`').unwrap() + 1;
     let probe = body_lo + src[body_lo..].find("${TITLE}").unwrap() + 3;
 
-    client.lsp_open(LspOpenReq {
-        uri: "file:///markdown-hover.sprf".into(),
-        text: src.into(),
-        version: 1,
-    }).await.unwrap();
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///markdown-hover.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
 
-    let hover = client.lsp_hover(LspHoverReq {
-        uri: "file:///markdown-hover.sprf".into(),
-        byte: probe as u32,
-    }).await.unwrap();
+    let hover = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///markdown-hover.sprf".into(),
+            byte: probe as u32,
+        })
+        .await
+        .unwrap();
 
     assert_eq!(
         hover.contents.as_deref(),
@@ -75,16 +88,22 @@ async fn lsp_hover_inside_render_dot_markdown_body_uses_markdown_provider() {
     let body_lo = src.find('`').unwrap() + 1;
     let probe = body_lo + src[body_lo..].find("${TITLE}").unwrap() + 3;
 
-    client.lsp_open(LspOpenReq {
-        uri: "file:///markdown-dot-hover.sprf".into(),
-        text: src.into(),
-        version: 1,
-    }).await.unwrap();
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///markdown-dot-hover.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
 
-    let hover = client.lsp_hover(LspHoverReq {
-        uri: "file:///markdown-dot-hover.sprf".into(),
-        byte: probe as u32,
-    }).await.unwrap();
+    let hover = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///markdown-dot-hover.sprf".into(),
+            byte: probe as u32,
+        })
+        .await
+        .unwrap();
 
     assert_eq!(
         hover.contents.as_deref(),
@@ -92,22 +111,27 @@ async fn lsp_hover_inside_render_dot_markdown_body_uses_markdown_provider() {
     );
 }
 
-
 #[tokio::test]
 async fn lsp_hover_outside_dsl_returns_empty() {
     let (_state, client) = build_in_process(std::env::temp_dir());
 
     let src = "sql`SELECT input.value` > void";
-    client.lsp_open(LspOpenReq {
-        uri: "file:///outside-hover.sprf".into(),
-        text: src.into(),
-        version: 1,
-    }).await.unwrap();
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///outside-hover.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
 
-    let hover = client.lsp_hover(LspHoverReq {
-        uri: "file:///outside-hover.sprf".into(),
-        byte: src.find('>').unwrap() as u32,
-    }).await.unwrap();
+    let hover = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///outside-hover.sprf".into(),
+            byte: src.find('>').unwrap() as u32,
+        })
+        .await
+        .unwrap();
 
     assert_eq!(hover.contents, None);
 }
@@ -117,16 +141,22 @@ async fn lsp_hover_on_host_op_reports_cursor_flow_count() {
     let (_state, client) = build_in_process(std::env::temp_dir());
 
     let src = "rule(:words, WORD?) { `alpha beta` > split(WORD?)` ` };";
-    client.lsp_open(LspOpenReq {
-        uri: "file:///cursor-flow-hover.sprf".into(),
-        text: src.into(),
-        version: 1,
-    }).await.unwrap();
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///cursor-flow-hover.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
 
-    let hover = client.lsp_hover(LspHoverReq {
-        uri: "file:///cursor-flow-hover.sprf".into(),
-        byte: src.find("split").unwrap() as u32,
-    }).await.unwrap();
+    let hover = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///cursor-flow-hover.sprf".into(),
+            byte: src.find("split").unwrap() as u32,
+        })
+        .await
+        .unwrap();
 
     assert_eq!(
         hover.contents.as_deref(),
@@ -139,25 +169,31 @@ async fn lsp_hover_op_publishes_runtime_hover_at_term_focus() {
     let (_state, client) = build_in_process(std::env::temp_dir());
 
     let src = "`before sh! after` > re`before (?P<NAME>sh!) after` > lsp.hover[NAME]`custom hover ${NAME}`;";
-    client.lsp_open(LspOpenReq {
-        uri: "file:///runtime-hover.sprf".into(),
-        text: src.into(),
-        version: 1,
-    }).await.unwrap();
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///runtime-hover.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
 
-    let hover = client.lsp_hover(LspHoverReq {
-        uri: "file:///runtime-hover.sprf".into(),
-        byte: 8,
-    }).await.unwrap();
+    let hover = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///runtime-hover.sprf".into(),
+            byte: 8,
+        })
+        .await
+        .unwrap();
 
-    assert_eq!(
-        hover.contents.as_deref(),
-        Some("custom hover sh!"),
-    );
+    assert_eq!(hover.contents.as_deref(), Some("custom hover sh!"),);
 
-    let diags = client.get_diags(GetDiagsReq {
-        uri: "file:///runtime-hover.sprf".into(),
-    }).await.unwrap();
+    let diags = client
+        .get_diags(GetDiagsReq {
+            uri: "file:///runtime-hover.sprf".into(),
+        })
+        .await
+        .unwrap();
     assert!(
         diags.iter().all(|d| d.code != "sprf/hover"),
         "runtime hover events should not leak as diagnostics: {diags:?}",
@@ -169,19 +205,22 @@ async fn lsp_hover_underscore_alias_publishes_runtime_hover() {
     let (_state, client) = build_in_process(std::env::temp_dir());
 
     let src = "`before sh! after` > re`before (?P<NAME>sh!) after` > lsp_hover[NAME]`alias hover ${NAME}`;";
-    client.lsp_open(LspOpenReq {
-        uri: "file:///runtime-hover-alias.sprf".into(),
-        text: src.into(),
-        version: 1,
-    }).await.unwrap();
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///runtime-hover-alias.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
 
-    let hover = client.lsp_hover(LspHoverReq {
-        uri: "file:///runtime-hover-alias.sprf".into(),
-        byte: 8,
-    }).await.unwrap();
+    let hover = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///runtime-hover-alias.sprf".into(),
+            byte: 8,
+        })
+        .await
+        .unwrap();
 
-    assert_eq!(
-        hover.contents.as_deref(),
-        Some("alias hover sh!"),
-    );
+    assert_eq!(hover.contents.as_deref(), Some("alias hover sh!"),);
 }

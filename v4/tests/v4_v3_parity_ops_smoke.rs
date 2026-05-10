@@ -10,7 +10,6 @@ use effect_runtime::v2::{
     MemFactStore, MemQueue, NextKey, Node, PipeInstance, QueueBackend, RenderCtx, Wake,
 };
 
-use v4::Cursor;
 use v4::lower::{default_registry, DslBody, LowerCtx, Value};
 use v4::pipeline::{str_pipe, StrConstComponent};
 use v4::store::SprfStore;
@@ -18,8 +17,11 @@ use v4::v2_ops::{
     file_dirty_key, CollectComponent, CollectMode, CommentComponent, ReadComponent,
     WriteCursorComponent, WriteMode, FILE_DOMAIN,
 };
+use v4::Cursor;
 
-fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
+fn br(lo: u32, hi: u32) -> ByteRange {
+    ByteRange { lo, hi }
+}
 
 fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
     run_many(p, vec![seed])
@@ -31,7 +33,8 @@ fn run_many(p: effect_runtime::v2::Pipe<Cursor>, seed: Vec<Cursor>) -> Vec<Curso
     impl Component for Sink {
         type Next = Cursor;
         fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            self.0.lock().unwrap().push(c.clone()); Node::Done
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
         }
     }
     let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = p.steps.iter().cloned().collect();
@@ -57,11 +60,18 @@ impl BusListener for RecordingListener {
 #[test]
 fn void_drops_cursor() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "void", None, vec![], None, None, br(0, 4),
-    ).unwrap();
+    let reg = default_registry();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "void",
+            None,
+            vec![],
+            None,
+            None,
+            br(0, 4),
+        )
+        .unwrap();
     let mut seed = Cursor::default();
     seed.set("X", "1");
     let out = run(p, seed);
@@ -71,13 +81,23 @@ fn void_drops_cursor() {
 #[test]
 fn print_passes_through() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
+    let reg = default_registry();
     // print`hello ${WHO}`
-    let dsl = DslBody { raw: Arc::from("hello ${WHO}"), interps: vec![] };
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "print", None, vec![], None, Some((dsl, br(0, 12))), br(0, 12),
-    ).unwrap();
+    let dsl = DslBody {
+        raw: Arc::from("hello ${WHO}"),
+        interps: vec![],
+    };
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "print",
+            None,
+            vec![],
+            None,
+            Some((dsl, br(0, 12))),
+            br(0, 12),
+        )
+        .unwrap();
     let mut seed = Cursor::default();
     seed.set("WHO", "world");
     let out = run(p, seed);
@@ -88,29 +108,50 @@ fn print_passes_through() {
 #[test]
 fn sh_filter_drops_on_nonzero_exit() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
+    let reg = default_registry();
     // sh(:filter)`false` — explicit filter mode (default is now capture).
-    let dsl = DslBody { raw: Arc::from("false"), interps: vec![] };
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "sh", None,
-        vec![(Value::atom("filter"), br(3, 10))],
-        None, Some((dsl, br(0, 5))), br(0, 5),
-    ).unwrap();
+    let dsl = DslBody {
+        raw: Arc::from("false"),
+        interps: vec![],
+    };
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "sh",
+            None,
+            vec![(Value::atom("filter"), br(3, 10))],
+            None,
+            Some((dsl, br(0, 5))),
+            br(0, 5),
+        )
+        .unwrap();
     let out = run(p, Cursor::default());
-    assert!(out.is_empty(), "sh(:filter) with failing command drops cursor");
+    assert!(
+        out.is_empty(),
+        "sh(:filter) with failing command drops cursor"
+    );
 }
 
 #[test]
 fn sh_default_captures_stdout_into_value() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
+    let reg = default_registry();
     // sh`printf hello` — default mode now captures into &.value.
-    let dsl = DslBody { raw: Arc::from("printf hello"), interps: vec![] };
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "sh", None, vec![], None, Some((dsl, br(0, 12))), br(0, 12),
-    ).unwrap();
+    let dsl = DslBody {
+        raw: Arc::from("printf hello"),
+        interps: vec![],
+    };
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "sh",
+            None,
+            vec![],
+            None,
+            Some((dsl, br(0, 12))),
+            br(0, 12),
+        )
+        .unwrap();
     let out = run(p, Cursor::default());
     assert_eq!(out.len(), 1);
     assert_eq!(&*out[0].value, "hello");
@@ -121,22 +162,28 @@ fn sh_capture_binds_stdout_to_term() {
     use v4::lower::Value as V;
     use v4::pipeline::str_pipe;
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
+    let reg = default_registry();
     // sh(OUT?)`printf alpha`
     // OUT? lowers (in real walk) to Value::Pipe(term_bind(:OUT)). We
     // synthesize that here with a Pipe that binds OUT.
     use v4::term::Term;
-    let bind_pipe = effect_runtime::v2::Pipe::new()
-        .step(Arc::new(Term::bind(Arc::<str>::from("OUT"))));
-    let dsl = DslBody { raw: Arc::from("printf alpha"), interps: vec![] };
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "sh", None,
-        vec![(V::pipe(bind_pipe), br(3, 7))],
-        None,
-        Some((dsl, br(8, 22))),
-        br(0, 22),
-    ).unwrap();
+    let bind_pipe =
+        effect_runtime::v2::Pipe::new().step(Arc::new(Term::bind(Arc::<str>::from("OUT"))));
+    let dsl = DslBody {
+        raw: Arc::from("printf alpha"),
+        interps: vec![],
+    };
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "sh",
+            None,
+            vec![(V::pipe(bind_pipe), br(3, 7))],
+            None,
+            Some((dsl, br(8, 22))),
+            br(0, 22),
+        )
+        .unwrap();
     let _ = str_pipe; // silence unused
     let out = run(p, Cursor::default());
     assert_eq!(out.len(), 1);
@@ -146,12 +193,22 @@ fn sh_capture_binds_stdout_to_term() {
 #[test]
 fn sh_bang_passes_through_without_capture() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let dsl = DslBody { raw: Arc::from("true"), interps: vec![] };
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "sh!", None, vec![], None, Some((dsl, br(0, 4))), br(0, 4),
-    ).unwrap();
+    let reg = default_registry();
+    let dsl = DslBody {
+        raw: Arc::from("true"),
+        interps: vec![],
+    };
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "sh!",
+            None,
+            vec![],
+            None,
+            Some((dsl, br(0, 4))),
+            br(0, 4),
+        )
+        .unwrap();
     let out = run(p, Cursor::default());
     assert_eq!(out.len(), 1, "sh! passes cursor through");
 }
@@ -159,12 +216,22 @@ fn sh_bang_passes_through_without_capture() {
 #[test]
 fn split_on_value_emits_cursor_per_piece() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let dsl = DslBody { raw: Arc::from("\n"), interps: vec![] };
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "split", None, vec![], None, Some((dsl, br(0, 1))), br(0, 1),
-    ).unwrap();
+    let reg = default_registry();
+    let dsl = DslBody {
+        raw: Arc::from("\n"),
+        interps: vec![],
+    };
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "split",
+            None,
+            vec![],
+            None,
+            Some((dsl, br(0, 1))),
+            br(0, 1),
+        )
+        .unwrap();
     let mut seed = Cursor::default();
     seed.value = Arc::from("alpha\nbeta\n\ngamma");
     let out = run(p, seed);
@@ -181,11 +248,18 @@ fn read_loads_file_bytes_into_value() {
     write!(f, "alpha-bravo").unwrap();
 
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "read", None, vec![], None, None, br(0, 4),
-    ).unwrap();
+    let reg = default_registry();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "read",
+            None,
+            vec![],
+            None,
+            None,
+            br(0, 4),
+        )
+        .unwrap();
     // Substrate cleanup (2026-05-07): `read` reads `cursor.value` as
     // the path source. The legacy `cursor.get("FS")` fallback was
     // removed; producers (fs / glob) now set value directly.
@@ -206,10 +280,17 @@ fn read_reruns_after_file_dirty_wake() {
 
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let reg = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "read", None, vec![], None, None, br(0, 4),
-    ).unwrap();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "read",
+            None,
+            vec![],
+            None,
+            None,
+            br(0, 4),
+        )
+        .unwrap();
 
     let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     struct Sink(Arc<Mutex<Vec<Cursor>>>);
@@ -228,7 +309,12 @@ fn read_reruns_after_file_dirty_wake() {
 
     let mut seed = Cursor::default();
     seed.value = Arc::<str>::from(path.display().to_string().as_str());
-    expand(&inst, q.clone(), vec![Arc::new(seed)], ExpandOpts::default());
+    expand(
+        &inst,
+        q.clone(),
+        vec![Arc::new(seed)],
+        ExpandOpts::default(),
+    );
 
     assert_eq!(sink.lock().unwrap()[0].value.as_ref(), "alpha");
     assert_eq!(q.depth(), 1, "read should park one file-dirty continuation");
@@ -241,24 +327,35 @@ fn read_reruns_after_file_dirty_wake() {
     );
     expand(&inst, q.clone(), Vec::new(), ExpandOpts::default());
 
-    let values: Vec<String> = sink.lock().unwrap()
+    let values: Vec<String> = sink
+        .lock()
+        .unwrap()
         .iter()
         .map(|c| c.value.to_string())
         .collect();
     assert_eq!(values, vec!["alpha".to_string(), "bravo".to_string()]);
-    assert_eq!(q.depth(), 1, "read should replace the file-dirty park after rerun");
+    assert_eq!(
+        q.depth(),
+        1,
+        "read should replace the file-dirty park after rerun"
+    );
 }
 
 #[test]
 fn comment_sequential_narrows_value_between_markers() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "comment", None,
-        vec![(Value::Pipe(str_pipe(r"# SECTION:.*\n")), br(0, 14))],
-        None, None, br(0, 14),
-    ).unwrap();
+    let reg = default_registry();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "comment",
+            None,
+            vec![(Value::Pipe(str_pipe(r"# SECTION:.*\n")), br(0, 14))],
+            None,
+            None,
+            br(0, 14),
+        )
+        .unwrap();
     let mut seed = Cursor::default();
     seed.value = Arc::from("# SECTION: a\nlineA\n# SECTION: b\nlineB\n");
     let out = run(p, seed);
@@ -270,16 +367,21 @@ fn comment_sequential_narrows_value_between_markers() {
 #[test]
 fn comment_paired_narrows_between_two_pipe_args() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "comment", None,
-        vec![
-            (Value::Pipe(str_pipe(r"<!-- sprf:start -->\n")), br(0, 23)),
-            (Value::Pipe(str_pipe(r"\n<!-- sprf:end -->")), br(25, 46)),
-        ],
-        None, None, br(0, 46),
-    ).unwrap();
+    let reg = default_registry();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "comment",
+            None,
+            vec![
+                (Value::Pipe(str_pipe(r"<!-- sprf:start -->\n")), br(0, 23)),
+                (Value::Pipe(str_pipe(r"\n<!-- sprf:end -->")), br(25, 46)),
+            ],
+            None,
+            None,
+            br(0, 46),
+        )
+        .unwrap();
     let mut seed = Cursor::default();
     seed.value = Arc::from("before\n<!-- sprf:start -->\nbody\n<!-- sprf:end -->\nafter\n");
     let out = run(p, seed);
@@ -292,17 +394,24 @@ fn comment_paired_narrows_between_two_pipe_args() {
 #[test]
 fn write_cursor_replace_splices_value_into_byte_range() {
     use std::io::Write;
-    let dir  = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("w.txt");
     let mut f = std::fs::File::create(&path).unwrap();
     write!(f, "abcdefghij").unwrap();
 
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "write_cursor", None, vec![], None, None, br(0, 12),
-    ).unwrap();
+    let reg = default_registry();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "write_cursor",
+            None,
+            vec![],
+            None,
+            None,
+            br(0, 12),
+        )
+        .unwrap();
     // two cursors targeting the same file. Right-to-left order means
     // the second splice (HI=8) lands first, so LO=2 stays valid.
     let mk = |lo: usize, hi: usize, v: &str| -> Cursor {
@@ -313,23 +422,27 @@ fn write_cursor_replace_splices_value_into_byte_range() {
         c.value = Arc::from(v);
         c
     };
-    use std::sync::Mutex;
     use effect_runtime::v2::{MemQueue, PipeInstance, QueueBackend};
+    use std::sync::Mutex;
     let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     struct Sink(Arc<Mutex<Vec<Cursor>>>);
     impl Component for Sink {
         type Next = Cursor;
         fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            self.0.lock().unwrap().push(c.clone()); Node::Done
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
         }
     }
     let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = p.steps.iter().cloned().collect();
     steps.push(Arc::new(Sink(sink.clone())));
     let inst = PipeInstance::new(steps);
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    expand(&inst, q,
+    expand(
+        &inst,
+        q,
         vec![Arc::new(mk(2, 4, "XX")), Arc::new(mk(7, 9, "YY"))],
-        ExpandOpts::default());
+        ExpandOpts::default(),
+    );
     let written = std::fs::read_to_string(&path).unwrap();
     assert_eq!(written, "abXXefgYYj");
 }
@@ -356,11 +469,15 @@ fn write_cursor_replace_uses_focal_coord_without_fs_term() {
 
     let inst = PipeInstance::new(vec![
         Arc::new(ReadComponent::new().with_sprf_store(sprf_store.clone())),
-        Arc::new(CommentComponent::paired("<!-- start -->", "<!-- end -->").unwrap()
-            .with_sprf_store(sprf_store.clone())),
-        Arc::new(StrConstComponent { literal: Arc::from("new") }),
-        Arc::new(WriteCursorComponent::new(WriteMode::Replace)
-            .with_sprf_store(sprf_store.clone())),
+        Arc::new(
+            CommentComponent::paired("<!-- start -->", "<!-- end -->")
+                .unwrap()
+                .with_sprf_store(sprf_store.clone()),
+        ),
+        Arc::new(StrConstComponent {
+            literal: Arc::from("new"),
+        }),
+        Arc::new(WriteCursorComponent::new(WriteMode::Replace).with_sprf_store(sprf_store.clone())),
         Arc::new(Sink(sink.clone())),
     ]);
     let mut seed = Cursor::default();
@@ -381,17 +498,24 @@ fn write_cursor_replace_uses_focal_coord_without_fs_term() {
 #[test]
 fn write_cursor_publishes_file_dirty_after_splice() {
     use std::io::Write;
-    let dir  = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("w.txt");
     let mut f = std::fs::File::create(&path).unwrap();
     write!(f, "abcdef").unwrap();
 
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let reg = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "write_cursor", None, vec![], None, None, br(0, 12),
-    ).unwrap();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "write_cursor",
+            None,
+            vec![],
+            None,
+            None,
+            br(0, 12),
+        )
+        .unwrap();
 
     let mut seed = Cursor::default();
     seed.set("FS", path.display().to_string());
@@ -401,7 +525,9 @@ fn write_cursor_publishes_file_dirty_after_splice() {
 
     let bus = Arc::new(EventBus::new());
     let events = Arc::new(Mutex::new(Vec::new()));
-    bus.add_listener(Arc::new(RecordingListener { events: events.clone() }));
+    bus.add_listener(Arc::new(RecordingListener {
+        events: events.clone(),
+    }));
 
     let inst = p.into_instance();
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
@@ -425,13 +551,18 @@ fn write_file_writes_value_to_path_arg() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.txt");
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "write_file", None,
-        vec![(Value::atom(path.display().to_string().as_str()), br(11, 30))],
-        None, None, br(0, 32),
-    ).unwrap();
+    let reg = default_registry();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "write_file",
+            None,
+            vec![(Value::atom(path.display().to_string().as_str()), br(11, 30))],
+            None,
+            None,
+            br(0, 32),
+        )
+        .unwrap();
     let mut seed = Cursor::default();
     seed.value = Arc::from("payload");
     let _ = run(p, seed);
@@ -444,18 +575,25 @@ fn write_file_publishes_file_dirty_after_write() {
     let path = dir.path().join("out.txt");
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let reg = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "write_file", None,
-        vec![(Value::atom(path.display().to_string().as_str()), br(11, 30))],
-        None, None, br(0, 32),
-    ).unwrap();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "write_file",
+            None,
+            vec![(Value::atom(path.display().to_string().as_str()), br(11, 30))],
+            None,
+            None,
+            br(0, 32),
+        )
+        .unwrap();
     let mut seed = Cursor::default();
     seed.value = Arc::from("payload");
 
     let bus = Arc::new(EventBus::new());
     let events = Arc::new(Mutex::new(Vec::new()));
-    bus.add_listener(Arc::new(RecordingListener { events: events.clone() }));
+    bus.add_listener(Arc::new(RecordingListener {
+        events: events.clone(),
+    }));
 
     let inst = p.into_instance();
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
@@ -477,13 +615,18 @@ fn write_file_publishes_file_dirty_after_write() {
 #[test]
 fn collect_emits_one_cursor_after_batch_completion() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "collect", None,
-        vec![],
-        None, None, br(0, 9),
-    ).unwrap();
+    let reg = default_registry();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "collect",
+            None,
+            vec![],
+            None,
+            None,
+            br(0, 9),
+        )
+        .unwrap();
 
     let mut a = Cursor::default();
     a.value = Arc::from("a");
@@ -501,19 +644,29 @@ fn collect_then_write_file_writes_aggregate_value_once() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.txt");
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
-    let collect = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "collect", None,
-        vec![],
-        None, None, br(0, 9),
-    ).unwrap();
-    let write_file = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "write_file", None,
-        vec![(Value::atom(path.display().to_string().as_str()), br(11, 30))],
-        None, None, br(0, 32),
-    ).unwrap();
+    let reg = default_registry();
+    let collect = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "collect",
+            None,
+            vec![],
+            None,
+            None,
+            br(0, 9),
+        )
+        .unwrap();
+    let write_file = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "write_file",
+            None,
+            vec![(Value::atom(path.display().to_string().as_str()), br(11, 30))],
+            None,
+            None,
+            br(0, 32),
+        )
+        .unwrap();
 
     let p = collect.extend(write_file);
     let mut a = Cursor::default();
@@ -530,14 +683,19 @@ fn collect_then_write_file_writes_aggregate_value_once() {
 #[test]
 fn collect_ready_accepts_snapshot_and_append_modes() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
+    let reg = default_registry();
     for mode in ["snapshot", "append"] {
-        let p = reg.lower(
-            &LowerCtx::new(store.clone(), std::env::temp_dir()),
-            "collect_ready", None,
-            vec![(Value::atom(mode), br(14, 22))],
-            None, None, br(0, 23),
-        ).unwrap();
+        let p = reg
+            .lower(
+                &LowerCtx::new(store.clone(), std::env::temp_dir()),
+                "collect_ready",
+                None,
+                vec![(Value::atom(mode), br(14, 22))],
+                None,
+                None,
+                br(0, 23),
+            )
+            .unwrap();
 
         let mut a = Cursor::default();
         a.value = Arc::from("x");
@@ -591,7 +749,10 @@ fn collect_keeps_buffer_when_upstream_resumes_in_later_expand_tick() {
     let key = NextKey([7; 32]);
     let sink = Arc::new(Mutex::new(Vec::new()));
     let pipe = PipeInstance::new(vec![
-        Arc::new(ParkOnce { seen: Arc::new(Mutex::new(false)), key }),
+        Arc::new(ParkOnce {
+            seen: Arc::new(Mutex::new(false)),
+            key,
+        }),
         Arc::new(CollectComponent::new(CollectMode::Complete)),
         Arc::new(Sink(sink.clone())),
     ]);
@@ -603,7 +764,12 @@ fn collect_keeps_buffer_when_upstream_resumes_in_later_expand_tick() {
     let mut b = Cursor::default();
     b.value = Arc::from("b");
 
-    expand(&pipe, queue.clone(), vec![Arc::new(a), Arc::new(b)], opts.clone());
+    expand(
+        &pipe,
+        queue.clone(),
+        vec![Arc::new(a), Arc::new(b)],
+        opts.clone(),
+    );
     assert_eq!(sink.lock().unwrap().len(), 0);
 
     assert_eq!(queue.dispatch_park("test", Some(key)), 1);
@@ -625,15 +791,20 @@ fn repo_emits_cursor_per_file_with_repo_and_fs_terms() {
     writeln!(f, "fn b() {{}}").unwrap();
 
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
+    let reg = default_registry();
     let slug_arg = (Value::atom("myrepo"), br(0, 6));
     let path_arg = (Value::atom(root.display().to_string().as_str()), br(7, 20));
-    let p = reg.lower(
-        &LowerCtx::new(store.clone(), std::env::temp_dir()),
-        "repo", None,
-        vec![slug_arg, path_arg],
-        None, None, br(0, 25),
-    ).unwrap();
+    let p = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "repo",
+            None,
+            vec![slug_arg, path_arg],
+            None,
+            None,
+            br(0, 25),
+        )
+        .unwrap();
     let out = run(p, Cursor::default());
     assert_eq!(out.len(), 2, "two files in fixture");
     for c in &out {

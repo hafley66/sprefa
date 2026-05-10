@@ -11,12 +11,12 @@ use crate::cst::injected::Injected;
 use crate::cst::path::{items, Path, PathBuilder, PathItem};
 
 pub struct Located<'a> {
-    pub doc_id:    DocId,
-    pub path:      Path,
-    pub host_off:  usize,
-    pub dsl_id:    Arc<str>,
-    pub node:      tree_sitter::Node<'a>,
-    pub trail:     Vec<Path>,
+    pub doc_id: DocId,
+    pub path: Path,
+    pub host_off: usize,
+    pub dsl_id: Arc<str>,
+    pub node: tree_sitter::Node<'a>,
+    pub trail: Vec<Path>,
 }
 
 pub fn locate<'a>(doc: &'a Doc, host_byte: usize) -> Located<'a> {
@@ -103,12 +103,16 @@ fn ts_path_to(root: tree_sitter::Node<'_>, target: tree_sitter::Node<'_>) -> Pat
         }
         let _ = hit;
         chain.push(items::Field { kind_id, idx });
-        if parent.id() == root.id() { break; }
+        if parent.id() == root.id() {
+            break;
+        }
         cursor = parent;
     }
     chain.reverse();
     let mut b = PathBuilder::with_capacity(chain.len());
-    for f in chain { b.push(f); }
+    for f in chain {
+        b.push(f);
+    }
     b.build()
 }
 
@@ -139,7 +143,9 @@ pub fn resolve<'a>(doc: &'a Doc, path: &Path) -> Option<tree_sitter::Node<'a>> {
                 b.push_boxed(clone_box(it.as_ref()));
             }
             let host_path = b.build();
-            let inj = active_children.iter().find(|inj| paths_eq(&inj.host_path, &host_path))?;
+            let inj = active_children
+                .iter()
+                .find(|inj| paths_eq(&inj.host_path, &host_path))?;
             active_tree = &inj.tree;
             active_children = &inj.injected;
             last_node = Some(active_tree.root_node());
@@ -154,7 +160,9 @@ pub fn resolve<'a>(doc: &'a Doc, path: &Path) -> Option<tree_sitter::Node<'a>> {
             let mut walker = node.walk();
             let children: Vec<_> = node.children(&mut walker).collect();
             let child = children.get(f.idx as usize)?;
-            if child.kind_id() != f.kind_id { return None; }
+            if child.kind_id() != f.kind_id {
+                return None;
+            }
             node = *child;
         }
         last_node = Some(node);
@@ -170,16 +178,18 @@ pub fn resolve<'a>(doc: &'a Doc, path: &Path) -> Option<tree_sitter::Node<'a>> {
 }
 
 fn paths_eq(a: &Path, b: &Path) -> bool {
-    if a.len() != b.len() { return false; }
+    if a.len() != b.len() {
+        return false;
+    }
     a.iter().zip(b.iter()).all(|(x, y)| x.dyn_eq(y.as_ref()))
 }
 
 fn clone_box(it: &dyn PathItem) -> Box<dyn PathItem> {
     match it.kind_tag() {
         "Index" => Box::new(it.as_any().downcast_ref::<items::Index>().unwrap().clone()),
-        "Name"  => Box::new(it.as_any().downcast_ref::<items::Name>().unwrap().clone()),
+        "Name" => Box::new(it.as_any().downcast_ref::<items::Name>().unwrap().clone()),
         "Field" => Box::new(it.as_any().downcast_ref::<items::Field>().unwrap().clone()),
-        "Body"  => Box::new(items::Body),
-        other   => panic!("locate: unhandled PathItem kind {other:?}"),
+        "Body" => Box::new(items::Body),
+        other => panic!("locate: unhandled PathItem kind {other:?}"),
     }
 }

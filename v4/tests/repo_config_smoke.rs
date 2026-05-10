@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    expand, ByteRange, Component, ExpandOpts, FactStore, MemFactStore, MemQueue,
-    Node, PipeInstance, QueueBackend, RenderCtx,
+    expand, ByteRange, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, Node,
+    PipeInstance, QueueBackend, RenderCtx,
 };
 
 use v4::config::{RepoConfig, SprfConfig};
@@ -19,7 +19,9 @@ use v4::lower::{default_registry, LowerCtx, Value};
 use v4::store::{SprfStore, REPOS_TABLE};
 use v4::Cursor;
 
-fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
+fn br(lo: u32, hi: u32) -> ByteRange {
+    ByteRange { lo, hi }
+}
 
 fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
     let sink: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
@@ -27,7 +29,8 @@ fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
     impl Component for Sink {
         type Next = Cursor;
         fn render(&self, _c: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-            self.0.lock().unwrap().push(c.clone()); Node::Done
+            self.0.lock().unwrap().push(c.clone());
+            Node::Done
         }
     }
     let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = p.steps.iter().cloned().collect();
@@ -43,30 +46,42 @@ fn run(p: effect_runtime::v2::Pipe<Cursor>, seed: Cursor) -> Vec<Cursor> {
 fn repo_bare_form_emits_one_cursor_per_configured_repo() {
     let cfg = SprfConfig {
         repos: vec![
-            RepoConfig { slug: "alpha/one".into(), root: PathBuf::from("/tmp/alpha") },
-            RepoConfig { slug: "beta/two".into(),  root: PathBuf::from("/tmp/beta") },
+            RepoConfig {
+                slug: "alpha/one".into(),
+                root: PathBuf::from("/tmp/alpha"),
+            },
+            RepoConfig {
+                slug: "beta/two".into(),
+                root: PathBuf::from("/tmp/beta"),
+            },
         ],
         ..Default::default()
     };
 
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
-    let reg   = default_registry();
+    let reg = default_registry();
 
     let ctx = LowerCtx::new(facts.clone(), std::env::temp_dir())
         .with_sprf_store(store.clone())
         .with_config(Arc::new(cfg));
 
-    let p = reg.lower(
-        &ctx, "repo", None, vec![], None, None, br(0, 6),
-    ).expect("bare repo() lowers");
+    let p = reg
+        .lower(&ctx, "repo", None, vec![], None, None, br(0, 6))
+        .expect("bare repo() lowers");
 
     let out = run(p, Cursor::default());
     assert_eq!(out.len(), 2, "one cursor per configured repo");
 
     let slugs: Vec<&str> = out.iter().map(|c| c.value.as_ref()).collect();
-    assert!(slugs.contains(&"alpha/one"), "alpha/one slug present in {slugs:?}");
-    assert!(slugs.contains(&"beta/two"),  "beta/two slug present in {slugs:?}");
+    assert!(
+        slugs.contains(&"alpha/one"),
+        "alpha/one slug present in {slugs:?}"
+    );
+    assert!(
+        slugs.contains(&"beta/two"),
+        "beta/two slug present in {slugs:?}"
+    );
 
     for c in &out {
         let repo = c.get("REPO").expect("REPO term set");
@@ -77,23 +92,27 @@ fn repo_bare_form_emits_one_cursor_per_configured_repo() {
     // _repos table: sentinel (0) + 2 configured repos.
     store.flush();
     let repo_rows = facts.rows_of(REPOS_TABLE);
-    assert_eq!(repo_rows.len(), 3, "sentinel + 2 configured repos in _repos");
+    assert_eq!(
+        repo_rows.len(),
+        3,
+        "sentinel + 2 configured repos in _repos"
+    );
 }
 
 #[test]
 fn repo_bare_form_emits_zero_when_no_config() {
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(facts.clone());
-    let reg   = default_registry();
+    let reg = default_registry();
 
     // Empty config attached.
     let ctx = LowerCtx::new(facts.clone(), std::env::temp_dir())
         .with_sprf_store(store.clone())
         .with_config(Arc::new(SprfConfig::empty()));
 
-    let p = reg.lower(
-        &ctx, "repo", None, vec![], None, None, br(0, 6),
-    ).expect("bare repo() lowers with empty config");
+    let p = reg
+        .lower(&ctx, "repo", None, vec![], None, None, br(0, 6))
+        .expect("bare repo() lowers with empty config");
 
     let out = run(p, Cursor::default());
     assert!(out.is_empty(), "no configured repos => no cursors");
@@ -105,13 +124,13 @@ fn repo_bare_form_emits_zero_when_ctx_lacks_config() {
     // emits zero rows rather than panicking. This is the back-compat
     // path for older lower call sites that don't yet thread config.
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
+    let reg = default_registry();
 
     let ctx = LowerCtx::new(facts.clone(), std::env::temp_dir());
 
-    let p = reg.lower(
-        &ctx, "repo", None, vec![], None, None, br(0, 6),
-    ).expect("bare repo() lowers without config");
+    let p = reg
+        .lower(&ctx, "repo", None, vec![], None, None, br(0, 6))
+        .expect("bare repo() lowers without config");
 
     let out = run(p, Cursor::default());
     assert!(out.is_empty(), "no config attached => no cursors");
@@ -129,16 +148,22 @@ fn repo_args_form_back_compat_unchanged() {
     writeln!(f, "fn a() {{}}").unwrap();
 
     let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let reg   = default_registry();
+    let reg = default_registry();
     let ctx = LowerCtx::new(facts.clone(), std::env::temp_dir());
 
     let slug_arg = (Value::atom("myrepo"), br(0, 6));
     let path_arg = (Value::atom(root.display().to_string().as_str()), br(7, 20));
-    let p = reg.lower(
-        &ctx, "repo", None,
-        vec![slug_arg, path_arg],
-        None, None, br(0, 25),
-    ).expect("args repo() lowers");
+    let p = reg
+        .lower(
+            &ctx,
+            "repo",
+            None,
+            vec![slug_arg, path_arg],
+            None,
+            None,
+            br(0, 25),
+        )
+        .expect("args repo() lowers");
 
     let out = run(p, Cursor::default());
     assert_eq!(out.len(), 1, "one file in fixture");

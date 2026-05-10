@@ -11,9 +11,9 @@ use super::pattern::{PatternMatcher, Segment};
 
 #[derive(Debug, Clone)]
 pub struct WalkCapture {
-    pub text:       Arc<str>,
+    pub text: Arc<str>,
     pub byte_start: u32,
-    pub byte_end:   u32,
+    pub byte_end: u32,
 }
 
 pub type Captures = FxHashMap<Arc<str>, WalkCapture>;
@@ -22,16 +22,22 @@ pub type Captures = FxHashMap<Arc<str>, WalkCapture>;
 pub enum CompiledStep {
     Any,
     Key {
-        name:    String,
+        name: String,
         capture: Option<String>,
     },
     KeyMatch {
         matchers: Vec<PatternMatcher>,
-        capture:  Option<String>,
+        capture: Option<String>,
     },
-    DepthMin { n: u32 },
-    DepthMax { n: u32 },
-    DepthEq  { n: u32 },
+    DepthMin {
+        n: u32,
+    },
+    DepthMax {
+        n: u32,
+    },
+    DepthEq {
+        n: u32,
+    },
     ParentKey {
         matchers: Vec<PatternMatcher>,
     },
@@ -57,7 +63,7 @@ pub enum CompiledStep {
 
 #[derive(Debug)]
 pub struct CompiledObjectEntry {
-    pub key:   CompiledKeyMatcher,
+    pub key: CompiledKeyMatcher,
     pub value: Vec<CompiledStep>,
 }
 

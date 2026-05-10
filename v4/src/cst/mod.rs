@@ -14,9 +14,9 @@
 
 pub mod build;
 pub mod diag;
-pub mod dsls;
 pub mod doc;
 pub mod dsl;
+pub mod dsls;
 pub mod injected;
 pub mod locate;
 pub mod lsp;

@@ -32,10 +32,16 @@ pub struct Term {
 
 impl Term {
     pub fn read(name: impl Into<Arc<str>>) -> Self {
-        Self { name: name.into(), mode: TermMode::Read }
+        Self {
+            name: name.into(),
+            mode: TermMode::Read,
+        }
     }
     pub fn bind(name: impl Into<Arc<str>>) -> Self {
-        Self { name: name.into(), mode: TermMode::Bind }
+        Self {
+            name: name.into(),
+            mode: TermMode::Bind,
+        }
     }
 }
 
@@ -52,11 +58,11 @@ impl Component for Term {
             TermMode::Read => {
                 let v = match c.get(&self.name) {
                     Some(v) => v,
-                    None    => {
-                        ctx.diag.emit(
-                            Diag::error("term/unbound",
-                                format!("{} not bound", &self.name))
-                        );
+                    None => {
+                        ctx.diag.emit(Diag::error(
+                            "term/unbound",
+                            format!("{} not bound", &self.name),
+                        ));
                         return Node::Done;
                     }
                 };
@@ -67,30 +73,39 @@ impl Component for Term {
         }
     }
 
-    fn kind(&self) -> &'static str { "term" }
+    fn kind(&self) -> &'static str {
+        "term"
+    }
 
     fn purity(&self) -> effect_runtime::v2::Purity {
         effect_runtime::v2::Purity::Pure
     }
 
-    fn describe(&self) -> Option<&dyn std::any::Any> { Some(self) }
+    fn describe(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use effect_runtime::v2::{
-        expand, ExpandOpts, MemQueue, Node, PipeInstance, QueueBackend,
-        DiagSink, RenderCtx,
+        expand, DiagSink, ExpandOpts, MemQueue, Node, PipeInstance, QueueBackend, RenderCtx,
     };
+    use std::sync::Mutex;
 
-    struct CollectorSink { sink: Arc<Mutex<Vec<Diag>>> }
+    struct CollectorSink {
+        sink: Arc<Mutex<Vec<Diag>>>,
+    }
     impl DiagSink for CollectorSink {
-        fn emit(&self, d: Diag) { self.sink.lock().unwrap().push(d); }
+        fn emit(&self, d: Diag) {
+            self.sink.lock().unwrap().push(d);
+        }
     }
 
-    struct Collector { sink: Arc<Mutex<Vec<Cursor>>> }
+    struct Collector {
+        sink: Arc<Mutex<Vec<Cursor>>>,
+    }
     impl Component for Collector {
         type Next = Cursor;
         fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
@@ -100,37 +115,50 @@ mod tests {
     }
 
     fn cursor_with_value(v: &str) -> Arc<Cursor> {
-        Arc::new(Cursor { value: v.into(), ..Default::default() })
+        Arc::new(Cursor {
+            value: v.into(),
+            ..Default::default()
+        })
     }
 
     #[test]
     fn bind_writes_value_into_named_term() {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
-        let pipe  = PipeInstance::new(vec![
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let pipe = PipeInstance::new(vec![
             Arc::new(Term::bind("X")) as Arc<dyn Component<Next = Cursor>>,
             Arc::new(Collector { sink: sink.clone() }),
         ]);
 
-        expand(&pipe, queue, vec![cursor_with_value("hello")], ExpandOpts::default());
+        expand(
+            &pipe,
+            queue,
+            vec![cursor_with_value("hello")],
+            ExpandOpts::default(),
+        );
 
         let got = sink.lock().unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].get("X"), Some("hello"));
-        assert_eq!(&*got[0].value, "hello");   // value unchanged on Bind
+        assert_eq!(&*got[0].value, "hello"); // value unchanged on Bind
     }
 
     #[test]
     fn read_pulls_term_into_value() {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
-        let pipe  = PipeInstance::new(vec![
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let pipe = PipeInstance::new(vec![
             Arc::new(Term::bind("X")) as Arc<dyn Component<Next = Cursor>>,
-            Arc::new(Term::read("X")),    // identity-ish: X already bound
+            Arc::new(Term::read("X")), // identity-ish: X already bound
             Arc::new(Collector { sink: sink.clone() }),
         ]);
 
-        expand(&pipe, queue, vec![cursor_with_value("hello")], ExpandOpts::default());
+        expand(
+            &pipe,
+            queue,
+            vec![cursor_with_value("hello")],
+            ExpandOpts::default(),
+        );
 
         let got = sink.lock().unwrap();
         assert_eq!(got.len(), 1);
@@ -141,14 +169,15 @@ mod tests {
     #[test]
     fn read_unbound_emits_diag_and_drops_row() {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::new(Mutex::new(Vec::new()));
         let diags = Arc::new(Mutex::new(Vec::new()));
-        let pipe  = PipeInstance::new(vec![
+        let pipe = PipeInstance::new(vec![
             Arc::new(Term::read("Y")) as Arc<dyn Component<Next = Cursor>>,
             Arc::new(Collector { sink: sink.clone() }),
         ]);
-        let opts = ExpandOpts::default()
-            .with_diag(Arc::new(CollectorSink { sink: diags.clone() }));
+        let opts = ExpandOpts::default().with_diag(Arc::new(CollectorSink {
+            sink: diags.clone(),
+        }));
 
         expand(&pipe, queue, vec![cursor_with_value("hi")], opts);
 
@@ -162,7 +191,9 @@ mod tests {
     fn bind_then_mutate_then_read_focuses_back() {
         // X? then overwrite value via a synthetic mutator, then X
         // should restore X's bound value into &.value.
-        struct OverwriteValue { v: &'static str }
+        struct OverwriteValue {
+            v: &'static str,
+        }
         impl Component for OverwriteValue {
             type Next = Cursor;
             fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
@@ -173,18 +204,23 @@ mod tests {
         }
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
-        let pipe  = PipeInstance::new(vec![
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let pipe = PipeInstance::new(vec![
             Arc::new(Term::bind("X")) as Arc<dyn Component<Next = Cursor>>,
             Arc::new(OverwriteValue { v: "DIFFERENT" }),
             Arc::new(Term::read("X")),
             Arc::new(Collector { sink: sink.clone() }),
         ]);
 
-        expand(&pipe, queue, vec![cursor_with_value("first")], ExpandOpts::default());
+        expand(
+            &pipe,
+            queue,
+            vec![cursor_with_value("first")],
+            ExpandOpts::default(),
+        );
 
         let got = sink.lock().unwrap();
-        assert_eq!(&*got[0].value, "first");          // Read("X") restored
-        assert_eq!(got[0].get("X"), Some("first"));   // X still bound
+        assert_eq!(&*got[0].value, "first"); // Read("X") restored
+        assert_eq!(got[0].get("X"), Some("first")); // X still bound
     }
 }

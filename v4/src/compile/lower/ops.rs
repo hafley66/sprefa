@@ -14,41 +14,45 @@ use std::sync::Arc;
 use ast_grep_config::{DeserializeEnv, SerializableRuleCore};
 use effect_runtime::v2::Pipe;
 
-use crate::Cursor;
 use crate::chan::{Next, NextQ};
-use crate::fact::{FactRead, FactWrite};
-use crate::term::Term;
-use crate::v2_ops::{
-    AstNmComponent, AstYamlComponent, CollectComponent, CollectMode, CommentComponent,
-    FsComponent, JsonComponent, PathComponent, PrintComponent, ReComponent, ReadComponent,
-    RenderMarkdownComponent, RepoComponent, RevComponent, ShBangComponent,
-    ShComponent, SplitComponent, VoidComponent, WriteCursorComponent,
-    WriteFileComponent, WriteFilePath, WriteMode,
-};
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBinder, DslBody, DslShape, OperatorDef,
 };
-use effect_runtime::v2::ByteRange;
 use crate::compile::lower::value::{run_once_const, Value};
+use crate::fact::{FactRead, FactWrite};
 use crate::pipeline::{GlobComponent, StrConstComponent, StrTemplateComponent};
 use crate::rule::Rule;
+use crate::term::Term;
+use crate::v2_ops::{
+    AstNmComponent, AstYamlComponent, CollectComponent, CollectMode, CommentComponent, FsComponent,
+    JsonComponent, PathComponent, PrintComponent, ReComponent, ReadComponent,
+    RenderMarkdownComponent, RepoComponent, RevComponent, ShBangComponent, ShComponent,
+    SplitComponent, VoidComponent, WriteCursorComponent, WriteFileComponent, WriteFilePath,
+    WriteMode,
+};
+use crate::Cursor;
+use effect_runtime::v2::ByteRange;
 
 // ─── str ──────────────────────────────────────────────────────────────────
 
 pub struct StrDef;
 
 impl OperatorDef for StrDef {
-    fn name(&self) -> &'static str { "str" }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn name(&self) -> &'static str {
+        "str"
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let body = dsl.expect("str: dsl body present (validate)");
         if body.interps.is_empty() {
@@ -63,7 +67,7 @@ impl OperatorDef for StrDef {
         let mut interps = body.interps.clone();
         interps.sort_by_key(|i| i.range.lo);
         Ok(Pipe::new().step(Arc::new(StrTemplateComponent {
-            raw:     body.raw.clone(),
+            raw: body.raw.clone(),
             interps: Arc::new(interps),
         })))
     }
@@ -74,18 +78,26 @@ impl OperatorDef for StrDef {
 pub struct PathDef;
 
 impl OperatorDef for PathDef {
-    fn name(&self) -> &'static str { "path" }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { false }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["FS"] }
+    fn name(&self) -> &'static str {
+        "path"
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        false
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["FS"]
+    }
 
     fn lower(
         &self,
-        ctx:    &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let mut comp = PathComponent::new(ctx.root.clone());
         if let Some(body) = dsl {
@@ -106,8 +118,10 @@ pub struct RuleDef;
 
 const RULE_SPEC: &[ArgSig] = &[
     ArgSig {
-        kind: ArgKind::Atom, name: "name",
-        doc: "rule + sink table name", required: true,
+        kind: ArgKind::Atom,
+        name: "name",
+        doc: "rule + sink table name",
+        required: true,
     },
     ArgSig {
         // Variadic(Any) so `rule(:name, COL_A, COL_B?)` accepts the two
@@ -118,23 +132,33 @@ const RULE_SPEC: &[ArgSig] = &[
         //                                        column at run time)
         // Plain `Value::Atom` strings are still accepted for backward shape.
         kind: ArgKind::Variadic(&ArgKind::Any),
-        name: "cols", doc: "sink columns", required: false,
+        name: "cols",
+        doc: "sink columns",
+        required: false,
     },
 ];
 
 impl OperatorDef for RuleDef {
-    fn name(&self) -> &'static str { "rule" }
-    fn paren_args(&self) -> &[ArgSig] { RULE_SPEC }
-    fn brace_block(&self) -> Option<BlockShape> { Some(BlockShape::Pipe) }
-    fn brace_block_required(&self) -> bool { false }
+    fn name(&self) -> &'static str {
+        "rule"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        RULE_SPEC
+    }
+    fn brace_block(&self) -> Option<BlockShape> {
+        Some(BlockShape::Pipe)
+    }
+    fn brace_block_required(&self) -> bool {
+        false
+    }
 
     fn lower(
         &self,
-        ctx:   &LowerCtx,
-        flow:  Option<Value>,
-        args:  &[Value],
+        ctx: &LowerCtx,
+        flow: Option<Value>,
+        args: &[Value],
         block: Option<Pipe<Cursor>>,
-        dsl:   Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         // Default chain_pos is 0 (head-of-pipe) for tests / any caller
         // that doesn't pass position info. The walker uses
@@ -160,12 +184,12 @@ impl OperatorDef for RuleDef {
     ///       `FactWrite` (the existing behavior).
     fn lower_with_chain(
         &self,
-        ctx:        &LowerCtx,
-        _flow:      Option<Value>,
-        args:       &[Value],
-        block:      Option<Pipe<Cursor>>,
-        _dsl:       Option<&DslBody>,
-        chain_pos:  usize,
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+        chain_pos: usize,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let name = match &args[0] {
             Value::Atom(s) => s.clone(),
@@ -175,9 +199,7 @@ impl OperatorDef for RuleDef {
         // Sink position, no body: pure FactWrite, no declare. Discards
         // any extra positional args (cols don't apply at the sink site).
         if chain_pos >= 1 && block.is_none() {
-            return Ok(Pipe::new().step(Arc::new(FactWrite::new(
-                ctx.store.clone(), name,
-            ))));
+            return Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), name))));
         }
 
         // Head-of-pipe forms (decl-only or bodied) collect col args and
@@ -191,8 +213,12 @@ impl OperatorDef for RuleDef {
             match a {
                 Value::Atom(s) => col_strings.push(s.to_string()),
                 Value::Pipe(p) => {
-                    for n in p.binds_terms() { col_strings.push(n.to_string()); }
-                    for n in p.reads_terms() { col_strings.push(n.to_string()); }
+                    for n in p.binds_terms() {
+                        col_strings.push(n.to_string());
+                    }
+                    for n in p.reads_terms() {
+                        col_strings.push(n.to_string());
+                    }
                 }
             }
         }
@@ -207,13 +233,7 @@ impl OperatorDef for RuleDef {
 
         // Bodied form: existing behavior — declare + body + FactWrite.
         let body = block.unwrap();
-        let rule = Rule::new(
-            name.clone(),
-            ctx.store.clone(),
-            name,
-            &cols,
-            body,
-        );
+        let rule = Rule::new(name.clone(), ctx.store.clone(), name, &cols, body);
         ctx.register_rule(rule.clone());
         Ok(rule.into_pipe())
     }
@@ -233,8 +253,10 @@ pub struct FactDef;
 
 const FACT_SPEC: &[ArgSig] = &[
     ArgSig {
-        kind: ArgKind::Atom, name: "table",
-        doc: "fact table name", required: true,
+        kind: ArgKind::Atom,
+        name: "table",
+        doc: "fact table name",
+        required: true,
     },
     ArgSig {
         kind: ArgKind::Variadic(&ArgKind::Any),
@@ -245,79 +267,102 @@ const FACT_SPEC: &[ArgSig] = &[
 ];
 
 impl OperatorDef for FactDef {
-    fn name(&self) -> &'static str { "fact" }
-    fn paren_args(&self) -> &[ArgSig] { FACT_SPEC }
+    fn name(&self) -> &'static str {
+        "fact"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        FACT_SPEC
+    }
 
     fn lower(
         &self,
-        ctx:    &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         use crate::sprf_introspect::PipeIntrospect;
 
         let table = match &args[0] {
             Value::Atom(s) => s.clone(),
-            _ => return Err(LowerError::Unknown(
-                "fact: first arg must be a :table atom".into()
-            )),
+            _ => {
+                return Err(LowerError::Unknown(
+                    "fact: first arg must be a :table atom".into(),
+                ))
+            }
         };
         let col_args = &args[1..];
 
         // Classify each col arg as Bound (Read/Atom) or Unbound (Bind).
         #[derive(Debug)]
-        enum ColMode { BoundLiteral(Arc<str>), BoundRead(Arc<str>), Unbound(Arc<str>) }
-        let modes: Vec<ColMode> = col_args.iter().map(|v| -> Result<ColMode, LowerError> {
-            match v {
-                Value::Atom(s) => Ok(ColMode::BoundLiteral(s.clone())),
-                Value::Pipe(p) => {
-                    let binds = p.binds_terms();
-                    let reads = p.reads_terms();
-                    if let Some(name) = binds.first() {
-                        Ok(ColMode::Unbound(name.clone()))
-                    } else if let Some(name) = reads.first() {
-                        Ok(ColMode::BoundRead(name.clone()))
-                    } else {
-                        // No term in the pipe (e.g. a backtick literal).
-                        // Treat as a bound literal value with a synthetic
-                        // anonymous name. Today FactRead/FactWrite ignore
-                        // literal-value cols at runtime; surface a stable
-                        // placeholder so dispatch still works.
-                        Ok(ColMode::BoundLiteral(Arc::<str>::from("$lit")))
+        enum ColMode {
+            BoundLiteral(Arc<str>),
+            BoundRead(Arc<str>),
+            Unbound(Arc<str>),
+        }
+        let modes: Vec<ColMode> = col_args
+            .iter()
+            .map(|v| -> Result<ColMode, LowerError> {
+                match v {
+                    Value::Atom(s) => Ok(ColMode::BoundLiteral(s.clone())),
+                    Value::Pipe(p) => {
+                        let binds = p.binds_terms();
+                        let reads = p.reads_terms();
+                        if let Some(name) = binds.first() {
+                            Ok(ColMode::Unbound(name.clone()))
+                        } else if let Some(name) = reads.first() {
+                            Ok(ColMode::BoundRead(name.clone()))
+                        } else {
+                            // No term in the pipe (e.g. a backtick literal).
+                            // Treat as a bound literal value with a synthetic
+                            // anonymous name. Today FactRead/FactWrite ignore
+                            // literal-value cols at runtime; surface a stable
+                            // placeholder so dispatch still works.
+                            Ok(ColMode::BoundLiteral(Arc::<str>::from("$lit")))
+                        }
                     }
                 }
-            }
-        }).collect::<Result<_, _>>()?;
+            })
+            .collect::<Result<_, _>>()?;
 
         let any_unbound = modes.iter().any(|m| matches!(m, ColMode::Unbound(_)));
 
         if !any_unbound {
             // Pure write — table + (no col surface yet on FactWrite).
-            return Ok(Pipe::new().step(Arc::new(FactWrite::new(
-                ctx.store.clone(), table,
-            ))));
+            return Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))));
         }
 
         // Read shape: pick first bound col as key_term (if any), project the
         // unbound names. With no bound cols, key_term is "" (drain+subscribe
         // semantics — but FactRead today requires a key. Surface the gap as
         // a clear error rather than silently mismatching.)
-        let key_term: Arc<str> = modes.iter().find_map(|m| match m {
-            ColMode::BoundRead(n) | ColMode::BoundLiteral(n) => Some(n.clone()),
-            _ => None,
-        }).ok_or_else(|| LowerError::Unknown(
-            "fact: SELECT * (all-unbound args) not yet wired; \
-             at least one bound col is required as the join key".into()
-        ))?;
-        let project: Vec<String> = modes.iter().filter_map(|m| match m {
-            ColMode::Unbound(n) => Some(n.to_string()),
-            _ => None,
-        }).collect();
+        let key_term: Arc<str> = modes
+            .iter()
+            .find_map(|m| match m {
+                ColMode::BoundRead(n) | ColMode::BoundLiteral(n) => Some(n.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                LowerError::Unknown(
+                    "fact: SELECT * (all-unbound args) not yet wired; \
+             at least one bound col is required as the join key"
+                        .into(),
+                )
+            })?;
+        let project: Vec<String> = modes
+            .iter()
+            .filter_map(|m| match m {
+                ColMode::Unbound(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect();
         let project_refs: Vec<&str> = project.iter().map(|s| s.as_str()).collect();
         Ok(Pipe::new().step(Arc::new(FactRead::new(
-            ctx.store.clone(), table, key_term, &project_refs,
+            ctx.store.clone(),
+            table,
+            key_term,
+            &project_refs,
         ))))
     }
 }
@@ -329,30 +374,40 @@ pub struct FactReadDef;
 
 const FACT_READ_SPEC: &[ArgSig] = &[
     ArgSig {
-        kind: ArgKind::Atom, name: "table",
-        doc: "fact table name", required: true,
+        kind: ArgKind::Atom,
+        name: "table",
+        doc: "fact table name",
+        required: true,
     },
     ArgSig {
-        kind: ArgKind::Atom, name: "key_term",
-        doc: "cursor term used as join key", required: true,
+        kind: ArgKind::Atom,
+        name: "key_term",
+        doc: "cursor term used as join key",
+        required: true,
     },
     ArgSig {
         kind: ArgKind::Variadic(&ArgKind::Atom),
-        name: "project", doc: "projected col names", required: false,
+        name: "project",
+        doc: "projected col names",
+        required: false,
     },
 ];
 
 impl OperatorDef for FactReadDef {
-    fn name(&self) -> &'static str { "fact_read" }
-    fn paren_args(&self) -> &[ArgSig] { FACT_READ_SPEC }
+    fn name(&self) -> &'static str {
+        "fact_read"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        FACT_READ_SPEC
+    }
 
     fn lower(
         &self,
-        ctx:    &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let atom = |i: usize| -> Arc<str> {
             match &args[i] {
@@ -360,7 +415,7 @@ impl OperatorDef for FactReadDef {
                 _ => unreachable!("validate ensured Atom"),
             }
         };
-        let table    = atom(0);
+        let table = atom(0);
         let key_term = atom(1);
         let mut project_cols: Vec<String> = Vec::with_capacity(args.len().saturating_sub(2));
         for a in &args[2..] {
@@ -371,7 +426,10 @@ impl OperatorDef for FactReadDef {
         }
         let project_refs: Vec<&str> = project_cols.iter().map(|s| s.as_str()).collect();
         Ok(Pipe::new().step(Arc::new(FactRead::new(
-            ctx.store.clone(), table, key_term, &project_refs,
+            ctx.store.clone(),
+            table,
+            key_term,
+            &project_refs,
         ))))
     }
 }
@@ -385,10 +443,12 @@ fn atom_arg(args: &[Value], i: usize) -> Arc<str> {
     }
 }
 fn atom_string_vec(args: &[Value]) -> Vec<String> {
-    args.iter().map(|a| match a {
-        Value::Atom(s) => s.to_string(),
-        _ => unreachable!("validate ensured Atom"),
-    }).collect()
+    args.iter()
+        .map(|a| match a {
+            Value::Atom(s) => s.to_string(),
+            _ => unreachable!("validate ensured Atom"),
+        })
+        .collect()
 }
 
 // ─── fs ───────────────────────────────────────────────────────────────────
@@ -399,36 +459,46 @@ pub struct FsDef;
 /// `ctx.root`, `cursor.value = path string`. `fs(glob`...`)` is the
 /// source-side filter form: only static single-step glob filters are
 /// accepted here, so rejected paths never enter the runtime queue.
-const FS_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Pipe,
-        name: "filter",
-        doc: "optional static source path filter, currently glob`...`",
-        required: false,
-    },
-];
+const FS_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Pipe,
+    name: "filter",
+    doc: "optional static source path filter, currently glob`...`",
+    required: false,
+}];
 
 impl OperatorDef for FsDef {
-    fn name(&self) -> &'static str { "fs" }
-    fn paren_args(&self) -> &[ArgSig] { FS_SPEC }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["FS"] }
+    fn name(&self) -> &'static str {
+        "fs"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        FS_SPEC
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["FS"]
+    }
 
     fn lower(
         &self,
-        ctx:    &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         // TODO: LowerCtx batch-size knob; hardcoded for now.
         let mut comp = FsComponent::new(ctx.root.clone(), 1024);
         if let Some(filter) = args.first() {
             comp = comp.with_source_filter(source_path_filter(filter)?);
         }
-        if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
-        if let Some(c) = &ctx.config     { comp = comp.with_config(c.clone()); }
-        if let Some(t) = &ctx.telemetry   { comp = comp.with_telemetry(t.fs.clone()); }
+        if let Some(s) = &ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
+        if let Some(c) = &ctx.config {
+            comp = comp.with_config(c.clone());
+        }
+        if let Some(t) = &ctx.telemetry {
+            comp = comp.with_telemetry(t.fs.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -447,7 +517,8 @@ fn source_path_filter(
         ));
     }
     let step = pipe.steps[0].clone();
-    let Some(_) = step.describe()
+    let Some(_) = step
+        .describe()
         .and_then(|d| d.downcast_ref::<GlobComponent>())
     else {
         return Err(LowerError::Unknown(
@@ -480,12 +551,17 @@ fn scan_re_named_groups(raw: &str) -> Vec<DslBinder> {
     while i + 4 < bytes.len() {
         // look for `(?P<` or `(?<`  (Rust regex accepts both shapes)
         let lo = i;
-        let prefix_len = if bytes[i] == b'(' && bytes[i+1] == b'?' && bytes[i+2] == b'P' && bytes[i+3] == b'<' {
+        let prefix_len = if bytes[i] == b'('
+            && bytes[i + 1] == b'?'
+            && bytes[i + 2] == b'P'
+            && bytes[i + 3] == b'<'
+        {
             4
-        } else if bytes[i] == b'(' && bytes[i+1] == b'?' && bytes[i+2] == b'<' {
+        } else if bytes[i] == b'(' && bytes[i + 1] == b'?' && bytes[i + 2] == b'<' {
             3
         } else {
-            i += 1; continue;
+            i += 1;
+            continue;
         };
         let name_lo = i + prefix_len;
         let mut j = name_lo;
@@ -495,8 +571,11 @@ fn scan_re_named_groups(raw: &str) -> Vec<DslBinder> {
         if j > name_lo && j < bytes.len() && bytes[j] == b'>' {
             let name = &raw[name_lo..j];
             out.push(DslBinder {
-                name:  Arc::<str>::from(name),
-                range: ByteRange { lo: lo as u32, hi: (j + 1) as u32 },
+                name: Arc::<str>::from(name),
+                range: ByteRange {
+                    lo: lo as u32,
+                    hi: (j + 1) as u32,
+                },
             });
             i = j + 1;
         } else {
@@ -507,44 +586,57 @@ fn scan_re_named_groups(raw: &str) -> Vec<DslBinder> {
 }
 
 impl OperatorDef for GlobDef {
-    fn name(&self) -> &'static str { "glob" }
-    fn paren_args(&self) -> &[ArgSig] { GLOB_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { true }
+    fn name(&self) -> &'static str {
+        "glob"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        GLOB_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        true
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "glob: pattern required — use backtick body, e.g. glob`**/*.rs`".into()
-        ))?;
+        let body = dsl.ok_or_else(|| {
+            LowerError::Unknown(
+                "glob: pattern required — use backtick body, e.g. glob`**/*.rs`".into(),
+            )
+        })?;
         // SubPipe-bearing bodies route through the dynamic Component.
         // Per-cursor: drain inner pipes, render body, re-translate to
         // regex, match. Term-only bodies stay on the static fast path.
         if crate::template::has_subpipe(&body.interps) {
             let mut interps = body.interps.clone();
             interps.sort_by_key(|i| i.range.lo);
-            let mut comp = crate::pipeline::GlobDynamicComponent::new(
-                body.raw.clone(), interps,
-            );
-            if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+            let mut comp = crate::pipeline::GlobDynamicComponent::new(body.raw.clone(), interps);
+            if let Some(s) = &_ctx.sprf_store {
+                comp = comp.with_sprf_store(s.clone());
+            }
             return Ok(Pipe::new().step(Arc::new(comp)));
         }
         let regex_src = glob_body_to_regex(body)?;
-        let re = regex::Regex::new(&regex_src).map_err(|e| LowerError::Unknown(
-            format!("glob: regex compile failure for translated pattern {regex_src:?}: {e}")
-        ))?;
+        let re = regex::Regex::new(&regex_src).map_err(|e| {
+            LowerError::Unknown(format!(
+                "glob: regex compile failure for translated pattern {regex_src:?}: {e}"
+            ))
+        })?;
         let mut comp = GlobComponent::new(re);
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
-
 
 /// Translate a glob body (with universal `${X?}` carveouts) to an
 /// anchored Rust regex string.
@@ -580,9 +672,11 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
     // Index interps by their lo offset for O(1) lookup at the literal
     // walk's current position. Each entry remembers whether this interp
     // is preceded by `$$$` (multi-segment greedy).
-    let mut by_lo: std::collections::BTreeMap<u32, &crate::compile::lower::op_def::DslInterp>
-        = std::collections::BTreeMap::new();
-    for it in &body.interps { by_lo.insert(it.range.lo, it); }
+    let mut by_lo: std::collections::BTreeMap<u32, &crate::compile::lower::op_def::DslInterp> =
+        std::collections::BTreeMap::new();
+    for it in &body.interps {
+        by_lo.insert(it.range.lo, it);
+    }
 
     let mut out = String::with_capacity(raw.len() + 8);
 
@@ -600,9 +694,15 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
         // chars at positions [i, i+1] live in the literal stream and
         // signal "promote this Bind interp to multi-segment".
         let triple_dollar = i + 3 < bytes.len()
-            && bytes[i] == b'$' && bytes[i + 1] == b'$'
-            && bytes[i + 2] == b'$' && bytes[i + 3] == b'{';
-        let interp_lo = if triple_dollar { (i + 2) as u32 } else { i as u32 };
+            && bytes[i] == b'$'
+            && bytes[i + 1] == b'$'
+            && bytes[i + 2] == b'$'
+            && bytes[i + 3] == b'{';
+        let interp_lo = if triple_dollar {
+            (i + 2) as u32
+        } else {
+            i as u32
+        };
         if let Some(interp) = by_lo.get(&interp_lo) {
             // Range covers the full `${...}` span (no $$$ prefix).
             match &interp.kind {
@@ -643,7 +743,8 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
                     // before this translator runs. Defensive bail-out.
                     return Err(LowerError::Unknown(
                         "glob: internal — SubPipe interp reached static \
-                         translator (should have routed to dynamic path)".into()
+                         translator (should have routed to dynamic path)"
+                            .into(),
                     ));
                 }
             }
@@ -664,15 +765,18 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
                     i += 1;
                 }
             }
-            b'?' => { out.push_str("[^/]"); i += 1; }
+            b'?' => {
+                out.push_str("[^/]");
+                i += 1;
+            }
             b'[' => {
                 // Pass through char-class verbatim until matching `]`.
                 let mut j = i + 1;
-                while j < bytes.len() && bytes[j] != b']' { j += 1; }
+                while j < bytes.len() && bytes[j] != b']' {
+                    j += 1;
+                }
                 if j >= bytes.len() {
-                    return Err(LowerError::Unknown(
-                        "glob: unterminated `[`".into()
-                    ));
+                    return Err(LowerError::Unknown("glob: unterminated `[`".into()));
                 }
                 out.push_str(&raw[i..=j]);
                 i = j + 1;
@@ -680,17 +784,19 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
             b'{' => {
                 // `{a,b,c}` → `(?:a|b|c)`. No nested `{...}` recognized.
                 let mut j = i + 1;
-                while j < bytes.len() && bytes[j] != b'}' { j += 1; }
+                while j < bytes.len() && bytes[j] != b'}' {
+                    j += 1;
+                }
                 if j >= bytes.len() {
-                    return Err(LowerError::Unknown(
-                        "glob: unterminated `{`".into()
-                    ));
+                    return Err(LowerError::Unknown("glob: unterminated `{`".into()));
                 }
                 out.push_str("(?:");
                 let inner = &raw[i + 1..j];
                 let parts: Vec<&str> = inner.split(',').collect();
                 for (k, part) in parts.iter().enumerate() {
-                    if k > 0 { out.push('|'); }
+                    if k > 0 {
+                        out.push('|');
+                    }
                     out.push_str(&regex::escape(part));
                 }
                 out.push(')');
@@ -713,19 +819,26 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
 
 pub struct AstDef;
 
-const AST_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom, name: "lang",
-        doc: "language atom (:rs, :c, :cpp, :ts, :tsx, :js, :py, :go, :java)",
-        required: false,
-    },
-];
+const AST_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "lang",
+    doc: "language atom (:rs, :c, :cpp, :ts, :tsx, :js, :py, :go, :java)",
+    required: false,
+}];
 
 impl OperatorDef for AstDef {
-    fn name(&self) -> &'static str { "ast" }
-    fn paren_args(&self) -> &[ArgSig] { AST_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI"] }
+    fn name(&self) -> &'static str {
+        "ast"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        AST_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["LO", "HI"]
+    }
 
     /// ast-grep metavars: `$NAME`, `$$$REST`. Both bind at runtime.
     fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
@@ -734,24 +847,27 @@ impl OperatorDef for AstDef {
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let lang_atom: Option<&str> = args.first().and_then(|v| match v {
             Value::Atom(s) => Some(s.as_ref()),
             _ => None,
         });
-        let lang = parse_lang_atom(lang_atom.unwrap_or("rs"))
-            .ok_or_else(|| LowerError::Unknown(format!(
+        let lang = parse_lang_atom(lang_atom.unwrap_or("rs")).ok_or_else(|| {
+            LowerError::Unknown(format!(
                 "ast: unknown lang atom :{} (try :rs, :c, :cpp, :ts, :tsx, :js, :py, :go, :java)",
                 lang_atom.unwrap_or("?")
-            )))?;
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "ast: dsl body required (e.g. ast(:rs)`fn ${NAME?}($$ARGS)`)".into()
-        ))?;
+            ))
+        })?;
+        let body = dsl.ok_or_else(|| {
+            LowerError::Unknown(
+                "ast: dsl body required (e.g. ast(:rs)`fn ${NAME?}($$ARGS)`)".into(),
+            )
+        })?;
         // SubPipe-bearing bodies route to AstNmComponent's dyn_body slow
         // path (per-cursor ast-grep Pattern recompile). The static
         // Pattern built here is unused on that path; we stamp a `*`
@@ -767,16 +883,21 @@ impl OperatorDef for AstDef {
         } else {
             body.raw.to_string()
         };
-        let mut comp = AstNmComponent::new(static_src, lang)
-            .with_root(_ctx.root.clone());
+        let mut comp = AstNmComponent::new(static_src, lang).with_root(_ctx.root.clone());
         if crate::template::has_subpipe(&body.interps) {
             let mut interps = body.interps.clone();
             interps.sort_by_key(|i| i.range.lo);
             comp = comp.with_dyn_body(body.raw.clone(), interps);
         }
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
-        if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
-        if let Some(t) = &_ctx.telemetry  { comp = comp.with_telemetry(t.ast.clone()); }
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
+        if let Some(c) = &_ctx.config {
+            comp = comp.with_config(c.clone());
+        }
+        if let Some(t) = &_ctx.telemetry {
+            comp = comp.with_telemetry(t.ast.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -788,10 +909,18 @@ impl OperatorDef for AstDef {
 pub struct AstYamlDef;
 
 impl OperatorDef for AstYamlDef {
-    fn name(&self) -> &'static str { "ast_yaml" }
-    fn paren_args(&self) -> &[ArgSig] { AST_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI"] }
+    fn name(&self) -> &'static str {
+        "ast_yaml"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        AST_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["LO", "HI"]
+    }
 
     fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
         let (caps, positions) = collect_ast_yaml_carveout_names_and_positions(raw);
@@ -799,7 +928,10 @@ impl OperatorDef for AstYamlDef {
             .into_iter()
             .map(|(name, range)| DslBinder {
                 name,
-                range: ByteRange { lo: range.start as u32, hi: range.end as u32 },
+                range: ByteRange {
+                    lo: range.start as u32,
+                    hi: range.end as u32,
+                },
             })
             .collect();
         for binder in scan_ast_metavars(raw) {
@@ -820,24 +952,27 @@ impl OperatorDef for AstYamlDef {
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let lang_atom: Option<&str> = args.first().and_then(|v| match v {
             Value::Atom(s) => Some(s.as_ref()),
             _ => None,
         });
-        let lang = parse_lang_atom(lang_atom.unwrap_or("rs"))
-            .ok_or_else(|| LowerError::Unknown(format!(
+        let lang = parse_lang_atom(lang_atom.unwrap_or("rs")).ok_or_else(|| {
+            LowerError::Unknown(format!(
                 "ast_yaml: unknown lang atom :{} (try :rs, :c, :cpp)",
                 lang_atom.unwrap_or("?")
-            )))?;
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "ast_yaml: dsl body required (e.g. ast_yaml(:rs)`pattern: \"fn $N() {}\"`)".into()
-        ))?;
+            ))
+        })?;
+        let body = dsl.ok_or_else(|| {
+            LowerError::Unknown(
+                "ast_yaml: dsl body required (e.g. ast_yaml(:rs)`pattern: \"fn $N() {}\"`)".into(),
+            )
+        })?;
         if crate::template::has_subpipe(&body.interps) {
             return Err(LowerError::Unknown(
                 "ast_yaml: subpipe interpolation inside YAML is not supported yet".into(),
@@ -848,16 +983,15 @@ impl OperatorDef for AstYamlDef {
         let value: serde_yaml::Value = serde_yaml::from_str(&rewritten)
             .map_err(|e| LowerError::Unknown(format!("ast_yaml YAML invalid: {e}")))?;
         let core_value = wrap_ast_yaml_under_rule_if_bare(value);
-        let core: SerializableRuleCore = serde_yaml::from_value(core_value)
-            .map_err(|e| LowerError::Unknown(format!(
-                "ast_yaml RuleCore deserialise failed: {e}"
-            )))?;
+        let core: SerializableRuleCore = serde_yaml::from_value(core_value).map_err(|e| {
+            LowerError::Unknown(format!("ast_yaml RuleCore deserialise failed: {e}"))
+        })?;
         let env = DeserializeEnv::new(lang);
-        let rule_core = core.get_matcher(env)
+        let rule_core = core
+            .get_matcher(env)
             .map_err(|e| LowerError::Unknown(format!("ast_yaml rule build failed: {e}")))?;
 
-        let (mut bound_caps, _) =
-            collect_ast_yaml_carveout_names_and_positions(body.raw.as_ref());
+        let (mut bound_caps, _) = collect_ast_yaml_carveout_names_and_positions(body.raw.as_ref());
         for v in rule_core.defined_vars() {
             let s: Arc<str> = Arc::from(v);
             if !bound_caps.iter().any(|c| c.as_ref() == s.as_ref()) {
@@ -865,10 +999,14 @@ impl OperatorDef for AstYamlDef {
             }
         }
 
-        let mut comp = AstYamlComponent::new(lang, rule_core, bound_caps)
-            .with_root(_ctx.root.clone());
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
-        if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
+        let mut comp =
+            AstYamlComponent::new(lang, rule_core, bound_caps).with_root(_ctx.root.clone());
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
+        if let Some(c) = &_ctx.config {
+            comp = comp.with_config(c.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -876,17 +1014,17 @@ impl OperatorDef for AstYamlDef {
 fn parse_lang_atom(s: &str) -> Option<ast_grep_language::SupportLang> {
     use ast_grep_language::SupportLang as L;
     Some(match s {
-        "rs" | "rust"        => L::Rust,
+        "rs" | "rust" => L::Rust,
         // ast-grep's C grammar is stricter than its C++ one; the C++
         // parser cleanly handles C source too. v4-bench picks Cpp for
         // both. Match that so the kernel walks the same on both paths.
         "c" | "cpp" | "c++" | "cc" => L::Cpp,
-        "ts" | "typescript"  => L::TypeScript,
-        "tsx"                => L::Tsx,
-        "js" | "javascript"  => L::JavaScript,
-        "py" | "python"      => L::Python,
-        "go" | "golang"      => L::Go,
-        "java"               => L::Java,
+        "ts" | "typescript" => L::TypeScript,
+        "tsx" => L::Tsx,
+        "js" | "javascript" => L::JavaScript,
+        "py" | "python" => L::Python,
+        "go" | "golang" => L::Go,
+        "java" => L::Java,
         _ => return None,
     })
 }
@@ -902,18 +1040,21 @@ fn scan_ast_metavars(raw: &str) -> Vec<DslBinder> {
             let lo = i;
             let mut j = i + 1;
             // skip up to two extra `$` for the $$$REST form
-            while j < bytes.len() && bytes[j] == b'$' && j - i < 3 { j += 1; }
+            while j < bytes.len() && bytes[j] == b'$' && j - i < 3 {
+                j += 1;
+            }
             if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
                 let name_lo = j;
-                while j < bytes.len()
-                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
-                {
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
                     j += 1;
                 }
                 let name = &raw[name_lo..j];
                 out.push(DslBinder {
-                    name:  Arc::<str>::from(name),
-                    range: ByteRange { lo: lo as u32, hi: j as u32 },
+                    name: Arc::<str>::from(name),
+                    range: ByteRange {
+                        lo: lo as u32,
+                        hi: j as u32,
+                    },
                 });
                 i = j;
                 continue;
@@ -934,14 +1075,13 @@ fn rewrite_ast_yaml_carveouts(src: &str) -> String {
             && bytes[i + 1] == b'$'
             && bytes[i + 2] == b'$'
             && bytes[i + 3] == b'{';
-        let single = !multi
-            && bytes[i] == b'$'
-            && i + 1 < bytes.len()
-            && bytes[i + 1] == b'{';
+        let single = !multi && bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{';
         if multi || single {
             let inner_start = if multi { i + 4 } else { i + 2 };
             let mut j = inner_start;
-            while j < bytes.len() && bytes[j] != b'}' { j += 1; }
+            while j < bytes.len() && bytes[j] != b'}' {
+                j += 1;
+            }
             if j >= bytes.len() {
                 out.push(bytes[i] as char);
                 i += 1;
@@ -949,7 +1089,11 @@ fn rewrite_ast_yaml_carveouts(src: &str) -> String {
             }
             let inner = src[inner_start..j].trim();
             let name = inner.strip_suffix('?').unwrap_or(inner);
-            if multi { out.push_str("$$$"); } else { out.push('$'); }
+            if multi {
+                out.push_str("$$$");
+            } else {
+                out.push('$');
+            }
             out.push_str(name);
             i = j + 1;
         } else {
@@ -973,24 +1117,21 @@ fn collect_ast_yaml_carveout_names_and_positions(
             && bytes[i + 1] == b'$'
             && bytes[i + 2] == b'$'
             && bytes[i + 3] == b'{';
-        let single = !multi
-            && bytes[i] == b'$'
-            && i + 1 < bytes.len()
-            && bytes[i + 1] == b'{';
+        let single = !multi && bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{';
         if multi || single {
             let token_start = i;
             let inner_start = if multi { i + 4 } else { i + 2 };
             let mut j = inner_start;
-            while j < bytes.len() && bytes[j] != b'}' { j += 1; }
+            while j < bytes.len() && bytes[j] != b'}' {
+                j += 1;
+            }
             if j >= bytes.len() {
                 i += 1;
                 continue;
             }
             let inner = src[inner_start..j].trim();
             let name = inner.strip_suffix('?').unwrap_or(inner);
-            if !name.is_empty()
-                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
+            if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 let arc: Arc<str> = Arc::from(name);
                 if !names.iter().any(|s| s.as_ref() == arc.as_ref()) {
                     names.push(arc.clone());
@@ -1008,9 +1149,9 @@ fn collect_ast_yaml_carveout_names_and_positions(
 fn wrap_ast_yaml_under_rule_if_bare(value: serde_yaml::Value) -> serde_yaml::Value {
     const ENVELOPE_KEYS: &[&str] = &["rule", "constraints", "utils", "transform", "fix"];
     if let serde_yaml::Value::Mapping(m) = &value {
-        let has_envelope = ENVELOPE_KEYS.iter().any(|k| {
-            m.contains_key(serde_yaml::Value::String((*k).into()))
-        });
+        let has_envelope = ENVELOPE_KEYS
+            .iter()
+            .any(|k| m.contains_key(serde_yaml::Value::String((*k).into())));
         if has_envelope {
             return value;
         }
@@ -1026,18 +1167,23 @@ fn wrap_ast_yaml_under_rule_if_bare(value: serde_yaml::Value) -> serde_yaml::Val
 
 pub struct JsonDef;
 
-const JSON_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom, name: "fmt",
-        doc: "target format atom (:json, :yaml, :toml). Default :json.",
-        required: false,
-    },
-];
+const JSON_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "fmt",
+    doc: "target format atom (:json, :yaml, :toml). Default :json.",
+    required: false,
+}];
 
 impl OperatorDef for JsonDef {
-    fn name(&self) -> &'static str { "json" }
-    fn paren_args(&self) -> &[ArgSig] { JSON_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn name(&self) -> &'static str {
+        "json"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        JSON_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
 
     /// json brace-pattern bindings: `$NAME` only (no braces). The braced
     /// form `${NAME}` is host territory — it's a host-pipe hole that
@@ -1050,17 +1196,17 @@ impl OperatorDef for JsonDef {
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         use crate::cst::dsls::json::{JsonDsl, TargetFormat};
 
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "json: dsl body required (e.g. json`{ name: $N }`)".into()
-        ))?;
+        let body = dsl.ok_or_else(|| {
+            LowerError::Unknown("json: dsl body required (e.g. json`{ name: $N }`)".into())
+        })?;
         let fmt_atom: Option<&str> = args.first().and_then(|v| match v {
             Value::Atom(s) => Some(s.as_ref()),
             _ => None,
@@ -1069,9 +1215,12 @@ impl OperatorDef for JsonDef {
             "json" => TargetFormat::Json,
             "yaml" | "yml" => TargetFormat::Yaml,
             "toml" => TargetFormat::Toml,
-            other => return Err(LowerError::Unknown(format!(
-                "json: unknown fmt atom :{} (try :json, :yaml, :toml)", other
-            ))),
+            other => {
+                return Err(LowerError::Unknown(format!(
+                    "json: unknown fmt atom :{} (try :json, :yaml, :toml)",
+                    other
+                )))
+            }
         };
         // SubPipe-bearing bodies route to JsonComponent's dyn_body slow
         // path (per-cursor JsonCompiled rebuild). Build a placeholder
@@ -1087,9 +1236,7 @@ impl OperatorDef for JsonDef {
             body.raw.as_bytes()
         };
         let compiled = JsonDsl::compile_typed(static_src)
-            .map_err(|d| LowerError::Unknown(format!(
-                "json: compile failed: {}", d.message
-            )))?;
+            .map_err(|d| LowerError::Unknown(format!("json: compile failed: {}", d.message)))?;
         let compiled = compiled.with_format(fmt);
         let mut comp = JsonComponent::new(compiled).with_root(_ctx.root.clone());
         if has_subpipe {
@@ -1097,8 +1244,12 @@ impl OperatorDef for JsonDef {
             interps.sort_by_key(|i| i.range.lo);
             comp = comp.with_dyn_body(body.raw.clone(), interps, fmt);
         }
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
-        if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
+        if let Some(c) = &_ctx.config {
+            comp = comp.with_config(c.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1113,20 +1264,24 @@ fn scan_bare_dollar_idents(raw: &str) -> Vec<DslBinder> {
     while i < bytes.len() {
         if bytes[i] == b'$' {
             // skip braced form — host owns `${...}`
-            if i + 1 < bytes.len() && bytes[i + 1] == b'{' { i += 2; continue; }
+            if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                i += 2;
+                continue;
+            }
             let lo = i;
             let mut j = i + 1;
             if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
                 let name_lo = j;
-                while j < bytes.len()
-                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
-                {
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
                     j += 1;
                 }
                 let name = &raw[name_lo..j];
                 out.push(DslBinder {
-                    name:  Arc::<str>::from(name),
-                    range: ByteRange { lo: lo as u32, hi: j as u32 },
+                    name: Arc::<str>::from(name),
+                    range: ByteRange {
+                        lo: lo as u32,
+                        hi: j as u32,
+                    },
                 });
                 i = j;
                 continue;
@@ -1142,9 +1297,15 @@ fn scan_bare_dollar_idents(raw: &str) -> Vec<DslBinder> {
 pub struct ReDef;
 
 impl OperatorDef for ReDef {
-    fn name(&self) -> &'static str { "re" }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI", "MATCH"] }
+    fn name(&self) -> &'static str {
+        "re"
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["LO", "HI", "MATCH"]
+    }
 
     /// Scan the regex body for `(?P<NAME>...)` named groups. Each name
     /// is a runtime binder; the binding graph treats them as bound at
@@ -1155,11 +1316,11 @@ impl OperatorDef for ReDef {
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let body = dsl.expect("re: dsl body present (validate)");
         // SubPipe-bearing bodies route to ReComponent's dyn_body slow
@@ -1178,43 +1339,46 @@ impl OperatorDef for ReDef {
             body.raw.as_ref().into()
         };
         let capture_names = scan_re_named_groups(body.raw.as_ref());
-        let capture_name_refs: Vec<&str> = capture_names
-            .iter()
-            .map(|b| b.name.as_ref())
-            .collect();
+        let capture_name_refs: Vec<&str> = capture_names.iter().map(|b| b.name.as_ref()).collect();
         let mut comp = ReComponent::new(&static_pat, &capture_name_refs);
         if crate::template::has_subpipe(&body.interps) {
             let mut interps = body.interps.clone();
             interps.sort_by_key(|i| i.range.lo);
             comp = comp.with_dyn_body(body.raw.clone(), interps);
         }
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
 // ─── term (read) ──────────────────────────────────────────────────────────
 
-const TERM_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom, name: "name",
-        doc: "term (capture) name", required: true,
-    },
-];
+const TERM_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "name",
+    doc: "term (capture) name",
+    required: true,
+}];
 
 pub struct TermReadDef;
 
 impl OperatorDef for TermReadDef {
-    fn name(&self) -> &'static str { "term" }
-    fn paren_args(&self) -> &[ArgSig] { TERM_SPEC }
+    fn name(&self) -> &'static str {
+        "term"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        TERM_SPEC
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let name = atom_arg(args, 0);
         Ok(Pipe::new().step(Arc::new(Term::read(name))))
@@ -1226,16 +1390,20 @@ impl OperatorDef for TermReadDef {
 pub struct TermBindDef;
 
 impl OperatorDef for TermBindDef {
-    fn name(&self) -> &'static str { "term_bind" }
-    fn paren_args(&self) -> &[ArgSig] { TERM_SPEC }
+    fn name(&self) -> &'static str {
+        "term_bind"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        TERM_SPEC
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let name = atom_arg(args, 0);
         Ok(Pipe::new().step(Arc::new(Term::bind(name))))
@@ -1248,8 +1416,10 @@ pub struct FactWriteDef;
 
 const FACT_WRITE_SPEC: &[ArgSig] = &[
     ArgSig {
-        kind: ArgKind::Atom, name: "table",
-        doc: "fact table name", required: true,
+        kind: ArgKind::Atom,
+        name: "table",
+        doc: "fact table name",
+        required: true,
     },
     ArgSig {
         kind: ArgKind::Variadic(&ArgKind::Atom),
@@ -1262,16 +1432,20 @@ const FACT_WRITE_SPEC: &[ArgSig] = &[
 ];
 
 impl OperatorDef for FactWriteDef {
-    fn name(&self) -> &'static str { "fact_write" }
-    fn paren_args(&self) -> &[ArgSig] { FACT_WRITE_SPEC }
+    fn name(&self) -> &'static str {
+        "fact_write"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        FACT_WRITE_SPEC
+    }
 
     fn lower(
         &self,
-        ctx:    &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         // TODO: `FactWrite::new` only takes the table name today. Cols
         // are accepted by the slot spec for arity/LSP but discarded
@@ -1286,15 +1460,17 @@ impl OperatorDef for FactWriteDef {
 pub struct VoidDef;
 
 impl OperatorDef for VoidDef {
-    fn name(&self) -> &'static str { "void" }
+    fn name(&self) -> &'static str {
+        "void"
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         Ok(Pipe::new().step(Arc::new(VoidComponent)))
     }
@@ -1306,26 +1482,34 @@ impl OperatorDef for VoidDef {
 
 pub struct PrintDef;
 
-const PRINT_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom, name: "prefix",
-        doc: "label prepended to each printed line", required: false,
-    },
-];
+const PRINT_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "prefix",
+    doc: "label prepended to each printed line",
+    required: false,
+}];
 
 impl OperatorDef for PrintDef {
-    fn name(&self) -> &'static str { "print" }
-    fn paren_args(&self) -> &[ArgSig] { PRINT_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { false }
+    fn name(&self) -> &'static str {
+        "print"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        PRINT_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        false
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let prefix: Option<String> = args.first().and_then(|v| match v {
             Value::Atom(s) => Some(s.to_string()),
@@ -1333,9 +1517,11 @@ impl OperatorDef for PrintDef {
         });
         let mut comp = match dsl {
             Some(b) => PrintComponent::new(b.raw.as_ref()),
-            None    => PrintComponent::dump(),
+            None => PrintComponent::dump(),
         };
-        if let Some(p) = prefix { comp = comp.with_prefix(p); }
+        if let Some(p) = prefix {
+            comp = comp.with_prefix(p);
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1349,33 +1535,39 @@ impl OperatorDef for PrintDef {
 
 pub struct ShDef;
 
-const SH_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Variadic(&ArgKind::Any),
-        name: "modifier",
-        doc: "either :lines (emit one cursor per stdout line) or BIND? (capture stdout into BIND)",
-        required: false,
-    },
-];
+const SH_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Variadic(&ArgKind::Any),
+    name: "modifier",
+    doc: "either :lines (emit one cursor per stdout line) or BIND? (capture stdout into BIND)",
+    required: false,
+}];
 
 impl OperatorDef for ShDef {
-    fn name(&self) -> &'static str { "sh" }
-    fn paren_args(&self) -> &[ArgSig] { SH_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn cursor_binds(&self) -> &'static [&'static str] { &[] }
+    fn name(&self) -> &'static str {
+        "sh"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        SH_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &[]
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         use crate::sprf_introspect::PipeIntrospect;
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "sh: dsl body required (e.g. sh`echo ${X}`)".into()
-        ))?;
+        let body = dsl.ok_or_else(|| {
+            LowerError::Unknown("sh: dsl body required (e.g. sh`echo ${X}`)".into())
+        })?;
         let cmd = body.raw.to_string();
 
         // Classify modifier: :filter atom, or BIND? capture term.
@@ -1383,10 +1575,13 @@ impl OperatorDef for ShDef {
         let mut filter_only = false;
         for a in args {
             match a {
-                Value::Atom(s) if s.as_ref() == "filter" => { filter_only = true; }
+                Value::Atom(s) if s.as_ref() == "filter" => {
+                    filter_only = true;
+                }
                 Value::Atom(other) => {
                     return Err(LowerError::Unknown(format!(
-                        "sh: unknown atom :{} (try :filter or BIND? for capture)", other
+                        "sh: unknown atom :{} (try :filter or BIND? for capture)",
+                        other
                     )));
                 }
                 Value::Pipe(p) => {
@@ -1416,20 +1611,22 @@ impl OperatorDef for ShDef {
 pub struct ShBangDef;
 
 impl OperatorDef for ShBangDef {
-    fn name(&self) -> &'static str { "sh!" }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn name(&self) -> &'static str {
+        "sh!"
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "sh!: dsl body required".into()
-        ))?;
+        let body = dsl.ok_or_else(|| LowerError::Unknown("sh!: dsl body required".into()))?;
         let mut interps = body.interps.clone();
         interps.sort_by_key(|i| i.range.lo);
         Ok(Pipe::new().step(Arc::new(
@@ -1456,39 +1653,47 @@ impl OperatorDef for ShBangDef {
 
 pub struct RepoDef;
 
-const REPO_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Variadic(&ArgKind::Atom),
-        name: "args",
-        doc: "0 args = bare-form (read repos.toml); else alternating :slug :path atoms",
-        required: false,
-    },
-];
+const REPO_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Variadic(&ArgKind::Atom),
+    name: "args",
+    doc: "0 args = bare-form (read repos.toml); else alternating :slug :path atoms",
+    required: false,
+}];
 
 impl OperatorDef for RepoDef {
-    fn name(&self) -> &'static str { "repo" }
-    fn paren_args(&self) -> &[ArgSig] { REPO_SPEC }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["REPO", "FS"] }
+    fn name(&self) -> &'static str {
+        "repo"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        REPO_SPEC
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["REPO", "FS"]
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         // Bare form `repo()`: drive the generator from `LowerCtx::config`.
         // One synthetic cursor per `RepoConfig` entry. No filesystem walk.
         if args.is_empty() {
             let mut comp = RepoComponent::from_config();
-            if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
-            if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
+            if let Some(s) = &_ctx.sprf_store {
+                comp = comp.with_sprf_store(s.clone());
+            }
+            if let Some(c) = &_ctx.config {
+                comp = comp.with_config(c.clone());
+            }
             return Ok(Pipe::new().step(Arc::new(comp)));
         }
         if args.len() % 2 != 0 {
             return Err(LowerError::Unknown(
-                "repo: requires alternating (:slug, :path) atom pairs".into()
+                "repo: requires alternating (:slug, :path) atom pairs".into(),
             ));
         }
         let mut roots: Vec<(String, std::path::PathBuf)> = Vec::with_capacity(args.len() / 2);
@@ -1496,21 +1701,23 @@ impl OperatorDef for RepoDef {
         while i < args.len() {
             let slug = match &args[i] {
                 Value::Atom(s) => s.to_string(),
-                _ => return Err(LowerError::Unknown(
-                    "repo: slug must be :atom".into()
-                )),
+                _ => return Err(LowerError::Unknown("repo: slug must be :atom".into())),
             };
             let path = match &args[i + 1] {
                 Value::Atom(s) => std::path::PathBuf::from(s.as_ref()),
-                _ => return Err(LowerError::Unknown(
-                    "repo: path must be :atom (filesystem path)".into()
-                )),
+                _ => {
+                    return Err(LowerError::Unknown(
+                        "repo: path must be :atom (filesystem path)".into(),
+                    ))
+                }
             };
             roots.push((slug, path));
             i += 2;
         }
         let mut comp = RepoComponent::new(roots, Vec::new());
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1527,27 +1734,31 @@ impl OperatorDef for RepoDef {
 
 pub struct RevDef;
 
-const REV_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Variadic(&ArgKind::Atom),
-        name: "specs",
-        doc: "0 args = :HEAD; else atom revspecs (:HEAD, :HEAD~5, :main, :v1.0)",
-        required: false,
-    },
-];
+const REV_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Variadic(&ArgKind::Atom),
+    name: "specs",
+    doc: "0 args = :HEAD; else atom revspecs (:HEAD, :HEAD~5, :main, :v1.0)",
+    required: false,
+}];
 
 impl OperatorDef for RevDef {
-    fn name(&self) -> &'static str { "rev" }
-    fn paren_args(&self) -> &[ArgSig] { REV_SPEC }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["REV"] }
+    fn name(&self) -> &'static str {
+        "rev"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        REV_SPEC
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["REV"]
+    }
 
     fn lower(
         &self,
-        ctx:    &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let specs: Vec<String> = if args.is_empty() {
             Vec::new() // ctor sugars to ["HEAD"]
@@ -1556,16 +1767,22 @@ impl OperatorDef for RevDef {
             for v in args {
                 match v {
                     Value::Atom(s) => out.push(s.to_string()),
-                    _ => return Err(LowerError::Unknown(
-                        "rev: args must be :atom revspecs (e.g. :HEAD, :HEAD~5, :main)".into()
-                    )),
+                    _ => {
+                        return Err(LowerError::Unknown(
+                            "rev: args must be :atom revspecs (e.g. :HEAD, :HEAD~5, :main)".into(),
+                        ))
+                    }
                 }
             }
             out
         };
         let mut comp = RevComponent::new(specs);
-        if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
-        if let Some(c) = &ctx.config     { comp = comp.with_config(c.clone()); }
+        if let Some(s) = &ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
+        if let Some(c) = &ctx.config {
+            comp = comp.with_config(c.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1577,38 +1794,46 @@ impl OperatorDef for RevDef {
 
 pub struct SplitDef;
 
-const SPLIT_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Variadic(&ArgKind::Any),
-        name: "terms",
-        doc: "0 args = on &.value; 1 arg = INTO?; 2 args = FROM, INTO?",
-        required: false,
-    },
-];
+const SPLIT_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Variadic(&ArgKind::Any),
+    name: "terms",
+    doc: "0 args = on &.value; 1 arg = INTO?; 2 args = FROM, INTO?",
+    required: false,
+}];
 
 impl OperatorDef for SplitDef {
-    fn name(&self) -> &'static str { "split" }
-    fn paren_args(&self) -> &[ArgSig] { SPLIT_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn name(&self) -> &'static str {
+        "split"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        SPLIT_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         use crate::sprf_introspect::PipeIntrospect;
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "split: dsl body required (separator string)".into()
-        ))?;
+        let body = dsl.ok_or_else(|| {
+            LowerError::Unknown("split: dsl body required (separator string)".into())
+        })?;
         let sep = body.raw.to_string();
 
         // Pull a term name from a Value::Pipe (the X / X? bareword desugar).
         let pipe_term = |p: &Pipe<Cursor>| -> Option<String> {
-            if let Some(n) = p.binds_terms().first() { return Some(n.to_string()); }
-            if let Some(n) = p.reads_terms().first() { return Some(n.to_string()); }
+            if let Some(n) = p.binds_terms().first() {
+                return Some(n.to_string());
+            }
+            if let Some(n) = p.reads_terms().first() {
+                return Some(n.to_string());
+            }
             None
         };
 
@@ -1616,9 +1841,9 @@ impl OperatorDef for SplitDef {
             0 => SplitComponent::on_value(&sep),
             1 => match &args[0] {
                 Value::Pipe(p) => {
-                    let into = pipe_term(p).ok_or_else(|| LowerError::Unknown(
-                        "split: arg must be a term (INTO?)".into()
-                    ))?;
+                    let into = pipe_term(p).ok_or_else(|| {
+                        LowerError::Unknown("split: arg must be a term (INTO?)".into())
+                    })?;
                     SplitComponent::on_value(&sep).into_term(&into)
                 }
                 Value::Atom(s) => SplitComponent::on_value(&sep).into_term(s),
@@ -1632,17 +1857,19 @@ impl OperatorDef for SplitDef {
                     Value::Pipe(p) => pipe_term(p),
                     Value::Atom(s) => Some(s.to_string()),
                 };
-                let from = from.ok_or_else(|| LowerError::Unknown(
-                    "split: 1st arg must be FROM term".into()
-                ))?;
-                let into = into.ok_or_else(|| LowerError::Unknown(
-                    "split: 2nd arg must be INTO? term".into()
-                ))?;
+                let from = from.ok_or_else(|| {
+                    LowerError::Unknown("split: 1st arg must be FROM term".into())
+                })?;
+                let into = into.ok_or_else(|| {
+                    LowerError::Unknown("split: 2nd arg must be INTO? term".into())
+                })?;
                 SplitComponent::new(&from, &sep, &into)
             }
-            n => return Err(LowerError::Unknown(format!(
-                "split: takes 0, 1, or 2 args (got {n})"
-            ))),
+            n => {
+                return Err(LowerError::Unknown(format!(
+                    "split: takes 0, 1, or 2 args (got {n})"
+                )))
+            }
         };
         Ok(Pipe::new().step(Arc::new(comp)))
     }
@@ -1656,19 +1883,25 @@ impl OperatorDef for SplitDef {
 pub struct ReadDef;
 
 impl OperatorDef for ReadDef {
-    fn name(&self) -> &'static str { "read" }
+    fn name(&self) -> &'static str {
+        "read"
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let mut comp = ReadComponent::new().with_root(_ctx.root.clone());
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
-        if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
+        if let Some(c) = &_ctx.config {
+            comp = comp.with_config(c.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1684,31 +1917,43 @@ pub struct CommentDef;
 
 const COMMENT_SPEC: &[ArgSig] = &[
     ArgSig {
-        kind: ArgKind::Any, name: "open",
+        kind: ArgKind::Any,
+        name: "open",
         doc: "open-pattern pipe, usually a backtick literal",
         required: false,
     },
     ArgSig {
-        kind: ArgKind::Any, name: "close",
+        kind: ArgKind::Any,
+        name: "close",
         doc: "optional close-pattern pipe, usually a backtick literal",
         required: false,
     },
 ];
 
 impl OperatorDef for CommentDef {
-    fn name(&self) -> &'static str { "comment" }
-    fn paren_args(&self) -> &[ArgSig] { COMMENT_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { false }
-    fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI"] }
+    fn name(&self) -> &'static str {
+        "comment"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        COMMENT_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        false
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["LO", "HI"]
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         if args.len() > 2 {
             return Err(LowerError::Unknown(format!(
@@ -1718,7 +1963,7 @@ impl OperatorDef for CommentDef {
         }
         if dsl.is_some() && !args.is_empty() {
             return Err(LowerError::Unknown(
-                "comment: use either pipe args or a legacy backtick body, not both".into()
+                "comment: use either pipe args or a legacy backtick body, not both".into(),
             ));
         }
         let arg_pattern = |idx: usize| -> Result<Option<String>, LowerError> {
@@ -1733,7 +1978,8 @@ impl OperatorDef for CommentDef {
             None => match dsl {
                 Some(body) => body.raw.to_string(),
                 None => return Err(LowerError::Unknown(
-                    "comment: open regex required, e.g. comment(`<!-- start -->`, `<!-- end -->`)".into()
+                    "comment: open regex required, e.g. comment(`<!-- start -->`, `<!-- end -->`)"
+                        .into(),
                 )),
             },
         };
@@ -1744,7 +1990,9 @@ impl OperatorDef for CommentDef {
             None => CommentComponent::sequential(&open)
                 .map_err(|e| LowerError::Unknown(format!("comment: bad regex: {e}")))?,
         };
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1774,43 +2022,54 @@ pub struct WriteCursorDef;
 
 const WRITE_CURSOR_SPEC: &[ArgSig] = &[
     ArgSig {
-        kind: ArgKind::Atom, name: "mode",
+        kind: ArgKind::Atom,
+        name: "mode",
         doc: ":replace (default) | :append | :prepend | :wrap",
         required: false,
     },
     ArgSig {
-        kind: ArgKind::Atom, name: "capture",
+        kind: ArgKind::Atom,
+        name: "capture",
         doc: ":NAME (uppercase) — splice into NAME's coord-space range",
         required: false,
     },
 ];
 
 impl OperatorDef for WriteCursorDef {
-    fn name(&self) -> &'static str { "write_cursor" }
-    fn paren_args(&self) -> &[ArgSig] { WRITE_CURSOR_SPEC }
+    fn name(&self) -> &'static str {
+        "write_cursor"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        WRITE_CURSOR_SPEC
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let mode = match args.first() {
             None => WriteMode::Replace,
             Some(Value::Atom(s)) => match s.as_ref() {
                 "replace" => WriteMode::Replace,
-                "append"  => WriteMode::Append,
+                "append" => WriteMode::Append,
                 "prepend" => WriteMode::Prepend,
-                "wrap"    => WriteMode::Wrap,
-                other => return Err(LowerError::Unknown(format!(
-                    "write_cursor: unknown mode :{} (try :replace, :append, :prepend, :wrap)", other
-                ))),
+                "wrap" => WriteMode::Wrap,
+                other => {
+                    return Err(LowerError::Unknown(format!(
+                        "write_cursor: unknown mode :{} (try :replace, :append, :prepend, :wrap)",
+                        other
+                    )))
+                }
             },
-            Some(_) => return Err(LowerError::Unknown(
-                "write_cursor: mode must be :atom".into()
-            )),
+            Some(_) => {
+                return Err(LowerError::Unknown(
+                    "write_cursor: mode must be :atom".into(),
+                ))
+            }
         };
         // Layer 3 — second positional atom is the capture name when its
         // first char is uppercase.
@@ -1822,17 +2081,24 @@ impl OperatorDef for WriteCursorDef {
                     Some(s.clone())
                 } else {
                     return Err(LowerError::Unknown(format!(
-                        "write_cursor: second atom must be an uppercase capture name, got :{}", s
+                        "write_cursor: second atom must be an uppercase capture name, got :{}",
+                        s
                     )));
                 }
             }
-            Some(_) => return Err(LowerError::Unknown(
-                "write_cursor: second arg must be :atom".into()
-            )),
+            Some(_) => {
+                return Err(LowerError::Unknown(
+                    "write_cursor: second arg must be :atom".into(),
+                ))
+            }
         };
         let mut comp = WriteCursorComponent::new(mode);
-        if let Some(name) = capture { comp = comp.on_capture(name); }
-        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(name) = capture {
+            comp = comp.on_capture(name);
+        }
+        if let Some(s) = &_ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1843,31 +2109,38 @@ impl OperatorDef for WriteCursorDef {
 
 pub struct WriteFileDef;
 
-const WRITE_FILE_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom, name: "path",
-        doc: "explicit output path; overrides cursor.FS when present",
-        required: false,
-    },
-];
+const WRITE_FILE_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "path",
+    doc: "explicit output path; overrides cursor.FS when present",
+    required: false,
+}];
 
 impl OperatorDef for WriteFileDef {
-    fn name(&self) -> &'static str { "write_file" }
-    fn paren_args(&self) -> &[ArgSig] { WRITE_FILE_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { false }
+    fn name(&self) -> &'static str {
+        "write_file"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        WRITE_FILE_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        false
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         if !args.is_empty() && dsl.is_some() {
             return Err(LowerError::Unknown(
-                "write_file: use either a path arg or backtick path body, not both".into()
+                "write_file: use either a path arg or backtick path body, not both".into(),
             ));
         }
         let path = match args.first() {
@@ -1883,12 +2156,14 @@ impl OperatorDef for WriteFileDef {
                     }
                 }
             }),
-            Some(Value::Atom(s)) => Some(WriteFilePath::Static(
-                std::path::PathBuf::from(s.as_ref())
-            )),
-            Some(_) => return Err(LowerError::Unknown(
-                "write_file: path arg must be :atom".into()
-            )),
+            Some(Value::Atom(s)) => {
+                Some(WriteFilePath::Static(std::path::PathBuf::from(s.as_ref())))
+            }
+            Some(_) => {
+                return Err(LowerError::Unknown(
+                    "write_file: path arg must be :atom".into(),
+                ))
+            }
         };
         Ok(Pipe::new().step(Arc::new(WriteFileComponent::new(path))))
     }
@@ -1900,28 +2175,34 @@ pub struct RenderDef;
 pub struct RenderMarkdownDef;
 pub struct RenderDotMarkdownDef;
 
-const RENDER_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom,
-        name: "format",
-        doc: ":markdown",
-        required: true,
-    },
-];
+const RENDER_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "format",
+    doc: ":markdown",
+    required: true,
+}];
 
 impl OperatorDef for RenderDef {
-    fn name(&self) -> &'static str { "render" }
-    fn paren_args(&self) -> &[ArgSig] { RENDER_SPEC }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { true }
+    fn name(&self) -> &'static str {
+        "render"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        RENDER_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        true
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let format = atom_arg(args, 0);
         if format.as_ref() != "markdown" {
@@ -1930,60 +2211,70 @@ impl OperatorDef for RenderDef {
                 format
             )));
         }
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "render(:markdown): template body required".into()
-        ))?;
+        let body = dsl.ok_or_else(|| {
+            LowerError::Unknown("render(:markdown): template body required".into())
+        })?;
         lower_render_markdown_body(body)
     }
 }
 
 impl OperatorDef for RenderMarkdownDef {
-    fn name(&self) -> &'static str { "render_markdown" }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { true }
+    fn name(&self) -> &'static str {
+        "render_markdown"
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        true
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "render_markdown: template body required".into()
-        ))?;
+        let body = dsl
+            .ok_or_else(|| LowerError::Unknown("render_markdown: template body required".into()))?;
         lower_render_markdown_body(body)
     }
 }
 
 impl OperatorDef for RenderDotMarkdownDef {
-    fn name(&self) -> &'static str { "render.markdown" }
-    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
-    fn dsl_required(&self) -> bool { true }
+    fn name(&self) -> &'static str {
+        "render.markdown"
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        true
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        dsl:    Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let body = dsl.ok_or_else(|| LowerError::Unknown(
-            "render.markdown: template body required".into()
-        ))?;
+        let body = dsl
+            .ok_or_else(|| LowerError::Unknown("render.markdown: template body required".into()))?;
         lower_render_markdown_body(body)
     }
 }
 
 fn lower_render_markdown_body(body: &DslBody) -> Result<Pipe<Cursor>, LowerError> {
-        let mut interps = body.interps.clone();
-        interps.sort_by_key(|i| i.range.lo);
-        Ok(Pipe::new().step(Arc::new(RenderMarkdownComponent::new(
-            body.raw.clone(),
-            interps,
-        ))))
+    let mut interps = body.interps.clone();
+    interps.sort_by_key(|i| i.range.lo);
+    Ok(Pipe::new().step(Arc::new(RenderMarkdownComponent::new(
+        body.raw.clone(),
+        interps,
+    ))))
 }
 
 // ─── collect / collect_ready ──────────────────────────────────────────────
@@ -1991,58 +2282,62 @@ fn lower_render_markdown_body(body: &DslBody) -> Result<Pipe<Cursor>, LowerError
 pub struct CollectDef;
 
 impl OperatorDef for CollectDef {
-    fn name(&self) -> &'static str { "collect" }
+    fn name(&self) -> &'static str {
+        "collect"
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        _args:  &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        Ok(Pipe::new().step(Arc::new(CollectComponent::new(
-            CollectMode::Complete,
-        ))))
+        Ok(Pipe::new().step(Arc::new(CollectComponent::new(CollectMode::Complete))))
     }
 }
 
 pub struct CollectReadyDef;
 
-const COLLECT_READY_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom, name: "mode",
-        doc: "partial flush mode: :snapshot or :append",
-        required: false,
-    },
-];
+const COLLECT_READY_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "mode",
+    doc: "partial flush mode: :snapshot or :append",
+    required: false,
+}];
 
 impl OperatorDef for CollectReadyDef {
-    fn name(&self) -> &'static str { "collect_ready" }
-    fn paren_args(&self) -> &[ArgSig] { COLLECT_READY_SPEC }
+    fn name(&self) -> &'static str {
+        "collect_ready"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        COLLECT_READY_SPEC
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let mode = match args.first() {
             None => CollectMode::ReadySnapshot,
-            Some(Value::Atom(s)) if s.as_ref() == "snapshot" => {
-                CollectMode::ReadySnapshot
+            Some(Value::Atom(s)) if s.as_ref() == "snapshot" => CollectMode::ReadySnapshot,
+            Some(Value::Atom(s)) if s.as_ref() == "append" => CollectMode::ReadyAppend,
+            Some(Value::Atom(s)) => {
+                return Err(LowerError::Unknown(format!(
+                    "collect_ready: unknown mode :{}",
+                    s
+                )))
             }
-            Some(Value::Atom(s)) if s.as_ref() == "append" => {
-                CollectMode::ReadyAppend
+            Some(_) => {
+                return Err(LowerError::Unknown(
+                    "collect_ready: mode arg must be :snapshot or :append".into(),
+                ))
             }
-            Some(Value::Atom(s)) => return Err(LowerError::Unknown(
-                format!("collect_ready: unknown mode :{}", s)
-            )),
-            Some(_) => return Err(LowerError::Unknown(
-                "collect_ready: mode arg must be :snapshot or :append".into()
-            )),
         };
         Ok(Pipe::new().step(Arc::new(CollectComponent::new(mode))))
     }
@@ -2050,26 +2345,30 @@ impl OperatorDef for CollectReadyDef {
 
 // ─── next / next_q ────────────────────────────────────────────────────────
 
-const CHAN_SPEC: &[ArgSig] = &[
-    ArgSig {
-        kind: ArgKind::Atom, name: "chan",
-        doc: "channel name", required: true,
-    },
-];
+const CHAN_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "chan",
+    doc: "channel name",
+    required: true,
+}];
 
 pub struct NextDef;
 
 impl OperatorDef for NextDef {
-    fn name(&self) -> &'static str { "next" }
-    fn paren_args(&self) -> &[ArgSig] { CHAN_SPEC }
+    fn name(&self) -> &'static str {
+        "next"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        CHAN_SPEC
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let chan = atom_arg(args, 0);
         Ok(Pipe::new().step(Arc::new(Next::new(chan))))
@@ -2079,16 +2378,20 @@ impl OperatorDef for NextDef {
 pub struct NextQDef;
 
 impl OperatorDef for NextQDef {
-    fn name(&self) -> &'static str { "next_q" }
-    fn paren_args(&self) -> &[ArgSig] { CHAN_SPEC }
+    fn name(&self) -> &'static str {
+        "next_q"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        CHAN_SPEC
+    }
 
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
-        args:   &[Value],
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl:   Option<&DslBody>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let chan = atom_arg(args, 0);
         Ok(Pipe::new().step(Arc::new(NextQ::new(chan))))

@@ -13,24 +13,25 @@
 use std::sync::Arc;
 
 use effect_runtime::v2::{
-    expand, ByteRange, ExpandOpts, FactStore, MemFactStore, MemQueue,
-    QueueBackend,
+    expand, ByteRange, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
 };
 
-use v4::Cursor;
+use effect_runtime::v2::Pipe;
 use v4::compile::ast::{DslText, OpCall, PipeAst, SlotText};
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
 use v4::lower::{ArgKind, ArgSig, DslBody, OperatorDef, Value};
-use effect_runtime::v2::Pipe;
+use v4::Cursor;
 
-fn br(lo: u32, hi: u32) -> ByteRange { ByteRange { lo, hi } }
+fn br(lo: u32, hi: u32) -> ByteRange {
+    ByteRange { lo, hi }
+}
 
 #[test]
 fn walk_smoke_rule_str() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
-    let dir   = std::env::temp_dir();
-    let reg   = default_registry();
+    let dir = std::env::temp_dir();
+    let reg = default_registry();
 
     // ── happy path: rule(:greet) { str `hello world` } ─────────────
     let program = vec![PipeAst {
@@ -43,7 +44,7 @@ fn walk_smoke_rule_str() {
             span: br(0, 30),
             flow: None,
             args: vec![SlotText {
-                raw:  Arc::<str>::from(":greet"),
+                raw: Arc::<str>::from(":greet"),
                 span: br(5, 11),
             }],
             dsl: None,
@@ -58,7 +59,7 @@ fn walk_smoke_rule_str() {
                     flow: None,
                     args: vec![],
                     dsl: Some(DslText {
-                        raw:  Arc::<str>::from("hello world"),
+                        raw: Arc::<str>::from("hello world"),
                         span: br(19, 30),
                     }),
                     block: None,
@@ -69,14 +70,25 @@ fn walk_smoke_rule_str() {
 
     let mut ctx = LowerCtx::new(store.clone(), dir.clone());
     let (pipes, diags) = walk_program(&program, &reg, &mut ctx);
-    assert!(diags.is_empty(), "happy path diags: {:?}",
-        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>());
+    assert!(
+        diags.is_empty(),
+        "happy path diags: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
     assert_eq!(pipes.len(), 1, "expected one pipe");
 
     let pipe = pipes.into_iter().next().unwrap();
     let inst = pipe.into_instance();
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    expand(&inst, q, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    expand(
+        &inst,
+        q,
+        vec![Arc::new(Cursor::default())],
+        ExpandOpts::default(),
+    );
 
     assert_eq!(store.len("greet"), 1, "rule wrote one row");
     let rows = store.rows_of("greet");
@@ -96,7 +108,7 @@ fn walk_smoke_rule_str() {
             span: br(0, 12),
             flow: None,
             args: vec![SlotText {
-                raw:  Arc::<str>::from(":greet"),
+                raw: Arc::<str>::from(":greet"),
                 span: br(5, 11),
             }],
             dsl: None,
@@ -107,14 +119,25 @@ fn walk_smoke_rule_str() {
     let store2: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let mut ctx2 = LowerCtx::new(store2.clone(), dir);
     let (pipes2, diags2) = walk_program(&decl_only, &reg, &mut ctx2);
-    assert!(diags2.is_empty(), "decl-only diags: {:?}",
-        diags2.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>());
+    assert!(
+        diags2.is_empty(),
+        "decl-only diags: {:?}",
+        diags2
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
     assert_eq!(pipes2.len(), 1, "decl-only lowers to one (empty) pipe");
 
     let pipe2 = pipes2.into_iter().next().unwrap();
     let inst2 = pipe2.into_instance();
     let q2: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    expand(&inst2, q2, vec![Arc::new(Cursor::default())], ExpandOpts::default());
+    expand(
+        &inst2,
+        q2,
+        vec![Arc::new(Cursor::default())],
+        ExpandOpts::default(),
+    );
     assert_eq!(store2.len("greet"), 0, "decl-only writes zero rows");
 }
 
@@ -127,22 +150,31 @@ fn walk_smoke_rule_str() {
 
 struct PipeAccept;
 const PIPE_ACCEPT_SPEC: &[ArgSig] = &[ArgSig {
-    kind: ArgKind::Pipe, name: "p", doc: "", required: true,
+    kind: ArgKind::Pipe,
+    name: "p",
+    doc: "",
+    required: true,
 }];
 impl OperatorDef for PipeAccept {
-    fn name(&self) -> &'static str { "pipe_accept" }
-    fn paren_args(&self) -> &[ArgSig] { PIPE_ACCEPT_SPEC }
+    fn name(&self) -> &'static str {
+        "pipe_accept"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        PIPE_ACCEPT_SPEC
+    }
     fn lower(
         &self,
-        _ctx:  &v4::lower::LowerCtx,
+        _ctx: &v4::lower::LowerCtx,
         _flow: Option<Value>,
-        args:  &[Value],
-        _blk:  Option<Pipe<Cursor>>,
-        _dsl:  Option<&DslBody>,
+        args: &[Value],
+        _blk: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, v4::lower::LowerError> {
         match &args[0] {
             Value::Pipe(p) => Ok(p.clone()),
-            _ => Err(v4::lower::LowerError::Unknown("pipe_accept: not a pipe".into())),
+            _ => Err(v4::lower::LowerError::Unknown(
+                "pipe_accept: not a pipe".into(),
+            )),
         }
     }
 }
@@ -167,7 +199,7 @@ fn walk_smoke_inline_pipe() {
             span: br(0, 22),
             flow: None,
             args: vec![SlotText {
-                raw:  Arc::<str>::from("foo > bar"),
+                raw: Arc::<str>::from("foo > bar"),
                 span: br(12, 21),
             }],
             dsl: None,
@@ -181,14 +213,24 @@ fn walk_smoke_inline_pipe() {
     // The gap closes at walk-time: no `compile/inline-pipe-unsupported`
     // diag must appear, regardless of how lower-time treats the result.
     assert!(
-        !diags.iter().any(|d| &*d.code == "compile/inline-pipe-unsupported"),
+        !diags
+            .iter()
+            .any(|d| &*d.code == "compile/inline-pipe-unsupported"),
         "inline-pipe-unsupported leaked through: {:?}",
-        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
     );
     // And no malformed-parse from a clean `foo > bar` fragment.
     assert!(
-        !diags.iter().any(|d| &*d.code == "compile/inline-pipe-malformed"),
+        !diags
+            .iter()
+            .any(|d| &*d.code == "compile/inline-pipe-malformed"),
         "inline-pipe-malformed unexpected: {:?}",
-        diags.iter().map(|d| (d.code.as_ref(), d.message.as_str())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
     );
 }

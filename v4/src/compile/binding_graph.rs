@@ -53,37 +53,45 @@ fn collect_rule_decls(program: &[PipeAst]) -> HashMap<Arc<str>, RuleDecl> {
             if op.name.as_ref() != "rule" {
                 continue;
             }
-            let Some(first) = op.args.first() else { continue; };
+            let Some(first) = op.args.first() else {
+                continue;
+            };
             let raw_name = first.raw.trim();
-            let Some(name) = raw_name.strip_prefix(':') else { continue; };
+            let Some(name) = raw_name.strip_prefix(':') else {
+                continue;
+            };
             if !is_ident(name) {
                 continue;
             }
             let mut cols = Vec::new();
             for arg in op.args.iter().skip(1) {
                 let raw = arg.raw.trim();
-                let raw = raw.strip_suffix('?')
+                let raw = raw
+                    .strip_suffix('?')
                     .or_else(|| raw.strip_suffix('!'))
                     .unwrap_or(raw);
                 if is_caps_ident(raw) {
                     cols.push(Arc::<str>::from(raw));
                 }
             }
-            out.insert(Arc::<str>::from(name), RuleDecl {
-                cols,
-                has_body: op.block.is_some(),
-            });
+            out.insert(
+                Arc::<str>::from(name),
+                RuleDecl {
+                    cols,
+                    has_body: op.block.is_some(),
+                },
+            );
         }
     }
     out
 }
 
 fn analyze_pipe(
-    pipe:       &PipeAst,
-    reg:        &Registry,
+    pipe: &PipeAst,
+    reg: &Registry,
     rule_decls: &HashMap<Arc<str>, RuleDecl>,
-    bound:      &mut HashSet<Arc<str>>,
-    diags:      &mut Vec<Diag>,
+    bound: &mut HashSet<Arc<str>>,
+    diags: &mut Vec<Diag>,
 ) {
     for op in &pipe.steps {
         let (reads, mut binds) = collect_term_refs(op, reg);
@@ -96,21 +104,14 @@ fn analyze_pipe(
         for r in &reads {
             if !bound.contains(r) {
                 let msg = if bound.is_empty() {
-                    format!(
-                        "`{}` used before bound (no captures bound at this step)",
-                        r
-                    )
+                    format!("`{}` used before bound (no captures bound at this step)", r)
                 } else {
                     let mut bn: Vec<&str> = bound.iter().map(|s| s.as_ref()).collect();
                     bn.sort();
-                    format!(
-                        "`{}` used before bound (in scope: {})",
-                        r, bn.join(", ")
-                    )
+                    format!("`{}` used before bound (in scope: {})", r, bn.join(", "))
                 };
                 diags.push(
-                    Diag::error("lang/use-before-bind", msg)
-                        .with_span(op.span.lo, op.span.hi),
+                    Diag::error("lang/use-before-bind", msg).with_span(op.span.lo, op.span.hi),
                 );
             }
         }
@@ -255,7 +256,9 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
 /// — those slots don't contribute to the binding graph at this layer.
 fn slot_terms(raw: &str, reads: &mut Vec<Arc<str>>, binds: &mut Vec<Arc<str>>) {
     let raw = raw.trim();
-    if raw.is_empty() { return; }
+    if raw.is_empty() {
+        return;
+    }
     let raw = split_keyword_value(raw).unwrap_or(raw).trim();
     if let Some(stripped) = raw.strip_suffix('!') {
         if is_caps_ident(stripped) {
@@ -276,7 +279,11 @@ fn slot_terms(raw: &str, reads: &mut Vec<Arc<str>>, binds: &mut Vec<Arc<str>>) {
 
 fn split_keyword_value(raw: &str) -> Option<&str> {
     let (key, value) = raw.split_once(':')?;
-    if is_ident(key.trim()) { Some(value) } else { None }
+    if is_ident(key.trim()) {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 fn rule_query_literal_binds(op: &OpCall, decl: &RuleDecl) -> Vec<Arc<str>> {
@@ -312,7 +319,11 @@ fn rule_query_literal_binds(op: &OpCall, decl: &RuleDecl) -> Vec<Arc<str>> {
 fn split_keyword_pair(raw: &str) -> Option<(&str, &str)> {
     let (key, value) = raw.split_once(':')?;
     let key = key.trim();
-    if is_ident(key) { Some((key, value)) } else { None }
+    if is_ident(key) {
+        Some((key, value))
+    } else {
+        None
+    }
 }
 
 fn is_literal_slot(raw: &str) -> bool {
@@ -334,16 +345,28 @@ fn is_literal_slot(raw: &str) -> bool {
 
 fn is_ident(s: &str) -> bool {
     let bytes = s.as_bytes();
-    if bytes.is_empty() { return false; }
-    if !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') { return false; }
-    bytes[1..].iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+    if bytes.is_empty() {
+        return false;
+    }
+    if !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') {
+        return false;
+    }
+    bytes[1..]
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
 fn is_caps_ident(s: &str) -> bool {
     let bytes = s.as_bytes();
-    if bytes.is_empty() { return false; }
-    if !bytes[0].is_ascii_uppercase() { return false; }
-    bytes[1..].iter().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
+    if bytes.is_empty() {
+        return false;
+    }
+    if !bytes[0].is_ascii_uppercase() {
+        return false;
+    }
+    bytes[1..]
+        .iter()
+        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
 }
 
 #[cfg(test)]
@@ -366,7 +389,8 @@ mod tests {
         let codes = diag_codes("rule(:r) { `hello ${X}` };");
         assert!(
             codes.iter().any(|c| c == "lang/use-before-bind"),
-            "expected use-before-bind, got {:?}", codes
+            "expected use-before-bind, got {:?}",
+            codes
         );
     }
 
@@ -377,7 +401,8 @@ mod tests {
         let codes = diag_codes("rule(:r, X?) { `hello ${X}` };");
         assert!(
             !codes.iter().any(|c| c == "lang/use-before-bind"),
-            "unexpected use-before-bind, got {:?}", codes
+            "unexpected use-before-bind, got {:?}",
+            codes
         );
     }
 
@@ -391,7 +416,8 @@ mod tests {
         // arg slot.)
         assert!(
             codes.iter().any(|c| c == "lang/use-before-bind"),
-            "expected use-before-bind, got {:?}", codes
+            "expected use-before-bind, got {:?}",
+            codes
         );
     }
 
@@ -400,7 +426,8 @@ mod tests {
         let codes = diag_codes("`alpha` > render.markdown`${&.value}`;");
         assert!(
             !codes.iter().any(|c| c == "lang/use-before-bind"),
-            "unexpected use-before-bind for focal cursor value, got {:?}", codes
+            "unexpected use-before-bind for focal cursor value, got {:?}",
+            codes
         );
     }
 }

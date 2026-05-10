@@ -10,7 +10,7 @@ use tree_sitter::{Node, Parser, Tree};
 use super::types::{DataKind, DataNode, ParseError};
 
 struct Inner {
-    src:  Arc<[u8]>,
+    src: Arc<[u8]>,
     tree: Tree,
 }
 
@@ -19,7 +19,7 @@ unsafe impl Sync for Inner {}
 
 #[derive(Clone)]
 pub struct JsonNode {
-    inner:   Arc<Inner>,
+    inner: Arc<Inner>,
     node_id: usize,
 }
 
@@ -37,7 +37,10 @@ impl JsonNode {
         let root = tree.root_node();
         let value_node = first_named_child(root).unwrap_or(root);
         let node_id = value_node.id();
-        Ok(JsonNode { inner: Arc::new(Inner { src, tree }), node_id })
+        Ok(JsonNode {
+            inner: Arc::new(Inner { src, tree }),
+            node_id,
+        })
     }
 
     fn node(&self) -> Node<'_> {
@@ -46,12 +49,17 @@ impl JsonNode {
     }
 
     fn wrap(&self, n: Node<'_>) -> JsonNode {
-        JsonNode { inner: self.inner.clone(), node_id: n.id() }
+        JsonNode {
+            inner: self.inner.clone(),
+            node_id: n.id(),
+        }
     }
 }
 
 impl DataNode for JsonNode {
-    fn kind(&self) -> DataKind { json_kind(self.node()) }
+    fn kind(&self) -> DataKind {
+        json_kind(self.node())
+    }
 
     fn byte_range(&self) -> (u32, u32) {
         let n = self.node();
@@ -69,7 +77,9 @@ impl DataNode for JsonNode {
         let pairs: Vec<_> = (0..n.named_child_count())
             .filter_map(|i| {
                 let child = n.named_child(i)?;
-                if child.kind() != "pair" { return None; }
+                if child.kind() != "pair" {
+                    return None;
+                }
                 let key = child.child_by_field_name("key")?;
                 let val = child.child_by_field_name("value")?;
                 Some((self.wrap(key), self.wrap(val)))
@@ -86,15 +96,17 @@ impl DataNode for JsonNode {
         Box::new(items.into_iter())
     }
 
-    fn source(&self) -> &[u8] { &self.inner.src }
+    fn source(&self) -> &[u8] {
+        &self.inner.src
+    }
 }
 
 fn json_kind(n: Node<'_>) -> DataKind {
     match n.kind() {
         "object" => DataKind::Object,
-        "array"  => DataKind::Array,
-        "null"   => DataKind::Null,
-        _        => DataKind::Scalar,
+        "array" => DataKind::Array,
+        "null" => DataKind::Null,
+        _ => DataKind::Scalar,
     }
 }
 
@@ -102,7 +114,9 @@ fn json_scalar_text<'a>(n: Node<'_>, src: &'a [u8]) -> Option<Cow<'a, str>> {
     match n.kind() {
         "string" => {
             let raw = &src[n.start_byte()..n.end_byte()];
-            if raw.len() < 2 { return None; }
+            if raw.len() < 2 {
+                return None;
+            }
             let inner = &raw[1..raw.len() - 1];
             let s = std::str::from_utf8(inner).ok()?;
             Some(Cow::Owned(unescape_json_string(s)))
@@ -121,21 +135,26 @@ fn unescape_json_string(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.next() {
-                Some('"')  => out.push('"'),
+                Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
-                Some('/')  => out.push('/'),
-                Some('b')  => out.push('\x08'),
-                Some('f')  => out.push('\x0C'),
-                Some('n')  => out.push('\n'),
-                Some('r')  => out.push('\r'),
-                Some('t')  => out.push('\t'),
-                Some('u')  => {
+                Some('/') => out.push('/'),
+                Some('b') => out.push('\x08'),
+                Some('f') => out.push('\x0C'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('u') => {
                     let hex: String = chars.by_ref().take(4).collect();
                     if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(cp) { out.push(ch); }
+                        if let Some(ch) = char::from_u32(cp) {
+                            out.push(ch);
+                        }
                     }
                 }
-                Some(c) => { out.push('\\'); out.push(c); }
+                Some(c) => {
+                    out.push('\\');
+                    out.push(c);
+                }
                 None => out.push('\\'),
             }
         } else {
@@ -150,10 +169,14 @@ fn first_named_child(n: Node<'_>) -> Option<Node<'_>> {
 }
 
 fn find_node_by_id<'a>(root: Node<'a>, id: usize) -> Option<Node<'a>> {
-    if root.id() == id { return Some(root); }
+    if root.id() == id {
+        return Some(root);
+    }
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
-        if let Some(found) = find_node_by_id(child, id) { return Some(found); }
+        if let Some(found) = find_node_by_id(child, id) {
+            return Some(found);
+        }
     }
     None
 }

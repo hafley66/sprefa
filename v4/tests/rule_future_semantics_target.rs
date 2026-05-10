@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use effect_runtime::v2::{
-    attach_dirty_to_queue, expand, Component, EventBus, ExpandOpts, FactStore,
-    MemFactStore, MemQueue, NextKey, Node, PipeInstance, QueueBackend, RenderCtx,
-    Wake,
+    attach_dirty_to_queue, expand, Component, EventBus, ExpandOpts, FactStore, MemFactStore,
+    MemQueue, NextKey, Node, PipeInstance, QueueBackend, RenderCtx, Wake,
 };
 
 use v4::compile::parse::host_parse;
@@ -67,20 +66,14 @@ impl LiveHarness {
         for _ in 0..8 {
             let mut rendered = 0;
             for inst in self.instances.iter().filter(|inst| has_sql_component(inst)) {
-                rendered += expand(
-                    inst,
-                    self.queue.clone(),
-                    Vec::new(),
-                    opts.clone(),
-                ).rendered;
+                rendered += expand(inst, self.queue.clone(), Vec::new(), opts.clone()).rendered;
             }
-            for inst in self.instances.iter().filter(|inst| !has_sql_component(inst)) {
-                rendered += expand(
-                    inst,
-                    self.queue.clone(),
-                    Vec::new(),
-                    opts.clone(),
-                ).rendered;
+            for inst in self
+                .instances
+                .iter()
+                .filter(|inst| !has_sql_component(inst))
+            {
+                rendered += expand(inst, self.queue.clone(), Vec::new(), opts.clone()).rendered;
             }
             if rendered == 0 {
                 break;
@@ -124,7 +117,8 @@ fn run_pipes(src: &str) -> Arc<dyn FactStore<Cursor>> {
 
 #[test]
 fn empty_rule_fully_bound_apply_sends_identity() {
-    let store = run_pipes(r#"
+    let store = run_pipes(
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:seen, OP?, FILE?);
 
@@ -134,22 +128,32 @@ fn empty_rule_fully_bound_apply_sends_identity() {
           > term_bind(:FILE)
           > frontend_hooks(OP, FILE)
           > rule(:seen, OP: OP, FILE: FILE);
-    "#);
+    "#,
+    );
 
     let frontend_rows = store.rows_of("frontend_hooks");
-    assert_eq!(frontend_rows.len(), 1, "fully bound empty-rule apply should write one subject row");
+    assert_eq!(
+        frontend_rows.len(),
+        1,
+        "fully bound empty-rule apply should write one subject row"
+    );
     assert_eq!(frontend_rows[0].get("OP"), Some("getUser"));
     assert_eq!(frontend_rows[0].get("FILE"), Some("src/hooks.ts"));
 
     let seen_rows = store.rows_of("seen");
-    assert_eq!(seen_rows.len(), 1, "send/write should pass the original cursor through 1:1");
+    assert_eq!(
+        seen_rows.len(),
+        1,
+        "send/write should pass the original cursor through 1:1"
+    );
 }
 
 #[test]
 fn mounted_query_reacts_to_late_relation_write() {
     let mut runtime = LiveHarness::new();
 
-    runtime.run(r#"
+    runtime.run(
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:missing_hooks, OP?);
 
@@ -168,7 +172,8 @@ fn mounted_query_reacts_to_late_relation_write() {
               )
             `
           > rule(:missing_hooks, OP: OP);
-    "#);
+    "#,
+    );
 
     assert_eq!(
         runtime.store.rows_of("missing_hooks").len(),
@@ -176,13 +181,15 @@ fn mounted_query_reacts_to_late_relation_write() {
         "initial anti-join should report missing hook",
     );
 
-    runtime.run(r#"
+    runtime.run(
+        r#"
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
           > rule(:frontend_hooks, OP: OP, FILE: FILE);
-    "#);
+    "#,
+    );
 
     assert_eq!(
         runtime.store.rows_of("missing_hooks").len(),
@@ -198,7 +205,8 @@ fn mounted_query_reacts_to_late_relation_write() {
 
 #[test]
 fn mounted_query_persists_outputs_by_mount_and_input_key() {
-    let store = run_pipes(r#"
+    let store = run_pipes(
+        r#"
         rule(:openapi_ops, OP?);
         rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
@@ -221,7 +229,8 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
             `
           > term_bind(:FILE)
           > rule(:hook_hits, OP: OP, FILE: FILE);
-    "#);
+    "#,
+    );
 
     assert_eq!(store.rows_of("hook_hits").len(), 1);
     let mounted_outputs = store.rows_of("mounted_query_output");
@@ -232,20 +241,23 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
     assert!(mounted_outputs[0].get("mount_id").is_some());
     assert!(mounted_outputs[0].get("input_key").is_some());
     assert!(mounted_outputs[0].get("generation").is_some());
-    let cursor_id = mounted_outputs[0].get("cursor_id").expect("mounted output should reference interned cursor");
+    let cursor_id = mounted_outputs[0]
+        .get("cursor_id")
+        .expect("mounted output should reference interned cursor");
 
     let mounted_cursors = store.rows_of("mounted_query_cursor");
     assert!(
         mounted_cursors.iter().any(|row| {
-            row.get("cursor_id") == Some(cursor_id)
-                && row.get("cursor_blob").is_some()
+            row.get("cursor_id") == Some(cursor_id) && row.get("cursor_blob").is_some()
         }),
         "mounted output cursor payload should be interned once in mounted_query_cursor"
     );
 
     let mounted_deps = store.rows_of("mounted_query_dep");
     assert!(
-        mounted_deps.iter().any(|row| row.get("dep_table") == Some("frontend_hooks")),
+        mounted_deps
+            .iter()
+            .any(|row| row.get("dep_table") == Some("frontend_hooks")),
         "mounted query should persist referenced relation deps for future table-dirty wakeups",
     );
 
@@ -266,7 +278,8 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
 fn mounted_query_rerun_emits_only_new_output_hashes() {
     let mut runtime = LiveHarness::new();
 
-    runtime.run(r#"
+    runtime.run(
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
 
@@ -285,17 +298,20 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
             `
           > term_bind(:FILE)
           > rule(:hook_hits, OP: OP, FILE: FILE);
-    "#);
+    "#,
+    );
 
     assert_eq!(runtime.store.rows_of("hook_hits").len(), 1);
 
-    runtime.run(r#"
+    runtime.run(
+        r#"
         `getUser`
           > term_bind(:OP)
           > `src/hooks_extra.ts`
           > term_bind(:FILE)
           > rule(:frontend_hooks, OP: OP, FILE: FILE);
-    "#);
+    "#,
+    );
 
     assert_eq!(
         runtime.store.rows_of("hook_hits").len(),
@@ -313,7 +329,8 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
 fn mounted_query_retraction_cascades_through_dependent_query() {
     let mut runtime = LiveHarness::new();
 
-    runtime.run(r#"
+    runtime.run(
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:missing_ops, OP?);
         rule(:warnings, OP?);
@@ -342,18 +359,21 @@ fn mounted_query_retraction_cascades_through_dependent_query() {
             `
           > term_bind(:OP)
           > rule(:warnings, OP: OP);
-    "#);
+    "#,
+    );
 
     assert_eq!(runtime.store.rows_of("missing_ops").len(), 1);
     assert_eq!(runtime.store.rows_of("warnings").len(), 1);
 
-    runtime.run(r#"
+    runtime.run(
+        r#"
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
           > rule(:frontend_hooks, OP: OP, FILE: FILE);
-    "#);
+    "#,
+    );
 
     assert_eq!(
         runtime.store.rows_of("missing_ops").len(),
@@ -371,7 +391,8 @@ fn mounted_query_retraction_cascades_through_dependent_query() {
 fn mounted_query_manual_rerun_emits_only_new_output_hashes() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
 
-    run_into_store(r#"
+    run_into_store(
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
 
@@ -390,11 +411,14 @@ fn mounted_query_manual_rerun_emits_only_new_output_hashes() {
             `
           > term_bind(:FILE)
           > rule(:hook_hits, OP: OP, FILE: FILE);
-    "#, store.clone());
+    "#,
+        store.clone(),
+    );
 
     assert_eq!(store.rows_of("hook_hits").len(), 1);
 
-    run_into_store(r#"
+    run_into_store(
+        r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
 
@@ -413,7 +437,9 @@ fn mounted_query_manual_rerun_emits_only_new_output_hashes() {
             `
           > term_bind(:FILE)
           > rule(:hook_hits, OP: OP, FILE: FILE);
-    "#, store.clone());
+    "#,
+        store.clone(),
+    );
 
     let rows = store.rows_of("hook_hits");
     assert_eq!(
@@ -505,7 +531,8 @@ fn collect_does_not_mix_two_pipe_instances() {
 
 #[test]
 fn bodied_rule_apply_runs_body_and_emits_outputs() {
-    let store = run_pipes(r#"
+    let store = run_pipes(
+        r#"
         rule(:derive_hook, OP?, FILE?) {
           `src/hooks.ts` > term_bind(:FILE)
         };
@@ -515,17 +542,23 @@ fn bodied_rule_apply_runs_body_and_emits_outputs() {
           > term_bind(:OP)
           > derive_hook(OP)
           > rule(:hook_hits, OP: OP, FILE: FILE);
-    "#);
+    "#,
+    );
 
     let rows = store.rows_of("hook_hits");
-    assert_eq!(rows.len(), 1, "bodied rule apply should run the body for the input cursor");
+    assert_eq!(
+        rows.len(),
+        1,
+        "bodied rule apply should run the body for the input cursor"
+    );
     assert_eq!(rows[0].get("OP"), Some("getUser"));
     assert_eq!(rows[0].get("FILE"), Some("src/hooks.ts"));
 }
 
 #[test]
 fn bodied_rule_query_reads_table_without_running_body() {
-    let store = run_pipes(r#"
+    let store = run_pipes(
+        r#"
         rule(:derive_hook, OP?, FILE?) {
           `src/hooks.ts` > term_bind(:FILE)
         };
@@ -535,8 +568,13 @@ fn bodied_rule_query_reads_table_without_running_body() {
           > term_bind(:OP)
           > derive_hook?(OP, FILE?)
           > rule(:hook_hits, OP: OP, FILE: FILE);
-    "#);
+    "#,
+    );
 
     let rows = store.rows_of("hook_hits");
-    assert_eq!(rows.len(), 0, "question-suffixed rule query should not run the body");
+    assert_eq!(
+        rows.len(),
+        0,
+        "question-suffixed rule query should not run the body"
+    );
 }

@@ -448,3 +448,11 @@ OK, so wait. I have not read everything that you have sent but to give you an id
     <note>Before changing implementation, write invariant tests for query/apply split, apply grounding, removal of rule_name?(...), duplicate support dedupe, and final-support retraction.</note>
   </topic>
 </llm-zone>
+
+rules have enough syntax to equal this select + join, but we have no order/where/limit/group by hmmm. 
+
+this was css + google biquery experimental pipeline syntax inspired as pipe language that is also a tree. not sure if querying should just take advantage of lifting (where we can have a op instaance/pipe, a way to respond to "are you pure string/regex/tree/string/byte_range" etc.  so that we knew or could compose syncronously and collapse the overhead. this is where im putting on a weird sql syntax hat but i was trying to keeep lang as low decisioon as possible, strings only ish, pipes, cursors, terms, thats it. 
+
+but i will need  forking (which is just more sprf path for parse/runtime anyways) and arbitrary nesting of parents as inner pipe exprs. 
+
+but idk how to handle the idea of making simple enough query/numeric predicate/operators to interpret value as number and do something with it. ah jeez, so many ideas. if we can make deterministic loops that would be dope. what the fukc am i building man. also json has implicit forking/branching/nesting, if you query 2 different object siblings. also json syntax has no wayy to capture the hole json object of something vs its elements, its one or the other. at least regex capture group syntax OG is eaten and not taken literally. make regex is really just the most portable fuckin programming language next to arithmetic

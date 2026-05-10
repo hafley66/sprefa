@@ -9,7 +9,7 @@ use tree_sitter::{Node, Parser, Tree};
 use super::types::{DataKind, DataNode, ParseError};
 
 struct Inner {
-    src:  Arc<[u8]>,
+    src: Arc<[u8]>,
     tree: Tree,
 }
 
@@ -18,7 +18,7 @@ unsafe impl Sync for Inner {}
 
 #[derive(Clone)]
 pub struct YamlNode {
-    inner:   Arc<Inner>,
+    inner: Arc<Inner>,
     node_id: usize,
 }
 
@@ -36,7 +36,10 @@ impl YamlNode {
         let root = tree.root_node();
         let value_node = dig_to_value(root).unwrap_or(root);
         let node_id = value_node.id();
-        Ok(YamlNode { inner: Arc::new(Inner { src, tree }), node_id })
+        Ok(YamlNode {
+            inner: Arc::new(Inner { src, tree }),
+            node_id,
+        })
     }
 
     fn node(&self) -> Node<'_> {
@@ -45,12 +48,17 @@ impl YamlNode {
     }
 
     fn wrap(&self, n: Node<'_>) -> YamlNode {
-        YamlNode { inner: self.inner.clone(), node_id: n.id() }
+        YamlNode {
+            inner: self.inner.clone(),
+            node_id: n.id(),
+        }
     }
 }
 
 impl DataNode for YamlNode {
-    fn kind(&self) -> DataKind { yaml_kind(self.node()) }
+    fn kind(&self) -> DataKind {
+        yaml_kind(self.node())
+    }
 
     fn byte_range(&self) -> (u32, u32) {
         let n = self.node();
@@ -69,17 +77,21 @@ impl DataNode for YamlNode {
         Box::new(collect_sequence_items(self.node(), self).into_iter())
     }
 
-    fn source(&self) -> &[u8] { &self.inner.src }
+    fn source(&self) -> &[u8] {
+        &self.inner.src
+    }
 }
 
 fn yaml_kind(n: Node<'_>) -> DataKind {
     match n.kind() {
-        "block_mapping" | "flow_mapping"   => DataKind::Object,
+        "block_mapping" | "flow_mapping" => DataKind::Object,
         "block_sequence" | "flow_sequence" => DataKind::Array,
-        "null_scalar"                      => DataKind::Null,
+        "null_scalar" => DataKind::Null,
         "plain_scalar" => {
             if let Some(child) = n.named_child(0) {
-                if child.kind() == "null_scalar" { return DataKind::Null; }
+                if child.kind() == "null_scalar" {
+                    return DataKind::Null;
+                }
             }
             DataKind::Scalar
         }
@@ -102,7 +114,7 @@ fn yaml_scalar_text<'a>(n: Node<'_>, src: &'a [u8]) -> Option<Cow<'a, str>> {
             Some(Cow::Owned(inner.replace("''", "'")))
         }
         "plain_scalar" => yaml_scalar_text(n.named_child(0)?, src),
-        "null_scalar"  => None,
+        "null_scalar" => None,
         "block_scalar" => {
             let raw = &src[n.start_byte()..n.end_byte()];
             Some(Cow::Owned(String::from_utf8_lossy(raw).into_owned()))
@@ -120,34 +132,41 @@ fn unescape_yaml_double_quoted(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.next() {
-                Some('n')  => out.push('\n'),
-                Some('t')  => out.push('\t'),
-                Some('r')  => out.push('\r'),
-                Some('"')  => out.push('"'),
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
-                Some('0')  => out.push('\0'),
-                Some('a')  => out.push('\x07'),
-                Some('b')  => out.push('\x08'),
-                Some('f')  => out.push('\x0C'),
-                Some('v')  => out.push('\x0B'),
-                Some('e')  => out.push('\x1B'),
-                Some('N')  => out.push('\u{85}'),
-                Some('_')  => out.push('\u{A0}'),
-                Some('L')  => out.push('\u{2028}'),
-                Some('P')  => out.push('\u{2029}'),
+                Some('0') => out.push('\0'),
+                Some('a') => out.push('\x07'),
+                Some('b') => out.push('\x08'),
+                Some('f') => out.push('\x0C'),
+                Some('v') => out.push('\x0B'),
+                Some('e') => out.push('\x1B'),
+                Some('N') => out.push('\u{85}'),
+                Some('_') => out.push('\u{A0}'),
+                Some('L') => out.push('\u{2028}'),
+                Some('P') => out.push('\u{2029}'),
                 Some('u') => {
                     let hex: String = chars.by_ref().take(4).collect();
                     if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(cp) { out.push(ch); }
+                        if let Some(ch) = char::from_u32(cp) {
+                            out.push(ch);
+                        }
                     }
                 }
                 Some('U') => {
                     let hex: String = chars.by_ref().take(8).collect();
                     if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(cp) { out.push(ch); }
+                        if let Some(ch) = char::from_u32(cp) {
+                            out.push(ch);
+                        }
                     }
                 }
-                Some(c) => { out.push('\\'); out.push(c); }
+                Some(c) => {
+                    out.push('\\');
+                    out.push(c);
+                }
                 None => out.push('\\'),
             }
         } else {
@@ -174,15 +193,13 @@ fn dig_to_value(n: Node<'_>) -> Option<Node<'_>> {
             })?;
             dig_to_value(content)
         }
-        "block_node" | "flow_node" => {
-            (0..n.named_child_count()).find_map(|i| {
-                let c = n.named_child(i)?;
-                match c.kind() {
-                    "anchor" | "tag" => None,
-                    _ => Some(c),
-                }
-            })
-        }
+        "block_node" | "flow_node" => (0..n.named_child_count()).find_map(|i| {
+            let c = n.named_child(i)?;
+            match c.kind() {
+                "anchor" | "tag" => None,
+                _ => Some(c),
+            }
+        }),
         _ => Some(n),
     }
 }
@@ -207,7 +224,10 @@ fn unwrap_node(n: Node<'_>) -> Node<'_> {
 fn collect_mapping_pairs(n: Node<'_>, owner: &YamlNode) -> Vec<(YamlNode, YamlNode)> {
     let mut pairs = Vec::new();
     for i in 0..n.named_child_count() {
-        let child = match n.named_child(i) { Some(c) => c, None => continue };
+        let child = match n.named_child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         match child.kind() {
             "block_mapping_pair" | "flow_pair" => {
                 let key_raw = match child.child_by_field_name("key") {
@@ -229,7 +249,10 @@ fn collect_mapping_pairs(n: Node<'_>, owner: &YamlNode) -> Vec<(YamlNode, YamlNo
 fn collect_sequence_items(n: Node<'_>, owner: &YamlNode) -> Vec<YamlNode> {
     let mut items = Vec::new();
     for i in 0..n.named_child_count() {
-        let child = match n.named_child(i) { Some(c) => c, None => continue };
+        let child = match n.named_child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         match child.kind() {
             "block_sequence_item" => {
                 if let Some(inner) = child.named_child(0) {
@@ -246,10 +269,14 @@ fn collect_sequence_items(n: Node<'_>, owner: &YamlNode) -> Vec<YamlNode> {
 }
 
 fn find_node_by_id<'a>(root: Node<'a>, id: usize) -> Option<Node<'a>> {
-    if root.id() == id { return Some(root); }
+    if root.id() == id {
+        return Some(root);
+    }
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
-        if let Some(found) = find_node_by_id(child, id) { return Some(found); }
+        if let Some(found) = find_node_by_id(child, id) {
+            return Some(found);
+        }
     }
     None
 }

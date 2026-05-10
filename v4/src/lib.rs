@@ -6,6 +6,8 @@ pub mod cst;
 pub mod cursor_codec;
 pub mod fact;
 #[cfg(feature = "ghcache")]
+pub mod ghcache;
+#[cfg(feature = "ghcache")]
 pub mod git_watch;
 pub mod lsp;
 pub mod mounted_query;
@@ -16,10 +18,10 @@ pub mod source;
 pub mod sprf_introspect;
 pub mod sql;
 pub mod store;
-pub mod template;
 pub mod telemetry;
-pub mod v2_ops;
+pub mod template;
 pub mod term;
+pub mod v2_ops;
 
 pub use compile::lower;
 pub use config::{RepoConfig, SprfConfig};
@@ -48,19 +50,19 @@ use crate::store::SprfStore;
 // ░░░▒                  § 1   actions / dispatch                    ▒░░░
 // ░░░▒▒▒▓▓▓██████████████████████████████████████████████████████▓▓▓▒▒▒░░░
 
-pub type Gen        = u64;
-pub type LineageId  = u64;
+pub type Gen = u64;
+pub type LineageId = u64;
 
 #[derive(Clone, Debug)]
 pub struct Action {
-    pub gen:    Gen,
+    pub gen: Gen,
     pub parent: Option<(Gen, LineageId)>,
-    pub kind:   ActionKind,
+    pub kind: ActionKind,
 }
 
 #[derive(Clone, Debug)]
 pub enum ActionKind {
-    Run         { root: PathBuf },
+    Run { root: PathBuf },
     FileChanged { path: PathBuf },
     Quit,
 }
@@ -84,22 +86,22 @@ pub enum ActionKind {
 // the coord position but a real StringId at the value position so
 // `_strings` dedupes synthetic and source-located text uniformly.
 
-pub type RepoId   = u32;
-pub type RevId    = u32;
-pub type FileId   = u64;
-pub type RefId    = u64;
-pub type PathId   = u64;
-pub type BlobId   = u64;
+pub type RepoId = u32;
+pub type RevId = u32;
+pub type FileId = u64;
+pub type RefId = u64;
+pub type PathId = u64;
+pub type BlobId = u64;
 
 /// A coordinate in the (repo × rev × file × byte-range) space.
 /// All zeros = SYNTHETIC. Source-located = nonzero ids + real bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Coord {
     pub repo: RepoId,
-    pub rev:  RevId,
-    pub fs:   FileId,
-    pub lo:   u32,
-    pub hi:   u32,
+    pub rev: RevId,
+    pub fs: FileId,
+    pub lo: u32,
+    pub hi: u32,
 }
 
 /// Physical byte span in a repo/rev/file source.
@@ -111,21 +113,34 @@ pub struct Coord {
 pub struct WhereBytes {
     pub string: StringId,
     pub repo: RepoId,
-    pub rev:  RevId,
+    pub rev: RevId,
     pub file: FileId,
-    pub lo:   u32,
-    pub hi:   u32,
+    pub lo: u32,
+    pub hi: u32,
 }
 
 impl From<Coord> for WhereBytes {
     fn from(c: Coord) -> Self {
-        Self { string: StringId::EMPTY, repo: c.repo, rev: c.rev, file: c.fs, lo: c.lo, hi: c.hi }
+        Self {
+            string: StringId::EMPTY,
+            repo: c.repo,
+            rev: c.rev,
+            file: c.fs,
+            lo: c.lo,
+            hi: c.hi,
+        }
     }
 }
 
 impl From<WhereBytes> for Coord {
     fn from(w: WhereBytes) -> Self {
-        Self { repo: w.repo, rev: w.rev, fs: w.file, lo: w.lo, hi: w.hi }
+        Self {
+            repo: w.repo,
+            rev: w.rev,
+            fs: w.file,
+            lo: w.lo,
+            hi: w.hi,
+        }
     }
 }
 
@@ -143,7 +158,9 @@ impl Ref {
     /// across runs/machines because the inputs (repo/rev/file/lo/hi)
     /// are themselves content-derived ids.
     pub fn of(c: Coord) -> Ref {
-        if c == Coord::default() { return Ref::SYNTHETIC; }
+        if c == Coord::default() {
+            return Ref::SYNTHETIC;
+        }
         let mut h = blake3::Hasher::new();
         h.update(&c.repo.to_be_bytes());
         h.update(&c.rev.to_be_bytes());
@@ -151,7 +168,9 @@ impl Ref {
         h.update(&c.lo.to_be_bytes());
         h.update(&c.hi.to_be_bytes());
         let bytes = h.finalize();
-        Ref(u64::from_be_bytes(bytes.as_bytes()[..8].try_into().unwrap()))
+        Ref(u64::from_be_bytes(
+            bytes.as_bytes()[..8].try_into().unwrap(),
+        ))
     }
 }
 
@@ -180,7 +199,9 @@ impl WhereBytesId {
         h.update(&w.lo.to_be_bytes());
         h.update(&w.hi.to_be_bytes());
         let bytes = h.finalize();
-        WhereBytesId(u64::from_be_bytes(bytes.as_bytes()[..8].try_into().unwrap()))
+        WhereBytesId(u64::from_be_bytes(
+            bytes.as_bytes()[..8].try_into().unwrap(),
+        ))
     }
 
     pub fn coord_only(w: WhereBytes) -> WhereBytesId {
@@ -190,11 +211,15 @@ impl WhereBytesId {
 }
 
 impl From<Ref> for WhereBytesId {
-    fn from(r: Ref) -> Self { WhereBytesId(r.0) }
+    fn from(r: Ref) -> Self {
+        WhereBytesId(r.0)
+    }
 }
 
 impl From<WhereBytesId> for Ref {
-    fn from(r: WhereBytesId) -> Self { Ref(r.0) }
+    fn from(r: WhereBytesId) -> Self {
+        Ref(r.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -209,7 +234,9 @@ pub enum CursorValue {
 }
 
 impl Default for CursorValue {
-    fn default() -> Self { CursorValue::String(StringId::EMPTY) }
+    fn default() -> Self {
+        CursorValue::String(StringId::EMPTY)
+    }
 }
 
 /// FK handle into `_strings`. `StringId(0)` is the empty string,
@@ -224,7 +251,9 @@ impl StringId {
     /// Content-derived id. `blake3(text)[..8]`. Same text => same id
     /// everywhere, every run, every process.
     pub fn of(text: &str) -> StringId {
-        if text.is_empty() { return StringId::EMPTY; }
+        if text.is_empty() {
+            return StringId::EMPTY;
+        }
         let h = blake3::hash(text.as_bytes());
         StringId(u64::from_be_bytes(h.as_bytes()[..8].try_into().unwrap()))
     }
@@ -232,7 +261,9 @@ impl StringId {
 
 /// Content-derived FileId from raw bytes.
 pub fn file_id_of(content: &[u8]) -> FileId {
-    if content.is_empty() { return 0; }
+    if content.is_empty() {
+        return 0;
+    }
     let h = blake3::hash(content);
     u64::from_be_bytes(h.as_bytes()[..8].try_into().unwrap())
 }
@@ -243,9 +274,9 @@ pub fn file_id_of(content: &[u8]) -> FileId {
 /// at the call site that has both the cursor and the store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Term {
-    pub name:  StringId,
+    pub name: StringId,
     pub value: StringId,
-    pub at:    Ref,
+    pub at: Ref,
 }
 
 pub type CursorTerm = Term;
@@ -254,7 +285,11 @@ impl Term {
     /// Synthetic Term: real StringId on name+value, SYNTHETIC ref.
     /// `_strings` still dedupes the text against source-located captures.
     pub fn synthetic(name: StringId, value: StringId) -> Self {
-        Self { name, value, at: Ref::SYNTHETIC }
+        Self {
+            name,
+            value,
+            at: Ref::SYNTHETIC,
+        }
     }
 }
 
@@ -267,7 +302,16 @@ mod coord_tests {
         assert_eq!(Ref::SYNTHETIC.0, 0);
         assert_eq!(StringId::EMPTY.0, 0);
         assert_eq!(file_id_of(b""), 0);
-        assert_eq!(Coord::default(), Coord { repo: 0, rev: 0, fs: 0, lo: 0, hi: 0 });
+        assert_eq!(
+            Coord::default(),
+            Coord {
+                repo: 0,
+                rev: 0,
+                fs: 0,
+                lo: 0,
+                hi: 0
+            }
+        );
         assert_eq!(Ref::of(Coord::default()), Ref::SYNTHETIC);
     }
 
@@ -284,17 +328,29 @@ mod coord_tests {
         assert_eq!(StringId::of(""), StringId::EMPTY);
 
         // Coord -> Ref likewise stable.
-        let coord = Coord { repo: 1, rev: 2, fs: 3, lo: 100, hi: 200 };
+        let coord = Coord {
+            repo: 1,
+            rev: 2,
+            fs: 3,
+            lo: 100,
+            hi: 200,
+        };
         assert_eq!(Ref::of(coord), Ref::of(coord));
 
         // Different coords -> different refs.
-        let other = Coord { repo: 1, rev: 2, fs: 3, lo: 101, hi: 200 };
+        let other = Coord {
+            repo: 1,
+            rev: 2,
+            fs: 3,
+            lo: 101,
+            hi: 200,
+        };
         assert_ne!(Ref::of(coord), Ref::of(other));
     }
 
     #[test]
     fn term_synthetic_keeps_real_string() {
-        let name  = StringId::of(":fan_idx");
+        let name = StringId::of(":fan_idx");
         let value = StringId::of("0");
         let t = Term::synthetic(name, value);
         assert_eq!(t.at, Ref::SYNTHETIC);
@@ -378,11 +434,14 @@ impl std::hash::Hash for Cursor {
     }
 }
 impl PartialOrd for Cursor {
-    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(o)) }
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
 }
 impl Ord for Cursor {
     fn cmp(&self, o: &Self) -> std::cmp::Ordering {
-        self.value.cmp(&o.value)
+        self.value
+            .cmp(&o.value)
             .then_with(|| self.cursor_value.cmp(&o.cursor_value))
             .then_with(|| self.value_id.cmp(&o.value_id))
             .then_with(|| self.at.cmp(&o.at))
@@ -395,7 +454,7 @@ impl Cursor {
     pub fn set(&mut self, name: &str, value: impl Into<Arc<str>>) {
         let v = value.into();
         match self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
-            Ok(i)  => self.raw_terms[i].1 = v,
+            Ok(i) => self.raw_terms[i].1 = v,
             Err(i) => self.raw_terms.insert(i, (Arc::<str>::from(name), v)),
         }
     }
@@ -403,7 +462,7 @@ impl Cursor {
     /// repeated values (e.g. file paths) share heap.
     pub fn set_arc(&mut self, name: &str, value: Arc<str>) {
         match self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
-            Ok(i)  => self.raw_terms[i].1 = value,
+            Ok(i) => self.raw_terms[i].1 = value,
             Err(i) => self.raw_terms.insert(i, (Arc::<str>::from(name), value)),
         }
     }
@@ -426,20 +485,28 @@ impl Cursor {
             if stem == "&" {
                 return match field {
                     "value" => Some(&self.value),
-                    other   => {
+                    other => {
                         let key = other.to_ascii_uppercase();
-                        self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(key.as_str()))
-                            .ok().map(|i| &*self.raw_terms[i].1)
+                        self.raw_terms
+                            .binary_search_by(|(n, _)| (**n).cmp(key.as_str()))
+                            .ok()
+                            .map(|i| &*self.raw_terms[i].1)
                     }
                 };
             }
             if field == "value" {
-                return self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(stem))
-                    .ok().map(|i| &*self.raw_terms[i].1);
+                return self
+                    .raw_terms
+                    .binary_search_by(|(n, _)| (**n).cmp(stem))
+                    .ok()
+                    .map(|i| &*self.raw_terms[i].1);
             }
             let key = format!("{}_{}", stem, field.to_ascii_uppercase());
-            return self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(key.as_str()))
-                .ok().map(|i| &*self.raw_terms[i].1);
+            return self
+                .raw_terms
+                .binary_search_by(|(n, _)| (**n).cmp(key.as_str()))
+                .ok()
+                .map(|i| &*self.raw_terms[i].1);
         }
         None
     }
@@ -449,7 +516,9 @@ impl Cursor {
         }
     }
     /// `&.value`. The focal value of the current cursor.
-    pub fn value(&self) -> &str { &self.value }
+    pub fn value(&self) -> &str {
+        &self.value
+    }
 
     // ── Layer 0c coord-space accessors (no live callers in 0c.1; live
     // ── in 0c.2 when emitters migrate to set_at). Allowed-dead so the
@@ -458,15 +527,25 @@ impl Cursor {
     /// Insert/replace a coord-space term. Interns name + slice through
     /// the store, derives `at` from the child coord. Idempotent on name.
     #[allow(dead_code)]
-    pub fn set_at(&mut self, name: &str, slice: &str, child_coord: Coord, store: &SprfStore) -> Ref {
-        let name_id  = store.intern_string(name);
+    pub fn set_at(
+        &mut self,
+        name: &str,
+        slice: &str,
+        child_coord: Coord,
+        store: &SprfStore,
+    ) -> Ref {
+        let name_id = store.intern_string(name);
         let value_id = store.intern_string(slice);
-        let at       = Ref::from(store.intern_where_bytes(WhereBytes {
+        let at = Ref::from(store.intern_where_bytes(WhereBytes {
             string: value_id,
             ..WhereBytes::from(child_coord)
         }));
         self.terms.retain(|t| t.name != name_id);
-        self.terms.push(Term { name: name_id, value: value_id, at });
+        self.terms.push(Term {
+            name: name_id,
+            value: value_id,
+            at,
+        });
         at
     }
 
@@ -474,7 +553,7 @@ impl Cursor {
     /// through the store; the `at` slot stays SYNTHETIC.
     #[allow(dead_code)]
     pub fn set_synthetic(&mut self, name: &str, text: &str, store: &SprfStore) {
-        let name_id  = store.intern_string(name);
+        let name_id = store.intern_string(name);
         let value_id = store.intern_string(text);
         self.terms.retain(|t| t.name != name_id);
         self.terms.push(Term::synthetic(name_id, value_id));
@@ -497,10 +576,17 @@ impl Cursor {
 }
 
 impl effect_runtime::v2::Row for Cursor {
-    fn get(&self, col: &str) -> Option<&str> { Cursor::get(self, col) }
-    fn set(&mut self, col: &str, value: &str) { Cursor::set(self, col, value); }
+    fn get(&self, col: &str) -> Option<&str> {
+        Cursor::get(self, col)
+    }
+    fn set(&mut self, col: &str, value: &str) {
+        Cursor::set(self, col, value);
+    }
     fn fields(&self) -> Vec<(&str, &str)> {
-        self.raw_terms.iter().map(|(n, v)| (n.as_ref(), v.as_ref())).collect()
+        self.raw_terms
+            .iter()
+            .map(|(n, v)| (n.as_ref(), v.as_ref()))
+            .collect()
     }
 }
 
@@ -529,7 +615,9 @@ pub struct Interner {
 }
 
 impl Interner {
-    pub fn new() -> Arc<Self> { Arc::new(Self::default()) }
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
     /// Return the canonical Arc<str> for `s`. Repeated calls with
     /// equal content return the same Arc clone.
     pub fn intern(&self, s: &str) -> Arc<str> {
@@ -539,9 +627,13 @@ impl Interner {
     /// Return a stable u32 id for `s`. Cheaper than intern() when
     /// downstream storage is integer-keyed (DdStore arrangements).
     pub fn intern_id(&self, s: &str) -> u32 {
-        if let Some(&id) = self.fwd.read().unwrap().get(s) { return id; }
+        if let Some(&id) = self.fwd.read().unwrap().get(s) {
+            return id;
+        }
         let mut fwd = self.fwd.write().unwrap();
-        if let Some(&id) = fwd.get(s) { return id; }
+        if let Some(&id) = fwd.get(s) {
+            return id;
+        }
         let mut rev = self.rev.write().unwrap();
         let id = rev.len() as u32;
         let arc: Arc<str> = Arc::from(s);
@@ -554,10 +646,13 @@ impl Interner {
     pub fn lookup(&self, id: u32) -> Arc<str> {
         self.rev.read().unwrap()[id as usize].clone()
     }
-    pub fn len(&self) -> usize { self.fwd.read().unwrap().len() }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn len(&self) -> usize {
+        self.fwd.read().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
-
 
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 //   § 4   Telemetry — v3-shape spans, per-op-batch granularity
@@ -571,11 +666,11 @@ impl Interner {
 
 #[derive(Clone, Debug)]
 pub struct Span {
-    pub name:    &'static str,
+    pub name: &'static str,
     pub start_ns: u64,
-    pub wall_ns:  u64,
-    pub n_in:    Option<u64>,
-    pub n_out:   Option<u64>,
+    pub wall_ns: u64,
+    pub n_in: Option<u64>,
+    pub n_out: Option<u64>,
     /// Bytes consumed by this span (sum of file sizes parsed, etc.).
     pub bytes_in: Option<u64>,
     /// Time spent in tree-sitter parse (sum across files inside batch).
@@ -592,7 +687,11 @@ pub struct Telemetry {
     epoch: Arc<Mutex<Instant>>,
 }
 
-impl Default for Telemetry { fn default() -> Self { Self::new() } }
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Telemetry {
     pub fn new() -> Self {
@@ -603,10 +702,10 @@ impl Telemetry {
     }
     pub fn start(&self, name: &'static str, n_in: Option<u64>) -> SpanOpen {
         let epoch = *self.epoch.lock().unwrap();
-        let now   = Instant::now();
+        let now = Instant::now();
         SpanOpen {
             name,
-            started:  now,
+            started: now,
             start_ns: now.saturating_duration_since(epoch).as_nanos() as u64,
             n_in,
             bytes_in: None,
@@ -615,8 +714,12 @@ impl Telemetry {
             sink: self.inner.clone(),
         }
     }
-    pub fn snapshot(&self) -> Vec<Span> { self.inner.lock().unwrap().clone() }
-    pub fn drain(&self) -> Vec<Span> { std::mem::take(&mut *self.inner.lock().unwrap()) }
+    pub fn snapshot(&self) -> Vec<Span> {
+        self.inner.lock().unwrap().clone()
+    }
+    pub fn drain(&self) -> Vec<Span> {
+        std::mem::take(&mut *self.inner.lock().unwrap())
+    }
     pub fn clear(&self) {
         self.inner.lock().unwrap().clear();
         *self.epoch.lock().unwrap() = Instant::now();
@@ -624,9 +727,13 @@ impl Telemetry {
     pub fn report(&self) -> Vec<OpReport> {
         let spans = self.inner.lock().unwrap();
         let mut by: HashMap<&'static str, Vec<&Span>> = HashMap::new();
-        for s in spans.iter() { by.entry(s.name).or_default().push(s); }
-        let mut out: Vec<OpReport> = by.into_iter()
-            .map(|(n, v)| OpReport::from_spans(n, &v)).collect();
+        for s in spans.iter() {
+            by.entry(s.name).or_default().push(s);
+        }
+        let mut out: Vec<OpReport> = by
+            .into_iter()
+            .map(|(n, v)| OpReport::from_spans(n, &v))
+            .collect();
         out.sort_by(|a, b| b.total_wall_ns.cmp(&a.total_wall_ns));
         out
     }
@@ -640,8 +747,15 @@ impl Telemetry {
         ));
         s.push_str(&format!(
             "{:<20} {:>7} {:>9} {:>9} {:>9} {:>9} {:>10} {:>9} {:>10}\n",
-            "-".repeat(20), "-------", "---", "---", "---", "----",
-            "----", "--", "----",
+            "-".repeat(20),
+            "-------",
+            "---",
+            "---",
+            "---",
+            "----",
+            "----",
+            "--",
+            "----",
         ));
         for r in &reports {
             let wall_s = r.wall_window_ns as f64 / 1e9;
@@ -654,10 +768,15 @@ impl Telemetry {
                 "{:<20} {:>7} {:>9} {:>9} {:>9} {:>9} {:>10} {:>9} {:>10}\n",
                 short_name(r.name),
                 r.count,
-                fmt_ns(r.p50_ns), fmt_ns(r.p95_ns), fmt_ns(r.p99_ns), fmt_ns(r.mean_ns),
+                fmt_ns(r.p50_ns),
+                fmt_ns(r.p95_ns),
+                fmt_ns(r.p99_ns),
+                fmt_ns(r.mean_ns),
                 fmt_ns(r.wall_window_ns),
-                mb.map(|m| format!("{:.1}", m)).unwrap_or_else(|| "—".into()),
-                mbs.map(|m| format!("{:.1}", m)).unwrap_or_else(|| "—".into()),
+                mb.map(|m| format!("{:.1}", m))
+                    .unwrap_or_else(|| "—".into()),
+                mbs.map(|m| format!("{:.1}", m))
+                    .unwrap_or_else(|| "—".into()),
             ));
         }
         // Row 2: parse vs match split + RSS
@@ -668,20 +787,31 @@ impl Telemetry {
         ));
         s.push_str(&format!(
             "{:<20} {:>10} {:>10} {:>7} {:>10} {:>10} {:>10}\n",
-            "-".repeat(20), "---------", "---------", "---", "-------", "-------", "--------",
+            "-".repeat(20),
+            "---------",
+            "---------",
+            "---",
+            "-------",
+            "-------",
+            "--------",
         ));
         for r in &reports {
             let pm_ratio = match (r.total_parse_ns, r.total_match_ns) {
                 (Some(p), Some(m)) if m > 0 => Some(p as f64 / m as f64),
                 _ => None,
             };
-            let mb_str = |kb: Option<u64>| kb.map(|k| format!("{} MB", k / 1024)).unwrap_or_else(|| "—".into());
+            let mb_str = |kb: Option<u64>| {
+                kb.map(|k| format!("{} MB", k / 1024))
+                    .unwrap_or_else(|| "—".into())
+            };
             s.push_str(&format!(
                 "{:<20} {:>10} {:>10} {:>7} {:>10} {:>10} {:>10}\n",
                 short_name(r.name),
                 r.total_parse_ns.map(fmt_ns).unwrap_or_else(|| "—".into()),
                 r.total_match_ns.map(fmt_ns).unwrap_or_else(|| "—".into()),
-                pm_ratio.map(|x| format!("{:.1}×", x)).unwrap_or_else(|| "—".into()),
+                pm_ratio
+                    .map(|x| format!("{:.1}×", x))
+                    .unwrap_or_else(|| "—".into()),
                 mb_str(r.rss_kb_min),
                 mb_str(r.rss_kb_max),
                 mb_str(r.rss_kb_last),
@@ -692,10 +822,10 @@ impl Telemetry {
 }
 
 pub struct SpanOpen {
-    name:    &'static str,
+    name: &'static str,
     started: Instant,
     start_ns: u64,
-    n_in:    Option<u64>,
+    n_in: Option<u64>,
     bytes_in: Option<u64>,
     parse_ns: Option<u64>,
     match_ns: Option<u64>,
@@ -703,15 +833,24 @@ pub struct SpanOpen {
 }
 
 impl SpanOpen {
-    pub fn set_bytes(&mut self, bytes: u64) { self.bytes_in = Some(bytes); }
-    pub fn set_parse_ns(&mut self, ns: u64) { self.parse_ns = Some(ns); }
-    pub fn set_match_ns(&mut self, ns: u64) { self.match_ns = Some(ns); }
+    pub fn set_bytes(&mut self, bytes: u64) {
+        self.bytes_in = Some(bytes);
+    }
+    pub fn set_parse_ns(&mut self, ns: u64) {
+        self.parse_ns = Some(ns);
+    }
+    pub fn set_match_ns(&mut self, ns: u64) {
+        self.match_ns = Some(ns);
+    }
     pub fn close(self, n_out: Option<u64>) {
         let wall_ns = self.started.elapsed().as_nanos() as u64;
         let rss_kb_end = Some(rss_peak_kb_now());
         let span = Span {
-            name: self.name, start_ns: self.start_ns, wall_ns,
-            n_in: self.n_in, n_out,
+            name: self.name,
+            start_ns: self.start_ns,
+            wall_ns,
+            n_in: self.n_in,
+            n_out,
             bytes_in: self.bytes_in,
             parse_ns: self.parse_ns,
             match_ns: self.match_ns,
@@ -726,14 +865,19 @@ impl Drop for SpanOpen {
     fn drop(&mut self) {
         let wall_ns = self.started.elapsed().as_nanos() as u64;
         let span = Span {
-            name: self.name, start_ns: self.start_ns, wall_ns,
-            n_in: self.n_in, n_out: None,
+            name: self.name,
+            start_ns: self.start_ns,
+            wall_ns,
+            n_in: self.n_in,
+            n_out: None,
             bytes_in: self.bytes_in,
             parse_ns: self.parse_ns,
             match_ns: self.match_ns,
             rss_kb_end: Some(rss_peak_kb_now()),
         };
-        if let Ok(mut v) = self.sink.lock() { v.push(span); }
+        if let Ok(mut v) = self.sink.lock() {
+            v.push(span);
+        }
     }
 }
 
@@ -742,12 +886,17 @@ impl Drop for SpanOpen {
 /// we forward accumulated nanoseconds across a channel boundary.
 pub fn push_synthetic_span(t: &Telemetry, name: &'static str, wall_ns: u64, n_out: Option<u64>) {
     let epoch = *t.epoch.lock().unwrap();
-    let now   = Instant::now();
+    let now = Instant::now();
     let start_ns = now.saturating_duration_since(epoch).as_nanos() as u64;
     let span = Span {
-        name, start_ns, wall_ns,
-        n_in: None, n_out,
-        bytes_in: None, parse_ns: None, match_ns: None,
+        name,
+        start_ns,
+        wall_ns,
+        n_in: None,
+        n_out,
+        bytes_in: None,
+        parse_ns: None,
+        match_ns: None,
         rss_kb_end: Some(rss_peak_kb_now()),
     };
     t.inner.lock().unwrap().push(span);
@@ -756,9 +905,17 @@ pub fn push_synthetic_span(t: &Telemetry, name: &'static str, wall_ns: u64, n_ou
 fn rss_peak_kb_now() -> u64 {
     unsafe {
         let mut u: libc::rusage = std::mem::zeroed();
-        if libc::getrusage(libc::RUSAGE_SELF, &mut u) != 0 { return 0; }
-        #[cfg(target_os = "macos")] { (u.ru_maxrss as u64) / 1024 }
-        #[cfg(not(target_os = "macos"))] { u.ru_maxrss as u64 }
+        if libc::getrusage(libc::RUSAGE_SELF, &mut u) != 0 {
+            return 0;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            (u.ru_maxrss as u64) / 1024
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            u.ru_maxrss as u64
+        }
     }
 }
 
@@ -766,7 +923,10 @@ fn rss_peak_kb_now() -> u64 {
 pub struct OpReport {
     pub name: &'static str,
     pub count: usize,
-    pub p50_ns: u64, pub p95_ns: u64, pub p99_ns: u64, pub mean_ns: u64,
+    pub p50_ns: u64,
+    pub p95_ns: u64,
+    pub p99_ns: u64,
+    pub mean_ns: u64,
     pub total_wall_ns: u64,
     pub wall_window_ns: u64,
     pub total_in: Option<u64>,
@@ -785,14 +945,24 @@ impl OpReport {
         let mut walls: Vec<u64> = spans.iter().map(|s| s.wall_ns).collect();
         walls.sort_unstable();
         let p = |q: f64| -> u64 {
-            if walls.is_empty() { return 0; }
+            if walls.is_empty() {
+                return 0;
+            }
             walls[((walls.len() - 1) as f64 * q).round() as usize]
         };
         let sum_wall: u64 = walls.iter().sum();
-        let mean_ns = if count > 0 { sum_wall / count as u64 } else { 0 };
+        let mean_ns = if count > 0 {
+            sum_wall / count as u64
+        } else {
+            0
+        };
         let earliest = spans.iter().map(|s| s.start_ns).min().unwrap_or(0);
-        let latest   = spans.iter().map(|s| s.start_ns.saturating_add(s.wall_ns)).max().unwrap_or(0);
-        let mut total_in:  Option<u64> = None;
+        let latest = spans
+            .iter()
+            .map(|s| s.start_ns.saturating_add(s.wall_ns))
+            .max()
+            .unwrap_or(0);
+        let mut total_in: Option<u64> = None;
         let mut total_out: Option<u64> = None;
         let mut total_bytes_in: Option<u64> = None;
         let mut total_parse_ns: Option<u64> = None;
@@ -801,11 +971,21 @@ impl OpReport {
         let mut rss_kb_max: Option<u64> = None;
         let mut rss_kb_last: Option<u64> = None;
         for s in spans {
-            if let Some(n) = s.n_in  { total_in  = Some(total_in.unwrap_or(0)  + n); }
-            if let Some(n) = s.n_out { total_out = Some(total_out.unwrap_or(0) + n); }
-            if let Some(b) = s.bytes_in { total_bytes_in = Some(total_bytes_in.unwrap_or(0) + b); }
-            if let Some(p) = s.parse_ns { total_parse_ns = Some(total_parse_ns.unwrap_or(0) + p); }
-            if let Some(m) = s.match_ns { total_match_ns = Some(total_match_ns.unwrap_or(0) + m); }
+            if let Some(n) = s.n_in {
+                total_in = Some(total_in.unwrap_or(0) + n);
+            }
+            if let Some(n) = s.n_out {
+                total_out = Some(total_out.unwrap_or(0) + n);
+            }
+            if let Some(b) = s.bytes_in {
+                total_bytes_in = Some(total_bytes_in.unwrap_or(0) + b);
+            }
+            if let Some(p) = s.parse_ns {
+                total_parse_ns = Some(total_parse_ns.unwrap_or(0) + p);
+            }
+            if let Some(m) = s.match_ns {
+                total_match_ns = Some(total_match_ns.unwrap_or(0) + m);
+            }
             if let Some(r) = s.rss_kb_end {
                 rss_kb_min = Some(rss_kb_min.map(|x| x.min(r)).unwrap_or(r));
                 rss_kb_max = Some(rss_kb_max.map(|x| x.max(r)).unwrap_or(r));
@@ -813,27 +993,40 @@ impl OpReport {
             }
         }
         Self {
-            name, count,
-            p50_ns: p(0.50), p95_ns: p(0.95), p99_ns: p(0.99), mean_ns,
+            name,
+            count,
+            p50_ns: p(0.50),
+            p95_ns: p(0.95),
+            p99_ns: p(0.99),
+            mean_ns,
             total_wall_ns: sum_wall,
             wall_window_ns: latest.saturating_sub(earliest),
-            total_in, total_out,
-            total_bytes_in, total_parse_ns, total_match_ns,
-            rss_kb_min, rss_kb_max, rss_kb_last,
+            total_in,
+            total_out,
+            total_bytes_in,
+            total_parse_ns,
+            total_match_ns,
+            rss_kb_min,
+            rss_kb_max,
+            rss_kb_last,
         }
     }
 }
 
 fn fmt_ns(ns: u64) -> String {
-    if ns >= 1_000_000_000 { format!("{:.2}s",  ns as f64 / 1e9) }
-    else if ns >= 1_000_000 { format!("{:.1}ms", ns as f64 / 1e6) }
-    else if ns >= 1_000     { format!("{:.1}µs", ns as f64 / 1e3) }
-    else                    { format!("{}ns", ns) }
+    if ns >= 1_000_000_000 {
+        format!("{:.2}s", ns as f64 / 1e9)
+    } else if ns >= 1_000_000 {
+        format!("{:.1}ms", ns as f64 / 1e6)
+    } else if ns >= 1_000 {
+        format!("{:.1}µs", ns as f64 / 1e3)
+    } else {
+        format!("{}ns", ns)
+    }
 }
 fn short_name(full: &'static str) -> String {
     full.rsplit("::").next().unwrap_or(full).to_string()
 }
-
 
 // ▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟▙▟
 // ▜▛  § 5   Action / lineage counters (process-globals)              ▜▛
@@ -845,8 +1038,11 @@ pub static LIN: AtomicU64 = AtomicU64::new(0);
 pub fn new_action(kind: ActionKind, parent: Option<(Gen, LineageId)>) -> Action {
     Action {
         gen: GEN.fetch_add(1, Ordering::SeqCst) + 1,
-        parent, kind,
+        parent,
+        kind,
     }
 }
 
-pub fn new_lineage() -> LineageId { LIN.fetch_add(1, Ordering::SeqCst) + 1 }
+pub fn new_lineage() -> LineageId {
+    LIN.fetch_add(1, Ordering::SeqCst) + 1
+}
