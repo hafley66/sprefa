@@ -22,9 +22,9 @@ This means:
 | --- | --- |
 | `rule(:frontend_hooks, OP?, FILE?, REF?);` | declare relation/table |
 | `... > rule(:frontend_hooks, OP, FILE)` | write/next into relation |
-| `... > frontend_hooks.(OP, FILE)` | apply/send grounded values into relation |
-| `... > frontend_hooks(FILE?, OP)` | query relation rows |
-| `... > frontend_hooks(OP, FILE)` | grounded query, predicate-like pass/drop |
+| `... > frontend_hooks(OP, FILE)` | apply/send grounded values into relation |
+| `... > frontend_hooks?(FILE?, OP)` | query relation rows |
+| `... > frontend_hooks?(OP, FILE)` | grounded query, predicate-like pass/drop |
 
 The old `fact` idea maps to an empty-body `rule`: declaration plus imperative row signal/write plus replay/query of the table.
 
@@ -53,12 +53,12 @@ Markers:
 | --- | --- |
 | `TERM?` | hole / setter / output projection. This step writes the term. |
 | `TERM` | grounded read / constraint. This step reads the term. |
-| `rule_name(...)` | query or replay materialized relation rows. |
-| `rule_name.(...)` | apply/send/run. Args must be grounded. |
-| `rule_name!.(...)` | apply/send/run and bypass apply-cache read. |
+| `rule_name?(...)` | query or replay materialized relation rows. |
+| `rule_name(...)` | apply/send/run. Args must be grounded. |
+| `rule_name!(...)` | reserved apply policy override. |
 
-`rule_name?(...)` is not part of the locked V4 surface. Predicate
-behavior is a normal query with no projected holes.
+`rule_name.(...)` is retired for declared rules. The dot remains available
+inside operator names such as `render.markdown`.
 
 Rule calls use Python-style positional and keyword binding against
 declared columns. Positional args bind declared columns by order; kwargs
@@ -66,52 +66,52 @@ bind declared columns by name. A bare same-name `TERM` or `TERM?`
 also binds the declared column with that name, even after kwargs.
 
 ```sprf
-frontend_hooks(FILE?, OP)
-frontend_hooks(FILE: FILE?, OP: OP)
+frontend_hooks?(FILE?, OP)
+frontend_hooks?(FILE: FILE?, OP: OP)
 ```
 
 Query examples:
 
 | Surface | Meaning |
 | --- | --- |
-| `frontend_hooks(FILE?, OP)` | query rows where row `OP = cursor.OP`, project row `FILE` into cursor `FILE` |
-| `frontend_hooks(OP, FILE)` | query rows where both match; emits distinct pass-through output cursors |
-| `frontend_hooks(FILE?, OP: OP)` | same as positional, normalized to column assignments |
+| `frontend_hooks?(FILE?, OP)` | query rows where row `OP = cursor.OP`, project row `FILE` into cursor `FILE` |
+| `frontend_hooks?(OP, FILE)` | query rows where both match; emits distinct pass-through output cursors |
+| `frontend_hooks?(FILE?, OP: OP)` | same as positional, normalized to column assignments |
 
 Apply examples:
 
 | Surface | Meaning |
 | --- | --- |
-| `frontend_hooks.(OP, FILE)` | apply/send/run with grounded `OP` and `FILE` |
-| `frontend_hooks!.(OP, FILE)` | same, skipping apply-cache read |
-| `frontend_hooks.(FILE?, OP)` | invalid: apply cannot accept holes |
+| `frontend_hooks(OP, FILE)` | apply/send/run with grounded `OP` and `FILE` |
+| `frontend_hooks!(OP, FILE)` | reserved for future apply policy override |
+| `frontend_hooks(FILE?, OP)` | invalid: apply cannot accept holes |
 
 Rules:
 
 | Rule | Example |
 | --- | --- |
-| positional args bind declared columns by order | `frontend_hooks(OP, FILE?)` |
-| kwargs bind declared columns by name | `frontend_hooks(OP: OP, FILE: FILE?)` |
-| same-name shorthand can follow kwargs | `rule_a(X?, Y, OUT_A: OUT_A?, OUT_B?)` |
+| positional args bind declared columns by order | `frontend_hooks?(OP, FILE?)` |
+| kwargs bind declared columns by name | `frontend_hooks?(OP: OP, FILE: FILE?)` |
+| same-name shorthand can follow kwargs | `rule_a?(X?, Y, OUT_A: OUT_A?, OUT_B?)` |
 | once a kwarg appears, later non-shorthand positional args are rejected | `frontend_hooks(OP: OP, :literal)` is invalid |
 | duplicate column assignment is rejected | `frontend_hooks(OP, OP: OTHER)` is invalid |
 | unknown kwarg column is rejected | `frontend_hooks(NOPE: X)` is invalid |
 | positional overflow is rejected | more positional args than declared columns is invalid |
-| apply args must be grounded | `frontend_hooks.(OP, FILE)` |
-| apply args cannot be holes | `frontend_hooks.(OP, FILE?)` is invalid |
+| apply args must be grounded | `frontend_hooks(OP, FILE)` |
+| apply args cannot be holes | `frontend_hooks(OP, FILE?)` is invalid |
 
 Positional args are authoring sugar. Lowering should normalize every call into named column assignments before producing SQL or a store write.
 
 ```text
 rule(:frontend_hooks, OP, FILE, REF)
 
-frontend_hooks(FILE?, OP)
+frontend_hooks?(FILE?, OP)
 => FILE: FILE?, OP: OP
 
-frontend_hooks(FILE?, REF: REF)
+frontend_hooks?(FILE?, REF: REF)
 => FILE: FILE?, REF: REF
 
-rule_a(X?, Y, OUT_A: OUT_A?, OUT_B?)
+rule_a?(X?, Y, OUT_A: OUT_A?, OUT_B?)
 => X: X?, Y: Y, OUT_A: OUT_A?, OUT_B: OUT_B?
 ```
 
@@ -159,10 +159,10 @@ The executable implementation keeps legacy `... > rule(:name)` as a whole-cursor
 
 ## Query Calls
 
-`rule_name(...)` is row-producing. It queries the rule table and emits one output cursor per matching row at that point in the pipe.
+`rule_name?(...)` is row-producing. It queries the rule table and emits one output cursor per matching row at that point in the pipe.
 
 ```sprf
-frontend_hooks(FILE?, OP)
+frontend_hooks?(FILE?, OP)
 ```
 
 Plain meaning:
@@ -177,7 +177,7 @@ for each input cursor:
 Grounded query is predicate-like:
 
 ```sprf
-frontend_hooks(OP, FILE)
+frontend_hooks?(OP, FILE)
 ```
 
 Plain meaning:
@@ -190,7 +190,7 @@ zero rows means failure/drop
 
 ## Apply Send Run
 
-`rule_name.(...)` is apply/send/run. All args must be grounded. Holes are
+`rule_name(...)` is apply/send/run. All args must be grounded. Holes are
 illegal at this boundary.
 
 For an empty-body rule:
@@ -198,7 +198,7 @@ For an empty-body rule:
 ```text
 rule(:r, X?, Y?);
 
-r.(X, Y)
+r(X, Y)
   write/send grounded X and Y into relation r
   pass cursor through
 ```
@@ -208,17 +208,16 @@ For a bodied rule:
 ```text
 rule(:r, X?, Y?) { ... }
 
-r.(X, Y)
+r(X, Y)
   run/apply the body with grounded args
   cache read allowed
 
-r!.(X, Y)
-  run/apply the body with grounded args
-  skip apply-cache read
+r!(X, Y)
+  reserved apply policy override
 ```
 
-`!` affects cache policy only. It does not change storage, query,
-subscription, or projection semantics.
+Future `!` is reserved for apply-time cache/storage policy. It should not
+change query, subscription, or projection semantics.
 
 ## Runtime State
 

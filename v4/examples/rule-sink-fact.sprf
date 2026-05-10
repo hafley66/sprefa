@@ -5,7 +5,7 @@ rule(:echo_words, WORD?);
 
 `alpha beta`
   > split(WORD?)` `
-  > words.(WORD);
+  > words(WORD);
 
-words(WORD?)
-  > echo_words.(WORD);
+words?(WORD?)
+  > echo_words(WORD);

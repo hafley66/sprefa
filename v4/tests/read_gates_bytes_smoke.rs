@@ -105,7 +105,7 @@ fn path_literal_resolves_before_read() {
            path`cfg/sprefa.toml`
              > read
              > json(:toml)`{ repos: [ ... { slug: ${SLUG?}, root: ${ROOT?}, remote: ${REMOTE?} } ] }`
-             > repos.(SLUG, ROOT, REMOTE);"#,
+             > repos(SLUG, ROOT, REMOTE);"#,
     );
     assert_eq!(store.len("repos"), 1);
     let rows = store.rows_of("repos");

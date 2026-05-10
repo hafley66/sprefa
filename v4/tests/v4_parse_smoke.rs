@@ -50,14 +50,24 @@ fn host_parse_four_slot_and_diag_shape() {
         "expected at least one parse/syntax-error diag, got: {diags_bad:?}"
     );
 
-    let src_apply = "frontend_hooks!.(OP, FILE);";
+    let src_apply = "frontend_hooks!(OP, FILE);";
     let (pipes_apply, diags_apply) = host_parse(src_apply);
-    assert!(diags_apply.is_empty(), "expected clean dotted apply parse, got diags: {diags_apply:?}");
+    assert!(diags_apply.is_empty(), "expected clean force apply parse, got diags: {diags_apply:?}");
     let call = &pipes_apply[0].steps[0];
     assert_eq!(&*call.name, "frontend_hooks");
     assert!(call.force);
     assert!(!call.predicate);
-    assert!(call.apply);
+    assert!(!call.apply);
+    assert_eq!(call.args.len(), 2);
+
+    let src_query = "frontend_hooks?(OP?, FILE);";
+    let (pipes_query, diags_query) = host_parse(src_query);
+    assert!(diags_query.is_empty(), "expected clean rule query parse, got diags: {diags_query:?}");
+    let call = &pipes_query[0].steps[0];
+    assert_eq!(&*call.name, "frontend_hooks");
+    assert!(!call.force);
+    assert!(call.predicate);
+    assert!(!call.apply);
     assert_eq!(call.args.len(), 2);
 
     let src_force = "db_size_over!(PATH, LIMIT);";

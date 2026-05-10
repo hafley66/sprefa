@@ -13,5 +13,5 @@ rule(:panic_sites, FS?, LO?, HI?) {
     > ast(:rs)`panic!($$$ARGS)`
 };
 
-panic_sites(FS?, LO?, HI?)
+panic_sites?(FS?, LO?, HI?)
   > lsp_warn(:panic_site)`panic! call at ${FS}:${LO}`;

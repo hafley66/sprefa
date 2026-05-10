@@ -148,7 +148,7 @@ async fn render_markdown_aggregate_writes_file() {
         `alpha` > term_bind(:NAME) > rule(:items, NAME: NAME);
         `beta`  > term_bind(:NAME) > rule(:items, NAME: NAME);
 
-        items(NAME?)
+        items?(NAME?)
         > render_markdown`- ${{NAME}}`
         > write_file`{}`;
         "#,
@@ -199,7 +199,7 @@ async fn render_markdown_interpolates_subpipe_links() {
           > term_bind(:FILE)
           > `42`
           > term_bind(:LO)
-          > important_types.(TYPE, FILE, LO);
+          > important_types(TYPE, FILE, LO);
 
         `OrderStore`
           > term_bind(:TYPE)
@@ -207,9 +207,9 @@ async fn render_markdown_interpolates_subpipe_links() {
           > term_bind(:FILE)
           > `7`
           > term_bind(:LO)
-          > important_types.(TYPE, FILE, LO);
+          > important_types(TYPE, FILE, LO);
 
-        important_types(TYPE?, FILE?, LO?)
+        important_types?(TYPE?, FILE?, LO?)
         > render_markdown`- ${{ TYPE > `**${{&.value}}**` }} at ${{ FILE > `[${{&.value}}:${{LO}}](${{&.value}}#L${{LO}})` }}
 `
         > write_file`{}`;
@@ -498,9 +498,9 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
           > term_bind(:OP)
           > `openapi.yaml`
           > term_bind(:SPEC)
-          > openapi_ops.(OP, SPEC);
+          > openapi_ops(OP, SPEC);
 
-        openapi_ops(OP?, SPEC?)
+        openapi_ops?(OP?, SPEC?)
           > sql`
               SELECT input.__cursor_idx, input.OP
               FROM input
@@ -510,7 +510,7 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
                 WHERE frontend_hooks.OP = ${OP}
               )
             `
-          > missing_hooks.(OP);
+          > missing_hooks(OP);
     "#).unwrap();
 
     {
@@ -545,15 +545,15 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
           > term_bind(:OP)
           > `openapi.yaml`
           > term_bind(:SPEC)
-          > openapi_ops.(OP, SPEC);
+          > openapi_ops(OP, SPEC);
 
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks.(OP, FILE);
+          > frontend_hooks(OP, FILE);
 
-        openapi_ops(OP?, SPEC?)
+        openapi_ops?(OP?, SPEC?)
           > sql`
               SELECT input.__cursor_idx, input.OP
               FROM input
@@ -563,7 +563,7 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
                 WHERE frontend_hooks.OP = ${OP}
               )
             `
-          > missing_hooks.(OP);
+          > missing_hooks(OP);
     "#).unwrap();
 
     {

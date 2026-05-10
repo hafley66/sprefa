@@ -42,15 +42,15 @@ fn run_pipes(src: &str) -> Arc<dyn FactStore<Cursor>> {
 }
 
 #[test]
-fn declared_rule_force_without_apply_is_rejected() {
+fn declared_rule_force_apply_policy_is_reserved() {
     let diags = walk_diags(r#"
         rule(:frontend_hooks);
         frontend_hooks!();
     "#);
 
     assert!(
-        diags.iter().any(|d| d.code.as_ref() == "lower/rule-force-unsupported"),
-        "expected lower/rule-force-unsupported diag, got {diags:?}"
+        diags.iter().any(|d| d.code.as_ref() == "lower/rule-force-reserved"),
+        "expected lower/rule-force-reserved diag, got {diags:?}"
     );
 }
 
@@ -135,7 +135,7 @@ fn declared_rule_call_projects_matching_rows() {
 
         `getUser`
           > term_bind(:OP)
-          > frontend_hooks(OP, FILE?)
+          > frontend_hooks?(OP, FILE?)
           > rule(:hook_hits);
     "#;
 
@@ -160,12 +160,12 @@ fn rule_call_allows_kwarg_then_same_name_shorthand() {
           > term_bind(:OUT_A)
           > `b-val`
           > term_bind(:OUT_B)
-          > rule_a.(X, Y, OUT_A, OUT_B);
+          > rule_a(X, Y, OUT_A, OUT_B);
 
         `y-val`
           > term_bind(:Y)
-          > rule_a(X?, Y, OUT_A: OUT_A?, OUT_B?)
-          > hits.(X, Y, OUT_A, OUT_B);
+          > rule_a?(X?, Y, OUT_A: OUT_A?, OUT_B?)
+          > hits(X, Y, OUT_A, OUT_B);
     "#;
 
     let store = run_pipes(src);
@@ -184,7 +184,7 @@ fn rule_call_rejects_non_shorthand_positional_after_kwarg() {
 
         `y-val`
           > term_bind(:Y)
-          > rule_a(Y: Y, `literal`);
+          > rule_a?(Y: Y, `literal`);
     "#);
 
     assert!(
@@ -205,14 +205,27 @@ fn declared_empty_rule_apply_rejects_holes() {
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks.(OP: OP, FILE: FILE?)
+          > frontend_hooks(OP: OP, FILE: FILE?)
           > rule(:hook_hits, OP: OP, FILE: FILE);
     "#;
 
     let diags = walk_diags(src);
     assert!(
         diags.iter().any(|d| d.code.as_ref() == "lower/rule-apply"),
-        "expected lower/rule-apply diag for TERM? in dotted apply, got {diags:?}"
+        "expected lower/rule-apply diag for TERM? in apply, got {diags:?}"
+    );
+}
+
+#[test]
+fn declared_rule_dotted_apply_is_rejected() {
+    let diags = walk_diags(r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        `getUser` > term_bind(:OP) > `src/hooks.ts` > term_bind(:FILE) > frontend_hooks.(OP, FILE);
+    "#);
+
+    assert!(
+        diags.iter().any(|d| d.code.as_ref() == "lower/rule-dotted-apply"),
+        "expected lower/rule-dotted-apply diag, got {diags:?}"
     );
 }
 
@@ -226,7 +239,7 @@ fn declared_empty_rule_apply_writes_and_passes_through_with_grounded_args() {
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks.(OP: OP, FILE: FILE)
+          > frontend_hooks(OP: OP, FILE: FILE)
           > rule(:hook_hits, OP: OP, FILE: FILE);
     "#;
 
@@ -253,7 +266,7 @@ fn declared_rule_query_does_not_write_empty_rule() {
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks(OP, FILE)
+          > frontend_hooks?(OP, FILE)
           > rule(:checked_hooks);
     "#;
 
@@ -273,19 +286,19 @@ fn declared_rule_grounded_query_dedupes_same_output_cursor() {
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks.(OP, FILE);
+          > frontend_hooks(OP, FILE);
 
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks.(OP, FILE);
+          > frontend_hooks(OP, FILE);
 
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks(OP, FILE)
+          > frontend_hooks?(OP, FILE)
           > rule(:checked_hooks);
     "#;
 
@@ -297,14 +310,17 @@ fn declared_rule_grounded_query_dedupes_same_output_cursor() {
 }
 
 #[test]
-fn declared_rule_predicate_syntax_is_rejected() {
-    let diags = walk_diags(r#"
+fn declared_rule_predicate_syntax_queries_relation() {
+    let src = r#"
         rule(:frontend_hooks, OP?);
-        `getUser` > term_bind(:OP) > frontend_hooks?(OP);
-    "#);
+        rule(:checked_hooks, OP?);
 
-    assert!(
-        diags.iter().any(|d| d.code.as_ref() == "lower/rule-predicate-unsupported"),
-        "expected lower/rule-predicate-unsupported diag, got {diags:?}"
-    );
+        `getUser` > term_bind(:OP) > frontend_hooks(OP);
+        `getUser` > term_bind(:OP) > frontend_hooks?(OP) > checked_hooks(OP);
+    "#;
+
+    let store = run_pipes(src);
+    let rows = store.rows_of("checked_hooks");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("OP"), Some("getUser"));
 }

@@ -6,4 +6,4 @@ fs
   > glob`**/*.sprf`
   > read
   > re`rule`
-  > rule_mentions.(FS, MATCH, LO, HI);
+  > rule_mentions(FS, MATCH, LO, HI);

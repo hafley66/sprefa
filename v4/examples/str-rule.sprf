@@ -4,4 +4,4 @@ rule(:greet, MSG?);
 
 `hello world`
   > term_bind(:MSG)
-  > greet.(MSG);
+  > greet(MSG);

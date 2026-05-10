@@ -19,5 +19,5 @@ fs
           pattern: "fn ${NAME?}() {}"
     `
   > term_bind(:DOC)
-  > documented_fns.(NAME, DOC, FS, LO)
+  > documented_fns(NAME, DOC, FS, LO)
   > lsp_info[NAME](:documented_fn)`documented function ${NAME}`;

@@ -13,7 +13,7 @@ rule(:doc_rows, BODY?);
   > term_bind(:FILE)
   > `42`
   > term_bind(:LO)
-  > important_types.(TYPE, FILE, LO);
+  > important_types(TYPE, FILE, LO);
 
 `OrderStore`
   > term_bind(:TYPE)
@@ -21,10 +21,10 @@ rule(:doc_rows, BODY?);
   > term_bind(:FILE)
   > `7`
   > term_bind(:LO)
-  > important_types.(TYPE, FILE, LO);
+  > important_types(TYPE, FILE, LO);
 
-important_types(TYPE?, FILE?, LO?)
+important_types?(TYPE?, FILE?, LO?)
   > render.markdown`- ${ TYPE > `**${&.value}**` } at ${ FILE > `[${&.value}:${LO}](${&.value}#L${LO})` }
 `
   > term_bind(:BODY)
-  > doc_rows.(BODY);
+  > doc_rows(BODY);

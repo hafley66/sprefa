@@ -17,6 +17,6 @@ rule(:produce_flow_words) {
 # Current relation read path. This should read rows materialized above
 # when run in a single app state.
 rule(:produce_flow_echo) {
-  flow_words(WORD?)
+  flow_words?(WORD?)
   > rule(:flow_echo, WORD: WORD)
 };

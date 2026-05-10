@@ -11,21 +11,21 @@ rule(:missing_frontend_hooks, OP?);
   > term_bind(:OP)
   > `openapi.yaml`
   > term_bind(:SPEC)
-  > openapi_ops.(OP, SPEC);
+  > openapi_ops(OP, SPEC);
 
 `listPets`
   > term_bind(:OP)
   > `openapi.yaml`
   > term_bind(:SPEC)
-  > openapi_ops.(OP, SPEC);
+  > openapi_ops(OP, SPEC);
 
 `getUser`
   > term_bind(:OP)
   > `src/hooks.ts`
   > term_bind(:FILE)
-  > frontend_hooks.(OP, FILE);
+  > frontend_hooks(OP, FILE);
 
-openapi_ops(OP?, SPEC?)
+openapi_ops?(OP?, SPEC?)
   > sql`
       SELECT input.__cursor_idx, input.OP
       FROM input
@@ -35,5 +35,5 @@ openapi_ops(OP?, SPEC?)
         WHERE frontend_hooks.OP = ${OP}
       )
     `
-  > missing_frontend_hooks.(OP)
+  > missing_frontend_hooks(OP)
   > lsp_warn(:missing_frontend_hook)`missing frontend hook for ${OP}`;

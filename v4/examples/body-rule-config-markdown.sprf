@@ -14,7 +14,7 @@ rule(:config_repos, SLUG?, ROOT?) {
 `v4/examples/body-rule-config-repos.md`
   > render.markdown`# Body Rule Config Repos
 
-${ config_repos(SLUG?, ROOT?)
+${ config_repos?(SLUG?, ROOT?)
   > render.markdown`- ${SLUG}: ${ROOT}
 `
 }

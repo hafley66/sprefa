@@ -11,29 +11,29 @@ rule(:api_responses, PATH?, METHOD?, STATUS?, DESC?);
 `v4/examples/openapi-cardinality.json`
   > read
   > json`{ info: { title: $TITLE, version: $VERSION } }`
-  > api_info.(TITLE, VERSION);
+  > api_info(TITLE, VERSION);
 
 `v4/examples/openapi-cardinality.json`
   > read
   > json`{ paths: { $PATH: { $METHOD: { operationId: $OP, summary: $SUMMARY } } } }`
-  > api_ops.(PATH, METHOD, OP, SUMMARY);
+  > api_ops(PATH, METHOD, OP, SUMMARY);
 
 `v4/examples/openapi-cardinality.json`
   > read
   > json`{ paths: { $PATH: { $METHOD: { responses: { $STATUS: { description: $DESC } } } } } }`
-  > api_responses.(PATH, METHOD, STATUS, DESC);
+  > api_responses(PATH, METHOD, STATUS, DESC);
 
 `v4/examples/openapi-cardinality.md`
   > render.markdown`# OpenAPI Cardinality Demo
 
-${ api_info(TITLE?, VERSION?)
+${ api_info?(TITLE?, VERSION?)
   > render.markdown`> **${TITLE}** version ${VERSION}
 `
 }
 
 ## Operations
 
-${ api_ops(PATH?, METHOD?, OP?, SUMMARY?)
+${ api_ops?(PATH?, METHOD?, OP?, SUMMARY?)
   > render.markdown`### ${ METHOD > `**${&.value}**` } ${ PATH > `**${&.value}**` }
 
 - Operation: ${ OP > `**${&.value}**` }

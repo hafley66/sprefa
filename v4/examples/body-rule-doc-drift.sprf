@@ -22,7 +22,7 @@ rule(:actual_docs, DOC?) {
 };
 
 rule(:missing_docs, DOC?) {
-  expected_docs(DOC?)
+  expected_docs?(DOC?)
     > sql`
         SELECT input.__cursor_idx, input.DOC
         FROM input
@@ -34,5 +34,5 @@ rule(:missing_docs, DOC?) {
       `
 };
 
-missing_docs(DOC?)
+missing_docs?(DOC?)
   > lsp_warn(:missing_doc)`expected doc is missing: ${DOC}`;

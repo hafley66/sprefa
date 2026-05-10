@@ -132,7 +132,7 @@ fn empty_rule_fully_bound_apply_sends_identity() {
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks.(OP, FILE)
+          > frontend_hooks(OP, FILE)
           > rule(:seen, OP: OP, FILE: FILE);
     "#);
 
@@ -213,7 +213,7 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
           > term_bind(:FILE)
           > rule(:frontend_hooks, OP: OP, FILE: FILE);
 
-        openapi_ops(OP: OP?)
+        openapi_ops?(OP: OP?)
           > sql`
               SELECT input.__cursor_idx, input.OP, frontend_hooks.FILE AS value
               FROM input
@@ -513,7 +513,7 @@ fn bodied_rule_apply_runs_body_and_emits_outputs() {
 
         `getUser`
           > term_bind(:OP)
-          > derive_hook.(OP)
+          > derive_hook(OP)
           > rule(:hook_hits, OP: OP, FILE: FILE);
     "#);
 
@@ -533,10 +533,10 @@ fn bodied_rule_query_reads_table_without_running_body() {
 
         `getUser`
           > term_bind(:OP)
-          > derive_hook(OP, FILE?)
+          > derive_hook?(OP, FILE?)
           > rule(:hook_hits, OP: OP, FILE: FILE);
     "#);
 
     let rows = store.rows_of("hook_hits");
-    assert_eq!(rows.len(), 0, "non-dotted rule query should not run the body");
+    assert_eq!(rows.len(), 0, "question-suffixed rule query should not run the body");
 }

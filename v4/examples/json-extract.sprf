@@ -4,4 +4,4 @@ rule(:people, NAME?, AGE?);
 
 `{"name":"ada","age":37}`
   > json`{ name: $NAME, age: $AGE }`
-  > people.(NAME, AGE);
+  > people(NAME, AGE);

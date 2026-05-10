@@ -8,5 +8,5 @@ rule(:todo_hits, HIT?);
 sh`git grep -n -E 'TODO|FIXME' -- ':!.beads' ':!chat_log' ':!v4/target' ':!target' || true`
   > split(HIT?)`
 `
-  > todo_hits.(HIT)
+  > todo_hits(HIT)
   > lsp_info(:todo_hit)`todo/fixme: ${HIT}`;

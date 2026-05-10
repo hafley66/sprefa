@@ -12,12 +12,12 @@ rule(:config_repos, SLUG?, ROOT?);
 path`v4/examples/sprefa.config.example.toml`
   > read
   > json(:toml)`{ repos: { slug: ${SLUG?}, root: ${ROOT?} } }`
-  > config_repos.(SLUG, ROOT);
+  > config_repos(SLUG, ROOT);
 
 `v4/examples/config-repos.md`
   > render.markdown`# Config Repos
 
-${ config_repos(SLUG?, ROOT?)
+${ config_repos?(SLUG?, ROOT?)
   > render.markdown`- ${SLUG}: ${ROOT}
 `
 }

@@ -12,5 +12,5 @@ rule(:doc_regions, FS?, LO?, HI?);
 path`v4/docs/v4-self-doc-architecture.md`
   > read
   > comment(`<!-- sprf:self-doc:start -->\n`, `\n<!-- sprf:self-doc:end -->`)
-  > doc_regions.(FS, LO, HI)
+  > doc_regions(FS, LO, HI)
   > lsp_info(:self_doc_region)`self-doc generated region ${FS}:${LO}-${HI}`;

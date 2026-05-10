@@ -130,7 +130,12 @@ fn analyze_pipe(
             }
         }
 
-        if op.apply {
+        let bare_rule_apply = !op.predicate
+            && !op.force
+            && !op.apply
+            && reg.get(&op.name).is_none()
+            && rule_decls.contains_key(&op.name);
+        if op.apply || bare_rule_apply {
             if let Some(decl) = rule_decls.get(&op.name) {
                 if decl.has_body {
                     binds.extend(decl.cols.iter().cloned());

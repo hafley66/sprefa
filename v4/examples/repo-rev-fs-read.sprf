@@ -10,4 +10,4 @@ repo()
   > glob`**/Cargo.toml`
   > read
   > re`(?m)^name\s*=\s*"[^"]+"`
-  > cargo_name_lines.(FS, MATCH);
+  > cargo_name_lines(FS, MATCH);

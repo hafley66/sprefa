@@ -244,14 +244,14 @@ rule(:api_ops, PATH?, METHOD?, OP?);
 rule(:api_responses, PATH?, METHOD?, STATUS?, DESC?);
 rule(:rows, OP?, STATUS?, DESC?);
 
-`/pets` > PATH? > `get` > METHOD? > `listPets` > OP? > api_ops.(PATH, METHOD, OP);
-`/pets` > PATH? > `get` > METHOD? > `200` > STATUS? > `ok` > DESC? > api_responses.(PATH, METHOD, STATUS, DESC);
-`/pets` > PATH? > `get` > METHOD? > `401` > STATUS? > `auth` > DESC? > api_responses.(PATH, METHOD, STATUS, DESC);
+`/pets` > PATH? > `get` > METHOD? > `listPets` > OP? > api_ops(PATH, METHOD, OP);
+`/pets` > PATH? > `get` > METHOD? > `200` > STATUS? > `ok` > DESC? > api_responses(PATH, METHOD, STATUS, DESC);
+`/pets` > PATH? > `get` > METHOD? > `401` > STATUS? > `auth` > DESC? > api_responses(PATH, METHOD, STATUS, DESC);
 
-api_ops(PATH?, METHOD?, OP?)
-  > api_responses(PATH, METHOD, STATUS?, DESC?)
+api_ops?(PATH?, METHOD?, OP?)
+  > api_responses?(PATH, METHOD, STATUS?, DESC?)
   > order_num(STATUS)
-  > rows.(OP, STATUS, DESC);
+  > rows(OP, STATUS, DESC);
 ```
 
 Expected rows:
@@ -300,7 +300,7 @@ pub struct RelRuleReadMarker {
 }
 ```
 
-Do this without changing rule apply/write semantics. Dotted apply remains imperative write/run. Non-dotted rule call remains query/read.
+Do this without changing rule apply/write semantics. Bare rule call applies/writes/runs. Question-suffixed rule call queries/reads.
 
 - [ ] **Step 4: Add a pipe fusion pass before final lowering or as a lower-time chain rewrite**
 
@@ -373,11 +373,11 @@ Implement only the low-decision ops first:
 Example:
 
 ```sprf
-api_ops(PATH?, METHOD?, OP?)
-  > api_responses(PATH, METHOD, STATUS?, DESC?)
+api_ops?(PATH?, METHOD?, OP?)
+  > api_responses?(PATH, METHOD, STATUS?, DESC?)
   > where_eq(STATUS, `200`)
   > limit(1)
-  > rows.(OP, STATUS, DESC);
+  > rows(OP, STATUS, DESC);
 ```
 
 Expected: only the `200` row emits.
@@ -387,11 +387,11 @@ Expected: only the `200` row emits.
 Example:
 
 ```sprf
-api_ops(PATH?, METHOD?, OP?)
-  > api_responses(PATH, METHOD, STATUS?, DESC?)
+api_ops?(PATH?, METHOD?, OP?)
+  > api_responses?(PATH, METHOD, STATUS?, DESC?)
   > where_num_ge(STATUS, `400`)
   > order_num(STATUS)
-  > rows.(OP, STATUS, DESC);
+  > rows(OP, STATUS, DESC);
 ```
 
 Expected: only `400+` rows emit in numeric order.
@@ -783,7 +783,7 @@ NODE_LO/HI cover the object range
 | SQL becomes the real language by accident | Keep raw `sql`` as escape hatch; add terse ops only for common clauses. |
 | LSP schema gets stale | Build schema from current open document parse + declared rule tables, not global cache first. |
 | Numeric semantics drift | Keep numeric ops explicit: `where_num_*`, `order_num*`. |
-| Rule query and rule apply blur again | Non-dotted rule call reads table. Dotted rule call writes/runs. Do not add predicate punctuation. |
+| Rule query and rule apply blur again | `rule?(...)` reads table. `rule(...)` writes/runs. `rule!(...)` stays reserved for policy. |
 | Render holes hide expensive queries | LSP hover should show “hole runs relation query, emits N rows from last analysis”. |
 | Forking explodes support counts | Branch id must become part of cursor support identity. |
 
@@ -798,4 +798,3 @@ These need lock-in before implementation starts.
 2. Numeric/query predicate syntax: use explicit boring ops like `where_num_ge(STATUS, \`400\`)`, or accept an expression parser now with `where(STATUS >= \`400\`)`?
 
 3. JSON whole-subtree capture syntax: use `$$NODE`, `${NODE?}`, or another marker for “bind the raw matched object/array slice plus byte range”?
-

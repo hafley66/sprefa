@@ -16,12 +16,12 @@ fs
           pattern: "fn ${NAME?}($$$ARGS) { $$$BODY }"
     `
   > term_bind(:DOC)
-  > rust_doc_items.(NAME, DOC, FS, LO);
+  > rust_doc_items(NAME, DOC, FS, LO);
 
 `v4/examples/rust-doc-ast-yaml-map.md`
   > render.markdown`# Rust Doc AST YAML Map
 
-${ rust_doc_items(NAME?, DOC?, FS?, LO?)
+${ rust_doc_items?(NAME?, DOC?, FS?, LO?)
   > render.markdown`## ${NAME}
 
 [${FS} byte ${LO}](${FS})

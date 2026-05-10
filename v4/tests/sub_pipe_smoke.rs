@@ -61,11 +61,11 @@ fn subpipe_can_start_with_term_sugar_step() {
         rule(:types, TYPE?);
         rule(:docs, BODY?);
 
-        `UserService` > TYPE? > types.(TYPE);
-        types(TYPE?)
+        `UserService` > TYPE? > types(TYPE);
+        types?(TYPE?)
           > render_markdown`${ TYPE > `**${&.value}**` }`
           > BODY?
-          > docs.(BODY);
+          > docs(BODY);
     "#;
     let store = run(src);
     let rows = store.rows_of("docs");
@@ -82,7 +82,7 @@ fn render_holes_can_nest_multiple_levels() {
           > NAME?
           > render_markdown`outer ${ NAME > render_markdown`mid ${ NAME > render_markdown`inner ${&.value}` }` }`
           > BODY?
-          > docs.(BODY);
+          > docs(BODY);
     "#;
     let store = run(src);
     let rows = store.rows_of("docs");

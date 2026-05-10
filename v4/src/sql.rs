@@ -569,16 +569,10 @@ impl OperatorDef for SqlDef {
 }
 
 pub fn rule_table_call_pipe(
-    ctx:       &LowerCtx,
-    table:     &str,
-    predicate: bool,
-    args:      &[CallArg],
+    ctx:   &LowerCtx,
+    table: &str,
+    args:  &[CallArg],
 ) -> Result<Pipe<Cursor>, LowerError> {
-    if predicate {
-        return Err(LowerError::Unknown(format!(
-            "{table}?(...): rule predicate syntax is outside the locked V4 surface; use a grounded {table}(...) relation query"
-        )));
-    }
     let cols = ctx.store.declared_cols(table).ok_or_else(|| {
         LowerError::Unknown(format!("rule table `{table}` is not declared"))
     })?;
@@ -821,7 +815,7 @@ fn grounded_write_value(table: &str, value: Value) -> Result<WriteValue, LowerEr
                 Ok(WriteValue::Term(term.clone()))
             } else if pipe.binds_terms().first().is_some() {
                 Err(LowerError::Unknown(format!(
-                    "{table}.(...): rule apply args must be grounded; TERM? holes are only valid in relation queries"
+                    "{table}(...): rule apply args must be grounded; TERM? holes are only valid in relation queries"
                 )))
             } else {
                 Err(LowerError::Unknown(

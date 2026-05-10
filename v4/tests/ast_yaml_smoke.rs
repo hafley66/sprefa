@@ -72,7 +72,7 @@ fs
           inside:
             kind: mod_item
     `
-  > hits.(X);
+  > hits(X);
 "#,
     );
 
@@ -94,7 +94,7 @@ rule(:hits, NAME?);
 fs
   > glob`**/*.rs`
   > ast_yaml(:rs)`pattern: "fn ${NAME?}() {}"`
-  > hits.(NAME);
+  > hits(NAME);
 "#,
     );
 
@@ -130,7 +130,7 @@ fs
           pattern: "fn ${NAME?}() {}"
     `
   > term_bind(:DOC)
-  > docs.(NAME, DOC);
+  > docs(NAME, DOC);
 "#,
     );
 

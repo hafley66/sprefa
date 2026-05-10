@@ -250,27 +250,55 @@ pub fn walk_op(
         }
     }
 
-    if op.predicate && reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+    let declared_rule_call =
+        reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some();
+
+    if op.force && declared_rule_call {
         diags.push(
-            Diag::error("lower/rule-predicate-unsupported",
-                format!("{}?(...): rule predicate syntax is outside the locked V4 surface; use a grounded {}(...) relation query", op.name, op.name))
+            Diag::error("lower/rule-force-reserved",
+                format!("{}!(...): rule apply policy override is reserved; use {}(...) for default apply", op.name, op.name))
                 .with_span(op.span.lo, op.span.hi)
         );
         return None;
     }
 
-    if op.force && !op.apply && reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+    if op.apply && declared_rule_call {
         diags.push(
-            Diag::error("lower/rule-force-unsupported",
-                format!("{}!: force is only valid with dotted apply as {}!.(...)", op.name, op.name))
+            Diag::error("lower/rule-dotted-apply",
+                format!("{}.(...): dotted rule apply is retired; use {}(...) for default apply", op.name, op.name))
                 .with_span(op.span.lo, op.span.hi)
         );
         return None;
     }
 
-    if op.apply && reg.get(&lower_name).is_none() && ctx.get_rule(&op.name).is_some() {
+    // Declared rule-table query. `?` is the visible pull/materialize
+    // marker for relation reads:
+    //   rule_name?(A, B?) -> row-producing query/project
+    //   rule_name?(A, B)  -> grounded relation query
+    if op.predicate && declared_rule_call {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
-        match crate::sql::rule_body_call_pipe(ctx, &op.name, op.force, &arg_vals) {
+        match crate::sql::rule_table_call_pipe(ctx, &op.name, &arg_vals) {
+            Ok(pipe) => {
+                let pipe = match &ctx.probe {
+                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
+                    None    => pipe,
+                };
+                return Some(pipe);
+            }
+            Err(e) => {
+                diags.push(
+                    Diag::error("lower/rule-call", e.to_string())
+                        .with_span(op.span.lo, op.span.hi)
+                );
+                return None;
+            }
+        }
+    }
+
+    // Declared rule apply/send. Bare call is the visible push/run/write marker.
+    if declared_rule_call && ctx.get_rule(&op.name).is_some() {
+        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
+        match crate::sql::rule_body_call_pipe(ctx, &op.name, false, &arg_vals) {
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
                     Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
@@ -288,7 +316,7 @@ pub fn walk_op(
         }
     }
 
-    if op.apply && reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
+    if declared_rule_call {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
         match crate::sql::rule_apply_write_pipe(ctx, &op.name, &arg_vals) {
             Ok(pipe) => {
@@ -301,30 +329,6 @@ pub fn walk_op(
             Err(e) => {
                 diags.push(
                     Diag::error("lower/rule-apply", e.to_string())
-                        .with_span(op.span.lo, op.span.hi)
-                );
-                return None;
-            }
-        }
-    }
-
-    // Declared rule-table calls. A declared table name in call position
-    // is a relation read over that rule table:
-    //   rule_name(A, B?)  -> row-producing query/project
-    //   rule_name(A, B)   -> grounded relation query
-    if reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some() {
-        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
-        match crate::sql::rule_table_call_pipe(ctx, &op.name, false, &arg_vals) {
-            Ok(pipe) => {
-                let pipe = match &ctx.probe {
-                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
-                    None    => pipe,
-                };
-                return Some(pipe);
-            }
-            Err(e) => {
-                diags.push(
-                    Diag::error("lower/rule-call", e.to_string())
                         .with_span(op.span.lo, op.span.hi)
                 );
                 return None;
