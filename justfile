@@ -8,6 +8,7 @@ export CC := "cc"
 # parse.md §14.4 — YOLO Phase 1: parser.c is committed per op, regen is manual.
 #
 #   just regen-host           # v3 host grammar
+#   just v4-regen-host        # v4 host grammar
 #   just regen-op glob        # single pattern op
 #   just regen-grammars       # all pattern ops under pipeline/src/ops/
 #   just regen-all            # host + every pattern op
@@ -28,6 +29,9 @@ regen-grammars:
 
 regen-all: regen-host regen-grammars
 
+v4-regen-host:
+    cd v4/crates/tree-sitter-sprefa && tree-sitter generate
+
 # -----------------------------------------------------------------------------
 # cargo shortcuts
 # -----------------------------------------------------------------------------
@@ -45,11 +49,22 @@ build:
 v4-test:
     cargo test --manifest-path v4/Cargo.toml
 
+v4-release:
+    cargo build --manifest-path v4/Cargo.toml --release
+
+v4-release-test: v4-test v4-release
+
 v4-target-tests:
     cargo test --manifest-path v4/Cargo.toml --test rule_future_semantics_target -- --ignored
 
 v4-v3-parity-targets:
     cargo test --manifest-path v4/Cargo.toml --test v3_parity_target
+
+v4-render-markdown-test:
+    cargo test --manifest-path v4/Cargo.toml --test v4_parse_smoke host_parse_four_slot_and_diag_shape
+    cargo test --manifest-path v4/Cargo.toml --test v3_parity_target render_dot_markdown_alias_writes_file
+    cargo test --manifest-path v4/Cargo.toml --test lsp_hover_smoke lsp_hover_inside_render_dot_markdown_body_uses_markdown_provider
+    cargo test --offline --manifest-path v4/crates/sprefa-lsp/Cargo.toml render_dot_markdown_body_emits_tokens
 
 v4-flow-smoke:
     cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/lsp-flow-smoke.sprf --show-rows
@@ -89,8 +104,11 @@ v4-no-ghcache-test:
 v4-lsp-build:
     cargo build --manifest-path v4/crates/sprefa-lsp/Cargo.toml --bin sprefa-lsp
 
+v4-lsp-release:
+    cargo build --offline --manifest-path v4/crates/sprefa-lsp/Cargo.toml --release
+
 v4-lsp-test:
-    cargo test --manifest-path v4/crates/sprefa-lsp/Cargo.toml
+    cargo test --offline --manifest-path v4/crates/sprefa-lsp/Cargo.toml
 
 v4-app-host-test:
     cargo test --manifest-path v4/app_host/Cargo.toml
@@ -98,7 +116,18 @@ v4-app-host-test:
 v4-vscode-compile:
     cd v4/editors/vscode && npm run compile
 
+v4-vscode-package: v4-vscode-compile
+    cd v4/editors/vscode && vsce package --allow-missing-repository --no-git-tag-version
+
 v4-vscode-install:
     cd v4/editors/vscode && ./install.sh
+
+v4-render-markdown-examples: v4-release
+    ./v4/target/release/sprefa-run v4/examples/self-doc-markdown-inject.sprf --root . --show-rows
+    ./v4/target/release/sprefa-run v4/examples/openapi-cardinality-markdown.sprf --root . --show-rows
+    ./v4/target/release/sprefa-run v4/examples/rust-doc-ast-yaml-map.sprf --root . --show-rows
+    ./v4/target/release/sprefa-run v4/examples/render-markdown-subpipe-links.sprf --root . --show-rows
+
+v4-release-workflow: v4-test v4-lsp-test v4-release v4-lsp-release v4-vscode-package v4-render-markdown-examples
 
 v4-dogfood: v4-flow-smoke v4-lsp-build
