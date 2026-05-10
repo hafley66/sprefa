@@ -52,13 +52,13 @@ v4-test:
 v4-release:
     cargo build --manifest-path v4/Cargo.toml --release
 
-v4-bench-linux LINUX=".bench/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
-    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern "{{PATTERN}}" --lang c --mode bare
+v4-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
+    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare
 
-v4-bench-linux-read LINUX=".bench/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
-    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern "{{PATTERN}}" --lang c --mode bare --materialize-read
+v4-bench-linux-read LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
+    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --materialize-read
 
-v4-bench-linux-sprf LINUX=".bench/linux":
+v4-bench-linux-sprf LINUX="v3/tests/smoke/.fixtures/linux":
     ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows
 
 v4-release-test: v4-test v4-release
