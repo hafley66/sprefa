@@ -35,9 +35,22 @@ use crate::config::SprfConfig;
 use crate::compile::lower::op_def::DslInterp;
 use crate::source::{resolve_path_text, SourceReader};
 use crate::store::SprfStore;
-use crate::{Coord, Cursor, CursorValue, Interner, WhereBytesId};
+use crate::{Coord, Cursor, CursorValue, Interner, WhereBytes, WhereBytesId};
 
 pub const FILE_DOMAIN: &str = "file";
+
+fn stamp_source_value(child: &mut Cursor, store: &SprfStore, coord: Coord, slice: &str) -> WhereBytesId {
+    let value_id = store.intern_string(slice);
+    let where_bytes = store.intern_where_bytes(WhereBytes {
+        string: value_id,
+        ..WhereBytes::from(coord)
+    });
+    child.at = where_bytes.into();
+    child.cursor_value = CursorValue::WhereBytes(where_bytes);
+    child.value = Arc::<str>::from(slice);
+    child.value_id = value_id;
+    where_bytes
+}
 
 pub fn file_dirty_key(path: impl AsRef<std::path::Path>) -> NextKey {
     let path = path.as_ref().to_string_lossy();
@@ -663,14 +676,11 @@ impl Component for AstNmComponent {
                         };
                         let slice = src.get(r.start..r.end).unwrap_or("");
                         // Focal coord identifies the match itself.
-                        child.at = store.intern_ref(coord);
-                        child.cursor_value = CursorValue::WhereBytes(WhereBytesId::from(child.at));
-                        child.value = Arc::<str>::from(slice);
-                        child.value_id = store.intern_string(slice);
+                        let where_bytes = stamp_source_value(&mut child, store, coord, slice);
                         store.observe_string(
                             child.value_id,
                             "ast_match",
-                            WhereBytesId::from(child.at),
+                            where_bytes,
                             "",
                             0,
                         );
@@ -793,13 +803,11 @@ impl Component for AstYamlComponent {
                         repo, rev, fs: file_id,
                         lo: r.start as u32, hi: r.end as u32,
                     };
-                    child.at = store.intern_ref(coord);
-                    child.cursor_value = CursorValue::WhereBytes(WhereBytesId::from(child.at));
-                    child.value_id = store.intern_string(slice);
+                    let where_bytes = stamp_source_value(&mut child, store, coord, slice);
                     store.observe_string(
                         child.value_id,
                         "ast_yaml_match",
-                        WhereBytesId::from(child.at),
+                        where_bytes,
                         "",
                         0,
                     );
@@ -907,8 +915,7 @@ impl Component for MultiAstNmComponent {
                             lo: r.start as u32, hi: r.end as u32,
                         };
                         let slice = src.get(r.start..r.end).unwrap_or("");
-                        child.at = store.intern_ref(coord);
-                        child.value_id = store.intern_string(slice);
+                        stamp_source_value(&mut child, store, coord, slice);
                         child.set_at("MATCH", slice, coord, store);
                         // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
                         child.set("MATCH_LO", coord.lo.to_string());
@@ -2096,8 +2103,7 @@ impl Component for CommentComponent {
                     repo: 0, rev: 0, fs: parent_fs,
                     lo: lo as u32, hi: hi as u32,
                 };
-                child.at = store.intern_ref(coord);
-                child.value_id = store.intern_string(slice);
+                stamp_source_value(&mut child, store, coord, slice);
                 child.set_at("MATCH", slice, coord, store);
                 // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
                 child.set("MATCH_LO", coord.lo.to_string());

@@ -59,6 +59,7 @@ fn fs_ast_reads_source_without_read_materializing_full_body() {
         .expect("match cursor has source byte range");
     assert_ne!(where_bytes.file, 0);
     assert!(where_bytes.hi > where_bytes.lo);
+    assert_eq!(sprf.lookup_string(where_bytes.string).as_deref(), Some(rows[0].value()));
     assert_eq!(telemetry.input_rows.load(Ordering::Relaxed), 1);
     assert_eq!(telemetry.source_read_rows.load(Ordering::Relaxed), 1);
     assert_eq!(telemetry.source_read_bytes.load(Ordering::Relaxed), body.len() as u64);

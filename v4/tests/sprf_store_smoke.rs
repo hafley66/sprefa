@@ -63,17 +63,33 @@ fn intern_file_is_content_addressable() {
 fn intern_where_bytes_dedups_on_span_tuple() {
     let s = fresh_store();
     let f = s.intern_file(b"abc", "/x");
+    let abc = s.intern_string("abc");
+    let bc = s.intern_string("bc");
 
-    let r1 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo: 0, hi: 3 });
-    let r2 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo: 0, hi: 3 });
-    let r3 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo: 1, hi: 3 });
+    let r1 = s.intern_where_bytes(WhereBytes { string: abc, repo: 0, rev: 0, file: f, lo: 0, hi: 3 });
+    let r2 = s.intern_where_bytes(WhereBytes { string: abc, repo: 0, rev: 0, file: f, lo: 0, hi: 3 });
+    let r3 = s.intern_where_bytes(WhereBytes { string: bc, repo: 0, rev: 0, file: f, lo: 1, hi: 3 });
     assert_eq!(r1, r2);
     assert_ne!(r1, r3);
     assert_eq!(s.inner().len(WHERE_BYTES_TABLE), 3, "sentinel + 2 unique byte ranges");
     assert_eq!(
         s.where_bytes_of(r1),
-        Some(WhereBytes { repo: 0, rev: 0, file: f, lo: 0, hi: 3 }),
+        Some(WhereBytes { string: abc, repo: 0, rev: 0, file: f, lo: 0, hi: 3 }),
     );
+}
+
+#[test]
+fn where_bytes_id_includes_string_id() {
+    let s = fresh_store();
+    let f = s.intern_file(b"abcdef", "/x");
+    let abc = s.intern_string("abc");
+    let xyz = s.intern_string("xyz");
+
+    let a = s.intern_where_bytes(WhereBytes { string: abc, repo: 0, rev: 0, file: f, lo: 0, hi: 3 });
+    let b = s.intern_where_bytes(WhereBytes { string: xyz, repo: 0, rev: 0, file: f, lo: 0, hi: 3 });
+
+    assert_ne!(a, b);
+    assert_eq!(s.inner().len(WHERE_BYTES_TABLE), 3, "sentinel + 2 located strings sharing one span");
 }
 
 #[test]
@@ -106,14 +122,15 @@ fn norm_columns_populated() {
 fn string_observations_are_role_rows() {
     let s = fresh_store();
     let file = s.intern_file(b"const ApiService = 1;", "/src/api.ts");
+    let string = s.intern_string("ApiService");
     let where_bytes = s.intern_where_bytes(WhereBytes {
+        string,
         repo: 0,
         rev: 0,
         file,
         lo: 6,
         hi: 16,
     });
-    let string = s.intern_string("ApiService");
 
     s.observe_string(string, "identifier", where_bytes, "", 0);
     s.observe_string(string, "identifier", where_bytes, "", 0);
@@ -199,9 +216,9 @@ fn find_where_bytes_covering_returns_covering_ids() {
     let s = fresh_store();
     let f = s.intern_file(b"some bytes for indexing", "/x.rs");
 
-    let r1 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo:  0, hi: 10 });
-    let r2 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo:  5, hi: 15 });
-    let r3 = s.intern_where_bytes(WhereBytes { repo: 0, rev: 0, file: f, lo: 20, hi: 30 });
+    let r1 = s.intern_where_bytes(WhereBytes { string: s.intern_string("some bytes"), repo: 0, rev: 0, file: f, lo:  0, hi: 10 });
+    let r2 = s.intern_where_bytes(WhereBytes { string: s.intern_string("bytes for"), repo: 0, rev: 0, file: f, lo:  5, hi: 15 });
+    let r3 = s.intern_where_bytes(WhereBytes { string: s.intern_string("indexing"), repo: 0, rev: 0, file: f, lo: 20, hi: 30 });
 
     // byte=7 is inside r1 (0..10) and r2 (5..15).
     let mut at_7 = s.find_where_bytes_covering(f, 7);

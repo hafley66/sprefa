@@ -45,6 +45,7 @@ pub struct SprfStore {
     strings_lru:  Mutex<LruCache<StringId, Arc<str>>>,
     files_lru:    Mutex<LruCache<FileId, ([u8; 32], Arc<str>)>>,
     refs_lru:     Mutex<LruCache<Ref, crate::Coord>>,
+    where_bytes_lru: Mutex<LruCache<WhereBytesId, WhereBytes>>,
     repos_lru:    Mutex<LruCache<RepoId, (Arc<str>, Arc<str>)>>,
     revs_lru:     Mutex<LruCache<RevId, (RepoId, Arc<str>, i64)>>,
     paths_lru:    Mutex<LruCache<PathId, (RepoId, RevId, FileId, Arc<str>)>>,
@@ -78,6 +79,7 @@ impl SprfStore {
             strings_lru:  Mutex::new(LruCache::new(nz(strings_cap))),
             files_lru:    Mutex::new(LruCache::new(nz(files_cap))),
             refs_lru:     Mutex::new(LruCache::new(nz(refs_cap))),
+            where_bytes_lru: Mutex::new(LruCache::new(nz(refs_cap))),
             repos_lru:    Mutex::new(LruCache::new(nz(DEFAULT_REPOS_CAP))),
             revs_lru:     Mutex::new(LruCache::new(nz(DEFAULT_REVS_CAP))),
             paths_lru:    Mutex::new(LruCache::new(nz(DEFAULT_PATHS_CAP))),
@@ -124,7 +126,7 @@ impl SprfStore {
     fn declare_core_tables(&self) {
         self.inner.declare(STRINGS_TABLE, &["id", "content", "norm"]);
         self.inner.declare(FILES_TABLE, &["id", "content_hash", "path", "size"]);
-        self.inner.declare(WHERE_BYTES_TABLE, &["id", "file_id", "lo", "hi", "repo", "rev"]);
+        self.inner.declare(WHERE_BYTES_TABLE, &["id", "string_id", "file_id", "lo", "hi", "repo", "rev"]);
         self.inner.declare(REPOS_TABLE, &["id", "slug", "remote"]);
         self.inner.declare(REVS_TABLE, &["id", "repo_id", "oid", "ts"]);
         self.inner.declare(PATHS_TABLE, &["id", "repo_id", "rev_id", "file_id", "path"]);
@@ -161,6 +163,7 @@ impl SprfStore {
         // _where_bytes(0) = synthetic
         let mut row = Cursor::default();
         row.set("id",      "0");
+        row.set("string_id", "0");
         row.set("file_id", "0");
         row.set("lo",      "0");
         row.set("hi",      "0");
@@ -169,6 +172,7 @@ impl SprfStore {
         self.insert_core(WHERE_BYTES_TABLE, row);
         self.seen_refs.lock().unwrap().insert(0);
         self.refs_lru.lock().unwrap().put(Ref::SYNTHETIC, crate::Coord::default());
+        self.where_bytes_lru.lock().unwrap().put(WhereBytesId::SYNTHETIC, WhereBytes::default());
 
         // _repos(0) = empty slug + remote
         let mut row = Cursor::default();
@@ -312,10 +316,16 @@ impl SprfStore {
             if lru.get(&r).is_none() {
                 lru.put(r, c);
             }
+            let wb = WhereBytes::from(c);
+            let mut wb_lru = self.where_bytes_lru.lock().unwrap();
+            if wb_lru.get(&WhereBytesId::from(r)).is_none() {
+                wb_lru.put(WhereBytesId::from(r), wb);
+            }
             return r;
         }
         let mut row = Cursor::default();
         row.set("id",      r.0.to_string());
+        row.set("string_id", "0");
         row.set("file_id", c.fs.to_string());
         row.set("lo",      c.lo.to_string());
         row.set("hi",      c.hi.to_string());
@@ -323,11 +333,35 @@ impl SprfStore {
         row.set("rev",     c.rev.to_string());
         self.insert_core(WHERE_BYTES_TABLE, row);
         self.refs_lru.lock().unwrap().put(r, c);
+        self.where_bytes_lru.lock().unwrap().put(WhereBytesId::from(r), WhereBytes::from(c));
         r
     }
 
     pub fn intern_where_bytes(&self, w: WhereBytes) -> WhereBytesId {
-        WhereBytesId::from(self.intern_ref(w.into()))
+        let r = WhereBytesId::of(w);
+        if !self.seen_refs.lock().unwrap().insert(r.0) {
+            let mut lru = self.refs_lru.lock().unwrap();
+            if lru.get(&Ref::from(r)).is_none() {
+                lru.put(Ref::from(r), w.into());
+            }
+            let mut wb_lru = self.where_bytes_lru.lock().unwrap();
+            if wb_lru.get(&r).is_none() {
+                wb_lru.put(r, w);
+            }
+            return r;
+        }
+        let mut row = Cursor::default();
+        row.set("id",        r.0.to_string());
+        row.set("string_id", w.string.0.to_string());
+        row.set("file_id",   w.file.to_string());
+        row.set("lo",        w.lo.to_string());
+        row.set("hi",        w.hi.to_string());
+        row.set("repo",      w.repo.to_string());
+        row.set("rev",       w.rev.to_string());
+        self.insert_core(WHERE_BYTES_TABLE, row);
+        self.refs_lru.lock().unwrap().put(Ref::from(r), w.into());
+        self.where_bytes_lru.lock().unwrap().put(r, w);
+        r
     }
 
     pub fn coord_of(&self, r: Ref) -> Option<crate::Coord> {
@@ -353,7 +387,27 @@ impl SprfStore {
     }
 
     pub fn where_bytes_of(&self, r: WhereBytesId) -> Option<WhereBytes> {
-        self.coord_of(r.into()).map(WhereBytes::from)
+        if let Some(w) = self.where_bytes_lru.lock().unwrap().get(&r) {
+            return Some(*w);
+        }
+        let id_str = r.0.to_string();
+        self.flush();
+        for row in self.inner.rows_of(WHERE_BYTES_TABLE) {
+            if row.get("id").as_deref() == Some(id_str.as_str()) {
+                let w = WhereBytes {
+                    string: StringId(row.get("string_id").unwrap_or("0").parse().unwrap_or(0)),
+                    repo:   row.get("repo").unwrap_or("0").parse().unwrap_or(0),
+                    rev:    row.get("rev").unwrap_or("0").parse().unwrap_or(0),
+                    file:   row.get("file_id").unwrap_or("0").parse().unwrap_or(0),
+                    lo:     row.get("lo").unwrap_or("0").parse().unwrap_or(0),
+                    hi:     row.get("hi").unwrap_or("0").parse().unwrap_or(0),
+                };
+                self.refs_lru.lock().unwrap().put(Ref::from(r), w.into());
+                self.where_bytes_lru.lock().unwrap().put(r, w);
+                return Some(w);
+            }
+        }
+        None
     }
 
     pub fn observe_string(

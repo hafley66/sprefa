@@ -109,6 +109,7 @@ pub struct Coord {
 /// field name directly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct WhereBytes {
+    pub string: StringId,
     pub repo: RepoId,
     pub rev:  RevId,
     pub file: FileId,
@@ -118,7 +119,7 @@ pub struct WhereBytes {
 
 impl From<Coord> for WhereBytes {
     fn from(c: Coord) -> Self {
-        Self { repo: c.repo, rev: c.rev, file: c.fs, lo: c.lo, hi: c.hi }
+        Self { string: StringId::EMPTY, repo: c.repo, rev: c.rev, file: c.fs, lo: c.lo, hi: c.hi }
     }
 }
 
@@ -164,6 +165,25 @@ impl WhereBytesId {
     pub const SYNTHETIC: WhereBytesId = WhereBytesId(0);
 
     pub fn of(w: WhereBytes) -> WhereBytesId {
+        if w == WhereBytes::default() {
+            return WhereBytesId::SYNTHETIC;
+        }
+        if w.string == StringId::EMPTY {
+            let r = Ref::of(w.into());
+            return WhereBytesId(r.0);
+        }
+        let mut h = blake3::Hasher::new();
+        h.update(&w.string.0.to_be_bytes());
+        h.update(&w.repo.to_be_bytes());
+        h.update(&w.rev.to_be_bytes());
+        h.update(&w.file.to_be_bytes());
+        h.update(&w.lo.to_be_bytes());
+        h.update(&w.hi.to_be_bytes());
+        let bytes = h.finalize();
+        WhereBytesId(u64::from_be_bytes(bytes.as_bytes()[..8].try_into().unwrap()))
+    }
+
+    pub fn coord_only(w: WhereBytes) -> WhereBytesId {
         let r = Ref::of(w.into());
         WhereBytesId(r.0)
     }
@@ -438,12 +458,16 @@ impl Cursor {
     /// Insert/replace a coord-space term. Interns name + slice through
     /// the store, derives `at` from the child coord. Idempotent on name.
     #[allow(dead_code)]
-    pub fn set_at(&mut self, name: &str, slice: &str, child_coord: Coord, store: &SprfStore) {
+    pub fn set_at(&mut self, name: &str, slice: &str, child_coord: Coord, store: &SprfStore) -> Ref {
         let name_id  = store.intern_string(name);
         let value_id = store.intern_string(slice);
-        let at       = store.intern_ref(child_coord);
+        let at       = Ref::from(store.intern_where_bytes(WhereBytes {
+            string: value_id,
+            ..WhereBytes::from(child_coord)
+        }));
         self.terms.retain(|t| t.name != name_id);
         self.terms.push(Term { name: name_id, value: value_id, at });
+        at
     }
 
     /// Insert/replace a synthetic coord-space term. Interns name+text
