@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>sprefa runtime map</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 32px; color: #1f2933; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    p { max-width: 760px; line-height: 1.45; }
+    .diagram { display: grid; gap: 12px; max-width: 980px; margin-top: 24px; }
+    .node { border: 1px solid #c8d0d9; border-radius: 8px; padding: 14px 16px; background: #fbfcfd; }
+    .node strong { display: block; font-size: 18px; margin-bottom: 4px; }
+    .node a { color: #0f5c8c; text-decoration: none; }
+    .note { color: #52616f; }
+    .edge { color: #7b8794; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <h1>sprefa runtime map</h1>
+  <p>This file is rendered by <code>v4/examples/runtime-map-html.sprf</code>. Missing source matches emit <code>lsp_warn(:missing_runtime_doc)</code>.</p>
+  <div class="diagram">
+    <section class="node">
+      <strong><a href="../../v4/src/lib.rs">Cursor</a></strong>
+      <div class="note">current cursor payload; migrating toward implicit & plus named terms</div>
+      <div class="edge">v4/src/lib.rs byte 11626..12956</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v4/src/lib.rs">CursorValue</a></strong>
+      <div class="note">typed payload handle for strings, byte ranges, blobs, and scalars</div>
+      <div class="edge">v4/src/lib.rs byte 6769..6919</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v4/src/lib.rs">Term</a></strong>
+      <div class="note">named compact term row: name, value string id, byte-range ref</div>
+      <div class="edge">v4/src/lib.rs byte 8281..8370</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/queue.rs">QueueRow</a></strong>
+      <div class="note">runtime cursor row: parent, batch index, path, pipe hash, instance, depth, wake</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/queue.rs byte 2057..2453</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/expand.rs">PipeInstance</a></strong>
+      <div class="note">runtime pipe identity: ordered components plus pipe hash and instance id</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/expand.rs byte 2605..2748</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/component.rs">RenderCtx</a></strong>
+      <div class="note">dispatch context: pipe hash, depth, generation tick, event bus, diagnostics</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/component.rs byte 6439..6629</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/component.rs">Component</a></strong>
+      <div class="note">operator boundary: render, render_batch, dispatch, barrier lifecycle</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/component.rs byte 1789..5851</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/node.rs">Node</a></strong>
+      <div class="note">operator output algebra: emit, many, park, done</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/node.rs byte 321..1118</div>
+    </section>
+
+  </div>
+</body>
+</html>

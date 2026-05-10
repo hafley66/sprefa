@@ -1,0 +1,127 @@
+# Living runtime map.
+#
+# Scans source definitions that anchor the runtime calculus, writes an HTML
+# diagram, and warns when an expected architecture node has no source cursor.
+#
+# Run from repo root:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/runtime-map-html.sprf --root . --show-rows
+
+rule(:expected_runtime_nodes, NAME?);
+rule(:runtime_nodes, NAME?, FILE?, LO?, HI?, NOTE?);
+rule(:missing_runtime_nodes, NAME?);
+
+`Cursor`       > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`CursorValue`  > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`CursorTerm`   > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`Term`         > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`QueueRow`     > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`PipeInstance` > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`RenderCtx`    > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`Component`    > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`Node`         > term_bind(:NAME) > expected_runtime_nodes(NAME);
+
+path`v4/src/lib.rs`
+  > ast(:rs)`pub struct Cursor { $$$ }`
+  > `Cursor` > term_bind(:NAME)
+  > `v4/src/lib.rs` > term_bind(:FILE)
+  > `current cursor payload; migrating toward implicit & plus named terms` > term_bind(:NOTE)
+  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+
+path`v4/src/lib.rs`
+  > ast(:rs)`pub enum CursorValue { $$$ }`
+  > `CursorValue` > term_bind(:NAME)
+  > `v4/src/lib.rs` > term_bind(:FILE)
+  > `typed payload handle for strings, byte ranges, blobs, and scalars` > term_bind(:NOTE)
+  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+
+path`v4/src/lib.rs`
+  > ast(:rs)`pub struct Term { $$$ }`
+  > `Term` > term_bind(:NAME)
+  > `v4/src/lib.rs` > term_bind(:FILE)
+  > `named compact term row: name, value string id, byte-range ref` > term_bind(:NOTE)
+  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+
+path`v3/crates/effect_runtime/src/v2/queue.rs`
+  > ast(:rs)`pub struct QueueRow<N: Next> { $$$ }`
+  > `QueueRow` > term_bind(:NAME)
+  > `v3/crates/effect_runtime/src/v2/queue.rs` > term_bind(:FILE)
+  > `runtime cursor row: parent, batch index, path, pipe hash, instance, depth, wake` > term_bind(:NOTE)
+  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+
+path`v3/crates/effect_runtime/src/v2/expand.rs`
+  > ast(:rs)`pub struct PipeInstance<N: Next> { $$$ }`
+  > `PipeInstance` > term_bind(:NAME)
+  > `v3/crates/effect_runtime/src/v2/expand.rs` > term_bind(:FILE)
+  > `runtime pipe identity: ordered components plus pipe hash and instance id` > term_bind(:NOTE)
+  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+
+path`v3/crates/effect_runtime/src/v2/component.rs`
+  > ast(:rs)`pub struct RenderCtx { $$$ }`
+  > `RenderCtx` > term_bind(:NAME)
+  > `v3/crates/effect_runtime/src/v2/component.rs` > term_bind(:FILE)
+  > `dispatch context: pipe hash, depth, generation tick, event bus, diagnostics` > term_bind(:NOTE)
+  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+
+path`v3/crates/effect_runtime/src/v2/component.rs`
+  > ast(:rs)`pub trait Component: Send + Sync + 'static { $$$ }`
+  > `Component` > term_bind(:NAME)
+  > `v3/crates/effect_runtime/src/v2/component.rs` > term_bind(:FILE)
+  > `operator boundary: render, render_batch, dispatch, barrier lifecycle` > term_bind(:NOTE)
+  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+
+path`v3/crates/effect_runtime/src/v2/node.rs`
+  > ast(:rs)`pub enum Node<N: Next> { $$$ }`
+  > `Node` > term_bind(:NAME)
+  > `v3/crates/effect_runtime/src/v2/node.rs` > term_bind(:FILE)
+  > `operator output algebra: emit, many, park, done` > term_bind(:NOTE)
+  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+
+expected_runtime_nodes?(NAME?)
+  > sql`
+      SELECT input.__cursor_idx, input.NAME
+      FROM input
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM runtime_nodes
+        WHERE runtime_nodes.NAME = ${NAME}
+      )
+    `
+  > missing_runtime_nodes(NAME)
+  > lsp_warn(:missing_runtime_doc)`runtime map expected source cursor is missing: ${NAME}`;
+
+`v4/examples/runtime-map.html`
+  > render.markdown`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>sprefa runtime map</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 32px; color: #1f2933; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    p { max-width: 760px; line-height: 1.45; }
+    .diagram { display: grid; gap: 12px; max-width: 980px; margin-top: 24px; }
+    .node { border: 1px solid #c8d0d9; border-radius: 8px; padding: 14px 16px; background: #fbfcfd; }
+    .node strong { display: block; font-size: 18px; margin-bottom: 4px; }
+    .node a { color: #0f5c8c; text-decoration: none; }
+    .note { color: #52616f; }
+    .edge { color: #7b8794; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <h1>sprefa runtime map</h1>
+  <p>This file is rendered by <code>v4/examples/runtime-map-html.sprf</code>. Missing source matches emit <code>lsp_warn(:missing_runtime_doc)</code>.</p>
+  <div class="diagram">
+${ runtime_nodes?(NAME?, FILE?, LO?, HI?, NOTE?)
+  > render.markdown`    <section class="node">
+      <strong><a href="../../${FILE}">${NAME}</a></strong>
+      <div class="note">${NOTE}</div>
+      <div class="edge">${FILE} byte ${LO}..${HI}</div>
+    </section>
+`
+}
+  </div>
+</body>
+</html>
+`
+  > write_file`v4/examples/runtime-map.html`;

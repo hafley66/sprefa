@@ -154,6 +154,44 @@ fn primitive_examples_run_through_cli() {
 }
 
 #[test]
+fn runtime_map_example_writes_html_and_warns_on_missing_source_cursor() {
+    let bin = env!("CARGO_BIN_EXE_sprefa-run");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let root = repo_root();
+    let sprf = format!("{manifest_dir}/examples/runtime-map-html.sprf");
+    let html = root.join("v4/examples/runtime-map.html");
+
+    let output = Command::new(bin)
+        .current_dir(&root)
+        .arg(&sprf)
+        .arg("--root")
+        .arg(".")
+        .arg("--show-rows")
+        .output()
+        .expect("sprefa-run runtime-map-html spawns");
+
+    assert!(
+        output.status.success(),
+        "sprefa-run runtime-map-html failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("warning:missing_runtime_doc: runtime map expected source cursor is missing: CursorTerm"),
+        "stdout missing CursorTerm drift warning:\n{stdout}",
+    );
+    assert!(stdout.contains("runtime_nodes: 8 rows"), "stdout missing source rows:\n{stdout}");
+    assert!(stdout.contains("missing_runtime_nodes: 1 rows"), "stdout missing drift row:\n{stdout}");
+
+    let body = std::fs::read_to_string(&html).expect("runtime map html should be written");
+    assert!(body.contains("<h1>sprefa runtime map</h1>"), "html missing heading:\n{body}");
+    assert!(body.contains(">QueueRow<"), "html missing QueueRow node:\n{body}");
+    assert!(body.contains(">RenderCtx<"), "html missing RenderCtx node:\n{body}");
+}
+
+#[test]
 fn repo_rev_fs_read_example_runs_with_example_config() {
     let bin = env!("CARGO_BIN_EXE_sprefa-run");
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
