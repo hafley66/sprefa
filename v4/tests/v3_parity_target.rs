@@ -58,6 +58,37 @@ async fn runtime_lsp_warn_publishes_diagnostics_for_open_buffer() {
 }
 
 #[tokio::test]
+async fn runtime_lsp_warn_bracket_term_focuses_capture_span() {
+    let root = tempfile::tempdir().unwrap();
+    let sprf = root.path().join("lsp_term_focus.sprf");
+    let src = r#"
+        `before sh! after`
+          > re`before (?P<NAME>sh!) after`
+          > lsp_warn[NAME](:impure_shell)`shell ${NAME}`;
+    "#;
+    fs::write(&sprf, src).unwrap();
+
+    let (_state, client) = build_in_process(root.path().to_path_buf());
+    let report = client
+        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .await
+        .unwrap();
+
+    assert!(
+        report.parse_diags.is_empty()
+            && report.walk_diags.is_empty()
+            && report.runtime_diags.len() == 1,
+        "focused lsp_warn should parse/lower/run cleanly:\n{}",
+        report_lines(&report)
+    );
+    let diag = &report.runtime_diags[0];
+    assert_eq!(diag.code, "impure_shell");
+    assert_eq!(diag.message, "shell sh!");
+    assert_eq!(diag.lo, Some(7));
+    assert_eq!(diag.hi, Some(10));
+}
+
+#[tokio::test]
 async fn write_file_backtick_path_writes_cursor_value() {
     let root = tempfile::tempdir().unwrap();
     let out = root.path().join("out.md");

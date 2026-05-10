@@ -1,5 +1,5 @@
-//! `lsp_*` op family — emit Diag events anchored to a cursor's LO/HI
-//! span. Per user constraint, the whole family lives in one file
+//! `lsp_*` op family — emit Diag events anchored to a cursor coord.
+//! Per user constraint, the whole family lives in one file
 //! across layers (Component + four OperatorDefs).
 //!
 //! Surface:
@@ -22,9 +22,9 @@
 //! so downstream still sees the row. To filter by severity downstream,
 //! chain a separate filter op.
 //!
-//! Span — the diag's byte range comes from `cursor.get("LO")` /
-//! `cursor.get("HI")` if both parse as `u32`. Otherwise the diag is
-//! span-less.
+//! Span — the diag's byte range comes from `cursor.at` when it resolves
+//! through SprfStore. `lsp_warn[NAME]` focuses the span on term `NAME`'s
+//! coord. Legacy `LO`/`HI` and `NAME_LO`/`NAME_HI` remain fallbacks.
 
 use std::sync::Arc;
 
@@ -32,13 +32,15 @@ use effect_runtime::v2::{
     Component, Diag, Node, Pipe, RenderCtx, Severity,
 };
 
-use crate::Cursor;
+use crate::{Cursor, Ref, StringId};
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
     ArgKind, ArgSig, DslBinder, DslBody, DslShape, OperatorDef,
     default_plain_dsl_parse,
 };
 use crate::compile::lower::value::Value;
+use crate::sprf_introspect::PipeIntrospect;
+use crate::store::SprfStore;
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
@@ -47,6 +49,14 @@ pub struct LspDiagComponent {
     code:     Arc<str>,
     template: Arc<str>,
     interps:  Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
+    focus:    LspDiagFocus,
+    store:    Option<Arc<SprfStore>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LspDiagFocus {
+    Focal,
+    Term(Arc<str>),
 }
 
 impl LspDiagComponent {
@@ -56,7 +66,24 @@ impl LspDiagComponent {
         template: Arc<str>,
         interps:  Vec<crate::compile::lower::op_def::DslInterp>,
     ) -> Self {
-        Self { severity, code, template, interps: Arc::new(interps) }
+        Self {
+            severity,
+            code,
+            template,
+            interps: Arc::new(interps),
+            focus: LspDiagFocus::Focal,
+            store: None,
+        }
+    }
+
+    fn with_focus(mut self, focus: LspDiagFocus) -> Self {
+        self.focus = focus;
+        self
+    }
+
+    fn with_sprf_store(mut self, store: Arc<SprfStore>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     fn render_message(&self, c: &Cursor) -> String {
@@ -89,9 +116,38 @@ impl LspDiagComponent {
         out
     }
 
-    fn span_from_cursor(c: &Cursor) -> Option<(u32, u32)> {
-        let lo = c.get("LO")?.parse::<u32>().ok()?;
-        let hi = c.get("HI")?.parse::<u32>().ok()?;
+    fn span_from_cursor(&self, c: &Cursor) -> Option<(u32, u32)> {
+        match &self.focus {
+            LspDiagFocus::Focal => {
+                self.span_from_ref(c.at)
+                    .or_else(|| Self::span_from_legacy(c, "LO", "HI"))
+            }
+            LspDiagFocus::Term(name) => {
+                let name_id = StringId::of(name.as_ref());
+                c.term(name_id)
+                    .and_then(|t| self.span_from_ref(t.at))
+                    .or_else(|| {
+                        Self::span_from_legacy(
+                            c,
+                            &format!("{}_LO", name.as_ref()),
+                            &format!("{}_HI", name.as_ref()),
+                        )
+                    })
+            }
+        }
+    }
+
+    fn span_from_ref(&self, at: Ref) -> Option<(u32, u32)> {
+        if at == Ref::SYNTHETIC {
+            return None;
+        }
+        let coord = self.store.as_ref()?.coord_of(at)?;
+        Some((coord.lo, coord.hi))
+    }
+
+    fn span_from_legacy(c: &Cursor, lo_key: &str, hi_key: &str) -> Option<(u32, u32)> {
+        let lo = c.get(lo_key)?.parse::<u32>().ok()?;
+        let hi = c.get(hi_key)?.parse::<u32>().ok()?;
         Some((lo, hi))
     }
 }
@@ -107,7 +163,7 @@ impl Component for LspDiagComponent {
             Severity::Info  => Diag::info (self.code.clone(), message),
             Severity::Hint  => Diag::hint (self.code.clone(), message),
         };
-        if let Some((lo, hi)) = Self::span_from_cursor(c) {
+        if let Some((lo, hi)) = self.span_from_cursor(c) {
             diag = diag.with_span(lo, hi);
         }
         ctx.diag.emit(diag);
@@ -125,8 +181,17 @@ const LSP_SPEC: &[ArgSig] = &[
     },
 ];
 
+const LSP_FLOW: ArgSig = ArgSig {
+    kind: ArgKind::Pipe,
+    name: "focus",
+    doc: "optional term focus for diagnostic span, e.g. lsp_warn[NAME](...)",
+    required: false,
+};
+
 fn lower_lsp_diag(
     severity: Severity,
+    ctx:      &LowerCtx,
+    flow:     Option<Value>,
     args:     &[Value],
     dsl:      Option<&DslBody>,
 ) -> Result<Pipe<Cursor>, LowerError> {
@@ -139,12 +204,34 @@ fn lower_lsp_diag(
     ))?;
     let mut interps = body.interps.clone();
     interps.sort_by_key(|i| i.range.lo);
-    Ok(Pipe::new().step(Arc::new(LspDiagComponent::new(
+    let mut comp = LspDiagComponent::new(
         severity,
         code,
         body.raw.clone(),
         interps,
-    ))))
+    ).with_focus(lsp_focus_from_flow(flow)?);
+    if let Some(store) = &ctx.sprf_store {
+        comp = comp.with_sprf_store(store.clone());
+    }
+    Ok(Pipe::new().step(Arc::new(comp)))
+}
+
+fn lsp_focus_from_flow(flow: Option<Value>) -> Result<LspDiagFocus, LowerError> {
+    let Some(flow) = flow else {
+        return Ok(LspDiagFocus::Focal);
+    };
+    let Value::Pipe(pipe) = flow else {
+        return Err(LowerError::Unknown(
+            "lsp_* [] focus must be a term read, e.g. lsp_warn[NAME]".into(),
+        ));
+    };
+    let reads = pipe.reads_terms();
+    if reads.len() == 1 && pipe.binds_terms().is_empty() {
+        return Ok(LspDiagFocus::Term(reads[0].clone()));
+    }
+    Err(LowerError::Unknown(
+        "lsp_* [] focus must read exactly one term, e.g. lsp_warn[NAME]".into(),
+    ))
 }
 
 fn lsp_binders_in_dsl(raw: &str) -> Vec<DslBinder> {
@@ -161,6 +248,7 @@ fn lsp_parse_dsl(raw: &str) -> Vec<crate::compile::lower::op_def::DslInterp> {
 pub struct LspErrorDef;
 impl OperatorDef for LspErrorDef {
     fn name(&self) -> &'static str { "lsp_error" }
+    fn flow_arg(&self) -> Option<ArgSig> { Some(LSP_FLOW) }
     fn paren_args(&self) -> &[ArgSig] { LSP_SPEC }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
     fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> { lsp_binders_in_dsl(raw) }
@@ -169,19 +257,20 @@ impl OperatorDef for LspErrorDef {
     }
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
+        ctx:    &LowerCtx,
+        flow:   Option<Value>,
         args:   &[Value],
         _block: Option<Pipe<Cursor>>,
         dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_diag(Severity::Error, args, dsl)
+        lower_lsp_diag(Severity::Error, ctx, flow, args, dsl)
     }
 }
 
 pub struct LspWarnDef;
 impl OperatorDef for LspWarnDef {
     fn name(&self) -> &'static str { "lsp_warn" }
+    fn flow_arg(&self) -> Option<ArgSig> { Some(LSP_FLOW) }
     fn paren_args(&self) -> &[ArgSig] { LSP_SPEC }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
     fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> { lsp_binders_in_dsl(raw) }
@@ -190,19 +279,20 @@ impl OperatorDef for LspWarnDef {
     }
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
+        ctx:    &LowerCtx,
+        flow:   Option<Value>,
         args:   &[Value],
         _block: Option<Pipe<Cursor>>,
         dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_diag(Severity::Warn, args, dsl)
+        lower_lsp_diag(Severity::Warn, ctx, flow, args, dsl)
     }
 }
 
 pub struct LspInfoDef;
 impl OperatorDef for LspInfoDef {
     fn name(&self) -> &'static str { "lsp_info" }
+    fn flow_arg(&self) -> Option<ArgSig> { Some(LSP_FLOW) }
     fn paren_args(&self) -> &[ArgSig] { LSP_SPEC }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
     fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> { lsp_binders_in_dsl(raw) }
@@ -211,19 +301,20 @@ impl OperatorDef for LspInfoDef {
     }
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
+        ctx:    &LowerCtx,
+        flow:   Option<Value>,
         args:   &[Value],
         _block: Option<Pipe<Cursor>>,
         dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_diag(Severity::Info, args, dsl)
+        lower_lsp_diag(Severity::Info, ctx, flow, args, dsl)
     }
 }
 
 pub struct LspHintDef;
 impl OperatorDef for LspHintDef {
     fn name(&self) -> &'static str { "lsp_hint" }
+    fn flow_arg(&self) -> Option<ArgSig> { Some(LSP_FLOW) }
     fn paren_args(&self) -> &[ArgSig] { LSP_SPEC }
     fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
     fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> { lsp_binders_in_dsl(raw) }
@@ -232,13 +323,13 @@ impl OperatorDef for LspHintDef {
     }
     fn lower(
         &self,
-        _ctx:   &LowerCtx,
-        _flow:  Option<Value>,
+        ctx:    &LowerCtx,
+        flow:   Option<Value>,
         args:   &[Value],
         _block: Option<Pipe<Cursor>>,
         dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_diag(Severity::Hint, args, dsl)
+        lower_lsp_diag(Severity::Hint, ctx, flow, args, dsl)
     }
 }
 
@@ -247,8 +338,11 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
     use effect_runtime::v2::{
-        expand, DiagSink, ExpandOpts, MemQueue, PipeInstance, QueueBackend,
+        expand, DiagSink, ExpandOpts, FactStore, MemFactStore, MemQueue, PipeInstance,
+        QueueBackend,
     };
+    use crate::Coord;
+    use crate::store::SprfStore;
 
     struct CollectSink { rows: Mutex<Vec<Diag>> }
     impl DiagSink for CollectSink {
@@ -286,6 +380,68 @@ mod tests {
         assert_eq!(d.severity, Severity::Error);
         assert_eq!(d.span.unwrap().lo, 10);
         assert_eq!(d.span.unwrap().hi, 20);
+    }
+
+    #[test]
+    fn lsp_warn_uses_cursor_at_before_legacy_span() {
+        let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let store = SprfStore::new(facts);
+        let file_id = store.intern_file(b"abcdef", "demo.rs");
+        let at = store.intern_ref(Coord { repo: 0, rev: 0, fs: file_id, lo: 2, hi: 5 });
+
+        let sink = Arc::new(CollectSink { rows: Mutex::new(Vec::new()) });
+        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        let comp = LspDiagComponent::new(
+            Severity::Warn,
+            Arc::from("cursor-at"),
+            Arc::from("at"),
+            Vec::new(),
+        ).with_sprf_store(store);
+        let pipe = PipeInstance::new(vec![Arc::new(comp) as Arc<dyn Component<Next = Cursor>>]);
+        let mut cursor = Cursor::default();
+        cursor.at = at;
+        cursor.set("LO", "0");
+        cursor.set("HI", "6");
+
+        expand(&pipe, queue, vec![Arc::new(cursor)], ExpandOpts::default().with_diag(sink.clone()));
+
+        let rows = sink.rows.lock().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].span.unwrap().lo, 2);
+        assert_eq!(rows[0].span.unwrap().hi, 5);
+    }
+
+    #[test]
+    fn lsp_warn_term_focus_uses_term_at_before_focal_span() {
+        let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let store = SprfStore::new(facts);
+        let file_id = store.intern_file(b"before sh! after", "demo.rs");
+        let focal = store.intern_ref(Coord { repo: 0, rev: 0, fs: file_id, lo: 0, hi: 16 });
+        let term_coord = Coord { repo: 0, rev: 0, fs: file_id, lo: 7, hi: 10 };
+
+        let sink = Arc::new(CollectSink { rows: Mutex::new(Vec::new()) });
+        let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        let comp = LspDiagComponent::new(
+            Severity::Warn,
+            Arc::from("term-at"),
+            Arc::from("shell ${NAME}"),
+            default_plain_dsl_parse("shell ${NAME}"),
+        )
+        .with_focus(LspDiagFocus::Term(Arc::from("NAME")))
+        .with_sprf_store(store.clone());
+        let pipe = PipeInstance::new(vec![Arc::new(comp) as Arc<dyn Component<Next = Cursor>>]);
+        let mut cursor = Cursor::default();
+        cursor.at = focal;
+        cursor.set("NAME", "sh!");
+        cursor.set_at("NAME", "sh!", term_coord, &store);
+
+        expand(&pipe, queue, vec![Arc::new(cursor)], ExpandOpts::default().with_diag(sink.clone()));
+
+        let rows = sink.rows.lock().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].message, "shell sh!");
+        assert_eq!(rows[0].span.unwrap().lo, 7);
+        assert_eq!(rows[0].span.unwrap().hi, 10);
     }
 
     #[test]
