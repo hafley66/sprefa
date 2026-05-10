@@ -102,7 +102,18 @@ v4-dogfood-rust-doc-lsp:
 v4-dogfood-config-markdown:
     cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/config-repos-markdown.sprf --show-rows --root .
 
-v4-dev-dogfood: v4-dev-missing-hook v4-dev-doc-drift v4-dev-git-todo-index v4-dev-rust-panic-map v4-dev-config-repos v4-dogfood-comment-region-lsp v4-dogfood-rust-doc-lsp v4-dogfood-config-markdown
+v4-body-rule-rust-panic-map:
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/body-rule-rust-panic-map.sprf --show-rows --root .
+
+v4-body-rule-doc-drift:
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/body-rule-doc-drift.sprf --show-rows --root .
+
+v4-body-rule-config-markdown:
+    cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- v4/examples/body-rule-config-markdown.sprf --show-rows --root .
+
+v4-body-rule-dogfood: v4-body-rule-rust-panic-map v4-body-rule-doc-drift v4-body-rule-config-markdown
+
+v4-dev-dogfood: v4-dev-missing-hook v4-dev-doc-drift v4-dev-git-todo-index v4-dev-rust-panic-map v4-dev-config-repos v4-dogfood-comment-region-lsp v4-dogfood-rust-doc-lsp v4-dogfood-config-markdown v4-body-rule-dogfood
 
 v4-cli-smoke:
     cargo test --manifest-path v4/Cargo.toml --test sprefa_run_cli_smoke -- --nocapture

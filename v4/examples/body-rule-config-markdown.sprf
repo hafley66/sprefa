@@ -1,0 +1,22 @@
+# Body-style config-to-markdown example.
+#
+# `config_repos` owns TOML extraction. The render step queries the table.
+#
+# Run:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/body-rule-config-markdown.sprf --root . --show-rows
+
+rule(:config_repos, SLUG?, ROOT?) {
+  path`v4/examples/sprefa.config.example.toml`
+    > json(:toml)`{ repos: { slug: ${SLUG?}, root: ${ROOT?} } }`
+};
+
+`v4/examples/body-rule-config-repos.md`
+  > render.markdown`# Body Rule Config Repos
+
+${ config_repos(SLUG?, ROOT?)
+  > render.markdown`- ${SLUG}: ${ROOT}
+`
+}
+`
+  > write_file`v4/examples/body-rule-config-repos.md`;

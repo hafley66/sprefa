@@ -1,0 +1,17 @@
+# Body-style rule example.
+#
+# `panic_sites` owns the scan. The trailing query only consumes the table
+# and emits diagnostics. No imperative send is needed inside the scan path.
+#
+# Run:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/body-rule-rust-panic-map.sprf --root . --show-rows
+
+rule(:panic_sites, FS?, LO?, HI?) {
+  fs
+    > glob`**/*.rs`
+    > ast(:rs)`panic!($$$ARGS)`
+};
+
+panic_sites(FS?, LO?, HI?)
+  > lsp_warn(:panic_site)`panic! call at ${FS}:${LO}`;
