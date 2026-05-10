@@ -8,73 +8,49 @@
 #     v4/examples/runtime-map-html.sprf --root . --show-rows
 
 rule(:expected_runtime_nodes, NAME?);
+rule(:runtime_specs, NAME?, FILE?, NOTE?);
+rule(:source_type_defs, NAME?, FILE?, LO?, HI?);
 rule(:runtime_nodes, NAME?, FILE?, LO?, HI?, NOTE?);
 rule(:missing_runtime_nodes, NAME?);
 
-`Cursor`       > term_bind(:NAME) > expected_runtime_nodes(NAME);
-`CursorValue`  > term_bind(:NAME) > expected_runtime_nodes(NAME);
-`CursorTerm`   > term_bind(:NAME) > expected_runtime_nodes(NAME);
-`Term`         > term_bind(:NAME) > expected_runtime_nodes(NAME);
-`QueueRow`     > term_bind(:NAME) > expected_runtime_nodes(NAME);
-`PipeInstance` > term_bind(:NAME) > expected_runtime_nodes(NAME);
-`RenderCtx`    > term_bind(:NAME) > expected_runtime_nodes(NAME);
-`Component`    > term_bind(:NAME) > expected_runtime_nodes(NAME);
-`Node`         > term_bind(:NAME) > expected_runtime_nodes(NAME);
+`Cursor|v4/src/lib.rs|current cursor payload; migrating toward implicit & plus named terms
+CursorValue|v4/src/lib.rs|typed payload handle for strings, byte ranges, blobs, and scalars
+Term|v4/src/lib.rs|named compact term row: name, value string id, byte-range ref
+QueueRow|v3/crates/effect_runtime/src/v2/queue.rs|runtime cursor row: parent, batch index, path, pipe hash, instance, depth, wake
+PipeInstance|v3/crates/effect_runtime/src/v2/expand.rs|runtime pipe identity: ordered components plus pipe hash and instance id
+RenderCtx|v3/crates/effect_runtime/src/v2/component.rs|dispatch context: pipe hash, depth, generation tick, event bus, diagnostics
+Component|v3/crates/effect_runtime/src/v2/component.rs|operator boundary: render, render_batch, dispatch, barrier lifecycle
+Node|v3/crates/effect_runtime/src/v2/node.rs|operator output algebra: emit, many, park, done`
+  > split`
+`
+  > re`(?P<NAME>[^|]+)\|(?P<FILE>[^|]+)\|(?P<NOTE>.+)`
+  > runtime_specs(NAME, FILE, NOTE)
+  > expected_runtime_nodes(NAME);
 
-path`v4/src/lib.rs`
-  > ast(:rs)`pub struct Cursor { $$$ }`
-  > `Cursor` > term_bind(:NAME)
-  > `v4/src/lib.rs` > term_bind(:FILE)
-  > `current cursor payload; migrating toward implicit & plus named terms` > term_bind(:NOTE)
-  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+`CursorTerm` > term_bind(:NAME) > expected_runtime_nodes(NAME);
 
-path`v4/src/lib.rs`
-  > ast(:rs)`pub enum CursorValue { $$$ }`
-  > `CursorValue` > term_bind(:NAME)
-  > `v4/src/lib.rs` > term_bind(:FILE)
-  > `typed payload handle for strings, byte ranges, blobs, and scalars` > term_bind(:NOTE)
-  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
+`v4/src/lib.rs
+v3/crates/effect_runtime/src/v2/queue.rs
+v3/crates/effect_runtime/src/v2/expand.rs
+v3/crates/effect_runtime/src/v2/component.rs
+v3/crates/effect_runtime/src/v2/node.rs`
+  > split(FILE?)`
+`
+  > path`${FILE}`
+  > ast_yaml(:rs)`
+      rule:
+        any:
+          - pattern: "pub struct ${NAME?} { $$$ }"
+          - pattern: "pub struct ${NAME?}<$$$> { $$$ }"
+          - pattern: "pub enum ${NAME?} { $$$ }"
+          - pattern: "pub enum ${NAME?}<$$$> { $$$ }"
+          - pattern: "pub trait ${NAME?} { $$$ }"
+          - pattern: "pub trait ${NAME?}: $$$ { $$$ }"
+    `
+  > source_type_defs(NAME, FILE, LO, HI);
 
-path`v4/src/lib.rs`
-  > ast(:rs)`pub struct Term { $$$ }`
-  > `Term` > term_bind(:NAME)
-  > `v4/src/lib.rs` > term_bind(:FILE)
-  > `named compact term row: name, value string id, byte-range ref` > term_bind(:NOTE)
-  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
-
-path`v3/crates/effect_runtime/src/v2/queue.rs`
-  > ast(:rs)`pub struct QueueRow<N: Next> { $$$ }`
-  > `QueueRow` > term_bind(:NAME)
-  > `v3/crates/effect_runtime/src/v2/queue.rs` > term_bind(:FILE)
-  > `runtime cursor row: parent, batch index, path, pipe hash, instance, depth, wake` > term_bind(:NOTE)
-  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
-
-path`v3/crates/effect_runtime/src/v2/expand.rs`
-  > ast(:rs)`pub struct PipeInstance<N: Next> { $$$ }`
-  > `PipeInstance` > term_bind(:NAME)
-  > `v3/crates/effect_runtime/src/v2/expand.rs` > term_bind(:FILE)
-  > `runtime pipe identity: ordered components plus pipe hash and instance id` > term_bind(:NOTE)
-  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
-
-path`v3/crates/effect_runtime/src/v2/component.rs`
-  > ast(:rs)`pub struct RenderCtx { $$$ }`
-  > `RenderCtx` > term_bind(:NAME)
-  > `v3/crates/effect_runtime/src/v2/component.rs` > term_bind(:FILE)
-  > `dispatch context: pipe hash, depth, generation tick, event bus, diagnostics` > term_bind(:NOTE)
-  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
-
-path`v3/crates/effect_runtime/src/v2/component.rs`
-  > ast(:rs)`pub trait Component: Send + Sync + 'static { $$$ }`
-  > `Component` > term_bind(:NAME)
-  > `v3/crates/effect_runtime/src/v2/component.rs` > term_bind(:FILE)
-  > `operator boundary: render, render_batch, dispatch, barrier lifecycle` > term_bind(:NOTE)
-  > runtime_nodes(NAME, FILE, LO, HI, NOTE);
-
-path`v3/crates/effect_runtime/src/v2/node.rs`
-  > ast(:rs)`pub enum Node<N: Next> { $$$ }`
-  > `Node` > term_bind(:NAME)
-  > `v3/crates/effect_runtime/src/v2/node.rs` > term_bind(:FILE)
-  > `operator output algebra: emit, many, park, done` > term_bind(:NOTE)
+source_type_defs?(NAME?, FILE?, LO?, HI?)
+  > runtime_specs?(NAME, FILE, NOTE?)
   > runtime_nodes(NAME, FILE, LO, HI, NOTE);
 
 expected_runtime_nodes?(NAME?)

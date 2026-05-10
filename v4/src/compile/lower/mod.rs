@@ -62,5 +62,7 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(crate::lsp::LspWarnDef));
     r.register(Arc::new(crate::lsp::LspInfoDef));
     r.register(Arc::new(crate::lsp::LspHintDef));
+    r.register(Arc::new(crate::lsp::LspHoverDef));
+    r.register(Arc::new(crate::lsp::LspHoverAliasDef));
     r
 }

@@ -9,6 +9,8 @@
 //!   lsp_warn(:code)`message ${TERM}`
 //!   lsp_info(:code)`message ${TERM}`
 //!   lsp_hint(:code)`message ${TERM}`
+//!   lsp.hover[TERM]`hover ${TERM}`
+//!   lsp_hover[TERM]`hover ${TERM}`
 //! ```
 //!
 //! Args:
@@ -42,11 +44,20 @@ use crate::compile::lower::value::Value;
 use crate::sprf_introspect::PipeIntrospect;
 use crate::store::SprfStore;
 
+pub const LSP_HOVER_CODE: &str = "sprf/hover";
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 pub struct LspDiagComponent {
     severity: Severity,
     code:     Arc<str>,
+    template: Arc<str>,
+    interps:  Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
+    focus:    LspDiagFocus,
+    store:    Option<Arc<SprfStore>>,
+}
+
+pub struct LspHoverComponent {
     template: Arc<str>,
     interps:  Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
     focus:    LspDiagFocus,
@@ -171,6 +182,97 @@ impl Component for LspDiagComponent {
     }
 }
 
+impl LspHoverComponent {
+    pub fn new(
+        template: Arc<str>,
+        interps:  Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self {
+        Self {
+            template,
+            interps: Arc::new(interps),
+            focus: LspDiagFocus::Focal,
+            store: None,
+        }
+    }
+
+    fn with_focus(mut self, focus: LspDiagFocus) -> Self {
+        self.focus = focus;
+        self
+    }
+
+    fn with_sprf_store(mut self, store: Arc<SprfStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    fn render_message(&self, c: &Cursor) -> String {
+        let raw = self.template.as_ref();
+        let mut out = String::with_capacity(raw.len());
+        let mut head: usize = 0;
+        for interp in self.interps.iter() {
+            let lo = interp.range.lo as usize;
+            let hi = interp.range.hi as usize;
+            if lo > raw.len() || hi > raw.len() || lo < head { continue; }
+            out.push_str(&raw[head..lo]);
+            match &interp.kind {
+                crate::compile::lower::op_def::InterpKind::Term { field, .. } => {
+                    let key: std::borrow::Cow<'_, str> = match field {
+                        None    => (&*interp.name).into(),
+                        Some(f) => format!("{}.{}", interp.name, f).into(),
+                    };
+                    if let Some(v) = c.get(&key) { out.push_str(v); }
+                }
+                crate::compile::lower::op_def::InterpKind::SubPipe { .. } => {}
+            }
+            head = hi;
+        }
+        out.push_str(&raw[head..]);
+        out
+    }
+
+    fn span_from_cursor(&self, c: &Cursor) -> Option<(u32, u32)> {
+        match &self.focus {
+            LspDiagFocus::Focal => {
+                self.span_from_ref(c.at)
+                    .or_else(|| LspDiagComponent::span_from_legacy(c, "LO", "HI"))
+            }
+            LspDiagFocus::Term(name) => {
+                let name_id = StringId::of(name.as_ref());
+                c.term(name_id)
+                    .and_then(|t| self.span_from_ref(t.at))
+                    .or_else(|| {
+                        LspDiagComponent::span_from_legacy(
+                            c,
+                            &format!("{}_LO", name.as_ref()),
+                            &format!("{}_HI", name.as_ref()),
+                        )
+                    })
+            }
+        }
+    }
+
+    fn span_from_ref(&self, at: Ref) -> Option<(u32, u32)> {
+        if at == Ref::SYNTHETIC {
+            return None;
+        }
+        let coord = self.store.as_ref()?.coord_of(at)?;
+        Some((coord.lo, coord.hi))
+    }
+}
+
+impl Component for LspHoverComponent {
+    type Next = Cursor;
+
+    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        if let Some((lo, hi)) = self.span_from_cursor(c) {
+            ctx.diag.emit(
+                Diag::hint(LSP_HOVER_CODE, self.render_message(c)).with_span(lo, hi),
+            );
+        }
+        Node::Emit(Arc::new(c.clone()))
+    }
+}
+
 // ─── OperatorDefs ──────────────────────────────────────────────────────────
 
 const LSP_SPEC: &[ArgSig] = &[
@@ -207,6 +309,26 @@ fn lower_lsp_diag(
     let mut comp = LspDiagComponent::new(
         severity,
         code,
+        body.raw.clone(),
+        interps,
+    ).with_focus(lsp_focus_from_flow(flow)?);
+    if let Some(store) = &ctx.sprf_store {
+        comp = comp.with_sprf_store(store.clone());
+    }
+    Ok(Pipe::new().step(Arc::new(comp)))
+}
+
+fn lower_lsp_hover(
+    ctx:  &LowerCtx,
+    flow: Option<Value>,
+    dsl:  Option<&DslBody>,
+) -> Result<Pipe<Cursor>, LowerError> {
+    let body = dsl.ok_or_else(|| LowerError::Unknown(
+        "lsp.hover: dsl body required (e.g. lsp.hover`details ${X}`)".into()
+    ))?;
+    let mut interps = body.interps.clone();
+    interps.sort_by_key(|i| i.range.lo);
+    let mut comp = LspHoverComponent::new(
         body.raw.clone(),
         interps,
     ).with_focus(lsp_focus_from_flow(flow)?);
@@ -330,6 +452,48 @@ impl OperatorDef for LspHintDef {
         dsl:    Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         lower_lsp_diag(Severity::Hint, ctx, flow, args, dsl)
+    }
+}
+
+pub struct LspHoverDef;
+impl OperatorDef for LspHoverDef {
+    fn name(&self) -> &'static str { "lsp.hover" }
+    fn flow_arg(&self) -> Option<ArgSig> { Some(LSP_FLOW) }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> { lsp_binders_in_dsl(raw) }
+    fn parse_dsl(&self, raw: &str) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
+        Ok(lsp_parse_dsl(raw))
+    }
+    fn lower(
+        &self,
+        ctx:    &LowerCtx,
+        flow:   Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        lower_lsp_hover(ctx, flow, dsl)
+    }
+}
+
+pub struct LspHoverAliasDef;
+impl OperatorDef for LspHoverAliasDef {
+    fn name(&self) -> &'static str { "lsp_hover" }
+    fn flow_arg(&self) -> Option<ArgSig> { Some(LSP_FLOW) }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> { lsp_binders_in_dsl(raw) }
+    fn parse_dsl(&self, raw: &str) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
+        Ok(lsp_parse_dsl(raw))
+    }
+    fn lower(
+        &self,
+        ctx:    &LowerCtx,
+        flow:   Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        lower_lsp_hover(ctx, flow, dsl)
     }
 }
 

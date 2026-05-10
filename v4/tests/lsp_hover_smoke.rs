@@ -1,5 +1,5 @@
 use v4::app::{
-    build_in_process, LspHoverReq, LspOpenReq, SprfClient, SprfError,
+    build_in_process, GetDiagsReq, LspHoverReq, LspOpenReq, SprfClient, SprfError,
 };
 
 #[tokio::test]
@@ -131,5 +131,57 @@ async fn lsp_hover_on_host_op_reports_cursor_flow_count() {
     assert_eq!(
         hover.contents.as_deref(),
         Some("`split`\ncursors: 2\nspan: 37..52\nvalue: `alpha`\nterms: `WORD=alpha`"),
+    );
+}
+
+#[tokio::test]
+async fn lsp_hover_op_publishes_runtime_hover_at_term_focus() {
+    let (_state, client) = build_in_process(std::env::temp_dir());
+
+    let src = "`before sh! after` > re`before (?P<NAME>sh!) after` > lsp.hover[NAME]`custom hover ${NAME}`;";
+    client.lsp_open(LspOpenReq {
+        uri: "file:///runtime-hover.sprf".into(),
+        text: src.into(),
+        version: 1,
+    }).await.unwrap();
+
+    let hover = client.lsp_hover(LspHoverReq {
+        uri: "file:///runtime-hover.sprf".into(),
+        byte: 8,
+    }).await.unwrap();
+
+    assert_eq!(
+        hover.contents.as_deref(),
+        Some("custom hover sh!"),
+    );
+
+    let diags = client.get_diags(GetDiagsReq {
+        uri: "file:///runtime-hover.sprf".into(),
+    }).await.unwrap();
+    assert!(
+        diags.iter().all(|d| d.code != "sprf/hover"),
+        "runtime hover events should not leak as diagnostics: {diags:?}",
+    );
+}
+
+#[tokio::test]
+async fn lsp_hover_underscore_alias_publishes_runtime_hover() {
+    let (_state, client) = build_in_process(std::env::temp_dir());
+
+    let src = "`before sh! after` > re`before (?P<NAME>sh!) after` > lsp_hover[NAME]`alias hover ${NAME}`;";
+    client.lsp_open(LspOpenReq {
+        uri: "file:///runtime-hover-alias.sprf".into(),
+        text: src.into(),
+        version: 1,
+    }).await.unwrap();
+
+    let hover = client.lsp_hover(LspHoverReq {
+        uri: "file:///runtime-hover-alias.sprf".into(),
+        byte: 8,
+    }).await.unwrap();
+
+    assert_eq!(
+        hover.contents.as_deref(),
+        Some("alias hover sh!"),
     );
 }

@@ -39,6 +39,7 @@ use crate::compile::ast::{OpCall, PipeAst};
 use crate::compile::parse::host_parse;
 use crate::compile::walk::walk_program;
 use crate::cst::dsl::Dsl;
+use crate::lsp::LSP_HOVER_CODE;
 #[cfg(feature = "ghcache")]
 pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq};
 #[cfg(feature = "ghcache")]
@@ -192,6 +193,13 @@ pub struct LspHoverReq {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LspHoverResp {
     pub contents: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RuntimeHover {
+    pub lo:       u32,
+    pub hi:       u32,
+    pub contents: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -435,6 +443,7 @@ pub struct DocState {
     pub parse_diags: Vec<Diag>,
     pub walk_diags:  Vec<Diag>,
     pub runtime_diags: Vec<Diag>,
+    pub runtime_hovers: Vec<RuntimeHover>,
     pub probes:      Vec<InlayProbe>,
 }
 
@@ -637,13 +646,16 @@ impl SprfState {
             }).collect();
         probes.sort_by_key(|p| (p.lo, p.hi));
 
+        let (runtime_hovers, runtime_diags) = split_runtime_hovers(runtime_diags.snapshot());
+
         self.docs.lock().unwrap().insert(uri, DocState {
             text,
             version,
             program,
             parse_diags,
             walk_diags,
-            runtime_diags: runtime_diags.snapshot(),
+            runtime_diags,
+            runtime_hovers,
             probes,
         });
     }
@@ -728,6 +740,10 @@ impl SprfHandlers for SprfState {
         }
 
         let host_byte = req.byte;
+        if let Some(contents) = runtime_hover_at(&d.runtime_hovers, host_byte) {
+            return Ok(LspHoverResp { contents: Some(contents) });
+        }
+
         let Some(probe) = d.probes.iter()
             .filter(|p| p.lo <= host_byte && host_byte <= p.hi)
             .min_by_key(|p| (p.hi - p.lo, p.lo, p.hi))
@@ -903,6 +919,33 @@ struct ProbeAgg {
     count: u32,
     sample_value: Option<String>,
     sample_terms: Vec<(String, String)>,
+}
+
+fn split_runtime_hovers(rows: Vec<Diag>) -> (Vec<RuntimeHover>, Vec<Diag>) {
+    let mut hovers = Vec::new();
+    let mut diags = Vec::new();
+    for row in rows {
+        if row.code.as_ref() == LSP_HOVER_CODE {
+            if let Some(span) = row.span {
+                hovers.push(RuntimeHover {
+                    lo: span.lo,
+                    hi: span.hi,
+                    contents: row.message,
+                });
+            }
+        } else {
+            diags.push(row);
+        }
+    }
+    hovers.sort_by_key(|h| (h.lo, h.hi, h.contents.clone()));
+    (hovers, diags)
+}
+
+fn runtime_hover_at(hovers: &[RuntimeHover], host_byte: u32) -> Option<String> {
+    hovers.iter()
+        .filter(|h| h.lo <= host_byte && host_byte <= h.hi)
+        .min_by_key(|h| (h.hi - h.lo, h.lo, h.hi))
+        .map(|h| h.contents.clone())
 }
 
 fn host_hover(op_name: &str, probe: &InlayProbe) -> String {
