@@ -95,3 +95,24 @@ fn fs_glob_read_chain() {
     assert_eq!(rows.len(), 1, "only b.rs survives the glob filter");
     assert_eq!(&*rows[0].value, "bravo", "read loaded b.rs content");
 }
+
+/// Source-side filter form: fs(glob`...`) keeps the Sprf surface small
+/// while letting fs reject candidate paths before emitting them into the
+/// runtime queue.
+#[test]
+fn fs_accepts_glob_filter_arg() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(tmp.path().join("src/lib.rs"), b"lib").unwrap();
+    std::fs::write(tmp.path().join("src/main.rs"), b"main").unwrap();
+    std::fs::write(tmp.path().join("README.md"), b"readme").unwrap();
+
+    let store = run_in(tmp.path(), "rule(:rs_paths) { fs(glob`**/*.rs`) };");
+    let rows = store.rows_of("rs_paths");
+    let mut values: Vec<String> = rows.iter().map(|c| c.value.to_string()).collect();
+    values.sort();
+
+    assert_eq!(values.len(), 2, "expected only Rust source files: {values:?}");
+    assert!(values[0].ends_with("src/lib.rs"), "got {values:?}");
+    assert!(values[1].ends_with("src/main.rs"), "got {values:?}");
+}

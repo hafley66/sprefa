@@ -53,6 +53,18 @@ fn source_reader_preserves_relative_cursor_path_identity() {
     assert_eq!(source.path.as_ref(), "a.txt");
 }
 
+#[test]
+fn source_reader_reads_relative_path_already_under_relative_root() {
+    let source = SourceReader::new("tests", None, None)
+        .read_path("tests/read_gates_bytes_smoke.rs")
+        .expect("path emitted from a relative fs root should read directly");
+    assert!(
+        source.bytes.starts_with(b"//! Source-aware matcher smoke tests."),
+        "unexpected file content prefix",
+    );
+    assert_eq!(source.path.as_ref(), "tests/read_gates_bytes_smoke.rs");
+}
+
 /// `fs > glob > read > re` - green. read materializes bytes, re matches
 /// against cursor.value bytes.
 #[test]
@@ -150,6 +162,28 @@ fn ast_without_read_source_reads_path_cursor() {
     assert_eq!(
         store.len("hits"), 1,
         "ast should source-read file bytes from the path cursor",
+    );
+}
+
+#[test]
+fn ast_source_reads_after_fs_glob_filter_arg() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("k.c"),
+        b"int main(void) { printk(\"hi\"); return 0; }\n",
+    ).unwrap();
+    std::fs::write(
+        tmp.path().join("skip.md"),
+        b"printk(\"not source\");\n",
+    ).unwrap();
+
+    let store = run_in(
+        tmp.path(),
+        "rule(:hits) { fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)` };",
+    );
+    assert_eq!(
+        store.len("hits"), 1,
+        "fs(glob) should filter source paths before ast source-read",
     );
 }
 

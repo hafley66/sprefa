@@ -58,7 +58,7 @@ impl SourceReader {
     }
 
     fn read_worktree_path(&self, path: &str, repo: RepoId, rev: RevId) -> Option<SourceBytes> {
-        let resolved = resolve_path_text(&self.root, path);
+        let resolved = resolve_source_path(&self.root, path);
         let bytes = std::fs::read(&resolved).ok()?;
         let path_arc: Arc<str> = Arc::from(path);
         let file = self.store.as_ref()
@@ -116,6 +116,19 @@ pub fn resolve_path_text(root: impl AsRef<Path>, raw: &str) -> PathBuf {
         root.as_ref().join(path)
     };
     normalize_lexical(&joined)
+}
+
+fn resolve_source_path(root: impl AsRef<Path>, raw: &str) -> PathBuf {
+    let expanded = expand_vars(expand_home(raw).as_ref());
+    let path = PathBuf::from(expanded);
+    if path.is_absolute() {
+        return normalize_lexical(&path);
+    }
+    let root = normalize_lexical(root.as_ref());
+    if path.starts_with(&root) {
+        return normalize_lexical(&path);
+    }
+    resolve_path_text(root, raw)
 }
 
 fn expand_home(raw: &str) -> String {

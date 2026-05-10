@@ -395,11 +395,18 @@ fn atom_string_vec(args: &[Value]) -> Vec<String> {
 
 pub struct FsDef;
 
-/// `fs` is a pure path query — bare form only, no atom args, no dsl
-/// body, no block. Emits one cursor per file under `ctx.root`,
-/// `cursor.value = path string`. Filtering is the job of `glob` / `re`
-/// downstream. Reading content is the job of `read`.
-const FS_SPEC: &[ArgSig] = &[];
+/// `fs` is a pure path query. Bare form emits one cursor per file under
+/// `ctx.root`, `cursor.value = path string`. `fs(glob`...`)` is the
+/// source-side filter form: only static single-step glob filters are
+/// accepted here, so rejected paths never enter the runtime queue.
+const FS_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Pipe,
+        name: "filter",
+        doc: "optional static source path filter, currently glob`...`",
+        required: false,
+    },
+];
 
 impl OperatorDef for FsDef {
     fn name(&self) -> &'static str { "fs" }
@@ -410,16 +417,48 @@ impl OperatorDef for FsDef {
         &self,
         ctx:    &LowerCtx,
         _flow:  Option<Value>,
-        _args:  &[Value],
+        args:   &[Value],
         _block: Option<Pipe<Cursor>>,
         _dsl:   Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         // TODO: LowerCtx batch-size knob; hardcoded for now.
         let mut comp = FsComponent::new(ctx.root.clone(), 1024);
+        if let Some(filter) = args.first() {
+            comp = comp.with_source_filter(source_path_filter(filter)?);
+        }
         if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         if let Some(c) = &ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
+}
+
+fn source_path_filter(
+    value: &Value,
+) -> Result<Arc<dyn Fn(&str) -> bool + Send + Sync>, LowerError> {
+    let Value::Pipe(pipe) = value else {
+        return Err(LowerError::Unknown(
+            "fs: source filter must be a pipe, e.g. fs(glob`**/*.rs`)".into(),
+        ));
+    };
+    if pipe.steps.len() != 1 {
+        return Err(LowerError::Unknown(
+            "fs: source filter must be one static step, e.g. fs(glob`**/*.rs`)".into(),
+        ));
+    }
+    let step = pipe.steps[0].clone();
+    let Some(_) = step.describe()
+        .and_then(|d| d.downcast_ref::<GlobComponent>())
+    else {
+        return Err(LowerError::Unknown(
+            "fs: source filter currently supports only static glob`...`".into(),
+        ));
+    };
+    Ok(Arc::new(move |path: &str| {
+        step.describe()
+            .and_then(|d| d.downcast_ref::<GlobComponent>())
+            .map(|glob| glob.matches_value(path))
+            .unwrap_or(false)
+    }))
 }
 
 // ─── glob ─────────────────────────────────────────────────────────────────

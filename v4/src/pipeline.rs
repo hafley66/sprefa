@@ -109,10 +109,15 @@ impl GlobComponent {
     pub fn with_sprf_store(mut self, s: Arc<crate::store::SprfStore>) -> Self {
         self.store = Some(s); self
     }
+    pub fn matches_value(&self, value: &str) -> bool {
+        self.re.captures(value).is_some()
+    }
 }
 
 impl Component for GlobComponent {
     type Next = Cursor;
+
+    fn describe(&self) -> Option<&dyn std::any::Any> { Some(self) }
 
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
         let hay: &str = c.value.as_ref();

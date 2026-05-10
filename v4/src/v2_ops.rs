@@ -132,6 +132,7 @@ pub struct FsComponent {
     /// `git ls-tree`.
     config:    Option<Arc<SprfConfig>>,
     include_exts: Option<Arc<Vec<String>>>,
+    source_filter: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
     telemetry: Option<Arc<FsTelemetry>>,
 }
 
@@ -150,6 +151,7 @@ impl FsComponent {
             store: None,
             config: None,
             include_exts: None,
+            source_filter: None,
             telemetry: None,
         }
     }
@@ -165,6 +167,12 @@ impl FsComponent {
     pub fn with_include_exts(mut self, exts: Vec<String>) -> Self {
         self.include_exts = Some(Arc::new(exts)); self
     }
+    pub fn with_source_filter(
+        mut self,
+        f: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    ) -> Self {
+        self.source_filter = Some(f); self
+    }
     pub fn with_telemetry(mut self, telemetry: Arc<FsTelemetry>) -> Self {
         self.telemetry = Some(telemetry); self
     }
@@ -172,6 +180,12 @@ impl FsComponent {
         let Some(exts) = &self.include_exts else { return true };
         let Some(ext) = path.as_ref().extension().and_then(|s| s.to_str()) else { return false };
         exts.iter().any(|want| want.eq_ignore_ascii_case(ext))
+    }
+    fn include_source_value(&self, value: &str) -> bool {
+        self.source_filter
+            .as_ref()
+            .map(|f| f(value))
+            .unwrap_or(true)
     }
 }
 
@@ -220,7 +234,7 @@ impl Component for FsComponent {
                     if let Some(t) = &self.telemetry {
                         t.seen_files.fetch_add(1, Ordering::Relaxed);
                     }
-                    if !self.include_path(&path) {
+                    if !self.include_path(&path) || !self.include_source_value(&path) {
                         if let Some(t) = &self.telemetry {
                             t.ext_skipped.fetch_add(1, Ordering::Relaxed);
                         }
@@ -292,6 +306,9 @@ impl Component for FsComponent {
             }
 
             let path_str = p.display().to_string();
+            if !self.include_source_value(&path_str) {
+                continue;
+            }
             let mut c = parent.value.as_ref().clone();
             // Pure-query contract: cursor.value carries the path string.
             // glob/re downstream match against it; read uses it as the

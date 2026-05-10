@@ -11,8 +11,8 @@
 #   cargo run --release --bin sprefa-run -- v4/bench/linux.sprf \
 #     --root .bench/linux --no-show-rows
 #
-# Each row carries FILE / LO / HI for the printk match site. Add
-# rule(:hits, FILE, LO, HI) to drain into a fact table; `sprefa-run`
-# reports the row count via the FactTable surface.
+# Each row carries FS / LO / HI for the printk match site.
 
-fs > glob`**/*.{c,h}` > ast(:c)`printk($$$)` > fact(:hits, FS, LO, HI);
+rule(:hits, :FS, :LO, :HI) {
+  fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)`
+};
