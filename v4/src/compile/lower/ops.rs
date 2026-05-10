@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use ast_grep_config::{DeserializeEnv, SerializableRuleCore};
 use effect_runtime::v2::Pipe;
 
 use crate::Cursor;
@@ -18,7 +19,7 @@ use crate::chan::{Next, NextQ};
 use crate::fact::{FactRead, FactWrite};
 use crate::term::Term;
 use crate::v2_ops::{
-    AstNmComponent, CollectComponent, CollectMode, CommentComponent,
+    AstNmComponent, AstYamlComponent, CollectComponent, CollectMode, CommentComponent,
     FsComponent, JsonComponent, PrintComponent, ReComponent, ReadComponent,
     RenderMarkdownComponent, RepoComponent, RevComponent, ShBangComponent,
     ShComponent, SplitComponent, VoidComponent, WriteCursorComponent,
@@ -706,6 +707,96 @@ impl OperatorDef for AstDef {
     }
 }
 
+// `ast_yaml(:lang)`rule: ...`` — ast-grep RuleCore YAML body.
+// V4 uses the normal paren atom + backtick body shape instead of V3's
+// bracket form `ast_yaml[lang](...)`.
+
+pub struct AstYamlDef;
+
+impl OperatorDef for AstYamlDef {
+    fn name(&self) -> &'static str { "ast_yaml" }
+    fn paren_args(&self) -> &[ArgSig] { AST_SPEC }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["LO", "HI"] }
+
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
+        let (caps, positions) = collect_ast_yaml_carveout_names_and_positions(raw);
+        let mut out: Vec<DslBinder> = positions
+            .into_iter()
+            .map(|(name, range)| DslBinder {
+                name,
+                range: ByteRange { lo: range.start as u32, hi: range.end as u32 },
+            })
+            .collect();
+        for binder in scan_ast_metavars(raw) {
+            if !out.iter().any(|b| b.name.as_ref() == binder.name.as_ref()) {
+                out.push(binder);
+            }
+        }
+        for cap in caps {
+            if !out.iter().any(|b| b.name.as_ref() == cap.as_ref()) {
+                out.push(DslBinder {
+                    name: cap,
+                    range: ByteRange { lo: 0, hi: 0 },
+                });
+            }
+        }
+        out
+    }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        args:   &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let lang_atom: Option<&str> = args.first().and_then(|v| match v {
+            Value::Atom(s) => Some(s.as_ref()),
+            _ => None,
+        });
+        let lang = parse_lang_atom(lang_atom.unwrap_or("rs"))
+            .ok_or_else(|| LowerError::Unknown(format!(
+                "ast_yaml: unknown lang atom :{} (try :rs, :c, :cpp)",
+                lang_atom.unwrap_or("?")
+            )))?;
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "ast_yaml: dsl body required (e.g. ast_yaml(:rs)`pattern: \"fn $N() {}\"`)".into()
+        ))?;
+        if crate::template::has_subpipe(&body.interps) {
+            return Err(LowerError::Unknown(
+                "ast_yaml: subpipe interpolation inside YAML is not supported yet".into(),
+            ));
+        }
+
+        let rewritten = rewrite_ast_yaml_carveouts(body.raw.as_ref());
+        let value: serde_yaml::Value = serde_yaml::from_str(&rewritten)
+            .map_err(|e| LowerError::Unknown(format!("ast_yaml YAML invalid: {e}")))?;
+        let core_value = wrap_ast_yaml_under_rule_if_bare(value);
+        let core: SerializableRuleCore = serde_yaml::from_value(core_value)
+            .map_err(|e| LowerError::Unknown(format!(
+                "ast_yaml RuleCore deserialise failed: {e}"
+            )))?;
+        let env = DeserializeEnv::new(lang);
+        let rule_core = core.get_matcher(env)
+            .map_err(|e| LowerError::Unknown(format!("ast_yaml rule build failed: {e}")))?;
+
+        let (mut bound_caps, _) =
+            collect_ast_yaml_carveout_names_and_positions(body.raw.as_ref());
+        for v in rule_core.defined_vars() {
+            let s: Arc<str> = Arc::from(v);
+            if !bound_caps.iter().any(|c| c.as_ref() == s.as_ref()) {
+                bound_caps.push(s);
+            }
+        }
+
+        let mut comp = AstYamlComponent::new(lang, rule_core, bound_caps);
+        if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        Ok(Pipe::new().step(Arc::new(comp)))
+    }
+}
+
 fn parse_lang_atom(s: &str) -> Option<ast_grep_language::SupportLang> {
     use ast_grep_language::SupportLang as L;
     Some(match s {
@@ -755,6 +846,102 @@ fn scan_ast_metavars(raw: &str) -> Vec<DslBinder> {
         i += 1;
     }
     out
+}
+
+fn rewrite_ast_yaml_carveouts(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let multi = bytes[i] == b'$'
+            && i + 3 < bytes.len()
+            && bytes[i + 1] == b'$'
+            && bytes[i + 2] == b'$'
+            && bytes[i + 3] == b'{';
+        let single = !multi
+            && bytes[i] == b'$'
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b'{';
+        if multi || single {
+            let inner_start = if multi { i + 4 } else { i + 2 };
+            let mut j = inner_start;
+            while j < bytes.len() && bytes[j] != b'}' { j += 1; }
+            if j >= bytes.len() {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+            let inner = src[inner_start..j].trim();
+            let name = inner.strip_suffix('?').unwrap_or(inner);
+            if multi { out.push_str("$$$"); } else { out.push('$'); }
+            out.push_str(name);
+            i = j + 1;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn collect_ast_yaml_carveout_names_and_positions(
+    src: &str,
+) -> (Vec<Arc<str>>, Vec<(Arc<str>, std::ops::Range<usize>)>) {
+    let bytes = src.as_bytes();
+    let mut names: Vec<Arc<str>> = Vec::new();
+    let mut positions: Vec<(Arc<str>, std::ops::Range<usize>)> = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let multi = bytes[i] == b'$'
+            && i + 3 < bytes.len()
+            && bytes[i + 1] == b'$'
+            && bytes[i + 2] == b'$'
+            && bytes[i + 3] == b'{';
+        let single = !multi
+            && bytes[i] == b'$'
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b'{';
+        if multi || single {
+            let token_start = i;
+            let inner_start = if multi { i + 4 } else { i + 2 };
+            let mut j = inner_start;
+            while j < bytes.len() && bytes[j] != b'}' { j += 1; }
+            if j >= bytes.len() {
+                i += 1;
+                continue;
+            }
+            let inner = src[inner_start..j].trim();
+            let name = inner.strip_suffix('?').unwrap_or(inner);
+            if !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                let arc: Arc<str> = Arc::from(name);
+                if !names.iter().any(|s| s.as_ref() == arc.as_ref()) {
+                    names.push(arc.clone());
+                }
+                positions.push((arc, token_start..(j + 1)));
+            }
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    (names, positions)
+}
+
+fn wrap_ast_yaml_under_rule_if_bare(value: serde_yaml::Value) -> serde_yaml::Value {
+    const ENVELOPE_KEYS: &[&str] = &["rule", "constraints", "utils", "transform", "fix"];
+    if let serde_yaml::Value::Mapping(m) = &value {
+        let has_envelope = ENVELOPE_KEYS.iter().any(|k| {
+            m.contains_key(serde_yaml::Value::String((*k).into()))
+        });
+        if has_envelope {
+            return value;
+        }
+    }
+    let mut wrapper = serde_yaml::Mapping::new();
+    wrapper.insert(serde_yaml::Value::String("rule".into()), value);
+    serde_yaml::Value::Mapping(wrapper)
 }
 
 // ─── json ─────────────────────────────────────────────────────────────────

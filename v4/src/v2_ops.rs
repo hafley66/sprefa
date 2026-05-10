@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ast_grep_config::RuleCore;
 use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
@@ -543,6 +544,149 @@ impl Component for AstNmComponent {
             if let Some(t) = &telemetry {
                 t.matches.fetch_add(hits.len() as u64, Ordering::Relaxed);
             }
+            if hits.is_empty() { Node::Done } else { Node::Many(hits) }
+        })
+    }
+}
+
+/// Raw ast-grep RuleCore YAML matcher. Mirrors `AstNmComponent`'s
+/// source-aware read path but runs a deserialised YAML rule instead of a
+/// plain ast-grep pattern.
+pub struct AstYamlComponent {
+    lang:       SupportLang,
+    rule_core:  Arc<RuleCore<SupportLang>>,
+    bound_caps: Arc<Vec<Arc<str>>>,
+    store:      Option<Arc<SprfStore>>,
+}
+
+impl AstYamlComponent {
+    pub fn new(
+        lang: SupportLang,
+        rule_core: RuleCore<SupportLang>,
+        bound_caps: Vec<Arc<str>>,
+    ) -> Self {
+        Self {
+            lang,
+            rule_core: Arc::new(rule_core),
+            bound_caps: Arc::new(bound_caps),
+            store: None,
+        }
+    }
+
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s);
+        self
+    }
+}
+
+impl Component for AstYamlComponent {
+    type Next = Cursor;
+
+    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+        let store = self.store.clone();
+        let lang = self.lang;
+        let rule_core = self.rule_core.clone();
+        let bound_caps = self.bound_caps.clone();
+        par_render(batch, move |c| {
+            if c.value.is_empty() { return Node::Done; }
+
+            let path_for_intern: &str = c.get("FS").unwrap_or("");
+            let parent_coord = store.as_ref().and_then(|s| s.coord_of(c.at));
+            let should_read_source = !path_for_intern.is_empty()
+                && c.value.as_ref() == path_for_intern;
+            let (src, file_id, repo, rev): (
+                String,
+                crate::FileId,
+                crate::RepoId,
+                crate::RevId,
+            ) = if should_read_source {
+                let (repo, rev) = parent_coord
+                    .map(|c| (c.repo, c.rev))
+                    .unwrap_or((0, 0));
+                let Ok(bytes) = std::fs::read(path_for_intern) else {
+                    return Node::Done;
+                };
+                let src = String::from_utf8_lossy(&bytes).into_owned();
+                let file_id = if let Some(s) = store.as_ref() {
+                    let file_id = s.intern_file(&bytes, path_for_intern);
+                    let _ = s.intern_path(repo, rev, file_id, path_for_intern);
+                    file_id
+                } else {
+                    0
+                };
+                (src, file_id, repo, rev)
+            } else {
+                let src: String = c.value.as_ref().to_string();
+                let (repo, rev) = parent_coord
+                    .map(|c| (c.repo, c.rev))
+                    .unwrap_or((0, 0));
+                let file_id = store.as_ref()
+                    .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
+                    .unwrap_or(0);
+                (src, file_id, repo, rev)
+            };
+
+            let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
+            let hits: Vec<Node<Cursor>> = grep.root().find_all(&*rule_core).map(|nm| {
+                let r = nm.range();
+                let mut child = c.clone();
+                child.set("LO", (r.start as u64).to_string());
+                child.set("HI", (r.end as u64).to_string());
+                let slice = src.get(r.start..r.end).unwrap_or("");
+                child.value = Arc::<str>::from(slice);
+
+                if let Some(store) = &store {
+                    let coord = Coord {
+                        repo, rev, fs: file_id,
+                        lo: r.start as u32, hi: r.end as u32,
+                    };
+                    child.at = store.intern_ref(coord);
+                    child.cursor_value = CursorValue::WhereBytes(WhereBytesId::from(child.at));
+                    child.value_id = store.intern_string(slice);
+                    store.observe_string(
+                        child.value_id,
+                        "ast_yaml_match",
+                        WhereBytesId::from(child.at),
+                        "",
+                        0,
+                    );
+                    child.set_at("MATCH", slice, coord, store);
+                    child.set("MATCH_LO", coord.lo.to_string());
+                    child.set("MATCH_HI", coord.hi.to_string());
+                    if let Some(path) = store.path_of(coord.fs) {
+                        child.set("MATCH_FS", &*path);
+                    }
+                }
+
+                let env = nm.get_env();
+                for cap_name in bound_caps.iter() {
+                    if let Some(node) = env.get_match(cap_name.as_ref()) {
+                        let nr = node.range();
+                        let text = node.text().to_string();
+                        child.set(cap_name.as_ref(), text.as_str());
+                        if let Some(store) = &store {
+                            let coord = Coord {
+                                repo, rev, fs: file_id,
+                                lo: nr.start as u32, hi: nr.end as u32,
+                            };
+                            child.set_at(cap_name.as_ref(), text.as_str(), coord, store);
+                        }
+                        continue;
+                    }
+                    let multi = env.get_multiple_matches(cap_name.as_ref());
+                    if !multi.is_empty() {
+                        let joined = multi
+                            .iter()
+                            .map(|n| n.text().to_string())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        child.set(cap_name.as_ref(), joined.as_str());
+                    }
+                }
+
+                Node::Emit(Arc::new(child))
+            }).collect();
+
             if hits.is_empty() { Node::Done } else { Node::Many(hits) }
         })
     }

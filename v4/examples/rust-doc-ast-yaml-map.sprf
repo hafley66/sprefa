@@ -1,0 +1,33 @@
+# Demo: ast_yaml RuleCore composition -> nested markdown.
+#
+# Run from repo root:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/rust-doc-ast-yaml-map.sprf --root . --show-rows
+
+rule(:rust_doc_items, NAME?, DOC?, FS?, LO?);
+
+fs
+  > glob`v4/src/**/*.rs`
+  > ast_yaml(:rs)`
+      rule:
+        kind: line_comment
+        regex: "^///"
+        precedes:
+          pattern: "fn ${NAME?}($$$ARGS) { $$$BODY }"
+    `
+  > term_bind(:DOC)
+  > rust_doc_items.(NAME, DOC, FS, LO);
+
+`v4/examples/rust-doc-ast-yaml-map.md`
+  > render_markdown`# Rust Doc AST YAML Map
+
+${ rust_doc_items(NAME?, DOC?, FS?, LO?)
+  > render_markdown`## ${NAME}
+
+[${FS} byte ${LO}](${FS})
+
+${DOC}
+`
+}
+`
+  > write_file`v4/examples/rust-doc-ast-yaml-map.md`;

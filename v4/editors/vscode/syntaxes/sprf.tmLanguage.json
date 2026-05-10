@@ -6,6 +6,7 @@
     { "include": "#comment"          },
     { "include": "#dsl-re"           },
     { "include": "#dsl-glob"         },
+    { "include": "#dsl-ast-yaml"     },
     { "include": "#dsl-ast"          },
     { "include": "#dsl-json"         },
     { "include": "#dsl-markdown"     },
@@ -102,6 +103,32 @@
         { "include": "#hole" },
         { "match": "\\$\\$\\$[A-Za-z_][A-Za-z0-9_]*", "name": "variable.parameter.metavar-rest.ast.sprf" },
         { "match": "\\$[A-Za-z_][A-Za-z0-9_]*",       "name": "variable.parameter.metavar.ast.sprf"      }
+      ]
+    },
+
+    "dsl-ast-yaml": {
+      "begin":         "\\b(ast_yaml)(\\s*\\(\\s*:[A-Za-z_][A-Za-z0-9_]*\\s*\\))?(\\?)?(`)",
+      "end":           "`",
+      "beginCaptures": {
+        "1": { "name": "entity.name.function.op.dsl-tag.ast-yaml.sprf" },
+        "2": { "name": "support.type.language-arg.ast-yaml.sprf"       },
+        "3": { "name": "keyword.operator.predicate.sprf"                },
+        "4": { "name": "punctuation.definition.string.begin.dsl.sprf"   }
+      },
+      "endCaptures":   { "0": { "name": "punctuation.definition.string.end.dsl.sprf" } },
+      "name":          "source.yaml.embedded.ast-yaml.sprf",
+      "contentName":   "source.yaml.embedded.ast-yaml.sprf",
+      "patterns": [
+        { "include": "#hole" },
+        { "match": "\\$\\$\\$[A-Za-z_][A-Za-z0-9_]*", "name": "variable.parameter.metavar-rest.ast-yaml.sprf" },
+        { "match": "\\$[A-Za-z_][A-Za-z0-9_]*",       "name": "variable.parameter.metavar.ast-yaml.sprf"      },
+        { "match": "^\\s*([A-Za-z_][A-Za-z0-9_-]*)\\s*:", "captures": { "1": { "name": "entity.name.tag.yaml.sprf" } } },
+        { "match": "\"(?:\\\\.|[^\"\\\\])*\"",        "name": "string.quoted.double.yaml.sprf" },
+        { "match": "'(?:''|[^'])*'",                   "name": "string.quoted.single.yaml.sprf" },
+        { "match": "\\b(?:true|false|null)\\b",        "name": "constant.language.yaml.sprf" },
+        { "match": "-?\\b\\d+(?:\\.\\d+)?\\b",         "name": "constant.numeric.yaml.sprf" },
+        { "match": "[-]\\s",                           "name": "punctuation.definition.list.yaml.sprf" },
+        { "match": ":",                                "name": "punctuation.separator.key-value.yaml.sprf" }
       ]
     },
 
