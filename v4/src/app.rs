@@ -765,8 +765,12 @@ impl SprfHandlers for SprfState {
         // 4096 matches v4-bench. Smaller caps multiply per-batch lock
         // overhead in batched sinks (FactWrite et al.).
         let runtime_diags = Arc::new(BufferDiagSink::new());
+        let batch_cap = std::env::var("SPREFA_BATCH_CAP")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(4096);
         let opts = ExpandOpts::default()
-            .with_batch_cap(4096)
+            .with_batch_cap(batch_cap)
             .with_bus(self.bus.clone())
             .with_diag(runtime_diags.clone());
         let mut n = 0;

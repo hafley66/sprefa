@@ -33,6 +33,7 @@ struct Args {
     fact_db:   Option<PathBuf>,
     queue_db:  Option<PathBuf>,
     telemetry: bool,
+    batch_cap: Option<usize>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -53,6 +54,7 @@ where
     let mut fact_db:   Option<PathBuf> = cfg.run_fact_db();
     let mut queue_db:  Option<PathBuf> = cfg.run_queue_db();
     let mut telemetry: bool            = false;
+    let mut batch_cap: Option<usize>   = None;
 
     let mut i = 0;
     while i < raw.len() {
@@ -84,6 +86,11 @@ where
                 queue_db = Some(PathBuf::from(v));
                 i += 2;
             }
+            "--batch" | "--batch-cap" => {
+                let v = raw.get(i+1).ok_or("--batch needs a value")?;
+                batch_cap = Some(v.parse().map_err(|_| format!("bad --batch: {v}"))?);
+                i += 2;
+            }
             "--telemetry" => { telemetry = true; i += 1; }
             "-h" | "--help" => { print_usage(); std::process::exit(0); }
             other if other.starts_with("--") => {
@@ -100,13 +107,13 @@ where
     }
     Ok(Args {
         path: path.ok_or("missing <path-to-sprf-file>")?,
-        show_rows, max_diags, remote, root, fact_db, queue_db, telemetry,
+        show_rows, max_diags, remote, root, fact_db, queue_db, telemetry, batch_cap,
     })
 }
 
 fn print_usage() {
     eprintln!("sprefa-run <path-to-sprf-file> \
-[--show-rows|--no-show-rows] [--telemetry] [--max-diags N] [--remote URL] [--root PATH] [--fact-db PATH] [--queue-db PATH]");
+[--show-rows|--no-show-rows] [--telemetry] [--batch N] [--max-diags N] [--remote URL] [--root PATH] [--fact-db PATH] [--queue-db PATH]");
 }
 
 /// 1-indexed (line, col) for byte offset `off` in `src`.
@@ -161,6 +168,9 @@ async fn main() -> ExitCode {
     };
     if args.telemetry {
         std::env::set_var("SPREFA_TELEMETRY", "1");
+    }
+    if let Some(batch_cap) = args.batch_cap {
+        std::env::set_var("SPREFA_BATCH_CAP", batch_cap.to_string());
     }
 
     let path_disp = args.path.display().to_string();
@@ -281,8 +291,14 @@ fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
     );
     for s in &t.stages {
         println!(
-            "stage {:>24}: calls={} rows={} wall_ms={:.1} rows_per_sec={:.0}",
-            s.name, s.calls, s.rows, s.wall_ms, s.rows_per_sec,
+            "stage {:>24}: calls={} rows={} avg_batch={:.1} max_batch={} wall_ms={:.1} rows_per_sec={:.0}",
+            s.name,
+            s.calls,
+            s.rows,
+            if s.calls == 0 { 0.0 } else { s.rows as f64 / s.calls as f64 },
+            s.max_batch,
+            s.wall_ms,
+            s.rows_per_sec,
         );
     }
 }
@@ -319,6 +335,7 @@ mod tests {
         assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/facts.db")));
         assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));
         assert!(!args.telemetry);
+        assert_eq!(args.batch_cap, None);
     }
 
     #[test]
@@ -340,11 +357,13 @@ mod tests {
             "dev.sprf",
             "--show-rows",
             "--telemetry",
+            "--batch", "65536",
             "--max-diags", "3",
             "--fact-db", "/tmp/cli-facts.db",
         ], &cfg).unwrap();
         assert!(args.show_rows);
         assert!(args.telemetry);
+        assert_eq!(args.batch_cap, Some(65536));
         assert_eq!(args.max_diags, 3);
         assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/cli-facts.db")));
         assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));

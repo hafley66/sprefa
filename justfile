@@ -59,8 +59,17 @@ v4-release:
 v4-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
     ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare
 
+v4-bench-linux-warm LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
+    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --warm-page-cache
+
 v4-bench-linux-quick:
     ./v4/target/release/v4-bench --root "v3/tests/smoke/.fixtures/linux" --workers "8" --trials "1" --batch "4096" --pattern 'printk($$$)' --lang c --mode bare
+
+v4-bench-linux-store LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="1" BATCH="4096":
+    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --sprf-store
+
+v4-bench-linux-store-warm LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="1" BATCH="4096":
+    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --sprf-store --warm-page-cache
 
 v4-bench-linux-read LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
     ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --materialize-read
@@ -70,6 +79,9 @@ v4-bench-linux-sprf LINUX="v3/tests/smoke/.fixtures/linux":
 
 v4-bench-linux-sprf-telemetry LINUX="v3/tests/smoke/.fixtures/linux":
     ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry
+
+v4-bench-linux-sprf-telemetry-batch LINUX="v3/tests/smoke/.fixtures/linux" BATCH="65536":
+    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}"
 
 v3-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3":
     ./v3/experiments/effect_proof/target/release/ast_grep_v3_bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --pattern '{{PATTERN}}' --lang c --mode batch

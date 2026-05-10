@@ -13,10 +13,11 @@ use crate::Cursor;
 
 #[derive(Default)]
 pub struct StageTiming {
-    pub name:    &'static str,
-    pub calls:   AtomicU64,
-    pub rows:    AtomicU64,
-    pub wall_ns: AtomicU64,
+    pub name:      &'static str,
+    pub calls:     AtomicU64,
+    pub rows:      AtomicU64,
+    pub max_batch: AtomicU64,
+    pub wall_ns:   AtomicU64,
 }
 
 impl StageTiming {
@@ -56,6 +57,7 @@ impl Component for TimedComponent {
         let dt = t0.elapsed();
         self.timing.calls.fetch_add(1, Ordering::Relaxed);
         self.timing.rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+        self.timing.max_batch.fetch_max(rows.len() as u64, Ordering::Relaxed);
         self.timing.wall_ns.fetch_add(dt.as_nanos() as u64, Ordering::Relaxed);
     }
 
@@ -119,6 +121,7 @@ impl PipelineTelemetry {
                     name: s.name.to_string(),
                     calls: s.calls.load(Ordering::Relaxed),
                     rows,
+                    max_batch: s.max_batch.load(Ordering::Relaxed),
                     wall_ms,
                     rows_per_sec: rows_per_sec(rows, wall_ms),
                 }
@@ -178,6 +181,7 @@ pub struct StageTelemetry {
     pub name: String,
     pub calls: u64,
     pub rows: u64,
+    pub max_batch: u64,
     pub wall_ms: f64,
     pub rows_per_sec: f64,
 }
