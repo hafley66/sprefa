@@ -140,9 +140,21 @@ impl PipelineTelemetry {
                 prefilter_skips:    self.ast.prefilter_skips.load(Ordering::Relaxed),
                 parses:             self.ast.parses.load(Ordering::Relaxed),
                 matches:            self.ast.matches.load(Ordering::Relaxed),
+                pattern_ms:         ns_to_ms(self.ast.pattern_ns.load(Ordering::Relaxed)),
+                source_read_ms:     ns_to_ms(self.ast.source_read_ns.load(Ordering::Relaxed)),
+                prefilter_ms:       ns_to_ms(self.ast.prefilter_ns.load(Ordering::Relaxed)),
+                utf8_ms:            ns_to_ms(self.ast.utf8_ns.load(Ordering::Relaxed)),
+                legacy_ms:          ns_to_ms(self.ast.legacy_ns.load(Ordering::Relaxed)),
+                parse_ms:           ns_to_ms(self.ast.parse_ns.load(Ordering::Relaxed)),
+                match_ms:           ns_to_ms(self.ast.match_ns.load(Ordering::Relaxed)),
+                emit_stamp_ms:      ns_to_ms(self.ast.emit_stamp_ns.load(Ordering::Relaxed)),
             },
         }
     }
+}
+
+fn ns_to_ms(ns: u64) -> f64 {
+    ns as f64 / 1_000_000.0
 }
 
 fn rows_per_sec(rows: u64, wall_ms: f64) -> f64 {
@@ -190,4 +202,12 @@ pub struct AstTelemetrySnapshot {
     pub prefilter_skips:    u64,
     pub parses:             u64,
     pub matches:            u64,
+    pub pattern_ms:         f64,
+    pub source_read_ms:     f64,
+    pub prefilter_ms:       f64,
+    pub utf8_ms:            f64,
+    pub legacy_ms:          f64,
+    pub parse_ms:           f64,
+    pub match_ms:           f64,
+    pub emit_stamp_ms:      f64,
 }

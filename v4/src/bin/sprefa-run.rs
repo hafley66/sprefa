@@ -268,6 +268,17 @@ fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
         t.ast.parses,
         t.ast.matches,
     );
+    println!(
+        "ast_ms pattern={:.1} read={:.1} prefilter={:.1} utf8={:.1} legacy={:.1} parse={:.1} match={:.1} emit_stamp={:.1}",
+        t.ast.pattern_ms,
+        t.ast.source_read_ms,
+        t.ast.prefilter_ms,
+        t.ast.utf8_ms,
+        t.ast.legacy_ms,
+        t.ast.parse_ms,
+        t.ast.match_ms,
+        t.ast.emit_stamp_ms,
+    );
     for s in &t.stages {
         println!(
             "stage {:>24}: calls={} rows={} wall_ms={:.1} rows_per_sec={:.0}",

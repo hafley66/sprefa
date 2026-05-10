@@ -381,7 +381,7 @@ async fn main() {
             );
         }
         eprintln!(
-            "  ast telemetry: inputs={} source_reads={} source_MB={:.1} source_utf8={} source_utf8_MB={:.1} source_errors={} legacy_rows={} prefilter_skips={} parses={} matches={}",
+            "  ast telemetry: inputs={} source_reads={} source_MB={:.1} source_utf8={} source_utf8_MB={:.1} source_errors={} legacy_rows={} prefilter_skips={} parses={} matches={} pattern_ms={:.1} read_ms={:.1} prefilter_ms={:.1} utf8_ms={:.1} legacy_ms={:.1} parse_ms={:.1} match_ms={:.1} emit_stamp_ms={:.1}",
             ast_telemetry.input_rows.load(Ordering::Relaxed),
             ast_telemetry.source_read_rows.load(Ordering::Relaxed),
             ast_telemetry.source_read_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
@@ -392,6 +392,14 @@ async fn main() {
             ast_telemetry.prefilter_skips.load(Ordering::Relaxed),
             ast_telemetry.parses.load(Ordering::Relaxed),
             ast_telemetry.matches.load(Ordering::Relaxed),
+            ast_telemetry.pattern_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            ast_telemetry.source_read_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            ast_telemetry.prefilter_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            ast_telemetry.utf8_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            ast_telemetry.legacy_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            ast_telemetry.parse_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            ast_telemetry.match_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            ast_telemetry.emit_stamp_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
         );
         walls.push(wall);
         last_matches = m;

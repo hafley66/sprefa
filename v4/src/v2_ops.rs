@@ -441,6 +441,14 @@ pub struct AstTelemetry {
     pub prefilter_skips:    AtomicU64,
     pub parses:             AtomicU64,
     pub matches:            AtomicU64,
+    pub pattern_ns:         AtomicU64,
+    pub source_read_ns:     AtomicU64,
+    pub prefilter_ns:       AtomicU64,
+    pub utf8_ns:            AtomicU64,
+    pub legacy_ns:          AtomicU64,
+    pub parse_ns:           AtomicU64,
+    pub match_ns:           AtomicU64,
+    pub emit_stamp_ns:      AtomicU64,
 }
 
 impl AstNmComponent {
@@ -482,6 +490,21 @@ impl AstNmComponent {
     }
 }
 
+fn ast_timed<T>(
+    telemetry: &Option<Arc<AstTelemetry>>,
+    field: impl FnOnce(&AstTelemetry) -> &AtomicU64,
+    f: impl FnOnce() -> T,
+) -> T {
+    if let Some(t) = telemetry {
+        let t0 = std::time::Instant::now();
+        let out = f();
+        field(t).fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        out
+    } else {
+        f()
+    }
+}
+
 impl Component for AstNmComponent {
     type Next = Cursor;
 
@@ -505,19 +528,24 @@ impl Component for AstNmComponent {
             // Per-cursor pattern selection: static for term-only bodies,
             // SubPipe-bearing bodies recompile the ast-grep Pattern per
             // cursor against the rendered body.
-            let (cur_pat, cur_fixed): (Arc<Pattern<SupportLang>>, Arc<str>) = match &dyn_body {
-                None => (pattern.clone(), fixed.clone()),
-                Some((body, interps)) => {
-                    let pat_src = crate::template::render_segments_no_diag(
-                        body.as_ref(), interps, c,
-                    );
-                    let p = Pattern::new(&pat_src, lang);
-                    let fx: Arc<str> = Arc::from(p.fixed_string().to_string().as_str());
-                    (Arc::new(p), fx)
-                }
-            };
+            let (cur_pat, cur_fixed): (Arc<Pattern<SupportLang>>, Arc<str>) =
+                ast_timed(&telemetry, |t| &t.pattern_ns, || {
+                    match &dyn_body {
+                        None => (pattern.clone(), fixed.clone()),
+                        Some((body, interps)) => {
+                            let pat_src = crate::template::render_segments_no_diag(
+                                body.as_ref(), interps, c,
+                            );
+                            let p = Pattern::new(&pat_src, lang);
+                            let fx: Arc<str> = Arc::from(p.fixed_string().to_string().as_str());
+                            (Arc::new(p), fx)
+                        }
+                    }
+                });
             let reader = SourceReader::new(root.clone(), store.clone(), config.clone());
-            let source = reader.read_cursor(c);
+            let source = ast_timed(&telemetry, |t| &t.source_read_ns, || {
+                reader.read_cursor(c)
+            });
             let (src, file_id, repo, rev, prefiltered_bytes): (
                 String,
                 crate::FileId,
@@ -529,79 +557,96 @@ impl Component for AstNmComponent {
                         t.source_read_rows.fetch_add(1, Ordering::Relaxed);
                         t.source_read_bytes.fetch_add(source.bytes.len() as u64, Ordering::Relaxed);
                     }
-                    if !cur_fixed.is_empty()
-                        && memchr::memmem::find(&source.bytes, cur_fixed.as_bytes()).is_none()
-                    {
-                        if let Some(t) = &telemetry {
-                            t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
+                    if !cur_fixed.is_empty() {
+                        let miss = ast_timed(&telemetry, |t| &t.prefilter_ns, || {
+                            memchr::memmem::find(&source.bytes, cur_fixed.as_bytes()).is_none()
+                        });
+                        if miss {
+                            if let Some(t) = &telemetry {
+                                t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
+                            }
+                            return Node::Done;
                         }
-                        return Node::Done;
                     }
-                    let src = String::from_utf8_lossy(&source.bytes).into_owned();
+                    let src = ast_timed(&telemetry, |t| &t.utf8_ns, || {
+                        String::from_utf8_lossy(&source.bytes).into_owned()
+                    });
                     if let Some(t) = &telemetry {
                         t.source_utf8_rows.fetch_add(1, Ordering::Relaxed);
                         t.source_utf8_bytes.fetch_add(source.bytes.len() as u64, Ordering::Relaxed);
                     }
                     (src, source.file, source.coord.repo, source.coord.rev, !cur_fixed.is_empty())
                 } else {
-                    if let Some(t) = &telemetry {
-                        t.legacy_rows.fetch_add(1, Ordering::Relaxed);
-                    }
-                    let src: String = c.value.as_ref().to_string();
-                    let (repo, rev) = parent_coord
-                        .map(|c| (c.repo, c.rev))
-                        .unwrap_or((0, 0));
-                    let path_for_intern: &str = c.get("FS").unwrap_or("");
-                    let file_id = store.as_ref()
-                        .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
-                        .unwrap_or(0);
-                    (src, file_id, repo, rev, false)
+                    ast_timed(&telemetry, |t| &t.legacy_ns, || {
+                        if let Some(t) = &telemetry {
+                            t.legacy_rows.fetch_add(1, Ordering::Relaxed);
+                        }
+                        let src: String = c.value.as_ref().to_string();
+                        let (repo, rev) = parent_coord
+                            .map(|c| (c.repo, c.rev))
+                            .unwrap_or((0, 0));
+                        let path_for_intern: &str = c.get("FS").unwrap_or("");
+                        let file_id = store.as_ref()
+                            .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
+                            .unwrap_or(0);
+                        (src, file_id, repo, rev, false)
+                    })
                 };
-            if !prefiltered_bytes && !cur_fixed.is_empty() && !src.contains(&*cur_fixed) {
-                if let Some(t) = &telemetry {
-                    t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
+            if !prefiltered_bytes && !cur_fixed.is_empty() {
+                let miss = ast_timed(&telemetry, |t| &t.prefilter_ns, || {
+                    !src.contains(&*cur_fixed)
+                });
+                if miss {
+                    if let Some(t) = &telemetry {
+                        t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return Node::Done;
                 }
-                return Node::Done;
             }
             if let Some(t) = &telemetry {
                 t.parses.fetch_add(1, Ordering::Relaxed);
             }
-            let grep: AstGrep<StrDoc<SupportLang>> = lang.ast_grep(&src);
-            let hits: Vec<Node<Cursor>> = grep.root().find_all(&*cur_pat).map(|nm| {
+            let grep: AstGrep<StrDoc<SupportLang>> =
+                ast_timed(&telemetry, |t| &t.parse_ns, || lang.ast_grep(&src));
+            let hits: Vec<Node<Cursor>> = ast_timed(&telemetry, |t| &t.match_ns, || {
+                grep.root().find_all(&*cur_pat).map(|nm| {
                 let r = nm.range();
                 let mut child = c.clone();
                 child.set("LO", (r.start as u64).to_string());
                 child.set("HI", (r.end   as u64).to_string());
                 if let Some(store) = &store {
-                    let coord = Coord {
-                        repo, rev, fs: file_id,
-                        lo: r.start as u32, hi: r.end as u32,
-                    };
-                    let slice = src.get(r.start..r.end).unwrap_or("");
-                    // Focal coord identifies the match itself.
-                    child.at = store.intern_ref(coord);
-                    child.cursor_value = CursorValue::WhereBytes(WhereBytesId::from(child.at));
-                    child.value = Arc::<str>::from(slice);
-                    child.value_id = store.intern_string(slice);
-                    store.observe_string(
-                        child.value_id,
-                        "ast_match",
-                        WhereBytesId::from(child.at),
-                        "",
-                        0,
-                    );
-                    // Per-match coord term — `MATCH.at`/`MATCH.value`
-                    // reach through one Term entry instead of LO/HI cols.
-                    child.set_at("MATCH", slice, coord, store);
-                    // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
-                    child.set("MATCH_LO", coord.lo.to_string());
-                    child.set("MATCH_HI", coord.hi.to_string());
-                    if let Some(path) = store.path_of(coord.fs) {
-                        child.set("MATCH_FS", &*path);
-                    }
+                    ast_timed(&telemetry, |t| &t.emit_stamp_ns, || {
+                        let coord = Coord {
+                            repo, rev, fs: file_id,
+                            lo: r.start as u32, hi: r.end as u32,
+                        };
+                        let slice = src.get(r.start..r.end).unwrap_or("");
+                        // Focal coord identifies the match itself.
+                        child.at = store.intern_ref(coord);
+                        child.cursor_value = CursorValue::WhereBytes(WhereBytesId::from(child.at));
+                        child.value = Arc::<str>::from(slice);
+                        child.value_id = store.intern_string(slice);
+                        store.observe_string(
+                            child.value_id,
+                            "ast_match",
+                            WhereBytesId::from(child.at),
+                            "",
+                            0,
+                        );
+                        // Per-match coord term — `MATCH.at`/`MATCH.value`
+                        // reach through one Term entry instead of LO/HI cols.
+                        child.set_at("MATCH", slice, coord, store);
+                        // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
+                        child.set("MATCH_LO", coord.lo.to_string());
+                        child.set("MATCH_HI", coord.hi.to_string());
+                        if let Some(path) = store.path_of(coord.fs) {
+                            child.set("MATCH_FS", &*path);
+                        }
+                    });
                 }
                 Node::Emit(Arc::new(child))
-            }).collect();
+                }).collect()
+            });
             if let Some(t) = &telemetry {
                 t.matches.fetch_add(hits.len() as u64, Ordering::Relaxed);
             }
