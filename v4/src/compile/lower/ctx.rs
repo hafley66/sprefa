@@ -7,6 +7,7 @@ use effect_runtime::v2::{FactStore, Pipe, ProbeSink};
 use crate::config::SprfConfig;
 use crate::rule::Rule;
 use crate::store::SprfStore;
+use crate::telemetry::PipelineTelemetry;
 use crate::{Cursor, Interner};
 
 /// Lower-time context. Carries the fact store, optional Interner, root
@@ -38,6 +39,10 @@ pub struct LowerCtx {
     /// host (`SprfState::run` / `SprfState::ingest`); call sites that
     /// don't set it leave the bare-form generator emitting zero rows.
     pub config: Option<Arc<SprfConfig>>,
+    /// Optional runtime telemetry sinks. When present, lowerers attach
+    /// op-specific counters and the host may wrap lowered components
+    /// with timing probes.
+    pub telemetry: Option<Arc<PipelineTelemetry>>,
 }
 
 impl LowerCtx {
@@ -51,6 +56,7 @@ impl LowerCtx {
             probe:    None,
             sprf_store: None,
             config:   None,
+            telemetry: None,
         }
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
@@ -77,6 +83,9 @@ impl LowerCtx {
     /// emit one cursor per configured repo at lower time.
     pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
         self.config = Some(c); self
+    }
+    pub fn with_telemetry(mut self, t: Arc<PipelineTelemetry>) -> Self {
+        self.telemetry = Some(t); self
     }
 }
 

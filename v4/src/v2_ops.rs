@@ -138,9 +138,10 @@ pub struct FsComponent {
 
 #[derive(Default)]
 pub struct FsTelemetry {
-    pub seen_files:  AtomicU64,
-    pub emitted:     AtomicU64,
-    pub ext_skipped: AtomicU64,
+    pub seen_files:     AtomicU64,
+    pub emitted:        AtomicU64,
+    pub ext_skipped:    AtomicU64,
+    pub filter_skipped: AtomicU64,
 }
 
 impl FsComponent {
@@ -192,6 +193,8 @@ impl FsComponent {
 impl Component for FsComponent {
     type Next = Cursor;
 
+    fn kind(&self) -> &'static str { "fs" }
+
     fn dispatch(
         &self,
         ctx:   &RenderCtx,
@@ -234,9 +237,15 @@ impl Component for FsComponent {
                     if let Some(t) = &self.telemetry {
                         t.seen_files.fetch_add(1, Ordering::Relaxed);
                     }
-                    if !self.include_path(&path) || !self.include_source_value(&path) {
+                    if !self.include_path(&path) {
                         if let Some(t) = &self.telemetry {
                             t.ext_skipped.fetch_add(1, Ordering::Relaxed);
+                        }
+                        continue;
+                    }
+                    if !self.include_source_value(&path) {
+                        if let Some(t) = &self.telemetry {
+                            t.filter_skipped.fetch_add(1, Ordering::Relaxed);
                         }
                         continue;
                     }
@@ -307,6 +316,9 @@ impl Component for FsComponent {
 
             let path_str = p.display().to_string();
             if !self.include_source_value(&path_str) {
+                if let Some(t) = &self.telemetry {
+                    t.filter_skipped.fetch_add(1, Ordering::Relaxed);
+                }
                 continue;
             }
             let mut c = parent.value.as_ref().clone();
@@ -472,6 +484,8 @@ impl AstNmComponent {
 
 impl Component for AstNmComponent {
     type Next = Cursor;
+
+    fn kind(&self) -> &'static str { "ast" }
 
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let store = self.store.clone();

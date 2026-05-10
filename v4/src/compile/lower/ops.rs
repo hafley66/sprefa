@@ -428,6 +428,7 @@ impl OperatorDef for FsDef {
         }
         if let Some(s) = &ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         if let Some(c) = &ctx.config     { comp = comp.with_config(c.clone()); }
+        if let Some(t) = &ctx.telemetry   { comp = comp.with_telemetry(t.fs.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -775,6 +776,7 @@ impl OperatorDef for AstDef {
         }
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
+        if let Some(t) = &_ctx.telemetry  { comp = comp.with_telemetry(t.ast.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }

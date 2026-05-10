@@ -44,6 +44,7 @@ pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq
 #[cfg(feature = "ghcache")]
 use crate::git_watch::{dirty_notice, ghcache_dirty_notices};
 use crate::lower::{default_registry, LowerCtx, Registry};
+use crate::telemetry::{PipelineTelemetry, RunTelemetry};
 use crate::Cursor;
 
 // ───────────────────────────────────────────────────────────────────
@@ -137,6 +138,8 @@ pub struct RunReport    {
     pub pipes:       usize,
     /// Rule-table names harvested from the AST (one per `rule(:NAME)`).
     pub tables:      Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry:   Option<RunTelemetry>,
 }
 
 struct BufferDiagSink {
@@ -741,15 +744,22 @@ impl SprfHandlers for SprfState {
     }
 
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
+        let run_start = std::time::Instant::now();
         let src = std::fs::read_to_string(&req.path)
             .map_err(|e| SprfError::Io(e.to_string()))?;
         let (program, parse_diags) = host_parse(&src);
         let dir = req.root.clone()
             .or_else(|| req.path.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| self.root.clone());
+        let telemetry = std::env::var_os("SPREFA_TELEMETRY")
+            .is_some()
+            .then(|| Arc::new(PipelineTelemetry::new()));
         let mut ctx = LowerCtx::new(self.facts.clone(), dir)
             .with_sprf_store(self.sprf_store.clone())
             .with_config(self.config.clone());
+        if let Some(t) = &telemetry {
+            ctx = ctx.with_telemetry(t.clone());
+        }
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
 
         // 4096 matches v4-bench. Smaller caps multiply per-batch lock
@@ -760,18 +770,24 @@ impl SprfHandlers for SprfState {
             .with_bus(self.bus.clone())
             .with_diag(runtime_diags.clone());
         let mut n = 0;
+        let mut run_stats = effect_runtime::v2::ExpandStats::default();
         for (idx, pipe) in pipes.into_iter().enumerate() {
+            let pipe = match telemetry.as_ref() {
+                Some(t) => t.wrap_pipe(pipe),
+                None    => pipe,
+            };
             let identity = program
                 .get(idx)
                 .map(|pipe_ast| stable_pipe_identity(&req.path, pipe_ast))
                 .unwrap_or_else(|| fallback_pipe_identity(&req.path, idx));
             let inst = self.mount_pipe(pipe, identity);
-            expand(
+            let stats = expand(
                 inst.as_ref(),
                 self.queue.clone(),
                 vec![Arc::new(Cursor::default())],
                 opts.clone(),
             );
+            add_expand_stats(&mut run_stats, stats);
             n += 1;
         }
         let generation = *self.next_instance_id.lock().unwrap();
@@ -787,6 +803,7 @@ impl SprfHandlers for SprfState {
             runtime_diags: runtime_diags.snapshot().iter().map(SprfDiag::from).collect(),
             pipes:       n,
             tables,
+            telemetry: telemetry.map(|t| t.snapshot(run_start.elapsed(), run_stats)),
         })
     }
 
@@ -897,6 +914,16 @@ fn fallback_pipe_identity(path: &std::path::Path, idx: usize) -> u64 {
     h.update(b"\0pipe-index\0");
     h.update(&idx.to_le_bytes());
     hash_to_nonzero_u64(h.finalize().as_bytes())
+}
+
+fn add_expand_stats(
+    total: &mut effect_runtime::v2::ExpandStats,
+    next: effect_runtime::v2::ExpandStats,
+) {
+    total.rendered += next.rendered;
+    total.emitted  += next.emitted;
+    total.terminal += next.terminal;
+    total.parked    = total.parked.max(next.parked);
 }
 
 fn dsl_hover(op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {

@@ -17,6 +17,7 @@ pub mod sprf_introspect;
 pub mod sql;
 pub mod store;
 pub mod template;
+pub mod telemetry;
 pub mod v2_ops;
 pub mod term;
 

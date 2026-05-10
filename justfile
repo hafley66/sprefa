@@ -68,6 +68,9 @@ v4-bench-linux-read LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)"
 v4-bench-linux-sprf LINUX="v3/tests/smoke/.fixtures/linux":
     ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows
 
+v4-bench-linux-sprf-telemetry LINUX="v3/tests/smoke/.fixtures/linux":
+    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry
+
 v3-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3":
     ./v3/experiments/effect_proof/target/release/ast_grep_v3_bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --pattern '{{PATTERN}}' --lang c --mode batch
 

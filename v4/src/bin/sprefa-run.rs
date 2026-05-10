@@ -32,6 +32,7 @@ struct Args {
     root:      Option<PathBuf>,
     fact_db:   Option<PathBuf>,
     queue_db:  Option<PathBuf>,
+    telemetry: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -51,6 +52,7 @@ where
     let mut root:      Option<PathBuf> = cfg.run.root.clone();
     let mut fact_db:   Option<PathBuf> = cfg.run_fact_db();
     let mut queue_db:  Option<PathBuf> = cfg.run_queue_db();
+    let mut telemetry: bool            = false;
 
     let mut i = 0;
     while i < raw.len() {
@@ -82,6 +84,7 @@ where
                 queue_db = Some(PathBuf::from(v));
                 i += 2;
             }
+            "--telemetry" => { telemetry = true; i += 1; }
             "-h" | "--help" => { print_usage(); std::process::exit(0); }
             other if other.starts_with("--") => {
                 return Err(format!("unknown flag: {other}"));
@@ -97,13 +100,13 @@ where
     }
     Ok(Args {
         path: path.ok_or("missing <path-to-sprf-file>")?,
-        show_rows, max_diags, remote, root, fact_db, queue_db,
+        show_rows, max_diags, remote, root, fact_db, queue_db, telemetry,
     })
 }
 
 fn print_usage() {
     eprintln!("sprefa-run <path-to-sprf-file> \
-[--show-rows|--no-show-rows] [--max-diags N] [--remote URL] [--root PATH] [--fact-db PATH] [--queue-db PATH]");
+[--show-rows|--no-show-rows] [--telemetry] [--max-diags N] [--remote URL] [--root PATH] [--fact-db PATH] [--queue-db PATH]");
 }
 
 /// 1-indexed (line, col) for byte offset `off` in `src`.
@@ -156,6 +159,9 @@ async fn main() -> ExitCode {
         Ok(a)  => a,
         Err(e) => { eprintln!("sprefa-run: {e}"); print_usage(); return ExitCode::from(2); }
     };
+    if args.telemetry {
+        std::env::set_var("SPREFA_TELEMETRY", "1");
+    }
 
     let path_disp = args.path.display().to_string();
     let src = match std::fs::read_to_string(&args.path) {
@@ -211,6 +217,10 @@ async fn main() -> ExitCode {
     let runtime_errs = print_diags(&path_disp, &src, &report.runtime_diags, args.max_diags);
     if runtime_errs > 0 { return ExitCode::from(1); }
 
+    if let Some(t) = &report.telemetry {
+        print_telemetry(t);
+    }
+
     if report.tables.is_empty() {
         println!("(no rules — FactStore not introspected)");
         return ExitCode::from(0);
@@ -235,6 +245,35 @@ async fn main() -> ExitCode {
         }
     }
     ExitCode::from(0)
+}
+
+fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
+    println!("── telemetry ──");
+    println!(
+        "wall_ms={:.1} rendered={} emitted={} terminal={} parked={}",
+        t.wall_ms, t.rendered, t.emitted, t.terminal, t.parked,
+    );
+    println!(
+        "fs seen={} emitted={} ext_skipped={} filter_skipped={}",
+        t.fs.seen_files, t.fs.emitted, t.fs.ext_skipped, t.fs.filter_skipped,
+    );
+    println!(
+        "ast inputs={} source_reads={} source_MB={:.1} utf8_rows={} utf8_MB={:.1} prefilter_skips={} parses={} matches={}",
+        t.ast.input_rows,
+        t.ast.source_read_rows,
+        t.ast.source_read_bytes as f64 / (1024.0 * 1024.0),
+        t.ast.source_utf8_rows,
+        t.ast.source_utf8_bytes as f64 / (1024.0 * 1024.0),
+        t.ast.prefilter_skips,
+        t.ast.parses,
+        t.ast.matches,
+    );
+    for s in &t.stages {
+        println!(
+            "stage {:>24}: calls={} rows={} wall_ms={:.1} rows_per_sec={:.0}",
+            s.name, s.calls, s.rows, s.wall_ms, s.rows_per_sec,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -268,6 +307,7 @@ mod tests {
         assert_eq!(args.root, Some(PathBuf::from("/tmp/root")));
         assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/facts.db")));
         assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));
+        assert!(!args.telemetry);
     }
 
     #[test]
@@ -288,10 +328,12 @@ mod tests {
         let args = parse_args_from([
             "dev.sprf",
             "--show-rows",
+            "--telemetry",
             "--max-diags", "3",
             "--fact-db", "/tmp/cli-facts.db",
         ], &cfg).unwrap();
         assert!(args.show_rows);
+        assert!(args.telemetry);
         assert_eq!(args.max_diags, 3);
         assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/cli-facts.db")));
         assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));

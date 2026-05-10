@@ -24,9 +24,8 @@ use std::time::Instant;
 use ast_grep_language::SupportLang;
 
 use effect_runtime::v2::{
-    expand, BarrierScope, Component, ComponentLifecycle, ExpandOpts, FactStore,
-    MemFactStore, MemQueue, MemoCache, Memoize, Node, PendingSummary,
-    PipeInstance, PriorChildIndex, QueueBackend, QueueRow, RenderCtx,
+    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, MemoCache,
+    Memoize, Node, PipeInstance, PriorChildIndex, QueueBackend, RenderCtx,
     SqliteFactStore,
 };
 use v4::v2_ops::{
@@ -34,82 +33,13 @@ use v4::v2_ops::{
     MultiAstNmComponent, ReadComponent, SinglePathComponent,
 };
 use v4::fact::FactWrite;
+use v4::telemetry::{StageTiming, TimedComponent};
 
 #[derive(Default)]
 struct BenchCounters {
     source_rows:  Arc<AtomicU64>,
     read_rows:    Arc<AtomicU64>,
     read_bytes:   Arc<AtomicU64>,
-}
-
-#[derive(Default)]
-struct StageTiming {
-    name:    &'static str,
-    calls:   AtomicU64,
-    rows:    AtomicU64,
-    wall_ns: AtomicU64,
-}
-
-impl StageTiming {
-    fn new(name: &'static str) -> Self {
-        Self { name, ..Default::default() }
-    }
-}
-
-struct TimedComponent {
-    inner:  Arc<dyn Component<Next = v4::Cursor>>,
-    timing: Arc<StageTiming>,
-}
-
-impl TimedComponent {
-    fn new(
-        name: &'static str,
-        inner: Arc<dyn Component<Next = v4::Cursor>>,
-        timings: &mut Vec<Arc<StageTiming>>,
-    ) -> Arc<dyn Component<Next = v4::Cursor>> {
-        let timing = Arc::new(StageTiming::new(name));
-        timings.push(timing.clone());
-        Arc::new(Self { inner, timing })
-    }
-}
-
-impl Component for TimedComponent {
-    type Next = v4::Cursor;
-
-    fn dispatch(
-        &self,
-        ctx:   &RenderCtx,
-        rows:  &[QueueRow<v4::Cursor>],
-        queue: &dyn QueueBackend<v4::Cursor>,
-    ) {
-        let t0 = Instant::now();
-        self.inner.dispatch(ctx, rows, queue);
-        let dt = t0.elapsed();
-        self.timing.calls.fetch_add(1, Ordering::Relaxed);
-        self.timing.rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
-        self.timing.wall_ns.fetch_add(dt.as_nanos() as u64, Ordering::Relaxed);
-    }
-
-    fn batch_hint(&self) -> Option<usize> { self.inner.batch_hint() }
-    fn lifecycle(&self) -> ComponentLifecycle { self.inner.lifecycle() }
-    fn idle(
-        &self,
-        ctx:     &RenderCtx,
-        scope:   BarrierScope,
-        pending: PendingSummary,
-        queue:   &dyn QueueBackend<v4::Cursor>,
-    ) {
-        self.inner.idle(ctx, scope, pending, queue);
-    }
-    fn complete(
-        &self,
-        ctx:   &RenderCtx,
-        scope: BarrierScope,
-        queue: &dyn QueueBackend<v4::Cursor>,
-    ) {
-        self.inner.complete(ctx, scope, queue);
-    }
-    fn kind(&self) -> &'static str { self.timing.name }
 }
 
 /// Bench-local pass-through counter. Keeps telemetry out of the core
@@ -426,13 +356,14 @@ async fn main() {
         let m = counter.load(Ordering::Relaxed);
         let rss = rss_peak_kb() / 1024;
         eprintln!(
-            "trial {}: wall={:.3}s  matches={:>9}  fs_seen={}  fs_rows={}  fs_ext_skipped={}  read_rows={}  read_MB={:.1}  rendered={}  emitted={}  rss_peak_MB={}",
+            "trial {}: wall={:.3}s  matches={:>9}  fs_seen={}  fs_rows={}  fs_ext_skipped={}  fs_filter_skipped={}  read_rows={}  read_MB={:.1}  rendered={}  emitted={}  rss_peak_MB={}",
             trial,
             wall.as_secs_f64(),
             m,
             fs_telemetry.seen_files.load(Ordering::Relaxed),
             bench.source_rows.load(Ordering::Relaxed),
             fs_telemetry.ext_skipped.load(Ordering::Relaxed),
+            fs_telemetry.filter_skipped.load(Ordering::Relaxed),
             bench.read_rows.load(Ordering::Relaxed),
             bench.read_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
             stats.rendered,

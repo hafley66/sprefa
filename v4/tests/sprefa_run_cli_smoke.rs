@@ -67,6 +67,31 @@ fn sprefa_run_accepts_sqlite_queue_db() {
 }
 
 #[test]
+fn sprefa_run_telemetry_flag_prints_runtime_counters() {
+    let bin = env!("CARGO_BIN_EXE_sprefa-run");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let sprf = format!("{manifest_dir}/examples/dev-missing-frontend-hook.sprf");
+
+    let output = Command::new(bin)
+        .arg(&sprf)
+        .arg("--no-show-rows")
+        .arg("--telemetry")
+        .output()
+        .expect("sprefa-run executes with telemetry");
+
+    assert!(
+        output.status.success(),
+        "sprefa-run --telemetry failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("── telemetry ──"), "stdout missing telemetry:\n{stdout}");
+    assert!(stdout.contains("rendered="), "stdout missing expand counters:\n{stdout}");
+    assert!(stdout.contains("stage"), "stdout missing stage counters:\n{stdout}");
+}
+
+#[test]
 fn sprefa_run_accepts_sqlite_fact_db() {
     let bin = env!("CARGO_BIN_EXE_sprefa-run");
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
