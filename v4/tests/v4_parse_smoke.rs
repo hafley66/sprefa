@@ -77,4 +77,12 @@ fn host_parse_four_slot_and_diag_shape() {
     assert_eq!(call.args.len(), 2);
     assert_eq!(&*call.args[0].raw, "`<!-- start -->`");
     assert_eq!(&*call.args[1].raw, "`<!-- end -->`");
+
+    let src_render = "render.markdown`## Title`;";
+    let (pipes_render, diags_render) = host_parse(src_render);
+    assert!(diags_render.is_empty(), "expected clean dotted render parse, got diags: {diags_render:?}");
+    let call = &pipes_render[0].steps[0];
+    assert_eq!(&*call.name, "render.markdown");
+    assert!(!call.apply);
+    assert_eq!(&*call.dsl.as_ref().unwrap().raw, "## Title");
 }

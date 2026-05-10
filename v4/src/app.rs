@@ -903,7 +903,9 @@ fn dsl_hover(op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {
     let dsl: Box<dyn Dsl> = match op_name {
         "sql"  => Box::new(crate::cst::dsls::sql::SqlDsl::new()),
         "json" => Box::new(crate::cst::dsls::json::JsonDsl::new()),
-        "render" | "render_markdown" => Box::new(crate::cst::dsls::markdown::MarkdownDsl::new()),
+        "render" | "render_markdown" | "render.markdown" => {
+            Box::new(crate::cst::dsls::markdown::MarkdownDsl::new())
+        }
         "re"   => Box::new(crate::cst::dsls::re::ReDsl::new()),
         "glob" => Box::new(crate::cst::dsls::glob::GlobDsl::new()),
         _ => return None,

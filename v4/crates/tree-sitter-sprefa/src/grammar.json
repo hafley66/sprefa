@@ -102,7 +102,7 @@
             "name": "name",
             "content": {
               "type": "SYMBOL",
-              "name": "identifier"
+              "name": "op_name"
             }
           },
           {
@@ -643,6 +643,34 @@
             }
           ]
         }
+      }
+    },
+    "op_name": {
+      "type": "TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "PATTERN",
+            "value": "[A-Za-z_][A-Za-z0-9_]*"
+          },
+          {
+            "type": "REPEAT",
+            "content": {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "."
+                },
+                {
+                  "type": "PATTERN",
+                  "value": "[A-Za-z_][A-Za-z0-9_]*"
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     "atom_literal": {

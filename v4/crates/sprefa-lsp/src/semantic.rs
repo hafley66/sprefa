@@ -109,7 +109,9 @@ fn dsl_tokens_for(op_name: &str, body: &[u8]) -> Option<Vec<v4::cst::SemanticTok
     match op_name {
         "re"   => Some(ReDsl::new().lsp()?.semantic_tokens(body)),
         "glob" => Some(GlobDsl::new().lsp()?.semantic_tokens(body)),
-        "render" | "render_markdown" => Some(MarkdownDsl::new().lsp()?.semantic_tokens(body)),
+        "render" | "render_markdown" | "render.markdown" => {
+            Some(MarkdownDsl::new().lsp()?.semantic_tokens(body))
+        }
         // "ast" — ast-grep DSL has no DslBodyLsp impl yet (no metavar/keyword
         // node kinds exposed); revisit when the v4 ast grammar lands queries.
         // "json" — no `json` op in v4 op registry yet.
@@ -239,6 +241,12 @@ mod tests {
     fn render_markdown_body_emits_tokens() {
         let toks = tokens_for("render_markdown`## ${TITLE}\n| A | B |`");
         assert!(!toks.is_empty(), "expected markdown tokens, got {:?}", toks);
+    }
+
+    #[test]
+    fn render_dot_markdown_body_emits_tokens() {
+        let toks = tokens_for("render.markdown`## ${TITLE}\n| A | B |`");
+        assert!(!toks.is_empty(), "expected dotted markdown tokens, got {:?}", toks);
     }
 
     #[test]

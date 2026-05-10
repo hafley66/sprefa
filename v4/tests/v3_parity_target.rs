@@ -274,6 +274,37 @@ range-safe markdown`
 }
 
 #[tokio::test]
+async fn render_dot_markdown_alias_writes_file() {
+    let root = tempfile::tempdir().unwrap();
+    let out = root.path().join("DOT_MARKDOWN.md");
+    let sprf = root.path().join("render_dot_markdown.sprf");
+    let src = format!(
+        r#"`alpha`
+> render.markdown`# ${{&.value}}`
+> write_file`{}`;
+"#,
+        out.display()
+    );
+    fs::write(&sprf, src).unwrap();
+
+    let (_state, client) = build_in_process(root.path().to_path_buf());
+    let report = client
+        .run(RunReq { path: sprf, root: Some(root.path().to_path_buf()) })
+        .await
+        .unwrap();
+
+    assert!(
+        report.parse_diags.is_empty()
+            && report.walk_diags.is_empty()
+            && report.runtime_diags.is_empty(),
+        "render.markdown should parse/lower cleanly:\n{}",
+        report_lines(&report)
+    );
+
+    assert_eq!(fs::read_to_string(&out).unwrap(), "# alpha\n");
+}
+
+#[tokio::test]
 async fn app_run_keeps_queue_and_wakes_mounted_sql() {
     let root = tempfile::tempdir().unwrap();
     let missing = root.path().join("missing.sprf");

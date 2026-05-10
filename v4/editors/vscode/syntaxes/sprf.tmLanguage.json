@@ -154,13 +154,14 @@
     },
 
     "dsl-markdown": {
-      "begin":         "\\b(?:(render_markdown)|(render)(\\s*\\(\\s*:markdown\\s*\\)))(`)",
+      "begin":         "\\b(?:(render_markdown)|(render\\.markdown)|(render)(\\s*\\(\\s*:markdown\\s*\\)))(`)",
       "end":           "`",
       "beginCaptures": {
         "1": { "name": "entity.name.function.op.dsl-tag.render-markdown.sprf" },
-        "2": { "name": "entity.name.function.op.dsl-tag.render.sprf"          },
-        "3": { "name": "support.type.format.markdown.sprf"                    },
-        "4": { "name": "punctuation.definition.string.begin.dsl.sprf"         }
+        "2": { "name": "entity.name.function.op.dsl-tag.render-markdown.sprf" },
+        "3": { "name": "entity.name.function.op.dsl-tag.render.sprf"          },
+        "4": { "name": "support.type.format.markdown.sprf"                    },
+        "5": { "name": "punctuation.definition.string.begin.dsl.sprf"         }
       },
       "endCaptures":   { "0": { "name": "punctuation.definition.string.end.dsl.sprf" } },
       "name":          "markup.raw.markdown.dsl.sprf",

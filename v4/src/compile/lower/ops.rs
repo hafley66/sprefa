@@ -1821,6 +1821,7 @@ impl OperatorDef for WriteFileDef {
 
 pub struct RenderDef;
 pub struct RenderMarkdownDef;
+pub struct RenderDotMarkdownDef;
 
 const RENDER_SPEC: &[ArgSig] = &[
     ArgSig {
@@ -1874,6 +1875,26 @@ impl OperatorDef for RenderMarkdownDef {
     ) -> Result<Pipe<Cursor>, LowerError> {
         let body = dsl.ok_or_else(|| LowerError::Unknown(
             "render_markdown: template body required".into()
+        ))?;
+        lower_render_markdown_body(body)
+    }
+}
+
+impl OperatorDef for RenderDotMarkdownDef {
+    fn name(&self) -> &'static str { "render.markdown" }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn dsl_required(&self) -> bool { true }
+
+    fn lower(
+        &self,
+        _ctx:   &LowerCtx,
+        _flow:  Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let body = dsl.ok_or_else(|| LowerError::Unknown(
+            "render.markdown: template body required".into()
         ))?;
         lower_render_markdown_body(body)
     }

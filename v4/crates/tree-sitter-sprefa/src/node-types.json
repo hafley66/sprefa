@@ -154,7 +154,7 @@
         "required": true,
         "types": [
           {
-            "type": "identifier",
+            "type": "op_name",
             "named": true
           }
         ]
@@ -328,6 +328,10 @@
   },
   {
     "type": "number_literal",
+    "named": true
+  },
+  {
+    "type": "op_name",
     "named": true
   },
   {

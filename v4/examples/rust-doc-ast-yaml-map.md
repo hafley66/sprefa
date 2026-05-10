@@ -8,7 +8,7 @@
 
 ## slot_terms
 
-[./v4/src/compile/binding_graph.rs byte 8976](./v4/src/compile/binding_graph.rs)
+[./v4/src/compile/binding_graph.rs byte 9061](./v4/src/compile/binding_graph.rs)
 
 /// — those slots don't contribute to the binding graph at this layer.
 

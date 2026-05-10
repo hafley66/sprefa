@@ -202,6 +202,9 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
         // walk_pipe entry.
         use crate::compile::lower::op_def::{InterpKind, InterpMode};
         for interp in default_plain_dsl_parse(dsl.raw.as_ref()) {
+            if interp.name.as_ref() == "&" {
+                continue;
+            }
             match interp.kind {
                 InterpKind::Term { mode, .. } => match mode {
                     InterpMode::Read => reads.push(interp.name),
@@ -326,6 +329,15 @@ mod tests {
         assert!(
             codes.iter().any(|c| c == "lang/use-before-bind"),
             "expected use-before-bind, got {:?}", codes
+        );
+    }
+
+    #[test]
+    fn focal_value_interpolation_is_always_in_scope() {
+        let codes = diag_codes("`alpha` > render.markdown`${&.value}`;");
+        assert!(
+            !codes.iter().any(|c| c == "lang/use-before-bind"),
+            "unexpected use-before-bind for focal cursor value, got {:?}", codes
         );
     }
 }

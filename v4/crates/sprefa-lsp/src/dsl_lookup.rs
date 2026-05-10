@@ -15,7 +15,9 @@ pub fn provider_for(op_name: &str) -> Option<Box<dyn ProviderHandle>> {
         "re"   => Some(Box::new(ReHandle(ReDsl::new()))),
         "glob" => Some(Box::new(GlobHandle(GlobDsl::new()))),
         "json" => Some(Box::new(JsonHandle(JsonDsl::new()))),
-        "render" | "render_markdown" => Some(Box::new(MarkdownHandle(MarkdownDsl::new()))),
+        "render" | "render_markdown" | "render.markdown" => {
+            Some(Box::new(MarkdownHandle(MarkdownDsl::new())))
+        }
         // ast — TODO once AstDsl gains a DslBodyLsp impl (#8).
         _ => None,
     }

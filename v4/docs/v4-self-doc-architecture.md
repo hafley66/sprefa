@@ -18,7 +18,7 @@ bounded by HTML comments so normal prose can live around it.
 | --- | --- | --- |
 | read | whole file bytes as text | whole-file coord |
 | comment(open, close) | bytes inside marker pair | focal LO/HI point at inside bytes |
-| render_markdown | generated markdown | preserves FS/LO/HI |
+| render.markdown | generated markdown | preserves FS/LO/HI |
 | write_cursor(:replace) | generated markdown | replaces only focal byte range |
 
 ## Why This Is Less Blunt
@@ -40,7 +40,7 @@ bounded by HTML comments so normal prose can live around it.
     docs/ARCHITECTURE.md
       > read
       > comment(open_marker_regex, close_marker_regex)
-      > render_markdown ...generated architecture rows...
+      > render.markdown ...generated architecture rows...
       > write_cursor(:replace)
 
 <!-- sprf:self-doc:end -->

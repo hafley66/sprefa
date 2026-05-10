@@ -1,4 +1,4 @@
-# Demo: JSON OpenAPI spec -> nested markdown via render_markdown holes.
+# Demo: JSON OpenAPI spec -> nested markdown via render.markdown holes.
 #
 # Run from repo root:
 #   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
@@ -24,17 +24,17 @@ rule(:api_responses, PATH?, METHOD?, STATUS?, DESC?);
   > api_responses.(PATH, METHOD, STATUS, DESC);
 
 `v4/examples/openapi-cardinality.md`
-  > render_markdown`# OpenAPI Cardinality Demo
+  > render.markdown`# OpenAPI Cardinality Demo
 
 ${ api_info(TITLE?, VERSION?)
-  > render_markdown`> **${TITLE}** version ${VERSION}
+  > render.markdown`> **${TITLE}** version ${VERSION}
 `
 }
 
 ## Operations
 
 ${ api_ops(PATH?, METHOD?, OP?, SUMMARY?)
-  > render_markdown`### ${ METHOD > `**${&.value}**` } ${ PATH > `**${&.value}**` }
+  > render.markdown`### ${ METHOD > `**${&.value}**` } ${ PATH > `**${&.value}**` }
 
 - Operation: ${ OP > `**${&.value}**` }
 - Summary: ${SUMMARY}
@@ -48,7 +48,7 @@ ${ sql`
        AND api_responses.METHOD = ${METHOD}
       ORDER BY api_responses.STATUS
     `
-  > render_markdown`  - ${ STATUS > `**${&.value}**` }: ${DESC}
+  > render.markdown`  - ${ STATUS > `**${&.value}**` }: ${DESC}
 `
 }
 `

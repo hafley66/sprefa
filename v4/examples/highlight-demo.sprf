@@ -31,6 +31,14 @@ ast(:rs)`fn ${NAME?}($$${ARGS?}) -> $RET { $$$BODY }`;
 # json DSL — structural shape; $UID binds UID at runtime
 json`{ kind: "User", id: $UID }` > fact?(:user, UID, `alice`);
 
+# markdown render DSL — headings, tables, interpolation holes, nested pipes
+render.markdown`## ${TITLE}
+
+| Label | Link |
+| --- | --- |
+| ${ NAME > `**${&.value}**` } | [${FS}](${FS}) |
+`;
+
 # bare backticks at pipe-step = `str` op sugar; X? introduces capture X
 rule(:x, X?) { `plain template with ${X} hole` };
 

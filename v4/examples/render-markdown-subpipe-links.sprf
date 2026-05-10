@@ -1,4 +1,4 @@
-# Demonstrates pipe-valued interpolation inside render_markdown.
+# Demonstrates pipe-valued interpolation inside render.markdown.
 #
 # Run from repo root:
 #   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
@@ -24,7 +24,7 @@ rule(:doc_rows, BODY?);
   > important_types.(TYPE, FILE, LO);
 
 important_types(TYPE?, FILE?, LO?)
-  > render_markdown`- ${ TYPE > `**${&.value}**` } at ${ FILE > `[${&.value}:${LO}](${&.value}#L${LO})` }
+  > render.markdown`- ${ TYPE > `**${&.value}**` } at ${ FILE > `[${&.value}:${LO}](${&.value}#L${LO})` }
 `
   > term_bind(:BODY)
   > doc_rows.(BODY);

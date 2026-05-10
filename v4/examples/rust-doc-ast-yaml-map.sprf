@@ -19,10 +19,10 @@ fs
   > rust_doc_items.(NAME, DOC, FS, LO);
 
 `v4/examples/rust-doc-ast-yaml-map.md`
-  > render_markdown`# Rust Doc AST YAML Map
+  > render.markdown`# Rust Doc AST YAML Map
 
 ${ rust_doc_items(NAME?, DOC?, FS?, LO?)
-  > render_markdown`## ${NAME}
+  > render.markdown`## ${NAME}
 
 [${FS} byte ${LO}](${FS})
 

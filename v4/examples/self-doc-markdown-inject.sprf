@@ -7,7 +7,7 @@
 `v4/docs/v4-self-doc-architecture.md`
   > read
   > comment(`<!-- sprf:self-doc:start -->\n`, `\n<!-- sprf:self-doc:end -->`)
-  > render_markdown`## Generated Formula
+  > render.markdown`## Generated Formula
 
     source file cursor
       > read
@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | read | whole file bytes as text | whole-file coord |
 | comment(open, close) | bytes inside marker pair | focal LO/HI point at inside bytes |
-| render_markdown | generated markdown | preserves FS/LO/HI |
+| render.markdown | generated markdown | preserves FS/LO/HI |
 | write_cursor(:replace) | generated markdown | replaces only focal byte range |
 
 ## Why This Is Less Blunt
@@ -36,7 +36,7 @@
 ${ `Runtime batching|v4/docs/v4-runtime-batching.md|generation and collection boundaries;;SQL rule queries|v4/docs/v4-sql-rule-query-plan.md|SQLite-shaped rule querying;;V3 parity gaps|v4/docs/v4-v3-parity-gaps.md|remaining parity surface`
   > split`;;`
   > re`(?P<LABEL>[^|]+)\|(?P<FILE>[^|]+)\|(?P<TITLE>.+)`
-  > render_markdown`- ${ LABEL > `**${&.value}**` }: [${TITLE}](${FILE})
+  > render.markdown`- ${ LABEL > `**${&.value}**` }: [${TITLE}](${FILE})
 `
 }
 
@@ -45,7 +45,7 @@ ${ `Runtime batching|v4/docs/v4-runtime-batching.md|generation and collection bo
     docs/ARCHITECTURE.md
       > read
       > comment(open_marker_regex, close_marker_regex)
-      > render_markdown ...generated architecture rows...
+      > render.markdown ...generated architecture rows...
       > write_cursor(:replace)
 `
   > write_cursor(:replace);
