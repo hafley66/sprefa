@@ -237,6 +237,7 @@ async fn main() -> ExitCode {
     }
     println!("── facts ──");
     for name in &report.tables {
+        let fetch_t = std::time::Instant::now();
         let tbl = match client.get_fact_table(GetFactTableReq {
             name: name.clone(), limit: Some(5),
         }).await {
@@ -244,7 +245,16 @@ async fn main() -> ExitCode {
             Err(SprfError::UnknownDoc(_)) => continue,
             Err(e) => { eprintln!("get_fact_table {name}: {e}"); continue; }
         };
-        println!("{}: {} rows", tbl.name, tbl.total);
+        if args.telemetry {
+            println!(
+                "{}: {} rows fetch_ms={:.1}",
+                tbl.name,
+                tbl.total,
+                fetch_t.elapsed().as_secs_f64() * 1000.0,
+            );
+        } else {
+            println!("{}: {} rows", tbl.name, tbl.total);
+        }
         if args.show_rows {
             for (i, r) in tbl.rows.iter().enumerate() {
                 println!("  [{i}] {:?}", r.fields);
@@ -262,6 +272,18 @@ fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
     println!(
         "wall_ms={:.1} rendered={} emitted={} terminal={} parked={}",
         t.wall_ms, t.rendered, t.emitted, t.terminal, t.parked,
+    );
+    println!(
+        "run_ms read_sprf={:.1} parse={:.1} lower={:.1} wrap_mount={:.1} expand={:.1} commit={:.1} resume={:.1} collect_tables={:.1} report={:.1}",
+        t.phases.read_sprf_ms,
+        t.phases.parse_ms,
+        t.phases.lower_ms,
+        t.phases.wrap_mount_ms,
+        t.phases.expand_ms,
+        t.phases.commit_ms,
+        t.phases.resume_ms,
+        t.phases.collect_tables_ms,
+        t.phases.report_ms,
     );
     println!(
         "fs seen={} emitted={} ext_skipped={} filter_skipped={}",

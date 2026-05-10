@@ -108,8 +108,18 @@ impl PipelineTelemetry {
     }
 
     pub fn snapshot(&self, wall: Duration, stats: ExpandStats) -> RunTelemetry {
+        self.snapshot_with_phases(wall, stats, RunPhaseTelemetry::default())
+    }
+
+    pub fn snapshot_with_phases(
+        &self,
+        wall: Duration,
+        stats: ExpandStats,
+        phases: RunPhaseTelemetry,
+    ) -> RunTelemetry {
         RunTelemetry {
             wall_ms: wall.as_secs_f64() * 1000.0,
+            phases,
             rendered: stats.rendered,
             emitted:  stats.emitted,
             terminal: stats.terminal,
@@ -167,6 +177,7 @@ fn rows_per_sec(rows: u64, wall_ms: f64) -> f64 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunTelemetry {
     pub wall_ms: f64,
+    pub phases: RunPhaseTelemetry,
     pub rendered: u64,
     pub emitted:  u64,
     pub terminal: u64,
@@ -174,6 +185,19 @@ pub struct RunTelemetry {
     pub stages: Vec<StageTelemetry>,
     pub fs: FsTelemetrySnapshot,
     pub ast: AstTelemetrySnapshot,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RunPhaseTelemetry {
+    pub read_sprf_ms:     f64,
+    pub parse_ms:         f64,
+    pub lower_ms:         f64,
+    pub wrap_mount_ms:    f64,
+    pub expand_ms:        f64,
+    pub commit_ms:        f64,
+    pub resume_ms:        f64,
+    pub collect_tables_ms: f64,
+    pub report_ms:        f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

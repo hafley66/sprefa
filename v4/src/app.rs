@@ -44,7 +44,7 @@ pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq
 #[cfg(feature = "ghcache")]
 use crate::git_watch::{dirty_notice, ghcache_dirty_notices};
 use crate::lower::{default_registry, LowerCtx, Registry};
-use crate::telemetry::{PipelineTelemetry, RunTelemetry};
+use crate::telemetry::{PipelineTelemetry, RunPhaseTelemetry, RunTelemetry};
 use crate::Cursor;
 
 // ───────────────────────────────────────────────────────────────────
@@ -745,9 +745,15 @@ impl SprfHandlers for SprfState {
 
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
         let run_start = std::time::Instant::now();
+        let mut phases = RunPhaseTelemetry::default();
+        let t = std::time::Instant::now();
         let src = std::fs::read_to_string(&req.path)
             .map_err(|e| SprfError::Io(e.to_string()))?;
+        phases.read_sprf_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+        let t = std::time::Instant::now();
         let (program, parse_diags) = host_parse(&src);
+        phases.parse_ms = t.elapsed().as_secs_f64() * 1000.0;
         let dir = req.root.clone()
             .or_else(|| req.path.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| self.root.clone());
@@ -760,7 +766,9 @@ impl SprfHandlers for SprfState {
         if let Some(t) = &telemetry {
             ctx = ctx.with_telemetry(t.clone());
         }
+        let t = std::time::Instant::now();
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
+        phases.lower_ms = t.elapsed().as_secs_f64() * 1000.0;
 
         // 4096 matches v4-bench. Smaller caps multiply per-batch lock
         // overhead in batched sinks (FactWrite et al.).
@@ -776,6 +784,7 @@ impl SprfHandlers for SprfState {
         let mut n = 0;
         let mut run_stats = effect_runtime::v2::ExpandStats::default();
         for (idx, pipe) in pipes.into_iter().enumerate() {
+            let t = std::time::Instant::now();
             let pipe = match telemetry.as_ref() {
                 Some(t) => t.wrap_pipe(pipe),
                 None    => pipe,
@@ -785,29 +794,45 @@ impl SprfHandlers for SprfState {
                 .map(|pipe_ast| stable_pipe_identity(&req.path, pipe_ast))
                 .unwrap_or_else(|| fallback_pipe_identity(&req.path, idx));
             let inst = self.mount_pipe(pipe, identity);
+            phases.wrap_mount_ms += t.elapsed().as_secs_f64() * 1000.0;
+
+            let t = std::time::Instant::now();
             let stats = expand(
                 inst.as_ref(),
                 self.queue.clone(),
                 vec![Arc::new(Cursor::default())],
                 opts.clone(),
             );
+            phases.expand_ms += t.elapsed().as_secs_f64() * 1000.0;
             add_expand_stats(&mut run_stats, stats);
             n += 1;
         }
         let generation = *self.next_instance_id.lock().unwrap();
+        let t = std::time::Instant::now();
         self.facts.commit(generation, Some(&self.bus));
+        phases.commit_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let t = std::time::Instant::now();
         self.resume_mounted(opts);
+        phases.resume_ms = t.elapsed().as_secs_f64() * 1000.0;
 
+        let t = std::time::Instant::now();
         let mut tables: Vec<String> = Vec::new();
         collect_rule_tables(&program, &mut tables);
+        phases.collect_tables_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+        let t = std::time::Instant::now();
+        let parse_diags = parse_diags.iter().map(SprfDiag::from).collect();
+        let walk_diags = walk_diags.iter().map(SprfDiag::from).collect();
+        let runtime_diags = runtime_diags.snapshot().iter().map(SprfDiag::from).collect();
+        phases.report_ms = t.elapsed().as_secs_f64() * 1000.0;
 
         Ok(RunReport {
-            parse_diags: parse_diags.iter().map(SprfDiag::from).collect(),
-            walk_diags:  walk_diags.iter().map(SprfDiag::from).collect(),
-            runtime_diags: runtime_diags.snapshot().iter().map(SprfDiag::from).collect(),
+            parse_diags,
+            walk_diags,
+            runtime_diags,
             pipes:       n,
             tables,
-            telemetry: telemetry.map(|t| t.snapshot(run_start.elapsed(), run_stats)),
+            telemetry: telemetry.map(|t| t.snapshot_with_phases(run_start.elapsed(), run_stats, phases)),
         })
     }
 
