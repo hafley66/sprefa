@@ -26,6 +26,7 @@ use std::sync::Arc;
 pub fn default_registry() -> Registry {
     let mut r = Registry::new();
     r.register(Arc::new(ops::StrDef));
+    r.register(Arc::new(ops::PathDef));
     r.register(Arc::new(ops::RuleDef));
     r.register(Arc::new(ops::FactDef));
     r.register(Arc::new(ops::FactReadDef));

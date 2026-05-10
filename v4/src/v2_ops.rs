@@ -33,6 +33,7 @@ use ignore::WalkBuilder;
 
 use crate::config::SprfConfig;
 use crate::compile::lower::op_def::DslInterp;
+use crate::source::{resolve_path_text, SourceReader};
 use crate::store::SprfStore;
 use crate::{Coord, Cursor, CursorValue, Interner, WhereBytesId};
 
@@ -41,6 +42,58 @@ pub const FILE_DOMAIN: &str = "file";
 pub fn file_dirty_key(path: impl AsRef<std::path::Path>) -> NextKey {
     let path = path.as_ref().to_string_lossy();
     NextKey(*blake3::hash(path.as_bytes()).as_bytes())
+}
+
+// ─── path ─────────────────────────────────────────────────────────────────
+
+pub struct PathComponent {
+    root:    PathBuf,
+    raw:     Option<Arc<str>>,
+    interps: Option<Arc<Vec<DslInterp>>>,
+    store:   Option<Arc<SprfStore>>,
+}
+
+impl PathComponent {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root, raw: None, interps: None, store: None }
+    }
+    pub fn with_template(mut self, raw: Arc<str>, interps: Vec<DslInterp>) -> Self {
+        self.raw = Some(raw);
+        self.interps = Some(Arc::new(interps));
+        self
+    }
+    pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
+        self.store = Some(s);
+        self
+    }
+}
+
+impl Component for PathComponent {
+    type Next = Cursor;
+
+    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let raw = match (&self.raw, &self.interps) {
+            (Some(raw), Some(interps)) => {
+                crate::template::render_segments(raw.as_ref(), interps, c, ctx)
+            }
+            (Some(raw), None) => raw.to_string(),
+            _ => c.value.to_string(),
+        };
+        if raw.is_empty() {
+            return Node::Done;
+        }
+        let path = resolve_path_text(&self.root, &raw);
+        let path_str = path.to_string_lossy().to_string();
+        let mut child = c.clone();
+        child.value = Arc::from(path_str.as_str());
+        child.set("FS", path_str.as_str());
+        if let Some(store) = &self.store {
+            child.value_id = store.intern_string(path_str.as_str());
+            child.cursor_value = CursorValue::String(child.value_id);
+            child.set_synthetic("FS", path_str.as_str(), store);
+        }
+        Node::Emit(Arc::new(child))
+    }
 }
 
 /// Helper: pack a Vec of cursors into the right Node shape.
@@ -327,6 +380,7 @@ fn walk_via_ls_tree(root: &std::path::Path, rev: &str) -> Vec<(String, [u8; 20])
 /// file, prefilter with `Pattern::fixed_string`, parse, match, emit
 /// one child per hit with LO/HI byte range stamped.
 pub struct AstNmComponent {
+    root:    PathBuf,
     lang:    SupportLang,
     pattern: Arc<Pattern<SupportLang>>,
     fixed:   Arc<str>,
@@ -342,6 +396,7 @@ pub struct AstNmComponent {
     /// match cursor stamps focal `value_id`/`at` and per-match coord
     /// terms alongside legacy `LO`/`HI`/raw_terms writes.
     store:   Option<Arc<SprfStore>>,
+    config:  Option<Arc<SprfConfig>>,
     telemetry: Option<Arc<AstTelemetry>>,
 }
 
@@ -363,10 +418,25 @@ impl AstNmComponent {
     pub fn new(pat_src: String, lang: SupportLang) -> Self {
         let pattern = Arc::new(Pattern::new(&pat_src, lang));
         let fixed: Arc<str> = Arc::from(pattern.fixed_string().to_string().as_str());
-        Self { lang, pattern, fixed, dyn_body: None, store: None, telemetry: None }
+        Self {
+            root: PathBuf::from("."),
+            lang,
+            pattern,
+            fixed,
+            dyn_body: None,
+            store: None,
+            config: None,
+            telemetry: None,
+        }
+    }
+    pub fn with_root(mut self, root: PathBuf) -> Self {
+        self.root = root; self
     }
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
+    }
+    pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
+        self.config = Some(c); self
     }
     pub fn with_telemetry(mut self, telemetry: Arc<AstTelemetry>) -> Self {
         self.telemetry = Some(telemetry); self
@@ -393,15 +463,14 @@ impl Component for AstNmComponent {
         let fixed = self.fixed.clone();
         let dyn_body = self.dyn_body.clone();
         let telemetry = self.telemetry.clone();
+        let config = self.config.clone();
+        let root = self.root.clone();
         par_render(batch, move |c| {
             if c.value.is_empty() { return Node::Done; }
             if let Some(t) = &telemetry {
                 t.input_rows.fetch_add(1, Ordering::Relaxed);
             }
-            let path_for_intern: &str = c.get("FS").unwrap_or("");
             let parent_coord = store.as_ref().and_then(|s| s.coord_of(c.at));
-            let should_read_source = !path_for_intern.is_empty()
-                && c.value.as_ref() == path_for_intern;
             // Per-cursor pattern selection: static for term-only bodies,
             // SubPipe-bearing bodies recompile the ast-grep Pattern per
             // cursor against the rendered body.
@@ -416,73 +485,33 @@ impl Component for AstNmComponent {
                     (Arc::new(p), fx)
                 }
             };
+            let reader = SourceReader::new(root.clone(), store.clone(), config.clone());
+            let source = reader.read_cursor(c);
             let (src, file_id, repo, rev, prefiltered_bytes): (
                 String,
                 crate::FileId,
                 crate::RepoId,
                 crate::RevId,
                 bool,
-            ) =
-                if should_read_source {
-                    let (repo, rev) = parent_coord
-                        .map(|c| (c.repo, c.rev))
-                        .unwrap_or((0, 0));
-                    if let Some(s) = store.as_ref() {
-                        let Ok(bytes) = std::fs::read(path_for_intern) else {
-                            if let Some(t) = &telemetry {
-                                t.source_read_errors.fetch_add(1, Ordering::Relaxed);
-                            }
-                            return Node::Done;
-                        };
-                        if let Some(t) = &telemetry {
-                            t.source_read_rows.fetch_add(1, Ordering::Relaxed);
-                            t.source_read_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                        }
-                        if !cur_fixed.is_empty()
-                            && memchr::memmem::find(&bytes, cur_fixed.as_bytes()).is_none()
-                        {
-                            if let Some(t) = &telemetry {
-                                t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
-                            }
-                            return Node::Done;
-                        }
-                        let src = String::from_utf8_lossy(&bytes).into_owned();
-                        if let Some(t) = &telemetry {
-                            t.source_utf8_rows.fetch_add(1, Ordering::Relaxed);
-                            t.source_utf8_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                        }
-                        let file_id = {
-                            let file_id = s.intern_file(&bytes, path_for_intern);
-                            let _ = s.intern_path(repo, rev, file_id, path_for_intern);
-                            file_id
-                        };
-                        (src, file_id, repo, rev, !cur_fixed.is_empty())
-                    } else {
-                        let Ok(bytes) = std::fs::read(path_for_intern) else {
-                            if let Some(t) = &telemetry {
-                                t.source_read_errors.fetch_add(1, Ordering::Relaxed);
-                            }
-                            return Node::Done;
-                        };
-                        if let Some(t) = &telemetry {
-                            t.source_read_rows.fetch_add(1, Ordering::Relaxed);
-                            t.source_read_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                        }
-                        if !cur_fixed.is_empty()
-                            && memchr::memmem::find(&bytes, cur_fixed.as_bytes()).is_none()
-                        {
-                            if let Some(t) = &telemetry {
-                                t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
-                            }
-                            return Node::Done;
-                        }
-                        let src = String::from_utf8_lossy(&bytes).into_owned();
-                        if let Some(t) = &telemetry {
-                            t.source_utf8_rows.fetch_add(1, Ordering::Relaxed);
-                            t.source_utf8_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                        }
-                        (src, 0, repo, rev, !cur_fixed.is_empty())
+            ) = if let Some(source) = source.filter(|s| s.path.as_ref() == c.value.as_ref()) {
+                    if let Some(t) = &telemetry {
+                        t.source_read_rows.fetch_add(1, Ordering::Relaxed);
+                        t.source_read_bytes.fetch_add(source.bytes.len() as u64, Ordering::Relaxed);
                     }
+                    if !cur_fixed.is_empty()
+                        && memchr::memmem::find(&source.bytes, cur_fixed.as_bytes()).is_none()
+                    {
+                        if let Some(t) = &telemetry {
+                            t.prefilter_skips.fetch_add(1, Ordering::Relaxed);
+                        }
+                        return Node::Done;
+                    }
+                    let src = String::from_utf8_lossy(&source.bytes).into_owned();
+                    if let Some(t) = &telemetry {
+                        t.source_utf8_rows.fetch_add(1, Ordering::Relaxed);
+                        t.source_utf8_bytes.fetch_add(source.bytes.len() as u64, Ordering::Relaxed);
+                    }
+                    (src, source.file, source.coord.repo, source.coord.rev, !cur_fixed.is_empty())
                 } else {
                     if let Some(t) = &telemetry {
                         t.legacy_rows.fetch_add(1, Ordering::Relaxed);
@@ -491,6 +520,7 @@ impl Component for AstNmComponent {
                     let (repo, rev) = parent_coord
                         .map(|c| (c.repo, c.rev))
                         .unwrap_or((0, 0));
+                    let path_for_intern: &str = c.get("FS").unwrap_or("");
                     let file_id = store.as_ref()
                         .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
                         .unwrap_or(0);
@@ -553,10 +583,12 @@ impl Component for AstNmComponent {
 /// source-aware read path but runs a deserialised YAML rule instead of a
 /// plain ast-grep pattern.
 pub struct AstYamlComponent {
+    root:       PathBuf,
     lang:       SupportLang,
     rule_core:  Arc<RuleCore<SupportLang>>,
     bound_caps: Arc<Vec<Arc<str>>>,
     store:      Option<Arc<SprfStore>>,
+    config:     Option<Arc<SprfConfig>>,
 }
 
 impl AstYamlComponent {
@@ -566,15 +598,27 @@ impl AstYamlComponent {
         bound_caps: Vec<Arc<str>>,
     ) -> Self {
         Self {
+            root: PathBuf::from("."),
             lang,
             rule_core: Arc::new(rule_core),
             bound_caps: Arc::new(bound_caps),
             store: None,
+            config: None,
         }
+    }
+
+    pub fn with_root(mut self, root: PathBuf) -> Self {
+        self.root = root;
+        self
     }
 
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s);
+        self
+    }
+
+    pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
+        self.config = Some(c);
         self
     }
 }
@@ -587,39 +631,32 @@ impl Component for AstYamlComponent {
         let lang = self.lang;
         let rule_core = self.rule_core.clone();
         let bound_caps = self.bound_caps.clone();
+        let root = self.root.clone();
+        let config = self.config.clone();
         par_render(batch, move |c| {
             if c.value.is_empty() { return Node::Done; }
 
-            let path_for_intern: &str = c.get("FS").unwrap_or("");
             let parent_coord = store.as_ref().and_then(|s| s.coord_of(c.at));
-            let should_read_source = !path_for_intern.is_empty()
-                && c.value.as_ref() == path_for_intern;
+            let reader = SourceReader::new(root.clone(), store.clone(), config.clone());
+            let source = reader.read_cursor(c);
             let (src, file_id, repo, rev): (
                 String,
                 crate::FileId,
                 crate::RepoId,
                 crate::RevId,
-            ) = if should_read_source {
-                let (repo, rev) = parent_coord
-                    .map(|c| (c.repo, c.rev))
-                    .unwrap_or((0, 0));
-                let Ok(bytes) = std::fs::read(path_for_intern) else {
-                    return Node::Done;
-                };
-                let src = String::from_utf8_lossy(&bytes).into_owned();
-                let file_id = if let Some(s) = store.as_ref() {
-                    let file_id = s.intern_file(&bytes, path_for_intern);
-                    let _ = s.intern_path(repo, rev, file_id, path_for_intern);
-                    file_id
-                } else {
-                    0
-                };
-                (src, file_id, repo, rev)
+            ) = if let Some(source) = source.filter(|s| s.path.as_ref() == c.value.as_ref()) {
+                (
+                    String::from_utf8_lossy(&source.bytes).into_owned(),
+                    source.file,
+                    source.coord.repo,
+                    source.coord.rev,
+                )
             } else {
                 let src: String = c.value.as_ref().to_string();
                 let (repo, rev) = parent_coord
                     .map(|c| (c.repo, c.rev))
                     .unwrap_or((0, 0));
+                let path_for_intern: &str = c.get("FS").unwrap_or("");
                 let file_id = store.as_ref()
                     .map(|s| s.intern_file(src.as_bytes(), path_for_intern))
                     .unwrap_or(0);
@@ -1082,6 +1119,9 @@ impl Component for ReComponent {
             };
             let re: &regex::Regex = cur_re.as_ref();
             let mut file_id: crate::FileId = 0;
+            let source_coord = store.as_ref()
+                .and_then(|s| s.coord_of(c.at))
+                .unwrap_or_default();
             let (haystack, content_hash_arc): (String, Option<Arc<str>>) =
                 if on.is_empty() || on == "FS" {
                     if c.value.is_empty() { return Node::Done; }
@@ -1092,7 +1132,7 @@ impl Component for ReComponent {
                         let path_for_intern: &str = c.get("FS").unwrap_or("");
                         file_id = s.intern_file(bytes, path_for_intern);
                     }
-                    (c.value.as_ref().to_string(), h_arc)
+                    (String::from_utf8_lossy(bytes).into_owned(), h_arc)
                 } else {
                     match c.get(&on) {
                         Some(s) => (s.to_string(), None),
@@ -1116,7 +1156,7 @@ impl Component for ReComponent {
                 }
                 if let Some(store) = &store {
                     let match_coord = Coord {
-                        repo: 0, rev: 0, fs: file_id,
+                        repo: source_coord.repo, rev: source_coord.rev, fs: file_id,
                         lo: m0.start() as u32, hi: m0.end() as u32,
                     };
                     child.at = store.intern_ref(match_coord);
@@ -1138,7 +1178,7 @@ impl Component for ReComponent {
                     for (i, name) in capture_names.iter().enumerate() {
                         if let Some(g) = caps.get(i + 1) {
                             let group_coord = Coord {
-                                repo: 0, rev: 0, fs: file_id,
+                                repo: source_coord.repo, rev: source_coord.rev, fs: file_id,
                                 lo: g.start() as u32, hi: g.end() as u32,
                             };
                             child.set_at(name, g.as_str(), group_coord, store);
@@ -1757,6 +1797,7 @@ impl Component for VoidComponent {
 /// No-FS cursors pass through unchanged. UTF-8 errors fall through to
 /// from_utf8_lossy so we never drop a row on encoding.
 pub struct ReadComponent {
+    root:   PathBuf,
     /// Layer 0c.2 — content-derived intern store. When set, focal
     /// `value_id`/`at` stamp the file content + a whole-file coord.
     store:  Option<Arc<SprfStore>>,
@@ -1766,7 +1807,11 @@ pub struct ReadComponent {
     config: Option<Arc<SprfConfig>>,
 }
 impl ReadComponent {
-    pub fn new() -> Self { Self { store: None, config: None } }
+    pub fn new() -> Self { Self { root: PathBuf::from("."), store: None, config: None } }
+    pub fn with_root(mut self, root: PathBuf) -> Self {
+        self.root = root;
+        self
+    }
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
     }
@@ -1794,6 +1839,7 @@ impl Component for ReadComponent {
 
     fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let this = Self {
+            root: self.root.clone(),
             store: self.store.clone(),
             config: self.config.clone(),
         };
@@ -1831,65 +1877,19 @@ impl Component for ReadComponent {
     }
 
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        // Layer 5b.2 — git rev branch. When upstream cursor's coord
-        // has rev != 0, fetch the blob via `git show <oid>:<path>`
-        // instead of std::fs::read. cursor.value (set by fs() in the
-        // rev branch) is the path string.
-        if let (Some(store), Some(config)) = (self.store.as_ref(), self.config.as_ref()) {
-            if let Some(parent_coord) = store.coord_of(c.at) {
-                if parent_coord.rev != 0 {
-                    let path: &str = c.value.as_ref();
-                    let Some((slug, _)) = store.lookup_repo(parent_coord.repo) else { return Node::Done };
-                    let slug_str: &str = slug.as_ref();
-                    let Some(root_pb) = config.repos.iter().find(|r| r.slug == slug_str).map(|r| r.root.clone()) else { return Node::Done };
-                    let Some((_repo_id, oid_arc, _ts)) = store.lookup_rev(parent_coord.rev) else { return Node::Done };
-
-                    let spec = format!("{}:{}", oid_arc.as_ref(), path);
-                    let bytes = match std::process::Command::new("git")
-                        .args(["show", spec.as_str()])
-                        .current_dir(&root_pb)
-                        .output()
-                    {
-                        Ok(o) if o.status.success() => o.stdout,
-                        _ => return Node::Done,
-                    };
-                    let content_str = String::from_utf8_lossy(&bytes).into_owned();
-                    let file_id = store.intern_file(&bytes, path);
-                    let _path_id = store.intern_path(parent_coord.repo, parent_coord.rev, file_id, path);
-                    let coord = Coord {
-                        repo: parent_coord.repo,
-                        rev:  parent_coord.rev,
-                        fs:   file_id,
-                        lo:   0,
-                        hi:   bytes.len() as u32,
-                    };
-                    let mut child = c.clone();
-                    child.value    = Arc::<str>::from(content_str.as_str());
-                    child.value_id = store.intern_string(&content_str);
-                    child.at       = store.intern_ref(coord);
-                    return Node::Emit(Arc::new(child));
-                }
-            }
-        }
-
-        // Substrate cleanup: cursor.value is the path source. Empty
-        // value → no path → drop the row. Upstream `fs` always stamps
-        // value, so the only way to land here empty is a misconfigured
-        // chain.
-        let path: &str = c.value.as_ref();
-        if path.is_empty() { return Node::Done; }
-        let bytes = match std::fs::read(path) { Ok(b) => b, Err(_) => return Node::Done };
-        let s = String::from_utf8_lossy(&bytes).into_owned();
+        let reader = SourceReader::new(
+            self.root.clone(),
+            self.store.clone(),
+            self.config.clone(),
+        );
+        let Some(source) = reader.read_cursor(c) else {
+            return Node::Done;
+        };
+        let s = String::from_utf8_lossy(&source.bytes).into_owned();
         let mut child = c.clone();
         child.value = Arc::<str>::from(s.as_str());
         if let Some(store) = &self.store {
-            // Focal coord covers the whole file (lo=0, hi=len).
-            let file_id = store.intern_file(&bytes, path);
-            let coord = Coord {
-                repo: 0, rev: 0, fs: file_id,
-                lo: 0, hi: bytes.len() as u32,
-            };
-            child.at = store.intern_ref(coord);
+            child.at = store.intern_ref(source.coord);
             child.value_id = store.intern_string(&s);
         }
         Node::Emit(Arc::new(child))
@@ -2377,6 +2377,7 @@ impl Component for CollectComponent {
 /// cursor per matched row with each capture set as a term plus
 /// `LO`/`HI` byte offsets pointing at the row's first capture.
 pub struct JsonComponent {
+    root:     PathBuf,
     compiled: Arc<crate::cst::dsls::json::JsonCompiled>,
     /// Slow path: when Some, body+interps recompile per cursor. The
     /// `compiled` slot is unused on this path. Recompile cost: full
@@ -2388,14 +2389,28 @@ pub struct JsonComponent {
     )>,
     /// Layer 0c.2 — content-derived intern store.
     store:    Option<Arc<SprfStore>>,
+    config:   Option<Arc<SprfConfig>>,
 }
 
 impl JsonComponent {
     pub fn new(compiled: crate::cst::dsls::json::JsonCompiled) -> Self {
-        Self { compiled: Arc::new(compiled), dyn_body: None, store: None }
+        Self {
+            root: PathBuf::from("."),
+            compiled: Arc::new(compiled),
+            dyn_body: None,
+            store: None,
+            config: None,
+        }
+    }
+    pub fn with_root(mut self, root: PathBuf) -> Self {
+        self.root = root;
+        self
     }
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.store = Some(s); self
+    }
+    pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
+        self.config = Some(c); self
     }
     /// Slow path: route every cursor through render_segments → recompile.
     /// Fmt is captured here so the per-cursor compile rebuilds with the
@@ -2417,15 +2432,34 @@ impl Component for JsonComponent {
         let compiled = self.compiled.clone();
         let dyn_body = self.dyn_body.clone();
         let store = self.store.clone();
+        let config = self.config.clone();
+        let root = self.root.clone();
         par_render(batch, move |c| {
-            // Substrate purification: cursor.value carries the bytes;
-            // upstream `read` is the gate that materializes them.
             if c.value.is_empty() { return Node::Done; }
-            let bytes = c.value.as_bytes();
-            let path_for_intern: &str = c.get("FS").unwrap_or("");
-            let file_id = store.as_ref()
-                .map(|s| s.intern_file(bytes, path_for_intern))
-                .unwrap_or(0);
+            let reader = SourceReader::new(root.clone(), store.clone(), config.clone());
+            let source = reader.read_cursor(c);
+            let bytes_cow: std::borrow::Cow<'_, [u8]> = match source.as_ref() {
+                Some(source) if source.path.as_ref() == c.value.as_ref() => {
+                    std::borrow::Cow::Borrowed(source.bytes.as_slice())
+                }
+                _ => std::borrow::Cow::Borrowed(c.value.as_bytes()),
+            };
+            let bytes = bytes_cow.as_ref();
+            let parent_coord = store.as_ref()
+                .and_then(|s| s.coord_of(c.at))
+                .unwrap_or_default();
+            let (file_id, repo, rev) = match source.as_ref() {
+                Some(source) if source.path.as_ref() == c.value.as_ref() => {
+                    (source.file, source.coord.repo, source.coord.rev)
+                }
+                _ => {
+                    let path_for_intern: &str = c.get("FS").unwrap_or("");
+                    let file_id = store.as_ref()
+                        .map(|s| s.intern_file(bytes, path_for_intern))
+                        .unwrap_or(0);
+                    (file_id, parent_coord.repo, parent_coord.rev)
+                }
+            };
             // Per-cursor pattern selection: SubPipe-bearing bodies
             // recompile JsonCompiled per cursor. JsonCompiled isn't Clone,
             // so the dynamic arm builds owned; the static arm references
@@ -2462,7 +2496,7 @@ impl Component for JsonComponent {
                     // Focal coord = first capture's span (current
                     // legacy LO/HI semantics).
                     let focal = Coord {
-                        repo: 0, rev: 0, fs: file_id,
+                        repo, rev, fs: file_id,
                         lo: *lo0 as u32, hi: *hi0 as u32,
                     };
                     child.at = store.intern_ref(focal);
@@ -2470,7 +2504,7 @@ impl Component for JsonComponent {
                     child.value_id = store.intern_string(focal_slice);
                     for (name, lo, hi, value) in &caps {
                         let coord = Coord {
-                            repo: 0, rev: 0, fs: file_id,
+                            repo, rev, fs: file_id,
                             lo: *lo as u32, hi: *hi as u32,
                         };
                         child.set_at(name.as_ref(), value.as_ref(), coord, store);

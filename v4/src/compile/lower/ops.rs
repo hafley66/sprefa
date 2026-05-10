@@ -20,7 +20,7 @@ use crate::fact::{FactRead, FactWrite};
 use crate::term::Term;
 use crate::v2_ops::{
     AstNmComponent, AstYamlComponent, CollectComponent, CollectMode, CommentComponent,
-    FsComponent, JsonComponent, PrintComponent, ReComponent, ReadComponent,
+    FsComponent, JsonComponent, PathComponent, PrintComponent, ReComponent, ReadComponent,
     RenderMarkdownComponent, RepoComponent, RevComponent, ShBangComponent,
     ShComponent, SplitComponent, VoidComponent, WriteCursorComponent,
     WriteFileComponent, WriteFilePath, WriteMode,
@@ -66,6 +66,37 @@ impl OperatorDef for StrDef {
             raw:     body.raw.clone(),
             interps: Arc::new(interps),
         })))
+    }
+}
+
+// ─── path ─────────────────────────────────────────────────────────────────
+
+pub struct PathDef;
+
+impl OperatorDef for PathDef {
+    fn name(&self) -> &'static str { "path" }
+    fn dsl_body(&self) -> Option<DslShape> { Some(DslShape::Plain) }
+    fn dsl_required(&self) -> bool { false }
+    fn cursor_binds(&self) -> &'static [&'static str] { &["FS"] }
+
+    fn lower(
+        &self,
+        ctx:    &LowerCtx,
+        _flow:  Option<Value>,
+        _args:  &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl:    Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let mut comp = PathComponent::new(ctx.root.clone());
+        if let Some(body) = dsl {
+            let mut interps = body.interps.clone();
+            interps.sort_by_key(|i| i.range.lo);
+            comp = comp.with_template(body.raw.clone(), interps);
+        }
+        if let Some(s) = &ctx.sprf_store {
+            comp = comp.with_sprf_store(s.clone());
+        }
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 
@@ -696,13 +727,15 @@ impl OperatorDef for AstDef {
         } else {
             body.raw.to_string()
         };
-        let mut comp = AstNmComponent::new(static_src, lang);
+        let mut comp = AstNmComponent::new(static_src, lang)
+            .with_root(_ctx.root.clone());
         if crate::template::has_subpipe(&body.interps) {
             let mut interps = body.interps.clone();
             interps.sort_by_key(|i| i.range.lo);
             comp = comp.with_dyn_body(body.raw.clone(), interps);
         }
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -791,8 +824,10 @@ impl OperatorDef for AstYamlDef {
             }
         }
 
-        let mut comp = AstYamlComponent::new(lang, rule_core, bound_caps);
+        let mut comp = AstYamlComponent::new(lang, rule_core, bound_caps)
+            .with_root(_ctx.root.clone());
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1015,13 +1050,14 @@ impl OperatorDef for JsonDef {
                 "json: compile failed: {}", d.message
             )))?;
         let compiled = compiled.with_format(fmt);
-        let mut comp = JsonComponent::new(compiled);
+        let mut comp = JsonComponent::new(compiled).with_root(_ctx.root.clone());
         if has_subpipe {
             let mut interps = body.interps.clone();
             interps.sort_by_key(|i| i.range.lo);
             comp = comp.with_dyn_body(body.raw.clone(), interps, fmt);
         }
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
+        if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1589,7 +1625,7 @@ impl OperatorDef for ReadDef {
         _block: Option<Pipe<Cursor>>,
         _dsl:   Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let mut comp = ReadComponent::new();
+        let mut comp = ReadComponent::new().with_root(_ctx.root.clone());
         if let Some(s) = &_ctx.sprf_store { comp = comp.with_sprf_store(s.clone()); }
         if let Some(c) = &_ctx.config     { comp = comp.with_config(c.clone()); }
         Ok(Pipe::new().step(Arc::new(comp)))

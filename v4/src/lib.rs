@@ -12,6 +12,7 @@ pub mod mounted_query;
 pub mod pipeline;
 pub mod rule;
 pub mod runtime_bridge;
+pub mod source;
 pub mod sprf_introspect;
 pub mod sql;
 pub mod store;
