@@ -52,14 +52,24 @@ v4-test:
 v4-release:
     cargo build --manifest-path v4/Cargo.toml --release
 
+# Linux perf fixture lives in this checkout at v3/tests/smoke/.fixtures/linux.
+# Recipe parameters override positionally:
+#   just v4-bench-linux "v3/tests/smoke/.fixtures/linux" 'printk($$$)' 8 1 4096
+# Running multiple bench commands in parallel pollutes wall time. Run sequentially.
 v4-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
     ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare
+
+v4-bench-linux-quick:
+    ./v4/target/release/v4-bench --root "v3/tests/smoke/.fixtures/linux" --workers "8" --trials "1" --batch "4096" --pattern 'printk($$$)' --lang c --mode bare
 
 v4-bench-linux-read LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
     ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --materialize-read
 
 v4-bench-linux-sprf LINUX="v3/tests/smoke/.fixtures/linux":
     ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows
+
+v3-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3":
+    ./v3/experiments/effect_proof/target/release/ast_grep_v3_bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --pattern '{{PATTERN}}' --lang c --mode batch
 
 v4-release-test: v4-test v4-release
 

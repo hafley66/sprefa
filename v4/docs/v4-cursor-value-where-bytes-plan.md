@@ -207,6 +207,27 @@ Use the linux fixture:
 v3/tests/smoke/.fixtures/linux
 ```
 
+Run commands:
+
+```bash
+RUSTC_WRAPPER= cargo build --manifest-path v4/Cargo.toml --release --bin v4-bench
+just v4-bench-linux
+just v4-bench-linux-read
+just v4-bench-linux-sprf
+just v3-bench-linux
+```
+
+Just recipe parameter overrides are positional:
+
+```bash
+just v4-bench-linux-quick
+just v4-bench-linux "v3/tests/smoke/.fixtures/linux" 'printk($$$)' 8 1 4096
+just v4-bench-linux "v3/tests/smoke/.fixtures/linux" 'printk($$$)' 6 3 4096
+```
+
+Do not run benchmark recipes in parallel. CPU contention makes wall time useless
+and can make idle-thread experiments look worse than the default.
+
 Target query:
 
 ```text
@@ -268,6 +289,62 @@ Before the source-side extension filter, the bench emitted `93299` file cursors
 and then dropped `29817` through a downstream `ext_filter` component. The new
 bench path keeps default `fs` semantics unchanged but lets the benchmark match
 V3's pre-dispatch corpus filtering.
+
+2026-05-10 current-machine check after release rebuild:
+
+```text
+V3 existing release binary, batch mode, workers=8, trials=3
+  files=63482
+  matches=16627
+  p50=3.876s
+
+V4 source-aware v4-bench, workers=8, trials=3
+  files after ext filter=63482
+  matches=16627
+  p50=4.267s
+  read_rows=0
+  source_reads=63482
+  source_MB=1342.2
+  source_utf8=4495
+  source_utf8_MB=109.3
+  prefilter_skips=58987
+  parses=4495
+  peak RSS around 200 MB
+
+V4 explicit read path, workers=8, trials=1
+  read_rows=63482
+  read_MB=1342.2
+  peak RSS around 1.7 GB
+```
+
+Current bottleneck evidence:
+
+```text
+batch size:
+  v4-bench uses batch=4096 and expand batch_cap=max(batch, 65536)
+  app/sprefa-run uses batch_cap=4096 for normal runs
+
+N+1 / materialization:
+  default v4-bench has read_rows=0
+  skipped files do not become UTF-8 strings
+  explicit read is the known bad memory path
+
+CPU contention / idle threads:
+  workers=8 is best on this machine in quick sweeps
+  workers=6 p50=4.736s
+  workers=10 p50=4.694s
+```
+
+The `.sprf` bench is currently slower than `v4-bench` because it expresses:
+
+```sprf
+fs > glob`**/*.{c,h}` > ast(:c)`printk($$$)` > fact(:hits, FS, LO, HI);
+```
+
+That queues all `93299` file paths before `glob`. `v4-bench` pushes the c/h
+filter into `FsComponent`, so only `63482` candidate paths become queue rows.
+The next perf slice is either a lift/fusion from `fs > glob` into `FsComponent`
+or an explicit source-filter op that keeps the normal language path honest.
 
 ## Dirty Worktree Notes
 
