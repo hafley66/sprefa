@@ -46,7 +46,7 @@ use v4::app::{
 
 struct Backend {
     client: Client,
-    sprf:   Arc<dyn SprfClient>,
+    sprf:   Mutex<Arc<dyn SprfClient>>,
     docs:   Mutex<HashMap<Url, DocEntry>>,
 }
 
@@ -58,26 +58,59 @@ struct DocEntry {
 
 impl Backend {
     fn new(client: Client) -> Self {
-        let sprf: Arc<dyn SprfClient> = match std::env::var("SPREFA_LSP_DAEMON_URL") {
+        let sprf = Self::build_client(default_root());
+        Self { client, sprf: Mutex::new(sprf), docs: Mutex::new(HashMap::new()) }
+    }
+
+    fn build_client(root: PathBuf) -> Arc<dyn SprfClient> {
+        match std::env::var("SPREFA_LSP_DAEMON_URL") {
             Ok(base) if !base.trim().is_empty() => Arc::new(HttpClient::new(base)),
             _ => {
-                let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
                 let (_state, sprf) = build_in_process(root);
                 Arc::new(sprf)
             }
-        };
-        Self { client, sprf, docs: Mutex::new(HashMap::new()) }
+        }
+    }
+
+    async fn sprf(&self) -> Arc<dyn SprfClient> {
+        self.sprf.lock().await.clone()
+    }
+
+    async fn set_workspace_root(&self, root: PathBuf) {
+        if std::env::var("SPREFA_LSP_DAEMON_URL")
+            .map(|base| !base.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return;
+        }
+        *self.sprf.lock().await = Self::build_client(root);
+    }
+
+    fn root_from_initialize(params: &InitializeParams) -> PathBuf {
+        params
+            .workspace_folders
+            .as_ref()
+            .and_then(|folders| folders.first())
+            .and_then(|folder| folder.uri.to_file_path().ok())
+            .or_else(|| {
+                params
+                    .root_uri
+                    .as_ref()
+                    .and_then(|uri| uri.to_file_path().ok())
+            })
+            .unwrap_or_else(default_root)
     }
 
     /// Push doc through the sprf RPC, then publish converted diags.
     async fn refresh(&self, uri: Url, text: String, version: i32, is_open: bool) {
         let req_uri = uri.to_string();
+        let sprf = self.sprf().await;
         let res = if is_open {
-            self.sprf.lsp_open(LspOpenReq {
+            sprf.lsp_open(LspOpenReq {
                 uri: req_uri.clone(), text: text.clone(), version,
             }).await
         } else {
-            self.sprf.lsp_change(LspChangeReq {
+            sprf.lsp_change(LspChangeReq {
                 uri: req_uri.clone(), text: text.clone(), version,
             }).await
         };
@@ -86,7 +119,7 @@ impl Backend {
             return;
         }
 
-        let diags: Vec<SprfDiag> = match self.sprf
+        let diags: Vec<SprfDiag> = match sprf
             .get_diags(GetDiagsReq { uri: req_uri }).await
         {
             Ok(v)  => v,
@@ -109,7 +142,12 @@ impl Backend {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> RpcResult<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> RpcResult<InitializeResult> {
+        let root = Self::root_from_initialize(&params);
+        self.set_workspace_root(root.clone()).await;
+        self.client
+            .log_message(MessageType::INFO, format!("sprefa-lsp root {}", root.display()))
+            .await;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -183,7 +221,8 @@ impl LanguageServer for Backend {
             let g = self.docs.lock().await;
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
-        let probes = match self.sprf.get_inlays(GetInlaysReq {
+        let sprf = self.sprf().await;
+        let probes = match sprf.get_inlays(GetInlaysReq {
             uri: uri.to_string(),
         }).await {
             Ok(v)  => v,
@@ -214,7 +253,8 @@ impl LanguageServer for Backend {
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
         let host_byte = position_to_byte(&text, pos);
-        let resp = match self.sprf.lsp_hover(LspHoverReq {
+        let sprf = self.sprf().await;
+        let resp = match sprf.lsp_hover(LspHoverReq {
             uri:  uri.to_string(),
             byte: host_byte as u32,
         }).await {
@@ -238,7 +278,8 @@ impl LanguageServer for Backend {
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
         let host_byte = position_to_byte(&text, pos);
-        let hit: LspLocateDslResp = match self.sprf.lsp_locate_dsl(LspLocateDslReq {
+        let sprf = self.sprf().await;
+        let hit: LspLocateDslResp = match sprf.lsp_locate_dsl(LspLocateDslReq {
             uri:  uri.to_string(),
             byte: host_byte as u32,
         }).await {
@@ -280,7 +321,8 @@ impl LanguageServer for Backend {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        let _ = self.sprf.lsp_close(LspCloseReq { uri: uri.to_string() }).await;
+        let sprf = self.sprf().await;
+        let _ = sprf.lsp_close(LspCloseReq { uri: uri.to_string() }).await;
         { let mut g = self.docs.lock().await; g.remove(&uri); }
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
@@ -380,9 +422,53 @@ fn byte_to_position(src: &str, off: usize) -> Position {
     Position::new(line, col)
 }
 
-// suppress unused warning on Arc until something needs it later
-#[allow(dead_code)]
-fn _arc_marker() -> Arc<()> { Arc::new(()) }
+fn default_root() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tower_lsp::lsp_types::{ClientCapabilities, WorkspaceFolder};
+
+    #[allow(deprecated)]
+    fn init_params(root_uri: Option<Url>, workspace_folders: Option<Vec<WorkspaceFolder>>) -> InitializeParams {
+        InitializeParams {
+            process_id: None,
+            root_path: None,
+            root_uri,
+            initialization_options: None,
+            capabilities: ClientCapabilities::default(),
+            trace: None,
+            workspace_folders,
+            client_info: None,
+            locale: None,
+        }
+    }
+
+    #[test]
+    fn initialize_root_prefers_workspace_folder() {
+        let root_uri = Url::from_directory_path("/tmp/root-uri").unwrap();
+        let workspace_uri = Url::from_directory_path("/tmp/workspace").unwrap();
+        let params = init_params(
+            Some(root_uri),
+            Some(vec![WorkspaceFolder {
+                uri: workspace_uri,
+                name: "workspace".into(),
+            }]),
+        );
+
+        assert_eq!(Backend::root_from_initialize(&params), PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn initialize_root_falls_back_to_root_uri() {
+        let root_uri = Url::from_directory_path("/tmp/root-uri").unwrap();
+        let params = init_params(Some(root_uri), None);
+
+        assert_eq!(Backend::root_from_initialize(&params), PathBuf::from("/tmp/root-uri"));
+    }
+}
 
 // ── entry point ──────────────────────────────────────────────────────
 

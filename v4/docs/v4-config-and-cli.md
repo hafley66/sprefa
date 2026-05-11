@@ -113,7 +113,7 @@ Ghcache flags exist only when the `ghcache` feature is compiled in. The feature 
 
 ## sprefa-lsp
 
-`sprefa-lsp` currently has no project-specific CLI flags. It creates an in-process app rooted at the current working directory. The VS Code extension controls:
+`sprefa-lsp` currently has no project-specific CLI flags. In VS Code it roots the in-process app at the first workspace folder from `initialize`; outside VS Code it falls back to the current working directory. The VS Code extension controls:
 
 ```text
 sprefa-v4.serverPath
