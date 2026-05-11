@@ -1,5 +1,7 @@
 # V4 Docs
 
+Generated file inventory: [V4 Docs TOC](./v4-docs-toc.md)
+
 Reading order for getting back into v4 without replaying chat logs:
 
 1. [V4 Language Vector](./v4-language-vector.md)
