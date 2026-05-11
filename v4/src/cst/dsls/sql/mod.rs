@@ -3,6 +3,8 @@
 //! Runtime execution for the host `sql`` op lives in `crate::sql`.
 //! This module keeps body-local editor affordances in the CST DSL layer.
 
+use std::collections::BTreeMap;
+
 use lsp_types::{
     CompletionItem, CompletionItemKind, Hover, HoverContents, MarkedString, SemanticTokenType,
 };
@@ -17,6 +19,52 @@ pub struct SqlDsl {
     legend: Legend,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SqlLspCtx {
+    pub input_cols: Vec<SqlCol>,
+    pub rule_tables: Vec<SqlTable>,
+    pub core_tables: Vec<SqlTable>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SqlTable {
+    pub name: String,
+    pub cols: Vec<SqlCol>,
+}
+
+impl SqlTable {
+    pub fn new<I, S>(name: impl Into<String>, cols: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            name: name.into(),
+            cols: cols.into_iter().map(SqlCol::text).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SqlCol {
+    pub name: String,
+    pub ty: SqlType,
+}
+
+impl SqlCol {
+    pub fn text(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            ty: SqlType::Text,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SqlType {
+    Text,
+}
+
 impl Default for SqlDsl {
     fn default() -> Self {
         Self::new()
@@ -28,6 +76,81 @@ impl SqlDsl {
         Self {
             legend: Legend::standard(),
         }
+    }
+
+    pub fn completions_with_ctx(
+        &self,
+        body: &[u8],
+        byte: usize,
+        ctx: &SqlLspCtx,
+    ) -> Vec<CompletionItem> {
+        let clipped = byte.min(body.len());
+        if let Some(qualifier) = qualifier_before_dot(&body[..clipped]) {
+            return self.qualified_column_completions(body, ctx, &qualifier);
+        }
+
+        if is_table_position(&body[..clipped]) {
+            return ctx
+                .rule_tables
+                .iter()
+                .chain(ctx.core_tables.iter())
+                .map(|table| CompletionItem {
+                    label: table.name.clone(),
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some("SQL relation".to_string()),
+                    ..Default::default()
+                })
+                .collect();
+        }
+
+        self.completions(body, byte)
+    }
+
+    pub fn diagnostics_with_ctx(&self, body: &[u8], ctx: &SqlLspCtx) -> Vec<Diag> {
+        let tables = visible_tables(ctx);
+        let tokens = scan_sql(body);
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i + 1 < tokens.len() {
+            let text = token_text(body, &tokens[i]);
+            if keyword_eq(text, "FROM") || keyword_eq(text, "JOIN") {
+                let table = &tokens[i + 1];
+                if table.kind == SqlTokenKind::Identifier || table.kind == SqlTokenKind::InputName {
+                    let table_name = token_text(body, table);
+                    if !tables.contains_key(table_name) {
+                        out.push(Diag::error(
+                            "sql/unknown-table",
+                            format!("unknown SQL table `{table_name}`"),
+                            table.range.clone(),
+                        ));
+                    }
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+
+    fn qualified_column_completions(
+        &self,
+        body: &[u8],
+        ctx: &SqlLspCtx,
+        qualifier: &str,
+    ) -> Vec<CompletionItem> {
+        let aliases = visible_aliases(body, ctx);
+        let Some(table) = aliases.get(qualifier) else {
+            return Vec::new();
+        };
+        table
+            .cols
+            .iter()
+            .map(|col| CompletionItem {
+                label: format!("{qualifier}.{}", col.name),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some(format!("{}.{}", table.name, col.name)),
+                ..Default::default()
+            })
+            .collect()
     }
 }
 
@@ -350,6 +473,87 @@ fn keyword_hover(keyword: &str) -> Option<&'static str> {
     }
 }
 
+fn token_text<'a>(body: &'a [u8], token: &SqlToken) -> &'a str {
+    std::str::from_utf8(&body[token.range.clone()]).unwrap_or("")
+}
+
+fn keyword_eq(text: &str, keyword: &str) -> bool {
+    text.eq_ignore_ascii_case(keyword)
+}
+
+fn visible_tables(ctx: &SqlLspCtx) -> BTreeMap<String, SqlTable> {
+    let mut out = BTreeMap::new();
+    out.insert(
+        "input".to_string(),
+        SqlTable {
+            name: "input".to_string(),
+            cols: ctx.input_cols.clone(),
+        },
+    );
+    for table in ctx.rule_tables.iter().chain(ctx.core_tables.iter()) {
+        out.insert(table.name.clone(), table.clone());
+    }
+    out
+}
+
+fn visible_aliases(body: &[u8], ctx: &SqlLspCtx) -> BTreeMap<String, SqlTable> {
+    let tables = visible_tables(ctx);
+    let mut out = tables.clone();
+    let tokens = scan_sql(body);
+    let mut i = 0usize;
+    while i + 1 < tokens.len() {
+        let text = token_text(body, &tokens[i]);
+        if keyword_eq(text, "FROM") || keyword_eq(text, "JOIN") {
+            let table_name = token_text(body, &tokens[i + 1]);
+            if let Some(table) = tables.get(table_name) {
+                if i + 3 < tokens.len() && keyword_eq(token_text(body, &tokens[i + 2]), "AS") {
+                    out.insert(token_text(body, &tokens[i + 3]).to_string(), table.clone());
+                    i += 3;
+                } else if i + 2 < tokens.len() {
+                    let alias = &tokens[i + 2];
+                    let alias_text = token_text(body, alias);
+                    if alias.kind == SqlTokenKind::Identifier && !is_keyword(alias_text) {
+                        out.insert(alias_text.to_string(), table.clone());
+                        i += 2;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn qualifier_before_dot(prefix: &[u8]) -> Option<String> {
+    let mut i = prefix.len();
+    while i > 0 && prefix[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    if i == 0 || prefix[i - 1] != b'.' {
+        return None;
+    }
+    i -= 1;
+    let hi = i;
+    while i > 0 && is_ident_continue(prefix[i - 1]) {
+        i -= 1;
+    }
+    if hi == i {
+        return None;
+    }
+    std::str::from_utf8(&prefix[i..hi]).ok().map(str::to_string)
+}
+
+fn is_table_position(prefix: &[u8]) -> bool {
+    let text = std::str::from_utf8(prefix).unwrap_or("");
+    let mut words = text
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, '(' | ')' | ',' | ';'))
+        .filter(|word| !word.is_empty());
+    let Some(last) = words.next_back() else {
+        return false;
+    };
+    keyword_eq(last, "FROM") || keyword_eq(last, "JOIN")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +639,71 @@ mod tests {
         let mut sink = crate::cst::dsl::VecCaptureSink::new();
         compiled.match_into(b"anything", 0, &mut sink);
         assert!(sink.rows.is_empty());
+    }
+
+    #[test]
+    fn sql_lsp_ctx_completes_tables_after_from() {
+        let dsl = SqlDsl::new();
+        let ctx = SqlLspCtx {
+            input_cols: vec![SqlCol::text("__cursor_idx"), SqlCol::text("value")],
+            rule_tables: vec![SqlTable::new("frontend_hooks", ["OP", "FILE"])],
+            core_tables: vec![SqlTable::new("_strings", ["id", "content", "norm"])],
+        };
+
+        let labels: Vec<String> = dsl
+            .completions_with_ctx(b"SELECT * FROM ", 14, &ctx)
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec!["frontend_hooks".to_string(), "_strings".to_string(),]
+        );
+    }
+
+    #[test]
+    fn sql_lsp_ctx_completes_alias_columns_after_dot() {
+        let dsl = SqlDsl::new();
+        let ctx = SqlLspCtx {
+            input_cols: vec![
+                SqlCol::text("__cursor_idx"),
+                SqlCol::text("value"),
+                SqlCol::text("OP"),
+            ],
+            rule_tables: vec![SqlTable::new("frontend_hooks", ["OP", "FILE"])],
+            core_tables: vec![],
+        };
+
+        let labels: Vec<String> = dsl
+            .completions_with_ctx(
+                b"SELECT hooks. FROM input JOIN frontend_hooks AS hooks ON hooks.OP = input.OP",
+                13,
+                &ctx,
+            )
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec!["hooks.OP".to_string(), "hooks.FILE".to_string()]
+        );
+    }
+
+    #[test]
+    fn sql_lsp_ctx_diagnoses_unknown_table() {
+        let dsl = SqlDsl::new();
+        let ctx = SqlLspCtx {
+            input_cols: vec![SqlCol::text("__cursor_idx"), SqlCol::text("value")],
+            rule_tables: vec![SqlTable::new("frontend_hooks", ["OP", "FILE"])],
+            core_tables: vec![],
+        };
+
+        let diags = dsl.diagnostics_with_ctx(b"SELECT * FROM missing_hooks", &ctx);
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, "sql/unknown-table");
+        assert_eq!(diags[0].message, "unknown SQL table `missing_hooks`");
     }
 }
