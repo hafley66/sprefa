@@ -14,6 +14,8 @@ use effect_runtime::v2::{
     PipeInstance, QueueBackend, RenderCtx,
 };
 
+use v4::compile::parse::host_parse;
+use v4::compile::walk::walk_program;
 use v4::config::{RepoConfig, SprfConfig};
 use v4::lower::{default_registry, LowerCtx, Value};
 use v4::store::{SprfStore, REVS_TABLE};
@@ -225,4 +227,109 @@ fn rev_multi_spec_emits_one_cursor_per_spec() {
     store.flush();
     let rev_rows = facts.rows_of(REVS_TABLE);
     assert_eq!(rev_rows.len(), 3, "sentinel + 2 revs in _revs");
+}
+
+#[test]
+fn rev_call_writes_builtin_relation_and_revq_queries_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root: PathBuf = dir.path().to_path_buf();
+    init_git(&root, &[("README.md", b"v1")]);
+
+    let src = r#"
+        rule(:seen_revs, REPO?, REV?, KIND?, SPEC?);
+
+        repo()
+          > rev(:HEAD);
+
+        rev?(REPO?, REV?, KIND?, SPEC?)
+          > seen_revs(REPO, REV, KIND, SPEC);
+    "#;
+
+    let facts = run_program(&root, src);
+    let rows = facts.rows_of("seen_revs");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("REPO"), Some("test/repo"));
+    assert_eq!(rows[0].get("KIND"), Some("spec"));
+    assert_eq!(rows[0].get("SPEC"), Some("HEAD"));
+    let rev = rows[0].get("REV").unwrap();
+    assert_eq!(rev.len(), 40);
+}
+
+#[test]
+fn rev_glob_enumerates_refs_and_binds_captures() {
+    let dir = tempfile::tempdir().unwrap();
+    let root: PathBuf = dir.path().to_path_buf();
+    init_git(&root, &[("README.md", b"v1")]);
+    git(&root, &["tag", "support/0.1.7"]);
+    git(&root, &["tag", "support/0.2.0"]);
+
+    let src = r#"
+        rule(:support_revs, REPO?, PATCH?, REV?, NAME?, KIND?);
+
+        repo()
+          > rev(glob`support/0.1.${PATCH?}`)
+          > support_revs(REPO, PATCH, REV, NAME, KIND);
+    "#;
+
+    let facts = run_program(&root, src);
+    let rows = facts.rows_of("support_revs");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("REPO"), Some("test/repo"));
+    assert_eq!(rows[0].get("PATCH"), Some("7"));
+    assert_eq!(rows[0].get("NAME"), Some("support/0.1.7"));
+    assert_eq!(rows[0].get("KIND"), Some("tag"));
+    let rev = rows[0].get("REV").unwrap();
+    assert_eq!(rev.len(), 40);
+}
+
+fn git(root: &std::path::Path, args: &[&str]) {
+    let st = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t.com")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t.com")
+        .env("GIT_AUTHOR_DATE", "2026-01-03T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-01-03T00:00:00Z")
+        .output()
+        .expect("git");
+    assert!(
+        st.status.success(),
+        "git {:?}: {}",
+        args,
+        String::from_utf8_lossy(&st.stderr)
+    );
+}
+
+fn run_program(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
+    let (program, parse_diags) = host_parse(src);
+    assert!(parse_diags.is_empty(), "parse diags: {parse_diags:?}");
+
+    let cfg = SprfConfig {
+        repos: vec![RepoConfig {
+            slug: "test/repo".into(),
+            root: root.to_path_buf(),
+        }],
+        ..Default::default()
+    };
+    let facts: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let store = SprfStore::new(facts.clone());
+    let reg = default_registry();
+    let mut ctx = LowerCtx::new(facts.clone(), std::env::temp_dir())
+        .with_sprf_store(store)
+        .with_config(Arc::new(cfg));
+    let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
+    assert!(walk_diags.is_empty(), "walk diags: {walk_diags:?}");
+
+    let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    for pipe in pipes {
+        expand(
+            &pipe.into_instance(),
+            q.clone(),
+            vec![Arc::new(Cursor::default())],
+            ExpandOpts::default(),
+        );
+    }
+    facts
 }

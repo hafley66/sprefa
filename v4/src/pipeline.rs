@@ -117,6 +117,9 @@ impl GlobComponent {
     pub fn matches_value(&self, value: &str) -> bool {
         self.re.captures(value).is_some()
     }
+    pub fn regex(&self) -> regex::Regex {
+        self.re.clone()
+    }
 }
 
 impl Component for GlobComponent {

@@ -316,6 +316,26 @@ pub fn walk_op(
         }
     }
 
+    if op.predicate && lower_name.as_ref() == "rev" {
+        crate::v2_ops::declare_rev_relation(ctx.store.as_ref());
+        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
+        match crate::sql::rule_table_call_pipe(ctx, "rev", &arg_vals) {
+            Ok(pipe) => {
+                let pipe = match &ctx.probe {
+                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
+                    None => pipe,
+                };
+                return Some(pipe);
+            }
+            Err(e) => {
+                diags.push(
+                    Diag::error("lower/rev-query", e.to_string()).with_span(op.span.lo, op.span.hi),
+                );
+                return None;
+            }
+        }
+    }
+
     // Declared rule apply/send. Bare call is the visible push/run/write marker.
     if declared_rule_call && ctx.get_rule(&op.name).is_some() {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
@@ -486,7 +506,7 @@ pub fn classify_slot(
     // never at host-arg position. Like JS: `\`hello ${name}\`` is a hole;
     // `f(${name})` is not. Emit a clear diag so the fallthrough doesn't
     // bury the real cause.
-    if let Some(idx) = raw.find("${") {
+    if let Some(idx) = find_host_hole_outside_quotes(raw) {
         let lo = slot.span.lo.saturating_add(idx as u32);
         let hi_rel = raw[idx..]
             .find('}')
@@ -605,6 +625,33 @@ pub fn classify_slot(
         diags.push(d);
     }
     pipe.map(Value::Pipe)
+}
+
+fn find_host_hole_outside_quotes(raw: &str) -> Option<usize> {
+    let bytes = raw.as_bytes();
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        match bytes[i] {
+            b'`' | b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'$' if bytes[i + 1] == b'{' => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 fn is_ident(s: &str) -> bool {

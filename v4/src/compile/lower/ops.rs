@@ -1735,9 +1735,9 @@ impl OperatorDef for RepoDef {
 pub struct RevDef;
 
 const REV_SPEC: &[ArgSig] = &[ArgSig {
-    kind: ArgKind::Variadic(&ArgKind::Atom),
+    kind: ArgKind::Variadic(&ArgKind::Any),
     name: "specs",
-    doc: "0 args = :HEAD; else atom revspecs (:HEAD, :HEAD~5, :main, :v1.0)",
+    doc: "0 args = :HEAD; atom revspecs; or glob`...` to enumerate refs",
     required: false,
 }];
 
@@ -1749,7 +1749,17 @@ impl OperatorDef for RevDef {
         REV_SPEC
     }
     fn cursor_binds(&self) -> &'static [&'static str] {
-        &["REV"]
+        &[
+            "REPO",
+            "KIND",
+            "SPEC",
+            "NAME",
+            "REF",
+            "REV",
+            "TARGET",
+            "COMMIT_TS",
+            "TAG_TS",
+        ]
     }
 
     fn lower(
@@ -1760,8 +1770,29 @@ impl OperatorDef for RevDef {
         _block: Option<Pipe<Cursor>>,
         _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let specs: Vec<String> = if args.is_empty() {
-            Vec::new() // ctor sugars to ["HEAD"]
+        crate::v2_ops::declare_rev_relation(ctx.store.as_ref());
+        let mut comp = if args.len() == 1 {
+            if let Value::Pipe(pipe) = &args[0] {
+                let glob = pipe
+                    .steps
+                    .first()
+                    .and_then(|step| step.describe())
+                    .and_then(|desc| desc.downcast_ref::<GlobComponent>())
+                    .ok_or_else(|| {
+                        LowerError::Unknown(
+                            "rev: pipe arg must be a static glob`...` matcher".into(),
+                        )
+                    })?;
+                RevComponent::glob(glob.regex())
+            } else {
+                let spec = match &args[0] {
+                    Value::Atom(s) => s.to_string(),
+                    Value::Pipe(_) => unreachable!(),
+                };
+                RevComponent::new(vec![spec])
+            }
+        } else if args.is_empty() {
+            RevComponent::new(Vec::new()) // ctor sugars to ["HEAD"]
         } else {
             let mut out = Vec::with_capacity(args.len());
             for v in args {
@@ -1769,14 +1800,14 @@ impl OperatorDef for RevDef {
                     Value::Atom(s) => out.push(s.to_string()),
                     _ => {
                         return Err(LowerError::Unknown(
-                            "rev: args must be :atom revspecs (e.g. :HEAD, :HEAD~5, :main)".into(),
+                            "rev: args must be atom revspecs or one static glob`...` matcher"
+                                .into(),
                         ))
                     }
                 }
             }
-            out
+            RevComponent::new(out)
         };
-        let mut comp = RevComponent::new(specs);
         if let Some(s) = &ctx.sprf_store {
             comp = comp.with_sprf_store(s.clone());
         }

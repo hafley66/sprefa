@@ -27,7 +27,7 @@ use ast_grep_core::{source::StrDoc, AstGrep, Language, Pattern};
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
     par_render, splice_into, splice_into_at, BarrierScope, Component, ComponentLifecycle, Diag,
-    NextKey, Node, PendingSummary, Purity, QueueBackend, QueueRow, RenderCtx, Wake,
+    FactStore, NextKey, Node, PendingSummary, Purity, QueueBackend, QueueRow, RenderCtx, Wake,
 };
 use ignore::WalkBuilder;
 
@@ -38,6 +38,23 @@ use crate::store::SprfStore;
 use crate::{Coord, Cursor, CursorValue, Interner, WhereBytes, WhereBytesId};
 
 pub const FILE_DOMAIN: &str = "file";
+
+pub const REV_REL_TABLE: &str = "rev";
+pub const REV_REL_COLS: &[&str] = &[
+    "REPO",
+    "KIND",
+    "SPEC",
+    "NAME",
+    "REF",
+    "REV",
+    "TARGET",
+    "COMMIT_TS",
+    "TAG_TS",
+];
+
+pub fn declare_rev_relation(store: &dyn FactStore<Cursor>) {
+    store.declare(REV_REL_TABLE, REV_REL_COLS);
+}
 
 fn stamp_source_value(
     child: &mut Cursor,
@@ -2064,10 +2081,7 @@ impl Component for RepoComponent {
 ///   - synthetic REV term = oid hex (when store attached)
 ///   - legacy raw_terms REV = oid hex (back-compat for `${REV}` reads)
 pub struct RevComponent {
-    /// Atom revspecs to resolve per upstream cursor. Empty in the
-    /// constructor is sugared to `["HEAD"]` so bare `rev()` defaults
-    /// to HEAD.
-    revspecs: Vec<String>,
+    mode: RevMode,
     config: Option<Arc<SprfConfig>>,
     store: Option<Arc<SprfStore>>,
     /// Cache opened repos by slug. `git2::Repository` is `Send + !Sync`;
@@ -2075,6 +2089,11 @@ pub struct RevComponent {
     repos: std::sync::Mutex<
         std::collections::HashMap<String, Arc<std::sync::Mutex<git2::Repository>>>,
     >,
+}
+
+enum RevMode {
+    Specs(Vec<String>),
+    Glob { regex: regex::Regex },
 }
 
 impl RevComponent {
@@ -2085,7 +2104,15 @@ impl RevComponent {
             revspecs
         };
         Self {
-            revspecs,
+            mode: RevMode::Specs(revspecs),
+            config: None,
+            store: None,
+            repos: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+    pub fn glob(regex: regex::Regex) -> Self {
+        Self {
+            mode: RevMode::Glob { regex },
             config: None,
             store: None,
             repos: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -2151,38 +2178,88 @@ impl Component for RevComponent {
                 continue;
             };
 
-            let mut emitted: Vec<Node<Cursor>> = Vec::with_capacity(self.revspecs.len());
+            let mut emitted: Vec<Node<Cursor>> = Vec::new();
             {
                 let repo = repo_arc.lock().unwrap();
-                for spec in &self.revspecs {
-                    let obj = match repo.revparse_single(spec) {
-                        Ok(o) => o,
-                        Err(_) => continue, // skip bad spec; no panic
-                    };
-                    let commit = match obj.peel_to_commit() {
-                        Ok(c) => c,
-                        Err(_) => continue,
-                    };
-                    let oid_hex = commit.id().to_string();
-                    let ts = commit.time().seconds();
-                    let rev_id = store.intern_rev(repo_id, &oid_hex, ts);
-                    let coord = Coord {
-                        repo: repo_id,
-                        rev: rev_id,
-                        fs: 0,
-                        lo: 0,
-                        hi: 0,
-                    };
-                    let oid_arc: Arc<str> = Arc::from(oid_hex.as_str());
-                    let mut child = parent.value.as_ref().clone();
-                    child.value = oid_arc.clone();
-                    child.value_id = crate::StringId::of(&oid_hex);
-                    child.at = store.intern_ref(coord);
-                    // Legacy raw_terms surface so `${REV}` reads still
-                    // resolve through Cursor::get.
-                    child.set_arc("REV", oid_arc.clone());
-                    child.set_synthetic("REV", &oid_hex, store);
-                    emitted.push(Node::Emit(Arc::new(child)));
+                match &self.mode {
+                    RevMode::Specs(revspecs) => {
+                        emitted.reserve(revspecs.len());
+                        for spec in revspecs {
+                            let obj = match repo.revparse_single(spec) {
+                                Ok(o) => o,
+                                Err(_) => continue, // skip bad spec; no panic
+                            };
+                            let Some(child) = emit_resolved_rev(
+                                parent.value.as_ref(),
+                                store,
+                                repo_id,
+                                slug_str,
+                                "spec",
+                                spec,
+                                "",
+                                "",
+                                obj,
+                                None,
+                            ) else {
+                                continue;
+                            };
+                            emitted.push(Node::Emit(Arc::new(child)));
+                        }
+                    }
+                    RevMode::Glob { regex } => {
+                        let mut refs = Vec::new();
+                        let mut iter = match repo.references() {
+                            Ok(iter) => iter,
+                            Err(_) => continue,
+                        };
+                        while let Some(Ok(reference)) = iter.next() {
+                            let Some(full_ref) = reference.name() else {
+                                continue;
+                            };
+                            let Some((kind, short_name)) = classify_ref_name(full_ref) else {
+                                continue;
+                            };
+                            let Some(caps) = regex.captures(short_name) else {
+                                continue;
+                            };
+                            let Some(target) = reference.target().map(|oid| oid.to_string()) else {
+                                continue;
+                            };
+                            let Ok(obj) = reference.peel(git2::ObjectType::Any) else {
+                                continue;
+                            };
+                            refs.push((
+                                kind.to_string(),
+                                short_name.to_string(),
+                                full_ref.to_string(),
+                                target,
+                                obj,
+                                capture_terms(regex, &caps),
+                            ));
+                        }
+                        refs.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.3.cmp(&b.3)));
+                        for (kind, name, full_ref, target, obj, captures) in refs {
+                            let Some(mut child) = emit_resolved_rev(
+                                parent.value.as_ref(),
+                                store,
+                                repo_id,
+                                slug_str,
+                                &kind,
+                                "",
+                                &name,
+                                &full_ref,
+                                obj,
+                                Some(&target),
+                            ) else {
+                                continue;
+                            };
+                            for (capture_name, capture_value) in captures {
+                                child.set(&capture_name, capture_value.as_str());
+                                child.set_synthetic(&capture_name, capture_value.as_str(), store);
+                            }
+                            emitted.push(Node::Emit(Arc::new(child)));
+                        }
+                    }
                 }
             }
 
@@ -2193,6 +2270,103 @@ impl Component for RevComponent {
             splice_into_at(parent, many, ctx.depth + 1, ctx.expand_tick, queue, 0);
         }
     }
+}
+
+fn classify_ref_name(full_ref: &str) -> Option<(&'static str, &str)> {
+    if let Some(name) = full_ref.strip_prefix("refs/tags/") {
+        Some(("tag", name))
+    } else if let Some(name) = full_ref.strip_prefix("refs/heads/") {
+        Some(("branch", name))
+    } else if let Some(name) = full_ref.strip_prefix("refs/remotes/") {
+        Some(("remote", name))
+    } else {
+        None
+    }
+}
+
+fn capture_terms(regex: &regex::Regex, caps: &regex::Captures<'_>) -> Vec<(String, String)> {
+    regex
+        .capture_names()
+        .flatten()
+        .filter_map(|name| {
+            caps.name(name)
+                .map(|m| (name.to_string(), m.as_str().to_string()))
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_resolved_rev(
+    parent: &Cursor,
+    store: &SprfStore,
+    repo_id: crate::RepoId,
+    repo_slug: &str,
+    kind: &str,
+    spec: &str,
+    name: &str,
+    full_ref: &str,
+    obj: git2::Object<'_>,
+    target: Option<&str>,
+) -> Option<Cursor> {
+    let commit = obj.peel_to_commit().ok()?;
+    let oid_hex = commit.id().to_string();
+    let ts = commit.time().seconds();
+    let rev_id = store.intern_rev(repo_id, &oid_hex, ts);
+    let coord = Coord {
+        repo: repo_id,
+        rev: rev_id,
+        fs: 0,
+        lo: 0,
+        hi: 0,
+    };
+    let oid_arc: Arc<str> = Arc::from(oid_hex.as_str());
+    let mut child = parent.clone();
+    child.value = oid_arc.clone();
+    child.value_id = crate::StringId::of(&oid_hex);
+    child.at = store.intern_ref(coord);
+    child.set_arc("REV", oid_arc.clone());
+    child.set_synthetic("REV", &oid_hex, store);
+    child.set("REPO", repo_slug);
+    child.set_synthetic("REPO", repo_slug, store);
+    child.set("KIND", kind);
+    child.set_synthetic("KIND", kind, store);
+    if !spec.is_empty() {
+        child.set("SPEC", spec);
+        child.set_synthetic("SPEC", spec, store);
+    }
+    if !name.is_empty() {
+        child.set("NAME", name);
+        child.set_synthetic("NAME", name, store);
+    }
+    if !full_ref.is_empty() {
+        child.set("REF", full_ref);
+        child.set_synthetic("REF", full_ref, store);
+    }
+    let target = target.unwrap_or(oid_hex.as_str());
+    child.set("TARGET", target);
+    child.set_synthetic("TARGET", target, store);
+    let ts_string = ts.to_string();
+    child.set("COMMIT_TS", ts_string.as_str());
+    child.set_synthetic("COMMIT_TS", ts_string.as_str(), store);
+    child.set("TAG_TS", "");
+    child.set_synthetic("TAG_TS", "", store);
+
+    let mut row = Cursor::default();
+    row.set("REPO", repo_slug);
+    row.set("KIND", kind);
+    row.set("SPEC", spec);
+    row.set("NAME", name);
+    row.set("REF", full_ref);
+    row.set("REV", oid_hex.as_str());
+    row.set("TARGET", target);
+    row.set("COMMIT_TS", ts_string.as_str());
+    row.set("TAG_TS", "");
+    declare_rev_relation(store.inner().as_ref());
+    store
+        .inner()
+        .insert_batch(REV_REL_TABLE, vec![Arc::new(row)]);
+
+    Some(child)
 }
 
 /// Per-input-cursor: read the path at `term`, walk it, emit one child

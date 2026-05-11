@@ -192,6 +192,21 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
     for arg in &op.args {
         slot_terms(arg.raw.as_ref(), &mut reads, &mut binds);
     }
+    if op.name.as_ref() == "rev" {
+        for arg in &op.args {
+            if let Some(body) = static_glob_arg_body(arg.raw.as_ref()) {
+                for interp in default_plain_dsl_parse(body) {
+                    use crate::compile::lower::op_def::{InterpKind, InterpMode};
+                    if let InterpKind::Term { mode, .. } = interp.kind {
+                        match mode {
+                            InterpMode::Read => reads.push(interp.name),
+                            InterpMode::Bind => binds.push(interp.name),
+                        }
+                    }
+                }
+            }
+        }
+    }
     if op.name.as_ref() == "term" || op.name.as_ref() == "term_bind" {
         if let Some(arg) = op.args.first() {
             let raw = arg.raw.trim();
@@ -248,6 +263,12 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
     // term-self-cycle.
     reads.retain(|r| !binds.iter().any(|b| b == r));
     (reads, binds)
+}
+
+fn static_glob_arg_body(raw: &str) -> Option<&str> {
+    let raw = raw.trim();
+    let body = raw.strip_prefix("glob`")?;
+    body.strip_suffix('`')
 }
 
 /// Inspect a slot's raw text for a single CAPS / CAPS? bareword. Mirrors
