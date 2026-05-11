@@ -40,8 +40,8 @@ mod semantic;
 
 use v4::app::{
     build_in_process, GetDiagsReq, GetInlaysReq, HttpClient,
-    LspChangeReq, LspCloseReq, LspHoverReq, LspLocateDslReq, LspLocateDslResp,
-    LspOpenReq, SprfClient, SprfDiag,
+    LspChangeReq, LspCloseReq, LspCompletionReq, LspHoverReq, LspLocateDslReq,
+    LspLocateDslResp, LspOpenReq, SprfClient, SprfDiag,
 };
 
 struct Backend {
@@ -289,6 +289,14 @@ impl LanguageServer for Backend {
             Err(_) => return Ok(Some(CompletionResponse::Array(Vec::new()))),
         };
         let v4_items: Vec<v4_lsp_types::CompletionItem> = match (hit.op_name, hit.body_raw) {
+            (Some(op_name), Some(_body_raw)) if op_name == "sql" => {
+                sprf.lsp_completion(LspCompletionReq {
+                    uri: uri.to_string(),
+                    byte: host_byte as u32,
+                })
+                .await
+                .unwrap_or_default()
+            }
             (Some(op_name), Some(body_raw)) => match dsl_lookup::provider_for(&op_name) {
                 Some(handle) => match handle.lsp() {
                     Some(lsp) => lsp.completions(body_raw.as_bytes(), hit.body_byte as usize),

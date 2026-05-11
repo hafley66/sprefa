@@ -39,6 +39,7 @@ use crate::compile::ast::{OpCall, PipeAst};
 use crate::compile::parse::host_parse;
 use crate::compile::walk::walk_program;
 use crate::cst::dsl::Dsl;
+use crate::cst::dsls::sql::{SqlCol, SqlDsl, SqlLspCtx, SqlTable};
 #[cfg(feature = "ghcache")]
 use crate::git_watch::{dirty_notice, ghcache_dirty_notices};
 #[cfg(feature = "ghcache")]
@@ -214,6 +215,12 @@ pub struct LspHoverReq {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LspHoverResp {
     pub contents: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspCompletionReq {
+    pub uri: String,
+    pub byte: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -452,6 +459,7 @@ sprf_rpc! {
     fn get_inlays  (GetInlaysReq) -> Vec<InlayProbe>     => "/lsp/inlays";
     fn lsp_locate_dsl (LspLocateDslReq) -> LspLocateDslResp => "/lsp/locate-dsl";
     fn lsp_hover      (LspHoverReq) -> LspHoverResp      => "/lsp/hover";
+    fn lsp_completion (LspCompletionReq) -> Vec<lsp_types::CompletionItem> => "/lsp/completion";
     fn run            (RunReq)          -> RunReport     => "/run";
     fn get_fact_table (GetFactTableReq) -> FactTable     => "/facts";
     fn refs_at        (RefsAtReq)       -> RefsAtResp    => "/refs-at";
@@ -789,7 +797,12 @@ impl SprfHandlers for SprfState {
         }
         if let Some(contents) = hit.and_then(|(call, body_byte)| {
             let dsl = call.dsl.as_ref()?;
-            dsl_hover(&self.root, call.name.as_ref(), dsl.raw.as_bytes(), body_byte)
+            dsl_hover(
+                &self.root,
+                call.name.as_ref(),
+                dsl.raw.as_bytes(),
+                body_byte,
+            )
         }) {
             return Ok(LspHoverResp {
                 contents: Some(contents),
@@ -821,6 +834,21 @@ impl SprfHandlers for SprfState {
         Ok(LspHoverResp {
             contents: Some(host_hover(&op_name, probe)),
         })
+    }
+
+    async fn lsp_completion(
+        &self,
+        req: LspCompletionReq,
+    ) -> Result<Vec<lsp_types::CompletionItem>, SprfError> {
+        let docs = self.docs.lock().unwrap();
+        let d = docs
+            .get(&req.uri)
+            .ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
+        Ok(lsp_dsl_completion(
+            d,
+            self.facts.as_ref(),
+            req.byte as usize,
+        ))
     }
 
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
@@ -1110,6 +1138,65 @@ fn dsl_hover(root: &Path, op_name: &str, body: &[u8], body_byte: usize) -> Optio
     Some(hover_contents_to_string(hover.contents))
 }
 
+fn lsp_dsl_completion(
+    doc: &DocState,
+    facts: &dyn FactStore<Cursor>,
+    host_byte: usize,
+) -> Vec<lsp_types::CompletionItem> {
+    let mut hit: Option<(OpCall, usize)> = None;
+    for p in &doc.program {
+        walk_pipe_for_dsl(p, host_byte, &mut hit);
+    }
+    let Some((call, body_byte)) = hit else {
+        return Vec::new();
+    };
+    let Some(dsl) = call.dsl.as_ref() else {
+        return Vec::new();
+    };
+    match call.name.as_ref() {
+        "sql" => SqlDsl::new().completions_with_ctx(
+            dsl.raw.as_bytes(),
+            body_byte,
+            &sql_lsp_ctx(doc, facts),
+        ),
+        _ => Vec::new(),
+    }
+}
+
+fn sql_lsp_ctx(doc: &DocState, facts: &dyn FactStore<Cursor>) -> SqlLspCtx {
+    let mut rule_names = Vec::new();
+    collect_rule_tables(&doc.program, &mut rule_names);
+    let rule_tables = rule_names
+        .into_iter()
+        .filter_map(|name| sql_table_from_store(facts, &name))
+        .collect();
+    let core_tables = [
+        crate::store::STRINGS_TABLE,
+        crate::store::FILES_TABLE,
+        crate::store::WHERE_BYTES_TABLE,
+        crate::store::REPOS_TABLE,
+        crate::store::REVS_TABLE,
+        crate::store::PATHS_TABLE,
+        crate::store::STRING_OBSERVATIONS_TABLE,
+    ]
+    .into_iter()
+    .filter_map(|name| sql_table_from_store(facts, name))
+    .collect();
+    SqlLspCtx {
+        input_cols: vec![SqlCol::text("__cursor_idx"), SqlCol::text("value")],
+        rule_tables,
+        core_tables,
+    }
+}
+
+fn sql_table_from_store(facts: &dyn FactStore<Cursor>, name: &str) -> Option<SqlTable> {
+    let cols = facts.declared_cols(name)?;
+    Some(SqlTable {
+        name: name.to_string(),
+        cols: cols.into_iter().map(SqlCol::text).collect(),
+    })
+}
+
 fn path_hover(root: &Path, body: &[u8]) -> String {
     let Ok(raw) = std::str::from_utf8(body) else {
         return "path\ninvalid utf-8".to_string();
@@ -1206,9 +1293,9 @@ fn walk_step_for_dsl(call: &OpCall, host_byte: usize, hit: &mut Option<(OpCall, 
     if let Some(dsl) = &call.dsl {
         let lo = dsl.span.lo as usize;
         let hi = dsl.span.hi as usize;
-        if host_byte >= lo && host_byte < hi {
+        if host_byte >= lo && host_byte <= hi {
             // Deepest containing body wins (overwrites outer hits).
-            *hit = Some((call.clone(), host_byte - lo));
+            *hit = Some((call.clone(), (host_byte - lo).min(hi - lo)));
         }
     }
     if let Some(block) = &call.block {
@@ -1324,6 +1411,60 @@ mod tests {
             })
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn lsp_completion_inside_sql_body_returns_rule_tables() {
+        let (_state, client) = build_in_process(std::env::temp_dir());
+        let src = "rule(:frontend_hooks, OP?, FILE?);\nsql`SELECT * FROM `;";
+        client
+            .lsp_open(LspOpenReq {
+                uri: "file:///sql.sprf".into(),
+                text: src.into(),
+                version: 1,
+            })
+            .await
+            .unwrap();
+
+        let items = client
+            .lsp_completion(LspCompletionReq {
+                uri: "file:///sql.sprf".into(),
+                byte: (src.find("FROM ").unwrap() + "FROM ".len()) as u32,
+            })
+            .await
+            .unwrap();
+        let labels: Vec<String> = items.into_iter().map(|item| item.label).collect();
+
+        assert!(labels.contains(&"frontend_hooks".to_string()), "{labels:?}");
+        assert!(labels.contains(&"_strings".to_string()), "{labels:?}");
+    }
+
+    #[tokio::test]
+    async fn lsp_completion_inside_sql_body_returns_alias_columns() {
+        let (_state, client) = build_in_process(std::env::temp_dir());
+        let src = "rule(:frontend_hooks, OP?, FILE?);\nsql`SELECT hooks. FROM input JOIN frontend_hooks AS hooks ON hooks.OP = input.OP`;";
+        client
+            .lsp_open(LspOpenReq {
+                uri: "file:///sql.sprf".into(),
+                text: src.into(),
+                version: 1,
+            })
+            .await
+            .unwrap();
+
+        let items = client
+            .lsp_completion(LspCompletionReq {
+                uri: "file:///sql.sprf".into(),
+                byte: (src.find("hooks.").unwrap() + "hooks.".len()) as u32,
+            })
+            .await
+            .unwrap();
+        let labels: Vec<String> = items.into_iter().map(|item| item.label).collect();
+
+        assert_eq!(
+            labels,
+            vec!["hooks.OP".to_string(), "hooks.FILE".to_string()]
+        );
     }
 
     #[tokio::test]
