@@ -454,6 +454,11 @@ OK, so wait. I have not read everything that you have sent but to give you an id
     <note>Current store behavior: path existence alone does not write _paths, _files, _where_bytes, or rule rows. Store interning only records the emitted path string when SprfStore is present.</note>
     <note>Open questions: root confinement policy, project-relative path completions, whether path should ever produce a source coord, and reserving path? until there is an actual relation/query meaning.</note>
   </topic>
+  <topic name="v4-cursor-focal-uniformity" source="codex-session-2026-05-11">
+    <note>First uniformity pass: treat & as the public focal cursor term. Cursor::get("&") and Cursor::get("&.value") read the same focal value. Cursor::set("&", value) and Cursor::set("&.value", value) update the focal value.</note>
+    <note>Storage is still migrating: focal & is backed by Cursor.value plus CursorValue/value_id/at, while named terms still primarily use raw_terms until operators move to compact CursorTerm rows.</note>
+    <note>Normal Cursor::set cannot create a raw term that shadows &. Row::fields exposes & first so relation/input surfaces can see the focal value through the same term-shaped API.</note>
+  </topic>
 </llm-zone>
 
 rules have enough syntax to equal this select + join, but we have no order/where/limit/group by hmmm. 

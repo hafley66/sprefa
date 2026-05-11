@@ -3,8 +3,8 @@
 //!
 //! Two modes, both string-scoped over the current cursor:
 //!
-//!   `TERM`   (Read)  → cursor.value = cursor.get(name)   (mapBy / focus)
-//!   `TERM?`  (Bind)  → cursor.set(name, cursor.value)    (capture)
+//!   `TERM`   (Read)  → cursor.set("&", cursor.get(name))   (mapBy / focus)
+//!   `TERM?`  (Bind)  → cursor.set(name, cursor.get("&"))    (capture)
 //!
 //! No braces. No carveouts. The pipe step is the term reference. The
 //! lower-pass turns every bare ALL-CAPS ident at pipe position into a
@@ -67,7 +67,7 @@ impl Component for Term {
                     }
                 };
                 let mut next = c.clone();
-                next.value = Arc::from(v);
+                next.set_value(v);
                 Node::Emit(Arc::new(next))
             }
         }
@@ -198,7 +198,7 @@ mod tests {
             type Next = Cursor;
             fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
                 let mut next = c.clone();
-                next.value = Arc::from(self.v);
+                next.set_value(self.v);
                 Node::Emit(Arc::new(next))
             }
         }

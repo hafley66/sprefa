@@ -280,6 +280,7 @@ pub struct Term {
 }
 
 pub type CursorTerm = Term;
+pub const FOCAL_TERM: &str = "&";
 
 impl Term {
     /// Synthetic Term: real StringId on name+value, SYNTHETIC ref.
@@ -372,13 +373,14 @@ mod coord_tests {
 // Legacy bare-string surface (`value: Arc<str>`, `raw_terms: Vec<(Arc<str>,
 // Arc<str>)>`) is preserved verbatim so SprfStore's own meta-table writers
 // (sentinel + intern row builders in store.rs) keep operating bare-string
-// without recursing into the store. Row::get / Row::set hit `raw_terms`,
-// not `terms`.
+// without recursing into the store. Row::get / Row::set route focal `&`
+// through `value` and named terms through `raw_terms`, not `terms`.
 //
 // New coord-space fields (`value_id: StringId`, `at: Ref`, `terms:
 // Vec<Term>`) are populated by Layer 0c.2's emitter migration. In 0c.1
-// they default to SYNTHETIC sentinels and are not yet read on any code
-// path. The `store: Option<Weak<SprfStore>>` weak handle lets cursor
+// they default to SYNTHETIC sentinels. The public cursor API now treats
+// `&` as the focal term, backed by `value` while the storage migration
+// continues. The `store: Option<Weak<SprfStore>>` weak handle lets cursor
 // methods reach the intern store on demand without keeping the store
 // alive past program shutdown.
 #[derive(Clone, Debug, Default)]
@@ -451,8 +453,23 @@ impl Ord for Cursor {
 }
 
 impl Cursor {
+    pub fn set_value(&mut self, value: impl Into<Arc<str>>) {
+        self.set_value_arc(value.into());
+    }
+
+    pub fn set_value_arc(&mut self, value: Arc<str>) {
+        self.value = value;
+        self.value_id = StringId::of(self.value.as_ref());
+        self.cursor_value = CursorValue::String(self.value_id);
+        self.at = Ref::SYNTHETIC;
+    }
+
     pub fn set(&mut self, name: &str, value: impl Into<Arc<str>>) {
         let v = value.into();
+        if name == FOCAL_TERM || name == "&.value" {
+            self.set_value_arc(v);
+            return;
+        }
         match self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
             Ok(i) => self.raw_terms[i].1 = v,
             Err(i) => self.raw_terms.insert(i, (Arc::<str>::from(name), v)),
@@ -461,12 +478,19 @@ impl Cursor {
     /// Set with a pre-built Arc<str> value. Use this with Interner so
     /// repeated values (e.g. file paths) share heap.
     pub fn set_arc(&mut self, name: &str, value: Arc<str>) {
+        if name == FOCAL_TERM || name == "&.value" {
+            self.set_value_arc(value);
+            return;
+        }
         match self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
             Ok(i) => self.raw_terms[i].1 = value,
             Err(i) => self.raw_terms.insert(i, (Arc::<str>::from(name), value)),
         }
     }
     pub fn get(&self, name: &str) -> Option<&str> {
+        if name == FOCAL_TERM || name == "&.value" {
+            return Some(&self.value);
+        }
         // Direct raw_terms hit covers every legacy bare key (`X`, `FS`,
         // `LO`, `HI`, internal `:fan_idx`, etc.) AND any explicit dotted
         // key a writer chose to set (e.g. a future emitter that stamps
@@ -511,6 +535,10 @@ impl Cursor {
         None
     }
     pub fn unset(&mut self, name: &str) {
+        if name == FOCAL_TERM || name == "&.value" {
+            self.set_value_arc(Arc::<str>::from(""));
+            return;
+        }
         if let Ok(i) = self.raw_terms.binary_search_by(|(n, _)| (**n).cmp(name)) {
             self.raw_terms.remove(i);
         }
@@ -583,10 +611,59 @@ impl effect_runtime::v2::Row for Cursor {
         Cursor::set(self, col, value);
     }
     fn fields(&self) -> Vec<(&str, &str)> {
-        self.raw_terms
-            .iter()
-            .map(|(n, v)| (n.as_ref(), v.as_ref()))
-            .collect()
+        let mut out = Vec::with_capacity(self.raw_terms.len() + 1);
+        out.push((FOCAL_TERM, self.value.as_ref()));
+        out.extend(self.raw_terms.iter().map(|(n, v)| (n.as_ref(), v.as_ref())));
+        out
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+
+    #[test]
+    fn focal_ampersand_is_the_public_value_term() {
+        let mut c = Cursor::default();
+        c.set("&", "hello");
+
+        assert_eq!(c.value(), "hello");
+        assert_eq!(c.get("&"), Some("hello"));
+        assert_eq!(c.get("&.value"), Some("hello"));
+        assert_eq!(c.value_id, StringId::of("hello"));
+        assert_eq!(c.cursor_value, CursorValue::String(StringId::of("hello")));
+        assert_eq!(c.at, Ref::SYNTHETIC);
+
+        c.set("&.value", "world");
+        assert_eq!(c.value(), "world");
+        assert_eq!(c.get("&"), Some("world"));
+
+        c.unset("&");
+        assert_eq!(c.value(), "");
+        assert_eq!(c.get("&.value"), Some(""));
+    }
+
+    #[test]
+    fn raw_term_named_ampersand_cannot_shadow_focal_value() {
+        let c = Cursor {
+            value: Arc::<str>::from("focal"),
+            raw_terms: vec![(Arc::<str>::from("&"), Arc::<str>::from("shadow"))],
+            ..Default::default()
+        };
+
+        assert_eq!(c.get("&"), Some("focal"));
+        assert_eq!(c.get("&.value"), Some("focal"));
+    }
+
+    #[test]
+    fn row_fields_include_focal_term_first() {
+        let mut c = Cursor::default();
+        c.set("&", "focal");
+        c.set("NAME", "alpha");
+
+        let fields = effect_runtime::v2::Row::fields(&c);
+        assert_eq!(fields[0], ("&", "focal"));
+        assert!(fields.contains(&("NAME", "alpha")));
     }
 }
 

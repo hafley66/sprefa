@@ -79,8 +79,29 @@ Migration state:
 
 - `Cursor.cursor_value` exists.
 - `Cursor.value: Arc<str>` still exists as the legacy display/body lane.
+- `Cursor::get("&")` and `Cursor::get("&.value")` both read the focal value.
+- `Cursor::set("&", value)` and `Cursor::set("&.value", value)` both write the focal value.
+- `Row::fields()` exposes `&` first, followed by named raw terms.
 - Queue codec encodes `cursor_value` as a compact tag plus payload.
 - Full migration should move hot paths off `Cursor.value` for source bytes.
+
+Current uniformity boundary:
+
+```text
+public cursor API:
+  &              focal value
+  &.value        focal value alias
+  NAME           named cursor term
+  NAME.value     named cursor term alias
+
+current storage:
+  &              Cursor.value + CursorValue/value_id/at
+  NAME           raw_terms, with coord-space terms populated only by migrated emitters
+```
+
+Normal `Cursor::set` cannot create a named raw term that shadows `&`. A manually
+constructed raw term named `&` is ignored by `Cursor::get("&")`; the focal value
+wins.
 
 ## Store Target
 
