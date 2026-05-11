@@ -447,6 +447,13 @@ OK, so wait. I have not read everything that you have sent but to give you an id
     <note>Runtime shape: queued and progressive, with active batches plus bounded caches in memory. Durable support, mount, and materialized query state should live in the store when needed.</note>
     <note>Before changing implementation, write invariant tests for query/apply split, apply grounding, removal of rule_name?(...), duplicate support dedupe, and final-support retraction.</note>
   </topic>
+  <topic name="v4-checked-paths" source="codex-session-2026-05-10">
+    <note>First pass for checked strings: path`` validates that a literal, templated body, or current cursor value resolves to an existing path. Success emits one cursor with cursor.value and FS set to the resolved path. Failure emits path/missing and zero cursors.</note>
+    <note>Keep path separate from read. path validates an address; read loads bytes. This preserves cheap LSP checked references and avoids accidental file-content materialization.</note>
+    <note>Current LSP behavior: path body hover reports file, directory, exists, missing, or runtime template. Runtime diagnostics during LSP analysis inherit the op span when no more precise span exists.</note>
+    <note>Current store behavior: path existence alone does not write _paths, _files, _where_bytes, or rule rows. Store interning only records the emitted path string when SprfStore is present.</note>
+    <note>Open questions: root confinement policy, project-relative path completions, whether path should ever produce a source coord, and reserving path? until there is an actual relation/query meaning.</note>
+  </topic>
 </llm-zone>
 
 rules have enough syntax to equal this select + join, but we have no order/where/limit/group by hmmm. 
