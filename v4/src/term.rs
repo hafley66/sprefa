@@ -52,7 +52,7 @@ impl Component for Term {
         match self.mode {
             TermMode::Bind => {
                 let mut next = c.clone();
-                next.set_arc(&self.name, c.value.clone());
+                next.set_term_from(&self.name, c.focal());
                 Node::Emit(Arc::new(next))
             }
             TermMode::Read => {

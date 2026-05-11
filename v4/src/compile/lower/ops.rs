@@ -12,7 +12,11 @@
 use std::sync::Arc;
 
 use ast_grep_config::{DeserializeEnv, SerializableRuleCore};
-use effect_runtime::v2::Pipe;
+use effect_runtime::v2::{
+    expand, Component, ExpandOpts, MemQueue, Node, Pipe, PipeInstance, QueueBackend, RenderCtx,
+};
+use streaming_iterator::StreamingIterator;
+use tree_sitter::{Language, Parser, Query, QueryCursor};
 
 use crate::chan::{Next, NextQ};
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
@@ -23,6 +27,7 @@ use crate::compile::lower::value::{run_once_const, Value};
 use crate::fact::{FactRead, FactWrite};
 use crate::pipeline::{GlobComponent, StrConstComponent, StrTemplateComponent};
 use crate::rule::Rule;
+use crate::source::SourceReader;
 use crate::term::Term;
 use crate::v2_ops::{
     AstNmComponent, AstYamlComponent, CollectComponent, CollectMode, CommentComponent, FsComponent,
@@ -31,6 +36,7 @@ use crate::v2_ops::{
     SplitComponent, VoidComponent, WriteCursorComponent, WriteFileComponent, WriteFilePath,
     WriteMode,
 };
+use crate::Coord;
 use crate::Cursor;
 use effect_runtime::v2::ByteRange;
 
@@ -2306,6 +2312,348 @@ fn lower_render_markdown_body(body: &DslBody) -> Result<Pipe<Cursor>, LowerError
         body.raw.clone(),
         interps,
     ))))
+}
+
+// ─── cst / strings ───────────────────────────────────────────────────────
+
+pub struct CstDef;
+pub struct StringsDef;
+
+const CST_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Atom,
+    name: "lang",
+    doc: ":rust | :ts | :tsx | :js | :jsx | :python | :json | :yaml | :toml",
+    required: true,
+}];
+
+#[derive(Clone)]
+struct CstCaptureInterp {
+    placeholder: String,
+    pipe: Pipe<Cursor>,
+}
+
+pub struct CstQueryComponent {
+    root: std::path::PathBuf,
+    lang_name: Arc<str>,
+    language: Language,
+    query_src: Arc<str>,
+    interps: Arc<Vec<CstCaptureInterp>>,
+    store: Option<Arc<crate::store::SprfStore>>,
+    config: Option<Arc<crate::config::SprfConfig>>,
+}
+
+impl CstQueryComponent {
+    fn new(
+        root: std::path::PathBuf,
+        lang_name: Arc<str>,
+        language: Language,
+        query_src: Arc<str>,
+        interps: Vec<CstCaptureInterp>,
+        store: Option<Arc<crate::store::SprfStore>>,
+        config: Option<Arc<crate::config::SprfConfig>>,
+    ) -> Self {
+        Self {
+            root,
+            lang_name,
+            language,
+            query_src,
+            interps: Arc::new(interps),
+            store,
+            config,
+        }
+    }
+}
+
+impl Component for CstQueryComponent {
+    type Next = Cursor;
+
+    fn kind(&self) -> &'static str {
+        "cst"
+    }
+
+    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let reader = SourceReader::new(self.root.clone(), self.store.clone(), self.config.clone());
+        let source = reader.read_cursor_uninterned(c);
+        let (bytes, base_coord, file_path): (Vec<u8>, Coord, Option<Arc<str>>) = match source
+            .filter(|s| s.path.as_ref() == c.value.as_ref() || c.value.is_empty())
+        {
+            Some(source) => {
+                let mut coord = source.coord;
+                if coord.fs == 0 {
+                    if let Some(store) = &self.store {
+                        let file = store.intern_file(&source.bytes, source.path.as_ref());
+                        let _ =
+                            store.intern_path(coord.repo, coord.rev, file, source.path.as_ref());
+                        coord.fs = file;
+                    }
+                }
+                (source.bytes, coord, Some(source.path))
+            }
+            None => {
+                let parent = self
+                    .store
+                    .as_ref()
+                    .and_then(|s| s.coord_of(c.at))
+                    .unwrap_or_default();
+                (
+                    c.value.as_bytes().to_vec(),
+                    parent,
+                    c.get("FS").map(Arc::<str>::from),
+                )
+            }
+        };
+
+        let mut parser = Parser::new();
+        if let Err(e) = parser.set_language(&self.language) {
+            ctx.diag.emit(effect_runtime::v2::Diag::error(
+                "cst/language",
+                format!("{}: {e}", self.lang_name),
+            ));
+            return Node::Done;
+        }
+        let Some(tree) = parser.parse(&bytes, None) else {
+            ctx.diag.emit(effect_runtime::v2::Diag::error(
+                "cst/parse",
+                format!("{} parser returned no tree", self.lang_name),
+            ));
+            return Node::Done;
+        };
+        let query = match Query::new(&self.language, self.query_src.as_ref()) {
+            Ok(q) => q,
+            Err(e) => {
+                ctx.diag.emit(effect_runtime::v2::Diag::error(
+                    "cst/query",
+                    format!("{} query failed: {e}", self.lang_name),
+                ));
+                return Node::Done;
+            }
+        };
+        let capture_names = query.capture_names();
+        let mut qc = QueryCursor::new();
+        let mut matches = qc.matches(&query, tree.root_node(), &*bytes);
+        let mut out = Vec::new();
+        while let Some(m) = matches.next() {
+            for cap in m.captures {
+                let name = capture_names[cap.index as usize].to_string();
+                let r = cap.node.byte_range();
+                let slice = std::str::from_utf8(&bytes[r.clone()]).unwrap_or("");
+                let coord = Coord {
+                    repo: base_coord.repo,
+                    rev: base_coord.rev,
+                    fs: base_coord.fs,
+                    lo: base_coord.lo.saturating_add(r.start as u32),
+                    hi: base_coord.lo.saturating_add(r.end as u32),
+                };
+                let mut child = c.clone();
+                if let Some(store) = &self.store {
+                    child = child.with_store(store);
+                    child.set_at("&", slice, coord, store);
+                    if let Some(path) = &file_path {
+                        child.set_arc("FS", path.clone());
+                    }
+                } else {
+                    child.set_value(slice);
+                    child.set("LO", coord.lo.to_string());
+                    child.set("HI", coord.hi.to_string());
+                }
+
+                if let Some(interp) = self.interps.iter().find(|i| i.placeholder == name) {
+                    out.extend(run_capture_pipe(&interp.pipe, child, ctx));
+                } else if let Some(store) = &self.store {
+                    child.set_at(&name, slice, coord, store);
+                    out.push(Node::Emit(Arc::new(child)));
+                } else {
+                    child.set(&name, slice);
+                    out.push(Node::Emit(Arc::new(child)));
+                }
+            }
+        }
+        match out.len() {
+            0 => Node::Done,
+            1 => out.into_iter().next().unwrap(),
+            _ => Node::Many(out),
+        }
+    }
+}
+
+fn run_capture_pipe(pipe: &Pipe<Cursor>, seed: Cursor, ctx: &RenderCtx) -> Vec<Node<Cursor>> {
+    let sink = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = pipe.steps.iter().cloned().collect();
+    steps.push(Arc::new(CstCaptureCollector { sink: sink.clone() }));
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(
+        &PipeInstance::new(steps),
+        queue,
+        vec![Arc::new(seed)],
+        ExpandOpts::default()
+            .with_bus(ctx.bus.clone())
+            .with_diag(ctx.diag.clone()),
+    );
+    let out = sink
+        .lock()
+        .unwrap()
+        .iter()
+        .cloned()
+        .map(|c| Node::Emit(Arc::new(c)))
+        .collect();
+    out
+}
+
+struct CstCaptureCollector {
+    sink: Arc<std::sync::Mutex<Vec<Cursor>>>,
+}
+
+impl Component for CstCaptureCollector {
+    type Next = Cursor;
+
+    fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        self.sink.lock().unwrap().push(c.clone());
+        Node::Done
+    }
+}
+
+impl OperatorDef for CstDef {
+    fn name(&self) -> &'static str {
+        "cst"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        CST_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn cursor_binds(&self) -> &'static [&'static str] {
+        &["LO", "HI"]
+    }
+
+    fn lower(
+        &self,
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let lang = atom_arg(args, 0);
+        let language = tree_sitter_language(lang.as_ref())?;
+        let body = dsl.ok_or_else(|| LowerError::Unknown("cst: query body required".into()))?;
+        let (query_src, interps) = lower_cst_query_body(body)?;
+        Ok(Pipe::new().step(Arc::new(CstQueryComponent::new(
+            ctx.root.clone(),
+            lang,
+            language,
+            Arc::from(query_src),
+            interps,
+            ctx.sprf_store.clone(),
+            ctx.config.clone(),
+        ))))
+    }
+}
+
+impl OperatorDef for StringsDef {
+    fn name(&self) -> &'static str {
+        "strings"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        CST_SPEC
+    }
+
+    fn lower(
+        &self,
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let lang = atom_arg(args, 0);
+        let language = tree_sitter_language(lang.as_ref())?;
+        let query = string_query_for_lang(lang.as_ref())?;
+        let pipe = Pipe::new().step(Arc::new(Term::bind("STRING")));
+        Ok(Pipe::new().step(Arc::new(CstQueryComponent::new(
+            ctx.root.clone(),
+            lang,
+            language,
+            Arc::from(query),
+            vec![CstCaptureInterp {
+                placeholder: "__sprf_string".to_string(),
+                pipe,
+            }],
+            ctx.sprf_store.clone(),
+            ctx.config.clone(),
+        ))))
+    }
+}
+
+fn lower_cst_query_body(body: &DslBody) -> Result<(String, Vec<CstCaptureInterp>), LowerError> {
+    let mut interps = body.interps.clone();
+    interps.sort_by_key(|i| i.range.lo);
+    let mut out = String::with_capacity(body.raw.len());
+    let mut cursor = 0usize;
+    let mut lowered = Vec::new();
+    for (idx, interp) in interps.into_iter().enumerate() {
+        let lo = interp.range.lo as usize;
+        let hi = interp.range.hi as usize;
+        if lo == 0 || body.raw.as_bytes().get(lo - 1) != Some(&b'@') {
+            continue;
+        }
+        let placeholder = format!("__sprf_{idx}");
+        out.push_str(&body.raw[cursor..lo - 1]);
+        out.push('@');
+        out.push_str(&placeholder);
+        cursor = hi;
+        let pipe = match interp.kind {
+            crate::compile::lower::op_def::InterpKind::Term { mode, .. } => match mode {
+                crate::compile::lower::op_def::InterpMode::Bind => {
+                    Pipe::new().step(Arc::new(Term::bind(interp.name)))
+                }
+                crate::compile::lower::op_def::InterpMode::Read => {
+                    Pipe::new().step(Arc::new(Term::read(interp.name)))
+                }
+            },
+            crate::compile::lower::op_def::InterpKind::SubPipe { lowered, .. } => lowered
+                .ok_or_else(|| {
+                    LowerError::Unknown("cst: sub-pipe interpolation was not lowered".into())
+                })?,
+        };
+        lowered.push(CstCaptureInterp { placeholder, pipe });
+    }
+    out.push_str(&body.raw[cursor..]);
+    Ok((out, lowered))
+}
+
+fn tree_sitter_language(lang: &str) -> Result<Language, LowerError> {
+    match lang {
+        "rust" | "rs" => Ok(tree_sitter_rust::LANGUAGE.into()),
+        "js" | "jsx" | "javascript" => Ok(tree_sitter_javascript::LANGUAGE.into()),
+        "ts" | "typescript" => Ok(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        "tsx" => Ok(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        "python" | "py" => Ok(tree_sitter_python::LANGUAGE.into()),
+        "json" => Ok(tree_sitter_json::LANGUAGE.into()),
+        "yaml" | "yml" => Ok(tree_sitter_yaml::LANGUAGE.into()),
+        "toml" => Ok(tree_sitter_toml_ng::LANGUAGE.into()),
+        other => Err(LowerError::Unknown(format!(
+            "cst: unsupported lang :{other}"
+        ))),
+    }
+}
+
+fn string_query_for_lang(lang: &str) -> Result<&'static str, LowerError> {
+    match lang {
+        "rust" | "rs" => Ok("(string_literal) @__sprf_string"),
+        "js" | "jsx" | "javascript" | "ts" | "typescript" | "tsx" => {
+            Ok("[(string) (template_string)] @__sprf_string")
+        }
+        "python" | "py" => Ok("(string) @__sprf_string"),
+        "json" => Ok("(string) @__sprf_string"),
+        "yaml" | "yml" => {
+            Ok("(double_quote_scalar) @__sprf_string\n(single_quote_scalar) @__sprf_string")
+        }
+        "toml" => Ok("(string) @__sprf_string"),
+        other => Err(LowerError::Unknown(format!(
+            "strings: unsupported lang :{other}"
+        ))),
+    }
 }
 
 // ─── collect / collect_ready ──────────────────────────────────────────────

@@ -39,9 +39,9 @@ pub use config::{RepoConfig, SprfConfig};
 //   `crate::fact`.
 
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
 
@@ -450,7 +450,9 @@ impl DerefMut for Cursor {
 
 impl Cursor {
     fn focal_index(&self) -> Option<usize> {
-        self.terms.iter().position(|t| t.name.as_ref() == FOCAL_TERM)
+        self.terms
+            .iter()
+            .position(|t| t.name.as_ref() == FOCAL_TERM)
     }
 
     fn ensure_focal_index(&mut self) -> usize {
@@ -504,6 +506,19 @@ impl Cursor {
         } else {
             self.terms.push(Term::new(name, value));
         }
+    }
+
+    pub fn set_term_from(&mut self, name: &str, source: &Term) {
+        if name == FOCAL_TERM || name == "&.value" {
+            self.set_focal_at(source.value.clone(), source.at, source.cursor_value);
+            return;
+        }
+        self.terms.retain(|t| t.name.as_ref() != name);
+        self.remove_term_projections(name);
+        let mut term = source.clone();
+        term.name = Arc::<str>::from(name);
+        self.terms.push(term);
+        self.project_term_coord(name, source.at);
     }
 
     pub fn get(&self, name: &str) -> Option<&str> {
@@ -567,6 +582,7 @@ impl Cursor {
             ..WhereBytes::from(child_coord)
         }));
         self.terms.retain(|t| t.name.as_ref() != name);
+        self.remove_term_projections(name);
         self.terms.push(Term {
             name: Arc::<str>::from(name),
             value: Arc::<str>::from(slice),
@@ -574,6 +590,7 @@ impl Cursor {
             value_id,
             at,
         });
+        self.project_term_coord(name, at);
         at
     }
 
@@ -583,6 +600,7 @@ impl Cursor {
     pub fn set_synthetic(&mut self, name: &str, text: &str, store: &SprfStore) {
         let value_id = store.intern_string(text);
         self.terms.retain(|t| t.name.as_ref() != name);
+        self.remove_term_projections(name);
         self.terms.push(Term {
             name: Arc::<str>::from(name),
             value: Arc::<str>::from(text),
@@ -590,6 +608,39 @@ impl Cursor {
             value_id,
             at: Ref::SYNTHETIC,
         });
+    }
+
+    fn remove_term_projections(&mut self, name: &str) {
+        let prefixes = [
+            format!("{name}_LO"),
+            format!("{name}_HI"),
+            format!("{name}_FS"),
+            format!("{name}_REPO"),
+            format!("{name}_REV"),
+        ];
+        self.terms
+            .retain(|t| !prefixes.iter().any(|p| t.name.as_ref() == p));
+    }
+
+    fn project_term_coord(&mut self, name: &str, at: Ref) {
+        if at == Ref::SYNTHETIC {
+            return;
+        }
+        let Some(store) = self.store.as_ref().and_then(|s| s.upgrade()) else {
+            return;
+        };
+        let Some(coord) = store.coord_of(at) else {
+            return;
+        };
+        self.set(&format!("{name}_LO"), coord.lo.to_string());
+        self.set(&format!("{name}_HI"), coord.hi.to_string());
+        self.set(&format!("{name}_REPO"), coord.repo.to_string());
+        self.set(&format!("{name}_REV"), coord.rev.to_string());
+        if let Some(path) = store.path_of(coord.fs) {
+            self.set(&format!("{name}_FS"), path);
+        } else {
+            self.set(&format!("{name}_FS"), coord.fs.to_string());
+        }
     }
 
     /// Look up a coord-space term by interned name id.

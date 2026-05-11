@@ -80,12 +80,16 @@ impl Component for FactWrite {
                     for assignment in assignments.iter() {
                         match &assignment.value {
                             WriteValue::Term(term) => {
-                                if let Some(value) = c.get(term) {
+                                if let Some(source_term) =
+                                    c.terms.iter().find(|t| t.name.as_ref() == term.as_ref())
+                                {
+                                    row.set_term_from(&assignment.col, source_term);
+                                } else if let Some(value) = c.get(term) {
                                     row.set(&assignment.col, value);
                                 }
                             }
                             WriteValue::Value => {
-                                row.set_arc(&assignment.col, c.value.clone());
+                                row.set_term_from(&assignment.col, c.focal());
                             }
                             WriteValue::Literal(value) => {
                                 row.set_arc(&assignment.col, value.clone());

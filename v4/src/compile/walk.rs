@@ -568,6 +568,13 @@ pub fn classify_slot(
         let pipe = Pipe::new().step(Arc::new(term));
         return Some(Value::Pipe(pipe));
     }
+    if let Some((stem, field)) = raw.split_once('.') {
+        if is_caps_ident(stem) && is_ident(field) {
+            let term = crate::term::Term::read(Arc::<str>::from(raw));
+            let pipe = Pipe::new().step(Arc::new(term));
+            return Some(Value::Pipe(pipe));
+        }
+    }
     // Bare identifier (ASCII letter/underscore start, alnum/underscore body).
     if is_ident(raw) {
         return Some(Value::Atom(Arc::<str>::from(raw)));

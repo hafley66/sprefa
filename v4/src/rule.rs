@@ -167,7 +167,9 @@ impl RuleInvokeComponent {
         for assignment in self.assignments.iter() {
             match &assignment.value {
                 RuleInvokeValue::Term(term) => {
-                    let Some(value) = c.get(term) else {
+                    let Some(source_term) =
+                        c.terms.iter().find(|t| t.name.as_ref() == term.as_ref())
+                    else {
                         ctx.diag.emit(Diag::error(
                             "rule/missing-arg",
                             format!(
@@ -177,10 +179,10 @@ impl RuleInvokeComponent {
                         ));
                         return None;
                     };
-                    seed.set(&assignment.col, value);
+                    seed.set_term_from(&assignment.col, source_term);
                 }
                 RuleInvokeValue::Value => {
-                    seed.set_arc(&assignment.col, c.value.clone());
+                    seed.set_term_from(&assignment.col, c.focal());
                 }
                 RuleInvokeValue::Literal(value) => {
                     seed.set_arc(&assignment.col, value.clone());

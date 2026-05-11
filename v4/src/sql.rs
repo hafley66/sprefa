@@ -272,7 +272,11 @@ fn dedupe_nodes_by_cursor_hash(nodes: Vec<Node<Cursor>>) -> Vec<Node<Cursor>> {
 fn materialize_input(conn: &Connection, batch: &[&Cursor]) -> Result<(), String> {
     let mut cols = BTreeSet::new();
     for cursor in batch {
-        for term in cursor.terms.iter().filter(|t| t.name.as_ref() != FOCAL_TERM) {
+        for term in cursor
+            .terms
+            .iter()
+            .filter(|t| t.name.as_ref() != FOCAL_TERM)
+        {
             if term.name.as_ref() != "__cursor_idx" && term.name.as_ref() != "value" {
                 cols.insert(term.name.to_string());
             }
@@ -712,9 +716,13 @@ pub fn rule_table_call_pipe(
         sql.push_str(&predicates.join(" AND "));
     }
 
-    Ok(Pipe::new().step(Arc::new(
-        SqlQueryComponent::with_referenced_tables(ctx.store.clone(), sql, vec![table.to_string()]),
-    )))
+    Ok(
+        Pipe::new().step(Arc::new(SqlQueryComponent::with_referenced_tables(
+            ctx.store.clone(),
+            sql,
+            vec![table.to_string()],
+        ))),
+    )
 }
 
 pub fn rule_apply_write_pipe(
@@ -860,9 +868,7 @@ fn rule_invoke_value(value: Value) -> Result<Option<RuleInvokeValue>, LowerError
             if let Some(term) = pipe.reads_terms().first() {
                 Ok(Some(RuleInvokeValue::Term(term.clone())))
             } else if pipe.binds_terms().first().is_some() {
-                Err(LowerError::Unknown(
-                    "bodied rule apply args must be grounded; TERM? holes are only valid in relation queries".into(),
-                ))
+                Ok(None)
             } else {
                 Err(LowerError::Unknown(
                     "bodied rule apply args must be atoms or terms".into(),

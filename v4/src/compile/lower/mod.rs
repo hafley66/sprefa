@@ -32,6 +32,8 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::GlobDef));
     r.register(Arc::new(ops::AstDef));
     r.register(Arc::new(ops::AstYamlDef));
+    r.register(Arc::new(ops::CstDef));
+    r.register(Arc::new(ops::StringsDef));
     r.register(Arc::new(ops::JsonDef));
     r.register(Arc::new(ops::ReDef));
     r.register(Arc::new(ops::TermReadDef));
