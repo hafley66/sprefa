@@ -14,7 +14,7 @@
 //! same Router served by `hyper::Server` (slice 4, deferred).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -45,6 +45,7 @@ use crate::git_watch::{dirty_notice, ghcache_dirty_notices};
 pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq};
 use crate::lower::{default_registry, LowerCtx, Registry};
 use crate::lsp::LSP_HOVER_CODE;
+use crate::source::resolve_path_text;
 use crate::telemetry::{PipelineTelemetry, RunPhaseTelemetry, RunTelemetry};
 use crate::Cursor;
 
@@ -788,7 +789,7 @@ impl SprfHandlers for SprfState {
         }
         if let Some(contents) = hit.and_then(|(call, body_byte)| {
             let dsl = call.dsl.as_ref()?;
-            dsl_hover(call.name.as_ref(), dsl.raw.as_bytes(), body_byte)
+            dsl_hover(&self.root, call.name.as_ref(), dsl.raw.as_bytes(), body_byte)
         }) {
             return Ok(LspHoverResp {
                 contents: Some(contents),
@@ -1090,7 +1091,10 @@ fn add_expand_stats(
     total.parked = total.parked.max(next.parked);
 }
 
-fn dsl_hover(op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {
+fn dsl_hover(root: &Path, op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {
+    if op_name == "path" {
+        return Some(path_hover(root, body));
+    }
     let dsl: Box<dyn Dsl> = match op_name {
         "sql" => Box::new(crate::cst::dsls::sql::SqlDsl::new()),
         "json" => Box::new(crate::cst::dsls::json::JsonDsl::new()),
@@ -1103,6 +1107,22 @@ fn dsl_hover(op_name: &str, body: &[u8], body_byte: usize) -> Option<String> {
     };
     let hover = dsl.lsp()?.hover(body, body_byte)?;
     Some(hover_contents_to_string(hover.contents))
+}
+
+fn path_hover(root: &Path, body: &[u8]) -> String {
+    let Ok(raw) = std::str::from_utf8(body) else {
+        return "path\ninvalid utf-8".to_string();
+    };
+    if raw.contains("${") {
+        return "path template\nchecks existence at runtime".to_string();
+    }
+    let path = resolve_path_text(root, raw);
+    match std::fs::metadata(&path) {
+        Ok(meta) if meta.is_dir() => format!("path\ndirectory\n{}", path.display()),
+        Ok(meta) if meta.is_file() => format!("path\nfile\n{}", path.display()),
+        Ok(_) => format!("path\nexists\n{}", path.display()),
+        Err(err) => format!("path\nmissing\n{} ({err})", path.display()),
+    }
 }
 
 fn hover_contents_to_string(contents: lsp_types::HoverContents) -> String {

@@ -112,6 +112,74 @@ async fn lsp_hover_inside_render_dot_markdown_body_uses_markdown_provider() {
 }
 
 #[tokio::test]
+async fn lsp_hover_inside_path_body_reports_checked_path_status() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("exists.txt"), b"hello").unwrap();
+    let (_state, client) = build_in_process(tmp.path().to_path_buf());
+
+    let src = "path`exists.txt`;";
+    let body_lo = src.find('`').unwrap() + 1;
+    let probe = body_lo + src[body_lo..].find("exists").unwrap();
+
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///path-hover.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
+
+    let hover = client
+        .lsp_hover(LspHoverReq {
+            uri: "file:///path-hover.sprf".into(),
+            byte: probe as u32,
+        })
+        .await
+        .unwrap();
+
+    let expected = format!("path\nfile\n{}", tmp.path().join("exists.txt").display());
+    assert_eq!(
+        hover.contents.as_deref(),
+        Some(expected.as_str()),
+    );
+}
+
+#[tokio::test]
+async fn lsp_path_missing_literal_emits_runtime_diag_with_span() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, client) = build_in_process(tmp.path().to_path_buf());
+
+    let src = "path`missing.txt`;";
+    client
+        .lsp_open(LspOpenReq {
+            uri: "file:///path-missing.sprf".into(),
+            text: src.into(),
+            version: 1,
+        })
+        .await
+        .unwrap();
+
+    let diags = client
+        .get_diags(GetDiagsReq {
+            uri: "file:///path-missing.sprf".into(),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(diags.len(), 1, "{diags:#?}");
+    assert_eq!(diags[0].code, "path/missing");
+    assert_eq!(diags[0].severity, "error");
+    assert_eq!(diags[0].lo, Some(0));
+    assert_eq!(diags[0].hi, Some((src.len() - 1) as u32));
+    assert!(
+        diags[0].message.contains("missing.txt"),
+        "diag should include checked path, got {:?}",
+        diags[0].message,
+    );
+}
+
+#[tokio::test]
 async fn lsp_hover_outside_dsl_returns_empty() {
     let (_state, client) = build_in_process(std::env::temp_dir());
 

@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use effect_runtime::v2::next_key::NextKey;
 use effect_runtime::v2::{
-    ByteRange, Component, DynComponent, ExpandTick, Node, Probe, ProbeSink, Purity, QueueBackend,
-    QueueId, QueueRow, RenderCtx,
+    ByteRange, Component, Diag, DiagSink, DynComponent, ExpandTick, Node, Probe, ProbeSink, Purity,
+    QueueBackend, QueueId, QueueRow, RenderCtx,
 };
 
 use crate::Cursor;
@@ -40,11 +40,11 @@ impl Component for SpannedComponent {
     type Next = Cursor;
 
     fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        self.inner.render(ctx, c)
+        self.inner.render(&self.spanned_ctx(ctx), c)
     }
 
     fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
-        self.inner.render_batch(ctx, batch)
+        self.inner.render_batch(&self.spanned_ctx(ctx), batch)
     }
 
     fn dispatch(
@@ -58,7 +58,7 @@ impl Component for SpannedComponent {
             probe: self.probe.as_ref(),
             span: self.span,
         };
-        self.inner.dispatch(ctx, rows, &wrapped);
+        self.inner.dispatch(&self.spanned_ctx(ctx), rows, &wrapped);
     }
 
     fn batch_hint(&self) -> Option<usize> {
@@ -67,6 +67,29 @@ impl Component for SpannedComponent {
 
     fn purity(&self) -> Purity {
         self.inner.purity()
+    }
+}
+
+impl SpannedComponent {
+    fn spanned_ctx(&self, ctx: &RenderCtx) -> RenderCtx {
+        ctx.clone().with_diag(Arc::new(SpannedDiagSink {
+            inner: ctx.diag.clone(),
+            span: self.span,
+        }))
+    }
+}
+
+struct SpannedDiagSink {
+    inner: Arc<dyn DiagSink>,
+    span: ByteRange,
+}
+
+impl DiagSink for SpannedDiagSink {
+    fn emit(&self, mut diag: Diag) {
+        if diag.span.is_none() {
+            diag.span = Some(self.span);
+        }
+        self.inner.emit(diag);
     }
 }
 

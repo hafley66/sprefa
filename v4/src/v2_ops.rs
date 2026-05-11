@@ -123,6 +123,13 @@ impl Component for PathComponent {
             return Node::Done;
         }
         let path = resolve_path_text(&self.root, &raw);
+        if let Err(err) = std::fs::metadata(&path) {
+            ctx.diag.emit(Diag::error(
+                "path/missing",
+                format!("path does not exist: {} ({err})", path.display()),
+            ));
+            return Node::Done;
+        }
         let path_str = path.to_string_lossy().to_string();
         let mut child = c.clone();
         child.value = Arc::from(path_str.as_str());

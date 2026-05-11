@@ -11,8 +11,10 @@
 //!   6. `fs > glob > json`          - match source-reads path cursor
 //!   7. `path`...` > read`          - path expands against run root
 
-use effect_runtime::v2::{expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend};
-use std::sync::Arc;
+use effect_runtime::v2::{
+    expand, Diag, DiagSink, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
+};
+use std::sync::{Arc, Mutex};
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
@@ -45,6 +47,56 @@ fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
         );
     }
     store
+}
+
+#[derive(Default)]
+struct CollectDiagSink {
+    rows: Mutex<Vec<Diag>>,
+}
+
+impl CollectDiagSink {
+    fn snapshot(&self) -> Vec<Diag> {
+        self.rows.lock().unwrap().clone()
+    }
+}
+
+impl DiagSink for CollectDiagSink {
+    fn emit(&self, diag: Diag) {
+        self.rows.lock().unwrap().push(diag);
+    }
+}
+
+fn run_in_with_diags(
+    root: &std::path::Path,
+    src: &str,
+) -> (Arc<dyn FactStore<Cursor>>, Arc<CollectDiagSink>) {
+    let (program, parse_diags) = host_parse(src);
+    assert!(parse_diags.is_empty(), "parse: {:?}", parse_diags);
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg = default_registry();
+    let mut ctx = LowerCtx::new(store.clone(), root.to_path_buf());
+    let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
+    assert!(
+        walk_diags.is_empty(),
+        "walk: {:?}",
+        walk_diags
+            .iter()
+            .map(|d| (d.code.as_ref(), d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    let diags = Arc::new(CollectDiagSink::default());
+    let opts = ExpandOpts::default().with_diag(diags.clone());
+    for pipe in pipes {
+        let inst = pipe.into_instance();
+        expand(
+            &inst,
+            queue.clone(),
+            vec![Arc::new(Cursor::default())],
+            opts.clone(),
+        );
+    }
+    (store, diags)
 }
 
 #[test]
@@ -138,6 +190,47 @@ fn path_literal_resolves_before_read() {
     assert_eq!(rows[0].get("SLUG"), Some("demo"));
     assert_eq!(rows[0].get("ROOT"), Some("/tmp/demo"));
     assert_eq!(rows[0].get("REMOTE"), Some("origin"));
+}
+
+#[test]
+fn path_existing_file_emits_fs_without_reading_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("exists.txt"), b"hello").unwrap();
+
+    let store = run_in(
+        tmp.path(),
+        r#"rule(:paths, FS?);
+           path`exists.txt` > paths(FS);"#,
+    );
+
+    assert_eq!(store.len("paths"), 1);
+    let rows = store.rows_of("paths");
+    assert!(
+        rows[0].get("FS").unwrap().ends_with("exists.txt"),
+        "FS should carry the checked path, got {:?}",
+        rows[0].get("FS"),
+    );
+}
+
+#[test]
+fn path_missing_file_emits_zero_rows_and_diag() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let (store, diags) = run_in_with_diags(
+        tmp.path(),
+        r#"rule(:paths, FS?);
+           path`missing.txt` > paths(FS);"#,
+    );
+
+    assert_eq!(store.len("paths"), 0);
+    let diags = diags.snapshot();
+    assert_eq!(diags.len(), 1);
+    assert_eq!(diags[0].code.as_ref(), "path/missing");
+    assert!(
+        diags[0].message.contains("missing.txt"),
+        "diag should include checked path, got {:?}",
+        diags[0].message,
+    );
 }
 
 /// `fs > glob > read > ast(:c)` - green. ast walks bytes loaded by read.
