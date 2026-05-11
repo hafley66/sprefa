@@ -197,15 +197,11 @@ fn runtime_map_example_writes_html_and_warns_on_missing_source_cursor() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("warning:missing_runtime_doc: runtime map expected source cursor is missing: CursorTerm"),
-        "stdout missing CursorTerm drift warning:\n{stdout}",
-    );
-    assert!(
         stdout.contains("runtime_nodes: 8 rows"),
         "stdout missing source rows:\n{stdout}"
     );
     assert!(
-        stdout.contains("missing_runtime_nodes: 1 rows"),
+        stdout.contains("missing_runtime_nodes: 0 rows"),
         "stdout missing drift row:\n{stdout}"
     );
 
@@ -217,6 +213,10 @@ fn runtime_map_example_writes_html_and_warns_on_missing_source_cursor() {
     assert!(
         body.contains(">QueueRow<"),
         "html missing QueueRow node:\n{body}"
+    );
+    assert!(
+        body.contains(">CursorTerm<"),
+        "html missing CursorTerm node:\n{body}"
     );
     assert!(
         body.contains(">RenderCtx<"),

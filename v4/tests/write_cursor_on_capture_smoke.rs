@@ -181,8 +181,8 @@ fn write_cursor_on_capture_leaves_other_captures_untouched() {
     );
 }
 
-/// Focal default still works (no second atom). Uses the legacy
-/// FS/LO/HI raw_terms path with no SprfStore wiring.
+/// Focal default still works (no second atom). Uses the FS/LO/HI
+/// term path with no SprfStore wiring.
 #[test]
 fn write_cursor_focal_default_replaces_match_range() {
     let tmp = tempfile::tempdir().unwrap();
@@ -205,7 +205,7 @@ fn write_cursor_focal_default_replaces_match_range() {
     let after = std::fs::read_to_string(&path).unwrap();
     assert_eq!(
         after, "fn renamed() {}\n",
-        "focal-mode replace still operates on FS/LO/HI bare-string raw_terms",
+        "focal-mode replace still operates on FS/LO/HI terms",
     );
 }
 

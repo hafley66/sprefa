@@ -15,7 +15,7 @@ rule(:missing_runtime_nodes, NAME?);
 
 `Cursor|v4/src/lib.rs|current cursor payload; migrating toward implicit & plus named terms
 CursorValue|v4/src/lib.rs|typed payload handle for strings, byte ranges, blobs, and scalars
-Term|v4/src/lib.rs|named compact term row: name, value string id, byte-range ref
+CursorTerm|v4/src/lib.rs|named term row; & is the focal cursor term
 QueueRow|v3/crates/effect_runtime/src/v2/queue.rs|runtime cursor row: parent, batch index, path, pipe hash, instance, depth, wake
 PipeInstance|v3/crates/effect_runtime/src/v2/expand.rs|runtime pipe identity: ordered components plus pipe hash and instance id
 RenderCtx|v3/crates/effect_runtime/src/v2/component.rs|dispatch context: pipe hash, depth, generation tick, event bus, diagnostics
@@ -26,8 +26,6 @@ Node|v3/crates/effect_runtime/src/v2/node.rs|operator output algebra: emit, many
   > re`(?P<NAME>[^|]+)\|(?P<FILE>[^|]+)\|(?P<NOTE>.+)`
   > runtime_specs(NAME, FILE, NOTE)
   > expected_runtime_nodes(NAME);
-
-`CursorTerm` > term_bind(:NAME) > expected_runtime_nodes(NAME);
 
 `v4/src/lib.rs
 v3/crates/effect_runtime/src/v2/queue.rs

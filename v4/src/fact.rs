@@ -238,10 +238,8 @@ mod tests {
     }
 
     fn cursor(value: &str, kvs: &[(&str, &str)]) -> Arc<Cursor> {
-        let mut c = Cursor {
-            value: value.into(),
-            ..Default::default()
-        };
+        let mut c = Cursor::default();
+        c.set_value(value);
         for (k, v) in kvs {
             c.set(k, *v);
         }

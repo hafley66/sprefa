@@ -8,7 +8,7 @@
 //!      `${X?.field}`) are skipped (treated as literal text).
 //!
 //!   2. `StrTemplateComponent` renders a template against a Cursor that
-//!      holds raw_terms `FS` and `NAME`; the dotted form `${&.fs}` reads
+//!      holds terms `FS` and `NAME`; the dotted form `${&.fs}` reads
 //!      focal `FS`, `${NAME.value}` reads the bare `NAME` term, and
 //!      `${&.value}` reads `cursor.value`.
 //!
@@ -84,7 +84,7 @@ fn scanner_skips_illegal_dot_access_forms() {
 
 #[test]
 fn template_renders_focal_fs_and_term_value() {
-    // Build a Cursor with the same raw_terms shape that fs+re emitters
+    // Build a Cursor with the same term shape that fs+re emitters
     // produce: FS for focal coord file path, NAME for a re named-group
     // capture, and cursor.value for `&.value`.
     let mut cur = Cursor::default();
@@ -97,7 +97,7 @@ fn template_renders_focal_fs_and_term_value() {
     assert_eq!(cur.get("&.fs"), Some("/tmp/foo.rs"));
     assert_eq!(cur.get("NAME"), Some("foobar"));
     assert_eq!(cur.get("NAME.value"), Some("foobar"));
-    // X.lo not stamped to raw_terms by 0c.2 emitters; resolves to None.
+    // X.lo is not stamped by 0c.2 emitters; resolves to None.
     assert!(cur.get("NAME.lo").is_none());
 
     // End-to-end: scan a template, lower into StrTemplateComponent,
@@ -116,9 +116,9 @@ fn template_renders_focal_fs_and_term_value() {
 }
 
 #[test]
-fn term_dot_access_lo_hi_fs_resolve_via_raw_terms() {
+fn term_dot_access_lo_hi_fs_resolve_via_terms() {
     // Replicates the emit-site pattern: set_at + parallel <NAME>_LO/HI/FS
-    // raw_terms writes. Verifies Cursor::get dot-access dispatches to the
+    // term writes. Verifies Cursor::get dot-access dispatches to the
     // backfilled columns.
     let inner: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let store = SprfStore::new(inner);
@@ -142,7 +142,7 @@ fn term_dot_access_lo_hi_fs_resolve_via_raw_terms() {
     assert_eq!(cur.get("NAME.lo"), Some("10"));
     assert_eq!(cur.get("NAME.hi"), Some("15"));
     assert_eq!(cur.get("NAME.fs"), Some("/tmp/x.rs"));
-    // Bare term value still readable via legacy raw_terms (set_at does
+    // Bare term value still readable via named terms (set_at does
     // NOT write the bare <NAME> column; emitters separately call set).
     assert!(cur.get("NAME.zorp").is_none());
 }

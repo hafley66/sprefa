@@ -51,8 +51,8 @@ Meaning:
 WhereBytes       repo/rev/file/lo/hi byte span
 WhereBytesId     persisted id for a WhereBytes row
 StringId         interned string id in _strings
-CursorTerm       named value attached to a cursor
-CursorValue      small typed focal payload handle
+CursorTerm       named value attached to a cursor; `&` is the focal term
+CursorValue      small typed payload handle stored on a CursorTerm
 ```
 
 Current code still keeps `Coord`, `Ref`, and `Term` compatibility names while call sites migrate.
@@ -77,13 +77,15 @@ pub enum CursorValue {
 
 Migration state:
 
-- `Cursor.cursor_value` exists.
-- `Cursor.value: Arc<str>` still exists as the legacy display/body lane.
-- `Cursor::get("&")` and `Cursor::get("&.value")` both read the focal value.
-- `Cursor::set("&", value)` and `Cursor::set("&.value", value)` both write the focal value.
-- `Row::fields()` exposes `&` first, followed by named raw terms.
-- Queue codec encodes `cursor_value` as a compact tag plus payload.
-- Full migration should move hot paths off `Cursor.value` for source bytes.
+- `Cursor` stores `Vec<CursorTerm>` plus a process-local weak store handle.
+- The focal cursor value is a real term named `&`.
+- `Cursor` derefs to the focal term, so existing `cursor.value`, `cursor.at`,
+  `cursor.value_id`, and `cursor.cursor_value` field access delegates to `&`.
+- `Cursor::get("&")` and `Cursor::get("&.value")` both read the focal term value.
+- `Cursor::set("&", value)` and `Cursor::set("&.value", value)` both write the focal term value.
+- `Row::fields()` exposes the full term list, with default cursors placing `&` first.
+- Queue codec encodes the term list directly, including each term's `CursorValue`, `StringId`, and `Ref`.
+- Full migration should move hot paths off the string display lane for source bytes.
 
 Current uniformity boundary:
 
@@ -95,13 +97,13 @@ public cursor API:
   NAME.value     named cursor term alias
 
 current storage:
-  &              Cursor.value + CursorValue/value_id/at
-  NAME           raw_terms, with coord-space terms populated only by migrated emitters
+  &              CursorTerm { name: "&", value, cursor_value, value_id, at }
+  NAME           CursorTerm { name: "NAME", value, cursor_value, value_id, at }
 ```
 
-Normal `Cursor::set` cannot create a named raw term that shadows `&`. A manually
-constructed raw term named `&` is ignored by `Cursor::get("&")`; the focal value
-wins.
+Normal `Cursor::set` cannot create a named term that shadows `&`. If a manually
+constructed duplicate `&` term exists later in the term list, `Cursor::get("&")`
+uses the first focal term.
 
 ## Store Target
 

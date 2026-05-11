@@ -145,7 +145,7 @@ impl Component for GlobComponent {
         for (i, name_opt) in self.capture_names.iter().enumerate() {
             let Some(name) = name_opt else { continue };
             let Some(g) = caps.get(i) else { continue };
-            // Legacy raw_terms surface: `${X}` reads land here today.
+            // Term surface: `${X}` reads land here.
             child.set(name.as_ref(), g.as_str());
             // Layer 0c.2 — coord-space term. SYNTHETIC because no file
             // span is implied by the path-only match (no content read).

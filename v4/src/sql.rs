@@ -25,7 +25,7 @@ use crate::fact::{FactWrite, WriteAssign, WriteValue};
 use crate::mounted_query;
 use crate::rule::{RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
 use crate::sprf_introspect::PipeIntrospect;
-use crate::Cursor;
+use crate::{Cursor, FOCAL_TERM};
 
 pub struct SqlQueryComponent {
     store: Arc<dyn FactStore<Cursor>>,
@@ -265,9 +265,9 @@ fn dedupe_nodes_by_cursor_hash(nodes: Vec<Node<Cursor>>) -> Vec<Node<Cursor>> {
 fn materialize_input(conn: &Connection, batch: &[&Cursor]) -> Result<(), String> {
     let mut cols = BTreeSet::new();
     for cursor in batch {
-        for (name, _) in &cursor.raw_terms {
-            if name.as_ref() != "__cursor_idx" && name.as_ref() != "value" {
-                cols.insert(name.to_string());
+        for term in cursor.terms.iter().filter(|t| t.name.as_ref() != FOCAL_TERM) {
+            if term.name.as_ref() != "__cursor_idx" && term.name.as_ref() != "value" {
+                cols.insert(term.name.to_string());
             }
         }
     }
@@ -308,9 +308,9 @@ fn materialize_fact_table(
         }
     }
     for row in rows {
-        for (name, _) in &row.raw_terms {
-            if name.as_ref() != "value" {
-                cols.insert(name.to_string());
+        for term in row.terms.iter().filter(|t| t.name.as_ref() != FOCAL_TERM) {
+            if term.name.as_ref() != "value" {
+                cols.insert(term.name.to_string());
             }
         }
     }
@@ -949,10 +949,8 @@ mod tests {
     use effect_runtime::v2::MemFactStore;
 
     fn cursor(value: &str, kvs: &[(&str, &str)]) -> Cursor {
-        let mut c = Cursor {
-            value: Arc::from(value),
-            ..Default::default()
-        };
+        let mut c = Cursor::default();
+        c.set_value(Arc::<str>::from(value));
         for (k, v) in kvs {
             c.set(k, *v);
         }

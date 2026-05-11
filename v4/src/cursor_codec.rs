@@ -1,31 +1,24 @@
 // Canonical cursor encoding. Used by:
-//   - SqliteQueue (Phase 7) to serialize cursors to BLOB
-//   - blake3 hashing for mount keys + lineage hashes
-//   - any future cross-process cursor transport
+//   - SqliteQueue to serialize parked cursors to BLOB
+//   - blake3 hashing for mount keys and lineage hashes
+//   - future cross-process cursor transport
 //
-// Format (little-endian throughout). Layer 0c.1 widens the wire to
-// include the coord-space fields next to the legacy bare-string bag:
+// Format, little-endian:
 //
-//   [u32 value_len][value_bytes]              ← &.value (legacy Arc<str>)
-//   [u8 cursor_value_tag][u64 payload]        ← compact runtime payload handle
-//   [u64 value_id]                            ← StringId FK
-//   [u64 at_ref]                              ← Ref FK
-//   [u32 n_terms]                             ← coord-space terms
+//   [u32 n_terms]
 //   for each term:
-//     [u64 name][u64 value][u64 at]
-//   [u32 n_raw]                               ← bare-string raw_terms
-//   for each raw term (already sorted):
 //     [u32 name_len][name_bytes]
 //     [u32 value_len][value_bytes]
+//     [u8 cursor_value_tag][u64 payload]
+//     [u64 value_id]
+//     [u64 at_ref]
 //
-// The Weak<SprfStore> handle on Cursor is process-local and NOT
-// encoded; decode produces store=None and callers re-attach via
-// `Cursor::with_store(...)` when they have the store in scope.
-//
-// No Arc identity, no pointers, no mtimes. Bytes-only. Deterministic
-// across processes. Hashes of the encoding are stable.
+// The focal value is the term named `&`. The Weak<SprfStore> handle on
+// Cursor is process-local and is not encoded.
 
-use crate::{Cursor, CursorValue, Ref, StringId, Term, WhereBytesId};
+use std::sync::Arc;
+
+use crate::{Cursor, CursorValue, FOCAL_TERM, Ref, StringId, Term, WhereBytesId};
 
 fn encode_cursor_value(value: CursorValue) -> (u8, u64) {
     match value {
@@ -52,137 +45,93 @@ fn decode_cursor_value(tag: u8, payload: u64) -> Result<CursorValue, &'static st
     })
 }
 
+fn encode_text(buf: &mut Vec<u8>, text: &str) {
+    buf.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    buf.extend_from_slice(text.as_bytes());
+}
+
+fn read_u32(buf: &[u8], p: &mut usize, err: &'static str) -> Result<u32, &'static str> {
+    if *p + 4 > buf.len() {
+        return Err(err);
+    }
+    let value = u32::from_le_bytes(buf[*p..*p + 4].try_into().unwrap());
+    *p += 4;
+    Ok(value)
+}
+
+fn read_u64(buf: &[u8], p: &mut usize, err: &'static str) -> Result<u64, &'static str> {
+    if *p + 8 > buf.len() {
+        return Err(err);
+    }
+    let value = u64::from_le_bytes(buf[*p..*p + 8].try_into().unwrap());
+    *p += 8;
+    Ok(value)
+}
+
+fn read_text(buf: &[u8], p: &mut usize, len_err: &'static str) -> Result<Arc<str>, &'static str> {
+    let len = read_u32(buf, p, len_err)? as usize;
+    if *p + len > buf.len() {
+        return Err("truncated text");
+    }
+    let text = std::str::from_utf8(&buf[*p..*p + len]).map_err(|_| "text not utf8")?;
+    *p += len;
+    Ok(Arc::<str>::from(text))
+}
+
 pub fn encode(c: &Cursor) -> Vec<u8> {
-    let mut sz = 4 + c.value.len()        // value
-        + 1 + 8                            // cursor_value
-        + 8 + 8                            // value_id + at
-        + 4 + c.terms.len() * (8 * 3)      // coord-space terms
-        + 4; // n_raw header
-    for (n, v) in &c.raw_terms {
-        sz += 4 + n.len() + 4 + v.len();
+    let mut sz = 4;
+    for term in &c.terms {
+        sz += 4 + term.name.len();
+        sz += 4 + term.value.len();
+        sz += 1 + 8 + 8 + 8;
     }
+
     let mut buf = Vec::with_capacity(sz);
-    // legacy &.value
-    buf.extend_from_slice(&(c.value.len() as u32).to_le_bytes());
-    buf.extend_from_slice(c.value.as_bytes());
-    // compact cursor value
-    let (tag, payload) = encode_cursor_value(c.cursor_value);
-    buf.push(tag);
-    buf.extend_from_slice(&payload.to_le_bytes());
-    // coord-space scalars
-    buf.extend_from_slice(&c.value_id.0.to_le_bytes());
-    buf.extend_from_slice(&c.at.0.to_le_bytes());
-    // coord-space terms
     buf.extend_from_slice(&(c.terms.len() as u32).to_le_bytes());
-    for t in &c.terms {
-        buf.extend_from_slice(&t.name.0.to_le_bytes());
-        buf.extend_from_slice(&t.value.0.to_le_bytes());
-        buf.extend_from_slice(&t.at.0.to_le_bytes());
-    }
-    // bare-string raw_terms
-    buf.extend_from_slice(&(c.raw_terms.len() as u32).to_le_bytes());
-    for (n, v) in &c.raw_terms {
-        buf.extend_from_slice(&(n.len() as u32).to_le_bytes());
-        buf.extend_from_slice(n.as_bytes());
-        buf.extend_from_slice(&(v.len() as u32).to_le_bytes());
-        buf.extend_from_slice(v.as_bytes());
+    for term in &c.terms {
+        encode_text(&mut buf, term.name.as_ref());
+        encode_text(&mut buf, term.value.as_ref());
+        let (tag, payload) = encode_cursor_value(term.cursor_value);
+        buf.push(tag);
+        buf.extend_from_slice(&payload.to_le_bytes());
+        buf.extend_from_slice(&term.value_id.0.to_le_bytes());
+        buf.extend_from_slice(&term.at.0.to_le_bytes());
     }
     buf
 }
 
 pub fn decode(buf: &[u8]) -> Result<Cursor, &'static str> {
-    if buf.len() < 4 {
-        return Err("buf too short for value_len");
-    }
-    let vl = u32::from_le_bytes(buf[0..4].try_into().unwrap()) as usize;
-    let mut p = 4;
-    if p + vl > buf.len() {
-        return Err("truncated value");
-    }
-    let value: std::sync::Arc<str> = std::str::from_utf8(&buf[p..p + vl])
-        .map_err(|_| "value not utf8")?
-        .into();
-    p += vl;
+    let mut p = 0;
+    let n_terms = read_u32(buf, &mut p, "buf too short for n_terms")? as usize;
+    let mut terms = Vec::with_capacity(n_terms.max(1));
 
-    if p + 9 > buf.len() {
-        return Err("buf too short for cursor_value");
-    }
-    let cursor_value = decode_cursor_value(
-        buf[p],
-        u64::from_le_bytes(buf[p + 1..p + 9].try_into().unwrap()),
-    )?;
-    p += 9;
-
-    if p + 16 > buf.len() {
-        return Err("buf too short for value_id+at");
-    }
-    let value_id = StringId(u64::from_le_bytes(buf[p..p + 8].try_into().unwrap()));
-    p += 8;
-    let at = Ref(u64::from_le_bytes(buf[p..p + 8].try_into().unwrap()));
-    p += 8;
-
-    if p + 4 > buf.len() {
-        return Err("buf too short for n_terms");
-    }
-    let n_terms = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
-    p += 4;
-    let mut terms = Vec::with_capacity(n_terms);
     for _ in 0..n_terms {
-        if p + 24 > buf.len() {
-            return Err("truncated coord term");
+        let name = read_text(buf, &mut p, "truncated name_len")?;
+        let value = read_text(buf, &mut p, "truncated value_len")?;
+        if p + 9 > buf.len() {
+            return Err("buf too short for cursor_value");
         }
-        let name = StringId(u64::from_le_bytes(buf[p..p + 8].try_into().unwrap()));
-        let value = StringId(u64::from_le_bytes(buf[p + 8..p + 16].try_into().unwrap()));
-        let at_r = Ref(u64::from_le_bytes(buf[p + 16..p + 24].try_into().unwrap()));
+        let cursor_value = decode_cursor_value(buf[p], u64::from_le_bytes(buf[p + 1..p + 9].try_into().unwrap()))?;
+        p += 9;
+        let value_id = StringId(read_u64(buf, &mut p, "buf too short for value_id")?);
+        let at = Ref(read_u64(buf, &mut p, "buf too short for at_ref")?);
         terms.push(Term {
             name,
             value,
-            at: at_r,
+            cursor_value,
+            value_id,
+            at,
         });
-        p += 24;
     }
 
-    if p + 4 > buf.len() {
-        return Err("buf too short for n_raw");
+    if !terms.iter().any(|term| term.name.as_ref() == FOCAL_TERM) {
+        terms.insert(0, Term::focal());
     }
-    let n_raw = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
-    p += 4;
-    let mut raw_terms = Vec::with_capacity(n_raw);
-    for _ in 0..n_raw {
-        if p + 4 > buf.len() {
-            return Err("truncated name_len");
-        }
-        let nl = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
-        p += 4;
-        if p + nl > buf.len() {
-            return Err("truncated name");
-        }
-        let name = std::str::from_utf8(&buf[p..p + nl]).map_err(|_| "name not utf8")?;
-        p += nl;
-        if p + 4 > buf.len() {
-            return Err("truncated value_len");
-        }
-        let vl = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
-        p += 4;
-        if p + vl > buf.len() {
-            return Err("truncated value");
-        }
-        let val = std::str::from_utf8(&buf[p..p + vl]).map_err(|_| "value not utf8")?;
-        p += vl;
-        raw_terms.push((name.into(), val.into()));
-    }
-    Ok(Cursor {
-        value,
-        cursor_value,
-        value_id,
-        at,
-        terms,
-        raw_terms,
-        store: None,
-    })
+
+    Ok(Cursor { terms, store: None })
 }
 
-/// Stable u64 hash of a cursor — used for mount keys and lineage IDs.
+/// Stable u64 hash of a cursor, used for mount keys and lineage IDs.
 pub fn hash_u64(c: &Cursor) -> u64 {
     let bytes = encode(c);
     let h = blake3::hash(&bytes);
@@ -193,95 +142,71 @@ pub fn hash_u64(c: &Cursor) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
-    fn term(n: &str, v: &str) -> (Arc<str>, Arc<str>) {
-        (n.into(), v.into())
+    fn cursor(value: &str, kvs: &[(&str, &str)]) -> Cursor {
+        let mut c = Cursor::default();
+        c.set_value(value);
+        for (k, v) in kvs {
+            c.set(k, *v);
+        }
+        c
     }
 
     #[test]
     fn roundtrip_empty() {
-        let c = Cursor {
-            value: "".into(),
-            raw_terms: vec![],
-            ..Default::default()
-        };
+        let c = Cursor::default();
         assert_eq!(decode(&encode(&c)).unwrap(), c);
     }
 
     #[test]
     fn roundtrip_simple() {
-        let c = Cursor {
-            value: "".into(),
-            raw_terms: vec![term(":FS", "/tmp/a.rs"), term(":REPO", "myrepo")],
-            ..Default::default()
-        };
+        let c = cursor("", &[(":FS", "/tmp/a.rs"), (":REPO", "myrepo")]);
         assert_eq!(decode(&encode(&c)).unwrap(), c);
     }
 
     #[test]
     fn roundtrip_unicode() {
-        let c = Cursor {
-            value: "".into(),
-            raw_terms: vec![term(":k", "héllo 🌊")],
-            ..Default::default()
-        };
+        let c = cursor("", &[(":k", "héllo 🌊")]);
         assert_eq!(decode(&encode(&c)).unwrap(), c);
     }
 
     #[test]
     fn hash_is_stable_across_calls() {
-        let c = Cursor {
-            value: "".into(),
-            raw_terms: vec![term(":a", "1"), term(":b", "2")],
-            ..Default::default()
-        };
+        let c = cursor("", &[(":a", "1"), (":b", "2")]);
         assert_eq!(hash_u64(&c), hash_u64(&c));
     }
 
     #[test]
     fn hash_differs_on_value_change() {
-        let a = Cursor {
-            value: "".into(),
-            raw_terms: vec![term(":k", "1")],
-            ..Default::default()
-        };
-        let b = Cursor {
-            value: "".into(),
-            raw_terms: vec![term(":k", "2")],
-            ..Default::default()
-        };
+        let a = cursor("", &[(":k", "1")]);
+        let b = cursor("", &[(":k", "2")]);
         assert_ne!(hash_u64(&a), hash_u64(&b));
     }
 
     #[test]
     fn rejects_truncated() {
-        assert!(decode(&[1, 0, 0, 0]).is_err()); // claims 1-byte value, no body
         assert!(decode(&[]).is_err());
+        assert!(decode(&[1, 0, 0, 0]).is_err());
     }
 
     #[test]
     fn roundtrip_coord_space_fields() {
-        let c = Cursor {
-            value: "hi".into(),
-            cursor_value: crate::CursorValue::WhereBytes(crate::WhereBytesId(0x1234_5678)),
-            value_id: StringId(0xDEADBEEF),
-            at: Ref(0x1234_5678),
-            terms: vec![
-                Term {
-                    name: StringId(1),
-                    value: StringId(2),
-                    at: Ref(3),
-                },
-                Term {
-                    name: StringId(4),
-                    value: StringId(5),
-                    at: Ref(0),
-                },
-            ],
-            raw_terms: vec![term("LO", "100")],
-            ..Default::default()
-        };
+        let mut c = Cursor::default();
+        c.set_focal_at(
+            "hi",
+            Ref(0x1234_5678),
+            crate::CursorValue::WhereBytes(crate::WhereBytesId(0x1234_5678)),
+        );
+        c.focal_mut().value_id = StringId(0xDEADBEEF);
+        c.terms.push(Term {
+            name: Arc::<str>::from("MATCH"),
+            value: Arc::<str>::from("hit"),
+            cursor_value: crate::CursorValue::String(StringId(2)),
+            value_id: StringId(2),
+            at: Ref(3),
+        });
+        c.set("LO", "100");
+
         let got = decode(&encode(&c)).unwrap();
         assert_eq!(got, c);
     }
@@ -297,20 +222,16 @@ mod tests {
             crate::CursorValue::WhereBytes(crate::WhereBytesId(8)),
             crate::CursorValue::Blob(9),
         ] {
-            let c = Cursor {
-                cursor_value,
-                ..Default::default()
-            };
+            let mut c = Cursor::default();
+            c.focal_mut().cursor_value = cursor_value;
             assert_eq!(decode(&encode(&c)).unwrap(), c);
         }
     }
 
     #[test]
     fn source_handle_encoding_does_not_include_source_body() {
-        let mut c = Cursor {
-            cursor_value: crate::CursorValue::WhereBytes(crate::WhereBytesId(99)),
-            ..Default::default()
-        };
+        let mut c = Cursor::default();
+        c.focal_mut().cursor_value = crate::CursorValue::WhereBytes(crate::WhereBytesId(99));
         c.set("FS", "/tmp/huge.rs");
 
         let encoded = encode(&c);

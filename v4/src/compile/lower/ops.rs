@@ -2038,7 +2038,7 @@ impl OperatorDef for CommentDef {
 // Layer 3 — capture-internal mode. A second positional atom whose name
 // starts with an uppercase letter is treated as the NAME of a coord-
 // space capture; the splice byte range comes from `cursor.term(NAME).at`
-// instead of the legacy focal `FS`/`LO`/`HI` raw_terms. Mirrors v4's
+// instead of the focal `FS`/`LO`/`HI` terms. Mirrors v4's
 // existing convention that ALL-CAPS atoms = capture names, lowercase
 // atoms = mode/option keywords.
 //

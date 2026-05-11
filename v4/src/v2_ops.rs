@@ -35,7 +35,7 @@ use crate::compile::lower::op_def::DslInterp;
 use crate::config::SprfConfig;
 use crate::source::{resolve_path_text, SourceReader};
 use crate::store::SprfStore;
-use crate::{Coord, Cursor, CursorValue, Interner, WhereBytes, WhereBytesId};
+use crate::{Coord, Cursor, CursorValue, Interner, WhereBytes, WhereBytesId, FOCAL_TERM};
 
 pub const FILE_DOMAIN: &str = "file";
 
@@ -169,8 +169,7 @@ pub struct FsComponent {
     pub root: PathBuf,
     pub batch: usize,
     /// Layer 0c.2 — content-derived intern store. When `Some`, each
-    /// emitted Cursor also stamps the FS term in coord-space via
-    /// `set_at` alongside the legacy `raw_terms` write. SYNTHETIC
+    /// emitted Cursor also stamps the FS term via `set_at`. SYNTHETIC
     /// coord because no file content has been read yet at source-op
     /// time; the path string still dedupes through `_strings`.
     store: Option<Arc<SprfStore>>,
@@ -331,11 +330,11 @@ impl Component for FsComponent {
                         continue;
                     }
                     let mut child = parent.value.as_ref().clone();
-                    // cursor.value = path (legacy bare-string surface).
+                    // cursor.value delegates to focal `&`; path is the focal text.
                     child.value = Arc::<str>::from(path.as_str());
                     child.value_id = crate::StringId::of(&path);
                     child.cursor_value = CursorValue::String(child.value_id);
-                    // Legacy raw_terms FS write so `${FS}` reads still resolve.
+                    // FS term write so `${FS}` reads still resolve.
                     child.set("FS", path.as_str());
                     // Coord-space FS term (synthetic — no content read).
                     child.set_synthetic("FS", path.as_str(), &store);
@@ -426,8 +425,7 @@ impl Component for FsComponent {
             // glob/re downstream match against it; read uses it as the
             // source path.
             c.value = Arc::<str>::from(path_str.as_str());
-            // Legacy raw_terms FS write so `${FS}` reads still resolve
-            // until call-sites finish migrating to ${&.value}.
+            // FS term write so `${FS}` reads still resolve.
             c.set("FS", path_str.as_str());
             // Worktree path cursors keep coord-space cold. `read` or a
             // downstream matcher materializes durable file/ref rows only
@@ -543,7 +541,7 @@ pub struct AstNmComponent {
     dyn_body: Option<(Arc<str>, Arc<Vec<crate::compile::lower::op_def::DslInterp>>)>,
     /// Layer 0c.2 — content-derived intern store. When `Some`, each
     /// match cursor stamps focal `value_id`/`at` and per-match coord
-    /// terms alongside legacy `LO`/`HI`/raw_terms writes.
+    /// terms alongside `LO`/`HI` term writes.
     store: Option<Arc<SprfStore>>,
     config: Option<Arc<SprfConfig>>,
     telemetry: Option<Arc<AstTelemetry>>,
@@ -2081,12 +2079,12 @@ impl Component for RepoComponent {
 /// `rev(:HEAD, :HEAD~1)` emits two cursors per upstream repo cursor.
 ///
 /// Output cursor:
-///   - `cursor.value`    = oid hex (legacy Arc<str>)
+///   - `cursor.value`    = oid hex on focal `&`
 ///   - `cursor.value_id` = StringId::of(oid hex)
 ///   - `cursor.at`       = intern_ref(Coord { repo: parent.repo, rev,
 ///                                            fs: 0, lo: 0, hi: 0 })
 ///   - synthetic REV term = oid hex (when store attached)
-///   - legacy raw_terms REV = oid hex (back-compat for `${REV}` reads)
+///   - REV term = oid hex for `${REV}` reads
 pub struct RevComponent {
     mode: RevMode,
     config: Option<Arc<SprfConfig>>,
@@ -2498,13 +2496,18 @@ impl Component for PrintComponent {
             }
             None => {
                 let mut s = String::new();
-                for (i, (n, v)) in c.raw_terms.iter().enumerate() {
+                for (i, term) in c
+                    .terms
+                    .iter()
+                    .filter(|term| term.name.as_ref() != FOCAL_TERM)
+                    .enumerate()
+                {
                     if i > 0 {
                         s.push(' ');
                     }
-                    s.push_str(n);
+                    s.push_str(term.name.as_ref());
                     s.push('=');
-                    s.push_str(v);
+                    s.push_str(term.value.as_ref());
                 }
                 s
             }
@@ -2784,8 +2787,8 @@ pub enum WriteMode {
 ///
 /// Layer 3 — `:on=NAME` capture-internal mode. When `on_capture` is
 /// `Some(NAME)`, the splice byte range comes from `cursor.term(NAME).at`
-/// resolved through the SprfStore (`coord_of`) instead of the legacy
-/// `FS`/`LO`/`HI` raw_terms. Falls back to focal `FS`/`LO`/`HI` when no
+/// resolved through the SprfStore (`coord_of`) instead of the focal
+/// `FS`/`LO`/`HI` terms. Falls back to focal `FS`/`LO`/`HI` when no
 /// capture is named (existing behavior).
 ///
 /// Drift-detection — before splicing, the on-disk file is hashed and
@@ -2826,7 +2829,7 @@ impl Component for WriteCursorComponent {
         use std::collections::BTreeMap;
         // Group hits by FS path string. Each hit also carries its
         // FileId (Some(_) when the capture/focal coord was resolved
-        // through the store; None on the legacy raw_terms path) so
+        // through the store; None on the plain term fallback path) so
         // drift-detection can run per file.
         let mut by_file: BTreeMap<String, (Option<crate::FileId>, Vec<(usize, usize, Arc<str>)>)> =
             BTreeMap::new();

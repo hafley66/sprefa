@@ -456,8 +456,8 @@ OK, so wait. I have not read everything that you have sent but to give you an id
   </topic>
   <topic name="v4-cursor-focal-uniformity" source="codex-session-2026-05-11">
     <note>First uniformity pass: treat & as the public focal cursor term. Cursor::get("&") and Cursor::get("&.value") read the same focal value. Cursor::set("&", value) and Cursor::set("&.value", value) update the focal value.</note>
-    <note>Storage is still migrating: focal & is backed by Cursor.value plus CursorValue/value_id/at, while named terms still primarily use raw_terms until operators move to compact CursorTerm rows.</note>
-    <note>Normal Cursor::set cannot create a raw term that shadows &. Row::fields exposes & first so relation/input surfaces can see the focal value through the same term-shaped API.</note>
+    <note>Storage pass landed: Cursor now stores Vec&lt;CursorTerm&gt; plus the process-local store handle. The focal & is a real CursorTerm, and Cursor derefs to it so cursor.value, cursor.at, cursor.value_id, and cursor.cursor_value continue to name the focal term during migration.</note>
+    <note>raw_terms is removed from Cursor. Row::fields exposes the term list directly, default cursors place & first, and the queue codec serializes terms with each term's CursorValue/StringId/Ref.</note>
   </topic>
 </llm-zone>
 

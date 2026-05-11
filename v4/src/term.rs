@@ -115,10 +115,9 @@ mod tests {
     }
 
     fn cursor_with_value(v: &str) -> Arc<Cursor> {
-        Arc::new(Cursor {
-            value: v.into(),
-            ..Default::default()
-        })
+        let mut c = Cursor::default();
+        c.set_value(v);
+        Arc::new(c)
     }
 
     #[test]

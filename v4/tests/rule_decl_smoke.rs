@@ -98,7 +98,7 @@ fn rule_at_sink_position_drains_upstream_cursors() {
     // Sink form: pure decl up front, then two pipes that drain a
     // distinct-valued cursor into the declared rule. Each pipe pushes
     // its value through `split(V?)` so the per-cursor V binding lands
-    // in the row's identity (MemFactStore content_ids by raw_terms,
+    // in the row's identity (MemFactStore content_ids by terms,
     // so `&.value` alone wouldn't differentiate the two rows).
     let src = "rule(:items, V?); \
                `alpha` > split(V?)`!` > rule(:items); \

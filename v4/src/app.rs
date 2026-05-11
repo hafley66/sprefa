@@ -47,7 +47,7 @@ use crate::lower::{default_registry, LowerCtx, Registry};
 use crate::lsp::LSP_HOVER_CODE;
 use crate::source::resolve_path_text;
 use crate::telemetry::{PipelineTelemetry, RunPhaseTelemetry, RunTelemetry};
-use crate::Cursor;
+use crate::{Cursor, FOCAL_TERM};
 
 // ───────────────────────────────────────────────────────────────────
 // Errors
@@ -484,8 +484,7 @@ pub struct SprfState {
     next_instance_id: Mutex<u64>,
     /// Layer 0c.2 — content-derived intern store wrapping `facts`.
     /// Threaded into `LowerCtx` so source/pattern emitters stamp the
-    /// coord-space side of Cursor (`value_id`, `at`, `terms`) alongside
-    /// legacy `raw_terms` writes.
+    /// coord-space side of Cursor (`value_id`, `at`, `terms`).
     pub sprf_store: Arc<crate::store::SprfStore>,
     /// Layer 5a — XDG repos config. Bare `repo()` reads from this.
     /// `SprfState::new` loads from `~/.config/sprefa/repos.toml` via
@@ -657,13 +656,14 @@ impl SprfState {
                 entry.sample_value = sample_text(p.cursor.value.as_ref(), 80);
                 entry.sample_terms = p
                     .cursor
-                    .raw_terms
+                    .terms
                     .iter()
+                    .filter(|term| term.name.as_ref() != FOCAL_TERM)
                     .take(8)
-                    .map(|(k, v)| {
+                    .map(|term| {
                         (
-                            k.to_string(),
-                            sample_text(v.as_ref(), 48).unwrap_or_default(),
+                            term.name.to_string(),
+                            sample_text(term.value.as_ref(), 48).unwrap_or_default(),
                         )
                     })
                     .collect();
@@ -977,9 +977,10 @@ impl SprfHandlers for SprfState {
             .take(take)
             .map(|c| FactRow {
                 fields: c
-                    .raw_terms
+                    .terms
                     .iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .filter(|term| term.name.as_ref() != FOCAL_TERM)
+                    .map(|term| (term.name.to_string(), term.value.to_string()))
                     .collect(),
             })
             .collect();

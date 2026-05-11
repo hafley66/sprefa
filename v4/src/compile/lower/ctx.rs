@@ -31,8 +31,7 @@ pub struct LowerCtx {
     /// Optional content-derived intern store. Set via
     /// `with_sprf_store(...)` from the host (`SprfState::run` or
     /// equivalent). When present, source/pattern emitters stamp the
-    /// coord-space side of Cursor (`value_id`, `at`, `terms`) alongside
-    /// legacy `raw_terms` writes. When absent, only legacy writes fire.
+    /// coord-space side of Cursor (`value_id`, `at`, `terms`).
     pub sprf_store: Option<Arc<SprfStore>>,
     /// Layer 5a — XDG-style repo config used by the bare `repo()` op
     /// to drive a generator over `SprfConfig.repos`. Threaded by the
@@ -78,7 +77,7 @@ impl LowerCtx {
         self.rules.lock().unwrap().get(name).cloned()
     }
     /// Attach the content-derived intern store. Emitters lowered after
-    /// this call stamp coord-space terms alongside legacy raw_terms.
+    /// this call stamp coord-space terms.
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
         self.sprf_store = Some(s);
         self
