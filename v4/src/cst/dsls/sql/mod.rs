@@ -131,6 +131,46 @@ impl SqlDsl {
         out
     }
 
+    pub fn hover_with_ctx(&self, body: &[u8], byte: usize, ctx: &SqlLspCtx) -> Option<Hover> {
+        let token = token_at(body, byte)?;
+        let text = token_text(body, &token);
+        if let Some(table) = table_at_token(body, &token, ctx) {
+            return Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(format!(
+                    "SQL relation `{}`\ncolumns: {}",
+                    table.name,
+                    table
+                        .cols
+                        .iter()
+                        .map(|col| col.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))),
+                range: None,
+            });
+        }
+        if let Some((table, col)) = column_at_token(body, &token, ctx) {
+            return Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(format!(
+                    "SQL column `{}.{}`",
+                    table.name, col.name
+                ))),
+                range: None,
+            });
+        }
+        self.hover(body, byte).or_else(|| {
+            keyword_hover(text).map(|msg| Hover {
+                contents: HoverContents::Scalar(MarkedString::String(msg.to_string())),
+                range: None,
+            })
+        })
+    }
+
+    pub fn table_name_at(&self, body: &[u8], byte: usize, ctx: &SqlLspCtx) -> Option<String> {
+        let token = token_at(body, byte)?;
+        table_at_token(body, &token, ctx).map(|table| table.name.clone())
+    }
+
     fn qualified_column_completions(
         &self,
         body: &[u8],
@@ -477,6 +517,12 @@ fn token_text<'a>(body: &'a [u8], token: &SqlToken) -> &'a str {
     std::str::from_utf8(&body[token.range.clone()]).unwrap_or("")
 }
 
+fn token_at(body: &[u8], byte: usize) -> Option<SqlToken> {
+    scan_sql(body)
+        .into_iter()
+        .find(|token| byte >= token.range.start && byte < token.range.end)
+}
+
 fn keyword_eq(text: &str, keyword: &str) -> bool {
     text.eq_ignore_ascii_case(keyword)
 }
@@ -522,6 +568,32 @@ fn visible_aliases(body: &[u8], ctx: &SqlLspCtx) -> BTreeMap<String, SqlTable> {
         i += 1;
     }
     out
+}
+
+fn table_at_token(body: &[u8], token: &SqlToken, ctx: &SqlLspCtx) -> Option<SqlTable> {
+    if token_text(body, token).eq_ignore_ascii_case("input") {
+        return None;
+    }
+    let tables = visible_tables(ctx);
+    tables.get(token_text(body, token)).cloned()
+}
+
+fn column_at_token(body: &[u8], token: &SqlToken, ctx: &SqlLspCtx) -> Option<(SqlTable, SqlCol)> {
+    if token.kind != SqlTokenKind::Identifier {
+        return None;
+    }
+    let tokens = scan_sql(body);
+    let idx = tokens
+        .iter()
+        .position(|candidate| candidate.range == token.range)?;
+    if idx >= 2 && token_text(body, &tokens[idx - 1]) == "." {
+        let qualifier = token_text(body, &tokens[idx - 2]);
+        let table = visible_aliases(body, ctx).get(qualifier).cloned()?;
+        let col_name = token_text(body, token);
+        let col = table.cols.iter().find(|col| col.name == col_name)?.clone();
+        return Some((table, col));
+    }
+    None
 }
 
 fn qualifier_before_dot(prefix: &[u8]) -> Option<String> {
@@ -705,5 +777,48 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "sql/unknown-table");
         assert_eq!(diags[0].message, "unknown SQL table `missing_hooks`");
+    }
+
+    #[test]
+    fn sql_lsp_ctx_hovers_table_and_alias_column() {
+        let dsl = SqlDsl::new();
+        let ctx = SqlLspCtx {
+            input_cols: vec![SqlCol::text("__cursor_idx"), SqlCol::text("value")],
+            rule_tables: vec![SqlTable::new("frontend_hooks", ["OP", "FILE"])],
+            core_tables: vec![],
+        };
+        let body = b"SELECT hooks.OP FROM frontend_hooks AS hooks";
+
+        let table = dsl.hover_with_ctx(body, 23, &ctx).expect("table hover");
+        match table.contents {
+            HoverContents::Scalar(MarkedString::String(s)) => {
+                assert!(s.contains("SQL relation `frontend_hooks`"), "{s:?}");
+                assert!(s.contains("OP, FILE"), "{s:?}");
+            }
+            _ => panic!("unexpected hover shape"),
+        }
+
+        let col = dsl.hover_with_ctx(body, 13, &ctx).expect("column hover");
+        match col.contents {
+            HoverContents::Scalar(MarkedString::String(s)) => {
+                assert_eq!(s, "SQL column `frontend_hooks.OP`");
+            }
+            _ => panic!("unexpected hover shape"),
+        }
+    }
+
+    #[test]
+    fn sql_lsp_ctx_returns_table_name_at_cursor() {
+        let dsl = SqlDsl::new();
+        let ctx = SqlLspCtx {
+            input_cols: vec![],
+            rule_tables: vec![SqlTable::new("frontend_hooks", ["OP", "FILE"])],
+            core_tables: vec![],
+        };
+
+        assert_eq!(
+            dsl.table_name_at(b"SELECT * FROM frontend_hooks", 18, &ctx),
+            Some("frontend_hooks".to_string())
+        );
     }
 }

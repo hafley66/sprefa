@@ -19,7 +19,8 @@ use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result as RpcResult;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, GotoDefinitionParams,
+    GotoDefinitionResponse, Location,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, Hover,
     HoverContents, HoverParams, HoverProviderCapability, InitializeParams,
     InitializeResult, InitializedParams, InlayHint, InlayHintLabel,
@@ -40,8 +41,8 @@ mod semantic;
 
 use v4::app::{
     build_in_process, GetDiagsReq, GetInlaysReq, HttpClient,
-    LspChangeReq, LspCloseReq, LspCompletionReq, LspHoverReq, LspLocateDslReq,
-    LspLocateDslResp, LspOpenReq, SprfClient, SprfDiag,
+    LspChangeReq, LspCloseReq, LspCompletionReq, LspDefinitionReq, LspHoverReq,
+    LspLocateDslReq, LspLocateDslResp, LspOpenReq, SprfClient, SprfDiag,
 };
 
 struct Backend {
@@ -168,6 +169,7 @@ impl LanguageServer for Backend {
                 ),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions {
                     // `$` opens host pipe-holes; `:` opens atoms; `.` is
                     // reserved future "field access". Triggering on these
@@ -310,6 +312,37 @@ impl LanguageServer for Backend {
             .filter_map(|it| crosswalk::<_, CompletionItem>(it))
             .collect();
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> RpcResult<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let text = {
+            let g = self.docs.lock().await;
+            match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
+        };
+        let host_byte = position_to_byte(&text, pos);
+        let sprf = self.sprf().await;
+        let resp = match sprf.lsp_definition(LspDefinitionReq {
+            uri: uri.to_string(),
+            byte: host_byte as u32,
+        }).await {
+            Ok(resp) => resp,
+            Err(_) => return Ok(None),
+        };
+        let (Some(lo), Some(hi)) = (resp.lo, resp.hi) else {
+            return Ok(None);
+        };
+        Ok(Some(GotoDefinitionResponse::Scalar(Location {
+            uri,
+            range: Range::new(
+                byte_to_position(&text, lo as usize),
+                byte_to_position(&text, hi as usize),
+            ),
+        })))
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {

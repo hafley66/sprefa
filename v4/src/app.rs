@@ -223,6 +223,18 @@ pub struct LspCompletionReq {
     pub byte: u32,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspDefinitionReq {
+    pub uri: String,
+    pub byte: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspDefinitionResp {
+    pub lo: Option<u32>,
+    pub hi: Option<u32>,
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeHover {
     pub lo: u32,
@@ -460,6 +472,7 @@ sprf_rpc! {
     fn lsp_locate_dsl (LspLocateDslReq) -> LspLocateDslResp => "/lsp/locate-dsl";
     fn lsp_hover      (LspHoverReq) -> LspHoverResp      => "/lsp/hover";
     fn lsp_completion (LspCompletionReq) -> Vec<lsp_types::CompletionItem> => "/lsp/completion";
+    fn lsp_definition (LspDefinitionReq) -> LspDefinitionResp => "/lsp/definition";
     fn run            (RunReq)          -> RunReport     => "/run";
     fn get_fact_table (GetFactTableReq) -> FactTable     => "/facts";
     fn refs_at        (RefsAtReq)       -> RefsAtResp    => "/refs-at";
@@ -641,7 +654,8 @@ impl SprfState {
             .with_probe(probe_sink.clone() as Arc<dyn ProbeSink<Cursor>>)
             .with_sprf_store(self.sprf_store.clone())
             .with_config(self.config.clone());
-        let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
+        let (pipes, mut walk_diags) = walk_program(&program, &self.registry, &mut ctx);
+        walk_diags.extend(sql_lsp_diagnostics(&program, self.facts.as_ref()));
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let opts = ExpandOpts::default().with_diag(runtime_diags.clone());
@@ -797,7 +811,9 @@ impl SprfHandlers for SprfState {
         }
         if let Some(contents) = hit.and_then(|(call, body_byte)| {
             let dsl = call.dsl.as_ref()?;
-            dsl_hover(
+            dsl_hover_with_doc(
+                d,
+                self.facts.as_ref(),
                 &self.root,
                 call.name.as_ref(),
                 dsl.raw.as_bytes(),
@@ -849,6 +865,20 @@ impl SprfHandlers for SprfState {
             self.facts.as_ref(),
             req.byte as usize,
         ))
+    }
+
+    async fn lsp_definition(&self, req: LspDefinitionReq) -> Result<LspDefinitionResp, SprfError> {
+        let docs = self.docs.lock().unwrap();
+        let d = docs
+            .get(&req.uri)
+            .ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
+        let Some(range) = lsp_dsl_definition(d, self.facts.as_ref(), req.byte as usize) else {
+            return Ok(LspDefinitionResp { lo: None, hi: None });
+        };
+        Ok(LspDefinitionResp {
+            lo: Some(range.lo),
+            hi: Some(range.hi),
+        })
     }
 
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
@@ -1138,34 +1168,100 @@ fn dsl_hover(root: &Path, op_name: &str, body: &[u8], body_byte: usize) -> Optio
     Some(hover_contents_to_string(hover.contents))
 }
 
+fn dsl_hover_with_doc(
+    doc: &DocState,
+    facts: &dyn FactStore<Cursor>,
+    root: &Path,
+    op_name: &str,
+    body: &[u8],
+    body_byte: usize,
+) -> Option<String> {
+    if op_name == "sql" {
+        let ctx = sql_lsp_ctx(doc, facts, None);
+        let hover = SqlDsl::new().hover_with_ctx(body, body_byte, &ctx)?;
+        return Some(hover_contents_to_string(hover.contents));
+    }
+    dsl_hover(root, op_name, body, body_byte)
+}
+
 fn lsp_dsl_completion(
     doc: &DocState,
     facts: &dyn FactStore<Cursor>,
     host_byte: usize,
 ) -> Vec<lsp_types::CompletionItem> {
-    let mut hit: Option<(OpCall, usize)> = None;
-    for p in &doc.program {
-        walk_pipe_for_dsl(p, host_byte, &mut hit);
-    }
-    let Some((call, body_byte)) = hit else {
+    let Some(hit) = find_dsl_hit(&doc.program, host_byte) else {
         return Vec::new();
     };
+    let call = hit.call;
     let Some(dsl) = call.dsl.as_ref() else {
         return Vec::new();
     };
     match call.name.as_ref() {
         "sql" => SqlDsl::new().completions_with_ctx(
             dsl.raw.as_bytes(),
-            body_byte,
-            &sql_lsp_ctx(doc, facts),
+            hit.body_byte,
+            &sql_lsp_ctx(doc, facts, Some(&hit.prefix)),
         ),
         _ => Vec::new(),
     }
 }
 
-fn sql_lsp_ctx(doc: &DocState, facts: &dyn FactStore<Cursor>) -> SqlLspCtx {
+fn lsp_dsl_definition(
+    doc: &DocState,
+    facts: &dyn FactStore<Cursor>,
+    host_byte: usize,
+) -> Option<effect_runtime::v2::ByteRange> {
+    let hit = find_dsl_hit(&doc.program, host_byte)?;
+    if hit.call.name.as_ref() != "sql" {
+        return None;
+    }
+    let dsl = hit.call.dsl.as_ref()?;
+    let ctx = sql_lsp_ctx(doc, facts, Some(&hit.prefix));
+    let table = SqlDsl::new().table_name_at(dsl.raw.as_bytes(), hit.body_byte, &ctx)?;
+    rule_def_span(&doc.program, &table)
+}
+
+fn sql_lsp_diagnostics(program: &[PipeAst], facts: &dyn FactStore<Cursor>) -> Vec<Diag> {
+    let mut out = Vec::new();
+    for hit in all_sql_hits(program) {
+        let Some(dsl) = hit.call.dsl.as_ref() else {
+            continue;
+        };
+        let ctx = sql_lsp_ctx_from_program(program, facts, Some(&hit.prefix));
+        for diag in SqlDsl::new().diagnostics_with_ctx(dsl.raw.as_bytes(), &ctx) {
+            let shifted = diag.byte_range.start + dsl.span.lo as usize
+                ..diag.byte_range.end + dsl.span.lo as usize;
+            out.push(cst_diag_to_runtime(diag, shifted));
+        }
+    }
+    out
+}
+
+fn cst_diag_to_runtime(diag: crate::cst::diag::Diag, shifted: std::ops::Range<usize>) -> Diag {
+    let base = match diag.severity {
+        crate::cst::diag::Severity::Error => Diag::error(diag.code, diag.message),
+        crate::cst::diag::Severity::Warning => Diag::warn(diag.code, diag.message),
+        crate::cst::diag::Severity::Info => Diag::info(diag.code, diag.message),
+        crate::cst::diag::Severity::Hint => Diag::hint(diag.code, diag.message),
+    };
+    base.with_span(shifted.start as u32, shifted.end as u32)
+}
+
+fn sql_lsp_ctx(
+    doc: &DocState,
+    facts: &dyn FactStore<Cursor>,
+    prefix: Option<&[OpCall]>,
+) -> SqlLspCtx {
+    sql_lsp_ctx_from_program(&doc.program, facts, prefix)
+}
+
+fn sql_lsp_ctx_from_program(
+    program: &[PipeAst],
+    facts: &dyn FactStore<Cursor>,
+    prefix: Option<&[OpCall]>,
+) -> SqlLspCtx {
     let mut rule_names = Vec::new();
-    collect_rule_tables(&doc.program, &mut rule_names);
+    collect_rule_tables(program, &mut rule_names);
     let rule_tables = rule_names
         .into_iter()
         .filter_map(|name| sql_table_from_store(facts, &name))
@@ -1182,8 +1278,16 @@ fn sql_lsp_ctx(doc: &DocState, facts: &dyn FactStore<Cursor>) -> SqlLspCtx {
     .into_iter()
     .filter_map(|name| sql_table_from_store(facts, name))
     .collect();
+    let mut input_cols = vec![SqlCol::text("__cursor_idx"), SqlCol::text("value")];
+    if let Some(prefix) = prefix {
+        for term in input_terms_from_prefix(prefix) {
+            if !input_cols.iter().any(|col| col.name == term) {
+                input_cols.push(SqlCol::text(term));
+            }
+        }
+    }
     SqlLspCtx {
-        input_cols: vec![SqlCol::text("__cursor_idx"), SqlCol::text("value")],
+        input_cols,
         rule_tables,
         core_tables,
     }
@@ -1195,6 +1299,123 @@ fn sql_table_from_store(facts: &dyn FactStore<Cursor>, name: &str) -> Option<Sql
         name: name.to_string(),
         cols: cols.into_iter().map(SqlCol::text).collect(),
     })
+}
+
+#[derive(Clone)]
+struct DslHit {
+    call: OpCall,
+    body_byte: usize,
+    prefix: Vec<OpCall>,
+}
+
+fn find_dsl_hit(program: &[PipeAst], host_byte: usize) -> Option<DslHit> {
+    let mut hit = None;
+    for pipe in program {
+        walk_pipe_for_dsl_hit(pipe, host_byte, &mut Vec::new(), &mut hit);
+    }
+    hit
+}
+
+fn all_sql_hits(program: &[PipeAst]) -> Vec<DslHit> {
+    let mut out = Vec::new();
+    for pipe in program {
+        collect_sql_hits(pipe, &mut Vec::new(), &mut out);
+    }
+    out
+}
+
+fn walk_pipe_for_dsl_hit(
+    pipe: &PipeAst,
+    host_byte: usize,
+    prefix: &mut Vec<OpCall>,
+    hit: &mut Option<DslHit>,
+) {
+    for step in &pipe.steps {
+        if let Some(dsl) = &step.dsl {
+            let lo = dsl.span.lo as usize;
+            let hi = dsl.span.hi as usize;
+            if host_byte >= lo && host_byte <= hi {
+                *hit = Some(DslHit {
+                    call: step.clone(),
+                    body_byte: (host_byte - lo).min(hi - lo),
+                    prefix: prefix.clone(),
+                });
+            }
+        }
+        if let Some(block) = &step.block {
+            walk_pipe_for_dsl_hit(block, host_byte, &mut Vec::new(), hit);
+        }
+        prefix.push(step.clone());
+    }
+}
+
+fn collect_sql_hits(pipe: &PipeAst, prefix: &mut Vec<OpCall>, out: &mut Vec<DslHit>) {
+    for step in &pipe.steps {
+        if step.name.as_ref() == "sql" && step.dsl.is_some() {
+            out.push(DslHit {
+                call: step.clone(),
+                body_byte: 0,
+                prefix: prefix.clone(),
+            });
+        }
+        if let Some(block) = &step.block {
+            collect_sql_hits(block, &mut Vec::new(), out);
+        }
+        prefix.push(step.clone());
+    }
+}
+
+fn input_terms_from_prefix(prefix: &[OpCall]) -> Vec<String> {
+    let mut out = Vec::new();
+    for step in prefix {
+        for arg in &step.args {
+            collect_term_name_from_slot(arg.raw.as_ref(), &mut out);
+        }
+    }
+    out
+}
+
+fn collect_term_name_from_slot(raw: &str, out: &mut Vec<String>) {
+    let value = raw
+        .split_once(':')
+        .map(|(_, rhs)| rhs)
+        .unwrap_or(raw)
+        .trim()
+        .trim_end_matches('?')
+        .trim_start_matches(':')
+        .trim();
+    if value.is_empty() || value.contains('`') || value.contains('(') || value.contains('$') {
+        return;
+    }
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+        && !out.iter().any(|seen| seen == value)
+    {
+        out.push(value.to_string());
+    }
+}
+
+fn rule_def_span(program: &[PipeAst], table: &str) -> Option<effect_runtime::v2::ByteRange> {
+    for pipe in program {
+        for step in &pipe.steps {
+            if matches!(step.name.as_ref(), "rule" | "fact" | "fact_write") {
+                if let Some(first) = step.args.first() {
+                    let raw = first.raw.trim();
+                    let name = raw.strip_prefix(':').unwrap_or(raw).trim();
+                    if name == table {
+                        return Some(first.span);
+                    }
+                }
+            }
+            if let Some(block) = &step.block {
+                if let Some(span) = rule_def_span(std::slice::from_ref(block), table) {
+                    return Some(span);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn path_hover(root: &Path, body: &[u8]) -> String {
@@ -1464,6 +1685,127 @@ mod tests {
         assert_eq!(
             labels,
             vec!["hooks.OP".to_string(), "hooks.FILE".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn lsp_completion_inside_sql_body_returns_input_terms() {
+        let (_state, client) = build_in_process(std::env::temp_dir());
+        let src = "rule(:openapi_ops, OP?);\nopenapi_ops(OP?) > sql`SELECT input.`;";
+        client
+            .lsp_open(LspOpenReq {
+                uri: "file:///sql.sprf".into(),
+                text: src.into(),
+                version: 1,
+            })
+            .await
+            .unwrap();
+
+        let items = client
+            .lsp_completion(LspCompletionReq {
+                uri: "file:///sql.sprf".into(),
+                byte: (src.find("input.").unwrap() + "input.".len()) as u32,
+            })
+            .await
+            .unwrap();
+        let labels: Vec<String> = items.into_iter().map(|item| item.label).collect();
+
+        assert!(
+            labels.contains(&"input.__cursor_idx".to_string()),
+            "{labels:?}"
+        );
+        assert!(labels.contains(&"input.value".to_string()), "{labels:?}");
+        assert!(labels.contains(&"input.OP".to_string()), "{labels:?}");
+    }
+
+    #[tokio::test]
+    async fn lsp_diags_include_sql_unknown_table() {
+        let (_state, client) = build_in_process(std::env::temp_dir());
+        let src = "sql`SELECT * FROM missing_hooks`;";
+        client
+            .lsp_open(LspOpenReq {
+                uri: "file:///sql.sprf".into(),
+                text: src.into(),
+                version: 1,
+            })
+            .await
+            .unwrap();
+
+        let diags = client
+            .get_diags(GetDiagsReq {
+                uri: "file:///sql.sprf".into(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, "sql/unknown-table");
+        assert_eq!(diags[0].message, "unknown SQL table `missing_hooks`");
+        assert_eq!(
+            (diags[0].lo, diags[0].hi),
+            (
+                Some((src.find("missing_hooks").unwrap()) as u32),
+                Some((src.find("missing_hooks").unwrap() + "missing_hooks".len()) as u32)
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn lsp_hover_inside_sql_table_uses_schema_ctx() {
+        let (_state, client) = build_in_process(std::env::temp_dir());
+        let src = "rule(:frontend_hooks, OP?, FILE?);\nsql`SELECT * FROM frontend_hooks`;";
+        client
+            .lsp_open(LspOpenReq {
+                uri: "file:///sql.sprf".into(),
+                text: src.into(),
+                version: 1,
+            })
+            .await
+            .unwrap();
+
+        let hover = client
+            .lsp_hover(LspHoverReq {
+                uri: "file:///sql.sprf".into(),
+                byte: src.find("frontend_hooks`").unwrap() as u32,
+            })
+            .await
+            .unwrap();
+
+        let contents = hover.contents.expect("hover contents");
+        assert!(
+            contents.contains("SQL relation `frontend_hooks`"),
+            "{contents:?}"
+        );
+        assert!(contents.contains("OP, FILE"), "{contents:?}");
+    }
+
+    #[tokio::test]
+    async fn lsp_definition_inside_sql_table_returns_rule_span() {
+        let (_state, client) = build_in_process(std::env::temp_dir());
+        let src = "rule(:frontend_hooks, OP?, FILE?);\nsql`SELECT * FROM frontend_hooks`;";
+        client
+            .lsp_open(LspOpenReq {
+                uri: "file:///sql.sprf".into(),
+                text: src.into(),
+                version: 1,
+            })
+            .await
+            .unwrap();
+
+        let def = client
+            .lsp_definition(LspDefinitionReq {
+                uri: "file:///sql.sprf".into(),
+                byte: src.find("frontend_hooks`").unwrap() as u32,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (def.lo, def.hi),
+            (
+                Some(src.find(":frontend_hooks").unwrap() as u32),
+                Some((src.find(":frontend_hooks").unwrap() + ":frontend_hooks".len()) as u32)
+            )
         );
     }
 
