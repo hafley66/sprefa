@@ -185,6 +185,9 @@ v4-render-markdown-examples: v4-release
     ./v4/target/release/sprefa-run v4/examples/rust-doc-ast-yaml-map.sprf --root . --show-rows
     ./v4/target/release/sprefa-run v4/examples/render-markdown-subpipe-links.sprf --root . --show-rows
 
+v4-architecture-audit: v4-release
+    ./v4/target/release/sprefa-run v4/examples/system-architecture-mermaid.sprf --root . --show-rows
+
 v4-release-workflow: v4-test v4-lsp-test v4-release v4-lsp-release v4-vscode-package v4-render-markdown-examples
 
 v4-dogfood: v4-flow-smoke v4-lsp-build
