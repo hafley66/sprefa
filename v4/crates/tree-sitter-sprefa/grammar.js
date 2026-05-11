@@ -168,7 +168,11 @@ module.exports = grammar({
       repeat(seq('.', /[A-Za-z_][A-Za-z0-9_]*/)),
     )),
 
-    atom_literal: $ => token(seq(':', /[A-Za-z_][A-Za-z0-9_]*/)),
+    atom_literal: $ => token(seq(
+      ':',
+      /[A-Za-z_][A-Za-z0-9_]*/,
+      repeat(seq('.', /[A-Za-z_][A-Za-z0-9_]*/)),
+    )),
 
     // v4 has NO `"…"` / `r#"…"#` strings. All string-shaped values use
     // backticks (`` `text` ``). At pipe-step position the bare backtick

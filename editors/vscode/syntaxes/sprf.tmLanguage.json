@@ -274,7 +274,7 @@
         { "include": "#capture-single" },
         { "match": "\\|", "name": "keyword.operator.alternation.sprf" },
         { "match": "\\*", "name": "keyword.operator.glob.sprf" },
-        { "match": ":[A-Za-z_][A-Za-z0-9_-]*", "name": "constant.other.atom.sprf" },
+        { "match": ":[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*", "name": "constant.other.atom.sprf" },
         { "match": "[^)|$*]+", "name": "string.unquoted.glob.sprf" }
       ]
     },

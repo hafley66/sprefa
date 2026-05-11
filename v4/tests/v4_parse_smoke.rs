@@ -113,4 +113,20 @@ fn host_parse_four_slot_and_diag_shape() {
     assert_eq!(&*call.name, "render.markdown");
     assert!(!call.apply);
     assert_eq!(&*call.dsl.as_ref().unwrap().raw, "## Title");
+
+    let src_dotted_atoms =
+        "rule(:docs.runtime_node, NAME?); lsp_warn(:docs.missing_node)`missing`;";
+    let (pipes_dotted_atoms, diags_dotted_atoms) = host_parse(src_dotted_atoms);
+    assert!(
+        diags_dotted_atoms.is_empty(),
+        "expected clean dotted atom parse, got diags: {diags_dotted_atoms:?}"
+    );
+    assert_eq!(
+        &*pipes_dotted_atoms[0].steps[0].args[0].raw,
+        ":docs.runtime_node"
+    );
+    assert_eq!(
+        &*pipes_dotted_atoms[1].steps[0].args[0].raw,
+        ":docs.missing_node"
+    );
 }

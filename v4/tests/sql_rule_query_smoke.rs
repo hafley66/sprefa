@@ -368,3 +368,33 @@ fn declared_rule_predicate_syntax_queries_relation() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("OP"), Some("getUser"));
 }
+
+#[test]
+fn declared_dotted_rule_name_writes_and_queries() {
+    let src = r#"
+        rule(:docs.runtime_node, NAME?, FILE?);
+        rule(:docs.hit, NAME?, FILE?);
+
+        `Cursor`
+          > term_bind(:NAME)
+          > `v4/src/lib.rs`
+          > term_bind(:FILE)
+          > docs.runtime_node(NAME, FILE);
+
+        `Cursor`
+          > term_bind(:NAME)
+          > docs.runtime_node?(NAME, FILE?)
+          > docs.hit(NAME, FILE);
+    "#;
+
+    let store = run_pipes(src);
+    let runtime_rows = store.rows_of("docs.runtime_node");
+    assert_eq!(runtime_rows.len(), 1);
+    assert_eq!(runtime_rows[0].get("NAME"), Some("Cursor"));
+    assert_eq!(runtime_rows[0].get("FILE"), Some("v4/src/lib.rs"));
+
+    let hit_rows = store.rows_of("docs.hit");
+    assert_eq!(hit_rows.len(), 1);
+    assert_eq!(hit_rows[0].get("NAME"), Some("Cursor"));
+    assert_eq!(hit_rows[0].get("FILE"), Some("v4/src/lib.rs"));
+}

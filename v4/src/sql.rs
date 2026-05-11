@@ -37,12 +37,19 @@ pub struct SqlQueryComponent {
 impl SqlQueryComponent {
     pub fn new(store: Arc<dyn FactStore<Cursor>>, sql: impl Into<Arc<str>>) -> Self {
         let sql = sql.into();
-        let referenced_tables =
-            Arc::new(referenced_fact_tables(sql.as_ref()).into_iter().collect());
+        let referenced_tables = referenced_fact_tables(sql.as_ref()).into_iter().collect();
+        Self::with_referenced_tables(store, sql, referenced_tables)
+    }
+
+    pub fn with_referenced_tables(
+        store: Arc<dyn FactStore<Cursor>>,
+        sql: impl Into<Arc<str>>,
+        referenced_tables: Vec<String>,
+    ) -> Self {
         Self {
             store,
-            sql,
-            referenced_tables,
+            sql: sql.into(),
+            referenced_tables: Arc::new(referenced_tables),
             cache: Mutex::new(BTreeMap::new()),
         }
     }
@@ -697,7 +704,7 @@ pub fn rule_table_call_pipe(
     let mut sql = format!(
         "{select_prefix} {}\nFROM input JOIN {} AS {} ON 1=1",
         select_cols.join(", "),
-        table,
+        quote_ident(table),
         rule_alias,
     );
     if !predicates.is_empty() {
@@ -705,7 +712,9 @@ pub fn rule_table_call_pipe(
         sql.push_str(&predicates.join(" AND "));
     }
 
-    Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(ctx.store.clone(), sql))))
+    Ok(Pipe::new().step(Arc::new(
+        SqlQueryComponent::with_referenced_tables(ctx.store.clone(), sql, vec![table.to_string()]),
+    )))
 }
 
 pub fn rule_apply_write_pipe(

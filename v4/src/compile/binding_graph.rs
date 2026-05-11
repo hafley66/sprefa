@@ -60,7 +60,7 @@ fn collect_rule_decls(program: &[PipeAst]) -> HashMap<Arc<str>, RuleDecl> {
             let Some(name) = raw_name.strip_prefix(':') else {
                 continue;
             };
-            if !is_ident(name) {
+            if !is_rule_name(name) {
                 continue;
             }
             let mut cols = Vec::new();
@@ -377,6 +377,17 @@ fn is_ident(s: &str) -> bool {
         .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
+fn is_rule_name(s: &str) -> bool {
+    let mut parts = s.split('.');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    if !is_ident(first) {
+        return false;
+    }
+    parts.all(|part| !part.is_empty() && is_ident(part))
+}
+
 fn is_caps_ident(s: &str) -> bool {
     let bytes = s.as_bytes();
     if bytes.is_empty() {
@@ -448,6 +459,18 @@ mod tests {
         assert!(
             !codes.iter().any(|c| c == "lang/use-before-bind"),
             "unexpected use-before-bind for focal cursor value, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn dotted_bodied_rule_apply_binds_declared_cols() {
+        let codes = diag_codes(
+            "rule(:docs.derive, X?) { `x` > term_bind(:X) }; docs.derive() > render.markdown`${X}`;",
+        );
+        assert!(
+            !codes.iter().any(|c| c == "lang/use-before-bind"),
+            "unexpected use-before-bind for dotted rule apply, got {:?}",
             codes
         );
     }

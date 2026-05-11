@@ -28,6 +28,33 @@ This means:
 
 The old `fact` idea maps to an empty-body `rule`: declaration plus imperative row signal/write plus replay/query of the table.
 
+## Dotted Rule Atoms
+
+Rule atoms may use dot-separated identifier segments for lightweight
+namespacing:
+
+```sprf
+rule(:docs.runtime_node, NAME?, FILE?);
+docs.runtime_node?(NAME?, FILE?)
+```
+
+Atom spelling:
+
+```text
+:[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*
+```
+
+Termination is lexical. The atom ends at whitespace, comma, `)`, `}`,
+`;`, or another character outside identifier/dot segments. A trailing
+dot, double dot, slash, dash, or nested colon is rejected by the host
+grammar.
+
+The colon is syntax only. Lowering stores the atom value without the
+colon, so `:docs.runtime_node` becomes relation name `docs.runtime_node`.
+Dots are namespace punctuation in `.sprf`; SQL lowering must still quote
+or rewrite physical table names because SQLite treats dots as
+schema/table separators.
+
 ## Declaration Sigils
 
 Rule column sigils are schema metadata.
