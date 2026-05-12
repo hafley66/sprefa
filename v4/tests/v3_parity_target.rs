@@ -1,13 +1,14 @@
 use std::fs;
 use std::sync::Arc;
 
-use effect_runtime::v2::{
-    table_dirty_key, FactStore, QueueBackend, SqliteFactStore, SqliteQueue, TABLE_DOMAIN,
-};
+use effect_runtime::v2::{FactStore, QueueBackend, SqliteFactStore, SqliteQueue};
 
 use v4::app::{
     build_in_process, build_router, GetDiagsReq, GetFactTableReq, InProcessClient, LspOpenReq,
     RunReport, RunReq, SprfClient, SprfDiag, SprfState,
+};
+use v4::runtime_graph::{
+    RUNTIME_EDGE, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE,
 };
 
 fn diag_lines(diags: &[SprfDiag]) -> String {
@@ -450,7 +451,129 @@ async fn app_run_keeps_queue_and_wakes_mounted_sql() {
 }
 
 #[tokio::test]
-async fn app_can_use_sqlite_queue_for_mounted_sql_parks() {
+async fn app_run_records_mounted_sql_in_runtime_graph() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root.path().join("missing.sprf");
+
+    fs::write(
+        &missing,
+        r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:missing_hooks, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+                  AND frontend_hooks.FILE = ${FILE}
+              )
+            `
+          > rule(:missing_hooks, OP: OP);
+    "#,
+    )
+    .unwrap();
+
+    let (state, client) = build_in_process(root.path().to_path_buf());
+    client
+        .run(RunReq {
+            path: missing,
+            root: Some(root.path().to_path_buf()),
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        state.facts.len(RUNTIME_NODE) >= 4,
+        "mounted sql run should declare owner/source/output/row runtime nodes",
+    );
+    assert!(
+        state.facts.len(RUNTIME_EDGE) >= 3,
+        "mounted sql run should declare subscribe/member/support runtime edges",
+    );
+}
+
+#[tokio::test]
+async fn app_fact_write_dispatches_runtime_table_wake() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root.path().join("missing.sprf");
+    let hook = root.path().join("hook.sprf");
+
+    fs::write(
+        &missing,
+        r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:missing_hooks, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+              )
+            `
+          > rule(:missing_hooks, OP: OP);
+    "#,
+    )
+    .unwrap();
+    fs::write(
+        &hook,
+        r#"
+        rule(:frontend_hooks, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
+    "#,
+    )
+    .unwrap();
+
+    let (state, client) = build_in_process(root.path().to_path_buf());
+    client
+        .run(RunReq {
+            path: missing,
+            root: Some(root.path().to_path_buf()),
+        })
+        .await
+        .unwrap();
+    client
+        .run(RunReq {
+            path: hook,
+            root: Some(root.path().to_path_buf()),
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        state.facts.len(RUNTIME_EVENT) >= 1,
+        "fact writes should append runtime graph source events",
+    );
+    assert!(
+        state.facts.len(RUNTIME_EDGE_VALUE) >= 1,
+        "fact writes should update subscribe edge-local values",
+    );
+    assert!(
+        state.facts.len(RUNTIME_JOB) >= 1,
+        "fact writes should enqueue graph jobs for subscribed owners",
+    );
+}
+
+#[tokio::test]
+async fn app_uses_runtime_graph_instead_of_sqlite_queue_for_mounted_sql() {
     let root = tempfile::tempdir().unwrap();
     let db = root.path().join("queue.db");
     let missing = root.path().join("missing.sprf");
@@ -496,19 +619,17 @@ async fn app_can_use_sqlite_queue_for_mounted_sql_parks() {
 
         assert_eq!(
             state.queue.depth(),
-            1,
-            "mounted sql should park one table-dirty continuation in sqlite queue",
+            0,
+            "mounted sql should use runtime graph subscriptions instead of parked queue rows",
+        );
+        assert!(
+            state.facts.len(RUNTIME_EDGE) >= 2,
+            "mounted sql should persist subscribe/support graph edges",
         );
     }
 
-    let queue: Arc<dyn QueueBackend<v4::Cursor>> =
-        Arc::new(SqliteQueue::<v4::Cursor>::open_file(&db));
-    assert_eq!(queue.depth(), 1);
-    assert_eq!(
-        queue.dispatch_park(TABLE_DOMAIN, Some(table_dirty_key("frontend_hooks"))),
-        1,
-        "sqlite-backed app queue should revive the mounted SQL park by table dirty key",
-    );
+    let queue = SqliteQueue::<v4::Cursor>::open_file(&db);
+    assert_eq!(queue.depth(), 0);
 }
 
 #[tokio::test]
@@ -606,10 +727,7 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
 
     let queue: Arc<dyn QueueBackend<v4::Cursor>> =
         Arc::new(SqliteQueue::<v4::Cursor>::open_file(&queue_db));
-    assert!(
-        queue.depth() >= 1,
-        "first run should leave mounted SQL continuations parked in SQLite",
-    );
+    assert_eq!(queue.depth(), 0);
 
     fs::write(
         &sprf,
@@ -667,6 +785,88 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
         0,
         "reopened SQLite facts should retain mounted output state and retract stale anti-join rows",
     );
+}
+
+#[tokio::test]
+async fn app_graph_jobs_rerun_mounted_sql_after_reopen_without_sqlite_queue() {
+    let root = tempfile::tempdir().unwrap();
+    let fact_db = root.path().join("facts.db");
+    let missing = root.path().join("missing.sprf");
+    let hook = root.path().join("hook.sprf");
+
+    fs::write(
+        &missing,
+        r#"
+        rule(:frontend_hooks, OP?, FILE?);
+        rule(:missing_hooks, OP?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > sql`
+              SELECT input.__cursor_idx, input.OP
+              FROM input
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM frontend_hooks
+                WHERE frontend_hooks.OP = ${OP}
+              )
+            `
+          > missing_hooks(OP);
+    "#,
+    )
+    .unwrap();
+    fs::write(
+        &hook,
+        r#"
+        rule(:frontend_hooks, OP?, FILE?);
+
+        `getUser`
+          > term_bind(:OP)
+          > `src/hooks.ts`
+          > term_bind(:FILE)
+          > frontend_hooks(OP, FILE);
+    "#,
+    )
+    .unwrap();
+
+    {
+        let state = Arc::new(SprfState::new_with_sqlite_facts(
+            root.path().to_path_buf(),
+            &fact_db,
+        ));
+        let client = InProcessClient::new(build_router(state));
+        client
+            .run(RunReq {
+                path: missing,
+                root: Some(root.path().to_path_buf()),
+            })
+            .await
+            .unwrap();
+    }
+
+    let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
+    assert_eq!(facts.rows_of("missing_hooks").len(), 1);
+    drop(facts);
+
+    {
+        let state = Arc::new(SprfState::new_with_sqlite_facts(
+            root.path().to_path_buf(),
+            &fact_db,
+        ));
+        let client = InProcessClient::new(build_router(state.clone()));
+        client
+            .run(RunReq {
+                path: hook,
+                root: Some(root.path().to_path_buf()),
+            })
+            .await
+            .unwrap();
+    }
+
+    let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
+    assert_eq!(facts.rows_of("missing_hooks").len(), 0);
 }
 
 #[tokio::test]

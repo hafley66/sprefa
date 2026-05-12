@@ -33,6 +33,7 @@ use ignore::WalkBuilder;
 
 use crate::compile::lower::op_def::DslInterp;
 use crate::config::SprfConfig;
+use crate::runtime_graph::SourceWake;
 use crate::source::{resolve_path_text, SourceReader};
 use crate::store::SprfStore;
 use crate::{Coord, Cursor, CursorValue, Interner, WhereBytes, WhereBytesId, FOCAL_TERM};
@@ -77,6 +78,22 @@ fn stamp_source_value(
 pub fn file_dirty_key(path: impl AsRef<std::path::Path>) -> NextKey {
     let path = path.as_ref().to_string_lossy();
     NextKey(*blake3::hash(path.as_bytes()).as_bytes())
+}
+
+pub fn file_dirty_source_uri(path: impl AsRef<std::path::Path>) -> String {
+    format!("sprf://source/file/{}", path.as_ref().to_string_lossy())
+}
+
+fn dispatch_file_dirty(ctx: &RenderCtx, path: impl AsRef<std::path::Path>) {
+    if let Some(graph) = ctx.runtime::<crate::runtime_graph::RuntimeGraph>() {
+        graph.dispatch_source_wake(SourceWake::dirty(
+            file_dirty_source_uri(path.as_ref()),
+            ctx.expand_tick,
+        ));
+        return;
+    }
+    ctx.bus
+        .dispatch_dirty(FILE_DOMAIN, Some(file_dirty_key(path.as_ref())));
 }
 
 // ─── path ─────────────────────────────────────────────────────────────────
@@ -368,7 +385,7 @@ impl Component for FsComponent {
         // of "doomed" already-enqueued descendants.)
         let mut buf: Vec<Node<Cursor>> = Vec::with_capacity(self.batch);
         let mut next_idx: u32 = 0;
-        let mut flush = |buf: &mut Vec<Node<Cursor>>, next_idx: &mut u32| {
+        let flush = |buf: &mut Vec<Node<Cursor>>, next_idx: &mut u32| {
             if buf.is_empty() {
                 return;
             }
@@ -1957,7 +1974,7 @@ impl Component for RepoComponent {
         };
         let mut buf: Vec<Node<Cursor>> = Vec::with_capacity(self.batch);
         let mut next_idx: u32 = 0;
-        let mut flush = |buf: &mut Vec<Node<Cursor>>, next_idx: &mut u32| {
+        let flush = |buf: &mut Vec<Node<Cursor>>, next_idx: &mut u32| {
             if buf.is_empty() {
                 return;
             }
@@ -2609,6 +2626,37 @@ impl Component for ReadComponent {
             let Some(path) = self.file_subscription_path(row.value.as_ref()) else {
                 continue;
             };
+            if let Some(graph) = ctx.runtime::<crate::runtime_graph::RuntimeGraph>() {
+                let input_key = blake3::hash(&crate::cursor_codec::encode(row.value.as_ref()))
+                    .to_hex()
+                    .to_string();
+                let ast_uri = format!(
+                    "sprf://ast/read/{}/{}/{}",
+                    row.pipe_hash, row.instance_id, row.depth
+                );
+                let owner = graph.declare_owner(
+                    &ast_uri,
+                    None,
+                    input_key.as_str(),
+                    path.as_str(),
+                    "read",
+                    ctx.expand_tick,
+                );
+                let source = graph.declare_source(
+                    file_dirty_source_uri(path.as_str()).as_str(),
+                    ctx.expand_tick,
+                );
+                graph.subscribe(&owner, "file", &source, ctx.expand_tick);
+                graph.record_continuation(
+                    &owner,
+                    row.pipe_hash,
+                    row.instance_id,
+                    row.depth,
+                    row.value.as_ref(),
+                    ctx.expand_tick,
+                );
+                continue;
+            }
             queue.enqueue_replacing_parked(QueueRow {
                 id: 0,
                 parent_id: Some(row.id),
@@ -2994,8 +3042,7 @@ impl Component for WriteCursorComponent {
                 buf.splice(slice_lo..slice_hi, ins.as_bytes().iter().copied());
             }
             if buf != original && std::fs::write(&path, &buf).is_ok() {
-                ctx.bus
-                    .dispatch_dirty(FILE_DOMAIN, Some(file_dirty_key(&path)));
+                dispatch_file_dirty(ctx, &path);
             }
         }
         out
@@ -3046,8 +3093,7 @@ impl Component for WriteFileComponent {
             return Node::Emit(Arc::new(c.clone()));
         }
         if std::fs::write(&path, c.value.as_bytes()).is_ok() {
-            ctx.bus
-                .dispatch_dirty(FILE_DOMAIN, Some(file_dirty_key(&path)));
+            dispatch_file_dirty(ctx, &path);
         }
         Node::Emit(Arc::new(c.clone()))
     }

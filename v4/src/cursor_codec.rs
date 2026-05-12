@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use crate::{Cursor, CursorValue, FOCAL_TERM, Ref, StringId, Term, WhereBytesId};
+use crate::{Cursor, CursorValue, Ref, StringId, Term, WhereBytesId, FOCAL_TERM};
 
 fn encode_cursor_value(value: CursorValue) -> (u8, u64) {
     match value {
@@ -111,7 +111,10 @@ pub fn decode(buf: &[u8]) -> Result<Cursor, &'static str> {
         if p + 9 > buf.len() {
             return Err("buf too short for cursor_value");
         }
-        let cursor_value = decode_cursor_value(buf[p], u64::from_le_bytes(buf[p + 1..p + 9].try_into().unwrap()))?;
+        let cursor_value = decode_cursor_value(
+            buf[p],
+            u64::from_le_bytes(buf[p + 1..p + 9].try_into().unwrap()),
+        )?;
         p += 9;
         let value_id = StringId(read_u64(buf, &mut p, "buf too short for value_id")?);
         let at = Ref(read_u64(buf, &mut p, "buf too short for at_ref")?);

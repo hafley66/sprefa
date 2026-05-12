@@ -7,6 +7,7 @@
 //! the `EventBus` ready set (or the global tick) and re-enters `expand`
 //! to make progress.
 
+use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -96,6 +97,7 @@ pub struct ExpandOpts {
     pub bus:       Arc<EventBus>,
     pub diag:      Arc<dyn DiagSink>,
     pub batch_cap: usize,
+    pub runtime:   Option<Arc<dyn Any + Send + Sync>>,
 }
 
 pub const DEFAULT_BATCH_CAP: usize = 256;
@@ -106,6 +108,7 @@ impl Default for ExpandOpts {
             bus:       Arc::new(EventBus::new()),
             diag:      Arc::new(NoopDiagSink),
             batch_cap: DEFAULT_BATCH_CAP,
+            runtime:   None,
         }
     }
 }
@@ -125,6 +128,11 @@ impl ExpandOpts {
 
     pub fn with_batch_cap(mut self, cap: usize) -> Self {
         self.batch_cap = cap.max(1);
+        self
+    }
+
+    pub fn with_runtime<T: Any + Send + Sync>(mut self, runtime: Arc<T>) -> Self {
+        self.runtime = Some(runtime);
         self
     }
 }
@@ -193,9 +201,12 @@ pub fn expand<N: Next>(
         }
 
         let comp = &pipe.components[head_depth as usize];
-        let ctx  = RenderCtx::new(batch[0].pipe_hash, head_depth, expand_tick)
+        let mut ctx = RenderCtx::new(batch[0].pipe_hash, head_depth, expand_tick)
             .with_bus(opts.bus.clone())
             .with_diag(opts.diag.clone());
+        if let Some(runtime) = &opts.runtime {
+            ctx = ctx.with_runtime_any(runtime.clone());
+        }
 
         // PHASE E (deferred): reconciliation hook lives inside
         // `dispatch`. Before enqueueing new children, an override can

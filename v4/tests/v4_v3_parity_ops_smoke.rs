@@ -12,10 +12,11 @@ use effect_runtime::v2::{
 
 use v4::lower::{default_registry, DslBody, LowerCtx, Value};
 use v4::pipeline::{str_pipe, StrConstComponent};
+use v4::runtime_graph::{RuntimeGraph, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB};
 use v4::store::SprfStore;
 use v4::v2_ops::{
-    file_dirty_key, CollectComponent, CollectMode, CommentComponent, ReadComponent,
-    WriteCursorComponent, WriteMode, FILE_DOMAIN,
+    file_dirty_key, file_dirty_source_uri, CollectComponent, CollectMode, CommentComponent,
+    ReadComponent, WriteCursorComponent, WriteMode, FILE_DOMAIN,
 };
 use v4::Cursor;
 
@@ -237,6 +238,50 @@ fn split_on_value_emits_cursor_per_piece() {
     let out = run(p, seed);
     let vals: Vec<&str> = out.iter().map(|c| c.value.as_ref()).collect();
     assert_eq!(vals, vec!["alpha", "beta", "gamma"]);
+}
+
+#[test]
+fn sh_stdout_lines_can_bind_terms_with_split_line() {
+    use v4::lower::Value as V;
+    use v4::term::Term;
+
+    let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+    let reg = default_registry();
+    let sh = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "sh",
+            None,
+            vec![],
+            None,
+            Some((
+                DslBody {
+                    raw: Arc::from("printf 'alpha\\nbeta\\n\\ngamma\\n'"),
+                    interps: vec![],
+                },
+                br(0, 34),
+            )),
+            br(0, 34),
+        )
+        .unwrap();
+    let term = effect_runtime::v2::Pipe::new().step(Arc::new(Term::bind(Arc::<str>::from("TERM"))));
+    let split_line = reg
+        .lower(
+            &LowerCtx::new(store.clone(), std::env::temp_dir()),
+            "split_line",
+            None,
+            vec![(V::pipe(term), br(35, 40))],
+            None,
+            None,
+            br(35, 40),
+        )
+        .unwrap();
+
+    let out = run(sh.extend(split_line), Cursor::default());
+    let values: Vec<&str> = out.iter().map(|c| c.value.as_ref()).collect();
+    let terms: Vec<Option<&str>> = out.iter().map(|c| c.get("TERM")).collect();
+    assert_eq!(values, vec!["alpha", "beta", "gamma"]);
+    assert_eq!(terms, vec![Some("alpha"), Some("beta"), Some("gamma")]);
 }
 
 #[test]
@@ -570,7 +615,7 @@ fn write_file_writes_value_to_path_arg() {
 }
 
 #[test]
-fn write_file_publishes_file_dirty_after_write() {
+fn write_file_publishes_graph_file_dirty_after_write() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.txt");
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
@@ -594,6 +639,18 @@ fn write_file_publishes_file_dirty_after_write() {
     bus.add_listener(Arc::new(RecordingListener {
         events: events.clone(),
     }));
+    let sprf_store = SprfStore::new(store.clone());
+    let runtime_graph = Arc::new(RuntimeGraph::new(sprf_store, store.clone()));
+    let owner = runtime_graph.declare_owner(
+        "sprf://ast/test/write-file",
+        None,
+        "input",
+        "source",
+        "test",
+        1,
+    );
+    let source = runtime_graph.declare_source(file_dirty_source_uri(&path).as_str(), 1);
+    runtime_graph.subscribe(&owner, "file", &source, 1);
 
     let inst = p.into_instance();
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
@@ -601,15 +658,29 @@ fn write_file_publishes_file_dirty_after_write() {
         &inst,
         q,
         vec![Arc::new(seed)],
-        ExpandOpts::default().with_bus(bus),
+        ExpandOpts::default()
+            .with_bus(bus)
+            .with_runtime(runtime_graph.clone()),
     );
 
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "payload");
-    assert!(events.lock().unwrap().iter().any(|ev| matches!(
+    assert!(!events.lock().unwrap().iter().any(|ev| matches!(
         ev,
         Event::Dirty { domain, key }
             if domain.as_ref() == FILE_DOMAIN && *key == Some(file_dirty_key(&path))
     )));
+    assert!(
+        store.len(RUNTIME_EVENT) >= 1,
+        "write_file should append a graph source event for file dirty",
+    );
+    assert!(
+        store.len(RUNTIME_EDGE_VALUE) >= 1,
+        "write_file should update matching graph subscribe edge value",
+    );
+    assert!(
+        store.len(RUNTIME_JOB) >= 1,
+        "write_file graph wake should enqueue subscribed owners",
+    );
 }
 
 #[test]

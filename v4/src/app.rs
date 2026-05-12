@@ -41,11 +41,13 @@ use crate::compile::walk::walk_program;
 use crate::cst::dsl::Dsl;
 use crate::cst::dsls::sql::{SqlCol, SqlDsl, SqlLspCtx, SqlTable};
 #[cfg(feature = "ghcache")]
-use crate::git_watch::{dirty_notice, ghcache_dirty_notices};
+use crate::git_watch::{dirty_notice, ghcache_dirty_notices, ghcache_source_wakes};
 #[cfg(feature = "ghcache")]
 pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq};
 use crate::lower::{default_registry, LowerCtx, Registry};
 use crate::lsp::LSP_HOVER_CODE;
+use crate::runtime_graph::RuntimeGraph;
+use crate::runtime_replay::GraphReplayRunner;
 use crate::source::resolve_path_text;
 use crate::telemetry::{PipelineTelemetry, RunPhaseTelemetry, RunTelemetry};
 use crate::{Cursor, FOCAL_TERM};
@@ -507,6 +509,7 @@ pub struct SprfState {
     /// Threaded into `LowerCtx` so source/pattern emitters stamp the
     /// coord-space side of Cursor (`value_id`, `at`, `terms`).
     pub sprf_store: Arc<crate::store::SprfStore>,
+    pub runtime_graph: Arc<RuntimeGraph>,
     /// Layer 5a — XDG repos config. Bare `repo()` reads from this.
     /// `SprfState::new` loads from `~/.config/sprefa/repos.toml` via
     /// `SprfConfig::load_default`; tests inject explicit configs via
@@ -581,6 +584,7 @@ impl SprfState {
         let bus = Arc::new(EventBus::new());
         attach_dirty_to_queue(&bus, queue.clone());
         let sprf_store = crate::store::SprfStore::new(facts.clone());
+        let runtime_graph = Arc::new(RuntimeGraph::new(sprf_store.clone(), facts.clone()));
         let config = Arc::new(crate::config::SprfConfig::load_default());
         Self {
             docs: Mutex::new(HashMap::new()),
@@ -590,6 +594,7 @@ impl SprfState {
             instances: Mutex::new(Vec::new()),
             next_instance_id: Mutex::new(1),
             sprf_store,
+            runtime_graph,
             config,
             registry: Arc::new(default_registry()),
             root,
@@ -614,7 +619,8 @@ impl SprfState {
         inst
     }
 
-    fn resume_mounted(&self, opts: ExpandOpts) {
+    fn resume_mounted(&self, opts: ExpandOpts) -> u64 {
+        let mut total_rendered = 0;
         for _ in 0..8 {
             let instances = self.instances.lock().unwrap().clone();
             let mut rendered = 0;
@@ -622,6 +628,7 @@ impl SprfState {
                 rendered +=
                     expand(inst.as_ref(), self.queue.clone(), Vec::new(), opts.clone()).rendered;
             }
+            total_rendered += rendered;
             if rendered == 0 {
                 break;
             }
@@ -629,21 +636,57 @@ impl SprfState {
             self.sprf_store.flush();
             self.facts.commit(generation, Some(&self.bus));
         }
+        total_rendered
     }
 
     #[cfg(feature = "ghcache")]
     pub fn dispatch_ghcache_change(&self, change: &GhcacheChangeReq) -> Vec<DirtyNotice> {
         let mut notices = Vec::new();
         for (domain, key) in ghcache_dirty_notices(change) {
-            self.bus.dispatch_dirty(domain.clone(), key);
             notices.push(dirty_notice(domain, key));
+        }
+        let generation = *self.next_instance_id.lock().unwrap();
+        for wake in ghcache_source_wakes(change, generation) {
+            self.runtime_graph.dispatch_source_wake(wake);
         }
         notices
     }
 
     pub fn drain_ready(&self) {
-        let opts = ExpandOpts::default().with_bus(self.bus.clone());
-        self.resume_mounted(opts);
+        let opts = ExpandOpts::default()
+            .with_bus(self.bus.clone())
+            .with_runtime(self.runtime_graph.clone());
+        self.drain_runtime_until_idle(opts);
+    }
+
+    fn drain_runtime_until_idle(&self, opts: ExpandOpts) -> u64 {
+        let mut handled = 0;
+        for _ in 0..8 {
+            let graph_jobs = self.drain_graph_jobs();
+            if graph_jobs > 0 {
+                let generation = *self.next_instance_id.lock().unwrap();
+                self.sprf_store.flush();
+                self.facts.commit(generation, Some(&self.bus));
+            }
+            let rendered = self.resume_mounted(opts.clone());
+            handled += graph_jobs as u64 + rendered;
+            if graph_jobs == 0 && rendered == 0 {
+                break;
+            }
+        }
+        handled
+    }
+
+    pub fn drain_graph_jobs(&self) -> usize {
+        GraphReplayRunner {
+            facts: self.facts.clone(),
+            queue: self.queue.clone(),
+            bus: self.bus.clone(),
+            sprf_store: self.sprf_store.clone(),
+            runtime_graph: self.runtime_graph.clone(),
+            instances: self.instances.lock().unwrap().clone(),
+        }
+        .drain()
     }
 
     fn ingest(&self, uri: String, text: String, version: i32) {
@@ -919,7 +962,8 @@ impl SprfHandlers for SprfState {
         let opts = ExpandOpts::default()
             .with_batch_cap(batch_cap)
             .with_bus(self.bus.clone())
-            .with_diag(runtime_diags.clone());
+            .with_diag(runtime_diags.clone())
+            .with_runtime(self.runtime_graph.clone());
         let mut n = 0;
         let mut run_stats = effect_runtime::v2::ExpandStats::default();
         for (idx, pipe) in pipes.into_iter().enumerate() {
@@ -952,7 +996,7 @@ impl SprfHandlers for SprfState {
         self.facts.commit(generation, Some(&self.bus));
         phases.commit_ms = t.elapsed().as_secs_f64() * 1000.0;
         let t = std::time::Instant::now();
-        self.resume_mounted(opts);
+        self.drain_runtime_until_idle(opts);
         self.sprf_store.flush();
         phases.resume_ms = t.elapsed().as_secs_f64() * 1000.0;
 

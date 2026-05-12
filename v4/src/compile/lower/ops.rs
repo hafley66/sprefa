@@ -442,14 +442,6 @@ fn atom_arg(args: &[Value], i: usize) -> Arc<str> {
         _ => unreachable!("validate ensured Atom"),
     }
 }
-fn atom_string_vec(args: &[Value]) -> Vec<String> {
-    args.iter()
-        .map(|a| match a {
-            Value::Atom(s) => s.to_string(),
-            _ => unreachable!("validate ensured Atom"),
-        })
-        .collect()
-}
 
 // ─── fs ───────────────────────────────────────────────────────────────────
 
@@ -1824,6 +1816,7 @@ impl OperatorDef for RevDef {
 // `split(FROM, INTO?)\`sep\``     — read FROM term, bind INTO
 
 pub struct SplitDef;
+pub struct SplitLineDef;
 
 const SPLIT_SPEC: &[ArgSig] = &[ArgSig {
     kind: ArgKind::Variadic(&ArgKind::Any),
@@ -1831,6 +1824,58 @@ const SPLIT_SPEC: &[ArgSig] = &[ArgSig {
     doc: "0 args = on &.value; 1 arg = INTO?; 2 args = FROM, INTO?",
     required: false,
 }];
+
+fn lower_split_with_separator(
+    op: &str,
+    args: &[Value],
+    sep: &str,
+) -> Result<Pipe<Cursor>, LowerError> {
+    use crate::sprf_introspect::PipeIntrospect;
+
+    let pipe_term = |p: &Pipe<Cursor>| -> Option<String> {
+        if let Some(n) = p.binds_terms().first() {
+            return Some(n.to_string());
+        }
+        if let Some(n) = p.reads_terms().first() {
+            return Some(n.to_string());
+        }
+        None
+    };
+
+    let comp = match args.len() {
+        0 => SplitComponent::on_value(sep),
+        1 => match &args[0] {
+            Value::Pipe(p) => {
+                let into = pipe_term(p).ok_or_else(|| {
+                    LowerError::Unknown(format!("{op}: arg must be a term (INTO?)"))
+                })?;
+                SplitComponent::on_value(sep).into_term(&into)
+            }
+            Value::Atom(s) => SplitComponent::on_value(sep).into_term(s),
+        },
+        2 => {
+            let from = match &args[0] {
+                Value::Pipe(p) => pipe_term(p),
+                Value::Atom(s) => Some(s.to_string()),
+            };
+            let into = match &args[1] {
+                Value::Pipe(p) => pipe_term(p),
+                Value::Atom(s) => Some(s.to_string()),
+            };
+            let from = from
+                .ok_or_else(|| LowerError::Unknown(format!("{op}: 1st arg must be FROM term")))?;
+            let into = into
+                .ok_or_else(|| LowerError::Unknown(format!("{op}: 2nd arg must be INTO? term")))?;
+            SplitComponent::new(&from, sep, &into)
+        }
+        n => {
+            return Err(LowerError::Unknown(format!(
+                "{op}: takes 0, 1, or 2 args (got {n})"
+            )))
+        }
+    };
+    Ok(Pipe::new().step(Arc::new(comp)))
+}
 
 impl OperatorDef for SplitDef {
     fn name(&self) -> &'static str {
@@ -1851,58 +1896,30 @@ impl OperatorDef for SplitDef {
         _block: Option<Pipe<Cursor>>,
         dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        use crate::sprf_introspect::PipeIntrospect;
         let body = dsl.ok_or_else(|| {
             LowerError::Unknown("split: dsl body required (separator string)".into())
         })?;
-        let sep = body.raw.to_string();
+        lower_split_with_separator("split", args, &body.raw)
+    }
+}
 
-        // Pull a term name from a Value::Pipe (the X / X? bareword desugar).
-        let pipe_term = |p: &Pipe<Cursor>| -> Option<String> {
-            if let Some(n) = p.binds_terms().first() {
-                return Some(n.to_string());
-            }
-            if let Some(n) = p.reads_terms().first() {
-                return Some(n.to_string());
-            }
-            None
-        };
+impl OperatorDef for SplitLineDef {
+    fn name(&self) -> &'static str {
+        "split_line"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        SPLIT_SPEC
+    }
 
-        let comp = match args.len() {
-            0 => SplitComponent::on_value(&sep),
-            1 => match &args[0] {
-                Value::Pipe(p) => {
-                    let into = pipe_term(p).ok_or_else(|| {
-                        LowerError::Unknown("split: arg must be a term (INTO?)".into())
-                    })?;
-                    SplitComponent::on_value(&sep).into_term(&into)
-                }
-                Value::Atom(s) => SplitComponent::on_value(&sep).into_term(s),
-            },
-            2 => {
-                let from = match &args[0] {
-                    Value::Pipe(p) => pipe_term(p),
-                    Value::Atom(s) => Some(s.to_string()),
-                };
-                let into = match &args[1] {
-                    Value::Pipe(p) => pipe_term(p),
-                    Value::Atom(s) => Some(s.to_string()),
-                };
-                let from = from.ok_or_else(|| {
-                    LowerError::Unknown("split: 1st arg must be FROM term".into())
-                })?;
-                let into = into.ok_or_else(|| {
-                    LowerError::Unknown("split: 2nd arg must be INTO? term".into())
-                })?;
-                SplitComponent::new(&from, &sep, &into)
-            }
-            n => {
-                return Err(LowerError::Unknown(format!(
-                    "split: takes 0, 1, or 2 args (got {n})"
-                )))
-            }
-        };
-        Ok(Pipe::new().step(Arc::new(comp)))
+    fn lower(
+        &self,
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        lower_split_with_separator("split_line", args, "\n")
     }
 }
 

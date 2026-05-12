@@ -10,6 +10,7 @@ use std::sync::Arc;
 use effect_runtime::v2::{Component, FactStore, Node, RenderCtx};
 
 use crate::mounted_query;
+use crate::runtime_graph::RuntimeGraph;
 use crate::Cursor;
 
 // Re-exports so existing call sites keep compiling.
@@ -67,7 +68,7 @@ impl Component for FactWrite {
     /// Batch path — ONE store lock per component invocation, not per
     /// cursor. The batch is also the splice unit, so no per-row Node::Emit
     /// wrapping; we hand back exactly what came in.
-    fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         if batch.is_empty() {
             return Vec::new();
         }
@@ -112,6 +113,13 @@ impl Component for FactWrite {
             })
             .collect();
         self.store.insert_batch(&self.table, rows);
+        if let Some(graph) = ctx.runtime::<RuntimeGraph>() {
+            let source = graph.declare_source(
+                &format!("sprf://source/table/{}", self.table),
+                ctx.expand_tick,
+            );
+            graph.dispatch_dirty(&source, ctx.expand_tick);
+        }
         for (support_id, row_id) in support_rows {
             mounted_query::record_fact_supports(
                 self.store.as_ref(),

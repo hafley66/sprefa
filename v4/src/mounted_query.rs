@@ -5,14 +5,16 @@
 
 use std::sync::Arc;
 
-use effect_runtime::v2::{FactStore, Next, Node};
+use effect_runtime::v2::{FactStore, Next, Node, RenderCtx};
 
 use crate::cursor_codec;
+use crate::runtime_graph::{RuntimeGraph, SprfSubscribe, SprfSupportRows};
 use crate::Cursor;
 
 pub const OUTPUT_TABLE: &str = "mounted_query_output";
 pub const CURSOR_TABLE: &str = "mounted_query_cursor";
 pub const MOUNT_TABLE: &str = "mounted_query_mount";
+pub const INPUT_TABLE: &str = "mounted_query_input";
 pub const DEP_TABLE: &str = "mounted_query_dep";
 pub const SUPPORT_TABLE: &str = "mounted_query_support";
 pub const SUPPORT_CURSOR_ID: &str = "__support_cursor_id";
@@ -22,6 +24,7 @@ const INPUT_KEY: &str = "input_key";
 const GENERATION: &str = "generation";
 const CURSOR_ID: &str = "cursor_id";
 const CURSOR_BLOB: &str = "cursor_blob";
+const CURSOR_IDX: &str = "cursor_idx";
 const SQL: &str = "sql";
 const DEP_TABLE_NAME: &str = "dep_table";
 const SUPPORT_TABLE_NAME: &str = "support_table";
@@ -47,6 +50,13 @@ struct PersistedCursor {
     blob_hex: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MountedSqlSnapshot {
+    pub sql: String,
+    pub dep_tables: Vec<String>,
+    pub inputs: Vec<Cursor>,
+}
+
 impl FactMountedQueryStorage {
     pub fn new(store: Arc<dyn FactStore<Cursor>>) -> Self {
         Self { store }
@@ -58,6 +68,8 @@ impl FactMountedQueryStorage {
             .declare(OUTPUT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, CURSOR_ID]);
         self.store
             .declare(MOUNT_TABLE, &[MOUNT_ID, INPUT_KEY, GENERATION, SQL]);
+        self.store
+            .declare(INPUT_TABLE, &[MOUNT_ID, INPUT_KEY, CURSOR_IDX, CURSOR_BLOB]);
         self.store
             .declare(DEP_TABLE, &[MOUNT_ID, INPUT_KEY, DEP_TABLE_NAME]);
         self.store.declare(
@@ -100,10 +112,13 @@ impl FactMountedQueryStorage {
         generation: u64,
         mount_id: &str,
         input_key: &str,
+        batch: &[&Cursor],
         dep_tables: &[String],
     ) {
         self.store
             .delete_matching(MOUNT_TABLE, &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)]);
+        self.store
+            .delete_matching(INPUT_TABLE, &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)]);
         self.store
             .delete_matching(DEP_TABLE, &[(MOUNT_ID, mount_id), (INPUT_KEY, input_key)]);
 
@@ -113,6 +128,20 @@ impl FactMountedQueryStorage {
         mount.set(GENERATION, generation.to_string());
         mount.set(SQL, sql);
         self.store.insert_batch(MOUNT_TABLE, vec![Arc::new(mount)]);
+
+        let input_rows: Vec<Arc<Cursor>> = batch
+            .iter()
+            .enumerate()
+            .map(|(idx, cursor)| {
+                let mut row = Cursor::default();
+                row.set(MOUNT_ID, mount_id);
+                row.set(INPUT_KEY, input_key);
+                row.set(CURSOR_IDX, idx.to_string());
+                row.set(CURSOR_BLOB, hex(&cursor_codec::encode(cursor)));
+                Arc::new(row)
+            })
+            .collect();
+        self.store.insert_batch(INPUT_TABLE, input_rows);
 
         if dep_tables.is_empty() {
             return;
@@ -148,7 +177,7 @@ impl MountedQueryStorage for FactMountedQueryStorage {
 
         let mount_id = mount_id_for_sql(sql);
         let input_key = input_key_for_batch(batch);
-        self.record_mount(sql, generation, &mount_id, &input_key, dep_tables);
+        self.record_mount(sql, generation, &mount_id, &input_key, batch, dep_tables);
         let existing_cursor_ids = self.existing_cursor_ids(&mount_id, &input_key);
         let current_cursor_ids: std::collections::HashSet<String> =
             persisted.iter().map(|p| p.cursor_id.clone()).collect();
@@ -198,6 +227,150 @@ pub fn record_sql_outputs(
 ) -> Vec<Node<Cursor>> {
     FactMountedQueryStorage::new(store.clone())
         .record_sql_outputs(sql, generation, batch, dep_tables, nodes)
+}
+
+pub fn dirty_tables_for_sql_outputs(
+    store: &dyn FactStore<Cursor>,
+    sql: &str,
+    batch: &[&Cursor],
+    nodes: &[Node<Cursor>],
+) -> Vec<String> {
+    let mount_id = mount_id_for_sql(sql);
+    let input_key = input_key_for_batch(batch);
+    let existing_cursor_ids: std::collections::HashSet<String> = store
+        .rows_of(OUTPUT_TABLE)
+        .into_iter()
+        .filter(|row| {
+            row.get(MOUNT_ID) == Some(mount_id.as_str())
+                && row.get(INPUT_KEY) == Some(input_key.as_str())
+        })
+        .filter_map(|row| row.get(CURSOR_ID).map(str::to_string))
+        .collect();
+    let current_cursor_ids: std::collections::HashSet<String> =
+        persist_output_cursors(output_cursors(nodes))
+            .into_iter()
+            .map(|p| p.cursor_id)
+            .collect();
+    let removed_cursor_ids: std::collections::HashSet<&str> = existing_cursor_ids
+        .difference(&current_cursor_ids)
+        .map(|id| id.as_str())
+        .collect();
+    if removed_cursor_ids.is_empty() {
+        return Vec::new();
+    }
+
+    let support_rows = store.rows_of(SUPPORT_TABLE);
+    let mut dirty = Vec::new();
+    for row in &support_rows {
+        let Some(support_id) = row.get(SUPPORT_CURSOR_ID) else {
+            continue;
+        };
+        if !removed_cursor_ids.contains(support_id) {
+            continue;
+        }
+        let Some(table) = row.get(SUPPORT_TABLE_NAME) else {
+            continue;
+        };
+        let Some(row_id) = row.get(SUPPORT_ROW_ID) else {
+            continue;
+        };
+        let still_supported = support_rows.iter().any(|other| {
+            other
+                .get(SUPPORT_CURSOR_ID)
+                .map(|id| !removed_cursor_ids.contains(id))
+                .unwrap_or(false)
+                && other.get(SUPPORT_TABLE_NAME) == Some(table)
+                && other.get(SUPPORT_ROW_ID) == Some(row_id)
+        });
+        if !still_supported {
+            dirty.push(table.to_string());
+        }
+    }
+    dirty.sort();
+    dirty.dedup();
+    dirty
+}
+
+pub fn load_mounted_sql_snapshot(
+    store: &dyn FactStore<Cursor>,
+    mount_id: &str,
+    input_key: &str,
+) -> Option<MountedSqlSnapshot> {
+    let mount = store
+        .read_where(MOUNT_TABLE, MOUNT_ID, mount_id)
+        .into_iter()
+        .find(|row| row.get(INPUT_KEY) == Some(input_key))?;
+    let sql = mount.get(SQL)?.to_string();
+
+    let mut dep_tables: Vec<String> = store
+        .read_where(DEP_TABLE, MOUNT_ID, mount_id)
+        .into_iter()
+        .filter(|row| row.get(INPUT_KEY) == Some(input_key))
+        .filter_map(|row| row.get(DEP_TABLE_NAME).map(str::to_string))
+        .collect();
+    dep_tables.sort();
+    dep_tables.dedup();
+
+    let mut input_rows: Vec<(usize, Cursor)> = store
+        .read_where(INPUT_TABLE, MOUNT_ID, mount_id)
+        .into_iter()
+        .filter(|row| row.get(INPUT_KEY) == Some(input_key))
+        .filter_map(|row| {
+            let idx = row.get(CURSOR_IDX)?.parse().ok()?;
+            let bytes = unhex(row.get(CURSOR_BLOB)?)?;
+            let cursor = cursor_codec::decode(&bytes).ok()?;
+            Some((idx, cursor))
+        })
+        .collect();
+    input_rows.sort_by_key(|(idx, _)| *idx);
+    let inputs = input_rows.into_iter().map(|(_, cursor)| cursor).collect();
+
+    Some(MountedSqlSnapshot {
+        sql,
+        dep_tables,
+        inputs,
+    })
+}
+
+pub fn record_runtime_sql_mount(
+    ctx: &RenderCtx,
+    sql: &str,
+    batch: &[&Cursor],
+    dep_tables: &[String],
+    nodes: &[Node<Cursor>],
+) {
+    let Some(graph) = ctx.runtime::<RuntimeGraph>() else {
+        return;
+    };
+    let mount_id = mount_id_for_sql(sql);
+    let input_key = input_key_for_batch(batch);
+    let owner = graph.declare_owner(
+        &format!("sprf://ast/sql/{mount_id}"),
+        None,
+        input_key.as_str(),
+        mount_id.as_str(),
+        "sql",
+        ctx.expand_tick,
+    );
+
+    for dep_table in dep_tables {
+        let source =
+            graph.declare_source(&format!("sprf://source/table/{dep_table}"), ctx.expand_tick);
+        ctx.put(SprfSubscribe::new(
+            owner.clone(),
+            dep_table.as_str(),
+            source,
+            ctx.expand_tick,
+        ));
+    }
+
+    let output =
+        graph.declare_output_table(&format!("sprf://output/sql/{mount_id}"), ctx.expand_tick);
+    let rows: Vec<Cursor> = output_cursors(nodes)
+        .into_iter()
+        .map(|cursor| cursor_without_support(cursor.as_ref()))
+        .collect();
+    ctx.put(SprfSupportRows::new(owner, output, rows, ctx.expand_tick));
 }
 
 pub fn mount_id_for_sql(sql: &str) -> String {
@@ -395,6 +568,29 @@ fn hex(bytes: &[u8]) -> String {
         out.push(CHARS[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if text.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(text.len() / 2);
+    let bytes = text.as_bytes();
+    for pair in bytes.chunks_exact(2) {
+        let hi = hex_nibble(pair[0])?;
+        let lo = hex_nibble(pair[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Some(out)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

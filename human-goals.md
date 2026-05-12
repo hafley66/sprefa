@@ -459,6 +459,16 @@ OK, so wait. I have not read everything that you have sent but to give you an id
     <note>Storage pass landed: Cursor now stores Vec&lt;CursorTerm&gt; plus the process-local store handle. The focal & is a real CursorTerm, and Cursor derefs to it so cursor.value, cursor.at, cursor.value_id, and cursor.cursor_value continue to name the focal term during migration.</note>
     <note>raw_terms is removed from Cursor. Row::fields exposes the term list directly, default cursors place & first, and the queue codec serializes terms with each term's CursorValue/StringId/Ref.</note>
   </topic>
+  <topic name="v4-runtime-graph-retraction-migration" source="codex-session-2026-05-12" llm-tags="v4 runtime-graph retraction sqlite deterministic-resume source-wake mounted-sql read-continuation rxjs react-reconciler">
+    <note>This migration moved v4 from parked queue dirty-key wakeups toward a SQLite-backed runtime graph that can explain why an owner should rerun after process memory is gone.</note>
+    <note>Core graph shape: URI-shaped identities intern through _strings; runtime facts store nodes, edges, values, edge-local values, events, jobs, and continuations; subscriptions are owner-to-source edges; wakes are append-only source events; latest/readiness belongs to subscribe edges.</note>
+    <note>Retraction shape: output rows stay visible while at least one owner support remains. Removing one support retracts only when final support disappears. Empty visible deltas do not emit downstream wakes.</note>
+    <note>Mental model: React reconciler owner identity plus child/support edges decide keep/replace/retract; RxJS subscribe edges and source events model emissions; active child edges model switchMap; saga-style ops keep render surfaces pure and emit runtime effects through context.</note>
+    <note>Implementation landed: mounted SQL output reconciliation uses graph supports; table writes and source wakes enqueue graph jobs; graph replay runner reopens SQLite and reruns affected owners without durable queue row ids; read records continuations keyed by pipe hash, instance id, component depth, and encoded input cursor.</note>
+    <note>Legacy boundary after this pass: app runtime file writes and ghcache changes emit graph source wakes, not dual legacy dirty bus events. Queue remains as an execution implementation detail and for no-runtime fallback tests.</note>
+    <note>Design rule: durable reconciler identity cannot be queue id, pointer identity, insertion order, or process-local counter. Anything that must survive restart must be written as graph facts before completion.</note>
+    <note>Future impure/stateful operators should lower to explicit graph facts: source nodes, subscribe edges, edge-local values, active child edges, support edges, and event rows.</note>
+  </topic>
 </llm-zone>
 
 rules have enough syntax to equal this select + join, but we have no order/where/limit/group by hmmm. 

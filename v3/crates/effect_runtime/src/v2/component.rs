@@ -169,6 +169,7 @@ pub struct RenderCtx {
     pub expand_tick: ExpandTick,
     pub bus:         Arc<EventBus>,
     pub diag:        Arc<dyn DiagSink>,
+    runtime:         Option<Arc<dyn Any + Send + Sync>>,
 }
 
 impl RenderCtx {
@@ -179,6 +180,7 @@ impl RenderCtx {
             expand_tick,
             bus:  Arc::new(EventBus::new()),
             diag: Arc::new(NoopDiagSink),
+            runtime: None,
         }
     }
 
@@ -191,6 +193,32 @@ impl RenderCtx {
         self.diag = diag;
         self
     }
+
+    pub fn with_runtime<T: Any + Send + Sync>(mut self, runtime: Arc<T>) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    pub fn with_runtime_any(mut self, runtime: Arc<dyn Any + Send + Sync>) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    pub fn runtime<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        self.runtime
+            .as_ref()
+            .and_then(|runtime| runtime.clone().downcast::<T>().ok())
+    }
+
+    pub fn put<E: RuntimePut>(&self, effect: E) -> E::Output {
+        effect.apply(self)
+    }
+}
+
+pub trait RuntimePut {
+    type Output;
+
+    fn apply(self, ctx: &RenderCtx) -> Self::Output;
 }
 
 /// Type alias for the trait-object form a pipe stores. Reduces

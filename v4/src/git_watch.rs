@@ -3,6 +3,8 @@ use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::runtime_graph::{IntoSourceWakes, SourceWake};
+
 pub const GIT_REPO_DOMAIN: &str = "git/repo";
 pub const GIT_BRANCH_DOMAIN: &str = "git/branch";
 pub const GIT_PR_DOMAIN: &str = "git/pr";
@@ -93,10 +95,30 @@ pub fn ghcache_dirty_notices(change: &GhcacheChangeReq) -> Vec<(String, Option<N
     out
 }
 
+impl IntoSourceWakes for &GhcacheChangeReq {
+    fn into_source_wakes(self, generation: u64) -> Vec<SourceWake> {
+        ghcache_source_wakes(self, generation)
+    }
+}
+
+pub fn ghcache_source_wakes(change: &GhcacheChangeReq, generation: u64) -> Vec<SourceWake> {
+    ghcache_dirty_notices(change)
+        .into_iter()
+        .map(|(domain, key)| SourceWake::dirty(dirty_source_uri(domain.as_str(), key), generation))
+        .collect()
+}
+
 pub fn dirty_notice(domain: impl Into<String>, key: Option<NextKey>) -> DirtyNotice {
     DirtyNotice {
         domain: domain.into(),
         key_hex: key.map(hex_key),
+    }
+}
+
+pub fn dirty_source_uri(domain: &str, key: Option<NextKey>) -> String {
+    match key {
+        Some(key) => format!("sprf://source/dirty/{domain}/{}", hex_key(key)),
+        None => format!("sprf://source/dirty/{domain}/all"),
     }
 }
 

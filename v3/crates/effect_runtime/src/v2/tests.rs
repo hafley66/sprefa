@@ -223,6 +223,167 @@ fn sqlite_fact_store_allows_generation_user_column() {
     assert_eq!(rows[0].get("__support_cursor_id"), Some("c1"));
 }
 
+#[test]
+fn runtime_graph_supports_wake_resume_and_active_child_without_consumer_types() {
+    let store: Arc<dyn FactStore<LabCursor>> = Arc::new(MemFactStore::<LabCursor>::new());
+    let graph = FactRuntimeGraph::new(store.clone());
+
+    graph.insert_node(RuntimeNode {
+        node_id: "owner".into(),
+        kind_id: "owner-kind".into(),
+        ast_id: Some("ast".into()),
+        parent_id: None,
+        input_key: "input".into(),
+        source_key: "head".into(),
+        mode_id: Some("pure".into()),
+        generation: 1,
+    });
+    graph.insert_edge(RuntimeEdge {
+        edge_id: "sub-left".into(),
+        kind_id: "subscribe".into(),
+        from_id: "owner".into(),
+        to_id: "source-a".into(),
+        label_id: "left".into(),
+        generation: 1,
+    });
+    graph.insert_edge(RuntimeEdge {
+        edge_id: "sub-right".into(),
+        kind_id: "subscribe".into(),
+        from_id: "owner".into(),
+        to_id: "source-a".into(),
+        label_id: "right".into(),
+        generation: 1,
+    });
+    graph.insert_value(RuntimeValue {
+        value_id: "value-a".into(),
+        value_key: "hash-a".into(),
+        kind_id: "cursor-blob".into(),
+        payload: RuntimeValuePayload::InlineCell("blob-a".into()),
+        state_id: "ready".into(),
+        generation: 1,
+    });
+
+    let owners = graph.dispatch_wake(
+        "source-a",
+        "value-a",
+        "event-a",
+        "subscribe",
+        1,
+    );
+
+    assert_eq!(owners, vec!["owner".to_string()]);
+    assert_eq!(
+        graph.edge_values(&["sub-left".into(), "sub-right".into()]),
+        vec![Some("value-a".to_string()), Some("value-a".to_string())]
+    );
+    assert_eq!(graph.unconsumed_events().len(), 1);
+    graph.mark_event_consumed("event-a");
+    assert!(graph.unconsumed_events().is_empty());
+
+    let inserted = graph.replace_supports(
+        "owner",
+        "table-label",
+        &["row-a".into(), "row-b".into()],
+        "support",
+        2,
+    );
+    let updated = graph.replace_supports("owner", "table-label", &["row-b".into()], "support", 3);
+
+    assert_eq!(
+        inserted,
+        VisibleDelta {
+            inserted: vec!["row-a".to_string(), "row-b".to_string()],
+            retracted: Vec::new(),
+        }
+    );
+    assert_eq!(
+        updated,
+        VisibleDelta {
+            inserted: Vec::new(),
+            retracted: vec!["row-a".to_string()],
+        }
+    );
+
+    graph.insert_edge(RuntimeEdge {
+        edge_id: "active-old".into(),
+        kind_id: "active".into(),
+        from_id: "owner".into(),
+        to_id: "old-child".into(),
+        label_id: "active-inner".into(),
+        generation: 1,
+    });
+    graph.replace_active_child(
+        "owner",
+        "active-inner",
+        "new-child",
+        "active",
+        "active-new",
+        2,
+    );
+
+    assert_eq!(
+        graph.active_child("owner", "active-inner", "active"),
+        Some("new-child".to_string())
+    );
+}
+
+#[test]
+fn render_ctx_put_reconciles_runtime_effects_without_local_state() {
+    let store: Arc<dyn FactStore<LabCursor>> = Arc::new(MemFactStore::<LabCursor>::new());
+    let graph = Arc::new(FactRuntimeGraph::new(store));
+    let ctx = RenderCtx::new(1, 2, 3).with_runtime(graph.clone());
+
+    let value_id = ctx.put(EmitValue::<LabCursor>::new(RuntimeValue {
+        value_id: "value-a".into(),
+        value_key: "hash-a".into(),
+        kind_id: "cursor-cell".into(),
+        payload: RuntimeValuePayload::None,
+        state_id: "ready".into(),
+        generation: 1,
+    }));
+    graph.set_edge_value("edge-a", "left", value_id.as_str(), 1);
+
+    let sub = ctx.put(Subscribe::<LabCursor>::new(
+        "owner",
+        "left",
+        "source",
+        "edge-a",
+        "subscribe",
+        1,
+    ));
+    let delta = ctx.put(SupportRows::<LabCursor>::new(
+        "owner",
+        "table",
+        vec!["row-a".into()],
+        "support",
+        1,
+    ));
+    let active = ctx.put(ActiveChild::<LabCursor>::new(
+        "owner",
+        "active-inner",
+        "child",
+        "active",
+        "active-edge",
+        1,
+    ));
+
+    assert_eq!(
+        sub,
+        SubResult {
+            edge_id: "edge-a".into(),
+            latest: Some("value-a".into()),
+        }
+    );
+    assert_eq!(
+        delta,
+        VisibleDelta {
+            inserted: vec!["row-a".into()],
+            retracted: Vec::new(),
+        }
+    );
+    assert_eq!(active, Some("child".into()));
+}
+
 #[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_fact_store_identity_uses_declared_columns() {
