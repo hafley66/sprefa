@@ -24,6 +24,7 @@ use crate::compile::lower::value::{CallArg, Value};
 use crate::fact::{FactWrite, WriteAssign, WriteValue};
 use crate::mounted_query;
 use crate::rule::{RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
+use crate::runtime_graph::RuntimeGraph;
 use crate::sprf_introspect::PipeIntrospect;
 use crate::{Cursor, FOCAL_TERM};
 
@@ -53,6 +54,10 @@ impl SqlQueryComponent {
             cache: Mutex::new(BTreeMap::new()),
         }
     }
+
+    pub fn sql(&self) -> &str {
+        self.sql.as_ref()
+    }
 }
 
 impl Component for SqlQueryComponent {
@@ -68,6 +73,9 @@ impl Component for SqlQueryComponent {
         let nodes = self.render_batch(ctx, &inputs);
         for (row, node) in rows.iter().zip(nodes) {
             splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+            if ctx.runtime::<RuntimeGraph>().is_some() {
+                continue;
+            }
             for table in self.referenced_tables.iter() {
                 queue.enqueue_replacing_parked(QueueRow {
                     id: 0,
@@ -101,6 +109,13 @@ impl Component for SqlQueryComponent {
             batch,
         );
         if let Some(cached) = self.cache.lock().unwrap().get(&key).cloned() {
+            mounted_query::record_runtime_sql_mount(
+                ctx,
+                self.sql.as_ref(),
+                batch,
+                &self.referenced_tables,
+                &cached,
+            );
             return mounted_query::record_sql_outputs(
                 &self.store,
                 self.sql.as_ref(),
@@ -123,6 +138,13 @@ impl Component for SqlQueryComponent {
                 batch.iter().map(|_| Node::Done).collect()
             }
         };
+        mounted_query::record_runtime_sql_mount(
+            ctx,
+            self.sql.as_ref(),
+            batch,
+            &self.referenced_tables,
+            &result,
+        );
         let added = mounted_query::record_sql_outputs(
             &self.store,
             self.sql.as_ref(),
@@ -137,6 +159,10 @@ impl Component for SqlQueryComponent {
 
     fn purity(&self) -> Purity {
         Purity::Read
+    }
+
+    fn describe(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
 }
 
@@ -162,7 +188,7 @@ fn sql_batch_cache_key(
     *h.finalize().as_bytes()
 }
 
-fn run_sql_batch(
+pub fn run_sql_batch(
     store: &dyn FactStore<Cursor>,
     sql: &str,
     referenced_tables: &[String],
@@ -272,7 +298,11 @@ fn dedupe_nodes_by_cursor_hash(nodes: Vec<Node<Cursor>>) -> Vec<Node<Cursor>> {
 fn materialize_input(conn: &Connection, batch: &[&Cursor]) -> Result<(), String> {
     let mut cols = BTreeSet::new();
     for cursor in batch {
-        for term in cursor.terms.iter().filter(|t| t.name.as_ref() != FOCAL_TERM) {
+        for term in cursor
+            .terms
+            .iter()
+            .filter(|t| t.name.as_ref() != FOCAL_TERM)
+        {
             if term.name.as_ref() != "__cursor_idx" && term.name.as_ref() != "value" {
                 cols.insert(term.name.to_string());
             }
@@ -712,9 +742,13 @@ pub fn rule_table_call_pipe(
         sql.push_str(&predicates.join(" AND "));
     }
 
-    Ok(Pipe::new().step(Arc::new(
-        SqlQueryComponent::with_referenced_tables(ctx.store.clone(), sql, vec![table.to_string()]),
-    )))
+    Ok(
+        Pipe::new().step(Arc::new(SqlQueryComponent::with_referenced_tables(
+            ctx.store.clone(),
+            sql,
+            vec![table.to_string()],
+        ))),
+    )
 }
 
 pub fn rule_apply_write_pipe(

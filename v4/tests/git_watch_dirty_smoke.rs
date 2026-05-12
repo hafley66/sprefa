@@ -1,14 +1,15 @@
 #![cfg(feature = "ghcache")]
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
-use effect_runtime::v2::{NextKey, QueueBackend, QueueRow, Wake};
 use serde_json::json;
 use v4::app::{
     build_router, GhcacheChangeReq, InProcessClient, NotifyGhcacheChangeReq, SprfClient, SprfState,
 };
-use v4::git_watch::{git_branch_dirty_key, git_repo_dirty_key, GIT_BRANCH_DOMAIN, GIT_REPO_DOMAIN};
+use v4::git_watch::{
+    dirty_source_uri, git_branch_dirty_key, git_repo_dirty_key, GIT_BRANCH_DOMAIN, GIT_REPO_DOMAIN,
+};
+use v4::runtime_graph::{RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB};
 
 #[tokio::test]
 async fn ghcache_branch_change_dispatches_repo_and_branch_dirty_keys() {
@@ -18,8 +19,21 @@ async fn ghcache_branch_change_dispatches_repo_and_branch_dirty_keys() {
 
     let repo_key = git_repo_dirty_key("acme/api");
     let branch_key = git_branch_dirty_key("acme/api", "main");
-    park_probe(state.queue.as_ref(), GIT_REPO_DOMAIN, repo_key);
-    park_probe(state.queue.as_ref(), GIT_BRANCH_DOMAIN, branch_key);
+    let owner = state.runtime_graph.declare_owner(
+        "sprf://ast/test/ghcache-branch",
+        None,
+        "input",
+        "source",
+        "test",
+        1,
+    );
+    let branch_source = state.runtime_graph.declare_source(
+        dirty_source_uri(GIT_BRANCH_DOMAIN, Some(branch_key)).as_str(),
+        1,
+    );
+    state
+        .runtime_graph
+        .subscribe(&owner, "branch", &branch_source, 1);
 
     let notices = client
         .notify_ghcache_change(NotifyGhcacheChangeReq {
@@ -47,29 +61,21 @@ async fn ghcache_branch_change_dispatches_repo_and_branch_dirty_keys() {
             (GIT_BRANCH_DOMAIN, Some(hex_key(branch_key))),
         ],
     );
-    assert_eq!(state.queue.pull_runnable_batch(0, 8).len(), 2);
     assert_eq!(state.queue.depth(), 0);
+    assert!(
+        state.facts.len(RUNTIME_EVENT) >= 1,
+        "ghcache change should also append runtime graph source events",
+    );
+    assert!(
+        state.facts.len(RUNTIME_EDGE_VALUE) >= 1,
+        "ghcache change should update graph subscribe edge-local values",
+    );
+    assert!(
+        state.facts.len(RUNTIME_JOB) >= 1,
+        "ghcache graph wake should enqueue subscribed owners",
+    );
 }
 
-fn park_probe(queue: &dyn QueueBackend<v4::Cursor>, domain: &'static str, key: NextKey) {
-    queue.enqueue_replacing_parked(QueueRow {
-        id: 0,
-        parent_id: None,
-        batch_idx: 0,
-        path: Vec::new(),
-        pipe_hash: 1,
-        instance_id: 1,
-        depth: 0,
-        value: Arc::new(v4::Cursor::default()),
-        wake: Wake::Key {
-            domain: Cow::Borrowed(domain),
-            key,
-        },
-        expand_tick: 0,
-        enqueued_at_ns: 0,
-    });
-}
-
-fn hex_key(key: NextKey) -> String {
+fn hex_key(key: effect_runtime::v2::NextKey) -> String {
     key.0.iter().map(|b| format!("{b:02x}")).collect()
 }

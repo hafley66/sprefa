@@ -14,6 +14,8 @@ pub mod mounted_query;
 pub mod pipeline;
 pub mod rule;
 pub mod runtime_bridge;
+pub mod runtime_graph;
+pub mod runtime_replay;
 pub mod source;
 pub mod sprf_introspect;
 pub mod sql;
@@ -39,9 +41,9 @@ pub use config::{RepoConfig, SprfConfig};
 //   `crate::fact`.
 
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
 
@@ -450,7 +452,9 @@ impl DerefMut for Cursor {
 
 impl Cursor {
     fn focal_index(&self) -> Option<usize> {
-        self.terms.iter().position(|t| t.name.as_ref() == FOCAL_TERM)
+        self.terms
+            .iter()
+            .position(|t| t.name.as_ref() == FOCAL_TERM)
     }
 
     fn ensure_focal_index(&mut self) -> usize {

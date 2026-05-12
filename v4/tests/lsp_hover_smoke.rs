@@ -139,10 +139,7 @@ async fn lsp_hover_inside_path_body_reports_checked_path_status() {
         .unwrap();
 
     let expected = format!("path\nfile\n{}", tmp.path().join("exists.txt").display());
-    assert_eq!(
-        hover.contents.as_deref(),
-        Some(expected.as_str()),
-    );
+    assert_eq!(hover.contents.as_deref(), Some(expected.as_str()),);
 }
 
 #[tokio::test]

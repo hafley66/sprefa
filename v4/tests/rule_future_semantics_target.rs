@@ -8,6 +8,9 @@ use effect_runtime::v2::{
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
+use v4::runtime_graph::RuntimeGraph;
+use v4::runtime_replay::GraphReplayRunner;
+use v4::store::SprfStore;
 use v4::v2_ops::{CollectComponent, CollectMode};
 use v4::Cursor;
 
@@ -15,7 +18,9 @@ struct LiveHarness {
     store: Arc<dyn FactStore<Cursor>>,
     queue: Arc<dyn QueueBackend<Cursor>>,
     bus: Arc<EventBus>,
-    instances: Vec<PipeInstance<Cursor>>,
+    sprf_store: Arc<SprfStore>,
+    runtime_graph: Arc<RuntimeGraph>,
+    instances: Vec<Arc<PipeInstance<Cursor>>>,
     next_instance_id: u64,
 }
 
@@ -25,10 +30,14 @@ impl LiveHarness {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let bus = Arc::new(EventBus::new());
         attach_dirty_to_queue(&bus, queue.clone());
+        let sprf_store = SprfStore::new(store.clone());
+        let runtime_graph = Arc::new(RuntimeGraph::new(sprf_store.clone(), store.clone()));
         Self {
             store,
             queue,
             bus,
+            sprf_store,
+            runtime_graph,
             instances: Vec::new(),
             next_instance_id: 1,
         }
@@ -39,18 +48,22 @@ impl LiveHarness {
         assert!(parse_diags.is_empty(), "parse diags: {parse_diags:?}");
 
         let reg = default_registry();
-        let mut ctx = LowerCtx::new(self.store.clone(), std::env::temp_dir());
+        let mut ctx = LowerCtx::new(self.store.clone(), std::env::temp_dir())
+            .with_sprf_store(self.sprf_store.clone());
         let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
         assert!(walk_diags.is_empty(), "walk diags: {walk_diags:?}");
 
-        let opts = ExpandOpts::default().with_bus(self.bus.clone());
+        let opts = ExpandOpts::default()
+            .with_bus(self.bus.clone())
+            .with_runtime(self.runtime_graph.clone());
         for pipe in pipes {
             let mut inst = pipe.into_instance();
             inst.pipe_hash = self.next_instance_id;
             inst.instance_id = self.next_instance_id;
             self.next_instance_id += 1;
+            let inst = Arc::new(inst);
             expand(
-                &inst,
+                inst.as_ref(),
                 self.queue.clone(),
                 vec![Arc::new(Cursor::default())],
                 opts.clone(),
@@ -58,7 +71,9 @@ impl LiveHarness {
             self.instances.push(inst);
         }
 
+        self.sprf_store.flush();
         self.store.commit(self.next_instance_id, Some(&self.bus));
+        self.drain_graph_jobs();
         self.resume(opts);
     }
 
@@ -66,20 +81,36 @@ impl LiveHarness {
         for _ in 0..8 {
             let mut rendered = 0;
             for inst in self.instances.iter().filter(|inst| has_sql_component(inst)) {
-                rendered += expand(inst, self.queue.clone(), Vec::new(), opts.clone()).rendered;
+                rendered +=
+                    expand(inst.as_ref(), self.queue.clone(), Vec::new(), opts.clone()).rendered;
             }
             for inst in self
                 .instances
                 .iter()
                 .filter(|inst| !has_sql_component(inst))
             {
-                rendered += expand(inst, self.queue.clone(), Vec::new(), opts.clone()).rendered;
+                rendered +=
+                    expand(inst.as_ref(), self.queue.clone(), Vec::new(), opts.clone()).rendered;
             }
             if rendered == 0 {
                 break;
             }
+            self.sprf_store.flush();
             self.store.commit(self.next_instance_id, Some(&self.bus));
+            self.drain_graph_jobs();
         }
+    }
+
+    fn drain_graph_jobs(&self) -> usize {
+        GraphReplayRunner {
+            facts: self.store.clone(),
+            queue: self.queue.clone(),
+            bus: self.bus.clone(),
+            sprf_store: self.sprf_store.clone(),
+            runtime_graph: self.runtime_graph.clone(),
+            instances: self.instances.clone(),
+        }
+        .drain()
     }
 }
 
@@ -198,8 +229,8 @@ fn mounted_query_reacts_to_late_relation_write() {
     );
     assert_eq!(
         runtime.queue.depth(),
-        1,
-        "mounted sql should keep one parked continuation for this table/input",
+        0,
+        "mounted sql should use runtime graph jobs instead of parked queue continuations",
     );
 }
 
@@ -258,7 +289,7 @@ fn mounted_query_persists_outputs_by_mount_and_input_key() {
         mounted_deps
             .iter()
             .any(|row| row.get("dep_table") == Some("frontend_hooks")),
-        "mounted query should persist referenced relation deps for future table-dirty wakeups",
+        "mounted query should persist referenced relation deps for future graph wakeups",
     );
 
     let mounted_mounts = store.rows_of("mounted_query_mount");
@@ -320,8 +351,8 @@ fn mounted_query_rerun_emits_only_new_output_hashes() {
     );
     assert_eq!(
         runtime.queue.depth(),
-        1,
-        "mounted sql should replace its prior parked continuation on rerun",
+        0,
+        "mounted sql should rerun through graph jobs instead of parked queue continuations",
     );
 }
 

@@ -46,6 +46,7 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::RepoDef));
     r.register(Arc::new(ops::RevDef));
     r.register(Arc::new(ops::SplitDef));
+    r.register(Arc::new(ops::SplitLineDef));
     r.register(Arc::new(ops::ReadDef));
     r.register(Arc::new(ops::CommentDef));
     r.register(Arc::new(ops::WriteCursorDef));

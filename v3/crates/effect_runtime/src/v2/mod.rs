@@ -20,6 +20,7 @@ pub mod codec;
 pub mod effect_dispatch;
 pub mod memoize;
 pub mod query;
+pub mod runtime_graph;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_queue;
 #[cfg(feature = "sqlite")]
@@ -55,13 +56,17 @@ pub use memoize::{
     CacheCascadeListener, MemoCache, MemoKey, Memoize,
 };
 pub use query::{attach_query_cache_to_bus, Query, QueryCache, QueryFn, QueryStatus};
+pub use runtime_graph::{
+    ActiveChild, EmitValue, FactRuntimeGraph, RuntimeEdge, RuntimeEvent, RuntimeNode,
+    RuntimeValue, RuntimeValuePayload, SubResult, Subscribe, SupportRows, VisibleDelta,
+};
 #[cfg(feature = "sqlite")]
 pub use sqlite_queue::SqliteQueue;
 #[cfg(feature = "sqlite")]
 pub use hybrid_queue::{HybridCfg, HybridQueue};
 pub use node::Node;
 pub use component::{
-    par_render, Component, ComponentLifecycle, DynComponent, Purity, RenderCtx,
+    par_render, Component, ComponentLifecycle, DynComponent, Purity, RenderCtx, RuntimePut,
 };
 pub use flatten::{splice_into, splice_into_at, splice_into_recorded, splice_into_recorded_at};
 pub use prior_children::{diff_children, ChildDiff, ContentHash, PriorChildIndex};
