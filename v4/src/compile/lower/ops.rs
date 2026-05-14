@@ -1465,6 +1465,47 @@ impl OperatorDef for FactWriteDef {
     }
 }
 
+// ─── where ────────────────────────────────────────────────────────────────
+// `where EXPR` is the predicate slot for fused-SQL rule bodies. The
+// parenless surface (`where ${A} != ${B}`) is rewritten in host_parse
+// into `where(${A} != ${B})`. The slot's text is captured raw and
+// handed to the fuser for predicate pushdown (P2). Runtime semantics
+// for the streamed-Rust fallback are out of scope for this op today —
+// the fuser's full-SQL path is the primary consumer.
+
+pub struct WhereDef;
+
+const WHERE_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Variadic(&ArgKind::Any),
+    name: "predicate",
+    doc: "predicate expression in sql shape; bound and read captures only",
+    required: false,
+}];
+
+impl OperatorDef for WhereDef {
+    fn name(&self) -> &'static str {
+        "where"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        WHERE_SPEC
+    }
+
+    fn lower(
+        &self,
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        // Streamed-Rust runtime support is the fuser's job. For now,
+        // surface as a pass-through so legacy paths that include
+        // `where` in a body don't crash; the fuser intercepts it
+        // before lowering.
+        Ok(Pipe::new().step(Arc::new(VoidComponent)))
+    }
+}
+
 // ─── tag ──────────────────────────────────────────────────────────────────
 // `tag(:rel, X, Y)` writes one row into relation `rel`. The first atom
 // names the target table; remaining positional args supply cell values.

@@ -38,6 +38,7 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::TermBindDef));
     r.register(Arc::new(ops::FactWriteDef));
     r.register(Arc::new(ops::TagDef));
+    r.register(Arc::new(ops::WhereDef));
     r.register(Arc::new(ops::NextDef));
     r.register(Arc::new(ops::NextQDef));
     r.register(Arc::new(ops::VoidDef));
