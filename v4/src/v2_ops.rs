@@ -930,7 +930,9 @@ impl Component for AstNmComponent {
                                 // Term-side coord projection for ${MATCH.lo}/${MATCH.hi}/${MATCH.fs}.
                                 child.set("MATCH_LO", coord.lo.to_string());
                                 child.set("MATCH_HI", coord.hi.to_string());
-                                if let Some(path) = store.path_of(coord.fs) {
+                                if let Some(path) = source_path.as_deref() {
+                                    child.set("MATCH_FS", path);
+                                } else if let Some(path) = store.path_of(coord.fs) {
                                     child.set("MATCH_FS", &*path);
                                 }
                             },
