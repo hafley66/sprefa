@@ -20,7 +20,9 @@ pub struct Generation(pub u64);
 
 impl Generation {
     pub const ZERO: Self = Self(0);
-    pub fn raw(self) -> u64 { self.0 }
+    pub fn raw(self) -> u64 {
+        self.0
+    }
 }
 
 impl std::fmt::Display for Generation {
@@ -36,7 +38,11 @@ pub struct GenCounter {
 }
 
 impl GenCounter {
-    pub fn new() -> Self { Self { inner: AtomicU64::new(0) } }
+    pub fn new() -> Self {
+        Self {
+            inner: AtomicU64::new(0),
+        }
+    }
 
     /// Sample the current round. Acquire load — sees every value
     /// previously written by any thread before this load returned.
@@ -53,7 +59,9 @@ impl GenCounter {
 }
 
 impl Default for GenCounter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -88,10 +96,14 @@ mod tests {
         for _ in 0..8 {
             let g = Arc::clone(&g);
             handles.push(thread::spawn(move || {
-                for _ in 0..1000 { g.bump(); }
+                for _ in 0..1000 {
+                    g.bump();
+                }
             }));
         }
-        for h in handles { h.join().unwrap(); }
+        for h in handles {
+            h.join().unwrap();
+        }
         assert_eq!(g.current(), Generation(8 * 1000));
     }
 

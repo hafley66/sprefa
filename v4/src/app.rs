@@ -28,8 +28,8 @@ use axum::{
 use bytes::Bytes;
 use effect_runtime::v2::{
     attach_dirty_to_queue, expand, BufferProbeSink, Component, Diag, DiagSink, EventBus,
-    ExpandOpts, FactStore, MemFactStore, MemQueue, Node, Pipe, PipeInstance, ProbeSink, Purity,
-    QueueBackend, SqliteFactStore, SqliteQueue,
+    ExpandOpts, FactStore, HybridCfg, HybridQueue, MemFactStore, MemQueue, Node, Pipe,
+    PipeInstance, ProbeSink, Purity, QueueBackend, SqliteFactStore,
 };
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
@@ -546,19 +546,25 @@ impl SprfState {
         Self::new_with_backends(
             root,
             Arc::new(MemFactStore::<Cursor>::new()),
-            Arc::new(SqliteQueue::<Cursor>::open_file(queue_path.as_ref())),
+            Arc::new(
+                HybridQueue::<Cursor>::open_file(queue_path.as_ref(), HybridCfg::default())
+                    .expect("open hybrid sqlite queue"),
+            ),
         )
     }
 
     pub fn new_with_sqlite_facts(root: PathBuf, fact_path: impl AsRef<std::path::Path>) -> Self {
-        Self::new_with_backends(
-            root,
-            Arc::new(
-                SqliteFactStore::<Cursor>::open_file(fact_path.as_ref())
-                    .expect("open sqlite fact store"),
-            ),
-            Arc::new(MemQueue::new()),
-        )
+        let facts: Arc<dyn FactStore<Cursor>> = Arc::new(
+            SqliteFactStore::<Cursor>::open_file(fact_path.as_ref())
+                .expect("open sqlite fact store"),
+        );
+        let mut state = Self::new_with_backends(root, facts, Arc::new(MemQueue::new()));
+        state.runtime_graph = Arc::new(RuntimeGraph::new_with_compact_sources(
+            state.sprf_store.clone(),
+            state.facts.clone(),
+            fact_path.as_ref(),
+        ));
+        state
     }
 
     pub fn new_with_sqlite_backends(
@@ -566,14 +572,24 @@ impl SprfState {
         fact_path: impl AsRef<std::path::Path>,
         queue_path: impl AsRef<std::path::Path>,
     ) -> Self {
-        Self::new_with_backends(
+        let facts: Arc<dyn FactStore<Cursor>> = Arc::new(
+            SqliteFactStore::<Cursor>::open_file(fact_path.as_ref())
+                .expect("open sqlite fact store"),
+        );
+        let mut state = Self::new_with_backends(
             root,
+            facts,
             Arc::new(
-                SqliteFactStore::<Cursor>::open_file(fact_path.as_ref())
-                    .expect("open sqlite fact store"),
+                HybridQueue::<Cursor>::open_file(queue_path.as_ref(), HybridCfg::default())
+                    .expect("open hybrid sqlite queue"),
             ),
-            Arc::new(SqliteQueue::<Cursor>::open_file(queue_path.as_ref())),
-        )
+        );
+        state.runtime_graph = Arc::new(RuntimeGraph::new_with_compact_sources(
+            state.sprf_store.clone(),
+            state.facts.clone(),
+            fact_path.as_ref(),
+        ));
+        state
     }
 
     pub fn new_with_backends(
@@ -952,18 +968,22 @@ impl SprfHandlers for SprfState {
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
         phases.lower_ms = t.elapsed().as_secs_f64() * 1000.0;
 
-        // 4096 matches v4-bench. Smaller caps multiply per-batch lock
+        // 65536 matches v4-bench. Smaller caps multiply per-batch lock
         // overhead in batched sinks (FactWrite et al.).
         let runtime_diags = Arc::new(BufferDiagSink::new());
         let batch_cap = std::env::var("SPREFA_BATCH_CAP")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(4096);
+            .unwrap_or(65536);
         let opts = ExpandOpts::default()
             .with_batch_cap(batch_cap)
             .with_bus(self.bus.clone())
             .with_diag(runtime_diags.clone())
             .with_runtime(self.runtime_graph.clone());
+        let opts = match telemetry.as_ref() {
+            Some(t) => opts.with_telemetry(t.effect.clone()),
+            None => opts,
+        };
         let mut n = 0;
         let mut run_stats = effect_runtime::v2::ExpandStats::default();
         for (idx, fused) in pipes.into_iter().enumerate() {
@@ -1019,6 +1039,7 @@ impl SprfHandlers for SprfState {
         let telemetry = telemetry.map(|t| {
             let mut snapshot = t.snapshot_with_phases(run_start.elapsed(), run_stats, phases);
             snapshot.fact_store = self.facts.stats().map(Into::into);
+            snapshot.runtime_graph = self.runtime_graph.stats();
             snapshot
         });
 

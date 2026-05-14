@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
     splice_into, table_dirty_key, Component, Diag, FactStore, Next, Node, Pipe, Purity,
-    QueueBackend, QueueRow, RenderCtx, Wake, TABLE_DOMAIN,
+    QueueBackend, QueueRow, RenderCtx, SqliteFactStore, Wake, TABLE_DOMAIN,
 };
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection};
@@ -33,6 +33,15 @@ pub struct SqlQueryComponent {
     sql: Arc<str>,
     referenced_tables: Arc<Vec<String>>,
     cache: Mutex<BTreeMap<[u8; 32], Vec<Node<Cursor>>>>,
+    terminal_fact: Option<TerminalFactWrite>,
+}
+
+const SQL_DISPATCH_ROW_CHUNK: usize = 2_048;
+
+#[derive(Clone)]
+struct TerminalFactWrite {
+    store: Arc<dyn FactStore<Cursor>>,
+    table: Arc<str>,
 }
 
 impl SqlQueryComponent {
@@ -52,11 +61,33 @@ impl SqlQueryComponent {
             sql: sql.into(),
             referenced_tables: Arc::new(referenced_tables),
             cache: Mutex::new(BTreeMap::new()),
+            terminal_fact: None,
         }
     }
 
     pub fn sql(&self) -> &str {
         self.sql.as_ref()
+    }
+
+    pub fn with_terminal_fact_write(
+        &self,
+        store: Arc<dyn FactStore<Cursor>>,
+        table: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            store: self.store.clone(),
+            sql: self.sql.clone(),
+            referenced_tables: self.referenced_tables.clone(),
+            cache: Mutex::new(BTreeMap::new()),
+            terminal_fact: Some(TerminalFactWrite {
+                store,
+                table: table.into(),
+            }),
+        }
+    }
+
+    pub fn has_terminal_fact_write(&self) -> bool {
+        self.terminal_fact.is_some()
     }
 }
 
@@ -69,32 +100,45 @@ impl Component for SqlQueryComponent {
         rows: &[QueueRow<Cursor>],
         queue: &dyn QueueBackend<Cursor>,
     ) {
-        let inputs: Vec<&Cursor> = rows.iter().map(|r| r.value.as_ref()).collect();
-        let nodes = self.render_batch(ctx, &inputs);
-        for (row, node) in rows.iter().zip(nodes) {
-            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
-            if ctx.runtime::<RuntimeGraph>().is_some() {
-                continue;
+        let active_len = if self.terminal_fact.is_some() {
+            rows.len()
+        } else if should_chunk_sql_dispatch(self.sql.as_ref()) {
+            rows.len().min(SQL_DISPATCH_ROW_CHUNK)
+        } else {
+            rows.len()
+        };
+        let active_rows = &rows[..active_len];
+        let inputs: Vec<&Cursor> = active_rows.iter().map(|r| r.value.as_ref()).collect();
+        if let Some(terminal_fact) = &self.terminal_fact {
+            match run_sql_terminal_output_cursors(
+                self.store.as_ref(),
+                self.sql.as_ref(),
+                &self.referenced_tables,
+                &inputs,
+            ) {
+                Ok(outputs) => {
+                    mounted_query::record_runtime_sql_mount_count(
+                        ctx,
+                        self.sql.as_ref(),
+                        &inputs,
+                        &self.referenced_tables,
+                        outputs.len(),
+                    );
+                    insert_terminal_fact_outputs(ctx, terminal_fact, outputs);
+                }
+                Err(e) => ctx.diag.emit(Diag::error("sql/runtime", e)),
             }
-            for table in self.referenced_tables.iter() {
-                queue.enqueue_replacing_parked(QueueRow {
-                    id: 0,
-                    parent_id: Some(row.id),
-                    batch_idx: row.batch_idx,
-                    path: row.path.clone(),
-                    pipe_hash: row.pipe_hash,
-                    instance_id: row.instance_id,
-                    depth: row.depth,
-                    value: row.value.clone(),
-                    wake: Wake::Key {
-                        domain: TABLE_DOMAIN.into(),
-                        key: table_dirty_key(table),
-                    },
-                    expand_tick: ctx.expand_tick,
-                    enqueued_at_ns: row.enqueued_at_ns,
-                });
-            }
+            enqueue_table_wakes(ctx, active_rows, queue, self.referenced_tables.as_ref());
+            requeue_inactive(rows, active_len, queue);
+            return;
         }
+
+        let nodes = self.render_batch(ctx, &inputs);
+        for (row, node) in active_rows.iter().zip(nodes) {
+            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+        }
+        enqueue_table_wakes(ctx, active_rows, queue, self.referenced_tables.as_ref());
+        requeue_inactive(rows, active_len, queue);
     }
 
     fn render_batch(&self, ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
@@ -145,6 +189,10 @@ impl Component for SqlQueryComponent {
             &self.referenced_tables,
             &result,
         );
+        let output_count = mounted_query::output_count(&result);
+        if !mounted_query::should_persist_mounted_outputs(output_count) {
+            return result;
+        }
         let added = mounted_query::record_sql_outputs(
             &self.store,
             self.sql.as_ref(),
@@ -164,6 +212,109 @@ impl Component for SqlQueryComponent {
     fn describe(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
+}
+
+fn enqueue_table_wakes(
+    ctx: &RenderCtx,
+    active_rows: &[QueueRow<Cursor>],
+    queue: &dyn QueueBackend<Cursor>,
+    referenced_tables: &[String],
+) {
+    for row in active_rows {
+        if ctx.runtime::<RuntimeGraph>().is_some() {
+            continue;
+        }
+        for table in referenced_tables {
+            queue.enqueue_replacing_parked(QueueRow {
+                id: 0,
+                parent_id: Some(row.id),
+                batch_idx: row.batch_idx,
+                path: row.path.clone(),
+                pipe_hash: row.pipe_hash,
+                instance_id: row.instance_id,
+                depth: row.depth,
+                value: row.value.clone(),
+                wake: Wake::Key {
+                    domain: TABLE_DOMAIN.into(),
+                    key: table_dirty_key(table),
+                },
+                expand_tick: ctx.expand_tick,
+                enqueued_at_ns: row.enqueued_at_ns,
+            });
+        }
+    }
+}
+
+fn requeue_inactive(
+    rows: &[QueueRow<Cursor>],
+    active_len: usize,
+    queue: &dyn QueueBackend<Cursor>,
+) {
+    for row in &rows[active_len..] {
+        let mut row = row.clone();
+        row.id = 0;
+        queue.enqueue(row);
+    }
+}
+
+fn insert_terminal_fact_outputs(
+    ctx: &RenderCtx,
+    terminal_fact: &TerminalFactWrite,
+    outputs: Vec<Arc<Cursor>>,
+) {
+    if outputs.is_empty() {
+        return;
+    }
+    let row_count = outputs.len();
+    let support_input_count = outputs
+        .iter()
+        .filter(|cursor| cursor.get(mounted_query::SUPPORT_CURSOR_ID).is_some())
+        .count();
+    let support_rows: Vec<(String, String, String)> =
+        if mounted_query::should_record_fact_support_count(support_input_count) {
+            outputs
+                .iter()
+                .filter_map(|cursor| {
+                    cursor
+                        .get(mounted_query::SUPPORT_CURSOR_ID)
+                        .map(|support_id| {
+                            (
+                                support_id.to_string(),
+                                terminal_fact.table.to_string(),
+                                terminal_fact
+                                    .store
+                                    .row_id_for(terminal_fact.table.as_ref(), cursor.as_ref()),
+                            )
+                        })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+    let insert_t0 = std::time::Instant::now();
+    terminal_fact
+        .store
+        .insert_batch(terminal_fact.table.as_ref(), outputs);
+    if let Some(graph) = ctx.runtime::<RuntimeGraph>() {
+        let source = graph.declare_source(
+            &format!("sprf://source/table/{}", terminal_fact.table),
+            ctx.expand_tick,
+        );
+        graph.dispatch_dirty(&source, ctx.expand_tick);
+    }
+    mounted_query::record_fact_support_batch(terminal_fact.store.as_ref(), &support_rows);
+    tracing::info!(
+        target: "sprefa::sql",
+        table = %terminal_fact.table,
+        rows = row_count,
+        insert_ms = insert_t0.elapsed().as_secs_f64() * 1000.0,
+        "terminal_sql_fact_insert"
+    );
+}
+
+fn should_chunk_sql_dispatch(sql: &str) -> bool {
+    let sql = sql.to_ascii_lowercase();
+    sql.contains(" join ") && !sql.contains("not exists")
 }
 
 fn sql_batch_cache_key(
@@ -194,15 +345,90 @@ pub fn run_sql_batch(
     referenced_tables: &[String],
     batch: &[&Cursor],
 ) -> Result<Vec<Node<Cursor>>, String> {
-    let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
-    materialize_input(&conn, batch)?;
+    if let Some(sqlite) = store.as_any().downcast_ref::<SqliteFactStore<Cursor>>() {
+        return run_sql_batch_on_sqlite_fact_store(sqlite, sql, referenced_tables, batch);
+    }
+
+    let mut conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
+    materialize_input(&mut conn, batch)?;
 
     for table in referenced_tables {
         let rows = store.rows_of(&table);
         let declared_cols = store.declared_cols(&table).unwrap_or_default();
-        materialize_fact_table(&conn, &table, &declared_cols, &rows)?;
+        materialize_fact_table(&mut conn, &table, &declared_cols, &rows)?;
     }
 
+    query_sql_rows(&mut conn, sql, batch)
+}
+
+fn run_sql_terminal_output_cursors(
+    store: &dyn FactStore<Cursor>,
+    sql: &str,
+    referenced_tables: &[String],
+    batch: &[&Cursor],
+) -> Result<Vec<Arc<Cursor>>, String> {
+    if let Some(sqlite) = store.as_any().downcast_ref::<SqliteFactStore<Cursor>>() {
+        return run_sql_terminal_output_cursors_on_sqlite_fact_store(
+            sqlite,
+            sql,
+            referenced_tables,
+            batch,
+        );
+    }
+
+    let mut conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
+    materialize_input(&mut conn, batch)?;
+
+    for table in referenced_tables {
+        let rows = store.rows_of(table);
+        let declared_cols = store.declared_cols(table).unwrap_or_default();
+        materialize_fact_table(&mut conn, table, &declared_cols, &rows)?;
+    }
+
+    query_sql_output_cursors(&mut conn, sql, batch)
+}
+
+fn run_sql_batch_on_sqlite_fact_store(
+    store: &SqliteFactStore<Cursor>,
+    sql: &str,
+    referenced_tables: &[String],
+    batch: &[&Cursor],
+) -> Result<Vec<Node<Cursor>>, String> {
+    store.with_connection(|conn| {
+        drop_sql_workspace(conn, referenced_tables)?;
+        materialize_input(conn, batch)?;
+        for table in referenced_tables {
+            create_fact_view(conn, store, table)?;
+        }
+        let result = query_sql_rows(conn, sql, batch);
+        drop_sql_workspace(conn, referenced_tables)?;
+        result
+    })
+}
+
+fn run_sql_terminal_output_cursors_on_sqlite_fact_store(
+    store: &SqliteFactStore<Cursor>,
+    sql: &str,
+    referenced_tables: &[String],
+    batch: &[&Cursor],
+) -> Result<Vec<Arc<Cursor>>, String> {
+    store.with_connection(|conn| {
+        drop_sql_workspace(conn, referenced_tables)?;
+        materialize_input(conn, batch)?;
+        for table in referenced_tables {
+            create_fact_view(conn, store, table)?;
+        }
+        let result = query_sql_output_cursors(conn, sql, batch);
+        drop_sql_workspace(conn, referenced_tables)?;
+        result
+    })
+}
+
+fn query_sql_rows(
+    conn: &mut Connection,
+    sql: &str,
+    batch: &[&Cursor],
+) -> Result<Vec<Node<Cursor>>, String> {
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
     let col_count = col_names.len();
@@ -270,6 +496,96 @@ pub fn run_sql_batch(
     Ok(out)
 }
 
+fn query_sql_output_cursors(
+    conn: &mut Connection,
+    sql: &str,
+    batch: &[&Cursor],
+) -> Result<Vec<Arc<Cursor>>, String> {
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let cursor_idx_col = col_names.iter().position(|name| name == "__cursor_idx");
+    let mut out = Vec::new();
+    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let cursor_idx = match cursor_idx_col {
+            Some(idx) => {
+                let value = sql_value_to_string(row.get_ref(idx).map_err(|e| e.to_string())?);
+                value.parse::<usize>().ok()
+            }
+            None => None,
+        };
+
+        let mut child = match cursor_idx.and_then(|idx| batch.get(idx).copied()) {
+            Some(source) => source.clone(),
+            None => Cursor::default(),
+        };
+
+        for (idx, name) in col_names.iter().enumerate() {
+            if Some(idx) == cursor_idx_col {
+                continue;
+            }
+            let value = sql_value_to_string(row.get_ref(idx).map_err(|e| e.to_string())?);
+            if name == "value" {
+                child.value = Arc::<str>::from(value.as_str());
+                continue;
+            }
+            child.set(name, value.as_str());
+        }
+        out.push(Arc::new(child));
+    }
+    Ok(out)
+}
+
+fn drop_sql_workspace(conn: &mut Connection, referenced_tables: &[String]) -> Result<(), String> {
+    conn.execute("DROP TABLE IF EXISTS temp.input", [])
+        .map_err(|e| e.to_string())?;
+    for table in referenced_tables {
+        conn.execute(
+            format!("DROP VIEW IF EXISTS temp.{}", quote_ident(table)).as_str(),
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn create_fact_view(
+    conn: &mut Connection,
+    store: &SqliteFactStore<Cursor>,
+    table: &str,
+) -> Result<(), String> {
+    let cols = store.declared_cols(table).unwrap_or_default();
+    let mut select = Vec::with_capacity(cols.len().max(1));
+    let mut joins = Vec::with_capacity(cols.len());
+    for col in &cols {
+        let sql_col = fact_col_sql(col);
+        let alias = format!("s_{sql_col}");
+        select.push(format!(
+            "{}.value AS {}",
+            quote_ident(&alias),
+            quote_ident(col),
+        ));
+        joins.push(format!(
+            "JOIN sprf_strings {} ON {}.id = t.{}",
+            quote_ident(&alias),
+            quote_ident(&alias),
+            quote_ident(format!("{sql_col}_id").as_str()),
+        ));
+    }
+    if select.is_empty() {
+        select.push("t._id AS _id".to_string());
+    }
+    let sql = format!(
+        "CREATE TEMP VIEW {} AS SELECT {} FROM {} t {}",
+        quote_ident(table),
+        select.join(", "),
+        quote_ident(format!("{table}_facts").as_str()),
+        joins.join(" "),
+    );
+    conn.execute(&sql, []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn nodes_to_node(nodes: Vec<Node<Cursor>>) -> Node<Cursor> {
     let nodes = dedupe_nodes_by_cursor_hash(nodes);
     match nodes.len() {
@@ -295,7 +611,7 @@ fn dedupe_nodes_by_cursor_hash(nodes: Vec<Node<Cursor>>) -> Vec<Node<Cursor>> {
     out
 }
 
-fn materialize_input(conn: &Connection, batch: &[&Cursor]) -> Result<(), String> {
+fn materialize_input(conn: &mut Connection, batch: &[&Cursor]) -> Result<(), String> {
     let mut cols = BTreeSet::new();
     for cursor in batch {
         for term in cursor
@@ -312,28 +628,32 @@ fn materialize_input(conn: &Connection, batch: &[&Cursor]) -> Result<(), String>
     let mut ordered = vec!["__cursor_idx".to_string(), "value".to_string()];
     ordered.extend(cols);
     create_text_table(conn, "input", &ordered, Some("__cursor_idx"))?;
-
-    for (idx, cursor) in batch.iter().enumerate() {
-        let values: Vec<SqlValue> = ordered
-            .iter()
-            .map(|col| {
-                if col == "__cursor_idx" {
-                    SqlValue::Integer(idx as i64)
-                } else if col == "value" {
-                    SqlValue::Text(cursor.value.to_string())
-                } else {
-                    SqlValue::Text(cursor.get(col).unwrap_or("").to_string())
-                }
-            })
-            .collect();
-        insert_row(conn, "input", &ordered, values)?;
-    }
+    insert_rows(
+        conn,
+        "input",
+        &ordered,
+        batch.iter().enumerate().map(|(idx, cursor)| {
+            ordered
+                .iter()
+                .map(|col| {
+                    if col == "__cursor_idx" {
+                        SqlValue::Integer(idx as i64)
+                    } else if col == "value" {
+                        SqlValue::Text(cursor.value.to_string())
+                    } else {
+                        SqlValue::Text(cursor.get(col).unwrap_or("").to_string())
+                    }
+                })
+                .collect::<Vec<_>>()
+        }),
+    )?;
+    create_text_indexes(conn, "input", &ordered)?;
 
     Ok(())
 }
 
 fn materialize_fact_table(
-    conn: &Connection,
+    conn: &mut Connection,
     table: &str,
     declared_cols: &[String],
     rows: &[Arc<Cursor>],
@@ -355,20 +675,24 @@ fn materialize_fact_table(
     let mut ordered = vec!["value".to_string()];
     ordered.extend(cols);
     create_text_table(conn, table, &ordered, None)?;
-
-    for row in rows {
-        let values: Vec<SqlValue> = ordered
-            .iter()
-            .map(|col| {
-                if col == "value" {
-                    SqlValue::Text(row.value.to_string())
-                } else {
-                    SqlValue::Text(row.get(col).unwrap_or("").to_string())
-                }
-            })
-            .collect();
-        insert_row(conn, table, &ordered, values)?;
-    }
+    insert_rows(
+        conn,
+        table,
+        &ordered,
+        rows.iter().map(|row| {
+            ordered
+                .iter()
+                .map(|col| {
+                    if col == "value" {
+                        SqlValue::Text(row.value.to_string())
+                    } else {
+                        SqlValue::Text(row.get(col).unwrap_or("").to_string())
+                    }
+                })
+                .collect::<Vec<_>>()
+        }),
+    )?;
+    create_text_indexes(conn, table, &ordered)?;
 
     Ok(())
 }
@@ -399,11 +723,11 @@ fn create_text_table(
     Ok(())
 }
 
-fn insert_row(
-    conn: &Connection,
+fn insert_rows(
+    conn: &mut Connection,
     table: &str,
     cols: &[String],
-    values: Vec<SqlValue>,
+    rows: impl IntoIterator<Item = Vec<SqlValue>>,
 ) -> Result<(), String> {
     let col_sql = cols
         .iter()
@@ -415,8 +739,31 @@ fn insert_row(
         "INSERT INTO {} ({col_sql}) VALUES ({placeholders})",
         quote_ident(table),
     );
-    conn.execute(&sql, params_from_iter(values.iter()))
-        .map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx.prepare(&sql).map_err(|e| e.to_string())?;
+        for values in rows {
+            stmt.execute(params_from_iter(values.iter()))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn create_text_indexes(conn: &Connection, table: &str, cols: &[String]) -> Result<(), String> {
+    for col in cols {
+        if col == "value" || col == "__cursor_idx" {
+            continue;
+        }
+        let sql = format!(
+            "CREATE INDEX {} ON {} ({})",
+            quote_ident(format!("{table}_{col}_idx").as_str()),
+            quote_ident(table),
+            quote_ident(col),
+        );
+        conn.execute(&sql, []).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -433,6 +780,10 @@ fn sql_value_to_string(value: ValueRef<'_>) -> String {
 fn quote_ident(s: &str) -> String {
     let escaped = s.replace('"', "\"\"");
     format!("\"{escaped}\"")
+}
+
+fn fact_col_sql(s: &str) -> &str {
+    s.strip_prefix(':').unwrap_or(s)
 }
 
 fn referenced_fact_tables(sql: &str) -> BTreeSet<String> {

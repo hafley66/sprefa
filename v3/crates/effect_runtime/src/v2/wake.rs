@@ -20,6 +20,11 @@ use super::next_key::NextKey;
 #[derive(Debug, Clone)]
 pub enum Wake {
     Immediate,
-    Tick { past_tick: u64 },
-    Key { domain: Cow<'static, str>, key: NextKey },
+    Tick {
+        past_tick: u64,
+    },
+    Key {
+        domain: Cow<'static, str>,
+        key: NextKey,
+    },
 }

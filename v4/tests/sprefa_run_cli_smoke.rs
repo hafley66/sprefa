@@ -77,11 +77,15 @@ fn sprefa_run_telemetry_flag_prints_runtime_counters() {
     let bin = env!("CARGO_BIN_EXE_sprefa-run");
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let sprf = format!("{manifest_dir}/examples/dev-missing-frontend-hook.sprf");
+    let dir = tempfile::tempdir().unwrap();
+    let fact_db = dir.path().join("facts.db");
 
     let output = Command::new(bin)
         .arg(&sprf)
         .arg("--no-show-rows")
         .arg("--telemetry")
+        .arg("--fact-db")
+        .arg(&fact_db)
         .output()
         .expect("sprefa-run executes with telemetry");
 
@@ -107,6 +111,14 @@ fn sprefa_run_telemetry_flag_prints_runtime_counters() {
     assert!(
         stdout.contains("store insert_calls="),
         "stdout missing fact store counters:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("runtime_graph name="),
+        "stdout missing runtime graph counters:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("db_table name="),
+        "stdout missing sqlite table counters:\n{stdout}"
     );
 }
 

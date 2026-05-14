@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
-use effect_runtime::v2::FactStore;
-use effect_runtime::v2::RenderCtx;
+use ast_grep_language::SupportLang;
+use effect_runtime::v2::{
+    expand, EventBus, ExpandOpts, FactStore, MemQueue, PipeInstance, QueueBackend, RenderCtx,
+};
 use tempfile::tempdir;
+use v4::fact::FactWrite;
 use v4::fact::SqliteFactStore;
 use v4::mounted_query::{
     input_key_for_batch, load_mounted_sql_snapshot, mount_id_for_sql, record_sql_outputs,
 };
 use v4::runtime_graph::{
-    RuntimeGraph, SprfActiveChild, SprfSubscribe, SprfSupportRows, RUNTIME_EDGE,
-    RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE, RUNTIME_VALUE,
+    RuntimeGraph, SourceSubscriptionInput, SprfActiveChild, SprfSubscribe, SprfSupportRows,
+    RUNTIME_EDGE, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE, RUNTIME_VALUE,
 };
+use v4::runtime_replay::GraphReplayRunner;
 use v4::store::SprfStore;
+use v4::v2_ops::AstNmComponent;
 use v4::{Cursor, WhereBytes, WhereBytesId};
 
 fn sqlite_graph(path: &std::path::Path) -> (Arc<dyn FactStore<Cursor>>, RuntimeGraph) {
@@ -22,11 +27,56 @@ fn sqlite_graph(path: &std::path::Path) -> (Arc<dyn FactStore<Cursor>>, RuntimeG
     (facts, graph)
 }
 
+fn sqlite_compact_graph(path: &std::path::Path) -> (Arc<dyn FactStore<Cursor>>, RuntimeGraph) {
+    let facts: Arc<dyn FactStore<Cursor>> =
+        Arc::new(SqliteFactStore::<Cursor>::open_file(path).unwrap());
+    let store = SprfStore::new(facts.clone());
+    let graph = RuntimeGraph::new_with_compact_sources(store, facts.clone(), path);
+    (facts, graph)
+}
+
 fn row(name: &str, value: &str) -> Cursor {
     let mut cursor = Cursor::default();
     cursor.set("name", name);
     cursor.set("value", value);
     cursor
+}
+
+fn path_cursor(path: &str) -> Cursor {
+    let mut cursor = Cursor::default();
+    cursor.value = Arc::from(path);
+    cursor.set("FS", path);
+    cursor
+}
+
+#[test]
+fn compact_source_graph_exposes_write_stats_snapshot() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (_facts, graph) = sqlite_compact_graph(&db);
+    let input = path_cursor("a.c");
+
+    graph.record_source_subscriptions(
+        &[SourceSubscriptionInput {
+            ast_uri: "sprf://ast/source/test/1/0".to_string(),
+            input_key: "input:a".to_string(),
+            source_uri: "sprf://source/file/a.c".to_string(),
+            label: "file".to_string(),
+            pipe_hash: 1,
+            instance_id: 2,
+            depth: 3,
+            input: &input,
+        }],
+        4,
+    );
+
+    let stats = graph.stats().expect("compact source stats");
+    assert_eq!(stats.name, "runtime_graph.compact_source_subscriptions");
+    assert_eq!(stats.calls, 1);
+    assert_eq!(stats.rows, 1);
+    assert_eq!(stats.transactions, 1);
+    assert!(stats.bytes > 0);
+    assert!(stats.wall_ns > 0);
 }
 
 #[test]
@@ -226,6 +276,7 @@ fn resume_finds_unconsumed_events_and_consumption_is_durable() {
     let value =
         graph.runtime_value_cursor_blob("sprf://value/rss/1", &row("entry", "a"), "ready", 1);
     graph.dispatch_wake(&source, &value, 1);
+    graph.store.flush();
 
     drop(graph);
 
@@ -371,4 +422,65 @@ fn sprf_runtime_effects_can_be_declared_through_render_ctx_put() {
     assert_eq!(delta.inserted.len(), 1);
     assert_ne!(active.uri_id, child.uri_id);
     assert_eq!(graph.active_child(&owner, "active-inner"), Some(child));
+}
+
+#[test]
+fn source_aware_ast_subscriptions_reopen_and_rerun_one_changed_file() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path().join("src");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a.c"), "int a(void) { return 1; }\n").unwrap();
+    std::fs::write(root.join("b.c"), "void b(void) { printk(\"b\"); }\n").unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    facts.declare("hits", &["FS", "LO", "HI"]);
+
+    let ast: Arc<dyn effect_runtime::v2::Component<Next = Cursor>> = Arc::new(
+        AstNmComponent::new("printk($$$)".to_string(), SupportLang::Cpp)
+            .with_root(root.clone())
+            .with_sprf_store(graph.store.clone()),
+    );
+    let write: Arc<dyn effect_runtime::v2::Component<Next = Cursor>> =
+        Arc::new(FactWrite::new(facts.clone(), "hits"));
+    let pipe = Arc::new(PipeInstance::new(vec![ast, write]));
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+
+    expand(
+        pipe.as_ref(),
+        queue.clone(),
+        vec![Arc::new(path_cursor("a.c")), Arc::new(path_cursor("b.c"))],
+        ExpandOpts::default()
+            .with_batch_cap(10)
+            .with_runtime(graph.clone()),
+    );
+    graph.store.flush();
+    facts.commit(1, None);
+
+    assert_eq!(facts.len("hits"), 1);
+    assert_eq!(facts.len(RUNTIME_EDGE), 2);
+    assert_eq!(facts.len("runtime_continuation"), 2);
+
+    drop(facts);
+    std::fs::write(root.join("a.c"), "void a(void) { printk(\"a\"); }\n").unwrap();
+
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    let source = graph.declare_source("sprf://source/file/a.c", 2);
+    graph.dispatch_dirty(&source, 2);
+    let jobs = graph.pending_jobs();
+    assert_eq!(jobs.len(), 1);
+
+    let runner = GraphReplayRunner {
+        facts: facts.clone(),
+        queue,
+        bus: Arc::new(EventBus::new()),
+        sprf_store: graph.store.clone(),
+        runtime_graph: graph,
+        instances: vec![pipe],
+    };
+
+    assert_eq!(runner.drain(), 1);
+    assert_eq!(facts.len("hits"), 2);
+    assert!(runner.runtime_graph.pending_jobs().is_empty());
 }

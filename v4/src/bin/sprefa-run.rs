@@ -138,6 +138,23 @@ fn print_usage() {
 [--show-rows|--no-show-rows] [--telemetry] [--batch N] [--max-diags N] [--remote URL] [--root PATH] [--fact-db PATH] [--queue-db PATH]");
 }
 
+fn rss_peak_kb() -> u64 {
+    unsafe {
+        let mut u: libc::rusage = std::mem::zeroed();
+        if libc::getrusage(libc::RUSAGE_SELF, &mut u) != 0 {
+            return 0;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            (u.ru_maxrss as u64) / 1024
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            u.ru_maxrss as u64
+        }
+    }
+}
+
 /// 1-indexed (line, col) for byte offset `off` in `src`.
 fn line_col(src: &str, off: u32) -> (u32, u32) {
     let off = (off as usize).min(src.len());
@@ -277,6 +294,9 @@ async fn main() -> ExitCode {
 
     if let Some(t) = &report.telemetry {
         print_telemetry(t);
+        if let Some(fact_db) = &args.fact_db {
+            print_sqlite_db_telemetry(fact_db);
+        }
     }
 
     if report.tables.is_empty() {
@@ -325,8 +345,13 @@ async fn main() -> ExitCode {
 fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
     println!("── telemetry ──");
     println!(
-        "wall_ms={:.1} rendered={} emitted={} terminal={} parked={}",
-        t.wall_ms, t.rendered, t.emitted, t.terminal, t.parked,
+        "wall_ms={:.1} rendered={} emitted={} terminal={} parked={} rss_peak_MB={}",
+        t.wall_ms,
+        t.rendered,
+        t.emitted,
+        t.terminal,
+        t.parked,
+        rss_peak_kb() / 1024,
     );
     println!(
         "run_ms read_sprf={:.1} parse={:.1} lower={:.1} wrap_mount={:.1} expand={:.1} commit={:.1} resume={:.1} collect_tables={:.1} report={:.1}",
@@ -341,8 +366,15 @@ fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
         t.phases.report_ms,
     );
     println!(
-        "fs seen={} emitted={} ext_skipped={} filter_skipped={}",
-        t.fs.seen_files, t.fs.emitted, t.fs.ext_skipped, t.fs.filter_skipped,
+        "fs seen={} emitted={} ext_skipped={} filter_skipped={} walk_ms={:.1} filter_ms={:.1} cursor_ms={:.1} splice_ms={:.1}",
+        t.fs.seen_files,
+        t.fs.emitted,
+        t.fs.ext_skipped,
+        t.fs.filter_skipped,
+        t.fs.walk_ms,
+        t.fs.filter_ms,
+        t.fs.cursor_ms,
+        t.fs.splice_ms,
     );
     println!(
         "ast inputs={} source_reads={} source_MB={:.1} utf8_rows={} utf8_MB={:.1} prefilter_skips={} parses={} matches={}",
@@ -380,7 +412,7 @@ fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
     }
     if let Some(s) = &t.fact_store {
         println!(
-            "store insert_calls={} insert_rows={} insert_batch_calls={} insert_batch_rows={} commit_calls={} string_intern_calls={} string_intern_rows={} transactions={}",
+            "store insert_calls={} insert_rows={} insert_batch_calls={} insert_batch_rows={} commit_calls={} string_intern_calls={} string_intern_rows={} sqlite_insert_exec_calls={} sqlite_insert_exec_rows={} transactions={} index_rebuilds={} index_rebuild_indexes={} insert_batch_ms={:.1} string_intern_ms={:.1} sqlite_insert_ms={:.1} index_drop_ms={:.1} index_create_ms={:.1} index_rebuild_ms={:.1} transaction_commit_ms={:.1} commit_ms={:.1}",
             s.insert_calls,
             s.insert_rows,
             s.insert_batch_calls,
@@ -388,9 +420,206 @@ fn print_telemetry(t: &v4::telemetry::RunTelemetry) {
             s.commit_calls,
             s.string_intern_calls,
             s.string_intern_rows,
+            s.sqlite_insert_exec_calls,
+            s.sqlite_insert_exec_rows,
             s.transactions,
+            s.index_rebuilds,
+            s.index_rebuild_indexes,
+            s.insert_batch_ms,
+            s.string_intern_ms,
+            s.sqlite_insert_ms,
+            s.index_drop_ms,
+            s.index_create_ms,
+            s.index_rebuild_ms,
+            s.transaction_commit_ms,
+            s.commit_ms,
+        );
+        let mut warnings = Vec::new();
+        if s.insert_calls > 1_000 {
+            warnings.push(format!(
+                "n_plus_one_insert_calls={} insert_rows={}",
+                s.insert_calls, s.insert_rows
+            ));
+        }
+        if s.insert_batch_calls > 0 {
+            let avg_batch = s.insert_batch_rows as f64 / s.insert_batch_calls as f64;
+            if s.insert_batch_rows > 10_000 && avg_batch < 1_000.0 {
+                warnings.push(format!(
+                    "small_insert_batches avg_batch={avg_batch:.1} calls={} rows={}",
+                    s.insert_batch_calls, s.insert_batch_rows
+                ));
+            }
+        }
+        if s.sqlite_insert_exec_calls > 0 {
+            let avg_sqlite_insert =
+                s.sqlite_insert_exec_rows as f64 / s.sqlite_insert_exec_calls as f64;
+            if s.sqlite_insert_exec_rows > 10_000 && avg_sqlite_insert < 100.0 {
+                warnings.push(format!(
+                    "n_plus_one_sqlite_insert_execs avg_rows_per_exec={avg_sqlite_insert:.1} execs={} rows={}",
+                    s.sqlite_insert_exec_calls, s.sqlite_insert_exec_rows
+                ));
+            }
+        }
+        if s.index_rebuilds > 0 {
+            warnings.push(format!(
+                "index_rebuilds={} indexes={} rebuild_ms={:.1}",
+                s.index_rebuilds, s.index_rebuild_indexes, s.index_rebuild_ms
+            ));
+        }
+        if !warnings.is_empty() {
+            println!("store_warnings {}", warnings.join(" "));
+        }
+    }
+    if let Some(s) = &t.effect_runtime {
+        println!(
+            "effect_runtime pull_calls={} pull_rows={} pull_ms={:.1} dispatch_calls={} dispatch_rows={} dispatch_ms={:.1} put_calls={} put_ms={:.1}",
+            s.pull_calls,
+            s.pull_rows,
+            s.pull_ms,
+            s.dispatch_calls,
+            s.dispatch_rows,
+            s.dispatch_ms,
+            s.put_calls,
+            s.put_ms,
         );
     }
+    if let Some(s) = &t.runtime_graph {
+        println!(
+            "runtime_graph name={} calls={} rows={} MB={:.1} transactions={} wall_ms={:.1} avg_rows_per_tx={:.1}",
+            s.name,
+            s.calls,
+            s.rows,
+            s.bytes as f64 / (1024.0 * 1024.0),
+            s.transactions,
+            s.wall_ms(),
+            if s.transactions == 0 {
+                0.0
+            } else {
+                s.rows as f64 / s.transactions as f64
+            },
+        );
+    }
+}
+
+fn print_sqlite_db_telemetry(path: &PathBuf) {
+    let Ok(conn) = rusqlite::Connection::open(path) else {
+        return;
+    };
+    let db_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let page_size = sqlite_page_size(&conn).unwrap_or(4096);
+    let page_bytes = sqlite_page_bytes(&conn).unwrap_or(0);
+    println!(
+        "db file_MB={:.1} page_MB={:.1}",
+        db_bytes as f64 / (1024.0 * 1024.0),
+        page_bytes as f64 / (1024.0 * 1024.0),
+    );
+    for obj in sqlite_objects(&conn) {
+        if obj.kind == "index" && obj.bytes <= page_size {
+            continue;
+        }
+        let rows = if obj.kind == "table" {
+            sqlite_count_rows(&conn, obj.name.as_str())
+        } else {
+            None
+        };
+        println!(
+            "db_{} name={} rows={} bytes={} MB={:.1}",
+            obj.kind,
+            obj.name,
+            rows.map(|n| n.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            obj.bytes,
+            obj.bytes as f64 / (1024.0 * 1024.0),
+        );
+    }
+}
+
+struct SqliteObjectStat {
+    kind: String,
+    name: String,
+    bytes: u64,
+}
+
+fn sqlite_page_bytes(conn: &rusqlite::Connection) -> Option<u64> {
+    let page_count: u64 = conn
+        .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
+        .ok()?;
+    let page_size = sqlite_page_size(conn)?;
+    Some(page_count * page_size)
+}
+
+fn sqlite_page_size(conn: &rusqlite::Connection) -> Option<u64> {
+    conn.query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
+        .ok()
+}
+
+fn sqlite_objects(conn: &rusqlite::Connection) -> Vec<SqliteObjectStat> {
+    let mut objects = sqlite_schema_objects(conn);
+    let bytes_by_name = sqlite_dbstat_bytes(conn);
+    for object in &mut objects {
+        object.bytes = *bytes_by_name.get(object.name.as_str()).unwrap_or(&0);
+    }
+    objects.sort_by(|a, b| {
+        b.bytes
+            .cmp(&a.bytes)
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    objects
+}
+
+fn sqlite_schema_objects(conn: &rusqlite::Connection) -> Vec<SqliteObjectStat> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT type, name
+         FROM sqlite_master
+         WHERE type IN ('table', 'index')
+           AND name NOT LIKE 'sqlite_%'
+         ORDER BY type, name",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        Ok(SqliteObjectStat {
+            kind: row.get(0)?,
+            name: row.get(1)?,
+            bytes: 0,
+        })
+    }) else {
+        return Vec::new();
+    };
+    rows.filter_map(Result::ok).collect()
+}
+
+fn sqlite_dbstat_bytes(conn: &rusqlite::Connection) -> std::collections::BTreeMap<String, u64> {
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(mut stmt) = conn.prepare("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name") else {
+        return out;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        let name: String = row.get(0)?;
+        let bytes: Option<u64> = row.get(1)?;
+        Ok((name, bytes.unwrap_or(0)))
+    }) else {
+        return out;
+    };
+    for row in rows.flatten() {
+        out.insert(row.0, row.1);
+    }
+    out
+}
+
+fn sqlite_count_rows(conn: &rusqlite::Connection, table: &str) -> Option<u64> {
+    let quoted = sqlite_quote_ident(table);
+    conn.query_row(
+        format!("SELECT COUNT(*) FROM {quoted}").as_str(),
+        [],
+        |row| row.get::<_, u64>(0),
+    )
+    .ok()
+}
+
+fn sqlite_quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 #[cfg(test)]

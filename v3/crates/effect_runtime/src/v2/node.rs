@@ -27,10 +27,7 @@ pub enum Node<N: Next> {
     /// pattern: the Component decides what to do based on cache state,
     /// not based on position. Rendering must be idempotent against the
     /// input — the component sees its own input twice.
-    Yield {
-        value: Arc<N>,
-        wake:  Wake,
-    },
+    Yield { value: Arc<N>, wake: Wake },
 }
 
 // Manual Clone impl: `derive(Clone)` would needlessly demand `N: Clone`
@@ -38,12 +35,12 @@ pub enum Node<N: Next> {
 impl<N: Next> Clone for Node<N> {
     fn clone(&self) -> Self {
         match self {
-            Node::Done                  => Node::Done,
-            Node::Emit(v)               => Node::Emit(v.clone()),
-            Node::Many(c)               => Node::Many(c.clone()),
+            Node::Done => Node::Done,
+            Node::Emit(v) => Node::Emit(v.clone()),
+            Node::Many(c) => Node::Many(c.clone()),
             Node::Yield { value, wake } => Node::Yield {
                 value: value.clone(),
-                wake:  wake.clone(),
+                wake: wake.clone(),
             },
         }
     }

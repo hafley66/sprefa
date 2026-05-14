@@ -35,23 +35,29 @@ pub struct MemoCache<N: Next> {
 }
 
 struct Entry<N: Next> {
-    node:           Node<N>,
-    domains:        Vec<&'static str>,
-    input:          [u8; 32],
+    node: Node<N>,
+    domains: Vec<&'static str>,
+    input: [u8; 32],
     /// QueueId of the row whose render produced this entry. `Some`
     /// when stored via `Memoize::dispatch` (the substrate path).
     /// `None` when stored via `MemoCache::put` directly (test paths).
     /// On eviction this row + its descendants are cascade-deleted.
-    source_row_id:  Option<QueueId>,
+    source_row_id: Option<QueueId>,
 }
 
 impl<N: Next> MemoCache<N> {
     pub fn new() -> Self {
-        Self { by_key: Mutex::new(HashMap::new()) }
+        Self {
+            by_key: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn lookup(&self, key: MemoKey) -> Option<Node<N>> {
-        self.by_key.lock().unwrap().get(&key).map(|e| e.node.clone())
+        self.by_key
+            .lock()
+            .unwrap()
+            .get(&key)
+            .map(|e| e.node.clone())
     }
 
     pub fn put(&self, key: MemoKey, node: Node<N>, domains: Vec<&'static str>, input: [u8; 32]) {
@@ -60,19 +66,29 @@ impl<N: Next> MemoCache<N> {
 
     pub fn put_with_source(
         &self,
-        key:           MemoKey,
-        node:          Node<N>,
-        domains:       Vec<&'static str>,
-        input:         [u8; 32],
+        key: MemoKey,
+        node: Node<N>,
+        domains: Vec<&'static str>,
+        input: [u8; 32],
         source_row_id: Option<QueueId>,
     ) {
-        self.by_key.lock().unwrap().insert(key, Entry {
-            node, domains, input, source_row_id,
-        });
+        self.by_key.lock().unwrap().insert(
+            key,
+            Entry {
+                node,
+                domains,
+                input,
+                source_row_id,
+            },
+        );
     }
 
-    pub fn len(&self) -> usize { self.by_key.lock().unwrap().len() }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn len(&self) -> usize {
+        self.by_key.lock().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Drop all entries tagged with `domain`. Returns the source_row_ids
     /// of evicted entries (in unspecified order). Used by the cascade
@@ -83,9 +99,13 @@ impl<N: Next> MemoCache<N> {
         by.retain(|_, e| {
             let kill = e.domains.iter().any(|d| *d == domain);
             if kill {
-                if let Some(id) = e.source_row_id { evicted.push(id); }
+                if let Some(id) = e.source_row_id {
+                    evicted.push(id);
+                }
                 false
-            } else { true }
+            } else {
+                true
+            }
         });
         evicted
     }
@@ -98,16 +118,22 @@ impl<N: Next> MemoCache<N> {
         by.retain(|_, e| {
             let kill = e.input == k.0;
             if kill {
-                if let Some(id) = e.source_row_id { evicted.push(id); }
+                if let Some(id) = e.source_row_id {
+                    evicted.push(id);
+                }
                 false
-            } else { true }
+            } else {
+                true
+            }
         });
         evicted
     }
 }
 
 impl<N: Next> Default for MemoCache<N> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<N: Next> BusListener for MemoCache<N> {
@@ -116,8 +142,15 @@ impl<N: Next> BusListener for MemoCache<N> {
         // `attach_cache_to_bus_with_queue` to also remove descendants
         // from the queue on eviction.
         match ev {
-            Event::Dirty { domain, key: None }       => { let _ = self.invalidate_domain(domain); }
-            Event::Dirty { domain: _, key: Some(k) } => { let _ = self.invalidate_input(*k); }
+            Event::Dirty { domain, key: None } => {
+                let _ = self.invalidate_domain(domain);
+            }
+            Event::Dirty {
+                domain: _,
+                key: Some(k),
+            } => {
+                let _ = self.invalidate_input(*k);
+            }
         }
     }
 }
@@ -141,18 +174,23 @@ impl<N: Next> CacheCascadeListener<N> {
 impl<N: Next> BusListener for CacheCascadeListener<N> {
     fn on_event(&self, ev: &Event) {
         let evicted = match ev {
-            Event::Dirty { domain, key: None }       => self.cache.invalidate_domain(domain),
-            Event::Dirty { domain: _, key: Some(k) } => self.cache.invalidate_input(*k),
+            Event::Dirty { domain, key: None } => self.cache.invalidate_domain(domain),
+            Event::Dirty {
+                domain: _,
+                key: Some(k),
+            } => self.cache.invalidate_input(*k),
         };
-        for id in evicted { self.queue.cascade_delete(id); }
+        for id in evicted {
+            self.queue.cascade_delete(id);
+        }
     }
 }
 
 pub struct Memoize<C: Component> {
-    inner:    C,
-    ident:    &'static str,
-    domains:  Vec<&'static str>,
-    cache:    Arc<MemoCache<C::Next>>,
+    inner: C,
+    ident: &'static str,
+    domains: Vec<&'static str>,
+    cache: Arc<MemoCache<C::Next>>,
     /// Optional per-position child index. When set, `dispatch` does
     /// multiset-diff reconcile against prior children at the same
     /// `row.path`, cascade-deleting only what changed.
@@ -161,7 +199,13 @@ pub struct Memoize<C: Component> {
 
 impl<C: Component> Memoize<C> {
     pub fn new(inner: C, ident: &'static str, cache: Arc<MemoCache<C::Next>>) -> Self {
-        Self { inner, ident, domains: Vec::new(), cache, children: None }
+        Self {
+            inner,
+            ident,
+            domains: Vec::new(),
+            cache,
+            children: None,
+        }
     }
 
     pub fn with_domain(mut self, d: &'static str) -> Self {
@@ -199,12 +243,13 @@ impl<C: Component> Component for Memoize<C> {
     /// invalidation the entry drops but no cascade fires for it.
     fn render(&self, ctx: &RenderCtx, c: &Self::Next) -> Node<Self::Next> {
         let input = c.content_hash();
-        let key   = self.key_for(&input);
+        let key = self.key_for(&input);
         if let Some(node) = self.cache.lookup(key) {
             return node;
         }
         let node = self.inner.render(ctx, c);
-        self.cache.put_with_source(key, node.clone(), self.domains.clone(), input, None);
+        self.cache
+            .put_with_source(key, node.clone(), self.domains.clone(), input, None);
         node
     }
 
@@ -220,19 +265,19 @@ impl<C: Component> Component for Memoize<C> {
     /// subtrees preserved), only added children are enqueued.
     fn dispatch(
         &self,
-        ctx:   &RenderCtx,
-        rows:  &[QueueRow<Self::Next>],
+        ctx: &RenderCtx,
+        rows: &[QueueRow<Self::Next>],
         queue: &dyn QueueBackend<Self::Next>,
     ) {
         // Pre-pass: classify rows as cache hit or miss. Within a batch
         // of identical inputs, dedupe so inner only renders each unique
         // input once; identical inputs share that result.
         let mut nodes: Vec<Option<Node<Self::Next>>> = Vec::with_capacity(rows.len());
-        let mut input_hashes: Vec<[u8; 32]>          = Vec::with_capacity(rows.len());
-        let mut keys:         Vec<MemoKey>           = Vec::with_capacity(rows.len());
-        let mut miss_inputs:  Vec<&Self::Next>       = Vec::new();
-        let mut row_to_miss:  Vec<Option<usize>>     = Vec::with_capacity(rows.len());
-        let mut miss_seen:    std::collections::HashMap<MemoKey, usize> =
+        let mut input_hashes: Vec<[u8; 32]> = Vec::with_capacity(rows.len());
+        let mut keys: Vec<MemoKey> = Vec::with_capacity(rows.len());
+        let mut miss_inputs: Vec<&Self::Next> = Vec::new();
+        let mut row_to_miss: Vec<Option<usize>> = Vec::with_capacity(rows.len());
+        let mut miss_seen: std::collections::HashMap<MemoKey, usize> =
             std::collections::HashMap::new();
 
         for row in rows {
@@ -289,11 +334,14 @@ impl<C: Component> Component for Memoize<C> {
                         // dance from diff_children. Still hash + record
                         // each child so the index is populated for any
                         // future re-render at this path.
-                        new_children.into_iter().map(|child| {
-                            let h  = child.value.content_hash();
-                            let id = queue.enqueue(child);
-                            (h, id)
-                        }).collect()
+                        new_children
+                            .into_iter()
+                            .map(|child| {
+                                let h = child.value.content_hash();
+                                let id = queue.enqueue(child);
+                                (h, id)
+                            })
+                            .collect()
                     } else {
                         let new_hashes: Vec<[u8; 32]> = new_children
                             .iter()
@@ -301,14 +349,16 @@ impl<C: Component> Component for Memoize<C> {
                             .collect();
                         let diff = diff_children(&prior, &new_hashes);
 
-                        for id in &diff.doomed_ids { queue.cascade_delete(*id); }
+                        for id in &diff.doomed_ids {
+                            queue.cascade_delete(*id);
+                        }
 
                         let added: std::collections::HashSet<usize> =
                             diff.added_idx.iter().copied().collect();
                         let mut merged = diff.kept;
                         for (i, child) in new_children.into_iter().enumerate() {
                             if added.contains(&i) {
-                                let h  = new_hashes[i];
+                                let h = new_hashes[i];
                                 let id = queue.enqueue(child);
                                 merged.push((h, id));
                             }
@@ -334,7 +384,7 @@ pub fn attach_cache_to_bus<N: Next>(cache: Arc<MemoCache<N>>, bus: &EventBus) {
 /// evicted entry's source_row_id.
 pub fn attach_cache_to_bus_with_queue<N: Next>(
     cache: Arc<MemoCache<N>>,
-    bus:   &EventBus,
+    bus: &EventBus,
     queue: Arc<dyn QueueBackend<N>>,
 ) {
     bus.add_listener(Arc::new(CacheCascadeListener::new(cache, queue)));

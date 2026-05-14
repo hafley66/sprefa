@@ -57,7 +57,9 @@ pub struct Telemetry {
 }
 
 impl Default for Telemetry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Telemetry {
@@ -126,13 +128,19 @@ impl Telemetry {
         let mut s = String::with_capacity(1024);
         s.push_str(&format!(
             "{:<28} {:>8} {:>10} {:>10} {:>10} {:>10} {:>12} {:>12} {:>12}\n",
-            "effect", "count", "p50", "p95", "p99", "mean",
-            "total_MB", "wall", "MB/s_wall",
+            "effect", "count", "p50", "p95", "p99", "mean", "total_MB", "wall", "MB/s_wall",
         ));
         s.push_str(&format!(
             "{:<28} {:>8} {:>10} {:>10} {:>10} {:>10} {:>12} {:>12} {:>12}\n",
-            "-".repeat(28), "-----", "---", "---", "---", "----",
-            "--------", "----", "---------",
+            "-".repeat(28),
+            "-----",
+            "---",
+            "---",
+            "---",
+            "----",
+            "--------",
+            "----",
+            "---------",
         ));
         for r in &reports {
             let mb_total = r.total_bytes.map(|b| b as f64 / 1_048_576.0);
@@ -229,12 +237,18 @@ impl EffectReport {
         let mut walls: Vec<u64> = spans.iter().map(|s| s.wall_ns).collect();
         walls.sort_unstable();
         let p = |q: f64| -> u64 {
-            if walls.is_empty() { return 0; }
+            if walls.is_empty() {
+                return 0;
+            }
             let i = ((walls.len() - 1) as f64 * q).round() as usize;
             walls[i]
         };
         let sum_wall: u64 = walls.iter().sum();
-        let mean_ns = if count > 0 { sum_wall / count as u64 } else { 0 };
+        let mean_ns = if count > 0 {
+            sum_wall / count as u64
+        } else {
+            0
+        };
         // Wall window: latest close (start + wall) minus earliest
         // open. This is the wall-clock duration during which puts of
         // this effect type were in flight. Correct throughput metric

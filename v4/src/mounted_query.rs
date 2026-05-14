@@ -18,6 +18,7 @@ pub const INPUT_TABLE: &str = "mounted_query_input";
 pub const DEP_TABLE: &str = "mounted_query_dep";
 pub const SUPPORT_TABLE: &str = "mounted_query_support";
 pub const SUPPORT_CURSOR_ID: &str = "__support_cursor_id";
+const MAX_RUNTIME_SQL_SUPPORT_ROWS: usize = 10_000;
 
 const MOUNT_ID: &str = "mount_id";
 const INPUT_KEY: &str = "input_key";
@@ -39,6 +40,14 @@ pub trait MountedQueryStorage {
         dep_tables: &[String],
         nodes: &[Node<Cursor>],
     ) -> Vec<Node<Cursor>>;
+}
+
+pub fn output_count(nodes: &[Node<Cursor>]) -> usize {
+    nodes.iter().map(output_node_count).sum()
+}
+
+pub fn should_persist_mounted_outputs(count: usize) -> bool {
+    count <= MAX_RUNTIME_SQL_SUPPORT_ROWS
 }
 
 pub struct FactMountedQueryStorage {
@@ -170,6 +179,17 @@ impl MountedQueryStorage for FactMountedQueryStorage {
         dep_tables: &[String],
         nodes: &[Node<Cursor>],
     ) -> Vec<Node<Cursor>> {
+        let count = output_count(nodes);
+        if !should_persist_mounted_outputs(count) {
+            tracing::debug!(
+                target: "sprefa::runtime_graph",
+                sql,
+                rows = count,
+                limit = MAX_RUNTIME_SQL_SUPPORT_ROWS,
+                "skipping large mounted SQL output persistence"
+            );
+            return nodes.to_vec();
+        }
         let outputs = output_cursors(nodes);
         let persisted = persist_output_cursors(outputs);
         let stamped_nodes = stamp_support_nodes(nodes);
@@ -364,13 +384,65 @@ pub fn record_runtime_sql_mount(
         ));
     }
 
-    let output =
-        graph.declare_output_table(&format!("sprf://output/sql/{mount_id}"), ctx.expand_tick);
+    let row_count = output_count(nodes);
+    if !should_persist_mounted_outputs(row_count) {
+        tracing::debug!(
+            target: "sprefa::sql",
+            rows = row_count,
+            max = MAX_RUNTIME_SQL_SUPPORT_ROWS,
+            "skip_large_runtime_sql_support_rows"
+        );
+        return;
+    }
     let rows: Vec<Cursor> = output_cursors(nodes)
         .into_iter()
         .map(|cursor| cursor_without_support(cursor.as_ref()))
         .collect();
+    let output =
+        graph.declare_output_table(&format!("sprf://output/sql/{mount_id}"), ctx.expand_tick);
     ctx.put(SprfSupportRows::new(owner, output, rows, ctx.expand_tick));
+}
+
+pub fn record_runtime_sql_mount_count(
+    ctx: &RenderCtx,
+    sql: &str,
+    batch: &[&Cursor],
+    dep_tables: &[String],
+    row_count: usize,
+) {
+    let Some(graph) = ctx.runtime::<RuntimeGraph>() else {
+        return;
+    };
+    let mount_id = mount_id_for_sql(sql);
+    let input_key = input_key_for_batch(batch);
+    let owner = graph.declare_owner(
+        &format!("sprf://ast/sql/{mount_id}"),
+        None,
+        input_key.as_str(),
+        mount_id.as_str(),
+        "sql",
+        ctx.expand_tick,
+    );
+
+    for dep_table in dep_tables {
+        let source =
+            graph.declare_source(&format!("sprf://source/table/{dep_table}"), ctx.expand_tick);
+        ctx.put(SprfSubscribe::new(
+            owner.clone(),
+            dep_table.as_str(),
+            source,
+            ctx.expand_tick,
+        ));
+    }
+
+    if !should_persist_mounted_outputs(row_count) {
+        tracing::debug!(
+            target: "sprefa::sql",
+            rows = row_count,
+            max = MAX_RUNTIME_SQL_SUPPORT_ROWS,
+            "skip_large_runtime_sql_support_rows"
+        );
+    }
 }
 
 pub fn mount_id_for_sql(sql: &str) -> String {
@@ -392,6 +464,14 @@ fn output_cursors(nodes: &[Node<Cursor>]) -> Vec<Arc<Cursor>> {
         collect_node_outputs(node, &mut out);
     }
     out
+}
+
+fn output_node_count(node: &Node<Cursor>) -> usize {
+    match node {
+        Node::Emit(_) => 1,
+        Node::Many(nodes) => nodes.iter().map(output_node_count).sum(),
+        Node::Yield { .. } | Node::Done => 0,
+    }
 }
 
 fn nodes_added_since(
@@ -476,15 +556,42 @@ pub fn record_fact_supports(
     table: &str,
     row_id: &str,
 ) {
+    record_fact_support_batch(
+        store,
+        &[(
+            support_cursor_id.to_string(),
+            table.to_string(),
+            row_id.to_string(),
+        )],
+    );
+}
+
+pub fn should_record_fact_support_count(count: usize) -> bool {
+    should_persist_mounted_outputs(count)
+}
+
+pub fn record_fact_support_batch(
+    store: &dyn FactStore<Cursor>,
+    supports: &[(String, String, String)],
+) {
+    if supports.is_empty() {
+        return;
+    }
     store.declare(
         SUPPORT_TABLE,
         &[SUPPORT_CURSOR_ID, SUPPORT_TABLE_NAME, SUPPORT_ROW_ID],
     );
-    let mut row = Cursor::default();
-    row.set(SUPPORT_CURSOR_ID, support_cursor_id);
-    row.set(SUPPORT_TABLE_NAME, table);
-    row.set(SUPPORT_ROW_ID, row_id);
-    store.insert_batch(SUPPORT_TABLE, vec![Arc::new(row)]);
+    let rows: Vec<Arc<Cursor>> = supports
+        .iter()
+        .map(|(support_cursor_id, table, row_id)| {
+            let mut row = Cursor::default();
+            row.set(SUPPORT_CURSOR_ID, support_cursor_id.as_str());
+            row.set(SUPPORT_TABLE_NAME, table.as_str());
+            row.set(SUPPORT_ROW_ID, row_id.as_str());
+            Arc::new(row)
+        })
+        .collect();
+    store.insert_batch(SUPPORT_TABLE, rows);
 }
 
 fn retract_supported_rows(store: &dyn FactStore<Cursor>, removed_cursor_ids: &[String]) {

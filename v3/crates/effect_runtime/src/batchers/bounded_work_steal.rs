@@ -59,8 +59,7 @@ where
                 .expect("rayon pool build"),
         );
         let f = Arc::new(f);
-        let (tx, rx) =
-            mpsc::channel::<(E, CancellationToken, ReplyTx<E::Response>)>(cap);
+        let (tx, rx) = mpsc::channel::<(E, CancellationToken, ReplyTx<E::Response>)>(cap);
         let rx = Arc::new(Mutex::new(rx));
         let pool_for_drainer = pool.clone();
         let drainer = tokio::spawn(async move {

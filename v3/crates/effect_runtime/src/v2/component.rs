@@ -27,19 +27,18 @@
 //! `dispatch` → `render_batch` → `render`. No recursion: `render`'s
 //! terminal default is `Node::Done`.
 
-use std::any::Any;
+use std::any::{type_name, Any};
 use std::hash::Hasher;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::diag::{DiagSink, NoopDiagSink};
 use super::event_bus::EventBus;
 use super::flatten::splice_into;
 use super::next::Next;
 use super::node::Node;
-use super::queue::{
-    BarrierScope, ExpandTick, PendingSummary, PipeHash, QueueBackend,
-    QueueRow,
-};
+use super::queue::{BarrierScope, ExpandTick, PendingSummary, PipeHash, QueueBackend, QueueRow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ComponentLifecycle {
@@ -56,11 +55,7 @@ pub trait Component: Send + Sync + 'static {
     }
 
     /// Tier 2. Per-batch pure transform. Default = loop `render`.
-    fn render_batch(
-        &self,
-        ctx:   &RenderCtx,
-        batch: &[&Self::Next],
-    ) -> Vec<Node<Self::Next>> {
+    fn render_batch(&self, ctx: &RenderCtx, batch: &[&Self::Next]) -> Vec<Node<Self::Next>> {
         batch.iter().map(|c| self.render(ctx, c)).collect()
     }
 
@@ -71,12 +66,11 @@ pub trait Component: Send + Sync + 'static {
     /// sink hang off `ctx`.
     fn dispatch(
         &self,
-        ctx:   &RenderCtx,
-        rows:  &[QueueRow<Self::Next>],
+        ctx: &RenderCtx,
+        rows: &[QueueRow<Self::Next>],
         queue: &dyn QueueBackend<Self::Next>,
     ) {
-        let inputs: Vec<&Self::Next> =
-            rows.iter().map(|r| r.value.as_ref()).collect();
+        let inputs: Vec<&Self::Next> = rows.iter().map(|r| r.value.as_ref()).collect();
         let nodes = self.render_batch(ctx, &inputs);
         for (row, node) in rows.iter().zip(nodes) {
             splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
@@ -86,21 +80,25 @@ pub trait Component: Send + Sync + 'static {
     /// Driver hint for `pull_runnable_batch`: max rows to hand to
     /// `dispatch` at once. `None` lets the driver pick a default.
     /// `Some(1)` forces per-row.
-    fn batch_hint(&self) -> Option<usize> { None }
+    fn batch_hint(&self) -> Option<usize> {
+        None
+    }
 
     /// Barrier components buffer rows during `dispatch`, then flush
     /// from `idle` or `complete` once the scheduler observes upstream
     /// state. Streaming components ignore both hooks.
-    fn lifecycle(&self) -> ComponentLifecycle { ComponentLifecycle::Streaming }
+    fn lifecycle(&self) -> ComponentLifecycle {
+        ComponentLifecycle::Streaming
+    }
 
     /// Called when the scheduler has no runnable rows but upstream rows
     /// before this barrier are still parked.
     fn idle(
         &self,
-        _ctx:     &RenderCtx,
-        _scope:   BarrierScope,
+        _ctx: &RenderCtx,
+        _scope: BarrierScope,
         _pending: PendingSummary,
-        _queue:   &dyn QueueBackend<Self::Next>,
+        _queue: &dyn QueueBackend<Self::Next>,
     ) {
     }
 
@@ -109,7 +107,7 @@ pub trait Component: Send + Sync + 'static {
     /// to `depth + 1` here.
     fn complete(
         &self,
-        _ctx:   &RenderCtx,
+        _ctx: &RenderCtx,
         _scope: BarrierScope,
         _queue: &dyn QueueBackend<Self::Next>,
     ) {
@@ -125,19 +123,25 @@ pub trait Component: Send + Sync + 'static {
     /// action.type / react devtools hook kind. Default = Rust type
     /// name (debug-only — author-supplied override is preferred for
     /// tools that surface this label).
-    fn kind(&self) -> &'static str { std::any::type_name::<Self>() }
+    fn kind(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
 
     /// Coarse purity tag. Drives downstream memoize/replay/cancellation.
     ///   `Pure`      — render = f(input). Memoizable.
     ///   `Read`      — observes external state but emits no effect.
     ///   `Effectful` — emits writes / IO descriptions.
-    fn purity(&self) -> Purity { Purity::Pure }
+    fn purity(&self) -> Purity {
+        Purity::Pure
+    }
 
     /// Fold this component's identity into a hasher. Returns `true` if
     /// the component contributed identity bytes; `false` if it declines
     /// (callers treat that as "do not memoize across this step"). v3's
     /// `Op::cache_key` shape, generalized.
-    fn cache_key(&self, _h: &mut dyn Hasher) -> bool { false }
+    fn cache_key(&self, _h: &mut dyn Hasher) -> bool {
+        false
+    }
 
     /// Static-analysis blob. Userland trait extensions downcast to
     /// recover strongly-typed configuration. Mirror of react devtools'
@@ -145,7 +149,9 @@ pub trait Component: Send + Sync + 'static {
     ///
     /// Components that compute a descriptor lazily must cache it on
     /// `self` (e.g. via `OnceLock`); the borrow is `&self`-bound.
-    fn describe(&self) -> Option<&dyn Any> { None }
+    fn describe(&self) -> Option<&dyn Any> {
+        None
+    }
 }
 
 /// Coarse purity classification. Three levels for now; widen to the
@@ -164,12 +170,13 @@ pub enum Purity {
 /// it clones cheaply across `flatten` and override sites.
 #[derive(Clone)]
 pub struct RenderCtx {
-    pub pipe:        PipeHash,
-    pub depth:       u32,
+    pub pipe: PipeHash,
+    pub depth: u32,
     pub expand_tick: ExpandTick,
-    pub bus:         Arc<EventBus>,
-    pub diag:        Arc<dyn DiagSink>,
-    runtime:         Option<Arc<dyn Any + Send + Sync>>,
+    pub bus: Arc<EventBus>,
+    pub diag: Arc<dyn DiagSink>,
+    pub telemetry: Option<Arc<EffectTelemetry>>,
+    runtime: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 impl RenderCtx {
@@ -178,8 +185,9 @@ impl RenderCtx {
             pipe,
             depth,
             expand_tick,
-            bus:  Arc::new(EventBus::new()),
+            bus: Arc::new(EventBus::new()),
             diag: Arc::new(NoopDiagSink),
+            telemetry: None,
             runtime: None,
         }
     }
@@ -191,6 +199,11 @@ impl RenderCtx {
 
     pub fn with_diag(mut self, diag: Arc<dyn DiagSink>) -> Self {
         self.diag = diag;
+        self
+    }
+
+    pub fn with_telemetry(mut self, telemetry: Arc<EffectTelemetry>) -> Self {
+        self.telemetry = Some(telemetry);
         self
     }
 
@@ -211,7 +224,10 @@ impl RenderCtx {
     }
 
     pub fn put<E: RuntimePut>(&self, effect: E) -> E::Output {
-        effect.apply(self)
+        let Some(telemetry) = &self.telemetry else {
+            return effect.apply(self);
+        };
+        telemetry.record_put(type_name::<E>(), || effect.apply(self))
     }
 }
 
@@ -219,6 +235,87 @@ pub trait RuntimePut {
     type Output;
 
     fn apply(self, ctx: &RenderCtx) -> Self::Output;
+}
+
+#[derive(Default)]
+pub struct EffectTelemetry {
+    put_calls: AtomicU64,
+    put_ns: AtomicU64,
+    dispatch_calls: AtomicU64,
+    dispatch_rows: AtomicU64,
+    dispatch_ns: AtomicU64,
+    pull_calls: AtomicU64,
+    pull_rows: AtomicU64,
+    pull_ns: AtomicU64,
+}
+
+impl EffectTelemetry {
+    pub fn record_put<T>(&self, effect: &'static str, f: impl FnOnce() -> T) -> T {
+        let t0 = std::time::Instant::now();
+        let out = f();
+        let ns = t0.elapsed().as_nanos() as u64;
+        self.put_calls.fetch_add(1, Ordering::Relaxed);
+        self.put_ns.fetch_add(ns, Ordering::Relaxed);
+        tracing::trace!(
+            target: "effect_runtime::telemetry",
+            effect,
+            wall_ns = ns,
+            "put"
+        );
+        out
+    }
+
+    pub fn record_dispatch(&self, op: &'static str, rows: u64, wall: Duration) {
+        let ns = wall.as_nanos() as u64;
+        self.dispatch_calls.fetch_add(1, Ordering::Relaxed);
+        self.dispatch_rows.fetch_add(rows, Ordering::Relaxed);
+        self.dispatch_ns.fetch_add(ns, Ordering::Relaxed);
+        tracing::trace!(
+            target: "effect_runtime::telemetry",
+            op,
+            rows,
+            wall_ns = ns,
+            "dispatch"
+        );
+    }
+
+    pub fn record_pull(&self, rows: u64, wall: Duration) {
+        let ns = wall.as_nanos() as u64;
+        self.pull_calls.fetch_add(1, Ordering::Relaxed);
+        self.pull_rows.fetch_add(rows, Ordering::Relaxed);
+        self.pull_ns.fetch_add(ns, Ordering::Relaxed);
+        tracing::trace!(
+            target: "effect_runtime::telemetry",
+            rows,
+            wall_ns = ns,
+            "pull"
+        );
+    }
+
+    pub fn snapshot(&self) -> EffectTelemetrySnapshot {
+        EffectTelemetrySnapshot {
+            put_calls: self.put_calls.load(Ordering::Relaxed),
+            put_ns: self.put_ns.load(Ordering::Relaxed),
+            dispatch_calls: self.dispatch_calls.load(Ordering::Relaxed),
+            dispatch_rows: self.dispatch_rows.load(Ordering::Relaxed),
+            dispatch_ns: self.dispatch_ns.load(Ordering::Relaxed),
+            pull_calls: self.pull_calls.load(Ordering::Relaxed),
+            pull_rows: self.pull_rows.load(Ordering::Relaxed),
+            pull_ns: self.pull_ns.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct EffectTelemetrySnapshot {
+    pub put_calls: u64,
+    pub put_ns: u64,
+    pub dispatch_calls: u64,
+    pub dispatch_rows: u64,
+    pub dispatch_ns: u64,
+    pub pull_calls: u64,
+    pub pull_rows: u64,
+    pub pull_ns: u64,
 }
 
 /// Type alias for the trait-object form a pipe stores. Reduces

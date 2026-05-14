@@ -7,8 +7,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::*;
 use super::queue::QueueBackend;
+use super::*;
 
 const TEST_DOMAIN: &str = "test";
 
@@ -20,15 +20,24 @@ pub struct LabCursor {
 }
 
 impl super::row::Row for LabCursor {
-    fn get(&self, col: &str) -> Option<&str> { LabCursor::get(self, col) }
-    fn set(&mut self, col: &str, value: &str) { LabCursor::set(self, col, value.to_string()); }
+    fn get(&self, col: &str) -> Option<&str> {
+        LabCursor::get(self, col)
+    }
+    fn set(&mut self, col: &str, value: &str) {
+        LabCursor::set(self, col, value.to_string());
+    }
     fn fields(&self) -> Vec<(&str, &str)> {
-        self.terms.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect()
+        self.terms
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect()
     }
 }
 
 impl LabCursor {
-    pub fn new() -> Self { Self { terms: Vec::new() } }
+    pub fn new() -> Self {
+        Self { terms: Vec::new() }
+    }
 
     pub fn with(mut self, k: &str, v: impl Into<String>) -> Self {
         self.set(k, v);
@@ -38,7 +47,7 @@ impl LabCursor {
     pub fn set(&mut self, k: &str, v: impl Into<String>) -> &mut Self {
         let v = v.into();
         match self.terms.binary_search_by(|(n, _)| n.as_str().cmp(k)) {
-            Ok(i)  => self.terms[i].1 = v,
+            Ok(i) => self.terms[i].1 = v,
             Err(i) => self.terms.insert(i, (k.to_string(), v)),
         }
         self
@@ -81,7 +90,7 @@ impl super::codec::Codec for LabCursor {
         let mut p = 0;
         let read_u32 = |b: &[u8], p: &mut usize| -> u32 {
             let mut a = [0u8; 4];
-            a.copy_from_slice(&b[*p..*p+4]);
+            a.copy_from_slice(&b[*p..*p + 4]);
             *p += 4;
             u32::from_le_bytes(a)
         };
@@ -89,9 +98,11 @@ impl super::codec::Codec for LabCursor {
         let mut terms = Vec::with_capacity(n);
         for _ in 0..n {
             let nl = read_u32(bytes, &mut p) as usize;
-            let name = std::str::from_utf8(&bytes[p..p+nl]).unwrap().to_string(); p += nl;
+            let name = std::str::from_utf8(&bytes[p..p + nl]).unwrap().to_string();
+            p += nl;
             let vl = read_u32(bytes, &mut p) as usize;
-            let val  = std::str::from_utf8(&bytes[p..p+vl]).unwrap().to_string(); p += vl;
+            let val = std::str::from_utf8(&bytes[p..p + vl]).unwrap().to_string();
+            p += vl;
             terms.push((name, val));
         }
         Self { terms }
@@ -117,7 +128,9 @@ fn fact_store_commit_publishes_row_and_table_dirty() {
     let store = MemFactStore::<LabCursor>::new();
     let bus = EventBus::new();
     let events = Arc::new(Mutex::new(Vec::new()));
-    bus.add_listener(Arc::new(RecordingListener { events: events.clone() }));
+    bus.add_listener(Arc::new(RecordingListener {
+        events: events.clone(),
+    }));
 
     let row = LabCursor::new().with("name", "one");
     let expected_row_key = row_dirty_key(&content_id("alpha", &row));
@@ -144,7 +157,9 @@ fn fact_store_delete_matching_publishes_table_dirty() {
     let store = MemFactStore::<LabCursor>::new();
     let bus = EventBus::new();
     let events = Arc::new(Mutex::new(Vec::new()));
-    bus.add_listener(Arc::new(RecordingListener { events: events.clone() }));
+    bus.add_listener(Arc::new(RecordingListener {
+        events: events.clone(),
+    }));
 
     store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
     store.commit(1, Some(&bus));
@@ -173,7 +188,11 @@ fn mem_fact_store_table_version_changes_on_visible_writes() {
     store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
     assert_eq!(store.table_version("alpha"), 1);
     store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
-    assert_eq!(store.table_version("alpha"), 1, "duplicate row should not change version");
+    assert_eq!(
+        store.table_version("alpha"),
+        1,
+        "duplicate row should not change version"
+    );
     assert_eq!(store.delete_matching("alpha", &[("name", "one")]), 1);
     assert_eq!(store.table_version("alpha"), 2);
 }
@@ -188,7 +207,11 @@ fn sqlite_fact_store_table_version_changes_on_visible_writes() {
     store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
     assert_eq!(store.table_version("alpha"), 1);
     store.insert("alpha", Arc::new(LabCursor::new().with("name", "one")));
-    assert_eq!(store.table_version("alpha"), 1, "duplicate row should not change version");
+    assert_eq!(
+        store.table_version("alpha"),
+        1,
+        "duplicate row should not change version"
+    );
     assert_eq!(store.delete_matching("alpha", &[("name", "one")]), 1);
     assert_eq!(store.table_version("alpha"), 2);
 }
@@ -199,7 +222,13 @@ fn sqlite_fact_store_allows_generation_user_column() {
     let store = SqliteFactStore::<LabCursor>::open_in_memory().unwrap();
     store.declare(
         "mounted_query_mount",
-        &["mount_id", "input_key", "generation", "sql", "__support_cursor_id"],
+        &[
+            "mount_id",
+            "input_key",
+            "generation",
+            "sql",
+            "__support_cursor_id",
+        ],
     );
 
     store.insert(
@@ -263,13 +292,7 @@ fn runtime_graph_supports_wake_resume_and_active_child_without_consumer_types() 
         generation: 1,
     });
 
-    let owners = graph.dispatch_wake(
-        "source-a",
-        "value-a",
-        "event-a",
-        "subscribe",
-        1,
-    );
+    let owners = graph.dispatch_wake("source-a", "value-a", "event-a", "subscribe", 1);
 
     assert_eq!(owners, vec!["owner".to_string()]);
     assert_eq!(
@@ -420,7 +443,10 @@ fn sqlite_fact_store_identity_uses_declared_columns() {
 
 // --- demo components -------------------------------------------------
 
-struct Trim { from: String, to: String }
+struct Trim {
+    from: String,
+    to: String,
+}
 impl Component for Trim {
     type Next = LabCursor;
     fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
@@ -431,7 +457,9 @@ impl Component for Trim {
     }
 }
 
-struct Collector { sink: Arc<Mutex<Vec<LabCursor>>> }
+struct Collector {
+    sink: Arc<Mutex<Vec<LabCursor>>>,
+}
 impl Component for Collector {
     type Next = LabCursor;
     fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
@@ -458,12 +486,7 @@ impl BarrierCollect {
         }
     }
 
-    fn emit_snapshot(
-        &self,
-        scope: BarrierScope,
-        queue: &dyn QueueBackend<LabCursor>,
-        label: &str,
-    ) {
+    fn emit_snapshot(&self, scope: BarrierScope, queue: &dyn QueueBackend<LabCursor>, label: &str) {
         let values = self.buffered.lock().unwrap().clone();
         if values.is_empty() {
             return;
@@ -472,16 +495,16 @@ impl BarrierCollect {
         out.set(":kind", label);
         out.set(":joined", values.join(","));
         queue.enqueue(QueueRow {
-            id:             0,
-            parent_id:      None,
-            batch_idx:      0,
-            path:           Vec::new(),
-            pipe_hash:      scope.pipe_hash,
-            instance_id:    scope.instance_id,
-            depth:          scope.depth + 1,
-            value:          Arc::new(out),
-            wake:           Wake::Immediate,
-            expand_tick:    scope.expand_tick,
+            id: 0,
+            parent_id: None,
+            batch_idx: 0,
+            path: Vec::new(),
+            pipe_hash: scope.pipe_hash,
+            instance_id: scope.instance_id,
+            depth: scope.depth + 1,
+            value: Arc::new(out),
+            wake: Wake::Immediate,
+            expand_tick: scope.expand_tick,
             enqueued_at_ns: 0,
         });
     }
@@ -503,7 +526,9 @@ impl Component for BarrierCollect {
         }
     }
 
-    fn lifecycle(&self) -> ComponentLifecycle { ComponentLifecycle::Barrier }
+    fn lifecycle(&self) -> ComponentLifecycle {
+        ComponentLifecycle::Barrier
+    }
 
     fn idle(
         &self,
@@ -524,12 +549,7 @@ impl Component for BarrierCollect {
         }
     }
 
-    fn complete(
-        &self,
-        _ctx: &RenderCtx,
-        scope: BarrierScope,
-        queue: &dyn QueueBackend<LabCursor>,
-    ) {
+    fn complete(&self, _ctx: &RenderCtx, scope: BarrierScope, queue: &dyn QueueBackend<LabCursor>) {
         if self.buffered.lock().unwrap().is_empty() {
             return;
         }
@@ -540,25 +560,34 @@ impl Component for BarrierCollect {
     }
 }
 
-struct FanOut { n: usize }
+struct FanOut {
+    n: usize,
+}
 impl Component for FanOut {
     type Next = LabCursor;
     fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
-        Node::Many((0..self.n).map(|i| {
-            let mut copy = c.clone();
-            copy.set(":fan_idx", i.to_string());
-            Node::Emit(Arc::new(copy))
-        }).collect())
+        Node::Many(
+            (0..self.n)
+                .map(|i| {
+                    let mut copy = c.clone();
+                    copy.set(":fan_idx", i.to_string());
+                    Node::Emit(Arc::new(copy))
+                })
+                .collect(),
+        )
     }
 }
 
 struct ParkOnKey {
-    key:   NextKey,
+    key: NextKey,
     fired: std::sync::atomic::AtomicBool,
 }
 impl ParkOnKey {
     fn new(key: NextKey) -> Self {
-        Self { key, fired: std::sync::atomic::AtomicBool::new(false) }
+        Self {
+            key,
+            fired: std::sync::atomic::AtomicBool::new(false),
+        }
     }
 }
 impl Component for ParkOnKey {
@@ -571,7 +600,10 @@ impl Component for ParkOnKey {
         } else {
             Node::Yield {
                 value: Arc::new(c.clone()),
-                wake:  Wake::Key { domain: TEST_DOMAIN.into(), key: self.key },
+                wake: Wake::Key {
+                    domain: TEST_DOMAIN.into(),
+                    key: self.key,
+                },
             }
         }
     }
@@ -582,15 +614,23 @@ impl Component for ParkOnKey {
 #[test]
 fn pipe_value_builds_into_runnable_instance() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
 
     let pipe: Pipe<LabCursor> = Pipe::new()
-        .step(Arc::new(Trim { from: ":raw".into(), to: ":clean".into() }))
+        .step(Arc::new(Trim {
+            from: ":raw".into(),
+            to: ":clean".into(),
+        }))
         .step(Arc::new(Collector { sink: sink.clone() }));
     assert_eq!(pipe.len(), 2);
 
     let inst = pipe.into_instance();
-    expand(&inst, queue, vec![lc(":raw", "  hi  ")], ExpandOpts::default());
+    expand(
+        &inst,
+        queue,
+        vec![lc(":raw", "  hi  ")],
+        ExpandOpts::default(),
+    );
 
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 1);
@@ -599,26 +639,33 @@ fn pipe_value_builds_into_runnable_instance() {
 
 #[test]
 fn pipe_extend_concatenates_steps() {
-    let outer: Pipe<LabCursor> = Pipe::new()
-        .step(Arc::new(Trim { from: ":raw".into(), to: ":a".into() }));
-    let inner: Pipe<LabCursor> = Pipe::new()
-        .step(Arc::new(Trim { from: ":a".into(), to: ":b".into() }));
+    let outer: Pipe<LabCursor> = Pipe::new().step(Arc::new(Trim {
+        from: ":raw".into(),
+        to: ":a".into(),
+    }));
+    let inner: Pipe<LabCursor> = Pipe::new().step(Arc::new(Trim {
+        from: ":a".into(),
+        to: ":b".into(),
+    }));
     assert_eq!(outer.extend(inner).len(), 2);
 }
 
 #[test]
 fn trim_collector_pipe_runs_to_drain() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
 
     let pipe = PipeInstance::new(vec![
-        Arc::new(Trim { from: ":raw".into(), to: ":clean".into() })
-            as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Trim {
+            from: ":raw".into(),
+            to: ":clean".into(),
+        }) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
     let stats = expand(
-        &pipe, queue.clone(),
+        &pipe,
+        queue.clone(),
         vec![lc(":raw", "  hello  "), lc(":raw", "world\n")],
         ExpandOpts::default(),
     );
@@ -628,21 +675,26 @@ fn trim_collector_pipe_runs_to_drain() {
     assert_eq!(got[0].get(":clean"), Some("hello"));
     assert_eq!(got[1].get(":clean"), Some("world"));
     assert_eq!(stats.rendered, 4);
-    assert_eq!(stats.parked,   0);
-    assert_eq!(queue.depth(),  0);
+    assert_eq!(stats.parked, 0);
+    assert_eq!(queue.depth(), 0);
 }
 
 #[test]
 fn many_fanout_three_per_input() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
 
     let pipe = PipeInstance::new(vec![
         Arc::new(FanOut { n: 3 }) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    expand(&pipe, queue, vec![lc(":raw", "x"), lc(":raw", "y")], ExpandOpts::default());
+    expand(
+        &pipe,
+        queue,
+        vec![lc(":raw", "x"), lc(":raw", "y")],
+        ExpandOpts::default(),
+    );
 
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 6);
@@ -656,9 +708,9 @@ fn many_fanout_three_per_input() {
 #[test]
 fn yield_parks_until_dispatch_park_promotes() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
-    let key   = bus.fresh_key();
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
+    let key = bus.fresh_key();
 
     let pipe = PipeInstance::new(vec![
         Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
@@ -668,12 +720,13 @@ fn yield_parks_until_dispatch_park_promotes() {
     let opts = ExpandOpts::default().with_bus(bus.clone());
 
     let stats = expand(
-        &pipe, queue.clone(),
+        &pipe,
+        queue.clone(),
         vec![lc(":raw", "alpha")],
         opts.clone(),
     );
     assert_eq!(stats.rendered, 1);
-    assert_eq!(stats.parked,   1);
+    assert_eq!(stats.parked, 1);
     assert_eq!(sink.lock().unwrap().len(), 0);
 
     let promoted = queue.dispatch_park(TEST_DOMAIN, Some(key));
@@ -681,7 +734,7 @@ fn yield_parks_until_dispatch_park_promotes() {
 
     let stats = expand(&pipe, queue.clone(), Vec::new(), opts);
     assert_eq!(stats.rendered, 2);
-    assert_eq!(stats.parked,   0);
+    assert_eq!(stats.parked, 0);
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].get(":raw"), Some("alpha"));
@@ -695,9 +748,9 @@ fn background_thread_wake_no_async_runtime() {
     use std::time::Duration;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
-    let key   = bus.fresh_key();
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
+    let key = bus.fresh_key();
 
     let pipe = PipeInstance::new(vec![
         Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
@@ -705,7 +758,12 @@ fn background_thread_wake_no_async_runtime() {
     ]);
     let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    expand(&pipe, queue.clone(), vec![lc(":raw", "thread-fired")], opts.clone());
+    expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "thread-fired")],
+        opts.clone(),
+    );
     assert_eq!(queue.depth(), 1);
 
     let queue_for_thread = queue.clone();
@@ -723,7 +781,7 @@ fn background_thread_wake_no_async_runtime() {
 #[test]
 fn barrier_complete_fires_after_upstream_drain() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
     let barrier = Arc::new(BarrierCollect::new(false));
 
     let pipe = PipeInstance::new(vec![
@@ -750,9 +808,9 @@ fn barrier_complete_fires_after_upstream_drain() {
 #[test]
 fn barrier_complete_waits_for_parked_upstream_then_next_wake_finishes() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
-    let key   = bus.fresh_key();
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
+    let key = bus.fresh_key();
     let barrier = Arc::new(BarrierCollect::new(false));
 
     let pipe = PipeInstance::new(vec![
@@ -790,9 +848,9 @@ fn barrier_complete_waits_for_parked_upstream_then_next_wake_finishes() {
 #[test]
 fn barrier_idle_can_emit_partial_snapshot_while_upstream_is_parked() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
-    let key   = bus.fresh_key();
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
+    let key = bus.fresh_key();
     let barrier = Arc::new(BarrierCollect::new(true));
 
     let pipe = PipeInstance::new(vec![
@@ -841,9 +899,9 @@ fn mutation_store_routes_async_response_back() {
     use super::effect_dispatch::{key_hex, MUTATION_KEY_COL};
 
     struct AsyncUppercase {
-        bus:        Arc<EventBus>,
-        queue:      Arc<dyn QueueBackend<LabCursor>>,
-        responses:  Arc<dyn FactStore<LabCursor>>,
+        bus: Arc<EventBus>,
+        queue: Arc<dyn QueueBackend<LabCursor>>,
+        responses: Arc<dyn FactStore<LabCursor>>,
         dispatched: Mutex<std::collections::HashMap<[u8; 32], NextKey>>,
     }
     impl Component for AsyncUppercase {
@@ -860,14 +918,17 @@ fn mutation_store_routes_async_response_back() {
                 }
                 return Node::Yield {
                     value: Arc::new(c.clone()),
-                    wake:  Wake::Key { domain: TEST_DOMAIN.into(), key },
+                    wake: Wake::Key {
+                        domain: TEST_DOMAIN.into(),
+                        key,
+                    },
                 };
             }
             let key = self.bus.fresh_key();
             d.insert(hash, key);
             drop(d);
 
-            let raw    = c.get(":raw").unwrap_or("").to_string();
+            let raw = c.get(":raw").unwrap_or("").to_string();
             let parent = c.clone();
             let queue_t = self.queue.clone();
             let resp_t = self.responses.clone();
@@ -882,14 +943,17 @@ fn mutation_store_routes_async_response_back() {
 
             Node::Yield {
                 value: Arc::new(c.clone()),
-                wake:  Wake::Key { domain: TEST_DOMAIN.into(), key },
+                wake: Wake::Key {
+                    domain: TEST_DOMAIN.into(),
+                    key,
+                },
             }
         }
     }
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
     let resp: Arc<dyn FactStore<LabCursor>> = Arc::new(MemFactStore::<LabCursor>::new());
     resp.declare("results", &[MUTATION_KEY_COL, ":upper", ":raw"]);
 
@@ -905,19 +969,26 @@ fn mutation_store_routes_async_response_back() {
 
     let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    expand(&pipe, queue.clone(), vec![lc(":raw", "hello")], opts.clone());
+    expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "hello")],
+        opts.clone(),
+    );
     assert_eq!(sink.lock().unwrap().len(), 0);
     assert_eq!(queue.depth(), 1);
 
     // Wait for the spawned thread to land its result + promote.
-    while resp.len("results") == 0 { std::thread::yield_now(); }
+    while resp.len("results") == 0 {
+        std::thread::yield_now();
+    }
     std::thread::sleep(Duration::from_millis(15));
 
     expand(&pipe, queue.clone(), Vec::new(), opts);
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].get(":upper"), Some("HELLO"));
-    assert_eq!(got[0].get(":raw"),   Some("hello"));
+    assert_eq!(got[0].get(":raw"), Some("hello"));
     assert_eq!(queue.depth(), 0);
 }
 
@@ -935,7 +1006,9 @@ fn carrier_can_be_a_plain_integer() {
         }
     }
 
-    struct Collector { sink: Arc<Mutex<Vec<N>>> }
+    struct Collector {
+        sink: Arc<Mutex<Vec<N>>>,
+    }
     impl Component for Collector {
         type Next = N;
         fn render(&self, _: &RenderCtx, n: &N) -> Node<N> {
@@ -945,15 +1018,16 @@ fn carrier_can_be_a_plain_integer() {
     }
 
     let queue: Arc<dyn QueueBackend<N>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let pipe  = PipeInstance::new(vec![
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let pipe = PipeInstance::new(vec![
         Arc::new(Double) as Arc<dyn Component<Next = N>>,
         Arc::new(Double),
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
     expand(
-        &pipe, queue,
+        &pipe,
+        queue,
         vec![Arc::new(3i64), Arc::new(5i64)],
         ExpandOpts::default(),
     );
@@ -967,21 +1041,24 @@ fn carrier_can_be_a_plain_integer() {
 fn park_row<N: Next>(
     queue: &dyn QueueBackend<N>,
     domain: &'static str,
-    key:    NextKey,
-    value:  Arc<N>,
+    key: NextKey,
+    value: Arc<N>,
 ) {
     use super::queue::QueueRow;
     queue.enqueue(QueueRow {
-        id:             0,
-        parent_id:      None,
-        batch_idx:      0,
-        path:           Vec::new(),
-        pipe_hash:      0,
-        instance_id:    0,
-        depth:          0,
+        id: 0,
+        parent_id: None,
+        batch_idx: 0,
+        path: Vec::new(),
+        pipe_hash: 0,
+        instance_id: 0,
+        depth: 0,
         value,
-        wake:           Wake::Key { domain: domain.into(), key },
-        expand_tick:     0,
+        wake: Wake::Key {
+            domain: domain.into(),
+            key,
+        },
+        expand_tick: 0,
         enqueued_at_ns: 0,
     });
 }
@@ -998,8 +1075,10 @@ fn dispatch_park_promotes_matching_rows() {
     let k1 = fresh_key(1);
     let k2 = fresh_key(2);
 
-    for _ in 0..3 { park_row(queue.as_ref(), "fs",  k1, lc(":raw", "f")); }
-    park_row(queue.as_ref(), "fs",  k2, lc(":raw", "f"));
+    for _ in 0..3 {
+        park_row(queue.as_ref(), "fs", k1, lc(":raw", "f"));
+    }
+    park_row(queue.as_ref(), "fs", k2, lc(":raw", "f"));
     park_row(queue.as_ref(), "git", k1, lc(":raw", "g"));
 
     let n = queue.dispatch_park("fs", Some(k1));
@@ -1012,8 +1091,10 @@ fn dispatch_park_domain_only_promotes_all_keys_in_domain() {
     let k1 = fresh_key(1);
     let k2 = fresh_key(2);
 
-    for _ in 0..3 { park_row(queue.as_ref(), "fs",  k1, lc(":raw", "f")); }
-    park_row(queue.as_ref(), "fs",  k2, lc(":raw", "f"));
+    for _ in 0..3 {
+        park_row(queue.as_ref(), "fs", k1, lc(":raw", "f"));
+    }
+    park_row(queue.as_ref(), "fs", k2, lc(":raw", "f"));
     park_row(queue.as_ref(), "git", k1, lc(":raw", "g"));
 
     let n = queue.dispatch_park("fs", None);
@@ -1044,16 +1125,19 @@ fn mem_queue_replaces_duplicate_parked_subscription() {
     let key = fresh_key(11);
 
     let mut first = QueueRow {
-        id:             0,
-        parent_id:      None,
-        batch_idx:      0,
-        path:           Vec::new(),
-        pipe_hash:      7,
-        instance_id:    8,
-        depth:          2,
-        value:          lc(":raw", "same"),
-        wake:           Wake::Key { domain: "table".into(), key },
-        expand_tick:     0,
+        id: 0,
+        parent_id: None,
+        batch_idx: 0,
+        path: Vec::new(),
+        pipe_hash: 7,
+        instance_id: 8,
+        depth: 2,
+        value: lc(":raw", "same"),
+        wake: Wake::Key {
+            domain: "table".into(),
+            key,
+        },
+        expand_tick: 0,
         enqueued_at_ns: 0,
     };
     queue.enqueue_replacing_parked(first.clone());
@@ -1068,29 +1152,29 @@ fn mem_queue_replaces_duplicate_parked_subscription() {
 fn mem_queue_scoped_pull_skips_other_pipe_rows() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
     queue.enqueue(QueueRow {
-        id:             0,
-        parent_id:      None,
-        batch_idx:      0,
-        path:           Vec::new(),
-        pipe_hash:      1,
-        instance_id:    1,
-        depth:          0,
-        value:          lc(":raw", "one"),
-        wake:           Wake::Immediate,
-        expand_tick:     0,
+        id: 0,
+        parent_id: None,
+        batch_idx: 0,
+        path: Vec::new(),
+        pipe_hash: 1,
+        instance_id: 1,
+        depth: 0,
+        value: lc(":raw", "one"),
+        wake: Wake::Immediate,
+        expand_tick: 0,
         enqueued_at_ns: 0,
     });
     queue.enqueue(QueueRow {
-        id:             0,
-        parent_id:      None,
-        batch_idx:      0,
-        path:           Vec::new(),
-        pipe_hash:      2,
-        instance_id:    2,
-        depth:          0,
-        value:          lc(":raw", "two"),
-        wake:           Wake::Immediate,
-        expand_tick:     0,
+        id: 0,
+        parent_id: None,
+        batch_idx: 0,
+        path: Vec::new(),
+        pipe_hash: 2,
+        instance_id: 2,
+        depth: 0,
+        value: lc(":raw", "two"),
+        wake: Wake::Immediate,
+        expand_tick: 0,
         enqueued_at_ns: 0,
     });
 
@@ -1121,13 +1205,15 @@ fn sqlite_dispatch_park_promotes_matching_rows() {
     let k1 = fresh_key(11);
     let k2 = fresh_key(12);
 
-    for _ in 0..3 { park_row(queue.as_ref(), "fs",  k1, lc(":raw", "f")); }
-    park_row(queue.as_ref(), "fs",  k2, lc(":raw", "f"));
+    for _ in 0..3 {
+        park_row(queue.as_ref(), "fs", k1, lc(":raw", "f"));
+    }
+    park_row(queue.as_ref(), "fs", k2, lc(":raw", "f"));
     park_row(queue.as_ref(), "git", k1, lc(":raw", "g"));
 
     assert_eq!(queue.dispatch_park("fs", Some(k1)), 3);
-    assert_eq!(queue.dispatch_park("fs", None),     1); // k2 still parked
-    assert_eq!(queue.dispatch_park("git", None),    1);
+    assert_eq!(queue.dispatch_park("fs", None), 1); // k2 still parked
+    assert_eq!(queue.dispatch_park("git", None), 1);
 }
 
 #[cfg(feature = "sqlite")]
@@ -1136,16 +1222,19 @@ fn sqlite_queue_replaces_duplicate_parked_subscription() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
     let key = fresh_key(13);
     let mut row = QueueRow {
-        id:             0,
-        parent_id:      None,
-        batch_idx:      0,
-        path:           Vec::new(),
-        pipe_hash:      7,
-        instance_id:    8,
-        depth:          2,
-        value:          lc(":raw", "same"),
-        wake:           Wake::Key { domain: "table".into(), key },
-        expand_tick:     0,
+        id: 0,
+        parent_id: None,
+        batch_idx: 0,
+        path: Vec::new(),
+        pipe_hash: 7,
+        instance_id: 8,
+        depth: 2,
+        value: lc(":raw", "same"),
+        wake: Wake::Key {
+            domain: "table".into(),
+            key,
+        },
+        expand_tick: 0,
         enqueued_at_ns: 0,
     };
 
@@ -1162,29 +1251,29 @@ fn sqlite_queue_replaces_duplicate_parked_subscription() {
 fn sqlite_queue_scoped_pull_skips_other_pipe_rows() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
     queue.enqueue(QueueRow {
-        id:             0,
-        parent_id:      None,
-        batch_idx:      0,
-        path:           Vec::new(),
-        pipe_hash:      1,
-        instance_id:    1,
-        depth:          0,
-        value:          lc(":raw", "one"),
-        wake:           Wake::Immediate,
-        expand_tick:     0,
+        id: 0,
+        parent_id: None,
+        batch_idx: 0,
+        path: Vec::new(),
+        pipe_hash: 1,
+        instance_id: 1,
+        depth: 0,
+        value: lc(":raw", "one"),
+        wake: Wake::Immediate,
+        expand_tick: 0,
         enqueued_at_ns: 0,
     });
     queue.enqueue(QueueRow {
-        id:             0,
-        parent_id:      None,
-        batch_idx:      0,
-        path:           Vec::new(),
-        pipe_hash:      2,
-        instance_id:    2,
-        depth:          0,
-        value:          lc(":raw", "two"),
-        wake:           Wake::Immediate,
-        expand_tick:     0,
+        id: 0,
+        parent_id: None,
+        batch_idx: 0,
+        path: Vec::new(),
+        pipe_hash: 2,
+        instance_id: 2,
+        depth: 0,
+        value: lc(":raw", "two"),
+        wake: Wake::Immediate,
+        expand_tick: 0,
         enqueued_at_ns: 0,
     });
 
@@ -1224,7 +1313,9 @@ fn sqlite_park_rss_does_not_grow_significantly() {
     assert!(
         per_row < 1024,
         "rss delta {} bytes / {} rows = {} bytes/row exceeded 1024",
-        delta, N, per_row,
+        delta,
+        N,
+        per_row,
     );
 }
 
@@ -1234,16 +1325,19 @@ fn sqlite_park_rss_does_not_grow_significantly() {
 #[test]
 fn sqlite_queue_replays_trim_collector_pipe() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
 
     let pipe = PipeInstance::new(vec![
-        Arc::new(Trim { from: ":raw".into(), to: ":clean".into() })
-            as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(Trim {
+            from: ":raw".into(),
+            to: ":clean".into(),
+        }) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
     let stats = expand(
-        &pipe, queue.clone(),
+        &pipe,
+        queue.clone(),
         vec![lc(":raw", "  hello  "), lc(":raw", "world\n")],
         ExpandOpts::default(),
     );
@@ -1253,22 +1347,27 @@ fn sqlite_queue_replays_trim_collector_pipe() {
     assert_eq!(got[0].get(":clean"), Some("hello"));
     assert_eq!(got[1].get(":clean"), Some("world"));
     assert_eq!(stats.rendered, 4);
-    assert_eq!(stats.parked,   0);
-    assert_eq!(queue.depth(),  0);
+    assert_eq!(stats.parked, 0);
+    assert_eq!(queue.depth(), 0);
 }
 
 #[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_queue_many_fanout_three_per_input() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
 
     let pipe = PipeInstance::new(vec![
         Arc::new(FanOut { n: 3 }) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    expand(&pipe, queue, vec![lc(":raw", "x"), lc(":raw", "y")], ExpandOpts::default());
+    expand(
+        &pipe,
+        queue,
+        vec![lc(":raw", "x"), lc(":raw", "y")],
+        ExpandOpts::default(),
+    );
 
     assert_eq!(sink.lock().unwrap().len(), 6);
 }
@@ -1277,9 +1376,9 @@ fn sqlite_queue_many_fanout_three_per_input() {
 #[test]
 fn sqlite_queue_yield_parks_until_dispatch_park() {
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open_in_memory());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
-    let key   = bus.fresh_key();
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
+    let key = bus.fresh_key();
 
     let pipe = PipeInstance::new(vec![
         Arc::new(ParkOnKey::new(key)) as Arc<dyn Component<Next = LabCursor>>,
@@ -1287,7 +1386,12 @@ fn sqlite_queue_yield_parks_until_dispatch_park() {
     ]);
     let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    expand(&pipe, queue.clone(), vec![lc(":raw", "alpha")], opts.clone());
+    expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "alpha")],
+        opts.clone(),
+    );
     assert_eq!(queue.depth(), 1);
     assert_eq!(sink.lock().unwrap().len(), 0);
 
@@ -1313,12 +1417,14 @@ fn sqlite_queue_yield_parks_until_dispatch_park() {
 #[cfg(feature = "sqlite")]
 #[test]
 fn crash_restart_resumes_parked_row_with_persisted_mutation() {
-    use std::sync::Mutex as StdMutex;
     use super::effect_dispatch::{key_hex, MUTATION_KEY_COL};
+    use std::sync::Mutex as StdMutex;
 
     const RESULTS: &str = "results";
 
-    struct ParkAndConsume { store: Arc<dyn FactStore<LabCursor>> }
+    struct ParkAndConsume {
+        store: Arc<dyn FactStore<LabCursor>>,
+    }
     impl Component for ParkAndConsume {
         type Next = LabCursor;
         fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
@@ -1330,7 +1436,10 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
             }
             Node::Yield {
                 value: Arc::new(c.clone()),
-                wake:  Wake::Key { domain: TEST_DOMAIN.into(), key: k },
+                wake: Wake::Key {
+                    domain: TEST_DOMAIN.into(),
+                    key: k,
+                },
             }
         }
     }
@@ -1351,17 +1460,19 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
 
     {
         let conn = Arc::new(StdMutex::new(rusqlite::Connection::open(&db_path).unwrap()));
-        let queue: Arc<dyn QueueBackend<LabCursor>> =
-            Arc::new(SqliteQueue::open(conn.clone()));
+        let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open(conn.clone()));
         let store: Arc<dyn FactStore<LabCursor>> =
             Arc::new(SqliteFactStore::<LabCursor>::open_file(&fact_path).unwrap());
         store.declare(RESULTS, &[MUTATION_KEY_COL, ":raw", ":upper"]);
-        let bus   = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::new());
 
         let pipe = PipeInstance::new(vec![
-            Arc::new(ParkAndConsume { store: store.clone() })
-                as Arc<dyn Component<Next = LabCursor>>,
-            Arc::new(Collector { sink: Arc::new(Mutex::new(Vec::new())) }),
+            Arc::new(ParkAndConsume {
+                store: store.clone(),
+            }) as Arc<dyn Component<Next = LabCursor>>,
+            Arc::new(Collector {
+                sink: Arc::new(Mutex::new(Vec::new())),
+            }),
         ]);
         let opts = ExpandOpts::default().with_bus(bus.clone());
 
@@ -1378,11 +1489,10 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
     let collected = Arc::new(Mutex::new(Vec::new()));
     {
         let conn = Arc::new(StdMutex::new(rusqlite::Connection::open(&db_path).unwrap()));
-        let queue: Arc<dyn QueueBackend<LabCursor>> =
-            Arc::new(SqliteQueue::open(conn.clone()));
+        let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(SqliteQueue::open(conn.clone()));
         let store: Arc<dyn FactStore<LabCursor>> =
             Arc::new(SqliteFactStore::<LabCursor>::open_file(&fact_path).unwrap());
-        let bus   = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::new());
 
         // Park-as-row: the queue itself holds the wake state. Promote
         // the parked row directly through `dispatch_park`.
@@ -1391,9 +1501,12 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
         assert_eq!(store.len(RESULTS), 1);
 
         let pipe = PipeInstance::new(vec![
-            Arc::new(ParkAndConsume { store: store.clone() })
-                as Arc<dyn Component<Next = LabCursor>>,
-            Arc::new(Collector { sink: collected.clone() }),
+            Arc::new(ParkAndConsume {
+                store: store.clone(),
+            }) as Arc<dyn Component<Next = LabCursor>>,
+            Arc::new(Collector {
+                sink: collected.clone(),
+            }),
         ]);
         let opts = ExpandOpts::default().with_bus(bus.clone());
 
@@ -1405,22 +1518,22 @@ fn crash_restart_resumes_parked_row_with_persisted_mutation() {
 
     let got = collected.lock().unwrap();
     assert_eq!(got.len(), 1);
-    assert_eq!(got[0].get(":raw"),   Some("alpha"));
+    assert_eq!(got[0].get(":raw"), Some("alpha"));
     assert_eq!(got[0].get(":upper"), Some("ALPHA"));
 }
 
 // --- Phase B: saga-style effect dispatch (Spawner + EffectDispatch) --
 
 struct DispatchUppercase {
-    fx:         Arc<EffectDispatch<LabCursor>>,
-    domain:     &'static str,
+    fx: Arc<EffectDispatch<LabCursor>>,
+    domain: &'static str,
     dispatched: Mutex<std::collections::HashSet<[u8; 32]>>,
 }
 impl Component for DispatchUppercase {
     type Next = LabCursor;
     fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
         let hash = c.content_hash();
-        let key  = NextKey(hash);
+        let key = NextKey(hash);
 
         if let Some(r) = self.fx.take_result(key) {
             return Node::Emit(r);
@@ -1431,7 +1544,7 @@ impl Component for DispatchUppercase {
             d.insert(hash);
             drop(d);
 
-            let raw  = c.get(":raw").unwrap_or("").to_string();
+            let raw = c.get(":raw").unwrap_or("").to_string();
             let seed = c.clone();
             self.fx.dispatch(key, move || {
                 std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1443,7 +1556,10 @@ impl Component for DispatchUppercase {
 
         Node::Yield {
             value: Arc::new(c.clone()),
-            wake:  Wake::Key { domain: self.domain.into(), key },
+            wake: Wake::Key {
+                domain: self.domain.into(),
+                key,
+            },
         }
     }
 }
@@ -1453,15 +1569,13 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
     use std::time::Duration;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
-    let store: Arc<dyn FactStore<LabCursor>> =
-        Arc::new(MemFactStore::<LabCursor>::new());
-    let fx    = Arc::new(EffectDispatch::new(
-        store.clone(),
-        Arc::new(ThreadSpawner),
-        queue.clone(),
-    ).with_domain("phase-b"));
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
+    let store: Arc<dyn FactStore<LabCursor>> = Arc::new(MemFactStore::<LabCursor>::new());
+    let fx = Arc::new(
+        EffectDispatch::new(store.clone(), Arc::new(ThreadSpawner), queue.clone())
+            .with_domain("phase-b"),
+    );
 
     let pipe = PipeInstance::new(vec![
         Arc::new(DispatchUppercase {
@@ -1473,7 +1587,12 @@ fn effect_dispatch_with_thread_spawner_no_runtime() {
     ]);
     let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    expand(&pipe, queue.clone(), vec![lc(":raw", "phase-b")], opts.clone());
+    expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "phase-b")],
+        opts.clone(),
+    );
     assert_eq!(queue.depth(), 1);
 
     // Wait until the spawned thread has put + dispatched_park.
@@ -1500,15 +1619,13 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
 
     rt.block_on(async {
         let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
-        let bus   = Arc::new(EventBus::new());
-        let store: Arc<dyn FactStore<LabCursor>> =
-            Arc::new(MemFactStore::<LabCursor>::new());
-        let fx    = Arc::new(EffectDispatch::new(
-            store.clone(),
-            Arc::new(TokioSpawner),
-            queue.clone(),
-        ).with_domain("tokio-b"));
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let bus = Arc::new(EventBus::new());
+        let store: Arc<dyn FactStore<LabCursor>> = Arc::new(MemFactStore::<LabCursor>::new());
+        let fx = Arc::new(
+            EffectDispatch::new(store.clone(), Arc::new(TokioSpawner), queue.clone())
+                .with_domain("tokio-b"),
+        );
 
         let pipe = PipeInstance::new(vec![
             Arc::new(DispatchUppercase {
@@ -1520,7 +1637,12 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
         ]);
         let opts = ExpandOpts::default().with_bus(bus.clone());
 
-        expand(&pipe, queue.clone(), vec![lc(":raw", "tokio-b")], opts.clone());
+        expand(
+            &pipe,
+            queue.clone(),
+            vec![lc(":raw", "tokio-b")],
+            opts.clone(),
+        );
         assert_eq!(queue.depth(), 1);
 
         while store.len(super::effect_dispatch::DEFAULT_MUTATION_TABLE) == 0 {
@@ -1539,13 +1661,14 @@ fn effect_dispatch_with_tokio_spawner_via_runtime() {
 
 struct CountingTrim {
     counter: Arc<std::sync::atomic::AtomicU64>,
-    from:    String,
-    to:      String,
+    from: String,
+    to: String,
 }
 impl Component for CountingTrim {
     type Next = LabCursor;
     fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
-        self.counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let raw = c.get(&self.from).unwrap_or("").to_string();
         let mut next = c.clone();
         next.set(&self.to, raw.trim());
@@ -1558,7 +1681,7 @@ fn memoize_hits_cache_on_identical_input() {
     use std::sync::atomic::Ordering;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
     let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let cache = Arc::new(MemoCache::<LabCursor>::new());
 
@@ -1578,7 +1701,8 @@ fn memoize_hits_cache_on_identical_input() {
     ]);
 
     expand(
-        &pipe, queue.clone(),
+        &pipe,
+        queue.clone(),
         vec![
             lc(":raw", "  hi  "),
             lc(":raw", "  hi  "),
@@ -1597,12 +1721,16 @@ fn memoize_misses_on_different_input() {
     use std::sync::atomic::Ordering;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
     let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let cache = Arc::new(MemoCache::<LabCursor>::new());
 
     let memoized = Memoize::new(
-        CountingTrim { counter: counter.clone(), from: ":raw".into(), to: ":clean".into() },
+        CountingTrim {
+            counter: counter.clone(),
+            from: ":raw".into(),
+            to: ":clean".into(),
+        },
         "trim_clean",
         cache.clone(),
     );
@@ -1613,8 +1741,13 @@ fn memoize_misses_on_different_input() {
     ]);
 
     expand(
-        &pipe, queue.clone(),
-        vec![lc(":raw", "  hi  "), lc(":raw", "  bye  "), lc(":raw", "  yo  ")],
+        &pipe,
+        queue.clone(),
+        vec![
+            lc(":raw", "  hi  "),
+            lc(":raw", "  bye  "),
+            lc(":raw", "  yo  "),
+        ],
         ExpandOpts::default(),
     );
 
@@ -1628,18 +1761,23 @@ fn dirty_domain_drops_tagged_memo_entries() {
     use std::sync::atomic::Ordering;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
     let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let cache = Arc::new(MemoCache::<LabCursor>::new());
-    let bus   = Arc::new(EventBus::new());
+    let bus = Arc::new(EventBus::new());
 
     attach_cache_to_bus(cache.clone(), &bus);
 
     let memoized = Memoize::new(
-        CountingTrim { counter: counter.clone(), from: ":raw".into(), to: ":clean".into() },
+        CountingTrim {
+            counter: counter.clone(),
+            from: ":raw".into(),
+            to: ":clean".into(),
+        },
         "trim_clean",
         cache.clone(),
-    ).with_domain("fs");
+    )
+    .with_domain("fs");
 
     let pipe = PipeInstance::new(vec![
         Arc::new(memoized) as Arc<dyn Component<Next = LabCursor>>,
@@ -1647,11 +1785,21 @@ fn dirty_domain_drops_tagged_memo_entries() {
     ]);
     let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    expand(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
+    expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "  hi  ")],
+        opts.clone(),
+    );
     assert_eq!(counter.load(Ordering::SeqCst), 1);
     assert_eq!(cache.len(), 1);
 
-    expand(&pipe, queue.clone(), vec![lc(":raw", "  hi  ")], opts.clone());
+    expand(
+        &pipe,
+        queue.clone(),
+        vec![lc(":raw", "  hi  ")],
+        opts.clone(),
+    );
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 
     bus.dispatch_dirty("fs", None);
@@ -1668,9 +1816,12 @@ struct ListReposQueryFn {
     counter: Arc<std::sync::atomic::AtomicU64>,
 }
 impl QueryFn<LabCursor> for ListReposQueryFn {
-    fn ident(&self) -> &'static str { "list_repos" }
+    fn ident(&self) -> &'static str {
+        "list_repos"
+    }
     fn run(&self, input: &LabCursor) -> LabCursor {
-        self.counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         std::thread::sleep(std::time::Duration::from_millis(5));
         let mut out = input.clone();
         out.set(":repos", "alpha,beta,gamma");
@@ -1683,15 +1834,17 @@ fn query_runs_query_fn_once_then_serves_from_cache() {
     use std::sync::atomic::Ordering;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
     let cache = Arc::new(QueryCache::<LabCursor>::new());
     let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     attach_query_cache_to_bus(cache.clone(), &bus);
 
     let q = Query::new(
-        ListReposQueryFn { counter: counter.clone() },
+        ListReposQueryFn {
+            counter: counter.clone(),
+        },
         cache.clone(),
         bus.clone(),
         queue.clone(),
@@ -1724,20 +1877,23 @@ fn invalidate_queries_via_dirty_domain_re_runs_query_fn() {
     use std::sync::atomic::Ordering;
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
     let cache = Arc::new(QueryCache::<LabCursor>::new());
     let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     attach_query_cache_to_bus(cache.clone(), &bus);
 
     let q = Query::new(
-        ListReposQueryFn { counter: counter.clone() },
+        ListReposQueryFn {
+            counter: counter.clone(),
+        },
         cache.clone(),
         bus.clone(),
         queue.clone(),
         Arc::new(ThreadSpawner),
-    ).with_domain("repos");
+    )
+    .with_domain("repos");
 
     let pipe = PipeInstance::new(vec![
         Arc::new(q) as Arc<dyn Component<Next = LabCursor>>,
@@ -1765,7 +1921,9 @@ fn invalidate_queries_via_dirty_domain_re_runs_query_fn() {
 fn tempdir() -> std::path::PathBuf {
     let mut p = std::env::temp_dir();
     let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     p.push(format!("sprf_v2_test_{}_{}", std::process::id(), nanos));
     std::fs::create_dir_all(&p).unwrap();
     p
@@ -1779,34 +1937,41 @@ fn tempdir() -> std::path::PathBuf {
 fn render_batch_override_sees_full_homogeneous_batch() {
     use std::sync::atomic::{AtomicUsize, Ordering as AO};
 
-    struct UpperBatch { sizes_seen: Arc<Mutex<Vec<usize>>>, calls: Arc<AtomicUsize> }
+    struct UpperBatch {
+        sizes_seen: Arc<Mutex<Vec<usize>>>,
+        calls: Arc<AtomicUsize>,
+    }
     impl Component for UpperBatch {
         type Next = LabCursor;
         fn render_batch(&self, _: &RenderCtx, batch: &[&LabCursor]) -> Vec<Node<LabCursor>> {
             self.sizes_seen.lock().unwrap().push(batch.len());
             self.calls.fetch_add(1, AO::SeqCst);
-            batch.iter().map(|c| {
-                let raw = c.get(":raw").unwrap_or("").to_uppercase();
-                let mut next = (*c).clone();
-                next.set(":upper", raw);
-                Node::Emit(Arc::new(next))
-            }).collect()
+            batch
+                .iter()
+                .map(|c| {
+                    let raw = c.get(":raw").unwrap_or("").to_uppercase();
+                    let mut next = (*c).clone();
+                    next.set(":upper", raw);
+                    Node::Emit(Arc::new(next))
+                })
+                .collect()
         }
     }
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
     let sizes = Arc::new(Mutex::new(Vec::<usize>::new()));
     let calls = Arc::new(AtomicUsize::new(0));
 
     let pipe = PipeInstance::new(vec![
-        Arc::new(UpperBatch { sizes_seen: sizes.clone(), calls: calls.clone() })
-            as Arc<dyn Component<Next = LabCursor>>,
+        Arc::new(UpperBatch {
+            sizes_seen: sizes.clone(),
+            calls: calls.clone(),
+        }) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    let seeds: Vec<Arc<LabCursor>> =
-        (0..7).map(|i| lc(":raw", &format!("v{}", i))).collect();
+    let seeds: Vec<Arc<LabCursor>> = (0..7).map(|i| lc(":raw", &format!("v{}", i))).collect();
     expand(&pipe, queue.clone(), seeds, ExpandOpts::default());
 
     let collected = sink.lock().unwrap();
@@ -1842,22 +2007,23 @@ fn par_render_runs_over_rayon_in_input_order() {
     }
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
 
     let pipe = PipeInstance::new(vec![
         Arc::new(ParUpper) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
     ]);
 
-    let seeds: Vec<Arc<LabCursor>> =
-        (0..32).map(|i| lc(":raw", &format!("seed{:03}", i))).collect();
+    let seeds: Vec<Arc<LabCursor>> = (0..32)
+        .map(|i| lc(":raw", &format!("seed{:03}", i)))
+        .collect();
     expand(&pipe, queue, seeds, ExpandOpts::default());
 
     let got = sink.lock().unwrap();
     assert_eq!(got.len(), 32);
     for c in got.iter() {
         let raw = c.get(":raw").unwrap();
-        let up  = c.get(":upper").unwrap();
+        let up = c.get(":upper").unwrap();
         assert_eq!(up, &raw.to_uppercase());
     }
 }
@@ -1873,16 +2039,16 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
     use std::sync::atomic::{AtomicUsize, Ordering as AO};
 
     struct SwitchMap {
-        bus:        Arc<EventBus>,
-        prev_key:   Mutex<Option<NextKey>>,
+        bus: Arc<EventBus>,
+        prev_key: Mutex<Option<NextKey>>,
         wake_count: Arc<AtomicUsize>,
     }
     impl Component for SwitchMap {
         type Next = LabCursor;
         fn dispatch(
             &self,
-            ctx:   &RenderCtx,
-            rows:  &[QueueRow<LabCursor>],
+            ctx: &RenderCtx,
+            rows: &[QueueRow<LabCursor>],
             queue: &dyn QueueBackend<LabCursor>,
         ) {
             for row in rows {
@@ -1893,7 +2059,10 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
                 }
                 let suspended = Node::Yield {
                     value: row.value.clone(),
-                    wake:  Wake::Key { domain: "switch".into(), key: new_key },
+                    wake: Wake::Key {
+                        domain: "switch".into(),
+                        key: new_key,
+                    },
                 };
                 splice_into(row, suspended, ctx.depth + 1, ctx.expand_tick, queue);
             }
@@ -1901,14 +2070,14 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
     }
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
-    let bus   = Arc::new(EventBus::new());
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bus = Arc::new(EventBus::new());
     let waked = Arc::new(AtomicUsize::new(0));
 
     let pipe = PipeInstance::new(vec![
         Arc::new(SwitchMap {
-            bus:        bus.clone(),
-            prev_key:   Mutex::new(None),
+            bus: bus.clone(),
+            prev_key: Mutex::new(None),
             wake_count: waked.clone(),
         }) as Arc<dyn Component<Next = LabCursor>>,
         Arc::new(Collector { sink: sink.clone() }),
@@ -1916,8 +2085,7 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
 
     let opts = ExpandOpts::default().with_bus(bus.clone());
 
-    let seeds: Vec<Arc<LabCursor>> =
-        (0..3).map(|i| lc(":raw", &format!("v{}", i))).collect();
+    let seeds: Vec<Arc<LabCursor>> = (0..3).map(|i| lc(":raw", &format!("v{}", i))).collect();
     expand(&pipe, queue.clone(), seeds, opts.clone());
 
     // 2 prior parkers got promoted (seeds 1 + 2 cancel seeds 0 + 1).
@@ -1935,12 +2103,15 @@ fn dispatch_override_controls_parker_enqueue_and_promotion() {
 #[cfg(feature = "sqlite")]
 mod hybrid {
     use super::*;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use crate::v2::hybrid_queue::{HybridCfg, HybridQueue};
     use crate::v2::queue::QueueRow;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn now_ns() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
     }
 
     fn park_row_at<N: Next>(
@@ -1959,7 +2130,10 @@ mod hybrid {
             instance_id: 0,
             depth: 0,
             value,
-            wake: Wake::Key { domain: domain.into(), key },
+            wake: Wake::Key {
+                domain: domain.into(),
+                key,
+            },
             expand_tick: 0,
             enqueued_at_ns,
         });
@@ -1970,7 +2144,9 @@ mod hybrid {
         let cfg = HybridCfg {
             park_flush_interval: Duration::from_secs(1),
             park_mem_cap: 10_000,
+            runnable_mem_cap: 16_384,
             park_flush_batch: 256,
+            runnable_flush_batch: 16_384,
         };
         let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
         let k = fresh_key(1);
@@ -1989,7 +2165,9 @@ mod hybrid {
         let cfg = HybridCfg {
             park_flush_interval: Duration::from_millis(10),
             park_mem_cap: 10_000,
+            runnable_mem_cap: 16_384,
             park_flush_batch: 256,
+            runnable_flush_batch: 16_384,
         };
         let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
         let k = fresh_key(2);
@@ -1998,7 +2176,7 @@ mod hybrid {
         std::thread::sleep(Duration::from_millis(50));
         let n = q.tick_flush();
         assert_eq!(n, 1);
-        assert_eq!(q.hot().depth(),  0);
+        assert_eq!(q.hot().depth(), 0);
         assert_eq!(q.cold().depth(), 1);
 
         // Promote and pull through hybrid.
@@ -2022,7 +2200,9 @@ mod hybrid {
         let cfg = HybridCfg {
             park_flush_interval: Duration::from_secs(60), // never age out
             park_mem_cap: 500,
+            runnable_mem_cap: 16_384,
             park_flush_batch: 5_000,
+            runnable_flush_batch: 16_384,
         };
         let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
         let now = now_ns();
@@ -2046,7 +2226,9 @@ mod hybrid {
         let cfg = HybridCfg {
             park_flush_interval: Duration::ZERO,
             park_mem_cap: 10_000,
+            runnable_mem_cap: 16_384,
             park_flush_batch: 256,
+            runnable_flush_batch: 16_384,
         };
         let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
         let now = now_ns();
@@ -2056,8 +2238,46 @@ mod hybrid {
         }
         let n = q.tick_flush();
         assert_eq!(n, 10);
-        assert_eq!(q.hot().depth(),  0);
+        assert_eq!(q.hot().depth(), 0);
         assert_eq!(q.cold().depth(), 10);
+    }
+
+    #[test]
+    fn hybrid_runnable_rows_spill_to_cold_when_cap_exceeded() {
+        let cfg = HybridCfg {
+            park_flush_interval: Duration::from_secs(60),
+            park_mem_cap: 10_000,
+            runnable_mem_cap: 4,
+            park_flush_batch: 256,
+            runnable_flush_batch: 2,
+        };
+        let q = HybridQueue::<LabCursor>::open_in_memory(cfg).unwrap();
+        for i in 0..10u64 {
+            q.enqueue(QueueRow {
+                id: 0,
+                parent_id: None,
+                batch_idx: i as u32,
+                path: vec![i as u32],
+                pipe_hash: 1,
+                instance_id: 1,
+                depth: 0,
+                value: lc(":raw", &format!("row-{i}")),
+                wake: Wake::Immediate,
+                expand_tick: 0,
+                enqueued_at_ns: now_ns(),
+            });
+        }
+
+        assert_eq!(q.hot().runnable_count(), 4);
+        assert_eq!(q.cold().depth(), 6);
+        assert_eq!(q.depth(), 10);
+
+        let pulled = q.pull_runnable_batch(1, 10);
+        assert_eq!(pulled.len(), 4);
+        assert_eq!(q.hot().depth(), 0);
+        let pulled = q.pull_runnable_batch(1, 10);
+        assert_eq!(pulled.len(), 6);
+        assert_eq!(q.depth(), 0);
     }
 
     #[test]
@@ -2067,7 +2287,7 @@ mod hybrid {
         let k = fresh_key(99);
         // Park directly in cold tier to simulate post-flush state.
         park_row_at(q.cold().as_ref(), "test", k, lc(":raw", "cold"), now_ns());
-        assert_eq!(q.hot().depth(),  0);
+        assert_eq!(q.hot().depth(), 0);
         assert_eq!(q.cold().depth(), 1);
 
         let promoted = q.dispatch_park("test", Some(k));
@@ -2082,10 +2302,12 @@ mod hybrid {
 #[test]
 fn unoverridden_component_drops_every_input() {
     struct NoOp;
-    impl Component for NoOp { type Next = LabCursor; }
+    impl Component for NoOp {
+        type Next = LabCursor;
+    }
 
     let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-    let sink  = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(Vec::new()));
 
     let pipe = PipeInstance::new(vec![
         Arc::new(NoOp) as Arc<dyn Component<Next = LabCursor>>,
@@ -2093,14 +2315,15 @@ fn unoverridden_component_drops_every_input() {
     ]);
 
     let stats = expand(
-        &pipe, queue.clone(),
+        &pipe,
+        queue.clone(),
         vec![lc(":raw", "alpha"), lc(":raw", "beta")],
         ExpandOpts::default(),
     );
     assert_eq!(sink.lock().unwrap().len(), 0);
     assert_eq!(stats.rendered, 2);
-    assert_eq!(stats.emitted,  0);
-    assert_eq!(queue.depth(),  0);
+    assert_eq!(stats.emitted, 0);
+    assert_eq!(queue.depth(), 0);
 }
 
 // ---------------------------------------------------------------------
@@ -2110,23 +2333,23 @@ fn unoverridden_component_drops_every_input() {
 // ---------------------------------------------------------------------
 
 mod cascade {
-    use super::*;
-    use super::super::queue::{QueueRow};
+    use super::super::queue::QueueRow;
     use super::super::sqlite_queue::SqliteQueue;
     use super::super::wake::Wake;
+    use super::*;
 
     fn row(parent: Option<u64>, wake: Wake) -> QueueRow<LabCursor> {
         QueueRow {
-            id:             0,  // backend assigns
-            parent_id:      parent,
-            batch_idx:      0,
-            path:           Vec::new(),
-            pipe_hash:      0,
-            instance_id:    0,
-            depth:          0,
-            value:          lc(":raw", "x"),
+            id: 0, // backend assigns
+            parent_id: parent,
+            batch_idx: 0,
+            path: Vec::new(),
+            pipe_hash: 0,
+            instance_id: 0,
+            depth: 0,
+            value: lc(":raw", "x"),
             wake,
-            expand_tick:    0,
+            expand_tick: 0,
             enqueued_at_ns: 0,
         }
     }
@@ -2135,15 +2358,18 @@ mod cascade {
     /// cascade_delete(R) removes R,A,B,AA,AB (5 rows). U survives.
     fn cascade_subtree_suite(queue: Arc<dyn QueueBackend<LabCursor>>) {
         // Mix wake states so the doomed set straddles all three buckets.
-        let r = queue.enqueue(row(None,    Wake::Immediate));
+        let r = queue.enqueue(row(None, Wake::Immediate));
         let a = queue.enqueue(row(Some(r), Wake::Tick { past_tick: 0 }));
-        let _b = queue.enqueue(row(Some(r), Wake::Key {
-            domain: "d".into(),
-            key:    NextKey([0u8; 32]),
-        }));
+        let _b = queue.enqueue(row(
+            Some(r),
+            Wake::Key {
+                domain: "d".into(),
+                key: NextKey([0u8; 32]),
+            },
+        ));
         let _aa = queue.enqueue(row(Some(a), Wake::Immediate));
         let _ab = queue.enqueue(row(Some(a), Wake::Immediate));
-        let _u  = queue.enqueue(row(None,    Wake::Immediate));
+        let _u = queue.enqueue(row(None, Wake::Immediate));
 
         assert_eq!(queue.depth(), 6);
         let removed = queue.cascade_delete(r);
@@ -2158,8 +2384,8 @@ mod cascade {
     }
 
     fn cascade_leaf_only_removes_self(queue: Arc<dyn QueueBackend<LabCursor>>) {
-        let parent = queue.enqueue(row(None,         Wake::Immediate));
-        let leaf   = queue.enqueue(row(Some(parent), Wake::Immediate));
+        let parent = queue.enqueue(row(None, Wake::Immediate));
+        let leaf = queue.enqueue(row(Some(parent), Wake::Immediate));
         assert_eq!(queue.cascade_delete(leaf), 1);
         assert_eq!(queue.depth(), 1);
     }
@@ -2180,39 +2406,55 @@ mod cascade {
         assert_eq!(queue.depth(), 0);
     }
 
-    #[test] fn mem_cascade_subtree()             { cascade_subtree_suite(Arc::new(MemQueue::new())); }
-    #[test] fn mem_cascade_unknown_root()        { cascade_unknown_root_is_zero(Arc::new(MemQueue::new())); }
-    #[test] fn mem_cascade_leaf_only()           { cascade_leaf_only_removes_self(Arc::new(MemQueue::new())); }
-    #[test] fn mem_cascade_with_absent_root()    { cascade_with_absent_root(Arc::new(MemQueue::new())); }
+    #[test]
+    fn mem_cascade_subtree() {
+        cascade_subtree_suite(Arc::new(MemQueue::new()));
+    }
+    #[test]
+    fn mem_cascade_unknown_root() {
+        cascade_unknown_root_is_zero(Arc::new(MemQueue::new()));
+    }
+    #[test]
+    fn mem_cascade_leaf_only() {
+        cascade_leaf_only_removes_self(Arc::new(MemQueue::new()));
+    }
+    #[test]
+    fn mem_cascade_with_absent_root() {
+        cascade_with_absent_root(Arc::new(MemQueue::new()));
+    }
 
-    #[test] fn sqlite_cascade_subtree()          { cascade_subtree_suite(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
-    #[test] fn sqlite_cascade_unknown_root()     { cascade_unknown_root_is_zero(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
-    #[test] fn sqlite_cascade_leaf_only()        { cascade_leaf_only_removes_self(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
-    #[test] fn sqlite_cascade_with_absent_root() { cascade_with_absent_root(Arc::new(SqliteQueue::<LabCursor>::open_in_memory())); }
+    #[test]
+    fn sqlite_cascade_subtree() {
+        cascade_subtree_suite(Arc::new(SqliteQueue::<LabCursor>::open_in_memory()));
+    }
+    #[test]
+    fn sqlite_cascade_unknown_root() {
+        cascade_unknown_root_is_zero(Arc::new(SqliteQueue::<LabCursor>::open_in_memory()));
+    }
+    #[test]
+    fn sqlite_cascade_leaf_only() {
+        cascade_leaf_only_removes_self(Arc::new(SqliteQueue::<LabCursor>::open_in_memory()));
+    }
+    #[test]
+    fn sqlite_cascade_with_absent_root() {
+        cascade_with_absent_root(Arc::new(SqliteQueue::<LabCursor>::open_in_memory()));
+    }
 
     /// CacheCascadeListener: bus event evicts cache entries AND
     /// cascade-deletes their queued descendants. End-to-end check that
     /// (b) source_row_id tracking + cascade wiring works.
     #[test]
     fn cache_cascade_listener_evicts_and_cascades() {
-        use super::super::memoize::{
-            attach_cache_to_bus_with_queue, MemoCache, MemoKey,
-        };
+        use super::super::memoize::{attach_cache_to_bus_with_queue, MemoCache, MemoKey};
         use super::super::node::Node;
 
         let cache: Arc<MemoCache<LabCursor>> = Arc::new(MemoCache::new());
         let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-        let bus   = EventBus::new();
+        let bus = EventBus::new();
 
         // Cache entry tagged with domain "fs" and source_row_id=42.
         let key = MemoKey([1u8; 32]);
-        cache.put_with_source(
-            key,
-            Node::Done,
-            vec!["fs"],
-            [9u8; 32],
-            Some(42),
-        );
+        cache.put_with_source(key, Node::Done, vec!["fs"], [9u8; 32], Some(42));
 
         // Three children whose parent_id=42. Models descendants spliced
         // from the (now-popped) row 42's prior render.
@@ -2223,13 +2465,13 @@ mod cascade {
         let _u = queue.enqueue(row(None, Wake::Immediate));
 
         assert_eq!(queue.depth(), 4);
-        assert_eq!(cache.len(),   1);
+        assert_eq!(cache.len(), 1);
 
         attach_cache_to_bus_with_queue(cache.clone(), &bus, queue.clone());
         bus.dispatch_dirty("fs", None);
 
-        assert_eq!(cache.len(),   0);
-        assert_eq!(queue.depth(), 1);  // only the unrelated row
+        assert_eq!(cache.len(), 0);
+        assert_eq!(queue.depth(), 1); // only the unrelated row
     }
 
     /// B2 reconcile: Memoize with PriorChildIndex diffs new vs prior
@@ -2255,36 +2497,42 @@ mod cascade {
             type Next = LabCursor;
             fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
                 let raw = c.get(":list").unwrap_or("").to_string();
-                Node::Many(raw.split(',').map(|s| {
-                    let mut child = LabCursor::new();
-                    child.set(":item", s);
-                    Node::Emit(Arc::new(child))
-                }).collect())
+                Node::Many(
+                    raw.split(',')
+                        .map(|s| {
+                            let mut child = LabCursor::new();
+                            child.set(":item", s);
+                            Node::Emit(Arc::new(child))
+                        })
+                        .collect(),
+                )
             }
         }
 
-        struct ParkEach { bus: Arc<EventBus> }
+        struct ParkEach {
+            bus: Arc<EventBus>,
+        }
         impl Component for ParkEach {
             type Next = LabCursor;
             fn render(&self, _: &RenderCtx, c: &LabCursor) -> Node<LabCursor> {
                 Node::Yield {
                     value: Arc::new(c.clone()),
-                    wake:  Wake::Key {
+                    wake: Wake::Key {
                         domain: TEST_DOMAIN.into(),
-                        key:    self.bus.fresh_key(),
+                        key: self.bus.fresh_key(),
                     },
                 }
             }
         }
 
-        let cache:     Arc<MemoCache<LabCursor>>     = Arc::new(MemoCache::new());
-        let prior_idx: Arc<PriorChildIndex>          = Arc::new(PriorChildIndex::new());
-        let queue:     Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
+        let cache: Arc<MemoCache<LabCursor>> = Arc::new(MemoCache::new());
+        let prior_idx: Arc<PriorChildIndex> = Arc::new(PriorChildIndex::new());
+        let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
         let bus = Arc::new(EventBus::new());
         let opts = ExpandOpts::default().with_bus(bus.clone());
 
-        let memo = Memoize::new(EmitItems, "emit", cache.clone())
-            .with_prior_children(prior_idx.clone());
+        let memo =
+            Memoize::new(EmitItems, "emit", cache.clone()).with_prior_children(prior_idx.clone());
         let pipe = PipeInstance::new(vec![
             Arc::new(memo) as Arc<dyn Component<Next = LabCursor>>,
             Arc::new(ParkEach { bus: bus.clone() }),
@@ -2293,7 +2541,8 @@ mod cascade {
         // Run 1: list = "a,b,c". Three children from Memoize → three
         // rows hit ParkEach → three yielded parks.
         expand(
-            &pipe, queue.clone(),
+            &pipe,
+            queue.clone(),
             vec![Arc::new(LabCursor::new().with(":list", "a,b,c"))],
             opts.clone(),
         );
@@ -2305,11 +2554,16 @@ mod cascade {
         // Run 2: list = "a,b,d". Diff: a/b kept, c doomed, d added.
         // Total parked rows still 3.
         expand(
-            &pipe, queue.clone(),
+            &pipe,
+            queue.clone(),
             vec![Arc::new(LabCursor::new().with(":list", "a,b,d"))],
             opts.clone(),
         );
-        assert_eq!(queue.depth(), 3, "run2: 3 parked rows (c dead, d new, a/b kept)");
+        assert_eq!(
+            queue.depth(),
+            3,
+            "run2: 3 parked rows (c dead, d new, a/b kept)"
+        );
 
         let prior2 = prior_idx.get(&[]);
         assert_eq!(prior2.len(), 3);
@@ -2326,7 +2580,11 @@ mod cascade {
         // Kept-id invariant: a and b's QueueIds in run2 match what they
         // were in run1 (the prior records were carried forward).
         let id_for = |hash: ContentHash, slice: &[(ContentHash, QueueId)]| -> QueueId {
-            slice.iter().find(|(h, _)| *h == hash).map(|(_, id)| *id).unwrap()
+            slice
+                .iter()
+                .find(|(h, _)| *h == hash)
+                .map(|(_, id)| *id)
+                .unwrap()
         };
         assert_eq!(id_for(h("a"), &prior1), id_for(h("a"), &prior2));
         assert_eq!(id_for(h("b"), &prior1), id_for(h("b"), &prior2));
@@ -2359,7 +2617,7 @@ mod cascade {
 
         let cache: Arc<MemoCache<LabCursor>> = Arc::new(MemoCache::new());
         let queue: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-        let sink  = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::new(Mutex::new(Vec::new()));
 
         let pipe = PipeInstance::new(vec![
             Arc::new(Memoize::new(Mark, "mark", cache.clone()).with_domain("fs"))
@@ -2367,7 +2625,12 @@ mod cascade {
             Arc::new(Collector { sink: sink.clone() }),
         ]);
 
-        expand(&pipe, queue, vec![lc(":raw", "alpha")], ExpandOpts::default());
+        expand(
+            &pipe,
+            queue,
+            vec![lc(":raw", "alpha")],
+            ExpandOpts::default(),
+        );
 
         // Cache populated; the entry's source_row_id is non-None.
         assert_eq!(cache.len(), 1);
@@ -2378,13 +2641,20 @@ mod cascade {
         // re-render (we'd see a second :marked emit either way; the
         // signal we want is cache.len() unchanged).
         let queue2: Arc<dyn QueueBackend<LabCursor>> = Arc::new(MemQueue::new());
-        let sink2  = Arc::new(Mutex::new(Vec::new()));
+        let sink2 = Arc::new(Mutex::new(Vec::new()));
         let pipe2 = PipeInstance::new(vec![
             Arc::new(Memoize::new(Mark, "mark", cache.clone()).with_domain("fs"))
                 as Arc<dyn Component<Next = LabCursor>>,
-            Arc::new(Collector { sink: sink2.clone() }),
+            Arc::new(Collector {
+                sink: sink2.clone(),
+            }),
         ]);
-        expand(&pipe2, queue2, vec![lc(":raw", "alpha")], ExpandOpts::default());
+        expand(
+            &pipe2,
+            queue2,
+            vec![lc(":raw", "alpha")],
+            ExpandOpts::default(),
+        );
         assert_eq!(cache.len(), 1);
         assert_eq!(sink2.lock().unwrap().len(), 1);
     }

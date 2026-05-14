@@ -46,10 +46,10 @@ pub enum QueryStatus<N: Next> {
 impl<N: Next> Clone for QueryStatus<N> {
     fn clone(&self) -> Self {
         match self {
-            QueryStatus::Idle          => QueryStatus::Idle,
-            QueryStatus::Pending       => QueryStatus::Pending,
-            QueryStatus::Success(d)    => QueryStatus::Success(d.clone()),
-            QueryStatus::Error(m)      => QueryStatus::Error(m.clone()),
+            QueryStatus::Idle => QueryStatus::Idle,
+            QueryStatus::Pending => QueryStatus::Pending,
+            QueryStatus::Success(d) => QueryStatus::Success(d.clone()),
+            QueryStatus::Error(m) => QueryStatus::Error(m.clone()),
         }
     }
 }
@@ -65,28 +65,36 @@ pub struct QueryCache<N: Next> {
 
 impl<N: Next> QueryCache<N> {
     pub fn new() -> Self {
-        Self { by_key: Mutex::new(HashMap::new()) }
+        Self {
+            by_key: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn status(&self, key: NextKey) -> QueryStatus<N> {
         match self.by_key.lock().unwrap().get(&key) {
             Some((s, _)) => s.clone(),
-            None         => QueryStatus::Idle,
+            None => QueryStatus::Idle,
         }
     }
 
     pub fn set_pending(&self, key: NextKey, domains: Vec<&'static str>) {
-        self.by_key.lock().unwrap()
+        self.by_key
+            .lock()
+            .unwrap()
             .insert(key, (QueryStatus::Pending, domains));
     }
 
     pub fn set_success(&self, key: NextKey, data: Arc<N>, domains: Vec<&'static str>) {
-        self.by_key.lock().unwrap()
+        self.by_key
+            .lock()
+            .unwrap()
             .insert(key, (QueryStatus::Success(data), domains));
     }
 
     pub fn set_error(&self, key: NextKey, msg: String, domains: Vec<&'static str>) {
-        self.by_key.lock().unwrap()
+        self.by_key
+            .lock()
+            .unwrap()
             .insert(key, (QueryStatus::Error(msg), domains));
     }
 
@@ -97,12 +105,18 @@ impl<N: Next> QueryCache<N> {
         before - by.len()
     }
 
-    pub fn len(&self) -> usize { self.by_key.lock().unwrap().len() }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn len(&self) -> usize {
+        self.by_key.lock().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl<N: Next> Default for QueryCache<N> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<N: Next> BusListener for QueryCache<N> {
@@ -129,23 +143,30 @@ pub fn attach_query_cache_to_bus<N: Next>(cache: Arc<QueryCache<N>>, bus: &Event
 const QUERY_DOMAIN: &str = "query";
 
 pub struct Query<N: Next, F: QueryFn<N>> {
-    fn_:     Arc<F>,
-    cache:   Arc<QueryCache<N>>,
-    bus:     Arc<EventBus>,
-    queue:   Arc<dyn QueueBackend<N>>,
+    fn_: Arc<F>,
+    cache: Arc<QueryCache<N>>,
+    bus: Arc<EventBus>,
+    queue: Arc<dyn QueueBackend<N>>,
     spawner: Arc<dyn Spawner>,
     domains: Vec<&'static str>,
 }
 
 impl<N: Next, F: QueryFn<N>> Query<N, F> {
     pub fn new(
-        fn_:     F,
-        cache:   Arc<QueryCache<N>>,
-        bus:     Arc<EventBus>,
-        queue:   Arc<dyn QueueBackend<N>>,
+        fn_: F,
+        cache: Arc<QueryCache<N>>,
+        bus: Arc<EventBus>,
+        queue: Arc<dyn QueueBackend<N>>,
         spawner: Arc<dyn Spawner>,
     ) -> Self {
-        Self { fn_: Arc::new(fn_), cache, bus, queue, spawner, domains: Vec::new() }
+        Self {
+            fn_: Arc::new(fn_),
+            cache,
+            bus,
+            queue,
+            spawner,
+            domains: Vec::new(),
+        }
     }
 
     pub fn with_domain(mut self, d: &'static str) -> Self {
@@ -174,17 +195,20 @@ impl<N: Next + Clone, F: QueryFn<N>> Component for Query<N, F> {
 
             QueryStatus::Pending => Node::Yield {
                 value: Arc::new(c.clone()),
-                wake:  Wake::Key { domain: QUERY_DOMAIN.into(), key },
+                wake: Wake::Key {
+                    domain: QUERY_DOMAIN.into(),
+                    key,
+                },
             },
 
             QueryStatus::Idle => {
                 self.cache.set_pending(key, self.domains.clone());
-                let fn_     = self.fn_.clone();
-                let cache   = self.cache.clone();
-                let queue   = self.queue.clone();
+                let fn_ = self.fn_.clone();
+                let cache = self.cache.clone();
+                let queue = self.queue.clone();
                 let domains = self.domains.clone();
-                let input   = c.clone();
-                let _bus    = self.bus.clone(); // reserved for future telemetry
+                let input = c.clone();
+                let _bus = self.bus.clone(); // reserved for future telemetry
                 let _ = _bus;
                 self.spawner.spawn(Box::new(move || {
                     let result = fn_.run(&input);
@@ -193,7 +217,10 @@ impl<N: Next + Clone, F: QueryFn<N>> Component for Query<N, F> {
                 }));
                 Node::Yield {
                     value: Arc::new(c.clone()),
-                    wake:  Wake::Key { domain: QUERY_DOMAIN.into(), key },
+                    wake: Wake::Key {
+                        domain: QUERY_DOMAIN.into(),
+                        key,
+                    },
                 }
             }
 

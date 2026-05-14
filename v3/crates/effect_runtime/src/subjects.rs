@@ -63,19 +63,27 @@ pub struct SubjectKey<S: SubjectKind> {
 }
 
 impl<S: SubjectKind> SubjectKey<S> {
-    pub fn raw(self) -> u64 { self.id }
+    pub fn raw(self) -> u64 {
+        self.id
+    }
 }
 
 impl<S: SubjectKind> Clone for SubjectKey<S> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<S: SubjectKind> Copy for SubjectKey<S> {}
 impl<S: SubjectKind> PartialEq for SubjectKey<S> {
-    fn eq(&self, other: &Self) -> bool { self.id == other.id }
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
 }
 impl<S: SubjectKind> Eq for SubjectKey<S> {}
 impl<S: SubjectKind> Hash for SubjectKey<S> {
-    fn hash<H: Hasher>(&self, state: &mut H) { self.id.hash(state); }
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 impl<S: SubjectKind> std::fmt::Debug for SubjectKey<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -119,7 +127,9 @@ pub struct SubjectRegistry<S: SubjectKind> {
 }
 
 impl<S: SubjectKind> Default for SubjectRegistry<S> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<S: SubjectKind> Store for SubjectRegistry<S> {}
@@ -215,10 +225,13 @@ impl<S: SubjectKind> SubjectRegistry<S> {
         lineage: Option<Lineage>,
     ) -> oneshot::Receiver<Result<Arc<S::Payload>, Unsubscribed>> {
         let (tx, rx) = oneshot::channel();
-        self.pending
-            .lock()
-            .unwrap()
-            .insert(key, Entry { sender: tx, lineage });
+        self.pending.lock().unwrap().insert(
+            key,
+            Entry {
+                sender: tx,
+                lineage,
+            },
+        );
         rx
     }
 
@@ -239,7 +252,10 @@ impl<S: SubjectKind> SubjectRegistry<S> {
         lineage: Option<Lineage>,
     ) -> BoxFuture<'static, Result<Arc<S::Payload>, Unsubscribed>> {
         let rx = self.register(key, lineage);
-        let guard = YieldGuard { registry: self.clone(), key };
+        let guard = YieldGuard {
+            registry: self.clone(),
+            key,
+        };
         Box::pin(async move {
             let _g = guard;
             match rx.await {
@@ -386,7 +402,9 @@ mod tests {
 
         let cx_clone = cx.clone();
         let handle = tokio::spawn(async move {
-            let _ = cx_clone.put(Yield::<TestSubject> { key, lineage: None }).await;
+            let _ = cx_clone
+                .put(Yield::<TestSubject> { key, lineage: None })
+                .await;
         });
         tokio::time::sleep(Duration::from_millis(10)).await;
         assert_eq!(reg.pending_count(), 1, "registered while awaited");
@@ -418,7 +436,9 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct Lin { tag: u32 }
+    struct Lin {
+        tag: u32,
+    }
 
     fn spawn_yield(
         cx: &RtCtx,
@@ -443,9 +463,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(10)).await;
         assert_eq!(reg.pending_count(), 3);
 
-        let n = reg.unsubscribe_where(|any| {
-            matches!(any.downcast_ref::<Lin>(), Some(l) if l.tag == 1)
-        });
+        let n =
+            reg.unsubscribe_where(|any| matches!(any.downcast_ref::<Lin>(), Some(l) if l.tag == 1));
         assert_eq!(n, 1);
         assert_unsub(h1.await.unwrap());
 
@@ -475,8 +494,7 @@ mod tests {
     #[tokio::test]
     async fn registry_reachable_via_store_typemap() {
         let (cx, reg) = build_cx();
-        let from_store: Arc<TestRegistry> =
-            cx.store::<TestRegistry>().expect("registered");
+        let from_store: Arc<TestRegistry> = cx.store::<TestRegistry>().expect("registered");
         let k = from_store.fresh_key();
         assert_eq!(k.raw(), reg.fresh_key().raw() - 1);
     }

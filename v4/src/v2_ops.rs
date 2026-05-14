@@ -205,6 +205,10 @@ pub struct FsTelemetry {
     pub emitted: AtomicU64,
     pub ext_skipped: AtomicU64,
     pub filter_skipped: AtomicU64,
+    pub walk_ns: AtomicU64,
+    pub filter_ns: AtomicU64,
+    pub cursor_ns: AtomicU64,
+    pub splice_ns: AtomicU64,
 }
 
 impl FsComponent {
@@ -390,6 +394,7 @@ impl Component for FsComponent {
                 return;
             }
             let many = Node::Many(std::mem::take(buf));
+            let t0 = std::time::Instant::now();
             let n = splice_into_at(
                 parent,
                 many,
@@ -398,6 +403,10 @@ impl Component for FsComponent {
                 queue,
                 *next_idx,
             );
+            if let Some(t) = &self.telemetry {
+                t.splice_ns
+                    .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            }
             *next_idx += n as u32;
         };
 
@@ -410,11 +419,23 @@ impl Component for FsComponent {
             .as_ref()
             .and_then(|s| s.coord_of(parent.value.at));
 
-        for entry in WalkBuilder::new(&self.root)
+        let mut walker = WalkBuilder::new(&self.root)
             .hidden(true)
             .git_ignore(false)
-            .build()
-        {
+            .build();
+        loop {
+            let t0 = std::time::Instant::now();
+            let Some(entry) = walker.next() else {
+                if let Some(t) = &self.telemetry {
+                    t.walk_ns
+                        .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                }
+                break;
+            };
+            if let Some(t) = &self.telemetry {
+                t.walk_ns
+                    .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            }
             let Ok(e) = entry else { continue };
             if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 continue;
@@ -423,7 +444,12 @@ impl Component for FsComponent {
             if let Some(t) = &self.telemetry {
                 t.seen_files.fetch_add(1, Ordering::Relaxed);
             }
+            let t0 = std::time::Instant::now();
             if !self.include_path(&p) {
+                if let Some(t) = &self.telemetry {
+                    t.filter_ns
+                        .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                }
                 if let Some(t) = &self.telemetry {
                     t.ext_skipped.fetch_add(1, Ordering::Relaxed);
                 }
@@ -433,10 +459,19 @@ impl Component for FsComponent {
             let path_str = p.display().to_string();
             if !self.include_source_value(&path_str) {
                 if let Some(t) = &self.telemetry {
+                    t.filter_ns
+                        .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                }
+                if let Some(t) = &self.telemetry {
                     t.filter_skipped.fetch_add(1, Ordering::Relaxed);
                 }
                 continue;
             }
+            if let Some(t) = &self.telemetry {
+                t.filter_ns
+                    .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            }
+            let t0 = std::time::Instant::now();
             let mut c = parent.value.as_ref().clone();
             // Pure-query contract: cursor.value carries the path string.
             // glob/re downstream match against it; read uses it as the
@@ -464,6 +499,8 @@ impl Component for FsComponent {
             }
             if let Some(t) = &self.telemetry {
                 t.emitted.fetch_add(1, Ordering::Relaxed);
+                t.cursor_ns
+                    .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
             }
             buf.push(Node::Emit(Arc::new(c)));
 
@@ -649,6 +686,48 @@ impl Component for AstNmComponent {
 
     fn kind(&self) -> &'static str {
         "ast"
+    }
+
+    fn dispatch(
+        &self,
+        ctx: &RenderCtx,
+        rows: &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        if let Some(graph) = ctx.runtime::<crate::runtime_graph::RuntimeGraph>() {
+            let mut subscriptions = Vec::new();
+            for row in rows {
+                let input = row.value.as_ref();
+                if input.value.is_empty() {
+                    continue;
+                }
+                let input_key = blake3::hash(&crate::cursor_codec::encode(input))
+                    .to_hex()
+                    .to_string();
+                let ast_uri = format!(
+                    "sprf://ast/source/{}/{}/{}",
+                    row.pipe_hash, row.instance_id, row.depth
+                );
+                let source_uri = file_dirty_source_uri(input.value.as_ref());
+                subscriptions.push(crate::runtime_graph::SourceSubscriptionInput {
+                    ast_uri,
+                    input_key,
+                    source_uri,
+                    label: "file".to_string(),
+                    pipe_hash: row.pipe_hash,
+                    instance_id: row.instance_id,
+                    depth: row.depth,
+                    input,
+                });
+            }
+            graph.record_source_subscriptions(&subscriptions, ctx.expand_tick);
+        }
+
+        let inputs: Vec<&Cursor> = rows.iter().map(|r| r.value.as_ref()).collect();
+        let nodes = self.render_batch(ctx, &inputs);
+        for (row, node) in rows.iter().zip(nodes) {
+            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+        }
     }
 
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {

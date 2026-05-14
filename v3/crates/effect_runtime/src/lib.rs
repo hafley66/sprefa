@@ -34,10 +34,14 @@ pub trait EffectKind: Send + 'static {
 
     /// Bytes that the framework should attribute to this put for
     /// throughput rollups.
-    fn payload_bytes(&self) -> Option<usize> { None }
+    fn payload_bytes(&self) -> Option<usize> {
+        None
+    }
 
     /// Bytes delivered back.
-    fn response_bytes(_r: &Self::Response) -> Option<usize> { None }
+    fn response_bytes(_r: &Self::Response) -> Option<usize> {
+        None
+    }
 }
 
 /// A read-like effect: idempotent, keyable, cacheable. Implement when a
@@ -291,24 +295,32 @@ impl RtCtx {
     }
 
     /// Access the telemetry sink for this ctx.
-    pub fn telemetry(&self) -> &telemetry::Telemetry { &self.telemetry }
+    pub fn telemetry(&self) -> &telemetry::Telemetry {
+        &self.telemetry
+    }
 
     /// Sample the current round. Cheap (atomic acquire load). Op
     /// closures and batchers call this at staged-effect enqueue time so
     /// downstream actors can correlate effect rows back to the round
     /// that produced them.
-    pub fn current_gen(&self) -> generation::Generation { self.gen.current() }
+    pub fn current_gen(&self) -> generation::Generation {
+        self.gen.current()
+    }
 
     /// Advance to the next round. Called only by the seed driver
     /// (cold-start, manual reload) and the LSP backend (did_change /
     /// did_open / did_save / fs-watcher events). Op closures must NOT
     /// bump.
-    pub fn bump_gen(&self) -> generation::Generation { self.gen.bump() }
+    pub fn bump_gen(&self) -> generation::Generation {
+        self.gen.bump()
+    }
 
     /// Hand out a clone of the underlying counter. The LSP daemon
     /// shares one `Arc<GenCounter>` across every per-seed RtCtx build
     /// so re-runs across `did_change` see monotonic gen.
-    pub fn gen_counter(&self) -> Arc<generation::GenCounter> { self.gen.clone() }
+    pub fn gen_counter(&self) -> Arc<generation::GenCounter> {
+        self.gen.clone()
+    }
 
     /// Fetch a store registered at builder time (or via `bind_store`).
     /// Returns `None` if no store of type `S` was registered. Callers
@@ -350,7 +362,11 @@ impl Default for RtCtxBuilder {
 
 impl RtCtxBuilder {
     pub fn new() -> Self {
-        Self { registry: HashMap::new(), stores: HashMap::new(), gen: None }
+        Self {
+            registry: HashMap::new(),
+            stores: HashMap::new(),
+            gen: None,
+        }
     }
 
     /// Override the gen counter. The LSP daemon uses this to share one
@@ -415,7 +431,9 @@ impl RtCtxBuilder {
             stores: Arc::new(ArcSwap::from_pointee(self.stores)),
             root_cancel: CancellationToken::new(),
             telemetry: telemetry::Telemetry::new(),
-            gen: self.gen.unwrap_or_else(|| Arc::new(generation::GenCounter::new())),
+            gen: self
+                .gen
+                .unwrap_or_else(|| Arc::new(generation::GenCounter::new())),
         }
     }
 }
@@ -428,8 +446,7 @@ pub mod v2;
 
 pub use generation::{GenCounter, Generation};
 pub use subjects::{
-    Lineage, SubjectKey, SubjectKind, SubjectRegistry, Unsubscribed, Yield,
-    YieldBatcher,
+    Lineage, SubjectKey, SubjectKind, SubjectRegistry, Unsubscribed, Yield, YieldBatcher,
 };
 
 // Convenience surface for the v4 sqlite fact-store consumer. The
@@ -451,15 +468,21 @@ mod store_typemap_tests {
     use super::*;
     use std::sync::Mutex;
 
-    struct CountStore { hits: Mutex<u32> }
+    struct CountStore {
+        hits: Mutex<u32>,
+    }
     impl Store for CountStore {}
 
-    struct OtherStore { name: &'static str }
+    struct OtherStore {
+        name: &'static str,
+    }
     impl Store for OtherStore {}
 
     #[test]
     fn store_typemap_register_fetch_rebind() {
-        let s = Arc::new(CountStore { hits: Mutex::new(0) });
+        let s = Arc::new(CountStore {
+            hits: Mutex::new(0),
+        });
         let other = Arc::new(OtherStore { name: "alpha" });
         let cx = RtCtxBuilder::new()
             .with_store(s.clone())
@@ -468,7 +491,11 @@ mod store_typemap_tests {
 
         let fetched = cx.store::<CountStore>().expect("registered");
         *fetched.hits.lock().unwrap() += 1;
-        assert_eq!(*s.hits.lock().unwrap(), 1, "Arc shared, not cloned-by-value");
+        assert_eq!(
+            *s.hits.lock().unwrap(),
+            1,
+            "Arc shared, not cloned-by-value"
+        );
 
         let other_fetched = cx.store::<OtherStore>().expect("registered");
         assert_eq!(other_fetched.name, "alpha");
@@ -478,7 +505,9 @@ mod store_typemap_tests {
         assert!(cx.store::<Unregistered>().is_none());
 
         // bind_store rebinds atomically; new lookups see the new value.
-        let s2 = Arc::new(CountStore { hits: Mutex::new(99) });
+        let s2 = Arc::new(CountStore {
+            hits: Mutex::new(99),
+        });
         cx.bind_store(s2.clone());
         let after = cx.store::<CountStore>().expect("rebound");
         assert_eq!(*after.hits.lock().unwrap(), 99);

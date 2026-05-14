@@ -77,3 +77,11 @@ path = "src/bin/sprefa-run.rs"
 [[bin]]
 name = "sprefa-daemon"
 path = "src/bin/sprefa-daemon.rs"
+
+[[bin]]
+name = "cursor-codec-stress"
+path = "src/bin/cursor_codec_stress.rs"
+
+[[bin]]
+name = "sqlite-queue-stress"
+path = "src/bin/sqlite_queue_stress.rs"

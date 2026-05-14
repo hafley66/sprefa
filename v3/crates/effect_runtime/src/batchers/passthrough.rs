@@ -22,7 +22,10 @@ where
     F: Fn(E) -> E::Response + Send + Sync + 'static,
 {
     pub fn new(f: F) -> Self {
-        Self { f: Arc::new(f), _marker: std::marker::PhantomData }
+        Self {
+            f: Arc::new(f),
+            _marker: std::marker::PhantomData,
+        }
     }
 }
 

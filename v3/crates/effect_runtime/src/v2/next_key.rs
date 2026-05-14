@@ -16,9 +16,13 @@ use super::queue::QueueRow;
 pub struct NextKey(pub [u8; 32]);
 
 impl NextKey {
-    pub fn from_bytes(b: [u8; 32]) -> Self { Self(b) }
+    pub fn from_bytes(b: [u8; 32]) -> Self {
+        Self(b)
+    }
 
-    pub fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
 
 /// Compute the canonical key for an in-flight queue row. Stable across

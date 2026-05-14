@@ -45,11 +45,8 @@ where
     E: Clone + Send + 'static,
     E::Response: Clone + Send + 'static,
 {
-    pub fn new<B: Batcher<E>>(
-        inner: B,
-    ) -> (Self, SubjectHandle<E>, SubjectHandle<E::Response>) {
-        let req_tx: SubjectHandle<E> =
-            Arc::new(Mutex::new(Shared::subject::<E, Infallible>()));
+    pub fn new<B: Batcher<E>>(inner: B) -> (Self, SubjectHandle<E>, SubjectHandle<E::Response>) {
+        let req_tx: SubjectHandle<E> = Arc::new(Mutex::new(Shared::subject::<E, Infallible>()));
         let resp_tx: SubjectHandle<E::Response> =
             Arc::new(Mutex::new(Shared::subject::<E::Response, Infallible>()));
         let tap = Self {

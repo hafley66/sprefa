@@ -54,34 +54,67 @@ v4-release:
 
 # Linux perf fixture lives in this checkout at v3/tests/smoke/.fixtures/linux.
 # Recipe parameters override positionally:
-#   just v4-bench-linux "v3/tests/smoke/.fixtures/linux" 'printk($$$)' 8 1 4096
+#   just v4-bench-linux "v3/tests/smoke/.fixtures/linux" 'printk($$$)' 8 1 65536
 # Running multiple bench commands in parallel pollutes wall time. Run sequentially.
-v4-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
+v4-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="65536":
     ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare
 
-v4-bench-linux-warm LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
+v4-bench-linux-warm LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="65536":
     ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --warm-page-cache
 
 v4-bench-linux-quick:
-    ./v4/target/release/v4-bench --root "v3/tests/smoke/.fixtures/linux" --workers "8" --trials "1" --batch "4096" --pattern 'printk($$$)' --lang c --mode bare
+    ./v4/target/release/v4-bench --root "v3/tests/smoke/.fixtures/linux" --workers "8" --trials "1" --batch "65536" --pattern 'printk($$$)' --lang c --mode bare
 
-v4-bench-linux-store LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="1" BATCH="4096":
+v4-bench-linux-store LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="1" BATCH="65536":
     ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --sprf-store
 
-v4-bench-linux-store-warm LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="1" BATCH="4096":
+v4-bench-linux-store-warm LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="1" BATCH="65536":
     ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --sprf-store --warm-page-cache
 
-v4-bench-linux-read LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3" BATCH="4096":
-    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --materialize-read
+v4-bench-linux-sprf LINUX="v3/tests/smoke/.fixtures/linux" BATCH="65536" FACT_DB="/private/tmp/sprefa-v4-bench-linux-facts.db":
+    rm -f "{{FACT_DB}}"
+    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}" --fact-db "{{FACT_DB}}"
 
-v4-bench-linux-sprf LINUX="v3/tests/smoke/.fixtures/linux":
-    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows
+v4-bench-linux-sprf-telemetry LINUX="v3/tests/smoke/.fixtures/linux" BATCH="65536" FACT_DB="/private/tmp/sprefa-v4-bench-linux-facts.db":
+    rm -f "{{FACT_DB}}"
+    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}" --fact-db "{{FACT_DB}}"
 
-v4-bench-linux-sprf-telemetry LINUX="v3/tests/smoke/.fixtures/linux":
-    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry
+v4-bench-linux-sprf-telemetry-batch LINUX="v3/tests/smoke/.fixtures/linux" BATCH="65536" FACT_DB="/private/tmp/sprefa-v4-bench-linux-facts.db":
+    rm -f "{{FACT_DB}}"
+    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}" --fact-db "{{FACT_DB}}"
 
-v4-bench-linux-sprf-telemetry-batch LINUX="v3/tests/smoke/.fixtures/linux" BATCH="65536":
-    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}"
+v4-bench-linux-sprf-join LINUX="v3/tests/smoke/.fixtures/linux" BATCH="65536" FACT_DB="/private/tmp/sprefa-v4-bench-linux-join-facts.db":
+    rm -f "{{FACT_DB}}"
+    ./v4/target/release/sprefa-run v4/bench/linux-join.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}" --fact-db "{{FACT_DB}}"
+
+v4-bench-linux-sprf-antijoin LINUX="v3/tests/smoke/.fixtures/linux" BATCH="65536" FACT_DB="/private/tmp/sprefa-v4-bench-linux-antijoin-facts.db":
+    rm -f "{{FACT_DB}}"
+    ./v4/target/release/sprefa-run v4/bench/linux-antijoin.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}" --fact-db "{{FACT_DB}}"
+
+v4-bench-linux-all LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="1" BATCH="65536":
+    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --warm-page-cache
+    ./v4/target/release/v4-bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --batch "{{BATCH}}" --pattern '{{PATTERN}}' --lang c --mode bare --sprf-store --warm-page-cache
+    rm -f "/private/tmp/sprefa-v4-bench-linux-all-materialize.db"
+    ./v4/target/release/sprefa-run v4/bench/linux.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}" --fact-db "/private/tmp/sprefa-v4-bench-linux-all-materialize.db"
+    rm -f "/private/tmp/sprefa-v4-bench-linux-all-join.db"
+    ./v4/target/release/sprefa-run v4/bench/linux-join.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}" --fact-db "/private/tmp/sprefa-v4-bench-linux-all-join.db"
+
+v4-bench-linux-all-full LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="1" BATCH="65536":
+    just v4-bench-linux-all "{{LINUX}}" "{{PATTERN}}" "{{WORKERS}}" "{{TRIALS}}" "{{BATCH}}"
+    rm -f "/private/tmp/sprefa-v4-bench-linux-all-antijoin.db"
+    ./v4/target/release/sprefa-run v4/bench/linux-antijoin.sprf --root "{{LINUX}}" --no-show-rows --telemetry --batch "{{BATCH}}" --fact-db "/private/tmp/sprefa-v4-bench-linux-all-antijoin.db"
+
+v4-cursor-codec-stress ROWS="706778":
+    cargo build --manifest-path v4/Cargo.toml --release --bin cursor-codec-stress
+    ./v4/target/release/cursor-codec-stress --rows "{{ROWS}}"
+
+v4-sqlite-queue-stress ROWS="706778" BATCH="65536" DB="/private/tmp/sprefa-sqlite-queue-stress.db":
+    cargo build --manifest-path v4/Cargo.toml --release --bin sqlite-queue-stress
+    RUST_LOG=effect_runtime::sqlite_queue=info ./v4/target/release/sqlite-queue-stress --rows "{{ROWS}}" --batch "{{BATCH}}" --db "{{DB}}"
+
+v4-sqlite-queue-stress-sweep ROWS="706778" BATCHES="4096,16384,65536,131072" DB="/private/tmp/sprefa-sqlite-queue-stress.db":
+    cargo build --manifest-path v4/Cargo.toml --release --bin sqlite-queue-stress
+    RUST_LOG=effect_runtime::sqlite_queue=info ./v4/target/release/sqlite-queue-stress --rows "{{ROWS}}" --batches "{{BATCHES}}" --db "{{DB}}"
 
 v3-bench-linux LINUX="v3/tests/smoke/.fixtures/linux" PATTERN="printk($$$)" WORKERS="8" TRIALS="3":
     ./v3/experiments/effect_proof/target/release/ast_grep_v3_bench --root "{{LINUX}}" --workers "{{WORKERS}}" --trials "{{TRIALS}}" --pattern '{{PATTERN}}' --lang c --mode batch

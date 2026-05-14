@@ -8,9 +8,8 @@
 //   insert  Fs > AstNm > FactWrite [+ CommitEvery]
 //   full    not yet ported (rule infra still landing)
 //
-// Default bulk shape is now source-aware `fs > ast`; file bodies stay
-// behind the ast operator. Use `--materialize-read` to measure the old
-// explicit `fs > read > ast` materialization boundary.
+// Bulk shape is source-aware `fs > ast`; file bodies stay behind the
+// ast operator and are not serialized through cursor.value.
 //
 // Usage:
 //   cargo run --release --bin v4-bench -- --root <linux> \
@@ -25,22 +24,20 @@ use ast_grep_language::SupportLang;
 use ignore::WalkBuilder;
 
 use effect_runtime::v2::{
-    expand, Component, ExpandOpts, FactStore, MemFactStore, MemQueue, MemoCache, Memoize, Node,
-    PipeInstance, PriorChildIndex, QueueBackend, RenderCtx, SqliteFactStore,
+    expand, Component, EffectTelemetry, ExpandOpts, FactStore, MemFactStore, MemQueue, MemoCache,
+    Memoize, Node, PipeInstance, PriorChildIndex, QueueBackend, RenderCtx, SqliteFactStore,
 };
 use v4::fact::FactWrite;
 use v4::store::SprfStore;
 use v4::telemetry::{StageTiming, TimedComponent};
 use v4::v2_ops::{
     AstNmComponent, AstTelemetry, CountComponent, FsComponent, FsTelemetry, MultiAstNmComponent,
-    ReadComponent, SinglePathComponent,
+    SinglePathComponent,
 };
 
 #[derive(Default)]
 struct BenchCounters {
     source_rows: Arc<AtomicU64>,
-    read_rows: Arc<AtomicU64>,
-    read_bytes: Arc<AtomicU64>,
 }
 
 /// Bench-local pass-through counter. Keeps telemetry out of the core
@@ -54,22 +51,6 @@ impl Component for RowCountComponent {
 
     fn render(&self, _ctx: &RenderCtx, c: &v4::Cursor) -> Node<v4::Cursor> {
         self.rows.fetch_add(1, Ordering::Relaxed);
-        Node::Emit(Arc::new(c.clone()))
-    }
-}
-
-struct ReadTelemetryComponent {
-    rows: Arc<AtomicU64>,
-    bytes: Arc<AtomicU64>,
-}
-
-impl Component for ReadTelemetryComponent {
-    type Next = v4::Cursor;
-
-    fn render(&self, _ctx: &RenderCtx, c: &v4::Cursor) -> Node<v4::Cursor> {
-        self.rows.fetch_add(1, Ordering::Relaxed);
-        self.bytes
-            .fetch_add(c.value.len() as u64, Ordering::Relaxed);
         Node::Emit(Arc::new(c.clone()))
     }
 }
@@ -157,14 +138,13 @@ async fn main() {
     let mut pattern_src = String::from("printk($$$)");
     let mut lang_spec = String::from("c");
     let mut mode_str = String::from("bare");
-    let mut batch: usize = 4096;
+    let mut batch: usize = 65536;
     let mut file: Option<PathBuf> = None;
     let mut multi: usize = 0;
     let mut multi_each: Vec<String> = Vec::new();
     let mut commit_every: usize = 0;
     let mut store_kind = String::from("mem");
     let mut sqlite_path: Option<PathBuf> = None;
-    let mut materialize_read = false;
     let mut sprf_store_enabled = false;
     let mut warm_page_cache = false;
     // --memoize off|on|reconcile. Wraps AstNm in Memoize.
@@ -228,8 +208,7 @@ async fn main() {
                 i += 2;
             }
             "--materialize-read" => {
-                materialize_read = true;
-                i += 1;
+                panic!("--materialize-read was removed; v4-bench uses source-aware ast reads");
             }
             "--sprf-store" => {
                 sprf_store_enabled = true;
@@ -267,10 +246,7 @@ async fn main() {
         "mode={:?} workers={} batch={} trials={} pattern={:?} lang={:?} root={} memoize={} memoize_share={} sprf_store={} warm_page_cache={}",
         mode, workers, batch, trials, pattern_src, lang, root.display(), memoize, memoize_share, sprf_store_enabled, warm_page_cache,
     );
-    eprintln!(
-        "ext_filter={:?} materialize_read={}",
-        exts, materialize_read,
-    );
+    eprintln!("ext_filter={:?} source_reads=ast", exts,);
     if !matches!(memoize.as_str(), "off" | "on" | "reconcile") {
         panic!("--memoize must be off|on|reconcile, got {memoize:?}");
     }
@@ -429,11 +405,9 @@ async fn main() {
         };
 
         // Build chain:
-        //   default             source > matcher > Count
-        //   --materialize-read  source > read > matcher > Count
+        //   source > matcher > Count
         //
-        // The default exercises the source-aware matcher path: source
-        // bytes stay behind ast instead of being serialized through
+        // Source bytes stay behind ast instead of being serialized through
         // cursor.value between queue stages.
         let mut steps: Vec<Arc<dyn Component<Next = v4::Cursor>>> = vec![
             TimedComponent::new("fs", source, &mut timings),
@@ -445,18 +419,6 @@ async fn main() {
                 &mut timings,
             ),
         ];
-        if materialize_read {
-            let read: Arc<dyn Component<Next = v4::Cursor>> = Arc::new(ReadComponent::new());
-            steps.push(TimedComponent::new("read", read, &mut timings));
-            steps.push(TimedComponent::new(
-                "read_telemetry",
-                Arc::new(ReadTelemetryComponent {
-                    rows: bench.read_rows.clone(),
-                    bytes: bench.read_bytes.clone(),
-                }),
-                &mut timings,
-            ));
-        }
         steps.push(TimedComponent::new("ast", matcher, &mut timings));
         if matches!(mode, Mode::Insert) {
             let store = store_opt.as_ref().unwrap().clone();
@@ -491,7 +453,10 @@ async fn main() {
 
         let pipe = PipeInstance::new(steps);
         let queue: Arc<dyn QueueBackend<v4::Cursor>> = Arc::new(MemQueue::new());
-        let opts = ExpandOpts::default().with_batch_cap(batch.max(65536));
+        let effect_telemetry = Arc::new(EffectTelemetry::default());
+        let opts = ExpandOpts::default()
+            .with_batch_cap(batch)
+            .with_telemetry(effect_telemetry.clone());
 
         let t_run = Instant::now();
         let stats = expand(&pipe, queue, vec![Arc::new(v4::Cursor::default())], opts);
@@ -503,7 +468,7 @@ async fn main() {
         let m = counter.load(Ordering::Relaxed);
         let rss = rss_peak_kb() / 1024;
         eprintln!(
-            "trial {}: wall={:.3}s  matches={:>9}  fs_seen={}  fs_rows={}  fs_ext_skipped={}  fs_filter_skipped={}  read_rows={}  read_MB={:.1}  rendered={}  emitted={}  rss_peak_MB={}",
+            "trial {}: wall={:.3}s  matches={:>9}  fs_seen={}  fs_rows={}  fs_ext_skipped={}  fs_filter_skipped={}  fs_walk_ms={:.1}  fs_filter_ms={:.1}  fs_cursor_ms={:.1}  fs_splice_ms={:.1}  rendered={}  emitted={}  rss_peak_MB={}",
             trial,
             wall.as_secs_f64(),
             m,
@@ -511,8 +476,10 @@ async fn main() {
             bench.source_rows.load(Ordering::Relaxed),
             fs_telemetry.ext_skipped.load(Ordering::Relaxed),
             fs_telemetry.filter_skipped.load(Ordering::Relaxed),
-            bench.read_rows.load(Ordering::Relaxed),
-            bench.read_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
+            fs_telemetry.walk_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            fs_telemetry.filter_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            fs_telemetry.cursor_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            fs_telemetry.splice_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             stats.rendered,
             stats.emitted,
             rss,
@@ -554,6 +521,38 @@ async fn main() {
             ast_telemetry.parse_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             ast_telemetry.match_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             ast_telemetry.emit_stamp_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+        );
+        if let Some(store) = &store_opt {
+            if let Some(s) = store.stats() {
+                eprintln!(
+                    "  store telemetry: insert_calls={} insert_rows={} insert_batch_calls={} insert_batch_rows={} commit_calls={} string_intern_calls={} string_intern_rows={} transactions={} insert_batch_ms={:.1} string_intern_ms={:.1} sqlite_insert_ms={:.1} transaction_commit_ms={:.1} commit_ms={:.1}",
+                    s.insert_calls,
+                    s.insert_rows,
+                    s.insert_batch_calls,
+                    s.insert_batch_rows,
+                    s.commit_calls,
+                    s.string_intern_calls,
+                    s.string_intern_rows,
+                    s.transactions,
+                    s.insert_batch_ms,
+                    s.string_intern_ms,
+                    s.sqlite_insert_ms,
+                    s.transaction_commit_ms,
+                    s.commit_ms,
+                );
+            }
+        }
+        let effect = effect_telemetry.snapshot();
+        eprintln!(
+            "  effect runtime: pull_calls={} pull_rows={} pull_ms={:.1} dispatch_calls={} dispatch_rows={} dispatch_ms={:.1} put_calls={} put_ms={:.1}",
+            effect.pull_calls,
+            effect.pull_rows,
+            effect.pull_ns as f64 / 1_000_000.0,
+            effect.dispatch_calls,
+            effect.dispatch_rows,
+            effect.dispatch_ns as f64 / 1_000_000.0,
+            effect.put_calls,
+            effect.put_ns as f64 / 1_000_000.0,
         );
         walls.push(wall);
         last_matches = m;

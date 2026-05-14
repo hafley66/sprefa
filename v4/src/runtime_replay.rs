@@ -30,7 +30,11 @@ impl GraphReplayRunner {
                 let Some(owner) = self.runtime_graph.owner_descriptor(job.owner_uri_id) else {
                     continue;
                 };
-                if owner.ast_uri.starts_with("sprf://ast/read/") {
+                if self
+                    .runtime_graph
+                    .continuation_for_owner(job.owner_uri_id)
+                    .is_some()
+                {
                     if self.rerun_continuation_owner(job.owner_uri_id, job.generation) {
                         self.runtime_graph.mark_job_done(&job);
                         handled += 1;

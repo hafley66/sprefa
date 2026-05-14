@@ -8,16 +8,14 @@
 //! to make progress.
 
 use std::any::Any;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use super::component::{ComponentLifecycle, DynComponent, RenderCtx};
+use super::component::{ComponentLifecycle, DynComponent, EffectTelemetry, RenderCtx};
 use super::diag::{DiagSink, NoopDiagSink};
 use super::event_bus::EventBus;
 use super::next::Next;
-use super::queue::{
-    BarrierScope, ExpandTick, InstanceId, PipeHash, QueueBackend, QueueRow,
-};
+use super::queue::{BarrierScope, ExpandTick, InstanceId, PipeHash, QueueBackend, QueueRow};
 use super::wake::Wake;
 
 /// Unbuilt pipe value. The shape DSL holes resolve to at lower-time:
@@ -30,7 +28,9 @@ pub struct Pipe<N: Next> {
 }
 
 impl<N: Next> Pipe<N> {
-    pub fn new() -> Self { Self { steps: Vec::new() } }
+    pub fn new() -> Self {
+        Self { steps: Vec::new() }
+    }
 
     pub fn from_steps(steps: Vec<DynComponent<N>>) -> Self {
         Self { steps }
@@ -49,8 +49,12 @@ impl<N: Next> Pipe<N> {
         self
     }
 
-    pub fn len(&self) -> usize { self.steps.len() }
-    pub fn is_empty(&self) -> bool { self.steps.is_empty() }
+    pub fn len(&self) -> usize {
+        self.steps.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+    }
 
     /// Convert to a mounted, runnable instance. Pipe-hash and
     /// instance-id default to 0 today; assign once the lower-pass
@@ -61,7 +65,9 @@ impl<N: Next> Pipe<N> {
 }
 
 impl<N: Next> Default for Pipe<N> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // Cloning a Pipe deep-copies the step Vec but shares each component
@@ -70,21 +76,27 @@ impl<N: Next> Default for Pipe<N> {
 // shape, lower then folds the steps in).
 impl<N: Next> Clone for Pipe<N> {
     fn clone(&self) -> Self {
-        Self { steps: self.steps.iter().cloned().collect() }
+        Self {
+            steps: self.steps.iter().cloned().collect(),
+        }
     }
 }
 
 /// One mounted pipe instance. Pipe homogeneous in `N`; components
 /// pinned via `dyn Component<Next = N>`.
 pub struct PipeInstance<N: Next> {
-    pub pipe_hash:   PipeHash,
+    pub pipe_hash: PipeHash,
     pub instance_id: InstanceId,
-    pub components:  Vec<DynComponent<N>>,
+    pub components: Vec<DynComponent<N>>,
 }
 
 impl<N: Next> PipeInstance<N> {
     pub fn new(components: Vec<DynComponent<N>>) -> Self {
-        Self { pipe_hash: 0, instance_id: 0, components }
+        Self {
+            pipe_hash: 0,
+            instance_id: 0,
+            components,
+        }
     }
 }
 
@@ -94,10 +106,11 @@ impl<N: Next> PipeInstance<N> {
 /// that many homogeneous rows in one call.
 #[derive(Clone)]
 pub struct ExpandOpts {
-    pub bus:       Arc<EventBus>,
-    pub diag:      Arc<dyn DiagSink>,
+    pub bus: Arc<EventBus>,
+    pub diag: Arc<dyn DiagSink>,
     pub batch_cap: usize,
-    pub runtime:   Option<Arc<dyn Any + Send + Sync>>,
+    pub runtime: Option<Arc<dyn Any + Send + Sync>>,
+    pub telemetry: Option<Arc<EffectTelemetry>>,
 }
 
 pub const DEFAULT_BATCH_CAP: usize = 256;
@@ -105,16 +118,19 @@ pub const DEFAULT_BATCH_CAP: usize = 256;
 impl Default for ExpandOpts {
     fn default() -> Self {
         Self {
-            bus:       Arc::new(EventBus::new()),
-            diag:      Arc::new(NoopDiagSink),
+            bus: Arc::new(EventBus::new()),
+            diag: Arc::new(NoopDiagSink),
             batch_cap: DEFAULT_BATCH_CAP,
-            runtime:   None,
+            runtime: None,
+            telemetry: None,
         }
     }
 }
 
 impl ExpandOpts {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn with_bus(mut self, bus: Arc<EventBus>) -> Self {
         self.bus = bus;
@@ -135,14 +151,19 @@ impl ExpandOpts {
         self.runtime = Some(runtime);
         self
     }
+
+    pub fn with_telemetry(mut self, telemetry: Arc<EffectTelemetry>) -> Self {
+        self.telemetry = Some(telemetry);
+        self
+    }
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct ExpandStats {
     pub rendered: u64,
-    pub emitted:  u64,
+    pub emitted: u64,
     pub terminal: u64,
-    pub parked:   u64,
+    pub parked: u64,
 }
 
 static GLOBAL_TICK: AtomicU64 = AtomicU64::new(1);
@@ -154,24 +175,24 @@ fn bump_global_tick() -> ExpandTick {
 /// Drive a single pipe instance until nothing is runnable. Pass empty
 /// `seed` to resume an already-seeded queue.
 pub fn expand<N: Next>(
-    pipe:  &PipeInstance<N>,
+    pipe: &PipeInstance<N>,
     queue: Arc<dyn QueueBackend<N>>,
-    seed:  Vec<Arc<N>>,
-    opts:  ExpandOpts,
+    seed: Vec<Arc<N>>,
+    opts: ExpandOpts,
 ) -> ExpandStats {
     let expand_tick = bump_global_tick();
 
     for value in seed {
         queue.enqueue(QueueRow {
-            id:             0,
-            parent_id:      None,
-            batch_idx:      0,
-            path:           Vec::new(),
-            pipe_hash:      pipe.pipe_hash,
-            instance_id:    pipe.instance_id,
-            depth:             0,
+            id: 0,
+            parent_id: None,
+            batch_idx: 0,
+            path: Vec::new(),
+            pipe_hash: pipe.pipe_hash,
+            instance_id: pipe.instance_id,
+            depth: 0,
             value,
-            wake:           Wake::Immediate,
+            wake: Wake::Immediate,
             expand_tick,
             enqueued_at_ns: 0,
         });
@@ -180,12 +201,16 @@ pub fn expand<N: Next>(
     let mut stats = ExpandStats::default();
 
     loop {
+        let pull_t0 = std::time::Instant::now();
         let batch = queue.pull_runnable_batch_for(
             pipe.pipe_hash,
             pipe.instance_id,
             expand_tick,
             opts.batch_cap,
         );
+        if let Some(telemetry) = &opts.telemetry {
+            telemetry.record_pull(batch.len() as u64, pull_t0.elapsed());
+        }
         if batch.is_empty() {
             if drive_barriers(pipe, queue.as_ref(), expand_tick, &opts) {
                 continue;
@@ -207,6 +232,9 @@ pub fn expand<N: Next>(
         if let Some(runtime) = &opts.runtime {
             ctx = ctx.with_runtime_any(runtime.clone());
         }
+        if let Some(telemetry) = &opts.telemetry {
+            ctx = ctx.with_telemetry(telemetry.clone());
+        }
 
         // PHASE E (deferred): reconciliation hook lives inside
         // `dispatch`. Before enqueueing new children, an override can
@@ -216,7 +244,7 @@ pub fn expand<N: Next>(
         // Phase E lights up when Memoize+Yield get composed.
 
         let depth_before = queue.depth();
-        let batch_len    = batch.len() as u64;
+        let batch_len = batch.len() as u64;
 
         // Gate every tracing-related cost on whether a subscriber wants
         // it. `event_enabled!` is one atomic load when no subscriber is
@@ -239,6 +267,9 @@ pub fn expand<N: Next>(
             let t0 = std::time::Instant::now();
             comp.dispatch(&ctx, &batch, queue.as_ref());
             let elapsed = t0.elapsed();
+            if let Some(telemetry) = &opts.telemetry {
+                telemetry.record_dispatch(kind, batch_len, elapsed);
+            }
             let depth_after = queue.depth();
             let emitted_in_batch = depth_after.saturating_sub(depth_before);
 
@@ -253,12 +284,16 @@ pub fn expand<N: Next>(
             );
 
             stats.rendered += batch_len;
-            stats.emitted  += emitted_in_batch;
+            stats.emitted += emitted_in_batch;
         } else {
+            let t0 = std::time::Instant::now();
             comp.dispatch(&ctx, &batch, queue.as_ref());
+            if let Some(telemetry) = &opts.telemetry {
+                telemetry.record_dispatch(comp.kind(), batch_len, t0.elapsed());
+            }
             let depth_after = queue.depth();
             stats.rendered += batch_len;
-            stats.emitted  += depth_after.saturating_sub(depth_before);
+            stats.emitted += depth_after.saturating_sub(depth_before);
         }
     }
 
@@ -266,10 +301,10 @@ pub fn expand<N: Next>(
 }
 
 fn drive_barriers<N: Next>(
-    pipe:        &PipeInstance<N>,
-    queue:       &dyn QueueBackend<N>,
+    pipe: &PipeInstance<N>,
+    queue: &dyn QueueBackend<N>,
     expand_tick: ExpandTick,
-    opts:        &ExpandOpts,
+    opts: &ExpandOpts,
 ) -> bool {
     let mut emitted = false;
 

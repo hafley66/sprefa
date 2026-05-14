@@ -20,7 +20,7 @@ use super::diag::ByteRange;
 #[derive(Clone, Debug)]
 pub struct Probe<N> {
     /// Source byte range of the op that emitted this cursor.
-    pub span:   ByteRange,
+    pub span: ByteRange,
     /// The cursor that was emitted. Arc-shared with the queue.
     pub cursor: Arc<N>,
 }
@@ -45,19 +45,29 @@ pub struct BufferProbeSink<N> {
 }
 
 impl<N> Default for BufferProbeSink<N> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<N> BufferProbeSink<N> {
-    pub fn new() -> Self { Self { inner: Mutex::new(Vec::new()) } }
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(Vec::new()),
+        }
+    }
 
     /// Take all buffered probes, leaving the buffer empty.
     pub fn drain(&self) -> Vec<Probe<N>> {
         std::mem::take(&mut *self.inner.lock().unwrap())
     }
 
-    pub fn len(&self) -> usize { self.inner.lock().unwrap().len() }
-    pub fn is_empty(&self) -> bool { self.inner.lock().unwrap().is_empty() }
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().unwrap().is_empty()
+    }
 }
 
 impl<N: Send + Sync + 'static> ProbeSink<N> for BufferProbeSink<N> {

@@ -10,30 +10,42 @@
 //!     Some(k)` invalidates a single entry.
 
 use std::borrow::Cow;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use super::next_key::NextKey;
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    Dirty { domain: Cow<'static, str>, key: Option<NextKey> },
+    Dirty {
+        domain: Cow<'static, str>,
+        key: Option<NextKey>,
+    },
 }
 
 /// Listener for cache-invalidation / telemetry events.
 pub trait BusListener: Send + Sync + 'static {
     fn on_event(&self, ev: &Event);
+
+    fn on_dirty_batch(&self, domain: &str, keys: &[Option<NextKey>]) {
+        for key in keys {
+            self.on_event(&Event::Dirty {
+                domain: Cow::Owned(domain.to_string()),
+                key: *key,
+            });
+        }
+    }
 }
 
 pub struct EventBus {
-    counter:   AtomicU64,
+    counter: AtomicU64,
     listeners: Mutex<Vec<std::sync::Arc<dyn BusListener>>>,
 }
 
 impl EventBus {
     pub fn new() -> Self {
         Self {
-            counter:   AtomicU64::new(1),
+            counter: AtomicU64::new(1),
             listeners: Mutex::new(Vec::new()),
         }
     }
@@ -55,15 +67,35 @@ impl EventBus {
         let listeners = self.listeners.lock().unwrap().clone();
         // Listeners fire outside the lock so they can re-enter the bus
         // (e.g. cache drops triggering further dispatches).
-        for l in listeners { l.on_event(&ev); }
+        for l in listeners {
+            l.on_event(&ev);
+        }
     }
 
     /// Convenience: dispatch a `Dirty` event with the given domain and key.
     pub fn dispatch_dirty(&self, domain: impl Into<Cow<'static, str>>, key: Option<NextKey>) {
-        self.dispatch(Event::Dirty { domain: domain.into(), key });
+        self.dispatch(Event::Dirty {
+            domain: domain.into(),
+            key,
+        });
+    }
+
+    pub fn dispatch_dirty_batch(
+        &self,
+        domain: impl Into<Cow<'static, str>>,
+        keys: impl IntoIterator<Item = Option<NextKey>>,
+    ) {
+        let domain = domain.into();
+        let keys: Vec<Option<NextKey>> = keys.into_iter().collect();
+        let listeners = self.listeners.lock().unwrap().clone();
+        for l in &listeners {
+            l.on_dirty_batch(domain.as_ref(), &keys);
+        }
     }
 }
 
 impl Default for EventBus {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

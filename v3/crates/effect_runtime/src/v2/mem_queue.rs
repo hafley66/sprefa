@@ -5,27 +5,26 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use super::next::Next;
 use super::next_key::NextKey;
 use super::queue::{
-    ExpandTick, PendingSummary, PipeHash, InstanceId, QueueBackend, QueueId,
-    QueueRow,
+    ExpandTick, InstanceId, PendingSummary, PipeHash, QueueBackend, QueueId, QueueRow,
 };
 use super::wake::Wake;
 
 pub struct MemQueue<N: Next> {
     next_id: AtomicU64,
-    state:   Mutex<State<N>>,
+    state: Mutex<State<N>>,
 }
 
 struct State<N: Next> {
-    runnable:    VecDeque<QueueRow<N>>,
+    runnable: VecDeque<QueueRow<N>>,
     tick_parked: Vec<QueueRow<N>>,
-    by_key:      HashMap<(Cow<'static, str>, NextKey), Vec<QueueRow<N>>>,
-    depth:       u64,
+    by_key: HashMap<(Cow<'static, str>, NextKey), Vec<QueueRow<N>>>,
+    depth: u64,
 }
 
 impl<N: Next> MemQueue<N> {
@@ -33,17 +32,19 @@ impl<N: Next> MemQueue<N> {
         Self {
             next_id: AtomicU64::new(1),
             state: Mutex::new(State {
-                runnable:    VecDeque::new(),
+                runnable: VecDeque::new(),
                 tick_parked: Vec::new(),
-                by_key:      HashMap::new(),
-                depth:       0,
+                by_key: HashMap::new(),
+                depth: 0,
             }),
         }
     }
 }
 
 impl<N: Next> Default for MemQueue<N> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<N: Next> QueueBackend<N> for MemQueue<N> {
@@ -55,8 +56,8 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         let mut s = self.state.lock().unwrap();
         s.depth += 1;
         match &row.wake {
-            Wake::Immediate    => s.runnable.push_back(row),
-            Wake::Tick { .. }  => s.tick_parked.push(row),
+            Wake::Immediate => s.runnable.push_back(row),
+            Wake::Tick { .. } => s.tick_parked.push(row),
             Wake::Key { domain, key } => {
                 let k = (domain.clone(), *key);
                 s.by_key.entry(k).or_default().push(row);
@@ -101,10 +102,7 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         id
     }
 
-    fn pull_runnable(
-        &self,
-        global_tick: ExpandTick,
-    ) -> Option<QueueRow<N>> {
+    fn pull_runnable(&self, global_tick: ExpandTick) -> Option<QueueRow<N>> {
         let mut s = self.state.lock().unwrap();
 
         if let Some(row) = s.runnable.pop_front() {
@@ -112,9 +110,10 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
             return Some(row);
         }
 
-        let tick_idx = s.tick_parked.iter().position(|r|
-            matches!(&r.wake, Wake::Tick { past_tick } if *past_tick < global_tick)
-        );
+        let tick_idx = s
+            .tick_parked
+            .iter()
+            .position(|r| matches!(&r.wake, Wake::Tick { past_tick } if *past_tick < global_tick));
         if let Some(i) = tick_idx {
             let row = s.tick_parked.swap_remove(i);
             s.depth -= 1;
@@ -132,10 +131,10 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         let mut s = self.state.lock().unwrap();
         // Collect matching keys to drain — by_key is keyed by
         // (Cow<str>, NextKey) so domain-only sweeps walk the whole map.
-        let matching: Vec<(Cow<'static, str>, NextKey)> = s.by_key.keys()
-            .filter(|(d, k)| {
-                d.as_ref() == domain && key.map_or(true, |want| *k == want)
-            })
+        let matching: Vec<(Cow<'static, str>, NextKey)> = s
+            .by_key
+            .keys()
+            .filter(|(d, k)| d.as_ref() == domain && key.map_or(true, |want| *k == want))
             .cloned()
             .collect();
         let mut promoted = 0u64;
@@ -151,30 +150,35 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         promoted
     }
 
-    fn pull_runnable_batch(
-        &self,
-        global_tick: ExpandTick,
-        n:           usize,
-    ) -> Vec<QueueRow<N>> {
+    fn has_parked_domain(&self, domain: &str) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .by_key
+            .keys()
+            .any(|(d, _)| d.as_ref() == domain)
+    }
+
+    fn pull_runnable_batch(&self, global_tick: ExpandTick, n: usize) -> Vec<QueueRow<N>> {
         self.pull_runnable_batch_impl(global_tick, n)
     }
 
     fn pull_runnable_batch_for(
         &self,
-        pipe_hash:   PipeHash,
+        pipe_hash: PipeHash,
         instance_id: InstanceId,
         global_tick: ExpandTick,
-        n:           usize,
+        n: usize,
     ) -> Vec<QueueRow<N>> {
         self.pull_runnable_batch_for_impl(pipe_hash, instance_id, global_tick, n)
     }
 
     fn pending_summary_before_or_at(
         &self,
-        pipe_hash:   PipeHash,
+        pipe_hash: PipeHash,
         instance_id: InstanceId,
         global_tick: ExpandTick,
-        max_depth:   u32,
+        max_depth: u32,
     ) -> PendingSummary {
         let s = self.state.lock().unwrap();
         let mut pending = PendingSummary::default();
@@ -222,23 +226,31 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         // Step 1: BFS over parent_id to collect the full doomed id set.
         // Walk all three buckets each pass since rows live in whichever
         // matches their wake state.
-        let mut doomed: std::collections::HashSet<QueueId> =
-            std::collections::HashSet::new();
+        let mut doomed: std::collections::HashSet<QueueId> = std::collections::HashSet::new();
         doomed.insert(root);
         let mut frontier = vec![root];
         while !frontier.is_empty() {
             let mut next: Vec<QueueId> = Vec::new();
-            let scan = |row: &QueueRow<N>, frontier: &[QueueId], next: &mut Vec<QueueId>, doomed: &mut std::collections::HashSet<QueueId>| {
+            let scan = |row: &QueueRow<N>,
+                        frontier: &[QueueId],
+                        next: &mut Vec<QueueId>,
+                        doomed: &mut std::collections::HashSet<QueueId>| {
                 if let Some(p) = row.parent_id {
                     if frontier.contains(&p) && doomed.insert(row.id) {
                         next.push(row.id);
                     }
                 }
             };
-            for r in s.runnable.iter()    { scan(r, &frontier, &mut next, &mut doomed); }
-            for r in s.tick_parked.iter() { scan(r, &frontier, &mut next, &mut doomed); }
+            for r in s.runnable.iter() {
+                scan(r, &frontier, &mut next, &mut doomed);
+            }
+            for r in s.tick_parked.iter() {
+                scan(r, &frontier, &mut next, &mut doomed);
+            }
             for bucket in s.by_key.values() {
-                for r in bucket.iter() { scan(r, &frontier, &mut next, &mut doomed); }
+                for r in bucket.iter() {
+                    scan(r, &frontier, &mut next, &mut doomed);
+                }
             }
             frontier = next;
         }
@@ -256,12 +268,20 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
         let keys: Vec<(Cow<'static, str>, NextKey)> = s.by_key.keys().cloned().collect();
         for k in keys {
             let bucket = s.by_key.remove(&k).unwrap();
-            let kept: Vec<QueueRow<N>> = bucket.into_iter()
+            let kept: Vec<QueueRow<N>> = bucket
+                .into_iter()
                 .filter(|r| {
-                    if doomed.contains(&r.id) { removed += 1; false } else { true }
+                    if doomed.contains(&r.id) {
+                        removed += 1;
+                        false
+                    } else {
+                        true
+                    }
                 })
                 .collect();
-            if !kept.is_empty() { s.by_key.insert(k, kept); }
+            if !kept.is_empty() {
+                s.by_key.insert(k, kept);
+            }
         }
 
         s.depth = s.depth.saturating_sub(removed);
@@ -270,6 +290,28 @@ impl<N: Next> QueueBackend<N> for MemQueue<N> {
 }
 
 impl<N: Next> MemQueue<N> {
+    /// Drain runnable rows where `pred(row)` returns true. Rows keep
+    /// their original wake state and can be bulk-enqueued into a cold
+    /// queue. Depth is decremented for each drained row.
+    pub fn drain_runnable_where(
+        &self,
+        mut pred: impl FnMut(&QueueRow<N>) -> bool,
+    ) -> Vec<QueueRow<N>> {
+        let mut s = self.state.lock().unwrap();
+        let mut out = Vec::new();
+        let mut keep = VecDeque::with_capacity(s.runnable.len());
+        while let Some(row) = s.runnable.pop_front() {
+            if pred(&row) {
+                s.depth -= 1;
+                out.push(row);
+            } else {
+                keep.push_back(row);
+            }
+        }
+        s.runnable = keep;
+        out
+    }
+
     /// Drain `Wake::Key` rows where `pred(row)` returns true. Returns
     /// the owned rows; depth is decremented for each. Used by
     /// `HybridQueue::tick_flush` to evict aged parks down to sqlite.
@@ -305,26 +347,34 @@ impl<N: Next> MemQueue<N> {
         s.by_key.values().map(|v| v.len()).sum()
     }
 
-    fn pull_runnable_batch_impl(
-        &self,
-        global_tick: ExpandTick,
-        n:           usize,
-    ) -> Vec<QueueRow<N>> {
-        if n == 0 { return Vec::new(); }
+    /// Runnable row count. Used by `HybridQueue` to cap hot immediate
+    /// fanout before it dominates RSS.
+    pub fn runnable_count(&self) -> usize {
+        self.state.lock().unwrap().runnable.len()
+    }
+
+    fn pull_runnable_batch_impl(&self, global_tick: ExpandTick, n: usize) -> Vec<QueueRow<N>> {
+        if n == 0 {
+            return Vec::new();
+        }
         let mut s = self.state.lock().unwrap();
 
         // Hot path: runnable VecDeque. Drain a homogeneous prefix
         // without reordering — peek front, pop only if `(pipe_hash,
         // depth)` matches the head's.
         if let Some(head) = s.runnable.front() {
-            let head_pipe  = head.pipe_hash;
+            let head_pipe = head.pipe_hash;
             let head_depth = head.depth;
             let mut out = Vec::with_capacity(n);
             while out.len() < n {
-                let matches = s.runnable.front()
+                let matches = s
+                    .runnable
+                    .front()
                     .map(|r| r.pipe_hash == head_pipe && r.depth == head_depth)
                     .unwrap_or(false);
-                if !matches { break; }
+                if !matches {
+                    break;
+                }
                 let row = s.runnable.pop_front().unwrap();
                 s.depth -= 1;
                 out.push(row);
@@ -336,23 +386,27 @@ impl<N: Next> MemQueue<N> {
         drop(s);
         match self.pull_runnable(global_tick) {
             Some(r) => vec![r],
-            None    => Vec::new(),
+            None => Vec::new(),
         }
     }
 
     fn pull_runnable_batch_for_impl(
         &self,
-        pipe_hash:   PipeHash,
+        pipe_hash: PipeHash,
         instance_id: InstanceId,
         global_tick: ExpandTick,
-        n:           usize,
+        n: usize,
     ) -> Vec<QueueRow<N>> {
-        if n == 0 { return Vec::new(); }
+        if n == 0 {
+            return Vec::new();
+        }
         let mut s = self.state.lock().unwrap();
 
-        let Some(head_idx) = s.runnable.iter().position(|row| {
-            row.pipe_hash == pipe_hash && row.instance_id == instance_id
-        }) else {
+        let Some(head_idx) = s
+            .runnable
+            .iter()
+            .position(|row| row.pipe_hash == pipe_hash && row.instance_id == instance_id)
+        else {
             let tick_idx = s.tick_parked.iter().position(|row| {
                 row.pipe_hash == pipe_hash
                     && row.instance_id == instance_id

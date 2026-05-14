@@ -80,18 +80,18 @@ pub fn key_hex(key: NextKey) -> String {
 }
 
 pub struct EffectDispatch<T: Row> {
-    pub store:   Arc<dyn FactStore<T>>,
+    pub store: Arc<dyn FactStore<T>>,
     pub spawner: Arc<dyn Spawner>,
-    pub queue:   Arc<dyn QueueBackend<T>>,
-    pub domain:  Cow<'static, str>,
-    pub table:   Cow<'static, str>,
+    pub queue: Arc<dyn QueueBackend<T>>,
+    pub domain: Cow<'static, str>,
+    pub table: Cow<'static, str>,
 }
 
 impl<T: Row> EffectDispatch<T> {
     pub fn new(
-        store:   Arc<dyn FactStore<T>>,
+        store: Arc<dyn FactStore<T>>,
         spawner: Arc<dyn Spawner>,
-        queue:   Arc<dyn QueueBackend<T>>,
+        queue: Arc<dyn QueueBackend<T>>,
     ) -> Self {
         // Declare the default mutation_results table with the key
         // column. Idempotent on re-construction.
@@ -101,7 +101,7 @@ impl<T: Row> EffectDispatch<T> {
             spawner,
             queue,
             domain: Cow::Borrowed(DEFAULT_EFFECT_DOMAIN),
-            table:  Cow::Borrowed(DEFAULT_MUTATION_TABLE),
+            table: Cow::Borrowed(DEFAULT_MUTATION_TABLE),
         }
     }
 
@@ -123,8 +123,10 @@ impl<T: Row> EffectDispatch<T> {
     /// has landed yet.
     pub fn take_result(&self, key: NextKey) -> Option<Arc<T>> {
         let hex = key_hex(key);
-        self.store.read_where(self.table.as_ref(), MUTATION_KEY_COL, &hex)
-            .into_iter().last()
+        self.store
+            .read_where(self.table.as_ref(), MUTATION_KEY_COL, &hex)
+            .into_iter()
+            .last()
     }
 
     /// Fire `mutation_fn` off-thread, stamp the result with
@@ -139,10 +141,10 @@ impl<T: Row> EffectDispatch<T> {
     where
         F: FnOnce() -> T + Send + 'static,
     {
-        let store  = self.store.clone();
-        let queue  = self.queue.clone();
+        let store = self.store.clone();
+        let queue = self.queue.clone();
         let domain = self.domain.clone();
-        let table  = self.table.clone();
+        let table = self.table.clone();
         self.spawner.spawn(Box::new(move || {
             let mut result = mutation_fn();
             result.set(MUTATION_KEY_COL, &key_hex(key));

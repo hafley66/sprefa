@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use super::{FactStore, RenderCtx, RuntimePut, Row};
+use super::{FactStore, RenderCtx, Row, RuntimePut};
 
 pub const RUNTIME_NODE: &str = "runtime_node";
 pub const RUNTIME_EDGE: &str = "runtime_edge";
@@ -340,10 +340,14 @@ impl<R: Row> FactRuntimeGraph<R> {
             .rows_of(RUNTIME_EDGE)
             .into_iter()
             .filter(|row| {
-                kind_id.map(|v| row.get(EDGE_KIND_ID) == Some(v)).unwrap_or(true)
+                kind_id
+                    .map(|v| row.get(EDGE_KIND_ID) == Some(v))
+                    .unwrap_or(true)
                     && from_id.map(|v| row.get(FROM_ID) == Some(v)).unwrap_or(true)
                     && to_id.map(|v| row.get(TO_ID) == Some(v)).unwrap_or(true)
-                    && label_id.map(|v| row.get(LABEL_ID) == Some(v)).unwrap_or(true)
+                    && label_id
+                        .map(|v| row.get(LABEL_ID) == Some(v))
+                        .unwrap_or(true)
             })
             .filter_map(edge_from_row)
             .collect();
@@ -352,7 +356,8 @@ impl<R: Row> FactRuntimeGraph<R> {
     }
 
     pub fn delete_edge(&self, edge_id: &str) -> usize {
-        self.facts.delete_matching(RUNTIME_EDGE, &[(EDGE_ID, edge_id)])
+        self.facts
+            .delete_matching(RUNTIME_EDGE, &[(EDGE_ID, edge_id)])
     }
 
     pub fn insert_value(&self, value: RuntimeValue) {
@@ -382,13 +387,7 @@ impl<R: Row> FactRuntimeGraph<R> {
         self.facts.insert_batch(RUNTIME_VALUE, vec![Arc::new(row)]);
     }
 
-    pub fn set_edge_value(
-        &self,
-        edge_id: &str,
-        label_id: &str,
-        value_id: &str,
-        generation: u64,
-    ) {
+    pub fn set_edge_value(&self, edge_id: &str, label_id: &str, value_id: &str, generation: u64) {
         self.facts.delete_matching(
             RUNTIME_EDGE_VALUE,
             &[(EDGE_ID, edge_id), (LABEL_ID, label_id)],
@@ -398,16 +397,11 @@ impl<R: Row> FactRuntimeGraph<R> {
         row.set(LABEL_ID, label_id);
         row.set(VALUE_ID, value_id);
         row.set(GENERATION, generation.to_string().as_str());
-        self.facts.insert_batch(RUNTIME_EDGE_VALUE, vec![Arc::new(row)]);
+        self.facts
+            .insert_batch(RUNTIME_EDGE_VALUE, vec![Arc::new(row)]);
     }
 
-    pub fn append_event(
-        &self,
-        event_id: &str,
-        source_id: &str,
-        value_id: &str,
-        generation: u64,
-    ) {
+    pub fn append_event(&self, event_id: &str, source_id: &str, value_id: &str, generation: u64) {
         if self.has_row(RUNTIME_EVENT, EVENT_ID, event_id) {
             return;
         }
@@ -536,15 +530,18 @@ impl<R: Row> FactRuntimeGraph<R> {
         label_id: &str,
         active_kind_id: &str,
     ) -> Option<String> {
-        self.facts.rows_of(RUNTIME_EDGE).into_iter().find_map(|row| {
-            if row.get(EDGE_KIND_ID) == Some(active_kind_id)
-                && row.get(FROM_ID) == Some(owner_id)
-                && row.get(LABEL_ID) == Some(label_id)
-            {
-                return row.get(TO_ID).map(str::to_string);
-            }
-            None
-        })
+        self.facts
+            .rows_of(RUNTIME_EDGE)
+            .into_iter()
+            .find_map(|row| {
+                if row.get(EDGE_KIND_ID) == Some(active_kind_id)
+                    && row.get(FROM_ID) == Some(owner_id)
+                    && row.get(LABEL_ID) == Some(label_id)
+                {
+                    return row.get(TO_ID).map(str::to_string);
+                }
+                None
+            })
     }
 
     pub fn edge_values(&self, edge_ids: &[String]) -> Vec<Option<String>> {
@@ -620,8 +617,10 @@ impl<R: Row> FactRuntimeGraph<R> {
                 GENERATION,
             ],
         );
-        self.facts
-            .declare(RUNTIME_EDGE_VALUE, &[EDGE_ID, LABEL_ID, VALUE_ID, GENERATION]);
+        self.facts.declare(
+            RUNTIME_EDGE_VALUE,
+            &[EDGE_ID, LABEL_ID, VALUE_ID, GENERATION],
+        );
         self.facts.declare(
             RUNTIME_EVENT,
             &[
@@ -686,7 +685,12 @@ fn edge_from_row<R: Row>(row: Arc<R>) -> Option<RuntimeEdge> {
     })
 }
 
-fn support_edge_id(owner_id: &str, row_id: &str, table_label_id: &str, support_kind_id: &str) -> String {
+fn support_edge_id(
+    owner_id: &str,
+    row_id: &str,
+    table_label_id: &str,
+    support_kind_id: &str,
+) -> String {
     let mut h = blake3::Hasher::new();
     for part in [support_kind_id, owner_id, row_id, table_label_id] {
         h.update(&(part.len() as u64).to_be_bytes());

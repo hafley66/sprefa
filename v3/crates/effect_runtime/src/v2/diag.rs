@@ -10,15 +10,20 @@
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Severity { Error, Warn, Info, Hint }
+pub enum Severity {
+    Error,
+    Warn,
+    Info,
+    Hint,
+}
 
 #[derive(Debug, Clone)]
 pub struct Diag {
     pub severity: Severity,
-    pub code:     Arc<str>,
-    pub message:  String,
-    pub span:     Option<ByteRange>,
-    pub op_path:  Vec<u32>,
+    pub code: Arc<str>,
+    pub message: String,
+    pub span: Option<ByteRange>,
+    pub op_path: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -42,40 +47,40 @@ impl Diag {
     pub fn error(code: impl Into<Arc<str>>, message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Error,
-            code:     code.into(),
-            message:  message.into(),
-            span:     None,
-            op_path:  Vec::new(),
+            code: code.into(),
+            message: message.into(),
+            span: None,
+            op_path: Vec::new(),
         }
     }
 
     pub fn warn(code: impl Into<Arc<str>>, message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Warn,
-            code:     code.into(),
-            message:  message.into(),
-            span:     None,
-            op_path:  Vec::new(),
+            code: code.into(),
+            message: message.into(),
+            span: None,
+            op_path: Vec::new(),
         }
     }
 
     pub fn info(code: impl Into<Arc<str>>, message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Info,
-            code:     code.into(),
-            message:  message.into(),
-            span:     None,
-            op_path:  Vec::new(),
+            code: code.into(),
+            message: message.into(),
+            span: None,
+            op_path: Vec::new(),
         }
     }
 
     pub fn hint(code: impl Into<Arc<str>>, message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Hint,
-            code:     code.into(),
-            message:  message.into(),
-            span:     None,
-            op_path:  Vec::new(),
+            code: code.into(),
+            message: message.into(),
+            span: None,
+            op_path: Vec::new(),
         }
     }
 

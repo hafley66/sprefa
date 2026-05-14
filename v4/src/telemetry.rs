@@ -4,13 +4,99 @@ use std::time::Duration;
 
 use effect_runtime::v2::fact_store::FactStoreStats;
 use effect_runtime::v2::{
-    BarrierScope, Component, ComponentLifecycle, ExpandStats, PendingSummary, QueueBackend,
-    QueueRow, RenderCtx,
+    BarrierScope, Component, ComponentLifecycle, EffectTelemetry, EffectTelemetrySnapshot,
+    ExpandStats, PendingSummary, QueueBackend, QueueRow, RenderCtx,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::v2_ops::{AstTelemetry, FsTelemetry};
 use crate::Cursor;
+
+pub struct WriteStats {
+    name: &'static str,
+    calls: AtomicU64,
+    rows: AtomicU64,
+    bytes: AtomicU64,
+    transactions: AtomicU64,
+    wall_ns: AtomicU64,
+}
+
+impl Default for WriteStats {
+    fn default() -> Self {
+        Self::new("write")
+    }
+}
+
+impl WriteStats {
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            calls: AtomicU64::new(0),
+            rows: AtomicU64::new(0),
+            bytes: AtomicU64::new(0),
+            transactions: AtomicU64::new(0),
+            wall_ns: AtomicU64::new(0),
+        }
+    }
+
+    pub fn record_timed<T>(
+        &self,
+        rows: u64,
+        bytes: u64,
+        transactions: u64,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let t0 = std::time::Instant::now();
+        let out = f();
+        self.record(rows, bytes, transactions, t0.elapsed());
+        out
+    }
+
+    pub fn record(&self, rows: u64, bytes: u64, transactions: u64, wall: Duration) {
+        let wall_ns = wall.as_nanos() as u64;
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        self.rows.fetch_add(rows, Ordering::Relaxed);
+        self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.transactions.fetch_add(transactions, Ordering::Relaxed);
+        self.wall_ns.fetch_add(wall_ns, Ordering::Relaxed);
+        tracing::trace!(
+            target: "sprefa::telemetry",
+            name = self.name,
+            rows,
+            bytes,
+            transactions,
+            wall_ns,
+            "write_stats"
+        );
+    }
+
+    pub fn snapshot(&self) -> WriteStatsSnapshot {
+        WriteStatsSnapshot {
+            name: self.name.to_string(),
+            calls: self.calls.load(Ordering::Relaxed),
+            rows: self.rows.load(Ordering::Relaxed),
+            bytes: self.bytes.load(Ordering::Relaxed),
+            transactions: self.transactions.load(Ordering::Relaxed),
+            wall_ns: self.wall_ns.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WriteStatsSnapshot {
+    pub name: String,
+    pub calls: u64,
+    pub rows: u64,
+    pub bytes: u64,
+    pub transactions: u64,
+    pub wall_ns: u64,
+}
+
+impl WriteStatsSnapshot {
+    pub fn wall_ms(&self) -> f64 {
+        ns_to_ms(self.wall_ns)
+    }
+}
 
 #[derive(Default)]
 pub struct StageTiming {
@@ -99,6 +185,7 @@ pub struct PipelineTelemetry {
     stages: Mutex<Vec<Arc<StageTiming>>>,
     pub fs: Arc<FsTelemetry>,
     pub ast: Arc<AstTelemetry>,
+    pub effect: Arc<EffectTelemetry>,
 }
 
 impl PipelineTelemetry {
@@ -107,6 +194,7 @@ impl PipelineTelemetry {
             stages: Mutex::new(Vec::new()),
             fs: Arc::new(FsTelemetry::default()),
             ast: Arc::new(AstTelemetry::default()),
+            effect: Arc::new(EffectTelemetry::default()),
         }
     }
 
@@ -159,11 +247,16 @@ impl PipelineTelemetry {
                 })
                 .collect(),
             fact_store: None,
+            effect_runtime: Some(self.effect.snapshot().into()),
             fs: FsTelemetrySnapshot {
                 seen_files: self.fs.seen_files.load(Ordering::Relaxed),
                 emitted: self.fs.emitted.load(Ordering::Relaxed),
                 ext_skipped: self.fs.ext_skipped.load(Ordering::Relaxed),
                 filter_skipped: self.fs.filter_skipped.load(Ordering::Relaxed),
+                walk_ms: ns_to_ms(self.fs.walk_ns.load(Ordering::Relaxed)),
+                filter_ms: ns_to_ms(self.fs.filter_ns.load(Ordering::Relaxed)),
+                cursor_ms: ns_to_ms(self.fs.cursor_ns.load(Ordering::Relaxed)),
+                splice_ms: ns_to_ms(self.fs.splice_ns.load(Ordering::Relaxed)),
             },
             ast: AstTelemetrySnapshot {
                 input_rows: self.ast.input_rows.load(Ordering::Relaxed),
@@ -185,6 +278,7 @@ impl PipelineTelemetry {
                 match_ms: ns_to_ms(self.ast.match_ns.load(Ordering::Relaxed)),
                 emit_stamp_ms: ns_to_ms(self.ast.emit_stamp_ns.load(Ordering::Relaxed)),
             },
+            runtime_graph: None,
         }
     }
 }
@@ -212,8 +306,39 @@ pub struct RunTelemetry {
     pub stages: Vec<StageTelemetry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fact_store: Option<FactStoreTelemetry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_runtime: Option<EffectRuntimeTelemetry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_graph: Option<WriteStatsSnapshot>,
     pub fs: FsTelemetrySnapshot,
     pub ast: AstTelemetrySnapshot,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EffectRuntimeTelemetry {
+    pub put_calls: u64,
+    pub put_ms: f64,
+    pub dispatch_calls: u64,
+    pub dispatch_rows: u64,
+    pub dispatch_ms: f64,
+    pub pull_calls: u64,
+    pub pull_rows: u64,
+    pub pull_ms: f64,
+}
+
+impl From<EffectTelemetrySnapshot> for EffectRuntimeTelemetry {
+    fn from(s: EffectTelemetrySnapshot) -> Self {
+        Self {
+            put_calls: s.put_calls,
+            put_ms: ns_to_ms(s.put_ns),
+            dispatch_calls: s.dispatch_calls,
+            dispatch_rows: s.dispatch_rows,
+            dispatch_ms: ns_to_ms(s.dispatch_ns),
+            pull_calls: s.pull_calls,
+            pull_rows: s.pull_rows,
+            pull_ms: ns_to_ms(s.pull_ns),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -225,7 +350,19 @@ pub struct FactStoreTelemetry {
     pub commit_calls: u64,
     pub string_intern_calls: u64,
     pub string_intern_rows: u64,
+    pub sqlite_insert_exec_calls: u64,
+    pub sqlite_insert_exec_rows: u64,
     pub transactions: u64,
+    pub index_rebuilds: u64,
+    pub index_rebuild_indexes: u64,
+    pub insert_batch_ms: f64,
+    pub string_intern_ms: f64,
+    pub sqlite_insert_ms: f64,
+    pub index_drop_ms: f64,
+    pub index_create_ms: f64,
+    pub index_rebuild_ms: f64,
+    pub transaction_commit_ms: f64,
+    pub commit_ms: f64,
 }
 
 impl From<FactStoreStats> for FactStoreTelemetry {
@@ -238,7 +375,19 @@ impl From<FactStoreStats> for FactStoreTelemetry {
             commit_calls: s.commit_calls,
             string_intern_calls: s.string_intern_calls,
             string_intern_rows: s.string_intern_rows,
+            sqlite_insert_exec_calls: s.sqlite_insert_exec_calls,
+            sqlite_insert_exec_rows: s.sqlite_insert_exec_rows,
             transactions: s.transactions,
+            index_rebuilds: s.index_rebuilds,
+            index_rebuild_indexes: s.index_rebuild_indexes,
+            insert_batch_ms: s.insert_batch_ms,
+            string_intern_ms: s.string_intern_ms,
+            sqlite_insert_ms: s.sqlite_insert_ms,
+            index_drop_ms: s.index_drop_ms,
+            index_create_ms: s.index_create_ms,
+            index_rebuild_ms: s.index_rebuild_ms,
+            transaction_commit_ms: s.transaction_commit_ms,
+            commit_ms: s.commit_ms,
         }
     }
 }
@@ -272,6 +421,10 @@ pub struct FsTelemetrySnapshot {
     pub emitted: u64,
     pub ext_skipped: u64,
     pub filter_skipped: u64,
+    pub walk_ms: f64,
+    pub filter_ms: f64,
+    pub cursor_ms: f64,
+    pub splice_ms: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

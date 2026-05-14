@@ -30,13 +30,19 @@ pub struct PriorChildIndex {
 }
 
 impl PriorChildIndex {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Take the prior child list for `path`, leaving the slot empty.
     /// The caller computes the diff and calls `put` with the merged
     /// (kept ++ added) list.
     pub fn take(&self, path: &[u32]) -> Vec<(ContentHash, QueueId)> {
-        self.by_path.lock().unwrap().remove(path).unwrap_or_default()
+        self.by_path
+            .lock()
+            .unwrap()
+            .remove(path)
+            .unwrap_or_default()
     }
 
     pub fn put(&self, path: Vec<u32>, children: Vec<(ContentHash, QueueId)>) {
@@ -49,18 +55,28 @@ impl PriorChildIndex {
     }
 
     pub fn get(&self, path: &[u32]) -> Vec<(ContentHash, QueueId)> {
-        self.by_path.lock().unwrap().get(path).cloned().unwrap_or_default()
+        self.by_path
+            .lock()
+            .unwrap()
+            .get(path)
+            .cloned()
+            .unwrap_or_default()
     }
 
-    pub fn len(&self) -> usize { self.by_path.lock().unwrap().len() }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn len(&self) -> usize {
+        self.by_path.lock().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Entries whose path starts with `prefix`, including `prefix`
     /// itself. Used by future cascade-by-position invalidation. Today
     /// not wired into Memoize.
     pub fn drain_prefix(&self, prefix: &[u32]) -> Vec<(Vec<u32>, Vec<(ContentHash, QueueId)>)> {
         let mut by = self.by_path.lock().unwrap();
-        let keys: Vec<Vec<u32>> = by.keys()
+        let keys: Vec<Vec<u32>> = by
+            .keys()
             .filter(|p| p.starts_with(prefix))
             .cloned()
             .collect();
@@ -86,15 +102,14 @@ pub struct ChildDiff {
 
 /// Multiset diff of `prior` against `new_hashes`. Order of `new_hashes`
 /// is preserved in `added_idx`.
-pub fn diff_children(
-    prior:       &[(ContentHash, QueueId)],
-    new_hashes:  &[ContentHash],
-) -> ChildDiff {
+pub fn diff_children(prior: &[(ContentHash, QueueId)], new_hashes: &[ContentHash]) -> ChildDiff {
     // Build a multiset of prior by hash → Vec<QueueId> stack (pop on match).
     let mut pool: HashMap<ContentHash, Vec<QueueId>> = HashMap::new();
-    for (h, id) in prior { pool.entry(*h).or_default().push(*id); }
+    for (h, id) in prior {
+        pool.entry(*h).or_default().push(*id);
+    }
 
-    let mut kept      = Vec::new();
+    let mut kept = Vec::new();
     let mut added_idx = Vec::new();
     for (i, h) in new_hashes.iter().enumerate() {
         if let Some(stack) = pool.get_mut(h) {
@@ -107,14 +122,20 @@ pub fn diff_children(
     }
 
     let doomed_ids: Vec<QueueId> = pool.into_values().flatten().collect();
-    ChildDiff { doomed_ids, kept, added_idx }
+    ChildDiff {
+        doomed_ids,
+        kept,
+        added_idx,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn h(byte: u8) -> ContentHash { [byte; 32] }
+    fn h(byte: u8) -> ContentHash {
+        [byte; 32]
+    }
 
     #[test]
     fn diff_empty_prior_all_added() {
@@ -137,7 +158,7 @@ mod tests {
     #[test]
     fn diff_partial_overlap() {
         let prior = vec![(h(1), 10), (h(2), 20), (h(3), 30)];
-        let new   = vec![h(2), h(3), h(4)];
+        let new = vec![h(2), h(3), h(4)];
         let d = diff_children(&prior, &new);
         let mut doomed = d.doomed_ids.clone();
         doomed.sort();
@@ -153,7 +174,7 @@ mod tests {
         // Two identical hashes prior, three identical hashes new:
         // 2 kept, 1 added, 0 doomed.
         let prior = vec![(h(7), 100), (h(7), 200)];
-        let new   = vec![h(7), h(7), h(7)];
+        let new = vec![h(7), h(7), h(7)];
         let d = diff_children(&prior, &new);
         assert!(d.doomed_ids.is_empty());
         assert_eq!(d.kept.len(), 2);
@@ -180,13 +201,13 @@ mod tests {
     #[test]
     fn drain_prefix_collects_subtree() {
         let idx = PriorChildIndex::new();
-        idx.put(vec![0],       vec![(h(1), 1)]);
-        idx.put(vec![0, 1],    vec![(h(2), 2)]);
+        idx.put(vec![0], vec![(h(1), 1)]);
+        idx.put(vec![0, 1], vec![(h(2), 2)]);
         idx.put(vec![0, 1, 0], vec![(h(3), 3)]);
-        idx.put(vec![1],       vec![(h(4), 4)]);
+        idx.put(vec![1], vec![(h(4), 4)]);
 
         let drained = idx.drain_prefix(&[0]);
         assert_eq!(drained.len(), 3);
-        assert_eq!(idx.len(), 1);  // only path [1] survives
+        assert_eq!(idx.len(), 1); // only path [1] survives
     }
 }

@@ -23,10 +23,7 @@ type ReplyTx<R> = oneshot::Sender<R>;
 
 /// The op-author-facing work function. Takes a batch in, produces a
 /// vector of responses in the same order.
-pub type BatchFn<E> = dyn Fn(Vec<E>) -> Vec<<E as EffectKind>::Response>
-    + Send
-    + Sync
-    + 'static;
+pub type BatchFn<E> = dyn Fn(Vec<E>) -> Vec<<E as EffectKind>::Response> + Send + Sync + 'static;
 
 pub struct BoundedBatched<E: EffectKind> {
     tx: crossbeam_channel::Sender<(E, ReplyTx<E::Response>)>,
@@ -37,12 +34,7 @@ impl<E: EffectKind> BoundedBatched<E> {
     /// Spawn `workers` threads behind a bounded channel of `cap`. Each
     /// worker drains up to `max_batch` items opportunistically (drains
     /// all available, capped at max_batch) before calling `handler`.
-    pub fn new<F>(
-        cap: usize,
-        max_batch: usize,
-        workers: usize,
-        handler: F,
-    ) -> Self
+    pub fn new<F>(cap: usize, max_batch: usize, workers: usize, handler: F) -> Self
     where
         F: Fn(Vec<E>) -> Vec<E::Response> + Send + Sync + 'static,
     {
@@ -53,8 +45,7 @@ impl<E: EffectKind> BoundedBatched<E> {
             let rx = rx.clone();
             let handler = handler.clone();
             handles.push(std::thread::spawn(move || {
-                let mut batch: Vec<(E, ReplyTx<E::Response>)> =
-                    Vec::with_capacity(max_batch);
+                let mut batch: Vec<(E, ReplyTx<E::Response>)> = Vec::with_capacity(max_batch);
                 loop {
                     // Block for the first item (drains-on-disconnect).
                     let first = match rx.recv() {
@@ -85,7 +76,10 @@ impl<E: EffectKind> BoundedBatched<E> {
                 }
             }));
         }
-        Self { tx, _workers: Arc::new(handles) }
+        Self {
+            tx,
+            _workers: Arc::new(handles),
+        }
     }
 }
 
@@ -96,9 +90,9 @@ impl<E: EffectKind> Batcher<E> for BoundedBatched<E> {
         // context. For the prototype this is fine; real code would use
         // `spawn_blocking` to avoid starving the runtime when `cap` is
         // saturated.
-        self.tx.send((req, rtx)).expect("BoundedBatched workers gone");
-        Box::pin(async move {
-            rrx.await.expect("batched reply dropped")
-        })
+        self.tx
+            .send((req, rtx))
+            .expect("BoundedBatched workers gone");
+        Box::pin(async move { rrx.await.expect("batched reply dropped") })
     }
 }

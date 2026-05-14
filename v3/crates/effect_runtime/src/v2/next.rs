@@ -20,13 +20,19 @@ pub trait Next: Send + Sync + 'static {
 // Convenience impls for the common primitive carriers used in tests.
 
 impl Next for i64 {
-    fn content_hash(&self) -> [u8; 32] { blake3::hash(&self.to_le_bytes()).into() }
+    fn content_hash(&self) -> [u8; 32] {
+        blake3::hash(&self.to_le_bytes()).into()
+    }
 }
 
 impl Next for u64 {
-    fn content_hash(&self) -> [u8; 32] { blake3::hash(&self.to_le_bytes()).into() }
+    fn content_hash(&self) -> [u8; 32] {
+        blake3::hash(&self.to_le_bytes()).into()
+    }
 }
 
 impl Next for String {
-    fn content_hash(&self) -> [u8; 32] { blake3::hash(self.as_bytes()).into() }
+    fn content_hash(&self) -> [u8; 32] {
+        blake3::hash(self.as_bytes()).into()
+    }
 }

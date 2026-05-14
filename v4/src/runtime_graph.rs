@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
     FactRuntimeGraph, FactStore, RenderCtx, RuntimeEdge as RuntimeEdgeRow,
@@ -9,7 +10,8 @@ use effect_runtime::v2::{
 
 use crate::cursor_codec;
 use crate::store::SprfStore;
-use crate::{Cursor, StringId, WhereBytesId};
+use crate::telemetry::{WriteStats, WriteStatsSnapshot};
+use crate::{Cursor, StringId, WhereBytesId, FOCAL_TERM};
 
 pub const RUNTIME_NODE: &str = "runtime_node";
 pub const RUNTIME_EDGE: &str = "runtime_edge";
@@ -68,6 +70,7 @@ pub struct RuntimeGraph {
     pub store: Arc<SprfStore>,
     pub facts: Arc<dyn FactStore<Cursor>>,
     core: FactRuntimeGraph<Cursor>,
+    compact_sources: Option<Arc<CompactSourceGraph>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,6 +83,17 @@ pub struct OwnerNode {
 pub struct SourceNode {
     pub uri_id: StringId,
     pub uri: Arc<str>,
+}
+
+pub struct SourceSubscriptionInput<'a> {
+    pub ast_uri: String,
+    pub input_key: String,
+    pub source_uri: String,
+    pub label: String,
+    pub pipe_hash: u64,
+    pub instance_id: u64,
+    pub depth: u32,
+    pub input: &'a Cursor,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -298,7 +312,30 @@ impl RuntimePut for SprfActiveChild {
 impl RuntimeGraph {
     pub fn new(store: Arc<SprfStore>, facts: Arc<dyn FactStore<Cursor>>) -> Self {
         let core = FactRuntimeGraph::new(facts.clone());
-        Self { store, facts, core }
+        Self {
+            store,
+            facts,
+            core,
+            compact_sources: None,
+        }
+    }
+
+    pub fn new_with_compact_sources(
+        store: Arc<SprfStore>,
+        facts: Arc<dyn FactStore<Cursor>>,
+        path: impl AsRef<Path>,
+    ) -> Self {
+        let core = FactRuntimeGraph::new(facts.clone());
+        Self {
+            store,
+            facts,
+            core,
+            compact_sources: Some(Arc::new(CompactSourceGraph::open(path.as_ref()))),
+        }
+    }
+
+    pub fn stats(&self) -> Option<WriteStatsSnapshot> {
+        self.compact_sources.as_ref().map(|compact| compact.stats())
     }
 
     pub fn declare_owner(
@@ -411,6 +448,121 @@ impl RuntimeGraph {
             uri: edge.uri,
             label_id,
         }
+    }
+
+    pub fn record_source_subscriptions(
+        &self,
+        subscriptions: &[SourceSubscriptionInput<'_>],
+        generation: u64,
+    ) {
+        if subscriptions.is_empty() {
+            return;
+        }
+        if let Some(compact) = &self.compact_sources {
+            compact.record(subscriptions, generation);
+            return;
+        }
+        self.facts.declare(
+            RUNTIME_CONTINUATION,
+            &[
+                CONT_OWNER_URI_ID,
+                CONT_PIPE_HASH,
+                CONT_INSTANCE_ID,
+                CONT_DEPTH,
+                CONT_INPUT_CURSOR,
+                GENERATION,
+            ],
+        );
+
+        let owner_kind_id = self.intern_uri(KIND_OWNER).0.to_string();
+        let source_kind_id = self.intern_uri(KIND_SOURCE).0.to_string();
+        let subscribe_kind_id = self.intern_uri(KIND_SUBSCRIBE).0.to_string();
+        let mode_id = self.intern_uri("ast").0.to_string();
+        let empty_id = self.intern_uri("").0.to_string();
+        let generation_text = generation.to_string();
+
+        let mut nodes = Vec::with_capacity(subscriptions.len() * 2);
+        let mut edges = Vec::with_capacity(subscriptions.len());
+        let mut continuations = Vec::with_capacity(subscriptions.len());
+
+        for subscription in subscriptions {
+            let source_uri = Arc::<str>::from(subscription.source_uri.as_str());
+            let source_uri_id = self.intern_uri(source_uri.as_ref());
+            let source_hash = hash_text(subscription.source_uri.as_str());
+            let owner_uri = owner_uri(
+                subscription.ast_uri.as_str(),
+                None,
+                subscription.input_key.as_str(),
+                subscription.source_uri.as_str(),
+                "ast",
+            );
+            let owner_uri_id = self.intern_uri(owner_uri.as_ref());
+            let ast_uri_id = self.intern_uri(subscription.ast_uri.as_str());
+            let edge_uri_id = self.intern_uri(
+                edge_uri(
+                    KIND_SUBSCRIBE,
+                    owner_uri_id,
+                    source_uri_id,
+                    self.intern_uri(subscription.label.as_str()),
+                )
+                .as_ref(),
+            );
+
+            let mut owner = Cursor::default();
+            owner.set(NODE_URI_ID, owner_uri_id.0.to_string());
+            owner.set("node_kind_id", owner_kind_id.as_str());
+            owner.set("ast_uri_id", ast_uri_id.0.to_string());
+            owner.set("parent_uri_id", "");
+            owner.set(INPUT_KEY, subscription.input_key.as_str());
+            owner.set("source_hash", subscription.source_uri.as_str());
+            owner.set("mode_id", mode_id.as_str());
+            owner.set(GENERATION, generation_text.as_str());
+            nodes.push(Arc::new(owner));
+
+            let mut source = Cursor::default();
+            source.set(NODE_URI_ID, source_uri_id.0.to_string());
+            source.set("node_kind_id", source_kind_id.as_str());
+            source.set("ast_uri_id", empty_id.as_str());
+            source.set("parent_uri_id", "");
+            source.set(INPUT_KEY, "");
+            source.set("source_hash", source_hash.as_ref());
+            source.set("mode_id", empty_id.as_str());
+            source.set(GENERATION, generation_text.as_str());
+            nodes.push(Arc::new(source));
+
+            let mut edge = Cursor::default();
+            edge.set(EDGE_URI_ID, edge_uri_id.0.to_string());
+            edge.set(EDGE_KIND_ID, subscribe_kind_id.as_str());
+            edge.set(FROM_URI_ID, owner_uri_id.0.to_string());
+            edge.set(TO_URI_ID, source_uri_id.0.to_string());
+            edge.set(
+                LABEL_ID,
+                self.intern_uri(subscription.label.as_str()).0.to_string(),
+            );
+            edge.set(GENERATION, generation_text.as_str());
+            edges.push(Arc::new(edge));
+
+            let owner_id_text = owner_uri_id.0.to_string();
+            self.facts.delete_matching(
+                RUNTIME_CONTINUATION,
+                &[(CONT_OWNER_URI_ID, owner_id_text.as_str())],
+            );
+            let mut continuation = Cursor::default();
+            continuation.set(CONT_OWNER_URI_ID, owner_id_text);
+            continuation.set(CONT_PIPE_HASH, subscription.pipe_hash.to_string());
+            continuation.set(CONT_INSTANCE_ID, subscription.instance_id.to_string());
+            continuation.set(CONT_DEPTH, subscription.depth.to_string());
+            continuation.set(
+                CONT_INPUT_CURSOR,
+                hex(&cursor_codec::encode(subscription.input)),
+            );
+            continuation.set(GENERATION, generation_text.as_str());
+            continuations.push(Arc::new(continuation));
+        }
+
+        self.facts.insert_batch(RUNTIME_NODE, nodes);
+        self.facts.insert_batch(RUNTIME_EDGE, edges);
+        self.facts.insert_batch(RUNTIME_CONTINUATION, continuations);
     }
 
     pub fn replace_active_child(
@@ -564,6 +716,12 @@ impl RuntimeGraph {
                 let job = self.insert_job(&event, &incoming.owner, generation);
                 jobs.insert(job.uri_id.0, job);
             }
+            if let Some(compact) = &self.compact_sources {
+                for owner in compact.owners_for_source(source.uri_id) {
+                    let job = self.insert_job(&event, &owner, generation);
+                    jobs.insert(job.uri_id.0, job);
+                }
+            }
         }
         jobs.into_values().collect()
     }
@@ -606,11 +764,17 @@ impl RuntimeGraph {
 
     pub fn owner_descriptor(&self, owner_uri_id: StringId) -> Option<OwnerDescriptor> {
         let owner_id = owner_uri_id.0.to_string();
-        let row = self
+        let Some(row) = self
             .facts
             .read_where(RUNTIME_NODE, NODE_URI_ID, owner_id.as_str())
             .into_iter()
-            .next()?;
+            .next()
+        else {
+            return self
+                .compact_sources
+                .as_ref()
+                .and_then(|compact| compact.owner_descriptor(owner_uri_id));
+        };
         let owner_uri = self.store.lookup_string(owner_uri_id)?;
         let ast_id = row.get("ast_uri_id").and_then(parse_u64)?;
         let ast_uri = self.store.lookup_string(StringId(ast_id))?;
@@ -666,11 +830,17 @@ impl RuntimeGraph {
 
     pub fn continuation_for_owner(&self, owner_uri_id: StringId) -> Option<RuntimeContinuation> {
         let owner_id = owner_uri_id.0.to_string();
-        let row = self
+        let Some(row) = self
             .facts
             .read_where(RUNTIME_CONTINUATION, CONT_OWNER_URI_ID, owner_id.as_str())
             .into_iter()
-            .next()?;
+            .next()
+        else {
+            return self
+                .compact_sources
+                .as_ref()
+                .and_then(|compact| compact.continuation_for_owner(owner_uri_id));
+        };
         let input_hex = row.get(CONT_INPUT_CURSOR)?;
         let input = cursor_codec::decode(&unhex(input_hex)?).ok()?;
         Some(RuntimeContinuation {
@@ -731,6 +901,11 @@ impl RuntimeGraph {
         for edge in self.incoming_subscribe_edges(source) {
             self.record_edge_value(&edge.edge, edge.label.as_ref(), value, generation);
             owners.insert(edge.owner.uri_id.0, edge.owner);
+        }
+        if let Some(compact) = &self.compact_sources {
+            for owner in compact.owners_for_source(source.uri_id) {
+                owners.insert(owner.uri_id.0, owner);
+            }
         }
         self.enqueue_jobs_for_unconsumed_events(generation);
         owners.into_values().collect()
@@ -1093,9 +1268,7 @@ impl RuntimeGraph {
     }
 
     fn intern_uri(&self, uri: &str) -> StringId {
-        let id = self.store.intern_string(uri);
-        self.store.flush();
-        id
+        self.store.intern_string(uri)
     }
 
     fn runtime_value_by_id(&self, value_id: StringId) -> Option<RuntimeValue> {
@@ -1173,6 +1346,216 @@ struct IncomingSubscribe {
     edge: SubscribeEdge,
     owner: OwnerNode,
     label: Arc<str>,
+}
+
+struct CompactSourceGraph {
+    conn: Mutex<rusqlite::Connection>,
+    write_stats: WriteStats,
+}
+
+const COMPACT_FS_CURSOR_MAGIC: &[u8] = b"sprf:fs-cursor:v1\0";
+
+fn encode_runtime_cursor(cursor: &Cursor) -> Vec<u8> {
+    if is_plain_fs_cursor(cursor) {
+        let mut bytes = Vec::with_capacity(COMPACT_FS_CURSOR_MAGIC.len() + cursor.value.len());
+        bytes.extend_from_slice(COMPACT_FS_CURSOR_MAGIC);
+        bytes.extend_from_slice(cursor.value.as_bytes());
+        return bytes;
+    }
+    cursor_codec::encode(cursor)
+}
+
+fn decode_runtime_cursor(bytes: &[u8]) -> Result<Cursor, String> {
+    if let Some(path) = bytes.strip_prefix(COMPACT_FS_CURSOR_MAGIC) {
+        let path = std::str::from_utf8(path)
+            .map_err(|err| format!("decode compact fs cursor utf8: {err}"))?;
+        let mut cursor = Cursor::default();
+        cursor.set_value(path);
+        cursor.set("FS", path);
+        return Ok(cursor);
+    }
+    cursor_codec::decode(bytes).map_err(str::to_string)
+}
+
+fn is_plain_fs_cursor(cursor: &Cursor) -> bool {
+    if cursor.terms.len() != 2 {
+        return false;
+    }
+    let mut has_focal = false;
+    let mut has_fs = false;
+    for term in &cursor.terms {
+        if term.name.as_ref() == FOCAL_TERM && term.value.as_ref() == cursor.value.as_ref() {
+            has_focal = true;
+        } else if term.name.as_ref() == "FS" && term.value.as_ref() == cursor.value.as_ref() {
+            has_fs = true;
+        } else {
+            return false;
+        }
+    }
+    has_focal && has_fs
+}
+
+impl CompactSourceGraph {
+    fn open(path: &Path) -> Self {
+        let conn = rusqlite::Connection::open(path).expect("open compact runtime graph sqlite");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS runtime_source_subscription_compact (
+                owner_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                pipe_hash INTEGER NOT NULL,
+                instance_id INTEGER NOT NULL,
+                depth INTEGER NOT NULL,
+                input_cursor BLOB NOT NULL,
+                generation INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS runtime_source_subscription_compact_source
+                ON runtime_source_subscription_compact(source_id);",
+        )
+        .expect("create compact source graph tables");
+        Self {
+            conn: Mutex::new(conn),
+            write_stats: WriteStats::new("runtime_graph.compact_source_subscriptions"),
+        }
+    }
+
+    fn record(&self, subscriptions: &[SourceSubscriptionInput<'_>], generation: u64) {
+        let rows: Vec<_> = subscriptions
+            .iter()
+            .map(|subscription| {
+                let owner_uri = owner_uri(
+                    subscription.ast_uri.as_str(),
+                    None,
+                    subscription.input_key.as_str(),
+                    subscription.source_uri.as_str(),
+                    "ast",
+                );
+                (
+                    StringId::of(owner_uri.as_ref()).0.to_string(),
+                    StringId::of(subscription.source_uri.as_str()).0.to_string(),
+                    subscription.pipe_hash.to_string(),
+                    subscription.instance_id.to_string(),
+                    subscription.depth.to_string(),
+                    encode_runtime_cursor(subscription.input),
+                    generation.to_string(),
+                )
+            })
+            .collect();
+        let byte_count = rows.iter().map(|row| row.5.len() as u64).sum();
+        self.write_stats
+            .record_timed(rows.len() as u64, byte_count, 1, || {
+                let mut conn = self.conn.lock().unwrap();
+                let tx = conn
+                    .transaction()
+                    .expect("compact source subscription transaction");
+                {
+                    let mut insert = tx
+                        .prepare(
+                            "INSERT OR REPLACE INTO runtime_source_subscription_compact
+                            (owner_id, source_id, pipe_hash, instance_id, depth,
+                             input_cursor, generation)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        )
+                        .expect("prepare compact source subscription insert");
+                    for row in rows {
+                        insert
+                            .execute(rusqlite::params![
+                                row.0, row.1, row.2, row.3, row.4, row.5, row.6,
+                            ])
+                            .expect("insert compact source subscription");
+                    }
+                }
+                tx.commit()
+                    .expect("commit compact source subscription transaction");
+            });
+    }
+
+    fn stats(&self) -> WriteStatsSnapshot {
+        self.write_stats.snapshot()
+    }
+
+    fn owners_for_source(&self, source_uri_id: StringId) -> Vec<OwnerNode> {
+        let conn = self.conn.lock().unwrap();
+        let source_id = source_uri_id.0.to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT owner_id
+                 FROM runtime_source_subscription_compact
+                 WHERE source_id = ?1
+                 ORDER BY owner_id",
+            )
+            .expect("prepare compact source owner lookup");
+        let rows = stmt
+            .query_map([source_id], |row| {
+                let owner_id: String = row.get(0)?;
+                let owner_uri = format!("sprf://runtime/owner/{owner_id}");
+                Ok(OwnerNode {
+                    uri_id: StringId(owner_id.parse().unwrap_or(0)),
+                    uri: Arc::from(owner_uri),
+                })
+            })
+            .expect("query compact source owners");
+        rows.filter_map(Result::ok).collect()
+    }
+
+    fn owner_descriptor(&self, owner_uri_id: StringId) -> Option<OwnerDescriptor> {
+        let conn = self.conn.lock().unwrap();
+        let owner_id = owner_uri_id.0.to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT owner_id
+                 FROM runtime_source_subscription_compact
+                 WHERE owner_id = ?1",
+            )
+            .ok()?;
+        stmt.query_row([owner_id], |row| {
+            let owner_id: String = row.get(0)?;
+            let owner_uri = format!("sprf://runtime/owner/{owner_id}");
+            Ok(OwnerDescriptor {
+                owner: OwnerNode {
+                    uri_id: owner_uri_id,
+                    uri: Arc::from(owner_uri),
+                },
+                ast_uri: Arc::from(""),
+                input_key: Arc::from(""),
+            })
+        })
+        .ok()
+    }
+
+    fn continuation_for_owner(&self, owner_uri_id: StringId) -> Option<RuntimeContinuation> {
+        let conn = self.conn.lock().unwrap();
+        let owner_id = owner_uri_id.0.to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT pipe_hash, instance_id, depth, input_cursor, generation
+                 FROM runtime_source_subscription_compact
+                 WHERE owner_id = ?1",
+            )
+            .ok()?;
+        stmt.query_row([owner_id], |row| {
+            let pipe_hash: String = row.get(0)?;
+            let instance_id: String = row.get(1)?;
+            let depth: String = row.get(2)?;
+            let input_cursor: Vec<u8> = row.get(3)?;
+            let generation: String = row.get(4)?;
+            let input = decode_runtime_cursor(&input_cursor).map_err(|err| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    input_cursor.len(),
+                    rusqlite::types::Type::Blob,
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
+                )
+            })?;
+            Ok(RuntimeContinuation {
+                owner_uri_id,
+                pipe_hash: pipe_hash.parse().unwrap_or(0),
+                instance_id: instance_id.parse().unwrap_or(0),
+                depth: depth.parse().unwrap_or(0),
+                input,
+                generation: generation.parse().unwrap_or(0),
+            })
+        })
+        .ok()
+    }
 }
 
 fn owner_uri(

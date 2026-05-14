@@ -98,20 +98,30 @@ impl Component for FactWrite {
                 .collect(),
             None => arced.clone(),
         };
-        let support_rows: Vec<(String, String)> = batch
+        let support_input_count = batch
             .iter()
-            .zip(rows.iter())
-            .filter_map(|(cursor, row)| {
-                cursor
-                    .get(mounted_query::SUPPORT_CURSOR_ID)
-                    .map(|support_id| {
-                        (
-                            support_id.to_string(),
-                            self.store.row_id_for(self.table.as_ref(), row.as_ref()),
-                        )
+            .filter(|cursor| cursor.get(mounted_query::SUPPORT_CURSOR_ID).is_some())
+            .count();
+        let support_rows: Vec<(String, String, String)> =
+            if mounted_query::should_record_fact_support_count(support_input_count) {
+                batch
+                    .iter()
+                    .zip(rows.iter())
+                    .filter_map(|(cursor, row)| {
+                        cursor
+                            .get(mounted_query::SUPPORT_CURSOR_ID)
+                            .map(|support_id| {
+                                (
+                                    support_id.to_string(),
+                                    self.table.to_string(),
+                                    self.store.row_id_for(self.table.as_ref(), row.as_ref()),
+                                )
+                            })
                     })
-            })
-            .collect();
+                    .collect()
+            } else {
+                Vec::new()
+            };
         self.store.insert_batch(&self.table, rows);
         if let Some(graph) = ctx.runtime::<RuntimeGraph>() {
             let source = graph.declare_source(
@@ -120,14 +130,7 @@ impl Component for FactWrite {
             );
             graph.dispatch_dirty(&source, ctx.expand_tick);
         }
-        for (support_id, row_id) in support_rows {
-            mounted_query::record_fact_supports(
-                self.store.as_ref(),
-                &support_id,
-                self.table.as_ref(),
-                &row_id,
-            );
-        }
+        mounted_query::record_fact_support_batch(self.store.as_ref(), &support_rows);
         arced.into_iter().map(Node::Emit).collect()
     }
 }

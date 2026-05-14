@@ -19,6 +19,7 @@ use effect_runtime::v2::{
 };
 
 use crate::fact::{FactRead, FactWrite};
+use crate::sql::SqlQueryComponent;
 use crate::Cursor;
 use effect_runtime::v2::FactStore;
 #[cfg(test)]
@@ -77,6 +78,17 @@ impl Rule {
     /// Build the executable pipe (`body > FactWrite(sink)`).
     pub fn into_pipe(self) -> Pipe<Cursor> {
         let mut steps: Vec<Arc<dyn Component<Next = Cursor>>> = (*self.body_steps).clone();
+        if let Some(last) = steps.last_mut() {
+            if let Some(sql) = last
+                .describe()
+                .and_then(|desc| desc.downcast_ref::<SqlQueryComponent>())
+            {
+                *last = Arc::new(
+                    sql.with_terminal_fact_write(self.store.clone(), self.sink_table.clone()),
+                );
+                return Pipe::from_steps(steps);
+            }
+        }
         steps.push(Arc::new(FactWrite::new(self.store, self.sink_table)));
         Pipe::from_steps(steps)
     }
@@ -320,6 +332,43 @@ mod tests {
         let rows = store.rows_of("loud");
         assert_eq!(rows.len(), 1);
         assert_eq!(&*rows[0].value, "HI");
+    }
+
+    #[test]
+    fn rule_ending_in_sql_fuses_terminal_fact_write() {
+        let store = Arc::new(MemFactStore::<Cursor>::new());
+        let sql = SqlQueryComponent::new(
+            store.clone(),
+            "SELECT input.__cursor_idx, input.value AS value, input.NAME AS NAME FROM input",
+        );
+        let body = Pipe::new().step(Arc::new(sql));
+        let rule = Rule::new("names", store.clone(), "names", &["NAME"], body);
+
+        let pipe = rule.clone().into_pipe();
+        assert_eq!(pipe.len(), 1);
+        let fused = pipe.steps[0]
+            .describe()
+            .and_then(|desc| desc.downcast_ref::<SqlQueryComponent>())
+            .expect("terminal sql component");
+        assert!(fused.has_terminal_fact_write());
+
+        let queue = Arc::new(MemQueue::new());
+        rule.run_with(
+            queue.clone(),
+            vec![
+                cursor("one", &[("NAME", "alpha")]),
+                cursor("two", &[("NAME", "beta")]),
+            ],
+            ExpandOpts::default(),
+        );
+
+        assert_eq!(queue.depth(), 0);
+        let rows = store.rows_of("names");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(&*rows[0].value, "one");
+        assert_eq!(rows[0].get("NAME"), Some("alpha"));
+        assert_eq!(&*rows[1].value, "two");
+        assert_eq!(rows[1].get("NAME"), Some("beta"));
     }
 
     #[test]
