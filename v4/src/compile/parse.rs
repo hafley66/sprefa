@@ -24,9 +24,26 @@ pub fn host_parse(src: &str) -> (Vec<PipeAst>, Vec<Diag>) {
     parser
         .set_language(&tree_sitter_sprefa::LANGUAGE.into())
         .expect("tree-sitter-sprefa language loads");
+    // Tolerate a trailing top-level statement without `;`. Tree-sitter
+    // emits a `missing-token` diag for an absent terminator; for a
+    // *trailing* one that's friction we don't want at every call site
+    // (CLI fragments, examples, tests). Synthesize the `;` so the tree
+    // parses cleanly. Cross-statement omissions still surface.
+    let synthesized = needs_trailing_semi(src);
+    let owned_src: String;
+    let parse_src: &str = if synthesized {
+        owned_src = format!("{src};");
+        &owned_src
+    } else {
+        src
+    };
     let tree = parser
-        .parse(src, None)
+        .parse(parse_src, None)
         .expect("tree-sitter parser always returns a tree on str input");
+    // Source range for downstream consumers stays the original src; the
+    // synthesized `;` lives past the original end. Spans only point to
+    // bytes that exist in `src`, so this is safe.
+    let src = parse_src;
 
     let mut diags = Vec::new();
     let mut pipes = Vec::new();
@@ -388,6 +405,36 @@ fn node_range(n: Node<'_>) -> ByteRange {
         lo: r.start as u32,
         hi: r.end as u32,
     }
+}
+
+/// Does the source already end with a `;` after stripping whitespace
+/// and `//` line comments? Used at the top of `host_parse` to decide
+/// whether to append a synthetic terminator.
+fn needs_trailing_semi(src: &str) -> bool {
+    // Strip from the right past whitespace and full-line `//` comments.
+    let mut bytes = src.as_bytes();
+    loop {
+        // trim trailing whitespace
+        while let Some(&b) = bytes.last() {
+            if b.is_ascii_whitespace() {
+                bytes = &bytes[..bytes.len() - 1];
+            } else {
+                break;
+            }
+        }
+        // strip the final line if it's a `//` comment
+        if let Some(nl) = bytes.iter().rposition(|&b| b == b'\n') {
+            let line = &bytes[nl + 1..];
+            if line.trim_ascii_start().starts_with(b"//") {
+                bytes = &bytes[..nl];
+                continue;
+            }
+        } else if bytes.trim_ascii_start().starts_with(b"//") {
+            return false;
+        }
+        break;
+    }
+    !bytes.is_empty() && *bytes.last().unwrap() != b';'
 }
 
 /// Walk the tree collecting ERROR and MISSING nodes as `Diag`s.

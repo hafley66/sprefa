@@ -100,6 +100,18 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// All rows of `table`.
     fn rows_of(&self, table: &str) -> Vec<Arc<R>>;
 
+    /// Iterator over `table` rows. Returns `None` if the table has not
+    /// been declared / has never had a row inserted. Default forwards to
+    /// `rows_of`; stores override to stream when the underlying medium
+    /// supports it. The owned iterator escapes the `&self` borrow.
+    fn iter_table(&self, table: &str) -> Option<Box<dyn Iterator<Item = Arc<R>>>> {
+        let rows = self.rows_of(table);
+        if rows.is_empty() {
+            return None;
+        }
+        Some(Box::new(rows.into_iter()))
+    }
+
     /// Row count for `table`.
     fn len(&self, table: &str) -> usize;
 

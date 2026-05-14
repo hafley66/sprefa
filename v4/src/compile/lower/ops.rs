@@ -231,11 +231,29 @@ impl OperatorDef for RuleDef {
             return Ok(Pipe::new());
         }
 
-        // Bodied form: existing behavior — declare + body + FactWrite.
+        // Bodied form: declare + register the rule. The body executes
+        // as part of declaration only when its column list is wholly
+        // binders (TERM?) — those are the rows the body itself
+        // produces. With any grounded `:atom` column the body expects
+        // caller-supplied values, so it stays dormant until an apply.
         let body = block.unwrap();
         let rule = Rule::new(name.clone(), ctx.store.clone(), name, &cols, body);
         ctx.register_rule(rule.clone());
-        Ok(rule.into_pipe())
+
+        // A column came from a `:name` atom argument → its `Value::Atom`
+        // was stringified into `col_strings`. A column came from a
+        // `NAME?` bareword desugar → its `Value::Pipe` produced a
+        // `term_bind` step (binds_terms non-empty). We re-walk the
+        // original args to recover which shape supplied each col.
+        let auto_run = args[1..].iter().all(|a| match a {
+            Value::Atom(_) => false,
+            Value::Pipe(p) => !p.binds_terms().is_empty(),
+        });
+        if auto_run {
+            Ok(rule.into_pipe())
+        } else {
+            Ok(Pipe::new())
+        }
     }
 }
 
@@ -1443,6 +1461,88 @@ impl OperatorDef for FactWriteDef {
         // are accepted by the slot spec for arity/LSP but discarded
         // until FactWrite grows column projection.
         let table = atom_arg(args, 0);
+        Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))))
+    }
+}
+
+// ─── tag ──────────────────────────────────────────────────────────────────
+// `tag(:rel, X, Y)` writes one row into relation `rel`. The first atom
+// names the target table; remaining positional args supply cell values.
+// Args desugar through walk's classify_slot:
+//   bare `X`  / `${X}`  → term-read (column gets cursor[X])
+//   `X?`     / `${X?}` → introducer (only legal at query position;
+//                        tag detects and refuses)
+//   `"lit"`  / `:atom` → literal cell value
+//
+// If the table has not been declared, tag auto-declares it with
+// synthetic column names (`col0`, `col1`, …) so call sites don't have
+// to drag a `rule(:rel, …);` decl ahead of every write. The auto-decl
+// is non-destructive: a later explicit decl with the same shape is
+// accepted; a conflicting shape panics as today.
+
+pub struct TagDef;
+
+const TAG_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom,
+        name: "table",
+        doc: "relation name (`:rel`)",
+        required: true,
+    },
+    ArgSig {
+        kind: ArgKind::Variadic(&ArgKind::Any),
+        name: "cells",
+        doc: "positional cell values; bare term-ref, literal, or `${X}`",
+        required: false,
+    },
+];
+
+impl OperatorDef for TagDef {
+    fn name(&self) -> &'static str {
+        "tag"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        TAG_SPEC
+    }
+
+    fn lower(
+        &self,
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        use crate::fact::FactWrite;
+
+        let table = match args.first() {
+            Some(Value::Atom(s)) => s.clone(),
+            _ => {
+                return Err(LowerError::Unknown(
+                    "tag: first arg must be the :table atom".into(),
+                ))
+            }
+        };
+
+        let cell_args = &args[1..];
+
+        // Resolve declared cols. If the table is not declared yet,
+        // synthesize `col0..colN` and declare so FactStore impls that
+        // require schema (sqlite) accept the insert.
+        let declared = ctx.store.declared_cols(&table);
+        if declared.map(|c| c.is_empty()).unwrap_or(true) {
+            let synth: Vec<String> = (0..cell_args.len())
+                .map(|i| format!("col{i}"))
+                .collect();
+            let synth_refs: Vec<&str> = synth.iter().map(|s| s.as_str()).collect();
+            ctx.store.declare(&table, &synth_refs);
+        }
+
+        // Tag writes the full cursor so any synthetic terms stamped by
+        // upstream apply sites (`_call_seq` on `r!.`) propagate into
+        // the row's content_id. That keeps content-dedup correct for
+        // intentional duplicates while still distinguishing
+        // cache-bypassed invocations.
         Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))))
     }
 }

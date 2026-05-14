@@ -30,6 +30,15 @@ use super::lower::value::{CallArg, Value};
 /// Walk a whole program. Each `PipeAst` becomes one `Pipe<Cursor>` on
 /// success; on failure that pipe is dropped and its diags accumulated.
 /// Continues past per-pipe errors to surface every diag in one pass.
+///
+/// Pipes that the walker recognizes as self-driving (rule apply, rule
+/// write-position) are expanded inline against a `Cursor::default()`
+/// seed so the rule body executes and its writes hit the store. This is
+/// the "mechanism TBD by the harness" referenced by `*_target.rs` —
+/// callers no longer have to thread their own queue + expand for the
+/// common "lower then run" path. Pipes that consume an external seed
+/// (top-level `fs > …` etc.) still need an explicit expand by the
+/// caller; the auto-expand here just primes pipes that own their input.
 pub fn walk_program(
     program: &[PipeAst],
     reg: &Registry,
@@ -45,13 +54,52 @@ pub fn walk_program(
     // produces diags the LSP can surface alongside lower-time diags.
     diags.extend(super::binding_graph::analyze_program(program, reg));
 
-    // ── pass 2: lower per-pipe ────────────────────────────────────
+    // ── pass 2: lower per-pipe + auto-expand top-level rule pipes ──
     for p in program {
         if let Some(pipe) = walk_pipe(p, reg, ctx, &mut diags) {
+            maybe_auto_expand(&pipe, p, ctx);
             pipes.push(pipe);
         }
     }
     (pipes, diags)
+}
+
+/// Drive a pipe through a fresh expander when it's a self-driving form
+/// (rule declaration with a body, dotted-apply, or rule sink-write
+/// position). Other shapes (fs > ast > …) need an external seed and
+/// remain caller-driven.
+fn maybe_auto_expand(pipe: &Pipe<Cursor>, ast: &PipeAst, _ctx: &LowerCtx) {
+    if !is_self_driving(ast) {
+        return;
+    }
+    use effect_runtime::v2::{expand, ExpandOpts, MemQueue, QueueBackend};
+    let inst = pipe.clone().into_instance();
+    let queue: Arc<dyn QueueBackend<Cursor>> =
+        Arc::new(MemQueue::new());
+    expand(
+        &inst,
+        queue,
+        vec![Arc::new(Cursor::default())],
+        ExpandOpts::default(),
+    );
+}
+
+/// A pipe is "self-driving" if its first step is a rule apply, a rule
+/// sink-write, or a top-level rule declaration with a body. These
+/// shapes don't need an external seed because the call site itself is
+/// the trigger; bare queries and external generators still rely on the
+/// caller to seed an expand.
+fn is_self_driving(ast: &PipeAst) -> bool {
+    let Some(head) = ast.steps.first() else {
+        return false;
+    };
+    if head.name.as_ref() == "rule" {
+        // `rule(:r, …)` decl with a body OR rule sink-write at chain
+        // head (rare; handled by the body-attached FactWrite).
+        return head.block.is_some();
+    }
+    // Apply form `r.(…)` / `r!.(…)`: self-driving regardless of body.
+    head.apply
 }
 
 /// Walk one pipe. Concat per-op `Pipe<Cursor>` via `Pipe::extend`. If
@@ -270,34 +318,68 @@ pub fn walk_op(
     let declared_rule_call =
         reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some();
 
+    // V4 locked rule semantics (CLAUDE.md):
+    //   r.(X, Y)   → apply form: run the body with grounded args
+    //   r!.(X, Y)  → apply + bypass apply-cache
+    //   r(X?, Y?)  → bare call: QUERY r_facts; never run the body
+    //   r.(X?, Y)  → diagnostic `lower/apply-with-hole`
+    if op.apply && declared_rule_call {
+        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
+        if first_apply_hole(&arg_vals).is_some() {
+            diags.push(
+                Diag::error(
+                    "lower/apply-with-hole",
+                    format!(
+                        "{}.(...): apply form requires grounded args; \
+                         capture-binders (TERM?) are only valid in bare query calls",
+                        op.name,
+                    ),
+                )
+                .with_span(op.span.lo, op.span.hi),
+            );
+            return None;
+        }
+        // Apply form: prefer bodied invocation (RuleInvokeComponent). For
+        // pass-through rules (no body) fall back to the apply-write path
+        // so :sink-style declarations still write.
+        let result = if ctx.get_rule(&op.name).is_some() {
+            crate::sql::rule_body_call_pipe(ctx, &op.name, op.force, &arg_vals)
+        } else {
+            crate::sql::rule_apply_write_pipe(ctx, &op.name, &arg_vals)
+        };
+        match result {
+            Ok(pipe) => {
+                let pipe = match &ctx.probe {
+                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
+                    None => pipe,
+                };
+                return Some(pipe);
+            }
+            Err(e) => {
+                diags.push(
+                    Diag::error("lower/rule-apply", e.to_string())
+                        .with_span(op.span.lo, op.span.hi),
+                );
+                return None;
+            }
+        }
+    }
+
     if op.force && declared_rule_call {
+        // `r!(...)` without dotted apply is reserved. Force only applies
+        // to the dotted apply form `r!.(...)`.
         diags.push(
             Diag::error("lower/rule-force-reserved",
-                format!("{}!(...): rule apply policy override is reserved; use {}(...) for default apply", op.name, op.name))
+                format!("{}!(...): force is only valid on the apply form {}!.(...)", op.name, op.name))
                 .with_span(op.span.lo, op.span.hi)
         );
         return None;
     }
 
-    if op.apply && declared_rule_call {
-        diags.push(
-            Diag::error(
-                "lower/rule-dotted-apply",
-                format!(
-                    "{}.(...): dotted rule apply is retired; use {}(...) for default apply",
-                    op.name, op.name
-                ),
-            )
-            .with_span(op.span.lo, op.span.hi),
-        );
-        return None;
-    }
-
-    // Declared rule-table query. `?` is the visible pull/materialize
-    // marker for relation reads:
-    //   rule_name?(A, B?) -> row-producing query/project
-    //   rule_name?(A, B)  -> grounded relation query
-    if op.predicate && declared_rule_call {
+    // Bare or predicate rule call against the materialized facts table.
+    // V4 locked: `r(...)` and `r?(...)` are both QUERY paths against
+    // `<r>_facts`. The body is NEVER run from a bare call site.
+    if declared_rule_call {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
         match crate::sql::rule_table_call_pipe(ctx, &op.name, &arg_vals) {
             Ok(pipe) => {
@@ -336,47 +418,6 @@ pub fn walk_op(
         }
     }
 
-    // Declared rule apply/send. Bare call is the visible push/run/write marker.
-    if declared_rule_call && ctx.get_rule(&op.name).is_some() {
-        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
-        match crate::sql::rule_body_call_pipe(ctx, &op.name, false, &arg_vals) {
-            Ok(pipe) => {
-                let pipe = match &ctx.probe {
-                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
-                    None => pipe,
-                };
-                return Some(pipe);
-            }
-            Err(e) => {
-                diags.push(
-                    Diag::error("lower/rule-body-call", e.to_string())
-                        .with_span(op.span.lo, op.span.hi),
-                );
-                return None;
-            }
-        }
-    }
-
-    if declared_rule_call {
-        let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
-        match crate::sql::rule_apply_write_pipe(ctx, &op.name, &arg_vals) {
-            Ok(pipe) => {
-                let pipe = match &ctx.probe {
-                    Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
-                    None => pipe,
-                };
-                return Some(pipe);
-            }
-            Err(e) => {
-                diags.push(
-                    Diag::error("lower/rule-apply", e.to_string())
-                        .with_span(op.span.lo, op.span.hi),
-                );
-                return None;
-            }
-        }
-    }
-
     // Dispatch.
     match reg.lower_call_at(ctx, &lower_name, flow, args, block, dsl, op.span, chain_pos) {
         Ok(pipe) => {
@@ -395,6 +436,26 @@ pub fn walk_op(
             None
         }
     }
+}
+
+/// Detect a TERM? capture-binder in an apply form's arg list. Returns
+/// the byte span of the offending arg's enclosing op when found. Used
+/// for the `lower/apply-with-hole` diagnostic — apply cannot accept
+/// unbound captures; the bare query form is the only place holes are
+/// legal.
+fn first_apply_hole(args: &[CallArg]) -> Option<(u32, u32)> {
+    use crate::sprf_introspect::PipeIntrospect;
+    for a in args {
+        if let Value::Pipe(p) = &a.value {
+            if !p.binds_terms().is_empty() {
+                // Span info would require threading slot ranges; the
+                // caller falls back to the op span. Returning a sentinel
+                // (0,0) tells the caller "yes, found one".
+                return Some((0, 0));
+            }
+        }
+    }
+    None
 }
 
 fn classify_call_arg(
@@ -501,29 +562,21 @@ pub fn classify_slot(
         );
         return None;
     }
-    // `${X}` and `${X?}` are template-literal interpolation holes —
-    // valid ONLY inside backtick DSL bodies (re/glob/ast/json/plain `` ` ``),
-    // never at host-arg position. Like JS: `\`hello ${name}\`` is a hole;
-    // `f(${name})` is not. Emit a clear diag so the fallthrough doesn't
-    // bury the real cause.
-    if let Some(idx) = find_host_hole_outside_quotes(raw) {
-        let lo = slot.span.lo.saturating_add(idx as u32);
-        let hi_rel = raw[idx..]
-            .find('}')
-            .map(|j| idx + j + 1)
-            .unwrap_or(raw.len());
-        let hi = slot.span.lo.saturating_add(hi_rel as u32).min(slot.span.hi);
-        diags.push(
-            Diag::error(
-                "lang/host-hole-illegal",
-                "`${X}` interpolation is only valid inside a backtick DSL body. \
-                 Use a bareword (`X`) or `:atom` here, or move the hole inside \
-                 a `` ` `` template."
-                    .to_string(),
-            )
-            .with_span(lo, hi),
-        );
-        return None;
+    // `${X}` / `${X?}` in arg-slot position desugar to term reads /
+    // binders. Per CLAUDE.md "Pinned semantics", `${X}` is the read
+    // mode and `${X?}` is the unbound (introducer) mode — both valid
+    // at slot position so call sites like `tag(:r, ${A}, ${B})` work
+    // without falling back to inline-pipe parsing. Anything more
+    // complex than a single `${IDENT}` or `${IDENT?}` falls through to
+    // the inline-pipe path below and surfaces a parse-time diag if
+    // malformed.
+    if let Some(name) = simple_host_term_read(raw) {
+        let term = crate::term::Term::read(Arc::<str>::from(name));
+        return Some(Value::Pipe(Pipe::new().step(Arc::new(term))));
+    }
+    if let Some(name) = simple_host_term_bind(raw) {
+        let term = crate::term::Term::bind(Arc::<str>::from(name));
+        return Some(Value::Pipe(Pipe::new().step(Arc::new(term))));
     }
     // `:foo` colon-prefixed atom.
     if let Some(rest) = raw.strip_prefix(':') {
@@ -627,6 +680,36 @@ pub fn classify_slot(
     pipe.map(Value::Pipe)
 }
 
+/// Recognize `${IDENT}` as a host-position term read. Returns the
+/// captured name without the wrapping `${ }`. Returns None if the slot
+/// has anything else after the closing brace (then we fall through to
+/// inline-pipe parsing).
+fn simple_host_term_read(raw: &str) -> Option<&str> {
+    let rest = raw.strip_prefix("${")?;
+    let inner = rest.strip_suffix('}')?;
+    if inner.ends_with('?') {
+        return None;
+    }
+    if is_caps_ident(inner) {
+        Some(inner)
+    } else {
+        None
+    }
+}
+
+/// Recognize `${IDENT?}` as a host-position term binder.
+fn simple_host_term_bind(raw: &str) -> Option<&str> {
+    let rest = raw.strip_prefix("${")?;
+    let inner = rest.strip_suffix('}')?;
+    let name = inner.strip_suffix('?')?;
+    if is_caps_ident(name) {
+        Some(name)
+    } else {
+        None
+    }
+}
+
+#[allow(dead_code)]
 fn find_host_hole_outside_quotes(raw: &str) -> Option<usize> {
     let bytes = raw.as_bytes();
     let mut i = 0usize;

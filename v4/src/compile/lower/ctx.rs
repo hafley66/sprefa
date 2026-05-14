@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{FactStore, Pipe, ProbeSink};
@@ -42,6 +43,18 @@ pub struct LowerCtx {
     /// op-specific counters and the host may wrap lowered components
     /// with timing probes.
     pub telemetry: Option<Arc<PipelineTelemetry>>,
+    /// Per-compile counter handed out to force-apply call sites so
+    /// content-deduped fact stores still see distinct rows across
+    /// repeated `r!.(…)` invocations. The counter is stamped onto the
+    /// apply seed as `_call_seq`; cache-respecting bare/apply calls
+    /// don't touch it.
+    apply_seq: Arc<AtomicU64>,
+}
+
+impl LowerCtx {
+    pub fn next_apply_seq(&self) -> u64 {
+        self.apply_seq.fetch_add(1, Ordering::Relaxed)
+    }
 }
 
 impl LowerCtx {
@@ -56,6 +69,7 @@ impl LowerCtx {
             sprf_store: None,
             config: None,
             telemetry: None,
+            apply_seq: Arc::new(AtomicU64::new(0)),
         }
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
