@@ -57,7 +57,7 @@ impl LiveHarness {
             .with_bus(self.bus.clone())
             .with_runtime(self.runtime_graph.clone());
         for pipe in pipes {
-            let mut inst = pipe.into_instance();
+            let mut inst = pipe.into_pipe().into_instance();
             inst.pipe_hash = self.next_instance_id;
             inst.instance_id = self.next_instance_id;
             self.next_instance_id += 1;
@@ -132,7 +132,7 @@ fn run_into_store(src: &str, store: Arc<dyn FactStore<Cursor>>) {
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     for pipe in pipes {
         expand(
-            &pipe.into_instance(),
+            &pipe.into_pipe().into_instance(),
             queue.clone(),
             vec![Arc::new(Cursor::default())],
             ExpandOpts::default(),
