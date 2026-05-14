@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use dashmap::DashSet;
 use effect_runtime::v2::FactStore;
 use lru::LruCache;
+use thread_local::ThreadLocal;
 
 use crate::Cursor;
 pub use crate::{FileId, PathId, Ref, RepoId, RevId, StringId, WhereBytes, WhereBytesId};
@@ -102,7 +103,7 @@ pub struct SprfStore {
     seen_revs: DashSet<u64>,
     seen_paths: DashSet<u64>,
     seen_string_observations: DashSet<u64>,
-    pending_core: Mutex<HashMap<&'static str, Vec<Arc<Cursor>>>>,
+    pending_core: ThreadLocal<Mutex<HashMap<&'static str, Vec<Arc<Cursor>>>>>,
 }
 
 impl SprfStore {
@@ -137,7 +138,7 @@ impl SprfStore {
             seen_revs: DashSet::new(),
             seen_paths: DashSet::new(),
             seen_string_observations: DashSet::new(),
-            pending_core: Mutex::new(HashMap::new()),
+            pending_core: ThreadLocal::new(),
         });
         store.declare_core_tables();
         store.preinsert_sentinels();
@@ -151,8 +152,14 @@ impl SprfStore {
     }
 
     pub fn flush(&self) {
-        let pending = std::mem::take(&mut *self.pending_core.lock().unwrap());
-        for (table, rows) in pending {
+        for slot in self.pending_core.iter() {
+            self.drain_slot(slot);
+        }
+    }
+
+    fn drain_slot(&self, slot: &Mutex<HashMap<&'static str, Vec<Arc<Cursor>>>>) {
+        let drained = std::mem::take(&mut *slot.lock().unwrap());
+        for (table, rows) in drained {
             if rows.is_empty() {
                 continue;
             }
@@ -161,14 +168,17 @@ impl SprfStore {
     }
 
     fn insert_core(&self, table: &'static str, row: Cursor) {
-        let should_flush = {
-            let mut pending = self.pending_core.lock().unwrap();
+        let slot = self
+            .pending_core
+            .get_or(|| Mutex::new(HashMap::new()));
+        let drain_now = {
+            let mut pending = slot.lock().unwrap();
             let rows = pending.entry(table).or_default();
             rows.push(Arc::new(row));
             rows.len() >= CORE_FLUSH_ROWS
         };
-        if should_flush {
-            self.flush();
+        if drain_now {
+            self.drain_slot(slot);
         }
     }
 
