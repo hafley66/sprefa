@@ -12,7 +12,7 @@
 //! Plus: eq_classes UnionFind, scopes Vec<ScopeInfo>, steps Vec<StepInfo>.
 //!
 //! These tests pin the contract. Five pre-computations consume the graph
-//! (covered in fuser_regimes_target.rs). The graph build itself is what
+//! (covered in fuser_kinds_target.rs). The graph build itself is what
 //! we test here.
 
 use std::sync::Arc;

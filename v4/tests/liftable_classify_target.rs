@@ -3,12 +3,12 @@
 //! Spec: every op implements `Op::classify() -> Liftable` returning one
 //! of three variants:
 //!   - Pure       — pure SQL projection or filter fragment
-//!   - Stream     — runs in Rust during streamed-Rust regime; provides
+//!   - Stream     — runs in Rust during streamed-Rust kind; provides
 //!                  row schema (column → IdKind) so the rule's prepared
 //!                  INSERT can be built once
 //!   - RuleQuery  — query against another rule's `<rule>_facts` table
 //!
-//! The fuser uses these classifications to pick the regime (full-SQL vs
+//! The fuser uses these classifications to pick the kind (full-SQL vs
 //! streamed-Rust) and to compose fused SQL.
 //!
 //! Adding a new lifting op = implementing Op::classify on the op type.

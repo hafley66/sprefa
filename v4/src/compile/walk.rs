@@ -29,8 +29,8 @@ use super::lower::value::{CallArg, Value};
 
 /// Walk a whole program. Each `PipeAst` becomes one `FusedRule`. The
 /// fuser at the top of the per-pipe path classifies rule bodies and
-/// emits full-SQL / streamed-Rust / unfused regimes; non-rule pipes
-/// fall through as `Regime::Unfused` carrying the lowered Pipe.
+/// emits full-SQL / streamed-Rust / unfused kinds; non-rule pipes
+/// fall through as `FusedKind::Unfused` carrying the lowered Pipe.
 ///
 /// Self-driving forms (rule decls with binder-only cols, dotted-apply
 /// call sites) are expanded inline against a `Cursor::default()` seed

@@ -2,7 +2,7 @@
 //!
 //! Spec: the fuser is a peephole pass at the top of `walk_pipe` that
 //! consumes the TermFlowGraph (step 3) and the per-op `Liftable`
-//! classifications (step 4) and picks ONE of two regimes per rule body:
+//! classifications (step 4) and picks ONE of two kinds per rule body:
 //!
 //!   full-SQL       — when every body op is Pure or RuleQuery.
 //!                    Emits ONE `INSERT OR IGNORE INTO <rule>_facts
@@ -42,12 +42,12 @@ fn lower(src: &str) -> (Vec<v4::compile::FusedRule>, Vec<effect_runtime::v2::Dia
     let mut ctx = LowerCtx::new(store, dir);
     let (rules, walk_diags) = walk_program(&program, &reg, &mut ctx);
     // After step 5, walk_program returns FusedRule rather than raw Pipe,
-    // so the test can introspect the chosen regime.
+    // so the test can introspect the chosen kind.
     (rules, walk_diags)
 }
 
 #[test]
-fn full_sql_regime_when_body_is_pure_and_rule_query() {
+fn full_sql_kind_when_body_is_pure_and_rule_query() {
     // hit_pairs body is two rule queries plus a where predicate. No
     // Stream ops. Must pick full-SQL.
     let src = r#"
@@ -62,11 +62,11 @@ fn full_sql_regime_when_body_is_pure_and_rule_query() {
     let pairs = rules.iter().find(|r| r.name() == "hit_pairs").unwrap();
     assert!(
         pairs.is_full_sql(),
-        "hit_pairs must be full-SQL regime, got {:?}",
-        pairs.regime()
+        "hit_pairs must be full-SQL kind, got {:?}",
+        pairs.kind()
     );
 
-    let sql = pairs.fused_sql().expect("full-SQL regime must expose its SQL");
+    let sql = pairs.fused_sql().expect("full-SQL kind must expose its SQL");
     assert!(
         sql.contains("INSERT OR IGNORE INTO hit_pairs_facts"),
         "must INSERT into hit_pairs_facts, got: {sql}"
@@ -82,7 +82,7 @@ fn full_sql_regime_when_body_is_pure_and_rule_query() {
 }
 
 #[test]
-fn streamed_rust_regime_when_body_has_stream_op() {
+fn streamed_rust_kind_when_body_has_stream_op() {
     // hits body has fs + ast (both Stream). Must pick streamed-Rust.
     let src = r#"
         rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` }
@@ -93,13 +93,13 @@ fn streamed_rust_regime_when_body_has_stream_op() {
     let hits = rules.iter().find(|r| r.name() == "hits").unwrap();
     assert!(
         hits.is_streamed_rust(),
-        "hits must be streamed-Rust regime, got {:?}",
-        hits.regime()
+        "hits must be streamed-Rust kind, got {:?}",
+        hits.kind()
     );
 
-    // The streamed-Rust regime exposes its prepared-insert SQL so we
+    // The streamed-Rust kind exposes its prepared-insert SQL so we
     // can confirm it's built once per rule, not per row.
-    let prepared = hits.prepared_insert_sql().expect("streamed regime exposes prepared SQL");
+    let prepared = hits.prepared_insert_sql().expect("streamed kind exposes prepared SQL");
     assert!(
         prepared.starts_with("INSERT OR IGNORE INTO hits_facts"),
         "prepared insert must target hits_facts, got: {prepared}"
@@ -223,7 +223,7 @@ fn p4_id_typed_columns_in_facts_schema() {
 
 #[test]
 fn support_edges_populated_in_same_transaction() {
-    // The fused full-SQL regime issues two INSERT...SELECT statements
+    // The fused full-SQL kind issues two INSERT...SELECT statements
     // in one transaction: one for facts, one for support edges.
     let src = r#"
         rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` };

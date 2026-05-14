@@ -17,4 +17,4 @@ pub mod parse;
 pub mod probe_wrap;
 pub mod walk;
 
-pub use fuser::{FusedRule, Regime, TransactionKind};
+pub use fuser::{FusedRule, FusedKind, TransactionKind};

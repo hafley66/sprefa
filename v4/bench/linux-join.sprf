@@ -1,7 +1,7 @@
 # bench/linux-join.sprf — full-SQL fused join over a real linux tree.
 #
 # Targets the same shape as linux.sprf but adds a self-join derived
-# rule (`hit_pairs`) so the fuser can demonstrate full-SQL regime
+# rule (`hit_pairs`) so the fuser can demonstrate full-SQL kind
 # end-to-end. Source-scan portion (`hits`) is streamed-Rust; the join
 # rule lifts entirely to SQL.
 #

@@ -3,7 +3,7 @@
 //! The fuser sits at the top of `walk_pipe`. For every rule body it:
 //!
 //!   1. Walks `&[OpCall]` and calls `Op::classify` on each step.
-//!   2. Picks one of two regimes:
+//!   2. Picks one of two kinds:
 //!        full-SQL       — every step is Pure or RuleQuery.
 //!        streamed-Rust  — any step is Stream; no RuleQuery appears
 //!                         after a Stream (would be `lower/rule-
@@ -16,7 +16,7 @@
 //!        P5 join-order selection
 //!   4. Emits a `FusedRule` carrying the chosen SQL / prepared-insert
 //!      shape plus a fallback `Pipe<Cursor>` so the existing runner
-//!      can drive the body when the regime requires Rust steps.
+//!      can drive the body when the kind requires Rust steps.
 //!
 //! The fuser is intentionally additive: rules whose body falls
 //! outside the SQL-friendly subset (e.g. ones using `print`, `write_
@@ -34,9 +34,9 @@ use super::binding_graph::{
 use super::lower::liftable::{Col, IdKind, Liftable, Op, TermBind};
 use crate::Cursor;
 
-/// Regime chosen by the fuser for a rule body.
+/// FusedKind chosen by the fuser for a rule body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Regime {
+pub enum FusedKind {
     FullSql,
     StreamedRust,
     /// Body has steps that today don't lift (e.g. `print`, `tag`).
@@ -58,7 +58,7 @@ pub enum TransactionKind {
 /// The fuser's output per rule body.
 pub struct FusedRule {
     name: Arc<str>,
-    regime: Regime,
+    kind: FusedKind,
     pipe: Pipe<Cursor>,
     fused_sql: Option<String>,
     fused_statements: Vec<String>,
@@ -71,17 +71,17 @@ impl FusedRule {
     pub fn name(&self) -> &str {
         self.name.as_ref()
     }
-    pub fn regime(&self) -> Regime {
-        self.regime
+    pub fn kind(&self) -> FusedKind {
+        self.kind
     }
     pub fn is_full_sql(&self) -> bool {
-        matches!(self.regime, Regime::FullSql)
+        matches!(self.kind, FusedKind::FullSql)
     }
     pub fn is_streamed_rust(&self) -> bool {
-        matches!(self.regime, Regime::StreamedRust)
+        matches!(self.kind, FusedKind::StreamedRust)
     }
     pub fn is_unfused(&self) -> bool {
-        matches!(self.regime, Regime::Unfused)
+        matches!(self.kind, FusedKind::Unfused)
     }
     pub fn fused_sql(&self) -> Option<&str> {
         self.fused_sql.as_deref()
@@ -103,7 +103,7 @@ impl FusedRule {
         self.transaction_kind
     }
     /// Underlying pipe. The runner uses this for the unfused / streamed
-    /// regimes; full-SQL paths still expose it so existing callers can
+    /// kinds; full-SQL paths still expose it so existing callers can
     /// migrate progressively.
     pub fn into_pipe(self) -> Pipe<Cursor> {
         self.pipe
@@ -119,7 +119,7 @@ impl FusedRule {
 pub(crate) fn passthrough(name: Arc<str>, pipe: Pipe<Cursor>) -> FusedRule {
     FusedRule {
         name,
-        regime: Regime::Unfused,
+        kind: FusedKind::Unfused,
         pipe,
         fused_sql: None,
         fused_statements: Vec::new(),
@@ -308,7 +308,7 @@ pub(crate) fn try_fuse(
         }
     }
 
-    // Regime selection per spec:
+    // FusedKind selection per spec:
     //   - every step Pure | RuleQuery       → full-SQL
     //   - any Stream + RuleQuery after it   → diag, unfused
     //   - any Stream                        → streamed-Rust
@@ -436,7 +436,7 @@ fn fuse_streamed_rust(
     let create = create_table_sql(rule_name, body);
     FusedRule {
         name: Arc::<str>::from(rule_name),
-        regime: Regime::StreamedRust,
+        kind: FusedKind::StreamedRust,
         pipe,
         fused_sql: None,
         fused_statements: Vec::new(),
@@ -648,7 +648,7 @@ fn fuse_full_sql(
     let combined = format!("{select_sql};\n{support_sql}");
     FusedRule {
         name: Arc::<str>::from(rule_name),
-        regime: Regime::FullSql,
+        kind: FusedKind::FullSql,
         pipe,
         fused_sql: Some(combined),
         fused_statements: vec![select_sql, support_sql],

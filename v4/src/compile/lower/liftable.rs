@@ -3,13 +3,13 @@
 //! Adding a new lifting op = implementing `Op::classify` on the op
 //! type. No central registry edit, no library change. The fuser walks
 //! `&[OpCall]` for a rule body, calls `classify` on each, picks one of
-//! three regimes per body (full-SQL, streamed-Rust) and emits the
+//! three kinds per body (full-SQL, streamed-Rust) and emits the
 //! fused statements.
 //!
 //! Three lifting variants:
 //!
 //!   Pure       — pure SQL projection or filter fragment.
-//!   Stream     — runs in Rust during streamed-Rust regime; provides
+//!   Stream     — runs in Rust during streamed-Rust kind; provides
 //!                row schema (column → IdKind) so the rule's prepared
 //!                INSERT can be built once.
 //!   RuleQuery  — query against another rule's `<rule>_facts` table.
@@ -40,11 +40,11 @@ pub enum IdKind {
     Float,
 }
 
-/// How a Stream op writes rows during streamed-Rust regime. Function
+/// How a Stream op writes rows during streamed-Rust kind. Function
 /// pointer with a stable signature so we can store it in the variant
 /// without a generic parameter. Today the fuser owns the actual
 /// dispatch; this type exists so the variant has a non-zero-cost slot
-/// the runner can call when the fuser decides streamed-Rust regime.
+/// the runner can call when the fuser decides streamed-Rust kind.
 pub type StreamFn = fn();
 
 /// How a literal arg pins a rule-query column.
@@ -64,7 +64,7 @@ pub enum TermBind {
 }
 
 /// Per-op classification. The fuser branches on this enum to pick the
-/// regime and emit fused SQL.
+/// kind and emit fused SQL.
 pub enum Liftable {
     /// Pure SQL fragment. `project` lists output columns (capture
     /// names) and the SQL expression to emit. `filter` is an optional
@@ -78,7 +78,7 @@ pub enum Liftable {
     /// Streamed in Rust; cannot lift to SQL. Schema is the row shape
     /// the prepared insert is built against. `run` is the per-row
     /// callback (today a placeholder fn pointer — the fuser invokes
-    /// the op directly when emitting a streamed-Rust regime).
+    /// the op directly when emitting a streamed-Rust kind).
     Stream {
         schema: Vec<(Col, IdKind)>,
         run: StreamFn,

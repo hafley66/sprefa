@@ -2,8 +2,8 @@
 #
 # Two rules over a ~50-file synthetic kernel tree
 # (`v4/bench/.fixtures/linux-micro/`). `hits` is the source-scan rule
-# (Stream regime via fs+ast). `hit_pairs` self-joins `hits` on FS and
-# emits ordered LO pairs per file (full-SQL regime: pure RuleQuery +
+# (Stream kind via fs+ast). `hit_pairs` self-joins `hits` on FS and
+# emits ordered LO pairs per file (full-SQL kind: pure RuleQuery +
 # where).
 #
 # Run target: <1s end-to-end. Used to iterate on the fuser without
