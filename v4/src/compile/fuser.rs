@@ -455,12 +455,20 @@ fn fuse_full_sql(
     let live = live_cols(body);
 
     // Compose JOIN sequence over RuleQuery steps. The first RuleQuery
-    // is the outer table; subsequent ones JOIN ON the shared columns
-    // (eq-class roots).
+    // is the outer table; subsequent ones JOIN ON the SHARED CAPTURE
+    // (not the shared column name — captures and columns can disagree
+    // when the user renames via projection).
+    //
+    // `capture_to_source` maps the capture's logical name to the
+    // (alias, column) pair that introduced it. First occurrence wins;
+    // subsequent occurrences emit a JOIN condition between the prior
+    // (alias, col) and the new one.
     let mut joined_tables: Vec<&str> = Vec::new();
     let mut aliases: Vec<String> = Vec::new();
     let mut where_clauses: Vec<String> = Vec::new();
     let mut on_clauses: Vec<String> = Vec::new();
+    let mut capture_to_source: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
 
     for (idx, step) in classified.iter().enumerate() {
         match &step.lift {
@@ -470,25 +478,22 @@ fn fuse_full_sql(
                 aliases.push(alias.clone());
                 for (col, bind) in binds {
                     match bind {
-                        TermBind::Bind(_) | TermBind::Read(_) => {
-                            // Shared join key with any earlier alias
-                            // exposing the same col.
-                            for prior in 0..aliases.len() - 1 {
-                                let prior_alias = &aliases[prior];
-                                let prior_step =
-                                    if let Liftable::RuleQuery { binds: prior_binds, .. } =
-                                        &classified[prior].lift
-                                    {
-                                        prior_binds
-                                    } else {
-                                        continue;
-                                    };
-                                if prior_step.iter().any(|(c, _)| c.as_ref() == col.as_ref()) {
-                                    on_clauses.push(format!(
-                                        "{prior_alias}.{col} = {alias}.{col}",
-                                        col = col,
-                                    ));
-                                }
+                        TermBind::Bind(capture) | TermBind::Read(capture) => {
+                            let cap_str = capture.to_string();
+                            let col_str = col.to_string();
+                            if let Some((prior_alias, prior_col)) =
+                                capture_to_source.get(&cap_str)
+                            {
+                                // Capture already bound by an earlier
+                                // rule-query → JOIN this alias to the
+                                // earlier one on the columns each
+                                // exposes for the same capture.
+                                on_clauses.push(format!(
+                                    "{prior_alias}.{prior_col} = {alias}.{col_str}",
+                                ));
+                            } else {
+                                capture_to_source
+                                    .insert(cap_str, (alias.clone(), col_str));
                             }
                         }
                         TermBind::Literal(lit) | TermBind::Atom(lit) => {
@@ -533,7 +538,7 @@ fn fuse_full_sql(
             ..
         } = &step.lift
         {
-            let filter = rewrite_pure_predicate(filter, &aliases, &classified);
+            let filter = rewrite_pure_predicate(filter, &aliases, &classified, &capture_to_source);
             if !aliases.is_empty() {
                 on_clauses.push(filter);
             } else {
@@ -542,17 +547,18 @@ fn fuse_full_sql(
         }
     }
 
-    // Build the SELECT clause from live captures. The fuser stamps the
-    // `sprf_blake3_id(...)` UDF call so the _id column is populated
-    // inside SQLite without a Rust round-trip.
+    // Resolve each live capture to its source (alias, col). The capture
+    // name in the rule's `live` set may differ from the column name on
+    // the source rule's table (e.g. capture OTHER_LO bound by source
+    // column LO on r1). Fall back to plain capture name if not bound
+    // by any RuleQuery (literal-only rule body).
     let select_cols: Vec<String> = std::iter::once({
         let args = live
             .iter()
             .map(|c| {
-                // Use the first alias that exposes this col; default
-                // to plain col name (which works for single-table
-                // queries).
-                if let Some(alias) = aliases.first() {
+                if let Some((alias, col)) = capture_to_source.get(c.as_ref()) {
+                    format!("{alias}.{col}")
+                } else if let Some(alias) = aliases.first() {
                     format!("{alias}.{}", c.as_ref())
                 } else {
                     c.as_ref().to_string()
@@ -563,7 +569,9 @@ fn fuse_full_sql(
         format!("sprf_blake3_id('{rule_name}',{args}) AS _id")
     })
     .chain(live.iter().map(|c| {
-        if let Some(alias) = aliases.first() {
+        if let Some((alias, col)) = capture_to_source.get(c.as_ref()) {
+            format!("{alias}.{col} AS {}", c.as_ref())
+        } else if let Some(alias) = aliases.first() {
             format!("{alias}.{} AS {}", c.as_ref(), c.as_ref())
         } else {
             c.as_ref().to_string()
@@ -619,7 +627,9 @@ fn fuse_full_sql(
         args = live
             .iter()
             .map(|c| {
-                if let Some(alias) = aliases.first() {
+                if let Some((alias, col)) = capture_to_source.get(c.as_ref()) {
+                    format!("{alias}.{col}")
+                } else if let Some(alias) = aliases.first() {
                     format!("{alias}.{}", c.as_ref())
                 } else {
                     c.as_ref().to_string()
@@ -631,10 +641,14 @@ fn fuse_full_sql(
         first_alias = aliases.first().cloned().unwrap_or_default(),
         col_refs = live
             .iter()
-            .map(|c| if let Some(alias) = aliases.first() {
-                format!("{alias}.{}", c.as_ref())
-            } else {
-                c.as_ref().to_string()
+            .map(|c| {
+                if let Some((alias, col)) = capture_to_source.get(c.as_ref()) {
+                    format!("{alias}.{col}")
+                } else if let Some(alias) = aliases.first() {
+                    format!("{alias}.{}", c.as_ref())
+                } else {
+                    c.as_ref().to_string()
+                }
             })
             .collect::<Vec<_>>()
             .join(","),
@@ -665,6 +679,7 @@ fn rewrite_pure_predicate(
     filter: &str,
     aliases: &[String],
     classified: &[ClassifiedStep<'_>],
+    capture_to_source: &std::collections::HashMap<String, (String, String)>,
 ) -> String {
     if aliases.is_empty() {
         return filter.to_string();
@@ -686,11 +701,36 @@ fn rewrite_pure_predicate(
                     .entry(name.to_string())
                     .and_modify(|v| *v += 1)
                     .or_insert(0);
-                let alias_idx = first_alias_carrying(classified, name, *n).unwrap_or(0);
-                let alias = aliases.get(alias_idx).cloned().unwrap_or_default();
+                // Prefer the (alias, col) recorded in capture_to_source
+                // (the first rule-query that bound this capture). Fall
+                // back to first_alias_carrying for higher occurrence
+                // indices when the same capture is bound in multiple
+                // places.
+                let (alias, col) = if *n == 0 {
+                    if let Some((a, c)) = capture_to_source.get(name) {
+                        (a.clone(), c.clone())
+                    } else {
+                        let alias_idx =
+                            first_alias_carrying(classified, name, *n).unwrap_or(0);
+                        (
+                            aliases.get(alias_idx).cloned().unwrap_or_default(),
+                            name.to_string(),
+                        )
+                    }
+                } else {
+                    let alias_idx = first_alias_carrying(classified, name, *n).unwrap_or(0);
+                    // For non-first occurrences, look up the column
+                    // exposed at that alias for this capture.
+                    let col = column_for_capture_at(classified, alias_idx, name)
+                        .unwrap_or_else(|| name.to_string());
+                    (
+                        aliases.get(alias_idx).cloned().unwrap_or_default(),
+                        col,
+                    )
+                };
                 out.push_str(&alias);
                 out.push('.');
-                out.push_str(name);
+                out.push_str(&col);
                 i = j + 1;
                 continue;
             }
@@ -703,6 +743,33 @@ fn rewrite_pure_predicate(
     out.replace("!=", "<>")
 }
 
+/// Find the source column name for a capture at a specific rule-query
+/// index. Walks classified steps; returns the col paired with the bind
+/// whose name matches the capture, at the n-th RuleQuery encountered.
+fn column_for_capture_at(
+    classified: &[ClassifiedStep<'_>],
+    rq_idx: usize,
+    capture: &str,
+) -> Option<String> {
+    let mut seen = 0usize;
+    for step in classified {
+        if let Liftable::RuleQuery { binds, .. } = &step.lift {
+            if seen == rq_idx {
+                for (col, bind) in binds {
+                    if let TermBind::Bind(name) | TermBind::Read(name) = bind {
+                        if name.as_ref() == capture {
+                            return Some(col.to_string());
+                        }
+                    }
+                }
+                return None;
+            }
+            seen += 1;
+        }
+    }
+    None
+}
+
 fn first_alias_carrying(
     classified: &[ClassifiedStep<'_>],
     capture: &str,
@@ -712,7 +779,14 @@ fn first_alias_carrying(
     let mut rq_idx = 0usize;
     for step in classified {
         if let Liftable::RuleQuery { binds, .. } = &step.lift {
-            if binds.iter().any(|(c, _)| c.as_ref() == capture) {
+            // Match by the CAPTURE NAME in the bind variant, not by the
+            // source column name. The user-facing capture is what
+            // `${X}` references; the table column may be different.
+            let binds_capture = binds.iter().any(|(_, b)| match b {
+                TermBind::Bind(name) | TermBind::Read(name) => name.as_ref() == capture,
+                _ => false,
+            });
+            if binds_capture {
                 if seen == skip {
                     return Some(rq_idx);
                 }

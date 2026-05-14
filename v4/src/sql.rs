@@ -549,7 +549,7 @@ fn drop_sql_workspace(conn: &mut Connection, referenced_tables: &[String]) -> Re
     Ok(())
 }
 
-fn create_fact_view(
+pub fn create_fact_view(
     conn: &mut Connection,
     store: &SqliteFactStore<Cursor>,
     table: &str,
@@ -777,12 +777,12 @@ fn sql_value_to_string(value: ValueRef<'_>) -> String {
     }
 }
 
-fn quote_ident(s: &str) -> String {
+pub fn quote_ident(s: &str) -> String {
     let escaped = s.replace('"', "\"\"");
     format!("\"{escaped}\"")
 }
 
-fn fact_col_sql(s: &str) -> &str {
+pub fn fact_col_sql(s: &str) -> &str {
     s.strip_prefix(':').unwrap_or(s)
 }
 

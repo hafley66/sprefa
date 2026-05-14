@@ -38,6 +38,7 @@ use tower::ServiceExt;
 use crate::compile::ast::{OpCall, PipeAst};
 use crate::compile::parse::host_parse;
 use crate::compile::walk::walk_program;
+use crate::compile::{FusedKind, FusedRule};
 use crate::cst::dsl::Dsl;
 use crate::cst::dsls::sql::{SqlCol, SqlDsl, SqlLspCtx, SqlTable};
 #[cfg(feature = "ghcache")]
@@ -795,6 +796,568 @@ fn analysis_safe_pipe(pipe: Pipe<Cursor>) -> Pipe<Cursor> {
     Pipe::from_steps(steps)
 }
 
+/// Execute a `FusedKind::FullSql` rule's precomputed INSERT statements
+/// directly against the SQLite fact store. Returns true if execution
+/// happened; false if the store is not SQLite-backed (caller falls back
+/// to legacy expand).
+///
+/// The fuser's SQL is written against the rules-as-tables aspirational
+/// schema (`hits_facts` with bare `FS` / `LO` columns, `_id BLOB`). The
+/// live `SqliteFactStore` schema has wide string-FK columns (`FS_id`,
+/// `LO_id`) and a TEXT `_id`. The adapter rewrites the fuser SQL into an
+/// equivalent statement against the live schema:
+///
+///   * source `<rule>_facts` references are routed through the existing
+///     `create_fact_view` helper, which exposes user-named columns;
+///   * `INSERT INTO <rule>_facts (_id, A, B, …) SELECT proj_a, proj_b, …`
+///     is rewritten to insert into the live FK columns by wrapping each
+///     projected text expression in `(SELECT id FROM sprf_strings WHERE
+///     value = <expr>)`. `_id` uses `hex(sprf_blake3_id(...))` to match
+///     the live TEXT format.
+///
+/// The `support_edges` insert is best-effort: the live schema doesn't
+/// declare the table, so we `CREATE TABLE IF NOT EXISTS` it in the same
+/// transaction. Failures there are demoted to a warning so the primary
+/// fact insert still commits.
+fn run_fused_sql(
+    facts: &dyn FactStore<Cursor>,
+    fused: &FusedRule,
+) -> bool {
+    let Some(store) = facts.as_any().downcast_ref::<SqliteFactStore<Cursor>>() else {
+        return false;
+    };
+    let Some(stmts) = fused.fused_statements() else {
+        return false;
+    };
+    let target = fused.name().to_string();
+    let target_facts = format!("{target}_facts");
+    let target_cols = match store.declared_cols(&target) {
+        Some(c) if !c.is_empty() => c,
+        _ => {
+            tracing::warn!(
+                target: "sprefa::fused",
+                rule = %target,
+                "full-SQL rule has no declared cols in store; falling back to legacy expand",
+            );
+            return false;
+        }
+    };
+
+    // Discover source tables referenced by the fuser SQL. The fuser
+    // emits raw `<rule>_facts` identifiers in FROM/JOIN positions for
+    // source reads. We need view names (`<rule>`) for the rewrite.
+    let combined = stmts.join("\n");
+    let source_tables = source_tables_from_fused_sql(&combined, &target_facts);
+
+    let mut inserted: u64 = 0;
+    let mut support_inserted: u64 = 0;
+    let mut had_error = false;
+
+    store.with_connection(|conn| {
+        let tx = match conn.transaction() {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(
+                    target: "sprefa::fused",
+                    rule = %target,
+                    error = %e,
+                    "could not open fused-SQL transaction; falling back",
+                );
+                had_error = true;
+                return;
+            }
+        };
+
+        // Create temp views for each source table so the fuser SQL's
+        // bare-column references resolve through `sprf_strings`.
+        let mut view_ok = true;
+        for src in &source_tables {
+            if let Err(e) = create_fact_view_in_tx(&tx, store, src) {
+                tracing::warn!(
+                    target: "sprefa::fused",
+                    rule = %target,
+                    source = %src,
+                    error = %e,
+                    "create_fact_view failed in fused-SQL path",
+                );
+                view_ok = false;
+                break;
+            }
+        }
+        if !view_ok {
+            had_error = true;
+            return;
+        }
+
+        // Ensure support_edges exists. Schema mirrors the fuser-emitted
+        // INSERT's column list.
+        let _ = tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS support_edges (
+                parent_table TEXT NOT NULL,
+                parent_id    BLOB NOT NULL,
+                child_table  TEXT NOT NULL,
+                child_id     TEXT NOT NULL,
+                UNIQUE(parent_table, parent_id, child_table, child_id)
+            )",
+        );
+
+        for raw_sql in stmts.iter() {
+            let executed = if raw_sql.trim_start().to_ascii_uppercase().starts_with("INSERT")
+                && raw_sql.contains(&target_facts)
+            {
+                // Primary facts insert: rewrite to the live FK schema.
+                match build_live_facts_insert(
+                    raw_sql,
+                    &target,
+                    &target_facts,
+                    target_cols.as_slice(),
+                    &source_tables,
+                ) {
+                    Some(rewritten) => match tx.execute(&rewritten, []) {
+                        Ok(n) => {
+                            inserted += n as u64;
+                            true
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "sprefa::fused",
+                                rule = %target,
+                                error = %e,
+                                sql = %rewritten,
+                                "fused-SQL fact insert failed",
+                            );
+                            had_error = true;
+                            false
+                        }
+                    },
+                    None => {
+                        tracing::warn!(
+                            target: "sprefa::fused",
+                            rule = %target,
+                            "could not rewrite fused-SQL fact insert to live schema",
+                        );
+                        had_error = true;
+                        false
+                    }
+                }
+            } else if raw_sql.contains("support_edges") {
+                let rewritten = rewrite_fused_source_refs(raw_sql, &source_tables);
+                match tx.execute(&rewritten, []) {
+                    Ok(n) => {
+                        support_inserted += n as u64;
+                        true
+                    }
+                    Err(e) => {
+                        // Demoted: support edges are best-effort.
+                        tracing::debug!(
+                            target: "sprefa::fused",
+                            rule = %target,
+                            error = %e,
+                            "support_edges insert skipped (best-effort)",
+                        );
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+            let _ = executed;
+        }
+
+        // Drop the temp views we created so the connection state stays
+        // clean for the next caller.
+        for src in &source_tables {
+            let _ = tx.execute(
+                &format!("DROP VIEW IF EXISTS temp.{}", quote_view_ident(src)),
+                [],
+            );
+        }
+
+        if let Err(e) = tx.commit() {
+            tracing::warn!(
+                target: "sprefa::fused",
+                rule = %target,
+                error = %e,
+                "fused-SQL transaction commit failed",
+            );
+            had_error = true;
+        }
+    });
+
+    if had_error {
+        return false;
+    }
+
+    // Telemetry: one exec call for the rule, rows = facts inserted.
+    store.record_sqlite_insert_exec(inserted);
+    if support_inserted > 0 {
+        store.record_sqlite_insert_exec(support_inserted);
+    }
+
+    if inserted > 0 {
+        store.bump_table_version(&target);
+        store.mark_table_dirty(&target);
+    }
+
+    true
+}
+
+/// Extract source table names from a fused-SQL `INSERT INTO X SELECT …
+/// FROM <src>_facts …` shape. We scan FROM/JOIN positions, drop the
+/// `_facts` suffix, and de-dup. The target's own `<target>_facts` is
+/// excluded.
+fn source_tables_from_fused_sql(sql: &str, exclude_table: &str) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // Skip strings.
+        if bytes[i] == b'\'' || bytes[i] == b'`' {
+            let q = bytes[i];
+            i += 1;
+            while i < bytes.len() && bytes[i] != q {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(rest) = lower_keyword_at(bytes, i, "FROM")
+            .or_else(|| lower_keyword_at(bytes, i, "JOIN"))
+        {
+            i = rest;
+            // Skip whitespace.
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            // Read identifier.
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+            {
+                i += 1;
+            }
+            if i > start {
+                let ident = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
+                if ident == exclude_table {
+                    continue;
+                }
+                if let Some(base) = ident.strip_suffix("_facts") {
+                    if !out.iter().any(|s| s == base) {
+                        out.push(base.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+fn lower_keyword_at(bytes: &[u8], i: usize, kw: &str) -> Option<usize> {
+    let kb = kw.as_bytes();
+    if i + kb.len() > bytes.len() {
+        return None;
+    }
+    for (k, &c) in kb.iter().enumerate() {
+        if bytes[i + k].eq_ignore_ascii_case(&c) {
+            continue;
+        }
+        return None;
+    }
+    // Must be a token boundary on both sides.
+    if i > 0
+        && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_')
+    {
+        return None;
+    }
+    let end = i + kb.len();
+    if end < bytes.len()
+        && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+    {
+        return None;
+    }
+    Some(end)
+}
+
+fn quote_view_ident(s: &str) -> String {
+    let escaped = s.replace('"', "\"\"");
+    format!("\"{escaped}\"")
+}
+
+/// Create a TEMP VIEW exposing `<table>_facts` joined through
+/// `sprf_strings` so SELECTs can reference user-named text columns.
+/// Mirrors `crate::sql::create_fact_view` but uses a `&Transaction`
+/// instead of a `&mut Connection` since we're inside a tx scope.
+fn create_fact_view_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    store: &SqliteFactStore<Cursor>,
+    table: &str,
+) -> Result<(), String> {
+    let cols = store.declared_cols(table).unwrap_or_default();
+    let _ = tx.execute(
+        &format!("DROP VIEW IF EXISTS temp.{}", quote_view_ident(table)),
+        [],
+    );
+    let mut select = Vec::with_capacity(cols.len().max(1));
+    let mut joins = Vec::with_capacity(cols.len());
+    for col in &cols {
+        let sql_col = col.strip_prefix(':').unwrap_or(col.as_str());
+        let alias = format!("s_{sql_col}");
+        select.push(format!(
+            "{}.value AS {}",
+            quote_view_ident(&alias),
+            quote_view_ident(col),
+        ));
+        joins.push(format!(
+            "JOIN sprf_strings {} ON {}.id = t.{}",
+            quote_view_ident(&alias),
+            quote_view_ident(&alias),
+            quote_view_ident(&format!("{sql_col}_id")),
+        ));
+    }
+    if select.is_empty() {
+        select.push("t._id AS _id".to_string());
+    }
+    let sql = format!(
+        "CREATE TEMP VIEW {} AS SELECT {} FROM {} t {}",
+        quote_view_ident(table),
+        select.join(", "),
+        quote_view_ident(&format!("{table}_facts")),
+        joins.join(" "),
+    );
+    tx.execute(&sql, []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Rewrite `<src>_facts` source references to the bare `<src>` view name.
+/// Only touches FROM/JOIN positions; literal strings are skipped.
+fn rewrite_fused_source_refs(sql: &str, source_tables: &[String]) -> String {
+    let bytes = sql.as_bytes();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\'' || bytes[i] == b'`' {
+            let q = bytes[i];
+            out.push(q as char);
+            i += 1;
+            while i < bytes.len() && bytes[i] != q {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    out.push(bytes[i] as char);
+                    out.push(bytes[i + 1] as char);
+                    i += 2;
+                    continue;
+                }
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+            if i < bytes.len() {
+                out.push(q as char);
+                i += 1;
+            }
+            continue;
+        }
+        if i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_' {
+            let mut replaced = false;
+            for src in source_tables {
+                let needle = format!("{src}_facts");
+                let nb = needle.as_bytes();
+                if i + nb.len() <= bytes.len() && &bytes[i..i + nb.len()] == nb {
+                    let after = i + nb.len();
+                    if after >= bytes.len()
+                        || (!bytes[after].is_ascii_alphanumeric() && bytes[after] != b'_')
+                    {
+                        out.push_str(src);
+                        i = after;
+                        replaced = true;
+                        break;
+                    }
+                }
+            }
+            if replaced {
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+/// Build the live-schema INSERT for a fuser facts INSERT statement.
+///
+/// Input shape:
+///   INSERT OR IGNORE INTO <target>_facts (_id, A, B, …)
+///   SELECT <id_expr> AS _id, <a_expr> AS A, <b_expr> AS B, …
+///   FROM <src>_facts r0 [JOIN <src>_facts r1 ON …]
+///   [WHERE …]
+///
+/// Output shape:
+///   INSERT OR IGNORE INTO <target>_facts (_id, A_id, B_id, …)
+///   SELECT hex(<id_expr>) AS _id,
+///          (SELECT id FROM sprf_strings WHERE value = <a_expr>) AS A_id, …
+///   FROM <src> r0 [JOIN <src> r1 ON …]
+///   [WHERE …]
+fn build_live_facts_insert(
+    sql: &str,
+    _target_name: &str,
+    target_facts: &str,
+    target_cols: &[String],
+    source_tables: &[String],
+) -> Option<String> {
+    // Locate INSERT INTO <target_facts> (...)
+    let upper = sql.to_ascii_uppercase();
+    let insert_marker = format!("INSERT OR IGNORE INTO {target_facts}");
+    let insert_marker_upper = insert_marker.to_ascii_uppercase();
+    let insert_pos = upper.find(&insert_marker_upper)?;
+    let after_insert = insert_pos + insert_marker.len();
+    let paren_open = sql[after_insert..].find('(')? + after_insert;
+    let paren_close = sql[paren_open + 1..].find(')')? + paren_open + 1;
+
+    let cols_raw = &sql[paren_open + 1..paren_close];
+    let cols: Vec<String> = cols_raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect();
+    if cols.is_empty() || cols[0] != "_id" {
+        return None;
+    }
+    // Drop _id, keep user cols.
+    let user_cols: Vec<String> = cols.into_iter().skip(1).collect();
+    if user_cols.len() != target_cols.len() {
+        // Schema and fuser disagree on shape; let the caller fall back.
+        return None;
+    }
+
+    // Locate SELECT … FROM … in the rest of the SQL.
+    let rest = &sql[paren_close + 1..];
+    let rest_upper = rest.to_ascii_uppercase();
+    let select_pos = rest_upper.find("SELECT")?;
+    let from_pos = rest_upper[select_pos..].find("FROM")? + select_pos;
+    let select_clause = rest[select_pos + 6..from_pos].trim(); // 6 = len("SELECT")
+    let from_clause = &rest[from_pos..];
+
+    // Split SELECT clause by top-level commas (depth-0 parentheses).
+    let projections = split_top_level_commas(select_clause);
+    if projections.len() != user_cols.len() + 1 {
+        return None;
+    }
+
+    // Strip ` AS NAME` suffixes from each projection expression.
+    let mut exprs: Vec<String> = Vec::with_capacity(projections.len());
+    for p in &projections {
+        exprs.push(strip_as_alias(p).to_string());
+    }
+
+    // Rewrite source-table refs in FROM and the projection exprs.
+    let from_clause_rewritten = rewrite_fused_source_refs(from_clause, source_tables);
+    let exprs_rewritten: Vec<String> = exprs
+        .iter()
+        .map(|e| rewrite_fused_source_refs(e, source_tables))
+        .collect();
+
+    // Compose the live INSERT.
+    let mut col_list = String::from("_id");
+    for c in &user_cols {
+        let sql_col = c.strip_prefix(':').unwrap_or(c.as_str());
+        col_list.push_str(", ");
+        col_list.push_str(sql_col);
+        col_list.push_str("_id");
+    }
+
+    let mut select_list = String::new();
+    // Project _id: wrap the fuser's blake3-blob in hex() to match the live
+    // TEXT column. Note: the resulting hex string does NOT match what the
+    // Rust `content_id` routine produces (which sorts pairs by key first),
+    // but `<target>_facts` is only written via this path, so dedup is
+    // self-consistent within the rule.
+    select_list.push_str(&format!("hex({}) AS _id", exprs_rewritten[0]));
+    for (col, expr) in user_cols.iter().zip(exprs_rewritten.iter().skip(1)) {
+        let sql_col = col.strip_prefix(':').unwrap_or(col.as_str());
+        select_list.push_str(", (SELECT id FROM sprf_strings WHERE value = ");
+        select_list.push_str(expr);
+        select_list.push_str(&format!(") AS {sql_col}_id"));
+    }
+
+    Some(format!(
+        "INSERT OR IGNORE INTO {target_facts} ({col_list})\nSELECT {select_list}\n{from_clause_rewritten}",
+    ))
+}
+
+fn split_top_level_commas(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'\'' || c == b'`' {
+            buf.push(c as char);
+            i += 1;
+            while i < bytes.len() && bytes[i] != c {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    buf.push(bytes[i] as char);
+                    buf.push(bytes[i + 1] as char);
+                    i += 2;
+                    continue;
+                }
+                buf.push(bytes[i] as char);
+                i += 1;
+            }
+            if i < bytes.len() {
+                buf.push(c as char);
+                i += 1;
+            }
+            continue;
+        }
+        match c {
+            b'(' => {
+                depth += 1;
+                buf.push('(');
+            }
+            b')' => {
+                depth -= 1;
+                buf.push(')');
+            }
+            b',' if depth == 0 => {
+                out.push(buf.trim().to_string());
+                buf.clear();
+            }
+            other => buf.push(other as char),
+        }
+        i += 1;
+    }
+    if !buf.trim().is_empty() {
+        out.push(buf.trim().to_string());
+    }
+    out
+}
+
+fn strip_as_alias(s: &str) -> &str {
+    // Look for the last ` AS ` (case-insensitive) at depth 0; return the
+    // prefix. We do this by scanning backwards token-style: easier
+    // approximation is splitting on case-insensitive " AS ".
+    let lower = s.to_ascii_lowercase();
+    let mut search_from = 0usize;
+    let mut last: Option<usize> = None;
+    while let Some(pos) = lower[search_from..].find(" as ") {
+        let absolute = search_from + pos;
+        last = Some(absolute);
+        search_from = absolute + 4;
+    }
+    match last {
+        Some(p) => s[..p].trim(),
+        None => s.trim(),
+    }
+}
+
 #[async_trait::async_trait]
 impl SprfHandlers for SprfState {
     async fn lsp_open(&self, req: LspOpenReq) -> Result<(), SprfError> {
@@ -987,6 +1550,26 @@ impl SprfHandlers for SprfState {
         let mut n = 0;
         let mut run_stats = effect_runtime::v2::ExpandStats::default();
         for (idx, fused) in pipes.into_iter().enumerate() {
+            // Full-SQL fused rules execute their precomputed INSERT...SELECT
+            // directly against the SQLite fact store. This bypasses the
+            // per-cursor expand path entirely: zero cursors cross Rust for
+            // the materialization. Falls through to legacy expand if the
+            // backing store is not SQLite (e.g. MemFactStore).
+            if fused.kind() == FusedKind::FullSql {
+                let t = std::time::Instant::now();
+                let executed = run_fused_sql(self.facts.as_ref(), &fused);
+                phases.expand_ms += t.elapsed().as_secs_f64() * 1000.0;
+                if executed {
+                    n += 1;
+                    continue;
+                }
+                // Store didn't support direct execution (MemFactStore) or
+                // SQL execution failed (e.g. fuser emits structurally
+                // invalid SQL today; see chat_log/20260514.7). Fall
+                // through to the legacy expand path so the rule still
+                // runs.
+            }
+
             let t = std::time::Instant::now();
             let pipe = fused.into_pipe();
             let pipe = match telemetry.as_ref() {

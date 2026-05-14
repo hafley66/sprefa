@@ -890,6 +890,36 @@ mod sqlite {
             let mut conn = self.conn.lock().unwrap();
             f(&mut conn)
         }
+
+        /// Bump the monotonic table-change token. Used by callers that
+        /// write to a fact table via a non-`insert` path (e.g. fused
+        /// `INSERT ... SELECT` driven by the runner) so query caches and
+        /// subscribers see the change.
+        pub fn bump_table_version(&self, table: &str) {
+            bump_table_version(&self.table_versions, table);
+        }
+
+        /// Mark `table` dirty for the next `commit` so the bus dispatches
+        /// `table_dirty_key(table)` to subscribers. Mirrors the dirty
+        /// tracking that `insert` / `insert_batch` do internally; callers
+        /// that bypass those paths (fused-SQL execution) use this to keep
+        /// subscribers in sync.
+        pub fn mark_table_dirty(&self, table: &str) {
+            self.dirty_tables.lock().unwrap().insert(table.to_string());
+        }
+
+        /// Record fused-SQL execution telemetry. Bumps `sqlite_insert_exec_calls`
+        /// once per call and `sqlite_insert_exec_rows` by `rows`. Used by the
+        /// fused full-SQL path so the bench output reflects work done at the
+        /// statement level instead of the per-row insert level.
+        pub fn record_sqlite_insert_exec(&self, rows: u64) {
+            self.stats
+                .sqlite_insert_exec_calls
+                .fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .sqlite_insert_exec_rows
+                .fetch_add(rows, Ordering::Relaxed);
+        }
     }
 
     impl<R: Row> FactStore<R> for SqliteFactStore<R> {
