@@ -651,6 +651,37 @@ OK, so wait. I have not read everything that you have sent but to give you an id
 
     <note>Final answer to the author's question: not rambling. Tired in the middle of a thing that's a few weeks from being demonstrable.</note>
   </topic>
+
+  <topic name="per-thread-row-buffer-lesson-2026-05-14" llm-tags="perf mutex-contention thread-local rayon hot-path emit-stamp store sprfstore">
+    <note>Concrete win: SprfStore.pending_core was Mutex&lt;HashMap&lt;&amp;'static str, Vec&lt;Arc&lt;Cursor&gt;&gt;&gt;&gt;. Every ast match issued 5 inserts (stamp_source_value, observe_string, set_at LO/HI/MATCH). On the 5000-file synthetic fixture: 5 × 20000 = 100k contended lock acquisitions on one global mutex, with 8 rayon workers. Effective parallelism capped at ~4.1 of 8.</note>
+
+    <note>Fix that worked: replace with ThreadLocal&lt;Mutex&lt;HashMap&lt;...&gt;&gt;&gt; (thread_local crate). Each worker locks its own slot's mutex — uncontended, ~10ns. flush() walks all slots and drains via inner.insert_batch. Synced state preserved; mutex on hot path eliminated.</note>
+
+    <note>Measured delta (mean of 3 runs, 5000-file synthetic):
+      ast stage wall_ms:    714.1  → 134.0  (-81%, 5.3x)
+      emit_stamp_summed:    1930.2 → 207.4  (-89%, 9.3x)
+      rss_peak_MB:          294.3  → 254.0  (-14%)
+      Overall wall_ms is dominated by source-read I/O variance (read_ms swings 105–869 across runs as page cache warms), so the ~580ms emit_stamp savings is partly masked in the headline number. Per-stage signal is unambiguous.
+    </note>
+
+    <note>Why the prior two patches (DashSet seen_*, StripedLru hot caches) didn't move the wall: they sped up the hit path. The hot path was the MISS path, which ALWAYS went through pending_core.lock(). The lock was downstream of every micro-optimization. The lesson: when a 16-shard LRU swap only nets -16%, the lock the LRU sits in front of is the real ceiling.</note>
+
+    <note>Why SegQueue regressed (+18% wall, +143% emit_stamp): lock-free push uses atomic CAS, which bounces the cache line owning the queue head across cores. With 8 workers all hammering the same atomic, CAS retries dominated. The Mutex was actually cheaper than the lock-free queue for this access pattern. Lock-free is not automatically faster. Per-thread storage was the only structural fix.</note>
+
+    <note>Mental model that survives this episode:
+      - "Eliminate cross-core synchronization on the hot path" beats "make the synchronization faster."
+      - Per-thread accumulators with a drain phase is the canonical shape for write-heavy parallel pipelines. rust-analyzer, biome, and our own par_render closure are all variations of this.
+      - Pattern is now available in v4/src/store.rs as a worked example. Future write-side hotspots (string_observations defer, where_bytes batching) should use the same shape rather than reaching for DashMap or SegQueue first.
+    </note>
+
+    <note>Discipline-flavored note: the prior 7-day "AI tunes the loop instead of replacing it" pattern (logged in cognitive-debt-and-discipline) almost recurred here. DashSet and StripedLru were "tune the loop" moves. They were fine and shipped, but neither attacked the structural issue. The chat_log .8 plan named the structural issue explicitly ("100k contended mutex acquisitions on a single global Mutex") before any code moved. That's the model: name the structural issue first, then write the fix. AI executing without that named target produced the SegQueue regression.</note>
+
+    <note>Open levers still on the table (from .8 plan):
+      1. Three set_at calls per match build 3 distinct WhereBytes around the same coord. If the fuser/query only reads one, the other two are pure overhead. Pre-comp P1 dead-capture elim (TermFlowGraph) is the fix; not wired yet.
+      2. _where_bytes and _string_observations writes are provenance meta, not query data. They can be deferred off the parse-time hot path entirely.
+      3. seen_* is still worth keeping — synthetic fixture has 99.95% intern_string hit rate (15 unique strings out of 20k), dropping it would force 20k more writes to pending_core. Net worse.
+    </note>
+  </topic>
 </llm-zone>
 
 rules have enough syntax to equal this select + join, but we have no order/where/limit/group by hmmm. 
