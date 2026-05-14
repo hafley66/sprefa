@@ -5,10 +5,11 @@
 //! seen-set per id family. Cold tier is the underlying FactStore;
 //! lookups miss-rehydrate through the LRU.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
+use dashmap::DashSet;
 use effect_runtime::v2::FactStore;
 use lru::LruCache;
 
@@ -40,22 +41,67 @@ fn norm(s: &str) -> String {
         .collect()
 }
 
+const LRU_SHARDS: usize = 16;
+
+pub struct StripedLru<K: std::hash::Hash + Eq, V> {
+    shards: Vec<Mutex<LruCache<K, V>>>,
+}
+
+impl<K: std::hash::Hash + Eq, V> StripedLru<K, V> {
+    fn new(total_cap: usize) -> Self {
+        let per_shard = NonZeroUsize::new((total_cap / LRU_SHARDS).max(1)).unwrap();
+        let mut shards = Vec::with_capacity(LRU_SHARDS);
+        for _ in 0..LRU_SHARDS {
+            shards.push(Mutex::new(LruCache::new(per_shard)));
+        }
+        Self { shards }
+    }
+
+    fn shard(&self, k: &K) -> &Mutex<LruCache<K, V>> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let mut h = DefaultHasher::new();
+        k.hash(&mut h);
+        &self.shards[(h.finish() as usize) % LRU_SHARDS]
+    }
+
+    pub fn get(&self, k: &K) -> Option<V>
+    where
+        V: Clone,
+    {
+        self.shard(k).lock().unwrap().get(k).cloned()
+    }
+
+    pub fn put(&self, k: K, v: V) {
+        self.shard(&k).lock().unwrap().put(k, v);
+    }
+
+    /// Insert only if the key is not already present (skip the value
+    /// construction allocation when it's there).
+    pub fn put_if_absent_with(&self, k: K, v: impl FnOnce() -> V) {
+        let mut lru = self.shard(&k).lock().unwrap();
+        if lru.get(&k).is_none() {
+            lru.put(k, v());
+        }
+    }
+}
+
 pub struct SprfStore {
     inner: Arc<dyn FactStore<Cursor>>,
-    strings_lru: Mutex<LruCache<StringId, Arc<str>>>,
-    files_lru: Mutex<LruCache<FileId, ([u8; 32], Arc<str>)>>,
-    refs_lru: Mutex<LruCache<Ref, crate::Coord>>,
-    where_bytes_lru: Mutex<LruCache<WhereBytesId, WhereBytes>>,
-    repos_lru: Mutex<LruCache<RepoId, (Arc<str>, Arc<str>)>>,
-    revs_lru: Mutex<LruCache<RevId, (RepoId, Arc<str>, i64)>>,
-    paths_lru: Mutex<LruCache<PathId, (RepoId, RevId, FileId, Arc<str>)>>,
-    seen_strings: Mutex<HashSet<u64>>,
-    seen_files: Mutex<HashSet<u64>>,
-    seen_refs: Mutex<HashSet<u64>>,
-    seen_repos: Mutex<HashSet<u64>>,
-    seen_revs: Mutex<HashSet<u64>>,
-    seen_paths: Mutex<HashSet<u64>>,
-    seen_string_observations: Mutex<HashSet<u64>>,
+    strings_lru: StripedLru<StringId, Arc<str>>,
+    files_lru: StripedLru<FileId, ([u8; 32], Arc<str>)>,
+    refs_lru: StripedLru<Ref, crate::Coord>,
+    where_bytes_lru: StripedLru<WhereBytesId, WhereBytes>,
+    repos_lru: StripedLru<RepoId, (Arc<str>, Arc<str>)>,
+    revs_lru: StripedLru<RevId, (RepoId, Arc<str>, i64)>,
+    paths_lru: StripedLru<PathId, (RepoId, RevId, FileId, Arc<str>)>,
+    seen_strings: DashSet<u64>,
+    seen_files: DashSet<u64>,
+    seen_refs: DashSet<u64>,
+    seen_repos: DashSet<u64>,
+    seen_revs: DashSet<u64>,
+    seen_paths: DashSet<u64>,
+    seen_string_observations: DashSet<u64>,
     pending_core: Mutex<HashMap<&'static str, Vec<Arc<Cursor>>>>,
 }
 
@@ -75,23 +121,22 @@ impl SprfStore {
         files_cap: usize,
         refs_cap: usize,
     ) -> Arc<Self> {
-        let nz = |n: usize| NonZeroUsize::new(n.max(1)).unwrap();
         let store = Arc::new(Self {
             inner,
-            strings_lru: Mutex::new(LruCache::new(nz(strings_cap))),
-            files_lru: Mutex::new(LruCache::new(nz(files_cap))),
-            refs_lru: Mutex::new(LruCache::new(nz(refs_cap))),
-            where_bytes_lru: Mutex::new(LruCache::new(nz(refs_cap))),
-            repos_lru: Mutex::new(LruCache::new(nz(DEFAULT_REPOS_CAP))),
-            revs_lru: Mutex::new(LruCache::new(nz(DEFAULT_REVS_CAP))),
-            paths_lru: Mutex::new(LruCache::new(nz(DEFAULT_PATHS_CAP))),
-            seen_strings: Mutex::new(HashSet::new()),
-            seen_files: Mutex::new(HashSet::new()),
-            seen_refs: Mutex::new(HashSet::new()),
-            seen_repos: Mutex::new(HashSet::new()),
-            seen_revs: Mutex::new(HashSet::new()),
-            seen_paths: Mutex::new(HashSet::new()),
-            seen_string_observations: Mutex::new(HashSet::new()),
+            strings_lru: StripedLru::new(strings_cap),
+            files_lru: StripedLru::new(files_cap),
+            refs_lru: StripedLru::new(refs_cap),
+            where_bytes_lru: StripedLru::new(refs_cap),
+            repos_lru: StripedLru::new(DEFAULT_REPOS_CAP),
+            revs_lru: StripedLru::new(DEFAULT_REVS_CAP),
+            paths_lru: StripedLru::new(DEFAULT_PATHS_CAP),
+            seen_strings: DashSet::new(),
+            seen_files: DashSet::new(),
+            seen_refs: DashSet::new(),
+            seen_repos: DashSet::new(),
+            seen_revs: DashSet::new(),
+            seen_paths: DashSet::new(),
+            seen_string_observations: DashSet::new(),
             pending_core: Mutex::new(HashMap::new()),
         });
         store.declare_core_tables();
@@ -163,11 +208,8 @@ impl SprfStore {
         row.set("content", "");
         row.set("norm", "");
         self.insert_core(STRINGS_TABLE, row);
-        self.seen_strings.lock().unwrap().insert(0);
-        self.strings_lru
-            .lock()
-            .unwrap()
-            .put(StringId::EMPTY, Arc::<str>::from(""));
+        self.seen_strings.insert(0);
+        self.strings_lru.put(StringId::EMPTY, Arc::<str>::from(""));
 
         // _files(0) = synthetic
         let mut row = Cursor::default();
@@ -176,12 +218,9 @@ impl SprfStore {
         row.set("path", "\u{2205}");
         row.set("size", "0");
         self.insert_core(FILES_TABLE, row);
-        self.seen_files.lock().unwrap().insert(0);
+        self.seen_files.insert(0);
         let synth_hash = [0u8; 32];
-        self.files_lru
-            .lock()
-            .unwrap()
-            .put(0 as FileId, (synth_hash, Arc::<str>::from("\u{2205}")));
+        self.files_lru.put(0 as FileId, (synth_hash, Arc::<str>::from("\u{2205}")));
 
         // _where_bytes(0) = synthetic
         let mut row = Cursor::default();
@@ -193,15 +232,9 @@ impl SprfStore {
         row.set("repo", "0");
         row.set("rev", "0");
         self.insert_core(WHERE_BYTES_TABLE, row);
-        self.seen_refs.lock().unwrap().insert(0);
-        self.refs_lru
-            .lock()
-            .unwrap()
-            .put(Ref::SYNTHETIC, crate::Coord::default());
-        self.where_bytes_lru
-            .lock()
-            .unwrap()
-            .put(WhereBytesId::SYNTHETIC, WhereBytes::default());
+        self.seen_refs.insert(0);
+        self.refs_lru.put(Ref::SYNTHETIC, crate::Coord::default());
+        self.where_bytes_lru.put(WhereBytesId::SYNTHETIC, WhereBytes::default());
 
         // _repos(0) = empty slug + remote
         let mut row = Cursor::default();
@@ -209,11 +242,8 @@ impl SprfStore {
         row.set("slug", "");
         row.set("remote", "");
         self.insert_core(REPOS_TABLE, row);
-        self.seen_repos.lock().unwrap().insert(0);
-        self.repos_lru
-            .lock()
-            .unwrap()
-            .put(0 as RepoId, (Arc::<str>::from(""), Arc::<str>::from("")));
+        self.seen_repos.insert(0);
+        self.repos_lru.put(0 as RepoId, (Arc::<str>::from(""), Arc::<str>::from("")));
 
         // _revs(0) = repo_id=0, empty oid, ts=0
         let mut row = Cursor::default();
@@ -222,11 +252,8 @@ impl SprfStore {
         row.set("oid", "");
         row.set("ts", "0");
         self.insert_core(REVS_TABLE, row);
-        self.seen_revs.lock().unwrap().insert(0);
-        self.revs_lru
-            .lock()
-            .unwrap()
-            .put(0 as RevId, (0 as RepoId, Arc::<str>::from(""), 0i64));
+        self.seen_revs.insert(0);
+        self.revs_lru.put(0 as RevId, (0 as RepoId, Arc::<str>::from(""), 0i64));
 
         // _paths(0) = synthetic
         let mut row = Cursor::default();
@@ -236,8 +263,8 @@ impl SprfStore {
         row.set("file_id", "0");
         row.set("path", "\u{2205}");
         self.insert_core(PATHS_TABLE, row);
-        self.seen_paths.lock().unwrap().insert(0);
-        self.paths_lru.lock().unwrap().put(
+        self.seen_paths.insert(0);
+        self.paths_lru.put(
             0 as PathId,
             (
                 0 as RepoId,
@@ -255,19 +282,17 @@ impl SprfStore {
         row.set("context_kind", "");
         row.set("context_id", "0");
         self.insert_core(STRING_OBSERVATIONS_TABLE, row);
-        self.seen_string_observations.lock().unwrap().insert(0);
+        self.seen_string_observations.insert(0);
     }
 
     // ── strings ──────────────────────────────────────────────────────
 
     pub fn intern_string(&self, s: &str) -> StringId {
         let id = StringId::of(s);
-        if !self.seen_strings.lock().unwrap().insert(id.0) {
+        if !self.seen_strings.insert(id.0) {
             // Already in cold storage (or sentinel). Touch LRU on cache hit.
-            let mut lru = self.strings_lru.lock().unwrap();
-            if lru.get(&id).is_none() {
-                lru.put(id, Arc::<str>::from(s));
-            }
+            self.strings_lru
+                .put_if_absent_with(id, || Arc::<str>::from(s));
             return id;
         }
         let mut row = Cursor::default();
@@ -275,15 +300,12 @@ impl SprfStore {
         row.set("content", s);
         row.set("norm", norm(s));
         self.insert_core(STRINGS_TABLE, row);
-        self.strings_lru
-            .lock()
-            .unwrap()
-            .put(id, Arc::<str>::from(s));
+        self.strings_lru.put(id, Arc::<str>::from(s));
         id
     }
 
     pub fn lookup_string(&self, id: StringId) -> Option<Arc<str>> {
-        if let Some(arc) = self.strings_lru.lock().unwrap().get(&id) {
+        if let Some(arc) = self.strings_lru.get(&id) {
             return Some(arc.clone());
         }
         let id_str = id.0.to_string();
@@ -292,7 +314,7 @@ impl SprfStore {
             if row.get("id").as_deref() == Some(id_str.as_str()) {
                 let content = row.get("content").unwrap_or("").to_string();
                 let arc: Arc<str> = Arc::<str>::from(content);
-                self.strings_lru.lock().unwrap().put(id, arc.clone());
+                self.strings_lru.put(id, arc.clone());
                 return Some(arc);
             }
         }
@@ -305,11 +327,9 @@ impl SprfStore {
         let id = crate::file_id_of(content);
         let full_hash = blake3::hash(content);
         let hash_bytes = *full_hash.as_bytes();
-        if !self.seen_files.lock().unwrap().insert(id) {
-            let mut lru = self.files_lru.lock().unwrap();
-            if lru.get(&id).is_none() {
-                lru.put(id, (hash_bytes, Arc::<str>::from(first_path)));
-            }
+        if !self.seen_files.insert(id) {
+            self.files_lru
+                .put_if_absent_with(id, || (hash_bytes, Arc::<str>::from(first_path)));
             return id;
         }
         let mut row = Cursor::default();
@@ -318,15 +338,12 @@ impl SprfStore {
         row.set("path", first_path);
         row.set("size", content.len().to_string());
         self.insert_core(FILES_TABLE, row);
-        self.files_lru
-            .lock()
-            .unwrap()
-            .put(id, (hash_bytes, Arc::<str>::from(first_path)));
+        self.files_lru.put(id, (hash_bytes, Arc::<str>::from(first_path)));
         id
     }
 
     pub fn lookup_file(&self, id: FileId) -> Option<([u8; 32], Arc<str>)> {
-        if let Some(meta) = self.files_lru.lock().unwrap().get(&id) {
+        if let Some(meta) = self.files_lru.get(&id) {
             return Some(meta.clone());
         }
         let id_str = id.to_string();
@@ -343,7 +360,7 @@ impl SprfStore {
                     }
                 }
                 let meta = (hash, Arc::<str>::from(path));
-                self.files_lru.lock().unwrap().put(id, meta.clone());
+                self.files_lru.put(id, meta.clone());
                 return Some(meta);
             }
         }
@@ -354,16 +371,10 @@ impl SprfStore {
 
     pub fn intern_ref(&self, c: crate::Coord) -> Ref {
         let r = Ref::of(c);
-        if !self.seen_refs.lock().unwrap().insert(r.0) {
-            let mut lru = self.refs_lru.lock().unwrap();
-            if lru.get(&r).is_none() {
-                lru.put(r, c);
-            }
-            let wb = WhereBytes::from(c);
-            let mut wb_lru = self.where_bytes_lru.lock().unwrap();
-            if wb_lru.get(&WhereBytesId::from(r)).is_none() {
-                wb_lru.put(WhereBytesId::from(r), wb);
-            }
+        if !self.seen_refs.insert(r.0) {
+            self.refs_lru.put_if_absent_with(r, || c);
+            self.where_bytes_lru
+                .put_if_absent_with(WhereBytesId::from(r), || WhereBytes::from(c));
             return r;
         }
         let mut row = Cursor::default();
@@ -375,25 +386,16 @@ impl SprfStore {
         row.set("repo", c.repo.to_string());
         row.set("rev", c.rev.to_string());
         self.insert_core(WHERE_BYTES_TABLE, row);
-        self.refs_lru.lock().unwrap().put(r, c);
-        self.where_bytes_lru
-            .lock()
-            .unwrap()
-            .put(WhereBytesId::from(r), WhereBytes::from(c));
+        self.refs_lru.put(r, c);
+        self.where_bytes_lru.put(WhereBytesId::from(r), WhereBytes::from(c));
         r
     }
 
     pub fn intern_where_bytes(&self, w: WhereBytes) -> WhereBytesId {
         let r = WhereBytesId::of(w);
-        if !self.seen_refs.lock().unwrap().insert(r.0) {
-            let mut lru = self.refs_lru.lock().unwrap();
-            if lru.get(&Ref::from(r)).is_none() {
-                lru.put(Ref::from(r), w.into());
-            }
-            let mut wb_lru = self.where_bytes_lru.lock().unwrap();
-            if wb_lru.get(&r).is_none() {
-                wb_lru.put(r, w);
-            }
+        if !self.seen_refs.insert(r.0) {
+            self.refs_lru.put_if_absent_with(Ref::from(r), || w.into());
+            self.where_bytes_lru.put_if_absent_with(r, || w);
             return r;
         }
         let mut row = Cursor::default();
@@ -405,14 +407,14 @@ impl SprfStore {
         row.set("repo", w.repo.to_string());
         row.set("rev", w.rev.to_string());
         self.insert_core(WHERE_BYTES_TABLE, row);
-        self.refs_lru.lock().unwrap().put(Ref::from(r), w.into());
-        self.where_bytes_lru.lock().unwrap().put(r, w);
+        self.refs_lru.put(Ref::from(r), w.into());
+        self.where_bytes_lru.put(r, w);
         r
     }
 
     pub fn coord_of(&self, r: Ref) -> Option<crate::Coord> {
-        if let Some(c) = self.refs_lru.lock().unwrap().get(&r) {
-            return Some(*c);
+        if let Some(c) = self.refs_lru.get(&r) {
+            return Some(c);
         }
         let id_str = r.0.to_string();
         self.flush();
@@ -425,7 +427,7 @@ impl SprfStore {
                     lo: row.get("lo").unwrap_or("0").parse().unwrap_or(0),
                     hi: row.get("hi").unwrap_or("0").parse().unwrap_or(0),
                 };
-                self.refs_lru.lock().unwrap().put(r, c);
+                self.refs_lru.put(r, c);
                 return Some(c);
             }
         }
@@ -433,8 +435,8 @@ impl SprfStore {
     }
 
     pub fn where_bytes_of(&self, r: WhereBytesId) -> Option<WhereBytes> {
-        if let Some(w) = self.where_bytes_lru.lock().unwrap().get(&r) {
-            return Some(*w);
+        if let Some(w) = self.where_bytes_lru.get(&r) {
+            return Some(w);
         }
         let id_str = r.0.to_string();
         self.flush();
@@ -448,8 +450,8 @@ impl SprfStore {
                     lo: row.get("lo").unwrap_or("0").parse().unwrap_or(0),
                     hi: row.get("hi").unwrap_or("0").parse().unwrap_or(0),
                 };
-                self.refs_lru.lock().unwrap().put(Ref::from(r), w.into());
-                self.where_bytes_lru.lock().unwrap().put(r, w);
+                self.refs_lru.put(Ref::from(r), w.into());
+                self.where_bytes_lru.put(r, w);
                 return Some(w);
             }
         }
@@ -476,7 +478,7 @@ impl SprfStore {
         h.update(&context_id.to_be_bytes());
         let bytes = h.finalize();
         let id = u64::from_be_bytes(bytes.as_bytes()[..8].try_into().unwrap());
-        if !self.seen_string_observations.lock().unwrap().insert(id) {
+        if !self.seen_string_observations.insert(id) {
             return id;
         }
 
@@ -506,11 +508,10 @@ impl SprfStore {
         h.update(remote.as_bytes());
         let bytes = h.finalize();
         let id = u32::from_be_bytes(bytes.as_bytes()[..4].try_into().unwrap());
-        if !self.seen_repos.lock().unwrap().insert(id as u64) {
-            let mut lru = self.repos_lru.lock().unwrap();
-            if lru.get(&id).is_none() {
-                lru.put(id, (Arc::<str>::from(slug), Arc::<str>::from(remote)));
-            }
+        if !self.seen_repos.insert(id as u64) {
+            self.repos_lru.put_if_absent_with(id, || {
+                (Arc::<str>::from(slug), Arc::<str>::from(remote))
+            });
             return id;
         }
         let mut row = Cursor::default();
@@ -518,15 +519,12 @@ impl SprfStore {
         row.set("slug", slug);
         row.set("remote", remote);
         self.insert_core(REPOS_TABLE, row);
-        self.repos_lru
-            .lock()
-            .unwrap()
-            .put(id, (Arc::<str>::from(slug), Arc::<str>::from(remote)));
+        self.repos_lru.put(id, (Arc::<str>::from(slug), Arc::<str>::from(remote)));
         id
     }
 
     pub fn lookup_repo(&self, id: RepoId) -> Option<(Arc<str>, Arc<str>)> {
-        if let Some(meta) = self.repos_lru.lock().unwrap().get(&id) {
+        if let Some(meta) = self.repos_lru.get(&id) {
             return Some(meta.clone());
         }
         let id_str = id.to_string();
@@ -536,7 +534,7 @@ impl SprfStore {
                 let slug = row.get("slug").unwrap_or("").to_string();
                 let remote = row.get("remote").unwrap_or("").to_string();
                 let meta = (Arc::<str>::from(slug), Arc::<str>::from(remote));
-                self.repos_lru.lock().unwrap().put(id, meta.clone());
+                self.repos_lru.put(id, meta.clone());
                 return Some(meta);
             }
         }
@@ -558,11 +556,9 @@ impl SprfStore {
         h.update(oid.as_bytes());
         let bytes = h.finalize();
         let id = u32::from_be_bytes(bytes.as_bytes()[..4].try_into().unwrap());
-        if !self.seen_revs.lock().unwrap().insert(id as u64) {
-            let mut lru = self.revs_lru.lock().unwrap();
-            if lru.get(&id).is_none() {
-                lru.put(id, (repo, Arc::<str>::from(oid), ts));
-            }
+        if !self.seen_revs.insert(id as u64) {
+            self.revs_lru
+                .put_if_absent_with(id, || (repo, Arc::<str>::from(oid), ts));
             return id;
         }
         let mut row = Cursor::default();
@@ -571,15 +567,12 @@ impl SprfStore {
         row.set("oid", oid);
         row.set("ts", ts.to_string());
         self.insert_core(REVS_TABLE, row);
-        self.revs_lru
-            .lock()
-            .unwrap()
-            .put(id, (repo, Arc::<str>::from(oid), ts));
+        self.revs_lru.put(id, (repo, Arc::<str>::from(oid), ts));
         id
     }
 
     pub fn lookup_rev(&self, id: RevId) -> Option<(RepoId, Arc<str>, i64)> {
-        if let Some(meta) = self.revs_lru.lock().unwrap().get(&id) {
+        if let Some(meta) = self.revs_lru.get(&id) {
             return Some(meta.clone());
         }
         let id_str = id.to_string();
@@ -590,7 +583,7 @@ impl SprfStore {
                 let oid = row.get("oid").unwrap_or("").to_string();
                 let ts = row.get("ts").unwrap_or("0").parse().unwrap_or(0);
                 let meta = (repo, Arc::<str>::from(oid), ts);
-                self.revs_lru.lock().unwrap().put(id, meta.clone());
+                self.revs_lru.put(id, meta.clone());
                 return Some(meta);
             }
         }
@@ -614,11 +607,9 @@ impl SprfStore {
         h.update(path.as_bytes());
         let bytes = h.finalize();
         let id = u64::from_be_bytes(bytes.as_bytes()[..8].try_into().unwrap());
-        if !self.seen_paths.lock().unwrap().insert(id) {
-            let mut lru = self.paths_lru.lock().unwrap();
-            if lru.get(&id).is_none() {
-                lru.put(id, (repo, rev, file, Arc::<str>::from(path)));
-            }
+        if !self.seen_paths.insert(id) {
+            self.paths_lru
+                .put_if_absent_with(id, || (repo, rev, file, Arc::<str>::from(path)));
             return id;
         }
         let mut row = Cursor::default();
@@ -628,10 +619,7 @@ impl SprfStore {
         row.set("file_id", file.to_string());
         row.set("path", path);
         self.insert_core(PATHS_TABLE, row);
-        self.paths_lru
-            .lock()
-            .unwrap()
-            .put(id, (repo, rev, file, Arc::<str>::from(path)));
+        self.paths_lru.put(id, (repo, rev, file, Arc::<str>::from(path)));
         id
     }
 
