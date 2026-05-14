@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sprefa LSP retraction runtime</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #53606f;
+      --line: #d6dde6;
+      --paper: #fbfcfe;
+      --panel: #ffffff;
+      --blue: #2563eb;
+      --green: #11835b;
+      --red: #c2410c;
+      --gold: #9a6a00;
+      --violet: #6d28d9;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, #f7fbff 0%, #fffaf3 46%, #f7fff9 100%);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 36px 0 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 22px;
+      align-items: end;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(34px, 5vw, 64px);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0; color: var(--muted); max-width: 72ch; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #eef4ff;
+      padding: 2px 5px;
+      border-radius: 5px;
+      color: #193b7a;
+    }
+
+    .hero-card, .panel, .layer, .policy, .edge {
+      background: rgba(255,255,255,0.86);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(33, 43, 54, 0.06);
+    }
+
+    .hero-card {
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .equation {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #101827;
+      color: #d6e4ff;
+      border-radius: 8px;
+      padding: 14px;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .panel {
+      padding: 18px;
+    }
+
+    .span-7 { grid-column: span 7; }
+    .span-5 { grid-column: span 5; }
+    .span-12 { grid-column: span 12; }
+
+    .layers {
+      display: grid;
+      gap: 10px;
+    }
+
+    .layer {
+      display: grid;
+      grid-template-columns: 58px 1fr;
+      gap: 12px;
+      padding: 12px;
+      align-items: start;
+    }
+
+    .num {
+      font: 700 18px ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--blue);
+    }
+
+    .layer strong, .policy strong, .edge strong {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 16px;
+    }
+
+    .tag {
+      display: inline-block;
+      margin-bottom: 6px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #eef4ff;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .edge {
+      padding: 12px;
+      min-height: 116px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .edge::after {
+      content: "";
+      position: absolute;
+      right: 12px;
+      bottom: 10px;
+      width: 44px;
+      height: 4px;
+      background: linear-gradient(90deg, var(--green), var(--blue));
+      border-radius: 999px;
+    }
+
+    .policies {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+
+    .policy {
+      padding: 12px;
+      min-height: 176px;
+      border-top: 4px solid var(--green);
+    }
+
+    .policy:nth-child(2) { border-top-color: var(--blue); }
+    .policy:nth-child(3) { border-top-color: var(--gold); }
+    .policy:nth-child(4) { border-top-color: var(--red); }
+    .policy:nth-child(5) { border-top-color: var(--violet); }
+
+    .small-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      margin-top: 10px;
+    }
+
+    .nested {
+      display: grid;
+      gap: 12px;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    ul { margin: 10px 0 0 20px; padding: 0; color: var(--muted); }
+    li { margin: 5px 0; }
+
+    @media (max-width: 900px) {
+      header, .flow, .policies { grid-template-columns: 1fr; }
+      .span-7, .span-5, .span-12 { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>LSP retraction runtime</h1>
+        <p>A generated map for the v4 design: content keys identify rows, owner keys identify output slices, dirty deps rerun only subscribed owners, and visible deltas decide whether downstream work wakes.</p>
+      </div>
+      <aside class="hero-card">
+        <strong>Core invariant</strong>
+        <div class="equation">owner_key = H(pipe_hash, instance_id, depth, op_path, input_key)
+row_key   = H(table_name, canonical_row_payload)
+visible   = support_count(table_name, row_key) &gt; 0</div>
+      </aside>
+    </header>
+
+    <section class="grid">
+      <div class="panel span-7">
+        <h2>Foundation Layers</h2>
+        <div class="layers">
+          <article class="layer">
+            <div class="num">01</div>
+            <div>
+              <span class="tag">foundation</span>
+              <strong>Content ids</strong>
+              <p>SQLite rows already get content-derived _id values. That gives the reconciler a stable row key, independent of insertion order.</p>
+            </div>
+          </article>
+          <article class="layer">
+            <div class="num">02</div>
+            <div>
+              <span class="tag">missing core</span>
+              <strong>Owner slices</strong>
+              <p>Every materialized op needs an owner key: pipe hash, instance id, depth, op path, and input key.</p>
+            </div>
+          </article>
+          <article class="layer">
+            <div class="num">03</div>
+            <div>
+              <span class="tag">missing core</span>
+              <strong>Replace outputs</strong>
+              <p>Rule rows, diagnostics, hovers, mounted SQL, git diff rows, and poll rows should all write through one replace-slice API.</p>
+            </div>
+          </article>
+          <article class="layer">
+            <div class="num">04</div>
+            <div>
+              <span class="tag">partly live</span>
+              <strong>Dirty deps</strong>
+              <p>Reads park continuations on table, file, git, poll, or external dirty keys. Dirty keys rerun owners, not whole worlds.</p>
+            </div>
+          </article>
+          <article class="layer">
+            <div class="num">05</div>
+            <div>
+              <span class="tag">core bailout</span>
+              <strong>Visible delta</strong>
+              <p>If a rerun produces the same content row ids, no downstream dirty event fires.</p>
+            </div>
+          </article>
+          <article class="layer">
+            <div class="num">06</div>
+            <div>
+              <span class="tag">runtime loop</span>
+              <strong>Completion boundary</strong>
+              <p>A run drains immediate work until only parked subscriptions remain. Watchers and polls schedule future epochs.</p>
+            </div>
+          </article>
+
+        </div>
+      </div>
+
+      <div class="panel span-5">
+        <h2>Replace Slice API</h2>
+        <div class="nested">
+          <details open>
+            <summary>Type signatures</summary>
+            <div class="equation">replace_outputs(owner, table, rows) -&gt; VisibleDelta
+VisibleDelta { inserted_row_ids, retracted_row_ids }</div>
+          </details>
+          <details open>
+            <summary>Instance timeline</summary>
+            <ul>
+              <li>LSP save or watcher emits a dirty key.</li>
+              <li>Parked rows subscribed to that key rerun.</li>
+              <li>Each materialized op writes a new output slice for the same owner.</li>
+              <li>Store diffs old support rows against new support rows.</li>
+              <li>Empty visible delta stops propagation.</li>
+            </ul>
+          </details>
+          <details>
+            <summary>Storage reads and writes</summary>
+            <ul>
+              <li>Read old supports by owner key.</li>
+              <li>Hash new output rows by content.</li>
+              <li>Insert added supports and visible rows idempotently.</li>
+              <li>Delete removed supports.</li>
+              <li>Delete visible rows whose support count reaches zero.</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+
+      <div class="panel span-12">
+        <h2>LSP Save Flow</h2>
+        <div class="flow">
+          <article class="edge">
+            <strong>LSP save -> file dirty</strong>
+            <p>save dispatches FILE_DOMAIN for the changed path</p>
+          </article>
+          <article class="edge">
+            <strong>file dirty -> read rerun</strong>
+            <p>parked read continuations wake by file key</p>
+          </article>
+          <article class="edge">
+            <strong>read rerun -> owner rerun</strong>
+            <p>stable owner key runs against new bytes</p>
+          </article>
+          <article class="edge">
+            <strong>owner rerun -> replace outputs</strong>
+            <p>old owner slice is diffed against new rows</p>
+          </article>
+          <article class="edge">
+            <strong>replace outputs -> visible delta</strong>
+            <p>shared rows keep support; stale rows retract</p>
+          </article>
+          <article class="edge">
+            <strong>visible delta -> downstream wake</strong>
+            <p>only real visible changes publish table or row dirty</p>
+          </article>
+
+        </div>
+      </div>
+
+      <div class="panel span-12">
+        <h2>RxJS And Reconciler Policy</h2>
+        <div class="policies">
+          <article class="policy">
+            <strong>Pure memo</strong>
+            <div class="small-label">rxjs shape</div>
+            <p><code>map</code></p>
+            <div class="small-label">owner identity</div>
+            <p>keyed by component identity and input content</p>
+            <div class="small-label">propagation</div>
+            <p>cache hit returns prior node; no materialized rows</p>
+          </article>
+          <article class="policy">
+            <strong>Replace slice</strong>
+            <div class="small-label">rxjs shape</div>
+            <p><code>switchMap</code></p>
+            <div class="small-label">owner identity</div>
+            <p>stable owner key per op and input</p>
+            <div class="small-label">propagation</div>
+            <p>new output set replaces old output set</p>
+          </article>
+          <article class="policy">
+            <strong>Append log</strong>
+            <div class="small-label">rxjs shape</div>
+            <p><code>mergeMap</code></p>
+            <div class="small-label">owner identity</div>
+            <p>owner key includes event id or tick id</p>
+            <div class="small-label">propagation</div>
+            <p>old output remains visible</p>
+          </article>
+          <article class="policy">
+            <strong>External effect</strong>
+            <div class="small-label">rxjs shape</div>
+            <p><code>tap</code></p>
+            <div class="small-label">owner identity</div>
+            <p>not cached unless effect declares idempotence</p>
+            <div class="small-label">propagation</div>
+            <p>writes dirty keys when external state changes</p>
+          </article>
+          <article class="policy">
+            <strong>No-op rerun</strong>
+            <div class="small-label">rxjs shape</div>
+            <p><code>distinctUntilChanged</code></p>
+            <div class="small-label">owner identity</div>
+            <p>same owner plus same row ids</p>
+            <div class="small-label">propagation</div>
+            <p>no visible delta, no downstream wake</p>
+          </article>
+
+        </div>
+      </div>
+
+      <div class="panel span-12">
+        <h2>Unstaged HEAD Rule Shape</h2>
+        <p>The git diff source should be a materialized relation. Its owner key stays stable for a repo and mode, so changing the unstaged file set replaces the relation slice.</p>
+        <div class="equation">rule(:unstaged_head_file, FS?, STATUS?);
+
+git.diff(:unstaged)
+  &gt; unstaged_head_file(FS, STATUS);
+
+unstaged_head_file?(FS?, STATUS?)
+  &gt; path&#96;&#36;{FS}&#96;
+  &gt; read
+  &gt; ast[rs](...)
+  &gt; lsp[warn](message = &#96;unstaged change: &#36;{FS}&#96;);</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
