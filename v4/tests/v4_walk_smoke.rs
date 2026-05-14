@@ -80,8 +80,8 @@ fn walk_smoke_rule_str() {
     );
     assert_eq!(pipes.len(), 1, "expected one pipe");
 
-    let pipe = pipes.into_iter().next().unwrap();
-    let inst = pipe.into_instance();
+    let fused = pipes.into_iter().next().unwrap();
+    let inst = fused.into_pipe().into_instance();
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     expand(
         &inst,
@@ -130,7 +130,7 @@ fn walk_smoke_rule_str() {
     assert_eq!(pipes2.len(), 1, "decl-only lowers to one (empty) pipe");
 
     let pipe2 = pipes2.into_iter().next().unwrap();
-    let inst2 = pipe2.into_instance();
+    let inst2 = pipe2.into_pipe().into_instance();
     let q2: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     expand(
         &inst2,

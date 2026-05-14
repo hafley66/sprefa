@@ -1,0 +1,23 @@
+# bench/linux-join.sprf — full-SQL fused join over a real linux tree.
+#
+# Targets the same shape as linux.sprf but adds a self-join derived
+# rule (`hit_pairs`) so the fuser can demonstrate full-SQL kind
+# end-to-end. Source-scan portion (`hits`) is streamed-Rust; the join
+# rule lifts entirely to SQL.
+#
+# Targets:
+#   wall_ms                       < 8000
+#   rss_peak_MB                   < 300
+#   sqlite_insert_exec_calls      reflects batched INSERT…SELECT
+#
+# Run with:
+#   cargo run --release --bin sprefa-run -- v4/bench/linux-join.sprf \
+#     --root .bench/linux --no-show-rows
+
+rule(:hits, FS?, LO?) {
+  fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)`
+};
+
+rule(:hit_pairs, FS?, LO?, OTHER_LO?) {
+  hits(FS?, LO?) > hits(FS?, OTHER_LO?) > where(${LO} != ${OTHER_LO})
+};

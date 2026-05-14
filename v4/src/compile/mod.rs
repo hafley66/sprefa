@@ -11,7 +11,10 @@
 
 pub mod ast;
 pub mod binding_graph;
+pub mod fuser;
 pub mod lower;
 pub mod parse;
 pub mod probe_wrap;
 pub mod walk;
+
+pub use fuser::{FusedRule, FusedKind, TransactionKind};

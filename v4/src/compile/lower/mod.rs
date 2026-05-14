@@ -8,10 +8,50 @@
 //!   ops.rs      — all OperatorDef wrappers in one file (str, rule, fact_read…).
 
 pub mod ctx;
+pub mod liftable;
 pub mod op_def;
 pub mod ops;
 pub mod registry;
 pub mod value;
+
+pub use liftable::{stream_noop, Col, IdKind, Liftable, Op, StreamFn, TermBind};
+
+use rusqlite::types::ValueRef;
+
+/// Compute the canonical 32-byte blake3 id for a row, identical to the
+/// `sprf_blake3_id` SQL UDF. Exposed for tests that need to assert
+/// bytewise equality between the Rust and SQL paths.
+pub fn blake3_id_for_test(table: &str, cols: &[i64]) -> Vec<u8> {
+    let mut h = blake3::Hasher::new();
+    h.update(table.as_bytes());
+    h.update(b"\0");
+    for v in cols {
+        h.update(&v.to_le_bytes());
+        h.update(b"\0");
+    }
+    h.finalize().as_bytes().to_vec()
+}
+
+/// Same routine the UDF uses internally — accepts the raw `ValueRef`
+/// stream the SQLite callback hands us so integer / blob / text inputs
+/// hash identically across the surface (`Rust → bytes`,
+/// `SQL → bytes`).
+pub fn blake3_id_from_sql_args(table: &str, args: &[ValueRef<'_>]) -> Vec<u8> {
+    let mut h = blake3::Hasher::new();
+    h.update(table.as_bytes());
+    h.update(b"\0");
+    for v in args {
+        match v {
+            ValueRef::Null => h.update(b"\0"),
+            ValueRef::Integer(i) => h.update(&i.to_le_bytes()),
+            ValueRef::Real(f) => h.update(&f.to_le_bytes()),
+            ValueRef::Text(s) => h.update(s),
+            ValueRef::Blob(b) => h.update(b),
+        };
+        h.update(b"\0");
+    }
+    h.finalize().as_bytes().to_vec()
+}
 
 pub use crate::pipeline::{str_pipe, StrConstComponent};
 pub use ctx::{LowerCtx, LowerError};
@@ -37,6 +77,8 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::TermReadDef));
     r.register(Arc::new(ops::TermBindDef));
     r.register(Arc::new(ops::FactWriteDef));
+    r.register(Arc::new(ops::TagDef));
+    r.register(Arc::new(ops::WhereDef));
     r.register(Arc::new(ops::NextDef));
     r.register(Arc::new(ops::NextQDef));
     r.register(Arc::new(ops::VoidDef));

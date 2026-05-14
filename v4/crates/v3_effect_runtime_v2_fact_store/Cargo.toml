@@ -1,0 +1,15 @@
+[package]
+name = "v3_effect_runtime_v2_fact_store"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Thin re-export wrapper so tests can refer to the sqlite fact-store
+# surface through a self-describing crate name without having to dig
+# `effect_runtime::v2::fact_store` out at every call site.
+
+[dependencies]
+effect_runtime = { path = "../../../v3/crates/effect_runtime", default-features = false, features = ["sqlite"] }
+
+[lib]
+path = "src/lib.rs"

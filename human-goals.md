@@ -471,6 +471,188 @@ OK, so wait. I have not read everything that you have sent but to give you an id
   </topic>
 </llm-zone>
 
+<llm-zone source="claude-session-2026-05-14" status="human-goal-capture">
+  <topic name="code-invariant-graph-vision" llm-tags="vision query fact watcher reactivity cross-rev local daemon ai">
+    <note>The full project, articulated in one line: a code invariant query/fact/watcher/reactivity graph efficient enough to run local, notifying when a move would break things or projecting what it will affect, with AI as a participant for understanding what links to what, why, and when in git time/space.</note>
+    <note>Four concepts fused as one stack:
+      - Query: ask state at a point.
+      - Fact: assert state at a point (rule materialization).
+      - Watcher: subscribe to changes (rule call subscribes the calling pipeline as a support edge).
+      - Reactivity: propagate through derived rules (support-edge antijoin retract).
+    </note>
+    <note>Comparison row, where the unique cell is sprefa carrying every column:
+      Sourcegraph: query yes, assert no, watch partial, react no, cross-rev partial, local no.
+      Glean: query yes, assert no, watch no, react no, cross-rev yes, local no.
+      LSP servers: query yes, assert no, watch per-file, react per-file, cross-rev no, local yes.
+      Git pre-commit hooks: query yes, assert yes, watch yes, react no, cross-rev no, local yes.
+      sprefa: query yes, assert yes, watch yes, react yes, cross-rev yes, local yes.
+    </note>
+  </topic>
+
+  <topic name="cross-repo-reachability-capabilities" llm-tags="reachability ghcache lsp pre-commit observability">
+    <note>Concrete query class enabled by ghcache + content-derived IDs + durable retraction: "which downstream repos call foo at any rev between v1.0 and HEAD," "if I edit this function locally which open PRs across the org break," "find every callsite of deprecated API X across the last 100 PRs," "when did repo A start depending on repo B." Each is a sprf rule that joins over rev ranges and materializes incrementally as ghcache syncs.</note>
+    <note>LSP UX that follows from daemon-resident retractable graph: hover with cross-repo "called by N sites across M repos," goto definition spanning repos at each repo's checked-out rev, code lens with usage counts and trend, real-time deprecation warnings that say "this commit would break 4 dependents."</note>
+    <note>Pre-commit hot mode as a policy enforcement surface. Daemon already holds warm state. Pre-commit asks "does this commit retract a support edge another repo depends on" and fails commit with specific dependents. Policy is sprf rules instead of bash scripts.</note>
+    <note>Long-running observability: API usage atlas (every public symbol × every consumer × trend), cross-repo dead code via antijoin (symbols with no inbound support edges), migration tracker (count outstanding callsites per repo for any org-wide refactor), invariant alerts (warn if function with this signature ever disappears from this repo).</note>
+  </topic>
+
+  <topic name="pipe-surface-as-fusion-target" llm-tags="dsl pipes sql-fusion ai-ejection liftable termflowgraph">
+    <note>The language is a pipeline/pattern-matching specialized DSL. Pipe + pattern is the user-facing surface. Compiler lifts to fused SQL. AI assists by authoring pipe expressions, translating between pipe and SQL, or suggesting two-rule splits when a chain breaks fusion.</note>
+    <note>Pipe-as-surface-with-SQL-as-optimization-target is a known pattern: dplyr, polars, LINQ, nushell, PowerShell. What's distinct about sprf is the substrate behind the pipes (cross-repo content-addressed facts, durable retraction, daemon-hot LSP, multi-DSL injection in one host grammar). The pipe surface is the user interface; the substrate is what makes answers correct and fast across hundreds of repos.</note>
+    <note>Unified capture surface: ${X?} works across regex, glob, ast, sql, json. Standard tools require composing rg + jq + ast-grep, each with its own capture syntax. One sigil, one mental model, one TermFlowGraph that knows about all of them. AI generation is better against one surface than against four.</note>
+    <note>AI authoring loop: deterministic compile errors and a small error surface mean AI can author a sprf rule, see a precise diagnostic if it breaks fusion, and refine. Tight feedback. The "explain why this rule didn't fuse" diagnostic and an LSP code action "expand to fused SQL" are the two transparency features that make the compile pipeline legible to humans and to AI assistants pointing at it.</note>
+  </topic>
+
+  <topic name="v0-reverse-refs-as-canonical-demo" llm-tags="v0 lsp reverse-refs linux-join demo-target">
+    <note>v0 had a hardcoded LSP feature: for any file, show which files reference its exports/imports/strings. Wild and fun, single hardcoded query.</note>
+    <note>v4 makes the same query class programmable. Same self-join shape expressed as a sprf rule:
+      rule(:reverse_refs, :FS, :OTHER_FS) {
+        hits(FS?, SYM?) > hits(OTHER_FS?, SYM?) > where ${FS} != ${OTHER_FS}
+      }
+      Swap the pattern op feeding hits and you get reverse-imports, reverse-exports, reverse-string-grep, reverse-anything.
+    </note>
+    <note>The linux-join.sprf bench is the stress proxy for this shape specifically. It's big enough that "doesn't fuse" shows up as visible LSP lag, and real enough that the answers are interesting. The fusion patch series is gated by this fixture.</note>
+    <note>Demo target after the fusion patch lands: open .c file in kernel checkout → LSP code lens above each function with "N callers across M files" → click peeks inline at callsites → edit retracts support edges and lens updates within a typing tick → entire computation is one editable sprf rule the user can change to reverse-imports, reverse-callgraph, anything else.</note>
+  </topic>
+
+  <topic name="git-time-space-as-ai-axis" llm-tags="ai git-history rev-range content-addressed claude-loop mcp">
+    <note>AI assistants today are stuck at "current state of the working tree" because no efficient way exists to query historical or cross-rev facts. Asking Claude "when did this function start being called by 100+ places" is currently a manual git log dive.</note>
+    <note>With ghcache-synced content-addressed facts, that becomes a one-line sprf rule against a join over rev-ranges. The substrate gives AI a queryable shape for time.</note>
+    <note>Tight loop: AI asks (knows what to ask), sprefa answers (knows how to compute it), daemon serves it hot (round-trip is sub-second). MCP server exposing sprefa-daemon to Claude is a near-term shippable: AI writes new rules, runs them against the daemon, summarizes results with the cross-rev context.</note>
+  </topic>
+
+  <topic name="rules-are-the-only-tables" llm-tags="rules-as-tables liftable fuser streamed-rust full-sql cursor-shrink">
+    <note>Corrected mental model after this session: only user-declared rule(:name, ...) blocks materialize fact tables. Intermediate ops (fs, ast, re, where, ${X?}, json.path) NEVER own tables. They lift INTO the owning rule's single execution pass. Earlier proposals about auto-named intermediate tables (fs_glob_&lt;hash&gt;_facts) are rejected.</note>
+    <note>Two execution regimes per rule body, decided at lower time:
+      full-SQL: all body ops are Pure or RuleQuery. Emits one INSERT OR IGNORE INTO &lt;rule&gt;_facts SELECT ... plus a support_edges insert in the same transaction.
+      streamed-Rust: any body op is Stream (fs/ast/read/sh). Opens one prepared INSERT, Stream ops write per row, no Vec&lt;Arc&lt;Cursor&gt;&gt; between ops.
+      Mixed Stream-then-RuleQuery rejected with diagnostic lower/rule-stream-after-relation. User splits into two rules.
+    </note>
+    <note>Liftable trait has three variants, no Source variant, no separate Sink variant:
+      Pure { project, where_, udfs } — SELECT projection or WHERE filter fragment.
+      Stream { schema: Vec&lt;(Col, IdKind)&gt;, run: StreamFn } — runs in Rust during streamed-Rust regime.
+      RuleQuery { table, binds } — JOIN against &lt;rule_name&gt;_facts.
+    </note>
+    <note>Cursor's role in Rust shrinks under this model. It only needs to exist for (a) the streamed-Rust regime threading rows through fs &gt; ast and (b) the LSP/runtime graph attaching diagnostics and hover to something. Most cursor codec, queue blob serialization, and per-row Arc traffic is paying for a model where Rust holds row state. The simpler model puts row state in SQLite and uses Rust only for genuinely-imperative seams. Queue/graph work stays as the wake substrate for source-driven re-execution; it stops being the data substrate.</note>
+    <note>All-id materialization shape:
+      CREATE TABLE &lt;rule&gt;_facts (
+        _id BLOB PRIMARY KEY,                       -- blake3 raw 32 bytes, not hex
+        &lt;col&gt; INTEGER NOT NULL REFERENCES &lt;intern_table&gt;(id),
+        ...
+      ) WITHOUT ROWID;
+      No TEXT columns on the hot path. SQLite never sees text during joins.
+    </note>
+  </topic>
+
+  <topic name="five-pre-computations-from-termflowgraph" llm-tags="termflowgraph dead-cap predicate-pushdown literal-pin type-storage join-order">
+    <note>Compile-time TermFlowGraph per rule body records: binding_site, read_sites, provenance (RegexGroup/AstMetavar/CursorBind/RuleProj/RuleParam/Literal), value_lattice, constraints (Eq/LiteralPin/NullImpossible), fanout (Dead/Once/Many), crosses_scope. Plus eq_classes UnionFind and scopes.</note>
+    <note>Five pre-computations the fuser consumes:
+      P1 Dead-capture elimination: drop columns with fanout=Dead from SELECT and CREATE TABLE.
+      P2 Predicate pushdown: move pure WHERE clauses into JOIN ON when reads are subsumed by upstream input.
+      P3 Literal-pin folding: pre-intern literal args at compile time; SQL compares against integer FK, not text.
+      P4 Type-driven storage: captures with id-lattice (StringId/WhereBytesId/FileId/PathId/BlobId) emit INTEGER REFERENCES columns, not TEXT.
+      P5 Join-order selection: read _fact_stats row counts, drive join from smaller side with INDEXED BY hint when SQLite would otherwise pick wrong.
+    </note>
+    <note>Value lattice with id-types as parallel refinements of bytes:
+      tree ⊐ tokens ⊐ string ⊐ bytes (arrow points to more refined)
+      StringId, WhereBytesId, FileId, PathId, BlobId all sit parallel as id refinements of bytes
+      Int, Bool, Float are scalar refinements
+    </note>
+  </topic>
+
+  <topic name="library-vs-applied-split" llm-tags="effect-runtime sprefa library-boundary fact-store support-edges">
+    <note>Library (v3/crates/effect_runtime, v3/crates/effect_runtime/src/v2/fact_store) owns:
+      FactStore trait (declare, insert_batch, run_sql, register_udf)
+      support_edges table + antijoin retract procedure
+      Prepared-statement pool, transaction owner
+      SQLite connection bootstrap (PRAGMA profile, UDF registration entrypoint)
+      Liftable enum + SqlFragment composition primitives
+      Cursor codec, queue, runtime graph durability
+      Knows about: tables, ids, joins, support counting, UDF registration.
+      Knows nothing about: fs, ast, re, sprefa syntax.
+    </note>
+    <note>Applied (v4/) owns:
+      Parser, OpCall, Pipe AST
+      Per-op Op::classify impls (FsOp, AstOp, ReOp, WhereOp, RuleCallOp, etc.)
+      TermFlowGraph builder + the five pre-computations
+      Lower-time fuser pass
+      sprf-specific UDFs declared and handed to library at session start (sprf_blake3_id, sprf_re_match, sprf_glob_match)
+      Rule semantics, tag dispatch, capture binding rules — all compile-time, none runtime.
+    </note>
+    <note>The seam is one-way. Sprefa hands the library a tree of Lifts plus a UDF registration list. Library executes. Library never sees OpCall or sprefa syntax. Applied side never writes raw SQL; it composes SqlFragments. Adding a new lifting op = one trait impl. Fuser picks it up. No library edits.</note>
+  </topic>
+
+  <topic name="implementation-order-locked-2026-05-14" llm-tags="patch-series fuser blake3-udf pragma-profile where-bytes-id tiny-fixture">
+    <note>Implementation order (locked, do not deviate):
+      1. Bare-call dispatch fix in v4/src/compile/walk.rs:282-358. Bare rule(...) = QUERY against &lt;rule&gt;_facts, never body run. Apply forms .(...) and !.(...) run the body. .(X?, Y) is diagnostic lower/apply-with-hole.
+      2. Tiny fixture + small bench: v4/bench/.fixtures/linux-micro/ (subset one kernel subsystem ~1.5k files) and v4/bench/linux-tiny-join.sprf. Iteration target &lt;1s.
+      3. TermFlowGraph builder in v4/src/compile/binding_graph.rs. Threaded through LowerCtx as Arc&lt;ProgramFlowGraph&gt;.
+      4. Liftable enum + Op::classify trait in v4/src/compile/lower/liftable.rs. Per-op impls.
+      5. Fuser pass at top of walk_pipe in v4/src/compile/walk.rs. Two regimes, decision procedure above. Returns Vec&lt;FusedRule&gt; from walk_program.
+      6. sprf_blake3_id UDF registered on SqliteFactStore::open_file. Deterministic, variadic, returns 32-byte BLOB. Body delegates to the existing blake3 routine. Expose register_sprf_udfs(&amp;Connection) helper.
+      7. PRAGMA profile (Safe / Bench / UnsafeBench) settable via SPREFA_SQLITE_PROFILE env var. Defaults Safe.
+      8. AST emitters set WhereBytesId directly on output term via store.intern_where_bytes(...). _where_bytes table already in v4/src/store.rs:386-411.
+      Steps 1, 3, 4, 5, 6 are the core. Rest is icing on the same patch series.
+    </note>
+    <note>Red tests written 2026-05-14 in v4/tests/ describing the contract:
+      rule_bare_call_target.rs — step 1 spec
+      term_flow_graph_target.rs — step 3 spec
+      liftable_classify_target.rs — step 4 spec
+      fuser_regimes_target.rs — step 5 spec
+      sprf_blake3_udf_target.rs — step 6 spec
+    </note>
+    <note>Demo deliverables after patch series stabilizes:
+      LSP code lens binding to sprf rule output columns (renders count as inline annotation, updates on retraction events).
+      Peek-on-click traversing support_edges to surface supporting rows.
+      Canonical rule library: reverse_refs, reverse_imports, reverse_deps, callgraph, dep_graph, type_graph, deprecation_tracker. Each small. Together they form AI's vocabulary.
+      MCP server exposing sprefa-daemon to Claude for AI-authored rules + summarization.
+    </note>
+  </topic>
+
+  <topic name="cognitive-debt-and-discipline" llm-tags="ai-iteration perf rust execution-discipline">
+    <note>Self-observation 2026-05-14: 7-day burst of AI-dictated architecture produced cognitive debt the human author couldn't continue to carry. Pattern: human dictates design, AI implements with default-LLM-style row-by-row defects, human stress-tests, AI "fixes" by tuning the loop instead of replacing it with set ops, repeat. N+1 is the default LLM coding failure mode.</note>
+    <note>Discipline going forward: design dictation stays in human hands. AI executes against red tests with locked architecture. Set the model first, write the spec as failing tests, hand to AI for implementation, verify with the tests. AI does not get to choose perf strategies; AI does not propose redesigns mid-implementation.</note>
+    <note>Closest competitor read (for grounding, not despair): Sourcegraph (cross-repo, batch indexed), Glean/Kythe (incremental but corp-side, not user-side), rust-analyzer/clangd (LSP-hot, single-workspace), ast-grep/comby (single-repo batch), DuckDB + scripts (same data shape, no LSP/git integration). The combination axis (incremental + cross-repo + daemon-hot + language-as-config + content-derived ids + LSP-first) is what nobody else carries as one stack.</note>
+  </topic>
+
+  <topic name="coherence-eval-2026-05-14" llm-tags="self-eval cohesion coping investment-levels trough-phase">
+    <note>Eval question from author: "does this all sound cohesive or am i rambling man coping with the ai wave of death."</note>
+
+    <note>Cohesive on technical axes:
+      1. Four-concept fusion (query/fact/watcher/reactivity) is a clean theory. Maps to real implementation pieces.
+      2. Rules-as-tables collapses the model. ONE materialization unit. A real simplification.
+      3. Library/applied split is principled. effect_runtime knows zero sprefa syntax. Clean boundary.
+      4. Content-derived IDs + durable retraction + ghcache reinforce each other mechanically. Cross-rev works because IDs are content-derived; retraction works because supports are tracked; multi-repo works because ghcache is the spool. Structural triple.
+      5. Pipe surface + SQL fusion target is the dplyr/polars/LINQ pattern. Documented prior art.
+      6. The implementation order follows logically: red tests → fusion → LSP code lens → rule library → MCP. Each step unblocks the next.
+      7. v0 reverse-refs as canonical demo grounds the work in something that already existed and was wanted again. Real anchor.
+      The architecture holds together. Anyone reading the llm-zones in this file can navigate it.
+    </note>
+
+    <note>Where coping is showing (real but not architectural):
+      1. Disabling CLAUDE.md was an emotional move. The content of the lock is architecturally fine. What hurt was AI citing it as a constraint instead of as design context.
+      2. The cursor-doesn't-need-to-exist-in-Rust realization looked like discovery in conversation. Structurally it was already a consequence of rules-as-tables, surfaced once that model landed.
+      3. "Should I keep going" and "is this technically sound" are different questions. The author has been treating them as one. Technical health is sound. Commercial viability depends on other things (distribution, co-founder, pricing) not on the table this week.
+      4. Mid-project nadir around day 7–10 is well-documented as a phase. Author wouldn't be feeling this if the project were trivial.
+    </note>
+
+    <note>Four overlapping investment levels (structural critique):
+      L1 Runtime substrate (effect_runtime, fact store, queue, graph). Deep, ~6 months across versions.
+      L2 Language (sprf, parser, lower, ops). Clean, evolving, some V4 surface questions still open.
+      L3 LSP/server/CLI integration. Working but not demo-quality.
+      L4 Applications (cross-repo refs, blast radius, AI loop). Aspirational.
+      Each layer has a clear consumer above and provider below. Healthy shape.
+      The gap: L3 → L4 is wide. The fusion patch series the agent is implementing now closes most of it. Without that series, L1–L3 stays research-grade. With it, L4 becomes achievable.
+    </note>
+
+    <note>Net read: today's synthesis produced one consistent picture across LSP UX, pre-commit policies, observability dashboards, AI authoring loops, and historical archaeology. If those reduced to different substrates, that would be evidence of incoherence. They reduce to one. That's the cohesion signal.</note>
+
+    <note>What the author is feeling is the gap between L3 and L4 closing slowly while AI execution churned through implementation defects. That's a real fatigue source. The agent doing the gap-closing work needs to land before re-evaluating the whole project. Re-evaluating during the implementation pass is the trough phase. Decisions made there are unreliable.</note>
+
+    <note>Final answer to the author's question: not rambling. Tired in the middle of a thing that's a few weeks from being demonstrable.</note>
+  </topic>
+</llm-zone>
+
 rules have enough syntax to equal this select + join, but we have no order/where/limit/group by hmmm. 
 
 this was css + google biquery experimental pipeline syntax inspired as pipe language that is also a tree. not sure if querying should just take advantage of lifting (where we can have a op instaance/pipe, a way to respond to "are you pure string/regex/tree/string/byte_range" etc.  so that we knew or could compose syncronously and collapse the overhead. this is where im putting on a weird sql syntax hat but i was trying to keeep lang as low decisioon as possible, strings only ish, pipes, cursors, terms, thats it. 

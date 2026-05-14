@@ -45,7 +45,7 @@ pub use fact_store::{
     TABLE_DOMAIN,
 };
 #[cfg(feature = "sqlite")]
-pub use fact_store::SqliteFactStore;
+pub use fact_store::{register_sprf_udfs, PragmaProfile, SqliteFactStore};
 pub use codec::Codec;
 pub use diag::{ByteRange, Diag, DiagSink, NoopDiagSink, Severity};
 pub use probe::{BufferProbeSink, NoopProbeSink, Probe, ProbeSink};

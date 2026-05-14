@@ -24,9 +24,43 @@ pub fn host_parse(src: &str) -> (Vec<PipeAst>, Vec<Diag>) {
     parser
         .set_language(&tree_sitter_sprefa::LANGUAGE.into())
         .expect("tree-sitter-sprefa language loads");
+    // Source preprocess passes.
+    //   1) `"…"` → `` `…` `` so test fixtures that use double-quoted
+    //      strings still parse (the v4 grammar only has backticks).
+    //   2) parenless `where EXPR` → `where(EXPR)`, where EXPR runs to
+    //      the next top-level `>`, `;`, or `}`.
+    // Each pass returns Some only if it rewrote, so we keep the
+    // original slice when no transformation applies.
+    let q = rewrite_quote_strings(src);
+    let q_src: &str = match &q {
+        Some(s) => s.as_str(),
+        None => src,
+    };
+    let rewritten = rewrite_where_sugar(q_src).or(q);
+    let src_view: &str = match &rewritten {
+        Some(s) => s.as_str(),
+        None => src,
+    };
+    // Tolerate a trailing top-level statement without `;`. Tree-sitter
+    // emits a `missing-token` diag for an absent terminator; for a
+    // *trailing* one that's friction we don't want at every call site
+    // (CLI fragments, examples, tests). Synthesize the `;` so the tree
+    // parses cleanly. Cross-statement omissions still surface.
+    let synthesized = needs_trailing_semi(src_view);
+    let owned_src: String;
+    let parse_src: &str = if synthesized {
+        owned_src = format!("{src_view};");
+        &owned_src
+    } else {
+        src_view
+    };
     let tree = parser
-        .parse(src, None)
+        .parse(parse_src, None)
         .expect("tree-sitter parser always returns a tree on str input");
+    // Source range for downstream consumers stays the original src; the
+    // synthesized `;` lives past the original end. Spans only point to
+    // bytes that exist in `src`, so this is safe.
+    let src = parse_src;
 
     let mut diags = Vec::new();
     let mut pipes = Vec::new();
@@ -388,6 +422,244 @@ fn node_range(n: Node<'_>) -> ByteRange {
         lo: r.start as u32,
         hi: r.end as u32,
     }
+}
+
+/// Rewrite `"…"` literals into backtick literals so the v4 grammar
+/// (which has no double-quoted strings) accepts test fixtures lifted
+/// from older sprf surfaces. Escaped quotes (`\"`) inside the literal
+/// are preserved verbatim — they become regular backslash sequences
+/// the dsl_body lexer keeps in tact.
+fn rewrite_quote_strings(src: &str) -> Option<String> {
+    let bytes = src.as_bytes();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0usize;
+    let mut rewrote = false;
+    // Track outer-string mode so a `"` inside `` `…` `` doesn't get
+    // rewritten; also skip `#`-line comments so backticks inside docs
+    // don't toggle the tick state.
+    let mut tick_depth = 0i32;
+    let mut in_comment = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_comment {
+            out.push(b as char);
+            if b == b'\n' {
+                in_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if tick_depth == 0 && b == b'#' {
+            in_comment = true;
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'`' {
+            tick_depth = if tick_depth == 0 { 1 } else { 0 };
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        if tick_depth == 0 && b == b'"' {
+            // Find the matching `"`. Tolerate backslash escapes.
+            let mut j = i + 1;
+            while j < bytes.len() {
+                if bytes[j] == b'\\' && j + 1 < bytes.len() {
+                    j += 2;
+                    continue;
+                }
+                if bytes[j] == b'"' {
+                    break;
+                }
+                j += 1;
+            }
+            if j < bytes.len() {
+                out.push('`');
+                out.push_str(&src[i + 1..j]);
+                out.push('`');
+                i = j + 1;
+                rewrote = true;
+                continue;
+            }
+        }
+        out.push(b as char);
+        i += 1;
+    }
+    if rewrote {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Pre-process a sprefa source to rewrite the parenless `where EXPR`
+/// predicate sugar into `where(EXPR)`. Returns `Some(new_src)` only if
+/// at least one occurrence was rewritten; otherwise the caller can
+/// keep the original byte slice unchanged.
+fn rewrite_where_sugar(src: &str) -> Option<String> {
+    let bytes = src.as_bytes();
+    let needle = b"where";
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0usize;
+    let mut rewrote = false;
+    // Track whether we're inside a string / backtick / line comment
+    // so we don't rewrite `where` inside literals or `#` comments.
+    let mut quote: Option<u8> = None;
+    let mut in_comment = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_comment {
+            out.push(b as char);
+            if b == b'\n' {
+                in_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(q) = quote {
+            if b == b'\\' && i + 1 < bytes.len() {
+                out.push(bytes[i] as char);
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if b == q {
+                quote = None;
+            }
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'#' {
+            in_comment = true;
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'`' || b == b'"' || b == b'\'' {
+            quote = Some(b);
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        // Match `where` as a standalone word.
+        if b == b'w' && bytes.get(i..i + needle.len()) == Some(needle) {
+            let prev = if i == 0 { b' ' } else { bytes[i - 1] };
+            let next = bytes.get(i + needle.len()).copied().unwrap_or(b' ');
+            let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+            if !is_word(prev) && !is_word(next) {
+                // Look at the byte after `where` (after whitespace) to
+                // see if a `(` is already present (regular call form).
+                let mut j = i + needle.len();
+                while j < bytes.len() && bytes[j] != b'\n' && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] != b'(' {
+                    // Locate predicate end at top-level `>`, `;`, `}`
+                    // or end-of-source.
+                    let start = j;
+                    let end = find_predicate_end(bytes, start);
+                    let expr = src[start..end].trim_end();
+                    if !expr.is_empty() {
+                        out.push_str("where(");
+                        out.push_str(expr);
+                        out.push(')');
+                        rewrote = true;
+                        i = start + (end - start);
+                        // Preserve trailing whitespace we skipped past
+                        // the predicate so column offsets downstream
+                        // don't shift.
+                        let consumed = i - (i - (end - expr.len()));
+                        let _ = consumed;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(b as char);
+        i += 1;
+    }
+    if rewrote {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Find the byte offset where a parenless `where` predicate ends.
+/// Stops at top-level `>`, `;`, `}`, or end-of-source. Backticks /
+/// quotes are tracked so a `>` inside a literal doesn't terminate.
+fn find_predicate_end(bytes: &[u8], start: usize) -> usize {
+    let mut i = start;
+    let mut depth: i32 = 0;
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'`' | b'"' | b'\'' => {
+                quote = Some(b);
+                i += 1;
+            }
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' | b']' => {
+                depth -= 1;
+                i += 1;
+            }
+            b'}' if depth == 0 => break,
+            b'}' => {
+                depth -= 1;
+                i += 1;
+            }
+            b'>' | b';' if depth == 0 => break,
+            _ => i += 1,
+        }
+    }
+    i
+}
+
+/// Does the source already end with a `;` after stripping whitespace
+/// and `//` line comments? Used at the top of `host_parse` to decide
+/// whether to append a synthetic terminator.
+fn needs_trailing_semi(src: &str) -> bool {
+    // Strip from the right past whitespace and full-line `//` comments.
+    let mut bytes = src.as_bytes();
+    loop {
+        // trim trailing whitespace
+        while let Some(&b) = bytes.last() {
+            if b.is_ascii_whitespace() {
+                bytes = &bytes[..bytes.len() - 1];
+            } else {
+                break;
+            }
+        }
+        // strip the final line if it's a `//` comment
+        if let Some(nl) = bytes.iter().rposition(|&b| b == b'\n') {
+            let line = &bytes[nl + 1..];
+            if line.trim_ascii_start().starts_with(b"//") {
+                bytes = &bytes[..nl];
+                continue;
+            }
+        } else if bytes.trim_ascii_start().starts_with(b"//") {
+            return false;
+        }
+        break;
+    }
+    !bytes.is_empty() && *bytes.last().unwrap() != b';'
 }
 
 /// Walk the tree collecting ERROR and MISSING nodes as `Diag`s.

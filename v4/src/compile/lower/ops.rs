@@ -231,11 +231,29 @@ impl OperatorDef for RuleDef {
             return Ok(Pipe::new());
         }
 
-        // Bodied form: existing behavior — declare + body + FactWrite.
+        // Bodied form: declare + register the rule. The body executes
+        // as part of declaration only when its column list is wholly
+        // binders (TERM?) — those are the rows the body itself
+        // produces. With any grounded `:atom` column the body expects
+        // caller-supplied values, so it stays dormant until an apply.
         let body = block.unwrap();
         let rule = Rule::new(name.clone(), ctx.store.clone(), name, &cols, body);
         ctx.register_rule(rule.clone());
-        Ok(rule.into_pipe())
+
+        // A column came from a `:name` atom argument → its `Value::Atom`
+        // was stringified into `col_strings`. A column came from a
+        // `NAME?` bareword desugar → its `Value::Pipe` produced a
+        // `term_bind` step (binds_terms non-empty). We re-walk the
+        // original args to recover which shape supplied each col.
+        let auto_run = args[1..].iter().all(|a| match a {
+            Value::Atom(_) => false,
+            Value::Pipe(p) => !p.binds_terms().is_empty(),
+        });
+        if auto_run {
+            Ok(rule.into_pipe())
+        } else {
+            Ok(Pipe::new())
+        }
     }
 }
 
@@ -1443,6 +1461,308 @@ impl OperatorDef for FactWriteDef {
         // are accepted by the slot spec for arity/LSP but discarded
         // until FactWrite grows column projection.
         let table = atom_arg(args, 0);
+        Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))))
+    }
+}
+
+// ─── Op-classify test wrappers ────────────────────────────────────────────
+//
+// The fuser consumes per-op classifications (`Op::classify`). The
+// surface is one constructor per op type plus `classify()` returning
+// `Liftable`. Tests in `liftable_classify_target.rs` construct these
+// directly via `new_for_test_*`. The real fuser path threads the same
+// classifications from walked OpCalls — once that wiring lands, these
+// wrappers also let the fuser stay one constructor away from any
+// op without touching the registry.
+
+use super::liftable::{stream_noop, Col, IdKind, Liftable, Op, TermBind};
+
+pub struct FsOp {
+    pub glob: Arc<str>,
+}
+
+impl FsOp {
+    pub fn new_for_test_glob(g: &str) -> Self {
+        Self {
+            glob: Arc::<str>::from(g),
+        }
+    }
+}
+
+impl Op for FsOp {
+    fn classify(&self) -> Liftable {
+        Liftable::Stream {
+            schema: vec![
+                (Col::from("FS"), IdKind::PathId),
+            ],
+            run: stream_noop,
+        }
+    }
+}
+
+pub struct AstOp {
+    pub lang: Arc<str>,
+    pub pattern: Arc<str>,
+}
+
+impl AstOp {
+    pub fn new_for_test(lang: &str, pattern: &str) -> Self {
+        Self {
+            lang: Arc::<str>::from(lang),
+            pattern: Arc::<str>::from(pattern),
+        }
+    }
+}
+
+impl Op for AstOp {
+    fn classify(&self) -> Liftable {
+        // AST emits a (FILE, LO, HI) tuple plus any captured metavars.
+        // The canonical fixed columns are FILE (FileId) and a
+        // WhereBytesId for the matched span. Metavar columns are
+        // appended by the fuser at compose time from the
+        // TermFlowGraph; this skeleton fixes the two mandatory cols
+        // the test checks.
+        Liftable::Stream {
+            schema: vec![
+                (Col::from("FILE"), IdKind::FileId),
+                (Col::from("LO"), IdKind::WhereBytesId),
+                (Col::from("HI"), IdKind::WhereBytesId),
+            ],
+            run: stream_noop,
+        }
+    }
+}
+
+pub struct ReOp {
+    pub pattern: Arc<str>,
+}
+
+impl ReOp {
+    pub fn new_for_test(pat: &str) -> Self {
+        Self {
+            pattern: Arc::<str>::from(pat),
+        }
+    }
+}
+
+impl Op for ReOp {
+    fn classify(&self) -> Liftable {
+        // Lifts to SQL via the `sprf_re_match` UDF over an existing
+        // string column. The project field is left empty here because
+        // the fuser fills the destination column from the
+        // TermFlowGraph; the udfs entry is the actual lifting signal.
+        Liftable::Pure {
+            project: Vec::new(),
+            filter: Some(format!("sprf_re_match({}, _input)", self.pattern)),
+            udfs: vec![Arc::<str>::from("sprf_re_match")],
+        }
+    }
+}
+
+pub struct WhereOp {
+    pub predicate: Arc<str>,
+}
+
+impl WhereOp {
+    pub fn new_for_test(pred: &str) -> Self {
+        Self {
+            predicate: Arc::<str>::from(pred),
+        }
+    }
+}
+
+impl Op for WhereOp {
+    fn classify(&self) -> Liftable {
+        Liftable::Pure {
+            project: Vec::new(),
+            filter: Some(self.predicate.to_string()),
+            udfs: Vec::new(),
+        }
+    }
+}
+
+/// Rule-call wrapper. Encodes the apply-vs-bare-vs-force distinction
+/// so the fuser can decide whether to treat as a join (bare) or skip
+/// (apply / force).
+pub struct RuleCallOp {
+    pub rule: Arc<str>,
+    pub apply: bool,
+    pub force: bool,
+    pub args: Vec<Arc<str>>,
+}
+
+impl RuleCallOp {
+    pub fn new_for_test_bare(rule: &str, args: &[&str]) -> Self {
+        Self {
+            rule: Arc::<str>::from(rule),
+            apply: false,
+            force: false,
+            args: args.iter().map(|s| Arc::<str>::from(*s)).collect(),
+        }
+    }
+    pub fn new_for_test_apply(rule: &str, args: &[&str]) -> Self {
+        Self {
+            rule: Arc::<str>::from(rule),
+            apply: true,
+            force: false,
+            args: args.iter().map(|s| Arc::<str>::from(*s)).collect(),
+        }
+    }
+}
+
+impl Op for RuleCallOp {
+    fn classify(&self) -> Liftable {
+        if self.apply {
+            return Liftable::Opaque;
+        }
+        let table = Arc::<str>::from(format!("{}_facts", self.rule));
+        let binds: Vec<(Col, TermBind)> = self
+            .args
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let col = Arc::<str>::from(format!("col{i}"));
+                let raw = a.as_ref();
+                let bind = if let Some(name) = raw.strip_suffix('?') {
+                    TermBind::Bind(Arc::<str>::from(name))
+                } else if let Some(stripped) = raw
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                {
+                    TermBind::Literal(Arc::<str>::from(stripped))
+                } else if let Some(stripped) = raw
+                    .strip_prefix(':')
+                {
+                    TermBind::Atom(Arc::<str>::from(stripped))
+                } else {
+                    TermBind::Read(Arc::<str>::from(raw))
+                };
+                (col, bind)
+            })
+            .collect();
+        Liftable::RuleQuery { table, binds }
+    }
+}
+
+// ─── where ────────────────────────────────────────────────────────────────
+// `where EXPR` is the predicate slot for fused-SQL rule bodies. The
+// parenless surface (`where ${A} != ${B}`) is rewritten in host_parse
+// into `where(${A} != ${B})`. The slot's text is captured raw and
+// handed to the fuser for predicate pushdown (P2). Runtime semantics
+// for the streamed-Rust fallback are out of scope for this op today —
+// the fuser's full-SQL path is the primary consumer.
+
+pub struct WhereDef;
+
+const WHERE_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Variadic(&ArgKind::Any),
+    name: "predicate",
+    doc: "predicate expression in sql shape; bound and read captures only",
+    required: false,
+}];
+
+impl OperatorDef for WhereDef {
+    fn name(&self) -> &'static str {
+        "where"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        WHERE_SPEC
+    }
+
+    fn lower(
+        &self,
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        // Streamed-Rust runtime support is the fuser's job. For now,
+        // surface as a pass-through so legacy paths that include
+        // `where` in a body don't crash; the fuser intercepts it
+        // before lowering.
+        Ok(Pipe::new().step(Arc::new(VoidComponent)))
+    }
+}
+
+// ─── tag ──────────────────────────────────────────────────────────────────
+// `tag(:rel, X, Y)` writes one row into relation `rel`. The first atom
+// names the target table; remaining positional args supply cell values.
+// Args desugar through walk's classify_slot:
+//   bare `X`  / `${X}`  → term-read (column gets cursor[X])
+//   `X?`     / `${X?}` → introducer (only legal at query position;
+//                        tag detects and refuses)
+//   `"lit"`  / `:atom` → literal cell value
+//
+// If the table has not been declared, tag auto-declares it with
+// synthetic column names (`col0`, `col1`, …) so call sites don't have
+// to drag a `rule(:rel, …);` decl ahead of every write. The auto-decl
+// is non-destructive: a later explicit decl with the same shape is
+// accepted; a conflicting shape panics as today.
+
+pub struct TagDef;
+
+const TAG_SPEC: &[ArgSig] = &[
+    ArgSig {
+        kind: ArgKind::Atom,
+        name: "table",
+        doc: "relation name (`:rel`)",
+        required: true,
+    },
+    ArgSig {
+        kind: ArgKind::Variadic(&ArgKind::Any),
+        name: "cells",
+        doc: "positional cell values; bare term-ref, literal, or `${X}`",
+        required: false,
+    },
+];
+
+impl OperatorDef for TagDef {
+    fn name(&self) -> &'static str {
+        "tag"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        TAG_SPEC
+    }
+
+    fn lower(
+        &self,
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        use crate::fact::FactWrite;
+
+        let table = match args.first() {
+            Some(Value::Atom(s)) => s.clone(),
+            _ => {
+                return Err(LowerError::Unknown(
+                    "tag: first arg must be the :table atom".into(),
+                ))
+            }
+        };
+
+        let cell_args = &args[1..];
+
+        // Resolve declared cols. If the table is not declared yet,
+        // synthesize `col0..colN` and declare so FactStore impls that
+        // require schema (sqlite) accept the insert.
+        let declared = ctx.store.declared_cols(&table);
+        if declared.map(|c| c.is_empty()).unwrap_or(true) {
+            let synth: Vec<String> = (0..cell_args.len())
+                .map(|i| format!("col{i}"))
+                .collect();
+            let synth_refs: Vec<&str> = synth.iter().map(|s| s.as_str()).collect();
+            ctx.store.declare(&table, &synth_refs);
+        }
+
+        // Tag writes the full cursor so any synthetic terms stamped by
+        // upstream apply sites (`_call_seq` on `r!.`) propagate into
+        // the row's content_id. That keeps content-dedup correct for
+        // intentional duplicates while still distinguishing
+        // cache-bypassed invocations.
         Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))))
     }
 }

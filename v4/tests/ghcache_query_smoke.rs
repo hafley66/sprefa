@@ -161,9 +161,9 @@ fn run_pipes_into_store_with_ghcache(
     assert!(walk_diags.is_empty(), "walk diags: {walk_diags:?}");
 
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    for pipe in pipes {
+    for fused in pipes {
         expand(
-            &pipe.into_instance(),
+            &fused.into_pipe().into_instance(),
             queue.clone(),
             vec![Arc::new(Cursor::default())],
             ExpandOpts::default(),
@@ -190,7 +190,7 @@ fn lower_single_pipe(
     let mut ctx = LowerCtx::new(store, std::env::temp_dir()).with_config(Arc::new(cfg));
     let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
     assert!(walk_diags.is_empty(), "walk diags: {walk_diags:?}");
-    pipes.into_iter().last().unwrap().into_instance()
+    pipes.into_iter().last().unwrap().into_pipe().into_instance()
 }
 
 fn seed_ghcache_db(path: &std::path::Path) {

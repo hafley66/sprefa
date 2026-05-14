@@ -44,7 +44,7 @@ fn e2e_source_to_fact_store() {
 
     // ── 4. expand ─────────────────────────────────────────────────────
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    let inst = pipes.into_iter().next().unwrap().into_instance();
+    let inst = pipes.into_iter().next().unwrap().into_pipe().into_instance();
     expand(
         &inst,
         queue,

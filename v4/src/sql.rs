@@ -863,6 +863,20 @@ pub fn rule_body_call_pipe(
         });
     }
 
+    // Apply-cache bypass: stamp a per-call sequence value into the
+    // synthetic `_call_seq` term on every seeded cursor. The body's
+    // FactWrite sees a fresh, distinct cursor content each invocation,
+    // so content-id-keyed stores (Mem/Sqlite) don't fold repeated
+    // `r!.(X, Y)` calls into one row. Bare apply (force=false) keeps
+    // the deterministic content-id semantics.
+    if force {
+        let seq = ctx.next_apply_seq();
+        assignments.push(RuleInvokeAssign {
+            col: Arc::<str>::from("_call_seq"),
+            value: RuleInvokeValue::Literal(Arc::<str>::from(seq.to_string())),
+        });
+    }
+
     Ok(Pipe::new().step(Arc::new(RuleInvokeComponent::new(rule, assignments, force))))
 }
 
@@ -925,7 +939,14 @@ fn resolve_rule_args(
                     )));
                 }
                 let idx = match shorthand_idx {
-                    Some(idx) => idx,
+                    Some(idx) => {
+                        // Same-name shorthand still consumes the
+                        // positional slot. Without bumping
+                        // positional_idx past it, the next positional
+                        // arg would land back on this column.
+                        positional_idx = positional_idx.max(idx + 1);
+                        idx
+                    }
                     None => {
                         if positional_idx >= cols.len() {
                             return Err(LowerError::Unknown(format!(

@@ -100,6 +100,18 @@ pub trait FactStore<R: Row>: Send + Sync + 'static {
     /// All rows of `table`.
     fn rows_of(&self, table: &str) -> Vec<Arc<R>>;
 
+    /// Iterator over `table` rows. Returns `None` if the table has not
+    /// been declared / has never had a row inserted. Default forwards to
+    /// `rows_of`; stores override to stream when the underlying medium
+    /// supports it. The owned iterator escapes the `&self` borrow.
+    fn iter_table(&self, table: &str) -> Option<Box<dyn Iterator<Item = Arc<R>>>> {
+        let rows = self.rows_of(table);
+        if rows.is_empty() {
+            return None;
+        }
+        Some(Box::new(rows.into_iter()))
+    }
+
     /// Row count for `table`.
     fn len(&self, table: &str) -> usize;
 
@@ -413,6 +425,123 @@ mod sqlite {
     use std::marker::PhantomData;
     use std::path::Path;
     use rusqlite::{params, params_from_iter, Connection, Transaction};
+    use rusqlite::functions::FunctionFlags;
+    use rusqlite::types::{ValueRef, ToSqlOutput, Value as SqlValue};
+
+    /// PRAGMA tuning profile. Selected via the `SPREFA_SQLITE_PROFILE`
+    /// env var or set explicitly on a callsite that builds its own
+    /// Connection. Tradeoffs:
+    ///
+    ///   Safe         WAL + synchronous=NORMAL. Crash-recoverable;
+    ///                fsync at commit. Default.
+    ///   Bench        Safe + temp_store=MEMORY, larger cache,
+    ///                wal_autocheckpoint=0 (manual checkpoints).
+    ///                Faster batch inserts; same durability semantics.
+    ///   UnsafeBench  Bench + synchronous=OFF, journal_mode=MEMORY.
+    ///                Database file is unrecoverable on crash. Only
+    ///                for throughput-only benchmark runs.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum PragmaProfile {
+        Safe,
+        Bench,
+        UnsafeBench,
+    }
+
+    impl PragmaProfile {
+        pub fn from_env() -> Self {
+            match std::env::var("SPREFA_SQLITE_PROFILE").ok().as_deref() {
+                Some("bench") | Some("Bench") | Some("BENCH") => PragmaProfile::Bench,
+                Some("unsafe") | Some("unsafe-bench") | Some("UNSAFE") => {
+                    PragmaProfile::UnsafeBench
+                }
+                _ => PragmaProfile::Safe,
+            }
+        }
+
+        pub fn apply(self, conn: &Connection) -> rusqlite::Result<()> {
+            match self {
+                PragmaProfile::Safe => {
+                    conn.pragma_update(None, "journal_mode", "WAL")?;
+                    conn.pragma_update(None, "synchronous", "NORMAL")?;
+                }
+                PragmaProfile::Bench => {
+                    conn.pragma_update(None, "journal_mode", "WAL")?;
+                    conn.pragma_update(None, "synchronous", "NORMAL")?;
+                    conn.pragma_update(None, "temp_store", "MEMORY")?;
+                    conn.pragma_update(None, "cache_size", -262144)?;
+                    conn.pragma_update(None, "wal_autocheckpoint", 0)?;
+                }
+                PragmaProfile::UnsafeBench => {
+                    conn.pragma_update(None, "journal_mode", "MEMORY")?;
+                    conn.pragma_update(None, "synchronous", "OFF")?;
+                    conn.pragma_update(None, "temp_store", "MEMORY")?;
+                    conn.pragma_update(None, "cache_size", -262144)?;
+                    conn.pragma_update(None, "wal_autocheckpoint", 0)?;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Register sprf-specific scalar UDFs on a raw rusqlite Connection.
+    /// Exposed at the module level so tests and external callers can
+    /// register on a Connection they built themselves; SqliteFactStore
+    /// calls this from `open_file` / `open_in_memory`.
+    ///
+    /// Functions installed:
+    ///   sprf_blake3_id(...) -> BLOB(32)
+    ///     Variadic (-1 args). Deterministic. Returns the raw 32-byte
+    ///     blake3 hash of the concatenation `table || \0 || arg0 ||
+    ///     \0 || arg1 || \0 || ...`. Identical to the Rust routine
+    ///     `crate::v2::fact_store::blake3_id_bytes(table, &args)`.
+    pub fn register_sprf_udfs(conn: &Connection) -> rusqlite::Result<()> {
+        conn.create_scalar_function(
+            "sprf_blake3_id",
+            -1,
+            FunctionFlags::SQLITE_DETERMINISTIC | FunctionFlags::SQLITE_UTF8,
+            move |ctx| {
+                let n = ctx.len();
+                if n == 0 {
+                    return Err(rusqlite::Error::UserFunctionError(
+                        "sprf_blake3_id requires at least the table name".into(),
+                    ));
+                }
+                let table_raw = ctx.get_raw(0);
+                let table_str = match table_raw {
+                    ValueRef::Text(b) => std::str::from_utf8(b).unwrap_or(""),
+                    ValueRef::Blob(b) => std::str::from_utf8(b).unwrap_or(""),
+                    _ => "",
+                };
+                let mut h = blake3::Hasher::new();
+                h.update(table_str.as_bytes());
+                h.update(b"\0");
+                for i in 1..n {
+                    let v = ctx.get_raw(i);
+                    match v {
+                        ValueRef::Null => {
+                            h.update(b"\0");
+                        }
+                        ValueRef::Integer(x) => {
+                            h.update(&x.to_le_bytes());
+                        }
+                        ValueRef::Real(x) => {
+                            h.update(&x.to_le_bytes());
+                        }
+                        ValueRef::Text(b) => {
+                            h.update(b);
+                        }
+                        ValueRef::Blob(b) => {
+                            h.update(b);
+                        }
+                    }
+                    h.update(b"\0");
+                }
+                let out = h.finalize().as_bytes().to_vec();
+                Ok(ToSqlOutput::Owned(SqlValue::Blob(out)))
+            },
+        )?;
+        Ok(())
+    }
 
     fn validate_table(name: &str) {
         let ok = !name.is_empty()
@@ -456,6 +585,7 @@ mod sqlite {
     impl<R: Row> SqliteFactStore<R> {
         pub fn open_in_memory() -> rusqlite::Result<Self> {
             let conn = Connection::open_in_memory()?;
+            register_sprf_udfs(&conn)?;
             Self::init(&conn)?;
             let schemas = Self::load_schemas(&conn)?;
             Ok(Self {
@@ -471,7 +601,15 @@ mod sqlite {
 
         pub fn open_file(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
             let conn = Connection::open(path)?;
-            conn.pragma_update(None, "journal_mode", "WAL")?;
+            // PragmaProfile is sourced from the SPREFA_SQLITE_PROFILE
+            // env var; default = Safe (WAL + synchronous NORMAL). Bench
+            // and UnsafeBench profiles are documented on the enum and
+            // exist for fuser benchmarks where durability is a
+            // non-goal. Errors from pragmas surface to the caller so
+            // misconfigured environments fail fast.
+            let profile = PragmaProfile::from_env();
+            profile.apply(&conn)?;
+            register_sprf_udfs(&conn)?;
             Self::init(&conn)?;
             let schemas = Self::load_schemas(&conn)?;
             Ok(Self {
@@ -483,6 +621,15 @@ mod sqlite {
                 stats: FactStoreAtomicStats::default(),
                 _marker: PhantomData,
             })
+        }
+
+        /// Test-only handle to the underlying connection. Used by the
+        /// UDF parity tests in `v4/tests/sprf_blake3_udf_target.rs` to
+        /// verify the registered functions match the Rust routine
+        /// byte-for-byte. Returns a clone of the Mutex's guard, so the
+        /// caller can pass it to `query_row(...)` directly.
+        pub fn conn_for_test(&self) -> std::sync::MutexGuard<'_, Connection> {
+            self.conn.lock().unwrap()
         }
 
         fn init(conn: &Connection) -> rusqlite::Result<()> {
@@ -943,4 +1090,4 @@ mod sqlite {
 }
 
 #[cfg(feature = "sqlite")]
-pub use sqlite::SqliteFactStore;
+pub use sqlite::{register_sprf_udfs, PragmaProfile, SqliteFactStore};
