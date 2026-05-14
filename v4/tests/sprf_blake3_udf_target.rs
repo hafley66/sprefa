@@ -116,6 +116,10 @@ fn udf_used_in_insert_select_fused_path() {
     v3_effect_runtime_v2_fact_store::register_sprf_udfs(&conn)
         .expect("UDF registration helper must exist");
 
+    // We mirror the fuser's actual emission: INSERT OR IGNORE. The
+    // deterministic UDF causes the duplicate (FS=1, LO=100) row to
+    // share an _id with the first one; OR IGNORE silently drops it,
+    // so the final count is the number of distinct (FS, LO) tuples.
     conn.execute_batch(
         r#"
         CREATE TABLE hits_facts (
@@ -123,7 +127,7 @@ fn udf_used_in_insert_select_fused_path() {
           FS  INTEGER NOT NULL,
           LO  INTEGER NOT NULL
         ) WITHOUT ROWID;
-        INSERT INTO hits_facts (_id, FS, LO)
+        INSERT OR IGNORE INTO hits_facts (_id, FS, LO)
           SELECT sprf_blake3_id('hits', FS, LO), FS, LO
           FROM (SELECT 1 AS FS, 100 AS LO
                 UNION ALL SELECT 1, 200
@@ -132,16 +136,10 @@ fn udf_used_in_insert_select_fused_path() {
     )
     .unwrap();
 
-    // Three rows in source, but two distinct (FS,LO) tuples → two _id
-    // values, so OR IGNORE keeps two rows.
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM hits_facts", [], |r| r.get(0))
         .unwrap();
-    // Note: we didn't use OR IGNORE above to keep the test simple, so
-    // the PRIMARY KEY enforces uniqueness via constraint violation; if
-    // that fails, the deterministic UDF is broken (would produce
-    // different _ids for the duplicate). Test re-runs with OR IGNORE
-    // in the fuser_regimes tests.
-    assert_eq!(count, 3, "without OR IGNORE, three rows insert (last is constraint err in real fuser)");
-    let _ = count; // placeholder
+    // Two distinct (FS, LO) tuples in the source, so OR IGNORE keeps
+    // two rows. Three would mean the UDF wasn't deterministic.
+    assert_eq!(count, 2, "duplicate (FS,LO) must collapse to one row via deterministic UDF");
 }

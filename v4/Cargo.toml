@@ -64,6 +64,7 @@ cc = "1"
 [dev-dependencies]
 tempfile = "3"
 tree-sitter-rust = "0.23"
+v3_effect_runtime_v2_fact_store = { path = "crates/v3_effect_runtime_v2_fact_store" }
 
 [[bin]]
 name = "v4-bench"

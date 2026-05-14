@@ -432,6 +432,14 @@ pub use subjects::{
     YieldBatcher,
 };
 
+// Convenience surface for the v4 sqlite fact-store consumer. The
+// canonical path is `effect_runtime::v2::SqliteFactStore`; the
+// re-export here lets v4 tests use the friendly
+// `v3_effect_runtime_v2_fact_store::SqliteFactStore` package-alias
+// path without having to dig into the v2 submodule.
+#[cfg(feature = "sqlite")]
+pub use v2::fact_store::{register_sprf_udfs, PragmaProfile, SqliteFactStore};
+
 #[cfg(feature = "rx")]
 pub mod rx;
 

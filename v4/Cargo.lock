@@ -2360,6 +2360,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "v3_effect_runtime_v2_fact_store"
+version = "0.1.0"
+dependencies = [
+ "effect_runtime",
+]
+
+[[package]]
 name = "v4"
 version = "0.1.0"
 dependencies = [
@@ -2410,6 +2417,7 @@ dependencies = [
  "tree-sitter-sprefa",
  "tree-sitter-toml-ng",
  "tree-sitter-yaml",
+ "v3_effect_runtime_v2_fact_store",
 ]
 
 [[package]]
