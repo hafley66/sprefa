@@ -161,9 +161,9 @@ fn run_pipes_into_store_with_ghcache(
     assert!(walk_diags.is_empty(), "walk diags: {walk_diags:?}");
 
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    for pipe in pipes {
+    for fused in pipes {
         expand(
-            &pipe.into_instance(),
+            &fused.into_pipe().into_instance(),
             queue.clone(),
             vec![Arc::new(Cursor::default())],
             ExpandOpts::default(),

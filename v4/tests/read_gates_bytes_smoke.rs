@@ -37,8 +37,8 @@ fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
             .collect::<Vec<_>>()
     );
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    for pipe in pipes {
-        let inst = pipe.into_instance();
+    for fused in pipes {
+        let inst = fused.into_pipe().into_instance();
         expand(
             &inst,
             queue.clone(),
@@ -87,8 +87,8 @@ fn run_in_with_diags(
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     let diags = Arc::new(CollectDiagSink::default());
     let opts = ExpandOpts::default().with_diag(diags.clone());
-    for pipe in pipes {
-        let inst = pipe.into_instance();
+    for fused in pipes {
+        let inst = fused.into_pipe().into_instance();
         expand(
             &inst,
             queue.clone(),
@@ -183,7 +183,7 @@ fn path_literal_resolves_before_read() {
            path`cfg/sprefa.toml`
              > read
              > json(:toml)`{ repos: [ ... { slug: ${SLUG?}, root: ${ROOT?}, remote: ${REMOTE?} } ] }`
-             > repos(SLUG, ROOT, REMOTE);"#,
+             > rule(:repos, SLUG, ROOT, REMOTE);"#,
     );
     assert_eq!(store.len("repos"), 1);
     let rows = store.rows_of("repos");
@@ -200,7 +200,7 @@ fn path_existing_file_emits_fs_without_reading_bytes() {
     let store = run_in(
         tmp.path(),
         r#"rule(:paths, FS?);
-           path`exists.txt` > paths(FS);"#,
+           path`exists.txt` > rule(:paths, FS);"#,
     );
 
     assert_eq!(store.len("paths"), 1);
@@ -219,7 +219,7 @@ fn path_missing_file_emits_zero_rows_and_diag() {
     let (store, diags) = run_in_with_diags(
         tmp.path(),
         r#"rule(:paths, FS?);
-           path`missing.txt` > paths(FS);"#,
+           path`missing.txt` > rule(:paths, FS);"#,
     );
 
     assert_eq!(store.len("paths"), 0);

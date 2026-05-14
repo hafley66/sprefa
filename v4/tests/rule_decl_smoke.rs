@@ -30,8 +30,8 @@ fn run_pipes(src: &str) -> (Arc<dyn FactStore<Cursor>>, Vec<Diag>) {
 
     if walk_diags.is_empty() {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        for pipe in pipes {
-            let inst = pipe.into_instance();
+        for fused in pipes {
+            let inst = fused.into_pipe().into_instance();
             expand(
                 &inst,
                 queue.clone(),

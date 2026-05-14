@@ -147,21 +147,19 @@ fn maybe_auto_expand(pipe: &Pipe<Cursor>, ast: &PipeAst, _ctx: &LowerCtx) {
     );
 }
 
-/// A pipe is "self-driving" if its first step is a rule apply, a rule
-/// sink-write, or a top-level rule declaration with a body. These
-/// shapes don't need an external seed because the call site itself is
-/// the trigger; bare queries and external generators still rely on the
-/// caller to seed an expand.
+/// A pipe is "self-driving" if its first step is an apply form. Rule
+/// declarations stay dormant until an explicit apply (or an external
+/// runner that drives the lowered pipe). Bare queries and external
+/// generators always rely on the caller for a seed.
+///
+/// Auto-expanding rule decls would double-run when the LSP / runner
+/// also schedules the same pipe; callers that need the body to fire
+/// at decl-time use a sibling apply (`r.(…)`) or push the lowered
+/// pipe through their own expander.
 fn is_self_driving(ast: &PipeAst) -> bool {
     let Some(head) = ast.steps.first() else {
         return false;
     };
-    if head.name.as_ref() == "rule" {
-        // `rule(:r, …)` decl with a body OR rule sink-write at chain
-        // head (rare; handled by the body-attached FactWrite).
-        return head.block.is_some();
-    }
-    // Apply form `r.(…)` / `r!.(…)`: self-driving regardless of body.
     head.apply
 }
 

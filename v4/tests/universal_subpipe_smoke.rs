@@ -33,8 +33,8 @@ fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
             .collect::<Vec<_>>()
     );
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    for pipe in pipes {
-        let inst = pipe.into_instance();
+    for fused in pipes {
+        let inst = fused.into_pipe().into_instance();
         expand(
             &inst,
             queue.clone(),

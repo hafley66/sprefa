@@ -25,9 +25,9 @@ fn run_in(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> {
     );
 
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    for pipe in pipes {
+    for fused in pipes {
         expand(
-            &pipe.into_instance(),
+            &fused.into_pipe().into_instance(),
             queue.clone(),
             vec![Arc::new(Cursor::default())],
             ExpandOpts::default(),
@@ -70,7 +70,7 @@ fs
           inside:
             kind: mod_item
     `
-  > hits(X);
+  > rule(:hits, X);
 "#,
     );
 
@@ -92,7 +92,7 @@ rule(:hits, NAME?);
 fs
   > glob`**/*.rs`
   > ast_yaml(:rs)`pattern: "fn ${NAME?}() {}"`
-  > hits(NAME);
+  > rule(:hits, NAME);
 "#,
     );
 
@@ -128,7 +128,7 @@ fs
           pattern: "fn ${NAME?}() {}"
     `
   > term_bind(:DOC)
-  > docs(NAME, DOC);
+  > rule(:docs, NAME, DOC);
 "#,
     );
 

@@ -242,7 +242,7 @@ fn rev_call_writes_builtin_relation_and_revq_queries_it() {
           > rev(:HEAD);
 
         rev?(REPO?, REV?, KIND?, SPEC?)
-          > seen_revs(REPO, REV, KIND, SPEC);
+          > rule(:seen_revs, REPO, REV, KIND, SPEC);
     "#;
 
     let facts = run_program(&root, src);
@@ -268,7 +268,7 @@ fn rev_glob_enumerates_refs_and_binds_captures() {
 
         repo()
           > rev(glob`support/0.1.${PATCH?}`)
-          > support_revs(REPO, PATCH, REV, NAME, KIND);
+          > rule(:support_revs, REPO, PATCH, REV, NAME, KIND);
     "#;
 
     let facts = run_program(&root, src);
@@ -323,9 +323,9 @@ fn run_program(root: &std::path::Path, src: &str) -> Arc<dyn FactStore<Cursor>> 
     assert!(walk_diags.is_empty(), "walk diags: {walk_diags:?}");
 
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    for pipe in pipes {
+    for fused in pipes {
         expand(
-            &pipe.into_instance(),
+            &fused.into_pipe().into_instance(),
             q.clone(),
             vec![Arc::new(Cursor::default())],
             ExpandOpts::default(),

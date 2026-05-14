@@ -28,8 +28,8 @@ fn run(src: &str) -> Arc<dyn FactStore<Cursor>> {
             .collect::<Vec<_>>()
     );
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    for pipe in pipes {
-        let inst = pipe.into_instance();
+    for fused in pipes {
+        let inst = fused.into_pipe().into_instance();
         expand(
             &inst,
             queue.clone(),
@@ -72,11 +72,11 @@ fn subpipe_can_start_with_term_sugar_step() {
         rule(:types, TYPE?);
         rule(:docs, BODY?);
 
-        `UserService` > TYPE? > types(TYPE);
+        `UserService` > TYPE? > rule(:types, TYPE);
         types?(TYPE?)
           > render_markdown`${ TYPE > `**${&.value}**` }`
           > BODY?
-          > docs(BODY);
+          > rule(:docs, BODY);
     "#;
     let store = run(src);
     let rows = store.rows_of("docs");
@@ -93,7 +93,7 @@ fn render_holes_can_nest_multiple_levels() {
           > NAME?
           > render_markdown`outer ${ NAME > render_markdown`mid ${ NAME > render_markdown`inner ${&.value}` }` }`
           > BODY?
-          > docs(BODY);
+          > rule(:docs, BODY);
     "#;
     let store = run(src);
     let rows = store.rows_of("docs");

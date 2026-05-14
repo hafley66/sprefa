@@ -81,7 +81,7 @@ fn walk_smoke_rule_str() {
     assert_eq!(pipes.len(), 1, "expected one pipe");
 
     let pipe = pipes.into_iter().next().unwrap();
-    let inst = pipe.into_instance();
+    let inst = fused.into_pipe().into_instance();
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     expand(
         &inst,
