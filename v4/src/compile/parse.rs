@@ -435,10 +435,26 @@ fn rewrite_quote_strings(src: &str) -> Option<String> {
     let mut i = 0usize;
     let mut rewrote = false;
     // Track outer-string mode so a `"` inside `` `…` `` doesn't get
-    // rewritten.
+    // rewritten; also skip `#`-line comments so backticks inside docs
+    // don't toggle the tick state.
     let mut tick_depth = 0i32;
+    let mut in_comment = false;
     while i < bytes.len() {
         let b = bytes[i];
+        if in_comment {
+            out.push(b as char);
+            if b == b'\n' {
+                in_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if tick_depth == 0 && b == b'#' {
+            in_comment = true;
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
         if b == b'`' {
             tick_depth = if tick_depth == 0 { 1 } else { 0 };
             out.push(b as char);
@@ -487,11 +503,20 @@ fn rewrite_where_sugar(src: &str) -> Option<String> {
     let mut out = String::with_capacity(src.len());
     let mut i = 0usize;
     let mut rewrote = false;
-    // Track whether we're inside a string / backtick so we don't
-    // rewrite `where` inside literals.
+    // Track whether we're inside a string / backtick / line comment
+    // so we don't rewrite `where` inside literals or `#` comments.
     let mut quote: Option<u8> = None;
+    let mut in_comment = false;
     while i < bytes.len() {
         let b = bytes[i];
+        if in_comment {
+            out.push(b as char);
+            if b == b'\n' {
+                in_comment = false;
+            }
+            i += 1;
+            continue;
+        }
         if let Some(q) = quote {
             if b == b'\\' && i + 1 < bytes.len() {
                 out.push(bytes[i] as char);
@@ -502,6 +527,12 @@ fn rewrite_where_sugar(src: &str) -> Option<String> {
             if b == q {
                 quote = None;
             }
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'#' {
+            in_comment = true;
             out.push(b as char);
             i += 1;
             continue;
