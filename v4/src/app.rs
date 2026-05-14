@@ -901,10 +901,14 @@ fn run_fused_sql(
             )",
         );
 
+        let primary_marker = format!(
+            "INSERT OR IGNORE INTO {target_facts}"
+        );
+        let support_marker = "INSERT OR IGNORE INTO support_edges";
         for raw_sql in stmts.iter() {
-            let executed = if raw_sql.trim_start().to_ascii_uppercase().starts_with("INSERT")
-                && raw_sql.contains(&target_facts)
-            {
+            let upper = raw_sql.trim_start().to_ascii_uppercase();
+            let primary_marker_upper = primary_marker.to_ascii_uppercase();
+            let executed = if upper.starts_with(&primary_marker_upper) {
                 // Primary facts insert: rewrite to the live FK schema.
                 match build_live_facts_insert(
                     raw_sql,
@@ -940,7 +944,7 @@ fn run_fused_sql(
                         false
                     }
                 }
-            } else if raw_sql.contains("support_edges") {
+            } else if upper.starts_with(support_marker) {
                 let rewritten = rewrite_fused_source_refs(raw_sql, &source_tables);
                 match tx.execute(&rewritten, []) {
                     Ok(n) => {
@@ -1231,7 +1235,6 @@ fn build_live_facts_insert(
     // Drop _id, keep user cols.
     let user_cols: Vec<String> = cols.into_iter().skip(1).collect();
     if user_cols.len() != target_cols.len() {
-        // Schema and fuser disagree on shape; let the caller fall back.
         return None;
     }
 
