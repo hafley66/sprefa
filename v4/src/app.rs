@@ -165,6 +165,24 @@ pub struct RunReport {
     pub telemetry: Option<RunTelemetry>,
 }
 
+#[derive(Clone)]
+pub struct GeneratedCtx {
+    pub root: PathBuf,
+    pub facts: Arc<dyn FactStore<Cursor>>,
+    pub sprf_store: Arc<crate::store::SprfStore>,
+    pub config: Arc<crate::config::SprfConfig>,
+}
+
+pub struct GeneratedPipe {
+    pub identity: u64,
+    pub pipe: Pipe<Cursor>,
+}
+
+pub struct GeneratedProgram {
+    pub tables: Vec<String>,
+    pub pipes: Vec<GeneratedPipe>,
+}
+
 struct BufferDiagSink {
     rows: Mutex<Vec<Diag>>,
 }
@@ -617,6 +635,52 @@ impl SprfState {
         let inst = Arc::new(inst);
         self.instances.lock().unwrap().push(inst.clone());
         inst
+    }
+
+    pub fn generated_ctx(&self) -> GeneratedCtx {
+        GeneratedCtx {
+            root: self.root.clone(),
+            facts: self.facts.clone(),
+            sprf_store: self.sprf_store.clone(),
+            config: self.config.clone(),
+        }
+    }
+
+    pub fn mount_generated_program(&self, program: GeneratedProgram) -> RunReport {
+        let runtime_diags = Arc::new(BufferDiagSink::new());
+        let opts = ExpandOpts::default()
+            .with_bus(self.bus.clone())
+            .with_diag(runtime_diags.clone())
+            .with_runtime(self.runtime_graph.clone());
+        let mut mounted = 0usize;
+        for generated in program.pipes {
+            let inst = self.mount_pipe(generated.pipe, generated.identity);
+            expand(
+                inst.as_ref(),
+                self.queue.clone(),
+                vec![Arc::new(Cursor::default())],
+                opts.clone(),
+            );
+            mounted += 1;
+        }
+        let generation = *self.next_instance_id.lock().unwrap();
+        self.sprf_store.flush();
+        self.facts.commit(generation, Some(&self.bus));
+        self.drain_runtime_until_idle(opts);
+        self.sprf_store.flush();
+
+        RunReport {
+            parse_diags: Vec::new(),
+            walk_diags: Vec::new(),
+            runtime_diags: runtime_diags
+                .snapshot()
+                .iter()
+                .map(SprfDiag::from)
+                .collect(),
+            pipes: mounted,
+            tables: program.tables,
+            telemetry: None,
+        }
     }
 
     fn resume_mounted(&self, opts: ExpandOpts) -> u64 {

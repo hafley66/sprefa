@@ -21,6 +21,7 @@ use v4::app::{
     build_in_process, build_router, GetFactTableReq, HttpClient, InProcessClient, RunReq,
     SprfClient, SprfDiag, SprfError, SprfState,
 };
+use v4::compile::rust_daemon::{compile_rust_daemon, emit_rust_daemon, RustDaemonSpec};
 use v4::config::SprfConfig;
 
 #[global_allocator]
@@ -37,6 +38,8 @@ struct Args {
     queue_db: Option<PathBuf>,
     telemetry: bool,
     batch_cap: Option<usize>,
+    compile_daemon: bool,
+    bind: String,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -58,6 +61,12 @@ where
     let mut queue_db: Option<PathBuf> = cfg.run_queue_db();
     let mut telemetry: bool = false;
     let mut batch_cap: Option<usize> = None;
+    let mut compile_daemon: bool = false;
+    let mut bind: String = cfg
+        .daemon
+        .bind
+        .clone()
+        .unwrap_or_else(|| "127.0.0.1:8787".to_string());
 
     let mut i = 0;
     while i < raw.len() {
@@ -104,6 +113,15 @@ where
                 telemetry = true;
                 i += 1;
             }
+            "--compile-daemon" => {
+                compile_daemon = true;
+                i += 1;
+            }
+            "--bind" => {
+                let v = raw.get(i + 1).ok_or("--bind needs addr")?;
+                bind = v.clone();
+                i += 2;
+            }
             "-h" | "--help" => {
                 print_usage();
                 std::process::exit(0);
@@ -130,12 +148,14 @@ where
         queue_db,
         telemetry,
         batch_cap,
+        compile_daemon,
+        bind,
     })
 }
 
 fn print_usage() {
     eprintln!("sprefa-run <path-to-sprf-file> \
-[--show-rows|--no-show-rows] [--telemetry] [--batch N] [--max-diags N] [--remote URL] [--root PATH] [--fact-db PATH] [--queue-db PATH]");
+[--show-rows|--no-show-rows] [--telemetry] [--batch N] [--compile-daemon] [--bind ADDR] [--max-diags N] [--remote URL] [--root PATH] [--fact-db PATH] [--queue-db PATH]");
 }
 
 /// 1-indexed (line, col) for byte offset `off` in `src`.
@@ -210,6 +230,52 @@ async fn main() -> ExitCode {
     }
     if let Some(batch_cap) = args.batch_cap {
         std::env::set_var("SPREFA_BATCH_CAP", batch_cap.to_string());
+    }
+
+    if args.compile_daemon {
+        let root = args
+            .root
+            .clone()
+            .or_else(|| args.path.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let spec = RustDaemonSpec {
+            sprf_path: args.path.clone(),
+            root,
+            bind: args.bind.clone(),
+            fact_db: args.fact_db.clone(),
+            queue_db: args.queue_db.clone(),
+        };
+        let artifact = match emit_rust_daemon(&spec) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("sprefa-run compile-daemon emit: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        let bin = match compile_rust_daemon(&artifact) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("sprefa-run compile-daemon build: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        let mut cmd = std::process::Command::new(bin);
+        cmd.arg("--bind").arg(&args.bind);
+        cmd.arg("--root").arg(spec.root);
+        if let Some(fact_db) = args.fact_db {
+            cmd.arg("--fact-db").arg(fact_db);
+        }
+        if let Some(queue_db) = args.queue_db {
+            cmd.arg("--queue-db").arg(queue_db);
+        }
+        let status = match cmd.status() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("sprefa-run compile-daemon launch: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        return ExitCode::from(status.code().unwrap_or(1) as u8);
     }
 
     let path_disp = args.path.display().to_string();
@@ -464,5 +530,13 @@ mod tests {
         assert_eq!(args.max_diags, 3);
         assert_eq!(args.fact_db, Some(PathBuf::from("/tmp/cli-facts.db")));
         assert_eq!(args.queue_db, Some(PathBuf::from("/tmp/queue.db")));
+    }
+
+    #[test]
+    fn parse_args_accepts_compile_daemon_mode() {
+        let args =
+            parse_args_from(["dev.sprf", "--compile-daemon"], &SprfConfig::default()).unwrap();
+        assert!(args.compile_daemon);
+        assert_eq!(args.path, PathBuf::from("dev.sprf"));
     }
 }

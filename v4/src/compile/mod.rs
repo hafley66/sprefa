@@ -14,4 +14,5 @@ pub mod binding_graph;
 pub mod lower;
 pub mod parse;
 pub mod probe_wrap;
+pub mod rust_daemon;
 pub mod walk;
