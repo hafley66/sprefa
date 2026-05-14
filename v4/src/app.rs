@@ -702,8 +702,8 @@ impl SprfState {
 
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
         let opts = ExpandOpts::default().with_diag(runtime_diags.clone());
-        for pipe in pipes {
-            let inst = analysis_safe_pipe(pipe).into_instance();
+        for fused in pipes {
+            let inst = analysis_safe_pipe(fused.into_pipe()).into_instance();
             expand(
                 &inst,
                 queue.clone(),
@@ -966,8 +966,9 @@ impl SprfHandlers for SprfState {
             .with_runtime(self.runtime_graph.clone());
         let mut n = 0;
         let mut run_stats = effect_runtime::v2::ExpandStats::default();
-        for (idx, pipe) in pipes.into_iter().enumerate() {
+        for (idx, fused) in pipes.into_iter().enumerate() {
             let t = std::time::Instant::now();
+            let pipe = fused.into_pipe();
             let pipe = match telemetry.as_ref() {
                 Some(t) => t.wrap_pipe(pipe),
                 None => pipe,

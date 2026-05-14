@@ -27,41 +27,104 @@ use super::lower::op_def::{DslBody, DslInterp, InterpKind};
 use super::lower::registry::Registry;
 use super::lower::value::{CallArg, Value};
 
-/// Walk a whole program. Each `PipeAst` becomes one `Pipe<Cursor>` on
-/// success; on failure that pipe is dropped and its diags accumulated.
-/// Continues past per-pipe errors to surface every diag in one pass.
+/// Walk a whole program. Each `PipeAst` becomes one `FusedRule`. The
+/// fuser at the top of the per-pipe path classifies rule bodies and
+/// emits full-SQL / streamed-Rust / unfused regimes; non-rule pipes
+/// fall through as `Regime::Unfused` carrying the lowered Pipe.
 ///
-/// Pipes that the walker recognizes as self-driving (rule apply, rule
-/// write-position) are expanded inline against a `Cursor::default()`
-/// seed so the rule body executes and its writes hit the store. This is
-/// the "mechanism TBD by the harness" referenced by `*_target.rs` —
-/// callers no longer have to thread their own queue + expand for the
-/// common "lower then run" path. Pipes that consume an external seed
-/// (top-level `fs > …` etc.) still need an explicit expand by the
-/// caller; the auto-expand here just primes pipes that own their input.
+/// Self-driving forms (rule decls with binder-only cols, dotted-apply
+/// call sites) are expanded inline against a `Cursor::default()` seed
+/// so the rule body executes and its writes hit the store. Callers
+/// that need the underlying pipe pull it from the returned FusedRule
+/// via `pipe()` / `into_pipe()`.
 pub fn walk_program(
     program: &[PipeAst],
     reg: &Registry,
     ctx: &mut LowerCtx,
-) -> (Vec<Pipe<Cursor>>, Vec<Diag>) {
+) -> (Vec<super::FusedRule>, Vec<Diag>) {
     let mut pipes = Vec::with_capacity(program.len());
     let mut diags = Vec::new();
 
     // ── pass 1: compile-time binding-graph analysis ────────────────
-    // Walks each PipeAst tracking which captures are bound at each
-    // step. Emits `lang/use-before-bind` and `lang/term-self-cycle`
-    // diagnostics. Independent of lowering — runs once on the AST,
-    // produces diags the LSP can surface alongside lower-time diags.
     diags.extend(super::binding_graph::analyze_program(program, reg));
 
-    // ── pass 2: lower per-pipe + auto-expand top-level rule pipes ──
+    // ── pass 1b: full ProgramFlowGraph for the fuser ───────────────
+    let (graph, _gdiag) = super::binding_graph::build_graph(program, reg, ctx);
+    let rule_decls = collect_rule_decl_cols(program);
+
+    // ── pass 2: lower per-pipe; route rule bodies through the fuser ─
     for p in program {
         if let Some(pipe) = walk_pipe(p, reg, ctx, &mut diags) {
             maybe_auto_expand(&pipe, p, ctx);
-            pipes.push(pipe);
+            let head = p.steps.first();
+            let fused = match head {
+                Some(op) if op.name.as_ref() == "rule" => {
+                    let block = op.block.as_ref();
+                    let rule_name = op
+                        .args
+                        .first()
+                        .and_then(|a| a.raw.trim().strip_prefix(':'))
+                        .map(Arc::<str>::from)
+                        .unwrap_or_else(|| Arc::<str>::from("<unnamed>"));
+                    if let Some(block) = block {
+                        super::fuser::try_fuse(
+                            &rule_name,
+                            block,
+                            pipe,
+                            &graph,
+                            &rule_decls,
+                            &mut diags,
+                        )
+                        .unwrap_or_else(|| {
+                            super::fuser::passthrough(rule_name, Pipe::new())
+                        })
+                    } else {
+                        super::fuser::passthrough(rule_name, pipe)
+                    }
+                }
+                Some(op) => {
+                    super::fuser::passthrough(op.name.clone(), pipe)
+                }
+                None => super::fuser::passthrough(Arc::<str>::from("<empty>"), pipe),
+            };
+            pipes.push(fused);
         }
     }
     (pipes, diags)
+}
+
+fn collect_rule_decl_cols(
+    program: &[PipeAst],
+) -> std::collections::HashMap<Arc<str>, Vec<Arc<str>>> {
+    let mut out = std::collections::HashMap::new();
+    for pipe in program {
+        for op in &pipe.steps {
+            if op.name.as_ref() != "rule" {
+                continue;
+            }
+            let Some(first) = op.args.first() else {
+                continue;
+            };
+            let Some(name) = first.raw.trim().strip_prefix(':') else {
+                continue;
+            };
+            let name = Arc::<str>::from(name);
+            let mut cols = Vec::new();
+            for arg in op.args.iter().skip(1) {
+                let raw = arg.raw.trim();
+                let raw = raw.strip_prefix(':').unwrap_or(raw);
+                let raw = raw
+                    .strip_suffix('?')
+                    .or_else(|| raw.strip_suffix('!'))
+                    .unwrap_or(raw);
+                if !raw.is_empty() {
+                    cols.push(Arc::<str>::from(raw));
+                }
+            }
+            out.insert(name, cols);
+        }
+    }
+    out
 }
 
 /// Drive a pipe through a fresh expander when it's a self-driving form
@@ -635,6 +698,16 @@ pub fn classify_slot(
             return Some(Value::Atom(Arc::<str>::from(inner)));
         }
     }
+    // Predicate-shape escape hatch: when the slot looks like a SQL
+    // predicate (carries `${X}` interps plus a relational operator),
+    // skip the inline-pipe fallback and return the raw text as a
+    // Value::Atom. The fuser pulls the raw slot text directly for
+    // where/predicate ops; re-parsing as a sub-pipe would produce
+    // spurious `unknown-op LO` diagnostics here.
+    if looks_like_predicate(raw) {
+        return Some(Value::Atom(Arc::<str>::from(raw)));
+    }
+
     // Inline-pipe fallback: re-parse the slot body as a sprf fragment.
     // Top-level stmts now require a trailing `;`; slot fragments don't
     // carry one, so synthesize it. The appended `;` sits at byte
@@ -678,6 +751,34 @@ pub fn classify_slot(
         diags.push(d);
     }
     pipe.map(Value::Pipe)
+}
+
+/// Heuristic: does this slot text look like a SQL-style predicate?
+/// Two signals, both required:
+///   1. carries at least one `${IDENT}` interp;
+///   2. carries a relational / comparison token (`!=`, `<>`, `<`, `>`,
+///      `=`, ` like `, ` is `, ` between `).
+/// This is used as a fast escape hatch out of the inline-pipe parser
+/// path inside `classify_slot`. False positives don't break parsing
+/// (the slot text is preserved as an atom and the consuming op's
+/// classifier still gets the raw bytes) but they DO skip the
+/// sub-pipe walk, which the where/predicate fuser path doesn't need.
+fn looks_like_predicate(raw: &str) -> bool {
+    if !raw.contains("${") {
+        return false;
+    }
+    let lower = raw.to_ascii_lowercase();
+    let has_op = raw.contains("!=")
+        || raw.contains("<>")
+        || raw.contains(">=")
+        || raw.contains("<=")
+        || raw.contains(" = ")
+        || raw.contains(" < ")
+        || raw.contains(" > ")
+        || lower.contains(" like ")
+        || lower.contains(" is ")
+        || lower.contains(" between ");
+    has_op
 }
 
 /// Recognize `${IDENT}` as a host-position term read. Returns the

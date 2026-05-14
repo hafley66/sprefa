@@ -939,7 +939,14 @@ fn resolve_rule_args(
                     )));
                 }
                 let idx = match shorthand_idx {
-                    Some(idx) => idx,
+                    Some(idx) => {
+                        // Same-name shorthand still consumes the
+                        // positional slot. Without bumping
+                        // positional_idx past it, the next positional
+                        // arg would land back on this column.
+                        positional_idx = positional_idx.max(idx + 1);
+                        idx
+                    }
                     None => {
                         if positional_idx >= cols.len() {
                             return Err(LowerError::Unknown(format!(
