@@ -675,8 +675,8 @@ impl RuntimeGraph {
                 uri_id: event.source_uri_id,
                 uri: source_uri,
             };
-            for incoming in self.incoming_subscribe_edges(&source) {
-                let job = self.insert_job(&event, &incoming.owner, generation);
+            for owner in self.incoming_subscribers(&source) {
+                let job = self.insert_job(&event, &owner, generation);
                 jobs.insert(job.uri_id.0, job);
             }
             if let Some(compact) = &self.compact_sources {
@@ -789,8 +789,8 @@ impl RuntimeGraph {
     pub fn dispatch_wake(&self, source: &SourceNode, generation: u64) -> Vec<OwnerNode> {
         self.append_source_event(source, generation);
         let mut owners = BTreeMap::new();
-        for edge in self.incoming_subscribe_edges(source) {
-            owners.insert(edge.owner.uri_id.0, edge.owner);
+        for owner in self.incoming_subscribers(source) {
+            owners.insert(owner.uri_id.0, owner);
         }
         if let Some(compact) = &self.compact_sources {
             for owner in compact.owners_for_source(source.uri_id) {
@@ -1034,37 +1034,28 @@ impl RuntimeGraph {
         })
     }
 
-    fn incoming_subscribe_edges(&self, source: &SourceNode) -> Vec<IncomingSubscribe> {
+    fn incoming_subscribers(&self, source: &SourceNode) -> Vec<OwnerNode> {
+        // Delegate edge filtering to effect_runtime's edges_where; project
+        // the opaque from_id strings onto sprf OwnerNode by store lookup.
         let subscribe_kind = self.intern_uri(KIND_SUBSCRIBE).0.to_string();
         let source_id = source.uri_id.0.to_string();
-        let mut out = Vec::new();
-
-        for row in self.facts.rows_of(RUNTIME_EDGE) {
-            if row.get(EDGE_KIND_ID) != Some(subscribe_kind.as_str())
-                || row.get(TO_URI_ID) != Some(source_id.as_str())
-            {
-                continue;
-            }
-            let Some(edge_id) = row.get(EDGE_URI_ID).and_then(parse_u64) else {
-                continue;
-            };
-            let Some(owner_id) = row.get(FROM_URI_ID).and_then(parse_u64) else {
-                continue;
-            };
-            let Some(owner_uri) = self.store.lookup_string(StringId(owner_id)) else {
-                continue;
-            };
-            out.push(IncomingSubscribe {
-                edge_uri_id: StringId(edge_id),
-                owner: OwnerNode {
+        self.core
+            .edges_where(
+                Some(subscribe_kind.as_str()),
+                None,
+                Some(source_id.as_str()),
+                None,
+            )
+            .into_iter()
+            .filter_map(|edge| {
+                let owner_id = edge.from_id.parse::<u64>().ok()?;
+                let uri = self.store.lookup_string(StringId(owner_id))?;
+                Some(OwnerNode {
                     uri_id: StringId(owner_id),
-                    uri: owner_uri,
-                },
-            });
-        }
-
-        out.sort_by_key(|incoming| incoming.edge_uri_id.0);
-        out
+                    uri,
+                })
+            })
+            .collect()
     }
 
     fn intern_uri(&self, uri: &str) -> StringId {
@@ -1075,11 +1066,6 @@ impl RuntimeGraph {
 struct EdgeRecord {
     uri_id: StringId,
     uri: Arc<str>,
-}
-
-struct IncomingSubscribe {
-    edge_uri_id: StringId,
-    owner: OwnerNode,
 }
 
 struct CompactSourceGraph {
