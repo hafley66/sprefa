@@ -80,6 +80,16 @@ impl std::fmt::Display for QuiescenceError {
 
 impl std::error::Error for QuiescenceError {}
 
+impl QuiescenceError {
+    fn from_core(err: effect_runtime::v2::QuiescenceError) -> Self {
+        match err {
+            effect_runtime::v2::QuiescenceError::IterationCap { iters, handled } => {
+                QuiescenceError::IterationCap { iters, handled }
+            }
+        }
+    }
+}
+
 /// Canonical key for one positional rule-call argument. Literal carries
 /// the interned StringId so equality is `u64==u64`. Unbound means the
 /// caller left this position as `?` for the body/SQL to fill.
@@ -407,15 +417,10 @@ impl RuntimeGraph {
             .collect()
     }
 
-    /// Drive pending jobs to fixed point. Each iteration drains the
-    /// current `pending_jobs()` snapshot, calls `handler(&job)` for each
-    /// job, then `mark_job_done(&job)`. The handler may notify table
-    /// inserts (which enqueues new jobs) during the loop; those jobs
-    /// are picked up on the next iteration.
-    ///
-    /// Returns the total number of jobs run. Errors out with
-    /// `QuiescenceError::IterationCap` once the iteration count exceeds
-    /// `max_iters` — catches infinite cascades.
+    /// Drive pending jobs to fixed point. Thin sprf adapter over
+    /// `effect_runtime::v2::FactRuntimeGraph::run_to_quiescence`: the
+    /// generic drain runs against the underlying `core` and the handler
+    /// is projected onto sprf `RuntimeJob` for ergonomic callers.
     pub fn run_to_quiescence<F>(
         &self,
         max_iters: usize,
@@ -424,26 +429,26 @@ impl RuntimeGraph {
     where
         F: FnMut(&RuntimeJob),
     {
-        let mut handled = 0usize;
-        for iter in 0..max_iters {
-            let jobs = self.pending_jobs();
-            if jobs.is_empty() {
-                return Ok(handled);
-            }
-            for job in &jobs {
-                handler(job);
-                self.mark_job_done(job);
-                handled += 1;
-            }
-            // Sanity: don't loop forever if a job re-enqueues itself.
-            if iter + 1 == max_iters && !self.pending_jobs().is_empty() {
-                return Err(QuiescenceError::IterationCap {
-                    iters: max_iters,
-                    handled,
-                });
-            }
-        }
-        Ok(handled)
+        self.core
+            .run_to_quiescence(max_iters, |core_job| {
+                let Some(uri_id) = core_job.job_id.parse::<u64>().ok() else {
+                    return;
+                };
+                let Some(event_uri_id) = core_job.event_id.parse::<u64>().ok() else {
+                    return;
+                };
+                let Some(owner_uri_id) = core_job.owner_id.parse::<u64>().ok() else {
+                    return;
+                };
+                let job = RuntimeJob {
+                    uri_id: StringId(uri_id),
+                    event_uri_id: StringId(event_uri_id),
+                    owner_uri_id: StringId(owner_uri_id),
+                    generation: core_job.generation,
+                };
+                handler(&job);
+            })
+            .map_err(QuiescenceError::from_core)
     }
 
     pub fn declare_source(&self, source_uri: &str, generation: u64) -> SourceNode {
