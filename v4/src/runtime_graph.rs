@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -71,6 +71,55 @@ pub struct RuntimeGraph {
     pub facts: Arc<dyn FactStore<Cursor>>,
     core: FactRuntimeGraph<Cursor>,
     compact_sources: Option<Arc<CompactSourceGraph>>,
+    rule_memo: Arc<Mutex<RuleMemo>>,
+}
+
+/// Canonical key for one positional rule-call argument. Literal carries
+/// the interned StringId so equality is `u64==u64`. Unbound means the
+/// caller left this position as `?` for the body/SQL to fill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ArgKey {
+    Literal(StringId),
+    Unbound,
+}
+
+/// Memo from (rule-name, arg-tuple) to the OwnerNode declared on first
+/// fire. Same input tuple => same OwnerNode (durable identity via the
+/// underlying runtime-graph URI machinery).
+#[derive(Default)]
+pub struct RuleMemo {
+    table: HashMap<(StringId, Vec<ArgKey>), OwnerNode>,
+}
+
+impl RuleMemo {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Lookup or insert. `build` runs only on miss; the closure is
+    /// responsible for declaring the owner so the memo always wraps the
+    /// graph-side identity.
+    pub fn get_or_insert<F>(&mut self, rule: StringId, args: Vec<ArgKey>, build: F) -> OwnerNode
+    where
+        F: FnOnce() -> OwnerNode,
+    {
+        self.table
+            .entry((rule, args))
+            .or_insert_with(build)
+            .clone()
+    }
+
+    pub fn get(&self, rule: StringId, args: &[ArgKey]) -> Option<OwnerNode> {
+        self.table.get(&(rule, args.to_vec())).cloned()
+    }
+
+    pub fn len(&self) -> usize {
+        self.table.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.table.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -317,6 +366,7 @@ impl RuntimeGraph {
             facts,
             core,
             compact_sources: None,
+            rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
         }
     }
 
@@ -331,7 +381,31 @@ impl RuntimeGraph {
             facts,
             core,
             compact_sources: Some(Arc::new(CompactSourceGraph::open(path.as_ref()))),
+            rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
         }
+    }
+
+    /// Memoize the OwnerNode for a rule call by (rule_name, arg_keys).
+    /// First call with the tuple declares an owner via the supplied
+    /// `build` closure; later calls with the same tuple return the same
+    /// OwnerNode. Callers pass a build that uses a deterministic
+    /// `input_key` so durable identity matches the in-memory memo.
+    pub fn rule_memo_owner<F>(&self, rule: StringId, args: Vec<ArgKey>, build: F) -> OwnerNode
+    where
+        F: FnOnce() -> OwnerNode,
+    {
+        self.rule_memo
+            .lock()
+            .unwrap()
+            .get_or_insert(rule, args, build)
+    }
+
+    pub fn rule_memo_get(&self, rule: StringId, args: &[ArgKey]) -> Option<OwnerNode> {
+        self.rule_memo.lock().unwrap().get(rule, args)
+    }
+
+    pub fn rule_memo_len(&self) -> usize {
+        self.rule_memo.lock().unwrap().len()
     }
 
     pub fn stats(&self) -> Option<WriteStatsSnapshot> {

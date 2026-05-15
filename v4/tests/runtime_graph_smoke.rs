@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
-    expand, EventBus, ExpandOpts, FactStore, MemQueue, PipeInstance, QueueBackend, RenderCtx,
+    expand, Component, EventBus, ExpandOpts, FactStore, MemQueue, PipeInstance, QueueBackend,
+    RenderCtx,
 };
 use tempfile::tempdir;
 use v4::fact::FactWrite;
@@ -565,4 +566,74 @@ fn fact_write_auto_notifies_subscribed_owners() {
     assert_eq!(facts.len("T"), 1);
     assert_eq!(after.len(), before + 1);
     assert_eq!(after[0].owner_uri_id, owner.uri_id);
+}
+
+#[test]
+fn rule_invoke_memoizes_owner_by_input_arg_tuple() {
+    use effect_runtime::v2::{MemFactStore, Pipe};
+    use v4::rule::{Rule, RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
+    use v4::runtime_graph::ArgKey;
+
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (_facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    let user_store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+
+    let body = Pipe::new();
+    let rule = Rule::new("foo", user_store.clone(), "foo", &["A", "B"], body);
+
+    // foo("a", X?) — A literal "a", B unbound (Term against a key that
+    // isn't on the cursor).
+    let assignments = vec![
+        RuleInvokeAssign {
+            col: Arc::<str>::from("A"),
+            value: RuleInvokeValue::Literal(Arc::<str>::from("a")),
+        },
+        RuleInvokeAssign {
+            col: Arc::<str>::from("B"),
+            value: RuleInvokeValue::Term(Arc::<str>::from("MISSING")),
+        },
+    ];
+    let call = RuleInvokeComponent::new(rule.clone(), assignments.clone(), false);
+
+    let seed = Cursor::default();
+    let ctx = RenderCtx::new(0, 0, 0).with_runtime(graph.clone());
+
+    let _ = call.render(&ctx, &seed);
+    let _ = call.render(&ctx, &seed);
+
+    assert_eq!(graph.rule_memo_len(), 1);
+    let rule_id = graph.store.intern_string("foo");
+    let arg_a = ArgKey::Literal(graph.store.intern_string("a"));
+    let arg_b = ArgKey::Unbound;
+    let owner_first = graph
+        .rule_memo_get(rule_id, &[arg_a, arg_b])
+        .expect("memoized owner");
+
+    let _ = call.render(&ctx, &seed);
+    let owner_again = graph
+        .rule_memo_get(rule_id, &[arg_a, arg_b])
+        .expect("still memoized");
+    assert_eq!(owner_first.uri_id, owner_again.uri_id);
+    assert_eq!(owner_first.uri, owner_again.uri);
+
+    let other_assignments = vec![
+        RuleInvokeAssign {
+            col: Arc::<str>::from("A"),
+            value: RuleInvokeValue::Literal(Arc::<str>::from("b")),
+        },
+        RuleInvokeAssign {
+            col: Arc::<str>::from("B"),
+            value: RuleInvokeValue::Term(Arc::<str>::from("MISSING")),
+        },
+    ];
+    let other_call = RuleInvokeComponent::new(rule, other_assignments, false);
+    let _ = other_call.render(&ctx, &seed);
+    let arg_a2 = ArgKey::Literal(graph.store.intern_string("b"));
+    let owner_other = graph
+        .rule_memo_get(rule_id, &[arg_a2, arg_b])
+        .expect("second-tuple owner");
+    assert_ne!(owner_first.uri_id, owner_other.uri_id);
+    assert_eq!(graph.rule_memo_len(), 2);
 }
