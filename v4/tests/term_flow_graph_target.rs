@@ -41,7 +41,7 @@ fn captures_record_binding_site_and_read_sites() {
     // Body binds X at step 0 (ast metavar), reads X at step 1 (where).
     let src = r#"
         rule(:r, :X) {
-            ast(:c)`fn ${X?}()` > where ${X} != ""
+            ast(:c)`fn ${X?}()` > where`${X} != ""`
         }
     "#;
     let g = graph_for(src);
@@ -90,7 +90,7 @@ fn provenance_tagged_for_ast_and_rule_proj() {
     // Y read from upstream rule projection → RuleProj provenance.
     let src = r#"
         rule(:hits, :FS, :X) { ast(:c)`fn ${X?}()` };
-        rule(:caller, :FS, :X) { hits(FS?, X?) > where ${X} != "main" }
+        rule(:caller, :FS, :X) { hits(FS?, X?) > where`${X} != "main"` }
     "#;
     let g = graph_for(src);
     let caller = &g.bodies[g.rule_body_id("caller").unwrap()];

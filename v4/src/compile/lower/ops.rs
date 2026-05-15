@@ -1645,38 +1645,27 @@ impl Op for RuleCallOp {
 }
 
 // ─── where ────────────────────────────────────────────────────────────────
-// `where EXPR` is the predicate slot for fused-SQL rule bodies. The
-// parenless surface (`where ${A} != ${B}`) is rewritten in host_parse
-// into `where(${A} != ${B})`. The slot's text is captured raw and
-// handed to the fuser for predicate pushdown (P2). Runtime semantics
-// for the streamed-Rust fallback are out of scope for this op today —
-// the fuser's full-SQL path is the primary consumer.
+// `where\`PREDICATE\`` is the predicate slot for fused-SQL rule
+// bodies. The body is a SqlWhereDsl-grammar expression (SQLite
+// predicate vocabulary with `${capture}` host holes — see
+// v4/src/cst/dsls/sql_where/). The DSL body's raw text is read by the
+// fuser for predicate pushdown (P2). Runtime semantics for the
+// streamed-Rust fallback are out of scope for this op today — the
+// fuser's full-SQL path is the primary consumer.
 
 pub struct WhereDef;
-
-const WHERE_SPEC: &[ArgSig] = &[ArgSig {
-    kind: ArgKind::Variadic(&ArgKind::Any),
-    name: "predicate",
-    doc: "predicate expression in sql shape; bound and read captures only",
-    required: false,
-}];
 
 impl OperatorDef for WhereDef {
     fn name(&self) -> &'static str {
         "where"
     }
-    fn paren_args(&self) -> &[ArgSig] {
-        WHERE_SPEC
-    }
     fn dsl_body(&self) -> Option<DslShape> {
         Some(DslShape::Plain)
     }
     fn dsl_required(&self) -> bool {
-        // Transition: paren form `where(${A} != ${B})` is rewritten
-        // from `where ${A} != ${B}` sugar at parse time. After phase 4
-        // drops the paren form, this stays false and the backtick body
-        // becomes the only accepted shape (still optional so an empty
-        // `where\`\`` doesn't error before fuser pickup).
+        // An empty `where\`\`` is permitted at lower time; the fuser
+        // is responsible for rejecting empty predicates if they ever
+        // reach it.
         false
     }
 

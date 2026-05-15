@@ -17,5 +17,5 @@ rule(:hits, FS?, LO?) {
 };
 
 rule(:hit_pairs, FS?, LO?, OTHER_LO?) {
-  hits(FS?, LO?) > hits(FS?, OTHER_LO?) > where(${LO} != ${OTHER_LO})
+  hits(FS?, LO?) > hits(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
 };

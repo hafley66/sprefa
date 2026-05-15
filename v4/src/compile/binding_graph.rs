@@ -767,8 +767,16 @@ fn build_body_graph(
                 );
             }
             // DSL body reads still apply (rule calls don't carry one
-            // today, but be defensive).
-            record_dsl_reads(op, op_idx, scope_id, &mut captures, &mut eq_classes);
+            // today, but be defensive). Rule-call dsl is not predicate
+            // context, so use Argument.
+            record_dsl_reads(
+                op,
+                op_idx,
+                scope_id,
+                &mut captures,
+                &mut eq_classes,
+                ReadCtx::Argument,
+            );
             continue;
         }
 
@@ -926,7 +934,7 @@ fn record_reads(
         }
     }
 
-    record_dsl_reads(op, op_idx, scope_id, captures, eq_classes);
+    record_dsl_reads(op, op_idx, scope_id, captures, eq_classes, ctx);
 }
 
 fn record_dsl_reads(
@@ -935,6 +943,7 @@ fn record_dsl_reads(
     scope_id: ScopeId,
     captures: &mut HashMap<Arc<str>, CaptureInfo>,
     eq_classes: &mut UnionFind<Arc<str>>,
+    ctx: ReadCtx,
 ) {
     if let Some(dsl) = &op.dsl {
         let interps = default_plain_dsl_parse(dsl.raw.as_ref());
@@ -954,7 +963,7 @@ fn record_dsl_reads(
                     interp.name.clone(),
                     op_idx,
                     scope_id,
-                    ReadCtx::DslInterp,
+                    ctx.clone(),
                 );
             }
         }

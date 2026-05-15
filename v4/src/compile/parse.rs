@@ -27,16 +27,10 @@ pub fn host_parse(src: &str) -> (Vec<PipeAst>, Vec<Diag>) {
     // Source preprocess passes.
     //   1) `"…"` → `` `…` `` so test fixtures that use double-quoted
     //      strings still parse (the v4 grammar only has backticks).
-    //   2) parenless `where EXPR` → `where(EXPR)`, where EXPR runs to
-    //      the next top-level `>`, `;`, or `}`.
-    // Each pass returns Some only if it rewrote, so we keep the
-    // original slice when no transformation applies.
-    let q = rewrite_quote_strings(src);
-    let q_src: &str = match &q {
-        Some(s) => s.as_str(),
-        None => src,
-    };
-    let rewritten = rewrite_where_sugar(q_src).or(q);
+    // The historical parenless `where EXPR` rewrite was dropped in
+    // phase 4 of the where-strictly-via-sql-where-dsl migration. The
+    // canonical form is now `where\`EXPR\``.
+    let rewritten = rewrite_quote_strings(src);
     let src_view: &str = match &rewritten {
         Some(s) => s.as_str(),
         None => src,
@@ -491,147 +485,6 @@ fn rewrite_quote_strings(src: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-/// Pre-process a sprefa source to rewrite the parenless `where EXPR`
-/// predicate sugar into `where(EXPR)`. Returns `Some(new_src)` only if
-/// at least one occurrence was rewritten; otherwise the caller can
-/// keep the original byte slice unchanged.
-fn rewrite_where_sugar(src: &str) -> Option<String> {
-    let bytes = src.as_bytes();
-    let needle = b"where";
-    let mut out = String::with_capacity(src.len());
-    let mut i = 0usize;
-    let mut rewrote = false;
-    // Track whether we're inside a string / backtick / line comment
-    // so we don't rewrite `where` inside literals or `#` comments.
-    let mut quote: Option<u8> = None;
-    let mut in_comment = false;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if in_comment {
-            out.push(b as char);
-            if b == b'\n' {
-                in_comment = false;
-            }
-            i += 1;
-            continue;
-        }
-        if let Some(q) = quote {
-            if b == b'\\' && i + 1 < bytes.len() {
-                out.push(bytes[i] as char);
-                out.push(bytes[i + 1] as char);
-                i += 2;
-                continue;
-            }
-            if b == q {
-                quote = None;
-            }
-            out.push(b as char);
-            i += 1;
-            continue;
-        }
-        if b == b'#' {
-            in_comment = true;
-            out.push(b as char);
-            i += 1;
-            continue;
-        }
-        if b == b'`' || b == b'"' || b == b'\'' {
-            quote = Some(b);
-            out.push(b as char);
-            i += 1;
-            continue;
-        }
-        // Match `where` as a standalone word.
-        if b == b'w' && bytes.get(i..i + needle.len()) == Some(needle) {
-            let prev = if i == 0 { b' ' } else { bytes[i - 1] };
-            let next = bytes.get(i + needle.len()).copied().unwrap_or(b' ');
-            let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-            if !is_word(prev) && !is_word(next) {
-                // Look at the byte after `where` (after whitespace) to
-                // see if a call-form delimiter is already present.
-                // `(` = paren-arg form. `` ` `` = backtick DSL body form
-                // (canonical). Both skip the sugar rewrite.
-                let mut j = i + needle.len();
-                while j < bytes.len() && bytes[j] != b'\n' && bytes[j].is_ascii_whitespace() {
-                    j += 1;
-                }
-                if j < bytes.len() && bytes[j] != b'(' && bytes[j] != b'`' {
-                    // Locate predicate end at top-level `>`, `;`, `}`
-                    // or end-of-source.
-                    let start = j;
-                    let end = find_predicate_end(bytes, start);
-                    let expr = src[start..end].trim_end();
-                    if !expr.is_empty() {
-                        out.push_str("where(");
-                        out.push_str(expr);
-                        out.push(')');
-                        rewrote = true;
-                        i = start + (end - start);
-                        // Preserve trailing whitespace we skipped past
-                        // the predicate so column offsets downstream
-                        // don't shift.
-                        let consumed = i - (i - (end - expr.len()));
-                        let _ = consumed;
-                        continue;
-                    }
-                }
-            }
-        }
-        out.push(b as char);
-        i += 1;
-    }
-    if rewrote {
-        Some(out)
-    } else {
-        None
-    }
-}
-
-/// Find the byte offset where a parenless `where` predicate ends.
-/// Stops at top-level `>`, `;`, `}`, or end-of-source. Backticks /
-/// quotes are tracked so a `>` inside a literal doesn't terminate.
-fn find_predicate_end(bytes: &[u8], start: usize) -> usize {
-    let mut i = start;
-    let mut depth: i32 = 0;
-    let mut quote: Option<u8> = None;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if let Some(q) = quote {
-            if b == b'\\' && i + 1 < bytes.len() {
-                i += 2;
-                continue;
-            }
-            if b == q {
-                quote = None;
-            }
-            i += 1;
-            continue;
-        }
-        match b {
-            b'`' | b'"' | b'\'' => {
-                quote = Some(b);
-                i += 1;
-            }
-            b'(' | b'[' | b'{' => {
-                depth += 1;
-                i += 1;
-            }
-            b')' | b']' => {
-                depth -= 1;
-                i += 1;
-            }
-            b'}' if depth == 0 => break,
-            b'}' => {
-                depth -= 1;
-                i += 1;
-            }
-            b'>' | b';' if depth == 0 => break,
-            _ => i += 1,
-        }
-    }
-    i
 }
 
 /// Does the source already end with a `;` after stripping whitespace

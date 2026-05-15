@@ -160,21 +160,15 @@ fn classify_op(op: &OpCall) -> Option<Liftable> {
             udfs: vec![Arc::<str>::from("sprf_re_match")],
         }),
         "where" => {
-            // Predicate text comes from the backtick DSL body when
-            // present (canonical surface: `where\`${A} != ${B}\``).
-            // During the paren-form transition the parser may still
-            // route the predicate through args[0]; fall back to that
-            // shape so legacy `where ${A} != ${B}` (rewritten to
-            // `where(${A} != ${B})`) keeps working until phase 4.
+            // Predicate text comes from the backtick DSL body
+            // (canonical surface: `where\`${A} != ${B}\``). Paren form
+            // and the parenless `where EXPR` rewrite were removed in
+            // phase 4 of the where-strictly-via-sql-where-dsl
+            // migration. Body LSP support: cst::dsls::sql_where.
             let pred = op
                 .dsl
                 .as_ref()
                 .map(|d| d.raw.as_ref().trim().to_string())
-                .or_else(|| {
-                    op.args
-                        .first()
-                        .map(|s| s.raw.as_ref().trim().to_string())
-                })
                 .unwrap_or_default();
             Some(Liftable::Pure {
                 project: Vec::new(),
