@@ -74,6 +74,29 @@ pub struct RuntimeGraph {
     rule_memo: Arc<Mutex<RuleMemo>>,
 }
 
+/// Reasons `run_to_quiescence` may bail out before draining.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuiescenceError {
+    /// Hit the iteration cap with non-empty `pending_jobs`. Likely a
+    /// cycle in the rule graph (A wakes B wakes A).
+    IterationCap { iters: usize, handled: usize },
+}
+
+impl std::fmt::Display for QuiescenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QuiescenceError::IterationCap { iters, handled } => {
+                write!(
+                    f,
+                    "run_to_quiescence hit iteration cap (iters={iters}, handled={handled})"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for QuiescenceError {}
+
 /// Canonical key for one positional rule-call argument. Literal carries
 /// the interned StringId so equality is `u64==u64`. Unbound means the
 /// caller left this position as `?` for the body/SQL to fill.
@@ -457,6 +480,45 @@ impl RuntimeGraph {
             .into_iter()
             .filter(|job| !before.contains(&job.uri_id.0))
             .collect()
+    }
+
+    /// Drive pending jobs to fixed point. Each iteration drains the
+    /// current `pending_jobs()` snapshot, calls `handler(&job)` for each
+    /// job, then `mark_job_done(&job)`. The handler may notify table
+    /// inserts (which enqueues new jobs) during the loop; those jobs
+    /// are picked up on the next iteration.
+    ///
+    /// Returns the total number of jobs run. Errors out with
+    /// `QuiescenceError::IterationCap` once the iteration count exceeds
+    /// `max_iters` — catches infinite cascades.
+    pub fn run_to_quiescence<F>(
+        &self,
+        max_iters: usize,
+        mut handler: F,
+    ) -> Result<usize, QuiescenceError>
+    where
+        F: FnMut(&RuntimeJob),
+    {
+        let mut handled = 0usize;
+        for iter in 0..max_iters {
+            let jobs = self.pending_jobs();
+            if jobs.is_empty() {
+                return Ok(handled);
+            }
+            for job in &jobs {
+                handler(job);
+                self.mark_job_done(job);
+                handled += 1;
+            }
+            // Sanity: don't loop forever if a job re-enqueues itself.
+            if iter + 1 == max_iters && !self.pending_jobs().is_empty() {
+                return Err(QuiescenceError::IterationCap {
+                    iters: max_iters,
+                    handled,
+                });
+            }
+        }
+        Ok(handled)
     }
 
     pub fn declare_source(&self, source_uri: &str, generation: u64) -> SourceNode {

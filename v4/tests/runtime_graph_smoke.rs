@@ -714,3 +714,101 @@ fn rule_invoke_body_skips_on_cache_hit_and_refires_on_source_dirty() {
         "source dirty invalidates cache"
     );
 }
+
+#[test]
+fn run_to_quiescence_drains_three_level_chain() {
+    // Chain: source-a inserts -> wake owner-a -> a writes b -> wake
+    // owner-b -> b writes c -> wake owner-c. The handler closure
+    // implements each owner's effect inline; the cascade pumps through
+    // run_to_quiescence until no jobs remain.
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+
+    facts.declare("a", &["k"]);
+    facts.declare("b", &["k"]);
+    facts.declare("c", &["k"]);
+
+    let owner_a = graph.declare_owner("sprf://ast/rule/a", None, "input", "head", "pure", 1);
+    let owner_b = graph.declare_owner("sprf://ast/rule/b", None, "input", "head", "pure", 1);
+    let owner_c = graph.declare_owner("sprf://ast/rule/c", None, "input", "head", "pure", 1);
+
+    let src_a = graph.declare_table_source("a", 1);
+    let src_b = graph.declare_table_source("b", 1);
+    let src_c = graph.declare_table_source("c", 1);
+    graph.subscribe(&owner_a, "a", &src_a, 1);
+    graph.subscribe(&owner_b, "b", &src_b, 1);
+    graph.subscribe(&owner_c, "c", &src_c, 1);
+
+    // Seed: write to "a", which fires notify_table_inserted -> owner_a
+    // gets a job.
+    let mut row_a = Cursor::default();
+    row_a.set("k", "v");
+    facts.insert_batch("a", vec![Arc::new(row_a)]);
+    graph.notify_table_inserted("a", 2);
+
+    let owner_a_id = owner_a.uri_id;
+    let owner_b_id = owner_b.uri_id;
+    let owner_c_id = owner_c.uri_id;
+    let facts_for_handler = facts.clone();
+    let graph_for_handler = graph.clone();
+
+    let handled = graph
+        .run_to_quiescence(10, move |job| {
+            // Each owner's handler: read the upstream row count, write
+            // a single derived row to the next table, notify.
+            if job.owner_uri_id == owner_a_id {
+                let mut row_b = Cursor::default();
+                row_b.set("k", "v");
+                facts_for_handler.insert_batch("b", vec![Arc::new(row_b)]);
+                graph_for_handler.notify_table_inserted("b", job.generation + 1);
+            } else if job.owner_uri_id == owner_b_id {
+                let mut row_c = Cursor::default();
+                row_c.set("k", "v");
+                facts_for_handler.insert_batch("c", vec![Arc::new(row_c)]);
+                graph_for_handler.notify_table_inserted("c", job.generation + 1);
+            } else if job.owner_uri_id == owner_c_id {
+                // Terminal — nothing more to fire.
+            }
+        })
+        .expect("quiescence");
+
+    assert_eq!(handled, 3, "three jobs across three chain levels");
+    assert_eq!(facts.len("a"), 1);
+    assert_eq!(facts.len("b"), 1);
+    assert_eq!(facts.len("c"), 1);
+    assert!(graph.pending_jobs().is_empty(), "no jobs pending at quiescence");
+}
+
+#[test]
+fn run_to_quiescence_errors_on_iteration_cap() {
+    // Handler that re-fires the same source forever. Cap kicks in.
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    facts.declare("t", &["k"]);
+
+    let owner = graph.declare_owner("sprf://ast/cycle", None, "input", "head", "pure", 1);
+    let src = graph.declare_table_source("t", 1);
+    graph.subscribe(&owner, "t", &src, 1);
+
+    graph.notify_table_inserted("t", 2);
+
+    let graph_for_handler = graph.clone();
+    let mut gen = 3u64;
+    let err = graph
+        .run_to_quiescence(4, move |_job| {
+            graph_for_handler.notify_table_inserted("t", gen);
+            gen += 1;
+        })
+        .unwrap_err();
+
+    match err {
+        v4::runtime_graph::QuiescenceError::IterationCap { iters, handled } => {
+            assert_eq!(iters, 4);
+            assert!(handled >= 1);
+        }
+    }
+}
