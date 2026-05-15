@@ -28,11 +28,6 @@ const FROM_URI_ID: &str = "from_uri_id";
 const TO_URI_ID: &str = "to_uri_id";
 const LABEL_ID: &str = "label_id";
 
-const EVENT_URI_ID: &str = "event_uri_id";
-const EVENT_SOURCE_URI_ID: &str = "source_uri_id";
-const EVENT_VALUE_URI_ID: &str = "value_uri_id";
-const CONSUMED: &str = "consumed";
-
 
 const CONT_OWNER_URI_ID: &str = "owner_uri_id";
 const CONT_PIPE_HASH: &str = "pipe_hash";
@@ -807,28 +802,22 @@ impl RuntimeGraph {
     }
 
     pub fn unconsumed_events(&self) -> Vec<RuntimeEvent> {
-        let mut out: Vec<RuntimeEvent> = self
-            .facts
-            .rows_of(RUNTIME_EVENT)
+        // Delegate to effect_runtime's generic reader; project opaque
+        // String IDs onto sprf StringId. value_uri_id was reduced to a
+        // placeholder in slice 2 and lands as 0 for empty strings.
+        self.core
+            .unconsumed_events()
             .into_iter()
-            .filter(|row| row.get(CONSUMED) == Some("0"))
-            .filter_map(|row| {
-                // value_uri_id column is written as "" since slice 2;
-                // tolerate the empty case until slice 6 drops the column.
-                let value_uri_id = row
-                    .get(EVENT_VALUE_URI_ID)
-                    .and_then(parse_u64)
-                    .unwrap_or(0);
+            .filter_map(|event| {
+                let value_uri_id = event.value_id.parse::<u64>().unwrap_or(0);
                 Some(RuntimeEvent {
-                    uri_id: StringId(row.get(EVENT_URI_ID).and_then(parse_u64)?),
-                    source_uri_id: StringId(row.get(EVENT_SOURCE_URI_ID).and_then(parse_u64)?),
+                    uri_id: StringId(event.event_id.parse().ok()?),
+                    source_uri_id: StringId(event.source_id.parse().ok()?),
                     value_uri_id: StringId(value_uri_id),
-                    generation: row.get(GENERATION).and_then(parse_u64)?,
+                    generation: event.generation,
                 })
             })
-            .collect();
-        out.sort();
-        out
+            .collect()
     }
 
     pub fn owners_for_unconsumed_events(&self) -> Vec<OwnerNode> {
