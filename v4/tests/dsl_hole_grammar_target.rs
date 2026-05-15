@@ -162,8 +162,9 @@ fn json_hole_binds_value() {
 
 // ─── re ───────────────────────────────────────────────────────────────────
 
-/// `${NAME?}` in re lowers to `(?P<NAME>.*?)`. Same semantics as the
-/// existing `$NAME` sugar; the universal surface keeps it consistent.
+/// `${NAME?}` in re lowers to `(?P<NAME>\w+)` (tight word-form default).
+/// Same semantics as the existing `$NAME` sugar; the universal surface
+/// keeps it consistent.
 #[test]
 fn re_hole_binds_match() {
     let tmp = tempfile::tempdir().unwrap();
@@ -184,6 +185,26 @@ fn re_hole_binds_match() {
         .collect();
     who.sort();
     assert_eq!(who, vec!["alice".to_string(), "bob".to_string()]);
+}
+
+/// `$$${NAME?}` in re is the loose escape hatch — lowers to `(?P<NAME>.*?)`.
+/// Use when the default word-form `\w+` is too restrictive (e.g. names
+/// containing spaces or punctuation).
+#[test]
+fn re_triple_dollar_is_loose_any_char() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("notes.txt"),
+        b"NOTE: hello world is here\n",
+    )
+    .unwrap();
+    let store = run_in(
+        tmp.path(),
+        r#"rule(:hits, MSG?) { fs > glob`**/*.txt` > read > re`NOTE: $$${MSG?} is` };"#,
+    );
+    let rows = store.rows_of("hits");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("MSG").unwrap_or(""), "hello world");
 }
 
 // ─── sql ──────────────────────────────────────────────────────────────────
@@ -226,21 +247,16 @@ fn sql_where_hole_binds_parameter() {
 
 // ─── triple-dollar negative sweep ─────────────────────────────────────────
 
-/// Triple-dollar is ast-grep native + glob alias only. Each remaining
-/// DSL (re, json, sql, sql_where) must reject (or refuse to match)
-/// `$$${...}` in its body.
+/// Triple-dollar is a per-DSL carveout for the LOOSER form. Today:
+/// - ast (sibling sequence, native ast-grep)
+/// - glob (multi-segment, alias of `**`)
+/// - re (loose `.*?` escape hatch)
+/// json, sql, sql_where do not have a meaningful single-vs-multi
+/// distinction at the hole position, so they have no $$$ form.
 #[test]
-fn triple_dollar_is_ast_and_glob_only() {
+fn triple_dollar_only_where_single_vs_multi_makes_sense() {
     use v4::cst::diag::SilentSink;
     use v4::cst::dsl::Dsl;
-
-    // re: regex compile fails on `$$${...}` since native re grammar leaves
-    //     the literal `{X?}` for the regex crate, which errors.
-    let re = v4::cst::dsls::re::ReDsl::new();
-    assert!(
-        re.compile(b"$$${WHO?}", &SilentSink).is_err(),
-        "re must reject `$$${{...}}` at native compile",
-    );
 
     // json: brace_parse rejects the extra `$` chars with
     // "empty capture name after `$`".

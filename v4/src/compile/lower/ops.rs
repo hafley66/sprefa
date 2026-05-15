@@ -1350,9 +1350,11 @@ impl OperatorDef for ReDef {
 }
 
 /// Rewrite the `re` body's universal `${...}` carveouts into the regex
-/// surface. `${X?}` becomes `(?P<X>.*?)` (the per-DSL default named
-/// group); `${X}` Read is rejected at lower time (re does not yet have
-/// a per-cursor splice for non-SubPipe Read). Literal text passes through
+/// surface. Tight default + loose escape hatch (mirrors glob):
+///   `${X?}`    → `(?P<X>\w+)`   word-form capture (tight default)
+///   `$$${X?}`  → `(?P<X>.*?)`   lazy any-char (loose escape hatch)
+/// `${X}` Read is rejected at lower time (re does not yet have a
+/// per-cursor splice for non-SubPipe Read). Literal text passes through
 /// untouched; the regex crate handles its own escapes.
 fn re_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
     use crate::compile::lower::op_def::{InterpKind, InterpMode};
@@ -1371,18 +1373,17 @@ fn re_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
     let mut out = String::with_capacity(raw.len() + 8);
     let mut i: usize = 0;
     while i < bytes.len() {
-        // Reject triple-dollar in `re`: it's ast-grep-only per spec.
-        if i + 3 < bytes.len()
+        // Re carveout: `$$${X?}` is the loose escape hatch — lowers to
+        // `(?P<X>.*?)`. Default `${X?}` stays tight at `(?P<X>\w+)`.
+        // Host parser sets interp.range.lo at the third `$` (where `${`
+        // is matched), so we look up at i+2 when triple_dollar.
+        let triple_dollar = i + 3 < bytes.len()
             && bytes[i] == b'$'
             && bytes[i + 1] == b'$'
             && bytes[i + 2] == b'$'
-            && bytes[i + 3] == b'{'
-        {
-            return Err(LowerError::Unknown(
-                "re: `$$${...}` is ast-grep only; use `${NAME?}` in re bodies".into(),
-            ));
-        }
-        if let Some(interp) = by_lo.get(&(i as u32)) {
+            && bytes[i + 3] == b'{';
+        let interp_offset = if triple_dollar { i + 2 } else { i };
+        if let Some(interp) = by_lo.get(&(interp_offset as u32)) {
             match &interp.kind {
                 InterpKind::Term { mode, field } => {
                     if field.is_some() {
@@ -1396,7 +1397,7 @@ fn re_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
                         InterpMode::Bind => {
                             out.push_str("(?P<");
                             out.push_str(interp.name.as_ref());
-                            out.push_str(">.*?)");
+                            out.push_str(if triple_dollar { ">.*?)" } else { ">\\w+)" });
                         }
                         InterpMode::Read => {
                             return Err(LowerError::Unknown(format!(
@@ -1579,16 +1580,15 @@ impl AstOp {
 impl Op for AstOp {
     fn classify(&self) -> Liftable {
         // AST emits a (FILE, LO, HI) tuple plus any captured metavars.
-        // The canonical fixed columns are FILE (FileId) and a
-        // WhereBytesId for the matched span. Metavar columns are
-        // appended by the fuser at compose time from the
-        // TermFlowGraph; this skeleton fixes the two mandatory cols
-        // the test checks.
+        // FILE is a FileId FK. LO and HI are raw byte offsets stored
+        // as INTEGER (not FKs) — they index into the file's bytes
+        // directly. MATCH (added downstream) carries the WhereBytesId
+        // for provenance.
         Liftable::Stream {
             schema: vec![
                 (Col::from("FILE"), IdKind::FileId),
-                (Col::from("LO"), IdKind::WhereBytesId),
-                (Col::from("HI"), IdKind::WhereBytesId),
+                (Col::from("LO"), IdKind::Int),
+                (Col::from("HI"), IdKind::Int),
             ],
             run: stream_noop,
         }
