@@ -821,18 +821,27 @@ impl RuntimeGraph {
     }
 
     pub fn owners_for_unconsumed_events(&self) -> Vec<OwnerNode> {
+        // Generic side returns opaque String IDs; map back to sprf
+        // OwnerNode by parsing the StringId and looking up the URI.
+        let subscribe_kind_id = self.intern_uri(KIND_SUBSCRIBE).0.to_string();
         let mut owners = BTreeMap::new();
-        for event in self.unconsumed_events() {
-            let Some(source_uri) = self.store.lookup_string(event.source_uri_id) else {
+        for owner_id_text in self
+            .core
+            .owners_for_unconsumed_events(subscribe_kind_id.as_str())
+        {
+            let Some(owner_id) = owner_id_text.parse::<u64>().ok() else {
                 continue;
             };
-            let source = SourceNode {
-                uri_id: event.source_uri_id,
-                uri: source_uri,
+            let Some(uri) = self.store.lookup_string(StringId(owner_id)) else {
+                continue;
             };
-            for incoming in self.incoming_subscribe_edges(&source) {
-                owners.insert(incoming.owner.uri_id.0, incoming.owner);
-            }
+            owners.insert(
+                owner_id,
+                OwnerNode {
+                    uri_id: StringId(owner_id),
+                    uri,
+                },
+            );
         }
         owners.into_values().collect()
     }
