@@ -33,10 +33,6 @@ const EVENT_SOURCE_URI_ID: &str = "source_uri_id";
 const EVENT_VALUE_URI_ID: &str = "value_uri_id";
 const CONSUMED: &str = "consumed";
 
-const JOB_URI_ID: &str = "job_uri_id";
-const JOB_EVENT_URI_ID: &str = "event_uri_id";
-const JOB_OWNER_URI_ID: &str = "owner_uri_id";
-const JOB_STATE: &str = "state";
 
 const CONT_OWNER_URI_ID: &str = "owner_uri_id";
 const CONT_PIPE_HASH: &str = "pipe_hash";
@@ -51,8 +47,6 @@ const KIND_ROW: &str = "row";
 const KIND_SUBSCRIBE: &str = "subscribe";
 const KIND_SUPPORT: &str = "support";
 const KIND_MEMBER_OF: &str = "member_of";
-const JOB_PENDING: &str = "pending";
-const JOB_DONE: &str = "done";
 
 #[derive(Clone)]
 pub struct RuntimeGraph {
@@ -696,39 +690,24 @@ impl RuntimeGraph {
     }
 
     pub fn pending_jobs(&self) -> Vec<RuntimeJob> {
-        let mut out: Vec<RuntimeJob> = self
-            .facts
-            .rows_of(RUNTIME_JOB)
+        // Read through effect_runtime's generic job table; convert opaque
+        // string IDs to sprf StringId for callers.
+        self.core
+            .pending_jobs()
             .into_iter()
-            .filter(|row| row.get(JOB_STATE) == Some(JOB_PENDING))
             .filter_map(|row| {
                 Some(RuntimeJob {
-                    uri_id: StringId(row.get(JOB_URI_ID).and_then(parse_u64)?),
-                    event_uri_id: StringId(row.get(JOB_EVENT_URI_ID).and_then(parse_u64)?),
-                    owner_uri_id: StringId(row.get(JOB_OWNER_URI_ID).and_then(parse_u64)?),
-                    generation: row.get(GENERATION).and_then(parse_u64)?,
+                    uri_id: StringId(row.job_id.parse().ok()?),
+                    event_uri_id: StringId(row.event_id.parse().ok()?),
+                    owner_uri_id: StringId(row.owner_id.parse().ok()?),
+                    generation: row.generation,
                 })
             })
-            .collect();
-        out.sort();
-        out
+            .collect()
     }
 
     pub fn mark_job_done(&self, job: &RuntimeJob) {
-        let job_id = job.uri_id.0.to_string();
-        self.facts
-            .delete_matching(RUNTIME_JOB, &[(JOB_URI_ID, job_id.as_str())]);
-        self.insert_job_row(job, JOB_DONE);
-
-        let event_id = job.event_uri_id.0.to_string();
-        let has_pending = self
-            .facts
-            .read_where(RUNTIME_JOB, JOB_EVENT_URI_ID, event_id.as_str())
-            .iter()
-            .any(|row| row.get(JOB_STATE) == Some(JOB_PENDING));
-        if !has_pending {
-            self.core.mark_event_consumed(event_id.as_str());
-        }
+        self.core.mark_job_done(job.uri_id.0.to_string().as_str());
     }
 
     pub fn owner_descriptor(&self, owner_uri_id: StringId) -> Option<OwnerDescriptor> {
@@ -992,40 +971,21 @@ impl RuntimeGraph {
             "job",
             &[&event.uri_id.0.to_string(), &owner.uri_id.0.to_string()],
         );
-        let job = RuntimeJob {
-            uri_id: self.intern_uri(uri.as_ref()),
+        let uri_id = self.intern_uri(uri.as_ref());
+        let event_id_text = event.uri_id.0.to_string();
+        let owner_id_text = owner.uri_id.0.to_string();
+        self.core.insert_job(
+            uri_id.0.to_string().as_str(),
+            event_id_text.as_str(),
+            owner_id_text.as_str(),
+            generation,
+        );
+        RuntimeJob {
+            uri_id,
             event_uri_id: event.uri_id,
             owner_uri_id: owner.uri_id,
             generation,
-        };
-        let job_id = job.uri_id.0.to_string();
-        let existing = self
-            .facts
-            .read_where(RUNTIME_JOB, JOB_URI_ID, job_id.as_str());
-        if existing.is_empty() {
-            self.insert_job_row(&job, JOB_PENDING);
         }
-        job
-    }
-
-    fn insert_job_row(&self, job: &RuntimeJob, state: &str) {
-        self.facts.declare(
-            RUNTIME_JOB,
-            &[
-                JOB_URI_ID,
-                JOB_EVENT_URI_ID,
-                JOB_OWNER_URI_ID,
-                JOB_STATE,
-                GENERATION,
-            ],
-        );
-        let mut row = Cursor::default();
-        row.set(JOB_URI_ID, job.uri_id.0.to_string());
-        row.set(JOB_EVENT_URI_ID, job.event_uri_id.0.to_string());
-        row.set(JOB_OWNER_URI_ID, job.owner_uri_id.0.to_string());
-        row.set(JOB_STATE, state);
-        row.set(GENERATION, job.generation.to_string());
-        self.facts.insert_batch(RUNTIME_JOB, vec![Arc::new(row)]);
     }
 
     fn supported_rows_for_owner(

@@ -9,6 +9,7 @@ pub const RUNTIME_EDGE: &str = "runtime_edge";
 pub const RUNTIME_VALUE: &str = "runtime_value";
 pub const RUNTIME_EDGE_VALUE: &str = "runtime_edge_value";
 pub const RUNTIME_EVENT: &str = "runtime_event";
+pub const RUNTIME_JOB: &str = "runtime_job";
 
 pub const NODE_ID: &str = "node_uri_id";
 pub const NODE_KIND_ID: &str = "node_kind_id";
@@ -36,6 +37,13 @@ pub const EVENT_ID: &str = "event_uri_id";
 pub const EVENT_SOURCE_ID: &str = "source_uri_id";
 pub const EVENT_VALUE_ID: &str = "value_uri_id";
 pub const CONSUMED: &str = "consumed";
+
+pub const JOB_ID: &str = "job_uri_id";
+pub const JOB_EVENT_ID: &str = "event_uri_id";
+pub const JOB_OWNER_ID: &str = "owner_uri_id";
+pub const JOB_STATE: &str = "state";
+pub const JOB_PENDING: &str = "pending";
+pub const JOB_DONE: &str = "done";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeNode {
@@ -84,6 +92,14 @@ pub struct RuntimeEvent {
     pub value_id: String,
     pub generation: u64,
     pub consumed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RuntimeJob {
+    pub job_id: String,
+    pub event_id: String,
+    pub owner_id: String,
+    pub generation: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -414,6 +430,80 @@ impl<R: Row> FactRuntimeGraph<R> {
         self.facts.insert_batch(RUNTIME_EVENT, vec![Arc::new(row)]);
     }
 
+    /// Idempotent job insert. Caller computes `job_id` (sprf side uses a
+    /// hash of event_id+owner_id). The row lands in PENDING state on
+    /// first insert and stays untouched on duplicate calls.
+    pub fn insert_job(&self, job_id: &str, event_id: &str, owner_id: &str, generation: u64) {
+        if self.has_row(RUNTIME_JOB, JOB_ID, job_id) {
+            return;
+        }
+        let mut row = R::default();
+        row.set(JOB_ID, job_id);
+        row.set(JOB_EVENT_ID, event_id);
+        row.set(JOB_OWNER_ID, owner_id);
+        row.set(JOB_STATE, JOB_PENDING);
+        row.set(GENERATION, generation.to_string().as_str());
+        self.facts.insert_batch(RUNTIME_JOB, vec![Arc::new(row)]);
+    }
+
+    pub fn pending_jobs(&self) -> Vec<RuntimeJob> {
+        let mut jobs: Vec<RuntimeJob> = self
+            .facts
+            .rows_of(RUNTIME_JOB)
+            .into_iter()
+            .filter(|row| row.get(JOB_STATE) == Some(JOB_PENDING))
+            .filter_map(|row| {
+                Some(RuntimeJob {
+                    job_id: row.get(JOB_ID)?.to_string(),
+                    event_id: row.get(JOB_EVENT_ID)?.to_string(),
+                    owner_id: row.get(JOB_OWNER_ID)?.to_string(),
+                    generation: row.get(GENERATION)?.parse().ok()?,
+                })
+            })
+            .collect();
+        jobs.sort();
+        jobs
+    }
+
+    /// Flip the job row to DONE. If no PENDING job remains for the same
+    /// event, mark that event consumed too (matches the prior v4
+    /// semantics that ratchet event lifecycle on the last job done).
+    pub fn mark_job_done(&self, job_id: &str) {
+        let Some(existing) = self
+            .facts
+            .read_where(RUNTIME_JOB, JOB_ID, job_id)
+            .into_iter()
+            .next()
+        else {
+            return;
+        };
+        let event_id = existing.get(JOB_EVENT_ID).unwrap_or("").to_string();
+        let owner_id = existing.get(JOB_OWNER_ID).unwrap_or("").to_string();
+        let generation = existing
+            .get(GENERATION)
+            .and_then(|g| g.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        self.facts
+            .delete_matching(RUNTIME_JOB, &[(JOB_ID, job_id)]);
+        let mut row = R::default();
+        row.set(JOB_ID, job_id);
+        row.set(JOB_EVENT_ID, event_id.as_str());
+        row.set(JOB_OWNER_ID, owner_id.as_str());
+        row.set(JOB_STATE, JOB_DONE);
+        row.set(GENERATION, generation.to_string().as_str());
+        self.facts.insert_batch(RUNTIME_JOB, vec![Arc::new(row)]);
+
+        let has_pending = self
+            .facts
+            .read_where(RUNTIME_JOB, JOB_EVENT_ID, event_id.as_str())
+            .iter()
+            .any(|row| row.get(JOB_STATE) == Some(JOB_PENDING));
+        if !has_pending {
+            self.mark_event_consumed(event_id.as_str());
+        }
+    }
+
     pub fn mark_event_consumed(&self, event_id: &str) {
         let Some(event) = self
             .unconsumed_events()
@@ -630,6 +720,10 @@ impl<R: Row> FactRuntimeGraph<R> {
                 GENERATION,
                 CONSUMED,
             ],
+        );
+        self.facts.declare(
+            RUNTIME_JOB,
+            &[JOB_ID, JOB_EVENT_ID, JOB_OWNER_ID, JOB_STATE, GENERATION],
         );
     }
 
