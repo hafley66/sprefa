@@ -19,7 +19,7 @@ use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection};
 
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
-use crate::compile::lower::op_def::{DslBody, DslShape, InterpKind, InterpMode, OperatorDef};
+use crate::compile::lower::op_def::{DslBody, DslShape, InterpKind, OperatorDef};
 use crate::compile::lower::value::{CallArg, Value};
 use crate::fact::{FactWrite, WriteAssign, WriteValue};
 use crate::mounted_query;
@@ -888,10 +888,11 @@ fn rewrite_sql_interps(dsl: &DslBody) -> Result<String, LowerError> {
         }
         out.push_str(&dsl.raw[cursor..lo]);
         match &interp.kind {
-            InterpKind::Term {
-                mode: InterpMode::Read,
-                field,
-            } => {
+            // Bind (`${X?}`) and Read (`${X}`) lower the same way: a SQL
+            // body has no notion of "introducing a new binding"; the rule
+            // head's `X?` is what introduces. The `?` here is purely the
+            // universal surface marker.
+            InterpKind::Term { mode: _, field } => {
                 if interp.name.as_ref() == "&" {
                     if field.as_ref().map(|f| f.as_ref()) == Some("value") {
                         out.push_str("\"input\".\"value\"");
@@ -908,14 +909,6 @@ fn rewrite_sql_interps(dsl: &DslBody) -> Result<String, LowerError> {
                         "sql: field interpolation must be explicit SQL over input columns".into(),
                     ));
                 }
-            }
-            InterpKind::Term {
-                mode: InterpMode::Bind,
-                ..
-            } => {
-                return Err(LowerError::Unknown(
-                    "sql: bind interpolation is not valid inside sql bodies".into(),
-                ));
             }
             InterpKind::SubPipe { .. } => {
                 return Err(LowerError::Unknown(
