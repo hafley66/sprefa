@@ -1675,13 +1675,35 @@ impl OperatorDef for WhereDef {
         _flow: Option<Value>,
         _args: &[Value],
         _block: Option<Pipe<Cursor>>,
-        _dsl: Option<&DslBody>,
+        dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        // Streamed-Rust runtime support is the fuser's job. For now,
-        // surface as a pass-through so legacy paths that include
-        // `where` in a body don't crash; the fuser intercepts it
-        // before lowering.
-        Ok(Pipe::new().step(Arc::new(VoidComponent)))
+        // Two consumers read the same `op.dsl.raw`:
+        //   - fuser (compile/fuser.rs::classify_op) — predicate
+        //     pushdown into JOIN ON for full-SQL bodies.
+        //   - this lower path — interpreted filter for streamed-Rust
+        //     bodies (any Stream op present).
+        // Both pull from the same text so the two regimes can't
+        // disagree on what the predicate says.
+        let Some(body) = dsl else {
+            // Empty `where\`\`` → pass-through (matches the prior
+            // VoidComponent semantics; the fuser already rejects empty
+            // predicates if they ever reach SQL emission).
+            return Ok(Pipe::new().step(Arc::new(VoidComponent)));
+        };
+        let raw = body.raw.as_ref();
+        if raw.trim().is_empty() {
+            return Ok(Pipe::new().step(Arc::new(VoidComponent)));
+        }
+        match crate::compile::lower::where_eval::parse_predicate(raw) {
+            Ok(expr) => {
+                let comp =
+                    crate::compile::lower::where_eval::PredicateComponent::new(expr, body.raw.clone());
+                Ok(Pipe::new().step(Arc::new(comp)))
+            }
+            Err(err) => Err(LowerError::Validate(vec![
+                crate::compile::lower::where_eval::parse_diag(raw, &err),
+            ])),
+        }
     }
 }
 

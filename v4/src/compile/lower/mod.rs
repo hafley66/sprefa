@@ -13,6 +13,7 @@ pub mod op_def;
 pub mod ops;
 pub mod registry;
 pub mod value;
+pub mod where_eval;
 
 pub use liftable::{stream_noop, Col, IdKind, Liftable, Op, StreamFn, TermBind};
 
