@@ -11,3 +11,4 @@ pub mod json;
 pub mod markdown;
 pub mod re;
 pub mod sql;
+pub mod sql_where;
