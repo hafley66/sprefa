@@ -13,12 +13,12 @@ use v4::mounted_query::{
 };
 use v4::runtime_graph::{
     table_source_uri, RuntimeGraph, SourceSubscriptionInput, SprfSubscribe, SprfSupportRows,
-    RUNTIME_EDGE, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE, RUNTIME_VALUE,
+    RUNTIME_EDGE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE,
 };
 use v4::runtime_replay::GraphReplayRunner;
 use v4::store::SprfStore;
 use v4::v2_ops::AstNmComponent;
-use v4::{Cursor, WhereBytes, WhereBytesId};
+use v4::Cursor;
 
 fn sqlite_graph(path: &std::path::Path) -> (Arc<dyn FactStore<Cursor>>, RuntimeGraph) {
     let facts: Arc<dyn FactStore<Cursor>> =
@@ -151,7 +151,6 @@ fn runtime_graph_identity_and_rows_survive_sqlite_reopen() {
 
     assert_eq!(facts.len(RUNTIME_NODE), 4);
     assert_eq!(facts.len(RUNTIME_EDGE), 2);
-    assert_eq!(facts.len(RUNTIME_VALUE), 0);
 
     let repeat_delta = graph.replace_supports(&owner, &table, &[row("a", "1")], 2);
     assert!(repeat_delta.inserted.is_empty());
@@ -182,6 +181,9 @@ fn support_reconciliation_keeps_shared_rows_until_final_support_retracts() {
 
 #[test]
 fn wake_dispatch_uses_subscribe_edges_as_separate_readiness_slots() {
+    // Two subscribe edges on the same owner, same source: a single wake
+    // appends one event and wakes one owner regardless of edge cardinality.
+    // Per-edge value slots (RUNTIME_EDGE_VALUE) were dropped in slice 2.
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("runtime.db");
     let (facts, graph) = sqlite_graph(&db);
@@ -190,54 +192,12 @@ fn wake_dispatch_uses_subscribe_edges_as_separate_readiness_slots() {
     let source = graph.declare_source("sprf://source/table/a", 1);
     let left = graph.subscribe(&owner, "left", &source, 1);
     let right = graph.subscribe(&owner, "right", &source, 1);
-    let value = graph.runtime_value_cursor_blob("sprf://value/a/1", &row("a", "1"), "ready", 1);
 
-    let woken = graph.dispatch_wake(&source, &value, 1);
-    let edge_values = facts.rows_of(RUNTIME_EDGE_VALUE);
-    let labels: Vec<String> = edge_values
-        .iter()
-        .filter_map(|row| row.get("label_id").map(str::to_string))
-        .collect();
+    let woken = graph.dispatch_wake(&source, 1);
 
     assert_eq!(woken, vec![owner.clone()]);
     assert_ne!(left.uri_id, right.uri_id);
     assert_eq!(facts.len(RUNTIME_EVENT), 1);
-    assert_eq!(edge_values.len(), 2);
-    assert!(labels.contains(&left.label_id.0.to_string()));
-    assert!(labels.contains(&right.label_id.0.to_string()));
-}
-
-#[test]
-fn source_located_runtime_values_are_durable() {
-    // Runtime value rows persist across sqlite reopen with the expected
-    // ref/blob columns. Active-child semantics dropped in dedupe slice 1.
-    let tmp = tempdir().unwrap();
-    let db = tmp.path().join("runtime.db");
-    let (facts, graph) = sqlite_graph(&db);
-
-    let source_text = graph.store.intern_string("source bytes");
-    let where_bytes = graph.store.intern_where_bytes(WhereBytes {
-        string: source_text,
-        repo: 1,
-        rev: 2,
-        file: 3,
-        lo: 4,
-        hi: 16,
-    });
-    let value = graph.runtime_value_where_bytes("sprf://value/source/a", where_bytes, "ready", 2);
-
-    drop(graph);
-    drop(facts);
-
-    let (facts, _graph) = sqlite_graph(&db);
-    let value_rows = facts.read_where(RUNTIME_VALUE, "value_uri_id", &value.uri_id.0.to_string());
-
-    assert_eq!(value_rows.len(), 1);
-    assert_eq!(
-        value_rows[0].get("value_ref_id"),
-        Some(WhereBytesId(where_bytes.0).0.to_string().as_str())
-    );
-    assert_eq!(value_rows[0].get("value_blob"), Some(""));
 }
 
 #[test]
@@ -249,9 +209,7 @@ fn resume_finds_unconsumed_events_and_consumption_is_durable() {
     let owner = graph.declare_owner("sprf://ast/rss-rule", None, "input", "head", "impure", 1);
     let source = graph.declare_source("sprf://source/rss/feed", 1);
     graph.subscribe(&owner, "rss", &source, 1);
-    let value =
-        graph.runtime_value_cursor_blob("sprf://value/rss/1", &row("entry", "a"), "ready", 1);
-    graph.dispatch_wake(&source, &value, 1);
+    graph.dispatch_wake(&source, 1);
     graph.store.flush();
 
     drop(graph);
@@ -280,9 +238,8 @@ fn graph_jobs_are_durable_and_idempotent_work_items() {
     let owner = graph.declare_owner("sprf://ast/sql", None, "input", "head", "sql", 1);
     let source = graph.declare_source("sprf://source/table/hooks", 1);
     graph.subscribe(&owner, "hooks", &source, 1);
-    let value = graph.runtime_value_dirty(&source, 1);
 
-    graph.dispatch_wake(&source, &value, 1);
+    graph.dispatch_wake(&source, 1);
     graph.enqueue_jobs_for_unconsumed_events(2);
     let jobs = graph.pending_jobs();
 
@@ -306,37 +263,6 @@ fn graph_jobs_are_durable_and_idempotent_work_items() {
 }
 
 #[test]
-fn reactive_operator_harnesses_use_edge_local_state() {
-    let tmp = tempdir().unwrap();
-    let db = tmp.path().join("runtime.db");
-    let (_facts, graph) = sqlite_graph(&db);
-
-    let owner = graph.declare_owner("sprf://ast/reactive", None, "input", "head", "pure", 1);
-    let source_a = graph.declare_source("sprf://source/table/a", 1);
-    let source_b = graph.declare_source("sprf://source/table/b", 1);
-    let left = graph.subscribe(&owner, "left", &source_a, 1);
-    let right = graph.subscribe(&owner, "right", &source_b, 1);
-    let a_value = graph.runtime_value_cursor_blob("sprf://value/a", &row("a", "1"), "ready", 1);
-    let b_value = graph.runtime_value_cursor_blob("sprf://value/b", &row("b", "2"), "ready", 1);
-
-    graph.dispatch_wake(&source_a, &a_value, 1);
-    assert_eq!(
-        graph.edge_values(&[left.clone(), right.clone()]),
-        vec![Some(a_value.clone()), None]
-    );
-
-    let merge_wake = graph.dispatch_wake(&source_b, &b_value, 2);
-    assert_eq!(merge_wake, vec![owner.clone()]);
-    assert_eq!(
-        graph.edge_values(&[left, right]),
-        vec![Some(a_value), Some(b_value)]
-    );
-
-    // Support reconciliation across multiple owners stays exercised by
-    // `support_reconciliation_keeps_shared_rows_until_final_support_retracts`.
-}
-
-#[test]
 fn sprf_runtime_effects_can_be_declared_through_render_ctx_put() {
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("runtime.db");
@@ -349,15 +275,19 @@ fn sprf_runtime_effects_can_be_declared_through_render_ctx_put() {
     let table = graph.declare_output_table("sprf://table/ctx", 1);
 
     let sub = ctx.put(SprfSubscribe::new(owner.clone(), "left", source, 1));
-    let delta = ctx.put(SprfSupportRows::new(
-        owner,
-        table,
+    ctx.put(SprfSupportRows::new(
+        owner.clone(),
+        table.clone(),
         vec![row("ctx", "put")],
         1,
     ));
 
     assert_eq!(sub.label_id, graph.store.intern_string("left"));
-    assert_eq!(delta.inserted.len(), 1);
+    // Support edge from the put landed in the graph.
+    let support_edges = graph
+        .replace_supports(&owner, &table, &[row("ctx", "put")], 2)
+        .inserted;
+    assert!(support_edges.is_empty(), "row was already inserted via put");
 }
 
 #[test]

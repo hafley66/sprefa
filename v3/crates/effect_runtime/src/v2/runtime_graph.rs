@@ -9,6 +9,8 @@ pub const RUNTIME_EDGE: &str = "runtime_edge";
 pub const RUNTIME_VALUE: &str = "runtime_value";
 pub const RUNTIME_EDGE_VALUE: &str = "runtime_edge_value";
 pub const RUNTIME_EVENT: &str = "runtime_event";
+pub const RUNTIME_JOB: &str = "runtime_job";
+pub const RUNTIME_CONTINUATION: &str = "runtime_continuation";
 
 pub const NODE_ID: &str = "node_uri_id";
 pub const NODE_KIND_ID: &str = "node_kind_id";
@@ -36,6 +38,19 @@ pub const EVENT_ID: &str = "event_uri_id";
 pub const EVENT_SOURCE_ID: &str = "source_uri_id";
 pub const EVENT_VALUE_ID: &str = "value_uri_id";
 pub const CONSUMED: &str = "consumed";
+
+pub const JOB_ID: &str = "job_uri_id";
+pub const JOB_EVENT_ID: &str = "event_uri_id";
+pub const JOB_OWNER_ID: &str = "owner_uri_id";
+pub const JOB_STATE: &str = "state";
+pub const JOB_PENDING: &str = "pending";
+pub const JOB_DONE: &str = "done";
+
+pub const CONT_OWNER_ID: &str = "owner_uri_id";
+pub const CONT_PIPE_HASH: &str = "pipe_hash";
+pub const CONT_INSTANCE_ID: &str = "instance_id";
+pub const CONT_DEPTH: &str = "depth";
+pub const CONT_INPUT_CURSOR: &str = "input_cursor";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeNode {
@@ -84,6 +99,47 @@ pub struct RuntimeEvent {
     pub value_id: String,
     pub generation: u64,
     pub consumed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RuntimeJob {
+    pub job_id: String,
+    pub event_id: String,
+    pub owner_id: String,
+    pub generation: u64,
+}
+
+/// Reasons `run_to_quiescence` may bail out before draining.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuiescenceError {
+    /// Hit the iteration cap with non-empty `pending_jobs`. Likely a
+    /// cycle in the rule graph (A wakes B wakes A).
+    IterationCap { iters: usize, handled: usize },
+}
+
+impl std::fmt::Display for QuiescenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QuiescenceError::IterationCap { iters, handled } => write!(
+                f,
+                "run_to_quiescence hit iteration cap (iters={iters}, handled={handled})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for QuiescenceError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeContinuation {
+    pub owner_id: String,
+    pub pipe_hash: u64,
+    pub instance_id: u64,
+    pub depth: u32,
+    /// Opaque hex-encoded input snapshot. Encoding choice belongs to
+    /// the caller (sprf side stores `cursor_codec::encode` output).
+    pub input_hex: String,
+    pub generation: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -414,6 +470,153 @@ impl<R: Row> FactRuntimeGraph<R> {
         self.facts.insert_batch(RUNTIME_EVENT, vec![Arc::new(row)]);
     }
 
+    /// Idempotent job insert. Caller computes `job_id` (sprf side uses a
+    /// hash of event_id+owner_id). The row lands in PENDING state on
+    /// first insert and stays untouched on duplicate calls.
+    pub fn insert_job(&self, job_id: &str, event_id: &str, owner_id: &str, generation: u64) {
+        if self.has_row(RUNTIME_JOB, JOB_ID, job_id) {
+            return;
+        }
+        let mut row = R::default();
+        row.set(JOB_ID, job_id);
+        row.set(JOB_EVENT_ID, event_id);
+        row.set(JOB_OWNER_ID, owner_id);
+        row.set(JOB_STATE, JOB_PENDING);
+        row.set(GENERATION, generation.to_string().as_str());
+        self.facts.insert_batch(RUNTIME_JOB, vec![Arc::new(row)]);
+    }
+
+    pub fn pending_jobs(&self) -> Vec<RuntimeJob> {
+        let mut jobs: Vec<RuntimeJob> = self
+            .facts
+            .rows_of(RUNTIME_JOB)
+            .into_iter()
+            .filter(|row| row.get(JOB_STATE) == Some(JOB_PENDING))
+            .filter_map(|row| {
+                Some(RuntimeJob {
+                    job_id: row.get(JOB_ID)?.to_string(),
+                    event_id: row.get(JOB_EVENT_ID)?.to_string(),
+                    owner_id: row.get(JOB_OWNER_ID)?.to_string(),
+                    generation: row.get(GENERATION)?.parse().ok()?,
+                })
+            })
+            .collect();
+        jobs.sort();
+        jobs
+    }
+
+    /// Flip the job row to DONE. If no PENDING job remains for the same
+    /// event, mark that event consumed too (matches the prior v4
+    /// semantics that ratchet event lifecycle on the last job done).
+    pub fn mark_job_done(&self, job_id: &str) {
+        let Some(existing) = self
+            .facts
+            .read_where(RUNTIME_JOB, JOB_ID, job_id)
+            .into_iter()
+            .next()
+        else {
+            return;
+        };
+        let event_id = existing.get(JOB_EVENT_ID).unwrap_or("").to_string();
+        let owner_id = existing.get(JOB_OWNER_ID).unwrap_or("").to_string();
+        let generation = existing
+            .get(GENERATION)
+            .and_then(|g| g.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        self.facts
+            .delete_matching(RUNTIME_JOB, &[(JOB_ID, job_id)]);
+        let mut row = R::default();
+        row.set(JOB_ID, job_id);
+        row.set(JOB_EVENT_ID, event_id.as_str());
+        row.set(JOB_OWNER_ID, owner_id.as_str());
+        row.set(JOB_STATE, JOB_DONE);
+        row.set(GENERATION, generation.to_string().as_str());
+        self.facts.insert_batch(RUNTIME_JOB, vec![Arc::new(row)]);
+
+        let has_pending = self
+            .facts
+            .read_where(RUNTIME_JOB, JOB_EVENT_ID, event_id.as_str())
+            .iter()
+            .any(|row| row.get(JOB_STATE) == Some(JOB_PENDING));
+        if !has_pending {
+            self.mark_event_consumed(event_id.as_str());
+        }
+    }
+
+    /// Drive pending jobs to fixed point. Each iteration drains the
+    /// current `pending_jobs()` snapshot, calls `handler(&job)` for each
+    /// job, then `mark_job_done(job_id)`. The handler may enqueue new
+    /// jobs (via `notify_table_inserted` / `dispatch_wake`) during the
+    /// loop; those jobs are picked up on the next iteration.
+    ///
+    /// Returns the total number of jobs run. Errors out with
+    /// `QuiescenceError::IterationCap` once the iteration count exceeds
+    /// `max_iters`.
+    pub fn run_to_quiescence<F>(
+        &self,
+        max_iters: usize,
+        mut handler: F,
+    ) -> Result<usize, QuiescenceError>
+    where
+        F: FnMut(&RuntimeJob),
+    {
+        let mut handled = 0usize;
+        for iter in 0..max_iters {
+            let jobs = self.pending_jobs();
+            if jobs.is_empty() {
+                return Ok(handled);
+            }
+            for job in &jobs {
+                handler(job);
+                self.mark_job_done(job.job_id.as_str());
+                handled += 1;
+            }
+            if iter + 1 == max_iters && !self.pending_jobs().is_empty() {
+                return Err(QuiescenceError::IterationCap {
+                    iters: max_iters,
+                    handled,
+                });
+            }
+        }
+        Ok(handled)
+    }
+
+    /// Record (or replace) the continuation for `owner_id`. The
+    /// `input_hex` blob is opaque to the generic layer; callers control
+    /// the encoding.
+    pub fn record_continuation(&self, cont: RuntimeContinuation) {
+        self.facts.delete_matching(
+            RUNTIME_CONTINUATION,
+            &[(CONT_OWNER_ID, cont.owner_id.as_str())],
+        );
+        let mut row = R::default();
+        row.set(CONT_OWNER_ID, cont.owner_id.as_str());
+        row.set(CONT_PIPE_HASH, cont.pipe_hash.to_string().as_str());
+        row.set(CONT_INSTANCE_ID, cont.instance_id.to_string().as_str());
+        row.set(CONT_DEPTH, cont.depth.to_string().as_str());
+        row.set(CONT_INPUT_CURSOR, cont.input_hex.as_str());
+        row.set(GENERATION, cont.generation.to_string().as_str());
+        self.facts
+            .insert_batch(RUNTIME_CONTINUATION, vec![Arc::new(row)]);
+    }
+
+    pub fn continuation_for_owner(&self, owner_id: &str) -> Option<RuntimeContinuation> {
+        let row = self
+            .facts
+            .read_where(RUNTIME_CONTINUATION, CONT_OWNER_ID, owner_id)
+            .into_iter()
+            .next()?;
+        Some(RuntimeContinuation {
+            owner_id: owner_id.to_string(),
+            pipe_hash: row.get(CONT_PIPE_HASH)?.parse().ok()?,
+            instance_id: row.get(CONT_INSTANCE_ID)?.parse().ok()?,
+            depth: row.get(CONT_DEPTH)?.parse::<u64>().ok()? as u32,
+            input_hex: row.get(CONT_INPUT_CURSOR)?.to_string(),
+            generation: row.get(GENERATION)?.parse().ok()?,
+        })
+    }
+
     pub fn mark_event_consumed(&self, event_id: &str) {
         let Some(event) = self
             .unconsumed_events()
@@ -629,6 +832,21 @@ impl<R: Row> FactRuntimeGraph<R> {
                 EVENT_VALUE_ID,
                 GENERATION,
                 CONSUMED,
+            ],
+        );
+        self.facts.declare(
+            RUNTIME_JOB,
+            &[JOB_ID, JOB_EVENT_ID, JOB_OWNER_ID, JOB_STATE, GENERATION],
+        );
+        self.facts.declare(
+            RUNTIME_CONTINUATION,
+            &[
+                CONT_OWNER_ID,
+                CONT_PIPE_HASH,
+                CONT_INSTANCE_ID,
+                CONT_DEPTH,
+                CONT_INPUT_CURSOR,
+                GENERATION,
             ],
         );
     }

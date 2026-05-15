@@ -9,7 +9,7 @@ use v4::app::{
 use v4::git_watch::{
     dirty_source_uri, git_branch_dirty_key, git_repo_dirty_key, GIT_BRANCH_DOMAIN, GIT_REPO_DOMAIN,
 };
-use v4::runtime_graph::{RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB};
+use v4::runtime_graph::{RUNTIME_EVENT, RUNTIME_JOB};
 
 #[tokio::test]
 async fn ghcache_branch_change_dispatches_repo_and_branch_dirty_keys() {
@@ -65,10 +65,6 @@ async fn ghcache_branch_change_dispatches_repo_and_branch_dirty_keys() {
     assert!(
         state.facts.len(RUNTIME_EVENT) >= 1,
         "ghcache change should also append runtime graph source events",
-    );
-    assert!(
-        state.facts.len(RUNTIME_EDGE_VALUE) >= 1,
-        "ghcache change should update graph subscribe edge-local values",
     );
     assert!(
         state.facts.len(RUNTIME_JOB) >= 1,
