@@ -11,6 +11,9 @@ use lsp_types::{
 
 use crate::cst::diag::{Diag, DiagSink};
 use crate::cst::dsl::{CaptureSink, Compiled, Dsl};
+use crate::cst::dsls::sql_where::{
+    predicate_keyword_hover, PREDICATE_FUNCTIONS, PREDICATE_KEYWORDS,
+};
 use crate::cst::lsp::highlights::Legend;
 use crate::cst::lsp::providers::{DslBodyLsp, SemanticToken};
 use crate::cst::path::PathBuilder;
@@ -252,6 +255,26 @@ impl DslBodyLsp for SqlDsl {
                 ..Default::default()
             });
         }
+        // Predicate vocabulary is sourced from `sql_where` so that any
+        // SQL surface offering predicates (WHERE, ON, HAVING here;
+        // `where\`...\`` op there) reuses the same keyword + function
+        // set. Phase-3 structural invariant.
+        for kw in PREDICATE_KEYWORDS {
+            out.push(CompletionItem {
+                label: kw.to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some("predicate keyword (from sql_where)".to_string()),
+                ..Default::default()
+            });
+        }
+        for func in PREDICATE_FUNCTIONS {
+            out.push(CompletionItem {
+                label: format!("{func}("),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some("predicate function (from sql_where)".to_string()),
+                ..Default::default()
+            });
+        }
         for (label, detail) in [
             ("input.__cursor_idx", "source cursor row index"),
             ("input.value", "current cursor value"),
@@ -490,6 +513,7 @@ fn scan_sql(body: &[u8]) -> Vec<SqlToken> {
 
 fn is_keyword(s: &str) -> bool {
     SQL_KEYWORDS.iter().any(|kw| s.eq_ignore_ascii_case(kw))
+        || PREDICATE_KEYWORDS.iter().any(|kw| s.eq_ignore_ascii_case(kw))
 }
 
 fn is_ident_start(b: u8) -> bool {
@@ -501,16 +525,19 @@ fn is_ident_continue(b: u8) -> bool {
 }
 
 fn keyword_hover(keyword: &str) -> Option<&'static str> {
-    match keyword.to_ascii_uppercase().as_str() {
+    let full_sql = match keyword.to_ascii_uppercase().as_str() {
         "SELECT" => Some("project SQL result columns into output cursors"),
         "FROM" => Some("read from input, rule tables, or future core tables"),
         "JOIN" | "INNER" | "LEFT" => Some("combine rows by SQL join predicates"),
         "WHERE" => Some("filter rows by predicate"),
-        "NOT" | "EXISTS" => Some("use NOT EXISTS for anti-join / missing rows"),
         "WITH" | "RECURSIVE" => Some("CTE support for graph traversal queries"),
         "GROUP" | "ORDER" | "LIMIT" => Some("SQLite result shaping clause"),
         _ => None,
-    }
+    };
+    // Predicate-side keywords (AND, OR, NOT, IS, NULL, IN, EXISTS,
+    // LIKE, GLOB, REGEXP, BETWEEN, CASE/WHEN/THEN/ELSE/END) resolve
+    // through sql_where so both surfaces give the same hover text.
+    full_sql.or_else(|| predicate_keyword_hover(keyword))
 }
 
 fn token_text<'a>(body: &'a [u8], token: &SqlToken) -> &'a str {
@@ -802,6 +829,61 @@ mod tests {
         match col.contents {
             HoverContents::Scalar(MarkedString::String(s)) => {
                 assert_eq!(s, "SQL column `frontend_hooks.OP`");
+            }
+            _ => panic!("unexpected hover shape"),
+        }
+    }
+
+    #[test]
+    fn sqldsl_predicate_vocab_is_sourced_from_sql_where() {
+        // Phase-3 invariant: the predicate keywords/functions visible
+        // in the full SqlDsl completion list come from sql_where, not
+        // from a duplicate SqlDsl-local table. Concretely: hovering
+        // `AND` in a SqlDsl body must yield the same explanation that
+        // hovering `AND` in a `where\`...\`` body would.
+        use crate::cst::dsls::sql_where::SqlWhereDsl;
+        let sql_dsl = SqlDsl::new();
+        let where_dsl = SqlWhereDsl::new();
+
+        let sql_items = sql_dsl.completions(b"", 0);
+        let where_items = where_dsl.completions(b"", 0);
+
+        for kw in ["AND", "OR", "NOT", "IS", "LIKE", "EXISTS"] {
+            assert!(
+                sql_items.iter().any(|i| i.label == kw),
+                "SqlDsl must surface predicate keyword `{kw}` from sql_where"
+            );
+            assert!(
+                where_items.iter().any(|i| i.label == kw),
+                "SqlWhereDsl must surface predicate keyword `{kw}`"
+            );
+        }
+        for func in ["length(", "instr(", "coalesce("] {
+            assert!(
+                sql_items.iter().any(|i| i.label == func),
+                "SqlDsl must surface predicate function `{func}` from sql_where"
+            );
+            assert!(
+                where_items.iter().any(|i| i.label == func),
+                "SqlWhereDsl must surface predicate function `{func}`"
+            );
+        }
+
+        // Predicate keyword hover in SqlDsl must equal the sql_where
+        // hover text — same source of truth.
+        let body = b"SELECT * FROM t WHERE a AND b";
+        let pos = body
+            .windows(3)
+            .position(|w| w == b"AND")
+            .map(|p| p + 1)
+            .unwrap();
+        let h = sql_dsl.hover(body, pos).expect("AND hover in SqlDsl");
+        match h.contents {
+            HoverContents::Scalar(MarkedString::String(s)) => {
+                assert!(
+                    s.contains("conjunction"),
+                    "AND hover in SqlDsl must come from sql_where, got: {s}"
+                );
             }
             _ => panic!("unexpected hover shape"),
         }
