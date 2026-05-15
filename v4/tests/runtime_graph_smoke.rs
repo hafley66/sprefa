@@ -275,15 +275,19 @@ fn sprf_runtime_effects_can_be_declared_through_render_ctx_put() {
     let table = graph.declare_output_table("sprf://table/ctx", 1);
 
     let sub = ctx.put(SprfSubscribe::new(owner.clone(), "left", source, 1));
-    let delta = ctx.put(SprfSupportRows::new(
-        owner,
-        table,
+    ctx.put(SprfSupportRows::new(
+        owner.clone(),
+        table.clone(),
         vec![row("ctx", "put")],
         1,
     ));
 
     assert_eq!(sub.label_id, graph.store.intern_string("left"));
-    assert_eq!(delta.inserted.len(), 1);
+    // Support edge from the put landed in the graph.
+    let support_edges = graph
+        .replace_supports(&owner, &table, &[row("ctx", "put")], 2)
+        .inserted;
+    assert!(support_edges.is_empty(), "row was already inserted via put");
 }
 
 #[test]

@@ -299,13 +299,16 @@ impl SprfSupportRows {
 }
 
 impl RuntimePut for SprfSupportRows {
-    type Output = VisibleDelta;
+    // mounted_query and other production callers drop the delta; the
+    // direct `replace_supports` method keeps returning VisibleDelta for
+    // smoke-test assertions until slice 6 removes it entirely.
+    type Output = ();
 
     fn apply(self, ctx: &RenderCtx) -> Self::Output {
         let graph = ctx
             .runtime::<RuntimeGraph>()
             .expect("sprf runtime graph missing from RenderCtx");
-        graph.replace_supports(&self.owner, &self.table, &self.rows, self.generation)
+        let _ = graph.replace_supports(&self.owner, &self.table, &self.rows, self.generation);
     }
 }
 
