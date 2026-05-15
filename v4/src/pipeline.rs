@@ -241,7 +241,7 @@ impl Component for GlobDynamicComponent {
 ///
 /// Carveout shapes:
 ///   `${X?}`           — named capture `(?P<X>[^/]*)` (single segment)
-///   `$$${...}`        — rejected; ast-grep only.
+///   `$$${X?}`         — named capture `(?P<X>.*)` (multi-segment, glob alias of `**`)
 ///   `${X}`            — Term Read; resolved via `cur.get("X")`,
 ///                       regex-escaped into the pattern.
 ///   `${X.field}`      — same as above (key is `X.field`).
@@ -263,17 +263,16 @@ fn build_dynamic_glob_regex(
     let mut names: Vec<Arc<str>> = Vec::new();
     let mut i: usize = 0;
     while i < bytes.len() {
-        // Triple-dollar is ast-grep only. The dynamic path returns Err
-        // so the upstream caller can surface a per-cursor diagnostic.
-        if i + 3 < bytes.len()
+        // Glob carveout: `$$${X?}` aliases `**` (multi-segment greedy).
+        // The host parser sets the interp's range.lo at the third `$`
+        // (where `${` is matched), so we look it up at i+2, not i+3.
+        let triple_dollar = i + 3 < bytes.len()
             && bytes[i] == b'$'
             && bytes[i + 1] == b'$'
             && bytes[i + 2] == b'$'
-            && bytes[i + 3] == b'{'
-        {
-            return Err(());
-        }
-        if let Some(interp) = by_lo.get(&(i as u32)) {
+            && bytes[i + 3] == b'{';
+        let interp_offset = if triple_dollar { i + 2 } else { i };
+        if let Some(interp) = by_lo.get(&(interp_offset as u32)) {
             match &interp.kind {
                 InterpKind::Term { mode, field } => {
                     let key: std::borrow::Cow<'_, str> = match field {
@@ -284,7 +283,7 @@ fn build_dynamic_glob_regex(
                         InterpMode::Bind => {
                             out.push_str("(?P<");
                             out.push_str(interp.name.as_ref());
-                            out.push_str(">[^/]*)");
+                            out.push_str(if triple_dollar { ">.*)" } else { ">[^/]*)" });
                             names.push(interp.name.clone());
                         }
                         InterpMode::Read => {

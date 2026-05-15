@@ -114,20 +114,30 @@ fn glob_hole_binds_path_segment() {
     assert_eq!(ext, "txt");
 }
 
-/// `$$${...}` in glob is rejected with a focused diag pointing at the
-/// universal rule. Author must rewrite as `**/${X?}` for multi-segment.
+/// `$$${X?}` in glob is the alias form of `**` (multi-segment greedy
+/// capture). The 3 leading `$` chars are consumed; the interp lowers to
+/// `(?P<X>.*)` instead of the single-segment `[^/]*`. ast-grep is not
+/// the only DSL with triple-dollar — glob has this carveout.
 #[test]
-fn glob_triple_dollar_rejected_with_diag() {
+fn glob_triple_dollar_is_multi_segment_alias() {
     let tmp = tempfile::tempdir().unwrap();
-    let diags = walk_diags(
+    std::fs::create_dir_all(tmp.path().join("src/sub/deep")).unwrap();
+    std::fs::write(tmp.path().join("src/sub/deep/leaf.rs"), b"x").unwrap();
+
+    let store = run_in(
         tmp.path(),
-        "rule(:tree, X?) { fs > glob`$$${X?}/foo.rs` };",
+        "rule(:tree, MID?, FILE?) { fs > glob`$$${MID?}/${FILE?}.rs` };",
     );
+    let rows = store.rows_of("tree");
+    assert_eq!(rows.len(), 1);
+    let mid = rows[0].get("MID").unwrap_or("").to_string();
+    let file = rows[0].get("FILE").unwrap_or("").to_string();
     assert!(
-        diags.iter().any(|(_, m)| m.contains("`$$${...}`") && m.contains("ast-grep")),
-        "expected glob/triple-dollar diag, got {:?}",
-        diags
+        mid.ends_with("src/sub/deep"),
+        "expected MID to greedy-match across segments, got {:?}",
+        mid
     );
+    assert_eq!(file, "leaf");
 }
 
 // ─── json ─────────────────────────────────────────────────────────────────
@@ -216,14 +226,14 @@ fn sql_where_hole_binds_parameter() {
 
 // ─── triple-dollar negative sweep ─────────────────────────────────────────
 
-/// Triple-dollar is ast-only. Each non-ast DSL must reject (or refuse to
-/// match) `$$${...}` in its body.
+/// Triple-dollar is ast-grep native + glob alias only. Each remaining
+/// DSL (re, json, sql, sql_where) must reject (or refuse to match)
+/// `$$${...}` in its body.
 #[test]
-fn triple_dollar_is_ast_only() {
+fn triple_dollar_is_ast_and_glob_only() {
     use v4::cst::diag::SilentSink;
     use v4::cst::dsl::Dsl;
 
-    // glob: lower-time diag (covered by `glob_triple_dollar_rejected_with_diag`).
     // re: regex compile fails on `$$${...}` since native re grammar leaves
     //     the literal `{X?}` for the regex crate, which errors.
     let re = v4::cst::dsls::re::ReDsl::new();

@@ -660,8 +660,8 @@ impl OperatorDef for GlobDef {
 ///   literal    → escaped (regex::escape one char at a time)
 ///   `${X?}`    → `(?P<X>[^/]*)` (single-segment named capture)
 ///   `${X}`     → rejected for now (`lower/glob-read-not-supported`)
-///   `$$${...}` → rejected: triple-dollar is ast-grep only per universal rule.
-///                Use `**/${X?}` for multi-segment capture in glob.
+///   `$$${X?}`  → `(?P<X>.*)`    (glob carveout: alias of `**` multi-segment;
+///                3 leading `$` chars consumed in walk before interp lookup)
 ///   `${...}`   → SubPipe form: handled by `GlobDynamicComponent` path
 ///                in `GlobDef::lower`; never reaches this translator.
 ///
@@ -693,21 +693,18 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
 
     let mut i: usize = 0;
     while i < bytes.len() {
-        // Per universal rule: `$$${...}` is ast-grep ONLY. In glob,
-        // surface a fatal diag so the author switches to `**/${X?}` for
-        // multi-segment captures. Single-segment is `${X?}` as usual.
-        if i + 3 < bytes.len()
+        // Glob carveout: `$$${X?}` is the alias form of capturing `**`
+        // (multi-segment greedy). The host parser sets the interp's
+        // range.lo at the third `$` (where `${` is matched), so we
+        // look it up at i+2, not i+3. Triple-dollar in any other DSL
+        // stays ast-grep only.
+        let triple_dollar = i + 3 < bytes.len()
             && bytes[i] == b'$'
             && bytes[i + 1] == b'$'
             && bytes[i + 2] == b'$'
-            && bytes[i + 3] == b'{'
-        {
-            return Err(LowerError::Unknown(
-                "glob: `$$${...}` is ast-grep only; use `**/${NAME?}` for \
-                 multi-segment captures in glob".into(),
-            ));
-        }
-        if let Some(interp) = by_lo.get(&(i as u32)) {
+            && bytes[i + 3] == b'{';
+        let interp_offset = if triple_dollar { i + 2 } else { i };
+        if let Some(interp) = by_lo.get(&(interp_offset as u32)) {
             match &interp.kind {
                 InterpKind::Term { mode, field } => {
                     if field.is_some() {
@@ -720,10 +717,9 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
                     }
                     match mode {
                         InterpMode::Bind => {
-                            // `${X?}` → single-segment named capture.
                             out.push_str("(?P<");
                             out.push_str(interp.name.as_ref());
-                            out.push_str(">[^/]*)");
+                            out.push_str(if triple_dollar { ">.*)" } else { ">[^/]*)" });
                         }
                         InterpMode::Read => {
                             return Err(LowerError::Unknown(format!(
@@ -735,9 +731,6 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
                     }
                 }
                 InterpKind::SubPipe { .. } => {
-                    // Unreachable in the static path: GlobDef::lower
-                    // routes SubPipe-bearing bodies to GlobDynamicComponent
-                    // before this translator runs. Defensive bail-out.
                     return Err(LowerError::Unknown(
                         "glob: internal — SubPipe interp reached static \
                          translator (should have routed to dynamic path)"

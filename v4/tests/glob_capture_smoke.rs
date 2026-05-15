@@ -1,6 +1,7 @@
-//! Glob capture syntax: ${X?} bind, ${X} read. Multi-segment is
-//! expressed via `**/${X?}`; `$$${...}` is ast-grep only per the
-//! universal carveout rule.
+//! Glob capture syntax: `${X?}` bind (single segment), `$$${X?}` bind
+//! (multi-segment, alias of `**`), `${X}` read. The triple-dollar form
+//! is glob's carveout — ast-grep also uses it for sibling sequences;
+//! no other DSL accepts it.
 
 use effect_runtime::v2::{expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend};
 use std::sync::Arc;
@@ -80,10 +81,35 @@ fn single_segment_capture_binds_term() {
     );
 }
 
-/// Multi-segment captures are spelled with explicit `**/` plus a
-/// single-segment hole. The leading `**` greedy-matches any number of
-/// intermediate path segments; the trailing `${X?}` captures just the
-/// immediate parent. Triple-dollar prefix is ast-grep only.
+/// `$$${X?}` is the alias form of `**` — multi-segment greedy capture.
+/// Pre-existing v3 carveout, restored after the universal hole-grammar
+/// pass momentarily dropped it.
+#[test]
+fn multi_segment_capture_with_triple_dollar() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src/sub/deep")).unwrap();
+    std::fs::write(tmp.path().join("src/sub/deep/leaf.rs"), b"x").unwrap();
+
+    let store = run_in(
+        tmp.path(),
+        "rule(:tree, PARENT?, FILE?) { fs > glob`$$${PARENT?}/${FILE?}.rs` };",
+    );
+    let rows = store.rows_of("tree");
+    assert_eq!(rows.len(), 1);
+    let parent = rows[0].get("PARENT").unwrap_or("").to_string();
+    let file = rows[0].get("FILE").unwrap_or("").to_string();
+    assert!(
+        parent.ends_with("src/sub/deep"),
+        "PARENT should be multi-segment, got {:?}",
+        parent
+    );
+    assert_eq!(file, "leaf");
+}
+
+/// Multi-segment captures via explicit `**/` plus a single-segment
+/// hole. The leading `**` greedy-matches intermediate segments; the
+/// trailing `${X?}` captures the immediate parent. Equivalent in
+/// power to the `$$${...}` alias above.
 #[test]
 fn multi_segment_via_double_star_and_single_capture() {
     let tmp = tempfile::tempdir().unwrap();
