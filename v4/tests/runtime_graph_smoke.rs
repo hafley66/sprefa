@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use ast_grep_language::SupportLang;
 use effect_runtime::v2::{
-    expand, EventBus, ExpandOpts, FactStore, MemQueue, PipeInstance, QueueBackend, RenderCtx,
+    expand, Component, EventBus, ExpandOpts, FactStore, MemQueue, PipeInstance, QueueBackend,
+    RenderCtx,
 };
 use tempfile::tempdir;
 use v4::fact::FactWrite;
@@ -528,4 +529,286 @@ fn source_aware_ast_subscriptions_reopen_and_rerun_one_changed_file() {
     assert_eq!(runner.drain(), 1);
     assert_eq!(facts.len("hits"), 2);
     assert!(runner.runtime_graph.pending_jobs().is_empty());
+}
+
+#[test]
+fn fact_write_auto_notifies_subscribed_owners() {
+    // FactWrite::render_batch must wake every owner subscribed to the
+    // canonical table-source for the written table without an explicit
+    // notify_table_inserted call from the driver.
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    facts.declare("T", &["k", "v"]);
+
+    let owner = graph.declare_owner("sprf://ast/sub", None, "input", "head", "pure", 1);
+    let source = graph.declare_table_source("T", 1);
+    graph.subscribe(&owner, "T", &source, 1);
+
+    let before = graph.pending_jobs().len();
+
+    let write: Arc<dyn effect_runtime::v2::Component<Next = Cursor>> =
+        Arc::new(FactWrite::new(facts.clone(), "T"));
+    let pipe = PipeInstance::new(vec![write]);
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    let mut seed = Cursor::default();
+    seed.set("k", "k1");
+    seed.set("v", "v1");
+    expand(
+        &pipe,
+        queue,
+        vec![Arc::new(seed)],
+        ExpandOpts::default().with_runtime(graph.clone()),
+    );
+
+    let after = graph.pending_jobs();
+    assert_eq!(facts.len("T"), 1);
+    assert_eq!(after.len(), before + 1);
+    assert_eq!(after[0].owner_uri_id, owner.uri_id);
+}
+
+#[test]
+fn rule_invoke_memoizes_owner_by_input_arg_tuple() {
+    use effect_runtime::v2::{MemFactStore, Pipe};
+    use v4::rule::{Rule, RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
+    use v4::runtime_graph::ArgKey;
+
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (_facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    let user_store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+
+    let body = Pipe::new();
+    let rule = Rule::new("foo", user_store.clone(), "foo", &["A", "B"], body);
+
+    // foo("a", X?) — A literal "a", B unbound (Term against a key that
+    // isn't on the cursor).
+    let assignments = vec![
+        RuleInvokeAssign {
+            col: Arc::<str>::from("A"),
+            value: RuleInvokeValue::Literal(Arc::<str>::from("a")),
+        },
+        RuleInvokeAssign {
+            col: Arc::<str>::from("B"),
+            value: RuleInvokeValue::Term(Arc::<str>::from("MISSING")),
+        },
+    ];
+    let call = RuleInvokeComponent::new(rule.clone(), assignments.clone(), false);
+
+    let seed = Cursor::default();
+    let ctx = RenderCtx::new(0, 0, 0).with_runtime(graph.clone());
+
+    let _ = call.render(&ctx, &seed);
+    let _ = call.render(&ctx, &seed);
+
+    assert_eq!(graph.rule_memo_len(), 1);
+    let rule_id = graph.store.intern_string("foo");
+    let arg_a = ArgKey::Literal(graph.store.intern_string("a"));
+    let arg_b = ArgKey::Unbound;
+    let owner_first = graph
+        .rule_memo_get(rule_id, &[arg_a, arg_b])
+        .expect("memoized owner");
+
+    let _ = call.render(&ctx, &seed);
+    let owner_again = graph
+        .rule_memo_get(rule_id, &[arg_a, arg_b])
+        .expect("still memoized");
+    assert_eq!(owner_first.uri_id, owner_again.uri_id);
+    assert_eq!(owner_first.uri, owner_again.uri);
+
+    let other_assignments = vec![
+        RuleInvokeAssign {
+            col: Arc::<str>::from("A"),
+            value: RuleInvokeValue::Literal(Arc::<str>::from("b")),
+        },
+        RuleInvokeAssign {
+            col: Arc::<str>::from("B"),
+            value: RuleInvokeValue::Term(Arc::<str>::from("MISSING")),
+        },
+    ];
+    let other_call = RuleInvokeComponent::new(rule, other_assignments, false);
+    let _ = other_call.render(&ctx, &seed);
+    let arg_a2 = ArgKey::Literal(graph.store.intern_string("b"));
+    let owner_other = graph
+        .rule_memo_get(rule_id, &[arg_a2, arg_b])
+        .expect("second-tuple owner");
+    assert_ne!(owner_first.uri_id, owner_other.uri_id);
+    assert_eq!(graph.rule_memo_len(), 2);
+}
+
+#[test]
+fn rule_invoke_body_skips_on_cache_hit_and_refires_on_source_dirty() {
+    use effect_runtime::v2::{MemFactStore, Node, Pipe};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use v4::rule::{Rule, RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
+    use v4::runtime_graph::ArgKey;
+
+    // Body counter: how many times the rule body actually ran.
+    struct CountBody {
+        count: Arc<AtomicUsize>,
+    }
+    impl Component for CountBody {
+        type Next = Cursor;
+        fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            Node::Emit(Arc::new(c.clone()))
+        }
+    }
+
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (_facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    let user_store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let body = Pipe::new().step(Arc::new(CountBody {
+        count: count.clone(),
+    }));
+    let rule = Rule::new("r", user_store.clone(), "r", &["A"], body);
+
+    let assignments = vec![RuleInvokeAssign {
+        col: Arc::<str>::from("A"),
+        value: RuleInvokeValue::Literal(Arc::<str>::from("a")),
+    }];
+    let call = RuleInvokeComponent::new(rule, assignments, false);
+
+    let seed = Cursor::default();
+
+    // First fire at gen=1.
+    let ctx1 = RenderCtx::new(1, 0, 0).with_runtime(graph.clone());
+    let _ = call.render(&ctx1, &seed);
+    assert_eq!(count.load(Ordering::SeqCst), 1, "first fire runs body");
+
+    // Subscribe the memoized owner to a "src" table source so a dirty
+    // there will enqueue a job for the owner.
+    let rule_id = graph.store.intern_string("r");
+    let arg_keys_one = [ArgKey::Literal(graph.store.intern_string("a"))];
+    let owner = graph
+        .rule_memo_get(rule_id, &arg_keys_one)
+        .expect("owner memoized after first fire");
+    let src = graph.declare_table_source("src", 1);
+    graph.subscribe(&owner, "src", &src, 1);
+
+    // Second fire at gen=2, no dirty in between: body must NOT re-run.
+    let ctx2 = RenderCtx::new(2, 0, 0).with_runtime(graph.clone());
+    let _ = call.render(&ctx2, &seed);
+    assert_eq!(count.load(Ordering::SeqCst), 1, "cache hit skips body");
+
+    // Mutate the source table — fires notify, enqueues a job at gen=3.
+    graph.notify_table_inserted("src", 3);
+    assert!(graph
+        .pending_jobs()
+        .iter()
+        .any(|job| job.owner_uri_id == owner.uri_id && job.generation == 3));
+
+    // Third fire at gen=4: body re-runs because owner has a pending
+    // dirty newer than the cached fire's gen.
+    let ctx3 = RenderCtx::new(4, 0, 0).with_runtime(graph.clone());
+    let _ = call.render(&ctx3, &seed);
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        2,
+        "source dirty invalidates cache"
+    );
+}
+
+#[test]
+fn run_to_quiescence_drains_three_level_chain() {
+    // Chain: source-a inserts -> wake owner-a -> a writes b -> wake
+    // owner-b -> b writes c -> wake owner-c. The handler closure
+    // implements each owner's effect inline; the cascade pumps through
+    // run_to_quiescence until no jobs remain.
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+
+    facts.declare("a", &["k"]);
+    facts.declare("b", &["k"]);
+    facts.declare("c", &["k"]);
+
+    let owner_a = graph.declare_owner("sprf://ast/rule/a", None, "input", "head", "pure", 1);
+    let owner_b = graph.declare_owner("sprf://ast/rule/b", None, "input", "head", "pure", 1);
+    let owner_c = graph.declare_owner("sprf://ast/rule/c", None, "input", "head", "pure", 1);
+
+    let src_a = graph.declare_table_source("a", 1);
+    let src_b = graph.declare_table_source("b", 1);
+    let src_c = graph.declare_table_source("c", 1);
+    graph.subscribe(&owner_a, "a", &src_a, 1);
+    graph.subscribe(&owner_b, "b", &src_b, 1);
+    graph.subscribe(&owner_c, "c", &src_c, 1);
+
+    // Seed: write to "a", which fires notify_table_inserted -> owner_a
+    // gets a job.
+    let mut row_a = Cursor::default();
+    row_a.set("k", "v");
+    facts.insert_batch("a", vec![Arc::new(row_a)]);
+    graph.notify_table_inserted("a", 2);
+
+    let owner_a_id = owner_a.uri_id;
+    let owner_b_id = owner_b.uri_id;
+    let owner_c_id = owner_c.uri_id;
+    let facts_for_handler = facts.clone();
+    let graph_for_handler = graph.clone();
+
+    let handled = graph
+        .run_to_quiescence(10, move |job| {
+            // Each owner's handler: read the upstream row count, write
+            // a single derived row to the next table, notify.
+            if job.owner_uri_id == owner_a_id {
+                let mut row_b = Cursor::default();
+                row_b.set("k", "v");
+                facts_for_handler.insert_batch("b", vec![Arc::new(row_b)]);
+                graph_for_handler.notify_table_inserted("b", job.generation + 1);
+            } else if job.owner_uri_id == owner_b_id {
+                let mut row_c = Cursor::default();
+                row_c.set("k", "v");
+                facts_for_handler.insert_batch("c", vec![Arc::new(row_c)]);
+                graph_for_handler.notify_table_inserted("c", job.generation + 1);
+            } else if job.owner_uri_id == owner_c_id {
+                // Terminal — nothing more to fire.
+            }
+        })
+        .expect("quiescence");
+
+    assert_eq!(handled, 3, "three jobs across three chain levels");
+    assert_eq!(facts.len("a"), 1);
+    assert_eq!(facts.len("b"), 1);
+    assert_eq!(facts.len("c"), 1);
+    assert!(graph.pending_jobs().is_empty(), "no jobs pending at quiescence");
+}
+
+#[test]
+fn run_to_quiescence_errors_on_iteration_cap() {
+    // Handler that re-fires the same source forever. Cap kicks in.
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    facts.declare("t", &["k"]);
+
+    let owner = graph.declare_owner("sprf://ast/cycle", None, "input", "head", "pure", 1);
+    let src = graph.declare_table_source("t", 1);
+    graph.subscribe(&owner, "t", &src, 1);
+
+    graph.notify_table_inserted("t", 2);
+
+    let graph_for_handler = graph.clone();
+    let mut gen = 3u64;
+    let err = graph
+        .run_to_quiescence(4, move |_job| {
+            graph_for_handler.notify_table_inserted("t", gen);
+            gen += 1;
+        })
+        .unwrap_err();
+
+    match err {
+        v4::runtime_graph::QuiescenceError::IterationCap { iters, handled } => {
+            assert_eq!(iters, 4);
+            assert!(handled >= 1);
+        }
+    }
 }

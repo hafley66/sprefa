@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -71,6 +71,78 @@ pub struct RuntimeGraph {
     pub facts: Arc<dyn FactStore<Cursor>>,
     core: FactRuntimeGraph<Cursor>,
     compact_sources: Option<Arc<CompactSourceGraph>>,
+    rule_memo: Arc<Mutex<RuleMemo>>,
+}
+
+/// Reasons `run_to_quiescence` may bail out before draining.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuiescenceError {
+    /// Hit the iteration cap with non-empty `pending_jobs`. Likely a
+    /// cycle in the rule graph (A wakes B wakes A).
+    IterationCap { iters: usize, handled: usize },
+}
+
+impl std::fmt::Display for QuiescenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QuiescenceError::IterationCap { iters, handled } => {
+                write!(
+                    f,
+                    "run_to_quiescence hit iteration cap (iters={iters}, handled={handled})"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for QuiescenceError {}
+
+/// Canonical key for one positional rule-call argument. Literal carries
+/// the interned StringId so equality is `u64==u64`. Unbound means the
+/// caller left this position as `?` for the body/SQL to fill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ArgKey {
+    Literal(StringId),
+    Unbound,
+}
+
+/// Memo from (rule-name, arg-tuple) to the OwnerNode declared on first
+/// fire. Same input tuple => same OwnerNode (durable identity via the
+/// underlying runtime-graph URI machinery).
+#[derive(Default)]
+pub struct RuleMemo {
+    table: HashMap<(StringId, Vec<ArgKey>), OwnerNode>,
+}
+
+impl RuleMemo {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Lookup or insert. `build` runs only on miss; the closure is
+    /// responsible for declaring the owner so the memo always wraps the
+    /// graph-side identity.
+    pub fn get_or_insert<F>(&mut self, rule: StringId, args: Vec<ArgKey>, build: F) -> OwnerNode
+    where
+        F: FnOnce() -> OwnerNode,
+    {
+        self.table
+            .entry((rule, args))
+            .or_insert_with(build)
+            .clone()
+    }
+
+    pub fn get(&self, rule: StringId, args: &[ArgKey]) -> Option<OwnerNode> {
+        self.table.get(&(rule, args.to_vec())).cloned()
+    }
+
+    pub fn len(&self) -> usize {
+        self.table.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.table.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -317,6 +389,7 @@ impl RuntimeGraph {
             facts,
             core,
             compact_sources: None,
+            rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
         }
     }
 
@@ -331,7 +404,31 @@ impl RuntimeGraph {
             facts,
             core,
             compact_sources: Some(Arc::new(CompactSourceGraph::open(path.as_ref()))),
+            rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
         }
+    }
+
+    /// Memoize the OwnerNode for a rule call by (rule_name, arg_keys).
+    /// First call with the tuple declares an owner via the supplied
+    /// `build` closure; later calls with the same tuple return the same
+    /// OwnerNode. Callers pass a build that uses a deterministic
+    /// `input_key` so durable identity matches the in-memory memo.
+    pub fn rule_memo_owner<F>(&self, rule: StringId, args: Vec<ArgKey>, build: F) -> OwnerNode
+    where
+        F: FnOnce() -> OwnerNode,
+    {
+        self.rule_memo
+            .lock()
+            .unwrap()
+            .get_or_insert(rule, args, build)
+    }
+
+    pub fn rule_memo_get(&self, rule: StringId, args: &[ArgKey]) -> Option<OwnerNode> {
+        self.rule_memo.lock().unwrap().get(rule, args)
+    }
+
+    pub fn rule_memo_len(&self) -> usize {
+        self.rule_memo.lock().unwrap().len()
     }
 
     pub fn stats(&self) -> Option<WriteStatsSnapshot> {
@@ -383,6 +480,45 @@ impl RuntimeGraph {
             .into_iter()
             .filter(|job| !before.contains(&job.uri_id.0))
             .collect()
+    }
+
+    /// Drive pending jobs to fixed point. Each iteration drains the
+    /// current `pending_jobs()` snapshot, calls `handler(&job)` for each
+    /// job, then `mark_job_done(&job)`. The handler may notify table
+    /// inserts (which enqueues new jobs) during the loop; those jobs
+    /// are picked up on the next iteration.
+    ///
+    /// Returns the total number of jobs run. Errors out with
+    /// `QuiescenceError::IterationCap` once the iteration count exceeds
+    /// `max_iters` — catches infinite cascades.
+    pub fn run_to_quiescence<F>(
+        &self,
+        max_iters: usize,
+        mut handler: F,
+    ) -> Result<usize, QuiescenceError>
+    where
+        F: FnMut(&RuntimeJob),
+    {
+        let mut handled = 0usize;
+        for iter in 0..max_iters {
+            let jobs = self.pending_jobs();
+            if jobs.is_empty() {
+                return Ok(handled);
+            }
+            for job in &jobs {
+                handler(job);
+                self.mark_job_done(job);
+                handled += 1;
+            }
+            // Sanity: don't loop forever if a job re-enqueues itself.
+            if iter + 1 == max_iters && !self.pending_jobs().is_empty() {
+                return Err(QuiescenceError::IterationCap {
+                    iters: max_iters,
+                    handled,
+                });
+            }
+        }
+        Ok(handled)
     }
 
     pub fn declare_source(&self, source_uri: &str, generation: u64) -> SourceNode {

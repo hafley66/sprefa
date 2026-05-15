@@ -124,11 +124,7 @@ impl Component for FactWrite {
             };
         self.store.insert_batch(&self.table, rows);
         if let Some(graph) = ctx.runtime::<RuntimeGraph>() {
-            let source = graph.declare_source(
-                &format!("sprf://source/table/{}", self.table),
-                ctx.expand_tick,
-            );
-            graph.dispatch_dirty(&source, ctx.expand_tick);
+            graph.notify_table_inserted(&self.table, ctx.expand_tick);
         }
         mounted_query::record_fact_support_batch(self.store.as_ref(), &support_rows);
         arced.into_iter().map(Node::Emit).collect()

@@ -296,11 +296,7 @@ fn insert_terminal_fact_outputs(
         .store
         .insert_batch(terminal_fact.table.as_ref(), outputs);
     if let Some(graph) = ctx.runtime::<RuntimeGraph>() {
-        let source = graph.declare_source(
-            &format!("sprf://source/table/{}", terminal_fact.table),
-            ctx.expand_tick,
-        );
-        graph.dispatch_dirty(&source, ctx.expand_tick);
+        graph.notify_table_inserted(terminal_fact.table.as_ref(), ctx.expand_tick);
     }
     mounted_query::record_fact_support_batch(terminal_fact.store.as_ref(), &support_rows);
     tracing::info!(

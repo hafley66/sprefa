@@ -19,6 +19,7 @@ use effect_runtime::v2::{
 };
 
 use crate::fact::{FactRead, FactWrite};
+use crate::runtime_graph::{ArgKey, OwnerNode, RuntimeGraph};
 use crate::sql::SqlQueryComponent;
 use crate::Cursor;
 use effect_runtime::v2::FactStore;
@@ -136,6 +137,10 @@ pub struct RuleInvokeComponent {
     assignments: Arc<Vec<RuleInvokeAssign>>,
     force: bool,
     cache: Mutex<BTreeMap<[u8; 32], Node<Cursor>>>,
+    /// Per-cache-key generation at which the body last fired. Used to
+    /// invalidate the cached Node when a relevant source has dispatched
+    /// a newer dirty event than the cached entry's generation.
+    fired_at_gen: Mutex<BTreeMap<[u8; 32], u64>>,
 }
 
 impl RuleInvokeComponent {
@@ -145,6 +150,7 @@ impl RuleInvokeComponent {
             assignments: Arc::new(assignments),
             force,
             cache: Mutex::new(BTreeMap::new()),
+            fired_at_gen: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -172,6 +178,48 @@ impl RuleInvokeComponent {
             }
         }
         *h.finalize().as_bytes()
+    }
+
+    /// Canonical positional arg keys for `(rule, c, assignments)`.
+    /// `Literal` -> interned StringId of the literal payload.
+    /// `Term`    -> interned StringId of the cursor-resolved value, or
+    ///              Unbound when the cursor has no value for the term.
+    /// `Value`   -> interned StringId of the cursor's primary value.
+    /// Used for `RuleMemo` keying and graph-owner input_key derivation.
+    fn arg_keys(&self, graph: &RuntimeGraph, c: &Cursor) -> Vec<ArgKey> {
+        let mut out = Vec::with_capacity(self.assignments.len());
+        for assignment in self.assignments.iter() {
+            let key = match &assignment.value {
+                RuleInvokeValue::Literal(value) => {
+                    ArgKey::Literal(graph.store.intern_string(value.as_ref()))
+                }
+                RuleInvokeValue::Term(term) => match c.get(term) {
+                    Some(value) => ArgKey::Literal(graph.store.intern_string(value)),
+                    None => ArgKey::Unbound,
+                },
+                RuleInvokeValue::Value => {
+                    ArgKey::Literal(graph.store.intern_string(c.value.as_ref()))
+                }
+            };
+            out.push(key);
+        }
+        out
+    }
+
+    /// Memoize the OwnerNode for this call's arg tuple. Same
+    /// `(rule_name, arg_keys)` => same OwnerNode across calls.
+    fn memoize_owner(&self, graph: &RuntimeGraph, c: &Cursor) -> OwnerNode {
+        let rule_name_id = graph.store.intern_string(self.rule.name.as_ref());
+        let args = self.arg_keys(graph, c);
+        let rule_name = self.rule.name.clone();
+        let args_for_build = args.clone();
+        graph.rule_memo_owner(rule_name_id, args, move || {
+            // input_key is the canonical fingerprint of the arg tuple;
+            // it doubles as the durable identity seed for declare_owner.
+            let input_key = arg_keys_input_key(&rule_name, &args_for_build);
+            let ast_uri = format!("sprf://ast/rule/{}", rule_name);
+            graph.declare_owner(&ast_uri, None, &input_key, "head", "pure", 0)
+        })
     }
 
     fn seed_for(&self, ctx: &RenderCtx, c: &Cursor) -> Option<Cursor> {
@@ -235,11 +283,32 @@ impl Component for RuleInvokeComponent {
     type Next = Cursor;
 
     fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        // Materialize the OwnerNode for this call tuple if a
+        // RuntimeGraph is in ctx. Identity-only — body-result memo
+        // below still gates whether the body re-fires.
+        let owner = ctx
+            .runtime::<RuntimeGraph>()
+            .as_ref()
+            .map(|graph| self.memoize_owner(graph.as_ref(), c));
+        let graph_opt = ctx.runtime::<RuntimeGraph>();
+
         let key = self.cache_key(c);
-        if !self.force {
+        let cached_gen = self.fired_at_gen.lock().unwrap().get(&key).copied();
+        let cache_stale = match (graph_opt.as_ref(), owner.as_ref(), cached_gen) {
+            (Some(graph), Some(owner), Some(prev_gen)) => {
+                owner_has_dirty_after(graph.as_ref(), owner, prev_gen)
+            }
+            _ => false,
+        };
+
+        if !self.force && !cache_stale {
             if let Some(cached) = self.cache.lock().unwrap().get(&key).cloned() {
                 return cached;
             }
+        }
+
+        if cache_stale {
+            self.cache.lock().unwrap().remove(&key);
         }
 
         let result = match self.seed_for(ctx, c) {
@@ -247,8 +316,48 @@ impl Component for RuleInvokeComponent {
             None => Node::Done,
         };
         self.cache.lock().unwrap().insert(key, result.clone());
+        self.fired_at_gen
+            .lock()
+            .unwrap()
+            .insert(key, ctx.expand_tick);
         result
     }
+}
+
+/// True if any pending RuntimeJob points at this owner with a
+/// generation strictly newer than the body's last fire.
+fn owner_has_dirty_after(graph: &RuntimeGraph, owner: &OwnerNode, prev_gen: u64) -> bool {
+    graph
+        .pending_jobs()
+        .into_iter()
+        .any(|job| job.owner_uri_id == owner.uri_id && job.generation > prev_gen)
+}
+
+/// Deterministic input_key for `declare_owner`. Hashes `(rule_name,
+/// arg_keys)` into hex so durable identity matches in-memory memo.
+fn arg_keys_input_key(rule: &str, args: &[ArgKey]) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(rule.as_bytes());
+    h.update(b"\0");
+    for arg in args {
+        match arg {
+            ArgKey::Literal(id) => {
+                h.update(b"L:");
+                h.update(&id.0.to_le_bytes());
+            }
+            ArgKey::Unbound => {
+                h.update(b"U");
+            }
+        }
+        h.update(b"\0");
+    }
+    let hash = h.finalize();
+    let bytes = hash.as_bytes();
+    let mut s = String::with_capacity(32);
+    for b in &bytes[..16] {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
 }
 
 struct InvokeCollector {
