@@ -93,7 +93,12 @@ fn lex(raw: &str) -> Result<Vec<Tok>, String> {
             .map_err(|_| "non-utf8 predicate text".to_string())?;
         match t.kind {
             PredicateTokenKind::HostHole => {
-                let name = slice.trim_start_matches("${").trim_end_matches('}');
+                // Universal `${NAME?}` / `${NAME}` surface: strip braces, then
+                // strip the optional `?` bind marker. Predicates only ever
+                // read cursor terms, so Bind and Read collapse to the same
+                // lookup.
+                let raw = slice.trim_start_matches("${").trim_end_matches('}');
+                let name = raw.strip_suffix('?').unwrap_or(raw);
                 if name.is_empty() {
                     return Err("empty `${}` in predicate".to_string());
                 }
