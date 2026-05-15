@@ -915,15 +915,8 @@ impl Component for AstNmComponent {
                                     "",
                                     0,
                                 );
-                                // Stamp LO/HI as WhereBytesId-backed
-                                // terms. The fuser's TypeLattice picks
-                                // WhereBytesId for these captures and
-                                // emits INTEGER REFERENCES _where_bytes
-                                // in the fact-table schema — set_at is
-                                // what makes the value carry the right
-                                // intern-id into the cursor → row path.
-                                child.set_at("LO", &(r.start as u64).to_string(), coord, store);
-                                child.set_at("HI", &(r.end as u64).to_string(), coord, store);
+                                child.set("LO", (r.start as u64).to_string());
+                                child.set("HI", (r.end as u64).to_string());
                                 // Per-match coord term — `MATCH.at`/`MATCH.value`
                                 // reach through one Term entry instead of LO/HI cols.
                                 child.set_at("MATCH", slice, coord, store);
