@@ -73,8 +73,9 @@ pub use queue::{
 };
 pub use row::Row;
 pub use runtime_graph::{
-    ActiveChild, EmitValue, FactRuntimeGraph, RuntimeEdge, RuntimeEvent, RuntimeNode, RuntimeValue,
-    RuntimeValuePayload, SubResult, Subscribe, SupportRows, VisibleDelta,
+    ActiveChild, EmitValue, FactRuntimeGraph, RuntimeContinuation, RuntimeEdge, RuntimeEvent,
+    RuntimeJob, RuntimeNode, RuntimeValue, RuntimeValuePayload, SubResult, Subscribe, SupportRows,
+    VisibleDelta,
 };
 #[cfg(feature = "sqlite")]
 pub use sqlite_queue::SqliteQueue;

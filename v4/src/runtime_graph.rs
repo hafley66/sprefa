@@ -3,8 +3,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    FactRuntimeGraph, FactStore, RenderCtx, RuntimeEdge as RuntimeEdgeRow,
-    RuntimeNode as RuntimeNodeRow, RuntimePut,
+    FactRuntimeGraph, FactStore, RenderCtx, RuntimeContinuation as CoreContinuation,
+    RuntimeEdge as RuntimeEdgeRow, RuntimeNode as RuntimeNodeRow, RuntimePut,
 };
 
 use crate::cursor_codec;
@@ -749,56 +749,32 @@ impl RuntimeGraph {
         input: &Cursor,
         generation: u64,
     ) {
-        self.facts.declare(
-            RUNTIME_CONTINUATION,
-            &[
-                CONT_OWNER_URI_ID,
-                CONT_PIPE_HASH,
-                CONT_INSTANCE_ID,
-                CONT_DEPTH,
-                CONT_INPUT_CURSOR,
-                GENERATION,
-            ],
-        );
-        let owner_id = owner.uri_id.0.to_string();
-        self.facts.delete_matching(
-            RUNTIME_CONTINUATION,
-            &[(CONT_OWNER_URI_ID, owner_id.as_str())],
-        );
-        let mut row = Cursor::default();
-        row.set(CONT_OWNER_URI_ID, owner_id);
-        row.set(CONT_PIPE_HASH, pipe_hash.to_string());
-        row.set(CONT_INSTANCE_ID, instance_id.to_string());
-        row.set(CONT_DEPTH, depth.to_string());
-        row.set(CONT_INPUT_CURSOR, hex(&cursor_codec::encode(input)));
-        row.set(GENERATION, generation.to_string());
-        self.facts
-            .insert_batch(RUNTIME_CONTINUATION, vec![Arc::new(row)]);
+        self.core.record_continuation(CoreContinuation {
+            owner_id: owner.uri_id.0.to_string(),
+            pipe_hash,
+            instance_id,
+            depth,
+            input_hex: hex(&cursor_codec::encode(input)),
+            generation,
+        });
     }
 
     pub fn continuation_for_owner(&self, owner_uri_id: StringId) -> Option<RuntimeContinuation> {
         let owner_id = owner_uri_id.0.to_string();
-        let Some(row) = self
-            .facts
-            .read_where(RUNTIME_CONTINUATION, CONT_OWNER_URI_ID, owner_id.as_str())
-            .into_iter()
-            .next()
-        else {
-            return self
-                .compact_sources
-                .as_ref()
-                .and_then(|compact| compact.continuation_for_owner(owner_uri_id));
-        };
-        let input_hex = row.get(CONT_INPUT_CURSOR)?;
-        let input = cursor_codec::decode(&unhex(input_hex)?).ok()?;
-        Some(RuntimeContinuation {
-            owner_uri_id,
-            pipe_hash: row.get(CONT_PIPE_HASH).and_then(parse_u64)?,
-            instance_id: row.get(CONT_INSTANCE_ID).and_then(parse_u64)?,
-            depth: row.get(CONT_DEPTH).and_then(parse_u64)? as u32,
-            input,
-            generation: row.get(GENERATION).and_then(parse_u64)?,
-        })
+        if let Some(core) = self.core.continuation_for_owner(owner_id.as_str()) {
+            let input = cursor_codec::decode(&unhex(core.input_hex.as_str())?).ok()?;
+            return Some(RuntimeContinuation {
+                owner_uri_id,
+                pipe_hash: core.pipe_hash,
+                instance_id: core.instance_id,
+                depth: core.depth,
+                input,
+                generation: core.generation,
+            });
+        }
+        self.compact_sources
+            .as_ref()
+            .and_then(|compact| compact.continuation_for_owner(owner_uri_id))
     }
 
     pub fn dispatch_dirty(&self, source: &SourceNode, generation: u64) -> Vec<OwnerNode> {

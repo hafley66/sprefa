@@ -10,6 +10,7 @@ pub const RUNTIME_VALUE: &str = "runtime_value";
 pub const RUNTIME_EDGE_VALUE: &str = "runtime_edge_value";
 pub const RUNTIME_EVENT: &str = "runtime_event";
 pub const RUNTIME_JOB: &str = "runtime_job";
+pub const RUNTIME_CONTINUATION: &str = "runtime_continuation";
 
 pub const NODE_ID: &str = "node_uri_id";
 pub const NODE_KIND_ID: &str = "node_kind_id";
@@ -44,6 +45,12 @@ pub const JOB_OWNER_ID: &str = "owner_uri_id";
 pub const JOB_STATE: &str = "state";
 pub const JOB_PENDING: &str = "pending";
 pub const JOB_DONE: &str = "done";
+
+pub const CONT_OWNER_ID: &str = "owner_uri_id";
+pub const CONT_PIPE_HASH: &str = "pipe_hash";
+pub const CONT_INSTANCE_ID: &str = "instance_id";
+pub const CONT_DEPTH: &str = "depth";
+pub const CONT_INPUT_CURSOR: &str = "input_cursor";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeNode {
@@ -99,6 +106,18 @@ pub struct RuntimeJob {
     pub job_id: String,
     pub event_id: String,
     pub owner_id: String,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeContinuation {
+    pub owner_id: String,
+    pub pipe_hash: u64,
+    pub instance_id: u64,
+    pub depth: u32,
+    /// Opaque hex-encoded input snapshot. Encoding choice belongs to
+    /// the caller (sprf side stores `cursor_codec::encode` output).
+    pub input_hex: String,
     pub generation: u64,
 }
 
@@ -504,6 +523,41 @@ impl<R: Row> FactRuntimeGraph<R> {
         }
     }
 
+    /// Record (or replace) the continuation for `owner_id`. The
+    /// `input_hex` blob is opaque to the generic layer; callers control
+    /// the encoding.
+    pub fn record_continuation(&self, cont: RuntimeContinuation) {
+        self.facts.delete_matching(
+            RUNTIME_CONTINUATION,
+            &[(CONT_OWNER_ID, cont.owner_id.as_str())],
+        );
+        let mut row = R::default();
+        row.set(CONT_OWNER_ID, cont.owner_id.as_str());
+        row.set(CONT_PIPE_HASH, cont.pipe_hash.to_string().as_str());
+        row.set(CONT_INSTANCE_ID, cont.instance_id.to_string().as_str());
+        row.set(CONT_DEPTH, cont.depth.to_string().as_str());
+        row.set(CONT_INPUT_CURSOR, cont.input_hex.as_str());
+        row.set(GENERATION, cont.generation.to_string().as_str());
+        self.facts
+            .insert_batch(RUNTIME_CONTINUATION, vec![Arc::new(row)]);
+    }
+
+    pub fn continuation_for_owner(&self, owner_id: &str) -> Option<RuntimeContinuation> {
+        let row = self
+            .facts
+            .read_where(RUNTIME_CONTINUATION, CONT_OWNER_ID, owner_id)
+            .into_iter()
+            .next()?;
+        Some(RuntimeContinuation {
+            owner_id: owner_id.to_string(),
+            pipe_hash: row.get(CONT_PIPE_HASH)?.parse().ok()?,
+            instance_id: row.get(CONT_INSTANCE_ID)?.parse().ok()?,
+            depth: row.get(CONT_DEPTH)?.parse::<u64>().ok()? as u32,
+            input_hex: row.get(CONT_INPUT_CURSOR)?.to_string(),
+            generation: row.get(GENERATION)?.parse().ok()?,
+        })
+    }
+
     pub fn mark_event_consumed(&self, event_id: &str) {
         let Some(event) = self
             .unconsumed_events()
@@ -724,6 +778,17 @@ impl<R: Row> FactRuntimeGraph<R> {
         self.facts.declare(
             RUNTIME_JOB,
             &[JOB_ID, JOB_EVENT_ID, JOB_OWNER_ID, JOB_STATE, GENERATION],
+        );
+        self.facts.declare(
+            RUNTIME_CONTINUATION,
+            &[
+                CONT_OWNER_ID,
+                CONT_PIPE_HASH,
+                CONT_INSTANCE_ID,
+                CONT_DEPTH,
+                CONT_INPUT_CURSOR,
+                GENERATION,
+            ],
         );
     }
 
