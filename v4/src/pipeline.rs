@@ -240,8 +240,8 @@ impl Component for GlobDynamicComponent {
 /// segments resolved to literal regex-escaped text.
 ///
 /// Carveout shapes:
-///   `${X?}`           — named capture `(?P<X>[^/]*)`
-///   `$$${X?}`         — multi-segment `(?P<X>.*)` (3-`$` prefix)
+///   `${X?}`           — named capture `(?P<X>[^/]*)` (single segment)
+///   `$$${...}`        — rejected; ast-grep only.
 ///   `${X}`            — Term Read; resolved via `cur.get("X")`,
 ///                       regex-escaped into the pattern.
 ///   `${X.field}`      — same as above (key is `X.field`).
@@ -263,18 +263,17 @@ fn build_dynamic_glob_regex(
     let mut names: Vec<Arc<str>> = Vec::new();
     let mut i: usize = 0;
     while i < bytes.len() {
-        let triple_dollar = i + 3 < bytes.len()
+        // Triple-dollar is ast-grep only. The dynamic path returns Err
+        // so the upstream caller can surface a per-cursor diagnostic.
+        if i + 3 < bytes.len()
             && bytes[i] == b'$'
             && bytes[i + 1] == b'$'
             && bytes[i + 2] == b'$'
-            && bytes[i + 3] == b'{';
-        let interp_lo = if triple_dollar {
-            (i + 2) as u32
-        } else {
-            i as u32
-        };
-
-        if let Some(interp) = by_lo.get(&interp_lo) {
+            && bytes[i + 3] == b'{'
+        {
+            return Err(());
+        }
+        if let Some(interp) = by_lo.get(&(i as u32)) {
             match &interp.kind {
                 InterpKind::Term { mode, field } => {
                     let key: std::borrow::Cow<'_, str> = match field {
@@ -283,15 +282,9 @@ fn build_dynamic_glob_regex(
                     };
                     match mode {
                         InterpMode::Bind => {
-                            if triple_dollar {
-                                out.push_str("(?P<");
-                                out.push_str(interp.name.as_ref());
-                                out.push_str(">.*)");
-                            } else {
-                                out.push_str("(?P<");
-                                out.push_str(interp.name.as_ref());
-                                out.push_str(">[^/]*)");
-                            }
+                            out.push_str("(?P<");
+                            out.push_str(interp.name.as_ref());
+                            out.push_str(">[^/]*)");
                             names.push(interp.name.clone());
                         }
                         InterpMode::Read => {

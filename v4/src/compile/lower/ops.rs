@@ -658,9 +658,10 @@ impl OperatorDef for GlobDef {
 ///   `[abc]`    → `[abc]`        (passed through, glob char-class shape)
 ///   `{a,b}`    → `(?:a|b)`      (alternation)
 ///   literal    → escaped (regex::escape one char at a time)
-///   `${X?}`    → `(?P<X>[^/]*)`
-///   `$$${X?}`  → `(?P<X>.*)`    (3 leading `$` chars consumed in walk)
+///   `${X?}`    → `(?P<X>[^/]*)` (single-segment named capture)
 ///   `${X}`     → rejected for now (`lower/glob-read-not-supported`)
+///   `$$${...}` → rejected: triple-dollar is ast-grep only per universal rule.
+///                Use `**/${X?}` for multi-segment capture in glob.
 ///   `${...}`   → SubPipe form: handled by `GlobDynamicComponent` path
 ///                in `GlobDef::lower`; never reaches this translator.
 ///
@@ -692,29 +693,21 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
 
     let mut i: usize = 0;
     while i < bytes.len() {
-        // Detect interp at this position. Two cases:
-        //   • `${...}` directly at i.
-        //   • `$$${...}` — three `$` then `${...}`. The interp starts
-        //     at i + 3 (the inner `${`); we consume the leading `$$$`
-        //     here and let the inner interp branch run.
-        // `$$${X?}` form. The body literally has 3 `$` chars then `{X?}`.
-        // The universal pre-pass treats only the trailing `${X?}` as an
-        // interp (because `${` is the trigger); its `lo` points at the
-        // third `$`. From this walk's standpoint, the leading two `$`
-        // chars at positions [i, i+1] live in the literal stream and
-        // signal "promote this Bind interp to multi-segment".
-        let triple_dollar = i + 3 < bytes.len()
+        // Per universal rule: `$$${...}` is ast-grep ONLY. In glob,
+        // surface a fatal diag so the author switches to `**/${X?}` for
+        // multi-segment captures. Single-segment is `${X?}` as usual.
+        if i + 3 < bytes.len()
             && bytes[i] == b'$'
             && bytes[i + 1] == b'$'
             && bytes[i + 2] == b'$'
-            && bytes[i + 3] == b'{';
-        let interp_lo = if triple_dollar {
-            (i + 2) as u32
-        } else {
-            i as u32
-        };
-        if let Some(interp) = by_lo.get(&interp_lo) {
-            // Range covers the full `${...}` span (no $$$ prefix).
+            && bytes[i + 3] == b'{'
+        {
+            return Err(LowerError::Unknown(
+                "glob: `$$${...}` is ast-grep only; use `**/${NAME?}` for \
+                 multi-segment captures in glob".into(),
+            ));
+        }
+        if let Some(interp) = by_lo.get(&(i as u32)) {
             match &interp.kind {
                 InterpKind::Term { mode, field } => {
                     if field.is_some() {
@@ -727,16 +720,10 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
                     }
                     match mode {
                         InterpMode::Bind => {
-                            // `${X?}` → named capture; multi-segment if `$$$`.
-                            if triple_dollar {
-                                out.push_str("(?P<");
-                                out.push_str(interp.name.as_ref());
-                                out.push_str(">.*)");
-                            } else {
-                                out.push_str("(?P<");
-                                out.push_str(interp.name.as_ref());
-                                out.push_str(">[^/]*)");
-                            }
+                            // `${X?}` → single-segment named capture.
+                            out.push_str("(?P<");
+                            out.push_str(interp.name.as_ref());
+                            out.push_str(">[^/]*)");
                         }
                         InterpMode::Read => {
                             return Err(LowerError::Unknown(format!(
@@ -758,7 +745,6 @@ fn glob_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
                     ));
                 }
             }
-            // Advance past the `$$$` (if any) plus the full interp span.
             i = interp.range.hi as usize;
             continue;
         }
@@ -1333,22 +1319,29 @@ impl OperatorDef for ReDef {
         dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let body = dsl.expect("re: dsl body present (validate)");
-        // SubPipe-bearing bodies route to ReComponent's dyn_body slow
-        // path; the static `re` constructed here is unused (kept as a
-        // placeholder until the fast path is selected). For term-only /
-        // pure-literal bodies, the static path uses the pre-compiled
-        // regex.
-        // TODO: surface named captures via Lane C parse_dsl so
-        // ReComponent's `capture_names` can be populated.
+        // Universal `${X?}` Bind / `${X}` Read carveouts are rewritten
+        // into the regex surface here before ReComponent::new sees the
+        // body. SubPipe-bearing bodies still route to ReComponent's
+        // dyn_body slow path; the static `re` constructed here is a
+        // placeholder for that case.
         let static_pat: String = if crate::template::has_subpipe(&body.interps) {
-            // Placeholder: never matched on the slow path. ".*" is
-            // syntactically valid; the dyn_body recompile per cursor is
-            // the real pattern.
+            // Placeholder; dyn_body recompile per cursor is the real
+            // pattern. Keep it syntactically valid.
             ".*".into()
         } else {
-            body.raw.as_ref().into()
+            re_body_to_regex(body)?
         };
-        let capture_names = scan_re_named_groups(body.raw.as_ref());
+        // Capture names come from BOTH the rewritten regex (which has
+        // groups synthesised from `${X?}` Bind interps) and any native
+        // `(?P<NAME>)` written by the author. Walk-time `binders_in_dsl`
+        // covers binding-graph; this list drives the runtime cursor
+        // stamping in `ReComponent`.
+        let mut capture_names = scan_re_named_groups(&static_pat);
+        for b in scan_re_named_groups(body.raw.as_ref()) {
+            if !capture_names.iter().any(|c| c.name.as_ref() == b.name.as_ref()) {
+                capture_names.push(b);
+            }
+        }
         let capture_name_refs: Vec<&str> = capture_names.iter().map(|b| b.name.as_ref()).collect();
         let mut comp = ReComponent::new(&static_pat, &capture_name_refs);
         if crate::template::has_subpipe(&body.interps) {
@@ -1361,6 +1354,82 @@ impl OperatorDef for ReDef {
         }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
+}
+
+/// Rewrite the `re` body's universal `${...}` carveouts into the regex
+/// surface. `${X?}` becomes `(?P<X>.*?)` (the per-DSL default named
+/// group); `${X}` Read is rejected at lower time (re does not yet have
+/// a per-cursor splice for non-SubPipe Read). Literal text passes through
+/// untouched; the regex crate handles its own escapes.
+fn re_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
+    use crate::compile::lower::op_def::{InterpKind, InterpMode};
+
+    let raw = body.raw.as_ref();
+    let bytes = raw.as_bytes();
+    let mut interps = body.interps.clone();
+    interps.sort_by_key(|i| i.range.lo);
+
+    let mut by_lo: std::collections::BTreeMap<u32, &crate::compile::lower::op_def::DslInterp> =
+        std::collections::BTreeMap::new();
+    for it in &interps {
+        by_lo.insert(it.range.lo, it);
+    }
+
+    let mut out = String::with_capacity(raw.len() + 8);
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        // Reject triple-dollar in `re`: it's ast-grep-only per spec.
+        if i + 3 < bytes.len()
+            && bytes[i] == b'$'
+            && bytes[i + 1] == b'$'
+            && bytes[i + 2] == b'$'
+            && bytes[i + 3] == b'{'
+        {
+            return Err(LowerError::Unknown(
+                "re: `$$${...}` is ast-grep only; use `${NAME?}` in re bodies".into(),
+            ));
+        }
+        if let Some(interp) = by_lo.get(&(i as u32)) {
+            match &interp.kind {
+                InterpKind::Term { mode, field } => {
+                    if field.is_some() {
+                        return Err(LowerError::Unknown(format!(
+                            "re: dot-access in body not supported (`${{{}.{}}}`)",
+                            interp.name,
+                            field.as_ref().map(|f| f.as_ref()).unwrap_or("")
+                        )));
+                    }
+                    match mode {
+                        InterpMode::Bind => {
+                            out.push_str("(?P<");
+                            out.push_str(interp.name.as_ref());
+                            out.push_str(">.*?)");
+                        }
+                        InterpMode::Read => {
+                            return Err(LowerError::Unknown(format!(
+                                "lower/re-read-not-supported: `${{{}}}` Read mode not \
+                                 supported in re bodies (use sub-pipe form `${{ <pipe> }}` \
+                                 to splice a value per cursor)",
+                                interp.name
+                            )));
+                        }
+                    }
+                }
+                InterpKind::SubPipe { .. } => {
+                    // SubPipe interps are handled by the dyn_body path;
+                    // ReDef::lower routes them before this function runs.
+                    return Err(LowerError::Unknown(
+                        "re: internal — SubPipe interp reached static translator".into(),
+                    ));
+                }
+            }
+            i = interp.range.hi as usize;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    Ok(out)
 }
 
 // ─── term (read) ──────────────────────────────────────────────────────────
