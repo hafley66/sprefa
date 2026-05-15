@@ -222,6 +222,32 @@ fn p4_id_typed_columns_in_facts_schema() {
 }
 
 #[test]
+fn where_backtick_dsl_body_is_pushed_into_join_on_clause() {
+    // Canonical surface for the where predicate is a backtick DSL body.
+    // The fuser must read the predicate text from op.dsl, not op.args,
+    // and produce the same JOIN ON predicate-pushdown shape as the
+    // paren form.
+    let src = r#"
+        rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` };
+        rule(:hit_pairs, :FS, :LO, :OTHER_LO) {
+            hits(FS?, LO?) > hits(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
+        }
+    "#;
+    let (rules, diags) = lower(src);
+    assert!(
+        diags.iter().all(|d| d.severity != effect_runtime::v2::Severity::Error),
+        "backtick where must lower without errors, got: {diags:?}"
+    );
+    let pairs = rules.iter().find(|r| r.name() == "hit_pairs").unwrap();
+    let sql = pairs.fused_sql().unwrap();
+    let on_section = sql.split("WHERE").next().unwrap_or("");
+    assert!(
+        on_section.contains("<>") || on_section.contains("!="),
+        "predicate must be pushed into JOIN ON, got: {sql}"
+    );
+}
+
+#[test]
 fn support_edges_populated_in_same_transaction() {
     // The fused full-SQL kind issues two INSERT...SELECT statements
     // in one transaction: one for facts, one for support edges.

@@ -1668,6 +1668,17 @@ impl OperatorDef for WhereDef {
     fn paren_args(&self) -> &[ArgSig] {
         WHERE_SPEC
     }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        // Transition: paren form `where(${A} != ${B})` is rewritten
+        // from `where ${A} != ${B}` sugar at parse time. After phase 4
+        // drops the paren form, this stays false and the backtick body
+        // becomes the only accepted shape (still optional so an empty
+        // `where\`\`` doesn't error before fuser pickup).
+        false
+    }
 
     fn lower(
         &self,

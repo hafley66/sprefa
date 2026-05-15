@@ -160,13 +160,21 @@ fn classify_op(op: &OpCall) -> Option<Liftable> {
             udfs: vec![Arc::<str>::from("sprf_re_match")],
         }),
         "where" => {
-            // The predicate slot text was captured by the parser as
-            // the op's first arg slot. Pull it raw and hand off as
-            // the Pure variant's filter.
+            // Predicate text comes from the backtick DSL body when
+            // present (canonical surface: `where\`${A} != ${B}\``).
+            // During the paren-form transition the parser may still
+            // route the predicate through args[0]; fall back to that
+            // shape so legacy `where ${A} != ${B}` (rewritten to
+            // `where(${A} != ${B})`) keeps working until phase 4.
             let pred = op
-                .args
-                .first()
-                .map(|s| s.raw.as_ref().trim().to_string())
+                .dsl
+                .as_ref()
+                .map(|d| d.raw.as_ref().trim().to_string())
+                .or_else(|| {
+                    op.args
+                        .first()
+                        .map(|s| s.raw.as_ref().trim().to_string())
+                })
                 .unwrap_or_default();
             Some(Liftable::Pure {
                 project: Vec::new(),

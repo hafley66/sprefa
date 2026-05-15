@@ -550,12 +550,14 @@ fn rewrite_where_sugar(src: &str) -> Option<String> {
             let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
             if !is_word(prev) && !is_word(next) {
                 // Look at the byte after `where` (after whitespace) to
-                // see if a `(` is already present (regular call form).
+                // see if a call-form delimiter is already present.
+                // `(` = paren-arg form. `` ` `` = backtick DSL body form
+                // (canonical). Both skip the sugar rewrite.
                 let mut j = i + needle.len();
                 while j < bytes.len() && bytes[j] != b'\n' && bytes[j].is_ascii_whitespace() {
                     j += 1;
                 }
-                if j < bytes.len() && bytes[j] != b'(' {
+                if j < bytes.len() && bytes[j] != b'(' && bytes[j] != b'`' {
                     // Locate predicate end at top-level `>`, `;`, `}`
                     // or end-of-source.
                     let start = j;
