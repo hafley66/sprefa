@@ -1,9 +1,10 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use effect_runtime::v2::{FactStore, Pipe, ProbeSink};
+use effect_runtime::v2::{ByteRange, FactStore, Pipe, ProbeSink};
 
 use crate::config::SprfConfig;
 use crate::rule::Rule;
@@ -49,6 +50,12 @@ pub struct LowerCtx {
     /// apply seed as `_call_seq`; cache-respecting bare/apply calls
     /// don't touch it.
     apply_seq: Arc<AtomicU64>,
+    /// Span of the op call currently being lowered. Set by the
+    /// Registry around each `OperatorDef::lower_call_with_chain`
+    /// invocation. Ops that anchor end-of-run diagnostics (no per-row
+    /// span available) read this from `lower(...)`. `Cell` is fine
+    /// because lower runs single-threaded per compile.
+    pub current_call_span: Cell<Option<ByteRange>>,
 }
 
 impl LowerCtx {
@@ -70,6 +77,7 @@ impl LowerCtx {
             config: None,
             telemetry: None,
             apply_seq: Arc::new(AtomicU64::new(0)),
+            current_call_span: Cell::new(None),
         }
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
