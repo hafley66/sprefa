@@ -637,3 +637,80 @@ fn rule_invoke_memoizes_owner_by_input_arg_tuple() {
     assert_ne!(owner_first.uri_id, owner_other.uri_id);
     assert_eq!(graph.rule_memo_len(), 2);
 }
+
+#[test]
+fn rule_invoke_body_skips_on_cache_hit_and_refires_on_source_dirty() {
+    use effect_runtime::v2::{MemFactStore, Node, Pipe};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use v4::rule::{Rule, RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
+    use v4::runtime_graph::ArgKey;
+
+    // Body counter: how many times the rule body actually ran.
+    struct CountBody {
+        count: Arc<AtomicUsize>,
+    }
+    impl Component for CountBody {
+        type Next = Cursor;
+        fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            Node::Emit(Arc::new(c.clone()))
+        }
+    }
+
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (_facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    let user_store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let body = Pipe::new().step(Arc::new(CountBody {
+        count: count.clone(),
+    }));
+    let rule = Rule::new("r", user_store.clone(), "r", &["A"], body);
+
+    let assignments = vec![RuleInvokeAssign {
+        col: Arc::<str>::from("A"),
+        value: RuleInvokeValue::Literal(Arc::<str>::from("a")),
+    }];
+    let call = RuleInvokeComponent::new(rule, assignments, false);
+
+    let seed = Cursor::default();
+
+    // First fire at gen=1.
+    let ctx1 = RenderCtx::new(1, 0, 0).with_runtime(graph.clone());
+    let _ = call.render(&ctx1, &seed);
+    assert_eq!(count.load(Ordering::SeqCst), 1, "first fire runs body");
+
+    // Subscribe the memoized owner to a "src" table source so a dirty
+    // there will enqueue a job for the owner.
+    let rule_id = graph.store.intern_string("r");
+    let arg_keys_one = [ArgKey::Literal(graph.store.intern_string("a"))];
+    let owner = graph
+        .rule_memo_get(rule_id, &arg_keys_one)
+        .expect("owner memoized after first fire");
+    let src = graph.declare_table_source("src", 1);
+    graph.subscribe(&owner, "src", &src, 1);
+
+    // Second fire at gen=2, no dirty in between: body must NOT re-run.
+    let ctx2 = RenderCtx::new(2, 0, 0).with_runtime(graph.clone());
+    let _ = call.render(&ctx2, &seed);
+    assert_eq!(count.load(Ordering::SeqCst), 1, "cache hit skips body");
+
+    // Mutate the source table — fires notify, enqueues a job at gen=3.
+    graph.notify_table_inserted("src", 3);
+    assert!(graph
+        .pending_jobs()
+        .iter()
+        .any(|job| job.owner_uri_id == owner.uri_id && job.generation == 3));
+
+    // Third fire at gen=4: body re-runs because owner has a pending
+    // dirty newer than the cached fire's gen.
+    let ctx3 = RenderCtx::new(4, 0, 0).with_runtime(graph.clone());
+    let _ = call.render(&ctx3, &seed);
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        2,
+        "source dirty invalidates cache"
+    );
+}

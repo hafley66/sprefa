@@ -137,6 +137,10 @@ pub struct RuleInvokeComponent {
     assignments: Arc<Vec<RuleInvokeAssign>>,
     force: bool,
     cache: Mutex<BTreeMap<[u8; 32], Node<Cursor>>>,
+    /// Per-cache-key generation at which the body last fired. Used to
+    /// invalidate the cached Node when a relevant source has dispatched
+    /// a newer dirty event than the cached entry's generation.
+    fired_at_gen: Mutex<BTreeMap<[u8; 32], u64>>,
 }
 
 impl RuleInvokeComponent {
@@ -146,6 +150,7 @@ impl RuleInvokeComponent {
             assignments: Arc::new(assignments),
             force,
             cache: Mutex::new(BTreeMap::new()),
+            fired_at_gen: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -281,15 +286,29 @@ impl Component for RuleInvokeComponent {
         // Materialize the OwnerNode for this call tuple if a
         // RuntimeGraph is in ctx. Identity-only — body-result memo
         // below still gates whether the body re-fires.
-        if let Some(graph) = ctx.runtime::<RuntimeGraph>() {
-            let _owner = self.memoize_owner(graph.as_ref(), c);
-        }
+        let owner = ctx
+            .runtime::<RuntimeGraph>()
+            .as_ref()
+            .map(|graph| self.memoize_owner(graph.as_ref(), c));
+        let graph_opt = ctx.runtime::<RuntimeGraph>();
 
         let key = self.cache_key(c);
-        if !self.force {
+        let cached_gen = self.fired_at_gen.lock().unwrap().get(&key).copied();
+        let cache_stale = match (graph_opt.as_ref(), owner.as_ref(), cached_gen) {
+            (Some(graph), Some(owner), Some(prev_gen)) => {
+                owner_has_dirty_after(graph.as_ref(), owner, prev_gen)
+            }
+            _ => false,
+        };
+
+        if !self.force && !cache_stale {
             if let Some(cached) = self.cache.lock().unwrap().get(&key).cloned() {
                 return cached;
             }
+        }
+
+        if cache_stale {
+            self.cache.lock().unwrap().remove(&key);
         }
 
         let result = match self.seed_for(ctx, c) {
@@ -297,8 +316,21 @@ impl Component for RuleInvokeComponent {
             None => Node::Done,
         };
         self.cache.lock().unwrap().insert(key, result.clone());
+        self.fired_at_gen
+            .lock()
+            .unwrap()
+            .insert(key, ctx.expand_tick);
         result
     }
+}
+
+/// True if any pending RuntimeJob points at this owner with a
+/// generation strictly newer than the body's last fire.
+fn owner_has_dirty_after(graph: &RuntimeGraph, owner: &OwnerNode, prev_gen: u64) -> bool {
+    graph
+        .pending_jobs()
+        .into_iter()
+        .any(|job| job.owner_uri_id == owner.uri_id && job.generation > prev_gen)
 }
 
 /// Deterministic input_key for `declare_owner`. Hashes `(rule_name,
