@@ -7,9 +7,7 @@ use v4::app::{
     build_in_process, build_router, GetDiagsReq, GetFactTableReq, InProcessClient, LspOpenReq,
     RunReport, RunReq, SprfClient, SprfDiag, SprfState,
 };
-use v4::runtime_graph::{
-    RUNTIME_EDGE, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE,
-};
+use v4::runtime_graph::{RUNTIME_EDGE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE};
 
 fn diag_lines(diags: &[SprfDiag]) -> String {
     diags
@@ -561,10 +559,6 @@ async fn app_fact_write_dispatches_runtime_table_wake() {
     assert!(
         state.facts.len(RUNTIME_EVENT) >= 1,
         "fact writes should append runtime graph source events",
-    );
-    assert!(
-        state.facts.len(RUNTIME_EDGE_VALUE) >= 1,
-        "fact writes should update subscribe edge-local values",
     );
     assert!(
         state.facts.len(RUNTIME_JOB) >= 1,

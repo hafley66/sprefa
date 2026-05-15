@@ -4,19 +4,16 @@ use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
     FactRuntimeGraph, FactStore, RenderCtx, RuntimeEdge as RuntimeEdgeRow,
-    RuntimeNode as RuntimeNodeRow, RuntimePut, RuntimeValue as RuntimeValueRow,
-    RuntimeValuePayload,
+    RuntimeNode as RuntimeNodeRow, RuntimePut,
 };
 
 use crate::cursor_codec;
 use crate::store::SprfStore;
 use crate::telemetry::{WriteStats, WriteStatsSnapshot};
-use crate::{Cursor, StringId, WhereBytesId, FOCAL_TERM};
+use crate::{Cursor, StringId, FOCAL_TERM};
 
 pub const RUNTIME_NODE: &str = "runtime_node";
 pub const RUNTIME_EDGE: &str = "runtime_edge";
-pub const RUNTIME_VALUE: &str = "runtime_value";
-pub const RUNTIME_EDGE_VALUE: &str = "runtime_edge_value";
 pub const RUNTIME_EVENT: &str = "runtime_event";
 pub const RUNTIME_JOB: &str = "runtime_job";
 pub const RUNTIME_CONTINUATION: &str = "runtime_continuation";
@@ -30,9 +27,6 @@ const EDGE_KIND_ID: &str = "edge_kind_id";
 const FROM_URI_ID: &str = "from_uri_id";
 const TO_URI_ID: &str = "to_uri_id";
 const LABEL_ID: &str = "label_id";
-
-const VALUE_URI_ID: &str = "value_uri_id";
-const VALUE_KEY: &str = "value_key";
 
 const EVENT_URI_ID: &str = "event_uri_id";
 const EVENT_SOURCE_URI_ID: &str = "source_uri_id";
@@ -57,10 +51,6 @@ const KIND_ROW: &str = "row";
 const KIND_SUBSCRIBE: &str = "subscribe";
 const KIND_SUPPORT: &str = "support";
 const KIND_MEMBER_OF: &str = "member_of";
-const KIND_DIRTY: &str = "dirty";
-const KIND_CURSOR_BLOB: &str = "cursor_blob";
-const KIND_WHERE_BYTES: &str = "where_bytes";
-const STATE_READY: &str = "ready";
 const JOB_PENDING: &str = "pending";
 const JOB_DONE: &str = "done";
 
@@ -194,13 +184,6 @@ pub struct SupportEdge {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RuntimeValue {
-    pub uri_id: StringId,
-    pub uri: Arc<str>,
-    pub value_key: Arc<str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RuntimeEvent {
     pub uri_id: StringId,
     pub source_uri_id: StringId,
@@ -240,16 +223,8 @@ pub struct VisibleDelta {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RuntimeValueInput {
-    Dirty,
-    CursorBlob(Cursor),
-    WhereBytes(WhereBytesId),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceWake {
     pub source_uri: Arc<str>,
-    pub value: RuntimeValueInput,
     pub generation: u64,
 }
 
@@ -257,7 +232,6 @@ impl SourceWake {
     pub fn dirty(source_uri: impl Into<Arc<str>>, generation: u64) -> Self {
         Self {
             source_uri: source_uri.into(),
-            value: RuntimeValueInput::Dirty,
             generation,
         }
     }
@@ -677,90 +651,19 @@ impl RuntimeGraph {
         self.facts.insert_batch(RUNTIME_CONTINUATION, continuations);
     }
 
-    pub fn runtime_value_dirty(&self, source: &SourceNode, generation: u64) -> RuntimeValue {
-        let uri = runtime_uri(
-            "value/dirty",
-            &[source.uri.as_ref(), &generation.to_string()],
-        );
-        self.insert_runtime_value(
-            uri.as_ref(),
-            KIND_DIRTY,
-            "",
-            RuntimeValuePayload::None,
-            STATE_READY,
-            generation,
-        )
-    }
-
-    pub fn runtime_value_cursor_blob(
-        &self,
-        value_uri: &str,
-        cursor: &Cursor,
-        state: &str,
-        generation: u64,
-    ) -> RuntimeValue {
-        let bytes = cursor_codec::encode(cursor);
-        let value_key = hash_bytes(&bytes);
-        self.insert_runtime_value(
-            value_uri,
-            KIND_CURSOR_BLOB,
-            value_key.as_ref(),
-            RuntimeValuePayload::InlineCell(hex(&bytes)),
-            state,
-            generation,
-        )
-    }
-
-    pub fn runtime_value_where_bytes(
-        &self,
-        value_uri: &str,
-        where_bytes: WhereBytesId,
-        state: &str,
-        generation: u64,
-    ) -> RuntimeValue {
-        let value_key = hash_text(&format!("where-bytes:{}", where_bytes.0));
-        self.insert_runtime_value(
-            value_uri,
-            KIND_WHERE_BYTES,
-            value_key.as_ref(),
-            RuntimeValuePayload::Ref(where_bytes.0.to_string()),
-            state,
-            generation,
-        )
-    }
-
-    pub fn record_edge_value(
-        &self,
-        edge: &SubscribeEdge,
-        label: &str,
-        value: &RuntimeValue,
-        generation: u64,
-    ) {
-        let edge_id = edge.uri_id.0.to_string();
-        let label_id = self.intern_uri(label).0.to_string();
-        self.core.set_edge_value(
-            edge_id.as_str(),
-            label_id.as_str(),
-            value.uri_id.0.to_string().as_str(),
-            generation,
-        );
-    }
-
-    pub fn append_source_event(&self, source: &SourceNode, value: &RuntimeValue, generation: u64) {
+    pub fn append_source_event(&self, source: &SourceNode, generation: u64) {
+        // Event identity is (source, generation). Dropped the per-event
+        // RuntimeValue join target in slice 2; RUNTIME_EVENT stays until
+        // slice 6 collapses event/job into a dirty bit on the subscribe edge.
         let uri = runtime_uri(
             "event",
-            &[
-                source.uri.as_ref(),
-                value.uri.as_ref(),
-                value.value_key.as_ref(),
-                &generation.to_string(),
-            ],
+            &[source.uri.as_ref(), &generation.to_string()],
         );
         let uri_id = self.intern_uri(uri.as_ref());
         self.core.append_event(
             uri_id.0.to_string().as_str(),
             source.uri_id.0.to_string().as_str(),
-            value.uri_id.0.to_string().as_str(),
+            "",
             generation,
         );
     }
@@ -917,52 +820,18 @@ impl RuntimeGraph {
     }
 
     pub fn dispatch_dirty(&self, source: &SourceNode, generation: u64) -> Vec<OwnerNode> {
-        let value = self.runtime_value_dirty(source, generation);
-        self.dispatch_wake(source, &value, generation)
+        self.dispatch_wake(source, generation)
     }
 
     pub fn dispatch_source_wake(&self, wake: SourceWake) -> Vec<OwnerNode> {
         let source = self.declare_source(wake.source_uri.as_ref(), wake.generation);
-        match wake.value {
-            RuntimeValueInput::Dirty => self.dispatch_dirty(&source, wake.generation),
-            RuntimeValueInput::CursorBlob(cursor) => {
-                let cursor_hash = hash_bytes(&cursor_codec::encode(&cursor));
-                let value_uri =
-                    runtime_uri("value/cursor", &[source.uri.as_ref(), cursor_hash.as_ref()]);
-                let value = self.runtime_value_cursor_blob(
-                    value_uri.as_ref(),
-                    &cursor,
-                    STATE_READY,
-                    wake.generation,
-                );
-                self.dispatch_wake(&source, &value, wake.generation)
-            }
-            RuntimeValueInput::WhereBytes(where_bytes) => {
-                let value_uri = runtime_uri(
-                    "value/where-bytes",
-                    &[source.uri.as_ref(), &where_bytes.0.to_string()],
-                );
-                let value = self.runtime_value_where_bytes(
-                    value_uri.as_ref(),
-                    where_bytes,
-                    STATE_READY,
-                    wake.generation,
-                );
-                self.dispatch_wake(&source, &value, wake.generation)
-            }
-        }
+        self.dispatch_wake(&source, wake.generation)
     }
 
-    pub fn dispatch_wake(
-        &self,
-        source: &SourceNode,
-        value: &RuntimeValue,
-        generation: u64,
-    ) -> Vec<OwnerNode> {
-        self.append_source_event(source, value, generation);
+    pub fn dispatch_wake(&self, source: &SourceNode, generation: u64) -> Vec<OwnerNode> {
+        self.append_source_event(source, generation);
         let mut owners = BTreeMap::new();
         for edge in self.incoming_subscribe_edges(source) {
-            self.record_edge_value(&edge.edge, edge.label.as_ref(), value, generation);
             owners.insert(edge.owner.uri_id.0, edge.owner);
         }
         if let Some(compact) = &self.compact_sources {
@@ -981,10 +850,16 @@ impl RuntimeGraph {
             .into_iter()
             .filter(|row| row.get(CONSUMED) == Some("0"))
             .filter_map(|row| {
+                // value_uri_id column is written as "" since slice 2;
+                // tolerate the empty case until slice 6 drops the column.
+                let value_uri_id = row
+                    .get(EVENT_VALUE_URI_ID)
+                    .and_then(parse_u64)
+                    .unwrap_or(0);
                 Some(RuntimeEvent {
                     uri_id: StringId(row.get(EVENT_URI_ID).and_then(parse_u64)?),
                     source_uri_id: StringId(row.get(EVENT_SOURCE_URI_ID).and_then(parse_u64)?),
-                    value_uri_id: StringId(row.get(EVENT_VALUE_URI_ID).and_then(parse_u64)?),
+                    value_uri_id: StringId(value_uri_id),
                     generation: row.get(GENERATION).and_then(parse_u64)?,
                 })
             })
@@ -1013,22 +888,6 @@ impl RuntimeGraph {
     pub fn mark_event_consumed(&self, event: &RuntimeEvent) {
         self.core
             .mark_event_consumed(event.uri_id.0.to_string().as_str());
-    }
-
-    pub fn edge_values(&self, edges: &[SubscribeEdge]) -> Vec<Option<RuntimeValue>> {
-        edges
-            .iter()
-            .map(|edge| {
-                let edge_id = edge.uri_id.0.to_string();
-                let row = self
-                    .facts
-                    .read_where(RUNTIME_EDGE_VALUE, EDGE_URI_ID, edge_id.as_str())
-                    .into_iter()
-                    .next()?;
-                let value_id = row.get(VALUE_URI_ID).and_then(parse_u64)?;
-                self.runtime_value_by_id(StringId(value_id))
-            })
-            .collect()
     }
 
     pub fn replace_supports(
@@ -1123,39 +982,6 @@ impl RuntimeGraph {
             generation,
         });
         EdgeRecord { uri_id, uri }
-    }
-
-    fn insert_runtime_value(
-        &self,
-        value_uri: &str,
-        value_kind: &str,
-        value_key: &str,
-        payload: RuntimeValuePayload,
-        state: &str,
-        generation: u64,
-    ) -> RuntimeValue {
-        let uri = Arc::<str>::from(value_uri);
-        let uri_id = self.intern_uri(uri.as_ref());
-        let key = if value_key.is_empty() {
-            Arc::<str>::from(hash_text(value_uri))
-        } else {
-            Arc::<str>::from(value_key)
-        };
-
-        self.core.insert_value(RuntimeValueRow {
-            value_id: uri_id.0.to_string(),
-            value_key: key.to_string(),
-            kind_id: self.intern_uri(value_kind).0.to_string(),
-            payload,
-            state_id: self.intern_uri(state).0.to_string(),
-            generation,
-        });
-
-        RuntimeValue {
-            uri_id,
-            uri,
-            value_key: key,
-        }
     }
 
     fn insert_job(&self, event: &RuntimeEvent, owner: &OwnerNode, generation: u64) -> RuntimeJob {
@@ -1283,59 +1109,25 @@ impl RuntimeGraph {
             let Some(owner_id) = row.get(FROM_URI_ID).and_then(parse_u64) else {
                 continue;
             };
-            let Some(label_id) = row.get(LABEL_ID).and_then(parse_u64) else {
-                continue;
-            };
-            let Some(edge_uri) = self.store.lookup_string(StringId(edge_id)) else {
-                continue;
-            };
             let Some(owner_uri) = self.store.lookup_string(StringId(owner_id)) else {
                 continue;
             };
-            let Some(label) = self.store.lookup_string(StringId(label_id)) else {
-                continue;
-            };
             out.push(IncomingSubscribe {
-                edge: SubscribeEdge {
-                    uri_id: StringId(edge_id),
-                    uri: edge_uri,
-                    label_id: StringId(label_id),
-                },
+                edge_uri_id: StringId(edge_id),
                 owner: OwnerNode {
                     uri_id: StringId(owner_id),
                     uri: owner_uri,
                 },
-                label,
             });
         }
 
-        out.sort_by_key(|incoming| incoming.edge.uri_id.0);
+        out.sort_by_key(|incoming| incoming.edge_uri_id.0);
         out
     }
 
     fn intern_uri(&self, uri: &str) -> StringId {
         self.store.intern_string(uri)
     }
-
-    fn runtime_value_by_id(&self, value_id: StringId) -> Option<RuntimeValue> {
-        let value_id_text = value_id.0.to_string();
-        let row = self
-            .facts
-            .read_where(RUNTIME_VALUE, VALUE_URI_ID, value_id_text.as_str())
-            .into_iter()
-            .next()?;
-        let value_key = row
-            .get(VALUE_KEY)
-            .map(Arc::<str>::from)
-            .unwrap_or_else(|| Arc::<str>::from(""));
-        let uri = self.store.lookup_string(value_id)?;
-        Some(RuntimeValue {
-            uri_id: value_id,
-            uri,
-            value_key,
-        })
-    }
-
 }
 
 struct EdgeRecord {
@@ -1344,9 +1136,8 @@ struct EdgeRecord {
 }
 
 struct IncomingSubscribe {
-    edge: SubscribeEdge,
+    edge_uri_id: StringId,
     owner: OwnerNode,
-    label: Arc<str>,
 }
 
 struct CompactSourceGraph {

@@ -12,7 +12,7 @@ use effect_runtime::v2::{
 
 use v4::lower::{default_registry, DslBody, LowerCtx, Value};
 use v4::pipeline::{str_pipe, StrConstComponent};
-use v4::runtime_graph::{RuntimeGraph, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB};
+use v4::runtime_graph::{RuntimeGraph, RUNTIME_EVENT, RUNTIME_JOB};
 use v4::store::SprfStore;
 use v4::v2_ops::{
     file_dirty_key, file_dirty_source_uri, CollectComponent, CollectMode, CommentComponent,
@@ -672,10 +672,6 @@ fn write_file_publishes_graph_file_dirty_after_write() {
     assert!(
         store.len(RUNTIME_EVENT) >= 1,
         "write_file should append a graph source event for file dirty",
-    );
-    assert!(
-        store.len(RUNTIME_EDGE_VALUE) >= 1,
-        "write_file should update matching graph subscribe edge value",
     );
     assert!(
         store.len(RUNTIME_JOB) >= 1,
