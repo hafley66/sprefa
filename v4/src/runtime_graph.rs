@@ -57,7 +57,6 @@ const KIND_ROW: &str = "row";
 const KIND_SUBSCRIBE: &str = "subscribe";
 const KIND_SUPPORT: &str = "support";
 const KIND_MEMBER_OF: &str = "member_of";
-const KIND_ACTIVE: &str = "active";
 const KIND_DIRTY: &str = "dirty";
 const KIND_CURSOR_BLOB: &str = "cursor_blob";
 const KIND_WHERE_BYTES: &str = "where_bytes";
@@ -190,12 +189,6 @@ pub struct SubscribeEdge {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SupportEdge {
-    pub uri_id: StringId,
-    pub uri: Arc<str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ActiveEdge {
     pub uri_id: StringId,
     pub uri: Arc<str>,
 }
@@ -339,45 +332,6 @@ impl RuntimePut for SprfSupportRows {
             .runtime::<RuntimeGraph>()
             .expect("sprf runtime graph missing from RenderCtx");
         graph.replace_supports(&self.owner, &self.table, &self.rows, self.generation)
-    }
-}
-
-pub struct SprfActiveChild {
-    pub owner: OwnerNode,
-    pub label: Arc<str>,
-    pub child: OwnerNode,
-    pub generation: u64,
-}
-
-impl SprfActiveChild {
-    pub fn new(
-        owner: OwnerNode,
-        label: impl Into<Arc<str>>,
-        child: OwnerNode,
-        generation: u64,
-    ) -> Self {
-        Self {
-            owner,
-            label: label.into(),
-            child,
-            generation,
-        }
-    }
-}
-
-impl RuntimePut for SprfActiveChild {
-    type Output = ActiveEdge;
-
-    fn apply(self, ctx: &RenderCtx) -> Self::Output {
-        let graph = ctx
-            .runtime::<RuntimeGraph>()
-            .expect("sprf runtime graph missing from RenderCtx");
-        graph.replace_active_child(
-            &self.owner,
-            self.label.as_ref(),
-            &self.child,
-            self.generation,
-        )
     }
 }
 
@@ -721,55 +675,6 @@ impl RuntimeGraph {
         self.facts.insert_batch(RUNTIME_NODE, nodes);
         self.facts.insert_batch(RUNTIME_EDGE, edges);
         self.facts.insert_batch(RUNTIME_CONTINUATION, continuations);
-    }
-
-    pub fn replace_active_child(
-        &self,
-        owner: &OwnerNode,
-        label: &str,
-        child: &OwnerNode,
-        generation: u64,
-    ) -> ActiveEdge {
-        let kind_id = self.intern_uri(KIND_ACTIVE).0.to_string();
-        let from_id = owner.uri_id.0.to_string();
-        let label_id = self.intern_uri(label).0.to_string();
-        let old_children: Vec<OwnerNode> = self
-            .facts
-            .rows_of(RUNTIME_EDGE)
-            .into_iter()
-            .filter(|row| {
-                row.get(EDGE_KIND_ID) == Some(kind_id.as_str())
-                    && row.get(FROM_URI_ID) == Some(from_id.as_str())
-                    && row.get(LABEL_ID) == Some(label_id.as_str())
-            })
-            .filter_map(|row| {
-                let id = row.get(TO_URI_ID).and_then(parse_u64)?;
-                if id == child.uri_id.0 {
-                    return None;
-                }
-                let uri = self.store.lookup_string(StringId(id))?;
-                Some(OwnerNode {
-                    uri_id: StringId(id),
-                    uri,
-                })
-            })
-            .collect();
-        for old_child in old_children {
-            self.retract_owner_runtime(&old_child);
-        }
-        self.facts.delete_matching(
-            RUNTIME_EDGE,
-            &[
-                (EDGE_KIND_ID, kind_id.as_str()),
-                (FROM_URI_ID, from_id.as_str()),
-                (LABEL_ID, label_id.as_str()),
-            ],
-        );
-        let edge = self.insert_edge(KIND_ACTIVE, owner.uri_id, child.uri_id, label, generation);
-        ActiveEdge {
-            uri_id: edge.uri_id,
-            uri: edge.uri,
-        }
     }
 
     pub fn runtime_value_dirty(&self, source: &SourceNode, generation: u64) -> RuntimeValue {
@@ -1126,23 +1031,6 @@ impl RuntimeGraph {
             .collect()
     }
 
-    pub fn active_child(&self, owner: &OwnerNode, label: &str) -> Option<OwnerNode> {
-        let kind_id = self.intern_uri(KIND_ACTIVE).0.to_string();
-        let owner_id = owner.uri_id.0.to_string();
-        let label_id = self.intern_uri(label).0.to_string();
-        let row = self.facts.rows_of(RUNTIME_EDGE).into_iter().find(|row| {
-            row.get(EDGE_KIND_ID) == Some(kind_id.as_str())
-                && row.get(FROM_URI_ID) == Some(owner_id.as_str())
-                && row.get(LABEL_ID) == Some(label_id.as_str())
-        })?;
-        let child_id = row.get(TO_URI_ID).and_then(parse_u64)?;
-        let uri = self.store.lookup_string(StringId(child_id))?;
-        Some(OwnerNode {
-            uri_id: StringId(child_id),
-            uri,
-        })
-    }
-
     pub fn replace_supports(
         &self,
         owner: &OwnerNode,
@@ -1448,51 +1336,6 @@ impl RuntimeGraph {
         })
     }
 
-    fn retract_owner_runtime(&self, owner: &OwnerNode) {
-        let owner_id = owner.uri_id.0.to_string();
-        let support_kind = self.intern_uri(KIND_SUPPORT).0.to_string();
-        let subscribe_kind = self.intern_uri(KIND_SUBSCRIBE).0.to_string();
-        let active_kind = self.intern_uri(KIND_ACTIVE).0.to_string();
-        let outgoing: Vec<Arc<Cursor>> = self
-            .facts
-            .rows_of(RUNTIME_EDGE)
-            .into_iter()
-            .filter(|row| row.get(FROM_URI_ID) == Some(owner_id.as_str()))
-            .collect();
-
-        for edge in outgoing
-            .iter()
-            .filter(|row| row.get(EDGE_KIND_ID) == Some(active_kind.as_str()))
-        {
-            let Some(child_id) = edge.get(TO_URI_ID).and_then(parse_u64) else {
-                continue;
-            };
-            let Some(child_uri) = self.store.lookup_string(StringId(child_id)) else {
-                continue;
-            };
-            self.retract_owner_runtime(&OwnerNode {
-                uri_id: StringId(child_id),
-                uri: child_uri,
-            });
-        }
-
-        for edge in outgoing {
-            let Some(edge_id) = edge.get(EDGE_URI_ID).map(str::to_string) else {
-                continue;
-            };
-            if edge.get(EDGE_KIND_ID) == Some(subscribe_kind.as_str()) {
-                self.facts
-                    .delete_matching(RUNTIME_EDGE_VALUE, &[(EDGE_URI_ID, edge_id.as_str())]);
-            }
-            if edge.get(EDGE_KIND_ID) == Some(support_kind.as_str()) {
-                self.facts
-                    .delete_matching(RUNTIME_EDGE, &[(EDGE_URI_ID, edge_id.as_str())]);
-                continue;
-            }
-            self.facts
-                .delete_matching(RUNTIME_EDGE, &[(EDGE_URI_ID, edge_id.as_str())]);
-        }
-    }
 }
 
 struct EdgeRecord {

@@ -12,9 +12,8 @@ use v4::mounted_query::{
     input_key_for_batch, load_mounted_sql_snapshot, mount_id_for_sql, record_sql_outputs,
 };
 use v4::runtime_graph::{
-    table_source_uri, RuntimeGraph, SourceSubscriptionInput, SprfActiveChild, SprfSubscribe,
-    SprfSupportRows, RUNTIME_EDGE, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE,
-    RUNTIME_VALUE,
+    table_source_uri, RuntimeGraph, SourceSubscriptionInput, SprfSubscribe, SprfSupportRows,
+    RUNTIME_EDGE, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE, RUNTIME_VALUE,
 };
 use v4::runtime_replay::GraphReplayRunner;
 use v4::store::SprfStore;
@@ -209,31 +208,12 @@ fn wake_dispatch_uses_subscribe_edges_as_separate_readiness_slots() {
 }
 
 #[test]
-fn active_child_and_source_located_values_are_durable() {
+fn source_located_runtime_values_are_durable() {
+    // Runtime value rows persist across sqlite reopen with the expected
+    // ref/blob columns. Active-child semantics dropped in dedupe slice 1.
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("runtime.db");
     let (facts, graph) = sqlite_graph(&db);
-
-    let parent = graph.declare_owner("sprf://ast/switch", None, "input", "head", "pure", 1);
-    let old_child = graph.declare_owner(
-        "sprf://ast/inner",
-        Some(parent.uri.as_ref()),
-        "old",
-        "head",
-        "pure",
-        1,
-    );
-    let new_child = graph.declare_owner(
-        "sprf://ast/inner",
-        Some(parent.uri.as_ref()),
-        "new",
-        "head",
-        "pure",
-        2,
-    );
-
-    graph.replace_active_child(&parent, "active-inner", &old_child, 1);
-    let active = graph.replace_active_child(&parent, "active-inner", &new_child, 2);
 
     let source_text = graph.store.intern_string("source bytes");
     let where_bytes = graph.store.intern_where_bytes(WhereBytes {
@@ -250,14 +230,8 @@ fn active_child_and_source_located_values_are_durable() {
     drop(facts);
 
     let (facts, _graph) = sqlite_graph(&db);
-    let active_rows = facts.read_where(RUNTIME_EDGE, "edge_uri_id", &active.uri_id.0.to_string());
     let value_rows = facts.read_where(RUNTIME_VALUE, "value_uri_id", &value.uri_id.0.to_string());
 
-    assert_eq!(active_rows.len(), 1);
-    assert_eq!(
-        active_rows[0].get("to_uri_id"),
-        Some(new_child.uri_id.0.to_string().as_str())
-    );
     assert_eq!(value_rows.len(), 1);
     assert_eq!(
         value_rows[0].get("value_ref_id"),
@@ -332,7 +306,7 @@ fn graph_jobs_are_durable_and_idempotent_work_items() {
 }
 
 #[test]
-fn reactive_operator_harnesses_use_edge_local_state_and_active_edges() {
+fn reactive_operator_harnesses_use_edge_local_state() {
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("runtime.db");
     let (_facts, graph) = sqlite_graph(&db);
@@ -354,36 +328,12 @@ fn reactive_operator_harnesses_use_edge_local_state_and_active_edges() {
     let merge_wake = graph.dispatch_wake(&source_b, &b_value, 2);
     assert_eq!(merge_wake, vec![owner.clone()]);
     assert_eq!(
-        graph.edge_values(&[left.clone(), right.clone()]),
+        graph.edge_values(&[left, right]),
         vec![Some(a_value), Some(b_value)]
     );
 
-    let table = graph.declare_output_table("sprf://table/reactive", 1);
-    let old_child = graph.declare_owner(
-        "sprf://ast/inner",
-        Some(owner.uri.as_ref()),
-        "old",
-        "head",
-        "pure",
-        1,
-    );
-    let new_child = graph.declare_owner(
-        "sprf://ast/inner",
-        Some(owner.uri.as_ref()),
-        "new",
-        "head",
-        "pure",
-        2,
-    );
-    graph.replace_supports(&old_child, &table, &[row("old", "visible")], 1);
-    graph.replace_active_child(&owner, "active-inner", &old_child, 1);
-    graph.replace_active_child(&owner, "active-inner", &new_child, 2);
-
-    assert_eq!(graph.active_child(&owner, "active-inner"), Some(new_child));
-    assert!(graph
-        .replace_supports(&old_child, &table, &[], 3)
-        .retracted
-        .is_empty());
+    // Support reconciliation across multiple owners stays exercised by
+    // `support_reconciliation_keeps_shared_rows_until_final_support_retracts`.
 }
 
 #[test]
@@ -397,33 +347,17 @@ fn sprf_runtime_effects_can_be_declared_through_render_ctx_put() {
     let owner = graph.declare_owner("sprf://ast/ctx-put", None, "input", "head", "pure", 1);
     let source = graph.declare_source("sprf://source/ctx", 1);
     let table = graph.declare_output_table("sprf://table/ctx", 1);
-    let child = graph.declare_owner(
-        "sprf://ast/child",
-        Some(owner.uri.as_ref()),
-        "input",
-        "head",
-        "pure",
-        1,
-    );
 
-    let sub = ctx.put(SprfSubscribe::new(owner.clone(), "left", source.clone(), 1));
+    let sub = ctx.put(SprfSubscribe::new(owner.clone(), "left", source, 1));
     let delta = ctx.put(SprfSupportRows::new(
-        owner.clone(),
+        owner,
         table,
         vec![row("ctx", "put")],
-        1,
-    ));
-    let active = ctx.put(SprfActiveChild::new(
-        owner.clone(),
-        "active-inner",
-        child.clone(),
         1,
     ));
 
     assert_eq!(sub.label_id, graph.store.intern_string("left"));
     assert_eq!(delta.inserted.len(), 1);
-    assert_ne!(active.uri_id, child.uri_id);
-    assert_eq!(graph.active_child(&owner, "active-inner"), Some(child));
 }
 
 #[test]
