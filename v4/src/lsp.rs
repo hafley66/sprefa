@@ -11,6 +11,8 @@
 //!   lsp_hint(:code)`message ${TERM}`
 //!   lsp.hover[TERM]`hover ${TERM}`
 //!   lsp_hover[TERM]`hover ${TERM}`
+//!   expect_zero(:code)`message ${TERM}`
+//!   expect_match(:code)`message`
 //! ```
 //!
 //! Args:
@@ -20,17 +22,28 @@
 //! DSL body — message template; `${X}` interps resolve from `cursor.terms`
 //! at render time, mirroring `str`'s template path.
 //!
-//! Cursor flow — each op emits `Node::Emit(child)` after firing the diag,
-//! so downstream still sees the row. To filter by severity downstream,
-//! chain a separate filter op.
+//! Cursor flow — every op in this file is rows-in → rows-out.
+//!   lsp_*           — pass-through, one diag per row.
+//!   expect_zero     — drops every input row, one Error diag per row.
+//!                     Empty input = no diags, no rows. Composes anywhere
+//!                     in the pipe (zero rows out is jq-`empty`).
+//!   expect_match    — pass-through; tracks "saw any row" across the rule
+//!                     run and emits one Warn diag at run-end if not.
+//!                     Barrier `complete()` is the end-of-run hook.
 //!
 //! Span — the diag's byte range comes from `cursor.at` when it resolves
 //! through SprfStore. `lsp_warn[NAME]` focuses the span on term `NAME`'s
 //! coord. Legacy `LO`/`HI` and `NAME_LO`/`NAME_HI` remain fallbacks.
+//! `expect_match` anchors its end-of-run warn to the op call site (no
+//! per-row span is available at that point).
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-use effect_runtime::v2::{Component, Diag, Node, Pipe, RenderCtx, Severity};
+use effect_runtime::v2::{
+    splice_into, BarrierScope, ByteRange, Component, ComponentLifecycle, Diag, Node, PendingSummary,
+    Pipe, QueueBackend, QueueRow, RenderCtx, Severity,
+};
 
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
@@ -531,6 +544,272 @@ impl OperatorDef for LspHoverDef {
         dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         lower_lsp_hover(ctx, flow, dsl)
+    }
+}
+
+// ─── expect_zero / expect_match ───────────────────────────────────────────
+//
+// Pipey contract:
+//   `expect_zero(:c)`m``  — rows-in → 0 rows-out. 1 Error per input row.
+//   `expect_match(:c)`m`` — rows-in → same rows-out. 1 Warn at run-end iff
+//                           zero rows ever arrived (Barrier `complete()`).
+// Neither op is positional. Both compose anywhere in the pipe.
+
+pub struct ExpectZeroComponent {
+    code: Arc<str>,
+    template: Arc<str>,
+    interps: Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
+    store: Option<Arc<SprfStore>>,
+}
+
+impl ExpectZeroComponent {
+    pub fn new(
+        code: Arc<str>,
+        template: Arc<str>,
+        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+    ) -> Self {
+        Self {
+            code,
+            template,
+            interps: Arc::new(interps),
+            store: None,
+        }
+    }
+
+    fn with_sprf_store(mut self, store: Arc<SprfStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    fn render_message(&self, c: &Cursor) -> String {
+        // Term-only template interp; mirrors LspDiagComponent. SubPipe
+        // carveouts are skipped — diag templates render messages, not
+        // pipe values.
+        let raw = self.template.as_ref();
+        let mut out = String::with_capacity(raw.len());
+        let mut head: usize = 0;
+        for interp in self.interps.iter() {
+            let lo = interp.range.lo as usize;
+            let hi = interp.range.hi as usize;
+            if lo > raw.len() || hi > raw.len() || lo < head {
+                continue;
+            }
+            out.push_str(&raw[head..lo]);
+            if let crate::compile::lower::op_def::InterpKind::Term { field, .. } = &interp.kind {
+                let key: std::borrow::Cow<'_, str> = match field {
+                    None => (&*interp.name).into(),
+                    Some(f) => format!("{}.{}", interp.name, f).into(),
+                };
+                if let Some(v) = c.get(&key) {
+                    out.push_str(v);
+                }
+            }
+            head = hi;
+        }
+        out.push_str(&raw[head..]);
+        out
+    }
+
+    fn span_from_cursor(&self, c: &Cursor) -> Option<(u32, u32)> {
+        if c.at != Ref::SYNTHETIC {
+            if let Some(store) = &self.store {
+                if let Some(coord) = store.coord_of(c.at) {
+                    return Some((coord.lo, coord.hi));
+                }
+            }
+        }
+        LspDiagComponent::span_from_legacy(c, "LO", "HI")
+    }
+}
+
+impl Component for ExpectZeroComponent {
+    type Next = Cursor;
+
+    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
+        let message = self.render_message(c);
+        let mut diag = Diag::error(self.code.clone(), message);
+        if let Some((lo, hi)) = self.span_from_cursor(c) {
+            diag = diag.with_span(lo, hi);
+        }
+        ctx.diag.emit(diag);
+        Node::Done
+    }
+}
+
+pub struct ExpectZeroDef;
+impl OperatorDef for ExpectZeroDef {
+    fn name(&self) -> &'static str {
+        "expect_zero"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        LSP_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        false
+    }
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
+        lsp_binders_in_dsl(raw)
+    }
+    fn parse_dsl(
+        &self,
+        raw: &str,
+    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
+        Ok(lsp_parse_dsl(raw))
+    }
+    fn lower(
+        &self,
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let code: Arc<str> = args
+            .first()
+            .and_then(|v| match v {
+                Value::Atom(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| Arc::<str>::from("expect_zero"));
+        let (template, interps): (Arc<str>, Vec<_>) = match dsl {
+            Some(body) => {
+                let mut interps = body.interps.clone();
+                interps.sort_by_key(|i| i.range.lo);
+                (body.raw.clone(), interps)
+            }
+            None => (Arc::<str>::from(""), Vec::new()),
+        };
+        let mut comp = ExpectZeroComponent::new(code, template, interps);
+        if let Some(store) = &ctx.sprf_store {
+            comp = comp.with_sprf_store(store.clone());
+        }
+        Ok(Pipe::new().step(Arc::new(comp)))
+    }
+}
+
+/// `expect_match` — pass-through that tracks "saw any row" per barrier
+/// scope. `complete()` (called by the runtime when upstream is drained
+/// at this depth) emits one Warn diag if no row was seen.
+pub struct ExpectMatchComponent {
+    code: Arc<str>,
+    template: Arc<str>,
+    call_span: Option<ByteRange>,
+    saw_any: Mutex<HashMap<BarrierScope, bool>>,
+}
+
+impl ExpectMatchComponent {
+    pub fn new(code: Arc<str>, template: Arc<str>, call_span: Option<ByteRange>) -> Self {
+        Self {
+            code,
+            template,
+            call_span,
+            saw_any: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn scope_of(&self, ctx: &RenderCtx, row: &QueueRow<Cursor>) -> BarrierScope {
+        BarrierScope {
+            pipe_hash: row.pipe_hash,
+            instance_id: row.instance_id,
+            expand_tick: ctx.expand_tick,
+            depth: ctx.depth,
+        }
+    }
+}
+
+impl Component for ExpectMatchComponent {
+    type Next = Cursor;
+
+    fn dispatch(
+        &self,
+        ctx: &RenderCtx,
+        rows: &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        // Pass each row through; mark scope as "saw a row". Multiple
+        // distinct scopes can run through one component (re-runs across
+        // ticks), so key on the row's scope, not a single bool.
+        if let Some(first) = rows.first() {
+            let scope = self.scope_of(ctx, first);
+            self.saw_any.lock().unwrap().insert(scope, true);
+        }
+        for row in rows {
+            let node = Node::Emit(Arc::new(row.value.as_ref().clone()));
+            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+        }
+    }
+
+    fn lifecycle(&self) -> ComponentLifecycle {
+        ComponentLifecycle::Barrier
+    }
+
+    fn idle(
+        &self,
+        _ctx: &RenderCtx,
+        _scope: BarrierScope,
+        _pending: PendingSummary,
+        _queue: &dyn QueueBackend<Cursor>,
+    ) {
+    }
+
+    fn complete(&self, ctx: &RenderCtx, scope: BarrierScope, _queue: &dyn QueueBackend<Cursor>) {
+        let saw = self.saw_any.lock().unwrap().remove(&scope).unwrap_or(false);
+        if !saw {
+            let mut diag = Diag::warn(self.code.clone(), self.template.as_ref().to_string());
+            if let Some(span) = self.call_span {
+                diag = diag.with_span(span.lo, span.hi);
+            }
+            ctx.diag.emit(diag);
+        }
+    }
+}
+
+pub struct ExpectMatchDef;
+impl OperatorDef for ExpectMatchDef {
+    fn name(&self) -> &'static str {
+        "expect_match"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        LSP_SPEC
+    }
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+    fn dsl_required(&self) -> bool {
+        false
+    }
+    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
+        lsp_binders_in_dsl(raw)
+    }
+    fn parse_dsl(
+        &self,
+        raw: &str,
+    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
+        Ok(lsp_parse_dsl(raw))
+    }
+    fn lower(
+        &self,
+        ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let code: Arc<str> = args
+            .first()
+            .and_then(|v| match v {
+                Value::Atom(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| Arc::<str>::from("expect_match"));
+        let template: Arc<str> = dsl
+            .map(|b| b.raw.clone())
+            .unwrap_or_else(|| Arc::<str>::from("expected at least one row, got none"));
+        let comp = ExpectMatchComponent::new(code, template, ctx.current_call_span.get());
+        Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
 

@@ -100,7 +100,14 @@ impl Registry {
         let arg_vals: Vec<CallArg> = args.into_iter().map(|(v, _)| v).collect();
         let block_val = block.map(|(p, _)| p);
         let dsl_ref = dsl.as_ref().map(|(d, _)| d);
-        def.lower_call_with_chain(ctx, flow_val, &arg_vals, block_val, dsl_ref, chain_pos)
+        // Stash the call span so ops that anchor end-of-run diagnostics
+        // (e.g. `expect_match`) can read it from `lower`. Save+restore
+        // for re-entrant lowering (sub-pipe carveouts).
+        let prev_span = ctx.current_call_span.replace(Some(call_span));
+        let result =
+            def.lower_call_with_chain(ctx, flow_val, &arg_vals, block_val, dsl_ref, chain_pos);
+        ctx.current_call_span.set(prev_span);
+        result
             .map_err(|e| match e {
                 LowerError::Validate(ds) => ds,
                 LowerError::UnboundCapture(n) => vec![Diag::error(
