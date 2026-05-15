@@ -11,8 +11,9 @@ use v4::mounted_query::{
     input_key_for_batch, load_mounted_sql_snapshot, mount_id_for_sql, record_sql_outputs,
 };
 use v4::runtime_graph::{
-    RuntimeGraph, SourceSubscriptionInput, SprfActiveChild, SprfSubscribe, SprfSupportRows,
-    RUNTIME_EDGE, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE, RUNTIME_VALUE,
+    table_source_uri, RuntimeGraph, SourceSubscriptionInput, SprfActiveChild, SprfSubscribe,
+    SprfSupportRows, RUNTIME_EDGE, RUNTIME_EDGE_VALUE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE,
+    RUNTIME_VALUE,
 };
 use v4::runtime_replay::GraphReplayRunner;
 use v4::store::SprfStore;
@@ -422,6 +423,50 @@ fn sprf_runtime_effects_can_be_declared_through_render_ctx_put() {
     assert_eq!(delta.inserted.len(), 1);
     assert_ne!(active.uri_id, child.uri_id);
     assert_eq!(graph.active_child(&owner, "active-inner"), Some(child));
+}
+
+#[test]
+fn table_source_uri_is_deterministic_for_table_name() {
+    // Same table -> same URI; different table -> different URI.
+    let a = table_source_uri("hits");
+    let b = table_source_uri("hits");
+    let c = table_source_uri("misses");
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+    assert!(a.starts_with("sprf://source/table/"));
+}
+
+#[test]
+fn notify_table_inserted_enqueues_jobs_for_subscribed_owners() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+
+    // Owner subscribed to a user fact table by its canonical source URI.
+    let owner = graph.declare_owner("sprf://ast/rule/x", None, "input", "head", "pure", 1);
+    let source = graph.declare_table_source("hits", 1);
+    graph.subscribe(&owner, "hits", &source, 1);
+
+    // Pretend a user-level FactStore::insert_batch landed rows in "hits";
+    // the runtime notifies the graph that the table is dirty.
+    let new_jobs = graph.notify_table_inserted("hits", 2);
+
+    assert_eq!(new_jobs.len(), 1);
+    assert_eq!(new_jobs[0].owner_uri_id, owner.uri_id);
+    let pending = graph.pending_jobs();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].owner_uri_id, owner.uri_id);
+
+    // Second notify with no new subscribers is idempotent: one event per
+    // (gen, source), one job per (event, owner).
+    let again = graph.notify_table_inserted("hits", 2);
+    assert!(again.is_empty() || again[0].uri_id == new_jobs[0].uri_id);
+    assert_eq!(facts.len(RUNTIME_JOB), 1);
+
+    // A fresh generation creates a new event and therefore a new job.
+    let next_gen_jobs = graph.notify_table_inserted("hits", 3);
+    assert_eq!(next_gen_jobs.len(), 1);
+    assert_ne!(next_gen_jobs[0].uri_id, new_jobs[0].uri_id);
 }
 
 #[test]

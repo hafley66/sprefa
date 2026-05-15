@@ -363,6 +363,28 @@ impl RuntimeGraph {
         node
     }
 
+    /// Declare a source node keyed by a fact-table name. Deterministic
+    /// URI shape `sprf://source/table/<table>`. Used by the table-source
+    /// watcher: subscribers attach to this node, callers of
+    /// `notify_table_inserted` dispatch wakes against it.
+    pub fn declare_table_source(&self, table: &str, generation: u64) -> SourceNode {
+        let uri = table_source_uri(table);
+        self.declare_source(&uri, generation)
+    }
+
+    /// Notify the graph that a fact table has new inserts. Emits one
+    /// dirty wake on the canonical table source, enqueues jobs for every
+    /// subscribed owner, and returns just the newly created jobs.
+    pub fn notify_table_inserted(&self, table: &str, generation: u64) -> Vec<RuntimeJob> {
+        let source = self.declare_table_source(table, generation);
+        let before: BTreeSet<u64> = self.pending_jobs().into_iter().map(|j| j.uri_id.0).collect();
+        let _ = self.dispatch_dirty(&source, generation);
+        self.pending_jobs()
+            .into_iter()
+            .filter(|job| !before.contains(&job.uri_id.0))
+            .collect()
+    }
+
     pub fn declare_source(&self, source_uri: &str, generation: u64) -> SourceNode {
         let uri = Arc::<str>::from(source_uri);
         let uri_id = self.intern_uri(uri.as_ref());
@@ -1556,6 +1578,12 @@ impl CompactSourceGraph {
         })
         .ok()
     }
+}
+
+/// Canonical source URI for a user fact table. Pure fn of the table
+/// name so callers can build the URI without holding a graph handle.
+pub fn table_source_uri(table: &str) -> Arc<str> {
+    Arc::<str>::from(format!("sprf://source/table/{table}"))
 }
 
 fn owner_uri(
