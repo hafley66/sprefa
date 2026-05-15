@@ -529,3 +529,40 @@ fn source_aware_ast_subscriptions_reopen_and_rerun_one_changed_file() {
     assert_eq!(facts.len("hits"), 2);
     assert!(runner.runtime_graph.pending_jobs().is_empty());
 }
+
+#[test]
+fn fact_write_auto_notifies_subscribed_owners() {
+    // FactWrite::render_batch must wake every owner subscribed to the
+    // canonical table-source for the written table without an explicit
+    // notify_table_inserted call from the driver.
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+    facts.declare("T", &["k", "v"]);
+
+    let owner = graph.declare_owner("sprf://ast/sub", None, "input", "head", "pure", 1);
+    let source = graph.declare_table_source("T", 1);
+    graph.subscribe(&owner, "T", &source, 1);
+
+    let before = graph.pending_jobs().len();
+
+    let write: Arc<dyn effect_runtime::v2::Component<Next = Cursor>> =
+        Arc::new(FactWrite::new(facts.clone(), "T"));
+    let pipe = PipeInstance::new(vec![write]);
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    let mut seed = Cursor::default();
+    seed.set("k", "k1");
+    seed.set("v", "v1");
+    expand(
+        &pipe,
+        queue,
+        vec![Arc::new(seed)],
+        ExpandOpts::default().with_runtime(graph.clone()),
+    );
+
+    let after = graph.pending_jobs();
+    assert_eq!(facts.len("T"), 1);
+    assert_eq!(after.len(), before + 1);
+    assert_eq!(after[0].owner_uri_id, owner.uri_id);
+}
