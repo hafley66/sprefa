@@ -457,6 +457,9 @@ pub enum TypeLattice {
     StringId,
     /// Opaque blob id.
     BlobId,
+    /// Raw integer (e.g. byte offsets like LO/HI). Not a FK into an
+    /// intern table.
+    Int,
 }
 
 /// How a capture is sourced.
@@ -1145,7 +1148,7 @@ fn tighten_lattice(a: &TypeLattice, b: &TypeLattice) -> TypeLattice {
         match t {
             Bytes => 0,
             String => 1,
-            StringId | PathId | FileId | BlobId => 2,
+            StringId | PathId | FileId | BlobId | Int => 2,
             Tokens | WhereBytesId => 3,
             Tree => 4,
         }
@@ -1238,7 +1241,7 @@ fn cursor_bind_lattice(op_name: &str, capture: &str) -> TypeLattice {
     match (op_name, capture) {
         ("fs", "FS") => TypeLattice::PathId,
         ("ast", "FILE") => TypeLattice::FileId,
-        ("ast", "LO") | ("ast", "HI") => TypeLattice::WhereBytesId,
+        ("ast", "LO") | ("ast", "HI") => TypeLattice::Int,
         _ => TypeLattice::String,
     }
 }

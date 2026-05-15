@@ -149,8 +149,8 @@ fn classify_op(op: &OpCall) -> Option<Liftable> {
         "ast" => Some(Liftable::Stream {
             schema: vec![
                 (Col::from("FILE"), IdKind::FileId),
-                (Col::from("LO"), IdKind::WhereBytesId),
-                (Col::from("HI"), IdKind::WhereBytesId),
+                (Col::from("LO"), IdKind::Int),
+                (Col::from("HI"), IdKind::Int),
             ],
             run: super::lower::liftable::stream_noop,
         }),
@@ -382,18 +382,22 @@ fn id_type_for(lattice: &TypeLattice) -> &'static str {
         | TypeLattice::FileId
         | TypeLattice::PathId
         | TypeLattice::StringId
-        | TypeLattice::BlobId => "INTEGER",
+        | TypeLattice::BlobId
+        | TypeLattice::Int => "INTEGER",
         _ => "INTEGER",
     }
 }
 
-fn intern_table_for(lattice: &TypeLattice) -> &'static str {
+/// Returns None for non-interned types (Int): the column is plain
+/// INTEGER, no FK clause.
+fn intern_table_for(lattice: &TypeLattice) -> Option<&'static str> {
     match lattice {
-        TypeLattice::WhereBytesId => "_where_bytes",
-        TypeLattice::FileId => "_files",
-        TypeLattice::PathId => "_paths",
-        TypeLattice::StringId => "_strings",
-        _ => "_strings",
+        TypeLattice::WhereBytesId => Some("_where_bytes"),
+        TypeLattice::FileId => Some("_files"),
+        TypeLattice::PathId => Some("_paths"),
+        TypeLattice::StringId => Some("_strings"),
+        TypeLattice::Int => None,
+        _ => Some("_strings"),
     }
 }
 
@@ -406,14 +410,16 @@ fn create_table_sql(rule_name: &str, body: &TermFlowGraph) -> String {
         let cap = body.captures.get(col.as_ref());
         let lattice = cap.map(|c| &c.value_lattice).unwrap_or(&TypeLattice::String);
         let ty = id_type_for(lattice);
-        let intern = intern_table_for(lattice);
         sql.push_str(",\n  ");
         sql.push_str(col);
         sql.push(' ');
         sql.push_str(ty);
-        sql.push_str(" NOT NULL REFERENCES ");
-        sql.push_str(intern);
-        sql.push_str("(id)");
+        sql.push_str(" NOT NULL");
+        if let Some(intern) = intern_table_for(lattice) {
+            sql.push_str(" REFERENCES ");
+            sql.push_str(intern);
+            sql.push_str("(id)");
+        }
     }
     sql.push_str("\n) WITHOUT ROWID");
     sql
