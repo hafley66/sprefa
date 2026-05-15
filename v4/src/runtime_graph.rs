@@ -972,26 +972,25 @@ impl RuntimeGraph {
         owner: &OwnerNode,
         table: &OutputNode,
     ) -> BTreeMap<u64, RowNode> {
+        // Delegate the edge scan to effect_runtime; sprf side resolves
+        // the row payload via the durable RUNTIME_NODE row.
         let support_kind = self.intern_uri(KIND_SUPPORT).0.to_string();
         let owner_id = owner.uri_id.0.to_string();
         let table_label = table.uri_id.0.to_string();
         let mut out = BTreeMap::new();
-
-        for edge in self.facts.rows_of(RUNTIME_EDGE) {
-            if edge.get(EDGE_KIND_ID) != Some(support_kind.as_str())
-                || edge.get(FROM_URI_ID) != Some(owner_id.as_str())
-                || edge.get(LABEL_ID) != Some(table_label.as_str())
-            {
-                continue;
-            }
-            let Some(row_id) = edge.get(TO_URI_ID).and_then(parse_u64) else {
+        for edge in self.core.edges_where(
+            Some(support_kind.as_str()),
+            Some(owner_id.as_str()),
+            None,
+            Some(table_label.as_str()),
+        ) {
+            let Some(row_id) = edge.to_id.parse::<u64>().ok() else {
                 continue;
             };
             if let Some(row) = self.row_node(row_id) {
                 out.insert(row_id, row);
             }
         }
-
         out
     }
 
@@ -1021,17 +1020,21 @@ impl RuntimeGraph {
             )
             .0
             .to_string();
-        self.facts
-            .delete_matching(RUNTIME_EDGE, &[(EDGE_URI_ID, edge_uri_id.as_str())]);
+        self.core.delete_edge(edge_uri_id.as_str());
     }
 
     fn row_has_support(&self, row_id: u64) -> bool {
         let support_kind = self.intern_uri(KIND_SUPPORT).0.to_string();
-        let row_id = row_id.to_string();
-        self.facts.rows_of(RUNTIME_EDGE).iter().any(|edge| {
-            edge.get(EDGE_KIND_ID) == Some(support_kind.as_str())
-                && edge.get(TO_URI_ID) == Some(row_id.as_str())
-        })
+        let row_id_text = row_id.to_string();
+        !self
+            .core
+            .edges_where(
+                Some(support_kind.as_str()),
+                None,
+                Some(row_id_text.as_str()),
+                None,
+            )
+            .is_empty()
     }
 
     fn incoming_subscribers(&self, source: &SourceNode) -> Vec<OwnerNode> {
