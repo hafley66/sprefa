@@ -12,7 +12,7 @@ use effect_runtime::v2::{
 
 use v4::lower::{default_registry, DslBody, LowerCtx, Value};
 use v4::pipeline::{str_pipe, StrConstComponent};
-use v4::runtime_graph::{RuntimeGraph, RUNTIME_EVENT, RUNTIME_JOB};
+use v4::runtime_graph::{RuntimeGraph, RUNTIME_DIRTY};
 use v4::store::SprfStore;
 use v4::v2_ops::{
     file_dirty_key, file_dirty_source_uri, CollectComponent, CollectMode, CommentComponent,
@@ -670,12 +670,8 @@ fn write_file_publishes_graph_file_dirty_after_write() {
             if domain.as_ref() == FILE_DOMAIN && *key == Some(file_dirty_key(&path))
     )));
     assert!(
-        store.len(RUNTIME_EVENT) >= 1,
-        "write_file should append a graph source event for file dirty",
-    );
-    assert!(
-        store.len(RUNTIME_JOB) >= 1,
-        "write_file graph wake should enqueue subscribed owners",
+        store.len(RUNTIME_DIRTY) >= 1,
+        "write_file graph wake should mark subscribed owners dirty",
     );
 }
 

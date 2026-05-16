@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::borrow::Cow;
 
 use effect_runtime::v2::{
-    FactRuntimeGraph, FactStore, NodeId, RenderCtx, RuntimeContinuation as CoreContinuation,
-    RuntimeEdge as RuntimeEdgeRow, RuntimeJob as CoreJob, RuntimeNode as RuntimeNodeRow,
-    RuntimePut,
+    DirtyOwner as CoreDirtyOwner, FactRuntimeGraph, FactStore, NodeId, RenderCtx,
+    RuntimeContinuation as CoreContinuation, RuntimeEdge as RuntimeEdgeRow,
+    RuntimeNode as RuntimeNodeRow, RuntimePut, TraversalOrder,
 };
 
 use crate::cursor_codec;
@@ -17,8 +17,10 @@ use crate::{Cursor, StringId, FOCAL_TERM};
 
 pub const RUNTIME_NODE: &str = "runtime_node";
 pub const RUNTIME_EDGE: &str = "runtime_edge";
-pub const RUNTIME_EVENT: &str = "runtime_event";
-pub const RUNTIME_JOB: &str = "runtime_job";
+/// Dirty-owner worklist. Collapses the old RUNTIME_EVENT + RUNTIME_JOB
+/// pair into one row per outstanding `(owner, source)` re-render. See
+/// the generic core for the schema-migration note.
+pub const RUNTIME_DIRTY: &str = "runtime_dirty";
 pub const RUNTIME_CONTINUATION: &str = "runtime_continuation";
 
 const NODE_URI_ID: &str = "node_uri_id";
@@ -201,19 +203,16 @@ pub struct SupportEdge {
     pub uri: Arc<str>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RuntimeEvent {
-    pub uri_id: StringId,
-    pub source_uri_id: StringId,
-    pub value_uri_id: StringId,
-    pub generation: u64,
-}
-
+/// One outstanding owner re-render. Backed by a single RUNTIME_DIRTY
+/// row, not the old event/job table pair. `uri_id` is a deterministic
+/// sprf runtime-job URI (interned from owner+source+generation) so
+/// callers keep the "new work since last snapshot" diffing they did
+/// against the old job-row ids.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RuntimeJob {
     pub uri_id: StringId,
-    pub event_uri_id: StringId,
     pub owner_uri_id: StringId,
+    pub source_uri_id: StringId,
     pub generation: u64,
 }
 
@@ -418,12 +417,13 @@ impl RuntimeGraph {
         self.declare_source(&uri, generation)
     }
 
-    /// Notify the graph that a fact table has new inserts. Emits one
-    /// dirty wake on the canonical table source, enqueues jobs for every
-    /// subscribed owner, and returns just the newly created jobs.
+    /// Notify the graph that a fact table has new inserts. Marks every
+    /// owner subscribed to the canonical table source dirty for it and
+    /// returns just the newly created dirty-work items.
     pub fn notify_table_inserted(&self, table: &str, generation: u64) -> Vec<RuntimeJob> {
         let source = self.declare_table_source(table, generation);
-        let before: BTreeSet<u64> = self.pending_jobs().into_iter().map(|j| j.uri_id.0).collect();
+        let before: BTreeSet<u64> =
+            self.pending_jobs().into_iter().map(|j| j.uri_id.0).collect();
         let _ = self.dispatch_dirty(&source, generation);
         self.pending_jobs()
             .into_iter()
@@ -431,26 +431,60 @@ impl RuntimeGraph {
             .collect()
     }
 
-    /// Drive pending jobs to fixed point. Thin sprf adapter over
-    /// `effect_runtime::v2::FactRuntimeGraph::run_to_quiescence`: the
-    /// generic drain runs against the underlying `core` and the handler
-    /// is projected onto sprf `RuntimeJob` for ergonomic callers.
+    /// Project a generic `DirtyOwner` onto a sprf `RuntimeJob`. The
+    /// generic side already carries owner/source as interned `StringId`s
+    /// (the core is `NodeId = StringId`); sprf re-derives a stable
+    /// runtime-job URI so `uri_id` keeps the identity callers diff
+    /// against, the same shape the old job-row id had.
+    fn job_from_core(&self, core: &CoreDirtyOwner<StringId>) -> RuntimeJob {
+        let uri = runtime_uri(
+            "job",
+            &[
+                core.owner_id.as_id_str().as_ref(),
+                core.source_id.as_id_str().as_ref(),
+                &core.generation.to_string(),
+            ],
+        );
+        RuntimeJob {
+            uri_id: self.intern_uri(uri.as_ref()),
+            owner_uri_id: core.owner_id,
+            source_uri_id: core.source_id,
+            generation: core.generation,
+        }
+    }
+
+    /// Drive the dirty worklist to a fixed point. Thin sprf adapter over
+    /// `effect_runtime::v2::FactRuntimeGraph::run_to_quiescence`
+    /// (breadth-first wave drain, the historical default). Use
+    /// `sweep_to_quiescence` to pick depth-first or streaming order.
     pub fn run_to_quiescence<F>(
         &self,
         max_iters: usize,
+        handler: F,
+    ) -> Result<usize, QuiescenceError>
+    where
+        F: FnMut(&RuntimeJob),
+    {
+        self.sweep_to_quiescence(max_iters, TraversalOrder::BreadthFirst, handler)
+    }
+
+    /// Drive the dirty worklist to a fixed point under an explicit
+    /// traversal order. `BreadthFirst` reproduces `run_to_quiescence`;
+    /// `DepthFirst` follows one cascade chain to its tip before
+    /// siblings; `Streaming` runs a single owner per call. The order is
+    /// a parameter, not baked into the dirty mechanism.
+    pub fn sweep_to_quiescence<F>(
+        &self,
+        max_iters: usize,
+        order: TraversalOrder,
         mut handler: F,
     ) -> Result<usize, QuiescenceError>
     where
         F: FnMut(&RuntimeJob),
     {
         self.core
-            .run_to_quiescence(max_iters, |core_job: &CoreJob<StringId>| {
-                let job = RuntimeJob {
-                    uri_id: core_job.job_id,
-                    event_uri_id: core_job.event_id,
-                    owner_uri_id: core_job.owner_id,
-                    generation: core_job.generation,
-                };
+            .sweep_to_quiescence(max_iters, order, |core_job: &CoreDirtyOwner<StringId>| {
+                let job = self.job_from_core(core_job);
                 handler(&job);
             })
             .map_err(QuiescenceError::from_core)
@@ -658,64 +692,50 @@ impl RuntimeGraph {
         self.facts.insert_batch(RUNTIME_CONTINUATION, continuations);
     }
 
+    /// Mark every owner subscribed to `source` dirty for it. Replaces
+    /// the old append-event step: the dirty row IS the work item.
+    /// Edge-backed subscribers are marked by the generic core via
+    /// `dispatch_wake`; compact-source owners (sqlite sidecar, not in
+    /// RUNTIME_EDGE) are marked here.
     pub fn append_source_event(&self, source: &SourceNode, generation: u64) {
-        // Event identity is (source, generation). Dropped the per-event
-        // RuntimeValue join target in slice 2; RUNTIME_EVENT stays until
-        // slice 6 collapses event/job into a dirty bit on the subscribe edge.
-        let uri = runtime_uri(
-            "event",
-            &[source.uri.as_ref(), &generation.to_string()],
-        );
-        let uri_id = self.intern_uri(uri.as_ref());
-        self.core.append_event(
-            uri_id.as_id_str().as_ref(),
+        let subscribe_kind = self.intern_uri(KIND_SUBSCRIBE);
+        self.core.dispatch_wake(
             source.uri_id.as_id_str().as_ref(),
             "",
+            "",
+            subscribe_kind.as_id_str().as_ref(),
             generation,
         );
-    }
-
-    pub fn enqueue_jobs_for_unconsumed_events(&self, generation: u64) -> Vec<RuntimeJob> {
-        let mut jobs = BTreeMap::new();
-        for event in self.unconsumed_events() {
-            let Some(source_uri) = self.store.lookup_string(event.source_uri_id) else {
-                continue;
-            };
-            let source = SourceNode {
-                uri_id: event.source_uri_id,
-                uri: source_uri,
-            };
-            for owner in self.incoming_subscribers(&source) {
-                let job = self.insert_job(&event, &owner, generation);
-                jobs.insert(job.uri_id.0, job);
-            }
-            if let Some(compact) = &self.compact_sources {
-                for owner in compact.owners_for_source(source.uri_id) {
-                    let job = self.insert_job(&event, &owner, generation);
-                    jobs.insert(job.uri_id.0, job);
-                }
+        if let Some(compact) = &self.compact_sources {
+            let source_id = source.uri_id.as_id_str();
+            for owner in compact.owners_for_source(source.uri_id) {
+                self.core.mark_dirty(
+                    owner.uri_id.as_id_str().as_ref(),
+                    source_id.as_ref(),
+                    generation,
+                );
             }
         }
-        jobs.into_values().collect()
+    }
+
+    /// Back-compat shim. The wake already marked dirty owners, so this
+    /// just returns the current worklist. Kept for callers/tests that
+    /// drove the old two-phase event-then-job model explicitly.
+    pub fn enqueue_jobs_for_unconsumed_events(&self, _generation: u64) -> Vec<RuntimeJob> {
+        self.pending_jobs()
     }
 
     pub fn pending_jobs(&self) -> Vec<RuntimeJob> {
-        // effect_runtime's job table is now StringId-typed; the row maps
-        // straight onto the sprf RuntimeJob with no string round-trip.
         self.core
-            .pending_jobs()
-            .into_iter()
-            .map(|row| RuntimeJob {
-                uri_id: row.job_id,
-                event_uri_id: row.event_id,
-                owner_uri_id: row.owner_id,
-                generation: row.generation,
-            })
+            .dirty_owners()
+            .iter()
+            .map(|core| self.job_from_core(core))
             .collect()
     }
 
     pub fn mark_job_done(&self, job: &RuntimeJob) {
-        self.core.mark_job_done(job.uri_id.as_id_str().as_ref());
+        self.core
+            .clear_dirty(job.owner_uri_id.as_id_str().as_ref());
     }
 
     pub fn owner_descriptor(&self, owner_uri_id: StringId) -> Option<OwnerDescriptor> {
@@ -805,42 +825,29 @@ impl RuntimeGraph {
                 owners.insert(owner.uri_id.0, owner);
             }
         }
-        self.enqueue_jobs_for_unconsumed_events(generation);
         owners.into_values().collect()
     }
 
-    pub fn unconsumed_events(&self) -> Vec<RuntimeEvent> {
-        // effect_runtime's reader is StringId-typed; ids pass through
-        // directly. value_uri_id was reduced to a placeholder in slice 2
-        // and decodes to StringId(0) for the empty column.
-        self.core
-            .unconsumed_events()
-            .into_iter()
-            .map(|event| RuntimeEvent {
-                uri_id: event.event_id,
-                source_uri_id: event.source_id,
-                value_uri_id: event.value_id,
-                generation: event.generation,
-            })
-            .collect()
+    /// View over the dirty worklist. After the event/job collapse an
+    /// "unconsumed event" is just an undrained dirty row; this returns
+    /// one `RuntimeJob` per such row so the resume/durability path keeps
+    /// working unchanged.
+    pub fn unconsumed_events(&self) -> Vec<RuntimeJob> {
+        self.pending_jobs()
     }
 
     pub fn owners_for_unconsumed_events(&self) -> Vec<OwnerNode> {
-        // Generic side returns StringId owner ids directly; resolve each
-        // to its URI for the sprf OwnerNode.
-        let subscribe_kind_id = self.intern_uri(KIND_SUBSCRIBE);
+        // After the collapse an unconsumed event is just an undrained
+        // dirty row; map each pending work item's owner back to its URI.
         let mut owners = BTreeMap::new();
-        for owner_uri_id in self
-            .core
-            .owners_for_unconsumed_events(subscribe_kind_id.as_id_str().as_ref())
-        {
-            let Some(uri) = self.store.lookup_string(owner_uri_id) else {
+        for job in self.pending_jobs() {
+            let Some(uri) = self.store.lookup_string(job.owner_uri_id) else {
                 continue;
             };
             owners.insert(
-                owner_uri_id.0,
+                job.owner_uri_id.0,
                 OwnerNode {
-                    uri_id: owner_uri_id,
+                    uri_id: job.owner_uri_id,
                     uri,
                 },
             );
@@ -848,9 +855,11 @@ impl RuntimeGraph {
         owners.into_values().collect()
     }
 
-    pub fn mark_event_consumed(&self, event: &RuntimeEvent) {
+    /// Drain the dirty row(s) behind one work item. Maps the old
+    /// "consume the event" verb onto `clear_dirty` for the owner.
+    pub fn mark_event_consumed(&self, event: &RuntimeJob) {
         self.core
-            .mark_event_consumed(event.uri_id.as_id_str().as_ref());
+            .clear_dirty(event.owner_uri_id.as_id_str().as_ref());
     }
 
     pub fn replace_supports(
@@ -945,29 +954,6 @@ impl RuntimeGraph {
             generation,
         });
         EdgeRecord { uri_id, uri }
-    }
-
-    fn insert_job(&self, event: &RuntimeEvent, owner: &OwnerNode, generation: u64) -> RuntimeJob {
-        let uri = runtime_uri(
-            "job",
-            &[
-                event.uri_id.as_id_str().as_ref(),
-                owner.uri_id.as_id_str().as_ref(),
-            ],
-        );
-        let uri_id = self.intern_uri(uri.as_ref());
-        self.core.insert_job(
-            uri_id.as_id_str().as_ref(),
-            event.uri_id.as_id_str().as_ref(),
-            owner.uri_id.as_id_str().as_ref(),
-            generation,
-        );
-        RuntimeJob {
-            uri_id,
-            event_uri_id: event.uri_id,
-            owner_uri_id: owner.uri_id,
-            generation,
-        }
     }
 
     fn supported_rows_for_owner(

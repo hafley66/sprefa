@@ -299,9 +299,9 @@ fn runtime_graph_supports_wake_resume_and_active_child_without_consumer_types() 
         graph.edge_values(&["sub-left".into(), "sub-right".into()]),
         vec![Some("value-a".to_string()), Some("value-a".to_string())]
     );
-    assert_eq!(graph.unconsumed_events().len(), 1);
-    graph.mark_event_consumed("event-a");
-    assert!(graph.unconsumed_events().is_empty());
+    assert_eq!(graph.dirty_owners().len(), 1);
+    graph.clear_dirty("owner");
+    assert!(graph.dirty_owners().is_empty());
 
     let inserted = graph.replace_supports(
         "owner",

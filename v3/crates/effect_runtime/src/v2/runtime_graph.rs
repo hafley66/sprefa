@@ -9,8 +9,14 @@ pub const RUNTIME_NODE: &str = "runtime_node";
 pub const RUNTIME_EDGE: &str = "runtime_edge";
 pub const RUNTIME_VALUE: &str = "runtime_value";
 pub const RUNTIME_EDGE_VALUE: &str = "runtime_edge_value";
-pub const RUNTIME_EVENT: &str = "runtime_event";
-pub const RUNTIME_JOB: &str = "runtime_job";
+/// Dirty-owner worklist. Replaces the old RUNTIME_EVENT + RUNTIME_JOB
+/// pair: one row per (owner, source) that still owes a re-render. A
+/// wake marks rows here; the sweep drains and clears them. Additive on
+/// disk: old fact DBs lack this table and gain it on first `declare`
+/// (the schema registry handles the version bump implicitly, matching
+/// the rest of this crate's no-ALTER convention). Stale RUNTIME_EVENT /
+/// RUNTIME_JOB rows on old DBs become inert; nothing reads them.
+pub const RUNTIME_DIRTY: &str = "runtime_dirty";
 pub const RUNTIME_CONTINUATION: &str = "runtime_continuation";
 
 pub const NODE_ID: &str = "node_uri_id";
@@ -35,17 +41,8 @@ pub const VALUE_REF: &str = "value_ref_id";
 pub const VALUE_BLOB: &str = "value_blob";
 pub const STATE_ID: &str = "state_id";
 
-pub const EVENT_ID: &str = "event_uri_id";
-pub const EVENT_SOURCE_ID: &str = "source_uri_id";
-pub const EVENT_VALUE_ID: &str = "value_uri_id";
-pub const CONSUMED: &str = "consumed";
-
-pub const JOB_ID: &str = "job_uri_id";
-pub const JOB_EVENT_ID: &str = "event_uri_id";
-pub const JOB_OWNER_ID: &str = "owner_uri_id";
-pub const JOB_STATE: &str = "state";
-pub const JOB_PENDING: &str = "pending";
-pub const JOB_DONE: &str = "done";
+pub const DIRTY_OWNER_ID: &str = "owner_uri_id";
+pub const DIRTY_SOURCE_ID: &str = "source_uri_id";
 
 pub const CONT_OWNER_ID: &str = "owner_uri_id";
 pub const CONT_PIPE_HASH: &str = "pipe_hash";
@@ -119,21 +116,34 @@ pub enum RuntimeValuePayload {
     InlineCell(String),
 }
 
+/// One outstanding re-render: a `(owner, source)` pair the sweep has
+/// not yet drained. `job_id` is a deterministic hash of the triple so
+/// callers can de-dup work the same way the old RUNTIME_JOB row id did;
+/// it carries no extra state. Generic over `I: NodeId` to match the
+/// rest of the graph; owner/source are interned ids, not bare strings.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RuntimeEvent<I: NodeId = String> {
-    pub event_id: I,
+pub struct DirtyOwner<I: NodeId = String> {
+    pub job_id: String,
+    pub owner_id: I,
     pub source_id: I,
-    pub value_id: I,
     pub generation: u64,
-    pub consumed: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RuntimeJob<I: NodeId = String> {
-    pub job_id: I,
-    pub event_id: I,
-    pub owner_id: I,
-    pub generation: u64,
+/// Order in which `sweep_to_quiescence` visits dirty owners. The dirty
+/// table is order-agnostic; the sweep picks the discipline. Default
+/// `BreadthFirst` reproduces the old wave-drain `run_to_quiescence`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TraversalOrder {
+    /// Drain the whole current dirty snapshot, then re-check. Cascades
+    /// surface one level per outer iteration.
+    #[default]
+    BreadthFirst,
+    /// LIFO: a freshly-dirtied owner runs before any sibling still on
+    /// the worklist. Follows one cascade chain to its tip first.
+    DepthFirst,
+    /// Pull exactly one dirty owner per call. The caller decides when
+    /// to re-enter; the sweep never loops internally.
+    Streaming,
 }
 
 /// Reasons `run_to_quiescence` may bail out before draining.
@@ -512,47 +522,48 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
             .insert_batch(RUNTIME_EDGE_VALUE, vec![Arc::new(row)]);
     }
 
-    pub fn append_event(&self, event_id: &str, source_id: &str, value_id: &str, generation: u64) {
-        if self.has_row(RUNTIME_EVENT, EVENT_ID, event_id) {
-            return;
-        }
-        let mut row = R::default();
-        row.set(EVENT_ID, event_id);
-        row.set(EVENT_SOURCE_ID, source_id);
-        row.set(EVENT_VALUE_ID, value_id);
-        row.set(GENERATION, generation.to_string().as_str());
-        row.set(CONSUMED, "0");
-        self.facts.insert_batch(RUNTIME_EVENT, vec![Arc::new(row)]);
-    }
-
-    /// Idempotent job insert. Caller computes `job_id` (sprf side uses a
-    /// hash of event_id+owner_id). The row lands in PENDING state on
-    /// first insert and stays untouched on duplicate calls.
-    pub fn insert_job(&self, job_id: &str, event_id: &str, owner_id: &str, generation: u64) {
-        if self.has_row(RUNTIME_JOB, JOB_ID, job_id) {
-            return;
-        }
-        let mut row = R::default();
-        row.set(JOB_ID, job_id);
-        row.set(JOB_EVENT_ID, event_id);
-        row.set(JOB_OWNER_ID, owner_id);
-        row.set(JOB_STATE, JOB_PENDING);
-        row.set(GENERATION, generation.to_string().as_str());
-        self.facts.insert_batch(RUNTIME_JOB, vec![Arc::new(row)]);
-    }
-
-    pub fn pending_jobs(&self) -> Vec<RuntimeJob<I>> {
-        let mut jobs: Vec<RuntimeJob<I>> = self
+    /// Mark `owner` dirty for `source`. Idempotent per `(owner, source,
+    /// generation)`: a second mark before the sweep drains it is a
+    /// no-op (matches the old "one event per (gen, source), one job per
+    /// (event, owner)" dedup, minus the two-table indirection). A later
+    /// `clear_dirty` followed by a fresh mark re-creates the row.
+    pub fn mark_dirty(&self, owner_id: &str, source_id: &str, generation: u64) {
+        if self
             .facts
-            .rows_of(RUNTIME_JOB)
+            .read_where(RUNTIME_DIRTY, DIRTY_OWNER_ID, owner_id)
+            .iter()
+            .any(|row| {
+                row.get(DIRTY_SOURCE_ID) == Some(source_id)
+                    && row.get(GENERATION).and_then(|g| g.parse::<u64>().ok())
+                        == Some(generation)
+            })
+        {
+            return;
+        }
+        let mut row = R::default();
+        row.set(DIRTY_OWNER_ID, owner_id);
+        row.set(DIRTY_SOURCE_ID, source_id);
+        row.set(GENERATION, generation.to_string().as_str());
+        self.facts.insert_batch(RUNTIME_DIRTY, vec![Arc::new(row)]);
+    }
+
+    /// Snapshot of every owner that still owes a re-render. Stable order
+    /// (sorted by deterministic job id) so callers can de-dup; the
+    /// traversal discipline lives in `sweep_to_quiescence`.
+    pub fn dirty_owners(&self) -> Vec<DirtyOwner<I>> {
+        let mut jobs: Vec<DirtyOwner<I>> = self
+            .facts
+            .rows_of(RUNTIME_DIRTY)
             .into_iter()
-            .filter(|row| row.get(JOB_STATE) == Some(JOB_PENDING))
             .filter_map(|row| {
-                Some(RuntimeJob {
-                    job_id: I::from_id_str(row.get(JOB_ID)?),
-                    event_id: I::from_id_str(row.get(JOB_EVENT_ID)?),
-                    owner_id: I::from_id_str(row.get(JOB_OWNER_ID)?),
-                    generation: row.get(GENERATION)?.parse().ok()?,
+                let owner_id = row.get(DIRTY_OWNER_ID)?;
+                let source_id = row.get(DIRTY_SOURCE_ID)?;
+                let generation = row.get(GENERATION)?.parse().ok()?;
+                Some(DirtyOwner {
+                    job_id: dirty_job_id(owner_id, source_id, generation),
+                    owner_id: I::from_id_str(owner_id),
+                    source_id: I::from_id_str(source_id),
+                    generation,
                 })
             })
             .collect();
@@ -560,81 +571,124 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
         jobs
     }
 
-    /// Flip the job row to DONE. If no PENDING job remains for the same
-    /// event, mark that event consumed too (matches the prior v4
-    /// semantics that ratchet event lifecycle on the last job done).
-    pub fn mark_job_done(&self, job_id: &str) {
-        let Some(existing) = self
-            .facts
-            .read_where(RUNTIME_JOB, JOB_ID, job_id)
-            .into_iter()
-            .next()
-        else {
-            return;
-        };
-        let event_id = existing.get(JOB_EVENT_ID).unwrap_or("").to_string();
-        let owner_id = existing.get(JOB_OWNER_ID).unwrap_or("").to_string();
-        let generation = existing
-            .get(GENERATION)
-            .and_then(|g| g.parse::<u64>().ok())
-            .unwrap_or(0);
-
+    /// Clear every dirty row for `owner_id`. Called once the owner has
+    /// been re-rendered; one sweep of the worklist for that owner.
+    pub fn clear_dirty(&self, owner_id: &str) {
         self.facts
-            .delete_matching(RUNTIME_JOB, &[(JOB_ID, job_id)]);
-        let mut row = R::default();
-        row.set(JOB_ID, job_id);
-        row.set(JOB_EVENT_ID, event_id.as_str());
-        row.set(JOB_OWNER_ID, owner_id.as_str());
-        row.set(JOB_STATE, JOB_DONE);
-        row.set(GENERATION, generation.to_string().as_str());
-        self.facts.insert_batch(RUNTIME_JOB, vec![Arc::new(row)]);
-
-        let has_pending = self
-            .facts
-            .read_where(RUNTIME_JOB, JOB_EVENT_ID, event_id.as_str())
-            .iter()
-            .any(|row| row.get(JOB_STATE) == Some(JOB_PENDING));
-        if !has_pending {
-            self.mark_event_consumed(event_id.as_str());
-        }
+            .delete_matching(RUNTIME_DIRTY, &[(DIRTY_OWNER_ID, owner_id)]);
     }
 
-    /// Drive pending jobs to fixed point. Each iteration drains the
-    /// current `pending_jobs()` snapshot, calls `handler(&job)` for each
-    /// job, then `mark_job_done(job_id)`. The handler may enqueue new
-    /// jobs (via `notify_table_inserted` / `dispatch_wake`) during the
-    /// loop; those jobs are picked up on the next iteration.
+    /// Clear exactly the dirty row drained by the sweep, not every row
+    /// for the owner. Without this, work the handler enqueues for the
+    /// same owner during its own re-render would be wiped (the old
+    /// per-job `mark_job_done` only retired the one job it ran).
+    fn clear_dirty_one(&self, owner_id: &str, source_id: &str, generation: u64) {
+        let gen_text = generation.to_string();
+        self.facts.delete_matching(
+            RUNTIME_DIRTY,
+            &[
+                (DIRTY_OWNER_ID, owner_id),
+                (DIRTY_SOURCE_ID, source_id),
+                (GENERATION, gen_text.as_str()),
+            ],
+        );
+    }
+
+    /// Drive the dirty worklist to a fixed point under `order`. The
+    /// handler may dirty more owners (via `notify_table_inserted` /
+    /// `dispatch_wake`) while running; those are picked up per `order`.
+    /// Returns the count of owners run, or `IterationCap` once the work
+    /// has not settled within `max_iters` rounds.
     ///
-    /// Returns the total number of jobs run. Errors out with
-    /// `QuiescenceError::IterationCap` once the iteration count exceeds
-    /// `max_iters`.
-    pub fn run_to_quiescence<F>(
+    /// `BreadthFirst` reproduces the old wave-drain. `DepthFirst` walks
+    /// one cascade chain to its tip before siblings. `Streaming` runs a
+    /// single owner per call and returns immediately.
+    pub fn sweep_to_quiescence<F>(
         &self,
         max_iters: usize,
+        order: TraversalOrder,
         mut handler: F,
     ) -> Result<usize, QuiescenceError>
     where
-        F: FnMut(&RuntimeJob<I>),
+        F: FnMut(&DirtyOwner<I>),
     {
         let mut handled = 0usize;
-        for iter in 0..max_iters {
-            let jobs = self.pending_jobs();
-            if jobs.is_empty() {
-                return Ok(handled);
+        match order {
+            TraversalOrder::Streaming => {
+                if let Some(job) = self.dirty_owners().into_iter().next() {
+                    handler(&job);
+                    self.clear_dirty_one(
+                        job.owner_id.as_id_str().as_ref(),
+                        job.source_id.as_id_str().as_ref(),
+                        job.generation,
+                    );
+                    handled += 1;
+                }
+                Ok(handled)
             }
-            for job in &jobs {
-                handler(job);
-                self.mark_job_done(job.job_id.as_id_str().as_ref());
-                handled += 1;
+            TraversalOrder::BreadthFirst => {
+                for iter in 0..max_iters {
+                    let jobs = self.dirty_owners();
+                    if jobs.is_empty() {
+                        return Ok(handled);
+                    }
+                    for job in &jobs {
+                        handler(job);
+                        self.clear_dirty_one(
+                            job.owner_id.as_id_str().as_ref(),
+                            job.source_id.as_id_str().as_ref(),
+                            job.generation,
+                        );
+                        handled += 1;
+                    }
+                    if iter + 1 == max_iters && !self.dirty_owners().is_empty() {
+                        return Err(QuiescenceError::IterationCap {
+                            iters: max_iters,
+                            handled,
+                        });
+                    }
+                }
+                Ok(handled)
             }
-            if iter + 1 == max_iters && !self.pending_jobs().is_empty() {
-                return Err(QuiescenceError::IterationCap {
-                    iters: max_iters,
-                    handled,
-                });
+            TraversalOrder::DepthFirst => {
+                for iter in 0..max_iters {
+                    // Re-snapshot each round and take the most recently
+                    // dirtied owner (max job id) so a cascade child runs
+                    // before older siblings still on the worklist.
+                    let Some(job) = self.dirty_owners().into_iter().next_back() else {
+                        return Ok(handled);
+                    };
+                    handler(&job);
+                    self.clear_dirty_one(
+                        job.owner_id.as_id_str().as_ref(),
+                        job.source_id.as_id_str().as_ref(),
+                        job.generation,
+                    );
+                    handled += 1;
+                    if iter + 1 == max_iters && !self.dirty_owners().is_empty() {
+                        return Err(QuiescenceError::IterationCap {
+                            iters: max_iters,
+                            handled,
+                        });
+                    }
+                }
+                Ok(handled)
             }
         }
-        Ok(handled)
+    }
+
+    /// Back-compat wave-drain. Thin alias for `sweep_to_quiescence`
+    /// with `TraversalOrder::BreadthFirst`; preserves the historical
+    /// `run_to_quiescence` name and semantics for existing callers.
+    pub fn run_to_quiescence<F>(
+        &self,
+        max_iters: usize,
+        handler: F,
+    ) -> Result<usize, QuiescenceError>
+    where
+        F: FnMut(&DirtyOwner<I>),
+    {
+        self.sweep_to_quiescence(max_iters, TraversalOrder::BreadthFirst, handler)
     }
 
     /// Record (or replace) the continuation for `owner_id`. The
@@ -673,34 +727,20 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
         })
     }
 
-    pub fn mark_event_consumed(&self, event_id: &str) {
-        let Some(event) = self
-            .unconsumed_events()
-            .into_iter()
-            .find(|event| event.event_id.as_id_str().as_ref() == event_id)
-        else {
-            return;
-        };
-        self.facts
-            .delete_matching(RUNTIME_EVENT, &[(EVENT_ID, event_id)]);
-        let mut row = R::default();
-        row.set(EVENT_ID, event.event_id.as_id_str().as_ref());
-        row.set(EVENT_SOURCE_ID, event.source_id.as_id_str().as_ref());
-        row.set(EVENT_VALUE_ID, event.value_id.as_id_str().as_ref());
-        row.set(GENERATION, event.generation.to_string().as_str());
-        row.set(CONSUMED, "1");
-        self.facts.insert_batch(RUNTIME_EVENT, vec![Arc::new(row)]);
-    }
-
+    /// Mark every owner subscribed to `source_id` dirty for it, and
+    /// refresh the per-edge latest-value slot. Replaces the old
+    /// append-event / enqueue-job pair: the wake now writes straight to
+    /// the dirty worklist. `_event_id` is retained for call-site
+    /// compatibility; the dirty row IS the work item now. Returns the
+    /// woken owners.
     pub fn dispatch_wake(
         &self,
         source_id: &str,
         value_id: &str,
-        event_id: &str,
+        _event_id: &str,
         subscribe_kind_id: &str,
         generation: u64,
     ) -> Vec<I> {
-        self.append_event(event_id, source_id, value_id, generation);
         let mut owners = BTreeSet::new();
         for edge in self.incoming_edges(subscribe_kind_id, source_id) {
             self.set_edge_value(
@@ -709,6 +749,7 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
                 value_id,
                 generation,
             );
+            self.mark_dirty(edge.from_id.as_id_str().as_ref(), source_id, generation);
             owners.insert(edge.from_id);
         }
         owners.into_iter().collect()
@@ -821,38 +862,6 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
             .collect()
     }
 
-    pub fn unconsumed_events(&self) -> Vec<RuntimeEvent<I>> {
-        let mut events: Vec<RuntimeEvent<I>> = self
-            .facts
-            .rows_of(RUNTIME_EVENT)
-            .into_iter()
-            .filter(|row| row.get(CONSUMED) == Some("0"))
-            .filter_map(|row| {
-                Some(RuntimeEvent {
-                    event_id: I::from_id_str(row.get(EVENT_ID)?),
-                    source_id: I::from_id_str(row.get(EVENT_SOURCE_ID)?),
-                    value_id: I::from_id_str(row.get(EVENT_VALUE_ID)?),
-                    generation: row.get(GENERATION)?.parse().ok()?,
-                    consumed: false,
-                })
-            })
-            .collect();
-        events.sort();
-        events
-    }
-
-    pub fn owners_for_unconsumed_events(&self, subscribe_kind_id: &str) -> Vec<I> {
-        let mut owners = BTreeSet::new();
-        for event in self.unconsumed_events() {
-            for edge in
-                self.incoming_edges(subscribe_kind_id, event.source_id.as_id_str().as_ref())
-            {
-                owners.insert(edge.from_id);
-            }
-        }
-        owners.into_iter().collect()
-    }
-
     fn declare_tables(&self) {
         self.facts.declare(
             RUNTIME_NODE,
@@ -888,18 +897,8 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
             &[EDGE_ID, LABEL_ID, VALUE_ID, GENERATION],
         );
         self.facts.declare(
-            RUNTIME_EVENT,
-            &[
-                EVENT_ID,
-                EVENT_SOURCE_ID,
-                EVENT_VALUE_ID,
-                GENERATION,
-                CONSUMED,
-            ],
-        );
-        self.facts.declare(
-            RUNTIME_JOB,
-            &[JOB_ID, JOB_EVENT_ID, JOB_OWNER_ID, JOB_STATE, GENERATION],
+            RUNTIME_DIRTY,
+            &[DIRTY_OWNER_ID, DIRTY_SOURCE_ID, GENERATION],
         );
         self.facts.declare(
             RUNTIME_CONTINUATION,
@@ -964,6 +963,19 @@ fn edge_from_row<R: Row, I: NodeId>(row: Arc<R>) -> Option<RuntimeEdge<I>> {
         label_id: I::from_id_str(row.get(LABEL_ID)?),
         generation: row.get(GENERATION)?.parse().ok()?,
     })
+}
+
+/// Deterministic work-item id for a dirty `(owner, source, generation)`
+/// triple. Same triple => same id, so callers can diff "new work since
+/// last snapshot" exactly as they diffed RUNTIME_JOB row ids before.
+fn dirty_job_id(owner_id: &str, source_id: &str, generation: u64) -> String {
+    let mut h = blake3::Hasher::new();
+    for part in [owner_id, source_id] {
+        h.update(&(part.len() as u64).to_be_bytes());
+        h.update(part.as_bytes());
+    }
+    h.update(&generation.to_be_bytes());
+    h.finalize().to_hex().to_string()
 }
 
 fn support_edge_id(

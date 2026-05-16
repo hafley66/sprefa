@@ -13,7 +13,7 @@ use v4::mounted_query::{
 };
 use v4::runtime_graph::{
     table_source_uri, RuntimeGraph, SourceSubscriptionInput, SprfSubscribe, SprfSupportRows,
-    RUNTIME_EDGE, RUNTIME_EVENT, RUNTIME_JOB, RUNTIME_NODE,
+    RUNTIME_DIRTY, RUNTIME_EDGE, RUNTIME_NODE,
 };
 use v4::runtime_replay::GraphReplayRunner;
 use v4::store::SprfStore;
@@ -243,8 +243,8 @@ fn support_reconciliation_keeps_shared_rows_until_final_support_retracts() {
 #[test]
 fn wake_dispatch_uses_subscribe_edges_as_separate_readiness_slots() {
     // Two subscribe edges on the same owner, same source: a single wake
-    // appends one event and wakes one owner regardless of edge cardinality.
-    // Per-edge value slots (RUNTIME_EDGE_VALUE) were dropped in slice 2.
+    // marks one dirty owner row and wakes one owner regardless of edge
+    // cardinality. The dirty bit replaced the old event/job tables.
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("runtime.db");
     let (facts, graph) = sqlite_graph(&db);
@@ -258,7 +258,7 @@ fn wake_dispatch_uses_subscribe_edges_as_separate_readiness_slots() {
 
     assert_eq!(woken, vec![owner.clone()]);
     assert_ne!(left.uri_id, right.uri_id);
-    assert_eq!(facts.len(RUNTIME_EVENT), 1);
+    assert_eq!(facts.len(RUNTIME_DIRTY), 1);
 }
 
 #[test]
@@ -304,7 +304,7 @@ fn graph_jobs_are_durable_and_idempotent_work_items() {
     graph.enqueue_jobs_for_unconsumed_events(2);
     let jobs = graph.pending_jobs();
 
-    assert_eq!(facts.len(RUNTIME_JOB), 1);
+    assert_eq!(facts.len(RUNTIME_DIRTY), 1);
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].owner_uri_id, owner.uri_id);
 
@@ -315,7 +315,7 @@ fn graph_jobs_are_durable_and_idempotent_work_items() {
     graph.enqueue_jobs_for_unconsumed_events(3);
     let jobs = graph.pending_jobs();
 
-    assert_eq!(facts.len(RUNTIME_JOB), 1);
+    assert_eq!(facts.len(RUNTIME_DIRTY), 1);
     assert_eq!(jobs.len(), 1);
 
     graph.mark_job_done(&jobs[0]);
@@ -383,13 +383,13 @@ fn notify_table_inserted_enqueues_jobs_for_subscribed_owners() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].owner_uri_id, owner.uri_id);
 
-    // Second notify with no new subscribers is idempotent: one event per
-    // (gen, source), one job per (event, owner).
+    // Second notify with no new subscribers is idempotent: one dirty
+    // row per (owner, source, gen).
     let again = graph.notify_table_inserted("hits", 2);
     assert!(again.is_empty() || again[0].uri_id == new_jobs[0].uri_id);
-    assert_eq!(facts.len(RUNTIME_JOB), 1);
+    assert_eq!(facts.len(RUNTIME_DIRTY), 1);
 
-    // A fresh generation creates a new event and therefore a new job.
+    // A fresh generation creates a new dirty row and therefore new work.
     let next_gen_jobs = graph.notify_table_inserted("hits", 3);
     assert_eq!(next_gen_jobs.len(), 1);
     assert_ne!(next_gen_jobs[0].uri_id, new_jobs[0].uri_id);

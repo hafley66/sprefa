@@ -9,7 +9,7 @@ use v4::app::{
 use v4::git_watch::{
     dirty_source_uri, git_branch_dirty_key, git_repo_dirty_key, GIT_BRANCH_DOMAIN, GIT_REPO_DOMAIN,
 };
-use v4::runtime_graph::{RUNTIME_EVENT, RUNTIME_JOB};
+use v4::runtime_graph::RUNTIME_DIRTY;
 
 #[tokio::test]
 async fn ghcache_branch_change_dispatches_repo_and_branch_dirty_keys() {
@@ -63,12 +63,8 @@ async fn ghcache_branch_change_dispatches_repo_and_branch_dirty_keys() {
     );
     assert_eq!(state.queue.depth(), 0);
     assert!(
-        state.facts.len(RUNTIME_EVENT) >= 1,
-        "ghcache change should also append runtime graph source events",
-    );
-    assert!(
-        state.facts.len(RUNTIME_JOB) >= 1,
-        "ghcache graph wake should enqueue subscribed owners",
+        state.facts.len(RUNTIME_DIRTY) >= 1,
+        "ghcache graph wake should mark subscribed owners dirty",
     );
 }
 
