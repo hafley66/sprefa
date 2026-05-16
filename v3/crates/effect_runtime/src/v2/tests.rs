@@ -353,7 +353,10 @@ fn runtime_graph_supports_wake_resume_and_active_child_without_consumer_types() 
 #[test]
 fn render_ctx_put_reconciles_runtime_effects_without_local_state() {
     let store: Arc<dyn FactStore<LabCursor>> = Arc::new(MemFactStore::<LabCursor>::new());
-    let graph = Arc::new(FactRuntimeGraph::new(store));
+    // `I` defaults to `String` at the API surface but a type-erased
+    // `with_runtime` binding has nothing to infer it from; name it so
+    // the downcast in `apply` resolves to the same concrete type.
+    let graph: Arc<FactRuntimeGraph<LabCursor>> = Arc::new(FactRuntimeGraph::new(store));
     let ctx = RenderCtx::new(1, 2, 3).with_runtime(graph.clone());
 
     let value_id = ctx.put(EmitValue::<LabCursor>::new(RuntimeValue {

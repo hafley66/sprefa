@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -52,35 +53,61 @@ pub const CONT_INSTANCE_ID: &str = "instance_id";
 pub const CONT_DEPTH: &str = "depth";
 pub const CONT_INPUT_CURSOR: &str = "input_cursor";
 
+/// Identity type carried by every runtime-graph node/edge field. The
+/// graph never inspects the value; it only round-trips it through the
+/// fact-store string column. `String` is the default so existing
+/// callers (and the in-memory test store) compile unchanged; sprf
+/// passes its interned `StringId` so the boundary stops paying the
+/// `StringId.0.to_string()` / `parse::<u64>().ok()?` tax.
+pub trait NodeId: Clone + Ord + std::hash::Hash + std::fmt::Debug {
+    /// View as the on-disk string form. Borrowed when the type already
+    /// holds a string; owned when it has to render (e.g. an integer id).
+    fn as_id_str(&self) -> Cow<'_, str>;
+    /// Reconstruct from the on-disk string form. Round-trips
+    /// `as_id_str`. Unparseable input yields the type's natural
+    /// fallback rather than panicking, matching the prior `.ok()?`
+    /// callers that silently dropped malformed rows.
+    fn from_id_str(s: &str) -> Self;
+}
+
+impl NodeId for String {
+    fn as_id_str(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self.as_str())
+    }
+    fn from_id_str(s: &str) -> Self {
+        s.to_string()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RuntimeNode {
-    pub node_id: String,
-    pub kind_id: String,
-    pub ast_id: Option<String>,
-    pub parent_id: Option<String>,
+pub struct RuntimeNode<I: NodeId = String> {
+    pub node_id: I,
+    pub kind_id: I,
+    pub ast_id: Option<I>,
+    pub parent_id: Option<I>,
     pub input_key: String,
     pub source_key: String,
-    pub mode_id: Option<String>,
+    pub mode_id: Option<I>,
     pub generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RuntimeEdge {
-    pub edge_id: String,
-    pub kind_id: String,
-    pub from_id: String,
-    pub to_id: String,
-    pub label_id: String,
+pub struct RuntimeEdge<I: NodeId = String> {
+    pub edge_id: I,
+    pub kind_id: I,
+    pub from_id: I,
+    pub to_id: I,
+    pub label_id: I,
     pub generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RuntimeValue {
-    pub value_id: String,
+pub struct RuntimeValue<I: NodeId = String> {
+    pub value_id: I,
     pub value_key: String,
-    pub kind_id: String,
+    pub kind_id: I,
     pub payload: RuntimeValuePayload,
-    pub state_id: String,
+    pub state_id: I,
     pub generation: u64,
 }
 
@@ -93,19 +120,19 @@ pub enum RuntimeValuePayload {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RuntimeEvent {
-    pub event_id: String,
-    pub source_id: String,
-    pub value_id: String,
+pub struct RuntimeEvent<I: NodeId = String> {
+    pub event_id: I,
+    pub source_id: I,
+    pub value_id: I,
     pub generation: u64,
     pub consumed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RuntimeJob {
-    pub job_id: String,
-    pub event_id: String,
-    pub owner_id: String,
+pub struct RuntimeJob<I: NodeId = String> {
+    pub job_id: I,
+    pub event_id: I,
+    pub owner_id: I,
     pub generation: u64,
 }
 
@@ -131,8 +158,8 @@ impl std::fmt::Display for QuiescenceError {
 impl std::error::Error for QuiescenceError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RuntimeContinuation {
-    pub owner_id: String,
+pub struct RuntimeContinuation<I: NodeId = String> {
+    pub owner_id: I,
     pub pipe_hash: u64,
     pub instance_id: u64,
     pub depth: u32,
@@ -143,9 +170,9 @@ pub struct RuntimeContinuation {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct VisibleDelta {
-    pub inserted: Vec<String>,
-    pub retracted: Vec<String>,
+pub struct VisibleDelta<I: NodeId = String> {
+    pub inserted: Vec<I>,
+    pub retracted: Vec<I>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -339,13 +366,17 @@ impl<R: Row> RuntimePut for EmitValue<R> {
 }
 
 #[derive(Clone)]
-pub struct FactRuntimeGraph<R: Row> {
+pub struct FactRuntimeGraph<R: Row, I: NodeId = String> {
     facts: Arc<dyn FactStore<R>>,
+    _id: PhantomData<fn() -> I>,
 }
 
-impl<R: Row> FactRuntimeGraph<R> {
+impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
     pub fn new(facts: Arc<dyn FactStore<R>>) -> Self {
-        let graph = Self { facts };
+        let graph = Self {
+            facts,
+            _id: PhantomData,
+        };
         graph.declare_tables();
         graph
     }
@@ -354,32 +385,55 @@ impl<R: Row> FactRuntimeGraph<R> {
         &self.facts
     }
 
-    pub fn insert_node(&self, node: RuntimeNode) {
-        if self.has_row(RUNTIME_NODE, NODE_ID, node.node_id.as_str()) {
+    pub fn insert_node(&self, node: RuntimeNode<I>) {
+        let node_id = node.node_id.as_id_str();
+        if self.has_row(RUNTIME_NODE, NODE_ID, node_id.as_ref()) {
             return;
         }
         let mut row = R::default();
-        row.set(NODE_ID, node.node_id.as_str());
-        row.set(NODE_KIND_ID, node.kind_id.as_str());
-        row.set(AST_ID, node.ast_id.as_deref().unwrap_or(""));
-        row.set(PARENT_ID, node.parent_id.as_deref().unwrap_or(""));
+        row.set(NODE_ID, node_id.as_ref());
+        row.set(NODE_KIND_ID, node.kind_id.as_id_str().as_ref());
+        row.set(
+            AST_ID,
+            node.ast_id
+                .as_ref()
+                .map(|v| v.as_id_str())
+                .as_deref()
+                .unwrap_or(""),
+        );
+        row.set(
+            PARENT_ID,
+            node.parent_id
+                .as_ref()
+                .map(|v| v.as_id_str())
+                .as_deref()
+                .unwrap_or(""),
+        );
         row.set(INPUT_KEY, node.input_key.as_str());
         row.set(SOURCE_KEY, node.source_key.as_str());
-        row.set(MODE_ID, node.mode_id.as_deref().unwrap_or(""));
+        row.set(
+            MODE_ID,
+            node.mode_id
+                .as_ref()
+                .map(|v| v.as_id_str())
+                .as_deref()
+                .unwrap_or(""),
+        );
         row.set(GENERATION, node.generation.to_string().as_str());
         self.facts.insert_batch(RUNTIME_NODE, vec![Arc::new(row)]);
     }
 
-    pub fn insert_edge(&self, edge: RuntimeEdge) {
-        if self.has_row(RUNTIME_EDGE, EDGE_ID, edge.edge_id.as_str()) {
+    pub fn insert_edge(&self, edge: RuntimeEdge<I>) {
+        let edge_id = edge.edge_id.as_id_str();
+        if self.has_row(RUNTIME_EDGE, EDGE_ID, edge_id.as_ref()) {
             return;
         }
         let mut row = R::default();
-        row.set(EDGE_ID, edge.edge_id.as_str());
-        row.set(EDGE_KIND_ID, edge.kind_id.as_str());
-        row.set(FROM_ID, edge.from_id.as_str());
-        row.set(TO_ID, edge.to_id.as_str());
-        row.set(LABEL_ID, edge.label_id.as_str());
+        row.set(EDGE_ID, edge_id.as_ref());
+        row.set(EDGE_KIND_ID, edge.kind_id.as_id_str().as_ref());
+        row.set(FROM_ID, edge.from_id.as_id_str().as_ref());
+        row.set(TO_ID, edge.to_id.as_id_str().as_ref());
+        row.set(LABEL_ID, edge.label_id.as_id_str().as_ref());
         row.set(GENERATION, edge.generation.to_string().as_str());
         self.facts.insert_batch(RUNTIME_EDGE, vec![Arc::new(row)]);
     }
@@ -390,8 +444,8 @@ impl<R: Row> FactRuntimeGraph<R> {
         from_id: Option<&str>,
         to_id: Option<&str>,
         label_id: Option<&str>,
-    ) -> Vec<RuntimeEdge> {
-        let mut edges: Vec<RuntimeEdge> = self
+    ) -> Vec<RuntimeEdge<I>> {
+        let mut edges: Vec<RuntimeEdge<I>> = self
             .facts
             .rows_of(RUNTIME_EDGE)
             .into_iter()
@@ -416,14 +470,15 @@ impl<R: Row> FactRuntimeGraph<R> {
             .delete_matching(RUNTIME_EDGE, &[(EDGE_ID, edge_id)])
     }
 
-    pub fn insert_value(&self, value: RuntimeValue) {
-        if self.has_row(RUNTIME_VALUE, VALUE_ID, value.value_id.as_str()) {
+    pub fn insert_value(&self, value: RuntimeValue<I>) {
+        let value_id = value.value_id.as_id_str();
+        if self.has_row(RUNTIME_VALUE, VALUE_ID, value_id.as_ref()) {
             return;
         }
         let mut row = R::default();
-        row.set(VALUE_ID, value.value_id.as_str());
+        row.set(VALUE_ID, value_id.as_ref());
         row.set(VALUE_KEY, value.value_key.as_str());
-        row.set(VALUE_KIND_ID, value.kind_id.as_str());
+        row.set(VALUE_KIND_ID, value.kind_id.as_id_str().as_ref());
         match value.payload {
             RuntimeValuePayload::None => {
                 row.set(VALUE_REF, "");
@@ -438,7 +493,7 @@ impl<R: Row> FactRuntimeGraph<R> {
                 row.set(VALUE_BLOB, blob.as_str());
             }
         }
-        row.set(STATE_ID, value.state_id.as_str());
+        row.set(STATE_ID, value.state_id.as_id_str().as_ref());
         row.set(GENERATION, value.generation.to_string().as_str());
         self.facts.insert_batch(RUNTIME_VALUE, vec![Arc::new(row)]);
     }
@@ -486,17 +541,17 @@ impl<R: Row> FactRuntimeGraph<R> {
         self.facts.insert_batch(RUNTIME_JOB, vec![Arc::new(row)]);
     }
 
-    pub fn pending_jobs(&self) -> Vec<RuntimeJob> {
-        let mut jobs: Vec<RuntimeJob> = self
+    pub fn pending_jobs(&self) -> Vec<RuntimeJob<I>> {
+        let mut jobs: Vec<RuntimeJob<I>> = self
             .facts
             .rows_of(RUNTIME_JOB)
             .into_iter()
             .filter(|row| row.get(JOB_STATE) == Some(JOB_PENDING))
             .filter_map(|row| {
                 Some(RuntimeJob {
-                    job_id: row.get(JOB_ID)?.to_string(),
-                    event_id: row.get(JOB_EVENT_ID)?.to_string(),
-                    owner_id: row.get(JOB_OWNER_ID)?.to_string(),
+                    job_id: I::from_id_str(row.get(JOB_ID)?),
+                    event_id: I::from_id_str(row.get(JOB_EVENT_ID)?),
+                    owner_id: I::from_id_str(row.get(JOB_OWNER_ID)?),
                     generation: row.get(GENERATION)?.parse().ok()?,
                 })
             })
@@ -559,7 +614,7 @@ impl<R: Row> FactRuntimeGraph<R> {
         mut handler: F,
     ) -> Result<usize, QuiescenceError>
     where
-        F: FnMut(&RuntimeJob),
+        F: FnMut(&RuntimeJob<I>),
     {
         let mut handled = 0usize;
         for iter in 0..max_iters {
@@ -569,7 +624,7 @@ impl<R: Row> FactRuntimeGraph<R> {
             }
             for job in &jobs {
                 handler(job);
-                self.mark_job_done(job.job_id.as_str());
+                self.mark_job_done(job.job_id.as_id_str().as_ref());
                 handled += 1;
             }
             if iter + 1 == max_iters && !self.pending_jobs().is_empty() {
@@ -585,13 +640,14 @@ impl<R: Row> FactRuntimeGraph<R> {
     /// Record (or replace) the continuation for `owner_id`. The
     /// `input_hex` blob is opaque to the generic layer; callers control
     /// the encoding.
-    pub fn record_continuation(&self, cont: RuntimeContinuation) {
+    pub fn record_continuation(&self, cont: RuntimeContinuation<I>) {
+        let owner_id = cont.owner_id.as_id_str();
         self.facts.delete_matching(
             RUNTIME_CONTINUATION,
-            &[(CONT_OWNER_ID, cont.owner_id.as_str())],
+            &[(CONT_OWNER_ID, owner_id.as_ref())],
         );
         let mut row = R::default();
-        row.set(CONT_OWNER_ID, cont.owner_id.as_str());
+        row.set(CONT_OWNER_ID, owner_id.as_ref());
         row.set(CONT_PIPE_HASH, cont.pipe_hash.to_string().as_str());
         row.set(CONT_INSTANCE_ID, cont.instance_id.to_string().as_str());
         row.set(CONT_DEPTH, cont.depth.to_string().as_str());
@@ -601,14 +657,14 @@ impl<R: Row> FactRuntimeGraph<R> {
             .insert_batch(RUNTIME_CONTINUATION, vec![Arc::new(row)]);
     }
 
-    pub fn continuation_for_owner(&self, owner_id: &str) -> Option<RuntimeContinuation> {
+    pub fn continuation_for_owner(&self, owner_id: &str) -> Option<RuntimeContinuation<I>> {
         let row = self
             .facts
             .read_where(RUNTIME_CONTINUATION, CONT_OWNER_ID, owner_id)
             .into_iter()
             .next()?;
         Some(RuntimeContinuation {
-            owner_id: owner_id.to_string(),
+            owner_id: I::from_id_str(owner_id),
             pipe_hash: row.get(CONT_PIPE_HASH)?.parse().ok()?,
             instance_id: row.get(CONT_INSTANCE_ID)?.parse().ok()?,
             depth: row.get(CONT_DEPTH)?.parse::<u64>().ok()? as u32,
@@ -621,16 +677,16 @@ impl<R: Row> FactRuntimeGraph<R> {
         let Some(event) = self
             .unconsumed_events()
             .into_iter()
-            .find(|event| event.event_id == event_id)
+            .find(|event| event.event_id.as_id_str().as_ref() == event_id)
         else {
             return;
         };
         self.facts
             .delete_matching(RUNTIME_EVENT, &[(EVENT_ID, event_id)]);
         let mut row = R::default();
-        row.set(EVENT_ID, event.event_id.as_str());
-        row.set(EVENT_SOURCE_ID, event.source_id.as_str());
-        row.set(EVENT_VALUE_ID, event.value_id.as_str());
+        row.set(EVENT_ID, event.event_id.as_id_str().as_ref());
+        row.set(EVENT_SOURCE_ID, event.source_id.as_id_str().as_ref());
+        row.set(EVENT_VALUE_ID, event.value_id.as_id_str().as_ref());
         row.set(GENERATION, event.generation.to_string().as_str());
         row.set(CONSUMED, "1");
         self.facts.insert_batch(RUNTIME_EVENT, vec![Arc::new(row)]);
@@ -643,13 +699,13 @@ impl<R: Row> FactRuntimeGraph<R> {
         event_id: &str,
         subscribe_kind_id: &str,
         generation: u64,
-    ) -> Vec<String> {
+    ) -> Vec<I> {
         self.append_event(event_id, source_id, value_id, generation);
         let mut owners = BTreeSet::new();
         for edge in self.incoming_edges(subscribe_kind_id, source_id) {
             self.set_edge_value(
-                edge.edge_id.as_str(),
-                edge.label_id.as_str(),
+                edge.edge_id.as_id_str().as_ref(),
+                edge.label_id.as_id_str().as_ref(),
                 value_id,
                 generation,
             );
@@ -665,7 +721,7 @@ impl<R: Row> FactRuntimeGraph<R> {
         row_ids: &[String],
         support_kind_id: &str,
         generation: u64,
-    ) -> VisibleDelta {
+    ) -> VisibleDelta<I> {
         let old = self.supported_rows_for_owner(owner_id, table_label_id, support_kind_id);
         let new: BTreeSet<String> = row_ids.iter().cloned().collect();
         let mut inserted = Vec::new();
@@ -675,22 +731,27 @@ impl<R: Row> FactRuntimeGraph<R> {
             let edge_id = support_edge_id(owner_id, row_id, table_label_id, support_kind_id);
             self.delete_edge(edge_id.as_str());
             if !self.row_has_support(row_id, support_kind_id) {
-                retracted.push(row_id.clone());
+                retracted.push(I::from_id_str(row_id));
             }
         }
 
         for row_id in new.difference(&old) {
             let already_visible = self.row_has_support(row_id, support_kind_id);
             self.insert_edge(RuntimeEdge {
-                edge_id: support_edge_id(owner_id, row_id, table_label_id, support_kind_id),
-                kind_id: support_kind_id.to_string(),
-                from_id: owner_id.to_string(),
-                to_id: row_id.clone(),
-                label_id: table_label_id.to_string(),
+                edge_id: I::from_id_str(&support_edge_id(
+                    owner_id,
+                    row_id,
+                    table_label_id,
+                    support_kind_id,
+                )),
+                kind_id: I::from_id_str(support_kind_id),
+                from_id: I::from_id_str(owner_id),
+                to_id: I::from_id_str(row_id),
+                label_id: I::from_id_str(table_label_id),
                 generation,
             });
             if !already_visible {
-                inserted.push(row_id.clone());
+                inserted.push(I::from_id_str(row_id));
             }
         }
 
@@ -718,11 +779,11 @@ impl<R: Row> FactRuntimeGraph<R> {
             ],
         );
         self.insert_edge(RuntimeEdge {
-            edge_id: edge_id.to_string(),
-            kind_id: active_kind_id.to_string(),
-            from_id: owner_id.to_string(),
-            to_id: child_id.to_string(),
-            label_id: label_id.to_string(),
+            edge_id: I::from_id_str(edge_id),
+            kind_id: I::from_id_str(active_kind_id),
+            from_id: I::from_id_str(owner_id),
+            to_id: I::from_id_str(child_id),
+            label_id: I::from_id_str(label_id),
             generation,
         });
     }
@@ -732,7 +793,7 @@ impl<R: Row> FactRuntimeGraph<R> {
         owner_id: &str,
         label_id: &str,
         active_kind_id: &str,
-    ) -> Option<String> {
+    ) -> Option<I> {
         self.facts
             .rows_of(RUNTIME_EDGE)
             .into_iter()
@@ -741,7 +802,7 @@ impl<R: Row> FactRuntimeGraph<R> {
                     && row.get(FROM_ID) == Some(owner_id)
                     && row.get(LABEL_ID) == Some(label_id)
                 {
-                    return row.get(TO_ID).map(str::to_string);
+                    return row.get(TO_ID).map(I::from_id_str);
                 }
                 None
             })
@@ -760,17 +821,17 @@ impl<R: Row> FactRuntimeGraph<R> {
             .collect()
     }
 
-    pub fn unconsumed_events(&self) -> Vec<RuntimeEvent> {
-        let mut events: Vec<RuntimeEvent> = self
+    pub fn unconsumed_events(&self) -> Vec<RuntimeEvent<I>> {
+        let mut events: Vec<RuntimeEvent<I>> = self
             .facts
             .rows_of(RUNTIME_EVENT)
             .into_iter()
             .filter(|row| row.get(CONSUMED) == Some("0"))
             .filter_map(|row| {
                 Some(RuntimeEvent {
-                    event_id: row.get(EVENT_ID)?.to_string(),
-                    source_id: row.get(EVENT_SOURCE_ID)?.to_string(),
-                    value_id: row.get(EVENT_VALUE_ID)?.to_string(),
+                    event_id: I::from_id_str(row.get(EVENT_ID)?),
+                    source_id: I::from_id_str(row.get(EVENT_SOURCE_ID)?),
+                    value_id: I::from_id_str(row.get(EVENT_VALUE_ID)?),
                     generation: row.get(GENERATION)?.parse().ok()?,
                     consumed: false,
                 })
@@ -780,10 +841,12 @@ impl<R: Row> FactRuntimeGraph<R> {
         events
     }
 
-    pub fn owners_for_unconsumed_events(&self, subscribe_kind_id: &str) -> Vec<String> {
+    pub fn owners_for_unconsumed_events(&self, subscribe_kind_id: &str) -> Vec<I> {
         let mut owners = BTreeSet::new();
         for event in self.unconsumed_events() {
-            for edge in self.incoming_edges(subscribe_kind_id, event.source_id.as_str()) {
+            for edge in
+                self.incoming_edges(subscribe_kind_id, event.source_id.as_id_str().as_ref())
+            {
                 owners.insert(edge.from_id);
             }
         }
@@ -855,8 +918,8 @@ impl<R: Row> FactRuntimeGraph<R> {
         !self.facts.read_where(table, col, value).is_empty()
     }
 
-    fn incoming_edges(&self, kind_id: &str, to_id: &str) -> Vec<RuntimeEdge> {
-        let mut edges: Vec<RuntimeEdge> = self
+    fn incoming_edges(&self, kind_id: &str, to_id: &str) -> Vec<RuntimeEdge<I>> {
+        let mut edges: Vec<RuntimeEdge<I>> = self
             .facts
             .rows_of(RUNTIME_EDGE)
             .into_iter()
@@ -892,13 +955,13 @@ impl<R: Row> FactRuntimeGraph<R> {
     }
 }
 
-fn edge_from_row<R: Row>(row: Arc<R>) -> Option<RuntimeEdge> {
+fn edge_from_row<R: Row, I: NodeId>(row: Arc<R>) -> Option<RuntimeEdge<I>> {
     Some(RuntimeEdge {
-        edge_id: row.get(EDGE_ID)?.to_string(),
-        kind_id: row.get(EDGE_KIND_ID)?.to_string(),
-        from_id: row.get(FROM_ID)?.to_string(),
-        to_id: row.get(TO_ID)?.to_string(),
-        label_id: row.get(LABEL_ID)?.to_string(),
+        edge_id: I::from_id_str(row.get(EDGE_ID)?),
+        kind_id: I::from_id_str(row.get(EDGE_KIND_ID)?),
+        from_id: I::from_id_str(row.get(FROM_ID)?),
+        to_id: I::from_id_str(row.get(TO_ID)?),
+        label_id: I::from_id_str(row.get(LABEL_ID)?),
         generation: row.get(GENERATION)?.parse().ok()?,
     })
 }

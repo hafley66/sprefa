@@ -2,9 +2,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use std::borrow::Cow;
+
 use effect_runtime::v2::{
-    FactRuntimeGraph, FactStore, RenderCtx, RuntimeContinuation as CoreContinuation,
-    RuntimeEdge as RuntimeEdgeRow, RuntimeNode as RuntimeNodeRow, RuntimePut,
+    FactRuntimeGraph, FactStore, NodeId, RenderCtx, RuntimeContinuation as CoreContinuation,
+    RuntimeEdge as RuntimeEdgeRow, RuntimeJob as CoreJob, RuntimeNode as RuntimeNodeRow,
+    RuntimePut,
 };
 
 use crate::cursor_codec;
@@ -47,7 +50,7 @@ const KIND_MEMBER_OF: &str = "member_of";
 pub struct RuntimeGraph {
     pub store: Arc<SprfStore>,
     pub facts: Arc<dyn FactStore<Cursor>>,
-    core: FactRuntimeGraph<Cursor>,
+    core: FactRuntimeGraph<Cursor, StringId>,
     compact_sources: Option<Arc<CompactSourceGraph>>,
     rule_memo: Arc<Mutex<RuleMemo>>,
 }
@@ -74,6 +77,22 @@ impl std::fmt::Display for QuiescenceError {
 }
 
 impl std::error::Error for QuiescenceError {}
+
+/// Carry the interned id straight through the generic runtime graph
+/// instead of stringifying at every call and re-parsing on the way
+/// back. On-disk form is the decimal `u64` so existing RUNTIME_* rows
+/// keep round-tripping. A row whose id column is non-numeric decodes
+/// to `StringId::EMPTY`; downstream `lookup_string` on EMPTY yields
+/// `None`, matching the prior `parse::<u64>().ok()?` drop.
+impl NodeId for StringId {
+    fn as_id_str(&self) -> Cow<'_, str> {
+        Cow::Owned(self.0.to_string())
+    }
+
+    fn from_id_str(s: &str) -> Self {
+        StringId(s.parse().unwrap_or(0))
+    }
+}
 
 impl QuiescenceError {
     fn from_core(err: effect_runtime::v2::QuiescenceError) -> Self {
@@ -425,20 +444,11 @@ impl RuntimeGraph {
         F: FnMut(&RuntimeJob),
     {
         self.core
-            .run_to_quiescence(max_iters, |core_job| {
-                let Some(uri_id) = core_job.job_id.parse::<u64>().ok() else {
-                    return;
-                };
-                let Some(event_uri_id) = core_job.event_id.parse::<u64>().ok() else {
-                    return;
-                };
-                let Some(owner_uri_id) = core_job.owner_id.parse::<u64>().ok() else {
-                    return;
-                };
+            .run_to_quiescence(max_iters, |core_job: &CoreJob<StringId>| {
                 let job = RuntimeJob {
-                    uri_id: StringId(uri_id),
-                    event_uri_id: StringId(event_uri_id),
-                    owner_uri_id: StringId(owner_uri_id),
+                    uri_id: core_job.job_id,
+                    event_uri_id: core_job.event_id,
+                    owner_uri_id: core_job.owner_id,
                     generation: core_job.generation,
                 };
                 handler(&job);
@@ -658,8 +668,8 @@ impl RuntimeGraph {
         );
         let uri_id = self.intern_uri(uri.as_ref());
         self.core.append_event(
-            uri_id.0.to_string().as_str(),
-            source.uri_id.0.to_string().as_str(),
+            uri_id.as_id_str().as_ref(),
+            source.uri_id.as_id_str().as_ref(),
             "",
             generation,
         );
@@ -690,31 +700,29 @@ impl RuntimeGraph {
     }
 
     pub fn pending_jobs(&self) -> Vec<RuntimeJob> {
-        // Read through effect_runtime's generic job table; convert opaque
-        // string IDs to sprf StringId for callers.
+        // effect_runtime's job table is now StringId-typed; the row maps
+        // straight onto the sprf RuntimeJob with no string round-trip.
         self.core
             .pending_jobs()
             .into_iter()
-            .filter_map(|row| {
-                Some(RuntimeJob {
-                    uri_id: StringId(row.job_id.parse().ok()?),
-                    event_uri_id: StringId(row.event_id.parse().ok()?),
-                    owner_uri_id: StringId(row.owner_id.parse().ok()?),
-                    generation: row.generation,
-                })
+            .map(|row| RuntimeJob {
+                uri_id: row.job_id,
+                event_uri_id: row.event_id,
+                owner_uri_id: row.owner_id,
+                generation: row.generation,
             })
             .collect()
     }
 
     pub fn mark_job_done(&self, job: &RuntimeJob) {
-        self.core.mark_job_done(job.uri_id.0.to_string().as_str());
+        self.core.mark_job_done(job.uri_id.as_id_str().as_ref());
     }
 
     pub fn owner_descriptor(&self, owner_uri_id: StringId) -> Option<OwnerDescriptor> {
-        let owner_id = owner_uri_id.0.to_string();
+        let owner_id = owner_uri_id.as_id_str();
         let Some(row) = self
             .facts
-            .read_where(RUNTIME_NODE, NODE_URI_ID, owner_id.as_str())
+            .read_where(RUNTIME_NODE, NODE_URI_ID, owner_id.as_ref())
             .into_iter()
             .next()
         else {
@@ -750,7 +758,7 @@ impl RuntimeGraph {
         generation: u64,
     ) {
         self.core.record_continuation(CoreContinuation {
-            owner_id: owner.uri_id.0.to_string(),
+            owner_id: owner.uri_id,
             pipe_hash,
             instance_id,
             depth,
@@ -760,8 +768,8 @@ impl RuntimeGraph {
     }
 
     pub fn continuation_for_owner(&self, owner_uri_id: StringId) -> Option<RuntimeContinuation> {
-        let owner_id = owner_uri_id.0.to_string();
-        if let Some(core) = self.core.continuation_for_owner(owner_id.as_str()) {
+        let owner_id = owner_uri_id.as_id_str();
+        if let Some(core) = self.core.continuation_for_owner(owner_id.as_ref()) {
             let input = cursor_codec::decode(&unhex(core.input_hex.as_str())?).ok()?;
             return Some(RuntimeContinuation {
                 owner_uri_id,
@@ -802,43 +810,37 @@ impl RuntimeGraph {
     }
 
     pub fn unconsumed_events(&self) -> Vec<RuntimeEvent> {
-        // Delegate to effect_runtime's generic reader; project opaque
-        // String IDs onto sprf StringId. value_uri_id was reduced to a
-        // placeholder in slice 2 and lands as 0 for empty strings.
+        // effect_runtime's reader is StringId-typed; ids pass through
+        // directly. value_uri_id was reduced to a placeholder in slice 2
+        // and decodes to StringId(0) for the empty column.
         self.core
             .unconsumed_events()
             .into_iter()
-            .filter_map(|event| {
-                let value_uri_id = event.value_id.parse::<u64>().unwrap_or(0);
-                Some(RuntimeEvent {
-                    uri_id: StringId(event.event_id.parse().ok()?),
-                    source_uri_id: StringId(event.source_id.parse().ok()?),
-                    value_uri_id: StringId(value_uri_id),
-                    generation: event.generation,
-                })
+            .map(|event| RuntimeEvent {
+                uri_id: event.event_id,
+                source_uri_id: event.source_id,
+                value_uri_id: event.value_id,
+                generation: event.generation,
             })
             .collect()
     }
 
     pub fn owners_for_unconsumed_events(&self) -> Vec<OwnerNode> {
-        // Generic side returns opaque String IDs; map back to sprf
-        // OwnerNode by parsing the StringId and looking up the URI.
-        let subscribe_kind_id = self.intern_uri(KIND_SUBSCRIBE).0.to_string();
+        // Generic side returns StringId owner ids directly; resolve each
+        // to its URI for the sprf OwnerNode.
+        let subscribe_kind_id = self.intern_uri(KIND_SUBSCRIBE);
         let mut owners = BTreeMap::new();
-        for owner_id_text in self
+        for owner_uri_id in self
             .core
-            .owners_for_unconsumed_events(subscribe_kind_id.as_str())
+            .owners_for_unconsumed_events(subscribe_kind_id.as_id_str().as_ref())
         {
-            let Some(owner_id) = owner_id_text.parse::<u64>().ok() else {
-                continue;
-            };
-            let Some(uri) = self.store.lookup_string(StringId(owner_id)) else {
+            let Some(uri) = self.store.lookup_string(owner_uri_id) else {
                 continue;
             };
             owners.insert(
-                owner_id,
+                owner_uri_id.0,
                 OwnerNode {
-                    uri_id: StringId(owner_id),
+                    uri_id: owner_uri_id,
                     uri,
                 },
             );
@@ -848,7 +850,7 @@ impl RuntimeGraph {
 
     pub fn mark_event_consumed(&self, event: &RuntimeEvent) {
         self.core
-            .mark_event_consumed(event.uri_id.0.to_string().as_str());
+            .mark_event_consumed(event.uri_id.as_id_str().as_ref());
     }
 
     pub fn replace_supports(
@@ -871,8 +873,8 @@ impl RuntimeGraph {
         let mut retracted = Vec::new();
 
         for row_id in old_keys.difference(&new_keys) {
-            self.delete_support(owner, table, *row_id);
-            if !self.row_has_support(*row_id) {
+            self.delete_support(owner, table, StringId(*row_id));
+            if !self.row_has_support(StringId(*row_id)) {
                 if let Some(row) = old.get(row_id) {
                     retracted.push(row.clone());
                 }
@@ -880,7 +882,7 @@ impl RuntimeGraph {
         }
 
         for row_id in new_keys.difference(&old_keys) {
-            let already_visible = self.row_has_support(*row_id);
+            let already_visible = self.row_has_support(StringId(*row_id));
             let row = new.get(row_id).unwrap();
             self.insert_edge(
                 KIND_SUPPORT,
@@ -912,13 +914,13 @@ impl RuntimeGraph {
         generation: u64,
     ) {
         self.core.insert_node(RuntimeNodeRow {
-            node_id: node_uri_id.0.to_string(),
-            kind_id: self.intern_uri(kind).0.to_string(),
-            ast_id: Some(self.intern_uri(ast_uri).0.to_string()),
-            parent_id: parent_uri.map(|uri| self.intern_uri(uri).0.to_string()),
+            node_id: node_uri_id,
+            kind_id: self.intern_uri(kind),
+            ast_id: Some(self.intern_uri(ast_uri)),
+            parent_id: parent_uri.map(|uri| self.intern_uri(uri)),
             input_key: input_key.to_string(),
             source_key: source_hash.to_string(),
-            mode_id: Some(self.intern_uri(mode).0.to_string()),
+            mode_id: Some(self.intern_uri(mode)),
             generation,
         });
     }
@@ -935,11 +937,11 @@ impl RuntimeGraph {
         let uri = edge_uri(kind, from_uri_id, to_uri_id, label_id);
         let uri_id = self.intern_uri(uri.as_ref());
         self.core.insert_edge(RuntimeEdgeRow {
-            edge_id: uri_id.0.to_string(),
-            kind_id: self.intern_uri(kind).0.to_string(),
-            from_id: from_uri_id.0.to_string(),
-            to_id: to_uri_id.0.to_string(),
-            label_id: label_id.0.to_string(),
+            edge_id: uri_id,
+            kind_id: self.intern_uri(kind),
+            from_id: from_uri_id,
+            to_id: to_uri_id,
+            label_id,
             generation,
         });
         EdgeRecord { uri_id, uri }
@@ -948,15 +950,16 @@ impl RuntimeGraph {
     fn insert_job(&self, event: &RuntimeEvent, owner: &OwnerNode, generation: u64) -> RuntimeJob {
         let uri = runtime_uri(
             "job",
-            &[&event.uri_id.0.to_string(), &owner.uri_id.0.to_string()],
+            &[
+                event.uri_id.as_id_str().as_ref(),
+                owner.uri_id.as_id_str().as_ref(),
+            ],
         );
         let uri_id = self.intern_uri(uri.as_ref());
-        let event_id_text = event.uri_id.0.to_string();
-        let owner_id_text = owner.uri_id.0.to_string();
         self.core.insert_job(
-            uri_id.0.to_string().as_str(),
-            event_id_text.as_str(),
-            owner_id_text.as_str(),
+            uri_id.as_id_str().as_ref(),
+            event.uri_id.as_id_str().as_ref(),
+            owner.uri_id.as_id_str().as_ref(),
             generation,
         );
         RuntimeJob {
@@ -974,9 +977,9 @@ impl RuntimeGraph {
     ) -> BTreeMap<u64, RowNode> {
         // Delegate the edge scan to effect_runtime; sprf side resolves
         // the row payload via the durable RUNTIME_NODE row.
-        let support_kind = self.intern_uri(KIND_SUPPORT).0.to_string();
-        let owner_id = owner.uri_id.0.to_string();
-        let table_label = table.uri_id.0.to_string();
+        let support_kind = self.intern_uri(KIND_SUPPORT).as_id_str().into_owned();
+        let owner_id = owner.uri_id.as_id_str().into_owned();
+        let table_label = table.uri_id.as_id_str().into_owned();
         let mut out = BTreeMap::new();
         for edge in self.core.edges_where(
             Some(support_kind.as_str()),
@@ -984,77 +987,71 @@ impl RuntimeGraph {
             None,
             Some(table_label.as_str()),
         ) {
-            let Some(row_id) = edge.to_id.parse::<u64>().ok() else {
-                continue;
-            };
+            let row_id = edge.to_id;
             if let Some(row) = self.row_node(row_id) {
-                out.insert(row_id, row);
+                out.insert(row_id.0, row);
             }
         }
         out
     }
 
-    fn row_node(&self, row_id: u64) -> Option<RowNode> {
-        let row_id_str = row_id.to_string();
+    fn row_node(&self, row_id: StringId) -> Option<RowNode> {
+        let row_id_str = row_id.as_id_str();
         let row = self
             .facts
-            .read_where(RUNTIME_NODE, NODE_URI_ID, row_id_str.as_str())
+            .read_where(RUNTIME_NODE, NODE_URI_ID, row_id_str.as_ref())
             .into_iter()
             .next()?;
-        let uri = self.store.lookup_string(StringId(row_id))?;
+        let uri = self.store.lookup_string(row_id)?;
         let row_key = row
             .get(INPUT_KEY)
             .map(Arc::<str>::from)
             .unwrap_or_else(|| Arc::<str>::from(""));
         Some(RowNode {
-            uri_id: StringId(row_id),
+            uri_id: row_id,
             uri,
             row_key,
         })
     }
 
-    fn delete_support(&self, owner: &OwnerNode, table: &OutputNode, row_id: u64) {
-        let edge_uri_id = self
-            .intern_uri(
-                edge_uri(KIND_SUPPORT, owner.uri_id, StringId(row_id), table.uri_id).as_ref(),
-            )
-            .0
-            .to_string();
-        self.core.delete_edge(edge_uri_id.as_str());
+    fn delete_support(&self, owner: &OwnerNode, table: &OutputNode, row_id: StringId) {
+        let edge_uri_id =
+            self.intern_uri(edge_uri(KIND_SUPPORT, owner.uri_id, row_id, table.uri_id).as_ref());
+        self.core.delete_edge(edge_uri_id.as_id_str().as_ref());
     }
 
-    fn row_has_support(&self, row_id: u64) -> bool {
-        let support_kind = self.intern_uri(KIND_SUPPORT).0.to_string();
-        let row_id_text = row_id.to_string();
+    fn row_has_support(&self, row_id: StringId) -> bool {
+        let support_kind = self.intern_uri(KIND_SUPPORT).as_id_str().into_owned();
+        let row_id_text = row_id.as_id_str();
         !self
             .core
             .edges_where(
                 Some(support_kind.as_str()),
                 None,
-                Some(row_id_text.as_str()),
+                Some(row_id_text.as_ref()),
                 None,
             )
             .is_empty()
     }
 
     fn incoming_subscribers(&self, source: &SourceNode) -> Vec<OwnerNode> {
-        // Delegate edge filtering to effect_runtime's edges_where; project
-        // the opaque from_id strings onto sprf OwnerNode by store lookup.
-        let subscribe_kind = self.intern_uri(KIND_SUBSCRIBE).0.to_string();
-        let source_id = source.uri_id.0.to_string();
+        // Delegate edge filtering to effect_runtime's edges_where; the
+        // returned from_id is already a StringId, just resolve its URI.
+        let subscribe_kind = self.intern_uri(KIND_SUBSCRIBE).as_id_str().into_owned();
+        let source_id = source.uri_id.as_id_str();
         self.core
             .edges_where(
                 Some(subscribe_kind.as_str()),
                 None,
-                Some(source_id.as_str()),
+                Some(source_id.as_ref()),
                 None,
             )
             .into_iter()
             .filter_map(|edge| {
-                let owner_id = edge.from_id.parse::<u64>().ok()?;
-                let uri = self.store.lookup_string(StringId(owner_id))?;
+                let owner_id = edge.from_id;
+                let uri = self.store.lookup_string(owner_id)?;
                 Some(OwnerNode {
-                    uri_id: StringId(owner_id),
+                    uri_id: owner_id,
                     uri,
                 })
             })
