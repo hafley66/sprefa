@@ -25,7 +25,7 @@ fn gh_prs_queries_open_pr_rows_from_ghcache_db() {
         rule(:seen_prs, REPO?, NUMBER?, TITLE?, STATE?, HEAD?, BASE?, UPDATED_AT?);
 
         gh.prs(REPO: REPO?, NUMBER: NUMBER?, TITLE: TITLE?, STATE: `open`, HEAD: HEAD?, BASE: BASE?, UPDATED_AT: UPDATED_AT?)
-          > seen_prs(REPO, NUMBER, TITLE, STATE, HEAD, BASE, UPDATED_AT);
+          > rule(:seen_prs, REPO: REPO, NUMBER: NUMBER, TITLE: TITLE, STATE: STATE, HEAD: HEAD, BASE: BASE, UPDATED_AT: UPDATED_AT);
     "#;
 
     let store = run_pipes_with_ghcache(src, db);
@@ -50,7 +50,7 @@ fn gh_prs_rerun_retracts_prior_supported_rule_rows() {
         rule(:seen_prs, REPO?, NUMBER?, TITLE?, STATE?, HEAD?, BASE?, UPDATED_AT?);
 
         gh.prs(REPO: REPO?, NUMBER: NUMBER?, TITLE: TITLE?, STATE: `open`, HEAD: HEAD?, BASE: BASE?, UPDATED_AT: UPDATED_AT?)
-          > seen_prs(REPO, NUMBER, TITLE, STATE, HEAD, BASE, UPDATED_AT);
+          > rule(:seen_prs, REPO: REPO, NUMBER: NUMBER, TITLE: TITLE, STATE: STATE, HEAD: HEAD, BASE: BASE, UPDATED_AT: UPDATED_AT);
     "#;
 
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
@@ -74,7 +74,7 @@ fn gh_prs_parked_query_wakes_from_pr_dirty_domain() {
         rule(:seen_prs, REPO?, NUMBER?, TITLE?, STATE?, HEAD?, BASE?, UPDATED_AT?);
 
         gh.prs(REPO: REPO?, NUMBER: NUMBER?, TITLE: TITLE?, STATE: `open`, HEAD: HEAD?, BASE: BASE?, UPDATED_AT: UPDATED_AT?)
-          > seen_prs(REPO, NUMBER, TITLE, STATE, HEAD, BASE, UPDATED_AT);
+          > rule(:seen_prs, REPO: REPO, NUMBER: NUMBER, TITLE: TITLE, STATE: STATE, HEAD: HEAD, BASE: BASE, UPDATED_AT: UPDATED_AT);
     "#;
 
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());

@@ -213,7 +213,7 @@ async fn render_markdown_interpolates_subpipe_links() {
           > term_bind(:FILE)
           > `42`
           > term_bind(:LO)
-          > important_types(TYPE, FILE, LO);
+          > rule(:important_types, TYPE: TYPE, FILE: FILE, LO: LO);
 
         `OrderStore`
           > term_bind(:TYPE)
@@ -221,7 +221,7 @@ async fn render_markdown_interpolates_subpipe_links() {
           > term_bind(:FILE)
           > `7`
           > term_bind(:LO)
-          > important_types(TYPE, FILE, LO);
+          > rule(:important_types, TYPE: TYPE, FILE: FILE, LO: LO);
 
         important_types?(TYPE?, FILE?, LO?)
         > render_markdown`- ${{ TYPE > `**${{&.value}}**` }} at ${{ FILE > `[${{&.value}}:${{LO}}](${{&.value}}#L${{LO}})` }}
@@ -690,7 +690,7 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
           > term_bind(:OP)
           > `openapi.yaml`
           > term_bind(:SPEC)
-          > openapi_ops(OP, SPEC);
+          > rule(:openapi_ops, OP: OP, SPEC: SPEC);
 
         openapi_ops?(OP?, SPEC?)
           > sql`
@@ -702,7 +702,7 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
                 WHERE frontend_hooks.OP = ${OP}
               )
             `
-          > missing_hooks(OP);
+          > rule(:missing_hooks, OP: OP);
     "#,
     )
     .unwrap();
@@ -741,13 +741,13 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
           > term_bind(:OP)
           > `openapi.yaml`
           > term_bind(:SPEC)
-          > openapi_ops(OP, SPEC);
+          > rule(:openapi_ops, OP: OP, SPEC: SPEC);
 
         `getUser`
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks(OP, FILE);
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
 
         openapi_ops?(OP?, SPEC?)
           > sql`
@@ -759,7 +759,7 @@ async fn app_reopens_sqlite_backends_and_retracts_mounted_sql_outputs() {
                 WHERE frontend_hooks.OP = ${OP}
               )
             `
-          > missing_hooks(OP);
+          > rule(:missing_hooks, OP: OP);
     "#,
     )
     .unwrap();
@@ -814,7 +814,7 @@ async fn app_graph_jobs_rerun_mounted_sql_after_reopen_without_sqlite_queue() {
                 WHERE frontend_hooks.OP = ${OP}
               )
             `
-          > missing_hooks(OP);
+          > rule(:missing_hooks, OP: OP);
     "#,
     )
     .unwrap();
@@ -827,7 +827,7 @@ async fn app_graph_jobs_rerun_mounted_sql_after_reopen_without_sqlite_queue() {
           > term_bind(:OP)
           > `src/hooks.ts`
           > term_bind(:FILE)
-          > frontend_hooks(OP, FILE);
+          > rule(:frontend_hooks, OP: OP, FILE: FILE);
     "#,
     )
     .unwrap();
