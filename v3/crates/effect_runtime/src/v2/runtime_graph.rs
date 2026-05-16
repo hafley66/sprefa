@@ -76,6 +76,118 @@ impl NodeId for String {
     }
 }
 
+/// Compile-time tag for one kind of runtime-graph handle. `TAG` is the
+/// on-disk `kind_id` string the handle projects onto (no schema change;
+/// the same `RuntimeNode`/`RuntimeEdge` rows back every kind). `Extra`
+/// carries whatever per-kind payload the handle needs beyond `(id,
+/// uri)`: `()` for plain nodes/edges, an interned label for subscribe
+/// edges, a row key for row nodes.
+pub trait NodeKind {
+    const TAG: &'static str;
+    // `Ord` is required because the old mirror structs derived `Ord`
+    // and several call sites key BTreeMap/BTreeSet on these handles.
+    // All concrete `Extra` types (`()`, `StringId`, `Arc<str>`) satisfy
+    // it, so this does not narrow the usable kinds.
+    type Extra: Clone + Ord + std::hash::Hash + std::fmt::Debug;
+}
+
+/// Phantom-typed handle for a runtime-graph node or edge. One struct
+/// replaces the per-kind mirror structs callers used to hand-roll: the
+/// kind lives in the `K` type parameter so a `GraphRef<Source, _>`
+/// cannot be passed where a `GraphRef<Owner, _>` is expected, and the
+/// shared `(id, uri, extra)` shape projects onto the existing
+/// `RuntimeNode`/`RuntimeEdge` rows via `K::TAG`. `K` is zero-size and
+/// must NOT appear in the trait-impl bounds below, so the std traits
+/// are hand-written rather than derived (a `#[derive]` would emit
+/// `K: Clone` etc. through `PhantomData<K>` and over-constrain callers).
+pub struct GraphRef<K: NodeKind, I: NodeId = String> {
+    pub id: I,
+    pub uri: Arc<str>,
+    pub extra: K::Extra,
+    _k: PhantomData<K>,
+}
+
+impl<K: NodeKind, I: NodeId> GraphRef<K, I> {
+    pub fn new(id: I, uri: Arc<str>, extra: K::Extra) -> Self {
+        Self {
+            id,
+            uri,
+            extra,
+            _k: PhantomData,
+        }
+    }
+
+    pub fn id(&self) -> &I {
+        &self.id
+    }
+
+    pub fn uri(&self) -> &Arc<str> {
+        &self.uri
+    }
+
+    pub fn extra(&self) -> &K::Extra {
+        &self.extra
+    }
+
+    /// The on-disk `kind_id` string this handle projects onto.
+    pub fn tag() -> &'static str {
+        K::TAG
+    }
+}
+
+impl<K: NodeKind, I: NodeId> Clone for GraphRef<K, I> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            uri: self.uri.clone(),
+            extra: self.extra.clone(),
+            _k: PhantomData,
+        }
+    }
+}
+
+impl<K: NodeKind, I: NodeId> std::fmt::Debug for GraphRef<K, I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphRef")
+            .field("kind", &K::TAG)
+            .field("id", &self.id)
+            .field("uri", &self.uri)
+            .field("extra", &self.extra)
+            .finish()
+    }
+}
+
+impl<K: NodeKind, I: NodeId> PartialEq for GraphRef<K, I> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.uri == other.uri && self.extra == other.extra
+    }
+}
+
+impl<K: NodeKind, I: NodeId> Eq for GraphRef<K, I> {}
+
+impl<K: NodeKind, I: NodeId> std::hash::Hash for GraphRef<K, I> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.uri.hash(state);
+        self.extra.hash(state);
+    }
+}
+
+impl<K: NodeKind, I: NodeId> PartialOrd for GraphRef<K, I> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<K: NodeKind, I: NodeId> Ord for GraphRef<K, I> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id
+            .cmp(&other.id)
+            .then_with(|| self.uri.cmp(&other.uri))
+            .then_with(|| self.extra.cmp(&other.extra))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeNode<I: NodeId = String> {
     pub node_id: I,

@@ -19,7 +19,7 @@ use effect_runtime::v2::{
 };
 
 use crate::fact::{FactRead, FactWrite};
-use crate::runtime_graph::{ArgKey, OwnerNode, RuntimeGraph};
+use crate::runtime_graph::{ArgKey, HandleUriId, OwnerNode, RuntimeGraph};
 use crate::sql::SqlQueryComponent;
 use crate::Cursor;
 use effect_runtime::v2::FactStore;
@@ -330,7 +330,7 @@ fn owner_has_dirty_after(graph: &RuntimeGraph, owner: &OwnerNode, prev_gen: u64)
     graph
         .pending_jobs()
         .into_iter()
-        .any(|job| job.owner_uri_id == owner.uri_id && job.generation > prev_gen)
+        .any(|job| job.owner_uri_id == owner.uri_id() && job.generation > prev_gen)
 }
 
 /// Deterministic input_key for `declare_owner`. Hashes `(rule_name,

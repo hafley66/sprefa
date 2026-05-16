@@ -73,8 +73,9 @@ pub use queue::{
 };
 pub use row::Row;
 pub use runtime_graph::{
-    ActiveChild, DirtyOwner, EmitValue, FactRuntimeGraph, NodeId, QuiescenceError,
-    RuntimeContinuation, RuntimeEdge, RuntimeNode, RuntimeValue, RuntimeValuePayload, SubResult,
+    ActiveChild, DirtyOwner, EmitValue, FactRuntimeGraph, GraphRef, NodeId, NodeKind,
+    QuiescenceError, RuntimeContinuation, RuntimeEdge, RuntimeNode, RuntimeValue,
+    RuntimeValuePayload, SubResult,
     Subscribe, SupportRows, TraversalOrder, VisibleDelta,
 };
 #[cfg(feature = "sqlite")]

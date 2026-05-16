@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::borrow::Cow;
 
 use effect_runtime::v2::{
-    DirtyOwner as CoreDirtyOwner, FactRuntimeGraph, FactStore, NodeId, RenderCtx,
-    RuntimeContinuation as CoreContinuation, RuntimeEdge as RuntimeEdgeRow,
+    DirtyOwner as CoreDirtyOwner, FactRuntimeGraph, FactStore, GraphRef, NodeId, NodeKind,
+    RenderCtx, RuntimeContinuation as CoreContinuation, RuntimeEdge as RuntimeEdgeRow,
     RuntimeNode as RuntimeNodeRow, RuntimePut, TraversalOrder,
 };
 
@@ -40,13 +40,55 @@ const CONT_INSTANCE_ID: &str = "instance_id";
 const CONT_DEPTH: &str = "depth";
 const CONT_INPUT_CURSOR: &str = "input_cursor";
 
-const KIND_OWNER: &str = "owner";
-const KIND_SOURCE: &str = "source";
-const KIND_OUTPUT: &str = "output";
-const KIND_ROW: &str = "row";
-const KIND_SUBSCRIBE: &str = "subscribe";
-const KIND_SUPPORT: &str = "support";
+/// `member_of` has no typed handle (the row→table edge is written
+/// inline in `declare_row` and never round-tripped as a handle), so it
+/// stays a bare literal rather than a `NodeKind` marker.
 const KIND_MEMBER_OF: &str = "member_of";
+
+/// Zero-size kind markers. Each names the on-disk `kind_id` string via
+/// `NodeKind::TAG`; the typed `GraphRef<K, _>` aliases below carry the
+/// kind in the type so a source handle cannot stand in for an owner
+/// handle at the `SprfSubscribe` / `SprfSupportRows` / `RuleMemo`
+/// boundaries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Owner;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Source;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Output;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Row;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Subscribe;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Support;
+
+impl NodeKind for Owner {
+    const TAG: &'static str = "owner";
+    type Extra = ();
+}
+impl NodeKind for Source {
+    const TAG: &'static str = "source";
+    type Extra = ();
+}
+impl NodeKind for Output {
+    const TAG: &'static str = "output";
+    type Extra = ();
+}
+impl NodeKind for Row {
+    const TAG: &'static str = "row";
+    // Row carries its content-addressed row key alongside (id, uri).
+    type Extra = Arc<str>;
+}
+impl NodeKind for Subscribe {
+    const TAG: &'static str = "subscribe";
+    // Subscribe edges carry the interned subscription label id.
+    type Extra = StringId;
+}
+impl NodeKind for Support {
+    const TAG: &'static str = "support";
+    type Extra = ();
+}
 
 #[derive(Clone)]
 pub struct RuntimeGraph {
@@ -154,16 +196,56 @@ impl RuleMemo {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct OwnerNode {
-    pub uri_id: StringId,
-    pub uri: Arc<str>,
+/// Typed runtime-graph handles. Each is `GraphRef<K, StringId>` with a
+/// distinct zero-size `K`, so the kind is part of the type and the
+/// public field is `id` (the interned URI). Inherent accessors below
+/// keep the old `uri_id()` / `row_key()` / `label_id()` spelling at
+/// call sites without re-introducing per-kind structs.
+pub type OwnerNode = GraphRef<Owner, StringId>;
+pub type SourceNode = GraphRef<Source, StringId>;
+pub type OutputNode = GraphRef<Output, StringId>;
+pub type RowNode = GraphRef<Row, StringId>;
+pub type SubscribeEdge = GraphRef<Subscribe, StringId>;
+pub type SupportEdge = GraphRef<Support, StringId>;
+
+/// `uri_id()` spelling for any sprf handle. `GraphRef` lives in
+/// `effect_runtime`, so v4 cannot add inherent methods to the aliases
+/// (orphan rule). A blanket extension trait over every kind keeps the
+/// old call-site spelling. Blanket over `K: NodeKind` only; it does not
+/// erode kind safety because the trait returns the shared id and never
+/// crosses kinds.
+pub trait HandleUriId {
+    fn uri_id(&self) -> StringId;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SourceNode {
-    pub uri_id: StringId,
-    pub uri: Arc<str>,
+impl<K: NodeKind> HandleUriId for GraphRef<K, StringId> {
+    fn uri_id(&self) -> StringId {
+        self.id
+    }
+}
+
+/// `row_key()` is defined ONLY for `RowNode`, so a non-row handle has
+/// no such method and the kind stays statically enforced.
+pub trait RowKey {
+    fn row_key(&self) -> &Arc<str>;
+}
+
+impl RowKey for RowNode {
+    fn row_key(&self) -> &Arc<str> {
+        &self.extra
+    }
+}
+
+/// `label_id()` is defined ONLY for `SubscribeEdge` for the same
+/// reason: the subscription label lives in that kind's `Extra` alone.
+pub trait LabelId {
+    fn label_id(&self) -> StringId;
+}
+
+impl LabelId for SubscribeEdge {
+    fn label_id(&self) -> StringId {
+        self.extra
+    }
 }
 
 pub struct SourceSubscriptionInput<'a> {
@@ -175,32 +257,6 @@ pub struct SourceSubscriptionInput<'a> {
     pub instance_id: u64,
     pub depth: u32,
     pub input: &'a Cursor,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct OutputNode {
-    pub uri_id: StringId,
-    pub uri: Arc<str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RowNode {
-    pub uri_id: StringId,
-    pub uri: Arc<str>,
-    pub row_key: Arc<str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SubscribeEdge {
-    pub uri_id: StringId,
-    pub uri: Arc<str>,
-    pub label_id: StringId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SupportEdge {
-    pub uri_id: StringId,
-    pub uri: Arc<str>,
 }
 
 /// One outstanding owner re-render. Backed by a single RUNTIME_DIRTY
@@ -394,10 +450,10 @@ impl RuntimeGraph {
     ) -> OwnerNode {
         let uri = owner_uri(ast_uri, parent_owner_uri, input_key, source_hash, mode);
         let uri_id = self.intern_uri(uri.as_ref());
-        let node = OwnerNode { uri_id, uri };
+        let node = OwnerNode::new(uri_id, uri, ());
         self.insert_node(
-            node.uri_id,
-            KIND_OWNER,
+            node.uri_id(),
+            Owner::TAG,
             ast_uri,
             parent_owner_uri,
             input_key,
@@ -495,7 +551,7 @@ impl RuntimeGraph {
         let uri_id = self.intern_uri(uri.as_ref());
         self.insert_node(
             uri_id,
-            KIND_SOURCE,
+            Source::TAG,
             "",
             None,
             "",
@@ -503,7 +559,7 @@ impl RuntimeGraph {
             "",
             generation,
         );
-        SourceNode { uri_id, uri }
+        SourceNode::new(uri_id, uri, ())
     }
 
     pub fn declare_output_table(&self, table_uri: &str, generation: u64) -> OutputNode {
@@ -511,7 +567,7 @@ impl RuntimeGraph {
         let uri_id = self.intern_uri(uri.as_ref());
         self.insert_node(
             uri_id,
-            KIND_OUTPUT,
+            Output::TAG,
             "",
             None,
             "",
@@ -519,7 +575,7 @@ impl RuntimeGraph {
             "",
             generation,
         );
-        OutputNode { uri_id, uri }
+        OutputNode::new(uri_id, uri, ())
     }
 
     pub fn declare_row(
@@ -533,7 +589,7 @@ impl RuntimeGraph {
         let uri_id = self.intern_uri(uri.as_ref());
         self.insert_node(
             uri_id,
-            KIND_ROW,
+            Row::TAG,
             "",
             Some(table.uri.as_ref()),
             row_key.as_ref(),
@@ -544,15 +600,11 @@ impl RuntimeGraph {
         self.insert_edge(
             KIND_MEMBER_OF,
             uri_id,
-            table.uri_id,
+            table.uri_id(),
             table.uri.as_ref(),
             generation,
         );
-        RowNode {
-            uri_id,
-            uri,
-            row_key,
-        }
+        RowNode::new(uri_id, uri, row_key)
     }
 
     pub fn subscribe(
@@ -564,17 +616,13 @@ impl RuntimeGraph {
     ) -> SubscribeEdge {
         let label_id = self.intern_uri(label);
         let edge = self.insert_edge(
-            KIND_SUBSCRIBE,
-            owner.uri_id,
-            source.uri_id,
+            Subscribe::TAG,
+            owner.uri_id(),
+            source.uri_id(),
             label,
             generation,
         );
-        SubscribeEdge {
-            uri_id: edge.uri_id,
-            uri: edge.uri,
-            label_id,
-        }
+        SubscribeEdge::new(edge.uri_id, edge.uri, label_id)
     }
 
     pub fn record_source_subscriptions(
@@ -601,9 +649,9 @@ impl RuntimeGraph {
             ],
         );
 
-        let owner_kind_id = self.intern_uri(KIND_OWNER).0.to_string();
-        let source_kind_id = self.intern_uri(KIND_SOURCE).0.to_string();
-        let subscribe_kind_id = self.intern_uri(KIND_SUBSCRIBE).0.to_string();
+        let owner_kind_id = self.intern_uri(Owner::TAG).0.to_string();
+        let source_kind_id = self.intern_uri(Source::TAG).0.to_string();
+        let subscribe_kind_id = self.intern_uri(Subscribe::TAG).0.to_string();
         let mode_id = self.intern_uri("ast").0.to_string();
         let empty_id = self.intern_uri("").0.to_string();
         let generation_text = generation.to_string();
@@ -627,7 +675,7 @@ impl RuntimeGraph {
             let ast_uri_id = self.intern_uri(subscription.ast_uri.as_str());
             let edge_uri_id = self.intern_uri(
                 edge_uri(
-                    KIND_SUBSCRIBE,
+                    Subscribe::TAG,
                     owner_uri_id,
                     source_uri_id,
                     self.intern_uri(subscription.label.as_str()),
@@ -698,19 +746,20 @@ impl RuntimeGraph {
     /// `dispatch_wake`; compact-source owners (sqlite sidecar, not in
     /// RUNTIME_EDGE) are marked here.
     pub fn append_source_event(&self, source: &SourceNode, generation: u64) {
-        let subscribe_kind = self.intern_uri(KIND_SUBSCRIBE);
+        let subscribe_kind = self.intern_uri(Subscribe::TAG);
         self.core.dispatch_wake(
-            source.uri_id.as_id_str().as_ref(),
+            source.uri_id().as_id_str().as_ref(),
             "",
             "",
             subscribe_kind.as_id_str().as_ref(),
             generation,
         );
         if let Some(compact) = &self.compact_sources {
-            let source_id = source.uri_id.as_id_str();
-            for owner in compact.owners_for_source(source.uri_id) {
+            let source_uri_id = source.uri_id();
+            let source_id = source_uri_id.as_id_str();
+            for owner in compact.owners_for_source(source.uri_id()) {
                 self.core.mark_dirty(
-                    owner.uri_id.as_id_str().as_ref(),
+                    owner.uri_id().as_id_str().as_ref(),
                     source_id.as_ref(),
                     generation,
                 );
@@ -759,10 +808,7 @@ impl RuntimeGraph {
             .map(Arc::<str>::from)
             .unwrap_or_else(|| Arc::<str>::from(""));
         Some(OwnerDescriptor {
-            owner: OwnerNode {
-                uri_id: owner_uri_id,
-                uri: owner_uri,
-            },
+            owner: OwnerNode::new(owner_uri_id, owner_uri, ()),
             ast_uri,
             input_key,
         })
@@ -778,7 +824,7 @@ impl RuntimeGraph {
         generation: u64,
     ) {
         self.core.record_continuation(CoreContinuation {
-            owner_id: owner.uri_id,
+            owner_id: owner.uri_id(),
             pipe_hash,
             instance_id,
             depth,
@@ -818,11 +864,11 @@ impl RuntimeGraph {
         self.append_source_event(source, generation);
         let mut owners = BTreeMap::new();
         for owner in self.incoming_subscribers(source) {
-            owners.insert(owner.uri_id.0, owner);
+            owners.insert(owner.uri_id().0, owner);
         }
         if let Some(compact) = &self.compact_sources {
-            for owner in compact.owners_for_source(source.uri_id) {
-                owners.insert(owner.uri_id.0, owner);
+            for owner in compact.owners_for_source(source.uri_id()) {
+                owners.insert(owner.uri_id().0, owner);
             }
         }
         owners.into_values().collect()
@@ -846,10 +892,7 @@ impl RuntimeGraph {
             };
             owners.insert(
                 job.owner_uri_id.0,
-                OwnerNode {
-                    uri_id: job.owner_uri_id,
-                    uri,
-                },
+                OwnerNode::new(job.owner_uri_id, uri, ()),
             );
         }
         owners.into_values().collect()
@@ -873,7 +916,7 @@ impl RuntimeGraph {
         let mut new = BTreeMap::new();
         for row in rows {
             let node = self.declare_row(table, row, generation);
-            new.insert(node.uri_id.0, node);
+            new.insert(node.uri_id().0, node);
         }
 
         let old_keys: BTreeSet<u64> = old.keys().copied().collect();
@@ -894,9 +937,9 @@ impl RuntimeGraph {
             let already_visible = self.row_has_support(StringId(*row_id));
             let row = new.get(row_id).unwrap();
             self.insert_edge(
-                KIND_SUPPORT,
-                owner.uri_id,
-                row.uri_id,
+                Support::TAG,
+                owner.uri_id(),
+                row.uri_id(),
                 table.uri.as_ref(),
                 generation,
             );
@@ -963,9 +1006,9 @@ impl RuntimeGraph {
     ) -> BTreeMap<u64, RowNode> {
         // Delegate the edge scan to effect_runtime; sprf side resolves
         // the row payload via the durable RUNTIME_NODE row.
-        let support_kind = self.intern_uri(KIND_SUPPORT).as_id_str().into_owned();
-        let owner_id = owner.uri_id.as_id_str().into_owned();
-        let table_label = table.uri_id.as_id_str().into_owned();
+        let support_kind = self.intern_uri(Support::TAG).as_id_str().into_owned();
+        let owner_id = owner.uri_id().as_id_str().into_owned();
+        let table_label = table.uri_id().as_id_str().into_owned();
         let mut out = BTreeMap::new();
         for edge in self.core.edges_where(
             Some(support_kind.as_str()),
@@ -993,21 +1036,17 @@ impl RuntimeGraph {
             .get(INPUT_KEY)
             .map(Arc::<str>::from)
             .unwrap_or_else(|| Arc::<str>::from(""));
-        Some(RowNode {
-            uri_id: row_id,
-            uri,
-            row_key,
-        })
+        Some(RowNode::new(row_id, uri, row_key))
     }
 
     fn delete_support(&self, owner: &OwnerNode, table: &OutputNode, row_id: StringId) {
         let edge_uri_id =
-            self.intern_uri(edge_uri(KIND_SUPPORT, owner.uri_id, row_id, table.uri_id).as_ref());
+            self.intern_uri(edge_uri(Support::TAG, owner.uri_id(), row_id, table.uri_id()).as_ref());
         self.core.delete_edge(edge_uri_id.as_id_str().as_ref());
     }
 
     fn row_has_support(&self, row_id: StringId) -> bool {
-        let support_kind = self.intern_uri(KIND_SUPPORT).as_id_str().into_owned();
+        let support_kind = self.intern_uri(Support::TAG).as_id_str().into_owned();
         let row_id_text = row_id.as_id_str();
         !self
             .core
@@ -1023,8 +1062,9 @@ impl RuntimeGraph {
     fn incoming_subscribers(&self, source: &SourceNode) -> Vec<OwnerNode> {
         // Delegate edge filtering to effect_runtime's edges_where; the
         // returned from_id is already a StringId, just resolve its URI.
-        let subscribe_kind = self.intern_uri(KIND_SUBSCRIBE).as_id_str().into_owned();
-        let source_id = source.uri_id.as_id_str();
+        let subscribe_kind = self.intern_uri(Subscribe::TAG).as_id_str().into_owned();
+        let source_uri_id = source.uri_id();
+        let source_id = source_uri_id.as_id_str();
         self.core
             .edges_where(
                 Some(subscribe_kind.as_str()),
@@ -1036,10 +1076,7 @@ impl RuntimeGraph {
             .filter_map(|edge| {
                 let owner_id = edge.from_id;
                 let uri = self.store.lookup_string(owner_id)?;
-                Some(OwnerNode {
-                    uri_id: owner_id,
-                    uri,
-                })
+                Some(OwnerNode::new(owner_id, uri, ()))
             })
             .collect()
     }
@@ -1220,10 +1257,11 @@ impl CompactSourceGraph {
             .query_map([source_id], |row| {
                 let owner_id: String = row.get(0)?;
                 let owner_uri: String = row.get(1)?;
-                Ok(OwnerNode {
-                    uri_id: StringId(owner_id.parse().unwrap_or(0)),
-                    uri: Arc::from(owner_uri),
-                })
+                Ok(OwnerNode::new(
+                    StringId::from_id_str(&owner_id),
+                    Arc::from(owner_uri),
+                    (),
+                ))
             })
             .expect("query compact source owners");
         rows.filter_map(Result::ok).collect()
@@ -1244,10 +1282,7 @@ impl CompactSourceGraph {
             let ast_uri: String = row.get(1)?;
             let input_key: String = row.get(2)?;
             Ok(OwnerDescriptor {
-                owner: OwnerNode {
-                    uri_id: owner_uri_id,
-                    uri: Arc::from(owner_uri),
-                },
+                owner: OwnerNode::new(owner_uri_id, Arc::from(owner_uri), ()),
                 ast_uri: Arc::from(ast_uri),
                 input_key: Arc::from(input_key),
             })

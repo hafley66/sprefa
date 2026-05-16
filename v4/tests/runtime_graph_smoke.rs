@@ -12,8 +12,8 @@ use v4::mounted_query::{
     input_key_for_batch, load_mounted_sql_snapshot, mount_id_for_sql, record_sql_outputs,
 };
 use v4::runtime_graph::{
-    table_source_uri, RuntimeGraph, SourceSubscriptionInput, SprfSubscribe, SprfSupportRows,
-    RUNTIME_DIRTY, RUNTIME_EDGE, RUNTIME_NODE,
+    table_source_uri, HandleUriId, LabelId, RuntimeGraph, SourceSubscriptionInput, SprfSubscribe,
+    SprfSupportRows, RUNTIME_DIRTY, RUNTIME_EDGE, RUNTIME_NODE,
 };
 use v4::runtime_replay::GraphReplayRunner;
 use v4::store::SprfStore;
@@ -123,16 +123,16 @@ fn compact_owner_descriptor_and_continuation_round_trip_through_fs_cursor() {
     );
 
     let descriptor = graph
-        .owner_descriptor(owner.uri_id)
+        .owner_descriptor(owner.uri_id())
         .expect("compact owner descriptor");
     assert_eq!(descriptor.owner.uri, owner.uri, "canonical owner URI, not a fabricated id URI");
     assert_eq!(descriptor.ast_uri.as_ref(), ast_uri, "ast_uri must not be empty");
     assert_eq!(descriptor.input_key.as_ref(), input_key, "input_key must not be empty");
 
     let cont = graph
-        .continuation_for_owner(owner.uri_id)
+        .continuation_for_owner(owner.uri_id())
         .expect("compact continuation");
-    assert_eq!(cont.owner_uri_id, owner.uri_id);
+    assert_eq!(cont.owner_uri_id, owner.uri_id());
     assert_eq!(cont.pipe_hash, 7);
     assert_eq!(cont.instance_id, 9);
     assert_eq!(cont.depth, 2);
@@ -199,8 +199,8 @@ fn runtime_graph_identity_and_rows_survive_sqlite_reopen() {
     let table = graph.declare_output_table("sprf://table/warnings", 1);
     let first_delta = graph.replace_supports(&owner, &table, &[row("a", "1")], 1);
 
-    assert_eq!(owner.uri_id, same_owner.uri_id);
-    assert_ne!(owner.uri_id, other_owner.uri_id);
+    assert_eq!(owner.uri_id(), same_owner.uri_id());
+    assert_ne!(owner.uri_id(), other_owner.uri_id());
     assert_eq!(first_delta.inserted.len(), 1);
     assert_eq!(first_delta.retracted.len(), 0);
     assert_eq!(facts.len(RUNTIME_NODE), 4);
@@ -257,7 +257,7 @@ fn wake_dispatch_uses_subscribe_edges_as_separate_readiness_slots() {
     let woken = graph.dispatch_wake(&source, 1);
 
     assert_eq!(woken, vec![owner.clone()]);
-    assert_ne!(left.uri_id, right.uri_id);
+    assert_ne!(left.uri_id(), right.uri_id());
     assert_eq!(facts.len(RUNTIME_DIRTY), 1);
 }
 
@@ -306,7 +306,7 @@ fn graph_jobs_are_durable_and_idempotent_work_items() {
 
     assert_eq!(facts.len(RUNTIME_DIRTY), 1);
     assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].owner_uri_id, owner.uri_id);
+    assert_eq!(jobs[0].owner_uri_id, owner.uri_id());
 
     drop(graph);
     drop(facts);
@@ -343,7 +343,7 @@ fn sprf_runtime_effects_can_be_declared_through_render_ctx_put() {
         1,
     ));
 
-    assert_eq!(sub.label_id, graph.store.intern_string("left"));
+    assert_eq!(sub.label_id(), graph.store.intern_string("left"));
     // Support edge from the put landed in the graph.
     let support_edges = graph
         .replace_supports(&owner, &table, &[row("ctx", "put")], 2)
@@ -378,10 +378,10 @@ fn notify_table_inserted_enqueues_jobs_for_subscribed_owners() {
     let new_jobs = graph.notify_table_inserted("hits", 2);
 
     assert_eq!(new_jobs.len(), 1);
-    assert_eq!(new_jobs[0].owner_uri_id, owner.uri_id);
+    assert_eq!(new_jobs[0].owner_uri_id, owner.uri_id());
     let pending = graph.pending_jobs();
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].owner_uri_id, owner.uri_id);
+    assert_eq!(pending[0].owner_uri_id, owner.uri_id());
 
     // Second notify with no new subscribers is idempotent: one dirty
     // row per (owner, source, gen).
@@ -490,7 +490,7 @@ fn fact_write_auto_notifies_subscribed_owners() {
     let after = graph.pending_jobs();
     assert_eq!(facts.len("T"), 1);
     assert_eq!(after.len(), before + 1);
-    assert_eq!(after[0].owner_uri_id, owner.uri_id);
+    assert_eq!(after[0].owner_uri_id, owner.uri_id());
 }
 
 #[test]
@@ -540,7 +540,7 @@ fn rule_invoke_memoizes_owner_by_input_arg_tuple() {
     let owner_again = graph
         .rule_memo_get(rule_id, &[arg_a, arg_b])
         .expect("still memoized");
-    assert_eq!(owner_first.uri_id, owner_again.uri_id);
+    assert_eq!(owner_first.uri_id(), owner_again.uri_id());
     assert_eq!(owner_first.uri, owner_again.uri);
 
     let other_assignments = vec![
@@ -559,7 +559,7 @@ fn rule_invoke_memoizes_owner_by_input_arg_tuple() {
     let owner_other = graph
         .rule_memo_get(rule_id, &[arg_a2, arg_b])
         .expect("second-tuple owner");
-    assert_ne!(owner_first.uri_id, owner_other.uri_id);
+    assert_ne!(owner_first.uri_id(), owner_other.uri_id());
     assert_eq!(graph.rule_memo_len(), 2);
 }
 
@@ -627,7 +627,7 @@ fn rule_invoke_body_skips_on_cache_hit_and_refires_on_source_dirty() {
     assert!(graph
         .pending_jobs()
         .iter()
-        .any(|job| job.owner_uri_id == owner.uri_id && job.generation == 3));
+        .any(|job| job.owner_uri_id == owner.uri_id() && job.generation == 3));
 
     // Third fire at gen=4: body re-runs because owner has a pending
     // dirty newer than the cached fire's gen.
@@ -673,9 +673,9 @@ fn run_to_quiescence_drains_three_level_chain() {
     facts.insert_batch("a", vec![Arc::new(row_a)]);
     graph.notify_table_inserted("a", 2);
 
-    let owner_a_id = owner_a.uri_id;
-    let owner_b_id = owner_b.uri_id;
-    let owner_c_id = owner_c.uri_id;
+    let owner_a_id = owner_a.uri_id();
+    let owner_b_id = owner_b.uri_id();
+    let owner_c_id = owner_c.uri_id();
     let facts_for_handler = facts.clone();
     let graph_for_handler = graph.clone();
 
