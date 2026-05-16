@@ -12,6 +12,11 @@ pub enum KeyMatcher {
     Glob(String),
     Capture(String),
     Wildcard,
+    /// json `$$${PATH?}` in key position: recursive descent that binds
+    /// the traversed path. Intercepted in `parse_object` (like `**`) and
+    /// lowered to `SelectStep::AnyCapture`; never reaches the walker as a
+    /// real key matcher.
+    RecursiveCapture(String),
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +28,12 @@ pub struct ObjectEntry {
 #[derive(Debug, Clone)]
 pub enum SelectStep {
     Any,
+    /// Recursive descent (`**`) that also binds the traversed key path
+    /// into `capture` (dot-joined). The v1/v2 `**:` "arbitrary json path
+    /// down" idea, surfaced as the json `$$${PATH?}` carveout.
+    AnyCapture {
+        capture: String,
+    },
     Key {
         name: String,
         capture: Option<String>,
@@ -68,6 +79,9 @@ pub fn compile_steps(steps: &[SelectStep]) -> Result<Vec<CompiledStep>, String> 
 fn compile_one_step(step: &SelectStep) -> Result<CompiledStep, String> {
     Ok(match step {
         SelectStep::Any => CompiledStep::Any,
+        SelectStep::AnyCapture { capture } => CompiledStep::AnyCapture {
+            capture: capture.clone(),
+        },
         SelectStep::Key { name, capture } => CompiledStep::Key {
             name: name.clone(),
             capture: capture.clone(),
@@ -119,5 +133,15 @@ fn compile_key_matcher(km: &KeyMatcher) -> Result<CompiledKeyMatcher, String> {
         }
         KeyMatcher::Capture(name) => CompiledKeyMatcher::Capture(name.clone()),
         KeyMatcher::Wildcard => CompiledKeyMatcher::Wildcard,
+        KeyMatcher::RecursiveCapture(name) => {
+            // parse_object intercepts `$$${PATH?}` keys before they reach
+            // compile (mirrors the `**` special-case). Reaching here means
+            // the key escaped that interception — a parser bug.
+            return Err(format!(
+                "json: `$$${{{}?}}` recursive-capture key was not lowered \
+                 to AnyCapture (parser bug)",
+                name
+            ));
+        }
     })
 }

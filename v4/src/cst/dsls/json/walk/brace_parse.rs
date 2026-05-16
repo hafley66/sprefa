@@ -149,7 +149,17 @@ fn parse_object(
         skip_ws(input, pos);
         let (key, value_steps) = parse_entry(input, pos, annotations, positions)?;
 
-        if matches!(&key, KeyMatcher::Exact(s) if s == "**") {
+        // `**:` and `$$${PATH?}:` both expand to recursive descent here,
+        // consuming the rest of the object. `$$${PATH?}` additionally
+        // binds the traversed path via `AnyCapture`.
+        let recursive_step: Option<SelectStep> = match &key {
+            KeyMatcher::Exact(s) if s == "**" => Some(SelectStep::Any),
+            KeyMatcher::RecursiveCapture(name) => Some(SelectStep::AnyCapture {
+                capture: name.clone(),
+            }),
+            _ => None,
+        };
+        if let Some(step) = recursive_step {
             skip_ws(input, pos);
             if peek_byte(input, *pos) == Some(b',') {
                 *pos += 1;
@@ -159,11 +169,11 @@ fn parse_object(
 
             if !entries.is_empty() {
                 let mut result = vec![SelectStep::Object { entries }];
-                result.push(SelectStep::Any);
+                result.push(step);
                 result.extend(value_steps);
                 return Ok(result);
             }
-            let mut steps = vec![SelectStep::Any];
+            let mut steps = vec![step];
             steps.extend(value_steps);
             return Ok(steps);
         }
@@ -385,6 +395,43 @@ fn parse_key(
         return Ok(key_matcher_parse(content));
     }
 
+    // json `$$${NAME?}` / `$$${NAME}` carveout: the recursive-descent
+    // path-capture key (the v1/v2 `**:` "arbitrary json path down" idea).
+    // The host pre-pass already recorded a Bind interp at the third `$`
+    // (it matches `${`, so its range.lo points at `$$$`+2, NOT +3); the
+    // json native parser still sees the raw `$$${NAME?}` bytes here and
+    // owns the `?`-strip, exactly as the single `${NAME?}` value path
+    // does. Detected in key position only; value-position `$$$` stays
+    // ast-grep territory.
+    if input[*pos..].starts_with("$$${") {
+        let token_start = *pos;
+        let inner_start = *pos + 4;
+        let mut p = inner_start;
+        let b = input.as_bytes();
+        while p < input.len() && b[p] != b'}' {
+            p += 1;
+        }
+        if p >= input.len() {
+            return Err("unclosed `$$${` in json key position".into());
+        }
+        let inner = &input[inner_start..p];
+        // Strip the host-grammar bind marker; `$$${X?}` and `$$${X}` are
+        // the same recursive path-capture (mirrors `${X?}` value path).
+        let name = inner.strip_suffix('?').unwrap_or(inner);
+        if name.is_empty()
+            || !(name.as_bytes()[0].is_ascii_alphabetic() || name.as_bytes()[0] == b'_')
+            || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        {
+            return Err(format!("invalid recursive-capture name `$$${{{}}}`", inner));
+        }
+        *pos = p + 1;
+        positions.push(CapturePosition {
+            name: Arc::from(name),
+            range: token_start..*pos,
+        });
+        return Ok(KeyMatcher::RecursiveCapture(name.to_string()));
+    }
+
     if input[*pos..].starts_with("**")
         && (*pos + 2 >= input.len() || !input.as_bytes()[*pos + 2].is_ascii_alphanumeric())
     {
@@ -518,6 +565,20 @@ mod tests {
         let (steps, _, _) = parse_body("{ **: { image: $I } }").unwrap();
         assert!(matches!(&steps[0], SelectStep::Any));
         assert!(matches!(&steps[1], SelectStep::Object { .. }));
+    }
+
+    #[test]
+    fn triple_dollar_key_is_recursive_capture() {
+        // `$$${PATH?}` in key position lowers to AnyCapture, not a
+        // single-key Capture. Mirrors the `**` → Any expansion.
+        let (steps, _, positions) = parse_body("{ $$${PATH?}: { id: $X } }").unwrap();
+        assert!(
+            matches!(&steps[0], SelectStep::AnyCapture { capture } if capture == "PATH"),
+            "steps[0] = {:?}",
+            steps[0]
+        );
+        // `?` is stripped at parse, capture name recorded for LSP.
+        assert!(positions.iter().any(|p| p.name.as_ref() == "PATH"));
     }
 
     #[test]

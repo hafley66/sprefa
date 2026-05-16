@@ -21,6 +21,11 @@ pub type Captures = FxHashMap<Arc<str>, WalkCapture>;
 #[derive(Debug)]
 pub enum CompiledStep {
     Any,
+    /// Recursive descent that binds the dot-joined traversed key path
+    /// into `capture`. Compiled form of the json `$$${PATH?}` carveout.
+    AnyCapture {
+        capture: String,
+    },
     Key {
         name: String,
         capture: Option<String>,

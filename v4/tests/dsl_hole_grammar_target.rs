@@ -6,8 +6,14 @@
 //! `(?P<X>[^/]*)`; re: `(?P<X>.*?)`; json: brace-pattern capture;
 //! sql/sql_where: column reference on `"input"`).
 //!
-//! `$$${...}` is **ast-grep only**. Every other DSL rejects (or
-//! literalises) it.
+//! `$$${...}` is the per-DSL "looser form" carveout. Most DSLs use it
+//! for a wider single-vs-multi match (ast: sibling sequence; glob:
+//! multi-segment; re: loose `.*?`). `json` uses it for the recursive
+//! path-capture: `$$${PATH?}` in KEY position is the v1/v2 `**:`
+//! "match any sub-object arbitrarily deep, binding the traversed
+//! path" idea. `json` single `${NAME?}` keeps its single-key bind.
+//! sql / sql_where have no meaningful single-vs-multi distinction at
+//! the hole position, so they have no `$$$` form.
 
 use std::sync::Arc;
 
@@ -160,6 +166,31 @@ fn json_hole_binds_value() {
     assert_eq!(rows[0].get("N").unwrap_or(""), "alice");
 }
 
+/// `$$${PATH?}` in json KEY position is the recursive path-capture: it
+/// descends arbitrarily deep (like `**`) and binds the dot-joined
+/// traversed key path into `PATH`. This is the v1/v2 `**:` "arbitrary
+/// json path down" idea, surfaced as json's `$$$` carveout. Single
+/// `${NAME?}` keeps its single-key bind (covered by `json_hole_binds_value`).
+#[test]
+fn json_triple_dollar_is_recursive_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("compose.json"),
+        br#"{"services":{"web":{"image":"nginx"}}}"#,
+    )
+    .unwrap();
+    let store = run_in(
+        tmp.path(),
+        "rule(:imgs, PATH?, IMG?) { fs > glob`**/*.json` > read \
+         > json`{ $$${PATH?}: { image: ${IMG?} } }` };",
+    );
+    let rows = store.rows_of("imgs");
+    assert_eq!(rows.len(), 1, "rows = {:?}", rows.len());
+    assert_eq!(rows[0].get("IMG").unwrap_or(""), "nginx");
+    // Path traversed from doc root to the object holding `image`.
+    assert_eq!(rows[0].get("PATH").unwrap_or(""), "services.web");
+}
+
 // ─── re ───────────────────────────────────────────────────────────────────
 
 /// `${NAME?}` in re lowers to `(?P<NAME>\w+)` (tight word-form default).
@@ -251,24 +282,31 @@ fn sql_where_hole_binds_parameter() {
 /// - ast (sibling sequence, native ast-grep)
 /// - glob (multi-segment, alias of `**`)
 /// - re (loose `.*?` escape hatch)
-/// json, sql, sql_where do not have a meaningful single-vs-multi
-/// distinction at the hole position, so they have no $$$ form.
+/// - json (recursive path-capture in KEY position — the v1/v2 `**:`
+///   "arbitrary json path down" idea)
+/// sql, sql_where have no meaningful single-vs-multi distinction at the
+/// hole position, so they have no `$$$` form.
 #[test]
 fn triple_dollar_only_where_single_vs_multi_makes_sense() {
     use v4::cst::diag::SilentSink;
     use v4::cst::dsl::Dsl;
 
-    // json: brace_parse rejects the extra `$` chars with
-    // "empty capture name after `$`".
+    // json: `$$${PATH?}` in KEY position is the recursive path-capture
+    // carveout — it must COMPILE (it no longer rejects). Single-key
+    // `${N?}` value bind is unaffected (covered elsewhere).
     let json = v4::cst::dsls::json::JsonDsl::new();
     assert!(
-        json.compile(b"{ name: $$${N?} }", &SilentSink).is_err(),
-        "json must reject `$$${{...}}` at native compile",
+        json.compile(b"{ $$${PATH?}: { name: ${N?} } }", &SilentSink)
+            .is_ok(),
+        "json must accept `$$${{PATH?}}` as recursive path-capture",
     );
+    // The looser `$$$` form is only meaningful in KEY position; in value
+    // position json has no single-vs-multi distinction, so `$$$` there
+    // is still not a special form.
 
     // sql / sql_where: the host pre-pass produces one Term interp for
     // the inner `${V?}`; the leading two `$` characters stay as literal
     // bytes. No DSL silently promotes triple-dollar to a special form
-    // (only ast does). We don't run those through the runtime here — the
-    // contract is "no per-DSL carveout", verified by reading source.
+    // there. We don't run those through the runtime here — the contract
+    // is "no per-DSL carveout", verified by reading source.
 }

@@ -31,6 +31,10 @@ pub struct WalkOutcome {
 struct Ctx {
     depth: u32,
     parent_key: Option<Arc<str>>,
+    /// Keys traversed from the walk root to the current node. Only the
+    /// `AnyCapture` step reads this (json `$$${PATH?}` path binding);
+    /// array indices contribute no segment.
+    path: Vec<Arc<str>>,
 }
 
 impl Ctx {
@@ -38,18 +42,23 @@ impl Ctx {
         Self {
             depth: 0,
             parent_key: None,
+            path: Vec::new(),
         }
     }
     fn descend_key(&self, key: &str) -> Self {
+        let mut path = self.path.clone();
+        path.push(Arc::from(key));
         Self {
             depth: self.depth + 1,
             parent_key: Some(Arc::from(key)),
+            path,
         }
     }
     fn descend_index(&self) -> Self {
         Self {
             depth: self.depth + 1,
             parent_key: None,
+            path: self.path.clone(),
         }
     }
 }
@@ -112,6 +121,49 @@ fn walk_inner<N: DataNode>(
     match step {
         CompiledStep::Any => {
             let mut out = walk_inner(node, rest, ctx, caps);
+            match node.kind() {
+                DataKind::Object => {
+                    for (k, v) in node.entries() {
+                        let k_text = scalar_text(&k);
+                        let child_ctx = ctx.descend_key(&k_text);
+                        out.extend(walk_inner(&v, steps, &child_ctx, caps));
+                    }
+                }
+                DataKind::Array => {
+                    for v in node.items() {
+                        let child_ctx = ctx.descend_index();
+                        out.extend(walk_inner(&v, steps, &child_ctx, caps));
+                    }
+                }
+                _ => {}
+            }
+            out
+        }
+        CompiledStep::AnyCapture { capture } => {
+            // Same recursive-descent shape as `Any`: try `rest` at every
+            // node reachable from here, plus recurse deeper. The only
+            // difference is that the dot-joined traversed key path is
+            // bound into `capture` at each "try rest here" point. This is
+            // the v1/v2 `**:` "any path down" idea, surfaced as json
+            // `$$${PATH?}`.
+            let mut here_caps = caps.clone();
+            let path_text: Arc<str> = Arc::from(
+                ctx.path
+                    .iter()
+                    .map(|s| s.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("."),
+            );
+            let (bs, be) = node.byte_range();
+            here_caps.insert(
+                Arc::from(capture.as_str()),
+                WalkCapture {
+                    text: path_text,
+                    byte_start: bs,
+                    byte_end: be,
+                },
+            );
+            let mut out = walk_inner(node, rest, ctx, &here_caps);
             match node.kind() {
                 DataKind::Object => {
                     for (k, v) in node.entries() {
@@ -558,6 +610,49 @@ mod tests {
             .filter_map(|r| r.captures.get("I").map(|c| c.text.to_string()))
             .collect();
         assert!(imgs.contains(&"nginx".to_string()));
+    }
+
+    #[test]
+    fn triple_dollar_binds_traversed_path() {
+        // `$$${PATH?}` is `**` plus a binding of the dot-joined key path
+        // from the walk root to where the value sub-pattern matched.
+        let json = parse_json(r#"{"a":{"b":{"image":"nginx"}}}"#);
+        let steps = compile("{ $$${PATH?}: { image: $I } }");
+        let out = walk(&json, &steps);
+        let hits: Vec<(String, String)> = out
+            .rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.captures.get("PATH")?.text.to_string(),
+                    r.captures.get("I")?.text.to_string(),
+                ))
+            })
+            .collect();
+        assert!(
+            hits.contains(&("a.b".to_string(), "nginx".to_string())),
+            "expected PATH=a.b bound to nginx, got {:?}",
+            hits
+        );
+    }
+
+    #[test]
+    fn triple_dollar_question_optional_same_as_no_question() {
+        // `$$${P?}` and `$$${P}` parse to the same recursive-capture.
+        let json = parse_json(r#"{"x":{"k":"v"}}"#);
+        let a = walk(&json, &compile("{ $$${P?}: { k: $V } }"));
+        let b = walk(&json, &compile("{ $$${P}: { k: $V } }"));
+        let collect = |o: &WalkOutcome| {
+            let mut v: Vec<_> = o
+                .rows
+                .iter()
+                .filter_map(|r| Some(r.captures.get("P")?.text.to_string()))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(collect(&a), collect(&b));
+        assert!(collect(&a).contains(&"x".to_string()));
     }
 
     #[test]
