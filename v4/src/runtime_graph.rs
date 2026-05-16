@@ -1071,6 +1071,25 @@ struct EdgeRecord {
     uri: Arc<str>,
 }
 
+/// Single-table SQLite sidecar for per-file AST subscription records.
+///
+/// (a) What it is: collapses the generic four-row
+/// `runtime_node`/`runtime_edge`/`runtime_continuation` subscription
+/// shape into one `INSERT OR REPLACE` row keyed by owner id, with the
+/// input cursor stored as a BLOB (a magic-prefixed UTF-8 path for the
+/// common plain-FS cursor, the full codec otherwise).
+///
+/// (b) Why it is not generic infrastructure: the BLOB fast path
+/// (`COMPACT_FS_CURSOR_MAGIC` + `is_plain_fs_cursor`) is tied to sprf's
+/// cursor wire format and the `FOCAL_TERM`/`"FS"` term names. Promoting
+/// it to `effect_runtime` would either drop that fast path or require a
+/// caller-supplied encoder; deferred until the cursor codec stabilizes.
+///
+/// (c) Known lossy omission, now fixed: earlier this path synthesized a
+/// fake `sprf://runtime/owner/{string_id}` URI and returned empty
+/// `ast_uri`/`input_key` from `owner_descriptor`. The canonical owner
+/// URI, ast URI, and input key are now persisted alongside the row so
+/// the compact path matches the generic path's descriptor exactly.
 struct CompactSourceGraph {
     conn: Mutex<rusqlite::Connection>,
     write_stats: WriteStats,
@@ -1124,6 +1143,9 @@ impl CompactSourceGraph {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS runtime_source_subscription_compact (
                 owner_id TEXT PRIMARY KEY,
+                owner_uri TEXT NOT NULL,
+                ast_uri TEXT NOT NULL,
+                input_key TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 pipe_hash INTEGER NOT NULL,
                 instance_id INTEGER NOT NULL,
@@ -1154,6 +1176,9 @@ impl CompactSourceGraph {
                 );
                 (
                     StringId::of(owner_uri.as_ref()).0.to_string(),
+                    owner_uri.to_string(),
+                    subscription.ast_uri.clone(),
+                    subscription.input_key.clone(),
                     StringId::of(subscription.source_uri.as_str()).0.to_string(),
                     subscription.pipe_hash.to_string(),
                     subscription.instance_id.to_string(),
@@ -1163,7 +1188,7 @@ impl CompactSourceGraph {
                 )
             })
             .collect();
-        let byte_count = rows.iter().map(|row| row.5.len() as u64).sum();
+        let byte_count = rows.iter().map(|row| row.8.len() as u64).sum();
         self.write_stats
             .record_timed(rows.len() as u64, byte_count, 1, || {
                 let mut conn = self.conn.lock().unwrap();
@@ -1174,15 +1199,16 @@ impl CompactSourceGraph {
                     let mut insert = tx
                         .prepare(
                             "INSERT OR REPLACE INTO runtime_source_subscription_compact
-                            (owner_id, source_id, pipe_hash, instance_id, depth,
-                             input_cursor, generation)
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                            (owner_id, owner_uri, ast_uri, input_key, source_id,
+                             pipe_hash, instance_id, depth, input_cursor, generation)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                         )
                         .expect("prepare compact source subscription insert");
                     for row in rows {
                         insert
                             .execute(rusqlite::params![
                                 row.0, row.1, row.2, row.3, row.4, row.5, row.6,
+                                row.7, row.8, row.9,
                             ])
                             .expect("insert compact source subscription");
                     }
@@ -1201,7 +1227,7 @@ impl CompactSourceGraph {
         let source_id = source_uri_id.0.to_string();
         let mut stmt = conn
             .prepare(
-                "SELECT owner_id
+                "SELECT owner_id, owner_uri
                  FROM runtime_source_subscription_compact
                  WHERE source_id = ?1
                  ORDER BY owner_id",
@@ -1210,7 +1236,7 @@ impl CompactSourceGraph {
         let rows = stmt
             .query_map([source_id], |row| {
                 let owner_id: String = row.get(0)?;
-                let owner_uri = format!("sprf://runtime/owner/{owner_id}");
+                let owner_uri: String = row.get(1)?;
                 Ok(OwnerNode {
                     uri_id: StringId(owner_id.parse().unwrap_or(0)),
                     uri: Arc::from(owner_uri),
@@ -1225,21 +1251,22 @@ impl CompactSourceGraph {
         let owner_id = owner_uri_id.0.to_string();
         let mut stmt = conn
             .prepare(
-                "SELECT owner_id
+                "SELECT owner_uri, ast_uri, input_key
                  FROM runtime_source_subscription_compact
                  WHERE owner_id = ?1",
             )
             .ok()?;
         stmt.query_row([owner_id], |row| {
-            let owner_id: String = row.get(0)?;
-            let owner_uri = format!("sprf://runtime/owner/{owner_id}");
+            let owner_uri: String = row.get(0)?;
+            let ast_uri: String = row.get(1)?;
+            let input_key: String = row.get(2)?;
             Ok(OwnerDescriptor {
                 owner: OwnerNode {
                     uri_id: owner_uri_id,
                     uri: Arc::from(owner_uri),
                 },
-                ast_uri: Arc::from(""),
-                input_key: Arc::from(""),
+                ast_uri: Arc::from(ast_uri),
+                input_key: Arc::from(input_key),
             })
         })
         .ok()
@@ -1256,11 +1283,14 @@ impl CompactSourceGraph {
             )
             .ok()?;
         stmt.query_row([owner_id], |row| {
-            let pipe_hash: String = row.get(0)?;
-            let instance_id: String = row.get(1)?;
-            let depth: String = row.get(2)?;
+            // Columns are declared INTEGER; SQLite coerces the string
+            // values written by `record` to integer affinity, so read
+            // them back as integers rather than text.
+            let pipe_hash: i64 = row.get(0)?;
+            let instance_id: i64 = row.get(1)?;
+            let depth: i64 = row.get(2)?;
             let input_cursor: Vec<u8> = row.get(3)?;
-            let generation: String = row.get(4)?;
+            let generation: i64 = row.get(4)?;
             let input = decode_runtime_cursor(&input_cursor).map_err(|err| {
                 rusqlite::Error::FromSqlConversionFailure(
                     input_cursor.len(),
@@ -1270,11 +1300,11 @@ impl CompactSourceGraph {
             })?;
             Ok(RuntimeContinuation {
                 owner_uri_id,
-                pipe_hash: pipe_hash.parse().unwrap_or(0),
-                instance_id: instance_id.parse().unwrap_or(0),
-                depth: depth.parse().unwrap_or(0),
+                pipe_hash: pipe_hash as u64,
+                instance_id: instance_id as u64,
+                depth: depth as u32,
                 input,
-                generation: generation.parse().unwrap_or(0),
+                generation: generation as u64,
             })
         })
         .ok()

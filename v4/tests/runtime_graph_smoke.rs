@@ -81,6 +81,67 @@ fn compact_source_graph_exposes_write_stats_snapshot() {
 }
 
 #[test]
+fn compact_owner_descriptor_and_continuation_round_trip_through_fs_cursor() {
+    // record_source_subscriptions short-circuits to the compact path
+    // (no runtime_node row), so owner_descriptor/continuation_for_owner
+    // fall back to CompactSourceGraph. This asserts the canonical owner
+    // URI, ast_uri, and input_key survive the round trip — the two URI
+    // bugs (fake "sprf://runtime/owner/{id}" URI, empty ast_uri/input_key)
+    // would make these assertions fail.
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("runtime.db");
+    let (_facts, graph) = sqlite_compact_graph(&db);
+
+    let ast_uri = "sprf://ast/source/test/1/0";
+    let input_key = "input:a";
+    let source_uri = "sprf://source/file/a.c";
+    let input = path_cursor("a.c");
+
+    graph.record_source_subscriptions(
+        &[SourceSubscriptionInput {
+            ast_uri: ast_uri.to_string(),
+            input_key: input_key.to_string(),
+            source_uri: source_uri.to_string(),
+            label: "file".to_string(),
+            pipe_hash: 7,
+            instance_id: 9,
+            depth: 2,
+            input: &input,
+        }],
+        11,
+    );
+
+    // The owner StringId is a pure hash of the canonical owner URI;
+    // declare_owner on a throwaway plain graph reproduces it without
+    // writing a runtime_node into the compact graph's facts store.
+    let side = tmp.path().join("side.db");
+    let (_side_facts, side_graph) = sqlite_graph(&side);
+    let owner = side_graph.declare_owner(ast_uri, None, input_key, source_uri, "ast", 11);
+    assert!(
+        owner.uri.starts_with("sprf://runtime/owner/"),
+        "canonical owner URI shape"
+    );
+
+    let descriptor = graph
+        .owner_descriptor(owner.uri_id)
+        .expect("compact owner descriptor");
+    assert_eq!(descriptor.owner.uri, owner.uri, "canonical owner URI, not a fabricated id URI");
+    assert_eq!(descriptor.ast_uri.as_ref(), ast_uri, "ast_uri must not be empty");
+    assert_eq!(descriptor.input_key.as_ref(), input_key, "input_key must not be empty");
+
+    let cont = graph
+        .continuation_for_owner(owner.uri_id)
+        .expect("compact continuation");
+    assert_eq!(cont.owner_uri_id, owner.uri_id);
+    assert_eq!(cont.pipe_hash, 7);
+    assert_eq!(cont.instance_id, 9);
+    assert_eq!(cont.depth, 2);
+    assert_eq!(cont.generation, 11);
+    assert_eq!(cont.input.value.as_ref(), "a.c", "FS cursor value round-trips");
+    assert_eq!(cont.input.get("FS").as_deref(), Some("a.c"));
+}
+
+#[test]
 fn mounted_sql_inputs_are_durable_for_graph_job_rerun() {
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("runtime.db");
