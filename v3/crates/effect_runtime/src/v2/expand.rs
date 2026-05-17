@@ -446,7 +446,11 @@ fn dispatch_with_seam<N: Next>(
     let mut run_idx: Vec<usize> = Vec::new();
     let mut prior_for: Vec<Option<Vec<Arc<N>>>> = Vec::new();
     for (bi, row) in batch.iter().enumerate() {
-        let in_key = row.value.content_hash();
+        // Phase 6: the seam decides the memo key for this input row.
+        // For a content-threaded op it is the source-keyed digest
+        // (stable under edits to the read sources); otherwise the
+        // default is `content_hash()` (== Phase-0 whole-cursor key).
+        let in_key = seam.in_key_for(owner, row.value.as_ref());
         match seam.probe(owner, in_key) {
             MemoProbe::Replay(rows) => {
                 // Pure replay: splice stored child rows downstream,
@@ -498,7 +502,10 @@ fn dispatch_with_seam<N: Next>(
     for (slot, &bi) in run_idx.iter().enumerate() {
         let in_row = &batch[bi];
         let idx = slot;
-        let in_key = in_row.value.content_hash();
+        // Same Phase-6 source-keyed digest used for the probe above;
+        // `reconcile` must store/diff the memo under the SAME key the
+        // next render will probe with.
+        let in_key = seam.in_key_for(owner, in_row.value.as_ref());
         let fresh: Vec<Arc<N>> = captured
             .iter()
             .filter(|c| c.parent_id == Some(in_row.id))

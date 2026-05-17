@@ -487,6 +487,103 @@ impl RuntimeGraph {
             .collect()
     }
 
+    /// Phase 6 (dirty-source reverse-lookup, Diagram A). Given a
+    /// changed `SourceId`, return the `(owner_op_id, in_key)` pairs
+    /// whose recorded dep set contains it. This is the EXACT scope of
+    /// a source change: it indexes `MEMO_DEPS` by `source_id`
+    /// (`read_where`, one source row family — NOT a full-graph scan),
+    /// so the dirty sweep touches only the affected owners. Preserving
+    /// the constant-RSS property is exactly why this is keyed, not
+    /// scanned.
+    pub fn memo_dep_owners_for_source(
+        &self,
+        source: crate::source_clock::SourceId,
+    ) -> Vec<(String, String)> {
+        let sid = source.hex();
+        let mut out: Vec<(String, String)> = self
+            .facts
+            .read_where(MEMO_DEPS_TABLE, "source_id", sid.as_str())
+            .into_iter()
+            .filter_map(|r| {
+                Some((
+                    r.get("owner_op_id")?.to_string(),
+                    r.get("in_key")?.to_string(),
+                ))
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Phase 6 (Diagram A). Mark one MEMO_DEPS owner dirty for a
+    /// changed source. Writes a `RUNTIME_DIRTY` row keyed by the RAW
+    /// owner-op hex (the digest the seam uses) — NOT a StringId URI:
+    /// the dirty-source loop drives by the recorded dep set, not the
+    /// SUBSCRIBE-edge graph, so the worklist key is the same hex
+    /// `MEMO_DEPS`/the seam use. Idempotent per
+    /// `(owner, source, generation)` (same dedup as the core
+    /// `mark_dirty`).
+    pub fn mark_memo_owner_dirty(&self, owner_hex: &str, source_hex: &str, generation: u64) {
+        self.facts
+            .declare(RUNTIME_DIRTY, &["owner_uri_id", "source_uri_id", GENERATION]);
+        let already = self
+            .facts
+            .read_where(RUNTIME_DIRTY, "owner_uri_id", owner_hex)
+            .iter()
+            .any(|r| {
+                r.get("source_uri_id") == Some(source_hex)
+                    && r.get(GENERATION).and_then(|g| g.parse::<u64>().ok())
+                        == Some(generation)
+            });
+        if already {
+            return;
+        }
+        let mut row = Cursor::default();
+        row.set("owner_uri_id", owner_hex);
+        row.set("source_uri_id", source_hex);
+        row.set(GENERATION, generation.to_string());
+        self.facts.insert(RUNTIME_DIRTY, Arc::new(row));
+    }
+
+    /// Phase 6. Snapshot the raw-hex dirty worklist as
+    /// `(owner_hex, source_hex, generation)`, deterministically
+    /// ordered. The dirty-source loop drains this; `clear_memo_owner_dirty`
+    /// retires one entry.
+    pub fn dirty_memo_owners(&self) -> Vec<(String, String, u64)> {
+        let mut rows: Vec<(String, String, u64)> = self
+            .facts
+            .rows_of(RUNTIME_DIRTY)
+            .into_iter()
+            .filter_map(|r| {
+                Some((
+                    r.get("owner_uri_id")?.to_string(),
+                    r.get("source_uri_id")?.to_string(),
+                    r.get(GENERATION)?.parse::<u64>().ok()?,
+                ))
+            })
+            .collect();
+        rows.sort();
+        rows.dedup();
+        rows
+    }
+
+    /// Phase 6. Retire exactly the dirty row the sweep just handled
+    /// (not every row for the owner) so work the re-render enqueues
+    /// for the same owner in its own round is not wiped — same
+    /// discipline as the core `clear_dirty_one`.
+    pub fn clear_memo_owner_dirty(&self, owner_hex: &str, source_hex: &str, generation: u64) {
+        let gen_text = generation.to_string();
+        self.facts.delete_matching(
+            RUNTIME_DIRTY,
+            &[
+                ("owner_uri_id", owner_hex),
+                ("source_uri_id", source_hex),
+                (GENERATION, gen_text.as_str()),
+            ],
+        );
+    }
+
     /// Memoize the OwnerNode for a rule call by (rule_name, arg_keys).
     /// First call with the tuple declares an owner via the supplied
     /// `build` closure; later calls with the same tuple return the same

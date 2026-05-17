@@ -4,6 +4,7 @@ pub mod compile;
 pub mod config;
 pub mod cst;
 pub mod cursor_codec;
+pub mod dirty_source;
 pub mod fact;
 #[cfg(feature = "ghcache")]
 pub mod ghcache;

@@ -47,10 +47,34 @@ pub enum MemoDelta {
 /// `ExpandOpts`/`RenderCtx`. Implemented in v4 over the Phase-3
 /// `v4::Memo`.
 pub trait MemoSeam<N>: Send + Sync {
+    /// Phase 6 (source-keyed owner identity). The driver asks the seam
+    /// for the memo `in_key` of one input row BEFORE probing, instead
+    /// of hard-coding `raw.content_hash()`. A content-threaded op
+    /// (e.g. `re` reading file bytes carried in the in-cursor focal
+    /// value) must NOT key its memo on that transient content — an
+    /// edit would change the in-cursor identity, the probe would MISS
+    /// (look brand-new), and `reconcile` (which needs STALE = same
+    /// owner key, newer source gen) would never fire. The seam returns
+    /// an `in_key` derived from the input row's STABLE identity (the
+    /// source-deriving terms), so it is invariant under edits to those
+    /// sources and changes only when the op instance or its source set
+    /// changes.
+    ///
+    /// Default: `raw.content_hash()` — the pre-Phase-6 behavior and,
+    /// for an op that records NO deps, exactly `key_hash(&[])` (Phase 0
+    /// whole-cursor identity). Only dep-recording owners override.
+    fn in_key_for(&self, _owner: [u8; 32], raw: &N) -> [u8; 32]
+    where
+        N: super::next::Next,
+    {
+        raw.content_hash()
+    }
+
     /// `owner` = stable opaque id of this lowered op call (the driver
     /// folds pipe_hash ++ instance_id ++ depth ++ kind). `in_key` =
     /// the input row's content digest (Phase 0: `key_hash(&[])` ==
-    /// whole-cursor `content_hash`).
+    /// whole-cursor `content_hash`; Phase 6: `in_key_for`'s
+    /// source-keyed digest for a dep-recording owner).
     fn probe(&self, owner: [u8; 32], in_key: [u8; 32]) -> MemoProbe<N>;
 
     /// Called after a `Stale`/`Miss` render. `prior` is `Some` only

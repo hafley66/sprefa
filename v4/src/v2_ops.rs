@@ -1537,6 +1537,30 @@ impl Component for LineComponent {
     }
 }
 
+/// Phase 6: lowercase hex of a 32-byte digest (the `source_id`/`in_key`
+/// column form the runtime graph stores).
+fn hex32_bytes(b: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(64);
+    for x in b {
+        s.push_str(&format!("{x:02x}"));
+    }
+    s
+}
+
+/// Phase 6: the v3 driver's owner digest for this input row —
+/// `blake3(pipe_hash ++ instance_id ++ depth ++ kind)`. Recorded
+/// dependencies must be keyed by the SAME digest so the seam probe
+/// finds them (and so a dirty-source reverse-lookup on `MEMO_DEPS`
+/// resolves this owner). Mirrors the fold in `expand::dispatch_with_seam`.
+fn re_owner_hex(row: &QueueRow<Cursor>, kind: &str) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(&row.pipe_hash.to_le_bytes());
+    h.update(&row.instance_id.to_le_bytes());
+    h.update(&row.depth.to_le_bytes());
+    h.update(kind.as_bytes());
+    hex32_bytes(h.finalize().as_bytes())
+}
+
 /// Regex match. Reads `on` term as the haystack (or the file at FS if
 /// `on == "FS"`). Stamps LO/HI/MATCH/captures on each hit. When `on ==
 /// "FS"`, also stamps `CONTENT_HASH` interned via `Interner`.
@@ -1595,6 +1619,63 @@ impl ReComponent {
 }
 impl Component for ReComponent {
     type Next = Cursor;
+
+    /// Phase 6: `re` is the content-threaded leaf of `fs > read > re`
+    /// — it matches over `cursor.value` (the file BYTES `read`
+    /// produced) but its STABLE identity is the `FS` path term. Record
+    /// the read file as a `MEMO_DEPS` dependency of this owner+input
+    /// row, keyed by the SAME `(owner, in_key)` the v3 driver's seam
+    /// computes: `owner = blake3(pipe_hash ++ instance_id ++ depth ++
+    /// kind)`, `in_key = key_hash(["FS"])` (the source-keyed digest,
+    /// stable under edits to the file bytes). Without this the `re`
+    /// owner never appears in `MEMO_DEPS`, the probe MISSes on every
+    /// edit, and `reconcile` never fires (the Phase-4 deviation #3
+    /// gap). Mirrors the Phase-2 `ReadComponent`/`AstNmComponent`
+    /// recording seams; the read itself still happens in
+    /// `render_batch` below.
+    fn dispatch(
+        &self,
+        ctx: &RenderCtx,
+        rows: &[QueueRow<Cursor>],
+        queue: &dyn QueueBackend<Cursor>,
+    ) {
+        let reads_focal_bytes = self.on.is_empty() || self.on == "FS";
+        if reads_focal_bytes {
+            if let Some(graph) = ctx.runtime::<crate::runtime_graph::RuntimeGraph>() {
+                use crate::source_clock::{SourceClock, SourceId};
+                for row in rows {
+                    let c = row.value.as_ref();
+                    let Some(path) = c.get("FS").filter(|p| !p.is_empty()) else {
+                        continue;
+                    };
+                    // Source-keyed owner identity (Phase 6): owner =
+                    // blake3(pipe ++ instance ++ depth ++ kind);
+                    // in_key = key_hash(["FS"]) — the focal `&`/bytes
+                    // term is excluded so an edit does not move it.
+                    let owner_hex = re_owner_hex(row, self.kind());
+                    let in_hex = hex32_bytes(&c.key_hash(&["FS"]));
+                    let sid = SourceId::for_file(path);
+                    let gen_seen = graph.clock().current_gen(sid);
+                    ctx.record_read(sid.0, gen_seen);
+                    for (digest, gen) in ctx.take_deps() {
+                        graph.record_memo_dep(
+                            &owner_hex,
+                            in_hex.as_str(),
+                            SourceId(digest),
+                            gen,
+                        );
+                    }
+                }
+            }
+        }
+        // Default dispatch behavior: render_batch + splice each child.
+        let inputs: Vec<&Cursor> = rows.iter().map(|r| r.value.as_ref()).collect();
+        let nodes = self.render_batch(ctx, &inputs);
+        for (row, node) in rows.iter().zip(nodes) {
+            splice_into(row, node, ctx.depth + 1, ctx.expand_tick, queue);
+        }
+    }
+
     fn render_batch(&self, _ctx: &RenderCtx, batch: &[&Cursor]) -> Vec<Node<Cursor>> {
         let re = self.re.clone();
         let dyn_body = self.dyn_body.clone();
