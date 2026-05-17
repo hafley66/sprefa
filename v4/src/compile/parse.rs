@@ -428,10 +428,25 @@ fn rewrite_quote_strings(src: &str) -> Option<String> {
     let mut out = String::with_capacity(src.len());
     let mut i = 0usize;
     let mut rewrote = false;
-    // Track outer-string mode so a `"` inside `` `…` `` doesn't get
-    // rewritten; also skip `#`-line comments so backticks inside docs
-    // don't toggle the tick state.
-    let mut tick_depth = 0i32;
+    // Model the grammar's real nesting so a `"` inside *any* backtick
+    // body (including a nested `dsl_body` reached through a `${…}` hole)
+    // is never rewritten. A flat 0/1 tick toggle is wrong here: backtick
+    // bodies nest (dsl_body → dsl_interp → dsl_body → …), so an odd
+    // backtick count would otherwise read "outside a body" while the
+    // cursor is actually inside a nested one, corrupting the source.
+    //
+    // Frames mirror the grammar:
+    //   Backtick — inside a `` `…` `` body. `${` pushes Interp; the next
+    //              unescaped `` ` `` pops back to the enclosing context.
+    //   Interp   — inside a `${ … }` hole (host context). A `` ` `` here
+    //              pushes a new Backtick; `}` pops the Interp.
+    // `"` is rewritten only when the stack is empty (true top level).
+    #[derive(PartialEq)]
+    enum Frame {
+        Backtick,
+        Interp,
+    }
+    let mut stack: Vec<Frame> = Vec::new();
     let mut in_comment = false;
     while i < bytes.len() {
         let b = bytes[i];
@@ -443,19 +458,56 @@ fn rewrite_quote_strings(src: &str) -> Option<String> {
             i += 1;
             continue;
         }
-        if tick_depth == 0 && b == b'#' {
+        // `#` line comments only exist at host level (outside any body).
+        if stack.is_empty() && b == b'#' {
             in_comment = true;
             out.push(b as char);
             i += 1;
             continue;
         }
+        match stack.last() {
+            Some(Frame::Backtick) => {
+                // Inside a backtick body: `${` opens a hole, an
+                // unescaped backtick closes the body. Everything else
+                // (including `"`) is opaque text — copy verbatim.
+                if b == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                    stack.push(Frame::Interp);
+                    out.push('$');
+                    out.push('{');
+                    i += 2;
+                    continue;
+                }
+                if b == b'`' {
+                    stack.pop();
+                    out.push('`');
+                    i += 1;
+                    continue;
+                }
+                out.push(b as char);
+                i += 1;
+                continue;
+            }
+            Some(Frame::Interp) => {
+                // Inside a `${…}` hole we are back in host context: a
+                // backtick opens a nested body, `}` closes the hole.
+                // Fall through to the shared host handling below for
+                // `` ` `` / `"`; only `}` needs special handling here.
+                if b == b'}' {
+                    stack.pop();
+                    out.push('}');
+                    i += 1;
+                    continue;
+                }
+            }
+            None => {}
+        }
         if b == b'`' {
-            tick_depth = if tick_depth == 0 { 1 } else { 0 };
-            out.push(b as char);
+            stack.push(Frame::Backtick);
+            out.push('`');
             i += 1;
             continue;
         }
-        if tick_depth == 0 && b == b'"' {
+        if stack.is_empty() && b == b'"' {
             // Find the matching `"`. Tolerate backslash escapes.
             let mut j = i + 1;
             while j < bytes.len() {
