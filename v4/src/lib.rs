@@ -6,6 +6,7 @@ pub mod cst;
 pub mod cursor_codec;
 pub mod dirty_source;
 pub mod fact;
+pub mod fixpoint;
 #[cfg(feature = "ghcache")]
 pub mod ghcache;
 #[cfg(feature = "ghcache")]
@@ -24,6 +25,7 @@ pub mod source_clock;
 pub mod sprf_introspect;
 pub mod sql;
 pub mod store;
+pub mod stratify;
 pub mod telemetry;
 pub mod template;
 pub mod term;
