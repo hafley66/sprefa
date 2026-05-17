@@ -17,7 +17,7 @@
 #   - node ids carry an `n_` literal prefix; tiers an `arch.tN` path.
 #   - label/edge text strips `;()/|` so split+regex stay clean.
 
-rule(:arch_node, ID?, GROUP?, KLASS?, LABEL?);
+rule(:arch_node, ID?, GROUP?, KLASS?, LABEL?, ALLOC?);
 rule(:arch_edge, SRC?, DST?, REL?);
 rule(:arch_group, GID?, GLABEL?);
 
@@ -39,33 +39,37 @@ t9|9 · rule-call dispatch · drives expand`
 
 # --- node facts: id | group | class | label ---
 # class drives the d2 visual tier (see classes block in projection).
-`host_parse|t1|stage|host_parse. tree-sitter CST per host file
-walk_program|t2|stage|walk_program. CST to FusedRule list
-FusedRule|t3|data|FusedRule. one lowered rule plus its op chain
-OpRegistry|t4|reg|OpRegistry. name to OperatorDef table
-split_op|t4|op|split. backtick literal to row stream
-re_op|t4|op|re. regex capture groups to named terms
-render_op|t4|op|render.markdown. template body to text
-sh_op|t4|op|sh. shell out effect node
-OperatorDef|t5|trait|OperatorDef. compile-time op trait. lower bridge
-Component|t5|trait|Component. runtime op trait. render render_batch
-Node|t5|trait|Node. output algebra. Emit Many Park Done
-RenderCtx|t5|trait|RenderCtx. pipe hash depth generation bus
-Cursor|t5|data|Cursor. payload. focal term plus named terms
-expand|t6|stage|expand. run op chain bind term cursors
-FactStore|t7|store|FactStore. derived rows keyed by rule name
-FactRuntimeGraph|t8|store|FactRuntimeGraph. subscribe support dirty sweep
-RuntimeGraph|t8|store|RuntimeGraph. v4 facade over FactRuntimeGraph
-owner_uri|t8|data|owner_uri. owner identity key. switchMap key
-Subscribe|t8|data|Subscribe. source in-edge. owner consumes source
-support|t8|data|support. keyed-children keep-alive set
-call_r|t9|dispatch|CALL r. eager rule-call. emit rows now
-force_r|t9|dispatch|force r. drain rule to fixpoint
-query_r|t9|dispatch|QUERY r. subscribe to rule rows`
+# 5th field is the Rust value/alloc the node owns, surfaced as a
+# hover tooltip (d2 has no <details>; node tooltip is the
+# hidden-until-hover equivalent that survives a static svg export --
+# connection tooltips do NOT). No ; { } | in alloc text.
+`host_parse|t1|stage|host_parse. tree-sitter CST per host file|&tree_sitter::Tree over host file bytes
+walk_program|t2|stage|walk_program. CST to FusedRule list|Vec<PipeAst> lowered to FusedRule
+FusedRule|t3|data|FusedRule. one lowered rule plus its op chain|FusedRule struct, kind plus fused_sql
+OpRegistry|t4|reg|OpRegistry. name to OperatorDef table|HashMap<str, Arc<dyn OperatorDef>>
+split_op|t4|op|split. backtick literal to row stream|Arc<dyn OperatorDef> SplitDef
+re_op|t4|op|re. regex capture groups to named terms|Arc<dyn OperatorDef> ReDef regex::Regex
+render_op|t4|op|render.markdown. template body to text|Arc<dyn OperatorDef> RenderDef
+sh_op|t4|op|sh. shell out effect node|Arc<dyn OperatorDef> wraps std::process::Command
+OperatorDef|t5|trait|OperatorDef. compile-time op trait. lower bridge|trait, fn lower -> Box<dyn Component>
+Component|t5|trait|Component. runtime op trait. render render_batch|Box<dyn Component>, render_batch over a tick
+Node|t5|trait|Node. output algebra. Emit Many Park Done|enum Node, Emit Many Park Done
+RenderCtx|t5|trait|RenderCtx. pipe hash depth generation bus|&RenderCtx, pipe_hash depth tick bus
+Cursor|t5|data|Cursor. payload. focal term plus named terms|Arc<Cursor> with Vec<CursorTerm>
+expand|t6|stage|expand. run op chain bind term cursors|PipeInstance over Vec<Arc<Cursor>> batches
+FactStore|t7|store|FactStore. derived rows keyed by rule name|rule_facts rows, blake3 _id keys
+FactRuntimeGraph|t8|store|FactRuntimeGraph. subscribe support dirty sweep|Z-set deltas plus subscribe and support edges
+RuntimeGraph|t8|store|RuntimeGraph. v4 facade over FactRuntimeGraph|thin facade over FactRuntimeGraph
+owner_uri|t8|data|owner_uri. owner identity key. switchMap key|OwnerUri, the switchMap key
+Subscribe|t8|data|Subscribe. source in-edge. owner consumes source|subscribe_edge, a source stream in-edge
+support|t8|data|support. keyed-children keep-alive set|support_edge refcount keep-alive set
+call_r|t9|dispatch|CALL r. eager rule-call. emit rows now|eager expand, emit rows now
+force_r|t9|dispatch|force r. drain rule to fixpoint|loop expand until no delta
+query_r|t9|dispatch|QUERY r. subscribe to rule rows|read rule_facts, body never runs`
   > split`
 `
-  > re`(?P<ID>[^|]+)\|(?P<GROUP>[^|]+)\|(?P<KLASS>[^|]+)\|(?P<LABEL>.+)`
-  > arch_node(ID, GROUP, KLASS, LABEL);
+  > re`(?P<ID>[^|]+)\|(?P<GROUP>[^|]+)\|(?P<KLASS>[^|]+)\|(?P<LABEL>[^|]+)\|(?P<ALLOC>.+)`
+  > arch_node(ID, GROUP, KLASS, LABEL, ALLOC);
 
 # --- edge facts: src | dst | relation ---
 `host_parse|walk_program|CST feeds walk
@@ -166,13 +170,13 @@ ${ arch_group?(GID?, GLABEL?)
 }
 `
 }
-${ arch_node?(ID?, GROUP?, KLASS?, LABEL?)
-  > render.markdown`arch.${GROUP}.n_${ID}: ${LABEL} { class: ${KLASS} }
+${ arch_node?(ID?, GROUP?, KLASS?, LABEL?, ALLOC?)
+  > render.markdown`arch.${GROUP}.n_${ID}: ${LABEL} { class: ${KLASS}; tooltip: ${ALLOC} }
 `
 }
 ${ arch_edge?(SRC?, DST?, REL?)
-  > arch_node?(SRC, SG?, SK?, SL?)
-  > arch_node?(DST, DG?, DK?, DL?)
+  > arch_node?(SRC, SG?, SK?, SL?, SA?)
+  > arch_node?(DST, DG?, DK?, DL?, DA?)
   > render.markdown`arch.${SG}.n_${SRC} -> arch.${DG}.n_${DST}: ${REL} { style.font-size: 11 }
 `
 }
