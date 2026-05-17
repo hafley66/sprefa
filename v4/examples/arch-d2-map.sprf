@@ -14,19 +14,24 @@
 #     (a d2 vars/title header), never `${`.
 #   - no `"` adjacent to `${`, and no `#` color literals (would need
 #     escaping near `${`); use d2 named colors instead.
-#   - node ids carry an `n_` literal prefix; containers a `g_` prefix.
+#   - node ids carry an `n_` literal prefix; tiers an `arch.tN` path.
 #   - label/edge text strips `;()/|` so split+regex stay clean.
 
 rule(:arch_node, ID?, GROUP?, KLASS?, LABEL?);
 rule(:arch_edge, SRC?, DST?, REL?);
 rule(:arch_group, GID?, GLABEL?);
 
-# --- container groups: id | display label ---
-`pipe|sprf compile pipeline
-reg|op registry
-rt|runtime traits
-state|reactive state graph
-disp|rule-call dispatch`
+# --- processing strata: tier id | display label ---
+# Ordered top-to-bottom by when the .sprf is first touched.
+`t1|1 · parse · first read of the sprf
+t2|2 · lower · CST to rules
+t3|3 · rule · the lowered unit
+t4|4 · op registry · resolved during lower
+t5|5 · runtime traits · the op contract
+t6|6 · execute · run the op chain
+t7|7 · facts · derived rows land
+t8|8 · reactive state · subscribe and keep-alive
+t9|9 · rule-call dispatch · drives expand`
   > split`
 `
   > re`(?P<GID>[^|]+)\|(?P<GLABEL>.+)`
@@ -34,29 +39,29 @@ disp|rule-call dispatch`
 
 # --- node facts: id | group | class | label ---
 # class drives the d2 visual tier (see classes block in projection).
-`host_parse|pipe|stage|host_parse. tree-sitter CST per host file
-walk_program|pipe|stage|walk_program. CST to FusedRule list
-FusedRule|pipe|data|FusedRule. one lowered rule plus its op chain
-expand|pipe|stage|expand. run op chain bind term cursors
-FactStore|pipe|store|FactStore. derived rows keyed by rule name
-OpRegistry|reg|reg|OpRegistry. name to OperatorDef table
-split_op|reg|op|split. backtick literal to row stream
-re_op|reg|op|re. regex capture groups to named terms
-render_op|reg|op|render.markdown. template body to text
-sh_op|reg|op|sh. shell out effect node
-OperatorDef|rt|trait|OperatorDef. compile-time op trait. lower bridge
-Component|rt|trait|Component. runtime op trait. render render_batch
-Node|rt|trait|Node. output algebra. Emit Many Park Done
-RenderCtx|rt|trait|RenderCtx. pipe hash depth generation bus
-Cursor|rt|data|Cursor. payload. focal term plus named terms
-FactRuntimeGraph|state|store|FactRuntimeGraph. subscribe support dirty sweep
-RuntimeGraph|state|store|RuntimeGraph. v4 facade over FactRuntimeGraph
-owner_uri|state|data|owner_uri. owner identity key. switchMap key
-Subscribe|state|data|Subscribe. source in-edge. owner consumes source
-support|state|data|support. keyed-children keep-alive set
-call_r|disp|dispatch|CALL r. eager rule-call. emit rows now
-force_r|disp|dispatch|force r. drain rule to fixpoint
-query_r|disp|dispatch|QUERY r. subscribe to rule rows`
+`host_parse|t1|stage|host_parse. tree-sitter CST per host file
+walk_program|t2|stage|walk_program. CST to FusedRule list
+FusedRule|t3|data|FusedRule. one lowered rule plus its op chain
+OpRegistry|t4|reg|OpRegistry. name to OperatorDef table
+split_op|t4|op|split. backtick literal to row stream
+re_op|t4|op|re. regex capture groups to named terms
+render_op|t4|op|render.markdown. template body to text
+sh_op|t4|op|sh. shell out effect node
+OperatorDef|t5|trait|OperatorDef. compile-time op trait. lower bridge
+Component|t5|trait|Component. runtime op trait. render render_batch
+Node|t5|trait|Node. output algebra. Emit Many Park Done
+RenderCtx|t5|trait|RenderCtx. pipe hash depth generation bus
+Cursor|t5|data|Cursor. payload. focal term plus named terms
+expand|t6|stage|expand. run op chain bind term cursors
+FactStore|t7|store|FactStore. derived rows keyed by rule name
+FactRuntimeGraph|t8|store|FactRuntimeGraph. subscribe support dirty sweep
+RuntimeGraph|t8|store|RuntimeGraph. v4 facade over FactRuntimeGraph
+owner_uri|t8|data|owner_uri. owner identity key. switchMap key
+Subscribe|t8|data|Subscribe. source in-edge. owner consumes source
+support|t8|data|support. keyed-children keep-alive set
+call_r|t9|dispatch|CALL r. eager rule-call. emit rows now
+force_r|t9|dispatch|force r. drain rule to fixpoint
+query_r|t9|dispatch|QUERY r. subscribe to rule rows`
   > split`
 `
   > re`(?P<ID>[^|]+)\|(?P<GROUP>[^|]+)\|(?P<KLASS>[^|]+)\|(?P<LABEL>.+)`
@@ -97,9 +102,10 @@ query_r|FactRuntimeGraph|subscribes via`
 
 # --- project facts -> styled d2 source, write, then render via sh ---
 # NOTE: the body opens with a literal d2 vars/title header so the first
-# non-space token is NOT `${` (parser workaround). Containers are emitted
-# as `g_GID.n_ID` qualified ids; d2 auto-creates the container. Colors are
-# d2 named colors to avoid `#` literals near `${`.
+# non-space token is NOT `${` (parser workaround). A root `arch` grid
+# container (grid-rows: 9, grid-columns: 1) stacks the tiers top-to-bottom
+# in code order; nodes are `arch.tN.n_ID`. Colors are d2 named colors to
+# avoid `#` literals near `${`.
 `arch-map`
   > render.markdown`vars: {
   d2-config: {
@@ -148,20 +154,26 @@ classes: {
   }
 }
 
+arch: sprf to facts processing strata {
+  grid-rows: 9
+  grid-columns: 1
+  grid-gap: 34
+  style: { fill: white; stroke: white; font-size: 13 }
+}
 ${ arch_group?(GID?, GLABEL?)
-  > render.markdown`g_${GID}: ${GLABEL} {
-  style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 17; bold: true }
+  > render.markdown`arch.${GID}: ${GLABEL} {
+  style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 16; bold: true }
 }
 `
 }
 ${ arch_node?(ID?, GROUP?, KLASS?, LABEL?)
-  > render.markdown`g_${GROUP}.n_${ID}: ${LABEL} { class: ${KLASS} }
+  > render.markdown`arch.${GROUP}.n_${ID}: ${LABEL} { class: ${KLASS} }
 `
 }
 ${ arch_edge?(SRC?, DST?, REL?)
   > arch_node?(SRC, SG?, SK?, SL?)
   > arch_node?(DST, DG?, DK?, DL?)
-  > render.markdown`g_${SG}.n_${SRC} -> g_${DG}.n_${DST}: ${REL} { style.font-size: 11 }
+  > render.markdown`arch.${SG}.n_${SRC} -> arch.${DG}.n_${DST}: ${REL} { style.font-size: 11 }
 `
 }
 `
