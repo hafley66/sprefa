@@ -97,6 +97,9 @@ pub struct RuntimeGraph {
     core: FactRuntimeGraph<Cursor, StringId>,
     compact_sources: Option<Arc<CompactSourceGraph>>,
     rule_memo: Arc<Mutex<RuleMemo>>,
+    /// Phase 1: one clock for files, buffers, and rule/fact tables.
+    /// Subsumes the old per-table `table_version`.
+    clock: Arc<crate::source_clock::FactStoreClock>,
 }
 
 /// Reasons `run_to_quiescence` may bail out before draining.
@@ -388,12 +391,14 @@ impl RuntimePut for SprfSupportRows {
 impl RuntimeGraph {
     pub fn new(store: Arc<SprfStore>, facts: Arc<dyn FactStore<Cursor>>) -> Self {
         let core = FactRuntimeGraph::new(facts.clone());
+        let clock = crate::source_clock::FactStoreClock::new(facts.clone());
         Self {
             store,
             facts,
             core,
             compact_sources: None,
             rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
+            clock,
         }
     }
 
@@ -403,13 +408,21 @@ impl RuntimeGraph {
         path: impl AsRef<Path>,
     ) -> Self {
         let core = FactRuntimeGraph::new(facts.clone());
+        let clock = crate::source_clock::FactStoreClock::new(facts.clone());
         Self {
             store,
             facts,
             core,
             compact_sources: Some(Arc::new(CompactSourceGraph::open(path.as_ref()))),
             rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
+            clock,
         }
+    }
+
+    /// The unified source clock (Phase 1). Files, LSP buffers, and
+    /// rule/fact tables are all `SourceId`s ticked here.
+    pub fn clock(&self) -> &Arc<crate::source_clock::FactStoreClock> {
+        &self.clock
     }
 
     /// Memoize the OwnerNode for a rule call by (rule_name, arg_keys).

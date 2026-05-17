@@ -146,8 +146,12 @@ impl Component for SqlQueryComponent {
             return Vec::new();
         }
 
+        let clock = ctx
+            .runtime::<crate::runtime_graph::RuntimeGraph>()
+            .map(|g| g.clock().clone());
         let key = sql_batch_cache_key(
             self.store.as_ref(),
+            clock.as_deref(),
             self.sql.as_ref(),
             &self.referenced_tables,
             batch,
@@ -315,10 +319,12 @@ fn should_chunk_sql_dispatch(sql: &str) -> bool {
 
 fn sql_batch_cache_key(
     store: &dyn FactStore<Cursor>,
+    clock: Option<&crate::source_clock::FactStoreClock>,
     sql: &str,
     referenced_tables: &[String],
     batch: &[&Cursor],
 ) -> [u8; 32] {
+    use crate::source_clock::{SourceClock, SourceId};
     let mut h = blake3::Hasher::new();
     h.update(sql.as_bytes());
     h.update(b"\0input\0");
@@ -328,6 +334,15 @@ fn sql_batch_cache_key(
     h.update(b"\0tables\0");
     for table in referenced_tables {
         h.update(table.as_bytes());
+        h.update(b"\0");
+        // Phase 1: fold the unified source clock (the fused-SQL write
+        // path bumps it). Keep folding the fact store's table_version
+        // too — direct insert/delete/commit paths still bump that and
+        // the cache must invalidate on those as well.
+        let clock_gen = clock
+            .map(|c| c.current_gen(SourceId::for_table(table)))
+            .unwrap_or(0);
+        h.update(&clock_gen.to_le_bytes());
         h.update(b"\0");
         h.update(&store.table_version(table).to_le_bytes());
         h.update(b"\0");
@@ -1447,5 +1462,55 @@ mod tests {
             Node::Emit(c) => assert_eq!(c.get("OP"), Some("listPets")),
             other => panic!("expected one emitted cursor, got {other:?}"),
         }
+    }
+
+    // ── Phase 1: SQL batch cache key folds the source clock ─────────
+
+    #[test]
+    fn cache_key_invalidates_on_table_clock_bump() {
+        use crate::source_clock::{FactStoreClock, SourceClock, SourceId};
+
+        let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let clock = FactStoreClock::new(store.clone());
+        let c = cursor("x", &[("OP", "getUser")]);
+        let batch = vec![&c];
+        let tables = vec!["imports".to_string()];
+        let sql = "SELECT input.OP FROM input JOIN imports ON imports.OP = input.OP";
+
+        let k0 = sql_batch_cache_key(store.as_ref(), Some(&clock), sql, &tables, &batch);
+
+        // Writing the rule/fact table bumps its source gen → key moves.
+        clock.bump(SourceId::for_table("imports"));
+        let k1 = sql_batch_cache_key(store.as_ref(), Some(&clock), sql, &tables, &batch);
+        assert_ne!(k0, k1, "table clock bump must invalidate the SQL cache key");
+
+        // An unrelated source bump does not move this key.
+        clock.bump(SourceId::for_file("/unrelated.rs"));
+        let k2 = sql_batch_cache_key(store.as_ref(), Some(&clock), sql, &tables, &batch);
+        assert_eq!(k1, k2, "unrelated source bump must not move the key");
+    }
+
+    #[test]
+    fn file_edit_and_table_write_bump_distinct_source_gens() {
+        use crate::source_clock::{FactStoreClock, SourceClock, SourceId};
+
+        let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
+        let clock = FactStoreClock::new(store);
+
+        let file = SourceId::for_file("/src/a.rs");
+        let table = SourceId::for_table("imports");
+
+        assert_eq!(clock.current_gen(file), 0);
+        assert_eq!(clock.current_gen(table), 0);
+
+        // Editing a file bumps that file's gen only.
+        clock.bump(file);
+        assert_eq!(clock.current_gen(file), 1);
+        assert_eq!(clock.current_gen(table), 0);
+
+        // Writing a rule/fact table bumps that table's gen only.
+        clock.bump(table);
+        assert_eq!(clock.current_gen(table), 1);
+        assert_eq!(clock.current_gen(file), 1);
     }
 }

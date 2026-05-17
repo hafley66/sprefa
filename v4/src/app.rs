@@ -48,6 +48,7 @@ pub use crate::git_watch::{DirtyNotice, GhcacheChangeReq, NotifyGhcacheChangeReq
 use crate::lower::{default_registry, LowerCtx, Registry};
 use crate::lsp::LSP_HOVER_CODE;
 use crate::runtime_graph::RuntimeGraph;
+use crate::source_clock::SourceClock;
 use crate::runtime_replay::GraphReplayRunner;
 use crate::source::resolve_path_text;
 use crate::telemetry::{PipelineTelemetry, RunPhaseTelemetry, RunTelemetry};
@@ -821,6 +822,7 @@ fn analysis_safe_pipe(pipe: Pipe<Cursor>) -> Pipe<Cursor> {
 /// fact insert still commits.
 fn run_fused_sql(
     facts: &dyn FactStore<Cursor>,
+    clock: &crate::source_clock::FactStoreClock,
     fused: &FusedRule,
 ) -> bool {
     let Some(store) = facts.as_any().downcast_ref::<SqliteFactStore<Cursor>>() else {
@@ -999,6 +1001,9 @@ fn run_fused_sql(
     }
 
     if inserted > 0 {
+        // Phase 1: a rule/fact table is a SourceId. The fused-SQL
+        // write path is an event-layer bump, the same as a file edit.
+        clock.bump(crate::source_clock::SourceId::for_table(&target));
         store.bump_table_version(&target);
         store.mark_table_dirty(&target);
     }
@@ -1560,7 +1565,11 @@ impl SprfHandlers for SprfState {
             // backing store is not SQLite (e.g. MemFactStore).
             if fused.kind() == FusedKind::FullSql {
                 let t = std::time::Instant::now();
-                let executed = run_fused_sql(self.facts.as_ref(), &fused);
+                let executed = run_fused_sql(
+                    self.facts.as_ref(),
+                    self.runtime_graph.clock().as_ref(),
+                    &fused,
+                );
                 phases.expand_ms += t.elapsed().as_secs_f64() * 1000.0;
                 if executed {
                     n += 1;
