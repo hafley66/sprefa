@@ -75,6 +75,12 @@ pub struct V4MemoSeam {
     /// Telemetry for tests: (#Retract, #Assert) the seam decided.
     retracts: AtomicUsize,
     asserts: AtomicUsize,
+    /// Times reconcile took the "same key, value moved" branch — i.e.
+    /// a prior row was matched by IDENTITY and only its payload
+    /// changed. Whole-cursor keying never hits this on a value edit
+    /// (the whole-cursor identity itself moved); capture-name keying
+    /// does. Distinguishes the two keyings for test 3.
+    value_moved: AtomicUsize,
 }
 
 impl V4MemoSeam {
@@ -92,6 +98,7 @@ impl V4MemoSeam {
             value_terms,
             retracts: AtomicUsize::new(0),
             asserts: AtomicUsize::new(0),
+            value_moved: AtomicUsize::new(0),
         })
     }
 
@@ -100,6 +107,9 @@ impl V4MemoSeam {
     }
     pub fn assert_count(&self) -> usize {
         self.asserts.load(Ordering::SeqCst)
+    }
+    pub fn value_moved_count(&self) -> usize {
+        self.value_moved.load(Ordering::SeqCst)
     }
 
     fn value_refs(&self) -> Vec<&str> {
@@ -189,7 +199,7 @@ impl MemoSeam<Cursor> for V4MemoSeam {
                 }
                 Some((old_rid, _, old_cur)) => {
                     // same key, value/position moved → Retract + Assert.
-                    let _ = old_rid;
+                    self.value_moved.fetch_add(1, Ordering::SeqCst);
                     retract_rows.push(old_cur.clone());
                     deltas.push(MemoDelta::Retract(old_rid));
                     deltas.push(MemoDelta::Assert(ord));
