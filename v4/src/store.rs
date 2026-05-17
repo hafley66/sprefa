@@ -49,7 +49,7 @@ pub struct StripedLru<K: std::hash::Hash + Eq, V> {
 }
 
 impl<K: std::hash::Hash + Eq, V> StripedLru<K, V> {
-    fn new(total_cap: usize) -> Self {
+    pub fn new(total_cap: usize) -> Self {
         let per_shard = NonZeroUsize::new((total_cap / LRU_SHARDS).max(1)).unwrap();
         let mut shards = Vec::with_capacity(LRU_SHARDS);
         for _ in 0..LRU_SHARDS {

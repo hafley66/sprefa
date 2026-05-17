@@ -10,7 +10,6 @@
 //! Layer-2 input-set memoization (the `Op::probe` path) is deferred;
 //! arrives once Component grows a `probe()` shim.
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
@@ -19,7 +18,7 @@ use effect_runtime::v2::{
 };
 
 use crate::fact::{FactRead, FactWrite};
-use crate::runtime_graph::{ArgKey, HandleUriId, OwnerNode, RuntimeGraph};
+use crate::runtime_graph::{ArgKey, OwnerNode, RuntimeGraph};
 use crate::sql::SqlQueryComponent;
 use crate::Cursor;
 use effect_runtime::v2::FactStore;
@@ -155,11 +154,10 @@ pub struct RuleInvokeComponent {
     rule: Rule,
     assignments: Arc<Vec<RuleInvokeAssign>>,
     force: bool,
-    cache: Mutex<BTreeMap<[u8; 32], Node<Cursor>>>,
-    /// Per-cache-key generation at which the body last fired. Used to
-    /// invalidate the cached Node when a relevant source has dispatched
-    /// a newer dirty event than the cached entry's generation.
-    fired_at_gen: Mutex<BTreeMap<[u8; 32], u64>>,
+    // Phase 3: the unbounded in-RAM `cache` / `fired_at_gen` BTreeMaps
+    // are gone. The body-result memo is now the disk-backed
+    // `crate::memo::Memo` owned by the RuntimeGraph (hot StripedLru +
+    // cold MEMO table). Probe → replay vs run lives in `render`.
 }
 
 impl RuleInvokeComponent {
@@ -168,8 +166,6 @@ impl RuleInvokeComponent {
             rule,
             assignments: Arc::new(assignments),
             force,
-            cache: Mutex::new(BTreeMap::new()),
-            fired_at_gen: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -296,14 +292,17 @@ impl RuleInvokeComponent {
         steps.push(Arc::new(InvokeCollector { sink: sink.clone() }));
         let inst = PipeInstance::new(steps);
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        expand(
-            &inst,
-            queue,
-            vec![Arc::new(seed)],
-            ExpandOpts::default()
-                .with_bus(ctx.bus.clone())
-                .with_diag(ctx.diag.clone()),
-        );
+        let mut opts = ExpandOpts::default()
+            .with_bus(ctx.bus.clone())
+            .with_diag(ctx.diag.clone());
+        // Phase 3: carry the RuntimeGraph into the rule body so its
+        // inner reads (fs/read/fact) record into MEMO_DEPS under this
+        // owner — the memo's staleness check is a gen-compare over
+        // exactly those recorded deps.
+        if let Some(graph) = ctx.runtime::<RuntimeGraph>() {
+            opts = opts.with_runtime(graph);
+        }
+        expand(&inst, queue, vec![Arc::new(seed)], opts);
 
         let rows = sink.lock().unwrap();
         match rows.len() {
@@ -323,54 +322,155 @@ impl Component for RuleInvokeComponent {
     type Next = Cursor;
 
     fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        // Materialize the OwnerNode for this call tuple if a
-        // RuntimeGraph is in ctx. Identity-only — body-result memo
-        // below still gates whether the body re-fires.
-        let owner = ctx
-            .runtime::<RuntimeGraph>()
-            .as_ref()
-            .map(|graph| self.memoize_owner(graph.as_ref(), c));
         let graph_opt = ctx.runtime::<RuntimeGraph>();
 
-        let key = self.cache_key(c);
-        let cached_gen = self.fired_at_gen.lock().unwrap().get(&key).copied();
-        let cache_stale = match (graph_opt.as_ref(), owner.as_ref(), cached_gen) {
-            (Some(graph), Some(owner), Some(prev_gen)) => {
-                owner_has_dirty_after(graph.as_ref(), owner, prev_gen)
-            }
-            _ => false,
+        // No graph in ctx ⇒ no memo available; run the body directly.
+        let Some(graph) = graph_opt.as_ref() else {
+            return match self.seed_for(ctx, c) {
+                Some(seed) => self.run_rule(ctx, seed),
+                None => Node::Done,
+            };
         };
 
-        if !self.force && !cache_stale {
-            if let Some(cached) = self.cache.lock().unwrap().get(&key).cloned() {
-                return cached;
+        // Materialize the OwnerNode (durable identity) and derive the
+        // memo coordinates: owner_op_id = owner uri, in_key = the
+        // (rule, cursor, assignments) cache key hex.
+        let owner = self.memoize_owner(graph.as_ref(), c);
+        let owner_id = owner.uri().to_string();
+        let in_key = {
+            let k = self.cache_key(c);
+            let mut s = String::with_capacity(64);
+            for b in &k {
+                s.push_str(&format!("{b:02x}"));
+            }
+            s
+        };
+
+        // Recorded deps from a prior run (Phase 2). Validity is a
+        // gen-compare over exactly these; the body is never re-run to
+        // check freshness.
+        let recorded = graph.memo_deps_of(&owner_id, &in_key);
+        let deps: Vec<(crate::source_clock::SourceId, u64)> = recorded
+            .iter()
+            .filter_map(|(hex, gen)| sid_from_hex(hex).map(|s| (s, *gen)))
+            .collect();
+
+        if !self.force {
+            if let Some((val, stale)) = graph.memo().probe(&owner_id, &in_key, &deps) {
+                if !stale {
+                    // Pure replay: do NOT run the rule body.
+                    return rows_to_node(val.out_rows);
+                }
             }
         }
 
-        if cache_stale {
-            self.cache.lock().unwrap().remove(&key);
-        }
-
+        // Miss / stale / forced → run the body. Inner ops record their
+        // reads into MEMO_DEPS under `owner_id` (run_rule threads the
+        // graph into the inner expand).
         let result = match self.seed_for(ctx, c) {
             Some(seed) => self.run_rule(ctx, seed),
             None => Node::Done,
         };
-        self.cache.lock().unwrap().insert(key, result.clone());
-        self.fired_at_gen
-            .lock()
-            .unwrap()
-            .insert(key, ctx.expand_tick);
+
+        // The rule call's conservative dependency is its input source:
+        // the file the input cursor names (FS term or focal value).
+        // For a pure rule body this is sound — unchanged input file +
+        // unchanged referenced tables ⇒ unchanged output. Inner fact
+        // reads also recorded their table sources under `owner_id` via
+        // the threaded graph (Phase 2).
+        if let Some(path) = rule_input_path(c) {
+            use crate::source_clock::{SourceClock, SourceId};
+            let sid = SourceId::for_file(&path);
+            let gen_seen = graph.clock().current_gen(sid);
+            graph.record_memo_dep(&owner_id, &in_key, sid, gen_seen);
+        }
+
+        // Persist the result under the freshly-recorded dep set so the
+        // next run can replay it while deps are unchanged.
+        let fresh = graph.memo_deps_of(&owner_id, &in_key);
+        let fresh_deps: Vec<(crate::source_clock::SourceId, u64)> = fresh
+            .iter()
+            .filter_map(|(hex, gen)| sid_from_hex(hex).map(|s| (s, *gen)))
+            .collect();
+        if let Some(rows) = node_to_rows(&result) {
+            let out_keys: Vec<String> = rows.iter().map(|r| key_hash_hex(r)).collect();
+            graph
+                .memo()
+                .put(&owner_id, &in_key, &fresh_deps, rows, out_keys);
+        }
         result
     }
 }
 
-/// True if any pending RuntimeJob points at this owner with a
-/// generation strictly newer than the body's last fire.
-fn owner_has_dirty_after(graph: &RuntimeGraph, owner: &OwnerNode, prev_gen: u64) -> bool {
-    graph
-        .pending_jobs()
-        .into_iter()
-        .any(|job| job.owner_uri_id == owner.uri_id() && job.generation > prev_gen)
+/// The file path a rule-call input names: the `FS` term if present,
+/// else the focal value when it looks like a path. `None` ⇒ no file
+/// dependency to track (the rule still memoizes on its in_key + any
+/// inner table reads).
+fn rule_input_path(c: &Cursor) -> Option<String> {
+    if let Some(fs) = c.get("FS") {
+        if !fs.is_empty() {
+            return Some(fs.to_string());
+        }
+    }
+    let v = c.value();
+    if !v.is_empty() {
+        return Some(v.to_string());
+    }
+    None
+}
+
+/// Parse a 64-char lowercase-hex `SourceId`.
+fn sid_from_hex(hex: &str) -> Option<crate::source_clock::SourceId> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut d = [0u8; 32];
+    for (i, byte) in d.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(crate::source_clock::SourceId(d))
+}
+
+/// Whole-cursor key hash hex (Phase 0 default: empty key_terms).
+fn key_hash_hex(c: &Cursor) -> String {
+    let h = c.key_hash(&[]);
+    let mut s = String::with_capacity(64);
+    for b in &h {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Flatten a `Node<Cursor>` into its emitted rows for memo storage.
+/// Returns `None` when the result contains a `Yield` (a paused effect
+/// carries a `Wake` that cannot round-trip through a row blob — such a
+/// result must not be memoized/replayed).
+fn node_to_rows(n: &Node<Cursor>) -> Option<Vec<Cursor>> {
+    match n {
+        Node::Done => Some(Vec::new()),
+        Node::Emit(c) => Some(vec![c.as_ref().clone()]),
+        Node::Many(children) => {
+            let mut out = Vec::new();
+            for ch in children {
+                out.extend(node_to_rows(ch)?);
+            }
+            Some(out)
+        }
+        Node::Yield { .. } => None,
+    }
+}
+
+/// Reconstruct the replay `Node<Cursor>` from stored rows.
+fn rows_to_node(rows: Vec<Cursor>) -> Node<Cursor> {
+    match rows.len() {
+        0 => Node::Done,
+        1 => Node::Emit(Arc::new(rows.into_iter().next().unwrap())),
+        _ => Node::Many(
+            rows.into_iter()
+                .map(|c| Node::Emit(Arc::new(c)))
+                .collect(),
+        ),
+    }
 }
 
 /// Deterministic input_key for `declare_owner`. Hashes `(rule_name,
@@ -573,7 +673,14 @@ mod tests {
     }
 
     #[test]
-    fn rule_invoke_cache_replays_unless_forced() {
+    fn rule_invoke_without_graph_runs_each_time() {
+        // Phase 3 contract: the body-result memo is the disk-backed
+        // Memo owned by the RuntimeGraph. With no graph in ctx there
+        // is no memo to consult, so the body runs every render (the
+        // documented fallthrough). The replay path is exercised by
+        // the integration test
+        // `rule_memo_replays_unchanged_source_zero_dispatch` in
+        // tests/runtime_graph_smoke.rs.
         let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
         let count = Arc::new(AtomicUsize::new(0));
         let body = Pipe::new().step(Arc::new(CountBody {
@@ -586,16 +693,16 @@ mod tests {
         let cached = RuleInvokeComponent::new(rule.clone(), Vec::new(), false);
         let first = cached.render(&ctx, &input);
         let second = cached.render(&ctx, &input);
-        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert_eq!(count.load(Ordering::SeqCst), 2);
         assert_eq!(node_count_value(&first), Some("1".to_string()));
-        assert_eq!(node_count_value(&second), Some("1".to_string()));
+        assert_eq!(node_count_value(&second), Some("2".to_string()));
 
         let forced = RuleInvokeComponent::new(rule, Vec::new(), true);
         let third = forced.render(&ctx, &input);
         let fourth = forced.render(&ctx, &input);
-        assert_eq!(count.load(Ordering::SeqCst), 3);
-        assert_eq!(node_count_value(&third), Some("2".to_string()));
-        assert_eq!(node_count_value(&fourth), Some("3".to_string()));
+        assert_eq!(count.load(Ordering::SeqCst), 4);
+        assert_eq!(node_count_value(&third), Some("3".to_string()));
+        assert_eq!(node_count_value(&fourth), Some("4".to_string()));
     }
 
     fn node_count_value(node: &Node<Cursor>) -> Option<String> {

@@ -103,6 +103,10 @@ pub struct RuntimeGraph {
     /// Phase 1: one clock for files, buffers, and rule/fact tables.
     /// Subsumes the old per-table `table_version`.
     clock: Arc<crate::source_clock::FactStoreClock>,
+    /// Phase 3: disk-backed memo. Replaces the unbounded in-RAM rule
+    /// result cache; hot tier is a bounded `StripedLru`, cold tier the
+    /// `MEMO` fact table.
+    memo: Arc<crate::memo::Memo>,
 }
 
 /// Reasons `run_to_quiescence` may bail out before draining.
@@ -395,6 +399,7 @@ impl RuntimeGraph {
     pub fn new(store: Arc<SprfStore>, facts: Arc<dyn FactStore<Cursor>>) -> Self {
         let core = FactRuntimeGraph::new(facts.clone());
         let clock = crate::source_clock::FactStoreClock::new(facts.clone());
+        let memo = crate::memo::Memo::new(facts.clone(), clock.clone());
         Self {
             store,
             facts,
@@ -402,6 +407,7 @@ impl RuntimeGraph {
             compact_sources: None,
             rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
             clock,
+            memo,
         }
     }
 
@@ -412,6 +418,7 @@ impl RuntimeGraph {
     ) -> Self {
         let core = FactRuntimeGraph::new(facts.clone());
         let clock = crate::source_clock::FactStoreClock::new(facts.clone());
+        let memo = crate::memo::Memo::new(facts.clone(), clock.clone());
         Self {
             store,
             facts,
@@ -419,6 +426,7 @@ impl RuntimeGraph {
             compact_sources: Some(Arc::new(CompactSourceGraph::open(path.as_ref()))),
             rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
             clock,
+            memo,
         }
     }
 
@@ -426,6 +434,11 @@ impl RuntimeGraph {
     /// rule/fact tables are all `SourceId`s ticked here.
     pub fn clock(&self) -> &Arc<crate::source_clock::FactStoreClock> {
         &self.clock
+    }
+
+    /// The disk-backed memo (Phase 3).
+    pub fn memo(&self) -> &Arc<crate::memo::Memo> {
+        &self.memo
     }
 
     /// Phase 2: persist one recorded read into `MEMO_DEPS`.

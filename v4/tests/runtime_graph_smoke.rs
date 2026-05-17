@@ -564,13 +564,20 @@ fn rule_invoke_memoizes_owner_by_input_arg_tuple() {
 }
 
 #[test]
-fn rule_invoke_body_skips_on_cache_hit_and_refires_on_source_dirty() {
+fn rule_memo_replays_unchanged_source_zero_dispatch() {
+    // Phase 3 binding test. The body-result memo is now the
+    // disk-backed Memo; validity is a gen-compare over the recorded
+    // dependency set (MEMO_DEPS), never a re-run to check. A rule
+    // call's conservative dep is its input file source.
+    //
+    //   run 1 (cold)            → body runs, memo.put, dep recorded
+    //   run 2 (source unchanged) → pure replay, body dispatch == 0
+    //   bump the file's gen      → stale → body re-runs
     use effect_runtime::v2::{MemFactStore, Node, Pipe};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use v4::rule::{Rule, RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
-    use v4::runtime_graph::ArgKey;
+    use v4::rule::{Rule, RuleInvokeComponent};
+    use v4::source_clock::{SourceClock, SourceId};
 
-    // Body counter: how many times the rule body actually ran.
     struct CountBody {
         count: Arc<AtomicUsize>,
     }
@@ -592,51 +599,49 @@ fn rule_invoke_body_skips_on_cache_hit_and_refires_on_source_dirty() {
     let body = Pipe::new().step(Arc::new(CountBody {
         count: count.clone(),
     }));
-    let rule = Rule::new("r", user_store.clone(), "r", &["A"], body);
+    let rule = Rule::new("r", user_store, "r", &["A"], body);
+    // No assignments: the seed (which names the input file) flows
+    // straight through, so the rule's recorded dep is that file.
+    let call = RuleInvokeComponent::new(rule, Vec::new(), false);
 
-    let assignments = vec![RuleInvokeAssign {
-        col: Arc::<str>::from("A"),
-        value: RuleInvokeValue::Literal(Arc::<str>::from("a")),
-    }];
-    let call = RuleInvokeComponent::new(rule, assignments, false);
+    // Input names a file path → rule_input_path() records its
+    // SourceId as the call's dependency.
+    let seed = path_cursor("a.c");
+    let file = SourceId::for_file("a.c");
+    assert_eq!(graph.clock().current_gen(file), 0);
 
-    let seed = Cursor::default();
-
-    // First fire at gen=1.
+    // Run 1: cold. Body must run; memo + dep recorded.
     let ctx1 = RenderCtx::new(1, 0, 0).with_runtime(graph.clone());
     let _ = call.render(&ctx1, &seed);
-    assert_eq!(count.load(Ordering::SeqCst), 1, "first fire runs body");
+    assert_eq!(count.load(Ordering::SeqCst), 1, "cold run executes body");
 
-    // Subscribe the memoized owner to a "src" table source so a dirty
-    // there will enqueue a job for the owner.
-    let rule_id = graph.store.intern_string("r");
-    let arg_keys_one = [ArgKey::Literal(graph.store.intern_string("a"))];
-    let owner = graph
-        .rule_memo_get(rule_id, &arg_keys_one)
-        .expect("owner memoized after first fire");
-    let src = graph.declare_table_source("src", 1);
-    graph.subscribe(&owner, "src", &src, 1);
-
-    // Second fire at gen=2, no dirty in between: body must NOT re-run.
+    // Run 2: source unchanged. Pure replay — body dispatch == 0
+    // (the counter does not advance).
     let ctx2 = RenderCtx::new(2, 0, 0).with_runtime(graph.clone());
     let _ = call.render(&ctx2, &seed);
-    assert_eq!(count.load(Ordering::SeqCst), 1, "cache hit skips body");
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "unchanged source: pure replay, body dispatch == 0"
+    );
 
-    // Mutate the source table — fires notify, enqueues a job at gen=3.
-    graph.notify_table_inserted("src", 3);
-    assert!(graph
-        .pending_jobs()
-        .iter()
-        .any(|job| job.owner_uri_id == owner.uri_id() && job.generation == 3));
-
-    // Third fire at gen=4: body re-runs because owner has a pending
-    // dirty newer than the cached fire's gen.
-    let ctx3 = RenderCtx::new(4, 0, 0).with_runtime(graph.clone());
+    // Bump the file's source gen → recorded dep gen differs → stale.
+    graph.clock().bump(file);
+    let ctx3 = RenderCtx::new(3, 0, 0).with_runtime(graph.clone());
     let _ = call.render(&ctx3, &seed);
     assert_eq!(
         count.load(Ordering::SeqCst),
         2,
-        "source dirty invalidates cache"
+        "bumped source gen invalidates the memo; body re-runs"
+    );
+
+    // Run 4: source unchanged again → replay against the new gen.
+    let ctx4 = RenderCtx::new(4, 0, 0).with_runtime(graph.clone());
+    let _ = call.render(&ctx4, &seed);
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        2,
+        "re-memoized at new gen: replay again, no dispatch"
     );
 }
 

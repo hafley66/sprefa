@@ -10,6 +10,7 @@ pub mod ghcache;
 #[cfg(feature = "ghcache")]
 pub mod git_watch;
 pub mod lsp;
+pub mod memo;
 pub mod mounted_query;
 pub mod pipeline;
 pub mod rule;
