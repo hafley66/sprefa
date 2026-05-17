@@ -66,7 +66,12 @@ fn row_id(owner: &[u8; 32], in_key: &[u8; 32], ordinal: usize) -> [u8; 32] {
 /// owner→key_terms registry is Phase-6 plumbing.
 pub struct V4MemoSeam {
     graph: Arc<RuntimeGraph>,
-    key_terms: Vec<String>,
+    /// The op's VALUE/payload term names (`OperatorDef::key_terms()`).
+    /// Row IDENTITY is the COMPLEMENT: `Cursor::val_hash(value_terms)`
+    /// folds every term NOT in this list (the capture-name terms),
+    /// `key_hash(value_terms)` is the payload. Empty ⇒ whole cursor is
+    /// identity (coarse default).
+    value_terms: Vec<String>,
     /// Telemetry for tests: (#Retract, #Assert) the seam decided.
     retracts: AtomicUsize,
     asserts: AtomicUsize,
@@ -74,16 +79,17 @@ pub struct V4MemoSeam {
 
 impl V4MemoSeam {
     pub fn new(graph: Arc<RuntimeGraph>) -> Arc<Self> {
-        Self::with_key_terms(graph, Vec::new())
+        Self::with_value_terms(graph, Vec::new())
     }
 
-    /// `key_terms`: cursor-term names that form output-row IDENTITY
-    /// for the memoized op (Decision 2: `re`/`ast`/`json` pass their
-    /// capture names; every other op passes empty = whole-cursor key).
-    pub fn with_key_terms(graph: Arc<RuntimeGraph>, key_terms: Vec<String>) -> Arc<Self> {
+    /// `value_terms`: the memoized op's `OperatorDef::key_terms()` —
+    /// its fixed VALUE/span terms (Decision 2: `re`→`[LO,HI,MATCH]`,
+    /// `ast`/`json`→`[LO,HI]`). Identity is the complement. Empty =
+    /// whole-cursor identity (coarse default, every other op).
+    pub fn with_value_terms(graph: Arc<RuntimeGraph>, value_terms: Vec<String>) -> Arc<Self> {
         Arc::new(Self {
             graph,
-            key_terms,
+            value_terms,
             retracts: AtomicUsize::new(0),
             asserts: AtomicUsize::new(0),
         })
@@ -96,8 +102,29 @@ impl V4MemoSeam {
         self.asserts.load(Ordering::SeqCst)
     }
 
-    fn key_refs(&self) -> Vec<&str> {
-        self.key_terms.iter().map(|s| s.as_str()).collect()
+    fn value_refs(&self) -> Vec<&str> {
+        self.value_terms.iter().map(|s| s.as_str()).collect()
+    }
+
+    /// Row identity = fold of every term NOT in `value_terms`
+    /// (`val_hash` complement). Empty `value_terms` ⇒ whole-cursor
+    /// `key_hash(&[])` (== prior `content_hash`).
+    fn identity_hex(&self, c: &Cursor, vt: &[&str]) -> String {
+        if vt.is_empty() {
+            hex32(&c.key_hash(&[]))
+        } else {
+            hex32(&c.val_hash(vt))
+        }
+    }
+
+    /// Row payload = the value subset (`value_terms`). Empty ⇒ the
+    /// constant empty-fold (whole cursor is identity, no value subset).
+    fn payload_hash(&self, c: &Cursor, vt: &[&str]) -> [u8; 32] {
+        if vt.is_empty() {
+            c.val_hash(&[])
+        } else {
+            c.key_hash(vt)
+        }
     }
 
     fn deps_of(&self, owner_hex: &str, in_hex: &str) -> Vec<(SourceId, u64)> {
@@ -132,16 +159,16 @@ impl MemoSeam<Cursor> for V4MemoSeam {
         prior: Option<Vec<Arc<Cursor>>>,
         fresh: &[Arc<Cursor>],
     ) -> Vec<MemoDelta> {
-        let keys = self.key_refs();
+        let vt = self.value_refs();
         let owner_hex = hex32(&owner);
         let in_hex = hex32(&in_key);
 
-        // prior: KeyHash(hex) -> (row_id, val_hash, prior cursor)
+        // prior: identity(hex) -> (row_id, payload_hash, prior cursor)
         let mut prior_map: BTreeMap<String, ([u8; 32], [u8; 32], Arc<Cursor>)> = BTreeMap::new();
         if let Some(prior_rows) = &prior {
             for (ord, c) in prior_rows.iter().enumerate() {
-                let kh = hex32(&c.key_hash(&keys));
-                let vh = c.val_hash(&keys);
+                let kh = self.identity_hex(c, &vt);
+                let vh = self.payload_hash(c, &vt);
                 let rid = row_id(&owner, &in_key, ord);
                 prior_map.insert(kh, (rid, vh, c.clone()));
             }
@@ -149,11 +176,12 @@ impl MemoSeam<Cursor> for V4MemoSeam {
 
         let mut deltas: Vec<MemoDelta> = Vec::new();
         let mut retract_rows: Vec<Arc<Cursor>> = Vec::new();
-        let out_keys: Vec<String> = fresh.iter().map(|c| hex32(&c.key_hash(&keys))).collect();
+        let out_keys: Vec<String> =
+            fresh.iter().map(|c| self.identity_hex(c, &vt)).collect();
 
         for (ord, c) in fresh.iter().enumerate() {
             let kh = &out_keys[ord];
-            let vh = c.val_hash(&keys);
+            let vh = self.payload_hash(c, &vt);
             let new_rid = row_id(&owner, &in_key, ord);
             match prior_map.remove(kh) {
                 Some((old_rid, old_vh, _)) if old_rid == new_rid && old_vh == vh => {

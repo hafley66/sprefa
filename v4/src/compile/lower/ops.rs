@@ -829,6 +829,12 @@ impl OperatorDef for AstDef {
         &["LO", "HI"]
     }
 
+    /// Decision 2: the AST span is VALUE; `$NAME`/`$$$REST` metavar
+    /// capture terms are row identity (the complement, via `val_hash`).
+    fn key_terms(&self) -> &[&str] {
+        &["LO", "HI"]
+    }
+
     /// ast-grep metavars: `$NAME`, `$$$REST`. Both bind at runtime.
     fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
         scan_ast_metavars(raw)
@@ -1183,6 +1189,12 @@ impl OperatorDef for JsonDef {
         scan_bare_dollar_idents(raw)
     }
 
+    /// Decision 2: the JSON span is VALUE; `$path` capture terms are
+    /// row identity (the complement, via `val_hash`).
+    fn key_terms(&self) -> &[&str] {
+        &["LO", "HI"]
+    }
+
     fn lower(
         &self,
         _ctx: &LowerCtx,
@@ -1293,6 +1305,12 @@ impl OperatorDef for ReDef {
         Some(DslShape::Plain)
     }
     fn cursor_binds(&self) -> &'static [&'static str] {
+        &["LO", "HI", "MATCH"]
+    }
+
+    /// Decision 2: span/match are VALUE; the `(?P<NAME>…)` capture
+    /// terms are row identity (the complement, via `val_hash`).
+    fn key_terms(&self) -> &[&str] {
         &["LO", "HI", "MATCH"]
     }
 

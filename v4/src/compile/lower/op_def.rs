@@ -225,17 +225,27 @@ pub trait OperatorDef: Send + Sync + 'static {
         &[]
     }
 
-    /// Cursor-term names that form this op's row IDENTITY (the key).
-    /// Everything not listed is treated as value/payload. Used by the
-    /// retraction/memo layer to tell "same row, new value" from "new
-    /// row" (`Cursor::key_hash` vs `Cursor::val_hash`).
+    /// Cursor-term names that are this op's VALUE/payload — the part
+    /// that may change without making it a different row. Row IDENTITY
+    /// is the COMPLEMENT (every other term). The retraction/memo layer
+    /// keys by the complement (`Cursor::val_hash(key_terms())`, which
+    /// folds the non-listed terms) and treats `key_hash(key_terms())`
+    /// as the payload, so a value-only edit is "same row, new value"
+    /// (Retract+Assert) rather than a brand-new row.
     ///
-    /// Default: empty. An empty key set means the WHOLE cursor is the
-    /// key (`key_hash` == the prior whole-cursor `content_hash`
-    /// semantics) and the value complement is empty. This is always
-    /// correct but coarse (any value edit looks like a new row). Op
-    /// authors opt in (`re`/`ast`/`json`: capture names as key, span as
-    /// value) to reduce churn.
+    /// Default: empty. An empty list means there is no value subset:
+    /// the WHOLE cursor is the identity (the coarse, always-correct
+    /// default — any edit looks like a new row). The three capture ops
+    /// opt in by declaring their FIXED span/match terms here so their
+    /// dynamic capture-name terms become identity:
+    ///   re   → `["LO","HI","MATCH"]`   (capture names are key)
+    ///   ast  → `["LO","HI"]`           (`$NAME` metavars are key)
+    ///   json → `["LO","HI"]`           (`$path` captures are key)
+    ///
+    /// Polarity note: the plan's Layer-1 sketch named this the key set;
+    /// capture names are per-pattern dynamic and cannot be enumerated
+    /// statically, so the only declarable axis is the fixed span set
+    /// and identity is taken as its complement via `val_hash`.
     fn key_terms(&self) -> &[&str] {
         &[]
     }
