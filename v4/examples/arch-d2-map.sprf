@@ -1,0 +1,59 @@
+# Hand-authored architecture map -> d2 -> svg via `sh`.
+#
+# Proof-of-capability: the trait/type interaction graph is supplied as
+# hand-made facts (no resolver needed yet). sprf maintains them, projects
+# to d2 source, writes the .d2, and shells out to `d2` to render the svg.
+#
+# Run from repo root:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/arch-d2-map.sprf --root . --show-rows
+
+rule(:arch_node, ID?, LABEL?);
+rule(:arch_edge, SRC?, DST?, REL?);
+
+# --- hand-made node facts: the main traits/types ---
+`OperatorDef|compile-time op trait. lower is the compile to runtime bridge
+Component|runtime op trait. render render_batch dispatch tiers
+Node|op output algebra. Emit Many Park Done
+RenderCtx|dispatch context. pipe hash depth generation bus diagnostics
+Cursor|payload. focal term plus named terms
+FactRuntimeGraph|reactive state graph. subscribe support dirty sweep
+RuntimeGraph|v4 facade over FactRuntimeGraph
+owner_uri|owner identity key. fiber or switchMap key
+Subscribe|source in-edge. owner consumes source
+support|owner keyed-children keep-alive set. DAG reconcile by key`
+  > split`
+`
+  > re`(?P<ID>[^|]+)\|(?P<LABEL>.+)`
+  > arch_node(ID, LABEL);
+
+# --- hand-made edge facts: how they interact ---
+`OperatorDef|Component|lower bridges compile to runtime
+Component|Node|render / dispatch return value
+Component|RenderCtx|dispatch reads ctx
+Cursor|Component|batch input
+RuntimeGraph|FactRuntimeGraph|delegates all state
+Subscribe|FactRuntimeGraph|inserts the subscribe edge
+owner_uri|RuntimeGraph|keys owner instances
+support|FactRuntimeGraph|refcount keep-alive set
+FactRuntimeGraph|Node|dirty sweep re-runs owners`
+  > split`
+`
+  > re`(?P<SRC>[^|]+)\|(?P<DST>[^|]+)\|(?P<REL>.+)`
+  > arch_edge(SRC, DST, REL);
+
+# --- project facts -> d2 source, write, then render via sh ---
+`arch-map`
+  > render.markdown`direction: right
+
+${ arch_node?(ID?, LABEL?)
+  > render.markdown`n_${ID}: ${LABEL}
+`
+}
+${ arch_edge?(SRC?, DST?, REL?)
+  > render.markdown`n_${SRC} -> n_${DST}: ${REL}
+`
+}
+`
+  > write_file`v4/examples/arch-map.d2`
+  > sh`d2 v4/examples/arch-map.d2 v4/examples/arch-map.svg && echo d2-rendered`;

@@ -1,0 +1,23 @@
+direction: right
+
+n_OperatorDef: compile-time op trait. lower is the compile to runtime bridge
+n_Component: runtime op trait. render render_batch dispatch tiers
+n_Node: op output algebra. Emit Many Park Done
+n_RenderCtx: dispatch context. pipe hash depth generation bus diagnostics
+n_Cursor: payload. focal term plus named terms
+n_FactRuntimeGraph: reactive state graph. subscribe support dirty sweep
+n_RuntimeGraph: v4 facade over FactRuntimeGraph
+n_owner_uri: owner identity key. fiber or switchMap key
+n_Subscribe: source in-edge. owner consumes source
+n_support: owner keyed-children keep-alive set. DAG reconcile by key
+
+n_OperatorDef -> n_Component: lower bridges compile to runtime
+n_Component -> n_Node: render / dispatch return value
+n_Component -> n_RenderCtx: dispatch reads ctx
+n_Cursor -> n_Component: batch input
+n_RuntimeGraph -> n_FactRuntimeGraph: delegates all state
+n_Subscribe -> n_FactRuntimeGraph: inserts the subscribe edge
+n_owner_uri -> n_RuntimeGraph: keys owner instances
+n_support -> n_FactRuntimeGraph: refcount keep-alive set
+n_FactRuntimeGraph -> n_Node: dirty sweep re-runs owners
+

@@ -53,7 +53,7 @@ fn full_sql_kind_when_body_is_pure_and_rule_query() {
     let src = r#"
         rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` };
         rule(:hit_pairs, :FS, :LO, :OTHER_LO) {
-            hits(FS?, LO?) > hits(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
+            hits?(FS?, LO?) > hits?(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
         }
     "#;
     let (rules, diags) = lower(src);
@@ -157,7 +157,7 @@ fn p2_predicate_pushdown_into_join_on_clause() {
     let src = r#"
         rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` };
         rule(:hit_pairs, :FS, :LO, :OTHER_LO) {
-            hits(FS?, LO?) > hits(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
+            hits?(FS?, LO?) > hits?(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
         }
     "#;
     let (rules, _) = lower(src);
@@ -182,7 +182,7 @@ fn p3_literal_pin_pre_interns_at_compile_time() {
     // comparison, not a TEXT comparison.
     let src = r#"
         rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` };
-        rule(:q, :LO) { hits("kernel/printk.c", LO?) }
+        rule(:q, :LO) { hits?("kernel/printk.c", LO?) }
     "#;
     let (rules, _) = lower(src);
     let q = rules.iter().find(|r| r.name() == "q").unwrap();
@@ -230,7 +230,7 @@ fn where_backtick_dsl_body_is_pushed_into_join_on_clause() {
     let src = r#"
         rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` };
         rule(:hit_pairs, :FS, :LO, :OTHER_LO) {
-            hits(FS?, LO?) > hits(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
+            hits?(FS?, LO?) > hits?(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
         }
     "#;
     let (rules, diags) = lower(src);
@@ -254,7 +254,7 @@ fn support_edges_populated_in_same_transaction() {
     let src = r#"
         rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` };
         rule(:hit_pairs, :FS, :LO, :OTHER_LO) {
-            hits(FS?, LO?) > hits(FS?, OTHER_LO?)
+            hits?(FS?, LO?) > hits?(FS?, OTHER_LO?)
         }
     "#;
     let (rules, _) = lower(src);

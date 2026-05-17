@@ -239,7 +239,7 @@ fn where_still_fused_when_liftable() {
     let src = r#"
         rule(:hits, :FS, :LO) { fs(glob`**/*.c`) > ast(:c)`printk(${LO?})` };
         rule(:hit_pairs, :FS, :LO, :OTHER_LO) {
-            hits(FS?, LO?) > hits(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
+            hits?(FS?, LO?) > hits?(FS?, OTHER_LO?) > where`${LO} != ${OTHER_LO}`
         }
     "#;
     let (program, parse_diags) = host_parse(src);

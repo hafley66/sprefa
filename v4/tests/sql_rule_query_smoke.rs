@@ -42,7 +42,9 @@ fn run_pipes(src: &str) -> Arc<dyn FactStore<Cursor>> {
 }
 
 #[test]
-fn declared_rule_force_apply_policy_is_reserved() {
+fn force_call_is_accepted() {
+    // `r!(...)` is a force-call (run/write, bypass invoke-cache). It is
+    // no longer reserved — the dotted apply form it guarded is gone.
     let diags = walk_diags(
         r#"
         rule(:frontend_hooks);
@@ -51,10 +53,8 @@ fn declared_rule_force_apply_policy_is_reserved() {
     );
 
     assert!(
-        diags
-            .iter()
-            .any(|d| d.code.as_ref() == "lower/rule-force-reserved"),
-        "expected lower/rule-force-reserved diag, got {diags:?}"
+        diags.is_empty(),
+        "force-call must lower cleanly, got {diags:?}"
     );
 }
 
@@ -202,7 +202,9 @@ fn rule_call_rejects_non_shorthand_positional_after_kwarg() {
 }
 
 #[test]
-fn declared_empty_rule_apply_rejects_holes() {
+fn bare_call_with_hole_is_rejected() {
+    // A call requires grounded args. `FILE: FILE?` has a hole, so this
+    // bare call is a hard error — the query form `r?(...)` is for holes.
     let src = r#"
         rule(:frontend_hooks, OP?, FILE?);
         rule(:hook_hits, OP?, FILE?);
@@ -217,8 +219,10 @@ fn declared_empty_rule_apply_rejects_holes() {
 
     let diags = walk_diags(src);
     assert!(
-        diags.iter().any(|d| d.code.as_ref() == "lower/rule-apply"),
-        "expected lower/rule-apply diag for TERM? in apply, got {diags:?}"
+        diags
+            .iter()
+            .any(|d| d.code.as_ref() == "lower/call-with-hole"),
+        "expected lower/call-with-hole for TERM? in a call, got {diags:?}"
     );
 }
 

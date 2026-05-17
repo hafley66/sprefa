@@ -131,8 +131,8 @@ fn collect_rule_decl_cols(
 /// (rule declaration with a body, dotted-apply, or rule sink-write
 /// position). Other shapes (fs > ast > …) need an external seed and
 /// remain caller-driven.
-fn maybe_auto_expand(pipe: &Pipe<Cursor>, ast: &PipeAst, _ctx: &LowerCtx) {
-    if !is_self_driving(ast) {
+fn maybe_auto_expand(pipe: &Pipe<Cursor>, ast: &PipeAst, ctx: &LowerCtx) {
+    if !is_self_driving(ast, ctx) {
         return;
     }
     use effect_runtime::v2::{expand, ExpandOpts, MemQueue, QueueBackend};
@@ -147,20 +147,20 @@ fn maybe_auto_expand(pipe: &Pipe<Cursor>, ast: &PipeAst, _ctx: &LowerCtx) {
     );
 }
 
-/// A pipe is "self-driving" if its first step is an apply form. Rule
-/// declarations stay dormant until an explicit apply (or an external
-/// runner that drives the lowered pipe). Bare queries and external
-/// generators always rely on the caller for a seed.
-///
-/// Auto-expanding rule decls would double-run when the LSP / runner
-/// also schedules the same pipe; callers that need the body to fire
-/// at decl-time use a sibling apply (`r.(…)`) or push the lowered
-/// pipe through their own expander.
-fn is_self_driving(ast: &PipeAst) -> bool {
+/// A pipe is "self-driving" if its head is a bare/force rule CALL
+/// (`r(…)` / `r!(…)`) — the call must run the body at statement time.
+/// Query heads (`r?(…)`) and external generators (`fs > ast > …`) stay
+/// caller-driven: they need an external seed. Rule declarations
+/// (`rule(:r,…){…}`) stay dormant until called.
+fn is_self_driving(ast: &PipeAst, ctx: &LowerCtx) -> bool {
     let Some(head) = ast.steps.first() else {
         return false;
     };
-    head.apply
+    if head.predicate {
+        return false; // r?(…) is a query, needs a seed
+    }
+    // Bare/force call against a declared rule → run body now.
+    ctx.store.declared_cols(&head.name).is_some()
 }
 
 /// Walk one pipe. Concat per-op `Pipe<Cursor>` via `Pipe::extend`. If
@@ -379,36 +379,31 @@ pub fn walk_op(
     let declared_rule_call =
         reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some();
 
-    // V4 locked rule semantics (CLAUDE.md):
-    //   r.(X, Y)   → apply form: run the body with grounded args
-    //   r!.(X, Y)  → apply + bypass apply-cache
-    //   r(X?, Y?)  → bare call: QUERY r_facts; never run the body
-    //   r.(X?, Y)  → diagnostic `lower/apply-with-hole`
+    // V4 rule semantics (locked):
+    //   r(X, Y)    → CALL: run the body / write. Args must be grounded.
+    //   r!(X, Y)   → CALL bypassing the invoke-cache.
+    //   r?(X?, Y?) → QUERY <r>_facts. Holes/kwargs project; body never runs.
+    //   r.(...)    → REMOVED. Hard error; never revive.
     if op.apply && declared_rule_call {
+        diags.push(
+            Diag::error(
+                "lower/rule-dotted-apply",
+                format!(
+                    "{}.(...): the dotted apply form is removed. Use \
+                     {}(...) to call (run/write) or {}?(...) to query.",
+                    op.name, op.name, op.name,
+                ),
+            )
+            .with_span(op.span.lo, op.span.hi),
+        );
+        return None;
+    }
+
+    // `r?(...)` → QUERY the materialized `<r>_facts` table. Holes
+    // (`TERM?`) are the projection binders. The body is never run.
+    if op.predicate && declared_rule_call {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
-        if first_apply_hole(&arg_vals).is_some() {
-            diags.push(
-                Diag::error(
-                    "lower/apply-with-hole",
-                    format!(
-                        "{}.(...): apply form requires grounded args; \
-                         capture-binders (TERM?) are only valid in bare query calls",
-                        op.name,
-                    ),
-                )
-                .with_span(op.span.lo, op.span.hi),
-            );
-            return None;
-        }
-        // Apply form: prefer bodied invocation (RuleInvokeComponent). For
-        // pass-through rules (no body) fall back to the apply-write path
-        // so :sink-style declarations still write.
-        let result = if ctx.get_rule(&op.name).is_some() {
-            crate::sql::rule_body_call_pipe(ctx, &op.name, op.force, &arg_vals)
-        } else {
-            crate::sql::rule_apply_write_pipe(ctx, &op.name, &arg_vals)
-        };
-        match result {
+        match crate::sql::rule_table_call_pipe(ctx, &op.name, &arg_vals) {
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
                     Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),
@@ -418,31 +413,37 @@ pub fn walk_op(
             }
             Err(e) => {
                 diags.push(
-                    Diag::error("lower/rule-apply", e.to_string())
-                        .with_span(op.span.lo, op.span.hi),
+                    Diag::error("lower/rule-call", e.to_string()).with_span(op.span.lo, op.span.hi),
                 );
                 return None;
             }
         }
     }
 
-    if op.force && declared_rule_call {
-        // `r!(...)` without dotted apply is reserved. Force only applies
-        // to the dotted apply form `r!.(...)`.
-        diags.push(
-            Diag::error("lower/rule-force-reserved",
-                format!("{}!(...): force is only valid on the apply form {}!.(...)", op.name, op.name))
-                .with_span(op.span.lo, op.span.hi)
-        );
-        return None;
-    }
-
-    // Bare or predicate rule call against the materialized facts table.
-    // V4 locked: `r(...)` and `r?(...)` are both QUERY paths against
-    // `<r>_facts`. The body is NEVER run from a bare call site.
+    // Bare `r(...)` → CALL, unambiguous. Args must be grounded; a hole
+    // is a hard error (use the query form `r?(...)` to project).
     if declared_rule_call {
         let arg_vals: Vec<CallArg> = args.iter().map(|(v, _)| v.clone()).collect();
-        match crate::sql::rule_table_call_pipe(ctx, &op.name, &arg_vals) {
+        if first_apply_hole(&arg_vals).is_some() {
+            diags.push(
+                Diag::error(
+                    "lower/call-with-hole",
+                    format!(
+                        "{}(...): a call requires grounded args; holes \
+                         (TERM?) are only valid in the query form {}?(...)",
+                        op.name, op.name,
+                    ),
+                )
+                .with_span(op.span.lo, op.span.hi),
+            );
+            return None;
+        }
+        let result = if ctx.get_rule(&op.name).is_some() {
+            crate::sql::rule_body_call_pipe(ctx, &op.name, op.force, &arg_vals)
+        } else {
+            crate::sql::rule_apply_write_pipe(ctx, &op.name, &arg_vals)
+        };
+        match result {
             Ok(pipe) => {
                 let pipe = match &ctx.probe {
                     Some(p) => super::probe_wrap::wrap_pipe_with_span(pipe, op.span, p.clone()),

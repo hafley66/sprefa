@@ -2327,6 +2327,30 @@ impl OperatorDef for SplitLineDef {
     }
 }
 
+/// `split_lines()` — plural alias of `split_line`; shorthand for
+/// `split` on a literal newline (`split` + `` `\n` `` DSL body).
+pub struct SplitLinesDef;
+
+impl OperatorDef for SplitLinesDef {
+    fn name(&self) -> &'static str {
+        "split_lines"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        SPLIT_SPEC
+    }
+
+    fn lower(
+        &self,
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        lower_split_with_separator("split_lines", args, "\n")
+    }
+}
+
 // ─── read ─────────────────────────────────────────────────────────────────
 // `read` — load file bytes at cursor.FS into cursor.value. Cursors
 // without FS pass through; downstream ops can read &.value as the

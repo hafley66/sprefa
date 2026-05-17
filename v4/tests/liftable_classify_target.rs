@@ -39,9 +39,9 @@ fn fs_op_classifies_as_stream() {
 
 #[test]
 fn ast_op_classifies_as_stream() {
-    // ast(:c)`pattern` runs tree-sitter. Stream variant. Output cols
-    // must be id-typed; LO/HI must use WhereBytesId so source byte
-    // spans are first-class.
+    // ast(:c)`pattern` runs tree-sitter. Stream variant. Per 9e31f389
+    // (LO/HI are raw byte offsets), the schema must NOT carry the bogus
+    // WhereBytesId FK; byte spans are plain Int offsets.
     let ast_op = v4::compile::lower::ops::AstOp::new_for_test("c", "printk($$$)");
     let lift = ast_op.classify();
 
@@ -51,12 +51,20 @@ fn ast_op_classifies_as_stream() {
     );
 
     if let Liftable::Stream { schema, .. } = &lift {
-        let has_where_bytes = schema.iter().any(|(_, kind)| {
-            matches!(kind, IdKind::WhereBytesId)
-        });
+        let has_where_bytes = schema
+            .iter()
+            .any(|(_, kind)| matches!(kind, IdKind::WhereBytesId));
         assert!(
-            has_where_bytes,
-            "ast Stream schema must include WhereBytesId for the matched span"
+            !has_where_bytes,
+            "ast Stream schema must NOT use WhereBytesId (LO/HI are raw \
+             byte offsets since 9e31f389): {schema:?}"
+        );
+        let has_int_span = schema
+            .iter()
+            .any(|(_, kind)| matches!(kind, IdKind::Int));
+        assert!(
+            has_int_span,
+            "ast Stream schema must carry Int byte-offset cols: {schema:?}"
         );
     }
 }
