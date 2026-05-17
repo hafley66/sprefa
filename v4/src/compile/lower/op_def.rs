@@ -225,6 +225,21 @@ pub trait OperatorDef: Send + Sync + 'static {
         &[]
     }
 
+    /// Cursor-term names that form this op's row IDENTITY (the key).
+    /// Everything not listed is treated as value/payload. Used by the
+    /// retraction/memo layer to tell "same row, new value" from "new
+    /// row" (`Cursor::key_hash` vs `Cursor::val_hash`).
+    ///
+    /// Default: empty. An empty key set means the WHOLE cursor is the
+    /// key (`key_hash` == the prior whole-cursor `content_hash`
+    /// semantics) and the value complement is empty. This is always
+    /// correct but coarse (any value edit looks like a new row). Op
+    /// authors opt in (`re`/`ast`/`json`: capture names as key, span as
+    /// value) to reduce churn.
+    fn key_terms(&self) -> &[&str] {
+        &[]
+    }
+
     fn lower(
         &self,
         ctx: &LowerCtx,

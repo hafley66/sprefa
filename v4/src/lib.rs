@@ -551,6 +551,81 @@ impl Cursor {
         self.focal().value.as_ref()
     }
 
+    // ── Phase 0: two-part cursor hash (identity vs value) ───────────
+    //
+    // `key_hash` covers the terms an op declares as row IDENTITY (via
+    // `OperatorDef::key_terms`). `val_hash` covers the complement (the
+    // payload). Telling them apart lets the retraction/memo layer
+    // distinguish "same row, new value" (Retract+Assert) from "new
+    // row" (Assert) without treating every re-render as full churn.
+    //
+    // Both are order-INDEPENDENT over the selected term set: each
+    // term is hashed independently and the per-term digests are XOR-
+    // folded. Term order on the cursor is not identity.
+    //
+    // When `keys` is empty the WHOLE cursor is the key: `key_hash`
+    // then matches the prior whole-cursor `content_hash` semantics
+    // (ordered codec encode + blake3), a safe coarse default, and
+    // `val_hash` is the hash of the empty set.
+
+    fn term_digest(t: &CursorTerm) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        h.update(&(t.name.len() as u64).to_le_bytes());
+        h.update(t.name.as_bytes());
+        h.update(&(t.value.len() as u64).to_le_bytes());
+        h.update(t.value.as_bytes());
+        let (tag, payload) = match t.cursor_value {
+            CursorValue::Null => (0u8, 0u64),
+            CursorValue::Bool(v) => (1u8, u64::from(v)),
+            CursorValue::Int(v) => (2u8, u64::from_le_bytes(v.to_le_bytes())),
+            CursorValue::Float(v) => (3u8, v),
+            CursorValue::String(v) => (4u8, v.0),
+            CursorValue::WhereBytes(v) => (5u8, v.0),
+            CursorValue::Blob(v) => (6u8, v),
+        };
+        h.update(&[tag]);
+        h.update(&payload.to_le_bytes());
+        h.update(&t.value_id.0.to_le_bytes());
+        h.update(&t.at.0.to_le_bytes());
+        *h.finalize().as_bytes()
+    }
+
+    fn fold_digest(&self, keep: impl Fn(&str) -> bool) -> [u8; 32] {
+        let mut acc = [0u8; 32];
+        for t in &self.terms {
+            if keep(t.name.as_ref()) {
+                let d = Self::term_digest(t);
+                for (a, b) in acc.iter_mut().zip(d.iter()) {
+                    *a ^= *b;
+                }
+            }
+        }
+        acc
+    }
+
+    /// Identity hash over the op-declared key term set. Stable under
+    /// value-only edits (edits to non-key terms). When `keys` is
+    /// empty, the whole cursor is the key and this matches the prior
+    /// whole-cursor `content_hash` semantics.
+    pub fn key_hash(&self, keys: &[&str]) -> [u8; 32] {
+        if keys.is_empty() {
+            // Whole-cursor key: same bytes/semantics as content_hash.
+            let bytes = crate::cursor_codec::encode(self);
+            return *blake3::hash(&bytes).as_bytes();
+        }
+        self.fold_digest(|n| keys.contains(&n))
+    }
+
+    /// Value/payload hash: the complement of the key term set. When
+    /// `keys` is empty (whole cursor is key) the value set is empty
+    /// and this is a constant (the empty-fold digest).
+    pub fn val_hash(&self, keys: &[&str]) -> [u8; 32] {
+        if keys.is_empty() {
+            return [0u8; 32];
+        }
+        self.fold_digest(|n| !keys.contains(&n))
+    }
+
     // ── Layer 0c coord-space accessors (no live callers in 0c.1; live
     // ── in 0c.2 when emitters migrate to set_at). Allowed-dead so the
     // ── lib.rs build stays clean while these remain unused.
@@ -673,6 +748,61 @@ mod cursor_tests {
         let fields = effect_runtime::v2::Row::fields(&c);
         assert_eq!(fields[0], ("&", "focal"));
         assert!(fields.contains(&("NAME", "alpha")));
+    }
+
+    // ── Phase 0: key_hash / val_hash split ──────────────────────────
+
+    #[test]
+    fn value_only_edit_keeps_key_hash_changes_val_hash() {
+        let keys: &[&str] = &["NAME"];
+
+        let mut a = Cursor::default();
+        a.set("NAME", "alpha");
+        a.set("SPAN", "10..20");
+
+        let k0 = a.key_hash(keys);
+        let v0 = a.val_hash(keys);
+
+        // Value-only edit: change a non-key term (SPAN).
+        let mut b = a.clone();
+        b.set("SPAN", "30..40");
+
+        assert_eq!(b.key_hash(keys), k0, "value-only edit must not move key_hash");
+        assert_ne!(b.val_hash(keys), v0, "value-only edit must move val_hash");
+
+        // Key-term edit: change the key term (NAME).
+        let mut c = a.clone();
+        c.set("NAME", "beta");
+        assert_ne!(c.key_hash(keys), k0, "key-term edit must move key_hash");
+    }
+
+    #[test]
+    fn key_hash_is_order_independent_over_term_set() {
+        let keys: &[&str] = &["NAME", "KIND"];
+
+        let mut a = Cursor::default();
+        a.set("NAME", "x");
+        a.set("KIND", "fn");
+
+        let mut b = Cursor::default();
+        b.set("KIND", "fn");
+        b.set("NAME", "x");
+
+        assert_eq!(a.key_hash(keys), b.key_hash(keys));
+        assert_eq!(a.val_hash(keys), b.val_hash(keys));
+    }
+
+    #[test]
+    fn empty_key_terms_is_whole_cursor_content_hash() {
+        use effect_runtime::v2::Next;
+        let mut c = Cursor::default();
+        c.set("&", "focal");
+        c.set("NAME", "alpha");
+
+        // Empty key set ⇒ whole cursor is the key ⇒ matches the prior
+        // whole-cursor content_hash; value complement is empty.
+        assert_eq!(c.key_hash(&[]), c.content_hash());
+        assert_eq!(c.val_hash(&[]), [0u8; 32]);
     }
 }
 
