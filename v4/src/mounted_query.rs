@@ -637,6 +637,27 @@ pub fn record_fact_support_batch(
     store.insert_batch(SUPPORT_TABLE, rows);
 }
 
+/// Phase 4: presence-based teardown for the generic memo path. Given
+/// the PRIOR output cursors that the new render no longer produces,
+/// compute their support cursor ids and run the SAME teardown the
+/// mounted-query path uses (delete sink rows whose support is gone).
+/// Presence-only — no mult/DRed (Phase 5).
+pub fn retract_memo_rows(
+    store: &dyn FactStore<Cursor>,
+    _owner_hex: &str,
+    _in_hex: &str,
+    removed_cursors: &[Arc<Cursor>],
+) {
+    if removed_cursors.is_empty() {
+        return;
+    }
+    let ids: Vec<String> = removed_cursors
+        .iter()
+        .map(|c| cursor_storage_parts(c.as_ref()).0)
+        .collect();
+    retract_supported_rows(store, &ids);
+}
+
 fn retract_supported_rows(store: &dyn FactStore<Cursor>, removed_cursor_ids: &[String]) {
     if removed_cursor_ids.is_empty() {
         return;

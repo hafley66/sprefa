@@ -21,6 +21,7 @@ pub mod flatten;
 #[cfg(feature = "sqlite")]
 pub mod hybrid_queue;
 pub mod mem_queue;
+pub mod memo_seam;
 pub mod memoize;
 pub mod next;
 pub mod next_key;
@@ -57,6 +58,7 @@ pub use flatten::{splice_into, splice_into_at, splice_into_recorded, splice_into
 #[cfg(feature = "sqlite")]
 pub use hybrid_queue::{HybridCfg, HybridQueue};
 pub use mem_queue::MemQueue;
+pub use memo_seam::{DynMemoSeam, MemoDelta, MemoProbe, MemoSeam};
 pub use memoize::{
     attach_cache_to_bus, attach_cache_to_bus_with_queue, CacheCascadeListener, MemoCache, MemoKey,
     Memoize,

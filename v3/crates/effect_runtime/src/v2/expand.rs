@@ -111,6 +111,12 @@ pub struct ExpandOpts {
     pub batch_cap: usize,
     pub runtime: Option<Arc<dyn Any + Send + Sync>>,
     pub telemetry: Option<Arc<EffectTelemetry>>,
+    /// Phase 4: the memo/replay/reconcile seam. Stored type-erased
+    /// (same `Arc<dyn Any>` trick as `runtime`) so `ExpandOpts` stays
+    /// non-generic; `expand<N>` downcasts to `Arc<dyn MemoSeam<N>>`.
+    /// `None` ⇒ the pre-Phase-4 path (no probe, every component
+    /// dispatches).
+    pub memo_seam: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 pub const DEFAULT_BATCH_CAP: usize = 256;
@@ -123,6 +129,7 @@ impl Default for ExpandOpts {
             batch_cap: DEFAULT_BATCH_CAP,
             runtime: None,
             telemetry: None,
+            memo_seam: None,
         }
     }
 }
@@ -156,7 +163,23 @@ impl ExpandOpts {
         self.telemetry = Some(telemetry);
         self
     }
+
+    /// Phase 4: install the memo/replay/reconcile seam. Type-erased
+    /// behind a sized newtype so `ExpandOpts` stays non-generic;
+    /// `expand<N>` recovers it via `downcast`.
+    pub fn with_memo_seam<N: Next>(
+        mut self,
+        seam: super::memo_seam::DynMemoSeam<N>,
+    ) -> Self {
+        self.memo_seam = Some(Arc::new(SeamCell(seam)));
+        self
+    }
 }
+
+/// Sized wrapper so a fat `Arc<dyn MemoSeam<N>>` can ride the
+/// `Arc<dyn Any>` slot on `ExpandOpts` (a trait-object Arc is not
+/// itself `Any`). Mirrors how `runtime` would wrap a `dyn` value.
+struct SeamCell<N: Next>(super::memo_seam::DynMemoSeam<N>);
 
 #[derive(Debug, Default, Clone)]
 pub struct ExpandStats {
@@ -236,12 +259,32 @@ pub fn expand<N: Next>(
             ctx = ctx.with_telemetry(telemetry.clone());
         }
 
-        // PHASE E (deferred): reconciliation hook lives inside
-        // `dispatch`. Before enqueueing new children, an override can
-        // multiset-diff this row's prior child NextKeys against the
-        // new ones via `queue.cascade_delete(child_id)`. Today every
-        // render is a fresh row, so there's no prior set to diff;
-        // Phase E lights up when Memoize+Yield get composed.
+        // PHASE 4: the memo/replay/reconcile hook. When a `MemoSeam`
+        // is installed it is probed for EVERY component (rule or not)
+        // before dispatch. A non-stale `Replay` splices the stored
+        // child rows downstream and SKIPS `comp.dispatch` for that
+        // input (the op runs 0×). `Miss`/`Stale` rows still run; their
+        // freshly-enqueued children are captured by a recording queue
+        // shim and routed through `reconcile`, which performs the
+        // presence-based `Retract` teardown (same semantics as the
+        // prior `mounted_query` path — no mult/DRed; that is Phase 5)
+        // and records the new memo entry, then hands back the rows to
+        // assert downstream. With no seam this is exactly the
+        // pre-Phase-4 path: every component dispatches.
+        let seam: Option<super::memo_seam::DynMemoSeam<N>> = opts
+            .memo_seam
+            .as_ref()
+            .and_then(|cell| cell.downcast_ref::<SeamCell<N>>())
+            .map(|c| c.0.clone());
+
+        let owner_id = seam.as_ref().map(|_| {
+            let mut h = blake3::Hasher::new();
+            h.update(&batch[0].pipe_hash.to_le_bytes());
+            h.update(&batch[0].instance_id.to_le_bytes());
+            h.update(&head_depth.to_le_bytes());
+            h.update(comp.kind().as_bytes());
+            *h.finalize().as_bytes()
+        });
 
         let depth_before = queue.depth();
         let batch_len = batch.len() as u64;
@@ -265,7 +308,16 @@ pub fn expand<N: Next>(
             );
             let _g = span.enter();
             let t0 = std::time::Instant::now();
-            comp.dispatch(&ctx, &batch, queue.as_ref());
+            dispatch_with_seam(
+                comp.as_ref(),
+                &ctx,
+                &batch,
+                queue.as_ref(),
+                seam.as_ref(),
+                owner_id,
+                head_depth + 1,
+                expand_tick,
+            );
             let elapsed = t0.elapsed();
             if let Some(telemetry) = &opts.telemetry {
                 telemetry.record_dispatch(kind, batch_len, elapsed);
@@ -287,7 +339,16 @@ pub fn expand<N: Next>(
             stats.emitted += emitted_in_batch;
         } else {
             let t0 = std::time::Instant::now();
-            comp.dispatch(&ctx, &batch, queue.as_ref());
+            dispatch_with_seam(
+                comp.as_ref(),
+                &ctx,
+                &batch,
+                queue.as_ref(),
+                seam.as_ref(),
+                owner_id,
+                head_depth + 1,
+                expand_tick,
+            );
             if let Some(telemetry) = &opts.telemetry {
                 telemetry.record_dispatch(comp.kind(), batch_len, t0.elapsed());
             }
@@ -298,6 +359,170 @@ pub fn expand<N: Next>(
     }
 
     stats
+}
+
+/// A `QueueBackend` shim that BUFFERS every `enqueue` instead of
+/// forwarding it. The seam path uses this to capture the rows a
+/// `Miss`/`Stale` `dispatch` would have produced so `reconcile` can
+/// decide which to actually assert downstream. Non-`enqueue` side
+/// effects of a `dispatch` override (graph/store writes, dep
+/// recording) still hit the real backend — only queue children are
+/// intercepted. All other `QueueBackend` calls delegate to `inner`.
+struct RecordingQueue<'a, N: Next> {
+    inner: &'a dyn QueueBackend<N>,
+    captured: std::sync::Mutex<Vec<QueueRow<N>>>,
+    next_id: std::sync::atomic::AtomicU64,
+}
+
+impl<'a, N: Next> RecordingQueue<'a, N> {
+    fn new(inner: &'a dyn QueueBackend<N>) -> Self {
+        Self {
+            inner,
+            captured: std::sync::Mutex::new(Vec::new()),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+        }
+    }
+    fn take(&self) -> Vec<QueueRow<N>> {
+        std::mem::take(&mut *self.captured.lock().unwrap())
+    }
+}
+
+impl<'a, N: Next> QueueBackend<N> for RecordingQueue<'a, N> {
+    fn enqueue(&self, row: QueueRow<N>) -> super::queue::QueueId {
+        // Provisional id so a dispatch that chains enqueues within one
+        // call still gets a unique handle back; the real id is minted
+        // when the kept rows are forwarded to `inner`.
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut r = row;
+        r.id = id;
+        self.captured.lock().unwrap().push(r);
+        id
+    }
+    fn pull_runnable(&self, global_tick: ExpandTick) -> Option<QueueRow<N>> {
+        self.inner.pull_runnable(global_tick)
+    }
+    fn depth(&self) -> u64 {
+        self.inner.depth()
+    }
+    fn dispatch_park(
+        &self,
+        domain: &str,
+        key: Option<super::next_key::NextKey>,
+    ) -> u64 {
+        self.inner.dispatch_park(domain, key)
+    }
+    fn has_parked_domain(&self, domain: &str) -> bool {
+        self.inner.has_parked_domain(domain)
+    }
+    fn cascade_delete(&self, root: super::queue::QueueId) -> u64 {
+        self.inner.cascade_delete(root)
+    }
+}
+
+/// Run one homogeneous batch through the memo seam (when installed),
+/// else straight through `comp.dispatch`. See the Phase-4 comment at
+/// the call site for the contract.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_with_seam<N: Next>(
+    comp: &dyn super::component::Component<Next = N>,
+    ctx: &RenderCtx,
+    batch: &[QueueRow<N>],
+    queue: &dyn QueueBackend<N>,
+    seam: Option<&super::memo_seam::DynMemoSeam<N>>,
+    owner_id: Option<[u8; 32]>,
+    next_depth: u32,
+    expand_tick: ExpandTick,
+) {
+    use super::memo_seam::{MemoDelta, MemoProbe};
+
+    let (Some(seam), Some(owner)) = (seam, owner_id) else {
+        comp.dispatch(ctx, batch, queue);
+        return;
+    };
+
+    // Partition by index into `batch`: REPLAY (skip dispatch) vs RUN.
+    // `QueueRow`'s derived `Clone` over-constrains `N: Clone`, so the
+    // run set is referenced by index, never cloned.
+    let mut run_idx: Vec<usize> = Vec::new();
+    let mut prior_for: Vec<Option<Vec<Arc<N>>>> = Vec::new();
+    for (bi, row) in batch.iter().enumerate() {
+        let in_key = row.value.content_hash();
+        match seam.probe(owner, in_key) {
+            MemoProbe::Replay(rows) => {
+                // Pure replay: splice stored child rows downstream,
+                // `comp.dispatch` is skipped for this input entirely.
+                for (i, v) in rows.into_iter().enumerate() {
+                    super::flatten::splice_into_at(
+                        row,
+                        super::node::Node::Emit(v),
+                        next_depth,
+                        expand_tick,
+                        queue,
+                        i as u32,
+                    );
+                }
+            }
+            MemoProbe::Stale(prior) => {
+                run_idx.push(bi);
+                prior_for.push(Some(prior));
+            }
+            MemoProbe::Miss => {
+                run_idx.push(bi);
+                prior_for.push(None);
+            }
+        }
+    }
+
+    if run_idx.is_empty() {
+        return;
+    }
+
+    // RUN the Miss/Stale rows. `dispatch` takes a slice; rebuild a
+    // contiguous run slice by borrowing the chosen `batch` rows into
+    // a `Vec<&QueueRow>` is not what `dispatch` wants (it wants
+    // `&[QueueRow]`). When the whole batch runs, pass it directly;
+    // otherwise dispatch each chosen row singly (correct, just less
+    // batched — the seam path is the cold/changed path).
+    let rec = RecordingQueue::new(queue);
+    if run_idx.len() == batch.len() {
+        comp.dispatch(ctx, batch, &rec);
+    } else {
+        for &bi in &run_idx {
+            comp.dispatch(ctx, std::slice::from_ref(&batch[bi]), &rec);
+        }
+    }
+    let captured = rec.take();
+
+    // Group captured children by the input row that produced them
+    // (`parent_id` == the input row's queue id).
+    for (slot, &bi) in run_idx.iter().enumerate() {
+        let in_row = &batch[bi];
+        let idx = slot;
+        let in_key = in_row.value.content_hash();
+        let fresh: Vec<Arc<N>> = captured
+            .iter()
+            .filter(|c| c.parent_id == Some(in_row.id))
+            .map(|c| c.value.clone())
+            .collect();
+        let prior = std::mem::take(&mut prior_for[idx]);
+        let deltas = seam.reconcile(owner, in_key, prior, &fresh);
+        for d in deltas {
+            if let MemoDelta::Assert(i) = d {
+                if let Some(v) = fresh.get(i) {
+                    super::flatten::splice_into_at(
+                        in_row,
+                        super::node::Node::Emit(v.clone()),
+                        next_depth,
+                        expand_tick,
+                        queue,
+                        i as u32,
+                    );
+                }
+            }
+            // `Retract` is performed inside `reconcile` (presence
+            // teardown, Phase 4). The driver does not act on it.
+        }
+    }
 }
 
 fn drive_barriers<N: Next>(

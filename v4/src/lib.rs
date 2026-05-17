@@ -11,6 +11,7 @@ pub mod ghcache;
 pub mod git_watch;
 pub mod lsp;
 pub mod memo;
+pub mod memo_seam_impl;
 pub mod mounted_query;
 pub mod pipeline;
 pub mod rule;
