@@ -19,14 +19,46 @@
   <h1>sprefa runtime map</h1>
   <p>This file is rendered by <code>v4/examples/runtime-map-html.sprf</code>. Missing source matches emit <code>lsp_warn(:missing_runtime_doc)</code>.</p>
   <div class="diagram">
-    <section class=
-    <section class=
-    <section class=
-    <section class=
-    <section class=
-    <section class=
-    <section class=
-    <section class=
+    <section class="node">
+      <strong><a href="../../v4/src/lib.rs">CursorValue</a></strong>
+      <div class="note">typed payload handle for strings, byte ranges, blobs, and scalars</div>
+      <div class="edge">v4/src/lib.rs byte 7087..7237</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v4/src/lib.rs">CursorTerm</a></strong>
+      <div class="note">named term row; & is the focal cursor term</div>
+      <div class="edge">v4/src/lib.rs byte 8567..8721</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v4/src/lib.rs">Cursor</a></strong>
+      <div class="note">current cursor payload; migrating toward implicit & plus named terms</div>
+      <div class="edge">v4/src/lib.rs byte 12172..12450</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/queue.rs">QueueRow</a></strong>
+      <div class="note">runtime cursor row: parent, batch index, path, pipe hash, instance, depth, wake</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/queue.rs byte 2053..2377</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/expand.rs">PipeInstance</a></strong>
+      <div class="note">runtime pipe identity: ordered components plus pipe hash and instance id</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/expand.rs byte 2703..2843</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/component.rs">Component</a></strong>
+      <div class="note">operator boundary: render, render_batch, dispatch, barrier lifecycle</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/component.rs byte 1862..5938</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/component.rs">RenderCtx</a></strong>
+      <div class="note">dispatch context: pipe hash, depth, generation tick, event bus, diagnostics</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/component.rs byte 6526..6786</div>
+    </section>
+    <section class="node">
+      <strong><a href="../../v3/crates/effect_runtime/src/v2/node.rs">Node</a></strong>
+      <div class="note">operator output algebra: emit, many, park, done</div>
+      <div class="edge">v3/crates/effect_runtime/src/v2/node.rs byte 321..1096</div>
+    </section>
 
   </div>
 </body>
