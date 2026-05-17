@@ -691,3 +691,66 @@ this was css + google biquery experimental pipeline syntax inspired as pipe lang
 but i will need  forking (which is just more sprf path for parse/runtime anyways) and arbitrary nesting of parents as inner pipe exprs. 
 
 but idk how to handle the idea of making simple enough query/numeric predicate/operators to interpret value as number and do something with it. ah jeez, so many ideas. if we can make deterministic loops that would be dope. what the fukc am i building man. also json has implicit forking/branching/nesting, if you query 2 different object siblings. also json syntax has no wayy to capture the hole json object of something vs its elements, its one or the other. at least regex capture group syntax OG is eaten and not taken literally. make regex is really just the most portable fuckin programming language next to arithmetic
+
+<llm-zone source="claude-session-2026-05-16" status="human-goal-capture">
+  <topic name="v4-cross-language-type-graph-research-intent" llm-tags="v4 type-graph cross-language tree-sitter stack-graphs partial-resolution cycles paths ram-budget rust go kotlin sql lsp-tree projection">
+    <note>Voice-text capture, intent only. This note is the human asking the LM to go research and answer the questions below, then write the findings down as an addressable note. Voice-to-text so wording is loose; preserve intent, do not act on the language design yet.</note>
+    <note>The ask: for v4, write down the ways we can handle parse-level / partial type resolution. Not full Hindley-Milner type inference because that's cursed in complexity. Scope: rust, go, and kotlin (the human waffled on naming kotlin but means kotlin). The goal is: look at the types of things and build a graph of the types across files and across languages.</note>
+    <note>Research question 1: does anything already do this with tree-sitter? Has someone already built a thing that takes a program/route and roughly figures out the type/binding graph from CST alone (tree-sitter, ast-grep, scip, stack-graphs, ctags, etc.)? Find prior art before designing ours.</note>
+    <note>Research question 2: what are the algorithms for cross-language type/path resolution and crawling? We have tree-sitter and ast-grep. The interest is in the resolution/crawl algorithm itself, not the parser.</note>
+    <note>Hard constraint: a lot of code, not enough RAM. 500+ polyglot repos. The point is to get as far as possible on the type graph WITHOUT giving up — partial / best-effort resolution that degrades gracefully rather than a full typechecker that OOMs. How far can static read + watch get without ML, same posture as v0 string-index study.</note>
+    <note>The deliverable shape the human wants: enumerate all the paths / strings in a lodash-`_.get`-style dotted-path sense — every route or path through a data model, and where the cycles are. Applies to type graphs and to SQL data models. Wants it to read like a folder review with dots, printed out, then eventually a visual UI on top. Needs the backbone first: the resolved-or-partially-resolved type/path graph that the dotted-path projection and the visual render off of.</note>
+    <note>Tie-in to existing v4 vision: this is the "type graph projected as a tree so you can query it with CSS/dotted paths" idea from the codex-session note above, and the cross-repo reachability / staleness watcher. Type graph is one more projection that rules can target and the LSP/map can render.</note>
+    <note>Action for the LM: research prior art + algorithms, then write findings as an addressable note (v4/docs/ doc plus an llm-zone summary), covering: (a) what exists on tree-sitter (stack-graphs/tree-sitter-stack-graphs, scip, glean, kythe, ctags, comby), (b) the partial-resolution algorithm family and how far each gets per language, (c) RAM/scaling strategy at 500 repos, (d) the dotted-path + cycle enumeration backbone and how it maps onto sprf rules/store.</note>
+  </topic>
+</llm-zone>
+
+
+```
+SPREFA v4 — TOPOLOGICAL PIPELINE  (each box depends only on boxes to its LEFT; data flows left→right)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ L0 PRIMITIVES            L1 CST / PARSE             L2 WALK + LOWER (op MAKER)            L3 PIPE (Vec<Arc<dyn Component>>)     L4 EXPAND ENGINE (effect_runtime::v2)        L5 STATE PLANE (the graph)            L6 SINKS
+ ───────────────────────  ─────────────────────────  ────────────────────────────────────  ───────────────────────────────────  ───────────────────────────────────────────  ───────────────────────────────────  ──────────────────────
+ lib.rs                   cst/mod.rs                  compile/parse.rs ─┐                    pipeline.rs        (pure, lang-       expand.rs   driver loop:                     fact_store.rs                        lsp.rs
+  Coord{repo,rev,fs,        tree-sitter + rowan       compile/walk.rs   │  walks CST,         │  StrConst/Template, glob,          │  pull_runnable_batch(QueueBackend)        FactStore<Cursor> trait            │ lsp_error/warn/
+  lo,hi}=WhereBytes         red/green lossless tree   │  per op-call:   │  resolves           │  void, collect, split, ...         │  → Component.dispatch()                   │  MemFactStore / SqliteFactStore   │ info/hint
+  StringId (blake3→u64)   cst/dsls/* (injected):     │                 ▼                    │                                    │  → render_batch → render                  │  insert_batch / read_where /      │ expect_zero
+  RepoId RevId FileId      re glob ast json/yaml      │  Registry::lower_at(name)           v2_ops.rs   (repo/rev/fs/         │  → Node → flatten::splice_into            │  delete_matching (RETRACT)        │ expect_match
+ ───────────────────────   sql sql_where markdown     │   ├─ OperatorDef::validate_call    │  read, source-located)            │     → QueueBackend.enqueue                │                                   │ lsp.hover
+ store.rs                  cst/injected.rs            │   ├─ ::parse_dsl(raw)→DslInterp    │  fact.rs   FactWrite/FactRead     │                                           ▼                                  ├──────────────────────
+  SprfStore interners      cst/locate.rs (pos↔span)   │   ├─ ::binders_in_dsl              │  rule.rs   Rule(into_pipe)        queue.rs   QueueRow / BarrierScope /      runtime_graph.rs  (v4 wrapper)     │ template.rs (${X})
+  _strings _repos _revs    cst/lsp/* highlights,      │   ├─ ::cursor_binds                │  sql.rs    SqlQueryComponent      │  mem_queue / sqlite_queue /                │  RuntimeGraph                     │ write_cursor /
+  _paths _files (sentinel  providers, shift           │   └─ ::lower()→Pipe<Cursor>        │  mounted_query.rs (record/retract)│  hybrid_queue                              │  declare_owner / declare_*source  │ write_file
+  row 0 = SYNTHETIC)      ───────────────────────     │                                    │  ghcache.rs GhPrsComponent        │                                           │  notify_table_inserted()──┐       │ comment / print
+ ───────────────────────  cst/store.rs (doc cache)    compile/binding_graph.rs             │  lsp.rs    diagnostic comps       wake.rs   Wake{Immediate|Key|Tick}          │  rule_memo_owner (ArgKey) │       │ render_markdown
+ config.rs                                            │  use-before-bind (uses cursor_binds  │  v2_ops/term/source backends     │  Node::Yield parks @ same depth           │  run_to_quiescence(F)─────┤       │ sprf_introspect
+  SprfConfig.repos[]                                  │  + binders_in_dsl to suppress FP)   └───────────────┬───────────────────┘  until Wake fires (poll/cache)              │  sweep_to_quiescence      │       │ telemetry.rs
+  daemon.ghcache_db                                   compile/fuser.rs + lower/liftable.rs                 │                       ───────────────────────────────────────────  └───────────────┬───────────┘       │ (EffectTelemetry)
+                                                      │  Pure→SQL hoist; Stream/RuleQuery/  assembled into Pipe → into_instance  flatten.rs splice_into  next.rs Next         effect_runtime::v2::runtime_graph.rs    bin/sprefa-{run,daemon}
+                                                      │  Opaque rungs decide SQL fusion     PipeInstance (pipe_hash, instance_id) memoize.rs / probe.rs (input-set memo) FactRuntimeGraph<Row>  ◄────────┘
+                                                      compile/probe_wrap.rs                ───────────────────────────────────  diag.rs DiagSink   event_bus.rs EventBus   GraphRef<K:NodeKind,I:NodeId>
+                                                                                                                                                                          NodeKind = Owner|Source|Output|
+                                                                                                                                                                                     Row|Subscribe|Support
+                                                                                                                                                                          insert_node/edge/value · mark_dirty
+                                                                                                                                                                          dirty_owners · run_to_quiescence
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+COMPILE-TIME  (L0–L3 built once: source text ⟶ Pipe of Components)            │            RUNTIME  (L3–L6 looped: seed cursors ⟶ expand ⟶ facts ⟶ retract ⟶ diags)
+```
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+GOAL  2026-05-16  ── deterministic type/field cartography, rendered in sprf
+─────────────────────────────────────────────────────────────────────────
+Want: for any type, an `ls`/tree-style view of its fields + every use site +
+the scope/block/nesting each use lives in. One command, not manual grep.
+
+Want: automate producing the staggered-row ASCII pointer diagrams (the
+/i:map style — fields on the left, callout lines staggered to the right
+pointing at what each is / where it flows). That visual is good; it should
+not be hand-drawn.
+
+Bigger arc: collect ALL these visual styles (field tree, staggered pointer
+map, from→to flow, COMPILE/RUNTIME split-pane) and turn them into
+deterministic renderers — given the code, emit the diagram. Then render
+them *in sprf itself*, one day. The diagrams become sprf outputs, not chat
+artifacts.
