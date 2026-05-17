@@ -1,57 +1,167 @@
 # Hand-authored architecture map -> d2 -> svg via `sh`.
 #
-# Proof-of-capability: the trait/type interaction graph is supplied as
+# Proof-of-capability: the sprefa v4 architecture graph is supplied as
 # hand-made facts (no resolver needed yet). sprf maintains them, projects
-# to d2 source, writes the .d2, and shells out to `d2` to render the svg.
+# to styled d2 source (containers + classes + shapes), writes the .d2,
+# and shells out to `d2` to render the svg.
 #
 # Run from repo root:
 #   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
 #     v4/examples/arch-d2-map.sprf --root . --show-rows
+#
+# Parser workarounds kept intentionally:
+#   - render.markdown body's first non-space token is literal text
+#     (a d2 vars/title header), never `${`.
+#   - no `"` adjacent to `${`, and no `#` color literals (would need
+#     escaping near `${`); use d2 named colors instead.
+#   - node ids carry an `n_` literal prefix; containers a `g_` prefix.
+#   - label/edge text strips `;()/|` so split+regex stay clean.
 
-rule(:arch_node, ID?, LABEL?);
+rule(:arch_node, ID?, GROUP?, KLASS?, LABEL?);
 rule(:arch_edge, SRC?, DST?, REL?);
+rule(:arch_group, GID?, GLABEL?);
 
-# --- hand-made node facts: the main traits/types ---
-`OperatorDef|compile-time op trait. lower is the compile to runtime bridge
-Component|runtime op trait. render render_batch dispatch tiers
-Node|op output algebra. Emit Many Park Done
-RenderCtx|dispatch context. pipe hash depth generation bus diagnostics
-Cursor|payload. focal term plus named terms
-FactRuntimeGraph|reactive state graph. subscribe support dirty sweep
-RuntimeGraph|v4 facade over FactRuntimeGraph
-owner_uri|owner identity key. fiber or switchMap key
-Subscribe|source in-edge. owner consumes source
-support|owner keyed-children keep-alive set. DAG reconcile by key`
+# --- container groups: id | display label ---
+`pipe|sprf compile pipeline
+reg|op registry
+rt|runtime traits
+state|reactive state graph
+disp|rule-call dispatch`
   > split`
 `
-  > re`(?P<ID>[^|]+)\|(?P<LABEL>.+)`
-  > arch_node(ID, LABEL);
+  > re`(?P<GID>[^|]+)\|(?P<GLABEL>.+)`
+  > arch_group(GID, GLABEL);
 
-# --- hand-made edge facts: how they interact ---
-`OperatorDef|Component|lower bridges compile to runtime
-Component|Node|render / dispatch return value
-Component|RenderCtx|dispatch reads ctx
-Cursor|Component|batch input
+# --- node facts: id | group | class | label ---
+# class drives the d2 visual tier (see classes block in projection).
+`host_parse|pipe|stage|host_parse. tree-sitter CST per host file
+walk_program|pipe|stage|walk_program. CST to FusedRule list
+FusedRule|pipe|data|FusedRule. one lowered rule plus its op chain
+expand|pipe|stage|expand. run op chain bind term cursors
+FactStore|pipe|store|FactStore. derived rows keyed by rule name
+OpRegistry|reg|reg|OpRegistry. name to OperatorDef table
+split_op|reg|op|split. backtick literal to row stream
+re_op|reg|op|re. regex capture groups to named terms
+render_op|reg|op|render.markdown. template body to text
+sh_op|reg|op|sh. shell out effect node
+OperatorDef|rt|trait|OperatorDef. compile-time op trait. lower bridge
+Component|rt|trait|Component. runtime op trait. render render_batch
+Node|rt|trait|Node. output algebra. Emit Many Park Done
+RenderCtx|rt|trait|RenderCtx. pipe hash depth generation bus
+Cursor|rt|data|Cursor. payload. focal term plus named terms
+FactRuntimeGraph|state|store|FactRuntimeGraph. subscribe support dirty sweep
+RuntimeGraph|state|store|RuntimeGraph. v4 facade over FactRuntimeGraph
+owner_uri|state|data|owner_uri. owner identity key. switchMap key
+Subscribe|state|data|Subscribe. source in-edge. owner consumes source
+support|state|data|support. keyed-children keep-alive set
+call_r|disp|dispatch|CALL r. eager rule-call. emit rows now
+force_r|disp|dispatch|force r. drain rule to fixpoint
+query_r|disp|dispatch|QUERY r. subscribe to rule rows`
+  > split`
+`
+  > re`(?P<ID>[^|]+)\|(?P<GROUP>[^|]+)\|(?P<KLASS>[^|]+)\|(?P<LABEL>.+)`
+  > arch_node(ID, GROUP, KLASS, LABEL);
+
+# --- edge facts: src | dst | relation ---
+`host_parse|walk_program|CST feeds walk
+walk_program|FusedRule|lowers each rule
+FusedRule|expand|op chain executed by
+expand|FactStore|emits derived rows
+expand|OpRegistry|resolves op by name
+OpRegistry|split_op|registers
+OpRegistry|re_op|registers
+OpRegistry|render_op|registers
+OpRegistry|sh_op|registers
+split_op|OperatorDef|implements
+re_op|OperatorDef|implements
+render_op|OperatorDef|implements
+sh_op|OperatorDef|implements
+OperatorDef|Component|lower compiles to
+Component|Node|dispatch returns
+Component|RenderCtx|dispatch reads
+Cursor|Component|batch input to
+expand|Cursor|binds term cursors
+FactStore|FactRuntimeGraph|rows land in
 RuntimeGraph|FactRuntimeGraph|delegates all state
-Subscribe|FactRuntimeGraph|inserts the subscribe edge
+Subscribe|FactRuntimeGraph|inserts subscribe edge
 owner_uri|RuntimeGraph|keys owner instances
-support|FactRuntimeGraph|refcount keep-alive set
-FactRuntimeGraph|Node|dirty sweep re-runs owners`
+support|FactRuntimeGraph|refcount keep-alive
+FactRuntimeGraph|Node|dirty sweep re-runs owners
+call_r|expand|triggers eager expand
+force_r|expand|drains to fixpoint
+query_r|FactRuntimeGraph|subscribes via`
   > split`
 `
   > re`(?P<SRC>[^|]+)\|(?P<DST>[^|]+)\|(?P<REL>.+)`
   > arch_edge(SRC, DST, REL);
 
-# --- project facts -> d2 source, write, then render via sh ---
+# --- project facts -> styled d2 source, write, then render via sh ---
+# NOTE: the body opens with a literal d2 vars/title header so the first
+# non-space token is NOT `${` (parser workaround). Containers are emitted
+# as `g_GID.n_ID` qualified ids; d2 auto-creates the container. Colors are
+# d2 named colors to avoid `#` literals near `${`.
 `arch-map`
-  > render.markdown`direction: right
+  > render.markdown`vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 300
+    pad: 40
+  }
+}
 
-${ arch_node?(ID?, LABEL?)
-  > render.markdown`n_${ID}: ${LABEL}
+title: sprefa v4 architecture {
+  near: top-center
+  shape: text
+  style: { font-size: 30; bold: true }
+}
+
+direction: down
+
+classes: {
+  stage: {
+    shape: rectangle
+    style: { fill: royalblue; stroke: navy; font-color: white; border-radius: 8; bold: true; shadow: true }
+  }
+  data: {
+    shape: rectangle
+    style: { fill: aliceblue; stroke: steelblue; border-radius: 12; font-size: 13 }
+  }
+  store: {
+    shape: cylinder
+    style: { fill: cornsilk; stroke: darkgoldenrod; font-size: 13 }
+  }
+  reg: {
+    shape: package
+    style: { fill: lavender; stroke: indigo; font-size: 13 }
+  }
+  op: {
+    shape: hexagon
+    style: { fill: thistle; stroke: indigo; font-size: 12 }
+  }
+  trait: {
+    shape: rectangle
+    style: { fill: honeydew; stroke: seagreen; border-radius: 4; multiple: true; font-size: 13 }
+  }
+  dispatch: {
+    shape: diamond
+    style: { fill: mistyrose; stroke: firebrick; font-size: 12; bold: true }
+  }
+}
+
+${ arch_group?(GID?, GLABEL?)
+  > render.markdown`g_${GID}: ${GLABEL} {
+  style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 17; bold: true }
+}
+`
+}
+${ arch_node?(ID?, GROUP?, KLASS?, LABEL?)
+  > render.markdown`g_${GROUP}.n_${ID}: ${LABEL} { class: ${KLASS} }
 `
 }
 ${ arch_edge?(SRC?, DST?, REL?)
-  > render.markdown`n_${SRC} -> n_${DST}: ${REL}
+  > arch_node?(SRC, SG?, SK?, SL?)
+  > arch_node?(DST, DG?, DK?, DL?)
+  > render.markdown`g_${SG}.n_${SRC} -> g_${DG}.n_${DST}: ${REL} { style.font-size: 11 }
 `
 }
 `

@@ -1,23 +1,115 @@
-direction: right
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 300
+    pad: 40
+  }
+}
 
-n_OperatorDef: compile-time op trait. lower is the compile to runtime bridge
-n_Component: runtime op trait. render render_batch dispatch tiers
-n_Node: op output algebra. Emit Many Park Done
-n_RenderCtx: dispatch context. pipe hash depth generation bus diagnostics
-n_Cursor: payload. focal term plus named terms
-n_FactRuntimeGraph: reactive state graph. subscribe support dirty sweep
-n_RuntimeGraph: v4 facade over FactRuntimeGraph
-n_owner_uri: owner identity key. fiber or switchMap key
-n_Subscribe: source in-edge. owner consumes source
-n_support: owner keyed-children keep-alive set. DAG reconcile by key
+title: sprefa v4 architecture {
+  near: top-center
+  shape: text
+  style: { font-size: 30; bold: true }
+}
 
-n_OperatorDef -> n_Component: lower bridges compile to runtime
-n_Component -> n_Node: render / dispatch return value
-n_Component -> n_RenderCtx: dispatch reads ctx
-n_Cursor -> n_Component: batch input
-n_RuntimeGraph -> n_FactRuntimeGraph: delegates all state
-n_Subscribe -> n_FactRuntimeGraph: inserts the subscribe edge
-n_owner_uri -> n_RuntimeGraph: keys owner instances
-n_support -> n_FactRuntimeGraph: refcount keep-alive set
-n_FactRuntimeGraph -> n_Node: dirty sweep re-runs owners
+direction: down
+
+classes: {
+  stage: {
+    shape: rectangle
+    style: { fill: royalblue; stroke: navy; font-color: white; border-radius: 8; bold: true; shadow: true }
+  }
+  data: {
+    shape: rectangle
+    style: { fill: aliceblue; stroke: steelblue; border-radius: 12; font-size: 13 }
+  }
+  store: {
+    shape: cylinder
+    style: { fill: cornsilk; stroke: darkgoldenrod; font-size: 13 }
+  }
+  reg: {
+    shape: package
+    style: { fill: lavender; stroke: indigo; font-size: 13 }
+  }
+  op: {
+    shape: hexagon
+    style: { fill: thistle; stroke: indigo; font-size: 12 }
+  }
+  trait: {
+    shape: rectangle
+    style: { fill: honeydew; stroke: seagreen; border-radius: 4; multiple: true; font-size: 13 }
+  }
+  dispatch: {
+    shape: diamond
+    style: { fill: mistyrose; stroke: firebrick; font-size: 12; bold: true }
+  }
+}
+
+g_pipe: sprf compile pipeline {
+  style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 17; bold: true }
+}
+g_reg: op registry {
+  style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 17; bold: true }
+}
+g_rt: runtime traits {
+  style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 17; bold: true }
+}
+g_state: reactive state graph {
+  style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 17; bold: true }
+}
+g_disp: rule-call dispatch {
+  style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 17; bold: true }
+}
+
+g_pipe.n_host_parse: host_parse. tree-sitter CST per host file { class: stage }
+g_pipe.n_walk_program: walk_program. CST to FusedRule list { class: stage }
+g_pipe.n_FusedRule: FusedRule. one lowered rule plus its op chain { class: data }
+g_pipe.n_expand: expand. run op chain bind term cursors { class: stage }
+g_pipe.n_FactStore: FactStore. derived rows keyed by rule name { class: store }
+g_reg.n_OpRegistry: OpRegistry. name to OperatorDef table { class: reg }
+g_reg.n_split_op: split. backtick literal to row stream { class: op }
+g_reg.n_re_op: re. regex capture groups to named terms { class: op }
+g_reg.n_render_op: render.markdown. template body to text { class: op }
+g_reg.n_sh_op: sh. shell out effect node { class: op }
+g_rt.n_OperatorDef: OperatorDef. compile-time op trait. lower bridge { class: trait }
+g_rt.n_Component: Component. runtime op trait. render render_batch { class: trait }
+g_rt.n_Node: Node. output algebra. Emit Many Park Done { class: trait }
+g_rt.n_RenderCtx: RenderCtx. pipe hash depth generation bus { class: trait }
+g_rt.n_Cursor: Cursor. payload. focal term plus named terms { class: data }
+g_state.n_FactRuntimeGraph: FactRuntimeGraph. subscribe support dirty sweep { class: store }
+g_state.n_RuntimeGraph: RuntimeGraph. v4 facade over FactRuntimeGraph { class: store }
+g_state.n_owner_uri: owner_uri. owner identity key. switchMap key { class: data }
+g_state.n_Subscribe: Subscribe. source in-edge. owner consumes source { class: data }
+g_state.n_support: support. keyed-children keep-alive set { class: data }
+g_disp.n_call_r: CALL r. eager rule-call. emit rows now { class: dispatch }
+g_disp.n_force_r: force r. drain rule to fixpoint { class: dispatch }
+g_disp.n_query_r: QUERY r. subscribe to rule rows { class: dispatch }
+
+g_pipe.n_host_parse -> g_pipe.n_walk_program: CST feeds walk { style.font-size: 11 }
+g_pipe.n_walk_program -> g_pipe.n_FusedRule: lowers each rule { style.font-size: 11 }
+g_pipe.n_FusedRule -> g_pipe.n_expand: op chain executed by { style.font-size: 11 }
+g_pipe.n_expand -> g_pipe.n_FactStore: emits derived rows { style.font-size: 11 }
+g_pipe.n_expand -> g_reg.n_OpRegistry: resolves op by name { style.font-size: 11 }
+g_reg.n_OpRegistry -> g_reg.n_split_op: registers { style.font-size: 11 }
+g_reg.n_OpRegistry -> g_reg.n_re_op: registers { style.font-size: 11 }
+g_reg.n_OpRegistry -> g_reg.n_render_op: registers { style.font-size: 11 }
+g_reg.n_OpRegistry -> g_reg.n_sh_op: registers { style.font-size: 11 }
+g_reg.n_split_op -> g_rt.n_OperatorDef: implements { style.font-size: 11 }
+g_reg.n_re_op -> g_rt.n_OperatorDef: implements { style.font-size: 11 }
+g_reg.n_render_op -> g_rt.n_OperatorDef: implements { style.font-size: 11 }
+g_reg.n_sh_op -> g_rt.n_OperatorDef: implements { style.font-size: 11 }
+g_rt.n_OperatorDef -> g_rt.n_Component: lower compiles to { style.font-size: 11 }
+g_rt.n_Component -> g_rt.n_Node: dispatch returns { style.font-size: 11 }
+g_rt.n_Component -> g_rt.n_RenderCtx: dispatch reads { style.font-size: 11 }
+g_rt.n_Cursor -> g_rt.n_Component: batch input to { style.font-size: 11 }
+g_pipe.n_expand -> g_rt.n_Cursor: binds term cursors { style.font-size: 11 }
+g_pipe.n_FactStore -> g_state.n_FactRuntimeGraph: rows land in { style.font-size: 11 }
+g_state.n_RuntimeGraph -> g_state.n_FactRuntimeGraph: delegates all state { style.font-size: 11 }
+g_state.n_Subscribe -> g_state.n_FactRuntimeGraph: inserts subscribe edge { style.font-size: 11 }
+g_state.n_owner_uri -> g_state.n_RuntimeGraph: keys owner instances { style.font-size: 11 }
+g_state.n_support -> g_state.n_FactRuntimeGraph: refcount keep-alive { style.font-size: 11 }
+g_state.n_FactRuntimeGraph -> g_rt.n_Node: dirty sweep re-runs owners { style.font-size: 11 }
+g_disp.n_call_r -> g_pipe.n_expand: triggers eager expand { style.font-size: 11 }
+g_disp.n_force_r -> g_pipe.n_expand: drains to fixpoint { style.font-size: 11 }
+g_disp.n_query_r -> g_state.n_FactRuntimeGraph: subscribes via { style.font-size: 11 }
 
