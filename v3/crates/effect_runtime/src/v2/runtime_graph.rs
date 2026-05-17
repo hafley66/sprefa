@@ -880,16 +880,32 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
         let mut inserted = Vec::new();
         let mut retracted = Vec::new();
 
+        // Phase 5: support `mult` is the count of distinct support
+        // edges pointing at a row (each `(owner, label, kind)` is one
+        // path). `add` on assert = insert one edge; `dec` on retract =
+        // delete one edge. The support-iff-mult invariant — a row is
+        // visible IFF `mult > 0` — is enforced by the debug_asserts at
+        // this teardown/insert seam. Ids stay opaque (the v3↔v4 wall:
+        // only `[u8;32]`/primitive ids cross).
         for row_id in old.difference(&new) {
             let edge_id = support_edge_id(owner_id, row_id, table_label_id, support_kind_id);
             self.delete_edge(edge_id.as_str());
-            if !self.row_has_support(row_id, support_kind_id) {
+            let mult = self.support_mult(row_id, support_kind_id);
+            debug_assert!(
+                mult >= 0,
+                "support-iff-mult: row {row_id:?} support mult went negative"
+            );
+            if mult == 0 {
+                debug_assert!(
+                    !self.row_has_support(row_id, support_kind_id),
+                    "support-iff-mult: row {row_id:?} retracted while still supported"
+                );
                 retracted.push(I::from_id_str(row_id));
             }
         }
 
         for row_id in new.difference(&old) {
-            let already_visible = self.row_has_support(row_id, support_kind_id);
+            let already_visible = self.support_mult(row_id, support_kind_id) > 0;
             self.insert_edge(RuntimeEdge {
                 edge_id: I::from_id_str(&support_edge_id(
                     owner_id,
@@ -903,6 +919,10 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
                 label_id: I::from_id_str(table_label_id),
                 generation,
             });
+            debug_assert!(
+                self.support_mult(row_id, support_kind_id) > 0,
+                "support-iff-mult: row {row_id:?} asserted but mult == 0"
+            );
             if !already_visible {
                 inserted.push(I::from_id_str(row_id));
             }
@@ -1063,6 +1083,22 @@ impl<R: Row, I: NodeId> FactRuntimeGraph<R, I> {
         self.facts.rows_of(RUNTIME_EDGE).iter().any(|row| {
             row.get(EDGE_KIND_ID) == Some(support_kind_id) && row.get(TO_ID) == Some(row_id)
         })
+    }
+
+    /// Phase 5: integer support multiplicity = count of distinct
+    /// support edges pointing at `row_id` for `support_kind_id`. Each
+    /// edge is one derivation path; the row is visible IFF this is
+    /// `> 0` (support-iff-mult, asserted at the `replace_supports`
+    /// seam).
+    fn support_mult(&self, row_id: &str, support_kind_id: &str) -> i64 {
+        self.facts
+            .rows_of(RUNTIME_EDGE)
+            .iter()
+            .filter(|row| {
+                row.get(EDGE_KIND_ID) == Some(support_kind_id)
+                    && row.get(TO_ID) == Some(row_id)
+            })
+            .count() as i64
     }
 }
 

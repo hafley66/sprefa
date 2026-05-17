@@ -30,6 +30,22 @@ const SQL: &str = "sql";
 const DEP_TABLE_NAME: &str = "dep_table";
 const SUPPORT_TABLE_NAME: &str = "support_table";
 const SUPPORT_ROW_ID: &str = "support_row_id";
+/// Phase 5: integer support multiplicity. A sink row is present IFF
+/// `sum(SUPPORT_MULT) > 0` over all support rows for its
+/// `(SUPPORT_TABLE_NAME, SUPPORT_ROW_ID)`. One physical support row per
+/// `(SUPPORT_CURSOR_ID, SUPPORT_TABLE_NAME, SUPPORT_ROW_ID)` triple
+/// carries that triple's current count; `add` increments, the DRed
+/// teardown decrements.
+const SUPPORT_MULT: &str = "support_mult";
+
+/// Phase 5 SUPPORT schema. Wide for a future Counting upgrade
+/// (Decision 2); DRed only uses the integer `SUPPORT_MULT` here.
+const SUPPORT_COLS: &[&str] = &[
+    SUPPORT_CURSOR_ID,
+    SUPPORT_TABLE_NAME,
+    SUPPORT_ROW_ID,
+    SUPPORT_MULT,
+];
 
 pub trait MountedQueryStorage {
     fn record_sql_outputs(
@@ -81,10 +97,7 @@ impl FactMountedQueryStorage {
             .declare(INPUT_TABLE, &[MOUNT_ID, INPUT_KEY, CURSOR_IDX, CURSOR_BLOB]);
         self.store
             .declare(DEP_TABLE, &[MOUNT_ID, INPUT_KEY, DEP_TABLE_NAME]);
-        self.store.declare(
-            SUPPORT_TABLE,
-            &[SUPPORT_CURSOR_ID, SUPPORT_TABLE_NAME, SUPPORT_ROW_ID],
-        );
+        self.store.declare(SUPPORT_TABLE, SUPPORT_COLS);
     }
 
     fn existing_cursor_ids(
@@ -214,7 +227,7 @@ impl MountedQueryStorage for FactMountedQueryStorage {
             .difference(&current_cursor_ids)
             .cloned()
             .collect();
-        retract_supported_rows(self.store.as_ref(), &removed_cursor_ids);
+        cascade_retract(self.store.as_ref(), &removed_cursor_ids);
         self.store.delete_matching(
             OUTPUT_TABLE,
             &[
@@ -620,28 +633,19 @@ pub fn record_fact_support_batch(
     if supports.is_empty() {
         return;
     }
-    store.declare(
-        SUPPORT_TABLE,
-        &[SUPPORT_CURSOR_ID, SUPPORT_TABLE_NAME, SUPPORT_ROW_ID],
-    );
-    let rows: Vec<Arc<Cursor>> = supports
-        .iter()
-        .map(|(support_cursor_id, table, row_id)| {
-            let mut row = Cursor::default();
-            row.set(SUPPORT_CURSOR_ID, support_cursor_id.as_str());
-            row.set(SUPPORT_TABLE_NAME, table.as_str());
-            row.set(SUPPORT_ROW_ID, row_id.as_str());
-            Arc::new(row)
-        })
-        .collect();
-    store.insert_batch(SUPPORT_TABLE, rows);
+    let ledger = SupportLedger::new(store);
+    for (support_cursor_id, table, row_id) in supports {
+        ledger.add(support_cursor_id, table, row_id);
+    }
 }
 
-/// Phase 4: presence-based teardown for the generic memo path. Given
+/// Phase 5: counted (DRed) teardown for the generic memo path. Given
 /// the PRIOR output cursors that the new render no longer produces,
-/// compute their support cursor ids and run the SAME teardown the
-/// mounted-query path uses (delete sink rows whose support is gone).
-/// Presence-only — no mult/DRed (Phase 5).
+/// compute their support cursor ids and run `cascade_retract` — the
+/// DRed delete half: decrement each support's `mult`; a sink row is
+/// deleted (and its support-children descended) only when its
+/// `sum(mult)` reaches 0. A row still derived by another
+/// `(owner, in_key)` path survives.
 pub fn retract_memo_rows(
     store: &dyn FactStore<Cursor>,
     _owner_hex: &str,
@@ -655,53 +659,165 @@ pub fn retract_memo_rows(
         .iter()
         .map(|c| cursor_storage_parts(c.as_ref()).0)
         .collect();
-    retract_supported_rows(store, &ids);
+    cascade_retract(store, &ids);
 }
 
-fn retract_supported_rows(store: &dyn FactStore<Cursor>, removed_cursor_ids: &[String]) {
+/// Phase-5 SUPPORT-table support ledger. SQLite-backed (no in-RAM
+/// ledger): the hot tier is the store's existing `StripedLru`. One
+/// physical row per `(cursor_id, table, row_id)` triple carries that
+/// triple's integer `mult`; `add` increments it, `dec` decrements it.
+///
+/// The plan's Layer-1 `SupportLedger::add(row, by_owner, in_key,
+/// dep_source)` collapses to this three-column key: `cursor_id` is the
+/// content hash of the deriving output cursor, which already folds
+/// `(owner, in_key, dep_source)` in the existing v4 vocabulary
+/// (`fact.rs` stamps it via `stamp_support_node`). Keeping that
+/// vocabulary preserves colocated consistency with the mounted-query
+/// path; the schema stays wide (`SUPPORT_COLS`) for a future Counting
+/// upgrade (Decision 2).
+pub struct SupportLedger<'a> {
+    store: &'a dyn FactStore<Cursor>,
+}
+
+impl<'a> SupportLedger<'a> {
+    pub fn new(store: &'a dyn FactStore<Cursor>) -> Self {
+        store.declare(SUPPORT_TABLE, SUPPORT_COLS);
+        Self { store }
+    }
+
+    fn triple_mult(&self, cursor_id: &str, table: &str, row_id: &str) -> i64 {
+        self.store
+            .rows_of(SUPPORT_TABLE)
+            .iter()
+            .filter(|r| {
+                r.get(SUPPORT_CURSOR_ID) == Some(cursor_id)
+                    && r.get(SUPPORT_TABLE_NAME) == Some(table)
+                    && r.get(SUPPORT_ROW_ID) == Some(row_id)
+            })
+            .filter_map(|r| r.get(SUPPORT_MULT).and_then(|m| m.parse::<i64>().ok()))
+            .sum()
+    }
+
+    fn write_triple(&self, cursor_id: &str, table: &str, row_id: &str, mult: i64) {
+        self.store.delete_matching(
+            SUPPORT_TABLE,
+            &[
+                (SUPPORT_CURSOR_ID, cursor_id),
+                (SUPPORT_TABLE_NAME, table),
+                (SUPPORT_ROW_ID, row_id),
+            ],
+        );
+        if mult <= 0 {
+            return;
+        }
+        let mut row = Cursor::default();
+        row.set(SUPPORT_CURSOR_ID, cursor_id);
+        row.set(SUPPORT_TABLE_NAME, table);
+        row.set(SUPPORT_ROW_ID, row_id);
+        row.set(SUPPORT_MULT, mult.to_string());
+        self.store
+            .insert_batch(SUPPORT_TABLE, vec![Arc::new(row)]);
+    }
+
+    /// `sum(mult)` over every support of sink `(table, row_id)`. The
+    /// support-iff-mult invariant: the row is present in `table` IFF
+    /// this is `> 0`.
+    pub fn sink_mult(&self, table: &str, row_id: &str) -> i64 {
+        self.store
+            .rows_of(SUPPORT_TABLE)
+            .iter()
+            .filter(|r| {
+                r.get(SUPPORT_TABLE_NAME) == Some(table)
+                    && r.get(SUPPORT_ROW_ID) == Some(row_id)
+            })
+            .filter_map(|r| r.get(SUPPORT_MULT).and_then(|m| m.parse::<i64>().ok()))
+            .sum()
+    }
+
+    /// `add(row, by_owner, in_key, dep_source)` — register one
+    /// derivation path for the sink row.
+    ///
+    /// A *path* is one distinct `(cursor_id, table, row_id)` triple:
+    /// `cursor_id` already folds `(owner, in_key, dep_source)`. Two
+    /// distinct supports of the same sink row are two distinct triples;
+    /// `sink_mult` sums them. Re-rendering the SAME deriving cursor
+    /// re-adds the SAME triple and is idempotent (mult stays 1) — the
+    /// triple's existence IS its one unit of support. This keeps the
+    /// presence semantics the mounted-query path relied on while making
+    /// `sink_mult` a true count of distinct paths (plan: support-iff-
+    /// mult; a row survives losing one of N paths). DRed `dec` removes
+    /// the triple (mult → 0).
+    pub fn add(&self, cursor_id: &str, table: &str, row_id: &str) {
+        if self.triple_mult(cursor_id, table, row_id) > 0 {
+            return; // idempotent: same path re-rendered
+        }
+        self.write_triple(cursor_id, table, row_id, 1);
+    }
+
+    /// Decrement the triple's `mult` (the DRed teardown half). Returns
+    /// the sink `(table, row_id)`'s new `sum(mult)` so the caller knows
+    /// whether the last path is gone.
+    fn dec(&self, cursor_id: &str, table: &str, row_id: &str) -> i64 {
+        let next = self.triple_mult(cursor_id, table, row_id) - 1;
+        self.write_triple(cursor_id, table, row_id, next);
+        self.sink_mult(table, row_id)
+    }
+}
+
+/// `cascade_retract`: the plan's DRed delete half. `stack = removed
+/// support cursor ids`. Pop `r`; for every support whose
+/// `SUPPORT_CURSOR_ID == r`, `dec` its `mult` for the retracting
+/// `(table, row_id)`; if that sink `sum(mult) == 0` delete the row
+/// from its sink table and push the row id (it may itself be the
+/// support cursor of transitively-derived rows) onto the stack; if
+/// `sum(mult) > 0` keep the row (another path still derives it) and
+/// stop descending that branch (over-delete + stop-at-supported).
+pub fn cascade_retract(store: &dyn FactStore<Cursor>, removed_cursor_ids: &[String]) {
     if removed_cursor_ids.is_empty() {
         return;
     }
+    let ledger = SupportLedger::new(store);
+    let mut stack: Vec<String> = removed_cursor_ids.to_vec();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let removed: std::collections::HashSet<&str> =
-        removed_cursor_ids.iter().map(|s| s.as_str()).collect();
-    let support_rows = store.rows_of(SUPPORT_TABLE);
-    let mut doomed = Vec::new();
-
-    for row in &support_rows {
-        let Some(support_id) = row.get(SUPPORT_CURSOR_ID) else {
-            continue;
-        };
-        if !removed.contains(support_id) {
+    while let Some(r) = stack.pop() {
+        if !seen.insert(r.clone()) {
             continue;
         }
-        let Some(table) = row.get(SUPPORT_TABLE_NAME) else {
-            continue;
-        };
-        let Some(row_id) = row.get(SUPPORT_ROW_ID) else {
-            continue;
-        };
+        // Supports r derives: every triple whose SUPPORT_CURSOR_ID == r.
+        let children: Vec<(String, String)> = store
+            .rows_of(SUPPORT_TABLE)
+            .iter()
+            .filter(|row| row.get(SUPPORT_CURSOR_ID) == Some(r.as_str()))
+            .filter_map(|row| {
+                Some((
+                    row.get(SUPPORT_TABLE_NAME)?.to_string(),
+                    row.get(SUPPORT_ROW_ID)?.to_string(),
+                ))
+            })
+            .collect();
 
-        let still_supported = support_rows.iter().any(|other| {
-            other
-                .get(SUPPORT_CURSOR_ID)
-                .map(|id| !removed.contains(id))
-                .unwrap_or(false)
-                && other.get(SUPPORT_TABLE_NAME) == Some(table)
-                && other.get(SUPPORT_ROW_ID) == Some(row_id)
-        });
-        if !still_supported {
-            doomed.push((table.to_string(), row_id.to_string()));
+        for (table, row_id) in children {
+            let remaining = ledger.dec(&r, &table, &row_id);
+            debug_assert!(
+                remaining >= 0,
+                "support-iff-mult: sink ({table}, {row_id}) sum(mult) went negative"
+            );
+            if remaining == 0 {
+                // Last path gone → delete the row from its sink table…
+                store.delete_matching(&table, &[(effect_runtime::v2::ID_COL, row_id.as_str())]);
+                debug_assert_eq!(
+                    ledger.sink_mult(&table, &row_id),
+                    0,
+                    "support-iff-mult: sink ({table}, {row_id}) deleted while still supported"
+                );
+                // …and descend: a deleted sink row may itself be the
+                // support cursor of transitively-derived rows.
+                stack.push(row_id);
+            }
+            // remaining > 0: another (owner,in_key) still derives the
+            // row — keep it, stop descending this branch.
         }
-    }
-
-    doomed.sort();
-    doomed.dedup();
-    for (table, row_id) in doomed {
-        store.delete_matching(&table, &[(effect_runtime::v2::ID_COL, row_id.as_str())]);
-    }
-    for support_id in removed_cursor_ids {
-        store.delete_matching(SUPPORT_TABLE, &[(SUPPORT_CURSOR_ID, support_id.as_str())]);
     }
 }
 

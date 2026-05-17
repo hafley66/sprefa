@@ -12,10 +12,11 @@
 //!   same key, value moved     → Retract(old) + Assert(new)
 //!   key gone from fresh       → Retract
 //!   key only in fresh         → Assert
-//! `Retract` runs the existing PRESENCE-based teardown (delete the
-//! sink rows whose support is gone) — identical semantics to the prior
-//! `mounted_query::retract_supported_rows`. No mult/DRed; that is
-//! Phase 5.
+//! `Retract` runs the Phase-5 COUNTED teardown
+//! (`mounted_query::cascade_retract`): DRed decrements the row's
+//! support `mult`; the sink row is deleted (and its support-children
+//! descended) only when `sum(mult)` reaches 0. A row still derived by
+//! another `(owner, in_key)` path survives.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -216,11 +217,11 @@ impl MemoSeam<Cursor> for V4MemoSeam {
             deltas.push(MemoDelta::Retract(old_rid));
         }
 
-        // Presence-based teardown: delete the memoized rows the new
-        // render no longer produces. Phase-4 keeps this presence-only
-        // (a row is gone when its producing render stops emitting it),
-        // exactly the prior `mounted_query` semantics. Phase 5 swaps
-        // this for mult/DRed.
+        // Counted (DRed) teardown: decrement the support `mult` of the
+        // rows the new render no longer produces. A sink row is deleted
+        // (and its support-children descended) only when its
+        // `sum(mult)` reaches 0; a row still derived by another
+        // `(owner, in_key)` path survives (Phase 5).
         if !retract_rows.is_empty() {
             crate::mounted_query::retract_memo_rows(
                 self.graph.facts.as_ref(),
