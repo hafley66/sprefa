@@ -709,6 +709,25 @@ impl Component for AstNmComponent {
                     row.pipe_hash, row.instance_id, row.depth
                 );
                 let source_uri = file_dirty_source_uri(input.value.as_ref());
+
+                // Phase 2: the ast op reads `input.value` (a file path)
+                // in render_batch below. Record it as a dependency of
+                // this owner+input row at the gen observed now.
+                {
+                    use crate::source_clock::{SourceClock, SourceId};
+                    let sid = SourceId::for_file(input.value.as_ref());
+                    let gen_seen = graph.clock().current_gen(sid);
+                    ctx.record_read(sid.0, gen_seen);
+                    for (digest, gen) in ctx.take_deps() {
+                        graph.record_memo_dep(
+                            &ast_uri,
+                            input_key.as_str(),
+                            SourceId(digest),
+                            gen,
+                        );
+                    }
+                }
+
                 subscriptions.push(crate::runtime_graph::SourceSubscriptionInput {
                     ast_uri,
                     input_key,
@@ -2732,6 +2751,24 @@ impl Component for ReadComponent {
                     ctx.expand_tick,
                 );
                 graph.subscribe(&owner, "file", &source, ctx.expand_tick);
+
+                // Phase 2: record this file read as a dependency of the
+                // owner+input row, at the gen observed now. The read
+                // happened in `render` just above (reader.read_cursor).
+                {
+                    use crate::source_clock::{SourceClock, SourceId};
+                    let sid = SourceId::for_file(path.as_str());
+                    let gen_seen = graph.clock().current_gen(sid);
+                    ctx.record_read(sid.0, gen_seen);
+                    for (digest, gen) in ctx.take_deps() {
+                        graph.record_memo_dep(
+                            &ast_uri,
+                            input_key.as_str(),
+                            SourceId(digest),
+                            gen,
+                        );
+                    }
+                }
                 graph.record_continuation(
                     &owner,
                     row.pipe_hash,

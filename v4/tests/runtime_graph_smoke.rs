@@ -737,3 +737,67 @@ fn run_to_quiescence_errors_on_iteration_cap() {
         }
     }
 }
+
+// ── Phase 2: dependency capture into MEMO_DEPS ─────────────────────
+
+#[test]
+fn parsing_a_file_records_its_source_id_in_memo_deps() {
+    use v4::runtime_graph::MEMO_DEPS_TABLE;
+    use v4::source_clock::{SourceClock, SourceId};
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path().join("src");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a.c"), "void a(void) { printk(\"a\"); }\n").unwrap();
+
+    let db = tmp.path().join("runtime.db");
+    let (facts, graph) = sqlite_graph(&db);
+    let graph = Arc::new(graph);
+
+    // The ast op keys SourceId on the input cursor's value (the path).
+    // path_cursor sets value = "a.c"; the AstNm component reads it via
+    // SourceReader rooted at `root`.
+    let ast: Arc<dyn effect_runtime::v2::Component<Next = Cursor>> = Arc::new(
+        AstNmComponent::new("printk($$$)".to_string(), SupportLang::Cpp)
+            .with_root(root.clone())
+            .with_sprf_store(graph.store.clone()),
+    );
+    let pipe = PipeInstance::new(vec![ast]);
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    expand(
+        &pipe,
+        queue,
+        vec![Arc::new(path_cursor("a.c"))],
+        ExpandOpts::default()
+            .with_batch_cap(10)
+            .with_runtime(graph.clone()),
+    );
+    graph.store.flush();
+    facts.commit(1, None);
+
+    // a.c is a SourceId; it must appear in MEMO_DEPS with the gen the
+    // op read it at (gen 0 — never bumped in this run).
+    let want = SourceId::for_file("a.c");
+    let want_hex = want.hex();
+    let rows = facts.rows_of(MEMO_DEPS_TABLE);
+    assert!(
+        !rows.is_empty(),
+        "MEMO_DEPS must have at least one recorded dep"
+    );
+    let hit = rows
+        .iter()
+        .find(|r| r.get("source_id") == Some(want_hex.as_str()))
+        .expect("a.c SourceId must appear in MEMO_DEPS");
+    assert_eq!(
+        hit.get("gen_seen"),
+        Some("0"),
+        "gen_seen must be the gen the op read the file at"
+    );
+    assert_eq!(graph.clock().current_gen(want), 0);
+
+    // The owner_op_id is a real ast owner uri, and memo_deps_of finds it.
+    let owner = hit.get("owner_op_id").unwrap().to_string();
+    let in_key = hit.get("in_key").unwrap().to_string();
+    let deps = graph.memo_deps_of(&owner, &in_key);
+    assert!(deps.iter().any(|(sid, gen)| sid == &want_hex && *gen == 0));
+}

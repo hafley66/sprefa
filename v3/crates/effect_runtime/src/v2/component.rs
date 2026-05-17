@@ -30,7 +30,7 @@
 use std::any::{type_name, Any};
 use std::hash::Hasher;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::diag::{DiagSink, NoopDiagSink};
@@ -177,6 +177,16 @@ pub struct RenderCtx {
     pub diag: Arc<dyn DiagSink>,
     pub telemetry: Option<Arc<EffectTelemetry>>,
     runtime: Option<Arc<dyn Any + Send + Sync>>,
+    /// Phase 2: external reads recorded during one render. Each entry
+    /// is `(source_id_digest, gen_seen)`. The digest is an opaque
+    /// `[u8;32]` so this crate stays free of any v4 `SourceId`
+    /// dependency; v4 wraps/unwraps. `Arc<Mutex<..>>` (not `RefCell`)
+    /// because `RenderCtx` must stay `Send + Sync` — the `runtime`
+    /// field already requires it and `par_render` runs renders across
+    /// rayon threads. Cloning `RenderCtx` shares the same buffer so
+    /// reads recorded under a flattened sub-pipe land here; drained
+    /// per input row via `take_deps`.
+    deps: Arc<Mutex<Vec<([u8; 32], u64)>>>,
 }
 
 impl RenderCtx {
@@ -189,7 +199,23 @@ impl RenderCtx {
             diag: Arc::new(NoopDiagSink),
             telemetry: None,
             runtime: None,
+            deps: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Phase 2: record one external read. `digest` is the source's
+    /// content-addressed id (v4 `SourceId`'s 32 bytes); `gen` is the
+    /// source generation observed at read time. Pushed onto the
+    /// per-render dep buffer; drained by `take_deps`.
+    pub fn record_read(&self, digest: [u8; 32], gen: u64) {
+        self.deps.lock().unwrap().push((digest, gen));
+    }
+
+    /// Phase 2: drain the recorded reads for the current input row.
+    /// Returns `(source_id_digest, gen_seen)` pairs and clears the
+    /// buffer so the next row starts empty.
+    pub fn take_deps(&self) -> Vec<([u8; 32], u64)> {
+        std::mem::take(&mut *self.deps.lock().unwrap())
     }
 
     pub fn with_bus(mut self, bus: Arc<EventBus>) -> Self {

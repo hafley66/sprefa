@@ -391,6 +391,23 @@ pub fn record_runtime_sql_mount(
             source,
             ctx.expand_tick,
         ));
+
+        // Phase 2: a referenced fact/rule table is a SourceId. Record
+        // the read so the memo can gen-compare it (Phase 3).
+        {
+            use crate::source_clock::{SourceClock, SourceId};
+            let sid = SourceId::for_table(dep_table);
+            let gen_seen = graph.clock().current_gen(sid);
+            ctx.record_read(sid.0, gen_seen);
+        }
+    }
+    for (digest, gen) in ctx.take_deps() {
+        graph.record_memo_dep(
+            &format!("sprf://ast/sql/{mount_id}"),
+            input_key.as_str(),
+            crate::source_clock::SourceId(digest),
+            gen,
+        );
     }
 
     let row_count = output_count(nodes);
@@ -442,6 +459,23 @@ pub fn record_runtime_sql_mount_count(
             source,
             ctx.expand_tick,
         ));
+
+        // Phase 2: a referenced fact/rule table is a SourceId. Record
+        // the read so the memo can gen-compare it (Phase 3).
+        {
+            use crate::source_clock::{SourceClock, SourceId};
+            let sid = SourceId::for_table(dep_table);
+            let gen_seen = graph.clock().current_gen(sid);
+            ctx.record_read(sid.0, gen_seen);
+        }
+    }
+    for (digest, gen) in ctx.take_deps() {
+        graph.record_memo_dep(
+            &format!("sprf://ast/sql/{mount_id}"),
+            input_key.as_str(),
+            crate::source_clock::SourceId(digest),
+            gen,
+        );
     }
 
     if !should_persist_mounted_outputs(row_count) {

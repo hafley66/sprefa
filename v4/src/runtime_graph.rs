@@ -22,6 +22,9 @@ pub const RUNTIME_EDGE: &str = "runtime_edge";
 /// the generic core for the schema-migration note.
 pub const RUNTIME_DIRTY: &str = "runtime_dirty";
 pub const RUNTIME_CONTINUATION: &str = "runtime_continuation";
+/// Phase 2: recorded dependency set per (owner, input row).
+/// `PK(owner_op_id, in_key, source_id)`.
+pub const MEMO_DEPS_TABLE: &str = "_memo_deps";
 
 const NODE_URI_ID: &str = "node_uri_id";
 const INPUT_KEY: &str = "input_key";
@@ -423,6 +426,52 @@ impl RuntimeGraph {
     /// rule/fact tables are all `SourceId`s ticked here.
     pub fn clock(&self) -> &Arc<crate::source_clock::FactStoreClock> {
         &self.clock
+    }
+
+    /// Phase 2: persist one recorded read into `MEMO_DEPS`.
+    /// `PK(owner_op_id, in_key, source_id)` — delete-then-insert keeps
+    /// one live row per (owner, input row, source) with the latest gen
+    /// observed.
+    pub fn record_memo_dep(
+        &self,
+        owner_op_id: &str,
+        in_key: &str,
+        source: crate::source_clock::SourceId,
+        gen_seen: u64,
+    ) {
+        self.facts
+            .declare(MEMO_DEPS_TABLE, &["owner_op_id", "in_key", "source_id", "gen_seen"]);
+        let sid = source.hex();
+        self.facts.delete_matching(
+            MEMO_DEPS_TABLE,
+            &[
+                ("owner_op_id", owner_op_id),
+                ("in_key", in_key),
+                ("source_id", sid.as_str()),
+            ],
+        );
+        let mut row = Cursor::default();
+        row.set("owner_op_id", owner_op_id.to_string());
+        row.set("in_key", in_key.to_string());
+        row.set("source_id", sid);
+        row.set("gen_seen", gen_seen.to_string());
+        self.facts.insert(MEMO_DEPS_TABLE, Arc::new(row));
+    }
+
+    /// Phase 2: read back the recorded deps for one (owner, input row)
+    /// as `(source_id_hex, gen_seen)` pairs. Used by the memo validity
+    /// check (Phase 3) and by tests.
+    pub fn memo_deps_of(&self, owner_op_id: &str, in_key: &str) -> Vec<(String, u64)> {
+        self.facts
+            .read_where(MEMO_DEPS_TABLE, "owner_op_id", owner_op_id)
+            .into_iter()
+            .filter(|r| r.get("in_key") == Some(in_key))
+            .filter_map(|r| {
+                let sid = r.get("source_id")?.to_string();
+                let gen = r.get("gen_seen")?.parse::<u64>().ok()?;
+                Some((sid, gen))
+            })
+            .collect()
     }
 
     /// Memoize the OwnerNode for a rule call by (rule_name, arg_keys).
