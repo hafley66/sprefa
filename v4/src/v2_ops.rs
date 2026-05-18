@@ -748,19 +748,29 @@ impl Component for AstNmComponent {
                 // Phase 2: the ast op reads `input.value` (a file path)
                 // in render_batch below. Record it as a dependency of
                 // this owner+input row at the gen observed now.
+                //
+                // The memo-dep owner key is the SEAM owner digest
+                // (`re_owner_hex` == the fold in
+                // `expand::dispatch_with_seam`), NOT the `sprf://ast`
+                // SUBSCRIBE URI. The seam probes
+                // `memo_deps_of(hex32(owner), in_key)`; keying deps
+                // under the URI string left `deps_of` empty for every
+                // ast input, so the seam always MISSed and never
+                // populated `_memo_facts`. `input_key` already equals
+                // `hex32(content_hash(input))` — the seam's default
+                // `in_key_for` — so it is the correct in_key.
                 {
                     use crate::source_clock::{SourceClock, SourceId};
                     let sid = SourceId::for_file(input.value.as_ref());
                     let gen_seen = graph.clock().current_gen(sid);
                     ctx.record_read(sid.0, gen_seen);
-                    for (digest, gen) in ctx.take_deps() {
-                        graph.record_memo_dep(
-                            &ast_uri,
-                            input_key.as_str(),
-                            SourceId(digest),
-                            gen,
-                        );
-                    }
+                    let memo_owner = re_owner_hex(row, self.kind());
+                    let deps: Vec<(SourceId, u64)> = ctx
+                        .take_deps()
+                        .into_iter()
+                        .map(|(digest, gen)| (SourceId(digest), gen))
+                        .collect();
+                    graph.record_memo_deps(&memo_owner, input_key.as_str(), &deps);
                 }
 
                 subscriptions.push(crate::runtime_graph::SourceSubscriptionInput {
@@ -1692,14 +1702,12 @@ impl Component for ReComponent {
                     let sid = SourceId::for_file(path);
                     let gen_seen = graph.clock().current_gen(sid);
                     ctx.record_read(sid.0, gen_seen);
-                    for (digest, gen) in ctx.take_deps() {
-                        graph.record_memo_dep(
-                            &owner_hex,
-                            in_hex.as_str(),
-                            SourceId(digest),
-                            gen,
-                        );
-                    }
+                    let deps: Vec<(SourceId, u64)> = ctx
+                        .take_deps()
+                        .into_iter()
+                        .map(|(digest, gen)| (SourceId(digest), gen))
+                        .collect();
+                    graph.record_memo_deps(&owner_hex, in_hex.as_str(), &deps);
                 }
             }
         }
@@ -2871,19 +2879,25 @@ impl Component for ReadComponent {
                 // Phase 2: record this file read as a dependency of the
                 // owner+input row, at the gen observed now. The read
                 // happened in `render` just above (reader.read_cursor).
+                //
+                // Memo-dep owner = seam owner digest (`re_owner_hex` ==
+                // the `expand::dispatch_with_seam` fold over
+                // pipe/instance/depth/kind), NOT the `sprf://ast/read`
+                // SUBSCRIBE URI. The seam looks deps up by that digest;
+                // the URI string left them unfindable, so the read
+                // owner never replayed and never wrote `_memo_facts`.
                 {
                     use crate::source_clock::{SourceClock, SourceId};
                     let sid = SourceId::for_file(path.as_str());
                     let gen_seen = graph.clock().current_gen(sid);
                     ctx.record_read(sid.0, gen_seen);
-                    for (digest, gen) in ctx.take_deps() {
-                        graph.record_memo_dep(
-                            &ast_uri,
-                            input_key.as_str(),
-                            SourceId(digest),
-                            gen,
-                        );
-                    }
+                    let memo_owner = re_owner_hex(row, self.kind());
+                    let deps: Vec<(SourceId, u64)> = ctx
+                        .take_deps()
+                        .into_iter()
+                        .map(|(digest, gen)| (SourceId(digest), gen))
+                        .collect();
+                    graph.record_memo_deps(&memo_owner, input_key.as_str(), &deps);
                 }
                 graph.record_continuation(
                     &owner,

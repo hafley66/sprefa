@@ -414,12 +414,16 @@ pub fn record_runtime_sql_mount(
             ctx.record_read(sid.0, gen_seen);
         }
     }
-    for (digest, gen) in ctx.take_deps() {
-        graph.record_memo_dep(
+    {
+        let deps: Vec<(crate::source_clock::SourceId, u64)> = ctx
+            .take_deps()
+            .into_iter()
+            .map(|(digest, gen)| (crate::source_clock::SourceId(digest), gen))
+            .collect();
+        graph.record_memo_deps(
             &format!("sprf://ast/sql/{mount_id}"),
             input_key.as_str(),
-            crate::source_clock::SourceId(digest),
-            gen,
+            &deps,
         );
     }
 
@@ -482,12 +486,16 @@ pub fn record_runtime_sql_mount_count(
             ctx.record_read(sid.0, gen_seen);
         }
     }
-    for (digest, gen) in ctx.take_deps() {
-        graph.record_memo_dep(
+    {
+        let deps: Vec<(crate::source_clock::SourceId, u64)> = ctx
+            .take_deps()
+            .into_iter()
+            .map(|(digest, gen)| (crate::source_clock::SourceId(digest), gen))
+            .collect();
+        graph.record_memo_deps(
             &format!("sprf://ast/sql/{mount_id}"),
             input_key.as_str(),
-            crate::source_clock::SourceId(digest),
-            gen,
+            &deps,
         );
     }
 

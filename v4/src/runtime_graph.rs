@@ -471,14 +471,78 @@ impl RuntimeGraph {
         self.facts.insert(MEMO_DEPS_TABLE, Arc::new(row));
     }
 
+    /// Phase 2 (batched): persist the FULL recorded dep set for one
+    /// `(owner_op_id, in_key)` drain in a single `insert_batch` instead
+    /// of one `delete`+`insert` per row. Semantics match repeated
+    /// `record_memo_dep`: one live row per `(owner, in_key, source)`
+    /// with the latest gen observed. We delete every row for this
+    /// `(owner, in_key)` once, then re-insert the full current set —
+    /// a `take_deps()` drain IS the complete dep set for this input
+    /// row, so the rebuilt set is exactly "latest gen per source".
+    /// Dedups by source within the batch (keeps the last-seen gen) so
+    /// the content-addressed `_id` set is unique.
+    ///
+    /// Counter effect vs the N+1 path: one `insert_batch` (1
+    /// `string_intern_calls`/chunk + 1 transaction) replaces N
+    /// `insert` calls (N*cols `string_intern_calls`, N transactions),
+    /// and one `delete_matching` replaces N.
+    pub fn record_memo_deps(
+        &self,
+        owner_op_id: &str,
+        in_key: &str,
+        deps: &[(crate::source_clock::SourceId, u64)],
+    ) {
+        if deps.is_empty() {
+            return;
+        }
+        self.facts
+            .declare(MEMO_DEPS_TABLE, &["owner_op_id", "in_key", "source_id", "gen_seen"]);
+        // Dedup by source_id, keeping the last gen seen in this drain.
+        let mut by_source: std::collections::BTreeMap<String, u64> =
+            std::collections::BTreeMap::new();
+        for (source, gen_seen) in deps {
+            by_source.insert(source.hex(), *gen_seen);
+        }
+        // One delete for the whole (owner, in_key) — then re-insert the
+        // full current set. Equivalent to per-source delete+insert when
+        // the drain carries the complete dep set (it does).
+        self.facts.delete_matching(
+            MEMO_DEPS_TABLE,
+            &[("owner_op_id", owner_op_id), ("in_key", in_key)],
+        );
+        let rows: Vec<Arc<Cursor>> = by_source
+            .into_iter()
+            .map(|(sid, gen_seen)| {
+                let mut row = Cursor::default();
+                row.set("owner_op_id", owner_op_id.to_string());
+                row.set("in_key", in_key.to_string());
+                row.set("source_id", sid);
+                row.set("gen_seen", gen_seen.to_string());
+                Arc::new(row)
+            })
+            .collect();
+        self.facts.insert_batch(MEMO_DEPS_TABLE, rows);
+    }
+
     /// Phase 2: read back the recorded deps for one (owner, input row)
     /// as `(source_id_hex, gen_seen)` pairs. Used by the memo validity
     /// check (Phase 3) and by tests.
+    ///
+    /// Keyed by `in_key`, NOT `owner_op_id`. The seam owner digest
+    /// (`re_owner_hex`) is IDENTICAL for every input row of one op
+    /// instance (pipe/instance/depth/kind are fixed across the batch),
+    /// so `owner_op_id` has cardinality 1 over the whole scan — a
+    /// `read_where` on it returns the ENTIRE dep table per probe
+    /// (O(rows) → O(rows²) over the run). `in_key` is the per-input
+    /// content hash: high cardinality, ~one row family per file, so
+    /// the indexed `in_key` lookup is O(deps-for-this-input). The
+    /// `owner_op_id` filter then disambiguates the rare in_key
+    /// collision across owners.
     pub fn memo_deps_of(&self, owner_op_id: &str, in_key: &str) -> Vec<(String, u64)> {
         self.facts
-            .read_where(MEMO_DEPS_TABLE, "owner_op_id", owner_op_id)
+            .read_where(MEMO_DEPS_TABLE, "in_key", in_key)
             .into_iter()
-            .filter(|r| r.get("in_key") == Some(in_key))
+            .filter(|r| r.get("owner_op_id") == Some(owner_op_id))
             .filter_map(|r| {
                 let sid = r.get("source_id")?.to_string();
                 let gen = r.get("gen_seen")?.parse::<u64>().ok()?;
