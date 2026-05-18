@@ -106,10 +106,11 @@ query_r|FactRuntimeGraph|subscribes via`
 
 # --- project facts -> styled d2 source, write, then render via sh ---
 # NOTE: the body opens with a literal d2 vars/title header so the first
-# non-space token is NOT `${` (parser workaround). A root `arch` grid
-# container (grid-rows: 9, grid-columns: 1) stacks the tiers top-to-bottom
-# in code order; nodes are `arch.tN.n_ID`. Colors are d2 named colors to
-# avoid `#` literals near `${`.
+# non-space token is NOT `${` (parser workaround). Root `page` is a
+# 2-col grid: left `page.arch` is a 9-row strata grid (nodes
+# `page.arch.tN.n_ID`); right `page.gloss` is a sql_table glossary,
+# one always-visible row per node mirroring its hover tooltip (the
+# tooltip is slow to summon). Colors are d2 named colors to avoid `#`.
 `arch-map`
   > render.markdown`vars: {
   d2-config: {
@@ -158,26 +159,36 @@ classes: {
   }
 }
 
-arch: sprf to facts processing strata {
+page: sprefa v4 architecture {
+  grid-columns: 2
+  grid-gap: 48
+  style: { fill: white; stroke: white }
+}
+page.arch: sprf to facts processing strata {
   grid-rows: 9
   grid-columns: 1
   grid-gap: 34
   style: { fill: white; stroke: white; font-size: 13 }
 }
+page.gloss: alloc glossary, pipeline order {
+  shape: sql_table
+  style: { fill: white; font-size: 13 }
+}
 ${ arch_group?(GID?, GLABEL?)
-  > render.markdown`arch.${GID}: ${GLABEL} {
+  > render.markdown`page.arch.${GID}: ${GLABEL} {
   style: { fill: ghostwhite; stroke: slategray; stroke-dash: 3; font-size: 16; bold: true }
 }
 `
 }
 ${ arch_node?(ID?, GROUP?, KLASS?, LABEL?, ALLOC?)
-  > render.markdown`arch.${GROUP}.n_${ID}: ${LABEL} { class: ${KLASS}; tooltip: ${ALLOC} }
+  > render.markdown`page.arch.${GROUP}.n_${ID}: ${LABEL} { class: ${KLASS}; tooltip: ${ALLOC} }
+page.gloss.${ID}: ${ALLOC}
 `
 }
 ${ arch_edge?(SRC?, DST?, REL?)
   > arch_node?(SRC, SG?, SK?, SL?, SA?)
   > arch_node?(DST, DG?, DK?, DL?, DA?)
-  > render.markdown`arch.${SG}.n_${SRC} -> arch.${DG}.n_${DST}: ${REL} { style.font-size: 11 }
+  > render.markdown`page.arch.${SG}.n_${SRC} -> page.arch.${DG}.n_${DST}: ${REL} { style.font-size: 11 }
 `
 }
 `
