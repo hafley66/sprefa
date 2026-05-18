@@ -60,6 +60,47 @@ impl SourceReader {
         self.read_worktree_path(path, 0, 0, true)
     }
 
+    /// Memo content-fingerprint: resolve `c` exactly as
+    /// `read_cursor_uninterned` does, read the bytes, and return
+    /// `(absolute_resolved_path, blake3_hex)`. The hash is byte-for-byte
+    /// the same digest `SprfStore::intern_file` mints for the same
+    /// content, so it is the store's content id without a second
+    /// hashing scheme. The absolute path lets the staleness check
+    /// re-read the SAME file on a later run with no `root`/clock state.
+    /// `None` ⇒ the cursor has no readable file source.
+    pub fn fingerprint_cursor(&self, c: &Cursor) -> Option<(String, String)> {
+        let resolved = self.resolve_cursor_path(c)?;
+        let bytes = std::fs::read(&resolved).ok()?;
+        let hex = blake3::hash(&bytes).to_hex().to_string();
+        Some((resolved.to_string_lossy().into_owned(), hex))
+    }
+
+    /// The absolute filesystem path `read_cursor_uninterned` would read
+    /// for `c`. Worktree only (rev == 0); git-backed sources fall back
+    /// to the raw `value` string (a stable per-rev key — its bytes do
+    /// not change under a worktree edit, which is the case the CLI
+    /// incremental run exercises).
+    fn resolve_cursor_path(&self, c: &Cursor) -> Option<PathBuf> {
+        if c.value.is_empty() {
+            let store = self.store.as_ref()?;
+            let coord = store.coord_of(c.at)?;
+            if coord.fs == 0 || coord.rev != 0 {
+                return None;
+            }
+            let path = store.path_of(coord.fs)?;
+            return Some(resolve_source_path(&self.root, path.as_ref()));
+        }
+        let parent = self
+            .store
+            .as_ref()
+            .and_then(|s| s.coord_of(c.at))
+            .unwrap_or_default();
+        if parent.rev != 0 {
+            return None;
+        }
+        Some(resolve_source_path(&self.root, c.value.as_ref()))
+    }
+
     fn read_cursor_coord(&self, c: &Cursor, intern: bool) -> Option<SourceBytes> {
         let store = self.store.as_ref()?;
         let coord = store.coord_of(c.at)?;

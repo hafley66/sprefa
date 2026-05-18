@@ -441,19 +441,37 @@ impl RuntimeGraph {
         &self.memo
     }
 
+    /// `_memo_deps` columns. `content_id` is the blake3 hex of the
+    /// source bytes the component actually read; `source_path` is the
+    /// filesystem path so the staleness check can re-read and re-hash
+    /// WITHOUT any generation counter or event layer (the CLI has
+    /// neither). `gen_seen` is kept structurally for the legacy
+    /// reverse-lookup callers but is NOT consulted for freshness.
+    const MEMO_DEPS_COLS: &'static [&'static str] = &[
+        "owner_op_id",
+        "in_key",
+        "source_id",
+        "gen_seen",
+        "content_id",
+        "source_path",
+    ];
+
     /// Phase 2: persist one recorded read into `MEMO_DEPS`.
     /// `PK(owner_op_id, in_key, source_id)` — delete-then-insert keeps
     /// one live row per (owner, input row, source) with the latest gen
-    /// observed.
+    /// observed. `content_hex` is the blake3 of the bytes the component
+    /// read; `source_path` is the file path the staleness check
+    /// re-reads. Content hash is the freshness oracle, not `gen_seen`.
     pub fn record_memo_dep(
         &self,
         owner_op_id: &str,
         in_key: &str,
         source: crate::source_clock::SourceId,
         gen_seen: u64,
+        content_hex: &str,
+        source_path: &str,
     ) {
-        self.facts
-            .declare(MEMO_DEPS_TABLE, &["owner_op_id", "in_key", "source_id", "gen_seen"]);
+        self.facts.declare(MEMO_DEPS_TABLE, Self::MEMO_DEPS_COLS);
         let sid = source.hex();
         self.facts.delete_matching(
             MEMO_DEPS_TABLE,
@@ -468,6 +486,8 @@ impl RuntimeGraph {
         row.set("in_key", in_key.to_string());
         row.set("source_id", sid);
         row.set("gen_seen", gen_seen.to_string());
+        row.set("content_id", content_hex.to_string());
+        row.set("source_path", source_path.to_string());
         self.facts.insert(MEMO_DEPS_TABLE, Arc::new(row));
     }
 
@@ -490,18 +510,21 @@ impl RuntimeGraph {
         &self,
         owner_op_id: &str,
         in_key: &str,
-        deps: &[(crate::source_clock::SourceId, u64)],
+        deps: &[(crate::source_clock::SourceId, u64, String, String)],
     ) {
         if deps.is_empty() {
             return;
         }
-        self.facts
-            .declare(MEMO_DEPS_TABLE, &["owner_op_id", "in_key", "source_id", "gen_seen"]);
-        // Dedup by source_id, keeping the last gen seen in this drain.
-        let mut by_source: std::collections::BTreeMap<String, u64> =
+        self.facts.declare(MEMO_DEPS_TABLE, Self::MEMO_DEPS_COLS);
+        // Dedup by source_id, keeping the last (gen, content, path) seen
+        // in this drain.
+        let mut by_source: std::collections::BTreeMap<String, (u64, String, String)> =
             std::collections::BTreeMap::new();
-        for (source, gen_seen) in deps {
-            by_source.insert(source.hex(), *gen_seen);
+        for (source, gen_seen, content_hex, path) in deps {
+            by_source.insert(
+                source.hex(),
+                (*gen_seen, content_hex.clone(), path.clone()),
+            );
         }
         // One delete for the whole (owner, in_key) — then re-insert the
         // full current set. Equivalent to per-source delete+insert when
@@ -512,12 +535,14 @@ impl RuntimeGraph {
         );
         let rows: Vec<Arc<Cursor>> = by_source
             .into_iter()
-            .map(|(sid, gen_seen)| {
+            .map(|(sid, (gen_seen, content_hex, path))| {
                 let mut row = Cursor::default();
                 row.set("owner_op_id", owner_op_id.to_string());
                 row.set("in_key", in_key.to_string());
                 row.set("source_id", sid);
                 row.set("gen_seen", gen_seen.to_string());
+                row.set("content_id", content_hex);
+                row.set("source_path", path);
                 Arc::new(row)
             })
             .collect();
@@ -547,6 +572,30 @@ impl RuntimeGraph {
                 let sid = r.get("source_id")?.to_string();
                 let gen = r.get("gen_seen")?.parse::<u64>().ok()?;
                 Some((sid, gen))
+            })
+            .collect()
+    }
+
+    /// Content-hash dep readback: `(source_id_hex, gen_seen,
+    /// content_hex, source_path)` for one `(owner, in_key)`. The memo
+    /// staleness check uses `content_hex` + `source_path` to re-hash
+    /// the file on disk and compare — independent of `gen_seen` and
+    /// the `FactStoreClock`/event layer (the one-shot CLI has neither).
+    pub fn memo_deps_ch_of(
+        &self,
+        owner_op_id: &str,
+        in_key: &str,
+    ) -> Vec<(String, u64, String, String)> {
+        self.facts
+            .read_where(MEMO_DEPS_TABLE, "in_key", in_key)
+            .into_iter()
+            .filter(|r| r.get("owner_op_id") == Some(owner_op_id))
+            .filter_map(|r| {
+                let sid = r.get("source_id")?.to_string();
+                let gen = r.get("gen_seen")?.parse::<u64>().ok()?;
+                let content = r.get("content_id").unwrap_or("").to_string();
+                let path = r.get("source_path").unwrap_or("").to_string();
+                Some((sid, gen, content, path))
             })
             .collect()
     }

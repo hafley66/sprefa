@@ -46,6 +46,16 @@ pub struct Memo {
     hot: StripedLru<[u8; 32], MemoVal>,
 }
 
+/// Current blake3 hex of the bytes at `path`. `None` if unreadable.
+/// Same digest scheme as `SprfStore::intern_file` /
+/// `SourceReader::fingerprint_cursor`, so a recorded fingerprint and a
+/// re-read here are directly comparable. This is the only IO the
+/// staleness check performs; it depends on nothing but the file bytes.
+fn current_content_hex(path: &str) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    Some(blake3::hash(&bytes).to_hex().to_string())
+}
+
 fn hex32(b: &[u8; 32]) -> String {
     let mut s = String::with_capacity(64);
     for x in b {
@@ -167,16 +177,40 @@ impl Memo {
     }
 
     /// Stale iff any recorded `MEMO_DEPS` gen differs from the source's
-    /// current clock gen. Never re-runs the op to check.
+    /// current clock gen. Never re-runs the op to check. LEGACY:
+    /// retained for the gen-based probe; the CLI/seam path uses
+    /// `is_stale_content` instead (clock-independent).
     fn is_stale(&self, recorded_deps: &[(SourceId, u64)]) -> bool {
         recorded_deps
             .iter()
             .any(|(s, seen)| self.clock.current_gen(*s) != *seen)
     }
 
+    /// Content-hash staleness. STALE iff ANY recorded dep's CURRENT
+    /// on-disk content hash differs from the hash recorded when the
+    /// component last read it. REPLAY iff every dep's bytes are
+    /// byte-identical. This re-reads each `source_path` and re-hashes
+    /// it with blake3 — the same hash the store mints at intern time —
+    /// so the decision is a pure function of the input bytes and is
+    /// INDEPENDENT of `FactStoreClock`/`gen_seen`/any event layer.
+    /// Conservative: an unreadable path or an empty recorded hash is
+    /// treated as STALE (force re-run, never a false replay).
+    fn is_stale_content(&self, recorded: &[(SourceId, u64, String, String)]) -> bool {
+        recorded.iter().any(|(_sid, _gen, recorded_hex, path)| {
+            if recorded_hex.is_empty() || path.is_empty() {
+                return true;
+            }
+            match current_content_hex(path) {
+                Some(now_hex) => now_hex != *recorded_hex,
+                None => true,
+            }
+        })
+    }
+
     /// Probe. `recorded_deps` is the `(SourceId, gen_seen)` set from
     /// `MEMO_DEPS` for this `(owner, in_key)` (Phase 2). Empty deps =>
-    /// treat as a miss (never computed / not dep-tracked).
+    /// treat as a miss (never computed / not dep-tracked). LEGACY
+    /// gen-based path; kept for callers that pass no content hash.
     pub fn probe(
         &self,
         owner_op_id: &str,
@@ -195,6 +229,31 @@ impl Memo {
             return Some((val, true));
         }
         let stale = self.is_stale(recorded_deps);
+        Some((val, stale))
+    }
+
+    /// Content-hash probe. `recorded` is the `(SourceId, gen_seen,
+    /// content_hex, source_path)` set from `MEMO_DEPS`. Staleness is
+    /// decided by re-hashing each `source_path` on disk vs the recorded
+    /// `content_hex` — no clock, no event bump. This is the path the
+    /// one-shot CLI seam uses so an edited file is detected purely from
+    /// its bytes moving.
+    pub fn probe_ch(
+        &self,
+        owner_op_id: &str,
+        in_key: &str,
+        recorded: &[(SourceId, u64, String, String)],
+    ) -> Probe {
+        let (hk, pk) = entry_key(owner_op_id, in_key);
+        let val = self.hot.get(&hk).or_else(|| {
+            let v = self.cold_get(&pk)?;
+            self.hot.put(hk, v.clone());
+            Some(v)
+        })?;
+        if recorded.is_empty() {
+            return Some((val, true));
+        }
+        let stale = self.is_stale_content(recorded);
         Some((val, stale))
     }
 
@@ -298,5 +357,53 @@ mod tests {
         let (v, stale) = memo2.probe("o", "k", &deps).unwrap();
         assert!(!stale);
         assert_eq!(v.out_rows[0].value(), "x");
+    }
+
+    #[test]
+    fn content_hash_staleness_ignores_clock_entirely() {
+        let dir = std::env::temp_dir().join(format!(
+            "sprf_memo_ch_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("x.rs");
+        std::fs::write(&f, b"fn a() {}\n").unwrap();
+        let path = f.to_string_lossy().into_owned();
+
+        let (_facts, _clock, memo) = setup();
+        let src = SourceId::for_file(&path);
+        let h0 = blake3::hash(b"fn a() {}\n").to_hex().to_string();
+        let deps = vec![(src, 0u64, h0.clone(), path.clone())];
+
+        // Cold miss → put under the content fingerprint.
+        assert!(memo.probe_ch("o", "k", &deps).is_none());
+        memo.put(
+            "o",
+            "k",
+            &[(src, 0u64)],
+            vec![cur("r")],
+            vec!["kh".into()],
+        );
+
+        // Unchanged file → REPLAY. Clock never bumped — proves the
+        // decision does not consult the clock at all.
+        let (_v, stale) = memo.probe_ch("o", "k", &deps).unwrap();
+        assert!(!stale, "byte-identical file must REPLAY (no clock bump)");
+
+        // Edit the file on disk (no clock bump, no event layer).
+        std::fs::write(&f, b"fn a() {}\nfn b() {}\n").unwrap();
+        let (_v, stale) = memo.probe_ch("o", "k", &deps).unwrap();
+        assert!(
+            stale,
+            "edited file must be STALE purely from its bytes moving"
+        );
+
+        // Recorded hash that no longer matches → STALE even though the
+        // clock is pristine; an unreadable path → STALE (conservative).
+        let bogus = vec![(src, 0u64, h0, "/no/such/path".to_string())];
+        let (_v, stale) = memo.probe_ch("o", "k", &bogus).unwrap();
+        assert!(stale, "unreadable source path is conservatively STALE");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

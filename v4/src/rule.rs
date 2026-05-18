@@ -349,14 +349,22 @@ impl Component for RuleInvokeComponent {
         // Recorded deps from a prior run (Phase 2). Validity is a
         // gen-compare over exactly these; the body is never re-run to
         // check freshness.
-        let recorded = graph.memo_deps_of(&owner_id, &in_key);
-        let deps: Vec<(crate::source_clock::SourceId, u64)> = recorded
+        let recorded = graph.memo_deps_ch_of(&owner_id, &in_key);
+        let deps: Vec<(crate::source_clock::SourceId, u64, String, String)> = recorded
             .iter()
-            .filter_map(|(hex, gen)| sid_from_hex(hex).map(|s| (s, *gen)))
+            .filter_map(|(hex, gen, content, path)| {
+                sid_from_hex(hex).map(|s| (s, *gen, content.clone(), path.clone()))
+            })
             .collect();
 
         if !self.force {
-            if let Some((val, stale)) = graph.memo().probe(&owner_id, &in_key, &deps) {
+            // Content-hash staleness: replay only if every recorded
+            // dep's file bytes are byte-identical now. A coarse rule
+            // whose input is a directory (auto_run root) has an
+            // unreadable fingerprint ⇒ STALE ⇒ body re-runs, and the
+            // INNER `ast`/`read` owners' per-file content-memo carries
+            // the replay win. No clock / event bump consulted.
+            if let Some((val, stale)) = graph.memo().probe_ch(&owner_id, &in_key, &deps) {
                 if !stale {
                     // Pure replay: do NOT run the rule body.
                     return rows_to_node(val.out_rows);
@@ -382,7 +390,21 @@ impl Component for RuleInvokeComponent {
             use crate::source_clock::{SourceClock, SourceId};
             let sid = SourceId::for_file(&path);
             let gen_seen = graph.clock().current_gen(sid);
-            graph.record_memo_dep(&owner_id, &in_key, sid, gen_seen);
+            // Fingerprint the input file's current bytes (a directory
+            // input hashes to None → empty hex → STALE next run, which
+            // is the correct conservative default for a coarse rule).
+            let content_hex = std::fs::read(&path)
+                .ok()
+                .map(|b| blake3::hash(&b).to_hex().to_string())
+                .unwrap_or_default();
+            graph.record_memo_dep(
+                &owner_id,
+                &in_key,
+                sid,
+                gen_seen,
+                &content_hex,
+                &path,
+            );
         }
 
         // Persist the result under the freshly-recorded dep set so the

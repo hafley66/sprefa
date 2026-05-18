@@ -765,10 +765,24 @@ impl Component for AstNmComponent {
                     let gen_seen = graph.clock().current_gen(sid);
                     ctx.record_read(sid.0, gen_seen);
                     let memo_owner = re_owner_hex(row, self.kind());
-                    let deps: Vec<(SourceId, u64)> = ctx
+                    // Content fingerprint of the bytes this owner reads
+                    // (resolved exactly as render_batch will read them).
+                    // The staleness oracle compares THIS hash to the
+                    // file's hash on the next run — no clock involved.
+                    let reader = crate::source::SourceReader::new(
+                        self.root.clone(),
+                        self.store.clone(),
+                        self.config.clone(),
+                    );
+                    let (fp_path, fp_hex) = reader
+                        .fingerprint_cursor(input)
+                        .unwrap_or_default();
+                    let deps: Vec<(SourceId, u64, String, String)> = ctx
                         .take_deps()
                         .into_iter()
-                        .map(|(digest, gen)| (SourceId(digest), gen))
+                        .map(|(digest, gen)| {
+                            (SourceId(digest), gen, fp_hex.clone(), fp_path.clone())
+                        })
                         .collect();
                     graph.record_memo_deps(&memo_owner, input_key.as_str(), &deps);
                 }
@@ -1702,10 +1716,19 @@ impl Component for ReComponent {
                     let sid = SourceId::for_file(path);
                     let gen_seen = graph.clock().current_gen(sid);
                     ctx.record_read(sid.0, gen_seen);
-                    let deps: Vec<(SourceId, u64)> = ctx
+                    // `re` matches over `c.value` — the bytes `read`
+                    // produced for this file. Fingerprint THOSE bytes;
+                    // staleness re-reads `path` (the FS term, an
+                    // absolute walker path) and compares hashes, with
+                    // no clock dependence.
+                    let fp_hex = blake3::hash(c.value.as_bytes()).to_hex().to_string();
+                    let fp_path = path.to_string();
+                    let deps: Vec<(SourceId, u64, String, String)> = ctx
                         .take_deps()
                         .into_iter()
-                        .map(|(digest, gen)| (SourceId(digest), gen))
+                        .map(|(digest, gen)| {
+                            (SourceId(digest), gen, fp_hex.clone(), fp_path.clone())
+                        })
                         .collect();
                     graph.record_memo_deps(&owner_hex, in_hex.as_str(), &deps);
                 }
@@ -2892,10 +2915,24 @@ impl Component for ReadComponent {
                     let gen_seen = graph.clock().current_gen(sid);
                     ctx.record_read(sid.0, gen_seen);
                     let memo_owner = re_owner_hex(row, self.kind());
-                    let deps: Vec<(SourceId, u64)> = ctx
+                    // Fingerprint the bytes `read` produced for this
+                    // file (resolved exactly as `render` read them).
+                    // Staleness re-hashes the file on the next run and
+                    // compares — no clock / event bump.
+                    let reader = crate::source::SourceReader::new(
+                        self.root.clone(),
+                        self.store.clone(),
+                        self.config.clone(),
+                    );
+                    let (fp_path, fp_hex) = reader
+                        .fingerprint_cursor(row.value.as_ref())
+                        .unwrap_or_default();
+                    let deps: Vec<(SourceId, u64, String, String)> = ctx
                         .take_deps()
                         .into_iter()
-                        .map(|(digest, gen)| (SourceId(digest), gen))
+                        .map(|(digest, gen)| {
+                            (SourceId(digest), gen, fp_hex.clone(), fp_path.clone())
+                        })
                         .collect();
                     graph.record_memo_deps(&memo_owner, input_key.as_str(), &deps);
                 }

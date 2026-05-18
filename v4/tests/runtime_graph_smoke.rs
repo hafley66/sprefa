@@ -565,18 +565,24 @@ fn rule_invoke_memoizes_owner_by_input_arg_tuple() {
 
 #[test]
 fn rule_memo_replays_unchanged_source_zero_dispatch() {
-    // Phase 3 binding test. The body-result memo is now the
-    // disk-backed Memo; validity is a gen-compare over the recorded
-    // dependency set (MEMO_DEPS), never a re-run to check. A rule
-    // call's conservative dep is its input file source.
+    // Phase 3 binding test, updated for the CONTENT-HASH oracle.
+    // Validity is a re-hash of the recorded input file's bytes vs the
+    // hash recorded when the body last read it — NOT a clock
+    // gen-compare. The pre-fix version poked `clock().bump()` on a
+    // NONEXISTENT `a.c`; that depended on the old event-gen contract
+    // content-hash supersedes (an unreadable input cannot be proven
+    // fresh → conservatively STALE). The test now writes a real file
+    // and performs a real edit, preserving its INTENT
+    // (unchanged→replay, changed→re-run) under the new oracle.
     //
     //   run 1 (cold)            → body runs, memo.put, dep recorded
-    //   run 2 (source unchanged) → pure replay, body dispatch == 0
-    //   bump the file's gen      → stale → body re-runs
+    //   run 2 (file unchanged)  → pure replay, body dispatch == 0
+    //   EDIT the file on disk   → content hash moves → stale → re-run
+    //   run 4 (unchanged again) → replay against the new content
     use effect_runtime::v2::{MemFactStore, Node, Pipe};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use v4::rule::{Rule, RuleInvokeComponent};
-    use v4::source_clock::{SourceClock, SourceId};
+    use v4::source_clock::SourceId;
 
     struct CountBody {
         count: Arc<AtomicUsize>,
@@ -604,44 +610,47 @@ fn rule_memo_replays_unchanged_source_zero_dispatch() {
     // straight through, so the rule's recorded dep is that file.
     let call = RuleInvokeComponent::new(rule, Vec::new(), false);
 
-    // Input names a file path → rule_input_path() records its
-    // SourceId as the call's dependency.
-    let seed = path_cursor("a.c");
-    let file = SourceId::for_file("a.c");
-    assert_eq!(graph.clock().current_gen(file), 0);
+    // Input names a REAL file path → rule_input_path() records its
+    // SourceId + content fingerprint as the call's dependency.
+    let src = tmp.path().join("a.c");
+    std::fs::write(&src, b"int a(void){return 0;}\n").unwrap();
+    let src_s = src.to_str().unwrap().to_string();
+    let seed = path_cursor(&src_s);
+    let _file = SourceId::for_file(&src_s);
 
-    // Run 1: cold. Body must run; memo + dep recorded.
+    // Run 1: cold. Body must run; memo + content-fingerprinted dep.
     let ctx1 = RenderCtx::new(1, 0, 0).with_runtime(graph.clone());
     let _ = call.render(&ctx1, &seed);
     assert_eq!(count.load(Ordering::SeqCst), 1, "cold run executes body");
 
-    // Run 2: source unchanged. Pure replay — body dispatch == 0
-    // (the counter does not advance).
+    // Run 2: file unchanged. Content hash matches → pure replay,
+    // body dispatch == 0 (the counter does not advance).
     let ctx2 = RenderCtx::new(2, 0, 0).with_runtime(graph.clone());
     let _ = call.render(&ctx2, &seed);
     assert_eq!(
         count.load(Ordering::SeqCst),
         1,
-        "unchanged source: pure replay, body dispatch == 0"
+        "unchanged file: pure replay, body dispatch == 0"
     );
 
-    // Bump the file's source gen → recorded dep gen differs → stale.
-    graph.clock().bump(file);
+    // EDIT the file on disk (no clock bump, no event layer). The
+    // recorded content hash no longer matches → stale → body re-runs.
+    std::fs::write(&src, b"int a(void){return 1;}\n").unwrap();
     let ctx3 = RenderCtx::new(3, 0, 0).with_runtime(graph.clone());
     let _ = call.render(&ctx3, &seed);
     assert_eq!(
         count.load(Ordering::SeqCst),
         2,
-        "bumped source gen invalidates the memo; body re-runs"
+        "edited file content invalidates the memo; body re-runs"
     );
 
-    // Run 4: source unchanged again → replay against the new gen.
+    // Run 4: file unchanged again → replay against the new content.
     let ctx4 = RenderCtx::new(4, 0, 0).with_runtime(graph.clone());
     let _ = call.render(&ctx4, &seed);
     assert_eq!(
         count.load(Ordering::SeqCst),
         2,
-        "re-memoized at new gen: replay again, no dispatch"
+        "re-memoized at new content: replay again, no dispatch"
     );
 }
 

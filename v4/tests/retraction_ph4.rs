@@ -102,7 +102,11 @@ impl Component for MatchOp {
                 let in_hex = hex32(&c.content_hash());
                 let sid = SourceId::for_file(&path);
                 let gen = g.clock().current_gen(sid);
-                g.record_memo_dep(&owner_hex, &in_hex, sid, gen);
+                let content_hex = std::fs::read(&path)
+                    .ok()
+                    .map(|b| blake3::hash(&b).to_hex().to_string())
+                    .unwrap_or_default();
+                g.record_memo_dep(&owner_hex, &in_hex, sid, gen, &content_hex, &path);
             }
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             let mut idx = 0u32;

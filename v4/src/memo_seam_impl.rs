@@ -268,6 +268,22 @@ impl V4MemoSeam {
             .filter_map(|(h, g)| sid_from_hex(h).map(|s| (s, *g)))
             .collect()
     }
+
+    /// Content-hash dep set: `(SourceId, gen_seen, content_hex,
+    /// source_path)`. This is what the probe hands the memo so
+    /// staleness is decided by re-hashing each `source_path` vs the
+    /// recorded `content_hex` — independent of the clock/event layer.
+    fn deps_ch_of(
+        &self,
+        owner_hex: &str,
+        in_hex: &str,
+    ) -> Vec<(SourceId, u64, String, String)> {
+        self.graph
+            .memo_deps_ch_of(owner_hex, in_hex)
+            .into_iter()
+            .filter_map(|(h, g, c, p)| sid_from_hex(&h).map(|s| (s, g, c, p)))
+            .collect()
+    }
 }
 
 impl MemoSeam<Cursor> for V4MemoSeam {
@@ -306,7 +322,8 @@ impl MemoSeam<Cursor> for V4MemoSeam {
         if deps.is_empty() {
             return MemoProbe::Miss;
         }
-        match self.graph.memo().probe(&owner_hex, &in_hex, &deps) {
+        let deps_ch = self.deps_ch_of(&owner_hex, &in_hex);
+        match self.graph.memo().probe_ch(&owner_hex, &in_hex, &deps_ch) {
             None => MemoProbe::Miss,
             Some((val, false)) => {
                 MemoProbe::Replay(val.out_rows.into_iter().map(Arc::new).collect())

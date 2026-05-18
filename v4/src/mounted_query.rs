@@ -415,10 +415,22 @@ pub fn record_runtime_sql_mount(
         }
     }
     {
-        let deps: Vec<(crate::source_clock::SourceId, u64)> = ctx
+        // SQL mount deps are `table:` sources (fact/rule tables), not
+        // files — no on-disk content to fingerprint. Empty content +
+        // path ⇒ `is_stale_content` treats them STALE (force re-run):
+        // the conservative, correct default for a non-file source. The
+        // memo win targets the file-reading `ast` owner, not SQL mount.
+        let deps: Vec<(crate::source_clock::SourceId, u64, String, String)> = ctx
             .take_deps()
             .into_iter()
-            .map(|(digest, gen)| (crate::source_clock::SourceId(digest), gen))
+            .map(|(digest, gen)| {
+                (
+                    crate::source_clock::SourceId(digest),
+                    gen,
+                    String::new(),
+                    String::new(),
+                )
+            })
             .collect();
         graph.record_memo_deps(
             &format!("sprf://ast/sql/{mount_id}"),
@@ -487,10 +499,22 @@ pub fn record_runtime_sql_mount_count(
         }
     }
     {
-        let deps: Vec<(crate::source_clock::SourceId, u64)> = ctx
+        // SQL mount deps are `table:` sources (fact/rule tables), not
+        // files — no on-disk content to fingerprint. Empty content +
+        // path ⇒ `is_stale_content` treats them STALE (force re-run):
+        // the conservative, correct default for a non-file source. The
+        // memo win targets the file-reading `ast` owner, not SQL mount.
+        let deps: Vec<(crate::source_clock::SourceId, u64, String, String)> = ctx
             .take_deps()
             .into_iter()
-            .map(|(digest, gen)| (crate::source_clock::SourceId(digest), gen))
+            .map(|(digest, gen)| {
+                (
+                    crate::source_clock::SourceId(digest),
+                    gen,
+                    String::new(),
+                    String::new(),
+                )
+            })
             .collect();
         graph.record_memo_deps(
             &format!("sprf://ast/sql/{mount_id}"),
