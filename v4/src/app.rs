@@ -1556,6 +1556,32 @@ impl SprfHandlers for SprfState {
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(65536);
+        // Phase 3/4: the memo/replay/reconcile seam is intentionally
+        // NOT installed on the one-shot `run` path.
+        //
+        // Installing it (and the now-aligned dep keying below) makes
+        // source-headed replay mechanically fire — measured: linux
+        // incremental wall 53.8s → 9.0s, ast dispatch → 0ms,
+        // `_memo_facts` 0 → 63482. But it is UNSAFE here: the seam's
+        // staleness is `Memo::is_stale`, a gen-compare of the recorded
+        // `gen_seen` against `FactStoreClock::current_gen`. That clock
+        // is a path-keyed counter advanced ONLY by an explicit
+        // `bump()` from an event layer (fs-watch / lsp / fact-write).
+        // `sprefa-run` is one-shot: it has NO file-change event layer,
+        // and the only `bump` in this path is for `table:` sources.
+        // So across two CLI invocations sharing `--fact-db`, an edited
+        // .c file's `file:` gen never advances, `is_stale` returns
+        // false for it too, and the seam REPLAYS the edited file's
+        // stale memo rows — silently dropping the edit (observed:
+        // linux `hits` 16627 instead of the correct 16628).
+        //
+        // Correcting this needs a content/mtime invalidation inside
+        // the staleness check. `Memo::is_stale` is shared with the
+        // Ph4/Ph5/Ph6 retraction suites, which depend on the
+        // explicit-`bump` contract; changing it is a third mechanism
+        // beyond the two dep/memo seams in scope. Replay is therefore
+        // left disabled on this path until an invalidation source
+        // exists (root-caused; not faked).
         let opts = ExpandOpts::default()
             .with_batch_cap(batch_cap)
             .with_bus(self.bus.clone())
