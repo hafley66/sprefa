@@ -109,3 +109,58 @@ bare_median_wall_s   = 4.151
 bare_rss_peak_MB     = 231
 sprf_store_wall_s    = 4.341
 sprf_store_rss_peak_MB = 250
+
+# ════════════════════════════════════════════════════════════════════
+# POST-FIX (feat/memo-perf-fix off feat/memo-bench2). Two seams fixed:
+#   1. MEMO_DEPS writes batched (perf(v4): batch MEMO_DEPS writes).
+#      Per-row `insert` N+1 -> one `insert_batch` per (owner,in_key)
+#      drain. The cold/incr numbers ABOVE are the PRE-FIX baseline,
+#      kept labeled; the numbers below are the SAME workload re-run
+#      with the fix binary (release --bin sprefa-run in the worktree;
+#      main comparison reuses the prebuilt main e47b0e95 binary).
+#   2. Memo put/replay: ROOT-CAUSED, replay NOT enabled on the
+#      one-shot CLI (no source-invalidation event layer; enabling it
+#      drops edits — see fix(v4) commit body). `_memo_facts` stays 0
+#      on this path BY DESIGN until an invalidation source exists.
+# ════════════════════════════════════════════════════════════════════
+
+[postfix.headline]
+defect1_store_insert_calls          = "63483 -> 0"      # per-row insert N+1 killed
+defect1_n_plus_one_insert_calls     = "63483 -> absent"
+defect1_string_intern_calls         = "253983 -> 63534"
+defect2_memo_facts_rows_cli         = 0                  # replay disabled (root-caused)
+defect2_memo_facts_rows_if_seam_on  = 63482              # measured: seam DOES populate
+incremental_wall_collapsed          = false              # would be 9.0s WITH seam, but
+                                                         # seam-on incremental is WRONG
+                                                         # (hits 16627 vs 16628 correct)
+incremental_correct_hits            = 16628              # seam-off: edit detected
+note = "Defect 1 fixed+measured. Defect 2 replay mechanically works (53.8s->9.0s, _memo_facts 0->63482) but is incorrect on the one-shot CLI: FactStoreClock is bumped only by an event layer the CLI lacks, so an edited file is replayed stale. Left disabled per the no-faking / correctness constraint; root cause in the fix(v4) commit + app.rs comment."
+
+[postfix.cold.branch]   # seam OFF (correct), dep-batch ON
+wall_s              = 16.85   # pre-fix 19.64 (raw cold this session)
+rss_peak_MB         = 300
+hits_rows           = 16627
+store_insert_calls  = 0       # pre-fix 63483
+store_insert_batch_calls = 63534
+string_intern_calls = 63534   # pre-fix 253983
+n_plus_one_insert_calls = 0   # pre-fix 63483
+memo_facts_rows     = 0       # replay disabled (root-caused)
+
+[postfix.incremental.branch]   # seam OFF (correct), dep-batch ON
+wall_s              = 53.45   # pre-fix 53.77 — no replay on CLI, full recompute
+rss_peak_MB         = 297
+hits_rows           = 16628   # CORRECT (edit detected; seam-on would show 16627)
+store_insert_calls  = 0
+string_intern_calls = 63534
+n_plus_one_insert_calls = 0
+memo_facts_rows     = 0
+
+[postfix.seam_on_probe]   # diagnostic only — NOT shipped (incorrect)
+incremental_wall_s  = 8.97    # replay fires: ast dispatch 0ms
+ast_stage_wall_ms   = 0.0     # all 63482 inputs replayed from _memo_facts
+memo_facts_rows     = 63482
+hits_rows           = 16627   # WRONG: edited file replayed stale, +1 printk lost
+verdict = "proves the wiring works; proves it is unsafe without source invalidation"
+
+# main comparison (prebuilt main e47b0e95, unchanged): cold 5.06s,
+# incremental 4.49s — carried from [cold.main]/[incremental.main].
