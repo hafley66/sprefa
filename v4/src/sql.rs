@@ -922,6 +922,22 @@ fn rewrite_sql_interps(dsl: &DslBody) -> Result<String, LowerError> {
     Ok(out)
 }
 
+/// Prepend a stable per-site marker so two syntactically-identical
+/// rule QUERY / `sql` occurrences hash to distinct `mount_id`s in the
+/// durable mount table. The marker is a SQL line comment: `sql_tokens`
+/// and SQLite both skip it, `referenced_fact_tables` is unaffected,
+/// and it round-trips through the persisted mount snapshot so the
+/// reactive replay path reconstructs the same `mount_id`.
+///
+/// Without this, identical `r?()` queries collide on one
+/// `(mount_id, input_key)` mount and the second occurrence is deduped
+/// to zero rows by the "added since existing" diff in
+/// `mounted_query::record_sql_outputs`.
+fn with_query_site_tag(ctx: &LowerCtx, sql: String) -> String {
+    let site = ctx.next_query_site();
+    format!("-- sprf-site:{site}\n{sql}")
+}
+
 pub struct SqlDef;
 
 impl OperatorDef for SqlDef {
@@ -941,7 +957,7 @@ impl OperatorDef for SqlDef {
         dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let dsl = dsl.ok_or_else(|| LowerError::Unknown("sql: dsl body required".into()))?;
-        let sql = rewrite_sql_interps(dsl)?;
+        let sql = with_query_site_tag(ctx, rewrite_sql_interps(dsl)?);
         Ok(Pipe::new().step(Arc::new(SqlQueryComponent::new(ctx.store.clone(), sql))))
     }
 }
@@ -1082,6 +1098,7 @@ pub fn rule_table_call_pipe(
         sql.push_str(&predicates.join(" AND "));
     }
 
+    let sql = with_query_site_tag(ctx, sql);
     Ok(
         Pipe::new().step(Arc::new(SqlQueryComponent::with_referenced_tables(
             ctx.store.clone(),

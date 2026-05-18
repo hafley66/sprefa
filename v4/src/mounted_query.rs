@@ -195,6 +195,15 @@ impl MountedQueryStorage for FactMountedQueryStorage {
         let stamped_nodes = stamp_support_nodes(nodes);
         self.declare_tables();
 
+        // `mount_id` folds the per-site tag carried in the SQL (a
+        // leading `-- sprf-site:N` comment, see
+        // `sql::with_query_site_tag`), so two syntactically-identical
+        // `r?()` query occurrences get distinct mount lineages and no
+        // longer collide on one `(mount_id, input_key)` mount. The
+        // "added since existing" diff stays correct per-site: a genuine
+        // same-site reactive re-run still suppresses already-emitted
+        // rows; a second independent occurrence is its own mount and
+        // yields the full materialized set.
         let mount_id = mount_id_for_sql(sql);
         let input_key = input_key_for_batch(batch);
         self.record_mount(sql, generation, &mount_id, &input_key, batch, dep_tables);

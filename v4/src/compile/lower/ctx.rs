@@ -50,6 +50,14 @@ pub struct LowerCtx {
     /// apply seed as `_call_seq`; cache-respecting bare/apply calls
     /// don't touch it.
     apply_seq: Arc<AtomicU64>,
+    /// Per-compile counter handed out to every lexical rule QUERY
+    /// (`r?()`) / `sql` site so syntactically-identical queries get
+    /// distinct durable mount lineages. Lowering is deterministic and
+    /// single-threaded per compile, so the Nth query site always draws
+    /// the same ordinal across runs of the same source — replay
+    /// reconstructs the same `mount_id` because the tag rides inside
+    /// the persisted SQL text. See `sql::with_query_site_tag`.
+    query_site: Arc<AtomicU64>,
     /// Span of the op call currently being lowered. Set by the
     /// Registry around each `OperatorDef::lower_call_with_chain`
     /// invocation. Ops that anchor end-of-run diagnostics (no per-row
@@ -61,6 +69,12 @@ pub struct LowerCtx {
 impl LowerCtx {
     pub fn next_apply_seq(&self) -> u64 {
         self.apply_seq.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Next stable ordinal for a rule QUERY / `sql` site (see
+    /// `query_site` field doc).
+    pub fn next_query_site(&self) -> u64 {
+        self.query_site.fetch_add(1, Ordering::Relaxed)
     }
 }
 
@@ -77,6 +91,7 @@ impl LowerCtx {
             config: None,
             telemetry: None,
             apply_seq: Arc::new(AtomicU64::new(0)),
+            query_site: Arc::new(AtomicU64::new(0)),
             current_call_span: Cell::new(None),
         }
     }
