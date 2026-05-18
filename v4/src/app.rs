@@ -848,8 +848,26 @@ fn run_fused_sql(
     // Discover source tables referenced by the fuser SQL. The fuser
     // emits raw `<rule>_facts` identifiers in FROM/JOIN positions for
     // source reads. We need view names (`<rule>`) for the rewrite.
+    //
+    // A recursive overload reads its OWN `{target}_facts`. The default
+    // exclusion of `target_facts` would leave that self-read pointed at
+    // the raw FK table (`<col>_id` columns, no string columns) → SQL
+    // error → the step silently contributes nothing. For recursive
+    // rules, DON'T exclude: a `{target}` source view is created and the
+    // self-read is rewritten through it like any other source.
     let combined = stmts.join("\n");
-    let source_tables = source_tables_from_fused_sql(&combined, &target_facts);
+    let source_tables = if fused.is_recursive() {
+        source_tables_from_fused_sql(&combined, "")
+    } else {
+        source_tables_from_fused_sql(&combined, &target_facts)
+    };
+
+    // Hard round cap so a non-terminating recursion fails loud instead
+    // of hanging (mirrors `fixpoint::DirtySweepError::RoundCap`).
+    let recursion_cap: usize = std::env::var("SPREFA_RECURSION_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000);
 
     let mut inserted: u64 = 0;
     let mut support_inserted: u64 = 0;
@@ -919,23 +937,53 @@ fn run_fused_sql(
                     target_cols.as_slice(),
                     &source_tables,
                 ) {
-                    Some(rewritten) => match tx.execute(&rewritten, []) {
-                        Ok(n) => {
-                            inserted += n as u64;
-                            true
+                    Some(rewritten) => {
+                        // Recursive overload: iterate the self-referential
+                        // INSERT to a least fixed point. `INSERT OR IGNORE`
+                        // + deterministic blake3 `_id` makes each pass
+                        // monotone and idempotent; the source view re-reads
+                        // rows inserted by prior passes in this same tx, so
+                        // the loop converges when a pass adds zero rows.
+                        // Non-recursive rules run exactly one pass.
+                        let mut pass_ok = true;
+                        let mut rounds = 0usize;
+                        loop {
+                            match tx.execute(&rewritten, []) {
+                                Ok(n) => {
+                                    inserted += n as u64;
+                                    if !fused.is_recursive() || n == 0 {
+                                        break;
+                                    }
+                                    rounds += 1;
+                                    if rounds >= recursion_cap {
+                                        tracing::warn!(
+                                            target: "sprefa::fused",
+                                            rule = %target,
+                                            cap = recursion_cap,
+                                            "recursive rule hit round cap without \
+                                             reaching a fixed point; aborting",
+                                        );
+                                        had_error = true;
+                                        pass_ok = false;
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        target: "sprefa::fused",
+                                        rule = %target,
+                                        error = %e,
+                                        sql = %rewritten,
+                                        "fused-SQL fact insert failed",
+                                    );
+                                    had_error = true;
+                                    pass_ok = false;
+                                    break;
+                                }
+                            }
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "sprefa::fused",
-                                rule = %target,
-                                error = %e,
-                                sql = %rewritten,
-                                "fused-SQL fact insert failed",
-                            );
-                            had_error = true;
-                            false
-                        }
-                    },
+                        pass_ok
+                    }
                     None => {
                         tracing::warn!(
                             target: "sprefa::fused",
@@ -1237,8 +1285,22 @@ fn build_live_facts_insert(
     if cols.is_empty() || cols[0] != "_id" {
         return None;
     }
-    // Drop _id, keep user cols.
-    let user_cols: Vec<String> = cols.into_iter().skip(1).collect();
+    // Drop _id, keep user cols. The fuser now double-quotes column
+    // identifiers (`"FROM"`) so reserved words don't break the raw SQL;
+    // unwrap them here since this path derives live FK names
+    // (`<col>_id`) by string surgery on the bare identifier.
+    let user_cols: Vec<String> = cols
+        .into_iter()
+        .skip(1)
+        .map(|c| {
+            let t = c.trim();
+            if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
+                t[1..t.len() - 1].replace("\"\"", "\"")
+            } else {
+                t.to_string()
+            }
+        })
+        .collect();
     if user_cols.len() != target_cols.len() {
         return None;
     }

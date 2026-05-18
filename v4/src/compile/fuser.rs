@@ -65,6 +65,11 @@ pub struct FusedRule {
     prepared_insert_sql: Option<String>,
     create_table_sql: Option<String>,
     transaction_kind: TransactionKind,
+    /// The body reads the rule's OWN `{name}_facts` table (a
+    /// self-referential / recursive overload). The run path must then
+    /// expose `{name}` as a live source view AND iterate the rule to a
+    /// fixed point instead of running it once.
+    recursive: bool,
 }
 
 impl FusedRule {
@@ -102,6 +107,9 @@ impl FusedRule {
     pub fn transaction_kind(&self) -> TransactionKind {
         self.transaction_kind
     }
+    pub fn is_recursive(&self) -> bool {
+        self.recursive
+    }
     /// Underlying pipe. The runner uses this for the unfused / streamed
     /// kinds; full-SQL paths still expose it so existing callers can
     /// migrate progressively.
@@ -126,6 +134,7 @@ pub(crate) fn passthrough(name: Arc<str>, pipe: Pipe<Cursor>) -> FusedRule {
         prepared_insert_sql: None,
         create_table_sql: None,
         transaction_kind: TransactionKind::None,
+        recursive: false,
     }
 }
 
@@ -411,7 +420,7 @@ fn create_table_sql(rule_name: &str, body: &TermFlowGraph) -> String {
         let lattice = cap.map(|c| &c.value_lattice).unwrap_or(&TypeLattice::String);
         let ty = id_type_for(lattice);
         sql.push_str(",\n  ");
-        sql.push_str(col);
+        sql.push_str(&qid(col));
         sql.push(' ');
         sql.push_str(ty);
         sql.push_str(" NOT NULL");
@@ -434,7 +443,7 @@ fn fuse_streamed_rust(
     let live = live_cols(body);
     let cols_sql = live
         .iter()
-        .map(|c| c.as_ref().to_string())
+        .map(|c| qid(c.as_ref()))
         .collect::<Vec<_>>()
         .join(",");
     let placeholders = vec!["?"; live.len()].join(",");
@@ -451,7 +460,18 @@ fn fuse_streamed_rust(
         prepared_insert_sql: Some(prepared),
         create_table_sql: Some(create),
         transaction_kind: TransactionKind::Single,
+        recursive: false,
     }
+}
+
+/// SQLite identifier quote. User-chosen rule columns can collide with
+/// reserved words (`FROM`, `TO`, `ORDER`, …); an unquoted `r0.X AS FROM`
+/// is a syntax error. Double-quote and escape embedded quotes. Applied
+/// to COLUMN idents only — table names and aliases (`r0`) stay bare so
+/// the run-path source-table parser (`source_tables_from_fused_sql`)
+/// keeps matching `FROM <name>` on raw identifiers.
+fn qid(s: &str) -> String {
+    format!("\"{}\"", s.replace('"', "\"\""))
 }
 
 fn fuse_full_sql(
@@ -497,7 +517,9 @@ fn fuse_full_sql(
                                 // earlier one on the columns each
                                 // exposes for the same capture.
                                 on_clauses.push(format!(
-                                    "{prior_alias}.{prior_col} = {alias}.{col_str}",
+                                    "{prior_alias}.{} = {alias}.{}",
+                                    qid(prior_col),
+                                    qid(&col_str),
                                 ));
                             } else {
                                 capture_to_source
@@ -523,7 +545,8 @@ fn fuse_full_sql(
                             // a quoted string — that's the P3 win the
                             // test asserts on.
                             on_clauses.push(format!(
-                                "{alias}.{col} = (SELECT id FROM {intern_table} WHERE value = ?)",
+                                "{alias}.{} = (SELECT id FROM {intern_table} WHERE value = ?)",
+                                qid(&col.to_string()),
                             ));
                             // Remember the literal for placeholder
                             // binding; for the smoke contract the
@@ -565,11 +588,11 @@ fn fuse_full_sql(
             .iter()
             .map(|c| {
                 if let Some((alias, col)) = capture_to_source.get(c.as_ref()) {
-                    format!("{alias}.{col}")
+                    format!("{alias}.{}", qid(col))
                 } else if let Some(alias) = aliases.first() {
-                    format!("{alias}.{}", c.as_ref())
+                    format!("{alias}.{}", qid(c.as_ref()))
                 } else {
-                    c.as_ref().to_string()
+                    qid(c.as_ref())
                 }
             })
             .collect::<Vec<_>>()
@@ -578,11 +601,11 @@ fn fuse_full_sql(
     })
     .chain(live.iter().map(|c| {
         if let Some((alias, col)) = capture_to_source.get(c.as_ref()) {
-            format!("{alias}.{col} AS {}", c.as_ref())
+            format!("{alias}.{} AS {}", qid(col), qid(c.as_ref()))
         } else if let Some(alias) = aliases.first() {
-            format!("{alias}.{} AS {}", c.as_ref(), c.as_ref())
+            format!("{alias}.{} AS {}", qid(c.as_ref()), qid(c.as_ref()))
         } else {
-            c.as_ref().to_string()
+            qid(c.as_ref())
         }
     }))
     .collect();
@@ -620,7 +643,7 @@ fn fuse_full_sql(
         "INSERT OR IGNORE INTO {rule_name}_facts (_id,{cols})\nSELECT {project}\nFROM {from}",
         cols = live
             .iter()
-            .map(|c| c.as_ref().to_string())
+            .map(|c| qid(c.as_ref()))
             .collect::<Vec<_>>()
             .join(","),
         project = select_cols.join(", "),
@@ -636,11 +659,11 @@ fn fuse_full_sql(
             .iter()
             .map(|c| {
                 if let Some((alias, col)) = capture_to_source.get(c.as_ref()) {
-                    format!("{alias}.{col}")
+                    format!("{alias}.{}", qid(col))
                 } else if let Some(alias) = aliases.first() {
-                    format!("{alias}.{}", c.as_ref())
+                    format!("{alias}.{}", qid(c.as_ref()))
                 } else {
-                    c.as_ref().to_string()
+                    qid(c.as_ref())
                 }
             })
             .collect::<Vec<_>>()
@@ -651,11 +674,11 @@ fn fuse_full_sql(
             .iter()
             .map(|c| {
                 if let Some((alias, col)) = capture_to_source.get(c.as_ref()) {
-                    format!("{alias}.{col}")
+                    format!("{alias}.{}", qid(col))
                 } else if let Some(alias) = aliases.first() {
-                    format!("{alias}.{}", c.as_ref())
+                    format!("{alias}.{}", qid(c.as_ref()))
                 } else {
-                    c.as_ref().to_string()
+                    qid(c.as_ref())
                 }
             })
             .collect::<Vec<_>>()
@@ -663,6 +686,11 @@ fn fuse_full_sql(
     );
 
     let create = create_table_sql(rule_name, body);
+    // Recursive overload: a RuleQuery in this body reads the rule's own
+    // `{rule_name}_facts`. The run path keys self-source-view creation
+    // and fixpoint iteration off this.
+    let self_facts = format!("{rule_name}_facts");
+    let recursive = joined_tables.iter().any(|t| *t == self_facts.as_str());
     // The single fused-SQL view returned by `fused_sql()` concatenates
     // facts insert + support_edges insert in transactional order so
     // callers that only sniff one string still see both. The split
@@ -677,6 +705,7 @@ fn fuse_full_sql(
         prepared_insert_sql: None,
         create_table_sql: Some(create),
         transaction_kind: TransactionKind::Single,
+        recursive,
     }
 }
 
