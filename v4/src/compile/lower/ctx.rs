@@ -100,6 +100,14 @@ pub struct LowerCtx {
     /// bare name by walking this path outward (the binding graph for
     /// rule names). Single-threaded per compile, hence `RefCell`.
     scope_path: RefCell<Vec<Arc<str>>>,
+    /// Declared type tag per `(table, column)`. Written when a type's
+    /// column is itself typed (the tree-sitter importer is the main
+    /// writer: a node field whose value is another node kind). Read by
+    /// `resolve_dot` to re-`.typed()` a projected value so chained
+    /// access (`x.a.b.c`) keeps resolving past the first hop. Empty for
+    /// scalar columns (the common case). Single-threaded per compile,
+    /// hence `RefCell`, mirroring `scope_path`.
+    col_types: RefCell<HashMap<Arc<str>, HashMap<Arc<str>, Arc<str>>>>,
 }
 
 impl LowerCtx {
@@ -134,7 +142,34 @@ impl LowerCtx {
             current_call_span: Cell::new(None),
             pipe_full_extent: Cell::new(true),
             scope_path: RefCell::new(Vec::new()),
+            col_types: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Record that column `col` of declared type `table` is itself of
+    /// type `ty`. Idempotent; a conflicting re-declaration is the
+    /// caller's bug (the importer declares each kind once).
+    pub fn set_col_type(
+        &self,
+        table: impl Into<Arc<str>>,
+        col: impl Into<Arc<str>>,
+        ty: impl Into<Arc<str>>,
+    ) {
+        self.col_types
+            .borrow_mut()
+            .entry(table.into())
+            .or_default()
+            .insert(col.into(), ty.into());
+    }
+
+    /// The declared type of `table.col`, if it was tagged via
+    /// `set_col_type`. `None` ⇒ scalar column (terminal for dotting).
+    pub fn col_type(&self, table: &str, col: &str) -> Option<Arc<str>> {
+        self.col_types
+            .borrow()
+            .get(table)
+            .and_then(|m| m.get(col))
+            .cloned()
     }
 
     /// Push the enclosing rule name before lowering its `{ block }`.
@@ -259,7 +294,14 @@ impl LowerCtx {
             if has_col {
                 let term = crate::term::Term::read(Arc::<str>::from(key));
                 let proj = Pipe::new().step(Arc::new(term));
-                return Ok(Value::pipe(proj));
+                let mut val = Value::pipe(proj);
+                // Carry the column's own declared type forward so the
+                // NEXT segment in `x.a.b.c` has a type to project
+                // against. Scalar column ⇒ no tag ⇒ terminal.
+                if let Some(col_ty) = self.col_type(&ty, key) {
+                    val = val.typed(col_ty);
+                }
+                return Ok(val);
             }
             return Err(LowerError::DotMiss {
                 ty: Some(ty),
