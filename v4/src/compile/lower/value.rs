@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
@@ -8,10 +9,41 @@ use crate::Cursor;
 
 use super::ctx::{LowerCtx, LowerError};
 
+/// The actual payload of a value. Was `Value`; renamed so `Value` can
+/// wrap it with a per-value dot table (Ruby-metaclass model).
 #[derive(Clone)]
-pub enum Value {
+pub enum ValueKind {
     Atom(Arc<str>),
     Pipe(Pipe<Cursor>),
+}
+
+/// Per-value singleton dot table. `map` = instance dots (read path now;
+/// decls later). `ty` = the rule name that is this value's TYPE; a dot
+/// miss on `map` falls through to that rule's parametric projection
+/// (see `LowerCtx::resolve_dot`). Cloned copy-on-write via
+/// `Arc::make_mut` (user ruling 2026-05-18: clone => independent).
+#[derive(Clone, Default)]
+pub struct DotTable {
+    pub map: HashMap<Arc<str>, Value>,
+    pub ty: Option<Arc<str>>,
+}
+
+/// Every value carries its own dot table. `dots` is `Arc`-shared until
+/// first mutation, then `Arc::make_mut` copies it — so `v.clone()`
+/// is cheap and writes do not propagate to prior clones.
+#[derive(Clone)]
+pub struct Value {
+    pub kind: ValueKind,
+    pub dots: Arc<DotTable>,
+}
+
+impl From<ValueKind> for Value {
+    fn from(kind: ValueKind) -> Self {
+        Value {
+            kind,
+            dots: Arc::new(DotTable::default()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -38,16 +70,33 @@ impl CallArg {
 
 impl Value {
     pub fn atom(s: impl Into<Arc<str>>) -> Self {
-        Value::Atom(s.into())
+        ValueKind::Atom(s.into()).into()
     }
     pub fn pipe(p: Pipe<Cursor>) -> Self {
-        Value::Pipe(p)
+        ValueKind::Pipe(p).into()
+    }
+
+    /// The payload, for matching: `match v.kind() { ValueKind::Atom .. }`.
+    pub fn kind(&self) -> &ValueKind {
+        &self.kind
+    }
+
+    /// Tag this value's TYPE (the rule whose columns are its fields).
+    /// Copy-on-write: mutates this value's own table only.
+    pub fn typed(mut self, rule: impl Into<Arc<str>>) -> Self {
+        Arc::make_mut(&mut self.dots).ty = Some(rule.into());
+        self
+    }
+
+    /// Set an instance dot (metaclass override). Copy-on-write.
+    pub fn set_dot(&mut self, key: impl Into<Arc<str>>, val: Value) {
+        Arc::make_mut(&mut self.dots).map.insert(key.into(), val);
     }
 
     pub fn kind_str(&self) -> &'static str {
-        match self {
-            Value::Atom(_) => "atom",
-            Value::Pipe(_) => "pipe",
+        match self.kind {
+            ValueKind::Atom(_) => "atom",
+            ValueKind::Pipe(_) => "pipe",
         }
     }
 }

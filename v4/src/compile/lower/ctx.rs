@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -64,6 +64,14 @@ pub struct LowerCtx {
     /// span available) read this from `lower(...)`. `Cell` is fine
     /// because lower runs single-threaded per compile.
     pub current_call_span: Cell<Option<ByteRange>>,
+    /// Lexical nesting of rule bodies currently being lowered. The
+    /// walker pushes the enclosing `rule(:name)`'s name before
+    /// recursing into its `{ block }` and pops after. `register_rule`
+    /// keys by the dotted join of this path so a nested
+    /// `rule(:inner)` lands as `outer.inner`; `get_rule` resolves a
+    /// bare name by walking this path outward (the binding graph for
+    /// rule names). Single-threaded per compile, hence `RefCell`.
+    scope_path: RefCell<Vec<Arc<str>>>,
 }
 
 impl LowerCtx {
@@ -93,6 +101,36 @@ impl LowerCtx {
             apply_seq: Arc::new(AtomicU64::new(0)),
             query_site: Arc::new(AtomicU64::new(0)),
             current_call_span: Cell::new(None),
+            scope_path: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Push the enclosing rule name before lowering its `{ block }`.
+    pub fn enter_scope(&self, name: impl Into<Arc<str>>) {
+        self.scope_path.borrow_mut().push(name.into());
+    }
+    /// Pop after the block is lowered.
+    pub fn exit_scope(&self) {
+        self.scope_path.borrow_mut().pop();
+    }
+    /// Dotted prefix of the current scope (`""` at top level).
+    fn scope_prefix(&self) -> String {
+        let p = self.scope_path.borrow();
+        if p.is_empty() {
+            String::new()
+        } else {
+            let mut s = p.join(".");
+            s.push('.');
+            s
+        }
+    }
+    /// The fully-qualified registry key for a rule defined right now.
+    pub fn scoped_rule_key(&self, name: &str) -> Arc<str> {
+        let pre = self.scope_prefix();
+        if pre.is_empty() {
+            Arc::from(name)
+        } else {
+            Arc::from(format!("{pre}{name}").as_str())
         }
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
@@ -108,11 +146,77 @@ impl LowerCtx {
         self
     }
     pub fn register_rule(&self, rule: Rule) {
-        self.rules.lock().unwrap().insert(rule.name.clone(), rule);
+        let key = self.scoped_rule_key(&rule.name);
+        self.rules.lock().unwrap().insert(key, rule);
     }
+    /// Resolve a (possibly bare) rule name against the current scope by
+    /// walking the path outward: `a.b.name` → `a.name` → `name`. Top
+    /// level (empty scope) degenerates to a plain bare lookup, so
+    /// existing single-namespace behavior is unchanged.
     pub fn get_rule(&self, name: &str) -> Option<Rule> {
-        self.rules.lock().unwrap().get(name).cloned()
+        let map = self.rules.lock().unwrap();
+        // An already-qualified name (caller passed `outer.inner`) or a
+        // bare name both work: try progressively shorter scope prefixes.
+        let mut path: Vec<Arc<str>> = self.scope_path.borrow().clone();
+        loop {
+            let key = if path.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}.{}", path.join("."), name)
+            };
+            if let Some(r) = map.get(key.as_str()) {
+                return Some(r.clone());
+            }
+            if path.pop().is_none() {
+                return None;
+            }
+        }
     }
+    /// Resolve `v.key` (one dot segment). Three steps, in order:
+    ///   1. instance dot — the value's own metaclass override;
+    ///   2. type projection — `v.dots.ty` names a rule whose columns are
+    ///      its fields; `key` must be one of them. The projected value
+    ///      is a column term-read, re-typeable for chained access;
+    ///   3. neither — `DotMiss` (a loud compile error, never empty rows).
+    pub fn resolve_dot(
+        &self,
+        v: &crate::compile::lower::value::Value,
+        key: &str,
+    ) -> Result<crate::compile::lower::value::Value, LowerError> {
+        use crate::compile::lower::value::Value;
+        // 1. instance dot
+        if let Some(hit) = v.dots.map.get(key) {
+            return Ok(hit.clone());
+        }
+        // 2. type column projection. A TYPE is a rule whose columns are
+        // its fields; the canonical imported-type shape is a decl-only
+        // `rule(:Ty, f?...)`, which registers ONLY in the fact-store
+        // schema (no body => no `register_rule`). So resolve columns via
+        // the declared schema, which covers decl-only types AND bodied
+        // rules (the bodied form declares its table too).
+        if let Some(ty) = v.dots.ty.clone() {
+            let has_col = self
+                .store
+                .declared_cols(&ty)
+                .map(|cols| cols.iter().any(|c| c.as_str() == key))
+                .unwrap_or(false);
+            if has_col {
+                let term = crate::term::Term::read(Arc::<str>::from(key));
+                let proj = Pipe::new().step(Arc::new(term));
+                return Ok(Value::pipe(proj));
+            }
+            return Err(LowerError::DotMiss {
+                ty: Some(ty),
+                key: Arc::from(key),
+            });
+        }
+        // 3. loud miss
+        Err(LowerError::DotMiss {
+            ty: None,
+            key: Arc::from(key),
+        })
+    }
+
     /// Attach the content-derived intern store. Emitters lowered after
     /// this call stamp coord-space terms.
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
@@ -137,6 +241,13 @@ pub enum LowerError {
     Validate(Vec<effect_runtime::v2::Diag>),
     /// Lower-time only: a `${X}` reference has no binding.
     UnboundCapture(Arc<str>),
+    /// Dot-access (`x.key`) resolved to nothing: not an instance dot,
+    /// and either no TYPE on the value or the TYPE's rule has no such
+    /// column. A loud compile error — never silently empty rows.
+    DotMiss {
+        ty: Option<Arc<str>>,
+        key: Arc<str>,
+    },
     /// Anything else.
     Unknown(String),
 }
@@ -146,6 +257,10 @@ impl std::fmt::Display for LowerError {
         match self {
             LowerError::Validate(ds) => write!(f, "validate: {} diag(s)", ds.len()),
             LowerError::UnboundCapture(n) => write!(f, "unbound capture: ${{{n}}}"),
+            LowerError::DotMiss { ty, key } => match ty {
+                Some(t) => write!(f, "no field `.{key}` on type `{t}`"),
+                None => write!(f, "no field `.{key}` (value has no type and no instance dot)"),
+            },
             LowerError::Unknown(s) => write!(f, "{s}"),
         }
     }

@@ -18,7 +18,7 @@ use effect_runtime::v2::{ByteRange, Pipe};
 use crate::Cursor;
 
 use super::ctx::{LowerCtx, LowerError};
-use super::value::{CallArg, Value};
+use super::value::{CallArg, Value, ValueKind};
 
 /// Variadic carries a `&'static ArgKind` rather than a Box so the
 /// trait's `paren_args()` can return a `const` slice. Build with
@@ -42,8 +42,8 @@ impl ArgKind {
     }
     pub fn matches(&self, v: &Value) -> bool {
         match self {
-            ArgKind::Atom => matches!(v, Value::Atom(_)),
-            ArgKind::Pipe => matches!(v, Value::Pipe(_)),
+            ArgKind::Atom => matches!(v.kind(), ValueKind::Atom(_)),
+            ArgKind::Pipe => matches!(v.kind(), ValueKind::Pipe(_)),
             ArgKind::Any => true,
             ArgKind::Variadic(_) => false, // checked at the slot level
         }

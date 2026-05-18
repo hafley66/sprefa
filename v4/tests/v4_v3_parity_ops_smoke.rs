@@ -165,7 +165,7 @@ fn sh_capture_binds_stdout_to_term() {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let reg = default_registry();
     // sh(OUT?)`printf alpha`
-    // OUT? lowers (in real walk) to Value::Pipe(term_bind(:OUT)). We
+    // OUT? lowers (in real walk) to Value::pipe(term_bind(:OUT)). We
     // synthesize that here with a Pipe that binds OUT.
     use v4::term::Term;
     let bind_pipe =
@@ -395,7 +395,7 @@ fn comment_sequential_narrows_value_between_markers() {
             &LowerCtx::new(store.clone(), std::env::temp_dir()),
             "comment",
             None,
-            vec![(Value::Pipe(str_pipe(r"# SECTION:.*\n")), br(0, 14))],
+            vec![(Value::pipe(str_pipe(r"# SECTION:.*\n")), br(0, 14))],
             None,
             None,
             br(0, 14),
@@ -419,8 +419,8 @@ fn comment_paired_narrows_between_two_pipe_args() {
             "comment",
             None,
             vec![
-                (Value::Pipe(str_pipe(r"<!-- sprf:start -->\n")), br(0, 23)),
-                (Value::Pipe(str_pipe(r"\n<!-- sprf:end -->")), br(25, 46)),
+                (Value::pipe(str_pipe(r"<!-- sprf:start -->\n")), br(0, 23)),
+                (Value::pipe(str_pipe(r"\n<!-- sprf:end -->")), br(25, 46)),
             ],
             None,
             None,

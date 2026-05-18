@@ -49,7 +49,7 @@ use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
     default_plain_dsl_parse, ArgKind, ArgSig, DslBinder, DslBody, DslShape, OperatorDef,
 };
-use crate::compile::lower::value::Value;
+use crate::compile::lower::value::{Value, ValueKind};
 use crate::sprf_introspect::PipeIntrospect;
 use crate::store::SprfStore;
 use crate::{Cursor, Ref, StringId};
@@ -310,8 +310,8 @@ fn lower_lsp_diag(
 ) -> Result<Pipe<Cursor>, LowerError> {
     let code: Arc<str> = args
         .first()
-        .and_then(|v| match v {
-            Value::Atom(s) => Some(s.clone()),
+        .and_then(|v| match v.kind() {
+            ValueKind::Atom(s) => Some(s.clone()),
             _ => None,
         })
         .unwrap_or_else(|| Arc::<str>::from("sprf/diag"));
@@ -350,7 +350,7 @@ fn lsp_focus_from_flow(flow: Option<Value>) -> Result<LspDiagFocus, LowerError> 
     let Some(flow) = flow else {
         return Ok(LspDiagFocus::Focal);
     };
-    let Value::Pipe(pipe) = flow else {
+    let ValueKind::Pipe(pipe) = flow.kind() else {
         return Err(LowerError::Unknown(
             "lsp_* [] focus must be a term read, e.g. lsp_warn[NAME]".into(),
         ));
@@ -669,8 +669,8 @@ impl OperatorDef for ExpectZeroDef {
     ) -> Result<Pipe<Cursor>, LowerError> {
         let code: Arc<str> = args
             .first()
-            .and_then(|v| match v {
-                Value::Atom(s) => Some(s.clone()),
+            .and_then(|v| match v.kind() {
+                ValueKind::Atom(s) => Some(s.clone()),
                 _ => None,
             })
             .unwrap_or_else(|| Arc::<str>::from("expect_zero"));
@@ -800,8 +800,8 @@ impl OperatorDef for ExpectMatchDef {
     ) -> Result<Pipe<Cursor>, LowerError> {
         let code: Arc<str> = args
             .first()
-            .and_then(|v| match v {
-                Value::Atom(s) => Some(s.clone()),
+            .and_then(|v| match v.kind() {
+                ValueKind::Atom(s) => Some(s.clone()),
                 _ => None,
             })
             .unwrap_or_else(|| Arc::<str>::from("expect_match"));

@@ -20,7 +20,7 @@ use effect_runtime::v2::Pipe;
 use v4::compile::ast::{DslText, OpCall, PipeAst, SlotText};
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
-use v4::lower::{ArgKind, ArgSig, DslBody, OperatorDef, Value};
+use v4::lower::{ArgKind, ArgSig, DslBody, OperatorDef, Value, ValueKind};
 use v4::Cursor;
 
 fn br(lo: u32, hi: u32) -> ByteRange {
@@ -170,8 +170,8 @@ impl OperatorDef for PipeAccept {
         _blk: Option<Pipe<Cursor>>,
         _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, v4::lower::LowerError> {
-        match &args[0] {
-            Value::Pipe(p) => Ok(p.clone()),
+        match args[0].kind() {
+            ValueKind::Pipe(p) => Ok(p.clone()),
             _ => Err(v4::lower::LowerError::Unknown(
                 "pipe_accept: not a pipe".into(),
             )),

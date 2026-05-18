@@ -20,7 +20,7 @@ use rusqlite::{params_from_iter, Connection};
 
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{DslBody, DslShape, InterpKind, OperatorDef};
-use crate::compile::lower::value::{CallArg, Value};
+use crate::compile::lower::value::{CallArg, Value, ValueKind};
 use crate::fact::{FactWrite, WriteAssign, WriteValue};
 use crate::mounted_query;
 use crate::rule::{RuleInvokeAssign, RuleInvokeComponent, RuleInvokeValue};
@@ -989,8 +989,8 @@ pub fn rule_table_call_pipe(
     let resolved = resolve_rule_args(table, &cols, args)?;
     let mut modes = Vec::with_capacity(resolved.len());
     for (col, arg) in resolved {
-        match arg {
-            Value::Atom(value) => {
+        match arg.kind() {
+            ValueKind::Atom(value) => {
                 if value.as_ref() == "&.value" {
                     modes.push(ArgMode::BoundTerm {
                         col,
@@ -1003,7 +1003,7 @@ pub fn rule_table_call_pipe(
                     });
                 }
             }
-            Value::Pipe(pipe) => {
+            ValueKind::Pipe(pipe) => {
                 if let Some(term) = pipe.binds_terms().first() {
                     modes.push(ArgMode::Project {
                         col,
@@ -1152,8 +1152,8 @@ pub fn rule_write_pipe(ctx: &LowerCtx, args: &[CallArg]) -> Result<Pipe<Cursor>,
             "rule write table arg must be positional".into(),
         ));
     }
-    let table = match &first.value {
-        Value::Atom(s) => s.clone(),
+    let table = match first.value.kind() {
+        ValueKind::Atom(s) => s.clone(),
         _ => {
             return Err(LowerError::Unknown(
                 "rule write first arg must be a :table atom".into(),
@@ -1170,10 +1170,10 @@ pub fn rule_write_pipe(ctx: &LowerCtx, args: &[CallArg]) -> Result<Pipe<Cursor>,
     let resolved = resolve_rule_args(&table, &cols, rest)?;
     let mut assignments = Vec::with_capacity(resolved.len());
     for (col, value) in resolved {
-        let value = match value {
-            Value::Atom(value) if value.as_ref() == "&.value" => WriteValue::Value,
-            Value::Atom(value) => WriteValue::Literal(value),
-            Value::Pipe(pipe) => {
+        let value = match value.kind() {
+            ValueKind::Atom(value) if value.as_ref() == "&.value" => WriteValue::Value,
+            ValueKind::Atom(value) => WriteValue::Literal(value.clone()),
+            ValueKind::Pipe(pipe) => {
                 if let Some(term) = pipe.reads_terms().first() {
                     WriteValue::Term(term.clone())
                 } else if let Some(term) = pipe.binds_terms().first() {
@@ -1238,10 +1238,10 @@ pub fn rule_body_call_pipe(
 }
 
 fn grounded_write_value(table: &str, value: Value) -> Result<WriteValue, LowerError> {
-    match value {
-        Value::Atom(value) if value.as_ref() == "&.value" => Ok(WriteValue::Value),
-        Value::Atom(value) => Ok(WriteValue::Literal(value)),
-        Value::Pipe(pipe) => {
+    match value.kind() {
+        ValueKind::Atom(value) if value.as_ref() == "&.value" => Ok(WriteValue::Value),
+        ValueKind::Atom(value) => Ok(WriteValue::Literal(value.clone())),
+        ValueKind::Pipe(pipe) => {
             if let Some(term) = pipe.reads_terms().first() {
                 Ok(WriteValue::Term(term.clone()))
             } else if pipe.binds_terms().first().is_some() {
@@ -1258,10 +1258,10 @@ fn grounded_write_value(table: &str, value: Value) -> Result<WriteValue, LowerEr
 }
 
 fn rule_invoke_value(value: Value) -> Result<Option<RuleInvokeValue>, LowerError> {
-    match value {
-        Value::Atom(value) if value.as_ref() == "&.value" => Ok(Some(RuleInvokeValue::Value)),
-        Value::Atom(value) => Ok(Some(RuleInvokeValue::Literal(value))),
-        Value::Pipe(pipe) => {
+    match value.kind() {
+        ValueKind::Atom(value) if value.as_ref() == "&.value" => Ok(Some(RuleInvokeValue::Value)),
+        ValueKind::Atom(value) => Ok(Some(RuleInvokeValue::Literal(value.clone()))),
+        ValueKind::Pipe(pipe) => {
             if let Some(term) = pipe.reads_terms().first() {
                 Ok(Some(RuleInvokeValue::Term(term.clone())))
             } else if pipe.binds_terms().first().is_some() {
@@ -1350,7 +1350,7 @@ fn resolve_rule_args(
 }
 
 fn same_name_rule_arg_col(cols: &[String], value: &Value) -> Option<usize> {
-    let Value::Pipe(pipe) = value else {
+    let ValueKind::Pipe(pipe) = value.kind() else {
         return None;
     };
     let binds = pipe.binds_terms();

@@ -9,7 +9,7 @@
 //!
 //! The `Pipe<Cursor>` helpers (`binds_terms`, `reads_terms`) are the
 //! direct fix for today's `RuleDef` gap: column-name extraction over a
-//! Value::Pipe sub-pipe that carried a Term, without downcasting on
+//! ValueKind::Pipe sub-pipe that carried a Term, without downcasting on
 //! Component (which lacks `Any`).
 
 use std::sync::Arc;

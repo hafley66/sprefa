@@ -7,7 +7,7 @@ use effect_runtime::v2::{
 use rusqlite::{Connection, OpenFlags};
 
 use crate::compile::lower::op_def::{ArgKind, ArgSig, OperatorDef};
-use crate::compile::lower::value::{CallArg, Value};
+use crate::compile::lower::value::{CallArg, Value, ValueKind};
 use crate::compile::lower::{LowerCtx, LowerError};
 use crate::git_watch::GIT_PR_DOMAIN;
 use crate::mounted_query;
@@ -168,9 +168,9 @@ impl OperatorDef for GhPrsDef {
 }
 
 fn classify_gh_arg(col: &'static str, value: &Value) -> Result<GhArgMode, LowerError> {
-    match value {
-        Value::Atom(s) => Ok(GhArgMode::Literal(s.clone())),
-        Value::Pipe(p) => {
+    match value.kind() {
+        ValueKind::Atom(s) => Ok(GhArgMode::Literal(s.clone())),
+        ValueKind::Pipe(p) => {
             let binds = p.binds_terms();
             let reads = p.reads_terms();
             if !binds.is_empty() {

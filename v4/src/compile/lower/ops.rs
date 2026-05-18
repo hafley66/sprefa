@@ -19,7 +19,7 @@ use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
     ArgKind, ArgSig, BlockShape, DslBinder, DslBody, DslShape, OperatorDef,
 };
-use crate::compile::lower::value::{run_once_const, Value};
+use crate::compile::lower::value::{run_once_const, Value, ValueKind};
 use crate::fact::{FactRead, FactWrite};
 use crate::pipeline::{GlobComponent, StrConstComponent, StrTemplateComponent};
 use crate::rule::Rule;
@@ -126,11 +126,11 @@ const RULE_SPEC: &[ArgSig] = &[
     ArgSig {
         // Variadic(Any) so `rule(:name, COL_A, COL_B?)` accepts the two
         // bareword-desugar shapes:
-        //   COL  → Value::Pipe(term(:COL))      (declares output column;
+        //   COL  → ValueKind::Pipe(term(:COL))      (declares output column;
         //                                        runtime read on each row)
-        //   COL? → Value::Pipe(term_bind(:COL)) (declares + introduces the
+        //   COL? → ValueKind::Pipe(term_bind(:COL)) (declares + introduces the
         //                                        column at run time)
-        // Plain `Value::Atom` strings are still accepted for backward shape.
+        // Plain `ValueKind::Atom` strings are still accepted for backward shape.
         kind: ArgKind::Variadic(&ArgKind::Any),
         name: "cols",
         doc: "sink columns",
@@ -191,8 +191,8 @@ impl OperatorDef for RuleDef {
         _dsl: Option<&DslBody>,
         chain_pos: usize,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let name = match &args[0] {
-            Value::Atom(s) => s.clone(),
+        let name = match args[0].kind() {
+            ValueKind::Atom(s) => s.clone(),
             _ => unreachable!("validate ensured Atom"),
         };
 
@@ -210,9 +210,9 @@ impl OperatorDef for RuleDef {
         use crate::sprf_introspect::PipeIntrospect;
         let mut col_strings: Vec<String> = Vec::with_capacity(args.len().saturating_sub(1));
         for a in &args[1..] {
-            match a {
-                Value::Atom(s) => col_strings.push(s.to_string()),
-                Value::Pipe(p) => {
+            match a.kind() {
+                ValueKind::Atom(s) => col_strings.push(s.to_string()),
+                ValueKind::Pipe(p) => {
                     for n in p.binds_terms() {
                         col_strings.push(n.to_string());
                     }
@@ -240,14 +240,14 @@ impl OperatorDef for RuleDef {
         let rule = Rule::new(name.clone(), ctx.store.clone(), name, &cols, body);
         ctx.register_rule(rule.clone());
 
-        // A column came from a `:name` atom argument → its `Value::Atom`
+        // A column came from a `:name` atom argument → its `ValueKind::Atom`
         // was stringified into `col_strings`. A column came from a
-        // `NAME?` bareword desugar → its `Value::Pipe` produced a
+        // `NAME?` bareword desugar → its `ValueKind::Pipe` produced a
         // `term_bind` step (binds_terms non-empty). We re-walk the
         // original args to recover which shape supplied each col.
-        let auto_run = args[1..].iter().all(|a| match a {
-            Value::Atom(_) => false,
-            Value::Pipe(p) => !p.binds_terms().is_empty(),
+        let auto_run = args[1..].iter().all(|a| match a.kind() {
+            ValueKind::Atom(_) => false,
+            ValueKind::Pipe(p) => !p.binds_terms().is_empty(),
         });
         if auto_run {
             Ok(rule.into_pipe())
@@ -263,9 +263,9 @@ impl OperatorDef for RuleDef {
 //   fact(:t, ${A?}, ${B?})  all unbound → SELECT * (FactRead, drain+subscribe)
 //   fact(:t, ${A}, ${B?})   mixed       → SELECT B WHERE col0=A
 // Args carry binding mode through the bareword desugar in walk.rs:
-//   COL  → Value::Pipe with `term(:COL)` step  (Read)
-//   COL? → Value::Pipe with `term_bind(:COL)` step (Bind)
-// Plain `Value::Atom` is treated as a literal bound value.
+//   COL  → ValueKind::Pipe with `term(:COL)` step  (Read)
+//   COL? → ValueKind::Pipe with `term_bind(:COL)` step (Bind)
+// Plain `ValueKind::Atom` is treated as a literal bound value.
 
 pub struct FactDef;
 
@@ -302,8 +302,8 @@ impl OperatorDef for FactDef {
     ) -> Result<Pipe<Cursor>, LowerError> {
         use crate::sprf_introspect::PipeIntrospect;
 
-        let table = match &args[0] {
-            Value::Atom(s) => s.clone(),
+        let table = match args[0].kind() {
+            ValueKind::Atom(s) => s.clone(),
             _ => {
                 return Err(LowerError::Unknown(
                     "fact: first arg must be a :table atom".into(),
@@ -322,9 +322,9 @@ impl OperatorDef for FactDef {
         let modes: Vec<ColMode> = col_args
             .iter()
             .map(|v| -> Result<ColMode, LowerError> {
-                match v {
-                    Value::Atom(s) => Ok(ColMode::BoundLiteral(s.clone())),
-                    Value::Pipe(p) => {
+                match v.kind() {
+                    ValueKind::Atom(s) => Ok(ColMode::BoundLiteral(s.clone())),
+                    ValueKind::Pipe(p) => {
                         let binds = p.binds_terms();
                         let reads = p.reads_terms();
                         if let Some(name) = binds.first() {
@@ -428,8 +428,8 @@ impl OperatorDef for FactReadDef {
         _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         let atom = |i: usize| -> Arc<str> {
-            match &args[i] {
-                Value::Atom(s) => s.clone(),
+            match args[i].kind() {
+                ValueKind::Atom(s) => s.clone(),
                 _ => unreachable!("validate ensured Atom"),
             }
         };
@@ -437,8 +437,8 @@ impl OperatorDef for FactReadDef {
         let key_term = atom(1);
         let mut project_cols: Vec<String> = Vec::with_capacity(args.len().saturating_sub(2));
         for a in &args[2..] {
-            match a {
-                Value::Atom(s) => project_cols.push(s.to_string()),
+            match a.kind() {
+                ValueKind::Atom(s) => project_cols.push(s.to_string()),
                 _ => unreachable!("validate ensured Atom"),
             }
         }
@@ -455,8 +455,8 @@ impl OperatorDef for FactReadDef {
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 fn atom_arg(args: &[Value], i: usize) -> Arc<str> {
-    match &args[i] {
-        Value::Atom(s) => s.clone(),
+    match args[i].kind() {
+        ValueKind::Atom(s) => s.clone(),
         _ => unreachable!("validate ensured Atom"),
     }
 }
@@ -516,7 +516,7 @@ impl OperatorDef for FsDef {
 fn source_path_filter(
     value: &Value,
 ) -> Result<Arc<dyn Fn(&str) -> bool + Send + Sync>, LowerError> {
-    let Value::Pipe(pipe) = value else {
+    let ValueKind::Pipe(pipe) = value.kind() else {
         return Err(LowerError::Unknown(
             "fs: source filter must be a pipe, e.g. fs(glob`**/*.rs`)".into(),
         ));
@@ -842,8 +842,8 @@ impl OperatorDef for AstDef {
         _block: Option<Pipe<Cursor>>,
         dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let lang_atom: Option<&str> = args.first().and_then(|v| match v {
-            Value::Atom(s) => Some(s.as_ref()),
+        let lang_atom: Option<&str> = args.first().and_then(|v| match v.kind() {
+            ValueKind::Atom(s) => Some(s.as_ref()),
             _ => None,
         });
         let lang = parse_lang_atom(lang_atom.unwrap_or("rs")).ok_or_else(|| {
@@ -947,8 +947,8 @@ impl OperatorDef for AstYamlDef {
         _block: Option<Pipe<Cursor>>,
         dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let lang_atom: Option<&str> = args.first().and_then(|v| match v {
-            Value::Atom(s) => Some(s.as_ref()),
+        let lang_atom: Option<&str> = args.first().and_then(|v| match v.kind() {
+            ValueKind::Atom(s) => Some(s.as_ref()),
             _ => None,
         });
         let lang = parse_lang_atom(lang_atom.unwrap_or("rs")).ok_or_else(|| {
@@ -1196,8 +1196,8 @@ impl OperatorDef for JsonDef {
         let body = dsl.ok_or_else(|| {
             LowerError::Unknown("json: dsl body required (e.g. json`{ name: $N }`)".into())
         })?;
-        let fmt_atom: Option<&str> = args.first().and_then(|v| match v {
-            Value::Atom(s) => Some(s.as_ref()),
+        let fmt_atom: Option<&str> = args.first().and_then(|v| match v.kind() {
+            ValueKind::Atom(s) => Some(s.as_ref()),
             _ => None,
         });
         let fmt = match fmt_atom.unwrap_or("json") {
@@ -1819,8 +1819,8 @@ impl OperatorDef for TagDef {
     ) -> Result<Pipe<Cursor>, LowerError> {
         use crate::fact::FactWrite;
 
-        let table = match args.first() {
-            Some(Value::Atom(s)) => s.clone(),
+        let table = match args.first().map(|v| v.kind()) {
+            Some(ValueKind::Atom(s)) => s.clone(),
             _ => {
                 return Err(LowerError::Unknown(
                     "tag: first arg must be the :table atom".into(),
@@ -1907,8 +1907,8 @@ impl OperatorDef for PrintDef {
         _block: Option<Pipe<Cursor>>,
         dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let prefix: Option<String> = args.first().and_then(|v| match v {
-            Value::Atom(s) => Some(s.to_string()),
+        let prefix: Option<String> = args.first().and_then(|v| match v.kind() {
+            ValueKind::Atom(s) => Some(s.to_string()),
             _ => None,
         });
         let mut comp = match dsl {
@@ -1970,17 +1970,17 @@ impl OperatorDef for ShDef {
         let mut bind_term: Option<String> = None;
         let mut filter_only = false;
         for a in args {
-            match a {
-                Value::Atom(s) if s.as_ref() == "filter" => {
+            match a.kind() {
+                ValueKind::Atom(s) if s.as_ref() == "filter" => {
                     filter_only = true;
                 }
-                Value::Atom(other) => {
+                ValueKind::Atom(other) => {
                     return Err(LowerError::Unknown(format!(
                         "sh: unknown atom :{} (try :filter or BIND? for capture)",
                         other
                     )));
                 }
-                Value::Pipe(p) => {
+                ValueKind::Pipe(p) => {
                     if let Some(name) = p.binds_terms().first() {
                         bind_term = Some(name.to_string());
                     } else if let Some(name) = p.reads_terms().first() {
@@ -2095,12 +2095,12 @@ impl OperatorDef for RepoDef {
         let mut roots: Vec<(String, std::path::PathBuf)> = Vec::with_capacity(args.len() / 2);
         let mut i = 0;
         while i < args.len() {
-            let slug = match &args[i] {
-                Value::Atom(s) => s.to_string(),
+            let slug = match args[i].kind() {
+                ValueKind::Atom(s) => s.to_string(),
                 _ => return Err(LowerError::Unknown("repo: slug must be :atom".into())),
             };
-            let path = match &args[i + 1] {
-                Value::Atom(s) => std::path::PathBuf::from(s.as_ref()),
+            let path = match args[i + 1].kind() {
+                ValueKind::Atom(s) => std::path::PathBuf::from(s.as_ref()),
                 _ => {
                     return Err(LowerError::Unknown(
                         "repo: path must be :atom (filesystem path)".into(),
@@ -2168,7 +2168,7 @@ impl OperatorDef for RevDef {
     ) -> Result<Pipe<Cursor>, LowerError> {
         crate::v2_ops::declare_rev_relation(ctx.store.as_ref());
         let mut comp = if args.len() == 1 {
-            if let Value::Pipe(pipe) = &args[0] {
+            if let ValueKind::Pipe(pipe) = args[0].kind() {
                 let glob = pipe
                     .steps
                     .first()
@@ -2181,9 +2181,9 @@ impl OperatorDef for RevDef {
                     })?;
                 RevComponent::glob(glob.regex())
             } else {
-                let spec = match &args[0] {
-                    Value::Atom(s) => s.to_string(),
-                    Value::Pipe(_) => unreachable!(),
+                let spec = match args[0].kind() {
+                    ValueKind::Atom(s) => s.to_string(),
+                    ValueKind::Pipe(_) => unreachable!(),
                 };
                 RevComponent::new(vec![spec])
             }
@@ -2192,8 +2192,8 @@ impl OperatorDef for RevDef {
         } else {
             let mut out = Vec::with_capacity(args.len());
             for v in args {
-                match v {
-                    Value::Atom(s) => out.push(s.to_string()),
+                match v.kind() {
+                    ValueKind::Atom(s) => out.push(s.to_string()),
                     _ => {
                         return Err(LowerError::Unknown(
                             "rev: args must be atom revspecs or one static glob`...` matcher"
@@ -2248,23 +2248,23 @@ fn lower_split_with_separator(
 
     let comp = match args.len() {
         0 => SplitComponent::on_value(sep),
-        1 => match &args[0] {
-            Value::Pipe(p) => {
+        1 => match args[0].kind() {
+            ValueKind::Pipe(p) => {
                 let into = pipe_term(p).ok_or_else(|| {
                     LowerError::Unknown(format!("{op}: arg must be a term (INTO?)"))
                 })?;
                 SplitComponent::on_value(sep).into_term(&into)
             }
-            Value::Atom(s) => SplitComponent::on_value(sep).into_term(s),
+            ValueKind::Atom(s) => SplitComponent::on_value(sep).into_term(s),
         },
         2 => {
-            let from = match &args[0] {
-                Value::Pipe(p) => pipe_term(p),
-                Value::Atom(s) => Some(s.to_string()),
+            let from = match args[0].kind() {
+                ValueKind::Pipe(p) => pipe_term(p),
+                ValueKind::Atom(s) => Some(s.to_string()),
             };
-            let into = match &args[1] {
-                Value::Pipe(p) => pipe_term(p),
-                Value::Atom(s) => Some(s.to_string()),
+            let into = match args[1].kind() {
+                ValueKind::Pipe(p) => pipe_term(p),
+                ValueKind::Atom(s) => Some(s.to_string()),
             };
             let from = from
                 .ok_or_else(|| LowerError::Unknown(format!("{op}: 1st arg must be FROM term")))?;
@@ -2443,9 +2443,9 @@ impl OperatorDef for CommentDef {
             ));
         }
         let arg_pattern = |idx: usize| -> Result<Option<String>, LowerError> {
-            match args.get(idx) {
-                Some(Value::Pipe(p)) => run_once_const(p, _ctx).map(Some),
-                Some(Value::Atom(a)) => Ok(Some(a.to_string())),
+            match args.get(idx).map(|v| v.kind()) {
+                Some(ValueKind::Pipe(p)) => run_once_const(p, _ctx).map(Some),
+                Some(ValueKind::Atom(a)) => Ok(Some(a.to_string())),
                 None => Ok(None),
             }
         };
@@ -2527,9 +2527,9 @@ impl OperatorDef for WriteCursorDef {
         _block: Option<Pipe<Cursor>>,
         _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let mode = match args.first() {
+        let mode = match args.first().map(|v| v.kind()) {
             None => WriteMode::Replace,
-            Some(Value::Atom(s)) => match s.as_ref() {
+            Some(ValueKind::Atom(s)) => match s.as_ref() {
                 "replace" => WriteMode::Replace,
                 "append" => WriteMode::Append,
                 "prepend" => WriteMode::Prepend,
@@ -2549,9 +2549,9 @@ impl OperatorDef for WriteCursorDef {
         };
         // Layer 3 — second positional atom is the capture name when its
         // first char is uppercase.
-        let capture: Option<Arc<str>> = match args.get(1) {
+        let capture: Option<Arc<str>> = match args.get(1).map(|v| v.kind()) {
             None => None,
-            Some(Value::Atom(s)) => {
+            Some(ValueKind::Atom(s)) => {
                 let first = s.chars().next();
                 if first.map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
                     Some(s.clone())
@@ -2619,7 +2619,7 @@ impl OperatorDef for WriteFileDef {
                 "write_file: use either a path arg or backtick path body, not both".into(),
             ));
         }
-        let path = match args.first() {
+        let path = match args.first().map(|v| v.kind()) {
             None => dsl.map(|body| {
                 let mut interps = body.interps.clone();
                 interps.sort_by_key(|i| i.range.lo);
@@ -2632,7 +2632,7 @@ impl OperatorDef for WriteFileDef {
                     }
                 }
             }),
-            Some(Value::Atom(s)) => {
+            Some(ValueKind::Atom(s)) => {
                 Some(WriteFilePath::Static(std::path::PathBuf::from(s.as_ref())))
             }
             Some(_) => {
@@ -2641,6 +2641,7 @@ impl OperatorDef for WriteFileDef {
                 ))
             }
         };
+
         Ok(Pipe::new().step(Arc::new(WriteFileComponent::new(path))))
     }
 }
@@ -2799,11 +2800,11 @@ impl OperatorDef for CollectReadyDef {
         _block: Option<Pipe<Cursor>>,
         _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let mode = match args.first() {
+        let mode = match args.first().map(|v| v.kind()) {
             None => CollectMode::ReadySnapshot,
-            Some(Value::Atom(s)) if s.as_ref() == "snapshot" => CollectMode::ReadySnapshot,
-            Some(Value::Atom(s)) if s.as_ref() == "append" => CollectMode::ReadyAppend,
-            Some(Value::Atom(s)) => {
+            Some(ValueKind::Atom(s)) if s.as_ref() == "snapshot" => CollectMode::ReadySnapshot,
+            Some(ValueKind::Atom(s)) if s.as_ref() == "append" => CollectMode::ReadyAppend,
+            Some(ValueKind::Atom(s)) => {
                 return Err(LowerError::Unknown(format!(
                     "collect_ready: unknown mode :{}",
                     s

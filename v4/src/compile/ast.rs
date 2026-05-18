@@ -24,7 +24,7 @@ pub struct PipeAst {
 /// One op invocation in source.
 ///
 /// Slot bodies are kept as raw text + span. The walker classifies each
-/// `()`-arg into `Value::Atom` or `Value::Pipe` and parses the dsl body
+/// `()`-arg into `ValueKind::Atom` or `ValueKind::Pipe` and parses the dsl body
 /// via the op's `OperatorDef::parse_dsl`. The `{...}` block is parsed
 /// eagerly into `PipeAst` because it's always a sub-pipe.
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ pub struct OpCall {
     /// `[flow]` body. Optional source override. Defaults to `&.value`.
     pub flow: Option<SlotText>,
     /// `(args)` body, split by top-level `,`. Each is a slot of raw text.
-    /// Walker classifies into Value::Atom | Value::Pipe.
+    /// Walker classifies into ValueKind::Atom | ValueKind::Pipe.
     pub args: Vec<SlotText>,
     /// `` `dsl body` `` raw text + span. Walker hands to `parse_dsl`.
     pub dsl: Option<DslText>,

@@ -38,6 +38,15 @@ pub struct Rule {
     pub sink_table: Arc<str>,
     pub sink_cols: Arc<Vec<Arc<str>>>,
     body_steps: Arc<Vec<Arc<dyn Component<Next = Cursor>>>>,
+    /// Closure env. Terms snapshotted from the ENCLOSING rule's
+    /// invocation at the moment this (nested) rule became a value
+    /// (`outer(A:1).inner` captures `A=1`). Overlaid into the invoke
+    /// seed ABOVE the ambient cursor but BELOW the call's explicit
+    /// assignments, so a closed-over `A` survives even when the
+    /// closure escapes outer's dynamic extent, while an explicit arg
+    /// at the call site still wins. Empty for ordinary rules; cheap
+    /// `Arc` clone, immutable after capture.
+    pub captured: Arc<Vec<(Arc<str>, Arc<str>)>>,
 }
 
 impl Rule {
@@ -57,7 +66,17 @@ impl Rule {
             sink_table,
             sink_cols: Arc::new(cols),
             body_steps: Arc::new(body.steps),
+            captured: Arc::new(Vec::new()),
         }
+    }
+
+    /// Clone this rule into a closure over `env` (term name → value),
+    /// snapshotted from the enclosing invocation. Used by the
+    /// `outer.inner` dot projection (Task 5) to make a nested rule a
+    /// first-class escaping closure value.
+    pub fn with_captured(mut self, env: Vec<(Arc<str>, Arc<str>)>) -> Self {
+        self.captured = Arc::new(env);
+        self
     }
 
     /// `rule = fact` shape: empty body, declaration-only. The first
@@ -159,6 +178,14 @@ impl RuleInvokeComponent {
         h.update(self.rule.name.as_bytes());
         h.update(b"\0");
         h.update(&c.content_hash());
+        // Distinct closures (same rule, different captured env) must
+        // not share a memo entry.
+        for (k, v) in self.rule.captured.iter() {
+            h.update(b"\0cap:");
+            h.update(k.as_bytes());
+            h.update(b"=");
+            h.update(v.as_bytes());
+        }
         for assignment in self.assignments.iter() {
             h.update(b"\0");
             h.update(assignment.col.as_bytes());
@@ -187,7 +214,14 @@ impl RuleInvokeComponent {
     /// `Value`   -> interned StringId of the cursor's primary value.
     /// Used for `RuleMemo` keying and graph-owner input_key derivation.
     fn arg_keys(&self, graph: &RuntimeGraph, c: &Cursor) -> Vec<ArgKey> {
-        let mut out = Vec::with_capacity(self.assignments.len());
+        let mut out = Vec::with_capacity(self.assignments.len() + self.rule.captured.len());
+        // Closure env participates in owner identity: outer(A:1).inner
+        // and outer(A:2).inner are distinct owners.
+        for (k, v) in self.rule.captured.iter() {
+            out.push(ArgKey::Literal(
+                graph.store.intern_string(&format!("{k}={v}")),
+            ));
+        }
         for assignment in self.assignments.iter() {
             let key = match &assignment.value {
                 RuleInvokeValue::Literal(value) => {
@@ -224,6 +258,12 @@ impl RuleInvokeComponent {
 
     fn seed_for(&self, ctx: &RenderCtx, c: &Cursor) -> Option<Cursor> {
         let mut seed = c.clone();
+        // Closure env: overlay snapshotted terms ABOVE the ambient
+        // cursor (so a closed-over `A` survives when the closure
+        // escapes), BELOW the explicit assignments applied next.
+        for (k, v) in self.rule.captured.iter() {
+            seed.set_arc(k, v.clone());
+        }
         for assignment in self.assignments.iter() {
             match &assignment.value {
                 RuleInvokeValue::Term(term) => {

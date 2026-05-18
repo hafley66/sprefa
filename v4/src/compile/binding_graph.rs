@@ -45,7 +45,15 @@ pub fn analyze_program(program: &[PipeAst], reg: &Registry) -> Vec<Diag> {
     let rule_decls = collect_rule_decls(program);
     for pipe in program {
         let mut bound: HashSet<Arc<str>> = HashSet::new();
-        analyze_pipe(pipe, reg, &rule_decls, &mut bound, &mut diags);
+        let mut declared: HashMap<Arc<str>, bool> = HashMap::new();
+        analyze_pipe(
+            pipe,
+            reg,
+            &rule_decls,
+            &mut bound,
+            &mut declared,
+            &mut diags,
+        );
     }
     diags
 }
@@ -89,7 +97,7 @@ fn collect_rule_decls(program: &[PipeAst]) -> HashMap<Arc<str>, RuleDecl> {
                     .strip_suffix('?')
                     .or_else(|| raw.strip_suffix('!'))
                     .unwrap_or(raw);
-                if is_caps_ident(raw) {
+                if is_ident(raw) {
                     cols.push(Arc::<str>::from(raw));
                 }
             }
@@ -110,10 +118,13 @@ fn analyze_pipe(
     reg: &Registry,
     rule_decls: &HashMap<Arc<str>, RuleDecl>,
     bound: &mut HashSet<Arc<str>>,
+    // name -> read since its last `?` decl in this frame. A second `?`
+    // decl of a name still marked `false` (unread) is `lang/dup-decl`.
+    declared: &mut HashMap<Arc<str>, bool>,
     diags: &mut Vec<Diag>,
 ) {
     for op in &pipe.steps {
-        let (reads, mut binds) = collect_term_refs(op, reg);
+        let (reads, mut binds, decls) = collect_term_refs(op, reg, rule_decls);
         if op.predicate && reg.get(&op.name).is_none() {
             if let Some(decl) = rule_decls.get(&op.name) {
                 binds.extend(rule_query_literal_binds(op, decl));
@@ -133,6 +144,28 @@ fn analyze_pipe(
                     Diag::error("lang/use-before-bind", msg).with_span(op.span.lo, op.span.hi),
                 );
             }
+        }
+
+        // A read of a previously-`?`-declared name satisfies it; a
+        // later re-`?` of that name is then a fresh, legal decl.
+        for r in &reads {
+            if let Some(seen) = declared.get_mut(r) {
+                *seen = true;
+            }
+        }
+        // Same-scope redeclare: a `?` decl of a name already declared in
+        // this frame with no intervening read since => `lang/dup-decl`.
+        for d in &decls {
+            if let Some(false) = declared.get(d) {
+                diags.push(
+                    Diag::error(
+                        "lang/dup-decl",
+                        format!("`{}` redeclared in the same scope without an intervening read", d),
+                    )
+                    .with_span(op.span.lo, op.span.hi),
+                );
+            }
+            declared.insert(d.clone(), false);
         }
 
         // Self-cycle: the step reads X *and* binds X without an
@@ -175,7 +208,15 @@ fn analyze_pipe(
         // {block} — inherits outer bound set. Binds inside don't leak.
         if let Some(block) = &op.block {
             let mut local = bound.clone();
-            analyze_pipe(block, reg, rule_decls, &mut local, diags);
+            let mut local_decls = declared.clone();
+            analyze_pipe(
+                block,
+                reg,
+                rule_decls,
+                &mut local,
+                &mut local_decls,
+                diags,
+            );
         }
     }
 }
@@ -186,30 +227,54 @@ fn analyze_pipe(
 /// desugar). dsl bodies carry `${IDENT}` interp holes (per
 /// `default_plain_dsl_parse`). Block sub-pipes are recursed by the
 /// caller; this fn handles only the op's own slots.
-fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str>>) {
+fn collect_term_refs(
+    op: &OpCall,
+    reg: &Registry,
+    rule_decls: &HashMap<Arc<str>, RuleDecl>,
+) -> (Vec<Arc<str>>, Vec<Arc<str>>, Vec<Arc<str>>) {
     let mut reads: Vec<Arc<str>> = Vec::new();
     let mut binds: Vec<Arc<str>> = Vec::new();
+    // `?`-form introducers only (slot `X?` / lone predicate step `X?`).
+    // Drives the same-scope redeclare check; a redeclare with no
+    // intervening read of the name is `lang/dup-decl`.
+    let mut decls: Vec<Arc<str>> = Vec::new();
 
+    // Lone bare word as a step = term ref (read, or bind in predicate
+    // position) ONLY when it names neither a registered op nor a declared
+    // rule. Mirrors `walk_op`'s positional op/rule-vs-term decision; the
+    // old ALL_CAPS heuristic is gone (lint convention only).
     if op.flow.is_none()
         && op.args.is_empty()
         && op.dsl.is_none()
         && op.block.is_none()
         && !op.force
         && !op.apply
-        && is_caps_ident(op.name.as_ref())
+        && is_ident(op.name.as_ref())
+        && reg.get(&op.name).is_none()
+        && !rule_decls.contains_key(&op.name)
     {
         if op.predicate {
             binds.push(op.name.clone());
+            decls.push(op.name.clone());
         } else {
             reads.push(op.name.clone());
         }
     }
 
+    // A `?` slot only counts as a fresh introducer for the redeclare
+    // check when the op is a plain step. In a predicate / apply / rule
+    // query (`hits?(FS?, LO?) > hits?(FS?, OTHER_LO?)`) a repeated `?`
+    // arg is a relational join binder, not a redundant redeclare.
+    let track_decls = !op.predicate && !op.apply && !rule_decls.contains_key(&op.name);
+    let mut slot_decls: Vec<Arc<str>> = Vec::new();
     if let Some(flow) = &op.flow {
-        slot_terms(flow.raw.as_ref(), &mut reads, &mut binds);
+        slot_terms(flow.raw.as_ref(), &mut reads, &mut binds, &mut slot_decls);
     }
     for arg in &op.args {
-        slot_terms(arg.raw.as_ref(), &mut reads, &mut binds);
+        slot_terms(arg.raw.as_ref(), &mut reads, &mut binds, &mut slot_decls);
+    }
+    if track_decls {
+        decls.extend(slot_decls);
     }
     if op.name.as_ref() == "rev" {
         for arg in &op.args {
@@ -230,7 +295,7 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
         if let Some(arg) = op.args.first() {
             let raw = arg.raw.trim();
             let name = raw.strip_prefix(':').unwrap_or(raw);
-            if is_caps_ident(name) {
+            if is_ident(name) {
                 if op.name.as_ref() == "term_bind" {
                     binds.push(Arc::<str>::from(name));
                 } else {
@@ -281,7 +346,7 @@ fn collect_term_refs(op: &OpCall, reg: &Registry) -> (Vec<Arc<str>>, Vec<Arc<str
     // this, every capture in a non-template dsl false-positives as
     // term-self-cycle.
     reads.retain(|r| !binds.iter().any(|b| b == r));
-    (reads, binds)
+    (reads, binds, decls)
 }
 
 fn static_glob_arg_body(raw: &str) -> Option<&str> {
@@ -294,25 +359,35 @@ fn static_glob_arg_body(raw: &str) -> Option<&str> {
 /// `walk::classify_slot`'s ALL_CAPS arm so the two stay in lockstep.
 /// Anything more complex than a single bareword falls through silently
 /// — those slots don't contribute to the binding graph at this layer.
-fn slot_terms(raw: &str, reads: &mut Vec<Arc<str>>, binds: &mut Vec<Arc<str>>) {
+fn slot_terms(
+    raw: &str,
+    reads: &mut Vec<Arc<str>>,
+    binds: &mut Vec<Arc<str>>,
+    decls: &mut Vec<Arc<str>>,
+) {
     let raw = raw.trim();
     if raw.is_empty() {
         return;
     }
     let raw = split_keyword_value(raw).unwrap_or(raw).trim();
-    if let Some(stripped) = raw.strip_suffix('!') {
-        if is_caps_ident(stripped) {
-            binds.push(Arc::<str>::from(stripped));
-            return;
-        }
-    }
+    // Mirrors `walk::classify_slot`: `name?` = bind/decl, `name!` =
+    // explicit read, bare `name` = read. ANY case (ALL_CAPS is lint
+    // convention only). The only atom form is `:sym`, which fails
+    // `is_ident` here and contributes nothing to the binding graph.
     if let Some(stripped) = raw.strip_suffix('?') {
-        if is_caps_ident(stripped) {
+        if is_ident(stripped) {
             binds.push(Arc::<str>::from(stripped));
+            decls.push(Arc::<str>::from(stripped));
             return;
         }
     }
-    if is_caps_ident(raw) {
+    if let Some(stripped) = raw.strip_suffix('!') {
+        if is_ident(stripped) {
+            reads.push(Arc::<str>::from(stripped));
+            return;
+        }
+    }
+    if is_ident(raw) {
         reads.push(Arc::<str>::from(raw));
     }
 }
@@ -380,7 +455,8 @@ fn is_literal_slot(raw: &str) -> bool {
             return true;
         }
     }
-    is_ident(raw) && !is_caps_ident(raw)
+    // A bare ident is a term ref under the flip, never a literal.
+    false
 }
 
 fn is_ident(s: &str) -> bool {
@@ -407,18 +483,6 @@ fn is_rule_name(s: &str) -> bool {
     parts.all(|part| !part.is_empty() && is_ident(part))
 }
 
-fn is_caps_ident(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    if bytes.is_empty() {
-        return false;
-    }
-    if !bytes[0].is_ascii_uppercase() {
-        return false;
-    }
-    bytes[1..]
-        .iter()
-        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // TermFlowGraph — rule-body-scoped capture flow graph.
@@ -989,7 +1053,7 @@ fn scan_dollar_idents(raw: &str) -> Vec<Arc<str>> {
             if j < bytes.len() {
                 let name = &raw[start..j];
                 let name = name.trim_end_matches('?');
-                if is_caps_ident(name) {
+                if is_ident(name) {
                     out.push(Arc::<str>::from(name));
                 }
                 i = j + 1;
@@ -1167,7 +1231,7 @@ fn host_binder_name(raw: &str) -> Option<Arc<str>> {
         raw
     };
     let stripped = inner.strip_suffix('?')?;
-    if !is_caps_ident(stripped) {
+    if !is_ident(stripped) {
         return None;
     }
     Some(Arc::<str>::from(stripped))
@@ -1182,7 +1246,7 @@ fn host_reader_name(raw: &str) -> Option<Arc<str>> {
     if inner.ends_with('?') {
         return None;
     }
-    if !is_caps_ident(inner) {
+    if !is_ident(inner) {
         return None;
     }
     Some(Arc::<str>::from(inner))

@@ -115,6 +115,17 @@ impl Registry {
                     format!("unbound capture: ${{{n}}}"),
                 )
                 .with_span(call_span.lo, call_span.hi)],
+                LowerError::DotMiss { ty, key } => {
+                    let msg = match ty {
+                        Some(t) => format!("no field `.{key}` on type `{t}`"),
+                        None => {
+                            format!("no field `.{key}` (value has no type and no instance dot)")
+                        }
+                    };
+                    vec![
+                        Diag::error("lang/dot-miss", msg).with_span(call_span.lo, call_span.hi),
+                    ]
+                }
                 LowerError::Unknown(s) => {
                     vec![Diag::error("lower/unknown", s).with_span(call_span.lo, call_span.hi)]
                 }

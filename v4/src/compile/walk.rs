@@ -2,7 +2,7 @@
 //!
 //! Lane C of the compile pipeline. Sits between the parser (which hands
 //! us `Vec<PipeAst>`) and the registry (which lowers per-op). Walk
-//! handles: slot text classification into `Value::Atom | Value::Pipe`,
+//! handles: slot text classification into `ValueKind::Atom | ValueKind::Pipe`,
 //! recursive sub-pipe lowering for `{ block }`, dsl parse via the op's
 //! `parse_dsl`, and diag aggregation across the program.
 //!
@@ -11,7 +11,7 @@
 //!
 //! Inline-pipe args (`foo > bar`-style positional values) are handled
 //! by re-entering `host_parse` on the slot body. If the fragment parses
-//! as exactly one `PipeAst`, walk it recursively into a `Value::Pipe`.
+//! as exactly one `PipeAst`, walk it recursively into a `ValueKind::Pipe`.
 //! Zero or more-than-one top-level pipes from a single arg slot is
 //! malformed and emits `compile/inline-pipe-malformed`.
 
@@ -25,7 +25,7 @@ use super::ast::{OpCall, PipeAst, SlotText};
 use super::lower::ctx::LowerCtx;
 use super::lower::op_def::{DslBody, DslInterp, InterpKind};
 use super::lower::registry::Registry;
-use super::lower::value::{CallArg, Value};
+use super::lower::value::{CallArg, Value, ValueKind};
 
 /// Walk a whole program. Each `PipeAst` becomes one `FusedRule`. The
 /// fuser at the top of the per-pipe path classifies rule bodies and
@@ -201,13 +201,20 @@ pub fn walk_op(
     diags: &mut Vec<Diag>,
     chain_pos: usize,
 ) -> Option<Pipe<Cursor>> {
+    // A lone bare word as a pipe step is a term ref (read, or bind in
+    // predicate position) ONLY when it names neither a registered op nor
+    // a declared rule. ALL_CAPS is lint convention only — the positional
+    // op/rule-vs-term decision replaces the old caps heuristic. An
+    // unresolved term ref is caught by the binding graph, not here.
     if op.flow.is_none()
         && op.args.is_empty()
         && op.dsl.is_none()
         && op.block.is_none()
         && !op.force
         && !op.apply
-        && is_caps_ident(op.name.as_ref())
+        && is_ident(op.name.as_ref())
+        && reg.get(&op.name).is_none()
+        && ctx.get_rule(&op.name).is_none()
     {
         let term = if op.predicate {
             crate::term::Term::bind(op.name.clone())
@@ -336,12 +343,33 @@ pub fn walk_op(
         None => None,
     };
 
-    // Recurse on block.
+    // Recurse on block. For `rule(:name){ ... }` push `name` so any
+    // nested `rule(...)` registered while lowering this block lands as
+    // `name.inner` and bare names resolve outward (the scope/closure
+    // model). The enclosing rule itself is registered AFTER this, by
+    // its own `RuleDef::lower`, at the parent scope (path popped here).
     let block: Option<(Pipe<Cursor>, ByteRange)> = match &op.block {
-        Some(sub_ast) => match walk_pipe(sub_ast, reg, ctx, diags) {
-            Some(pipe) => Some((pipe, sub_ast.span)),
-            None => return None,
-        },
+        Some(sub_ast) => {
+            let scoped: Option<Arc<str>> = (op.name.as_ref() == "rule")
+                .then(|| {
+                    op.args
+                        .first()
+                        .and_then(|a| a.raw.trim().strip_prefix(':'))
+                        .map(Arc::<str>::from)
+                })
+                .flatten();
+            if let Some(n) = &scoped {
+                ctx.enter_scope(n.clone());
+            }
+            let walked = walk_pipe(sub_ast, reg, ctx, diags);
+            if scoped.is_some() {
+                ctx.exit_scope();
+            }
+            match walked {
+                Some(pipe) => Some((pipe, sub_ast.span)),
+                None => return None,
+            }
+        }
         None => None,
     };
 
@@ -508,7 +536,7 @@ pub fn walk_op(
 fn first_apply_hole(args: &[CallArg]) -> Option<(u32, u32)> {
     use crate::sprf_introspect::PipeIntrospect;
     for a in args {
-        if let Value::Pipe(p) = &a.value {
+        if let ValueKind::Pipe(p) = a.value.kind() {
             if !p.binds_terms().is_empty() {
                 // Span info would require threading slot ranges; the
                 // caller falls back to the op span. Returning a sentinel
@@ -601,7 +629,7 @@ fn find_top_level_keyword_colon(raw: &str) -> Option<usize> {
     None
 }
 
-/// Classify a `SlotText` into `Value::Atom` or `Value::Pipe`.
+/// Classify a `SlotText` into `ValueKind::Atom` or `ValueKind::Pipe`.
 ///
 /// Literal classifiers fire first: `:foo` → Atom("foo"), bare ident →
 /// Atom, quoted string → Atom (outer quotes stripped). If none match,
@@ -634,20 +662,20 @@ pub fn classify_slot(
     // malformed.
     if let Some(name) = simple_host_term_read(raw) {
         let term = crate::term::Term::read(Arc::<str>::from(name));
-        return Some(Value::Pipe(Pipe::new().step(Arc::new(term))));
+        return Some(Value::pipe(Pipe::new().step(Arc::new(term))));
     }
     if let Some(name) = simple_host_term_bind(raw) {
         let term = crate::term::Term::bind(Arc::<str>::from(name));
-        return Some(Value::Pipe(Pipe::new().step(Arc::new(term))));
+        return Some(Value::pipe(Pipe::new().step(Arc::new(term))));
     }
     // `:foo` colon-prefixed atom.
     if let Some(rest) = raw.strip_prefix(':') {
         if !rest.is_empty() {
-            return Some(Value::Atom(Arc::<str>::from(rest)));
+            return Some(Value::atom(rest));
         }
     }
     if raw == "&.value" {
-        return Some(Value::Atom(Arc::<str>::from("&.value")));
+        return Some(Value::atom("&.value"));
     }
     // Plain backtick literal in host-arg position. This lets rule calls
     // accept direct literal kwargs, e.g. `some_rule(NAME: `Cursor`)`,
@@ -656,36 +684,82 @@ pub fn classify_slot(
         let bytes = raw.as_bytes();
         if bytes[0] == b'`' && bytes[bytes.len() - 1] == b'`' {
             let inner = &raw[1..raw.len() - 1];
-            return Some(Value::Atom(Arc::<str>::from(inner)));
+            return Some(Value::atom(inner));
         }
     }
-    // ALL_CAPS bareword → term-ref desugar.
-    //   `NAME`  → sub-pipe `term(:NAME)`      (read existing capture)
-    //   `NAME?` → sub-pipe `term_bind(:NAME)` (introduce/bind capture)
-    // CAPS convention: `[A-Z][A-Z0-9_]*`. Mixed-case / lowercase barewords
-    // remain `Value::Atom` for ops that take atom-shaped args by name.
+    // Bareword term-ref desugar (ANY case — ALL_CAPS is lint convention
+    // only, zero semantics). A bare identifier is a NAME, never an atom:
+    //   `name`  → sub-pipe `term(:name)`      (read existing capture)
+    //   `name?` → sub-pipe `term_bind(:name)` (declare/bind capture)
+    //   `name!` → sub-pipe `term(:name)`      (explicit read)
+    // The ONLY atom form is `:sym` (handled above). An unresolved bare
+    // ref is a compile error, raised by the binding graph
+    // (`lang/use-before-bind`), not silently coerced to an atom here.
     if let Some(stripped) = raw.strip_suffix('?') {
-        if is_caps_ident(stripped) {
+        if is_ident(stripped) {
             let term = crate::term::Term::bind(Arc::<str>::from(stripped));
             let pipe = Pipe::new().step(Arc::new(term));
-            return Some(Value::Pipe(pipe));
+            return Some(Value::pipe(pipe));
         }
     }
     if let Some(stripped) = raw.strip_suffix('!') {
-        if is_caps_ident(stripped) {
+        if is_ident(stripped) {
             let term = crate::term::Term::read(Arc::<str>::from(stripped));
             let pipe = Pipe::new().step(Arc::new(term));
-            return Some(Value::Pipe(pipe));
+            return Some(Value::pipe(pipe));
         }
     }
-    if is_caps_ident(raw) {
+    if is_ident(raw) {
         let term = crate::term::Term::read(Arc::<str>::from(raw));
         let pipe = Pipe::new().step(Arc::new(term));
-        return Some(Value::Pipe(pipe));
+        return Some(Value::pipe(pipe));
     }
-    // Bare identifier (ASCII letter/underscore start, alnum/underscore body).
-    if is_ident(raw) {
-        return Some(Value::Atom(Arc::<str>::from(raw)));
+    // De-greed dot (positional, Task 1 folded): a dotted head `Ty.field`
+    // whose first segment names a declared rule is a TYPE projection —
+    // the rule's columns are its fields. Resolve each segment through
+    // `ctx.resolve_dot`; a missing field is a loud `lang/dot-miss`, not
+    // empty rows. A head that is NOT a rule falls through to the
+    // existing op / inline-pipe path (unchanged).
+    if raw.contains('.') && !raw.starts_with('.') {
+        let mut segs = raw.split('.');
+        let head = segs.next().unwrap_or("");
+        let head_is_type = is_ident(head)
+            && ctx
+                .store
+                .declared_cols(head)
+                .map(|c| !c.is_empty())
+                .unwrap_or(false);
+        if head_is_type {
+            {
+                let seed = Pipe::new().step(Arc::new(crate::term::Term::read(
+                    Arc::<str>::from(head),
+                )));
+                let mut val = Value::pipe(seed).typed(Arc::<str>::from(head));
+                for seg in segs {
+                    if !is_ident(seg) {
+                        diags.push(
+                            Diag::error(
+                                "lang/dot-miss",
+                                format!("malformed dot segment `.{seg}` in `{raw}`"),
+                            )
+                            .with_span(slot.span.lo, slot.span.hi),
+                        );
+                        return None;
+                    }
+                    match ctx.resolve_dot(&val, seg) {
+                        Ok(next) => val = next,
+                        Err(e) => {
+                            diags.push(
+                                Diag::error("lang/dot-miss", e.to_string())
+                                    .with_span(slot.span.lo, slot.span.hi),
+                            );
+                            return None;
+                        }
+                    }
+                }
+                return Some(val);
+            }
+        }
     }
     // Double- or single-quoted string literal: strip outer quotes, no
     // escape handling yet (escape semantics belong to the parser lane).
@@ -694,17 +768,17 @@ pub fn classify_slot(
         let q = bytes[0];
         if (q == b'"' || q == b'\'') && bytes[bytes.len() - 1] == q {
             let inner = &raw[1..raw.len() - 1];
-            return Some(Value::Atom(Arc::<str>::from(inner)));
+            return Some(Value::atom(inner));
         }
     }
     // Predicate-shape escape hatch: when the slot looks like a SQL
     // predicate (carries `${X}` interps plus a relational operator),
     // skip the inline-pipe fallback and return the raw text as a
-    // Value::Atom. The fuser pulls the raw slot text directly for
+    // ValueKind::Atom. The fuser pulls the raw slot text directly for
     // where/predicate ops; re-parsing as a sub-pipe would produce
     // spurious `unknown-op LO` diagnostics here.
     if looks_like_predicate(raw) {
-        return Some(Value::Atom(Arc::<str>::from(raw)));
+        return Some(Value::atom(raw));
     }
 
     // Inline-pipe fallback: re-parse the slot body as a sprf fragment.
@@ -749,7 +823,7 @@ pub fn classify_slot(
         }
         diags.push(d);
     }
-    pipe.map(Value::Pipe)
+    pipe.map(Value::pipe)
 }
 
 /// Heuristic: does this slot text look like a SQL-style predicate?
@@ -790,7 +864,7 @@ fn simple_host_term_read(raw: &str) -> Option<&str> {
     if inner.ends_with('?') {
         return None;
     }
-    if is_caps_ident(inner) {
+    if is_ident(inner) {
         Some(inner)
     } else {
         None
@@ -802,7 +876,7 @@ fn simple_host_term_bind(raw: &str) -> Option<&str> {
     let rest = raw.strip_prefix("${")?;
     let inner = rest.strip_suffix('}')?;
     let name = inner.strip_suffix('?')?;
-    if is_caps_ident(name) {
+    if is_ident(name) {
         Some(name)
     } else {
         None
@@ -848,19 +922,4 @@ fn is_ident(s: &str) -> bool {
     bytes[1..]
         .iter()
         .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
-}
-
-/// `[A-Z][A-Z0-9_]*` — ALL_CAPS identifier convention. Used to mark a
-/// bareword in an arg slot as a term-ref (capture) rather than an atom.
-fn is_caps_ident(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    if bytes.is_empty() {
-        return false;
-    }
-    if !bytes[0].is_ascii_uppercase() {
-        return false;
-    }
-    bytes[1..]
-        .iter()
-        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
 }
