@@ -10,7 +10,7 @@
 //! use v4::v2_ops::{FsComponent, AstNmComponent, CountComponent};
 //!
 //! let pipe = PipeInstance::new(vec![
-//!     Arc::new(FsComponent::new(root, batch))           as Arc<dyn Component<Next = Cursor>>,
+//!     Arc::new(FsComponent::new(script_dir, batch))     as Arc<dyn Component<Next = Cursor>>,
 //!     Arc::new(AstNmComponent::new(pat_src, lang)),
 //!     Arc::new(CountComponent { count: counter.clone() }),
 //! ]);
@@ -183,7 +183,12 @@ fn nodes_from(out: Vec<Cursor>) -> Node<Cursor> {
 /// triple matches. Independent of the v2 pipeline; pure source-side
 /// optimization.
 pub struct FsComponent {
-    pub root: PathBuf,
+    /// Branch-3 fallback ONLY. `fs` is input-driven: the walk root is
+    /// chosen per input cursor (repo+rev coord → blob walk; path value
+    /// → fs walk of that path; empty bootstrap → walk `script_dir`).
+    /// `script_dir` is the directory of the running `.sprf` file, NOT a
+    /// lower-time corpus root and NOT process cwd.
+    pub script_dir: PathBuf,
     pub batch: usize,
     /// Layer 0c.2 — content-derived intern store. When `Some`, each
     /// emitted Cursor also stamps the FS term via `set_at`. SYNTHETIC
@@ -212,9 +217,12 @@ pub struct FsTelemetry {
 }
 
 impl FsComponent {
-    pub fn new(root: PathBuf, batch: usize) -> Self {
+    /// `script_dir` is the branch-3 fallback only (the `.sprf` file's
+    /// own directory). It is NOT what `fs` walks when an input cursor
+    /// carries a path value or a repo+rev coord.
+    pub fn new(script_dir: PathBuf, batch: usize) -> Self {
         Self {
-            root,
+            script_dir,
             batch,
             store: None,
             config: None,
@@ -276,12 +284,11 @@ impl Component for FsComponent {
         rows: &[QueueRow<Cursor>],
         queue: &dyn QueueBackend<Cursor>,
     ) {
-        // One bootstrap row produces all children. Extra seeds (if
-        // any) are ignored — not the model here.
-        let parent = match rows.first() {
-            Some(r) => r,
-            None => return,
-        };
+        // `fs` is input-driven: every input cursor is its own driver
+        // (branch 1/2/3 chosen per row below). No rows → nothing to do.
+        if rows.is_empty() {
+            return;
+        }
 
         // Layer 5b.2 — git rev branch. Each upstream row may carry a
         // distinct `Coord.rev`, so iterate per-row and dispatch
@@ -382,133 +389,161 @@ impl Component for FsComponent {
             return;
         }
 
-        // Streaming flushes share one parent — must thread a running
-        // batch_idx offset across calls so sibling paths stay unique.
-        // (The path collision is invisible for content-keyed
-        // memoization but breaks position-keyed reconcile via cascade
-        // of "doomed" already-enqueued descendants.)
-        let mut buf: Vec<Node<Cursor>> = Vec::with_capacity(self.batch);
-        let mut next_idx: u32 = 0;
-        let flush = |buf: &mut Vec<Node<Cursor>>, next_idx: &mut u32| {
-            if buf.is_empty() {
-                return;
-            }
-            let many = Node::Many(std::mem::take(buf));
-            let t0 = std::time::Instant::now();
-            let n = splice_into_at(
-                parent,
-                many,
-                ctx.depth + 1,
-                ctx.expand_tick,
-                queue,
-                *next_idx,
-            );
-            if let Some(t) = &self.telemetry {
-                t.splice_ns
-                    .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
-            }
-            *next_idx += n as u32;
-        };
+        // Non-rev path: `fs` is INPUT-DRIVEN. Each input cursor picks
+        // its own walk root:
+        //   branch 2 — cursor value resolves to an existing directory →
+        //              fs-walk that directory.
+        //   branch 3 — empty/default bootstrap cursor (no path value,
+        //              no repo+rev coord) → fs-walk `script_dir`, the
+        //              directory of the running `.sprf` file. NOT a
+        //              lower-time corpus root, NOT process cwd.
+        // (branch 1 — repo+rev coord — is the `any_rev` block above.)
+        for parent in rows {
+            // Pick this cursor's walk root. A non-empty cursor value
+            // that names an existing directory is branch 2; anything
+            // else (empty bootstrap, a value that is not a dir) falls
+            // to branch 3 = the script's own directory.
+            let cursor_val = parent.value.value.as_ref();
+            let branch2_dir = if cursor_val.is_empty() {
+                None
+            } else {
+                let pb = std::path::PathBuf::from(cursor_val);
+                match std::fs::metadata(&pb) {
+                    Ok(m) if m.is_dir() => Some(pb),
+                    _ => None,
+                }
+            };
+            let walk_root = branch2_dir.unwrap_or_else(|| self.script_dir.clone());
 
-        // Inherit Coord (repo/rev/fs=0) from the bootstrap parent so a
-        // bare `fs` rooted at a non-zero rev would still be reachable.
-        // Today the rev branch above runs for any non-zero rev; this WT
-        // path runs only when all upstream rows have rev == 0.
-        let parent_coord = self
-            .store
-            .as_ref()
-            .and_then(|s| s.coord_of(parent.value.at));
+            // Streaming flushes share one parent — must thread a
+            // running batch_idx offset across calls so sibling paths
+            // stay unique. (The path collision is invisible for
+            // content-keyed memoization but breaks position-keyed
+            // reconcile via cascade of "doomed" already-enqueued
+            // descendants.) Scoped per input cursor so two cursors
+            // never share an index space.
+            let mut buf: Vec<Node<Cursor>> = Vec::with_capacity(self.batch);
+            let mut next_idx: u32 = 0;
+            let flush = |buf: &mut Vec<Node<Cursor>>, next_idx: &mut u32| {
+                if buf.is_empty() {
+                    return;
+                }
+                let many = Node::Many(std::mem::take(buf));
+                let t0 = std::time::Instant::now();
+                let n = splice_into_at(
+                    parent,
+                    many,
+                    ctx.depth + 1,
+                    ctx.expand_tick,
+                    queue,
+                    *next_idx,
+                );
+                if let Some(t) = &self.telemetry {
+                    t.splice_ns
+                        .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                }
+                *next_idx += n as u32;
+            };
 
-        let mut walker = WalkBuilder::new(&self.root)
-            .hidden(true)
-            .git_ignore(false)
-            .build();
-        loop {
-            let t0 = std::time::Instant::now();
-            let Some(entry) = walker.next() else {
+            // Inherit Coord (repo/rev/fs=0) from the input cursor so a
+            // downstream `read` still resolves the right ref when the
+            // cursor carried a non-zero repo (rev==0 here by construction).
+            let parent_coord = self
+                .store
+                .as_ref()
+                .and_then(|s| s.coord_of(parent.value.at));
+
+            let mut walker = WalkBuilder::new(&walk_root)
+                .hidden(true)
+                .git_ignore(false)
+                .build();
+            loop {
+                let t0 = std::time::Instant::now();
+                let Some(entry) = walker.next() else {
+                    if let Some(t) = &self.telemetry {
+                        t.walk_ns
+                            .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    }
+                    break;
+                };
                 if let Some(t) = &self.telemetry {
                     t.walk_ns
                         .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 }
-                break;
-            };
-            if let Some(t) = &self.telemetry {
-                t.walk_ns
-                    .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
-            }
-            let Ok(e) = entry else { continue };
-            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                continue;
-            }
-            let p = e.into_path();
-            if let Some(t) = &self.telemetry {
-                t.seen_files.fetch_add(1, Ordering::Relaxed);
-            }
-            let t0 = std::time::Instant::now();
-            if !self.include_path(&p) {
+                let Ok(e) = entry else { continue };
+                if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    continue;
+                }
+                let p = e.into_path();
+                if let Some(t) = &self.telemetry {
+                    t.seen_files.fetch_add(1, Ordering::Relaxed);
+                }
+                let t0 = std::time::Instant::now();
+                if !self.include_path(&p) {
+                    if let Some(t) = &self.telemetry {
+                        t.filter_ns
+                            .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    }
+                    if let Some(t) = &self.telemetry {
+                        t.ext_skipped.fetch_add(1, Ordering::Relaxed);
+                    }
+                    continue;
+                }
+
+                let path_str = p.display().to_string();
+                if !self.include_source_value(&path_str) {
+                    if let Some(t) = &self.telemetry {
+                        t.filter_ns
+                            .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    }
+                    if let Some(t) = &self.telemetry {
+                        t.filter_skipped.fetch_add(1, Ordering::Relaxed);
+                    }
+                    continue;
+                }
                 if let Some(t) = &self.telemetry {
                     t.filter_ns
                         .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 }
-                if let Some(t) = &self.telemetry {
-                    t.ext_skipped.fetch_add(1, Ordering::Relaxed);
+                let t0 = std::time::Instant::now();
+                let mut c = parent.value.as_ref().clone();
+                // Pure-query contract: cursor.value carries the path
+                // string. glob/re downstream match against it; read
+                // uses it as the source path.
+                c.value = Arc::<str>::from(path_str.as_str());
+                // FS term write so `${FS}` reads still resolve.
+                c.set("FS", path_str.as_str());
+                // Worktree path cursors keep coord-space cold. `read`
+                // or a downstream matcher materializes durable file/ref
+                // rows only after bytes are actually needed.
+                c.value_id = crate::StringId::of(path_str.as_str());
+                c.cursor_value = CursorValue::String(c.value_id);
+                if let (Some(store), Some(parent_coord)) = (&self.store, parent_coord) {
+                    if parent_coord.repo != 0 || parent_coord.rev != 0 {
+                        c.set_synthetic("FS", path_str.as_str(), store);
+                        let coord = Coord {
+                            repo: parent_coord.repo,
+                            rev: parent_coord.rev,
+                            fs: 0,
+                            lo: 0,
+                            hi: 0,
+                        };
+                        c.at = store.intern_ref(coord);
+                    }
                 }
-                continue;
-            }
-
-            let path_str = p.display().to_string();
-            if !self.include_source_value(&path_str) {
                 if let Some(t) = &self.telemetry {
-                    t.filter_ns
+                    t.emitted.fetch_add(1, Ordering::Relaxed);
+                    t.cursor_ns
                         .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 }
-                if let Some(t) = &self.telemetry {
-                    t.filter_skipped.fetch_add(1, Ordering::Relaxed);
-                }
-                continue;
-            }
-            if let Some(t) = &self.telemetry {
-                t.filter_ns
-                    .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
-            }
-            let t0 = std::time::Instant::now();
-            let mut c = parent.value.as_ref().clone();
-            // Pure-query contract: cursor.value carries the path string.
-            // glob/re downstream match against it; read uses it as the
-            // source path.
-            c.value = Arc::<str>::from(path_str.as_str());
-            // FS term write so `${FS}` reads still resolve.
-            c.set("FS", path_str.as_str());
-            // Worktree path cursors keep coord-space cold. `read` or a
-            // downstream matcher materializes durable file/ref rows only
-            // after bytes are actually needed.
-            c.value_id = crate::StringId::of(path_str.as_str());
-            c.cursor_value = CursorValue::String(c.value_id);
-            if let (Some(store), Some(parent_coord)) = (&self.store, parent_coord) {
-                if parent_coord.repo != 0 || parent_coord.rev != 0 {
-                    c.set_synthetic("FS", path_str.as_str(), store);
-                    let coord = Coord {
-                        repo: parent_coord.repo,
-                        rev: parent_coord.rev,
-                        fs: 0,
-                        lo: 0,
-                        hi: 0,
-                    };
-                    c.at = store.intern_ref(coord);
-                }
-            }
-            if let Some(t) = &self.telemetry {
-                t.emitted.fetch_add(1, Ordering::Relaxed);
-                t.cursor_ns
-                    .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
-            }
-            buf.push(Node::Emit(Arc::new(c)));
+                buf.push(Node::Emit(Arc::new(c)));
 
-            if buf.len() >= self.batch {
-                flush(&mut buf, &mut next_idx);
+                if buf.len() >= self.batch {
+                    flush(&mut buf, &mut next_idx);
+                }
             }
+            flush(&mut buf, &mut next_idx);
         }
-        flush(&mut buf, &mut next_idx);
     }
 }
 

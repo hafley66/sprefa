@@ -465,10 +465,14 @@ fn atom_arg(args: &[Value], i: usize) -> Arc<str> {
 
 pub struct FsDef;
 
-/// `fs` is a pure path query. Bare form emits one cursor per file under
-/// `ctx.root`, `cursor.value = path string`. `fs(glob`...`)` is the
-/// source-side filter form: only static single-step glob filters are
-/// accepted here, so rejected paths never enter the runtime queue.
+/// `fs` is a pure, INPUT-DRIVEN path query. Per input cursor it walks:
+/// (1) the cursor's repo+rev coord (git blob walk), else (2) the
+/// cursor's path value if it names a directory (fs walk), else (3) the
+/// running `.sprf` file's own directory (`ctx.sprf_dir`). It does NOT
+/// walk a lower-time `ctx.root`. `cursor.value = path string` on each
+/// emitted child. `fs(glob`...`)` is the source-side filter form: only
+/// static single-step glob filters are accepted here, so rejected paths
+/// never enter the runtime queue.
 const FS_SPEC: &[ArgSig] = &[ArgSig {
     kind: ArgKind::Pipe,
     name: "filter",
@@ -496,7 +500,10 @@ impl OperatorDef for FsDef {
         _dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
         // TODO: LowerCtx batch-size knob; hardcoded for now.
-        let mut comp = FsComponent::new(ctx.root.clone(), 1024);
+        // `sprf_dir` is the branch-3 fallback ONLY (the script's own
+        // folder). The walk root is chosen per input cursor at run time;
+        // `ctx.root` is deliberately NOT baked in here.
+        let mut comp = FsComponent::new(ctx.sprf_dir.clone(), 1024);
         if let Some(filter) = args.first() {
             comp = comp.with_source_filter(source_path_filter(filter)?);
         }

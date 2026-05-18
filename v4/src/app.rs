@@ -1526,10 +1526,20 @@ impl SprfHandlers for SprfState {
             .clone()
             .or_else(|| req.path.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| self.root.clone());
+        // `fs`'s branch-3 fallback walks the SCRIPT's own directory,
+        // independent of `--root`. `--root` retargets `ctx.root` (used
+        // by path/ast/read for relative resolution) and reaches `fs` as
+        // an input cursor value (branch 2) via the seed below.
+        let sprf_dir = req
+            .path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| dir.clone());
         let telemetry = std::env::var_os("SPREFA_TELEMETRY")
             .is_some()
             .then(|| Arc::new(PipelineTelemetry::new()));
         let mut ctx = LowerCtx::new(self.facts.clone(), dir)
+            .with_sprf_dir(sprf_dir)
             .with_sprf_store(self.sprf_store.clone())
             .with_config(self.config.clone());
         if let Some(t) = &telemetry {
@@ -1554,6 +1564,20 @@ impl SprfHandlers for SprfState {
         let opts = match telemetry.as_ref() {
             Some(t) => opts.with_telemetry(t.effect.clone()),
             None => opts,
+        };
+        // `--root` reaches `fs` as INPUT: seed the bootstrap cursor's
+        // focal value with the root path so `fs`'s branch 2 (path-value
+        // → fs-walk) fires. With no `--root` the seed stays the empty
+        // default cursor and `fs` falls to branch 3 (script dir). A
+        // value-bearing seed is inert for pipes that don't read it
+        // (e.g. literal/`repo()` heads overwrite the focal cursor).
+        let seed_cursor: Cursor = match req.root.as_ref() {
+            Some(root) => {
+                let mut c = Cursor::default();
+                c.set_value(root.to_string_lossy().to_string());
+                c
+            }
+            None => Cursor::default(),
         };
         let mut n = 0;
         let mut run_stats = effect_runtime::v2::ExpandStats::default();
@@ -1599,7 +1623,7 @@ impl SprfHandlers for SprfState {
             let stats = expand(
                 inst.as_ref(),
                 self.queue.clone(),
-                vec![Arc::new(Cursor::default())],
+                vec![Arc::new(seed_cursor.clone())],
                 opts.clone(),
             );
             phases.expand_ms += t.elapsed().as_secs_f64() * 1000.0;

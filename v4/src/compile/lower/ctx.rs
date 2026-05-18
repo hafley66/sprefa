@@ -19,6 +19,13 @@ pub struct LowerCtx {
     pub store: Arc<dyn FactStore<Cursor>>,
     pub interner: Option<Arc<Interner>>,
     pub root: PathBuf,
+    /// Directory of the `.sprf` script currently being lowered. `fs`'s
+    /// branch-3 fallback walks THIS dir when an input cursor carries no
+    /// path value and no repo+rev coord. Distinct from `root`: `root`
+    /// follows `--root` (the corpus), `sprf_dir` always tracks the
+    /// script file's own folder. Defaults to `root` when unset so
+    /// non-host callers (tests) keep prior behavior.
+    pub sprf_dir: PathBuf,
     /// Capture name → Pipe that grounds to a constant string. Used by
     /// `str` to substitute `${X}` at lower-time.
     pub bindings: HashMap<Arc<str>, Pipe<Cursor>>,
@@ -91,6 +98,7 @@ impl LowerCtx {
         Self {
             store,
             interner: None,
+            sprf_dir: root.clone(),
             root,
             bindings: HashMap::new(),
             rules: Arc::new(Mutex::new(HashMap::new())),
@@ -132,6 +140,14 @@ impl LowerCtx {
         } else {
             Arc::from(format!("{pre}{name}").as_str())
         }
+    }
+    /// Set the `.sprf` script directory used by `fs`'s branch-3
+    /// fallback. The host (`SprfState::run`) threads `req.path`'s parent
+    /// here; it stays the script folder even when `--root` retargets
+    /// `root` at a corpus elsewhere.
+    pub fn with_sprf_dir(mut self, dir: PathBuf) -> Self {
+        self.sprf_dir = dir;
+        self
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
         self.interner = Some(i);
