@@ -1,0 +1,32 @@
+# bench/linux-called.sprf — memo-active CALLED-rule workload.
+#
+# Unlike bench/linux.sprf (an UNcalled `rule(:hits,:FS,:LO,:HI){…}`
+# with grounded :atom columns — dormant by design, 0 rows until an
+# apply), this rule's columns are all `NAME?` binders. Per the
+# lower-time three-state dispatch (compile/lower/ops.rs) an all-binder
+# bodied rule is `auto_run`: its body executes as a pipe seeded with
+# the run's bootstrap cursor. `--root` is plumbed into that seed as
+# the focal value, so `fs`'s branch-2 (path-value cursor → fs-walk)
+# fires and the rule scans the linux tree. The trailing `hits?(…)`
+# query genuinely CALLS the rule (drains its rows) and emits one
+# diagnostic per printk site.
+#
+# Validated: `hits: 16627 rows` on
+#   v3/tests/smoke/.fixtures/linux  (~37k .c, 16627 printk sites).
+#
+# Run with:
+#   cargo run --release --bin sprefa-run -- v4/bench/linux-called.sprf \
+#     --root <linux-root> --no-show-rows --fact-db <persistent.db>
+#
+# The incremental story: scan once with a persistent --fact-db, append
+# one `printk("x");` line to one .c, re-run the SAME script/db. With
+# the retraction memo (this branch) only the dirtied source recomputes
+# and the rest replays; on main (no retraction) the re-run is a full
+# recompute.
+
+rule(:hits, FS?, LO?, HI?) {
+  fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)`
+};
+
+hits?(FS?, LO?, HI?)
+  > lsp_warn(:printk_site)`printk at ${FS}:${LO}`;
