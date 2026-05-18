@@ -1538,6 +1538,22 @@ impl SprfHandlers for SprfState {
         let telemetry = std::env::var_os("SPREFA_TELEMETRY")
             .is_some()
             .then(|| Arc::new(PipelineTelemetry::new()));
+        // Corpus root resolves the git toplevel for the no-read oracle;
+        // recorded `_memo_deps` paths are absolute under it.
+        let dir_for_hint = dir.clone();
+        // Seed the process-global `SourceIndex` OnceLock NOW, from the
+        // corpus root, before anything else can win it. On a cold run
+        // the `warm_*` predicates below early-return WITHOUT touching
+        // the OnceLock (empty `_memo_deps`), so the first real init
+        // would otherwise be the seam probe with `hint="."` (the daemon
+        // CWD — the sprefa worktree, NOT the corpus). That resolves the
+        // wrong git toplevel; every corpus file `strip_prefix`-misses
+        // and falls back to `Stat{mtime,size}`, whose mtime is unstable
+        // across runs (a checkout rewrites it) → the warm-slice treats
+        // the whole corpus as changed every run → full recompute. With
+        // the corpus git root, tracked-clean files resolve to a stable
+        // `Git(oid)` and the slice shrinks to the edited file.
+        let _ = self.runtime_graph.source_index(dir_for_hint.as_path());
         let mut ctx = LowerCtx::new(self.facts.clone(), dir)
             .with_sprf_dir(sprf_dir)
             .with_sprf_store(self.sprf_store.clone())
@@ -1545,17 +1561,36 @@ impl SprfHandlers for SprfState {
         if let Some(t) = &telemetry {
             ctx = ctx.with_telemetry(t.clone());
         }
+        // Warm-skip: on a re-run sharing a persistent `--fact-db`, files
+        // whose no-read identity matches the recorded `_memo_deps`
+        // identity are UNCHANGED. `fs` must not emit them — their `hits`
+        // rows are already materialized and retraction is owner-scoped,
+        // so an un-rendered owner keeps its rows. Self-gating: a cold
+        // run (`_memo_deps` empty, e.g. in-memory store) yields an
+        // always-false predicate ⇒ full corpus walk, no behavior change.
+        ctx = ctx.with_warm_skip(
+            self.runtime_graph.warm_skip_predicate(dir_for_hint.as_path()),
+        );
+        // Warm dirty-slice: on a re-run, feed `fs` exactly the changed
+        // paths (no 63k tree walk). `None` on a cold run ⇒ full walk.
+        ctx = ctx.with_warm_slice(
+            self.runtime_graph
+                .warm_changed_paths(dir_for_hint.as_path())
+                .map(std::sync::Arc::new),
+        );
         let t = std::time::Instant::now();
         let (pipes, walk_diags) = walk_program(&program, &self.registry, &mut ctx);
         phases.lower_ms = t.elapsed().as_secs_f64() * 1000.0;
 
-        // 65536 matches v4-bench. Smaller caps multiply per-batch lock
-        // overhead in batched sinks (FactWrite et al.).
+        // Smaller caps multiply per-batch lock + transaction overhead in
+        // batched sinks (FactWrite, subscription compact). Default to an
+        // insane cap so a whole-corpus run collapses to ~one transaction
+        // per stage instead of hundreds. Env-overridable.
         let runtime_diags = Arc::new(BufferDiagSink::new());
         let batch_cap = std::env::var("SPREFA_BATCH_CAP")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(65536);
+            .unwrap_or(1 << 20);
         // The memo/replay/reconcile seam IS installed on the one-shot
         // `run` path. It is now SAFE: the seam's staleness
         // (`Memo::probe_ch` → `is_stale_content`) is decided by
@@ -1655,6 +1690,11 @@ impl SprfHandlers for SprfState {
         phases.commit_ms = t.elapsed().as_secs_f64() * 1000.0;
         let t = std::time::Instant::now();
         self.drain_runtime_until_idle(opts);
+        // Expand fully drained: persist the in-RAM memo + memo-deps in
+        // ONE transaction each (cost ∝ changes, not corpus). This is
+        // the single sqlite touch for the memo layer per run — no
+        // per-row writes (the cold N+1 that was 63k transactions).
+        self.runtime_graph.flush();
         self.sprf_store.flush();
         phases.resume_ms = t.elapsed().as_secs_f64() * 1000.0;
 

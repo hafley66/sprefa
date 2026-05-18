@@ -53,7 +53,7 @@ fn run(src: &str) -> Arc<dyn FactStore<Cursor>> {
 /// shell command.
 #[test]
 fn sh_body_renders_subpipe() {
-    let src = r#"rule(:greet) { sh`echo hello-${ str`world` }` };"#;
+    let src = r#"rule(:greet) { sh`echo hello-${ str`world` }` }; greet();"#;
     let store = run(src);
     assert_eq!(store.len("greet"), 1, "expected one row");
     let rows = store.rows_of("greet");
@@ -72,7 +72,7 @@ fn glob_body_renders_subpipe() {
     std::fs::write(tmp.path().join("alpha.txt"), b"a").unwrap();
     std::fs::write(tmp.path().join("bravo.txt"), b"b").unwrap();
 
-    let src = r#"rule(:hits, EXT?) { fs > glob`**/${ str`alpha` }.${EXT?}` };"#;
+    let src = r#"rule(:hits, EXT?) { fs > glob`**/${ str`alpha` }.${EXT?}` }; hits();"#;
     let store = run_in(tmp.path(), src);
     let rows = store.rows_of("hits");
     assert_eq!(
@@ -95,7 +95,7 @@ fn re_body_renders_subpipe() {
     std::fs::write(&path, b"the needle is here").unwrap();
 
     let src =
-        format!(r#"rule(:hits) {{ fs > glob`**/hay.txt` > read > re`${{ str`needle` }}` }};"#);
+        format!(r#"rule(:hits) {{ fs > glob`**/hay.txt` > read > re`${{ str`needle` }}` }}; hits();"#);
     let store = run_in(tmp.path(), &src);
     let rows = store.rows_of("hits");
     assert_eq!(
@@ -108,7 +108,7 @@ fn re_body_renders_subpipe() {
 /// Regression — str template subpipe still works (today's path).
 #[test]
 fn str_template_subpipe_regression() {
-    let src = r#"rule(:greet) { `out=${ str`hi` }` };"#;
+    let src = r#"rule(:greet) { `out=${ str`hi` }` }; greet();"#;
     let store = run(src);
     assert_eq!(store.len("greet"), 1);
     assert_eq!(&*store.rows_of("greet")[0].value, "out=hi");

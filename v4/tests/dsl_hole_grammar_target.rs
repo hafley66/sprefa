@@ -110,7 +110,10 @@ fn glob_hole_binds_path_segment() {
     std::fs::write(tmp.path().join("alpha.txt"), b"x").unwrap();
     let store = run_in(
         tmp.path(),
-        "rule(:bits, STEM?, EXT?) { fs > glob`${STEM?}.${EXT?}` };",
+        // Rule = function: declaring it no longer runs the body
+        // (auto_run removed). The `bits?(…)` call invokes it.
+        "rule(:bits, STEM?, EXT?) { fs > glob`${STEM?}.${EXT?}` }; \
+         bits();",
     );
     let rows = store.rows_of("bits");
     assert_eq!(rows.len(), 1);
@@ -132,7 +135,8 @@ fn glob_triple_dollar_is_multi_segment_alias() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:tree, MID?, FILE?) { fs > glob`$$${MID?}/${FILE?}.rs` };",
+        "rule(:tree, MID?, FILE?) { fs > glob`$$${MID?}/${FILE?}.rs` }; \
+         tree();",
     );
     let rows = store.rows_of("tree");
     assert_eq!(rows.len(), 1);
@@ -159,7 +163,8 @@ fn json_hole_binds_value() {
     .unwrap();
     let store = run_in(
         tmp.path(),
-        "rule(:hits, N?) { fs > glob`**/*.json` > read > json`{ name: ${N?} }` };",
+        "rule(:hits, N?) { fs > glob`**/*.json` > read > json`{ name: ${N?} }` }; \
+         hits();",
     );
     let rows = store.rows_of("hits");
     assert_eq!(rows.len(), 1);
@@ -182,7 +187,8 @@ fn json_triple_dollar_is_recursive_path() {
     let store = run_in(
         tmp.path(),
         "rule(:imgs, PATH?, IMG?) { fs > glob`**/*.json` > read \
-         > json`{ $$${PATH?}: { image: ${IMG?} } }` };",
+         > json`{ $$${PATH?}: { image: ${IMG?} } }` }; \
+         imgs();",
     );
     let rows = store.rows_of("imgs");
     assert_eq!(rows.len(), 1, "rows = {:?}", rows.len());
@@ -206,7 +212,7 @@ fn re_hole_binds_match() {
     .unwrap();
     let store = run_in(
         tmp.path(),
-        r#"rule(:hits, WHO?) { fs > glob`**/*.txt` > read > re`TODO\(${WHO?}\)` };"#,
+        r#"rule(:hits, WHO?) { fs > glob`**/*.txt` > read > re`TODO\(${WHO?}\)` }; hits();"#,
     );
     let rows = store.rows_of("hits");
     // Order is not guaranteed; collect into a sorted set.
@@ -231,7 +237,7 @@ fn re_triple_dollar_is_loose_any_char() {
     .unwrap();
     let store = run_in(
         tmp.path(),
-        r#"rule(:hits, MSG?) { fs > glob`**/*.txt` > read > re`NOTE: $$${MSG?} is` };"#,
+        r#"rule(:hits, MSG?) { fs > glob`**/*.txt` > read > re`NOTE: $$${MSG?} is` }; hits();"#,
     );
     let rows = store.rows_of("hits");
     assert_eq!(rows.len(), 1);

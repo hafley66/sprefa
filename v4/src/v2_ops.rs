@@ -201,6 +201,10 @@ pub struct FsComponent {
     config: Option<Arc<SprfConfig>>,
     include_exts: Option<Arc<Vec<String>>>,
     source_filter: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+    /// Warm dirty-slice. `Some` ⇒ emit exactly these absolute paths
+    /// (still subject to ext/source filters) and SKIP the `WalkBuilder`
+    /// entirely — no 63k readdir/stat on a warm run. `None` ⇒ full walk.
+    warm_slice: Option<Arc<Vec<PathBuf>>>,
     telemetry: Option<Arc<FsTelemetry>>,
 }
 
@@ -228,8 +232,14 @@ impl FsComponent {
             config: None,
             include_exts: None,
             source_filter: None,
+            warm_slice: None,
             telemetry: None,
         }
+    }
+    /// Install the warm dirty-slice (see field docs).
+    pub fn with_warm_slice(mut self, paths: Option<Arc<Vec<PathBuf>>>) -> Self {
+        self.warm_slice = paths;
+        self
     }
     /// Attach the intern store for coord-space stamping.
     pub fn with_sprf_store(mut self, s: Arc<SprfStore>) -> Self {
@@ -452,6 +462,64 @@ impl Component for FsComponent {
                 .store
                 .as_ref()
                 .and_then(|s| s.coord_of(parent.value.at));
+
+            // WARM dirty-slice: emit exactly the changed paths, NO
+            // tree walk. Cold run (`warm_slice == None`) falls through
+            // to the full `WalkBuilder` below. An empty slice emits
+            // nothing (warm, nothing changed → persisted `hits` answer
+            // the query). Mirrors the walk's per-path cursor build.
+            if let Some(slice) = self.warm_slice.clone() {
+                for p in slice.iter() {
+                    if !p.is_file() {
+                        continue;
+                    }
+                    if let Some(t) = &self.telemetry {
+                        t.seen_files.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if !self.include_path(p) {
+                        if let Some(t) = &self.telemetry {
+                            t.ext_skipped.fetch_add(1, Ordering::Relaxed);
+                        }
+                        continue;
+                    }
+                    let path_str = p.display().to_string();
+                    if !self.include_source_value(&path_str) {
+                        if let Some(t) = &self.telemetry {
+                            t.filter_skipped.fetch_add(1, Ordering::Relaxed);
+                        }
+                        continue;
+                    }
+                    let mut c = parent.value.as_ref().clone();
+                    c.value = Arc::<str>::from(path_str.as_str());
+                    c.set("FS", path_str.as_str());
+                    c.value_id = crate::StringId::of(path_str.as_str());
+                    c.cursor_value = CursorValue::String(c.value_id);
+                    if let (Some(store), Some(parent_coord)) =
+                        (&self.store, parent_coord)
+                    {
+                        if parent_coord.repo != 0 || parent_coord.rev != 0 {
+                            c.set_synthetic("FS", path_str.as_str(), store);
+                            let coord = Coord {
+                                repo: parent_coord.repo,
+                                rev: parent_coord.rev,
+                                fs: 0,
+                                lo: 0,
+                                hi: 0,
+                            };
+                            c.at = store.intern_ref(coord);
+                        }
+                    }
+                    if let Some(t) = &self.telemetry {
+                        t.emitted.fetch_add(1, Ordering::Relaxed);
+                    }
+                    buf.push(Node::Emit(Arc::new(c)));
+                    if buf.len() >= self.batch {
+                        flush(&mut buf, &mut next_idx);
+                    }
+                }
+                flush(&mut buf, &mut next_idx);
+                continue;
+            }
 
             let mut walker = WalkBuilder::new(&walk_root)
                 .hidden(true)
@@ -774,9 +842,21 @@ impl Component for AstNmComponent {
                         self.store.clone(),
                         self.config.clone(),
                     );
-                    let (fp_path, fp_hex) = reader
-                        .fingerprint_cursor(input)
-                        .unwrap_or_default();
+                    // No-read identity: resolve the path WITHOUT opening
+                    // it, then take the git-OID / stat signal from the
+                    // per-run `SourceIndex`. `fp_hex` now carries the
+                    // tagged `SourceIdentity` (not a blake3 of bytes);
+                    // the staleness check decodes and compares it with
+                    // zero file reads for unchanged sources.
+                    let (fp_path, fp_hex) = match reader.resolve_abs(input) {
+                        Some(abs) => {
+                            let id = graph
+                                .source_index(self.root.as_path())
+                                .identity(&abs);
+                            (abs.to_string_lossy().into_owned(), id.encode())
+                        }
+                        None => (String::new(), String::new()),
+                    };
                     let deps: Vec<(SourceId, u64, String, String)> = ctx
                         .take_deps()
                         .into_iter()
@@ -2924,9 +3004,20 @@ impl Component for ReadComponent {
                         self.store.clone(),
                         self.config.clone(),
                     );
-                    let (fp_path, fp_hex) = reader
-                        .fingerprint_cursor(row.value.as_ref())
-                        .unwrap_or_default();
+                    // No-read identity (git OID / stat), NOT a blake3 of
+                    // the file's bytes. The staleness check decodes and
+                    // compares this without opening unchanged files.
+                    let (fp_path, fp_hex) = match reader
+                        .resolve_abs(row.value.as_ref())
+                    {
+                        Some(abs) => {
+                            let id = graph
+                                .source_index(self.root.as_path())
+                                .identity(&abs);
+                            (abs.to_string_lossy().into_owned(), id.encode())
+                        }
+                        None => (String::new(), String::new()),
+                    };
                     let deps: Vec<(SourceId, u64, String, String)> = ctx
                         .take_deps()
                         .into_iter()

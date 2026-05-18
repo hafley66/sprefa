@@ -49,7 +49,8 @@ fn fs_emits_cursors_with_value_equal_to_path() {
     std::fs::write(tmp.path().join("a.txt"), b"alpha").unwrap();
     std::fs::write(tmp.path().join("b.txt"), b"bravo").unwrap();
 
-    let store = run_in(tmp.path(), "rule(:paths) { fs };");
+    // Rule = function: declaring no longer runs the body; the call does.
+    let store = run_in(tmp.path(), "rule(:paths) { fs }; paths();");
     let rows = store.rows_of("paths");
     assert_eq!(rows.len(), 2, "expected one cursor per file");
 
@@ -82,7 +83,7 @@ fn glob_filters_cursor_value_no_filesystem() {
     std::fs::write(tmp.path().join("c.rs"), b"z").unwrap();
 
     // fs emits 3 cursors with value=path; glob filters to .rs only.
-    let store = run_in(tmp.path(), "rule(:rs) { fs > glob`**/*.rs` };");
+    let store = run_in(tmp.path(), "rule(:rs) { fs > glob`**/*.rs` }; rs();");
     let rows = store.rows_of("rs");
     assert_eq!(rows.len(), 2, "expected b.rs + c.rs only");
     for c in rows.iter() {
@@ -97,7 +98,7 @@ fn read_loads_bytes_from_cursor_value_path() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("only.txt"), b"loaded-bytes").unwrap();
 
-    let store = run_in(tmp.path(), "rule(:bodies) { fs > read };");
+    let store = run_in(tmp.path(), "rule(:bodies) { fs > read }; bodies();");
     let rows = store.rows_of("bodies");
     assert_eq!(rows.len(), 1);
     assert_eq!(
@@ -115,7 +116,7 @@ fn fs_glob_read_chain() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:rs_bodies) { fs > glob`**/*.rs` > read };",
+        "rule(:rs_bodies) { fs > glob`**/*.rs` > read }; rs_bodies();",
     );
     let rows = store.rows_of("rs_bodies");
     assert_eq!(rows.len(), 1, "only b.rs survives the glob filter");
@@ -133,7 +134,7 @@ fn fs_accepts_glob_filter_arg() {
     std::fs::write(tmp.path().join("src/main.rs"), b"main").unwrap();
     std::fs::write(tmp.path().join("README.md"), b"readme").unwrap();
 
-    let store = run_in(tmp.path(), "rule(:rs_paths) { fs(glob`**/*.rs`) };");
+    let store = run_in(tmp.path(), "rule(:rs_paths) { fs(glob`**/*.rs`) }; rs_paths();");
     let rows = store.rows_of("rs_paths");
     let mut values: Vec<String> = rows.iter().map(|c| c.value.to_string()).collect();
     values.sort();

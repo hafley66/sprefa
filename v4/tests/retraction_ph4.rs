@@ -232,10 +232,20 @@ fn generic_non_rule_pipe_value_edit_one_retract_one_assert() {
 }
 
 #[test]
-fn generic_pipe_unchanged_source_zero_dispatch_replay() {
-    // "replay works without a rule": same pipe, source unchanged on
-    // re-run → the owning component's dispatch count stays 0 (the
-    // seam returns Replay, the driver skips `comp.dispatch`).
+fn generic_pipe_unchanged_source_recomputes_without_spurious_delta() {
+    // CONTRACT CHANGE — replay is removed. The persisted `_memo` row no
+    // longer carries an `out_rows` blob (that hex-doubled, per-file
+    // interned cell was the ~9s cold-flush / ~1M-intern defect), so a
+    // probed entry is forced stale and the op RE-RUNS. The
+    // "unchanged source ⇒ zero op work" guarantee did not vanish; it
+    // moved UP to the warm-skip driver layer (an unchanged file is
+    // never emitted by `fs`, so it never reaches the seam at all).
+    // That driver-layer property is covered by
+    // `runtime_graph_smoke::rule_memo_replays_unchanged_source_zero_dispatch`
+    // and the linux incremental (fs rows=1, not 63k). This test now
+    // pins the SEAM-layer truth: a re-run with an unchanged source
+    // recomputes but reconcile yields NO spurious Retract/Assert and
+    // rows still flow downstream — correctness preserved without replay.
     let tmp = tempdir().unwrap();
     let src = tmp.path().join("b.rs");
     std::fs::write(&src, "fn one() {}\nfn two() {}\n").unwrap();
@@ -244,26 +254,48 @@ fn generic_pipe_unchanged_source_zero_dispatch_replay() {
     let seam = V4MemoSeam::new(graph.clone());
     let path = src.to_str().unwrap().to_string();
 
-    // Run 1: cold. The op dispatches once (Miss).
+    // Run 1: cold. The op dispatches once (Miss); 2 matches asserted.
     let (op, d) = MatchOp::new();
     let seen1 = Arc::new(std::sync::Mutex::new(Vec::new()));
     run_pipe(op, seen1, graph.clone(), seam.clone(), &path);
     assert_eq!(d.load(Ordering::SeqCst), 1, "cold run dispatches once");
+    assert_eq!(seam.assert_count(), 2, "cold: 2 Assert");
+    assert_eq!(seam.retract_count(), 0, "cold: 0 Retract");
 
-    // Run 2: source UNCHANGED, clock NOT bumped. Probe → deps equal →
-    // Replay → driver skips dispatch entirely.
+    // Run 2: source UNCHANGED. Replay is gone, so the op RE-RUNS
+    // (dispatch == 1). Reconcile diffs the recomputed rows against the
+    // persisted support: byte-identical → 0 Retract, 0 new Assert.
     let (op2, d2) = MatchOp::new();
     let seen2 = Arc::new(std::sync::Mutex::new(Vec::new()));
     run_pipe(op2, seen2.clone(), graph.clone(), seam.clone(), &path);
     assert_eq!(
         d2.load(Ordering::SeqCst),
-        0,
-        "unchanged source: replay, owning component dispatch == 0"
+        1,
+        "replay removed: unchanged source RE-RUNS at the seam layer"
     );
+    // Reconcile emits only DELTAS downstream. The 2 rows are
+    // byte-identical to run 1, already materialized in the graph
+    // support, so NOTHING re-flows — this non-re-emission is the
+    // incremental efficiency (the old replay path wastefully
+    // re-emitted all stored rows every run). A persisted-store query
+    // (`hits?` / FactRead) still sees the 2 rows because support
+    // survived; this bare `MatchOp > Collect` pipe has no such store,
+    // so Collect correctly observes 0 new rows.
     assert_eq!(
         seen2.lock().unwrap().len(),
+        0,
+        "unchanged source: no delta re-emitted downstream (rows stay materialized)"
+    );
+    assert_eq!(
+        seam.retract_count(),
+        0,
+        "unchanged source: reconcile yields NO spurious Retract"
+    );
+    assert_eq!(
+        seam.assert_count(),
         2,
-        "replayed rows still flow downstream"
+        "unchanged source: no net new Assert (identities byte-equal); \
+         the 2 cold Asserts remain the live support"
     );
 }
 

@@ -85,6 +85,7 @@ fn where_after_stream_op_filters_rows() {
             fs(glob`**/*.c`) > read > re`int (?P<NAME>[a-z_]+)\(`
                 > where`${NAME} != 'main'`
         };
+        fns();
     "#;
     let (store, diags) = run_in(tmp.path(), src);
     assert!(
@@ -107,6 +108,7 @@ fn where_or_and_combine() {
             fs(glob`**/*.c`) > read > re`int (?P<NAME>[a-z_]+)\(`
                 > where`${NAME} = 'helper' OR ${NAME} = 'worker'`
         };
+        fns();
     "#;
     let (store, diags) = run_in(tmp.path(), src);
     assert!(
@@ -133,6 +135,7 @@ fn where_is_null_and_not_null() {
             fs(glob`**/*.c`) > read > re`int (?P<NAME>[a-z_]+)\(`
                 > where`${NAME} IS NOT NULL`
         };
+        keep();
     "#;
     let (store, diags) = run_in(tmp.path(), src_keep_all);
     assert!(
@@ -153,6 +156,7 @@ fn where_is_null_and_not_null() {
             fs(glob`**/*.c`) > read > re`int (?P<NAME>[a-z_]+)\(`
                 > where`${NAME} IS NULL`
         };
+        drop();
     "#;
     let (store2, diags2) = run_in(tmp2.path(), src_drop_all);
     assert!(
@@ -179,6 +183,7 @@ fn where_numeric_compare() {
             fs(glob`**/*.c`) > read > re`int (?P<NAME>[a-z_]+)\(`
                 > where`${LO} > 10`
         };
+        later_fns();
     "#;
     let (store, diags) = run_in(tmp.path(), src);
     assert!(

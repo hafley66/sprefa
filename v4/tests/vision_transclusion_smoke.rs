@@ -382,7 +382,9 @@ fn scene_d_language_form_transclusion() {
     // via `read`; the drained cursor's focal value renders into the
     // outer template slot. The outer rule writes one row whose value
     // is the rendered document.
-    let src = "rule(:doc) { `# A\n${ fs > glob`**/a.txt` > read }\n# B\n${ fs > glob`**/b.txt` > read }` };";
+    // Rule = function: the declaration is inert; the bare `doc()` call
+    // runs the body and writes the rendered row.
+    let src = "rule(:doc) { `# A\n${ fs > glob`**/a.txt` > read }\n# B\n${ fs > glob`**/b.txt` > read }` }; doc();";
 
     let (program, parse_diags) = host_parse(src);
     assert!(parse_diags.is_empty(), "parse: {:?}", parse_diags);

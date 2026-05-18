@@ -137,7 +137,7 @@ fn re_matches_after_read_loads_bytes() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:hits) { fs > glob`**/*.txt` > read > re`hello` };",
+        "rule(:hits) { fs > glob`**/*.txt` > read > re`hello` }; hits();",
     );
     assert_eq!(
         store.len("hits"),
@@ -156,7 +156,7 @@ fn re_without_read_does_not_auto_load_bytes() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:hits) { fs > glob`**/*.txt` > re`hello` };",
+        "rule(:hits) { fs > glob`**/*.txt` > re`hello` }; hits();",
     );
     assert_eq!(
         store.len("hits"),
@@ -245,7 +245,7 @@ fn ast_matches_after_read_loads_bytes() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:hits) { fs > glob`**/*.c` > read > ast(:c)`printk($$$)` };",
+        "rule(:hits) { fs > glob`**/*.c` > read > ast(:c)`printk($$$)` }; hits();",
     );
     assert_eq!(
         store.len("hits"),
@@ -267,7 +267,7 @@ fn ast_without_read_source_reads_path_cursor() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:hits) { fs > glob`**/*.c` > ast(:c)`printk($$$)` };",
+        "rule(:hits) { fs > glob`**/*.c` > ast(:c)`printk($$$)` }; hits();",
     );
     assert_eq!(
         store.len("hits"),
@@ -288,7 +288,7 @@ fn ast_source_reads_after_fs_glob_filter_arg() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:hits) { fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)` };",
+        "rule(:hits) { fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)` }; hits();",
     );
     assert_eq!(
         store.len("hits"),
@@ -305,7 +305,7 @@ fn json_matches_after_read_loads_bytes() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:hits) { fs > glob`**/*.json` > read > json`{ name: $N, age: $AGE }` };",
+        "rule(:hits) { fs > glob`**/*.json` > read > json`{ name: $N, age: $AGE }` }; hits();",
     );
     assert_eq!(
         store.len("hits"),
@@ -326,7 +326,7 @@ fn json_without_read_source_reads_path_cursor() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:hits) { fs > glob`**/*.json` > json`{ name: $N, age: $AGE }` };",
+        "rule(:hits) { fs > glob`**/*.json` > json`{ name: $N, age: $AGE }` }; hits();",
     );
     assert_eq!(
         store.len("hits"),

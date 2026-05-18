@@ -22,6 +22,7 @@ pub mod runtime_graph;
 pub mod runtime_replay;
 pub mod source;
 pub mod source_clock;
+pub mod source_index;
 pub mod sprf_introspect;
 pub mod sql;
 pub mod store;

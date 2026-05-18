@@ -77,8 +77,11 @@ fn rule_empty_body_with_param_captures_declares_columns() {
 }
 
 #[test]
-fn rule_with_body_still_writes_rows() {
-    let src = "rule(:greet) { `hello world` };";
+fn rule_with_body_writes_rows_when_called() {
+    // Rule = function: declaring `rule(:greet){…}` no longer runs the
+    // body (auto_run removed). Invoking it via `greet?()` writes the
+    // row — declaration is dormant, the call drives the body.
+    let src = "rule(:greet) { `hello world` }; greet();";
     let (store, diags) = run_pipes(src);
     assert!(
         diags.is_empty(),

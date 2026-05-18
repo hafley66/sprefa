@@ -28,5 +28,10 @@ rule(:hits, FS?, LO?, HI?) {
   fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)`
 };
 
+# Rule = function. Declaring it does NOT run it (auto_run removed).
+# The bare call runs the body (fs-walk → ast → FactWrite(hits)); the
+# query then reads the materialized table and reports each site.
+hits();
+
 hits?(FS?, LO?, HI?)
   > lsp_warn(:printk_site)`printk at ${FS}:${LO}`;

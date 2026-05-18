@@ -80,6 +80,14 @@ impl SourceReader {
     /// to the raw `value` string (a stable per-rev key — its bytes do
     /// not change under a worktree edit, which is the case the CLI
     /// incremental run exercises).
+    /// The absolute filesystem path `c` resolves to, WITHOUT reading
+    /// it. Same resolution as `fingerprint_cursor`/`read_cursor_*`; used
+    /// by the no-read memo staleness oracle (`source_index`) so deciding
+    /// "this file did not move" never opens the file.
+    pub fn resolve_abs(&self, c: &Cursor) -> Option<PathBuf> {
+        self.resolve_cursor_path(c)
+    }
+
     fn resolve_cursor_path(&self, c: &Cursor) -> Option<PathBuf> {
         if c.value.is_empty() {
             let store = self.store.as_ref()?;

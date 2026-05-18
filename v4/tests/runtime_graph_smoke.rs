@@ -786,6 +786,12 @@ fn parsing_a_file_records_its_source_id_in_memo_deps() {
             .with_batch_cap(10)
             .with_runtime(graph.clone()),
     );
+    // Memo-deps recording is now in-RAM with a single end-of-run
+    // batched flush (the per-row sqlite write was a cold N+1). The
+    // recording still happens during expand; this test asserts the
+    // PERSISTED form, so it must trigger the run's flush — exactly what
+    // the CLI does after expand completes.
+    graph.flush();
     graph.store.flush();
     facts.commit(1, None);
 

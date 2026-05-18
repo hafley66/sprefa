@@ -14,16 +14,16 @@ use v4::Cursor;
 #[test]
 fn e2e_source_to_fact_store() {
     // ── 1. source ─────────────────────────────────────────────────────
-    // Mirrors v4_parse_smoke / v4_walk_smoke shape. `rule(:greet)` opens
-    // the sink, the `{ str `hello world` }` body emits one row.
-    // Bare backtick at pipe-step lowers to `str` sugar (no whitespace
-    // permitted between an op name and its `` ` `` slot opener).
-    let src = "rule(:greet) { `hello world` };";
+    // Rule = function: `rule(:greet){…}` declares (inert); the bare
+    // `greet()` call runs the body. Two statements ⇒ two pipes; the
+    // call pipe is what writes the row. Bare backtick at pipe-step
+    // lowers to `str` sugar.
+    let src = "rule(:greet) { `hello world` }; greet();";
 
     // ── 2. parse ──────────────────────────────────────────────────────
     let (program, parse_diags) = host_parse(src);
     assert!(parse_diags.is_empty(), "parse diags: {:?}", parse_diags);
-    assert_eq!(program.len(), 1, "expected one pipe");
+    assert_eq!(program.len(), 2, "decl + call = two statements");
 
     // ── 3. walk ───────────────────────────────────────────────────────
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
@@ -40,17 +40,21 @@ fn e2e_source_to_fact_store() {
             .map(|d| (d.code.as_ref(), d.message.as_str()))
             .collect::<Vec<_>>()
     );
-    assert_eq!(pipes.len(), 1, "expected one lowered pipe");
+    assert_eq!(pipes.len(), 2, "decl pipe + call pipe");
 
     // ── 4. expand ─────────────────────────────────────────────────────
+    // Run the program in statement order: the decl pipe is inert, the
+    // call pipe runs `body > FactWrite(greet)`.
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    let inst = pipes.into_iter().next().unwrap().into_pipe().into_instance();
-    expand(
-        &inst,
-        queue,
-        vec![Arc::new(Cursor::default())],
-        ExpandOpts::default(),
-    );
+    for fused in pipes {
+        let inst = fused.into_pipe().into_instance();
+        expand(
+            &inst,
+            queue.clone(),
+            vec![Arc::new(Cursor::default())],
+            ExpandOpts::default(),
+        );
+    }
 
     // ── 5. assert FactStore writes ────────────────────────────────────
     assert_eq!(store.len("greet"), 1, "rule should have written one row");

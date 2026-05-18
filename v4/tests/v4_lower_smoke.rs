@@ -94,17 +94,25 @@ fn four_slot_lower_smoke() {
         )
         .unwrap();
 
-    let rule_pipe = reg
-        .lower(
-            &LowerCtx::new(store.clone(), dir.clone()),
-            "rule",
-            None,
-            vec![(Value::atom("greet"), br(0, 5))],
-            Some((body, br(7, 30))),
-            None,
-            br(0, 30),
-        )
-        .expect("rule lowers");
+    // `RuleDef::lower` is declaration-only now (returns an empty pipe;
+    // no auto-run). It REGISTERS the rule. The runnable body is the
+    // registered rule's `body > FactWrite(sink)` pipe — exactly what a
+    // bare `greet()` call lowers to. Fetch it from the (persistent) ctx.
+    let rule_ctx = LowerCtx::new(store.clone(), dir.clone());
+    reg.lower(
+        &rule_ctx,
+        "rule",
+        None,
+        vec![(Value::atom("greet"), br(0, 5))],
+        Some((body, br(7, 30))),
+        None,
+        br(0, 30),
+    )
+    .expect("rule lowers");
+    let rule_pipe = rule_ctx
+        .get_rule("greet")
+        .expect("rule registered")
+        .into_pipe();
 
     let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
     let inst = rule_pipe.into_instance();

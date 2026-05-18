@@ -46,7 +46,7 @@ fn run(src: &str) -> Arc<dyn FactStore<Cursor>> {
 /// After: nested str pipe drains "hi" cursor, slot renders to "out=hi".
 #[test]
 fn rule_body_renders_nested_str_subpipe() {
-    let src = "rule(:greet) { `out=${ str`hi` }` };";
+    let src = "rule(:greet) { `out=${ str`hi` }` }; greet();";
     let store = run(src);
     assert_eq!(store.len("greet"), 1, "expected one row");
     let rows = store.rows_of("greet");
@@ -59,7 +59,7 @@ fn rule_body_renders_nested_str_subpipe() {
 /// Multiple carveouts in one template — each independently drained.
 #[test]
 fn rule_body_renders_multiple_subpipes() {
-    let src = "rule(:pair) { `${ str`a` }-${ str`b` }` };";
+    let src = "rule(:pair) { `${ str`a` }-${ str`b` }` }; pair();";
     let store = run(src);
     assert_eq!(store.len("pair"), 1);
     let rows = store.rows_of("pair");
@@ -105,7 +105,7 @@ fn render_holes_can_nest_multiple_levels() {
 #[test]
 fn rule_body_term_carveout_still_works() {
     // Existing v4_e2e_smoke shape: cursor.value carried through unchanged.
-    let src = "rule(:greet) { `hello world` };";
+    let src = "rule(:greet) { `hello world` }; greet();";
     let store = run(src);
     assert_eq!(store.len("greet"), 1);
     assert_eq!(&*store.rows_of("greet")[0].value, "hello world");

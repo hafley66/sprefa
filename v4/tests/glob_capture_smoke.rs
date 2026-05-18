@@ -50,7 +50,8 @@ fn single_segment_capture_binds_term() {
     // rule_decl_smoke convention: bareword + `?` = declared binder col).
     let store = run_in(
         tmp.path(),
-        "rule(:bits, STEM?, EXT?) { fs > glob`${STEM?}.${EXT?}` };",
+        // Rule = function: declaring no longer runs the body; the call does.
+        "rule(:bits, STEM?, EXT?) { fs > glob`${STEM?}.${EXT?}` }; bits();",
     );
     let rows = store.rows_of("bits");
     assert_eq!(rows.len(), 2);
@@ -92,7 +93,7 @@ fn multi_segment_capture_with_triple_dollar() {
 
     let store = run_in(
         tmp.path(),
-        "rule(:tree, PARENT?, FILE?) { fs > glob`$$${PARENT?}/${FILE?}.rs` };",
+        "rule(:tree, PARENT?, FILE?) { fs > glob`$$${PARENT?}/${FILE?}.rs` }; tree();",
     );
     let rows = store.rows_of("tree");
     assert_eq!(rows.len(), 1);
@@ -120,7 +121,7 @@ fn multi_segment_via_double_star_and_single_capture() {
     // with PARENT = "deep" (single segment) and FILE = "leaf".
     let store = run_in(
         tmp.path(),
-        "rule(:tree, PARENT?, FILE?) { fs > glob`**/${PARENT?}/${FILE?}.rs` };",
+        "rule(:tree, PARENT?, FILE?) { fs > glob`**/${PARENT?}/${FILE?}.rs` }; tree();",
     );
     let rows = store.rows_of("tree");
     assert_eq!(rows.len(), 1);
@@ -137,7 +138,7 @@ fn no_match_filters_cursor() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("just.txt"), b"x").unwrap();
 
-    let store = run_in(tmp.path(), "rule(:nope) { fs > glob`${X?}.never` };");
+    let store = run_in(tmp.path(), "rule(:nope) { fs > glob`${X?}.never` }; nope();");
     let rows = store.rows_of("nope");
     assert_eq!(rows.len(), 0, "no path matches *.never");
 }
@@ -150,7 +151,7 @@ fn pattern_only_no_captures_still_filters() {
     std::fs::write(tmp.path().join("a.rs"), b"x").unwrap();
     std::fs::write(tmp.path().join("b.txt"), b"y").unwrap();
 
-    let store = run_in(tmp.path(), "rule(:rs) { fs > glob`**/*.rs` };");
+    let store = run_in(tmp.path(), "rule(:rs) { fs > glob`**/*.rs` }; rs();");
     let rows = store.rows_of("rs");
     assert_eq!(rows.len(), 1);
     assert!(rows[0].value.ends_with(".rs"));

@@ -65,6 +65,20 @@ pub struct LowerCtx {
     /// reconstructs the same `mount_id` because the tag rides inside
     /// the persisted SQL text. See `sql::with_query_site_tag`.
     query_site: Arc<AtomicU64>,
+    /// Warm-skip predicate for the `fs` source. `Some(f)` ⇒ `f(path)`
+    /// is `true` for files UNCHANGED since the prior run (recorded
+    /// `_memo_deps` identity == current no-read identity); `fs` then
+    /// never emits a cursor for them, so they are never parsed,
+    /// probed, or re-emitted (their `hits` rows persist in the fact
+    /// store, retraction being owner-scoped). `None` / cold run ⇒ no
+    /// skipping. Composed with the static `glob` filter in `FsDef`.
+    pub warm_skip: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+    /// Warm dirty-slice for the `fs` source. `Some(paths)` ⇒ `fs` emits
+    /// exactly these (changed tracked deps ∪ git-dirty) instead of
+    /// running its `WalkBuilder` over the whole tree — no 63k-entry
+    /// readdir/stat on a warm run. `None` ⇒ cold run ⇒ full walk.
+    /// `Some(empty)` ⇒ warm, nothing changed ⇒ `fs` emits nothing.
+    pub warm_slice: Option<Arc<Vec<PathBuf>>>,
     /// Span of the op call currently being lowered. Set by the
     /// Registry around each `OperatorDef::lower_call_with_chain`
     /// invocation. Ops that anchor end-of-run diagnostics (no per-row
@@ -106,6 +120,8 @@ impl LowerCtx {
             sprf_store: None,
             config: None,
             telemetry: None,
+            warm_skip: None,
+            warm_slice: None,
             apply_seq: Arc::new(AtomicU64::new(0)),
             query_site: Arc::new(AtomicU64::new(0)),
             current_call_span: Cell::new(None),
@@ -140,6 +156,22 @@ impl LowerCtx {
         } else {
             Arc::from(format!("{pre}{name}").as_str())
         }
+    }
+    /// Install the warm-skip predicate (see field docs). Threaded by
+    /// the host before `walk_program`; tests/other callers leave it
+    /// `None` and keep prior full-walk behavior.
+    pub fn with_warm_skip(
+        mut self,
+        f: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    ) -> Self {
+        self.warm_skip = Some(f);
+        self
+    }
+    /// Install the warm dirty-slice (see field docs). `None` keeps the
+    /// full-walk behavior for cold runs / non-host callers.
+    pub fn with_warm_slice(mut self, paths: Option<Arc<Vec<PathBuf>>>) -> Self {
+        self.warm_slice = paths;
+        self
     }
     /// Set the `.sprf` script directory used by `fs`'s branch-3
     /// fallback. The host (`SprfState::run`) threads `req.path`'s parent

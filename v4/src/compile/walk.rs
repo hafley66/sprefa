@@ -55,7 +55,13 @@ pub fn walk_program(
     // ── pass 2: lower per-pipe; route rule bodies through the fuser ─
     for p in program {
         if let Some(pipe) = walk_pipe(p, reg, ctx, &mut diags) {
-            maybe_auto_expand(&pipe, p, ctx);
+            // V4 rule model: ONE execution path. A bare `r(…)` call
+            // lowers to its `body > FactWrite(sink)` pipe and is
+            // expanded ONCE by the host (app.rs / run_in) in statement
+            // order with the run seed (carrying `--root`, warm context).
+            // No declaration-time auto-run, no lower-time double-run.
+            // `rule(:r){…}` declarations and `r?(…)` queries never run
+            // a body.
             let head = p.steps.first();
             let fused = match head {
                 Some(op) if op.name.as_ref() == "rule" => {
@@ -125,42 +131,6 @@ fn collect_rule_decl_cols(
         }
     }
     out
-}
-
-/// Drive a pipe through a fresh expander when it's a self-driving form
-/// (rule declaration with a body, dotted-apply, or rule sink-write
-/// position). Other shapes (fs > ast > …) need an external seed and
-/// remain caller-driven.
-fn maybe_auto_expand(pipe: &Pipe<Cursor>, ast: &PipeAst, ctx: &LowerCtx) {
-    if !is_self_driving(ast, ctx) {
-        return;
-    }
-    use effect_runtime::v2::{expand, ExpandOpts, MemQueue, QueueBackend};
-    let inst = pipe.clone().into_instance();
-    let queue: Arc<dyn QueueBackend<Cursor>> =
-        Arc::new(MemQueue::new());
-    expand(
-        &inst,
-        queue,
-        vec![Arc::new(Cursor::default())],
-        ExpandOpts::default(),
-    );
-}
-
-/// A pipe is "self-driving" if its head is a bare/force rule CALL
-/// (`r(…)` / `r!(…)`) — the call must run the body at statement time.
-/// Query heads (`r?(…)`) and external generators (`fs > ast > …`) stay
-/// caller-driven: they need an external seed. Rule declarations
-/// (`rule(:r,…){…}`) stay dormant until called.
-fn is_self_driving(ast: &PipeAst, ctx: &LowerCtx) -> bool {
-    let Some(head) = ast.steps.first() else {
-        return false;
-    };
-    if head.predicate {
-        return false; // r?(…) is a query, needs a seed
-    }
-    // Bare/force call against a declared rule → run body now.
-    ctx.store.declared_cols(&head.name).is_some()
 }
 
 /// Walk one pipe. Concat per-op `Pipe<Cursor>` via `Pipe::extend`. If

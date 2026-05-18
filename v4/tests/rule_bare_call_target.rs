@@ -11,7 +11,9 @@
 
 use std::sync::Arc;
 
-use effect_runtime::v2::{FactStore, MemFactStore};
+use effect_runtime::v2::{
+    expand, ExpandOpts, FactStore, MemFactStore, MemQueue, QueueBackend,
+};
 use v4::compile::parse::host_parse;
 use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
@@ -21,13 +23,27 @@ fn count_rows(store: &Arc<dyn FactStore<Cursor>>, table: &str) -> usize {
     store.iter_table(table).map(|i| i.count()).unwrap_or(0)
 }
 
+/// Lower the program, then RUN it. Single execution model: a bare
+/// `r(…)` call lowers to its `body > FactWrite` pipe; the body runs
+/// when the host expands that pipe (here, in statement order), not at
+/// lower time. Lowering alone is not execution.
 fn walk(src: &str) -> (Arc<dyn FactStore<Cursor>>, Vec<effect_runtime::v2::Diag>) {
     let store: Arc<dyn FactStore<Cursor>> = Arc::new(MemFactStore::<Cursor>::new());
     let reg = default_registry();
     let (program, pdiags) = host_parse(src);
     assert!(pdiags.is_empty(), "parse diags: {pdiags:?}");
     let mut ctx = LowerCtx::new(store.clone(), std::env::temp_dir());
-    let (_pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
+    let (pipes, walk_diags) = walk_program(&program, &reg, &mut ctx);
+    let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+    for fused in pipes {
+        let inst = fused.into_pipe().into_instance();
+        expand(
+            &inst,
+            queue.clone(),
+            vec![Arc::new(Cursor::default())],
+            ExpandOpts::default(),
+        );
+    }
     (store, walk_diags)
 }
 

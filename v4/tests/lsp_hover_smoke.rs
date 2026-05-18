@@ -205,7 +205,11 @@ async fn lsp_hover_outside_dsl_returns_empty() {
 async fn lsp_hover_on_host_op_reports_cursor_flow_count() {
     let (_state, client) = build_in_process(std::env::temp_dir());
 
-    let src = "rule(:words, WORD?) { `alpha beta` > split(WORD?)` ` };";
+    // Rule = function: declaring no longer runs the body (auto_run
+    // removed); runtime cursor-flow at `split` exists only once the
+    // function is invoked. Appended call drives it; "split" byte
+    // offset and span 37..52 are within the decl, unchanged.
+    let src = "rule(:words, WORD?) { `alpha beta` > split(WORD?)` ` }; words();";
     client
         .lsp_open(LspOpenReq {
             uri: "file:///cursor-flow-hover.sprf".into(),

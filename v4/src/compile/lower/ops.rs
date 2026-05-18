@@ -231,29 +231,19 @@ impl OperatorDef for RuleDef {
             return Ok(Pipe::new());
         }
 
-        // Bodied form: declare + register the rule. The body executes
-        // as part of declaration only when its column list is wholly
-        // binders (TERM?) — those are the rows the body itself
-        // produces. With any grounded `:atom` column the body expects
-        // caller-supplied values, so it stays dormant until an apply.
+        // Bodied form: declare + register the rule, then STOP. A rule
+        // is a function: declaring it never runs its body. The body
+        // runs only when the rule is CALLED — `r(…)`/`r!(…)` self-drive
+        // at statement time (walk::is_self_driving), and a `r?(…)` query
+        // of a self-producing rule has its body spliced ahead of the
+        // read in walk_program. (Previously a declaration-time
+        // `auto_run` heuristic re-ran the body whenever every column was
+        // a `NAME?` term; that conflated declaration with invocation
+        // and is removed.)
         let body = block.unwrap();
         let rule = Rule::new(name.clone(), ctx.store.clone(), name, &cols, body);
-        ctx.register_rule(rule.clone());
-
-        // A column came from a `:name` atom argument → its `ValueKind::Atom`
-        // was stringified into `col_strings`. A column came from a
-        // `NAME?` bareword desugar → its `ValueKind::Pipe` produced a
-        // `term_bind` step (binds_terms non-empty). We re-walk the
-        // original args to recover which shape supplied each col.
-        let auto_run = args[1..].iter().all(|a| match a.kind() {
-            ValueKind::Atom(_) => false,
-            ValueKind::Pipe(p) => !p.binds_terms().is_empty(),
-        });
-        if auto_run {
-            Ok(rule.into_pipe())
-        } else {
-            Ok(Pipe::new())
-        }
+        ctx.register_rule(rule);
+        Ok(Pipe::new())
     }
 }
 
@@ -504,9 +494,32 @@ impl OperatorDef for FsDef {
         // folder). The walk root is chosen per input cursor at run time;
         // `ctx.root` is deliberately NOT baked in here.
         let mut comp = FsComponent::new(ctx.sprf_dir.clone(), 1024);
-        if let Some(filter) = args.first() {
-            comp = comp.with_source_filter(source_path_filter(filter)?);
+        // Compose the static `glob` filter (keep iff matches) with the
+        // warm-skip predicate (drop iff UNCHANGED since prior run). A
+        // path enters the runtime queue only if it matches the glob
+        // AND is not a clean replay. Cold run ⇒ `warm_skip` None ⇒
+        // glob-only, full walk.
+        let glob_filter: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>> =
+            match args.first() {
+                Some(filter) => Some(source_path_filter(filter)?),
+                None => None,
+            };
+        let warm = ctx.warm_skip.clone();
+        match (glob_filter, warm) {
+            (Some(g), Some(w)) => {
+                comp = comp.with_source_filter(Arc::new(move |p: &str| {
+                    g(p) && !w(p)
+                }));
+            }
+            (Some(g), None) => {
+                comp = comp.with_source_filter(g);
+            }
+            (None, Some(w)) => {
+                comp = comp.with_source_filter(Arc::new(move |p: &str| !w(p)));
+            }
+            (None, None) => {}
         }
+        comp = comp.with_warm_slice(ctx.warm_slice.clone());
         if let Some(s) = &ctx.sprf_store {
             comp = comp.with_sprf_store(s.clone());
         }

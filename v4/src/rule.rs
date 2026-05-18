@@ -292,7 +292,18 @@ impl RuleInvokeComponent {
         steps.push(Arc::new(InvokeCollector { sink: sink.clone() }));
         let inst = PipeInstance::new(steps);
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
+        // Inner expand batch cap. `ExpandOpts::default()` is 256, so a
+        // 63k-file corpus dispatches in ~248 batches → ~248 separate
+        // subscription + insert transactions (the N+1 in the telemetry).
+        // Crank it to an insane default so the whole corpus flows in one
+        // dispatch batch → one transaction. Env-overridable, shares the
+        // same knob app.rs uses for the fact-store insert batch.
+        let batch_cap = std::env::var("SPREFA_BATCH_CAP")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(1 << 20);
         let mut opts = ExpandOpts::default()
+            .with_batch_cap(batch_cap)
             .with_bus(ctx.bus.clone())
             .with_diag(ctx.diag.clone());
         // Phase 3: carry the RuntimeGraph into the rule body so its
@@ -358,13 +369,23 @@ impl Component for RuleInvokeComponent {
             .collect();
 
         if !self.force {
-            // Content-hash staleness: replay only if every recorded
-            // dep's file bytes are byte-identical now. A coarse rule
-            // whose input is a directory (auto_run root) has an
-            // unreadable fingerprint ⇒ STALE ⇒ body re-runs, and the
-            // INNER `ast`/`read` owners' per-file content-memo carries
-            // the replay win. No clock / event bump consulted.
-            if let Some((val, stale)) = graph.memo().probe_ch(&owner_id, &in_key, &deps) {
+            // No-read staleness: replay only if every recorded dep's
+            // identity (git OID / stat, from the per-run oracle) is
+            // unchanged — unchanged files are never opened. A coarse
+            // rule whose input is a directory has no resolvable dep
+            // path ⇒ STALE ⇒ body re-runs, and the INNER `ast`/`read`
+            // owners' per-file memo carries the replay win. No clock /
+            // event bump consulted.
+            let idx_hint = deps
+                .iter()
+                .find_map(|(_, _, _, p)| {
+                    (!p.is_empty()).then(|| std::path::PathBuf::from(p))
+                })
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let idx = graph.source_index(&idx_hint);
+            if let Some((val, stale)) =
+                graph.memo().probe_ch(&owner_id, &in_key, &deps, idx)
+            {
                 if !stale {
                     // Pure replay: do NOT run the rule body.
                     return rows_to_node(val.out_rows);
@@ -390,13 +411,18 @@ impl Component for RuleInvokeComponent {
             use crate::source_clock::{SourceClock, SourceId};
             let sid = SourceId::for_file(&path);
             let gen_seen = graph.clock().current_gen(sid);
-            // Fingerprint the input file's current bytes (a directory
-            // input hashes to None → empty hex → STALE next run, which
-            // is the correct conservative default for a coarse rule).
-            let content_hex = std::fs::read(&path)
-                .ok()
-                .map(|b| blake3::hash(&b).to_hex().to_string())
-                .unwrap_or_default();
+            // No-read identity (git OID / stat) of the input file —
+            // NOT a blake3 of its bytes, and recorded in the SAME
+            // tagged form the probe decodes. A non-file input (a
+            // directory / unresolvable path) records an empty identity
+            // → STALE next run, the correct conservative default for a
+            // coarse rule. Files never get opened here.
+            let p = std::path::Path::new(&path);
+            let content_hex = if p.is_file() {
+                graph.source_index(p).identity(p).encode()
+            } else {
+                String::new()
+            };
             graph.record_memo_dep(
                 &owner_id,
                 &in_key,

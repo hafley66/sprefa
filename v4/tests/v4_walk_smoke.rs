@@ -66,6 +66,22 @@ fn walk_smoke_rule_str() {
                 }],
             }),
         }],
+    },
+    // Rule = function: the declaration above is inert. A bare `greet()`
+    // call statement is what runs `body > FactWrite(greet)`.
+    PipeAst {
+        span: br(31, 38),
+        steps: vec![OpCall {
+            name: Arc::<str>::from("greet"),
+            force: false,
+            predicate: false,
+            apply: false,
+            span: br(31, 38),
+            flow: None,
+            args: vec![],
+            dsl: None,
+            block: None,
+        }],
     }];
 
     let mut ctx = LowerCtx::new(store.clone(), dir.clone());
@@ -78,17 +94,18 @@ fn walk_smoke_rule_str() {
             .map(|d| (d.code.as_ref(), d.message.as_str()))
             .collect::<Vec<_>>()
     );
-    assert_eq!(pipes.len(), 1, "expected one pipe");
+    assert_eq!(pipes.len(), 2, "decl pipe + call pipe");
 
-    let fused = pipes.into_iter().next().unwrap();
-    let inst = fused.into_pipe().into_instance();
     let q: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-    expand(
-        &inst,
-        q,
-        vec![Arc::new(Cursor::default())],
-        ExpandOpts::default(),
-    );
+    for fused in pipes {
+        let inst = fused.into_pipe().into_instance();
+        expand(
+            &inst,
+            q.clone(),
+            vec![Arc::new(Cursor::default())],
+            ExpandOpts::default(),
+        );
+    }
 
     assert_eq!(store.len("greet"), 1, "rule wrote one row");
     let rows = store.rows_of("greet");

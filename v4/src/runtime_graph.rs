@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use std::borrow::Cow;
@@ -107,6 +107,32 @@ pub struct RuntimeGraph {
     /// result cache; hot tier is a bounded `StripedLru`, cold tier the
     /// `MEMO` fact table.
     memo: Arc<crate::memo::Memo>,
+    /// Per-run no-read staleness oracle (git OID / stat snapshot). Built
+    /// ONCE, lazily, on the first probe or dispatch that needs it; the
+    /// `OnceLock` makes the two sides order-independent (a recorded
+    /// absolute dep path and the scan root resolve to the same git
+    /// toplevel, so whichever side builds first wins identically).
+    source_index: std::sync::OnceLock<crate::source_index::SourceIndex>,
+    /// Read-side cache for `_memo_deps`, keyed by `(owner_op_id,
+    /// in_key)`. The seam probes ONE owner/in_key per input row, so a
+    /// 63k-file run did 63k×2 `read_where` point-queries (prepare +
+    /// 6-col join + 495k-row `sprf_strings` subselect, serialized
+    /// through one mutexed sqlite conn) — the read-side N+1. This loads
+    /// the whole table ONCE (`rows_of`) on first access; `record_memo_*`
+    /// is write-through so reads stay correct after a same-run rewrite.
+    /// `None` = not yet loaded.
+    memo_deps_cache: Arc<
+        Mutex<Option<HashMap<(String, String), Vec<(String, u64, String, String)>>>>,
+    >,
+    /// `(owner_op_id, in_key)` pairs whose `_memo_deps` changed this
+    /// run. `flush_memo_deps` persists exactly these (1 on a 1-file
+    /// incremental edit), NOT the whole owner — flush cost ∝ changes.
+    memo_deps_dirty: Arc<Mutex<std::collections::HashSet<(String, String)>>>,
+    /// `(owner, in_key)` pairs present in `_memo_deps` at load time.
+    /// Only these need delete-before-insert on flush; a cold run starts
+    /// empty ⇒ flush is pure `insert_batch`, zero deletes.
+    memo_deps_loaded_keys:
+        Arc<Mutex<std::collections::HashSet<(String, String)>>>,
 }
 
 /// Reasons `run_to_quiescence` may bail out before draining.
@@ -408,6 +434,10 @@ impl RuntimeGraph {
             rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
             clock,
             memo,
+            source_index: std::sync::OnceLock::new(),
+            memo_deps_cache: Arc::new(Mutex::new(None)),
+            memo_deps_dirty: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            memo_deps_loaded_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -427,6 +457,10 @@ impl RuntimeGraph {
             rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
             clock,
             memo,
+            source_index: std::sync::OnceLock::new(),
+            memo_deps_cache: Arc::new(Mutex::new(None)),
+            memo_deps_dirty: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            memo_deps_loaded_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -439,6 +473,149 @@ impl RuntimeGraph {
     /// The disk-backed memo (Phase 3).
     pub fn memo(&self) -> &Arc<crate::memo::Memo> {
         &self.memo
+    }
+
+    /// The per-run no-read staleness oracle. Built once from `hint`
+    /// (the scan root on the dispatch side, or any recorded absolute
+    /// dependency path on the probe side — both resolve to the same git
+    /// toplevel). Two `git` invocations total per process.
+    pub fn source_index(&self, hint: &Path) -> &crate::source_index::SourceIndex {
+        self.source_index
+            .get_or_init(|| crate::source_index::SourceIndex::build(hint))
+    }
+
+    /// Warm-skip predicate for the `fs` source. Returns a closure
+    /// `path -> bool` that is `true` when the path's current no-read
+    /// `SourceIdentity` equals the identity recorded in `_memo_deps`
+    /// from a prior run (i.e. the file is UNCHANGED and must NOT be
+    /// re-emitted: its `hits` rows are already materialized in the
+    /// persistent fact store and `replace_supports` is owner-scoped, so
+    /// an un-rendered owner keeps its rows). A cold run (`_memo_deps`
+    /// empty) yields a closure that always returns `false` — skip
+    /// nothing, full corpus processed. A path with no recorded dep also
+    /// returns `false` (new/unseen file → process it). `hint` resolves
+    /// the git toplevel for the no-read oracle.
+    /// Snapshot recorded identities from `_memo_deps`: abs source_path
+    /// → content_id. Same file recorded by multiple owners has an
+    /// identical content_id, so last-write-wins is correct. Empty ⇒
+    /// cold run (nothing memoized yet).
+    fn recorded_dep_identities(&self) -> HashMap<String, String> {
+        let mut recorded: HashMap<String, String> = HashMap::new();
+        let guard = self.memo_deps_loaded();
+        if let Some(map) = guard.as_ref() {
+            for rows in map.values() {
+                for (_sid, _gen, content_id, source_path) in rows {
+                    if !source_path.is_empty() {
+                        recorded.insert(source_path.clone(), content_id.clone());
+                    }
+                }
+            }
+        }
+        recorded
+    }
+
+    /// The exact set of absolute paths to feed `fs` on a WARM run, with
+    /// NO tree walk: every recorded dep whose current no-read identity
+    /// moved (edits/commits to tracked files), plus the `SourceIndex`
+    /// worktree-dirty set. `None` ⇒ cold run (no recorded deps) ⇒ `fs`
+    /// falls back to its full `WalkBuilder`. `Some(empty)` ⇒ warm run,
+    /// nothing changed ⇒ `fs` emits zero (the persisted `hits` rows
+    /// already answer the query). LIMITATION: brand-new untracked files
+    /// on a warm run are not enumerated here (`git status -uno`); they
+    /// surface on the next cold/full pass.
+    /// Task #6: changed-set from the O(1) repo-state token instead of
+    /// 63k per-file `_memo_deps` rows. `None` ⇒ cold (no prior token).
+    /// `Some(set)` ⇒ warm: tracked files that moved across HEAD
+    /// (`git diff prev..HEAD`) ∪ the current worktree-dirty/untracked
+    /// set ∪ the prior run's dirty set (a file dirty last run must be
+    /// re-evaluated even if reverted). While HEAD is fixed no
+    /// tracked-clean file can move, so the token alone is sufficient —
+    /// no per-file identity row needed.
+    fn warm_token_changed(
+        &self,
+        hint: &Path,
+    ) -> Option<std::collections::HashSet<PathBuf>> {
+        let compact = self.compact_sources.as_ref()?;
+        let (prev_head, prev_dirty) = compact.load_repo_state()?;
+        let _ = self.source_index(hint);
+        let si = self
+            .source_index
+            .get()
+            .expect("source_index initialized above");
+        let mut out: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
+        for p in si.diff_names_since(&prev_head) {
+            out.insert(p);
+        }
+        for p in si.dirty_abs() {
+            out.insert(p);
+        }
+        for (path, _id) in &prev_dirty {
+            out.insert(PathBuf::from(path));
+        }
+        Some(out)
+    }
+
+    pub fn warm_changed_paths(&self, hint: &Path) -> Option<Vec<PathBuf>> {
+        if self.compact_sources.is_some() {
+            return self
+                .warm_token_changed(hint)
+                .map(|s| s.into_iter().collect());
+        }
+        let recorded = self.recorded_dep_identities();
+        if recorded.is_empty() {
+            return None;
+        }
+        let _ = self.source_index(hint);
+        let si = self
+            .source_index
+            .get()
+            .expect("source_index initialized above");
+        let mut out: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
+        for (path, rec) in &recorded {
+            if *rec != si.identity(Path::new(path)).encode() {
+                out.insert(PathBuf::from(path));
+            }
+        }
+        for p in si.dirty_abs() {
+            out.insert(p);
+        }
+        Some(out.into_iter().collect())
+    }
+
+    pub fn warm_skip_predicate(
+        &self,
+        hint: &Path,
+    ) -> Arc<dyn Fn(&str) -> bool + Send + Sync> {
+        if self.compact_sources.is_some() {
+            // Token path: skip (return true) any file NOT in the
+            // changed set. Cold (no token) ⇒ always-false ⇒ skip
+            // nothing ⇒ full corpus, same self-gating as before.
+            return match self.warm_token_changed(hint) {
+                None => Arc::new(|_: &str| false),
+                Some(set) => Arc::new(move |path: &str| {
+                    !set.contains(Path::new(path))
+                }),
+            };
+        }
+        let recorded = self.recorded_dep_identities();
+        if recorded.is_empty() {
+            return Arc::new(|_: &str| false);
+        }
+        // Build the oracle once (shared OnceLock); clone the handle for
+        // the closure via a fresh build off the same hint — the oracle
+        // is process-global state, so resolve it through `self`.
+        let _ = self.source_index(hint);
+        let si = self
+            .source_index
+            .get()
+            .expect("source_index initialized above")
+            .clone();
+        Arc::new(move |path: &str| match recorded.get(path) {
+            Some(rec) => *rec == si.identity(Path::new(path)).encode(),
+            None => false,
+        })
     }
 
     /// `_memo_deps` columns. `content_id` is the blake3 hex of the
@@ -471,24 +648,26 @@ impl RuntimeGraph {
         content_hex: &str,
         source_path: &str,
     ) {
-        self.facts.declare(MEMO_DEPS_TABLE, Self::MEMO_DEPS_COLS);
+        // In-RAM only. NO per-call sqlite (that was a cold N+1).
+        // Persisted once by `flush_memo_deps`.
         let sid = source.hex();
-        self.facts.delete_matching(
-            MEMO_DEPS_TABLE,
-            &[
-                ("owner_op_id", owner_op_id),
-                ("in_key", in_key),
-                ("source_id", sid.as_str()),
-            ],
-        );
-        let mut row = Cursor::default();
-        row.set("owner_op_id", owner_op_id.to_string());
-        row.set("in_key", in_key.to_string());
-        row.set("source_id", sid);
-        row.set("gen_seen", gen_seen.to_string());
-        row.set("content_id", content_hex.to_string());
-        row.set("source_path", source_path.to_string());
-        self.facts.insert(MEMO_DEPS_TABLE, Arc::new(row));
+        let mut guard = self.memo_deps_loaded();
+        let m = guard.as_mut().unwrap();
+        let e = m
+            .entry((owner_op_id.to_string(), in_key.to_string()))
+            .or_default();
+        e.retain(|(s, _, _, _)| s != &sid);
+        e.push((
+            sid,
+            gen_seen,
+            content_hex.to_string(),
+            source_path.to_string(),
+        ));
+        drop(guard);
+        self.memo_deps_dirty
+            .lock()
+            .unwrap()
+            .insert((owner_op_id.to_string(), in_key.to_string()));
     }
 
     /// Phase 2 (batched): persist the FULL recorded dep set for one
@@ -515,9 +694,8 @@ impl RuntimeGraph {
         if deps.is_empty() {
             return;
         }
-        self.facts.declare(MEMO_DEPS_TABLE, Self::MEMO_DEPS_COLS);
         // Dedup by source_id, keeping the last (gen, content, path) seen
-        // in this drain.
+        // in this drain. In-RAM only; persisted once by `flush_memo_deps`.
         let mut by_source: std::collections::BTreeMap<String, (u64, String, String)> =
             std::collections::BTreeMap::new();
         for (source, gen_seen, content_hex, path) in deps {
@@ -526,27 +704,177 @@ impl RuntimeGraph {
                 (*gen_seen, content_hex.clone(), path.clone()),
             );
         }
-        // One delete for the whole (owner, in_key) — then re-insert the
-        // full current set. Equivalent to per-source delete+insert when
-        // the drain carries the complete dep set (it does).
-        self.facts.delete_matching(
-            MEMO_DEPS_TABLE,
-            &[("owner_op_id", owner_op_id), ("in_key", in_key)],
-        );
-        let rows: Vec<Arc<Cursor>> = by_source
+        let set: Vec<(String, u64, String, String)> = by_source
             .into_iter()
             .map(|(sid, (gen_seen, content_hex, path))| {
-                let mut row = Cursor::default();
-                row.set("owner_op_id", owner_op_id.to_string());
-                row.set("in_key", in_key.to_string());
-                row.set("source_id", sid);
-                row.set("gen_seen", gen_seen.to_string());
-                row.set("content_id", content_hex);
-                row.set("source_path", path);
-                Arc::new(row)
+                (sid, gen_seen, content_hex, path)
             })
             .collect();
-        self.facts.insert_batch(MEMO_DEPS_TABLE, rows);
+        // This drain IS the complete set for (owner, in_key) — replace
+        // the cached entry wholesale.
+        let mut guard = self.memo_deps_loaded();
+        guard
+            .as_mut()
+            .unwrap()
+            .insert((owner_op_id.to_string(), in_key.to_string()), set);
+        drop(guard);
+        self.memo_deps_dirty
+            .lock()
+            .unwrap()
+            .insert((owner_op_id.to_string(), in_key.to_string()));
+    }
+
+    /// Load `_memo_deps` into RAM ONCE (one `rows_of` query) and return
+    /// the locked map. Every probe/record is served from here; the only
+    /// sqlite touch is this one load + one `flush_memo_deps` write. The
+    /// seam probes one `(owner, in_key)` per input row, so per-call
+    /// `read_where`/`insert` were 63k× N+1s on both sides.
+    #[allow(clippy::type_complexity)]
+    fn memo_deps_loaded(
+        &self,
+    ) -> std::sync::MutexGuard<
+        '_,
+        Option<HashMap<(String, String), Vec<(String, u64, String, String)>>>,
+    > {
+        let mut guard = self.memo_deps_cache.lock().unwrap();
+        if guard.is_none() {
+            let mut m: HashMap<
+                (String, String),
+                Vec<(String, u64, String, String)>,
+            > = HashMap::new();
+            let mut loaded = self.memo_deps_loaded_keys.lock().unwrap();
+            if self.compact_sources.is_some() {
+                // Task #6: the compact (CLI) path persists NO per-file
+                // `_memo_deps` across runs — the warm-slice is the O(1)
+                // repo-state token. The in-RAM cache starts empty and is
+                // populated transiently this run by `record_memo_deps`
+                // for the handful of rendered owners (probe within the
+                // run). Nothing to load from disk.
+            } else {
+                // In-memory / no-compact (tests): keep the FactStore
+                // path so the schema is known and prior rows load.
+                self.facts.declare(MEMO_DEPS_TABLE, Self::MEMO_DEPS_COLS);
+                for r in self.facts.rows_of(MEMO_DEPS_TABLE) {
+                    let owner = r.get("owner_op_id").unwrap_or("").to_string();
+                    let ik = r.get("in_key").unwrap_or("").to_string();
+                    let sid = r.get("source_id").unwrap_or("").to_string();
+                    let gen = r
+                        .get("gen_seen")
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    let content = r.get("content_id").unwrap_or("").to_string();
+                    let path = r.get("source_path").unwrap_or("").to_string();
+                    loaded.insert((owner.clone(), ik.clone()));
+                    m.entry((owner, ik))
+                        .or_default()
+                        .push((sid, gen, content, path));
+                }
+            }
+            *guard = Some(m);
+        }
+        guard
+    }
+
+    fn memo_deps_entry(
+        &self,
+        owner_op_id: &str,
+        in_key: &str,
+    ) -> Vec<(String, u64, String, String)> {
+        self.memo_deps_loaded()
+            .as_ref()
+            .unwrap()
+            .get(&(owner_op_id.to_string(), in_key.to_string()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Persist exactly the `(owner, in_key)` pairs written this run, in
+    /// ONE `insert_batch`. A `delete_matching` is issued only for pairs
+    /// that existed in `_memo_deps` at load time (a cold run starts
+    /// empty ⇒ zero deletes; a 1-file incremental edit ⇒ one delete +
+    /// one tiny insert). Cost ∝ changes, NOT corpus. Idempotent.
+    pub fn flush_memo_deps(&self) {
+        if self.compact_sources.is_some() {
+            // Task #6: the compact path no longer persists ANY per-file
+            // `_memo_deps` row. The warm-slice is driven entirely by the
+            // O(1) repo-state token (`flush()` writes it). Nothing on
+            // the CLI run path reads per-owner deps for unchanged files
+            // (verified: dirty-sweep + memo replay are test-only / dead;
+            // a rendered changed owner with no recorded dep just MISSes
+            // and recomputes — correct). The 63k-row end-of-run write is
+            // gone outright.
+            return;
+        }
+
+        let dirty: Vec<(String, String)> = {
+            let mut d = self.memo_deps_dirty.lock().unwrap();
+            if d.is_empty() {
+                return;
+            }
+            d.drain().collect()
+        };
+        let guard = self.memo_deps_loaded();
+        let map = guard.as_ref().unwrap();
+        let mut loaded = self.memo_deps_loaded_keys.lock().unwrap();
+
+        // In-memory / no-compact (tests): FactStore path unchanged.
+        self.facts.declare(MEMO_DEPS_TABLE, Self::MEMO_DEPS_COLS);
+        let mut rows: Vec<Arc<Cursor>> = Vec::new();
+        for (o, ik) in &dirty {
+            if loaded.contains(&(o.clone(), ik.clone())) {
+                self.facts.delete_matching(
+                    MEMO_DEPS_TABLE,
+                    &[("owner_op_id", o.as_str()), ("in_key", ik.as_str())],
+                );
+            }
+            if let Some(set) = map.get(&(o.clone(), ik.clone())) {
+                for (sid, gen_seen, content_hex, path) in set {
+                    let mut row = Cursor::default();
+                    row.set("owner_op_id", o.clone());
+                    row.set("in_key", ik.clone());
+                    row.set("source_id", sid.clone());
+                    row.set("gen_seen", gen_seen.to_string());
+                    row.set("content_id", content_hex.clone());
+                    row.set("source_path", path.clone());
+                    rows.push(Arc::new(row));
+                }
+            }
+            loaded.insert((o.clone(), ik.clone()));
+        }
+        if !rows.is_empty() {
+            self.facts.insert_batch(MEMO_DEPS_TABLE, rows);
+        }
+    }
+
+    /// End-of-run persist for the in-RAM memo + memo-deps layers. One
+    /// transaction each, cost ∝ changes not corpus. MUST be called once
+    /// after expand completes (the CLI does this) so the next process
+    /// can `rows_of`-load and replay.
+    pub fn flush(&self) {
+        self.memo.flush();
+        self.flush_memo_deps();
+        // Task #6: persist the O(1) repo-state token so the next run is
+        // WARM. Replaces the 63k-row `_memo_deps` end-of-run write. The
+        // token = current `git rev-parse HEAD` + the worktree
+        // dirty/untracked set with each file's no-read identity (the
+        // only files whose content can move while HEAD is fixed). The
+        // `SourceIndex` was eagerly initialized in `app.rs::run` before
+        // expand; if absent (some non-CLI path) skip — the next run
+        // simply falls back to a cold full walk, which is safe.
+        if let Some(compact) = &self.compact_sources {
+            if let Some(si) = self.source_index.get() {
+                let head = si.head_oid().unwrap_or("").to_string();
+                let dirty: Vec<(String, String)> = si
+                    .dirty_abs()
+                    .into_iter()
+                    .map(|p| {
+                        let id = si.identity(&p).encode();
+                        (p.to_string_lossy().into_owned(), id)
+                    })
+                    .collect();
+                compact.store_repo_state(&head, &dirty);
+            }
+        }
     }
 
     /// Phase 2: read back the recorded deps for one (owner, input row)
@@ -564,15 +892,9 @@ impl RuntimeGraph {
     /// `owner_op_id` filter then disambiguates the rare in_key
     /// collision across owners.
     pub fn memo_deps_of(&self, owner_op_id: &str, in_key: &str) -> Vec<(String, u64)> {
-        self.facts
-            .read_where(MEMO_DEPS_TABLE, "in_key", in_key)
+        self.memo_deps_entry(owner_op_id, in_key)
             .into_iter()
-            .filter(|r| r.get("owner_op_id") == Some(owner_op_id))
-            .filter_map(|r| {
-                let sid = r.get("source_id")?.to_string();
-                let gen = r.get("gen_seen")?.parse::<u64>().ok()?;
-                Some((sid, gen))
-            })
+            .map(|(sid, gen, _, _)| (sid, gen))
             .collect()
     }
 
@@ -586,18 +908,7 @@ impl RuntimeGraph {
         owner_op_id: &str,
         in_key: &str,
     ) -> Vec<(String, u64, String, String)> {
-        self.facts
-            .read_where(MEMO_DEPS_TABLE, "in_key", in_key)
-            .into_iter()
-            .filter(|r| r.get("owner_op_id") == Some(owner_op_id))
-            .filter_map(|r| {
-                let sid = r.get("source_id")?.to_string();
-                let gen = r.get("gen_seen")?.parse::<u64>().ok()?;
-                let content = r.get("content_id").unwrap_or("").to_string();
-                let path = r.get("source_path").unwrap_or("").to_string();
-                Some((sid, gen, content, path))
-            })
-            .collect()
+        self.memo_deps_entry(owner_op_id, in_key)
     }
 
     /// Phase 6 (dirty-source reverse-lookup, Diagram A). Given a
@@ -612,17 +923,17 @@ impl RuntimeGraph {
         &self,
         source: crate::source_clock::SourceId,
     ) -> Vec<(String, String)> {
+        // Served from the in-RAM `_memo_deps` cache, NOT sqlite:
+        // `record_memo_deps` is now in-RAM + a single end-of-run flush,
+        // so the sqlite table is empty mid-run. The dirty sweep drives
+        // off this, so it MUST see the live (uncommitted) dep set.
         let sid = source.hex();
-        let mut out: Vec<(String, String)> = self
-            .facts
-            .read_where(MEMO_DEPS_TABLE, "source_id", sid.as_str())
-            .into_iter()
-            .filter_map(|r| {
-                Some((
-                    r.get("owner_op_id")?.to_string(),
-                    r.get("in_key")?.to_string(),
-                ))
-            })
+        let guard = self.memo_deps_loaded();
+        let map = guard.as_ref().unwrap();
+        let mut out: Vec<(String, String)> = map
+            .iter()
+            .filter(|(_, set)| set.iter().any(|(s, _, _, _)| s == &sid))
+            .map(|((owner, in_key), _)| (owner.clone(), in_key.clone()))
             .collect();
         out.sort();
         out.dedup();
@@ -1445,6 +1756,14 @@ fn is_plain_fs_cursor(cursor: &Cursor) -> bool {
 impl CompactSourceGraph {
     fn open(path: &Path) -> Self {
         let conn = rusqlite::Connection::open(path).expect("open compact runtime graph sqlite");
+        // This is a SECOND connection to the same db file as the main
+        // fact store. Untuned it defaults to synchronous=FULL + a DELETE
+        // rollback journal, so every one of the ~248 per-run subscription
+        // transactions is a full fsync AND fights the main store's WAL
+        // connection for the file lock. Apply the same profile the main
+        // store uses (Safe = WAL + synchronous=NORMAL by default) so both
+        // connections share the WAL and commits stop blocking on fsync.
+        let _ = effect_runtime::v2::PragmaProfile::from_env().apply(&conn);
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS runtime_source_subscription_compact (
                 owner_id TEXT PRIMARY KEY,
@@ -1459,13 +1778,63 @@ impl CompactSourceGraph {
                 generation INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS runtime_source_subscription_compact_source
-                ON runtime_source_subscription_compact(source_id);",
+                ON runtime_source_subscription_compact(source_id);
+            CREATE TABLE IF NOT EXISTS _repo_state (
+                id        INTEGER PRIMARY KEY CHECK (id = 0),
+                head_oid  TEXT NOT NULL,
+                dirty_set TEXT NOT NULL
+            );",
         )
         .expect("create compact source graph tables");
         Self {
             conn: Mutex::new(conn),
             write_stats: WriteStats::new("runtime_graph.compact_source_subscriptions"),
         }
+    }
+
+    /// The run-to-run repo-state token (task #6 — kills the per-corpus
+    /// `_memo_deps` N+1). `None` ⇒ no prior run recorded ⇒ COLD (full
+    /// walk). `Some((head_oid, dirty))` ⇒ WARM: `head_oid` is the prior
+    /// run's `git rev-parse HEAD`; `dirty` is the prior run's
+    /// worktree-dirty/untracked `(abs_path, identity_encoding)` set (the
+    /// only files whose identity can move while HEAD is fixed). One row.
+    fn load_repo_state(&self) -> Option<(String, Vec<(String, String)>)> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT head_oid, dirty_set FROM _repo_state WHERE id = 0")
+            .ok()?;
+        stmt.query_row([], |row| {
+            let head: String = row.get(0)?;
+            let blob: String = row.get(1)?;
+            Ok((head, blob))
+        })
+        .ok()
+        .map(|(head, blob)| {
+            let dirty = blob
+                .split('\n')
+                .filter(|l| !l.is_empty())
+                .filter_map(|l| {
+                    l.split_once('\u{1f}')
+                        .map(|(p, i)| (p.to_string(), i.to_string()))
+                })
+                .collect();
+            (head, dirty)
+        })
+    }
+
+    /// Upsert the single repo-state token row.
+    fn store_repo_state(&self, head_oid: &str, dirty: &[(String, String)]) {
+        let blob = dirty
+            .iter()
+            .map(|(p, i)| format!("{p}\u{1f}{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO _repo_state (id, head_oid, dirty_set) VALUES (0, ?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET head_oid = ?1, dirty_set = ?2",
+            rusqlite::params![head_oid, blob],
+        );
     }
 
     fn record(&self, subscriptions: &[SourceSubscriptionInput<'_>], generation: u64) {

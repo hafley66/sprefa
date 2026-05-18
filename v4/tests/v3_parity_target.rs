@@ -37,6 +37,7 @@ async fn runtime_lsp_warn_publishes_diagnostics_for_open_buffer() {
           `alpha`
           > lsp_warn(:v3_parity)`runtime warning`
         };
+        warns();
     "#;
 
     client
