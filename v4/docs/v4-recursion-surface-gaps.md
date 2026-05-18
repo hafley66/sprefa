@@ -63,7 +63,37 @@ GREEN. `v4/tests/recursion_fixpoint_target.rs`:
 Engine layer (`v4/src/fixpoint.rs`, `tests/retraction_ph6.rs`)
 remains the Rust-side proof; the surface no longer depends on it for
 the FullSql overload path (this wire loops the SQL directly).
-Retraction-after-recursion through this FullSql path is NOT
-implemented (the `support_edges` table here is disconnected from the
-`mounted_query_support` DRed); recursive rules are
-materialize-forward only for now.
+
+## Retraction gaps (two independent, both pinned RED)
+
+Retracting a base `edge` fact and watching `reach` follow needs TWO
+things wired. Demoed 2026-05-18: re-running the script with a source
+line removed changed nothing — `edge` did not retract, so `reach`
+never got the chance to cascade.
+
+**Part 1 — surface owner-reconcile for stream-fed rule writes
+(pre-existing, orthogonal to recursion).** `edge(X,Y)` lowers to a
+plain `FactWrite` (`sql.rs` -> `fact.rs`).
+`FactWrite::render_batch` records DRed support rows ONLY for input
+cursors carrying `mounted_query::SUPPORT_CURSOR_ID`
+(`fact.rs:101-104`); a literal/stream head never sets it, so
+`store.insert_batch` (`fact.rs:125`) is insert-only with no
+generation/owner reconcile. Owner-scoped retraction is wired only
+for the `fs>read>re` hits-owner path and the mounted SQL-query
+support path. Pinned: `tests/surface_owner_retract_target.rs`
+(`rerun_with_dropped_source_row_retracts_owner_fact`, `#[ignore]`).
+
+**Part 2 — DRed link from the recursive FullSql loop (this wire).**
+`run_fused_sql`'s recursive loop is `INSERT OR IGNORE` only, with no
+link to `mounted_query_support` / `cascade_retract` (the
+`support_edges` table it writes is disconnected from the real DRed).
+Recursive rules are materialize-forward. Pinned:
+`tests/retract_recursion_demo.rs`
+(`retract_base_edge_cascades_recursive_reach`, `#[ignore]`) — rides
+on Part 1 and additionally asserts the recursive re-closure.
+
+The engine proves the cascade is possible
+(`retraction_ph6.rs::recursive_transitive_closure_terminates_and_retracts`,
+`cascade_retract` over the `reach` closure) but only at the Rust
+store level. Both specs assert the SOUND target and are `#[ignore]`'d
+so the gate stays green while the gaps are explicit.
