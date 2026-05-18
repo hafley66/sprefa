@@ -2,6 +2,8 @@
 name = "v4"
 version = "0.1.0"
 edition = "2021"
+# sprf fixtures in v4/examples are not cargo example bins
+autoexamples = false
 
 [features]
 default = ["ghcache"]
