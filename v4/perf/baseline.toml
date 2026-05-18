@@ -164,3 +164,74 @@ verdict = "proves the wiring works; proves it is unsafe without source invalidat
 
 # main comparison (prebuilt main e47b0e95, unchanged): cold 5.06s,
 # incremental 4.49s — carried from [cold.main]/[incremental.main].
+
+# ════════════════════════════════════════════════════════════════════
+# CONTENT-HASH FIX (feat/memo-content-stale off feat/memo-perf-fix).
+# Staleness oracle is now blake3(input file bytes) vs the hash
+# recorded when the component last read it (`Memo::probe_ch` ->
+# `is_stale_content`, v4/src/memo.rs). It does NOT consult
+# `FactStoreClock`/`gen_seen`/any event bump, so it is correct on the
+# one-shot CLI. The memo seam IS now installed on the primary CLI
+# expand (v4/src/app.rs). `_memo_deps` carries new `content_id` +
+# `source_path` columns; the fingerprint is the same blake3 the store
+# mints at intern time (no second hashing scheme).
+#
+# Result: replay fires AND the edit is detected. Incremental skips the
+# tree-sitter parse for the 63481 unchanged files (ast stage rows
+# 63482 -> 1, ast parse_ms 18600.9 -> 0.8) while still re-reading
+# 1.3GB to recompute hashes (expected/accepted). The "before" column
+# is the seam-OFF full-recompute path ([postfix.*.branch]: incremental
+# 53.45s) — the only CORRECT CLI behavior prior to this fix.
+#
+# Measured this session, release --bin sprefa-run built in the
+# worktree, --telemetry --fact-db <persistent>, linux fixture.
+# Incremental edit: append one `printk("x");` to net/netfilter/
+# xt_LED.c; fixture restored byte-exact after (git checkout; cmp OK
+# vs pre-saved pristine; sha 033c1b3a...; dirty count back to the 13
+# pre-existing files, xt_LED.c clean).
+# ════════════════════════════════════════════════════════════════════
+
+[contenthash.headline]
+staleness_oracle             = "blake3(input file bytes) vs recorded hash; clock-independent"
+seam_installed_on_cli        = true
+cold_hits                    = 16627
+incremental_hits             = 16628    # CORRECT — edit detected (the bug was 16627)
+incremental_over_cold_wall   = 0.23     # 15.70s / 68.31s — parse skipped for unchanged
+parse_skipped_for_unchanged  = true     # ast rows 63482->1, ast parse_ms 18600.9->0.8
+before_fix_cli_incremental_s = 53.45    # seam-off full recompute (only prior-correct path)
+after_fix_cli_incremental_s  = 15.70    # 3.4x faster AND correct
+note = "both correctness (16628) and speed (15.70s « 53.45s) achieved with one oracle"
+
+[contenthash.cold.branch]   # seam ON, content-hash oracle, fresh db
+wall_s               = 68.31
+rss_peak_MB          = 306
+hits_rows            = 16627
+ast_stage_rows       = 63482
+ast_stage_wall_ms    = 36775.4
+ast_parse_ms         = 18600.9
+ast_read_ms          = 9305.7
+ast_match_ms         = 2089.1
+ast_parses           = 4495
+memo_facts_rows      = 63482
+memo_deps_facts_rows = 63483
+
+[contenthash.incremental.branch]   # seam ON, +1 printk in xt_LED.c, same db
+wall_s               = 15.70       # « 68.31 cold; « 53.45 prior seam-off CLI
+rss_peak_MB          = 112
+hits_rows            = 16628       # CORRECT — the edit is detected
+ast_stage_rows       = 1           # cold 63482 — 63481 inputs REPLAYED from memo
+ast_stage_wall_ms    = 3.2         # cold 36775.4
+ast_parse_ms         = 0.8         # cold 18600.9 — parse collapsed to ~0
+ast_match_ms         = 0.1         # cold 2089.1
+ast_parses           = 1           # only the one edited file re-parsed
+ast_source_reads     = 1           # ast inputs=1 (others replayed pre-ast)
+memo_facts_rows      = 63482       # replayed count > 0 (63481 of 63482 replayed)
+memo_deps_facts_rows = 63483
+expand_ms            = 15537.1     # remainder: memo probe + 1.3GB content re-hash
+                                   # (accepted per mandate; PARSE is what's skipped)
+
+# before/after (CLI, the only path that was ever correct pre-fix):
+#   before (seam OFF, full recompute): incr 53.45s, hits 16628
+#   after  (content-hash seam ON):     incr 15.70s, hits 16628
+# main e47b0e95 (no retraction chain): cold 5.06s, incr 4.49s
+#   (carried; main has no memo/replay layer — a different shape)

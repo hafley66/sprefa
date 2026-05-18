@@ -1556,37 +1556,29 @@ impl SprfHandlers for SprfState {
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(65536);
-        // Phase 3/4: the memo/replay/reconcile seam is intentionally
-        // NOT installed on the one-shot `run` path.
-        //
-        // Installing it (and the now-aligned dep keying below) makes
-        // source-headed replay mechanically fire — measured: linux
-        // incremental wall 53.8s → 9.0s, ast dispatch → 0ms,
-        // `_memo_facts` 0 → 63482. But it is UNSAFE here: the seam's
-        // staleness is `Memo::is_stale`, a gen-compare of the recorded
-        // `gen_seen` against `FactStoreClock::current_gen`. That clock
-        // is a path-keyed counter advanced ONLY by an explicit
-        // `bump()` from an event layer (fs-watch / lsp / fact-write).
-        // `sprefa-run` is one-shot: it has NO file-change event layer,
-        // and the only `bump` in this path is for `table:` sources.
-        // So across two CLI invocations sharing `--fact-db`, an edited
-        // .c file's `file:` gen never advances, `is_stale` returns
-        // false for it too, and the seam REPLAYS the edited file's
-        // stale memo rows — silently dropping the edit (observed:
-        // linux `hits` 16627 instead of the correct 16628).
-        //
-        // Correcting this needs a content/mtime invalidation inside
-        // the staleness check. `Memo::is_stale` is shared with the
-        // Ph4/Ph5/Ph6 retraction suites, which depend on the
-        // explicit-`bump` contract; changing it is a third mechanism
-        // beyond the two dep/memo seams in scope. Replay is therefore
-        // left disabled on this path until an invalidation source
-        // exists (root-caused; not faked).
+        // The memo/replay/reconcile seam IS installed on the one-shot
+        // `run` path. It is now SAFE: the seam's staleness
+        // (`Memo::probe_ch` → `is_stale_content`) is decided by
+        // re-hashing each recorded dep's bytes on disk vs the hash the
+        // component recorded when it last read them. That decision is a
+        // pure function of the file bytes and consults neither
+        // `FactStoreClock` nor any event-layer `bump()`. So across two
+        // `sprefa-run` invocations sharing `--fact-db`, an edited .c
+        // file's recorded content hash no longer matches its on-disk
+        // bytes → the seam probes STALE and the edit is detected
+        // (linux `hits` 16628, correct); every unchanged file's hash
+        // still matches → REPLAY, so its ~tree-sitter parse is skipped.
+        // The ~7s re-read of 1.3GB to recompute hashes is expected and
+        // dwarfed by the ~20s parse it lets us skip.
+        let memo_seam = crate::memo_seam_impl::V4MemoSeam::new(
+            self.runtime_graph.clone(),
+        );
         let opts = ExpandOpts::default()
             .with_batch_cap(batch_cap)
             .with_bus(self.bus.clone())
             .with_diag(runtime_diags.clone())
-            .with_runtime(self.runtime_graph.clone());
+            .with_runtime(self.runtime_graph.clone())
+            .with_memo_seam::<crate::Cursor>(memo_seam);
         let opts = match telemetry.as_ref() {
             Some(t) => opts.with_telemetry(t.effect.clone()),
             None => opts,
