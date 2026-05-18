@@ -4,7 +4,7 @@
 //! and consumed by the fuser. The graph records, for every capture:
 //!   - binding_site: (ScopeId, OpIdx)
 //!   - read_sites: Vec<(ScopeId, OpIdx, ReadCtx)>
-//!   - provenance: RegexGroup | AstMetavar | CursorBind | RuleProj | RuleParam | Literal
+//!   - source: RegexGroup | AstMetavar | CursorBind | RuleProj | RuleParam | Literal
 //!   - value_lattice: TypeLattice — bytes ⊑ string ⊑ tokens ⊑ tree, with id-types as parallel refinements
 //!   - constraints: Eq(other) | LiteralPin(StringId|i64) | NullImpossible
 //!   - fanout: Dead | Once | Many
@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use effect_runtime::v2::{FactStore, MemFactStore};
 use v4::compile::binding_graph::{
-    build_graph, CaptureInfo, Fanout, Provenance, ReadCtx, TypeLattice,
+    build_graph, CaptureInfo, Fanout, CaptureSource, ReadCtx, TypeLattice,
 };
 use v4::compile::parse::host_parse;
 use v4::lower::{default_registry, LowerCtx};
@@ -85,9 +85,9 @@ fn dead_capture_detected() {
 }
 
 #[test]
-fn provenance_tagged_for_ast_and_rule_proj() {
-    // X from ast metavar → AstMetavar provenance.
-    // Y read from upstream rule projection → RuleProj provenance.
+fn source_tagged_for_ast_and_rule_proj() {
+    // X from ast metavar → AstMetavar source.
+    // Y read from upstream rule projection → RuleProj source.
     let src = r#"
         rule(:hits, :FS, :X) { ast(:c)`fn ${X?}()` };
         rule(:caller, :FS, :X) { hits(FS?, X?) > where`${X} != "main"` }
@@ -97,17 +97,17 @@ fn provenance_tagged_for_ast_and_rule_proj() {
 
     let x = caller.captures.get("X").unwrap();
     assert!(
-        matches!(x.provenance, Provenance::RuleProj { ref rule, ref col } if rule.as_ref() == "hits" && col.as_ref() == "X"),
-        "X provenance must be RuleProj{{hits, X}}, got {:?}",
-        x.provenance
+        matches!(x.source, CaptureSource::RuleProj { ref rule, ref col } if rule.as_ref() == "hits" && col.as_ref() == "X"),
+        "X source must be RuleProj{{hits, X}}, got {:?}",
+        x.source
     );
 
     let hits_body = &g.bodies[g.rule_body_id("hits").unwrap()];
     let xh = hits_body.captures.get("X").unwrap();
     assert!(
-        matches!(xh.provenance, Provenance::AstMetavar { .. }),
-        "X in hits body provenance must be AstMetavar, got {:?}",
-        xh.provenance
+        matches!(xh.source, CaptureSource::AstMetavar { .. }),
+        "X in hits body source must be AstMetavar, got {:?}",
+        xh.source
     );
 }
 

@@ -8,7 +8,7 @@
 //!
 //!   `build_graph` — produces a `ProgramFlowGraph` per program with
 //!     one `TermFlowGraph` per rule body. Each capture in a body
-//!     carries its binding site, read sites, provenance, value
+//!     carries its binding site, read sites, source, value
 //!     lattice, constraint set, fanout, and crosses-scope flag. The
 //!     fuser (step 5 of the rules-as-tables patch series) consumes the
 //!     graph to apply five pre-computations:
@@ -535,7 +535,7 @@ pub enum TypeLattice {
 /// + col for projections). This keeps pattern matches on the fuser
 /// side concise.
 #[derive(Clone, Debug)]
-pub enum Provenance {
+pub enum CaptureSource {
     /// `(?P<NAME>…)` in a re body.
     RegexGroup { group: Arc<str> },
     /// `$NAME` / `$$$REST` in an ast pattern.
@@ -602,7 +602,7 @@ pub struct CaptureInfo {
     pub name: Arc<str>,
     pub binding_site: (ScopeId, OpIdx),
     pub read_sites: Vec<(ScopeId, OpIdx, ReadCtx)>,
-    pub provenance: Provenance,
+    pub source: CaptureSource,
     pub value_lattice: TypeLattice,
     pub constraints: Vec<CaptureConstraint>,
     pub fanout: Fanout,
@@ -800,7 +800,7 @@ fn build_body_graph(
                 name: col.clone(),
                 binding_site: (scope_id, usize::MAX),
                 read_sites: Vec::new(),
-                provenance: Provenance::RuleParam { col: col.clone() },
+                source: CaptureSource::RuleParam { col: col.clone() },
                 value_lattice: TypeLattice::String,
                 constraints: Vec::new(),
                 fanout: Fanout::Dead,
@@ -821,7 +821,7 @@ fn build_body_graph(
 
         if is_rule_call {
             // Rule call gets its own arg interpretation so RuleProj
-            // provenance wins over CursorBind on the same hole.
+            // source wins over CursorBind on the same hole.
             if let Some(rdecl) = rule_decls.get(&op.name) {
                 record_rule_call(
                     op,
@@ -908,7 +908,7 @@ fn record_binders(
     // Op-declared imperative cursor binds (fs sets FS, etc.).
     let cursor_binds: Vec<Arc<str>> = op_cursor_binds(&op.name);
     for name in cursor_binds {
-        let prov = Provenance::CursorBind { name: name.clone() };
+        let prov = CaptureSource::CursorBind { name: name.clone() };
         let lattice = cursor_bind_lattice(&op.name, &name);
         upsert_binder(captures, eq_classes, name, op_idx, scope_id, prov, lattice);
     }
@@ -928,7 +928,7 @@ fn record_binders(
             } = interp.kind
             {
                 let name = interp.name.clone();
-                let prov = ast_or_dsl_provenance(&op.name, &name);
+                let prov = ast_or_dsl_source(&op.name, &name);
                 let lattice = ast_or_dsl_lattice(&op.name);
                 upsert_binder(captures, eq_classes, name, op_idx, scope_id, prov, lattice);
             }
@@ -942,7 +942,7 @@ fn record_binders(
         let raw = strip_keyword_value(raw).unwrap_or(raw).trim();
         let name = host_binder_name(raw);
         if let Some(name) = name {
-            let prov = Provenance::CursorBind { name: name.clone() };
+            let prov = CaptureSource::CursorBind { name: name.clone() };
             upsert_binder(
                 captures,
                 eq_classes,
@@ -1100,7 +1100,7 @@ fn record_rule_call(
 
         // Hole `X?` / `${X?}` → projection from rule.
         if let Some(name) = host_binder_name(value) {
-            let prov = Provenance::RuleProj {
+            let prov = CaptureSource::RuleProj {
                 rule: op.name.clone(),
                 col: col_name.clone(),
             };
@@ -1157,7 +1157,7 @@ fn upsert_binder(
     name: Arc<str>,
     op_idx: OpIdx,
     scope_id: ScopeId,
-    prov: Provenance,
+    prov: CaptureSource,
     lattice: TypeLattice,
 ) {
     eq_classes.insert(name.clone());
@@ -1165,7 +1165,7 @@ fn upsert_binder(
         name: name.clone(),
         binding_site: (scope_id, op_idx),
         read_sites: Vec::new(),
-        provenance: prov.clone(),
+        source: prov.clone(),
         value_lattice: lattice.clone(),
         constraints: Vec::new(),
         fanout: Fanout::Dead,
@@ -1175,9 +1175,9 @@ fn upsert_binder(
     // the most specific id-shape seen across binders.
     let tightened = tighten_lattice(&entry.value_lattice, &lattice);
     entry.value_lattice = tightened;
-    if matches!(entry.provenance, Provenance::RuleParam { .. }) {
+    if matches!(entry.source, CaptureSource::RuleParam { .. }) {
         // A real binder upgrades a RuleParam placeholder.
-        entry.provenance = prov;
+        entry.source = prov;
         entry.binding_site = (scope_id, op_idx);
     }
 }
@@ -1195,7 +1195,7 @@ fn register_read(
         name: name.clone(),
         binding_site: (scope_id, usize::MAX),
         read_sites: Vec::new(),
-        provenance: Provenance::Literal,
+        source: CaptureSource::Literal,
         value_lattice: TypeLattice::String,
         constraints: Vec::new(),
         fanout: Fanout::Dead,
@@ -1310,13 +1310,13 @@ fn cursor_bind_lattice(op_name: &str, capture: &str) -> TypeLattice {
     }
 }
 
-fn ast_or_dsl_provenance(op_name: &str, name: &Arc<str>) -> Provenance {
+fn ast_or_dsl_source(op_name: &str, name: &Arc<str>) -> CaptureSource {
     match op_name {
-        "ast" => Provenance::AstMetavar { name: name.clone() },
-        "re" => Provenance::RegexGroup {
+        "ast" => CaptureSource::AstMetavar { name: name.clone() },
+        "re" => CaptureSource::RegexGroup {
             group: name.clone(),
         },
-        _ => Provenance::CursorBind { name: name.clone() },
+        _ => CaptureSource::CursorBind { name: name.clone() },
     }
 }
 

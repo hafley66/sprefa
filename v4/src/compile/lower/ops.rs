@@ -1621,7 +1621,7 @@ impl Op for AstOp {
         // FILE is a FileId FK. LO and HI are raw byte offsets stored
         // as INTEGER (not FKs) — they index into the file's bytes
         // directly. MATCH (added downstream) carries the WhereBytesId
-        // for provenance.
+        // for source.
         Liftable::Stream {
             schema: vec![
                 (Col::from("FILE"), IdKind::FileId),
