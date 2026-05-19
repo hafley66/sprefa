@@ -52,6 +52,13 @@ v4-test:
 v4-release:
     cargo build --manifest-path v4/Cargo.toml --release
 
+# Linux perf fixture: v3/tests/smoke/.fixtures/linux is a full kernel source
+# tree. It is treated like a git submodule but is intentionally gitignored
+# (too big to track; never re-clone it per worktree). It is NOT a real
+# submodule. On a fresh checkout run `just fixture-linux` once to provision it.
+fixture-linux LINUX="v3/tests/smoke/.fixtures/linux":
+    test -n "$(find '{{LINUX}}' -name '*.c' -print -quit 2>/dev/null)" && echo "linux fixture present ($(find '{{LINUX}}' -name '*.c' | wc -l | tr -d ' ') .c files)" || { echo "linux fixture missing — shallow-cloning torvalds/linux (depth 1)…"; rm -rf '{{LINUX}}'; git clone --depth 1 https://github.com/torvalds/linux.git '{{LINUX}}'; echo "provisioned ($(find '{{LINUX}}' -name '*.c' | wc -l | tr -d ' ') .c files, gitignored)"; }
+
 # Linux perf fixture lives in this checkout at v3/tests/smoke/.fixtures/linux.
 # Recipe parameters override positionally:
 #   just v4-bench-linux "v3/tests/smoke/.fixtures/linux" 'printk($$$)' 8 1 65536
