@@ -23,6 +23,48 @@ Reading order for getting back into v4 without replaying chat logs:
 17. [V4 V3 Parity Gaps](./v4-v3-parity-gaps.md)
 18. [V4 Next Slices](./v4-next-slices.md)
 
+## Milestone — recursion is reactive (2026-05-18, main `37bb93a5`)
+
+Plain version of what landed over the last few sessions.
+
+**Before:** a recursive rule (a rule that calls itself, e.g. "reach =
+one edge, OR reach-then-one-more-edge") only worked from hand-written
+Rust. At the `.sprf` surface it either did not close the loop or, once
+it did, it never un-derived anything: delete a fact from the source and
+the stale conclusions stuck around forever.
+
+**Now:** you can write transitive closure / reachability / a reactive
+state machine directly in `.sprf`, run it against a persistent
+`--fact-db`, edit the source, re-run, and the answer re-converges. Rows
+that lost their only reason to exist get retracted, not left behind.
+Working example: [`v4/examples/reactive-reach-retraction.sprf`](../examples/reactive-reach-retraction.sprf)
+(run it twice, delete a line between runs, watch `reach` shrink).
+
+The three things that made it work, in order:
+
+1. **Recursion runs at the surface.** A `rule(){ self?(...) > ... }`
+   overload now loops to a fixed point during a normal `sprefa-run`,
+   with a hard round cap so a runaway recursion fails loudly instead
+   of hanging.
+2. **Retraction is sound.** Every rule output is tracked back to what
+   derived it. Re-running over changed sources removes conclusions
+   whose support is gone, including transitively through the recursive
+   loop, scoped so unrelated writes are untouched.
+3. **The loop is wired into the reactor.** Each recursive rule now
+   advertises itself and subscribes to the source tables it depends
+   on, while structurally never subscribing to its own (or a
+   co-recursive sibling's) output, so a change-notification can never
+   feed itself into an infinite wake. A genuinely contradictory rule
+   graph (a relation depending on its own negation) surfaces as a
+   diagnostic instead of a silent wrong answer.
+
+Not yet on by default: skipping the recompute entirely when nothing
+changed. The code path exists behind `SPREFA_REC_INCREMENTAL=1` but
+the staleness signal available today is corpus-wide, not per-rule, so
+the safe default is "always recompute, never serve a stale closure."
+Sharpening that to a per-rule signal is the next step. Detail:
+[`v4-recursion-surface-gaps.md`](./v4-recursion-surface-gaps.md).
+
 Doc posture:
 
 - `human-goals.md` is the current human-authored intent artifact.
