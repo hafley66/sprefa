@@ -1,0 +1,50 @@
+# Reactive recursive retraction: a transition system whose reachable
+# set re-converges when the transition table changes.
+#
+# `trans(SRC, DST)` is the state machine's edge relation, loaded from a
+# constant block. A constant head => `full_extent` => owner-scoped
+# retraction is sound across re-runs sharing one --fact-db.
+#
+# `reach(SRC, DST)` is the transitive closure: every state reachable
+# from every state, the recursive rule. Edit the block, re-run against
+# the same --fact-db, and reach re-converges to the new least fixed
+# point: paths that lost their only derivation are RETRACTED, not left
+# stale (recursive rules clear + recompute the LFP each run).
+#
+# Ergonomics used here:
+#   - leading newline in the block is fine: `split_line` drops empty
+#     segments, so the table can start on its own line.
+#   - `re`${SRC?}\|${DST?}`` is the capture DSL: `${X?}` synthesises a
+#     named group bound to term X (no verbose `(?P<X>...)`).
+#   - column names avoid SQL reserved words (FROM/TO/ORDER as rule
+#     columns break the generated SQL — use SRC/DST/STATE/etc).
+#
+# Run twice against the SAME fact db, deleting the `idle|run` line
+# between runs:
+#   sprefa-run v4/examples/reactive-reach-retraction.sprf \
+#     --root . --fact-db /tmp/sm.db --show-rows
+#
+# Run 1 (4 transitions) reach = 6 pairs:
+#   boot->idle boot->run boot->done idle->run idle->done run->done
+# Delete `idle|run`, Run 2 (same /tmp/sm.db) reach = 3 pairs:
+#   boot->idle boot->done run->done
+# idle->run, idle->done, boot->run all lost their only derivation and
+# are retracted. No stale rows survive.
+
+rule(:trans, SRC?, DST?);
+
+`
+boot|idle
+idle|run
+run|done
+boot|done`
+  > split_line
+  > re`${SRC?}\|${DST?}`
+  > trans(SRC, DST);
+
+# Base: one transition is a length-1 reach.
+rule(:reach, SRC?, DST?) { trans?(SRC?, DST?) };
+
+# Recursive: extend any known reach by one more transition.
+# reach(SRC,MID) AND trans(MID,DST) => reach(SRC,DST).
+rule(:reach, SRC?, DST?) { reach?(SRC?, MID?) > trans?(MID?, DST?) };

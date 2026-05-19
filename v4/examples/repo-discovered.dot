@@ -1,0 +1,25 @@
+digraph repo_discovered {
+  rankdir=LR
+  labelloc=t
+  label="discovered transitive reach -- recursive rule"
+  node [shape=box style=rounded fontname=Helvetica]
+  edge [color=slategray]
+  app -> auth
+  app -> web
+  auth -> crypto
+  web -> http
+  http -> net
+  crypto -> net
+  net -> sys
+  app -> crypto
+  app -> http
+  auth -> net
+  web -> net
+  http -> sys
+  crypto -> sys
+  app -> net
+  auth -> sys
+  web -> sys
+  app -> sys
+
+}

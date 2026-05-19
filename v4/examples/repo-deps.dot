@@ -1,0 +1,14 @@
+digraph repo_deps {
+  rankdir=LR
+  labelloc=t
+  label="observed repo dependencies"
+  node [shape=box style=rounded fontname=Helvetica]
+  app -> auth
+  app -> web
+  auth -> crypto
+  web -> http
+  http -> net
+  crypto -> net
+  net -> sys
+
+}

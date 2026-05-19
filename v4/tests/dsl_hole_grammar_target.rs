@@ -316,3 +316,44 @@ fn triple_dollar_only_where_single_vs_multi_makes_sense() {
     // there. We don't run those through the runtime here — the contract
     // is "no per-DSL carveout", verified by reading source.
 }
+
+/// `re`${X?}|${Y?}`` — a literal `|` between capture holes is a literal
+/// delimiter, NOT regex alternation. The escaped form `${X?}\|${Y?}`
+/// lowers to the same pattern. A no-hole body stays raw regex.
+#[test]
+fn re_hole_literal_pipe_is_delimiter_not_alternation() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Unescaped pipe: both holes capture, split on the literal `|`.
+    let store = run_in(
+        tmp.path(),
+        "rule(:hits, X?, Y?) { `app|auth` > re`${X?}|${Y?}` }; hits();",
+    );
+    let rows = store.rows_of("hits");
+    assert_eq!(rows.len(), 1, "rows = {rows:?}");
+    assert_eq!(rows[0].get("X").unwrap_or(""), "app");
+    assert_eq!(
+        rows[0].get("Y").unwrap_or(""),
+        "auth",
+        "literal `|` must be a delimiter, not `X` OR `Y` (Y empty)"
+    );
+
+    // Escaped pipe lowers to the SAME pattern.
+    let store_esc = run_in(
+        tmp.path(),
+        "rule(:h2, X?, Y?) { `app|auth` > re`${X?}\\|${Y?}` }; h2();",
+    );
+    let r2 = store_esc.rows_of("h2");
+    assert_eq!(r2.len(), 1, "escaped form rows = {r2:?}");
+    assert_eq!(r2[0].get("X").unwrap_or(""), "app");
+    assert_eq!(r2[0].get("Y").unwrap_or(""), "auth");
+
+    // No holes ⇒ raw regex: `a|z` alternation still matches a bare `z`.
+    let store_raw = run_in(
+        tmp.path(),
+        "rule(:h3, M?) { `z` > re`(?P<M>a|z)` }; h3();",
+    );
+    let r3 = store_raw.rows_of("h3");
+    assert_eq!(r3.len(), 1, "raw-regex alternation rows = {r3:?}");
+    assert_eq!(r3[0].get("M").unwrap_or(""), "z");
+}
