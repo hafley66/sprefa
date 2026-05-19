@@ -1,0 +1,1 @@
+{ "points": [ { "repo": "acme-liba", "rev": "v1.0.0" }, { "repo": "acme-libb", "rev": "v1.0.0" } ] }
