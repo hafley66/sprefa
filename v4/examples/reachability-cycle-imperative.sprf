@@ -52,14 +52,13 @@ reaches?(SRC?, MID?)
   > reaches(SRC, DST);
 
 # --- cycle = a node that reaches ITSELF ---
-# Project both columns of reaches, then keep only the rows where the
-# two are equal (a node reachable from itself = on a cycle). The
-# self-equality is a `where` predicate, not a call-arg constraint:
-# `reaches?(N?, N)` can't say it because the second N is introduced by
-# this very read, so there's no prior cursor N to constrain against.
-reaches?(SRC?, DST?)
-  > where`${SRC} = ${DST}`
-  > cycle(SRC);
+# `reaches?(N?, N)` IS the cycle test: the first `N?` BINDS the SRC
+# column; the second `N` (same term, no `?`) REFS it within the same
+# call, which desugars to the intra-row self-equality
+# `__rule.DST = __rule.SRC`. No `where` step needed -- the call-arg
+# form says "the row where this rule's two columns are equal".
+reaches?(N?, N)
+  > cycle(N);
 
 # --- project to Graphviz: edges + cycle nodes highlighted ---
 `reach-cycle`

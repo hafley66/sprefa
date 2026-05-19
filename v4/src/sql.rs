@@ -1072,10 +1072,32 @@ pub fn rule_table_call_pipe(
         }
     }
 
+    // `?`-then-same-name-ref desugar: a term BOUND by an earlier
+    // `Project` arg (the `?` form) and then READ by a later arg in the
+    // SAME call is an INTRA-ROW self-equality (`__rule.colB =
+    // __rule.colA`), not a correlated read against the streaming
+    // `input` cursor (`__rule.colB = input.term`) — the term is born
+    // in this very read, so there is no prior cursor column. The map
+    // is populated ONLY by `Project` (the Term-Bind subset; literals,
+    // `&.value`, and pipe values are inert) and consulted ONLY by
+    // `BoundTerm`. Forward scan honors arg ORDER: ref-before-`?`
+    // (`r?(N, N?)`) keeps the legacy outer-cursor correlation.
+    let mut projected_term_col: std::collections::HashMap<&str, &str> =
+        std::collections::HashMap::new();
     let mut predicates = Vec::new();
     for mode in &modes {
         match mode {
             ArgMode::BoundTerm { col, term } => {
+                if let Some(bound_col) = projected_term_col.get(term.as_str()) {
+                    predicates.push(format!(
+                        "{}.{} = {}.{}",
+                        quote_ident(rule_alias),
+                        quote_ident(col),
+                        quote_ident(rule_alias),
+                        quote_ident(bound_col),
+                    ));
+                    continue;
+                }
                 predicates.push(format!(
                     "{}.{} = input.{}",
                     quote_ident(rule_alias),
@@ -1091,7 +1113,9 @@ pub fn rule_table_call_pipe(
                     quote_sql_literal(value),
                 ));
             }
-            ArgMode::Project { .. } => {}
+            ArgMode::Project { col, term } => {
+                projected_term_col.insert(term.as_str(), col.as_str());
+            }
         }
     }
 
