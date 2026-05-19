@@ -83,6 +83,7 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::NextDef));
     r.register(Arc::new(ops::NextQDef));
     r.register(Arc::new(ops::VoidDef));
+    r.register(Arc::new(crate::reify::ReifyDef));
     r.register(Arc::new(ops::PrintDef));
     r.register(Arc::new(ops::ShDef));
     r.register(Arc::new(ops::ShBangDef));

@@ -1594,6 +1594,22 @@ impl SprfHandlers for SprfState {
         let src = std::fs::read_to_string(&req.path).map_err(|e| SprfError::Io(e.to_string()))?;
         phases.read_sprf_ms = t.elapsed().as_secs_f64() * 1000.0;
 
+        // reify macro pre-pass: expand any `reify(...)` statement into
+        // an in-file comment-marked managed region BEFORE parse, so the
+        // generated `rule(...)` is ordinary sprf the unmodified
+        // parse→walk→run pipeline executes (a true macro). Idempotent
+        // by structural hash: byte-current ⇒ no rewrite.
+        let reify_root = req
+            .root
+            .clone()
+            .or_else(|| req.path.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| self.root.clone());
+        let src = match crate::reify::expand_in_place(&req.path, &src, &reify_root) {
+            Ok(Some(rewritten)) => rewritten,
+            Ok(None) => src,
+            Err(e) => return Err(SprfError::Io(e.to_string())),
+        };
+
         let t = std::time::Instant::now();
         let (program, parse_diags) = host_parse(&src);
         phases.parse_ms = t.elapsed().as_secs_f64() * 1000.0;

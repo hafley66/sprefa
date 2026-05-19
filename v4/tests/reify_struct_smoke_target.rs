@@ -22,11 +22,12 @@
 //!   op name      : `reify`
 //!   surface      : `reify(:rs)`kind: struct_item`;`
 //!   region marks : `#<reify gen h=…>` … `#</reify gen>`
-//!   type tokens  : `t.i64` (v0 = declared/annotate; no coercion yet)
+//!   type tokens  : retained as a `# reify types:` comment (v0 has no
+//!                  typed-column grammar; structural decl only)
 //!
 //! Pins:
-//!   1. after run, g.sprf on disk contains the marked region with
-//!      `rule(:Point, x?: t.i64, y?: t.i64);` inside it.
+//!   1. after run, g.sprf on disk contains the marked region with a
+//!      valid `rule(:Point, x?, y?);` decl + a `# reify types:` line.
 //!   2. the `Point` fact table has the row (x=1, y=2)  ⇒ the macro
 //!      expanded a live decl, ordered before the hand-written write.
 //!   3. a SECOND run is idempotent: region byte-identical (stable
@@ -103,9 +104,16 @@ async fn reify_struct_writes_region_and_macro_expands() {
         after.contains("#<reify gen") && after.contains("#</reify gen>"),
         "g.sprf must contain a reify-managed region after run; got:\n{after}"
     );
+    // v0: a VALID structural decl + the extracted types retained in a
+    // trailing comment (sprf has no `col?: type` grammar yet; typed
+    // columns are the separate value-space-types initiative).
     assert!(
-        after.contains("rule(:Point, x?: t.i64, y?: t.i64);"),
-        "region must declare Point with i64 fields; got:\n{after}"
+        after.contains("rule(:Point, x?, y?);"),
+        "region must declare Point structurally; got:\n{after}"
+    );
+    assert!(
+        after.contains("# reify types: x: t.i64, y: t.i64"),
+        "region must retain extracted types as a comment; got:\n{after}"
     );
 
     // pin 2: the macro expanded a LIVE decl, ordered before the write.

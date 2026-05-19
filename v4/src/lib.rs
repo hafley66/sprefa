@@ -16,6 +16,7 @@ pub mod memo;
 pub mod memo_seam_impl;
 pub mod mounted_query;
 pub mod pipeline;
+pub mod reify;
 pub mod rule;
 pub mod runtime_bridge;
 pub mod runtime_graph;
