@@ -1392,26 +1392,10 @@ impl OperatorDef for ReDef {
 ///   `${X?}`    → `(?P<X>\w+)`   word-form capture (tight default)
 ///   `$$${X?}`  → `(?P<X>.*?)`   lazy any-char (loose escape hatch)
 /// `${X}` Read is rejected at lower time (re does not yet have a
-/// per-cursor splice for non-SubPipe Read).
-///
-/// Literal text between holes is LITERAL: regex metacharacters in the
-/// literal run are escaped, and a `\x` is an explicit literal-`x`. So
-/// `${A?}|${B?}` and `${A?}\|${B?}` lower to the SAME pattern (a
-/// literal pipe delimiter, never regex alternation) — the capture DSL
-/// abstracts the regex away; authors who want raw regex use a plain
-/// `re` body with native `(?P<NAME>…)` and no `${}` holes.
-fn re_escape_literal(out: &mut String, c: char) {
-    // regex crate metacharacter set.
-    if matches!(
-        c,
-        '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{'
-            | '}' | '^' | '$' | '#' | '&' | '-' | '~'
-    ) {
-        out.push('\\');
-    }
-    out.push(c);
-}
-
+/// per-cursor splice for non-SubPipe Read). Literal text passes through
+/// untouched; the regex crate handles its own escapes (so a literal
+/// `|` is alternation and a literal delimiter must be written `\|`).
+/// Authors keep full regex power inside a `${...}`-hole body.
 fn re_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
     use crate::compile::lower::op_def::{InterpKind, InterpMode};
 
@@ -1419,11 +1403,6 @@ fn re_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
     let bytes = raw.as_bytes();
     let mut interps = body.interps.clone();
     interps.sort_by_key(|i| i.range.lo);
-    // A body with `${...}` holes opts INTO the capture DSL: its literal
-    // runs are literal text (metachars escaped, `\x` == `x`). A body
-    // with NO holes is raw regex and passes through untouched (native
-    // `(?P<NAME>…)`, `\d`, alternation, etc. stay live).
-    let dsl_mode = !interps.is_empty();
 
     let mut by_lo: std::collections::BTreeMap<u32, &crate::compile::lower::op_def::DslInterp> =
         std::collections::BTreeMap::new();
@@ -1481,21 +1460,9 @@ fn re_body_to_regex(body: &DslBody) -> Result<String, LowerError> {
             i = interp.range.hi as usize;
             continue;
         }
-        // Literal run. In DSL mode `\x` is an explicit literal-`x`
-        // (consume the backslash) and a bare metachar is also literal —
-        // both collapse to the same escaped form, so `${A?}\|${B?}` ==
-        // `${A?}|${B?}`. With no holes the body is raw regex: passthrough.
-        if !dsl_mode {
-            out.push(bytes[i] as char);
-            i += 1;
-            continue;
-        }
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            re_escape_literal(&mut out, bytes[i + 1] as char);
-            i += 2;
-            continue;
-        }
-        re_escape_literal(&mut out, bytes[i] as char);
+        // Literal run: raw regex passthrough (the regex crate handles
+        // escapes; `\|` is a literal pipe, `|` is alternation).
+        out.push(bytes[i] as char);
         i += 1;
     }
     Ok(out)

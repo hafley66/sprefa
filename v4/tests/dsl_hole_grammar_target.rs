@@ -317,28 +317,14 @@ fn triple_dollar_only_where_single_vs_multi_makes_sense() {
     // is "no per-DSL carveout", verified by reading source.
 }
 
-/// `re`${X?}|${Y?}`` — a literal `|` between capture holes is a literal
-/// delimiter, NOT regex alternation. The escaped form `${X?}\|${Y?}`
-/// lowers to the same pattern. A no-hole body stays raw regex.
+/// `re` keeps full regex power inside a `${...}`-hole body: literal
+/// text is raw regex (the crate handles escapes), so a literal pipe
+/// delimiter is written `${X?}\|${Y?}` and bare `|` stays alternation.
 #[test]
-fn re_hole_literal_pipe_is_delimiter_not_alternation() {
+fn re_hole_body_keeps_raw_regex() {
     let tmp = tempfile::tempdir().unwrap();
 
-    // Unescaped pipe: both holes capture, split on the literal `|`.
-    let store = run_in(
-        tmp.path(),
-        "rule(:hits, X?, Y?) { `app|auth` > re`${X?}|${Y?}` }; hits();",
-    );
-    let rows = store.rows_of("hits");
-    assert_eq!(rows.len(), 1, "rows = {rows:?}");
-    assert_eq!(rows[0].get("X").unwrap_or(""), "app");
-    assert_eq!(
-        rows[0].get("Y").unwrap_or(""),
-        "auth",
-        "literal `|` must be a delimiter, not `X` OR `Y` (Y empty)"
-    );
-
-    // Escaped pipe lowers to the SAME pattern.
+    // Escaped pipe = literal delimiter: both holes capture.
     let store_esc = run_in(
         tmp.path(),
         "rule(:h2, X?, Y?) { `app|auth` > re`${X?}\\|${Y?}` }; h2();",
@@ -348,12 +334,22 @@ fn re_hole_literal_pipe_is_delimiter_not_alternation() {
     assert_eq!(r2[0].get("X").unwrap_or(""), "app");
     assert_eq!(r2[0].get("Y").unwrap_or(""), "auth");
 
-    // No holes ⇒ raw regex: `a|z` alternation still matches a bare `z`.
+    // Raw regex still live inside a hole body: a bare `|` is
+    // alternation, `\d+` is a digit class.
+    let store_alt = run_in(
+        tmp.path(),
+        "rule(:h3, M?) { `port 8080 open` > re`${M?} \\d+` }; h3();",
+    );
+    let r3 = store_alt.rows_of("h3");
+    assert_eq!(r3.len(), 1, "raw-regex \\d+ rows = {r3:?}");
+    assert_eq!(r3[0].get("M").unwrap_or(""), "port");
+
+    // No holes ⇒ raw regex: `(?P<M>a|z)` alternation matches `z`.
     let store_raw = run_in(
         tmp.path(),
-        "rule(:h3, M?) { `z` > re`(?P<M>a|z)` }; h3();",
+        "rule(:h4, M?) { `z` > re`(?P<M>a|z)` }; h4();",
     );
-    let r3 = store_raw.rows_of("h3");
-    assert_eq!(r3.len(), 1, "raw-regex alternation rows = {r3:?}");
-    assert_eq!(r3[0].get("M").unwrap_or(""), "z");
+    let r4 = store_raw.rows_of("h4");
+    assert_eq!(r4.len(), 1, "no-hole alternation rows = {r4:?}");
+    assert_eq!(r4[0].get("M").unwrap_or(""), "z");
 }

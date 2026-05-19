@@ -43,9 +43,8 @@ web|http
 http|net
 crypto|net
 net|sys`
-  > split`
-`
-  > re`${X?}|${Y?}`
+  > split_line()
+  > re`${X?}\|${Y?}`
   > dep(X, Y);
 
 # --- DISCOVERY: recursive transitive closure of `dep` ---
