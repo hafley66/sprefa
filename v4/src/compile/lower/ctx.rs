@@ -274,18 +274,29 @@ impl LowerCtx {
         v: &crate::compile::lower::value::Value,
         key: &str,
     ) -> Result<crate::compile::lower::value::Value, LowerError> {
-        use crate::compile::lower::value::Value;
+        use crate::compile::lower::value::{CallableKind, CallableRef, Value, ValueKind};
         // 1. instance dot
         if let Some(hit) = v.dots.map.get(key) {
             return Ok(hit.clone());
         }
+        // H4: a `Callable(Rule "T")` has `dots.ty == None`, so step 2's
+        // projection would never fire. Treat the rule name as the type
+        // name so `Callable(Rule T).col` projects exactly like a
+        // `.typed(T)` value. Op callables intentionally have no ty.
+        let ty_from_kind: Option<Arc<str>> = match v.kind() {
+            ValueKind::Callable(CallableRef {
+                kind: CallableKind::Rule,
+                name,
+            }) => Some(name.clone()),
+            _ => None,
+        };
         // 2. type column projection. A TYPE is a rule whose columns are
         // its fields; the canonical imported-type shape is a decl-only
         // `rule(:Ty, f?...)`, which registers ONLY in the fact-store
         // schema (no body => no `register_rule`). So resolve columns via
         // the declared schema, which covers decl-only types AND bodied
         // rules (the bodied form declares its table too).
-        if let Some(ty) = v.dots.ty.clone() {
+        if let Some(ty) = v.dots.ty.clone().or(ty_from_kind) {
             let has_col = self
                 .store
                 .declared_cols(&ty)

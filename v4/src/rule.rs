@@ -448,6 +448,16 @@ impl Component for RuleInvokeComponent {
         }
         result
     }
+
+    /// Expose self as a typed descriptor so callers can structurally
+    /// recognize a rule-invoke step (the callable-Value `apply(Rule)`
+    /// path pins this: its produced pipe's step downcasts back to
+    /// `RuleInvokeComponent`, proving it reuses the EXISTING invoke
+    /// component and inherits the recursion wake-guard — no new
+    /// owner-subscription path).
+    fn describe(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 /// The file path a rule-call input names: the `FS` term if present,

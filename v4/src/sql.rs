@@ -1035,6 +1035,11 @@ pub fn rule_table_call_pipe(
                     ));
                 }
             }
+            ValueKind::Callable(_) => {
+                return Err(LowerError::Unknown(
+                    "rule call args cannot be a callable".into(),
+                ));
+            }
         }
     }
 
@@ -1226,6 +1231,11 @@ pub fn rule_write_pipe(ctx: &LowerCtx, args: &[CallArg]) -> Result<Pipe<Cursor>,
                     ));
                 }
             }
+            ValueKind::Callable(_) => {
+                return Err(LowerError::Unknown(
+                    "rule write args cannot be a callable".into(),
+                ));
+            }
         };
         assignments.push(WriteAssign {
             col: Arc::<str>::from(col),
@@ -1295,6 +1305,9 @@ fn grounded_write_value(table: &str, value: Value) -> Result<WriteValue, LowerEr
                 ))
             }
         }
+        ValueKind::Callable(_) => Err(LowerError::Unknown(
+            "rule apply args cannot be a callable".into(),
+        )),
     }
 }
 
@@ -1315,6 +1328,9 @@ fn rule_invoke_value(value: Value) -> Result<Option<RuleInvokeValue>, LowerError
                 ))
             }
         }
+        ValueKind::Callable(_) => Err(LowerError::Unknown(
+            "bodied rule apply args cannot be a callable".into(),
+        )),
     }
 }
 

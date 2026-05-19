@@ -183,6 +183,9 @@ fn classify_gh_arg(col: &'static str, value: &Value) -> Result<GhArgMode, LowerE
                 "gh.prs: column {col} arg must be a term or literal"
             )))
         }
+        ValueKind::Callable(_) => Err(LowerError::Unknown(format!(
+            "gh.prs: column {col} arg cannot be a callable"
+        ))),
     }
 }
 

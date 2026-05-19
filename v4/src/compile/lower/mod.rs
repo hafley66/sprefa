@@ -58,7 +58,9 @@ pub use crate::pipeline::{str_pipe, StrConstComponent};
 pub use ctx::{LowerCtx, LowerError};
 pub use op_def::{ArgKind, ArgSig, BlockShape, DslBody, DslInterp, DslShape, OperatorDef};
 pub use registry::{validate_call, Registry};
-pub use value::{run_once_const, CallArg, Value, ValueKind};
+pub use value::{
+    apply, run_once_const, CallArg, CallableKind, CallableRef, Value, ValueKind,
+};
 
 use std::sync::Arc;
 
