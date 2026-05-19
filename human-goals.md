@@ -754,3 +754,66 @@ map, from→to flow, COMPILE/RUNTIME split-pane) and turn them into
 deterministic renderers — given the code, emit the diagram. Then render
 them *in sprf itself*, one day. The diagrams become sprf outputs, not chat
 artifacts.
+
+
+<llm-zone source="claude-session-2026-05-18" status="llm-milestone-note">
+  <topic name="reactive-recursion-shipped-2026-05-18" llm-tags="v4 recursion fixpoint retraction dred owner-subscribe stratify reactor closure transitive-closure cycles staleness-watcher reactive-state-machine">
+    <note>LLM note (not human voice). Milestone landed on main 37bb93a5,
+    full v4 gate 492/0/1. Three legs, each ff-merged after worktree
+    verify on a non-stale base: (1) recursion runs at the .sprf surface
+    — a self-calling rule overload loops to a fixed point during a
+    normal sprefa-run with a hard round cap (SPREFA_RECURSION_CAP) so
+    runaway recursion fails loud, not hangs; (2) retraction is sound —
+    every rule output is tracked to its support; re-running over
+    changed sources DRed-removes conclusions whose derivation is gone,
+    transitively through the recursive loop, owner-scoped so unrelated
+    writes are untouched; (3) the recursive rule is wired into the
+    reactor — per-rule OwnerNode SUBSCRIBE'd to its external source
+    tables, structurally never to its own / a co-recursive sibling's
+    output (wake-cycle guard), and a relation depending on its own
+    negation surfaces as lower/unstratifiable-negation instead of a
+    silent wrong answer. Runnable proof:
+    v4/examples/reactive-reach-retraction.sprf. Deferred (behind
+    SPREFA_REC_INCREMENTAL, default off, sound-first): skipping the
+    recompute when nothing changed — today's staleness signal is
+    corpus-wide, the safe default is always-recompute until a per-rule
+    source signal exists. Detail doc: v4/docs/v4-recursion-surface-gaps.md.</note>
+    <note>What this makes MORE ACHIEVABLE in the goals already written
+    above (LLM assessment, for the human to confirm or redirect):
+
+    • The 2026-05-16 "dotted-path + cycle enumeration backbone" goal
+      and the cross-language-type-graph research note's deliverable
+      ("enumerate all the paths/strings ... and where the CYCLES are").
+      Walking a type/path graph to its transitive closure and naming
+      the cycles IS recursion + a self-join to a fixed point. That
+      primitive now exists at the surface; before this it was Rust-only.
+      The type-graph projection becomes a recursive rule over the
+      projected rows, not a bespoke crawler.
+
+    • The v4 header goal's "nested correlated expr chains that can
+      switch to another repo/rev within 1 already matching in scope and
+      further dig to see if some X is mentioned there". The "further
+      dig" is transitive: reach-into-reach. Recursion + retraction is
+      the engine for a cross-repo reachability / staleness watcher —
+      edit a source, re-run against the same --fact-db, conclusions
+      re-converge instead of going stale.
+
+    • The "reactive pattern-matching state machine language of my
+      dreams" aside (from the example-request session): a transition
+      table + recursive reach IS a reachable-state machine; with sound
+      retraction it is reactive (mutate the transitions, the reachable
+      set re-derives). The example file demonstrates exactly this.
+
+    • Indirectly de-risks the deterministic-renderer arc: a from→to
+      flow diagram or a COMPILE/RUNTIME dependency split is a graph
+      reachability query. Once the graph is rows, "what depends on X
+      transitively" is now expressible in sprf, which is the data layer
+      those renderers need.
+
+    NOT unlocked by this: the visual rendering itself, the partial
+    cross-language type resolution algorithm (still the open research
+    item), and incremental/no-recompute performance at 500-repo scale
+    (gated, pending per-rule staleness). Recursion gives the QUERY
+    shape; those remain separate.</note>
+  </topic>
+</llm-zone>
