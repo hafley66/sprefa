@@ -1,0 +1,85 @@
+# Cross-repo dependency edges from npm lockfiles, captured as rules,
+# rendered as a graph -- including a SHARED dep and a VERSION SKEW.
+#
+# Simulated repo/rev/fs layout (each dir is its own "repo" checkout):
+#   v4/examples/npm-sim/main-app/package-lock.json   repoMain  r1
+#   v4/examples/npm-sim/app-one/package-lock.json    repoAppOne a1c0ffee
+#   v4/examples/npm-sim/app-two/package-lock.json    repoAppTwo b2d0caf0
+#   v4/examples/npm-sim/lib-shared/package-lock.json repoShared 5ha23d
+#   v4/examples/npm-sim/lib-b/package-lock.json      repoB      bbbb111
+#
+# Topology:
+#   main-app -> app-one, app-two
+#   app-one  -> lib-shared@3.1.0, lib-b@1.0.0
+#   app-two  -> lib-shared@3.1.0, lib-b@2.0.0
+#                ^^^^^^^^^^ SHARED        ^^^^^^ SAME lib (repoB),
+#                                                TWO versions = SKEW
+#
+# Two capture forms are shown:
+#   rule(:dep, ...);              -- declared, fed by an fs pipe
+#   rule(:reaches, ...) { ... };  -- braced recursive overload
+#
+# Node id `name@version` makes the skew structural: lib-b@1.0.0 and
+# lib-b@2.0.0 are DISTINCT nodes; lib-shared@3.1.0 is ONE node with two
+# in-edges (the shared dep, visible as fan-in).
+#
+# Run from repo root:
+#   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
+#     v4/examples/npm-lockfile-dep-graph.sprf --root . \
+#     --fact-db /tmp/npm.db --show-rows
+#
+# Outputs:
+#   v4/examples/npm-deps.dot     + .svg   (direct edges, versioned)
+#   v4/examples/npm-reaches.dot  + .svg   (transitive closure)
+
+# --- CAPTURE form 1: declared rule, fed by an fs>glob>read>json pipe ---
+# `${SRC?}` is captured from the simulated-repo DIRECTORY name (the fs
+# location); DST + VER come from each lockfile's `deps[]` array.
+rule(:dep, SRC?, DST?, VER?);
+
+fs
+  > glob`**/npm-sim/${SRC?}/package-lock.json`
+  > read
+  > json`{ deps: [ ... { name: ${DST?}, version: ${VER?} } ] }`
+  > dep(SRC, DST, VER);
+
+# --- CAPTURE form 2: braced recursive overloads (rule(){}) ---
+# Transitive reachability over the dep edges (version-agnostic): which
+# packages a package pulls in, directly or through any chain.
+rule(:reaches, SRC?, DST?) { dep?(SRC?, DST?, V?) };
+rule(:reaches, SRC?, DST?) { reaches?(SRC?, MID?) > dep?(MID?, DST?, V?) };
+
+# --- GRAPH 1: direct edges, node id carries the version ---
+# `name@version` ids: lib-b splits into two nodes (skew), lib-shared
+# stays one (shared fan-in). Ids are quoted (names contain `-`/`@`/`.`).
+`npm-deps`
+  > render.markdown`digraph npm_deps {
+  rankdir=LR
+  labelloc=t
+  label="npm lockfile deps -- shared dep + version skew"
+  node [shape=box style=rounded fontname=Helvetica]
+${ dep?(SRC?, DST?, VER?)
+  > render.markdown`  "${SRC}" -> "${DST}@${VER}"
+`
+}
+}
+`
+  > write_file`v4/examples/npm-deps.dot`
+  > sh`dot -Tsvg v4/examples/npm-deps.dot -o v4/examples/npm-deps.svg && echo npm-deps-rendered`;
+
+# --- GRAPH 2: transitive closure from the braced recursive rule ---
+`npm-reaches`
+  > render.markdown`digraph npm_reaches {
+  rankdir=LR
+  labelloc=t
+  label="npm transitive reach (recursive rule)"
+  node [shape=box style=rounded fontname=Helvetica]
+  edge [color=slategray]
+${ reaches?(SRC?, DST?)
+  > render.markdown`  "${SRC}" -> "${DST}"
+`
+}
+}
+`
+  > write_file`v4/examples/npm-reaches.dot`
+  > sh`dot -Tsvg v4/examples/npm-reaches.dot -o v4/examples/npm-reaches.svg && echo npm-reaches-rendered`;

@@ -1,0 +1,13 @@
+digraph npm_deps {
+  rankdir=LR
+  labelloc=t
+  label="npm lockfile deps -- shared dep + version skew"
+  node [shape=box style=rounded fontname=Helvetica]
+  "app-two" -> "lib-shared@3.1.0"
+  "app-two" -> "lib-b@2.0.0"
+  "app-one" -> "lib-shared@3.1.0"
+  "app-one" -> "lib-b@1.0.0"
+  "main-app" -> "app-one@1.0.0"
+  "main-app" -> "app-two@1.0.0"
+
+}

@@ -1,0 +1,16 @@
+digraph npm_reaches {
+  rankdir=LR
+  labelloc=t
+  label="npm transitive reach (recursive rule)"
+  node [shape=box style=rounded fontname=Helvetica]
+  edge [color=slategray]
+  "app-two" -> "lib-shared"
+  "app-two" -> "lib-b"
+  "app-one" -> "lib-shared"
+  "app-one" -> "lib-b"
+  "main-app" -> "app-one"
+  "main-app" -> "app-two"
+  "main-app" -> "lib-shared"
+  "main-app" -> "lib-b"
+
+}
