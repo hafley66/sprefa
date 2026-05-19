@@ -27,6 +27,7 @@ use super::value::{CallArg, Value, ValueKind};
 pub enum ArgKind {
     Atom,
     Pipe,
+    Callable,
     Any,
     Variadic(&'static ArgKind),
 }
@@ -36,6 +37,7 @@ impl ArgKind {
         match self {
             ArgKind::Atom => "atom".into(),
             ArgKind::Pipe => "pipe".into(),
+            ArgKind::Callable => "callable".into(),
             ArgKind::Any => "any".into(),
             ArgKind::Variadic(inner) => format!("variadic({})", inner.label()),
         }
@@ -44,6 +46,7 @@ impl ArgKind {
         match self {
             ArgKind::Atom => matches!(v.kind(), ValueKind::Atom(_)),
             ArgKind::Pipe => matches!(v.kind(), ValueKind::Pipe(_)),
+            ArgKind::Callable => matches!(v.kind(), ValueKind::Callable(_)),
             ArgKind::Any => true,
             ArgKind::Variadic(_) => false, // checked at the slot level
         }

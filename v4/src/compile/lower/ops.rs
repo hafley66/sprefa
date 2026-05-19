@@ -220,6 +220,11 @@ impl OperatorDef for RuleDef {
                         col_strings.push(n.to_string());
                     }
                 }
+                ValueKind::Callable(_) => {
+                    return Err(LowerError::Unknown(
+                        "rule: a column arg cannot be a callable".into(),
+                    ))
+                }
             }
         }
         let cols: Vec<&str> = col_strings.iter().map(|s| s.as_str()).collect();
@@ -330,6 +335,9 @@ impl OperatorDef for FactDef {
                             Ok(ColMode::BoundLiteral(Arc::<str>::from("$lit")))
                         }
                     }
+                    ValueKind::Callable(_) => Err(LowerError::Unknown(
+                        "a column arg cannot be a callable".into(),
+                    )),
                 }
             })
             .collect::<Result<_, _>>()?;
@@ -2029,6 +2037,11 @@ impl OperatorDef for ShDef {
                         bind_term = Some(name.to_string());
                     }
                 }
+                ValueKind::Callable(_) => {
+                    return Err(LowerError::Unknown(
+                        "sh: arg cannot be a callable".into(),
+                    ));
+                }
             }
         }
 
@@ -2225,7 +2238,7 @@ impl OperatorDef for RevDef {
             } else {
                 let spec = match args[0].kind() {
                     ValueKind::Atom(s) => s.to_string(),
-                    ValueKind::Pipe(_) => unreachable!(),
+                    ValueKind::Pipe(_) | ValueKind::Callable(_) => unreachable!(),
                 };
                 RevComponent::new(vec![spec])
             }
@@ -2298,15 +2311,30 @@ fn lower_split_with_separator(
                 SplitComponent::on_value(sep).into_term(&into)
             }
             ValueKind::Atom(s) => SplitComponent::on_value(sep).into_term(s),
+            ValueKind::Callable(_) => {
+                return Err(LowerError::Unknown(format!(
+                    "{op}: arg cannot be a callable"
+                )))
+            }
         },
         2 => {
             let from = match args[0].kind() {
                 ValueKind::Pipe(p) => pipe_term(p),
                 ValueKind::Atom(s) => Some(s.to_string()),
+                ValueKind::Callable(_) => {
+                    return Err(LowerError::Unknown(format!(
+                        "{op}: 1st arg cannot be a callable"
+                    )))
+                }
             };
             let into = match args[1].kind() {
                 ValueKind::Pipe(p) => pipe_term(p),
                 ValueKind::Atom(s) => Some(s.to_string()),
+                ValueKind::Callable(_) => {
+                    return Err(LowerError::Unknown(format!(
+                        "{op}: 2nd arg cannot be a callable"
+                    )))
+                }
             };
             let from = from
                 .ok_or_else(|| LowerError::Unknown(format!("{op}: 1st arg must be FROM term")))?;
@@ -2488,6 +2516,9 @@ impl OperatorDef for CommentDef {
             match args.get(idx).map(|v| v.kind()) {
                 Some(ValueKind::Pipe(p)) => run_once_const(p, _ctx).map(Some),
                 Some(ValueKind::Atom(a)) => Ok(Some(a.to_string())),
+                Some(ValueKind::Callable(_)) => Err(LowerError::Unknown(
+                    "comment: arg cannot be a callable".into(),
+                )),
                 None => Ok(None),
             }
         };
