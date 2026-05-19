@@ -16,12 +16,13 @@
 #                ^^^^^^^^^^ SHARED        ^^^^^^ SAME pkg (repoB),
 #                                                two versions = SKEW
 #
-# The node is the PACKAGE (one per name); each package is drawn INSIDE
-# its repo's cluster box, labelled with the rev. The version lives on
-# the EDGE. So `lib-b` is ONE node in the `repoB` cluster with two
-# version-labelled in-edges (the skew, now visibly inside one repo);
-# `lib-shared` is one node in `repoShared` with two in-edges (shared).
-# The repo/rev grouping is the cluster nesting you asked for.
+# The node is the PACKAGE (one per name), drawn inside a REV box, which
+# is itself inside that package's REPO box (repo > rev > package
+# nesting). The version lives on the EDGE. So `lib-b` is ONE node in
+# repoB's bbbb111 box with two version-labelled in-edges (the skew,
+# inside one repo); `lib-shared` is one node in repoShared with two
+# in-edges (shared). The repo>rev box nesting is the git-graph-ish
+# grouping you asked for.
 #
 # Two capture forms:
 #   rule(:pkg, ...);  rule(:dep, ...);   -- declared, fed by fs pipes
@@ -59,9 +60,11 @@ rule(:reaches, SRC?, DST?) { dep?(SRC?, DST?, V?) };
 rule(:reaches, SRC?, DST?) { reaches?(SRC?, MID?) > dep?(MID?, DST?, V?) };
 
 # --- GRAPH 1: direct edges, packages CLUSTERED by their repo ---
-# Each `pkg` row emits a `subgraph cluster_<REPO>` containing that
-# package node; Graphviz merges same-name cluster reopens, so all of a
-# repo's packages land in one labelled box. Edges carry the version.
+# Each `pkg` row emits a NESTED cluster: an outer `cluster_<REPO>` box
+# (the repo) containing an inner `cluster_<REPO>_<REV>` box (the rev),
+# the package node inside that. Graphviz merges same-name cluster
+# reopens, so multiple revs of one repo become sibling rev-boxes inside
+# the one repo box (git-graph-ish). Edges carry the version.
 `npm-deps`
   > render.markdown`digraph npm_deps {
   rankdir=LR
@@ -70,7 +73,7 @@ rule(:reaches, SRC?, DST?) { reaches?(SRC?, MID?) > dep?(MID?, DST?, V?) };
   label="npm deps grouped by repo -- shared dep + version skew"
   node [shape=box style=rounded fontname=Helvetica]
 ${ pkg?(NAME?, REPO?, REV?)
-  > render.markdown`  subgraph cluster_${REPO} { label="${REPO} @ ${REV}"; style=filled; fillcolor=whitesmoke; "${NAME}" }
+  > render.markdown`  subgraph cluster_${REPO} { label="${REPO}"; style=filled; fillcolor=gray95; subgraph cluster_${REPO}_${REV} { label="${REV}"; style=filled; fillcolor=white; "${NAME}" } }
 `
 }
 ${ dep?(SRC?, DST?, VER?)
@@ -92,7 +95,7 @@ ${ dep?(SRC?, DST?, VER?)
   node [shape=box style=rounded fontname=Helvetica]
   edge [color=slategray]
 ${ pkg?(NAME?, REPO?, REV?)
-  > render.markdown`  subgraph cluster_${REPO} { label="${REPO} @ ${REV}"; style=filled; fillcolor=whitesmoke; "${NAME}" }
+  > render.markdown`  subgraph cluster_${REPO} { label="${REPO}"; style=filled; fillcolor=gray95; subgraph cluster_${REPO}_${REV} { label="${REV}"; style=filled; fillcolor=white; "${NAME}" } }
 `
 }
 ${ reaches?(SRC?, DST?)

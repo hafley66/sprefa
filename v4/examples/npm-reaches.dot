@@ -5,11 +5,11 @@ digraph npm_reaches {
   label="npm transitive reach grouped by repo (recursive rule)"
   node [shape=box style=rounded fontname=Helvetica]
   edge [color=slategray]
-  subgraph cluster_repoMain { label="repoMain @ r1"; style=filled; fillcolor=whitesmoke; "main-app" }
-  subgraph cluster_repoB { label="repoB @ bbbb111"; style=filled; fillcolor=whitesmoke; "lib-b" }
-  subgraph cluster_repoAppOne { label="repoAppOne @ a1c0ffee"; style=filled; fillcolor=whitesmoke; "app-one" }
-  subgraph cluster_repoAppTwo { label="repoAppTwo @ b2d0caf0"; style=filled; fillcolor=whitesmoke; "app-two" }
-  subgraph cluster_repoShared { label="repoShared @ 5ha23d"; style=filled; fillcolor=whitesmoke; "lib-shared" }
+  subgraph cluster_repoMain { label="repoMain"; style=filled; fillcolor=gray95; subgraph cluster_repoMain_r1 { label="r1"; style=filled; fillcolor=white; "main-app" } }
+  subgraph cluster_repoB { label="repoB"; style=filled; fillcolor=gray95; subgraph cluster_repoB_bbbb111 { label="bbbb111"; style=filled; fillcolor=white; "lib-b" } }
+  subgraph cluster_repoAppOne { label="repoAppOne"; style=filled; fillcolor=gray95; subgraph cluster_repoAppOne_a1c0ffee { label="a1c0ffee"; style=filled; fillcolor=white; "app-one" } }
+  subgraph cluster_repoAppTwo { label="repoAppTwo"; style=filled; fillcolor=gray95; subgraph cluster_repoAppTwo_b2d0caf0 { label="b2d0caf0"; style=filled; fillcolor=white; "app-two" } }
+  subgraph cluster_repoShared { label="repoShared"; style=filled; fillcolor=gray95; subgraph cluster_repoShared_5ha23d { label="5ha23d"; style=filled; fillcolor=white; "lib-shared" } }
 
   "main-app" -> "app-one"
   "main-app" -> "app-two"
