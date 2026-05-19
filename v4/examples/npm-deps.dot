@@ -2,19 +2,19 @@ digraph npm_deps {
   rankdir=LR
   compound=true
   labelloc=t
-  label="npm deps grouped by repo -- shared dep + version skew"
+  label="npm deps -- repo > rev(branch|tag|sha) > package; shared + skew"
   node [shape=box style=rounded fontname=Helvetica]
-  subgraph cluster_repoMain { label="repoMain"; style=filled; fillcolor=gray95; subgraph cluster_repoMain_r1 { label="r1"; style=filled; fillcolor=white; "main-app" } }
-  subgraph cluster_repoB { label="repoB"; style=filled; fillcolor=gray95; subgraph cluster_repoB_bbbb111 { label="bbbb111"; style=filled; fillcolor=white; "lib-b" } }
-  subgraph cluster_repoAppOne { label="repoAppOne"; style=filled; fillcolor=gray95; subgraph cluster_repoAppOne_a1c0ffee { label="a1c0ffee"; style=filled; fillcolor=white; "app-one" } }
-  subgraph cluster_repoAppTwo { label="repoAppTwo"; style=filled; fillcolor=gray95; subgraph cluster_repoAppTwo_b2d0caf0 { label="b2d0caf0"; style=filled; fillcolor=white; "app-two" } }
-  subgraph cluster_repoShared { label="repoShared"; style=filled; fillcolor=gray95; subgraph cluster_repoShared_5ha23d { label="5ha23d"; style=filled; fillcolor=white; "lib-shared" } }
+  subgraph cluster_acme-checkout { label="acme-checkout"; style=filled; fillcolor=gray95; subgraph cluster_acme-checkout_v1.4.0 { label="tag v1.4.0"; style=filled; fillcolor=white; "checkout-svc" } }
+  subgraph cluster_acme-logger { label="acme-logger"; style=filled; fillcolor=gray95; subgraph cluster_acme-logger_main { label="branch main"; style=filled; fillcolor=white; "logger" } }
+  subgraph cluster_acme-ui-kit { label="acme-ui-kit"; style=filled; fillcolor=gray95; subgraph cluster_acme-ui-kit_v3.1.0 { label="tag v3.1.0"; style=filled; fillcolor=white; "ui-kit" } }
+  subgraph cluster_acme-billing { label="acme-billing"; style=filled; fillcolor=gray95; subgraph cluster_acme-billing_9f3a1c2 { label="sha 9f3a1c2"; style=filled; fillcolor=white; "billing-svc" } }
+  subgraph cluster_acme-store-web { label="acme-store-web"; style=filled; fillcolor=gray95; subgraph cluster_acme-store-web_main { label="branch main"; style=filled; fillcolor=white; "store-web" } }
 
-  "main-app" -> "app-one" [label="1.0.0" fontsize=9]
-  "main-app" -> "app-two" [label="1.0.0" fontsize=9]
-  "app-one" -> "lib-shared" [label="3.1.0" fontsize=9]
-  "app-one" -> "lib-b" [label="1.0.0" fontsize=9]
-  "app-two" -> "lib-shared" [label="3.1.0" fontsize=9]
-  "app-two" -> "lib-b" [label="2.0.0" fontsize=9]
+  "checkout-svc" -> "ui-kit" [label="3.1.0" fontsize=9]
+  "checkout-svc" -> "logger" [label="1.0.0" fontsize=9]
+  "billing-svc" -> "ui-kit" [label="3.1.0" fontsize=9]
+  "billing-svc" -> "logger" [label="2.0.0" fontsize=9]
+  "store-web" -> "checkout-svc" [label="1.4.0" fontsize=9]
+  "store-web" -> "billing-svc" [label="2.0.1" fontsize=9]
 
 }
