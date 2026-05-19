@@ -1624,6 +1624,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprefa-extract"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter",
+ "tree-sitter-rust",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2415,6 +2423,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sprefa-extract",
  "streaming-iterator",
  "tempfile",
  "thiserror 1.0.69",
