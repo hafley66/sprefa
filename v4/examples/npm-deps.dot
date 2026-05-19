@@ -4,11 +4,11 @@ digraph npm_deps {
   labelloc=t
   label="npm deps -- repo > rev(branch|tag|sha) > package; shared + skew"
   node [shape=box style=rounded fontname=Helvetica]
-  subgraph cluster_acme-checkout { label="acme-checkout"; style=filled; fillcolor=gray95; subgraph cluster_acme-checkout_v1.4.0 { label="tag v1.4.0"; style=filled; fillcolor=white; "checkout-svc" } }
-  subgraph cluster_acme-logger { label="acme-logger"; style=filled; fillcolor=gray95; subgraph cluster_acme-logger_main { label="branch main"; style=filled; fillcolor=white; "logger" } }
-  subgraph cluster_acme-ui-kit { label="acme-ui-kit"; style=filled; fillcolor=gray95; subgraph cluster_acme-ui-kit_v3.1.0 { label="tag v3.1.0"; style=filled; fillcolor=white; "ui-kit" } }
-  subgraph cluster_acme-billing { label="acme-billing"; style=filled; fillcolor=gray95; subgraph cluster_acme-billing_9f3a1c2 { label="sha 9f3a1c2"; style=filled; fillcolor=white; "billing-svc" } }
-  subgraph cluster_acme-store-web { label="acme-store-web"; style=filled; fillcolor=gray95; subgraph cluster_acme-store-web_main { label="branch main"; style=filled; fillcolor=white; "store-web" } }
+  subgraph "cluster_acme-checkout" { label="acme-checkout"; style=filled; fillcolor=gray95; subgraph "cluster_acme-checkout_v1.4.0" { label="tag v1.4.0"; style=filled; fillcolor=white; "checkout-svc" } }
+  subgraph "cluster_acme-logger" { label="acme-logger"; style=filled; fillcolor=gray95; subgraph "cluster_acme-logger_main" { label="branch main"; style=filled; fillcolor=white; "logger" } }
+  subgraph "cluster_acme-ui-kit" { label="acme-ui-kit"; style=filled; fillcolor=gray95; subgraph "cluster_acme-ui-kit_v3.1.0" { label="tag v3.1.0"; style=filled; fillcolor=white; "ui-kit" } }
+  subgraph "cluster_acme-billing" { label="acme-billing"; style=filled; fillcolor=gray95; subgraph "cluster_acme-billing_9f3a1c2" { label="sha 9f3a1c2"; style=filled; fillcolor=white; "billing-svc" } }
+  subgraph "cluster_acme-store-web" { label="acme-store-web"; style=filled; fillcolor=gray95; subgraph "cluster_acme-store-web_main" { label="branch main"; style=filled; fillcolor=white; "store-web" } }
 
   "checkout-svc" -> "ui-kit" [label="3.1.0" fontsize=9]
   "checkout-svc" -> "logger" [label="1.0.0" fontsize=9]

@@ -1,0 +1,22 @@
+digraph crawl_discovered {
+  rankdir=LR
+  compound=true
+  labelloc=t
+  label="dynamic crawl from the registry -- repos DISCOVERED, not listed"
+  node [shape=box style=rounded fontname=Helvetica]
+  "registry" [style=filled fillcolor=gold]
+  subgraph "cluster_acme-checkout" { label="acme-checkout"; style=filled; fillcolor=gray95; subgraph "cluster_acme-checkout_v1.4.0" { label="tag v1.4.0"; style=filled; fillcolor=white; "acme-checkout" } }
+  subgraph "cluster_acme-logger" { label="acme-logger"; style=filled; fillcolor=gray95; subgraph "cluster_acme-logger_main" { label="branch main"; style=filled; fillcolor=white; "acme-logger" } }
+  subgraph "cluster_acme-ui-kit" { label="acme-ui-kit"; style=filled; fillcolor=gray95; subgraph "cluster_acme-ui-kit_v3.1.0" { label="tag v3.1.0"; style=filled; fillcolor=white; "acme-ui-kit" } }
+  subgraph "cluster_registry" { label="registry"; style=filled; fillcolor=gray95; subgraph "cluster_registry_main" { label="branch main"; style=filled; fillcolor=white; "registry" } }
+  subgraph "cluster_acme-billing" { label="acme-billing"; style=filled; fillcolor=gray95; subgraph "cluster_acme-billing_9f3a1c2" { label="sha 9f3a1c2"; style=filled; fillcolor=white; "acme-billing" } }
+  subgraph "cluster_acme-store-web" { label="acme-store-web"; style=filled; fillcolor=gray95; subgraph "cluster_acme-store-web_main" { label="branch main"; style=filled; fillcolor=white; "acme-store-web" } }
+
+  "acme-checkout" -> "acme-ui-kit"
+  "acme-checkout" -> "acme-logger"
+  "registry" -> "acme-store-web"
+  "registry" -> "acme-checkout"
+  "acme-billing" -> "acme-ui-kit"
+  "acme-store-web" -> "acme-billing"
+
+}

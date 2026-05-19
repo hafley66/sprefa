@@ -1,0 +1,1 @@
+{ "points": [ { "repo": "acme-store-web", "rev": "main" }, { "repo": "acme-checkout", "rev": "v1.4.0" } ] }

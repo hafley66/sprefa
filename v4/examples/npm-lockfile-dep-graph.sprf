@@ -76,7 +76,7 @@ rule(:reaches, SRC?, DST?) { reaches?(SRC?, MID?) > dep?(MID?, DST?, V?) };
   label="npm deps -- repo > rev(branch|tag|sha) > package; shared + skew"
   node [shape=box style=rounded fontname=Helvetica]
 ${ pkg?(NAME?, REPO?, KIND?, REV?)
-  > render.markdown`  subgraph cluster_${REPO} { label="${REPO}"; style=filled; fillcolor=gray95; subgraph cluster_${REPO}_${REV} { label="${KIND} ${REV}"; style=filled; fillcolor=white; "${NAME}" } }
+  > render.markdown`  subgraph "cluster_${REPO}" { label="${REPO}"; style=filled; fillcolor=gray95; subgraph "cluster_${REPO}_${REV}" { label="${KIND} ${REV}"; style=filled; fillcolor=white; "${NAME}" } }
 `
 }
 ${ dep?(SRC?, DST?, VER?)
@@ -98,7 +98,7 @@ ${ dep?(SRC?, DST?, VER?)
   node [shape=box style=rounded fontname=Helvetica]
   edge [color=slategray]
 ${ pkg?(NAME?, REPO?, KIND?, REV?)
-  > render.markdown`  subgraph cluster_${REPO} { label="${REPO}"; style=filled; fillcolor=gray95; subgraph cluster_${REPO}_${REV} { label="${KIND} ${REV}"; style=filled; fillcolor=white; "${NAME}" } }
+  > render.markdown`  subgraph "cluster_${REPO}" { label="${REPO}"; style=filled; fillcolor=gray95; subgraph "cluster_${REPO}_${REV}" { label="${KIND} ${REV}"; style=filled; fillcolor=white; "${NAME}" } }
 `
 }
 ${ reaches?(SRC?, DST?)
