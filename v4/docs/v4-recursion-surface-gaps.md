@@ -64,36 +64,45 @@ Engine layer (`v4/src/fixpoint.rs`, `tests/retraction_ph6.rs`)
 remains the Rust-side proof; the surface no longer depends on it for
 the FullSql overload path (this wire loops the SQL directly).
 
-## Retraction gaps (two independent, both pinned RED)
+## Retraction gaps — WIRED 2026-05-18 (both specs GREEN)
 
-Retracting a base `edge` fact and watching `reach` follow needs TWO
-things wired. Demoed 2026-05-18: re-running the script with a source
-line removed changed nothing — `edge` did not retract, so `reach`
-never got the chance to cascade.
+Retracting a base `edge` fact and watching `reach` follow needed TWO
+things wired. Both are now implemented; both specs are un-`#[ignore]`'d
+and pass in the full gate (488/0/1).
 
-**Part 1 — surface owner-reconcile for stream-fed rule writes
-(pre-existing, orthogonal to recursion).** `edge(X,Y)` lowers to a
-plain `FactWrite` (`sql.rs` -> `fact.rs`).
-`FactWrite::render_batch` records DRed support rows ONLY for input
-cursors carrying `mounted_query::SUPPORT_CURSOR_ID`
-(`fact.rs:101-104`); a literal/stream head never sets it, so
-`store.insert_batch` (`fact.rs:125`) is insert-only with no
-generation/owner reconcile. Owner-scoped retraction is wired only
-for the `fs>read>re` hits-owner path and the mounted SQL-query
-support path. Pinned: `tests/surface_owner_retract_target.rs`
-(`rerun_with_dropped_source_row_retracts_owner_fact`, `#[ignore]`).
+**Part 1 — owner-scoped reconcile for stream/literal-fed rule writes.**
+A `FactWrite` whose input cursors carry no
+`mounted_query::SUPPORT_CURSOR_ID` (a literal/stream head) now
+SELF-supports each produced row in the existing DRed ledger: one
+`(row_id, owner_table, row_id)` triple — `SUPPORT_CURSOR_ID ==
+SUPPORT_ROW_ID` is the self-support signature, and keeping the cursor
+id equal to the sink `row_id` is what lets `cascade_retract` descend
+transitively (the Part 2 link). A per-owner snapshot
+(`factwrite_owner_snapshot`, keyed by `(table, assignment shape)` so
+distinct write sites are distinct owners) holds the prior run's
+`row_id`s tagged with a per-`run()` epoch
+(`RuntimeGraph::run_epoch`); rows from a STRICTLY older epoch no
+longer produced → `cascade_retract`. Within-run multi-writes
+accumulate (same epoch, never self-retract). Soundness gate: the
+reconcile runs ONLY when the write re-derives its FULL extent each
+run — `FactWrite::full_extent`, set at lower time in `walk_pipe` (a
+pipe touching any external/incremental source op — fs/read/ast/glob/
+… — is NOT full extent, so an fs-driven warm-sliced re-run never
+retracts an unchanged-file row). Spec:
+`tests/surface_owner_retract_target.rs`.
 
-**Part 2 — DRed link from the recursive FullSql loop (this wire).**
-`run_fused_sql`'s recursive loop is `INSERT OR IGNORE` only, with no
-link to `mounted_query_support` / `cascade_retract` (the
-`support_edges` table it writes is disconnected from the real DRed).
-Recursive rules are materialize-forward. Pinned:
-`tests/retract_recursion_demo.rs`
-(`retract_base_edge_cascades_recursive_reach`, `#[ignore]`) — rides
-on Part 1 and additionally asserts the recursive re-closure.
+**Part 2 — DRed for the recursive FullSql loop.** A recursive rule is
+a pure derived relation: its overloads lower to SEPARATE fused rules
+(a non-recursive base seeds `<rule>_facts`, the recursive step closes
+over it). Before ANY overload runs, `run()` clears every recursive
+rule's `<rule>_facts` + its `support_edges` lineage once
+(SQLite-only path), then the existing in-tx fixpoint loop recomputes
+the least fixed point over the now-current sources (Part 1 already
+self-reconciled the base `edge` writes). The clear is at run start,
+NOT per fused rule — a per-rule clear wiped the base seed a sibling
+overload had just written. Spec: `tests/retract_recursion_demo.rs`
+(rides on Part 1, also asserts the recursive re-closure).
 
-The engine proves the cascade is possible
-(`retraction_ph6.rs::recursive_transitive_closure_terminates_and_retracts`,
-`cascade_retract` over the `reach` closure) but only at the Rust
-store level. Both specs assert the SOUND target and are `#[ignore]`'d
-so the gate stays green while the gaps are explicit.
+The engine already proved the cascade possible
+(`retraction_ph6.rs::recursive_transitive_closure_terminates_and_retracts`)
+at the Rust store level; this wire reaches it from the surface.

@@ -1175,8 +1175,11 @@ pub fn rule_write_pipe(ctx: &LowerCtx, args: &[CallArg]) -> Result<Pipe<Cursor>,
             ))
         }
     };
+    let full_extent = ctx.pipe_full_extent.get();
     if rest.is_empty() {
-        return Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))));
+        return Ok(Pipe::new().step(Arc::new(
+            FactWrite::new(ctx.store.clone(), table).with_full_extent(full_extent),
+        )));
     }
     let cols = ctx
         .store
@@ -1205,11 +1208,10 @@ pub fn rule_write_pipe(ctx: &LowerCtx, args: &[CallArg]) -> Result<Pipe<Cursor>,
             value,
         });
     }
-    Ok(Pipe::new().step(Arc::new(FactWrite::projected(
-        ctx.store.clone(),
-        table,
-        assignments,
-    ))))
+    Ok(Pipe::new().step(Arc::new(
+        FactWrite::projected(ctx.store.clone(), table, assignments)
+            .with_full_extent(full_extent),
+    )))
 }
 
 pub fn rule_body_call_pipe(

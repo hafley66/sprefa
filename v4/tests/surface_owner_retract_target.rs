@@ -47,8 +47,6 @@ fn pairs(t: &v4::app::FactTable) -> Vec<String> {
     v
 }
 
-#[ignore = "RED spec: stream-fed FactWrite is insert-only, no \
-            owner-scoped retraction; see v4/docs/v4-recursion-surface-gaps.md"]
 #[tokio::test]
 async fn rerun_with_dropped_source_row_retracts_owner_fact() {
     let root = tempfile::tempdir().unwrap();

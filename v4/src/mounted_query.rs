@@ -853,6 +853,94 @@ pub fn cascade_retract(store: &dyn FactStore<Cursor>, removed_cursor_ids: &[Stri
     }
 }
 
+/// Per-owner snapshot of the `row_id`s a stream/literal-fed rule write
+/// produced on its prior run. `owner_key` folds `(table, assignment
+/// shape)` so two distinct writers into the same rule table (e.g. two
+/// `r!(...)` call sites) are distinct owners and never retract each
+/// other's rows.
+const FW_OWNER_SNAPSHOT: &str = "factwrite_owner_snapshot";
+const FW_OWNER_KEY: &str = "owner_key";
+const FW_ROW_ID: &str = "row_id";
+const FW_EPOCH: &str = "epoch";
+
+/// Owner-scoped reconcile for a stream/literal-fed rule write
+/// (`FactWrite` whose input cursors carry NO `SUPPORT_CURSOR_ID`, so
+/// the mounted-query / fs-hits stamping never ran). Each produced row
+/// SELF-supports: one support triple `(row_id, owner_table, row_id)`
+/// — `SUPPORT_CURSOR_ID == SUPPORT_ROW_ID` is the self-support
+/// signature, distinct from the content-hash cursor ids the stamped
+/// path uses, so the two never alias. Keeping the self-support cursor
+/// id EQUAL to the sink `row_id` is what lets `cascade_retract` descend
+/// transitively (a removed base row pushes its `row_id`, retracting
+/// rows a recursive overload derived from it — the Part 2 link).
+///
+/// `current_row_ids` = this owner's produced `row_id`s this run. The
+/// per-owner snapshot (NOT the shared support table, which cannot tell
+/// owners apart) holds the prior run's set; rows no longer produced →
+/// `cascade_retract`.
+pub fn reconcile_owner_table(
+    store: &dyn FactStore<Cursor>,
+    owner_table: &str,
+    owner_key: &str,
+    epoch: u64,
+    current_row_ids: &[String],
+) {
+    store.declare(FW_OWNER_SNAPSHOT, &[FW_OWNER_KEY, FW_ROW_ID, FW_EPOCH]);
+    let ledger = SupportLedger::new(store);
+
+    let snap = store.rows_of(FW_OWNER_SNAPSHOT);
+    let owned = snap
+        .iter()
+        .filter(|r| r.get(FW_OWNER_KEY) == Some(owner_key));
+    // Rows from a STRICTLY older run = retraction candidates. Rows at
+    // this epoch = already produced earlier this run (accumulate, never
+    // self-retract within a run).
+    let mut prior_old: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    let mut produced_this_epoch: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for r in owned {
+        let Some(row_id) = r.get(FW_ROW_ID) else { continue };
+        let e: u64 = r.get(FW_EPOCH).and_then(|s| s.parse().ok()).unwrap_or(0);
+        if e < epoch {
+            prior_old.insert(row_id.to_string());
+        } else {
+            produced_this_epoch.insert(row_id.to_string());
+        }
+    }
+
+    for row_id in current_row_ids {
+        ledger.add(row_id, owner_table, row_id);
+        produced_this_epoch.insert(row_id.clone());
+    }
+
+    let removed: Vec<String> = prior_old
+        .iter()
+        .filter(|id| !produced_this_epoch.contains(*id))
+        .cloned()
+        .collect();
+    cascade_retract(store, &removed);
+
+    // Drop the consumed older-epoch snapshot for this owner, then
+    // record this run's produced set at the current epoch (idempotent
+    // across multiple batches in the same run).
+    store.delete_matching(FW_OWNER_SNAPSHOT, &[(FW_OWNER_KEY, owner_key)]);
+    if !produced_this_epoch.is_empty() {
+        let epoch_s = epoch.to_string();
+        let rows: Vec<Arc<Cursor>> = produced_this_epoch
+            .iter()
+            .map(|row_id| {
+                let mut row = Cursor::default();
+                row.set(FW_OWNER_KEY, owner_key);
+                row.set(FW_ROW_ID, row_id.as_str());
+                row.set(FW_EPOCH, epoch_s.clone());
+                Arc::new(row)
+            })
+            .collect();
+        store.insert_batch(FW_OWNER_SNAPSHOT, rows);
+    }
+}
+
 fn persist_output_cursors(outputs: Vec<Arc<Cursor>>) -> Vec<PersistedCursor> {
     outputs
         .into_iter()

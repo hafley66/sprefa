@@ -921,6 +921,16 @@ fn run_fused_sql(
             )",
         );
 
+        // DRed for a recursive rule (Part 2). A recursive overload is a
+        // pure derived relation: its extent is a function of its source
+        // tables this run. `INSERT OR IGNORE` alone is materialize-
+        // forward — a base fact retracted by Part 1 (the source
+        // `edge_facts` write self-reconciles) leaves stale closure rows.
+        // Clearing the target + its `support_edges` lineage here, then
+        // running the existing in-tx fixpoint loop, recomputes the
+        // least fixed point over the now-current sources each run. This
+        // is the sound DRed link: it rides on Part 1 (the base
+        // retraction already happened before this rule runs).
         let primary_marker = format!(
             "INSERT OR IGNORE INTO {target_facts}"
         );
@@ -1575,6 +1585,10 @@ impl SprfHandlers for SprfState {
 
     async fn run(&self, req: RunReq) -> Result<RunReport, SprfError> {
         let run_start = std::time::Instant::now();
+        // One epoch bump per run: owner-scoped FactWrite retraction tags
+        // its snapshot with this and only reconciles strictly-older
+        // epochs, so within-run multi-writes accumulate.
+        self.runtime_graph.begin_run_epoch();
         let mut phases = RunPhaseTelemetry::default();
         let t = std::time::Instant::now();
         let src = std::fs::read_to_string(&req.path).map_err(|e| SprfError::Io(e.to_string()))?;
@@ -1694,6 +1708,43 @@ impl SprfHandlers for SprfState {
             }
             None => Cursor::default(),
         };
+        // Part 2 DRed: a recursive rule is a pure derived relation —
+        // its extent is a function of its source tables this run. Its
+        // overloads lower to SEPARATE fused rules (base seeds
+        // `<rule>_facts`, the recursive step closes over it). Clearing
+        // the target once HERE — before ANY overload runs — recomputes
+        // the least fixed point each run over the now-current sources
+        // (Part 1 already self-reconciled the base `edge` writes). A
+        // per-rule clear would instead wipe the base seed a sibling
+        // overload just wrote. Scope: only recursive-rule targets, so a
+        // cold run is a no-op and the blast radius stays minimal.
+        if let Some(store) = self
+            .facts
+            .as_any()
+            .downcast_ref::<SqliteFactStore<Cursor>>()
+        {
+            let targets: std::collections::BTreeSet<String> = pipes
+                .iter()
+                .filter(|f| f.is_recursive())
+                .map(|f| f.name().to_string())
+                .collect();
+            if !targets.is_empty() {
+                store.with_connection(|conn| {
+                    if let Ok(tx) = conn.transaction() {
+                        for t in &targets {
+                            let tf = format!("{t}_facts");
+                            let _ = tx.execute(&format!("DELETE FROM {tf}"), []);
+                            let _ = tx.execute(
+                                "DELETE FROM support_edges WHERE parent_table = ?1",
+                                [tf.as_str()],
+                            );
+                        }
+                        let _ = tx.commit();
+                    }
+                });
+            }
+        }
+
         let mut n = 0;
         let mut run_stats = effect_runtime::v2::ExpandStats::default();
         for (idx, fused) in pipes.into_iter().enumerate() {

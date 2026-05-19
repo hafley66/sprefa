@@ -143,6 +143,23 @@ pub fn walk_pipe(
     ctx: &mut LowerCtx,
     diags: &mut Vec<Diag>,
 ) -> Option<Pipe<Cursor>> {
+    // External / mutable source ops: their extent depends on
+    // filesystem/network state and is subject to warm-slicing (a re-run
+    // may feed only changed paths). A pipe touching any of these does
+    // NOT re-derive its full extent each run, so a rule write it feeds
+    // must not own-scope-retract across runs. A pipe of only
+    // constant-derivable ops (literal/str/split/re/where/rule) does.
+    const EXTERNAL_SOURCE_OPS: &[&str] = &[
+        "fs", "read", "ast", "glob", "repo", "path", "lsp", "http",
+        "ghcache", "sg", "grep", "find", "walk", "stat", "git", "dir",
+        "file",
+    ];
+    let full_extent = !p
+        .steps
+        .iter()
+        .any(|op| EXTERNAL_SOURCE_OPS.contains(&op.name.as_ref()));
+    ctx.pipe_full_extent.set(full_extent);
+
     let mut acc: Pipe<Cursor> = Pipe::new();
     let mut any = false;
     for (idx, op) in p.steps.iter().enumerate() {

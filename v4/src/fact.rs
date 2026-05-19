@@ -25,6 +25,13 @@ pub struct FactWrite {
     pub store: Arc<dyn FactStore<Cursor>>,
     pub table: Arc<str>,
     pub assignments: Option<Arc<Vec<WriteAssign>>>,
+    /// True iff this write's pipeline re-derives its FULL extent every
+    /// run (constant literal/stream head, no fs/read/ast/glob/… source).
+    /// Owner-scoped cross-run retraction is sound ONLY then; an
+    /// fs-driven (incremental, warm-sliced) write sets this false so a
+    /// partial re-run never retracts an unchanged-file row. Set at
+    /// lower time from the pipe's head ops; defaults true.
+    pub full_extent: bool,
 }
 
 #[derive(Clone)]
@@ -46,6 +53,7 @@ impl FactWrite {
             store,
             table: table.into(),
             assignments: None,
+            full_extent: true,
         }
     }
 
@@ -58,7 +66,46 @@ impl FactWrite {
             store,
             table: table.into(),
             assignments: Some(Arc::new(assignments)),
+            full_extent: true,
         }
+    }
+
+    /// Lower-time builder: mark whether the enclosing pipe re-derives
+    /// its full extent each run (see `full_extent`).
+    pub fn with_full_extent(mut self, full: bool) -> Self {
+        self.full_extent = full;
+        self
+    }
+
+    /// Stable identity of THIS write site for owner-scoped retraction:
+    /// `(table, assignment shape)`. Two writers into one rule table
+    /// (e.g. distinct `r!(...)` call sites with different literal args)
+    /// fold to distinct owners, so a re-run reconcile never lets one
+    /// owner retract another's rows. A term-projected write (e.g.
+    /// `edge(X, Y)`) keeps a constant key across runs while its rows
+    /// vary by input, so its prior extent reconciles correctly.
+    fn owner_key(&self) -> String {
+        let mut buf = String::with_capacity(64);
+        buf.push_str(&self.table);
+        if let Some(assignments) = &self.assignments {
+            for a in assignments.iter() {
+                buf.push('\u{1f}');
+                buf.push_str(&a.col);
+                buf.push('=');
+                match &a.value {
+                    WriteValue::Term(t) => {
+                        buf.push('T');
+                        buf.push_str(t);
+                    }
+                    WriteValue::Value => buf.push('V'),
+                    WriteValue::Literal(l) => {
+                        buf.push('L');
+                        buf.push_str(l);
+                    }
+                }
+            }
+        }
+        blake3::hash(buf.as_bytes()).to_hex().to_string()
     }
 }
 
@@ -122,11 +169,39 @@ impl Component for FactWrite {
             } else {
                 Vec::new()
             };
+        // No upstream stamped support ⇒ a stream/literal-fed rule write.
+        // The mounted-query / fs-hits stamping never ran, so without
+        // this the table is insert-only and a re-run that no longer
+        // produces a row cannot retract it. Self-support each produced
+        // row and owner-scoped reconcile against the prior run's set.
+        let owner_reconcile_ids: Vec<String> = if support_input_count == 0 {
+            rows.iter()
+                .map(|row| self.store.row_id_for(self.table.as_ref(), row.as_ref()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.store.insert_batch(&self.table, rows);
         if let Some(graph) = ctx.runtime::<RuntimeGraph>() {
             graph.notify_table_inserted(&self.table, ctx.expand_tick);
         }
         mounted_query::record_fact_support_batch(self.store.as_ref(), &support_rows);
+        // Owner-scoped retraction is sound only when this write
+        // re-derives its FULL extent each run (constant literal/stream
+        // head). An fs/read-driven write (`full_extent == false`) sees a
+        // warm-sliced PARTIAL extent on a re-run; diffing it against the
+        // prior run would wrongly retract unchanged-file rows.
+        let graph = ctx.runtime::<RuntimeGraph>();
+        if support_input_count == 0 && self.full_extent {
+            let epoch = graph.as_ref().map(|g| g.run_epoch()).unwrap_or(0);
+            mounted_query::reconcile_owner_table(
+                self.store.as_ref(),
+                self.table.as_ref(),
+                &self.owner_key(),
+                epoch,
+                &owner_reconcile_ids,
+            );
+        }
         arced.into_iter().map(Node::Emit).collect()
     }
 }

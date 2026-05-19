@@ -475,6 +475,27 @@ impl RuntimeGraph {
         &self.memo
     }
 
+    /// Monotonic per-`run()` epoch. One global `SourceId` on the same
+    /// persisted clock, so it survives across `run()` invocations that
+    /// share a `--fact-db`. `begin_run_epoch` bumps it once at the top
+    /// of a run; owner-scoped FactWrite retraction tags its snapshot
+    /// rows with `run_epoch()` and only reconciles against STRICTLY
+    /// older epochs — so multiple writes by one owner within a single
+    /// run accumulate, and only a genuine re-run retracts.
+    fn run_epoch_source() -> crate::source_clock::SourceId {
+        crate::source_clock::SourceId::of("sprf://run-epoch")
+    }
+
+    pub fn begin_run_epoch(&self) -> u64 {
+        use crate::source_clock::SourceClock;
+        self.clock.bump(Self::run_epoch_source())
+    }
+
+    pub fn run_epoch(&self) -> u64 {
+        use crate::source_clock::SourceClock;
+        self.clock.current_gen(Self::run_epoch_source())
+    }
+
     /// The per-run no-read staleness oracle. Built once from `hint`
     /// (the scan root on the dispatch side, or any recorded absolute
     /// dependency path on the probe side — both resolve to the same git

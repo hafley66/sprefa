@@ -85,6 +85,13 @@ pub struct LowerCtx {
     /// span available) read this from `lower(...)`. `Cell` is fine
     /// because lower runs single-threaded per compile.
     pub current_call_span: Cell<Option<ByteRange>>,
+    /// Whether the pipe currently being walked re-derives its FULL
+    /// extent each run (constant literal/stream head, no
+    /// fs/read/ast/glob/repo/lsp/http source). `walk_pipe` sets this
+    /// from the statement's head ops before walking steps; a rule write
+    /// reads it to tag its `FactWrite::full_extent` for owner-scoped
+    /// retraction soundness. `Cell` — lower is single-threaded.
+    pub pipe_full_extent: Cell<bool>,
     /// Lexical nesting of rule bodies currently being lowered. The
     /// walker pushes the enclosing `rule(:name)`'s name before
     /// recursing into its `{ block }` and pops after. `register_rule`
@@ -125,6 +132,7 @@ impl LowerCtx {
             apply_seq: Arc::new(AtomicU64::new(0)),
             query_site: Arc::new(AtomicU64::new(0)),
             current_call_span: Cell::new(None),
+            pipe_full_extent: Cell::new(true),
             scope_path: RefCell::new(Vec::new()),
         }
     }

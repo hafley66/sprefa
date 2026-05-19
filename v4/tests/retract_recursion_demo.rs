@@ -45,8 +45,6 @@ fn pairs(t: &v4::app::FactTable, a: &str, b: &str) -> Vec<String> {
     v
 }
 
-#[ignore = "RED spec: recursive reach is materialize-forward (no DRed \
-            link); see v4/docs/v4-recursion-surface-gaps.md"]
 #[tokio::test]
 async fn retract_base_edge_cascades_recursive_reach() {
     let root = tempfile::tempdir().unwrap();
