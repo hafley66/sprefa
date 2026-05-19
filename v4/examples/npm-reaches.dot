@@ -1,15 +1,22 @@
 digraph npm_reaches {
   rankdir=LR
+  compound=true
   labelloc=t
-  label="npm transitive reach (recursive rule)"
+  label="npm transitive reach grouped by repo (recursive rule)"
   node [shape=box style=rounded fontname=Helvetica]
   edge [color=slategray]
-  "app-two" -> "lib-shared"
-  "app-two" -> "lib-b"
-  "app-one" -> "lib-shared"
-  "app-one" -> "lib-b"
+  subgraph cluster_repoMain { label="repoMain @ r1"; style=filled; fillcolor=whitesmoke; "main-app" }
+  subgraph cluster_repoB { label="repoB @ bbbb111"; style=filled; fillcolor=whitesmoke; "lib-b" }
+  subgraph cluster_repoAppOne { label="repoAppOne @ a1c0ffee"; style=filled; fillcolor=whitesmoke; "app-one" }
+  subgraph cluster_repoAppTwo { label="repoAppTwo @ b2d0caf0"; style=filled; fillcolor=whitesmoke; "app-two" }
+  subgraph cluster_repoShared { label="repoShared @ 5ha23d"; style=filled; fillcolor=whitesmoke; "lib-shared" }
+
   "main-app" -> "app-one"
   "main-app" -> "app-two"
+  "app-one" -> "lib-shared"
+  "app-one" -> "lib-b"
+  "app-two" -> "lib-shared"
+  "app-two" -> "lib-b"
   "main-app" -> "lib-shared"
   "main-app" -> "lib-b"
 

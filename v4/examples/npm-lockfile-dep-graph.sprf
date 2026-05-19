@@ -1,27 +1,31 @@
-# Cross-repo dependency edges from npm lockfiles, captured as rules,
-# rendered as a graph -- including a SHARED dep and a VERSION SKEW.
+# Cross-repo npm dependency graph, GROUPED BY REPO (git-graph-ish).
 #
-# Simulated repo/rev/fs layout (each dir is its own "repo" checkout):
-#   v4/examples/npm-sim/main-app/package-lock.json   repoMain  r1
-#   v4/examples/npm-sim/app-one/package-lock.json    repoAppOne a1c0ffee
-#   v4/examples/npm-sim/app-two/package-lock.json    repoAppTwo b2d0caf0
-#   v4/examples/npm-sim/lib-shared/package-lock.json repoShared 5ha23d
-#   v4/examples/npm-sim/lib-b/package-lock.json      repoB      bbbb111
+# Simulated repo/rev/fs as a real nested tree -- the path IS the
+# grouping: v4/examples/npm-sim/<REPO>/<REV>/<PKG>/package-lock.json
+#
+#   repoMain   /r1        /main-app
+#   repoAppOne /a1c0ffee  /app-one
+#   repoAppTwo /b2d0caf0  /app-two
+#   repoShared /5ha23d    /lib-shared
+#   repoB      /bbbb111   /lib-b
 #
 # Topology:
 #   main-app -> app-one, app-two
 #   app-one  -> lib-shared@3.1.0, lib-b@1.0.0
 #   app-two  -> lib-shared@3.1.0, lib-b@2.0.0
-#                ^^^^^^^^^^ SHARED        ^^^^^^ SAME lib (repoB),
-#                                                TWO versions = SKEW
+#                ^^^^^^^^^^ SHARED        ^^^^^^ SAME pkg (repoB),
+#                                                two versions = SKEW
 #
-# Two capture forms are shown:
-#   rule(:dep, ...);              -- declared, fed by an fs pipe
-#   rule(:reaches, ...) { ... };  -- braced recursive overload
+# The node is the PACKAGE (one per name); each package is drawn INSIDE
+# its repo's cluster box, labelled with the rev. The version lives on
+# the EDGE. So `lib-b` is ONE node in the `repoB` cluster with two
+# version-labelled in-edges (the skew, now visibly inside one repo);
+# `lib-shared` is one node in `repoShared` with two in-edges (shared).
+# The repo/rev grouping is the cluster nesting you asked for.
 #
-# Node id `name@version` makes the skew structural: lib-b@1.0.0 and
-# lib-b@2.0.0 are DISTINCT nodes; lib-shared@3.1.0 is ONE node with two
-# in-edges (the shared dep, visible as fan-in).
+# Two capture forms:
+#   rule(:pkg, ...);  rule(:dep, ...);   -- declared, fed by fs pipes
+#   rule(:reaches, ...) { ... };         -- braced recursive overload
 #
 # Run from repo root:
 #   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
@@ -29,37 +33,48 @@
 #     --fact-db /tmp/npm.db --show-rows
 #
 # Outputs:
-#   v4/examples/npm-deps.dot     + .svg   (direct edges, versioned)
-#   v4/examples/npm-reaches.dot  + .svg   (transitive closure)
+#   v4/examples/npm-deps.dot     + .svg   (direct, clustered by repo)
+#   v4/examples/npm-reaches.dot  + .svg   (transitive closure, clustered)
 
-# --- CAPTURE form 1: declared rule, fed by an fs>glob>read>json pipe ---
-# `${SRC?}` is captured from the simulated-repo DIRECTORY name (the fs
-# location); DST + VER come from each lockfile's `deps[]` array.
+# --- CAPTURE 1: every package's identity, from its repo/rev/fs path ---
+rule(:pkg, NAME?, REPO?, REV?);
+
+fs
+  > glob`**/npm-sim/${REPO?}/${REV?}/${NAME?}/package-lock.json`
+  > read
+  > pkg(NAME, REPO, REV);
+
+# --- CAPTURE 2: dependency edges; SRC from path, DST/VER from json ---
 rule(:dep, SRC?, DST?, VER?);
 
 fs
-  > glob`**/npm-sim/${SRC?}/package-lock.json`
+  > glob`**/npm-sim/${RP?}/${RV?}/${SRC?}/package-lock.json`
   > read
   > json`{ deps: [ ... { name: ${DST?}, version: ${VER?} } ] }`
   > dep(SRC, DST, VER);
 
-# --- CAPTURE form 2: braced recursive overloads (rule(){}) ---
-# Transitive reachability over the dep edges (version-agnostic): which
-# packages a package pulls in, directly or through any chain.
+# --- CAPTURE 3: braced recursive overloads (rule(){}) ---
+# Transitive reachability over the dep edges (version-agnostic).
 rule(:reaches, SRC?, DST?) { dep?(SRC?, DST?, V?) };
 rule(:reaches, SRC?, DST?) { reaches?(SRC?, MID?) > dep?(MID?, DST?, V?) };
 
-# --- GRAPH 1: direct edges, node id carries the version ---
-# `name@version` ids: lib-b splits into two nodes (skew), lib-shared
-# stays one (shared fan-in). Ids are quoted (names contain `-`/`@`/`.`).
+# --- GRAPH 1: direct edges, packages CLUSTERED by their repo ---
+# Each `pkg` row emits a `subgraph cluster_<REPO>` containing that
+# package node; Graphviz merges same-name cluster reopens, so all of a
+# repo's packages land in one labelled box. Edges carry the version.
 `npm-deps`
   > render.markdown`digraph npm_deps {
   rankdir=LR
+  compound=true
   labelloc=t
-  label="npm lockfile deps -- shared dep + version skew"
+  label="npm deps grouped by repo -- shared dep + version skew"
   node [shape=box style=rounded fontname=Helvetica]
+${ pkg?(NAME?, REPO?, REV?)
+  > render.markdown`  subgraph cluster_${REPO} { label="${REPO} @ ${REV}"; style=filled; fillcolor=whitesmoke; "${NAME}" }
+`
+}
 ${ dep?(SRC?, DST?, VER?)
-  > render.markdown`  "${SRC}" -> "${DST}@${VER}"
+  > render.markdown`  "${SRC}" -> "${DST}" [label="${VER}" fontsize=9]
 `
 }
 }
@@ -67,14 +82,19 @@ ${ dep?(SRC?, DST?, VER?)
   > write_file`v4/examples/npm-deps.dot`
   > sh`dot -Tsvg v4/examples/npm-deps.dot -o v4/examples/npm-deps.svg && echo npm-deps-rendered`;
 
-# --- GRAPH 2: transitive closure from the braced recursive rule ---
+# --- GRAPH 2: transitive closure (braced recursive rule), clustered ---
 `npm-reaches`
   > render.markdown`digraph npm_reaches {
   rankdir=LR
+  compound=true
   labelloc=t
-  label="npm transitive reach (recursive rule)"
+  label="npm transitive reach grouped by repo (recursive rule)"
   node [shape=box style=rounded fontname=Helvetica]
   edge [color=slategray]
+${ pkg?(NAME?, REPO?, REV?)
+  > render.markdown`  subgraph cluster_${REPO} { label="${REPO} @ ${REV}"; style=filled; fillcolor=whitesmoke; "${NAME}" }
+`
+}
 ${ reaches?(SRC?, DST?)
   > render.markdown`  "${SRC}" -> "${DST}"
 `

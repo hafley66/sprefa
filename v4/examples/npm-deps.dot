@@ -1,13 +1,20 @@
 digraph npm_deps {
   rankdir=LR
+  compound=true
   labelloc=t
-  label="npm lockfile deps -- shared dep + version skew"
+  label="npm deps grouped by repo -- shared dep + version skew"
   node [shape=box style=rounded fontname=Helvetica]
-  "app-two" -> "lib-shared@3.1.0"
-  "app-two" -> "lib-b@2.0.0"
-  "app-one" -> "lib-shared@3.1.0"
-  "app-one" -> "lib-b@1.0.0"
-  "main-app" -> "app-one@1.0.0"
-  "main-app" -> "app-two@1.0.0"
+  subgraph cluster_repoMain { label="repoMain @ r1"; style=filled; fillcolor=whitesmoke; "main-app" }
+  subgraph cluster_repoB { label="repoB @ bbbb111"; style=filled; fillcolor=whitesmoke; "lib-b" }
+  subgraph cluster_repoAppOne { label="repoAppOne @ a1c0ffee"; style=filled; fillcolor=whitesmoke; "app-one" }
+  subgraph cluster_repoAppTwo { label="repoAppTwo @ b2d0caf0"; style=filled; fillcolor=whitesmoke; "app-two" }
+  subgraph cluster_repoShared { label="repoShared @ 5ha23d"; style=filled; fillcolor=whitesmoke; "lib-shared" }
+
+  "main-app" -> "app-one" [label="1.0.0" fontsize=9]
+  "main-app" -> "app-two" [label="1.0.0" fontsize=9]
+  "app-one" -> "lib-shared" [label="3.1.0" fontsize=9]
+  "app-one" -> "lib-b" [label="1.0.0" fontsize=9]
+  "app-two" -> "lib-shared" [label="3.1.0" fontsize=9]
+  "app-two" -> "lib-b" [label="2.0.0" fontsize=9]
 
 }
