@@ -1708,46 +1708,165 @@ impl SprfHandlers for SprfState {
             }
             None => Cursor::default(),
         };
-        // Part 2 DRed: a recursive rule is a pure derived relation —
-        // its extent is a function of its source tables this run. Its
-        // overloads lower to SEPARATE fused rules (base seeds
-        // `<rule>_facts`, the recursive step closes over it). Clearing
-        // the target once HERE — before ANY overload runs — recomputes
-        // the least fixed point each run over the now-current sources
-        // (Part 1 already self-reconciled the base `edge` writes). A
-        // per-rule clear would instead wipe the base seed a sibling
-        // overload just wrote. Scope: only recursive-rule targets, so a
-        // cold run is a no-op and the blast radius stays minimal.
+        // Part 2 DRed + reactor wire: a recursive rule is a pure derived
+        // relation — its extent is a function of its EXTERNAL source
+        // tables this run. Its overloads lower to SEPARATE fused rules
+        // (base seeds `<rule>_facts`, the recursive step closes over
+        // it). Three things happen here, before ANY overload runs:
+        //  1. each recursive rule gets a stable OwnerNode SUBSCRIBE'd to
+        //     its external source tables (self + co-recursive siblings
+        //     excluded = the structural wake-cycle guard: an owner never
+        //     subscribes to a source it or an SCC sibling produces, so a
+        //     wake on its own write can't re-enter it).
+        //  2. a negative cycle through the rule graph surfaces as the
+        //     `lower/unstratifiable-negation` diag (stratify); on Err we
+        //     keep the unconditional clear so eval is no worse.
+        //  3. run-scoped incremental: the clear+recompute is skipped
+        //     when the warm memo oracle PROVES zero source files changed
+        //     since the prior run (`warm_changed_paths` == Some(empty)).
+        //     Cold / unknown / any-change ⇒ recompute (the prior
+        //     behavior; never skip unsound — the materialized table at
+        //     run start still holds the prior run's rows).
+        let mut skip_recompute: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
         if let Some(store) = self
             .facts
             .as_any()
             .downcast_ref::<SqliteFactStore<Cursor>>()
         {
-            let targets: std::collections::BTreeSet<String> = pipes
+            let rec: Vec<(String, Vec<String>)> = pipes
                 .iter()
                 .filter(|f| f.is_recursive())
-                .map(|f| f.name().to_string())
+                .map(|f| {
+                    let name = f.name().to_string();
+                    let combined = f
+                        .fused_statements()
+                        .map(|s| s.join("\n"))
+                        .unwrap_or_default();
+                    let deps = source_tables_from_fused_sql(&combined, "");
+                    (name, deps)
+                })
                 .collect();
-            if !targets.is_empty() {
-                store.with_connection(|conn| {
-                    if let Ok(tx) = conn.transaction() {
-                        for t in &targets {
-                            let tf = format!("{t}_facts");
-                            let _ = tx.execute(&format!("DELETE FROM {tf}"), []);
-                            let _ = tx.execute(
-                                "DELETE FROM support_edges WHERE parent_table = ?1",
-                                [tf.as_str()],
-                            );
+            if !rec.is_empty() {
+                let gen = self.runtime_graph.run_epoch();
+                let rec_names: std::collections::BTreeSet<&str> =
+                    rec.iter().map(|(n, _)| n.as_str()).collect();
+
+                // (2) stratify the recursive rule graph. The fuser
+                // already rejects antijoin-in-recursion, so no negative
+                // edges are emitted today; wiring it anyway surfaces a
+                // future negative cycle as a diag instead of a silent
+                // wrong fixed point.
+                let rule_deps: Vec<crate::stratify::RuleDep> = rec
+                    .iter()
+                    .map(|(n, deps)| {
+                        let mut rd = crate::stratify::RuleDep::new(n.clone());
+                        for d in deps {
+                            rd = rd.reads(d.clone());
                         }
-                        let _ = tx.commit();
+                        rd
+                    })
+                    .collect();
+                let stratifiable =
+                    match crate::stratify::stratify(&rule_deps) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            runtime_diags.emit(e.to_diag());
+                            false
+                        }
+                    };
+
+                // (1) declare owner + SUBSCRIBE to external sources.
+                // Idempotent on (kind,from,to,label): re-running each
+                // invocation is a no-op upsert keyed by a stable URI.
+                for (name, deps) in &rec {
+                    let owner = self.runtime_graph.declare_owner(
+                        &format!("sprf://ast/rule/{name}#fused"),
+                        None,
+                        "",
+                        "head",
+                        "pure",
+                        gen,
+                    );
+                    for d in deps {
+                        if d == name || rec_names.contains(d.as_str()) {
+                            continue; // self / co-recursive = cycle guard
+                        }
+                        let src =
+                            self.runtime_graph.declare_table_source(d, gen);
+                        let _ = self.runtime_graph.subscribe(
+                            &owner,
+                            "recursive-source",
+                            &src,
+                            gen,
+                        );
                     }
-                });
+                }
+
+                // (3) run-scoped incremental gate. SOUND DEFAULT =
+                // recompute (the proven Part-2 behavior). The skip is
+                // opt-in behind `SPREFA_REC_INCREMENTAL=1` because the
+                // available oracle (`warm_changed_paths`) is a
+                // PROCESS-WIDE corpus-change signal, not a per-rule
+                // source-attribution one: `Some(empty)` proves "no
+                // recorded corpus file moved", which does NOT prove THIS
+                // recursive rule's external sources are unchanged (a
+                // source the seam never recorded — explicit `path`
+                // reads, a sibling rule's table — can still have
+                // changed). Skipping on that is unsound (observed: an
+                // edited `.edges` corpus file still reported
+                // `Some(empty)`, so the closure would go stale). Until
+                // the gate consults a per-rule source set, default to
+                // recompute and never skip unsound. The structural wire
+                // above (owner + SUBSCRIBE + stratify) is unconditional
+                // and sound regardless. Negative cycle ⇒ recompute.
+                let incremental_optin = std::env::var("SPREFA_REC_INCREMENTAL")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+                let nothing_changed = incremental_optin
+                    && stratifiable
+                    && matches!(
+                        self.runtime_graph
+                            .warm_changed_paths(dir_for_hint.as_path()),
+                        Some(ref v) if v.is_empty()
+                    );
+                if nothing_changed {
+                    for (name, _) in &rec {
+                        skip_recompute.insert(name.clone());
+                    }
+                } else {
+                    store.with_connection(|conn| {
+                        if let Ok(tx) = conn.transaction() {
+                            for (name, _) in &rec {
+                                let tf = format!("{name}_facts");
+                                let _ = tx.execute(
+                                    &format!("DELETE FROM {tf}"),
+                                    [],
+                                );
+                                let _ = tx.execute(
+                                    "DELETE FROM support_edges WHERE parent_table = ?1",
+                                    [tf.as_str()],
+                                );
+                            }
+                            let _ = tx.commit();
+                        }
+                    });
+                }
             }
         }
 
         let mut n = 0;
         let mut run_stats = effect_runtime::v2::ExpandStats::default();
         for (idx, fused) in pipes.into_iter().enumerate() {
+            // Run-scoped incremental: the warm memo oracle proved no
+            // source file changed since the prior run, so this recursive
+            // rule's least fixed point is already materialized in the
+            // fact db (it was never cleared above). Skip recompute — the
+            // incremental win.
+            if fused.is_recursive() && skip_recompute.contains(fused.name())
+            {
+                continue;
+            }
             // Full-SQL fused rules execute their precomputed INSERT...SELECT
             // directly against the SQLite fact store. This bypasses the
             // per-cursor expand path entirely: zero cursors cross Rust for
