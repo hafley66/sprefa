@@ -23,9 +23,11 @@ Reading order for getting back into v4 without replaying chat logs:
 17. [V4 V3 Parity Gaps](./v4-v3-parity-gaps.md)
 18. [V4 Next Slices](./v4-next-slices.md)
 
-## Milestone — recursion is reactive (2026-05-18, main `37bb93a5`)
+## Milestone — recursion is reactive (2026-05-18 → 2026-05-19, main `294d60db`)
 
-Plain version of what landed over the last few sessions.
+Plain version of what landed over the last few sessions. (The reactive
+wire landed at `37bb93a5`; the cycle/self-reach surface form below
+landed at `294d60db`.)
 
 **Before:** a recursive rule (a rule that calls itself, e.g. "reach =
 one edge, OR reach-then-one-more-edge") only worked from hand-written
@@ -58,11 +60,66 @@ The three things that made it work, in order:
    graph (a relation depending on its own negation) surfaces as a
    diagnostic instead of a silent wrong answer.
 
+Follow-on (`294d60db`): cycle / self-reference is now a plain query
+shape, not a workaround. `reaches?(N?, N)` means "the rows where this
+rule's two columns are equal" — i.e. a node that reaches itself. No
+separate `where`-equals step. This completes the term-name algebra:
+the same term across two reads is a join across rows; a `?`-bound
+term re-referenced in one read is equality within a row. Example:
+[`v4/examples/reachability-cycle-imperative.sprf`](../examples/reachability-cycle-imperative.sprf).
+
+### What this unlocks (graph theory in the language)
+
+With recursion + stratified negation + retraction + cycle-as-surface,
+graph-theory queries are now writable in `.sprf` itself, over real
+repo corpora, not just in hand-written Rust:
+
+- reachability / transitive closure (recursive overload),
+- cycle detection and, from it, import-cycle / dependency-cycle
+  (`reaches?(N?, N)`),
+- mutual-reach / strongly-connected-ish membership
+  (`reaches?(A?,B?) > reaches?(B?, A?)`),
+- ancestor / descendant, connected-component-style grouping,
+- "reachable but **not** through X", orphan / dangling-reference
+  detection, version/rev drift — all via stratified antijoin.
+
+The honest framing: recursion + stratified negation + retraction is
+**stratified Datalog**, now expressible at the surface and evaluated
+over a polyglot code/repo graph. sprf stopped being "match + project"
+and became a recursive deductive query language.
+
+### Where this sits next to Differential Dataflow
+
+Same query *class*, different maintenance *cost curve*.
+
+- Expressiveness: stratified Datalog with retraction, same class as
+  Differential Dataflow (DD).
+- Recursion evaluation: sprf loops the fused SQL to quiescence
+  (semi-naive engine in `fixpoint.rs`; run path = `INSERT OR IGNORE`
+  loop with a hard cap). DD does true differential (delta) iteration.
+- Incrementality: sprf's fact-level retraction is incremental, but
+  recursive closures **recompute per run by default**. DD maintains
+  them differentially. The engine *can* cascade incrementally
+  (`tests/retraction_ph6.rs`) — the gap is wiring, not model.
+- Substrate: sprf is SQLite-backed fused SQL + effect_runtime,
+  owner/demand-driven and *persisted + ad-hoc queryable + LSP-wired*.
+  DD is a dedicated timely-dataflow operator graph with no notion of
+  "ask the graph a new question later" without redeploying.
+
+So today: sprf = stratified Datalog, recompute-by-default, reactive
+recompute triggers. DD = stratified Datalog, differential
+maintenance. The structural edge sprf keeps is that the graph is a
+persisted, queryable, editor-integrated artifact, not a streaming
+operator topology.
+
 Not yet on by default: skipping the recompute entirely when nothing
 changed. The code path exists behind `SPREFA_REC_INCREMENTAL=1` but
 the staleness signal available today is corpus-wide, not per-rule, so
 the safe default is "always recompute, never serve a stale closure."
-Sharpening that to a per-rule signal is the next step. Detail:
+**This is precisely the gap versus Differential Dataflow above:** a
+per-rule source-attribution oracle is what turns recompute-by-default
+into differential maintenance. Sharpening that signal is the next
+step. Detail:
 [`v4-recursion-surface-gaps.md`](./v4-recursion-surface-gaps.md).
 
 Doc posture:

@@ -817,3 +817,77 @@ artifacts.
     shape; those remain separate.</note>
   </topic>
 </llm-zone>
+
+<llm-zone source="claude-session-2026-05-19" status="llm-milestone-note">
+  <topic name="graph-theory-class-and-dd-framing-2026-05-19" llm-tags="v4 datalog stratified-negation cycle self-join surface differential-dataflow recompute-vs-differential graph-theory transitive-closure">
+    <note>LLM note (not human voice). RECONCILES + EXTENDS the
+    2026-05-18 zone above ("reactive-recursion-shipped-2026-05-18"); it
+    sharpens that note, does not replace it. The arc's main ref moves
+    37bb93a5 → 294d60db (full v4 gate 496/0/1). One follow-on landed:
+    cycle / self-reference is now a plain query SHAPE, not a `where`
+    workaround. `reaches?(N?, N)` = "rows where this rule's two columns
+    are equal" = a node that reaches itself. Mechanic: a `?`-bound term
+    re-referenced (no `?`) later in the SAME imperative rule-read
+    lowers to an intra-row self-equality (__rule.colB = __rule.colA)
+    instead of the old broken correlated read against the streaming
+    input cursor. This completes the term-name algebra: same term
+    across two reads = join across rows; `?`-then-ref in one read =
+    equality within a row. Order-honoring, Term-Bind subset only,
+    strictly additive (the rewritten case was a hard SQL error).
+    Proof: v4/tests/intra_row_self_eq_target.rs;
+    v4/examples/reachability-cycle-imperative.sprf re-pointed off the
+    `where`-equals step, render byte-identical (cycle = {a,b,c}).</note>
+    <note>The framing the human asked for (graph theory + DD
+    comparison), reconciled against the goals already written:
+
+    • CLASS CLAIM: recursion + stratified negation (antijoin) +
+      sound retraction + cycle-as-surface = STRATIFIED DATALOG,
+      now expressible at the .sprf surface and evaluated over a
+      polyglot code/repo graph. This is the precise, honest name for
+      what the line-19 / line-28 / line-36 asides ("it looked like
+      datalog, but we stopped", "datalog/prolog declarative rules",
+      "recursive queries on a tag table") were reaching for. Those
+      were aspirational; the class is now actually reached. sprf
+      stopped being match+project and became a recursive deductive
+      query language.
+
+    • GRAPH-THEORY QUERIES now writable in-language, not Rust-only:
+      reachability/transitive closure; cycle + import-/dep-cycle
+      (reaches?(N?, N)); mutual-reach / SCC-ish
+      (reaches?(A?,B?) > reaches?(B?, A?)); ancestor/descendant;
+      connected-component grouping; "reachable but NOT through X" /
+      orphan / dangling-ref / rev-drift via stratified antijoin.
+      This is the direct engine for line-104 ("violation checking,
+      hoping dd unlocks negation joins") and the
+      cross-repo-reachability + cross-language-type-graph
+      (paths-and-cycles) goals — answered by sprf rules, not a
+      bespoke crawler.
+
+    • VS DIFFERENTIAL DATAFLOW (the line-74 "explore sqlite store
+      techniques with DD" and line-104 "hoping dd unlocks" framing):
+      same query CLASS, different maintenance COST CURVE. sprf loops
+      fused SQL to quiescence (semi-naive engine in fixpoint.rs; run
+      path = INSERT-OR-IGNORE loop, hard cap). DD does true
+      differential (delta) iteration on timely dataflow. sprf's
+      fact-level retraction is incremental, but recursive closures
+      RECOMPUTE per run by default. The engine CAN cascade
+      incrementally (tests/retraction_ph6.rs) — the gap is WIRING,
+      not model. Substrate edge sprf keeps over DD: the graph is a
+      PERSISTED, ad-hoc QUERYABLE, LSP-wired artifact, not a
+      streaming operator topology you must redeploy to ask a new
+      question. Net today: sprf = stratified Datalog, recompute-
+      default, reactive recompute triggers; DD = stratified Datalog,
+      differential maintenance.
+
+    RECONCILIATION OF THE PRIOR "NOT UNLOCKED" LIST: the prior zone's
+    deferred item ("incremental/no-recompute at 500-repo scale, gated,
+    pending per-rule staleness") is now NAMED precisely: it IS the gap
+    versus Differential Dataflow. A per-rule source-attribution oracle
+    is exactly what converts recompute-by-default into differential
+    maintenance and would let SPREFA_REC_INCREMENTAL default on. Still
+    NOT unlocked (unchanged): the visual rendering, the partial
+    cross-language type-resolution algorithm, and DD-class differential
+    performance itself. Cycle-as-surface added query EXPRESSIVENESS;
+    it did not change the maintenance cost curve.</note>
+  </topic>
+</llm-zone>
