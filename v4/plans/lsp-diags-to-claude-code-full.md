@@ -18,20 +18,47 @@
 | `FactStoreClock` (durable only; no ephemeral clock) | yes | `v4/src/source_clock.rs:67-117` |
 | VS Code extension wiring `.sprf` only | yes | `v4/editors/vscode/src/extension.ts:30-35`, `v4/editors/vscode/package.json:32-72` |
 | Wide-selector extension at repo root | yes | `editors/vscode/src/extension.ts:28-39` |
-| FS watcher (`notify`), `VfsOverlay`, `WakeEvent` ingress | no | covered by `v4/plans/lsp-fs-watcher-reactive-wake.md` |
+| Watchman subscription via `watchman_client`, `VfsOverlay`, `WakeEvent` ingress | no | this plan |
 | `MemoDepsCache::by_source` reverse index | no | covered by `v4/plans/lsp-fs-watcher-reactive-wake.md` "MEMO_DEPS reverse index" |
 | daemon-side `DiagPublisher` (cross-URI publish) | no | new in this plan |
 | extension declares non-`.sprf` document selectors for diag receipt | no | new in this plan |
-| pre-warm walk on `initialize` | no | new in this plan |
+| SCM-aware pre-warm via Watchman `since: scm.mergebase` | no | new in this plan |
 
 Claude Code receives diagnostics via `mcp__ide__getDiagnostics(uri)`. That tool reads whatever the editor's diagnostics collection contains. Diagnostics arrive via standard LSP `publishDiagnostics` notifications from any connected LSP server the editor has wired up.
+
+## 0.5 Mechanism choice: Watchman + `watchman_client`
+
+This plan uses Facebook's Watchman daemon as the file-watching mechanism. Hand-rolled `notify::Watcher` is REJECTED as the default because:
+
+- Linux `notify::RecursiveMode::Recursive` is a userspace walk + per-subdir `inotify_add_watch`. 250k subdirs = 250k syscalls on subscribe and ~270MB unswappable kernel RAM at 1080 B/watch.
+- `fs.inotify.max_queued_events` defaults to 16384 and `git checkout` of a big diff overflows. Handling `IN_Q_OVERFLOW` requires a rescan trigger that Watchman implements and we would have to.
+- Atomic-save lookalikes (VS Code `files.enableAtomicSave: true`, JetBrains safe-write) fire `IN_MOVED_TO` not `IN_MODIFY`. Naive watchers miss every save.
+- Network mounts (NFS, SMB, WSL2 `/mnt/c`, Docker bind) deliver no events. Polling fallback is on us.
+
+Watchman handles all of the above. It also gives us SCM-aware queries: `since: { scm: { mergebase-with: "main" } }` returns ONLY files changed since the merge-base. Pre-warm becomes "everything different from main," not "walk 50k files."
+
+Trade-off: Watchman is an external C++ daemon. Users install it via `brew install watchman` or distro package; we ship a one-line check + helpful error on first connect. Already on most dev machines because Buck2, Mercurial, Jest, Metro, and Sapling all use it.
+
+Rust client: the `watchman_client` crate (Facebook-maintained, on crates.io). Unix-socket BSER protocol; no Node.
+
+Fallback (not in scope for this plan): if Watchman is unreachable, error out with installation instructions. A future opt-in `watchexec` fallback can be added later for distro-friendly installs.
 
 ## 1. End-to-end pipeline diagram
 
 ```
                     ┌──────────────────────────────────────────┐
-                    │ FsWatcher (notify, debouncer)            │
-                    │ paths_of_interest derived from MEMO_DEPS │
+                    │ Watchman daemon (external, brew install)│
+                    │  - watch-project per workspace root      │
+                    │  - subscribe per-root w/ since-clock     │
+                    │  - settles VCS bursts via defer_vcs      │
+                    └──────────────┬───────────────────────────┘
+                                   │ BSER over unix socket
+                                   ▼
+                    ┌──────────────────────────────────────────┐
+                    │ WatchmanIngress task (`watchman_client`) │
+                    │  - next() per Subscription               │
+                    │  - filter via paths_of_interest          │
+                    │  - emit WakeEvent::FsChange              │
                     └──────────────┬───────────────────────────┘
                                    │ WakeEvent::FsChange
                                    ▼
@@ -175,8 +202,9 @@ pub enum PutOutcome { Inserted, Updated, Stale }
 
 ```rust
 pub enum WakeEvent {
-    /// post-debounce on-disk change. `notify::EventKind` is collapsed
-    /// to Modify | Remove | Create at the watcher boundary.
+    /// Disk change reported by Watchman. The crate's `SubscriptionData::FilesChanged`
+    /// is normalized here. `kind` is derived from the per-file `exists` + `new` flags
+    /// returned by Watchman; we collapse to Modify | Remove | Create.
     FsChange { path: PathBuf, kind: FsKind },
 
     /// IDE buffer change. `text` overlays disk. `uri` preserved so
@@ -184,9 +212,92 @@ pub enum WakeEvent {
     BufferOpen   { path: PathBuf, uri: Arc<str>, text: Arc<str>, version: i32 },
     BufferChange { path: PathBuf, uri: Arc<str>, text: Arc<str>, version: i32 },
     BufferClose  { path: PathBuf, uri: Arc<str> },
+
+    /// Watchman state-transition signal. Buck/Mercurial/etc. fire these
+    /// around large operations ("hg.transaction", "hg.update", "git-checkout").
+    /// We use them to pause expand until the working copy settles, then
+    /// fold the resulting FilesChanged batch into one expand call.
+    ScmStateEnter { state: Arc<str> },
+    ScmStateLeave { state: Arc<str>, files_changed: Vec<PathBuf> },
 }
 
 pub enum FsKind { Modify, Remove, Create }
+```
+
+### 2.3a `WatchmanIngress` — new struct in `v4/src/app.rs`
+
+```rust
+pub struct WatchmanIngress {
+    client:        watchman_client::Client,
+    /// One subscription per workspace root resolved via `watch-project`.
+    subs:          DashMap<PathBuf /* root */, SubscriptionHandle>,
+    /// Tx half of the daemon's mpsc<WakeEvent>; cloned into each
+    /// subscription's per-root tokio task.
+    wake_tx:       mpsc::Sender<WakeEvent>,
+    /// SCM clock snapshot stored per root for replay-after-restart.
+    /// Persisted to `_watchman_clock` table on every successful drain.
+    last_clock:    DashMap<PathBuf, watchman_client::Clock>,
+}
+
+struct SubscriptionHandle {
+    sub:           watchman_client::Subscription<NameOnly>,
+    task:          tokio::task::JoinHandle<()>,
+    paths_filter:  Arc<DashSet<PathBuf>>, // snapshot of paths_of_interest at subscribe time
+}
+
+impl WatchmanIngress {
+    pub async fn connect() -> anyhow::Result<Self>;
+    // body: Connector::new().connect().await  -> client
+    //       Self { client, subs: DashMap::new(), wake_tx, last_clock: DashMap::new() }
+
+    pub async fn watch_root(&self, root: PathBuf, suffixes: &[&str]) -> anyhow::Result<()>;
+    // body:
+    //  1. let resolved = self.client.resolve_root(CanonicalPath::canonicalize(root)?).await?;
+    //  2. let since = self.last_clock.get(&root).cloned();
+    //  3. let (sub, _initial) = self.client.subscribe::<NameOnly>(
+    //         &resolved,
+    //         SubscribeRequest {
+    //             expression: Some(Expr::Suffix(suffixes.iter().map(|s| s.into()).collect())),
+    //             since: since.or_else(|| Some(Clock::ScmAware(ScmAwareClockData{
+    //                 mergebase_with: Some("main".into()),
+    //                 ..Default::default()
+    //             }))),
+    //             defer_vcs: false,        // we want vcs events
+    //             defer: vec!["hg.update".into(), "git-checkout".into()],
+    //             ..Default::default()
+    //         }
+    //     ).await?;
+    //  4. spawn(self.drain_subscription(root, sub))
+    //  5. self.subs.insert(root, handle)
+
+    async fn drain_subscription(&self, root: PathBuf, mut sub: Subscription<NameOnly>) {
+        // loop {
+        //   match sub.next().await {
+        //     Ok(SubscriptionData::FilesChanged(qr)) => {
+        //       self.last_clock.insert(root.clone(), qr.clock.clone());
+        //       for f in qr.files.unwrap_or_default() {
+        //         // f.name: PathBuf relative to root
+        //         let abs = root.join(&f.name);
+        //         if !self.paths_of_interest_contains(&abs) { continue; }
+        //         let kind = if f.exists { if f.new { FsKind::Create } else { FsKind::Modify } }
+        //                    else { FsKind::Remove };
+        //         let _ = self.wake_tx.send(WakeEvent::FsChange{ path: abs, kind }).await;
+        //       }
+        //     }
+        //     Ok(SubscriptionData::StateEnter { state_name, .. }) =>
+        //       self.wake_tx.send(WakeEvent::ScmStateEnter{ state: state_name.into() }).await.ok(),
+        //     Ok(SubscriptionData::StateLeave { state_name, .. }) =>
+        //       /* coalesce the resulting FilesChanged into one ScmStateLeave */,
+        //     Err(_) => /* reconnect with backoff */,
+        //   }
+        // }
+    }
+
+    pub async fn scm_changed_since_main(&self, root: &Path) -> anyhow::Result<Vec<PathBuf>>;
+    // body: query with since: Clock::ScmAware { mergebase_with: "main" };
+    //       returns the file list that differs from main's merge-base.
+    //       Used by pre-warm (§8).
+}
 ```
 
 ### 2.4 `DiagPublisher` — new in `v4/crates/sprefa-lsp/src/main.rs`
@@ -427,28 +538,33 @@ LSP frontend impl wraps `DiagPublisher`. Daemon-only run mode uses a no-op impl 
 - read at daemon start (one `rows_of`).
 - write at expand end (one batched `flush_memo_deps`).
 
-## 5. Reactivity model — two clocks
+## 5. Reactivity model — two clocks, Watchman-sourced disk events
 
 | event source | clock bumped | dedup | win window |
 |---|---|---|---|
 | `did_change(uri, text, v)` | `ephemeral(sid)` | `pending` map in `Backend` (`v4/crates/sprefa-lsp/src/main.rs:131-189`) | 80ms keystroke debounce |
-| `notify::Event::Modify(path)` | `durable(sid)`, only if `SourceIdentity` differs | `notify-debouncer-mini` 100ms | 100ms FS debounce |
-| `did_save` | none (file write fires `notify` separately) | — | — |
+| Watchman `FilesChanged` | `durable(sid)`, only if `SourceIdentity` differs | Watchman-side settle + our per-batch `BTreeSet` coalesce | per-subscription, set by Watchman defaults |
+| `did_save` | none (file write fires Watchman separately) | — | — |
 | `did_close(uri)` | `durable(sid)` | drop `vfs` entry then treat as FsChange | immediate |
 
+The `durable` clock is the sqlite-backed `FactStoreClock`. The `ephemeral` clock is in-RAM, bumped on every `did_change`. Watchman's own clock token is stored separately in `WatchmanIngress.last_clock` and persisted via `_watchman_clock` table on each successful drain so we resume from the right point after a daemon restart.
+
 ### 5.1 Dedup when both fire (typical: VS Code "auto-save on focus loss" + keystroke)
-- Sequence: `did_change` → 80ms debounce → daemon receives `BufferChange` → `ephemeral.bump(sid)`. Save happens. `notify` fires `Modify`.
+- Sequence: `did_change` → 80ms debounce → daemon receives `BufferChange` → `ephemeral.bump(sid)`. Save happens. Watchman fires `FilesChanged`.
 - Daemon sees `FsChange`. `vfs.is_owned(path) == true` (still owned). Short-circuit: no clock bump, no job emit.
 - When `did_close` arrives, `vfs.remove(path)` + `durable.bump(sid)`. New `expand` runs against on-disk text (now identical to the buffer; no work to do besides confirming).
 
-### 5.2 Git-checkout burst
+### 5.2 Git-checkout burst (Watchman-handled)
 - `git checkout` rewrites 1000 files in <100ms.
-- `notify-debouncer-mini` collapses to one batch event per second of activity per directory.
-- `on_wake_event(FsChange)` iterates the batch:
-  - For each path, compute `SourceIdentity` (one stat or one git OID lookup); gate via `paths_of_interest.contains(path)` BEFORE identity compute. Paths not in the set are dropped at the watcher debouncer's predicate.
-  - Owners-of-path coalesce via a `BTreeSet<(OwnerKey, InKey)>` accumulator inside one `on_wake_event` call.
-  - One mpsc send per `(owner, in_key)`, not per path.
-- DrainTask sees one fat batch, dedupes again, calls `expand` ONCE with the full warm slice. Cost ∝ # owners hit, not # files changed.
+- `defer: ["hg.update", "git-checkout"]` in the `SubscribeRequest` tells Watchman to PAUSE delivery while the working copy is mid-transition. We receive a `StateEnter("git-checkout")` event, then a single `StateLeave` carrying the full coalesced `FilesChanged` set after the working copy settles.
+- `on_wake_event(ScmStateEnter)` flips an `is_settling` flag; the drain task stops emitting RuntimeJobs.
+- `on_wake_event(ScmStateLeave)` clears the flag and emits one big batch to the drain task. ONE expand call per checkout, not 1000.
+- The `IN_Q_OVERFLOW` failure mode of hand-rolled inotify does not exist: Watchman's daemon keeps its own state and re-emits the consistent diff on resubscribe. Crash-recovery is by clock-token replay.
+
+### 5.3 Out-of-band events (gitignored writes, `target/` churn, etc.)
+- Watchman honors `.watchmanconfig` ignore globs at the watch-project level.
+- We ship a `_sprf_watchman_config.json` template that excludes `.git/`, `target/`, `node_modules/`, `dist/`, `build/`, `.next/`, `__pycache__/`, `.venv/`.
+- `setup` on `initialize` writes this template iff no `.watchmanconfig` exists in the workspace root. Existing user config is left untouched.
 
 ## 6. Cross-URI diagnostic publish
 
@@ -511,34 +627,48 @@ Keep stdio. Rationale: VS Code spawns one server per workspace; stdio is the low
 
 Cursor uses the same VS Code extension. No separate wiring. The Claude Code CLI's `mcp__ide__*` is editor-agnostic; it reads diagnostics through whatever IDE bridge it connects to.
 
-## 8. Pre-warm on `initialize`
+## 8. Pre-warm on `initialize` (SCM-aware via Watchman)
 
 Cold-start problem: with no `_memo_deps` (first run) and no buffer events, `paths_of_interest` is empty. Outside-IDE edits cannot wake. Worse, Claude Code asking `mcp__ide__getDiagnostics` immediately sees nothing.
 
-### 8.1 Strategy: bounded glob walk
+### 8.1 Strategy: SCM-aware Watchman query
 
-On `initialize`:
-1. Read all `*.sprf` files under the workspace root via `WalkBuilder::new(root).git_ignore(true)`.
-2. For each `.sprf`, parse to AST (cheap), extract literal globs from `fs > glob\`…\`` and `fs > files\`…\`` ops.
-3. Union the globs. Walk the workspace once with these globs.
-4. Push `WakeEvent::FsChange { path, kind: Modify }` for each match, capped at `max_files=50_000` and budget `5s` wall.
-5. DrainTask processes the batch in the background; first `mcp__ide__getDiagnostics(uri)` call may show empty until pre-warm completes (~5s on 50k-file repo).
+On `initialize`, for each workspace root:
+
+```rust
+let qr = client.query::<NameOnly>(&resolved_root, QueryRequestCommon {
+    expression: Some(Expr::Suffix(vec!["rs".into(), "ts".into(), "py".into(), "sprf".into()])),
+    since: Some(Clock::ScmAware(ScmAwareClockData {
+        mergebase_with: Some("main".into()),
+        ..Default::default()
+    })),
+    ..Default::default()
+}).await?;
+// qr.files: every file under root whose contents differ from the
+// merge-base with main.
+```
+
+This returns ONLY files that are modified, added, or removed relative to `main`. On a freshly-checked-out branch with 5 changed files this returns 5 paths. On a 500-repo workspace where most submodules are at HEAD, this returns the small subset that diverges.
+
+Push each returned path as `WakeEvent::FsChange { kind: Modify }`. DrainTask runs expand on the batch.
 
 ### 8.2 50k-file single repo
-- `WalkBuilder` walks at ~1µs/entry on hot disk; 50µs/cold. Budget 5s = 50k files cold, 5M files hot. Fine.
-- Glob match via `globset::GlobSetBuilder` is O(1) per path after compile. Trivial.
-- Per-file overhead: one `paths_of_interest.insert`. DashMap shard insert ~50ns. 50k * 50ns = 2.5ms.
-- Total: pre-warm fits in budget for 50k files. Expand-on-warm is the real cost — see §11.
+- SCM-aware query is one Unix-socket round-trip; Watchman has the answer cached from its own watch state.
+- Typical result size on a working branch: 10-500 paths.
+- Pre-warm wall time: ~50ms (one round-trip + N FsChange ingests).
+- Compare to the rejected `WalkBuilder` approach: 5s budget, 50k file walk. SCM-aware wins by two orders of magnitude.
 
 ### 8.3 500-repo workspace (monorepo of submodules)
-- Naive walk would be 500 * 50k = 25M files. Blows the budget.
-- Mitigation: pre-warm walks only the WORKSPACE ROOT non-recursively across submodules. Submodules opt in via a `sprefa.toml` `workspace.scan` field (defaults to `[".", "./*/"]`).
-- Per-repo budget: 5s / # submodules with .sprf rules. Skip submodules with no `.sprf` file.
-- Falls back to lazy mode (no pre-warm) if `# files > max_files`; first relevant edit wakes the relevant owner.
+- One `watch-project` + one SCM query per repo that contains `.sprf` rules.
+- Skip repos with no `.sprf` file via a `find ./*/. -name '*.sprf'` pre-pass (or one Watchman `query` against the workspace umbrella root if Watchman is rooted there).
+- Per-repo wall: ~50ms. 100 repos with rules = 5s, parallelisable to <1s with `futures::join_all`.
 
-### 8.4 Lazy alternative (rejected as default)
+### 8.4 Initial-cold case (first time on a branch, no `main` reference)
+- If `mergebase_with: "main"` fails (Watchman returns an error: no merge-base), fall back to `since: Clock::Spec(ClockSpec::null_clock())` which returns ALL files matching the suffix expression. This IS the full walk; cap at `max_files=50_000` and budget `5s` as a safety.
+- Cache the resulting clock token in `_watchman_clock` so subsequent boots resume from that point.
 
-Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. Rejected because Claude Code's whole value is asking about files the user is NOT looking at. Pre-warm cost is bounded; skipping it defeats the use case.
+### 8.5 Lazy alternative (rejected as default)
+Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. Rejected because Claude Code's whole value is asking about files the user is NOT looking at. The SCM-aware pre-warm is so cheap that this trade-off no longer matters.
 
 ## 9. Phasing / build order
 
@@ -573,18 +703,20 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
 - No watcher yet.
 - **User-visible outcome:** zero direct user effect, but `paths_of_interest` is now O(1)-derivable. Internal precondition for Phase 6.
 
-### Phase 6 — FsWatcher + drain task (the bulk of `lsp-fs-watcher-reactive-wake.md`)
-- Implement `FsWatcherState`, `WakeEvent::FsChange`, `Clocks { durable, ephemeral }`.
-- Spawn `notify::RecommendedWatcher` over `paths_of_interest.parents()`.
-- Drain task with mpsc cap 1024.
+### Phase 6 — WatchmanIngress + drain task
+- Implement `WatchmanIngress`, `WakeEvent::FsChange | ScmStateEnter | ScmStateLeave`, `Clocks { durable, ephemeral }`.
+- `connect()` on `initialize`; emit `window/showMessage` with install command on connect failure.
+- `watch_project` per workspace root, single persistent connection multiplexed.
+- `_watchman_clock` table persists per-root last clock token for replay across daemon restart.
+- Drain task with mpsc cap 1024 honors `is_settling` flag during `ScmStateEnter`.
 - Extend `DiagPublisher` to subscribe to per-URI diag bus and publish reactively.
-- **User-visible outcome:** edits to .rs/.ts files (via any tool, including Claude Code's own Edit) trigger re-lint in <100ms; agent sees fresh diagnostics on next `mcp__ide__getDiagnostics` call. This is the goal state.
+- **User-visible outcome:** edits to .rs/.ts files (via any tool, including Claude Code's own Edit, including `git checkout` of a branch) trigger re-lint in <100ms; agent sees fresh diagnostics on next `mcp__ide__getDiagnostics` call. This is the goal state.
 
-### Phase 7 — burst handling and `DiagPublisher.last` dedup
-- Implement throttle window (default 50ms) and `last` hash-skip.
-- Add `notify-debouncer-mini` 100ms collapse.
-- Burst gate: if `notify` fires >100 events on the same dir in <100ms, switch to identity-equality batch mode (one SourceIndex rebuild for the dir, not one per event).
-- **User-visible outcome:** `git checkout` between two branches with 1000+ changed files no longer pegs the daemon; diagnostics update in one batch within 1s.
+### Phase 7 — `DiagPublisher.last` dedup + reconnect hardening
+- Implement publish-side throttle window (default 50ms) and `last` hash-skip.
+- Reconnect backoff for Watchman socket loss (250ms, 500ms, 1s, 2s, max 30s); resubscribe with persisted `last_clock`.
+- Test the daemon-restart path: kill `watchman` mid-session, assert ingress reconnects and replays the diff.
+- **User-visible outcome:** `git checkout` already handled by Phase 6's `defer` settle; Phase 7 hardens the publish-side dedup so that idempotent re-publishes don't spam the editor across reconnects.
 
 ## 10. Tests
 
@@ -648,14 +780,14 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
 - **Blow-up vector:** the lint flips between two states on every keystroke (e.g., `if cond { lint } else { no_lint }`). `last` hash never skips. Acceptable; the user IS toggling state.
 - **Invariant:** `publish_diagnostics` is fire-and-forget; the daemon does not await acks. The slow point is JSON-RPC encoding, which is CPU-bound.
 
-### 11.5 `notify::Watcher` OS limits at 500-repo scale
-- **macOS:** `kqueue` has no hard cap but each watched file consumes a file descriptor. 500 repos × 50k files would exhaust `ulimit -n` (typical 256, with macOS daemons up to 10k). FATAL without mitigation.
-- **Linux:** `inotify_init` has `fs.inotify.max_user_watches` (typically 8k-1M depending on distro). 500 × 50k = 25M watches blows everything up.
-- **Mitigation:**
-  1. Watch DIRECTORIES, not files. `notify::RecommendedWatcher::watch(path, RecursiveMode::NonRecursive)`. One watch per parent dir of every path in `paths_of_interest`. Typical .rs file tree has ~100-500 directories per 10k files. 500 repos × 500 dirs = 250k watches; still high on Linux defaults.
-  2. Tier: watch dirs containing 5+ paths_of_interest; for sparser dirs, fall back to polling on a 1s tick (`notify::PollWatcher`).
-  3. Hard cap: 50k watches. If exceeded, fall back fully to polling.
-- **Invariant:** `paths_of_interest` is rule-derived and tends to cluster (e.g., `v4/src/**/*.rs` = one tree). Realistic workloads hit ~5k watches.
+### 11.5 Watchman daemon dependency
+- **Install requirement:** users need Watchman on PATH (`brew install watchman`, distro package, or `winget install Facebook.Watchman`). First connect attempt that errors emits a single LSP `window/showMessage` with the install command for their OS.
+- **OS limits — solved by Watchman, not us:** Watchman handles per-platform watch primitives (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows). Linux `fs.inotify.max_user_watches`, macOS `kern.maxfilesperproc`, Windows handle limits are all Watchman's problem; the daemon is tuned for monorepo scale (Buck2, Mercurial, Sapling at Meta).
+- **Daemon liveness:** `watchman_client::Connector::new().connect()` returns `Err` if the daemon is down. We auto-`watchman --foreground` ONLY if `--allow-watchman-spawn` flag is set; otherwise emit the install message and degrade to "polling on did_change only" mode (no FS reactivity).
+- **Crash recovery:** Watchman daemon crash drops our subscription. `WatchmanIngress::drain_subscription` detects the connection drop, reconnects with exponential backoff (250ms, 500ms, 1s, 2s, max 30s), and resubscribes using the persisted `last_clock` from `_watchman_clock`. No event loss across daemon restart.
+- **Cost at 500-repo scale:** one `watch-project` per root, one persistent socket connection (the `watchman_client` crate multiplexes subscriptions on one connection by default). Memory: ~64 bytes per `SubscriptionHandle` × 500 = 32 KB on our side. Watchman daemon RSS: typically <100 MB on a 50k-file Rust monorepo (per Watchman docs).
+- **Network mounts:** Watchman degrades to polling on NFS/SMB; latency goes from <100ms to ~1s but it works. We get this for free; hand-rolled `notify` would silently miss every event.
+- **WSL2 `/mnt/c`:** Watchman on WSL2 supports both the native ext4 case and `/mnt/c` (via polling on the Windows side); same automatic degradation.
 
 ### 11.6 Pre-warm walker
 - **Worst-case input:** 1M-file monorepo, all `.rs`.
@@ -694,7 +826,8 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
 - `v4/src/source_clock.rs` — Phase 6 (split `Clocks { durable, ephemeral }`; `FactStoreClock` stays + new `InMemClock`). Line ranges: `:67-117` (SourceClock trait + FactStoreClock).
 - `v4/src/lsp.rs` — Phase 2 (extend `LspBodyComponent` and `resolve_diag_span` to record the target URI on the emitted `Diag`). Line ranges: `:141-250` (component), `:284-326` (LspBodyDef ctors).
 - `v4/editors/vscode/src/extension.ts` and `v4/editors/vscode/package.json` — Phase 1 (selector + activation events). Line ranges: ext `:30-35`, pkg `:29-31`.
-- `v4/Cargo.toml` — Phase 6 (add `notify = "6"`, `notify-debouncer-mini = "0.4"`, `globset = "0.4"`).
+- `v4/Cargo.toml` — Phase 6 (add `watchman_client = "0.9"`). NO `notify`, NO `notify-debouncer-mini`. `globset = "0.4"` still wanted for the suffix-expression compile path.
+- `.watchmanconfig` template — Phase 6 (ship at `v4/templates/_watchman_config.json`; `initialize` copies it to workspace root iff absent).
 
 ## 14. Companion plans
 
