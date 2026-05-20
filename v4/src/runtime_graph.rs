@@ -93,6 +93,86 @@ impl NodeKind for Support {
     type Extra = ();
 }
 
+/// `_memo_deps` in-RAM cache. Phase 5 of `v4/plans/lsp-diags-to-claude-code-full.md`:
+/// `forward` is the historical shape (read by `memo_deps_of`, written by
+/// `record_memo_dep[s]`). `by_path` is the new path-keyed reverse index Phase 6
+/// uses to answer `FsChange(path) -> Vec<(owner_op_id, in_key)>` in O(1).
+///
+/// `by_path` keys are canonicalized via `vfs::canon_path` (`dunce::canonicalize`)
+/// so a Watchman event under `/private/...` matches a write-site path under
+/// `/Users/...` (macOS symlink). Entries with empty `source_path` (SQL mounts —
+/// `mounted_query.rs:430-431,514-515`) are kept in `forward` so the existing
+/// `memo_dep_owners_for_source` sweep still finds them via `SourceId`, but get
+/// no `by_path` entry.
+pub struct MemoDepsCache {
+    pub forward: HashMap<(String, String), Vec<(String, u64, String, String)>>,
+    pub by_path: HashMap<PathBuf, std::collections::HashSet<(String, String)>>,
+}
+
+impl MemoDepsCache {
+    pub fn new() -> Self {
+        Self {
+            forward: HashMap::new(),
+            by_path: HashMap::new(),
+        }
+    }
+
+    pub fn contains_path(&self, p: &Path) -> bool {
+        self.by_path.contains_key(p)
+    }
+
+    pub fn owners_of_path(&self, p: &Path) -> Vec<(String, String)> {
+        self.by_path
+            .get(p)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Diff-replace the by_path buckets for `key` given the OLD and NEW dep
+    /// vecs. The caller has already mutated `forward[key]` to the new value;
+    /// this only updates `by_path`. Empty `source_path` is skipped on both
+    /// sides (SQL mounts). Paths that fail to canonicalize (file deleted
+    /// between record and stat) are skipped — the disk truth for that source
+    /// is gone, so a Phase 6 wake on that path would be a no-op anyway.
+    pub fn write_through(
+        &mut self,
+        key: &(String, String),
+        old: Option<&[(String, u64, String, String)]>,
+        new: &[(String, u64, String, String)],
+    ) {
+        let new_canon: std::collections::HashSet<PathBuf> = new
+            .iter()
+            .filter_map(|(_, _, _, p)| {
+                if p.is_empty() {
+                    None
+                } else {
+                    crate::vfs::canon_path(Path::new(p))
+                }
+            })
+            .collect();
+        if let Some(old) = old {
+            for (_, _, _, p) in old {
+                if p.is_empty() {
+                    continue;
+                }
+                if let Some(cp) = crate::vfs::canon_path(Path::new(p)) {
+                    if !new_canon.contains(&cp) {
+                        if let Some(set) = self.by_path.get_mut(&cp) {
+                            set.remove(key);
+                            if set.is_empty() {
+                                self.by_path.remove(&cp);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for cp in new_canon {
+            self.by_path.entry(cp).or_default().insert(key.clone());
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct RuntimeGraph {
     pub store: Arc<SprfStore>,
@@ -129,10 +209,9 @@ pub struct RuntimeGraph {
     /// through one mutexed sqlite conn) — the read-side N+1. This loads
     /// the whole table ONCE (`rows_of`) on first access; `record_memo_*`
     /// is write-through so reads stay correct after a same-run rewrite.
-    /// `None` = not yet loaded.
-    memo_deps_cache: Arc<
-        Mutex<Option<HashMap<(String, String), Vec<(String, u64, String, String)>>>>,
-    >,
+    /// Phase 5: holds `forward` (existing) plus `by_path` reverse index
+    /// for Phase 6's FS wake path. `None` = not yet loaded.
+    memo_deps_cache: Arc<Mutex<Option<MemoDepsCache>>>,
     /// `(owner_op_id, in_key)` pairs whose `_memo_deps` changed this
     /// run. `flush_memo_deps` persists exactly these (1 on a 1-file
     /// incremental edit), NOT the whole owner — flush cost ∝ changes.
@@ -558,7 +637,7 @@ impl RuntimeGraph {
         let mut recorded: HashMap<String, String> = HashMap::new();
         let guard = self.memo_deps_loaded();
         if let Some(map) = guard.as_ref() {
-            for rows in map.values() {
+            for rows in map.forward.values() {
                 for (_sid, _gen, content_id, source_path) in rows {
                     if !source_path.is_empty() {
                         recorded.insert(source_path.clone(), content_id.clone());
@@ -693,11 +772,11 @@ impl RuntimeGraph {
         // In-RAM only. NO per-call sqlite (that was a cold N+1).
         // Persisted once by `flush_memo_deps`.
         let sid = source.hex();
+        let key = (owner_op_id.to_string(), in_key.to_string());
         let mut guard = self.memo_deps_loaded();
-        let m = guard.as_mut().unwrap();
-        let e = m
-            .entry((owner_op_id.to_string(), in_key.to_string()))
-            .or_default();
+        let cache = guard.as_mut().unwrap();
+        let old = cache.forward.get(&key).cloned();
+        let e = cache.forward.entry(key.clone()).or_default();
         e.retain(|(s, _, _, _)| s != &sid);
         e.push((
             sid,
@@ -705,11 +784,10 @@ impl RuntimeGraph {
             content_hex.to_string(),
             source_path.to_string(),
         ));
+        let new = e.clone();
+        cache.write_through(&key, old.as_deref(), &new);
         drop(guard);
-        self.memo_deps_dirty
-            .lock()
-            .unwrap()
-            .insert((owner_op_id.to_string(), in_key.to_string()));
+        self.memo_deps_dirty.lock().unwrap().insert(key);
     }
 
     /// Phase 2 (batched): persist the FULL recorded dep set for one
@@ -753,17 +831,15 @@ impl RuntimeGraph {
             })
             .collect();
         // This drain IS the complete set for (owner, in_key) — replace
-        // the cached entry wholesale.
+        // the cached entry wholesale. Phase 5: snapshot the OLD set
+        // before insert so `write_through` can diff-prune by_path.
+        let key = (owner_op_id.to_string(), in_key.to_string());
         let mut guard = self.memo_deps_loaded();
-        guard
-            .as_mut()
-            .unwrap()
-            .insert((owner_op_id.to_string(), in_key.to_string()), set);
+        let cache = guard.as_mut().unwrap();
+        let old = cache.forward.insert(key.clone(), set.clone());
+        cache.write_through(&key, old.as_deref(), &set);
         drop(guard);
-        self.memo_deps_dirty
-            .lock()
-            .unwrap()
-            .insert((owner_op_id.to_string(), in_key.to_string()));
+        self.memo_deps_dirty.lock().unwrap().insert(key);
     }
 
     /// Load `_memo_deps` into RAM ONCE (one `rows_of` query) and return
@@ -771,19 +847,10 @@ impl RuntimeGraph {
     /// sqlite touch is this one load + one `flush_memo_deps` write. The
     /// seam probes one `(owner, in_key)` per input row, so per-call
     /// `read_where`/`insert` were 63k× N+1s on both sides.
-    #[allow(clippy::type_complexity)]
-    fn memo_deps_loaded(
-        &self,
-    ) -> std::sync::MutexGuard<
-        '_,
-        Option<HashMap<(String, String), Vec<(String, u64, String, String)>>>,
-    > {
+    fn memo_deps_loaded(&self) -> std::sync::MutexGuard<'_, Option<MemoDepsCache>> {
         let mut guard = self.memo_deps_cache.lock().unwrap();
         if guard.is_none() {
-            let mut m: HashMap<
-                (String, String),
-                Vec<(String, u64, String, String)>,
-            > = HashMap::new();
+            let mut cache = MemoDepsCache::new();
             let mut loaded = self.memo_deps_loaded_keys.lock().unwrap();
             if self.compact_sources.is_some() {
                 // Task #6: the compact (CLI) path persists NO per-file
@@ -807,12 +874,22 @@ impl RuntimeGraph {
                     let content = r.get("content_id").unwrap_or("").to_string();
                     let path = r.get("source_path").unwrap_or("").to_string();
                     loaded.insert((owner.clone(), ik.clone()));
-                    m.entry((owner, ik))
+                    cache
+                        .forward
+                        .entry((owner, ik))
                         .or_default()
                         .push((sid, gen, content, path));
                 }
+                // Phase 5: seed by_path from the freshly loaded forward map.
+                // Snapshot keys + clone deps to avoid aliasing the mutable
+                // borrow inside write_through.
+                let keys: Vec<(String, String)> = cache.forward.keys().cloned().collect();
+                for key in keys {
+                    let deps = cache.forward.get(&key).cloned().unwrap_or_default();
+                    cache.write_through(&key, None, &deps);
+                }
             }
-            *guard = Some(m);
+            *guard = Some(cache);
         }
         guard
     }
@@ -825,6 +902,7 @@ impl RuntimeGraph {
         self.memo_deps_loaded()
             .as_ref()
             .unwrap()
+            .forward
             .get(&(owner_op_id.to_string(), in_key.to_string()))
             .cloned()
             .unwrap_or_default()
@@ -869,7 +947,7 @@ impl RuntimeGraph {
                     &[("owner_op_id", o.as_str()), ("in_key", ik.as_str())],
                 );
             }
-            if let Some(set) = map.get(&(o.clone(), ik.clone())) {
+            if let Some(set) = map.forward.get(&(o.clone(), ik.clone())) {
                 for (sid, gen_seen, content_hex, path) in set {
                     let mut row = Cursor::default();
                     row.set("owner_op_id", o.clone());
@@ -974,6 +1052,7 @@ impl RuntimeGraph {
         let guard = self.memo_deps_loaded();
         let map = guard.as_ref().unwrap();
         let mut out: Vec<(String, String)> = map
+            .forward
             .iter()
             .filter(|(_, set)| set.iter().any(|(s, _, _, _)| s == &sid))
             .map(|((owner, in_key), _)| (owner.clone(), in_key.clone()))
@@ -981,6 +1060,34 @@ impl RuntimeGraph {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Phase 5/6. Path-keyed reverse lookup. Path canonicalization matches
+    /// the write side (`vfs::canon_path`), so a Watchman event under
+    /// `/private/...` matches a recorded `source_path` under `/Users/...`.
+    /// Returns an owned snapshot; caller never holds the cache lock.
+    pub fn memo_dep_owners_for_path(&self, path: &Path) -> Vec<(String, String)> {
+        let cp = match crate::vfs::canon_path(path) {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+        self.memo_deps_loaded()
+            .as_ref()
+            .map(|c| c.owners_of_path(&cp))
+            .unwrap_or_default()
+    }
+
+    /// Phase 5/6. O(1) membership predicate. Same canonicalization as
+    /// `memo_dep_owners_for_path`.
+    pub fn memo_dep_contains_path(&self, path: &Path) -> bool {
+        let cp = match crate::vfs::canon_path(path) {
+            Some(p) => p,
+            None => return false,
+        };
+        self.memo_deps_loaded()
+            .as_ref()
+            .map(|c| c.contains_path(&cp))
+            .unwrap_or(false)
     }
 
     /// Phase 6 (Diagram A). Mark one MEMO_DEPS owner dirty for a

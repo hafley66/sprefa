@@ -112,51 +112,97 @@ Fallback (not in scope for this plan): if Watchman is unreachable, error out wit
 
 ### 2.1 `MemoDepsCache` reverse index — `v4/src/runtime_graph.rs:125-145`
 
+REVISED 2026-05-20 after a two-reviewer design audit. The original draft proposed
+`by_table` and `paths_of_interest`; both are removed. Rationale follows the type.
+
 ```rust
-type SourceIdEncoded = [u8; 32];           // matches SourceId::hex bytes via decode
-type OwnerKey       = String;              // owner_op_id today
-type InKey          = String;              // in_key today
+type OwnerKey  = String;   // owner_op_id = re_owner_hex (the seam digest at v2_ops.rs:1711)
+type InKey     = String;   // in_key
+type SidHex    = String;
+type ContentHex= String;
+type DepRow    = (SidHex, u64, ContentHex, PathBuf); // path canonical, see below
 
 pub struct MemoDepsCache {
-    /// existing forward shape — KEEP.
-    forward:   HashMap<(OwnerKey, InKey), Vec<DepRow>>,
-    /// new reverse — built write-through from forward, never loaded
-    /// separately. Holds path-keyed entries so `paths_of_interest`
-    /// derives by `keys().map(|p| p.parent())`.
-    by_path:   HashMap<PathBuf, HashSet<(OwnerKey, InKey)>>,
-    /// new alt key for table-typed sources (sql mounts pass empty path).
-    by_table:  HashMap<String, HashSet<(OwnerKey, InKey)>>,
+    /// KEEP. Existing forward shape (was: bare HashMap inside a Mutex<Option<...>>).
+    forward: HashMap<(OwnerKey, InKey), Vec<DepRow>>,
+    /// NEW. Reverse index for Phase 6's FsChange wake path. Built write-through
+    /// from `forward`. Independent storage so Phase 6 reads do not serialize on
+    /// the same lock that `record_memo_deps` grabs at expand-end. Stored
+    /// alongside `forward` inside the same `MemoDepsCache` for code locality;
+    /// the LOCK strategy is in §4.2.
+    by_path: HashMap<PathBuf, HashSet<(OwnerKey, InKey)>>,
 }
 
 impl MemoDepsCache {
-    pub fn owners_of_path(&self, path: &Path)
-        -> impl Iterator<Item = &(OwnerKey, InKey)>;
-    // body: self.by_path.get(path).into_iter().flatten()
+    /// Phase 6 hot path. O(1) point membership.
+    pub fn contains_path(&self, p: &Path) -> bool;
+    // body: self.by_path.contains_key(p)
 
-    pub fn owners_of_table(&self, name: &str)
-        -> impl Iterator<Item = &(OwnerKey, InKey)>;
-    // body: self.by_table.get(name).into_iter().flatten()
+    /// Phase 6 hot path. Returns an owned snapshot so the caller never holds
+    /// the cache lock across the wake/mark_dirty/mpsc-send sequence.
+    pub fn owners_of_path(&self, p: &Path) -> Vec<(OwnerKey, InKey)>;
+    // body: self.by_path.get(p)
+    //         .map(|s| s.iter().cloned().collect())
+    //         .unwrap_or_default()
 
-    pub fn paths_of_interest(&self) -> impl Iterator<Item = &Path>;
-    // body: self.by_path.keys().map(|p| p.as_path())
-
-    fn record_write_through(
+    /// Internal write-through. MUST diff-replace: the caller's `new_deps`
+    /// is the COMPLETE set for `(owner, in_key)` (drain semantics at
+    /// runtime_graph.rs:721 "this drain IS the complete set ... replace the
+    /// cached entry wholesale"). So we compute `old_paths − new_paths` and
+    /// prune the reverse buckets for the removed paths to avoid orphans.
+    fn write_through(
         &mut self,
-        key: (OwnerKey, InKey),
-        deps: &[(SourceId, u64, ContentHex, PathStr)],
+        key: &(OwnerKey, InKey),
+        old: Option<&Vec<DepRow>>,
+        new: &[DepRow],
     );
-    // body: for (sid, _gen, _content, path_str) in deps {
-    //   if path_str.is_empty() {
-    //       // table source — key on sid.hex() prefix decode
-    //   } else {
-    //       self.by_path
-    //           .entry(PathBuf::from(path_str))
-    //           .or_default()
-    //           .insert(key.clone());
+    // body:
+    //   let new_paths: HashSet<&PathBuf> = new.iter().map(|(_,_,_,p)| p).collect();
+    //   if let Some(old) = old {
+    //     for (_,_,_,p) in old {
+    //       if !new_paths.contains(p) {
+    //         if let Some(set) = self.by_path.get_mut(p) {
+    //           set.remove(key);
+    //           if set.is_empty() { self.by_path.remove(p); }
+    //         }
+    //       }
+    //     }
     //   }
-    // }
+    //   for (_,_,_,p) in new {
+    //     self.by_path.entry(p.clone()).or_default().insert(key.clone());
+    //   }
 }
 ```
+
+#### What was dropped and why
+
+| dropped | reason |
+|---|---|
+| `by_table: HashMap<String, HashSet<...>>` | Table name is never carried in the deps tuple. `record_memo_deps` only receives `(SourceId, gen, content, path)`; the `SourceId` is a one-way blake3, the table name is unrecoverable. SQL mount call sites (`mounted_query.rs:430-431,514-515`) emit empty path AND empty source_path. No Phase 6 consumer either: Watchman wakes via FS paths, not table writes. |
+| `owners_of_table` | follows from above |
+| `paths_of_interest -> impl Iterator<Item=&Path>` | Borrowed-iterator across `.await` is `!Send`. Phase 6's actual need at plan line 281 is `contains(&Path) -> bool`. Enumeration is unused: the Watchman subscription filter is `Expr::Suffix`, not a per-path filter (per §2.3a line 260-261). |
+| `record_write_through` "table branch" | falls out with `by_table` |
+
+#### What the owner key actually is, and why no `owner_uri_id` mapping is needed
+
+`OwnerKey = owner_op_id = re_owner_hex(row, kind)` is the SEAM digest (`v2_ops.rs:1711`), NOT a runtime-graph `OwnerNode.uri_id` (`runtime_graph.rs:249`). The codebase already accepts this mismatch: `mark_memo_owner_dirty(owner_hex, source_hex, gen)` at `runtime_graph.rs:994-1014` deliberately writes the RAW seam hex into the `owner_uri_id` column ("the worklist key is the same hex `MEMO_DEPS`/the seam use" — comment at lines 987-993). Phase 6's wake therefore routes through:
+
+```
+FsChange(path)
+  -> owners_of_path(path) = Vec<(OwnerKey, InKey)>
+  -> for each owner: mark_memo_owner_dirty(owner, source_hex, gen)
+  -> existing sweep: dirty_memo_owners -> drain -> re-expand
+```
+
+No new wake path. Phase 5 plugs into the existing dirty machinery; the only new code is `by_path` population + lookup.
+
+#### `source_path` canonicalization
+
+`record_memo_deps` is called with `source_path: String` whose value is `abs.to_string_lossy().into_owned()` (`v2_ops.rs:862,3053`) or `path.to_string()` (`v2_ops.rs:1822`). NONE of those go through `dunce::canonicalize`. Watchman returns paths joined under a canonical root (e.g. macOS `/private/Users/...` vs our `/Users/...`). Without canonicalization, `by_path.contains(p)` MISSES every entry.
+
+Phase 5 canonicalizes the `path` at the boundary of `write_through` (single seam) using the same `canon_path` already shipped in `vfs.rs` (`canon_path -> Option<PathBuf>` via `dunce::canonicalize`). If canonicalization fails (file deleted between write and stat), the entry is dropped from `by_path` but kept in `forward` — the disk truth for that source is gone, so a Phase 6 wake on that path would be a no-op anyway.
+
+The PathBuf stored in `forward` keeps the canonical form too so `owners_of_path` and `flush_memo_deps` round-trip on the same key.
 
 ### 2.2 `VfsOverlay` — new struct in `v4/src/app.rs`
 
@@ -500,18 +546,18 @@ LSP frontend impl wraps `DiagPublisher`. Daemon-only run mode uses a no-op impl 
 - write path: `on_wake_event(BufferOpen | BufferChange)` (linearized via DashMap shard).
 - uniqueness: one entry per absolute path; `put` returns `PutOutcome::Stale` if `version <= existing`.
 
-### 4.2 `MemoDepsCache.by_path` (in-RAM, write-through)
-- key: `PathBuf` (matches `source_path` recorded in `_memo_deps`).
-- value: `HashSet<(OwnerKey, InKey)>`.
+### 4.2 `MemoDepsCache.by_path` (in-RAM, write-through, diff-replace)
+- key: `PathBuf`, canonicalized via `vfs::canon_path` (`dunce::canonicalize`).
+- value: `HashSet<(OwnerKey, InKey)>`. Empty buckets are removed; `contains_path` is therefore "has any owner".
 - index: HashMap.
-- read path: `AppState::on_wake_event` — O(1) lookup.
-- write path: `record_memo_deps` (extend the existing `v4/src/runtime_graph.rs:730-767` site).
-- uniqueness: `(OwnerKey, InKey)` set semantics; re-recording the same triple is idempotent.
+- read path: `AppState::on_wake_event` calls `owners_of_path(p) -> Vec<...>` (owned snapshot, no lock held across await).
+- write path: `record_memo_deps` extended at `v4/src/runtime_graph.rs:730-767`. MUST read prior `forward.get(&key)` BEFORE the `insert`, pass `(old, new)` to `write_through`, then overwrite forward. Singular `record_memo_dep` (line 684-713) also routes through `write_through` (it's a public API; can't be left as a back door).
+- uniqueness: `(OwnerKey, InKey)` set semantics per bucket.
+- cold-load: `memo_deps_loaded` (line 775-832) builds `forward` from sqlite on first access; the same loop calls `write_through(key, None, &set)` to seed `by_path`. Daemon caveat: when `compact_sources.is_some()` (the LSP daemon's typical mode, line 788-794), the load is skipped and `by_path` is populated only by expand-time writes. Acceptable; the pre-warm path (§3 Phase 3) is the population mechanism on cold daemon start, and a first wake before any expand is a no-op (correct: there are no recorded deps).
+- locking: stored inside the same `Arc<Mutex<Option<MemoDepsCache>>>` as `forward` (one allocation, one lock). Phase 6 reads via `owners_of_path` clone the set under the lock and release before mark_dirty/mpsc-send; Phase 5 imposes no async lifetime. If contention shows up in Phase 6 profiling, split `by_path` into its own `RwLock` then.
 
-### 4.3 `MemoDepsCache.by_table` (in-RAM)
-- key: `String` table name.
-- value: `HashSet<(OwnerKey, InKey)>`.
-- write path: same site; `path_str.is_empty()` branch routes to `by_table` with name decoded from `SourceId::for_table`.
+### 4.3 (deleted)
+`by_table` is removed from the plan; see §2.1 "What was dropped and why".
 
 ### 4.4 `pending_jobs` mpsc
 - bounded cap 1024.
@@ -697,11 +743,17 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
 - `Backend::refresh` no longer pushes through `lsp_open`/`lsp_change`; it pushes through `lsp_buffer_open`/`lsp_buffer_change`. Existing RPCs stay for backward compat (kept as thin wrappers).
 - **User-visible outcome:** edits to a `.sprf` file in VS Code immediately re-lint with the unsaved buffer contents; agent sees those buffer-based diags via `mcp__ide__getDiagnostics`.
 
-### Phase 5 — `MemoDepsCache::by_path` reverse index
-- Extend `MemoDepsCache` per §2.1.
-- Write-through in `record_memo_deps` (`v4/src/runtime_graph.rs:730-767`).
+### Phase 5 — `MemoDepsCache::by_path` reverse index (REVISED 2026-05-20)
+- Wrap the existing `memo_deps_cache` field in a `MemoDepsCache` struct per §2.1 (forward + by_path; NO by_table).
+- Write-through `write_through(key, old, new)` called from THREE sites:
+  - `record_memo_deps` (`v4/src/runtime_graph.rs:730-767`): the batched drain-end site.
+  - `record_memo_dep` (line 684-713): the singular site.
+  - `memo_deps_loaded` cold-load loop (line 775-832): seeds `by_path` from sqlite-loaded forward map. Skipped on `compact_sources.is_some()` (daemon mode).
+- Canonicalize paths at the `write_through` boundary using existing `vfs::canon_path` (single seam).
+- Drop empty-`source_path` entries from `by_path`; keep them in `forward` so the existing `memo_dep_owners_for_source` sweep still finds them via SourceId.
+- Phase 6 will route: `FsChange(p)` → `owners_of_path(canon_path(p))` → for each `(owner, in_key)` call existing `mark_memo_owner_dirty(owner, source_hex, gen)`. No new wake path; Phase 5 just plugs into `runtime_graph.rs:994-1014`.
 - No watcher yet.
-- **User-visible outcome:** zero direct user effect, but `paths_of_interest` is now O(1)-derivable. Internal precondition for Phase 6.
+- **User-visible outcome:** zero direct user effect. `contains_path(p)` and `owners_of_path(p)` are now O(1). Internal precondition for Phase 6.
 
 ### Phase 6 — WatchmanIngress + drain task
 - Implement `WatchmanIngress`, `WakeEvent::FsChange | ScmStateEnter | ScmStateLeave`, `Clocks { durable, ephemeral }`.
@@ -736,7 +788,13 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
 - `tests/lsp_overlay_close_resumes_disk.rs`: open buffer, edit it to a state with no diag; close; assert disk-content diags reappear.
 
 ### Phase 5
-- `tests/memo_deps_by_path_reverse_index.rs`: record a few deps; assert `owners_of_path` returns the right set; assert empty path routes to `by_table`.
+- `tests/memo_deps_by_path_reverse_index.rs`:
+  1. **record-and-lookup**: record `(owner=A, in_key=X)` with paths `{p1, p2}`; `owners_of_path(p1) == [(A,X)]`, `contains_path(p1) == true`.
+  2. **diff-replace drops orphans**: re-record `(A, X)` with paths `{p2, p3}`; `owners_of_path(p1)` empty, `contains_path(p1) == false`, `owners_of_path(p2) == [(A,X)]`, `owners_of_path(p3) == [(A,X)]`.
+  3. **cold-load seeds by_path** (in-memory FactStore path, NOT compact_sources): pre-populate `MEMO_DEPS` via `facts.insert`, force `memo_deps_loaded()`, assert `owners_of_path(p)` returns the recorded owners before any record call. Skips on the `compact_sources.is_some()` daemon mode (asserts that path stays empty until expand).
+  4. **canonicalization symmetry**: on macOS, write a path under `tempfile::tempdir()` (resolves to `/var/folders/...`), record it via `record_memo_deps`, then look up via `dunce::canonicalize(p)` (yields `/private/var/folders/...`). MUST hit.
+  5. **empty-path / SQL-mount entry**: `record_memo_deps` called with a row whose `source_path` is `""` (SQL mount, mounted_query.rs:430-431); assert `forward` still contains it (so the dirty sweep can find it via `memo_dep_owners_for_source`) but `by_path` does NOT get an empty-PathBuf key.
+  6. **singular `record_memo_dep` write-through**: call the singular API once per source for a key; assert `by_path` has one bucket per non-empty path with the (owner, in_key) inside.
 
 ### Phase 6
 - `tests/lsp_fs_watcher_wakes.rs`: register lint over `**/*.rs`; write a `.rs` file via tempfile; assert diag published within 200ms.
@@ -757,11 +815,12 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
 - **Invariant that prevents it:** `lsp_buffer_close` is the only way to remove; LSP frontend tracks open buffers and emits `did_close` on disconnect via `tower_lsp` lifecycle. Add a hard cap of 4096 entries with LRU eviction (oldest version wins eviction). Cap protects against frontend bugs.
 
 ### 11.2 `MemoDepsCache::by_path` rebuild cost
-- **Worst-case input:** 1M `_memo_deps` rows on daemon start.
-- **Hot-path cost:** one-shot at startup, derived from `forward` map iteration. Each row = one `HashMap::entry().or_default().insert()` = ~150ns. 1M * 150ns = 150ms.
+- **Worst-case input:** 1M `_memo_deps` rows on daemon start (in-memory FactStore path only; daemon's `compact_sources.is_some()` path starts empty, see §4.2).
+- **Hot-path cost:** one-shot at startup, derived from the `memo_deps_loaded` sqlite load loop. Each row = `dunce::canonicalize` (one stat syscall worst case, but the OS dentry cache makes a hot repo ~50ns) + `HashMap::entry().or_default().insert()` ~150ns. 1M × 200ns ≈ 200ms cold, plus ~50ms warm.
 - **Memory:** ~80 bytes per `(OwnerKey, InKey)` pair (averaged path keying); 1M rows might collapse to ~10k distinct paths × 100 owners = 1M entries. ~80MB.
 - **Blow-up vector:** runaway `_memo_deps` table growth from a buggy rule. Already bounded by the dirty-set flush at end of run (`flush_memo_deps` writes only changed pairs). PK-uniqueness in sqlite prevents row explosion within one (owner, in_key, source) triple.
 - **Invariant:** `_memo_deps` size capped by the number of distinct `(owner, in_key, source)` triples a given rule set can produce; cardinality is bounded by rule count × ast match count per file × file count. For a 63k-file run, observed `_memo_deps` size ~63k × 2 = 126k rows. Two orders of magnitude below worst case.
+- **Diff-replace cost:** every `record_memo_deps` reads the prior `forward.get(&key)` (one HashMap lookup), builds a `HashSet<&PathBuf>` of new paths (typical: 1-5 entries), iterates old paths once (same size), and prunes empty buckets. O(deps-per-input). Adds one HashMap lookup per write site (v2_ops.rs:873, 1830, 3064; mounted_query.rs:435, 519). At 63k rows that's 63k × ~50ns = 3ms over the whole run. Negligible.
 
 ### 11.3 `WakeEvent` dedup at 10k events/tick
 - **Worst-case input:** `git checkout` of a 10k-file diff; `notify-debouncer-mini` collapses to ~100 batch events but each carries up to 100 paths.
@@ -821,7 +880,7 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
 
 - `v4/crates/sprefa-lsp/src/main.rs` — Phases 1, 3 (extend initialize), 4 (RPC swap), 6 (publisher), 7 (throttle). Line ranges: `:26` (debounce), `:56-72` (Backend), `:131-189` (refresh), `:184` + `:416` (publish_diagnostics call sites), `:194-241` (initialize), `:396-417` (did_* handlers).
 - `v4/src/app.rs` — all phases. `:89-156` (request types), `:470-485` (sprf_rpc!), `:491-522` (SprfState, DocState), `:779-792` (ingest writes), `:1451-1476` (existing handlers). Add `VfsOverlay`, `WakeEvent`, `Clocks`, `DiagSinkOut`, drain task, new RPCs.
-- `v4/src/runtime_graph.rs` — Phase 5 (`MemoDepsCache::by_path`), Phase 6 (`Clocks::ephemeral`). Line ranges: `:100-145` (RuntimeGraph state), `:125-135` (memo_deps_cache shape), `:610-661` (warm_changed_paths, warm_skip_predicate), `:684-832` (record_memo_dep / record_memo_deps / memo_deps_loaded / flush_memo_deps).
+- `v4/src/runtime_graph.rs` — Phase 5 (wrap field in `MemoDepsCache` struct + `by_path` + write-through + cold-load seed), Phase 6 (`Clocks::ephemeral` + path-keyed wake routes through existing `mark_memo_owner_dirty` at :994-1014, `dirty_memo_owners` at :1020, and `memo_dep_owners_for_source` at :965-984). Line ranges: `:100-145` (RuntimeGraph state, memo_deps_cache field is wrapped), `:610-661` (warm_changed_paths, warm_skip_predicate), `:684-832` (record_memo_dep / record_memo_deps / memo_deps_loaded / flush_memo_deps), `:965-984` + `:994-1014` + `:1020-1036` (existing dirty-sweep machinery, the wake-path Phase 6 plugs into).
 - `v4/src/source.rs` — Phase 4 (`SourceReader` overlay seam, `Arc<VfsOverlay>` constructor arg).
 - `v4/src/source_clock.rs` — Phase 6 (split `Clocks { durable, ephemeral }`; `FactStoreClock` stays + new `InMemClock`). Line ranges: `:67-117` (SourceClock trait + FactStoreClock).
 - `v4/src/lsp.rs` — Phase 2 (extend `LspBodyComponent` and `resolve_diag_span` to record the target URI on the emitted `Diag`). Line ranges: `:141-250` (component), `:284-326` (LspBodyDef ctors).
