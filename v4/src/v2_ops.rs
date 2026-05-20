@@ -2334,11 +2334,21 @@ impl Component for RepoComponent {
                         Some(i) => i.intern(&entry.slug),
                         None => Arc::from(entry.slug.as_str()),
                     };
+                    let root_str = entry.root.display().to_string();
+                    let root_arc: Arc<str> = match &self.interner {
+                        Some(i) => i.intern(&root_str),
+                        None => Arc::from(root_str.as_str()),
+                    };
                     let mut c = Cursor::default();
                     // Legacy bare-string surface: REPO term + cursor.value
                     // = slug so `&.value` and `${REPO}` both resolve.
                     c.value = slug_arc.clone();
                     c.set_arc("REPO", slug_arc.clone());
+                    // Project the RepoConfig fields as cursor terms so
+                    // examples can write `repo() > rule(SLUG, ROOT)`
+                    // without re-reading the TOML through `json(:toml)`.
+                    c.set_arc("SLUG", slug_arc.clone());
+                    c.set_arc("ROOT", root_arc.clone());
                     if let Some(store) = &self.store {
                         let repo_id = store.intern_repo(&entry.slug, "");
                         let coord = Coord {
@@ -2351,6 +2361,8 @@ impl Component for RepoComponent {
                         c.value_id = crate::StringId::of(slug_arc.as_ref());
                         c.at = store.intern_ref(coord);
                         c.set_synthetic("REPO", slug_arc.as_ref(), store);
+                        c.set_synthetic("SLUG", slug_arc.as_ref(), store);
+                        c.set_synthetic("ROOT", root_str.as_str(), store);
                     }
                     buf.push(Node::Emit(Arc::new(c)));
                     if buf.len() >= self.batch {

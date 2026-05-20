@@ -2119,7 +2119,10 @@ impl OperatorDef for RepoDef {
         REPO_SPEC
     }
     fn cursor_binds(&self) -> &'static [&'static str] {
-        &["REPO", "FS"]
+        // REPO + FS are the legacy bare-string surface; SLUG and ROOT
+        // are added on the FromConfig branch so examples can name the
+        // RepoConfig fields without re-reading the TOML.
+        &["REPO", "FS", "SLUG", "ROOT"]
     }
 
     fn lower(
