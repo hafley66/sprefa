@@ -982,9 +982,13 @@ pub fn rule_table_call_pipe(
     table: &str,
     args: &[CallArg],
 ) -> Result<Pipe<Cursor>, LowerError> {
+    // Phase A: file-scoped sink-table prefix. The user-facing `table`
+    // atom maps to a physical name keyed by the source URI. CLI/test
+    // paths get back the bare name; LSP/ingest paths get the prefix.
+    let physical = ctx.rule_table(table);
     let cols = ctx
         .store
-        .declared_cols(table)
+        .declared_cols(&physical)
         .ok_or_else(|| LowerError::Unknown(format!("rule table `{table}` is not declared")))?;
     if args.len() > cols.len() {
         return Err(LowerError::Unknown(format!(
@@ -1134,7 +1138,7 @@ pub fn rule_table_call_pipe(
     let mut sql = format!(
         "{select_prefix} {}\nFROM input JOIN {} AS {} ON 1=1",
         select_cols.join(", "),
-        quote_ident(table),
+        quote_ident(&physical),
         rule_alias,
     );
     if !predicates.is_empty() {
@@ -1147,7 +1151,7 @@ pub fn rule_table_call_pipe(
         Pipe::new().step(Arc::new(SqlQueryComponent::with_referenced_tables(
             ctx.store.clone(),
             sql,
-            vec![table.to_string()],
+            vec![physical],
         ))),
     )
 }
@@ -1157,15 +1161,18 @@ pub fn rule_apply_write_pipe(
     table: &str,
     args: &[CallArg],
 ) -> Result<Pipe<Cursor>, LowerError> {
+    // Phase A: file-scoped physical table; same prefix as the matching
+    // rule decl. See `LowerCtx::rule_table`.
+    let physical = ctx.rule_table(table);
     let cols = ctx
         .store
-        .declared_cols(table)
+        .declared_cols(&physical)
         .ok_or_else(|| LowerError::Unknown(format!("rule table `{table}` is not declared")))?;
     let resolved = resolve_rule_args(table, &cols, args)?;
     if resolved.is_empty() {
         return Ok(Pipe::new().step(Arc::new(FactWrite::new(
             ctx.store.clone(),
-            Arc::<str>::from(table),
+            Arc::<str>::from(physical),
         ))));
     }
 
@@ -1180,7 +1187,7 @@ pub fn rule_apply_write_pipe(
 
     Ok(Pipe::new().step(Arc::new(FactWrite::projected(
         ctx.store.clone(),
-        Arc::<str>::from(table),
+        Arc::<str>::from(physical),
         assignments,
     ))))
 }
@@ -1204,15 +1211,17 @@ pub fn rule_write_pipe(ctx: &LowerCtx, args: &[CallArg]) -> Result<Pipe<Cursor>,
             ))
         }
     };
+    // Phase A: file-scoped physical name (same as the decl side).
+    let physical = ctx.rule_table(&table);
     let full_extent = ctx.pipe_full_extent.get();
     if rest.is_empty() {
         return Ok(Pipe::new().step(Arc::new(
-            FactWrite::new(ctx.store.clone(), table).with_full_extent(full_extent),
+            FactWrite::new(ctx.store.clone(), physical).with_full_extent(full_extent),
         )));
     }
     let cols = ctx
         .store
-        .declared_cols(&table)
+        .declared_cols(&physical)
         .ok_or_else(|| LowerError::Unknown(format!("rule table `{table}` is not declared")))?;
     let resolved = resolve_rule_args(&table, &cols, rest)?;
     let mut assignments = Vec::with_capacity(resolved.len());
@@ -1243,7 +1252,7 @@ pub fn rule_write_pipe(ctx: &LowerCtx, args: &[CallArg]) -> Result<Pipe<Cursor>,
         });
     }
     Ok(Pipe::new().step(Arc::new(
-        FactWrite::projected(ctx.store.clone(), table, assignments)
+        FactWrite::projected(ctx.store.clone(), physical, assignments)
             .with_full_extent(full_extent),
     )))
 }

@@ -27,6 +27,13 @@ pub struct LowerCtx {
     /// script file's own folder. Defaults to `root` when unset so
     /// non-host callers (tests) keep prior behavior.
     pub sprf_dir: PathBuf,
+    /// Identity of the `.sprf` source being lowered, used to prefix
+    /// rule sink-table names so two `.sprf` files declaring the same
+    /// rule name don't collide in the shared `FactStore`. `Some(uri)`
+    /// on the LSP ingest path (`v4/src/app.rs::ingest`); `None` on
+    /// CLI / test paths, where sink-tables stay bare (today's
+    /// behavior). See `v4/plans/file-scoped-rule-tables.md`.
+    pub sprf_uri: Option<Arc<str>>,
     /// Capture name → Pipe that grounds to a constant string. Used by
     /// `str` to substitute `${X}` at lower-time.
     pub bindings: HashMap<Arc<str>, Pipe<Cursor>>,
@@ -134,6 +141,7 @@ impl LowerCtx {
             store,
             interner: None,
             sprf_dir: root.clone(),
+            sprf_uri: None,
             root,
             bindings: HashMap::new(),
             rules: Arc::new(Mutex::new(HashMap::new())),
@@ -230,6 +238,22 @@ impl LowerCtx {
     pub fn with_sprf_dir(mut self, dir: PathBuf) -> Self {
         self.sprf_dir = dir;
         self
+    }
+    /// Set the source URI of the `.sprf` being lowered. Used to scope
+    /// rule sink-tables per file. Called by `SprfState::ingest` (the
+    /// LSP path); CLI/test paths leave it `None` for back-compat.
+    pub fn with_sprf_uri(mut self, uri: impl Into<Arc<str>>) -> Self {
+        self.sprf_uri = Some(uri.into());
+        self
+    }
+
+    /// Phase A of `v4/plans/file-scoped-rule-tables.md`. Resolve the
+    /// user-facing rule atom to its file-scoped physical backing table.
+    /// Thin wrapper over the free function `resolve_rule_table` so LSP
+    /// helpers without a `LowerCtx` (e.g. `sql_lsp_ctx_from_program`)
+    /// can share the prefix scheme.
+    pub fn rule_table(&self, name: &str) -> String {
+        resolve_rule_table(self.sprf_uri.as_deref(), name)
     }
     pub fn with_interner(mut self, i: Arc<Interner>) -> Self {
         self.interner = Some(i);
@@ -389,3 +413,77 @@ impl std::fmt::Display for LowerError {
     }
 }
 impl std::error::Error for LowerError {}
+
+/// Phase A of `v4/plans/file-scoped-rule-tables.md`. Free-function form
+/// of the rule-table prefix; the `LowerCtx::rule_table` method delegates
+/// here. Exposed so non-LowerCtx callers (LSP completion, hover, and
+/// definition over SQL DSL bodies) can share the exact scheme.
+///
+/// Scheme: `{stem}_{8hex}__{name}` where stem is the URI's final path
+/// segment with `.sprf` stripped and non-alnum bytes replaced by `_`
+/// (`""` ⇒ `"anon"`); 8hex is the first 4 bytes of `blake3(uri)`. When
+/// `sprf_uri` is `None`, returns the bare `name` (CLI/test behavior).
+pub fn resolve_rule_table(sprf_uri: Option<&str>, name: &str) -> String {
+    let Some(uri) = sprf_uri else {
+        return name.to_string();
+    };
+    let segment = uri.rsplit('/').next().unwrap_or("");
+    let stem_raw = segment.strip_suffix(".sprf").unwrap_or(segment);
+    let mut stem = String::with_capacity(stem_raw.len());
+    for b in stem_raw.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'_' {
+            stem.push(b as char);
+        } else {
+            stem.push('_');
+        }
+    }
+    if stem.is_empty() {
+        stem.push_str("anon");
+    }
+    let digest = blake3::hash(uri.as_bytes());
+    let bytes = digest.as_bytes();
+    let hex8 = format!(
+        "{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3]
+    );
+    format!("{stem}_{hex8}__{name}")
+}
+
+#[cfg(test)]
+mod resolve_rule_table_tests {
+    use super::resolve_rule_table;
+
+    #[test]
+    fn bare_when_no_uri() {
+        assert_eq!(resolve_rule_table(None, "hits"), "hits");
+    }
+
+    #[test]
+    fn prefixed_when_uri_set() {
+        let out = resolve_rule_table(Some("file:///x/y/infra.sprf"), "hits");
+        assert!(out.starts_with("infra_"), "got {out}");
+        assert!(out.ends_with("__hits"), "got {out}");
+        assert_eq!(out.len(), "infra_".len() + 8 + "__hits".len());
+    }
+
+    #[test]
+    fn same_stem_different_dirs_distinct_hex() {
+        let a = resolve_rule_table(Some("file:///proj-a/infra.sprf"), "t");
+        let b = resolve_rule_table(Some("file:///proj-b/infra.sprf"), "t");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn sanitizes_stem() {
+        let out = resolve_rule_table(Some("file:///x/hello-world.sprf"), "t");
+        assert!(out.starts_with("hello_world_"), "got {out}");
+    }
+
+    #[test]
+    fn empty_stem_falls_back_to_anon() {
+        // A URI whose last segment is the empty string (e.g. trailing
+        // slash) yields stem == "" and falls back to "anon".
+        let out = resolve_rule_table(Some("file:///"), "t");
+        assert!(out.starts_with("anon_"), "got {out}");
+    }
+}

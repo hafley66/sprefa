@@ -195,11 +195,15 @@ impl OperatorDef for RuleDef {
             ValueKind::Atom(s) => s.clone(),
             _ => unreachable!("validate ensured Atom"),
         };
+        // Phase A: file-scoped sink table when an `.sprf` URI is in
+        // context. CLI / test paths leave `sprf_uri` None and keep
+        // bare names. See `v4/plans/file-scoped-rule-tables.md`.
+        let table = ctx.rule_table(&name);
 
         // Sink position, no body: pure FactWrite, no declare. Discards
         // any extra positional args (cols don't apply at the sink site).
         if chain_pos >= 1 && block.is_none() {
-            return Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), name))));
+            return Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))));
         }
 
         // Head-of-pipe forms (decl-only or bodied) collect col args and
@@ -232,7 +236,7 @@ impl OperatorDef for RuleDef {
         // Pure decl: declare for side-effect, return empty Pipe so the
         // cursor seed has nothing to drain into.
         if block.is_none() {
-            ctx.store.declare(&name, &cols);
+            ctx.store.declare(&table, &cols);
             return Ok(Pipe::new());
         }
 
@@ -246,7 +250,11 @@ impl OperatorDef for RuleDef {
         // a `NAME?` term; that conflated declaration with invocation
         // and is removed.)
         let body = block.unwrap();
-        let rule = Rule::new(name.clone(), ctx.store.clone(), name, &cols, body);
+        // `Rule.name` keeps the user-facing atom (used for ctx.rules
+        // lookup); `Rule.sink_table` carries the file-scoped physical
+        // table so two `.sprf` files declaring `:hits` write to
+        // distinct backing tables.
+        let rule = Rule::new(name.clone(), ctx.store.clone(), table, &cols, body);
         ctx.register_rule(rule);
         Ok(Pipe::new())
     }

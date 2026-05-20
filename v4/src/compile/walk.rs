@@ -436,8 +436,12 @@ pub fn walk_op(
         }
     }
 
-    let declared_rule_call =
-        reg.get(&lower_name).is_none() && ctx.store.declared_cols(&op.name).is_some();
+    // Phase A: rules declared in this file are stored under the
+    // file-scoped physical name. Look up via `ctx.rule_table()` so the
+    // detection matches the decl side. See
+    // `v4/plans/file-scoped-rule-tables.md`.
+    let declared_rule_call = reg.get(&lower_name).is_none()
+        && ctx.store.declared_cols(&ctx.rule_table(&op.name)).is_some();
 
     // V4 rule semantics (locked):
     //   r(X, Y)    → CALL: run the body / write. Args must be grounded.

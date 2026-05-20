@@ -852,7 +852,8 @@ impl SprfState {
             .with_probe(probe_sink.clone() as Arc<dyn ProbeSink<Cursor>>)
             .with_sprf_store(self.sprf_store.clone())
             .with_config(self.config.clone())
-            .with_vfs(self.vfs.clone());
+            .with_vfs(self.vfs.clone())
+            .with_sprf_uri(uri.clone());
         let (pipes, mut walk_diags) = walk_program(&program, &self.registry, &mut ctx);
         walk_diags.extend(sql_lsp_diagnostics(&program, self.facts.as_ref()));
 
@@ -1778,6 +1779,23 @@ impl SprfHandlers for SprfState {
                     continue;
                 }
                 let path = entry.path();
+                // Skip scratch directories that hold "rule(:hits, ...)" /
+                // similar collision-prone fixtures. Pre-warm uses ONE
+                // FactStore across the corpus, so two sibling .sprf files
+                // declaring the same rule name with different column sets
+                // panic the daemon at `fact_store.rs::declare`. Until
+                // pre-warm gets per-doc fact namespacing (plan §11.2 TODO),
+                // this list keeps the daemon alive on a repo-root open.
+                let skip = path.components().any(|c| {
+                    matches!(
+                        c.as_os_str().to_str(),
+                        Some("bench") | Some("benches") | Some("target")
+                            | Some("node_modules") | Some(".git")
+                    )
+                });
+                if skip {
+                    continue;
+                }
                 walked += 1;
                 let Ok(text) = std::fs::read_to_string(path) else { continue };
                 let Ok(uri) = url::Url::from_file_path(path) else { continue };
@@ -1897,6 +1915,7 @@ impl SprfHandlers for SprfState {
                 call.name.as_ref(),
                 dsl.raw.as_bytes(),
                 body_byte,
+                Some(req.uri.as_str()),
             )
         }) {
             return Ok(LspHoverResp {
@@ -1943,6 +1962,7 @@ impl SprfHandlers for SprfState {
             d,
             self.facts.as_ref(),
             req.byte as usize,
+            Some(req.uri.as_str()),
         ))
     }
 
@@ -1951,7 +1971,12 @@ impl SprfHandlers for SprfState {
         let d = docs
             .get(&req.uri)
             .ok_or(SprfError::UnknownDoc(req.uri.clone()))?;
-        let Some(range) = lsp_dsl_definition(d, self.facts.as_ref(), req.byte as usize) else {
+        let Some(range) = lsp_dsl_definition(
+            d,
+            self.facts.as_ref(),
+            req.byte as usize,
+            Some(req.uri.as_str()),
+        ) else {
             return Ok(LspDefinitionResp { lo: None, hi: None });
         };
         Ok(LspDefinitionResp {
@@ -2518,9 +2543,10 @@ fn dsl_hover_with_doc(
     op_name: &str,
     body: &[u8],
     body_byte: usize,
+    sprf_uri: Option<&str>,
 ) -> Option<String> {
     if op_name == "sql" {
-        let ctx = sql_lsp_ctx(doc, facts, None);
+        let ctx = sql_lsp_ctx(doc, facts, None, sprf_uri);
         let hover = SqlDsl::new().hover_with_ctx(body, body_byte, &ctx)?;
         return Some(hover_contents_to_string(hover.contents));
     }
@@ -2531,6 +2557,7 @@ fn lsp_dsl_completion(
     doc: &DocState,
     facts: &dyn FactStore<Cursor>,
     host_byte: usize,
+    sprf_uri: Option<&str>,
 ) -> Vec<lsp_types::CompletionItem> {
     let Some(hit) = find_dsl_hit(&doc.program, host_byte) else {
         return Vec::new();
@@ -2543,7 +2570,7 @@ fn lsp_dsl_completion(
         "sql" => SqlDsl::new().completions_with_ctx(
             dsl.raw.as_bytes(),
             hit.body_byte,
-            &sql_lsp_ctx(doc, facts, Some(&hit.prefix)),
+            &sql_lsp_ctx(doc, facts, Some(&hit.prefix), sprf_uri),
         ),
         _ => Vec::new(),
     }
@@ -2553,13 +2580,14 @@ fn lsp_dsl_definition(
     doc: &DocState,
     facts: &dyn FactStore<Cursor>,
     host_byte: usize,
+    sprf_uri: Option<&str>,
 ) -> Option<effect_runtime::v2::ByteRange> {
     let hit = find_dsl_hit(&doc.program, host_byte)?;
     if hit.call.name.as_ref() != "sql" {
         return None;
     }
     let dsl = hit.call.dsl.as_ref()?;
-    let ctx = sql_lsp_ctx(doc, facts, Some(&hit.prefix));
+    let ctx = sql_lsp_ctx(doc, facts, Some(&hit.prefix), sprf_uri);
     let table = SqlDsl::new().table_name_at(dsl.raw.as_bytes(), hit.body_byte, &ctx)?;
     rule_def_span(&doc.program, &table)
 }
@@ -2570,7 +2598,15 @@ fn sql_lsp_diagnostics(program: &[PipeAst], facts: &dyn FactStore<Cursor>) -> Ve
         let Some(dsl) = hit.call.dsl.as_ref() else {
             continue;
         };
-        let ctx = sql_lsp_ctx_from_program(program, facts, Some(&hit.prefix));
+        // `sql_lsp_diagnostics` runs over the post-ingest program; the
+        // bare names in `collect_rule_tables` still resolve to the
+        // shared FactStore via the file-scoped path. For the LSP-state
+        // side we don't have the URI here (sql_lsp_diagnostics is called
+        // from `ingest()` which knows the URI but the helper doesn't
+        // take it). Phase B note: thread the URI down when this becomes
+        // the surface for cross-URI diagnostics. For now: bare lookup
+        // (degrades to "rule not found" on cross-file diagnostic checks).
+        let ctx = sql_lsp_ctx_from_program(program, facts, Some(&hit.prefix), None);
         for diag in SqlDsl::new().diagnostics_with_ctx(dsl.raw.as_bytes(), &ctx) {
             let shifted = diag.byte_range.start + dsl.span.lo as usize
                 ..diag.byte_range.end + dsl.span.lo as usize;
@@ -2594,20 +2630,31 @@ fn sql_lsp_ctx(
     doc: &DocState,
     facts: &dyn FactStore<Cursor>,
     prefix: Option<&[OpCall]>,
+    sprf_uri: Option<&str>,
 ) -> SqlLspCtx {
-    sql_lsp_ctx_from_program(&doc.program, facts, prefix)
+    sql_lsp_ctx_from_program(&doc.program, facts, prefix, sprf_uri)
 }
 
 fn sql_lsp_ctx_from_program(
     program: &[PipeAst],
     facts: &dyn FactStore<Cursor>,
     prefix: Option<&[OpCall]>,
+    sprf_uri: Option<&str>,
 ) -> SqlLspCtx {
     let mut rule_names = Vec::new();
     collect_rule_tables(program, &mut rule_names);
     let rule_tables = rule_names
         .into_iter()
-        .filter_map(|name| sql_table_from_store(facts, &name))
+        .filter_map(|name| {
+            // Phase A/B: look up the file-scoped physical table for
+            // schema, but keep the user-facing bare name on the
+            // returned `SqlTable` so completions still surface
+            // `frontend_hooks`, not `sql_a1b2c3d4__frontend_hooks`.
+            let physical = crate::compile::lower::ctx::resolve_rule_table(sprf_uri, &name);
+            let mut table = sql_table_from_store(facts, &physical)?;
+            table.name = name;
+            Some(table)
+        })
         .collect();
     let core_tables = [
         crate::store::STRINGS_TABLE,
