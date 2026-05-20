@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::config::SprfConfig;
 use crate::store::SprfStore;
+use crate::vfs::VfsOverlay;
 use crate::{Coord, Cursor, FileId, RepoId, RevId};
 
 #[derive(Clone)]
@@ -10,6 +11,11 @@ pub struct SourceReader {
     root: PathBuf,
     store: Option<Arc<SprfStore>>,
     config: Option<Arc<SprfConfig>>,
+    /// Phase 4 — when present, `read_worktree_path` checks the overlay
+    /// for an IDE buffer at the canonicalized absolute path before
+    /// falling back to disk. `None` keeps existing disk-only behavior
+    /// for non-LSP callers (CLI, tests).
+    overlay: Option<Arc<VfsOverlay>>,
 }
 
 #[derive(Clone, Debug)]
@@ -30,7 +36,13 @@ impl SourceReader {
             root: root.into(),
             store,
             config,
+            overlay: None,
         }
+    }
+
+    pub fn with_overlay(mut self, overlay: Option<Arc<VfsOverlay>>) -> Self {
+        self.overlay = overlay;
+        self
     }
 
     pub fn read_cursor(&self, c: &Cursor) -> Option<SourceBytes> {
@@ -122,6 +134,15 @@ impl SourceReader {
         self.read_worktree_path(path.as_ref(), coord.repo, coord.rev, intern)
     }
 
+    fn overlay_read(&self, resolved: &Path) -> Option<Vec<u8>> {
+        let overlay = self.overlay.as_ref()?;
+        if overlay.is_empty() {
+            return None;
+        }
+        let canon = crate::vfs::canon_path(resolved)?;
+        overlay.get(&canon).map(|text| text.as_bytes().to_vec())
+    }
+
     fn read_worktree_path(
         &self,
         path: &str,
@@ -130,7 +151,7 @@ impl SourceReader {
         intern: bool,
     ) -> Option<SourceBytes> {
         let resolved = resolve_source_path(&self.root, path);
-        let bytes = std::fs::read(&resolved).ok()?;
+        let bytes = self.overlay_read(&resolved).or_else(|| std::fs::read(&resolved).ok())?;
         let path_arc: Arc<str> = Arc::from(path);
         let file = intern
             .then(|| self.store.as_ref())

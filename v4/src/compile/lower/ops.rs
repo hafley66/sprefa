@@ -936,6 +936,9 @@ impl OperatorDef for AstDef {
         if let Some(t) = &_ctx.telemetry {
             comp = comp.with_telemetry(t.ast.clone());
         }
+        if let Some(v) = &_ctx.vfs {
+            comp = comp.with_vfs(v.clone());
+        }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
 }
@@ -1044,6 +1047,9 @@ impl OperatorDef for AstYamlDef {
         }
         if let Some(c) = &_ctx.config {
             comp = comp.with_config(c.clone());
+        }
+        if let Some(v) = &_ctx.vfs {
+            comp = comp.with_vfs(v.clone());
         }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
@@ -1293,6 +1299,9 @@ impl OperatorDef for JsonDef {
         }
         if let Some(c) = &_ctx.config {
             comp = comp.with_config(c.clone());
+        }
+        if let Some(v) = &_ctx.vfs {
+            comp = comp.with_vfs(v.clone());
         }
         Ok(Pipe::new().step(Arc::new(comp)))
     }
@@ -2506,6 +2515,9 @@ impl OperatorDef for ReadDef {
         }
         if let Some(c) = &_ctx.config {
             comp = comp.with_config(c.clone());
+        }
+        if let Some(v) = &_ctx.vfs {
+            comp = comp.with_vfs(v.clone());
         }
         Ok(Pipe::new().step(Arc::new(comp)))
     }

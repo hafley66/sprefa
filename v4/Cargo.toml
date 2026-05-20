@@ -63,6 +63,7 @@ git2              = { version = "0.19", default-features = false }
 memchr            = "2"
 url               = "2"
 watchman_client   = "0.9"
+dunce             = "1"
 
 [build-dependencies]
 cc = "1"

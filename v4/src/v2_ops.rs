@@ -702,6 +702,7 @@ pub struct AstNmComponent {
     store: Option<Arc<SprfStore>>,
     config: Option<Arc<SprfConfig>>,
     telemetry: Option<Arc<AstTelemetry>>,
+    vfs: Option<Arc<crate::vfs::VfsOverlay>>,
 }
 
 #[derive(Default)]
@@ -739,6 +740,7 @@ impl AstNmComponent {
             store: None,
             config: None,
             telemetry: None,
+            vfs: None,
         }
     }
     pub fn with_root(mut self, root: PathBuf) -> Self {
@@ -755,6 +757,10 @@ impl AstNmComponent {
     }
     pub fn with_telemetry(mut self, telemetry: Arc<AstTelemetry>) -> Self {
         self.telemetry = Some(telemetry);
+        self
+    }
+    pub fn with_vfs(mut self, vfs: Arc<crate::vfs::VfsOverlay>) -> Self {
+        self.vfs = Some(vfs);
         self
     }
     /// Slow path: route every cursor through render_segments → recompile.
@@ -897,6 +903,7 @@ impl Component for AstNmComponent {
         let telemetry = self.telemetry.clone();
         let config = self.config.clone();
         let root = self.root.clone();
+        let vfs = self.vfs.clone();
         par_render(batch, move |c| {
             if c.value.is_empty() {
                 return Node::Done;
@@ -922,7 +929,8 @@ impl Component for AstNmComponent {
                     }
                 },
             );
-            let reader = SourceReader::new(root.clone(), store.clone(), config.clone());
+            let reader = SourceReader::new(root.clone(), store.clone(), config.clone())
+                .with_overlay(vfs.clone());
             let source = ast_timed(
                 &telemetry,
                 |t| &t.source_read_ns,
@@ -1110,6 +1118,7 @@ pub struct AstYamlComponent {
     bound_caps: Arc<Vec<Arc<str>>>,
     store: Option<Arc<SprfStore>>,
     config: Option<Arc<SprfConfig>>,
+    vfs: Option<Arc<crate::vfs::VfsOverlay>>,
 }
 
 impl AstYamlComponent {
@@ -1125,6 +1134,7 @@ impl AstYamlComponent {
             bound_caps: Arc::new(bound_caps),
             store: None,
             config: None,
+            vfs: None,
         }
     }
 
@@ -1142,6 +1152,11 @@ impl AstYamlComponent {
         self.config = Some(c);
         self
     }
+
+    pub fn with_vfs(mut self, vfs: Arc<crate::vfs::VfsOverlay>) -> Self {
+        self.vfs = Some(vfs);
+        self
+    }
 }
 
 impl Component for AstYamlComponent {
@@ -1154,13 +1169,15 @@ impl Component for AstYamlComponent {
         let bound_caps = self.bound_caps.clone();
         let root = self.root.clone();
         let config = self.config.clone();
+        let vfs = self.vfs.clone();
         par_render(batch, move |c| {
             if c.value.is_empty() {
                 return Node::Done;
             }
 
             let parent_coord = store.as_ref().and_then(|s| s.coord_of(c.at));
-            let reader = SourceReader::new(root.clone(), store.clone(), config.clone());
+            let reader = SourceReader::new(root.clone(), store.clone(), config.clone())
+                .with_overlay(vfs.clone());
             let source = reader.read_cursor(c);
             let (src, file_id, repo, rev): (String, crate::FileId, crate::RepoId, crate::RevId) =
                 if let Some(source) = source.filter(|s| s.path.as_ref() == c.value.as_ref()) {
@@ -2901,6 +2918,7 @@ pub struct ReadComponent {
     /// Coord.rev != 0 so the (slug, root) tuple can be resolved for
     /// `git show <oid>:<path>`.
     config: Option<Arc<SprfConfig>>,
+    vfs: Option<Arc<crate::vfs::VfsOverlay>>,
 }
 impl ReadComponent {
     pub fn new() -> Self {
@@ -2908,6 +2926,7 @@ impl ReadComponent {
             root: PathBuf::from("."),
             store: None,
             config: None,
+            vfs: None,
         }
     }
     pub fn with_root(mut self, root: PathBuf) -> Self {
@@ -2920,6 +2939,10 @@ impl ReadComponent {
     }
     pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
         self.config = Some(c);
+        self
+    }
+    pub fn with_vfs(mut self, vfs: Arc<crate::vfs::VfsOverlay>) -> Self {
+        self.vfs = Some(vfs);
         self
     }
 
@@ -2952,6 +2975,7 @@ impl Component for ReadComponent {
             root: self.root.clone(),
             store: self.store.clone(),
             config: self.config.clone(),
+            vfs: self.vfs.clone(),
         };
         par_render(batch, move |c| this.render(ctx, c))
     }
@@ -3069,7 +3093,8 @@ impl Component for ReadComponent {
     }
 
     fn render(&self, _ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        let reader = SourceReader::new(self.root.clone(), self.store.clone(), self.config.clone());
+        let reader = SourceReader::new(self.root.clone(), self.store.clone(), self.config.clone())
+            .with_overlay(self.vfs.clone());
         let Some(source) = reader.read_cursor(c) else {
             return Node::Done;
         };
@@ -3645,6 +3670,7 @@ pub struct JsonComponent {
     /// Layer 0c.2 — content-derived intern store.
     store: Option<Arc<SprfStore>>,
     config: Option<Arc<SprfConfig>>,
+    vfs: Option<Arc<crate::vfs::VfsOverlay>>,
 }
 
 impl JsonComponent {
@@ -3655,6 +3681,7 @@ impl JsonComponent {
             dyn_body: None,
             store: None,
             config: None,
+            vfs: None,
         }
     }
     pub fn with_root(mut self, root: PathBuf) -> Self {
@@ -3667,6 +3694,10 @@ impl JsonComponent {
     }
     pub fn with_config(mut self, c: Arc<SprfConfig>) -> Self {
         self.config = Some(c);
+        self
+    }
+    pub fn with_vfs(mut self, vfs: Arc<crate::vfs::VfsOverlay>) -> Self {
+        self.vfs = Some(vfs);
         self
     }
     /// Slow path: route every cursor through render_segments → recompile.
@@ -3691,11 +3722,13 @@ impl Component for JsonComponent {
         let store = self.store.clone();
         let config = self.config.clone();
         let root = self.root.clone();
+        let vfs = self.vfs.clone();
         par_render(batch, move |c| {
             if c.value.is_empty() {
                 return Node::Done;
             }
-            let reader = SourceReader::new(root.clone(), store.clone(), config.clone());
+            let reader = SourceReader::new(root.clone(), store.clone(), config.clone())
+                .with_overlay(vfs.clone());
             let source = reader.read_cursor(c);
             let bytes_cow: std::borrow::Cow<'_, [u8]> = match source.as_ref() {
                 Some(source) if source.path.as_ref() == c.value.as_ref() => {

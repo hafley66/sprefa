@@ -31,6 +31,7 @@ pub mod telemetry;
 pub mod template;
 pub mod term;
 pub mod v2_ops;
+pub mod vfs;
 pub mod watchman;
 
 pub use compile::lower;

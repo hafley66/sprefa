@@ -122,6 +122,24 @@ pub struct LspDiagsByUriResp {
     pub by_uri: std::collections::HashMap<String, Vec<SprfDiag>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspBufferOpenReq {
+    pub uri: String,
+    pub text: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspBufferOpenResp {
+    /// Canonical absolute path the overlay was keyed by, in case the
+    /// caller wants to verify the canonicalization worked.
+    pub canonical_path: String,
+}
+pub type LspBufferChangeReq = LspBufferOpenReq;
+pub type LspBufferChangeResp = LspBufferOpenResp;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspBufferCloseReq {
+    pub uri: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LspPreWarmReq {
     pub root: PathBuf,
     /// Empty defaults to "main".
@@ -510,6 +528,9 @@ sprf_rpc! {
     fn lsp_open    (LspOpenReq)   -> ()                  => "/lsp/open";
     fn lsp_change  (LspChangeReq) -> ()                  => "/lsp/change";
     fn lsp_close   (LspCloseReq)  -> ()                  => "/lsp/close";
+    fn lsp_buffer_open   (LspBufferOpenReq)   -> LspBufferOpenResp   => "/lsp/buffer/open";
+    fn lsp_buffer_change (LspBufferChangeReq) -> LspBufferChangeResp => "/lsp/buffer/change";
+    fn lsp_buffer_close  (LspBufferCloseReq)  -> ()                  => "/lsp/buffer/close";
     fn get_diags   (GetDiagsReq)  -> Vec<SprfDiag>       => "/lsp/diags";
     fn lsp_diags_by_uri (LspDiagsByUriReq) -> LspDiagsByUriResp => "/lsp/diags/by-uri";
     fn lsp_pre_warm     (LspPreWarmReq)    -> LspPreWarmResp    => "/lsp/pre-warm";
@@ -560,6 +581,10 @@ pub struct SprfState {
     pub config: Arc<crate::config::SprfConfig>,
     pub registry: Arc<Registry>,
     pub root: PathBuf,
+    /// Phase 4 — buffer-text overlay. Populated via `lsp_buffer_open` /
+    /// `lsp_buffer_change` / `lsp_buffer_close`. Read by `SourceReader`
+    /// before disk; key is `vfs::canon_path(absolute)`.
+    pub vfs: Arc<crate::vfs::VfsOverlay>,
 }
 
 struct AnalysisPassThrough;
@@ -667,6 +692,7 @@ impl SprfState {
             config,
             registry: Arc::new(default_registry()),
             root,
+            vfs: Arc::new(crate::vfs::VfsOverlay::new()),
         }
     }
 
@@ -765,7 +791,8 @@ impl SprfState {
         let mut ctx = LowerCtx::new(self.facts.clone(), self.root.clone())
             .with_probe(probe_sink.clone() as Arc<dyn ProbeSink<Cursor>>)
             .with_sprf_store(self.sprf_store.clone())
-            .with_config(self.config.clone());
+            .with_config(self.config.clone())
+            .with_vfs(self.vfs.clone());
         let (pipes, mut walk_diags) = walk_program(&program, &self.registry, &mut ctx);
         walk_diags.extend(sql_lsp_diagnostics(&program, self.facts.as_ref()));
 
@@ -1501,6 +1528,33 @@ impl SprfHandlers for SprfState {
     }
     async fn lsp_close(&self, req: LspCloseReq) -> Result<(), SprfError> {
         self.docs.lock().unwrap().remove(&req.uri);
+        Ok(())
+    }
+    async fn lsp_buffer_open(
+        &self,
+        req: LspBufferOpenReq,
+    ) -> Result<LspBufferOpenResp, SprfError> {
+        let canon = buffer_uri_to_canon(&req.uri)?;
+        let text: Arc<str> = Arc::from(req.text.as_str());
+        self.vfs.put(canon.clone(), text);
+        Ok(LspBufferOpenResp {
+            canonical_path: canon.display().to_string(),
+        })
+    }
+    async fn lsp_buffer_change(
+        &self,
+        req: LspBufferChangeReq,
+    ) -> Result<LspBufferChangeResp, SprfError> {
+        let canon = buffer_uri_to_canon(&req.uri)?;
+        let text: Arc<str> = Arc::from(req.text.as_str());
+        self.vfs.put(canon.clone(), text);
+        Ok(LspBufferChangeResp {
+            canonical_path: canon.display().to_string(),
+        })
+    }
+    async fn lsp_buffer_close(&self, req: LspBufferCloseReq) -> Result<(), SprfError> {
+        let canon = buffer_uri_to_canon(&req.uri)?;
+        self.vfs.remove(&canon);
         Ok(())
     }
     async fn get_diags(&self, req: GetDiagsReq) -> Result<Vec<SprfDiag>, SprfError> {
@@ -2699,6 +2753,25 @@ pub fn build_in_process(root: PathBuf) -> (Arc<SprfState>, InProcessClient) {
     let state = Arc::new(SprfState::new(root));
     let router = build_router(state.clone());
     (state, InProcessClient::new(router))
+}
+
+/// Resolve an LSP `file://` URI to a canonical PathBuf used as the
+/// VfsOverlay key. Single source of truth for both buffer writes
+/// (`lsp_buffer_*`) and overlay reads in `SourceReader`. A URI whose
+/// scheme is not `file`, whose path does not exist, or which fails
+/// canonicalization, becomes `SprfError::Io` so the caller can surface
+/// the mismatch instead of silently writing an unfindable key.
+fn buffer_uri_to_canon(uri: &str) -> Result<PathBuf, SprfError> {
+    let url = url::Url::parse(uri).map_err(|e| SprfError::Io(format!("uri parse: {e}")))?;
+    let path = url
+        .to_file_path()
+        .map_err(|_| SprfError::Io(format!("not a file uri: {uri}")))?;
+    crate::vfs::canon_path(&path).ok_or_else(|| {
+        SprfError::Io(format!(
+            "canonicalize failed for {}",
+            path.display()
+        ))
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────

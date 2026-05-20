@@ -10,6 +10,7 @@ use crate::config::SprfConfig;
 use crate::rule::Rule;
 use crate::store::SprfStore;
 use crate::telemetry::PipelineTelemetry;
+use crate::vfs::VfsOverlay;
 use crate::{Cursor, Interner};
 
 /// Lower-time context. Carries the fact store, optional Interner, root
@@ -51,6 +52,11 @@ pub struct LowerCtx {
     /// op-specific counters and the host may wrap lowered components
     /// with timing probes.
     pub telemetry: Option<Arc<PipelineTelemetry>>,
+    /// Phase 4 — buffer-text overlay handed down from `SprfState.vfs`.
+    /// Lowerers pass this to source-reading components (Ast, AstYaml,
+    /// Read, Json) so their `SourceReader::with_overlay` reads buffer
+    /// text in preference to disk. `None` on CLI/test paths.
+    pub vfs: Option<Arc<VfsOverlay>>,
     /// Per-compile counter handed out to force-apply call sites so
     /// content-deduped fact stores still see distinct rows across
     /// repeated `r!.(…)` invocations. The counter is stamped onto the
@@ -135,6 +141,7 @@ impl LowerCtx {
             sprf_store: None,
             config: None,
             telemetry: None,
+            vfs: None,
             warm_skip: None,
             warm_slice: None,
             apply_seq: Arc::new(AtomicU64::new(0)),
@@ -340,6 +347,13 @@ impl LowerCtx {
     }
     pub fn with_telemetry(mut self, t: Arc<PipelineTelemetry>) -> Self {
         self.telemetry = Some(t);
+        self
+    }
+    /// Phase 4 — attach the daemon's buffer overlay so lowered
+    /// source-reading components read IDE buffer text in preference to
+    /// disk.
+    pub fn with_vfs(mut self, vfs: Arc<VfsOverlay>) -> Self {
+        self.vfs = Some(vfs);
         self
     }
 }
