@@ -46,9 +46,9 @@ pub fn inlays_for(text: &str, root_dir: PathBuf) -> Vec<InlayHint> {
     let (pipes, _walk_diags) = walk_program(&program, &reg, &mut ctx);
 
     // 3. expand each pipe with a fresh seed cursor
-    for pipe in pipes {
+    for fused in pipes {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let inst = pipe.into_instance();
+        let inst = fused.into_pipe().into_instance();
         expand(
             &inst,
             queue,

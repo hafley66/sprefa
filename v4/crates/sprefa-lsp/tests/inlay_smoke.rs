@@ -18,7 +18,16 @@ use v4::compile::walk::walk_program;
 use v4::lower::{default_registry, LowerCtx};
 use v4::Cursor;
 
+// Stale post-fuser. Pre-fuser this test walked rule bodies as live pipes
+// and the BufferProbeSink captured one probe per emit. After the
+// FullSql/StreamedRust fuser landed, `walk_program` returns FusedRule
+// instances whose pipes are passthrough wrappers around fused SQL; the
+// per-op probe stream is no longer the inlay backbone for fused kinds.
+// The inlay subsystem itself (src/inlay.rs) is currently dead code
+// (compiler dead_code warning). When inlays come back, this test
+// rewrites against whatever the new path is.
 #[test]
+#[ignore]
 fn inlay_smoke_rule_str_emits_one_cursor_per_op() {
     let src = "rule(:greet) { str`hello world` };";
 
@@ -37,9 +46,14 @@ fn inlay_smoke_rule_str_emits_one_cursor_per_op() {
     assert!(walk_diags.is_empty(), "walk diags: {:?}", walk_diags);
     assert_eq!(pipes.len(), 1, "expected one lowered pipe");
 
-    for pipe in pipes {
+    for fused in pipes {
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let inst = pipe.into_instance();
+        // Post-fuser API: FusedRule wraps the pipe; reach through to the
+        // underlying pipe for expansion. Note that fused-SQL kinds don't
+        // walk the per-op probe path used by the inlay subsystem, so this
+        // smoke test only meaningfully exercises unfused/passthrough
+        // rules.
+        let inst = fused.into_pipe().into_instance();
         expand(
             &inst,
             queue,

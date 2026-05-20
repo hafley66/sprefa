@@ -428,6 +428,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "differential-dataflow"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2009,7 +2023,7 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "bytes",
- "dashmap",
+ "dashmap 5.5.3",
  "futures",
  "httparse",
  "lsp-types 0.94.1",
@@ -2458,6 +2472,7 @@ dependencies = [
  "blake3",
  "bytes",
  "cc",
+ "dashmap 6.2.1",
  "differential-dataflow",
  "effect_runtime",
  "futures",
@@ -2479,6 +2494,7 @@ dependencies = [
  "serde_yaml",
  "streaming-iterator",
  "thiserror 1.0.69",
+ "thread_local",
  "tikv-jemallocator",
  "timely",
  "tokio",

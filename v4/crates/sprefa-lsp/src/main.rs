@@ -14,8 +14,16 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
+
+/// Coalesce rapid keystrokes (`did_change`) before running the sprf
+/// compile/expand pipeline. Each per-URI refresh waits this long; if a
+/// newer version arrives in the meantime, the older call drops without
+/// firing the RPC. 80ms is below human-noticeable LSP latency and well
+/// above keyboard repeat rates.
+const DID_CHANGE_DEBOUNCE: Duration = Duration::from_millis(80);
 use tower_lsp::jsonrpc::Result as RpcResult;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
@@ -49,6 +57,11 @@ struct Backend {
     client: Client,
     sprf:   Mutex<Arc<dyn SprfClient>>,
     docs:   Mutex<HashMap<Url, DocEntry>>,
+    /// Most-recently-requested doc version per URI. Set BEFORE the
+    /// debounce sleep and BEFORE the RPC; checked after both. A newer
+    /// version arriving while an older refresh is in flight bumps this
+    /// counter and the older call drops without publishing.
+    pending: Mutex<HashMap<Url, i32>>,
 }
 
 #[allow(dead_code)]
@@ -60,7 +73,12 @@ struct DocEntry {
 impl Backend {
     fn new(client: Client) -> Self {
         let sprf = Self::build_client(default_root());
-        Self { client, sprf: Mutex::new(sprf), docs: Mutex::new(HashMap::new()) }
+        Self {
+            client,
+            sprf: Mutex::new(sprf),
+            docs: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+        }
     }
 
     fn build_client(root: PathBuf) -> Arc<dyn SprfClient> {
@@ -103,7 +121,29 @@ impl Backend {
     }
 
     /// Push doc through the sprf RPC, then publish converted diags.
+    ///
+    /// Two checkpoints drop stale work when newer keystrokes arrive:
+    ///   1. After the debounce sleep (did_change only): if `pending`
+    ///      has moved on, return without firing the RPC.
+    ///   2. After the RPC: if `pending` has moved on, return without
+    ///      publishing diags. The newer call will publish its own.
+    /// `did_open` skips the debounce so the first file load is immediate.
     async fn refresh(&self, uri: Url, text: String, version: i32, is_open: bool) {
+        // Mark this as the latest pending version BEFORE any sleep / RPC.
+        // A newer call arriving from now on will overwrite this and
+        // signal the checkpoints below to drop our work.
+        {
+            let mut p = self.pending.lock().await;
+            p.insert(uri.clone(), version);
+        }
+
+        if !is_open {
+            tokio::time::sleep(DID_CHANGE_DEBOUNCE).await;
+            if !self.is_still_latest(&uri, version).await {
+                return;
+            }
+        }
+
         let req_uri = uri.to_string();
         let sprf = self.sprf().await;
         let res = if is_open {
@@ -117,6 +157,10 @@ impl Backend {
         };
         if let Err(e) = res {
             tracing::error!(uri = %uri, %e, "sprf RPC failed");
+            return;
+        }
+
+        if !self.is_still_latest(&uri, version).await {
             return;
         }
 
@@ -138,6 +182,10 @@ impl Backend {
             g.insert(uri.clone(), DocEntry { text, version });
         }
         self.client.publish_diagnostics(uri, lsp_diags, Some(version)).await;
+    }
+
+    async fn is_still_latest(&self, uri: &Url, version: i32) -> bool {
+        self.pending.lock().await.get(uri).copied() == Some(version)
     }
 }
 
