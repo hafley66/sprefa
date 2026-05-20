@@ -105,13 +105,13 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(crate::sql::SqlDef));
     #[cfg(feature = "ghcache")]
     r.register(Arc::new(crate::ghcache::GhPrsDef));
-    r.register(Arc::new(crate::lsp::LspErrorDef));
-    r.register(Arc::new(crate::lsp::LspWarnDef));
-    r.register(Arc::new(crate::lsp::LspInfoDef));
-    r.register(Arc::new(crate::lsp::LspHintDef));
-    r.register(Arc::new(crate::lsp::LspHoverDef));
-    r.register(Arc::new(crate::lsp::LspHoverAliasDef));
-    r.register(Arc::new(crate::lsp::ExpectZeroDef));
+    r.register(Arc::new(crate::lsp::LspBodyDef::lsp_error()));
+    r.register(Arc::new(crate::lsp::LspBodyDef::lsp_warn()));
+    r.register(Arc::new(crate::lsp::LspBodyDef::lsp_info()));
+    r.register(Arc::new(crate::lsp::LspBodyDef::lsp_hint()));
+    r.register(Arc::new(crate::lsp::LspBodyDef::lsp_hover_dot()));
+    r.register(Arc::new(crate::lsp::LspBodyDef::lsp_hover_alias()));
+    r.register(Arc::new(crate::lsp::LspBodyDef::expect_zero()));
     r.register(Arc::new(crate::lsp::ExpectMatchDef));
     r
 }

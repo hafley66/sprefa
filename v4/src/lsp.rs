@@ -1,6 +1,5 @@
-//! `lsp_*` op family — emit Diag events anchored to a cursor coord.
-//! Per user constraint, the whole family lives in one file
-//! across layers (Component + four OperatorDefs).
+//! `lsp_*` / `lsp.hover` / `expect_*` op family — emit Diag events anchored
+//! to a cursor coord. All in one file per user constraint.
 //!
 //! Surface:
 //!
@@ -16,26 +15,23 @@
 //! ```
 //!
 //! Args:
-//!   `:code` — diagnostic code atom (positional, optional; defaults to
-//!             `"sprf/diag"`). One short kebab/slash atom.
+//!   `:code` — diagnostic code atom (positional, optional; defaults vary
+//!             per op). One short kebab/slash atom.
 //!
 //! DSL body — message template; `${X}` interps resolve from `cursor.terms`
 //! at render time, mirroring `str`'s template path.
 //!
-//! Cursor flow — every op in this file is rows-in → rows-out.
+//! Cursor flow:
 //!   lsp_*           — pass-through, one diag per row.
+//!   lsp.hover       — pass-through, one Hint per row IFF span resolves.
 //!   expect_zero     — drops every input row, one Error diag per row.
-//!                     Empty input = no diags, no rows. Composes anywhere
-//!                     in the pipe (zero rows out is jq-`empty`).
+//!                     Empty input = no diags, no rows.
 //!   expect_match    — pass-through; tracks "saw any row" across the rule
 //!                     run and emits one Warn diag at run-end if not.
-//!                     Barrier `complete()` is the end-of-run hook.
 //!
-//! Span — the diag's byte range comes from `cursor.at` when it resolves
-//! through SprfStore. `lsp_warn[NAME]` focuses the span on term `NAME`'s
-//! coord. Legacy `LO`/`HI` and `NAME_LO`/`NAME_HI` remain fallbacks.
-//! `expect_match` anchors its end-of-run warn to the op call site (no
-//! per-row span is available at that point).
+//! Span — diag byte range comes from `cursor.at` (via SprfStore), or the
+//! focused term's `at` when `lsp_warn[NAME]` form is used. Legacy
+//! `LO`/`HI` / `NAME_LO`/`NAME_HI` cursor terms are fallbacks.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -47,7 +43,8 @@ use effect_runtime::v2::{
 
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
 use crate::compile::lower::op_def::{
-    default_plain_dsl_parse, ArgKind, ArgSig, DslBinder, DslBody, DslShape, OperatorDef,
+    default_plain_dsl_parse, ArgKind, ArgSig, DslBinder, DslBody, DslInterp, DslShape, InterpKind,
+    OperatorDef,
 };
 use crate::compile::lower::value::{Value, ValueKind};
 use crate::sprf_introspect::PipeIntrospect;
@@ -56,22 +53,35 @@ use crate::{Cursor, Ref, StringId};
 
 pub const LSP_HOVER_CODE: &str = "sprf/hover";
 
-// ─── Component ─────────────────────────────────────────────────────────────
+// ─── Shared helpers ────────────────────────────────────────────────────────
 
-pub struct LspDiagComponent {
-    severity: Severity,
-    code: Arc<str>,
-    template: Arc<str>,
-    interps: Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
-    focus: LspDiagFocus,
-    store: Option<Arc<SprfStore>>,
-}
-
-pub struct LspHoverComponent {
-    template: Arc<str>,
-    interps: Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
-    focus: LspDiagFocus,
-    store: Option<Arc<SprfStore>>,
+/// Render a `${TERM}` / `${TERM.field}` template against a cursor. Used by
+/// every diag-emitting component in this file (was three near-clones).
+fn render_dsl_message(template: &str, interps: &[DslInterp], c: &Cursor) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut head: usize = 0;
+    for interp in interps {
+        let lo = interp.range.lo as usize;
+        let hi = interp.range.hi as usize;
+        if lo > template.len() || hi > template.len() || lo < head {
+            continue;
+        }
+        out.push_str(&template[head..lo]);
+        if let InterpKind::Term { field, .. } = &interp.kind {
+            let key: std::borrow::Cow<'_, str> = match field {
+                None => (&*interp.name).into(),
+                Some(f) => format!("{}.{}", interp.name, f).into(),
+            };
+            if let Some(v) = c.get(&key) {
+                out.push_str(v);
+            }
+        }
+        // SubPipe carveouts are skipped — diag templates render messages,
+        // not pipe values.
+        head = hi;
+    }
+    out.push_str(&template[head..]);
+    out
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,15 +90,111 @@ enum LspDiagFocus {
     Term(Arc<str>),
 }
 
-impl LspDiagComponent {
-    pub fn new(
+/// Resolve a diag's byte span: prefer the cursor coord (via SprfStore),
+/// fall back to legacy `LO`/`HI` cursor terms. Used by every diag-
+/// emitting component (was three near-clones).
+fn resolve_diag_span(
+    focus: &LspDiagFocus,
+    c: &Cursor,
+    store: Option<&Arc<SprfStore>>,
+) -> Option<(u32, u32)> {
+    match focus {
+        LspDiagFocus::Focal => span_from_ref(c.at, store).or_else(|| span_from_legacy(c, "LO", "HI")),
+        LspDiagFocus::Term(name) => {
+            let name_id = StringId::of(name.as_ref());
+            c.term(name_id)
+                .and_then(|t| span_from_ref(t.at, store))
+                .or_else(|| {
+                    span_from_legacy(
+                        c,
+                        &format!("{}_LO", name.as_ref()),
+                        &format!("{}_HI", name.as_ref()),
+                    )
+                })
+        }
+    }
+}
+
+fn span_from_ref(at: Ref, store: Option<&Arc<SprfStore>>) -> Option<(u32, u32)> {
+    if at == Ref::SYNTHETIC {
+        return None;
+    }
+    let coord = store?.coord_of(at)?;
+    Some((coord.lo, coord.hi))
+}
+
+fn span_from_legacy(c: &Cursor, lo_key: &str, hi_key: &str) -> Option<(u32, u32)> {
+    let lo = c.get(lo_key)?.parse::<u32>().ok()?;
+    let hi = c.get(hi_key)?.parse::<u32>().ok()?;
+    Some((lo, hi))
+}
+
+fn mk_diag(sev: Severity, code: Arc<str>, message: String) -> Diag {
+    match sev {
+        Severity::Error => Diag::error(code, message),
+        Severity::Warn => Diag::warn(code, message),
+        Severity::Info => Diag::info(code, message),
+        Severity::Hint => Diag::hint(code, message),
+    }
+}
+
+// ─── LspBodyComponent ──────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LspBodyKind {
+    /// Per-row: emit diag, pass row through. lsp_error / lsp_warn / lsp_info / lsp_hint.
+    Diag(Severity),
+    /// Per-row: emit Hint with `sprf/hover` code, only if span resolves; pass row through.
+    Hover,
+    /// Per-row: emit diag, DROP the row. expect_zero.
+    ExpectZero(Severity),
+}
+
+pub struct LspBodyComponent {
+    kind: LspBodyKind,
+    code: Arc<str>,
+    template: Arc<str>,
+    interps: Arc<Vec<DslInterp>>,
+    focus: LspDiagFocus,
+    store: Option<Arc<SprfStore>>,
+}
+
+impl LspBodyComponent {
+    pub fn diag(
         severity: Severity,
         code: Arc<str>,
         template: Arc<str>,
-        interps: Vec<crate::compile::lower::op_def::DslInterp>,
+        interps: Vec<DslInterp>,
     ) -> Self {
         Self {
-            severity,
+            kind: LspBodyKind::Diag(severity),
+            code,
+            template,
+            interps: Arc::new(interps),
+            focus: LspDiagFocus::Focal,
+            store: None,
+        }
+    }
+
+    pub fn hover(template: Arc<str>, interps: Vec<DslInterp>) -> Self {
+        Self {
+            kind: LspBodyKind::Hover,
+            code: Arc::<str>::from(LSP_HOVER_CODE),
+            template,
+            interps: Arc::new(interps),
+            focus: LspDiagFocus::Focal,
+            store: None,
+        }
+    }
+
+    pub fn expect_zero(
+        severity: Severity,
+        code: Arc<str>,
+        template: Arc<str>,
+        interps: Vec<DslInterp>,
+    ) -> Self {
+        Self {
+            kind: LspBodyKind::ExpectZero(severity),
             code,
             template,
             interps: Arc::new(interps),
@@ -106,186 +212,44 @@ impl LspDiagComponent {
         self.store = Some(store);
         self
     }
-
-    fn render_message(&self, c: &Cursor) -> String {
-        let raw = self.template.as_ref();
-        let mut out = String::with_capacity(raw.len());
-        let mut head: usize = 0;
-        for interp in self.interps.iter() {
-            let lo = interp.range.lo as usize;
-            let hi = interp.range.hi as usize;
-            if lo > raw.len() || hi > raw.len() || lo < head {
-                continue;
-            }
-            out.push_str(&raw[head..lo]);
-            match &interp.kind {
-                crate::compile::lower::op_def::InterpKind::Term { field, .. } => {
-                    // Layer 0c.3 — dot-access aware lookup; mirrors StrTemplateComponent.
-                    let key: std::borrow::Cow<'_, str> = match field {
-                        None => (&*interp.name).into(),
-                        Some(f) => format!("{}.{}", interp.name, f).into(),
-                    };
-                    if let Some(v) = c.get(&key) {
-                        out.push_str(v);
-                    }
-                }
-                crate::compile::lower::op_def::InterpKind::SubPipe { .. } => {
-                    // Diag templates render messages, not pipe values; skip
-                    // sub-pipe carveouts (today they're a parse-shape used
-                    // by `str`, not a diag-message form).
-                }
-            }
-            head = hi;
-        }
-        out.push_str(&raw[head..]);
-        out
-    }
-
-    fn span_from_cursor(&self, c: &Cursor) -> Option<(u32, u32)> {
-        match &self.focus {
-            LspDiagFocus::Focal => self
-                .span_from_ref(c.at)
-                .or_else(|| Self::span_from_legacy(c, "LO", "HI")),
-            LspDiagFocus::Term(name) => {
-                let name_id = StringId::of(name.as_ref());
-                c.term(name_id)
-                    .and_then(|t| self.span_from_ref(t.at))
-                    .or_else(|| {
-                        Self::span_from_legacy(
-                            c,
-                            &format!("{}_LO", name.as_ref()),
-                            &format!("{}_HI", name.as_ref()),
-                        )
-                    })
-            }
-        }
-    }
-
-    fn span_from_ref(&self, at: Ref) -> Option<(u32, u32)> {
-        if at == Ref::SYNTHETIC {
-            return None;
-        }
-        let coord = self.store.as_ref()?.coord_of(at)?;
-        Some((coord.lo, coord.hi))
-    }
-
-    fn span_from_legacy(c: &Cursor, lo_key: &str, hi_key: &str) -> Option<(u32, u32)> {
-        let lo = c.get(lo_key)?.parse::<u32>().ok()?;
-        let hi = c.get(hi_key)?.parse::<u32>().ok()?;
-        Some((lo, hi))
-    }
 }
 
-impl Component for LspDiagComponent {
+impl Component for LspBodyComponent {
     type Next = Cursor;
 
     fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        let message = self.render_message(c);
-        let mut diag = match self.severity {
-            Severity::Error => Diag::error(self.code.clone(), message),
-            Severity::Warn => Diag::warn(self.code.clone(), message),
-            Severity::Info => Diag::info(self.code.clone(), message),
-            Severity::Hint => Diag::hint(self.code.clone(), message),
-        };
-        if let Some((lo, hi)) = self.span_from_cursor(c) {
-            diag = diag.with_span(lo, hi);
-        }
-        ctx.diag.emit(diag);
-        Node::Emit(Arc::new(c.clone()))
-    }
-}
-
-impl LspHoverComponent {
-    pub fn new(template: Arc<str>, interps: Vec<crate::compile::lower::op_def::DslInterp>) -> Self {
-        Self {
-            template,
-            interps: Arc::new(interps),
-            focus: LspDiagFocus::Focal,
-            store: None,
-        }
-    }
-
-    fn with_focus(mut self, focus: LspDiagFocus) -> Self {
-        self.focus = focus;
-        self
-    }
-
-    fn with_sprf_store(mut self, store: Arc<SprfStore>) -> Self {
-        self.store = Some(store);
-        self
-    }
-
-    fn render_message(&self, c: &Cursor) -> String {
-        let raw = self.template.as_ref();
-        let mut out = String::with_capacity(raw.len());
-        let mut head: usize = 0;
-        for interp in self.interps.iter() {
-            let lo = interp.range.lo as usize;
-            let hi = interp.range.hi as usize;
-            if lo > raw.len() || hi > raw.len() || lo < head {
-                continue;
-            }
-            out.push_str(&raw[head..lo]);
-            match &interp.kind {
-                crate::compile::lower::op_def::InterpKind::Term { field, .. } => {
-                    let key: std::borrow::Cow<'_, str> = match field {
-                        None => (&*interp.name).into(),
-                        Some(f) => format!("{}.{}", interp.name, f).into(),
-                    };
-                    if let Some(v) = c.get(&key) {
-                        out.push_str(v);
-                    }
+        match self.kind {
+            LspBodyKind::Diag(sev) => {
+                let message = render_dsl_message(&self.template, &self.interps, c);
+                let mut diag = mk_diag(sev, self.code.clone(), message);
+                if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
+                    diag = diag.with_span(lo, hi);
                 }
-                crate::compile::lower::op_def::InterpKind::SubPipe { .. } => {}
+                ctx.diag.emit(diag);
+                Node::Emit(Arc::new(c.clone()))
             }
-            head = hi;
-        }
-        out.push_str(&raw[head..]);
-        out
-    }
-
-    fn span_from_cursor(&self, c: &Cursor) -> Option<(u32, u32)> {
-        match &self.focus {
-            LspDiagFocus::Focal => self
-                .span_from_ref(c.at)
-                .or_else(|| LspDiagComponent::span_from_legacy(c, "LO", "HI")),
-            LspDiagFocus::Term(name) => {
-                let name_id = StringId::of(name.as_ref());
-                c.term(name_id)
-                    .and_then(|t| self.span_from_ref(t.at))
-                    .or_else(|| {
-                        LspDiagComponent::span_from_legacy(
-                            c,
-                            &format!("{}_LO", name.as_ref()),
-                            &format!("{}_HI", name.as_ref()),
-                        )
-                    })
+            LspBodyKind::Hover => {
+                if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
+                    let message = render_dsl_message(&self.template, &self.interps, c);
+                    ctx.diag
+                        .emit(Diag::hint(self.code.clone(), message).with_span(lo, hi));
+                }
+                Node::Emit(Arc::new(c.clone()))
+            }
+            LspBodyKind::ExpectZero(sev) => {
+                let message = render_dsl_message(&self.template, &self.interps, c);
+                let mut diag = mk_diag(sev, self.code.clone(), message);
+                if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
+                    diag = diag.with_span(lo, hi);
+                }
+                ctx.diag.emit(diag);
+                Node::Done
             }
         }
     }
-
-    fn span_from_ref(&self, at: Ref) -> Option<(u32, u32)> {
-        if at == Ref::SYNTHETIC {
-            return None;
-        }
-        let coord = self.store.as_ref()?.coord_of(at)?;
-        Some((coord.lo, coord.hi))
-    }
 }
 
-impl Component for LspHoverComponent {
-    type Next = Cursor;
-
-    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        if let Some((lo, hi)) = self.span_from_cursor(c) {
-            ctx.diag
-                .emit(Diag::hint(LSP_HOVER_CODE, self.render_message(c)).with_span(lo, hi));
-        }
-        Node::Emit(Arc::new(c.clone()))
-    }
-}
-
-// ─── OperatorDefs ──────────────────────────────────────────────────────────
+// ─── LspBodyDef (one parameterized OperatorDef) ────────────────────────────
 
 const LSP_SPEC: &[ArgSig] = &[ArgSig {
     kind: ArgKind::Atom,
@@ -301,49 +265,168 @@ const LSP_FLOW: ArgSig = ArgSig {
     required: false,
 };
 
-fn lower_lsp_diag(
-    severity: Severity,
-    ctx: &LowerCtx,
-    flow: Option<Value>,
-    args: &[Value],
-    dsl: Option<&DslBody>,
-) -> Result<Pipe<Cursor>, LowerError> {
-    let code: Arc<str> = args
-        .first()
+#[derive(Clone, Copy)]
+enum DefShape {
+    /// lsp_error / lsp_warn / lsp_info / lsp_hint: flow-focus + code paren arg.
+    Diag(Severity, &'static str), // (sev, default_code)
+    /// lsp.hover / lsp_hover: flow-focus, no code paren arg (code is LSP_HOVER_CODE).
+    Hover,
+    /// expect_zero: no flow-focus, code paren arg, dsl optional.
+    ExpectZero(Severity, &'static str),
+}
+
+pub struct LspBodyDef {
+    name: &'static str,
+    shape: DefShape,
+}
+
+impl LspBodyDef {
+    pub const fn lsp_error() -> Self {
+        Self {
+            name: "lsp_error",
+            shape: DefShape::Diag(Severity::Error, "sprf/diag"),
+        }
+    }
+    pub const fn lsp_warn() -> Self {
+        Self {
+            name: "lsp_warn",
+            shape: DefShape::Diag(Severity::Warn, "sprf/diag"),
+        }
+    }
+    pub const fn lsp_info() -> Self {
+        Self {
+            name: "lsp_info",
+            shape: DefShape::Diag(Severity::Info, "sprf/diag"),
+        }
+    }
+    pub const fn lsp_hint() -> Self {
+        Self {
+            name: "lsp_hint",
+            shape: DefShape::Diag(Severity::Hint, "sprf/diag"),
+        }
+    }
+    pub const fn lsp_hover_dot() -> Self {
+        Self {
+            name: "lsp.hover",
+            shape: DefShape::Hover,
+        }
+    }
+    pub const fn lsp_hover_alias() -> Self {
+        Self {
+            name: "lsp_hover",
+            shape: DefShape::Hover,
+        }
+    }
+    pub const fn expect_zero() -> Self {
+        Self {
+            name: "expect_zero",
+            shape: DefShape::ExpectZero(Severity::Error, "expect_zero"),
+        }
+    }
+}
+
+impl OperatorDef for LspBodyDef {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn flow_arg(&self) -> Option<ArgSig> {
+        match self.shape {
+            DefShape::Diag(..) | DefShape::Hover => Some(LSP_FLOW),
+            DefShape::ExpectZero(..) => None,
+        }
+    }
+
+    fn paren_args(&self) -> &[ArgSig] {
+        match self.shape {
+            DefShape::Diag(..) | DefShape::ExpectZero(..) => LSP_SPEC,
+            DefShape::Hover => &[],
+        }
+    }
+
+    fn dsl_body(&self) -> Option<DslShape> {
+        Some(DslShape::Plain)
+    }
+
+    fn dsl_required(&self) -> bool {
+        match self.shape {
+            DefShape::Diag(..) | DefShape::Hover => true,
+            DefShape::ExpectZero(..) => false,
+        }
+    }
+
+    fn binders_in_dsl(&self, _raw: &str) -> Vec<DslBinder> {
+        // ${IDENT} interps don't BIND, they READ.
+        Vec::new()
+    }
+
+    fn parse_dsl(&self, raw: &str) -> Result<Vec<DslInterp>, LowerError> {
+        Ok(default_plain_dsl_parse(raw))
+    }
+
+    fn lower(
+        &self,
+        ctx: &LowerCtx,
+        flow: Option<Value>,
+        args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        let mut comp = match self.shape {
+            DefShape::Diag(sev, default_code) => {
+                let code = code_arg_or_default(args, default_code);
+                let (template, interps) = take_required_dsl_body(self.name, dsl)?;
+                LspBodyComponent::diag(sev, code, template, interps)
+                    .with_focus(lsp_focus_from_flow(flow)?)
+            }
+            DefShape::Hover => {
+                let (template, interps) = take_required_dsl_body(self.name, dsl)?;
+                LspBodyComponent::hover(template, interps).with_focus(lsp_focus_from_flow(flow)?)
+            }
+            DefShape::ExpectZero(sev, default_code) => {
+                let code = code_arg_or_default(args, default_code);
+                let (template, interps) = take_optional_dsl_body(dsl);
+                // ExpectZero has no [TERM] focus (flow_arg = None ⇒ flow = None).
+                LspBodyComponent::expect_zero(sev, code, template, interps)
+            }
+        };
+        if let Some(store) = &ctx.sprf_store {
+            comp = comp.with_sprf_store(store.clone());
+        }
+        Ok(Pipe::new().step(Arc::new(comp)))
+    }
+}
+
+fn code_arg_or_default(args: &[Value], default_code: &'static str) -> Arc<str> {
+    args.first()
         .and_then(|v| match v.kind() {
             ValueKind::Atom(s) => Some(s.clone()),
             _ => None,
         })
-        .unwrap_or_else(|| Arc::<str>::from("sprf/diag"));
-    let body = dsl.ok_or_else(|| {
-        LowerError::Unknown("lsp_*: dsl body required (e.g. lsp_error`unused: ${X}`)".into())
-    })?;
-    let mut interps = body.interps.clone();
-    interps.sort_by_key(|i| i.range.lo);
-    let mut comp = LspDiagComponent::new(severity, code, body.raw.clone(), interps)
-        .with_focus(lsp_focus_from_flow(flow)?);
-    if let Some(store) = &ctx.sprf_store {
-        comp = comp.with_sprf_store(store.clone());
-    }
-    Ok(Pipe::new().step(Arc::new(comp)))
+        .unwrap_or_else(|| Arc::<str>::from(default_code))
 }
 
-fn lower_lsp_hover(
-    ctx: &LowerCtx,
-    flow: Option<Value>,
+fn take_required_dsl_body(
+    op: &'static str,
     dsl: Option<&DslBody>,
-) -> Result<Pipe<Cursor>, LowerError> {
+) -> Result<(Arc<str>, Vec<DslInterp>), LowerError> {
     let body = dsl.ok_or_else(|| {
-        LowerError::Unknown("lsp.hover: dsl body required (e.g. lsp.hover`details ${X}`)".into())
+        LowerError::Unknown(format!("{op}: dsl body required (e.g. {op}`msg ${{X}}`)"))
     })?;
     let mut interps = body.interps.clone();
     interps.sort_by_key(|i| i.range.lo);
-    let mut comp =
-        LspHoverComponent::new(body.raw.clone(), interps).with_focus(lsp_focus_from_flow(flow)?);
-    if let Some(store) = &ctx.sprf_store {
-        comp = comp.with_sprf_store(store.clone());
+    Ok((body.raw.clone(), interps))
+}
+
+fn take_optional_dsl_body(dsl: Option<&DslBody>) -> (Arc<str>, Vec<DslInterp>) {
+    match dsl {
+        Some(body) => {
+            let mut interps = body.interps.clone();
+            interps.sort_by_key(|i| i.range.lo);
+            (body.raw.clone(), interps)
+        }
+        None => (Arc::<str>::from(""), Vec::new()),
     }
-    Ok(Pipe::new().step(Arc::new(comp)))
 }
 
 fn lsp_focus_from_flow(flow: Option<Value>) -> Result<LspDiagFocus, LowerError> {
@@ -364,335 +447,13 @@ fn lsp_focus_from_flow(flow: Option<Value>) -> Result<LspDiagFocus, LowerError> 
     ))
 }
 
-fn lsp_binders_in_dsl(raw: &str) -> Vec<DslBinder> {
-    // ${IDENT} interps don't BIND, they READ. Default empty so the
-    // analyzer treats them as reads (use-before-bind catches the rest).
-    let _ = raw;
-    Vec::new()
-}
-
-fn lsp_parse_dsl(raw: &str) -> Vec<crate::compile::lower::op_def::DslInterp> {
-    default_plain_dsl_parse(raw)
-}
-
-pub struct LspErrorDef;
-impl OperatorDef for LspErrorDef {
-    fn name(&self) -> &'static str {
-        "lsp_error"
-    }
-    fn flow_arg(&self) -> Option<ArgSig> {
-        Some(LSP_FLOW)
-    }
-    fn paren_args(&self) -> &[ArgSig] {
-        LSP_SPEC
-    }
-    fn dsl_body(&self) -> Option<DslShape> {
-        Some(DslShape::Plain)
-    }
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        lsp_binders_in_dsl(raw)
-    }
-    fn parse_dsl(
-        &self,
-        raw: &str,
-    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
-        Ok(lsp_parse_dsl(raw))
-    }
-    fn lower(
-        &self,
-        ctx: &LowerCtx,
-        flow: Option<Value>,
-        args: &[Value],
-        _block: Option<Pipe<Cursor>>,
-        dsl: Option<&DslBody>,
-    ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_diag(Severity::Error, ctx, flow, args, dsl)
-    }
-}
-
-pub struct LspWarnDef;
-impl OperatorDef for LspWarnDef {
-    fn name(&self) -> &'static str {
-        "lsp_warn"
-    }
-    fn flow_arg(&self) -> Option<ArgSig> {
-        Some(LSP_FLOW)
-    }
-    fn paren_args(&self) -> &[ArgSig] {
-        LSP_SPEC
-    }
-    fn dsl_body(&self) -> Option<DslShape> {
-        Some(DslShape::Plain)
-    }
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        lsp_binders_in_dsl(raw)
-    }
-    fn parse_dsl(
-        &self,
-        raw: &str,
-    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
-        Ok(lsp_parse_dsl(raw))
-    }
-    fn lower(
-        &self,
-        ctx: &LowerCtx,
-        flow: Option<Value>,
-        args: &[Value],
-        _block: Option<Pipe<Cursor>>,
-        dsl: Option<&DslBody>,
-    ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_diag(Severity::Warn, ctx, flow, args, dsl)
-    }
-}
-
-pub struct LspInfoDef;
-impl OperatorDef for LspInfoDef {
-    fn name(&self) -> &'static str {
-        "lsp_info"
-    }
-    fn flow_arg(&self) -> Option<ArgSig> {
-        Some(LSP_FLOW)
-    }
-    fn paren_args(&self) -> &[ArgSig] {
-        LSP_SPEC
-    }
-    fn dsl_body(&self) -> Option<DslShape> {
-        Some(DslShape::Plain)
-    }
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        lsp_binders_in_dsl(raw)
-    }
-    fn parse_dsl(
-        &self,
-        raw: &str,
-    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
-        Ok(lsp_parse_dsl(raw))
-    }
-    fn lower(
-        &self,
-        ctx: &LowerCtx,
-        flow: Option<Value>,
-        args: &[Value],
-        _block: Option<Pipe<Cursor>>,
-        dsl: Option<&DslBody>,
-    ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_diag(Severity::Info, ctx, flow, args, dsl)
-    }
-}
-
-pub struct LspHintDef;
-impl OperatorDef for LspHintDef {
-    fn name(&self) -> &'static str {
-        "lsp_hint"
-    }
-    fn flow_arg(&self) -> Option<ArgSig> {
-        Some(LSP_FLOW)
-    }
-    fn paren_args(&self) -> &[ArgSig] {
-        LSP_SPEC
-    }
-    fn dsl_body(&self) -> Option<DslShape> {
-        Some(DslShape::Plain)
-    }
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        lsp_binders_in_dsl(raw)
-    }
-    fn parse_dsl(
-        &self,
-        raw: &str,
-    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
-        Ok(lsp_parse_dsl(raw))
-    }
-    fn lower(
-        &self,
-        ctx: &LowerCtx,
-        flow: Option<Value>,
-        args: &[Value],
-        _block: Option<Pipe<Cursor>>,
-        dsl: Option<&DslBody>,
-    ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_diag(Severity::Hint, ctx, flow, args, dsl)
-    }
-}
-
-pub struct LspHoverDef;
-impl OperatorDef for LspHoverDef {
-    fn name(&self) -> &'static str {
-        "lsp.hover"
-    }
-    fn flow_arg(&self) -> Option<ArgSig> {
-        Some(LSP_FLOW)
-    }
-    fn dsl_body(&self) -> Option<DslShape> {
-        Some(DslShape::Plain)
-    }
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        lsp_binders_in_dsl(raw)
-    }
-    fn parse_dsl(
-        &self,
-        raw: &str,
-    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
-        Ok(lsp_parse_dsl(raw))
-    }
-    fn lower(
-        &self,
-        ctx: &LowerCtx,
-        flow: Option<Value>,
-        _args: &[Value],
-        _block: Option<Pipe<Cursor>>,
-        dsl: Option<&DslBody>,
-    ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_hover(ctx, flow, dsl)
-    }
-}
-
-// ─── expect_zero / expect_match ───────────────────────────────────────────
+// ─── expect_match — barrier-scoped, keeps its own shape ────────────────────
 //
-// Pipey contract:
-//   `expect_zero(:c)`m``  — rows-in → 0 rows-out. 1 Error per input row.
-//   `expect_match(:c)`m`` — rows-in → same rows-out. 1 Warn at run-end iff
-//                           zero rows ever arrived (Barrier `complete()`).
-// Neither op is positional. Both compose anywhere in the pipe.
+// `expect_match` tracks "saw any row" per barrier scope. `complete()`
+// (called by the runtime when upstream is drained at this depth) emits
+// one Warn diag if no row was seen. Cannot share LspBodyComponent because
+// its lifecycle is BARRIER, not the per-row dispatch path.
 
-pub struct ExpectZeroComponent {
-    code: Arc<str>,
-    template: Arc<str>,
-    interps: Arc<Vec<crate::compile::lower::op_def::DslInterp>>,
-    store: Option<Arc<SprfStore>>,
-}
-
-impl ExpectZeroComponent {
-    pub fn new(
-        code: Arc<str>,
-        template: Arc<str>,
-        interps: Vec<crate::compile::lower::op_def::DslInterp>,
-    ) -> Self {
-        Self {
-            code,
-            template,
-            interps: Arc::new(interps),
-            store: None,
-        }
-    }
-
-    fn with_sprf_store(mut self, store: Arc<SprfStore>) -> Self {
-        self.store = Some(store);
-        self
-    }
-
-    fn render_message(&self, c: &Cursor) -> String {
-        // Term-only template interp; mirrors LspDiagComponent. SubPipe
-        // carveouts are skipped — diag templates render messages, not
-        // pipe values.
-        let raw = self.template.as_ref();
-        let mut out = String::with_capacity(raw.len());
-        let mut head: usize = 0;
-        for interp in self.interps.iter() {
-            let lo = interp.range.lo as usize;
-            let hi = interp.range.hi as usize;
-            if lo > raw.len() || hi > raw.len() || lo < head {
-                continue;
-            }
-            out.push_str(&raw[head..lo]);
-            if let crate::compile::lower::op_def::InterpKind::Term { field, .. } = &interp.kind {
-                let key: std::borrow::Cow<'_, str> = match field {
-                    None => (&*interp.name).into(),
-                    Some(f) => format!("{}.{}", interp.name, f).into(),
-                };
-                if let Some(v) = c.get(&key) {
-                    out.push_str(v);
-                }
-            }
-            head = hi;
-        }
-        out.push_str(&raw[head..]);
-        out
-    }
-
-    fn span_from_cursor(&self, c: &Cursor) -> Option<(u32, u32)> {
-        if c.at != Ref::SYNTHETIC {
-            if let Some(store) = &self.store {
-                if let Some(coord) = store.coord_of(c.at) {
-                    return Some((coord.lo, coord.hi));
-                }
-            }
-        }
-        LspDiagComponent::span_from_legacy(c, "LO", "HI")
-    }
-}
-
-impl Component for ExpectZeroComponent {
-    type Next = Cursor;
-
-    fn render(&self, ctx: &RenderCtx, c: &Cursor) -> Node<Cursor> {
-        let message = self.render_message(c);
-        let mut diag = Diag::error(self.code.clone(), message);
-        if let Some((lo, hi)) = self.span_from_cursor(c) {
-            diag = diag.with_span(lo, hi);
-        }
-        ctx.diag.emit(diag);
-        Node::Done
-    }
-}
-
-pub struct ExpectZeroDef;
-impl OperatorDef for ExpectZeroDef {
-    fn name(&self) -> &'static str {
-        "expect_zero"
-    }
-    fn paren_args(&self) -> &[ArgSig] {
-        LSP_SPEC
-    }
-    fn dsl_body(&self) -> Option<DslShape> {
-        Some(DslShape::Plain)
-    }
-    fn dsl_required(&self) -> bool {
-        false
-    }
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        lsp_binders_in_dsl(raw)
-    }
-    fn parse_dsl(
-        &self,
-        raw: &str,
-    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
-        Ok(lsp_parse_dsl(raw))
-    }
-    fn lower(
-        &self,
-        ctx: &LowerCtx,
-        _flow: Option<Value>,
-        args: &[Value],
-        _block: Option<Pipe<Cursor>>,
-        dsl: Option<&DslBody>,
-    ) -> Result<Pipe<Cursor>, LowerError> {
-        let code: Arc<str> = args
-            .first()
-            .and_then(|v| match v.kind() {
-                ValueKind::Atom(s) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| Arc::<str>::from("expect_zero"));
-        let (template, interps): (Arc<str>, Vec<_>) = match dsl {
-            Some(body) => {
-                let mut interps = body.interps.clone();
-                interps.sort_by_key(|i| i.range.lo);
-                (body.raw.clone(), interps)
-            }
-            None => (Arc::<str>::from(""), Vec::new()),
-        };
-        let mut comp = ExpectZeroComponent::new(code, template, interps);
-        if let Some(store) = &ctx.sprf_store {
-            comp = comp.with_sprf_store(store.clone());
-        }
-        Ok(Pipe::new().step(Arc::new(comp)))
-    }
-}
-
-/// `expect_match` — pass-through that tracks "saw any row" per barrier
-/// scope. `complete()` (called by the runtime when upstream is drained
-/// at this depth) emits one Warn diag if no row was seen.
 pub struct ExpectMatchComponent {
     code: Arc<str>,
     template: Arc<str>,
@@ -729,9 +490,6 @@ impl Component for ExpectMatchComponent {
         rows: &[QueueRow<Cursor>],
         queue: &dyn QueueBackend<Cursor>,
     ) {
-        // Pass each row through; mark scope as "saw a row". Multiple
-        // distinct scopes can run through one component (re-runs across
-        // ticks), so key on the row's scope, not a single bool.
         if let Some(first) = rows.first() {
             let scope = self.scope_of(ctx, first);
             self.saw_any.lock().unwrap().insert(scope, true);
@@ -781,14 +539,11 @@ impl OperatorDef for ExpectMatchDef {
     fn dsl_required(&self) -> bool {
         false
     }
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        lsp_binders_in_dsl(raw)
+    fn binders_in_dsl(&self, _raw: &str) -> Vec<DslBinder> {
+        Vec::new()
     }
-    fn parse_dsl(
-        &self,
-        raw: &str,
-    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
-        Ok(lsp_parse_dsl(raw))
+    fn parse_dsl(&self, raw: &str) -> Result<Vec<DslInterp>, LowerError> {
+        Ok(default_plain_dsl_parse(raw))
     }
     fn lower(
         &self,
@@ -798,50 +553,12 @@ impl OperatorDef for ExpectMatchDef {
         _block: Option<Pipe<Cursor>>,
         dsl: Option<&DslBody>,
     ) -> Result<Pipe<Cursor>, LowerError> {
-        let code: Arc<str> = args
-            .first()
-            .and_then(|v| match v.kind() {
-                ValueKind::Atom(s) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| Arc::<str>::from("expect_match"));
+        let code = code_arg_or_default(args, "expect_match");
         let template: Arc<str> = dsl
             .map(|b| b.raw.clone())
             .unwrap_or_else(|| Arc::<str>::from("expected at least one row, got none"));
         let comp = ExpectMatchComponent::new(code, template, ctx.current_call_span.get());
         Ok(Pipe::new().step(Arc::new(comp)))
-    }
-}
-
-pub struct LspHoverAliasDef;
-impl OperatorDef for LspHoverAliasDef {
-    fn name(&self) -> &'static str {
-        "lsp_hover"
-    }
-    fn flow_arg(&self) -> Option<ArgSig> {
-        Some(LSP_FLOW)
-    }
-    fn dsl_body(&self) -> Option<DslShape> {
-        Some(DslShape::Plain)
-    }
-    fn binders_in_dsl(&self, raw: &str) -> Vec<DslBinder> {
-        lsp_binders_in_dsl(raw)
-    }
-    fn parse_dsl(
-        &self,
-        raw: &str,
-    ) -> Result<Vec<crate::compile::lower::op_def::DslInterp>, LowerError> {
-        Ok(lsp_parse_dsl(raw))
-    }
-    fn lower(
-        &self,
-        ctx: &LowerCtx,
-        flow: Option<Value>,
-        _args: &[Value],
-        _block: Option<Pipe<Cursor>>,
-        dsl: Option<&DslBody>,
-    ) -> Result<Pipe<Cursor>, LowerError> {
-        lower_lsp_hover(ctx, flow, dsl)
     }
 }
 
@@ -880,7 +597,7 @@ mod tests {
             rows: Mutex::new(Vec::new()),
         });
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let comp = LspDiagComponent::new(
+        let comp = LspBodyComponent::diag(
             Severity::Error,
             Arc::from("unused-var"),
             Arc::from("variable ${NAME} is unused"),
@@ -918,7 +635,7 @@ mod tests {
             rows: Mutex::new(Vec::new()),
         });
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let comp = LspDiagComponent::new(
+        let comp = LspBodyComponent::diag(
             Severity::Warn,
             Arc::from("cursor-at"),
             Arc::from("at"),
@@ -968,7 +685,7 @@ mod tests {
             rows: Mutex::new(Vec::new()),
         });
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let comp = LspDiagComponent::new(
+        let comp = LspBodyComponent::diag(
             Severity::Warn,
             Arc::from("term-at"),
             Arc::from("shell ${NAME}"),
@@ -1002,7 +719,7 @@ mod tests {
             rows: Mutex::new(Vec::new()),
         });
         let queue: Arc<dyn QueueBackend<Cursor>> = Arc::new(MemQueue::new());
-        let comp = LspDiagComponent::new(
+        let comp = LspBodyComponent::diag(
             Severity::Warn,
             Arc::from("sprf/diag"),
             Arc::from("plain"),
