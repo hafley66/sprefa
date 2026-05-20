@@ -24,11 +24,12 @@
 # declared LAST so the seed pipes above have already populated
 # openapi_ops_facts and frontend_hooks_facts when its INSERT runs.
 #
-# Run (needs --fact-db: fused INSERT/SELECT only executes on SQLite;
-# the default MemFactStore falls back to the legacy expand path):
+# Run (no --fact-db needed: the default fact store is now in-memory
+# SQLite, so fused INSERT/SELECT executes against the same connection
+# the seeds wrote into):
 #
 #   cargo run --manifest-path v4/Cargo.toml --bin sprefa-run -- \
-#     v4/examples/dogfood-antijoin.sprf --show-rows --fact-db /tmp/dogfood.db
+#     v4/examples/dogfood-antijoin.sprf --show-rows
 
 rule(:openapi_ops, OP?, SPEC?);
 rule(:frontend_hooks, OP?, FILE?);

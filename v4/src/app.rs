@@ -537,17 +537,27 @@ impl Component for AnalysisPassThrough {
 
 impl SprfState {
     pub fn new(root: PathBuf) -> Self {
-        Self::new_with_backends(
-            root,
-            Arc::new(MemFactStore::<Cursor>::new()),
-            Arc::new(MemQueue::new()),
-        )
+        // In-memory SQLite (not the HashMap-backed MemFactStore) so the
+        // default CLI/daemon path supports fused INSERT/SELECT. Without
+        // this, fused-SQL rules (including `not(rule?(args))` antijoin)
+        // silently fall through to the legacy expand path, which today
+        // can't run them. Tests that need the lighter HashMap backend
+        // construct MemFactStore directly.
+        let facts: Arc<dyn FactStore<Cursor>> = Arc::new(
+            SqliteFactStore::<Cursor>::open_in_memory()
+                .expect("open in-memory sqlite fact store"),
+        );
+        Self::new_with_backends(root, facts, Arc::new(MemQueue::new()))
     }
 
     pub fn new_with_sqlite_queue(root: PathBuf, queue_path: impl AsRef<std::path::Path>) -> Self {
+        let facts: Arc<dyn FactStore<Cursor>> = Arc::new(
+            SqliteFactStore::<Cursor>::open_in_memory()
+                .expect("open in-memory sqlite fact store"),
+        );
         Self::new_with_backends(
             root,
-            Arc::new(MemFactStore::<Cursor>::new()),
+            facts,
             Arc::new(
                 HybridQueue::<Cursor>::open_file(queue_path.as_ref(), HybridCfg::default())
                     .expect("open hybrid sqlite queue"),
@@ -2704,15 +2714,27 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].code, "sql/unknown-table");
-        assert_eq!(diags[0].message, "unknown SQL table `missing_hooks`");
+        // Two diags now: the lower-time `sql/unknown-table` AND the
+        // runtime `sql/runtime` from sqlite actually executing the SQL
+        // (default fact store is now in-memory SQLite, not MemFactStore).
+        let unknown = diags
+            .iter()
+            .find(|d| d.code == "sql/unknown-table")
+            .expect("lower-time sql/unknown-table diag");
+        assert_eq!(unknown.message, "unknown SQL table `missing_hooks`");
         assert_eq!(
-            (diags[0].lo, diags[0].hi),
+            (unknown.lo, unknown.hi),
             (
                 Some((src.find("missing_hooks").unwrap()) as u32),
                 Some((src.find("missing_hooks").unwrap() + "missing_hooks".len()) as u32)
             )
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "sql/runtime"
+                    && d.message.contains("missing_hooks_facts")),
+            "expected sql/runtime echo from sqlite execute, got: {diags:?}"
         );
     }
 

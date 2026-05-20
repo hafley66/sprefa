@@ -155,13 +155,9 @@ fn dogfood_antijoin_example_emits_listpets_warning() {
     let bin = env!("CARGO_BIN_EXE_sprefa-run");
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let sprf = format!("{manifest_dir}/examples/dogfood-antijoin.sprf");
-    let dir = tempfile::tempdir().unwrap();
-    let fact_db = dir.path().join("facts.db");
 
     let output = Command::new(bin)
         .arg(&sprf)
-        .arg("--fact-db")
-        .arg(&fact_db)
         .arg("--show-rows")
         .output()
         .expect("sprefa-run dogfood-antijoin spawns");
@@ -190,9 +186,6 @@ fn dogfood_antijoin_example_emits_listpets_warning() {
         stdout.contains("missing_frontend_hooks: 1 rows"),
         "stdout missing antijoin result:\n{stdout}"
     );
-
-    let facts = SqliteFactStore::<v4::Cursor>::open_file(&fact_db).unwrap();
-    assert_eq!(facts.len("missing_frontend_hooks"), 1);
 }
 
 #[test]

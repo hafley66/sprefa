@@ -346,6 +346,21 @@ impl OperatorDef for FactDef {
 
         if !any_unbound {
             // Pure write — table + (no col surface yet on FactWrite).
+            // Declare the table up-front so backends that require schema
+            // (SqliteFactStore) accept the insert. MemFactStore tolerates
+            // missing declare; SqliteFactStore panics at row_id_for.
+            if ctx.store.declared_cols(&table).is_none() {
+                let cols: Vec<String> = modes
+                    .iter()
+                    .map(|m| match m {
+                        ColMode::BoundLiteral(s) => s.to_string(),
+                        ColMode::BoundRead(s) => s.to_string(),
+                        ColMode::Unbound(s) => s.to_string(),
+                    })
+                    .collect();
+                let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
+                ctx.store.declare(&table, &col_refs);
+            }
             return Ok(Pipe::new().step(Arc::new(FactWrite::new(ctx.store.clone(), table))));
         }
 
