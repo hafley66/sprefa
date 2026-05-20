@@ -24,6 +24,10 @@ pub struct Diag {
     pub message: String,
     pub span: Option<ByteRange>,
     pub op_path: Vec<u32>,
+    /// Target file URI for this diagnostic. `None` => publish on the
+    /// requesting `.sprf` URI (back-compat). `Some` => publish on this
+    /// URI (set when a lint targets a non-`.sprf` file via FS column).
+    pub target_uri: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,6 +55,7 @@ impl Diag {
             message: message.into(),
             span: None,
             op_path: Vec::new(),
+            target_uri: None,
         }
     }
 
@@ -61,6 +66,7 @@ impl Diag {
             message: message.into(),
             span: None,
             op_path: Vec::new(),
+            target_uri: None,
         }
     }
 
@@ -71,6 +77,7 @@ impl Diag {
             message: message.into(),
             span: None,
             op_path: Vec::new(),
+            target_uri: None,
         }
     }
 
@@ -81,6 +88,7 @@ impl Diag {
             message: message.into(),
             span: None,
             op_path: Vec::new(),
+            target_uri: None,
         }
     }
 
@@ -91,6 +99,11 @@ impl Diag {
 
     pub fn with_op_path(mut self, path: Vec<u32>) -> Self {
         self.op_path = path;
+        self
+    }
+
+    pub fn with_target_uri(mut self, uri: impl Into<String>) -> Self {
+        self.target_uri = Some(uri.into());
         self
     }
 }

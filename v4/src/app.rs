@@ -111,6 +111,17 @@ pub struct GetInlaysReq {
     pub uri: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspDiagsByUriReq {
+    /// The `.sprf` URI that originated the lint program.
+    pub source_uri: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspDiagsByUriResp {
+    /// Diagnostics grouped by the URI they should publish on.
+    /// Diags with no `target_uri` fall under `source_uri`.
+    pub by_uri: std::collections::HashMap<String, Vec<SprfDiag>>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunReq {
     pub path: PathBuf,
     pub root: Option<PathBuf>,
@@ -134,6 +145,11 @@ pub struct SprfDiag {
     pub severity: String, // "error" | "warning" | "info" | "hint"
     pub code: String,
     pub message: String,
+    /// Target file URI when the diag should publish on a non-`.sprf`
+    /// file (lint targeting an `.rs` / `.ts` / etc.). `None` => the
+    /// requesting `.sprf` URI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
 }
 
 impl From<&effect_runtime::v2::Diag> for SprfDiag {
@@ -151,6 +167,7 @@ impl From<&effect_runtime::v2::Diag> for SprfDiag {
             .into(),
             code: d.code.to_string(),
             message: d.message.clone(),
+            uri: d.target_uri.clone(),
         }
     }
 }
@@ -472,6 +489,7 @@ sprf_rpc! {
     fn lsp_change  (LspChangeReq) -> ()                  => "/lsp/change";
     fn lsp_close   (LspCloseReq)  -> ()                  => "/lsp/close";
     fn get_diags   (GetDiagsReq)  -> Vec<SprfDiag>       => "/lsp/diags";
+    fn lsp_diags_by_uri (LspDiagsByUriReq) -> LspDiagsByUriResp => "/lsp/diags/by-uri";
     fn get_inlays  (GetInlaysReq) -> Vec<InlayProbe>     => "/lsp/inlays";
     fn lsp_locate_dsl (LspLocateDslReq) -> LspLocateDslResp => "/lsp/locate-dsl";
     fn lsp_hover      (LspHoverReq) -> LspHoverResp      => "/lsp/hover";
@@ -1473,6 +1491,30 @@ impl SprfHandlers for SprfState {
             .map(SprfDiag::from)
             .collect();
         Ok(out)
+    }
+    async fn lsp_diags_by_uri(
+        &self,
+        req: LspDiagsByUriReq,
+    ) -> Result<LspDiagsByUriResp, SprfError> {
+        let docs = self.docs.lock().unwrap();
+        let d = docs
+            .get(&req.source_uri)
+            .ok_or(SprfError::UnknownDoc(req.source_uri.clone()))?;
+        let mut by_uri: HashMap<String, Vec<SprfDiag>> = HashMap::new();
+        for diag in d
+            .parse_diags
+            .iter()
+            .chain(d.walk_diags.iter())
+            .chain(d.runtime_diags.iter())
+            .map(SprfDiag::from)
+        {
+            let key = diag
+                .uri
+                .clone()
+                .unwrap_or_else(|| req.source_uri.clone());
+            by_uri.entry(key).or_default().push(diag);
+        }
+        Ok(LspDiagsByUriResp { by_uri })
     }
     async fn get_inlays(&self, req: GetInlaysReq) -> Result<Vec<InlayProbe>, SprfError> {
         let docs = self.docs.lock().unwrap();

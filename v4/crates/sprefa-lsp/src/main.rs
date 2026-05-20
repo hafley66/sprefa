@@ -48,8 +48,8 @@ mod inlay;
 mod semantic;
 
 use v4::app::{
-    build_in_process, GetDiagsReq, GetInlaysReq, HttpClient,
-    LspChangeReq, LspCloseReq, LspCompletionReq, LspDefinitionReq, LspHoverReq,
+    build_in_process, GetInlaysReq, HttpClient,
+    LspChangeReq, LspCloseReq, LspCompletionReq, LspDefinitionReq, LspDiagsByUriReq, LspHoverReq,
     LspLocateDslReq, LspLocateDslResp, LspOpenReq, SprfClient, SprfDiag,
 };
 
@@ -62,6 +62,10 @@ struct Backend {
     /// version arriving while an older refresh is in flight bumps this
     /// counter and the older call drops without publishing.
     pending: Mutex<HashMap<Url, i32>>,
+    /// Target URIs we last published to under each source `.sprf` URI.
+    /// Lets us clear stale squiggles on a non-`.sprf` file once the
+    /// lint stops targeting it.
+    last_published: Mutex<HashMap<Url, Vec<Url>>>,
 }
 
 #[allow(dead_code)]
@@ -78,6 +82,7 @@ impl Backend {
             sprf: Mutex::new(sprf),
             docs: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
+            last_published: Mutex::new(HashMap::new()),
         }
     }
 
@@ -164,24 +169,76 @@ impl Backend {
             return;
         }
 
-        let diags: Vec<SprfDiag> = match sprf
-            .get_diags(GetDiagsReq { uri: req_uri }).await
+        let resp = match sprf
+            .lsp_diags_by_uri(LspDiagsByUriReq { source_uri: req_uri })
+            .await
         {
             Ok(v)  => v,
             Err(e) => {
-                tracing::error!(uri = %uri, %e, "get_diags failed");
+                tracing::error!(uri = %uri, %e, "lsp_diags_by_uri failed");
                 return;
             }
         };
 
-        let lsp_diags: Vec<Diagnostic> = diags.iter()
-            .map(|d| to_lsp_diag(&text, d)).collect();
-
         {
             let mut g = self.docs.lock().await;
-            g.insert(uri.clone(), DocEntry { text, version });
+            g.insert(uri.clone(), DocEntry { text: text.clone(), version });
         }
-        self.client.publish_diagnostics(uri, lsp_diags, Some(version)).await;
+
+        // For diags whose target URI is the requesting .sprf URI we
+        // already have the source text in hand. For cross-URI targets
+        // we load the target file from disk so byte spans render at
+        // correct line/col; on read failure we fall back to (0,0).
+        let mut published_uris: Vec<Url> = Vec::new();
+        for (target_uri_str, diags) in resp.by_uri.iter() {
+            let target_url = match Url::parse(target_uri_str) {
+                Ok(u) => u,
+                Err(e) => {
+                    tracing::warn!(target = %target_uri_str, %e, "invalid target URI; dropping diags");
+                    continue;
+                }
+            };
+            let text_for_target: std::borrow::Cow<'_, str> = if target_url == uri {
+                std::borrow::Cow::Borrowed(text.as_str())
+            } else {
+                match target_url
+                    .to_file_path()
+                    .ok()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                {
+                    Some(s) => std::borrow::Cow::Owned(s),
+                    None => std::borrow::Cow::Borrowed(""),
+                }
+            };
+            let lsp_diags: Vec<Diagnostic> = diags
+                .iter()
+                .map(|d| to_lsp_diag(text_for_target.as_ref(), d))
+                .collect();
+            // Only echo `version` on the source `.sprf` URI; for
+            // cross-URI publish we have no LSP-tracked version.
+            let version_for_publish = if target_url == uri { Some(version) } else { None };
+            self.client
+                .publish_diagnostics(target_url.clone(), lsp_diags, version_for_publish)
+                .await;
+            published_uris.push(target_url);
+        }
+
+        // Clear stale squiggles on URIs we previously published to
+        // under this source but that are absent from this round.
+        let previous: Vec<Url> = {
+            let mut g = self.last_published.lock().await;
+            g.insert(uri.clone(), published_uris.clone()).unwrap_or_default()
+        };
+        for prev in previous {
+            if prev == uri {
+                continue;
+            }
+            if !published_uris.iter().any(|u| u == &prev) {
+                self.client
+                    .publish_diagnostics(prev, Vec::new(), None)
+                    .await;
+            }
+        }
     }
 
     async fn is_still_latest(&self, uri: &Url, version: i32) -> bool {
@@ -413,7 +470,16 @@ impl LanguageServer for Backend {
         let sprf = self.sprf().await;
         let _ = sprf.lsp_close(LspCloseReq { uri: uri.to_string() }).await;
         { let mut g = self.docs.lock().await; g.remove(&uri); }
-        self.client.publish_diagnostics(uri, Vec::new(), None).await;
+        let cross_targets = {
+            let mut g = self.last_published.lock().await;
+            g.remove(&uri).unwrap_or_default()
+        };
+        self.client.publish_diagnostics(uri.clone(), Vec::new(), None).await;
+        for prev in cross_targets {
+            if prev != uri {
+                self.client.publish_diagnostics(prev, Vec::new(), None).await;
+            }
+        }
     }
 }
 

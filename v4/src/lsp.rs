@@ -138,6 +138,24 @@ fn mk_diag(sev: Severity, code: Arc<str>, message: String) -> Diag {
     }
 }
 
+/// If the cursor carries an absolute non-`.sprf` `FS` column, return a
+/// `file://` URI string suitable for cross-URI diag routing. Otherwise
+/// return `None`: the diag publishes on the requesting `.sprf` URI.
+fn cross_file_uri_for(c: &Cursor) -> Option<String> {
+    let fs = c.get("FS")?;
+    if fs.is_empty() {
+        return None;
+    }
+    let p = std::path::Path::new(fs);
+    if !p.is_absolute() {
+        return None;
+    }
+    if fs.ends_with(".sprf") {
+        return None;
+    }
+    Some(format!("file://{}", p.display()))
+}
+
 // ─── LspBodyComponent ──────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,14 +243,20 @@ impl Component for LspBodyComponent {
                 if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
                     diag = diag.with_span(lo, hi);
                 }
+                if let Some(uri) = cross_file_uri_for(c) {
+                    diag = diag.with_target_uri(uri);
+                }
                 ctx.diag.emit(diag);
                 Node::Emit(Arc::new(c.clone()))
             }
             LspBodyKind::Hover => {
                 if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
                     let message = render_dsl_message(&self.template, &self.interps, c);
-                    ctx.diag
-                        .emit(Diag::hint(self.code.clone(), message).with_span(lo, hi));
+                    let mut diag = Diag::hint(self.code.clone(), message).with_span(lo, hi);
+                    if let Some(uri) = cross_file_uri_for(c) {
+                        diag = diag.with_target_uri(uri);
+                    }
+                    ctx.diag.emit(diag);
                 }
                 Node::Emit(Arc::new(c.clone()))
             }
@@ -241,6 +265,9 @@ impl Component for LspBodyComponent {
                 let mut diag = mk_diag(sev, self.code.clone(), message);
                 if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
                     diag = diag.with_span(lo, hi);
+                }
+                if let Some(uri) = cross_file_uri_for(c) {
+                    diag = diag.with_target_uri(uri);
                 }
                 ctx.diag.emit(diag);
                 Node::Done
