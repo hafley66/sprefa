@@ -136,6 +136,12 @@ pub struct LspPreWarmResp {
     /// File count Watchman reported changed since `scm_branch` merge-base.
     /// `None` when watchman_ok is false or the SCM query returned None.
     pub scm_changed_count: Option<usize>,
+    /// Total `.sprf` files the walker visited before any cap fired.
+    /// Equals `source_uris.len()` plus any entries skipped by read failure.
+    pub walked: usize,
+    /// `true` when the wall-clock budget elapsed mid-walk and the walker
+    /// returned a partial result.
+    pub deadline_hit: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunReq {
@@ -1534,26 +1540,64 @@ impl SprfHandlers for SprfState {
         Ok(LspDiagsByUriResp { by_uri })
     }
     async fn lsp_pre_warm(&self, req: LspPreWarmReq) -> Result<LspPreWarmResp, SprfError> {
+        const PRE_WARM_MAX_FILES: usize = 50_000;
+        const PRE_WARM_WALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
         let root = if req.root.is_absolute() {
             req.root.clone()
         } else {
             std::env::current_dir().unwrap_or_default().join(&req.root)
         };
 
-        let mut source_uris: Vec<String> = Vec::new();
-        let mut to_open: Vec<(String, String)> = Vec::new();
-        for entry in ignore::WalkBuilder::new(&root).build() {
-            let Ok(entry) = entry else { continue };
-            if entry.path().extension().and_then(|s| s.to_str()) != Some("sprf") {
-                continue;
+        // Walker + sync reads run on a blocking thread so we never park
+        // a tokio worker on filesystem IO. The TypesBuilder filter cuts
+        // stat calls on monorepos with target/, node_modules/, etc.
+        let walk_root = root.clone();
+        let walk = tokio::task::spawn_blocking(move || {
+            let mut source_uris: Vec<String> = Vec::new();
+            let mut to_open: Vec<(String, String)> = Vec::new();
+            let mut walked: usize = 0;
+            let mut deadline_hit = false;
+            let start = std::time::Instant::now();
+
+            let mut builder = ignore::WalkBuilder::new(&walk_root);
+            let mut types = ignore::types::TypesBuilder::new();
+            types.add("sprf", "*.sprf").expect("static glob");
+            types.select("sprf");
+            builder.types(types.build().expect("static types"));
+
+            for entry in builder.build() {
+                if walked >= PRE_WARM_MAX_FILES {
+                    break;
+                }
+                if start.elapsed() >= PRE_WARM_WALL_BUDGET {
+                    deadline_hit = true;
+                    break;
+                }
+                let Ok(entry) = entry else { continue };
+                if entry.path().extension().and_then(|s| s.to_str()) != Some("sprf") {
+                    continue;
+                }
+                let path = entry.path();
+                walked += 1;
+                let Ok(text) = std::fs::read_to_string(path) else { continue };
+                let Ok(uri) = url::Url::from_file_path(path) else { continue };
+                let uri_str = uri.to_string();
+                to_open.push((uri_str.clone(), text));
+                source_uris.push(uri_str);
             }
-            let path = entry.path();
-            let Ok(text) = std::fs::read_to_string(path) else { continue };
-            let Ok(uri) = url::Url::from_file_path(path) else { continue };
-            let uri_str = uri.to_string();
-            to_open.push((uri_str.clone(), text));
-            source_uris.push(uri_str);
-        }
+
+            (source_uris, to_open, walked, deadline_hit)
+        })
+        .await;
+
+        let (source_uris, to_open, walked, deadline_hit) = match walk {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(%e, "pre-warm walker panicked");
+                (Vec::new(), Vec::new(), 0, false)
+            }
+        };
 
         let branch = if req.scm_branch.is_empty() {
             "main".to_string()
@@ -1596,6 +1640,8 @@ impl SprfHandlers for SprfState {
             source_uris,
             watchman_ok,
             scm_changed_count,
+            walked,
+            deadline_hit,
         })
     }
     async fn get_inlays(&self, req: GetInlaysReq) -> Result<Vec<InlayProbe>, SprfError> {

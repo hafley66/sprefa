@@ -70,6 +70,10 @@ struct BackendInner {
     /// Lets us clear stale squiggles on a non-`.sprf` file once the
     /// lint stops targeting it.
     last_published: Mutex<HashMap<Url, Vec<Url>>>,
+    /// Handle to the background pre-warm task started during
+    /// `initialize`. Aborted on `shutdown` so we never leak a walker
+    /// thread or an in-flight RPC past LSP teardown.
+    pre_warm_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 #[allow(dead_code)]
@@ -88,6 +92,7 @@ impl Backend {
                 docs: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
                 last_published: Mutex::new(HashMap::new()),
+                pre_warm_handle: Mutex::new(None),
             }),
         }
     }
@@ -260,6 +265,107 @@ impl BackendInner {
     async fn is_still_latest(&self, uri: &Url, version: i32) -> bool {
         self.pending.lock().await.get(uri).copied() == Some(version)
     }
+
+    /// Pre-warm-only sibling of `refresh`. Opens the doc on the daemon,
+    /// fetches diagnostics, publishes them, and tracks `last_published`
+    /// exactly like `refresh`, but never touches `pending`. Pre-warm is
+    /// not keystroke-driven, so it must not participate in the
+    /// version-checkpoint dance; otherwise a `version=0` write here
+    /// would clobber an editor's later `did_open` and cause its real
+    /// publish to be dropped by `is_still_latest`.
+    ///
+    /// If the editor has already opened this URI at a higher version,
+    /// `lsp_open` is idempotent on the daemon side (just re-ingests the
+    /// same text), so this is safe to call concurrently.
+    async fn refresh_from_pre_warm(&self, uri: Url, text: String) {
+        let req_uri = uri.to_string();
+        let sprf = self.sprf().await;
+        if let Err(e) = sprf
+            .lsp_open(LspOpenReq {
+                uri: req_uri.clone(),
+                text: text.clone(),
+                version: 0,
+            })
+            .await
+        {
+            tracing::error!(uri = %uri, %e, "pre-warm lsp_open failed");
+            return;
+        }
+
+        let resp = match sprf
+            .lsp_diags_by_uri(LspDiagsByUriReq { source_uri: req_uri })
+            .await
+        {
+            Ok(v)  => v,
+            Err(e) => {
+                tracing::error!(uri = %uri, %e, "pre-warm lsp_diags_by_uri failed");
+                return;
+            }
+        };
+
+        // Only seed the text cache if no editor-driven version is
+        // already there; we must not stomp a real `did_open`.
+        {
+            let mut g = self.docs.lock().await;
+            g.entry(uri.clone()).or_insert(DocEntry { text: text.clone(), version: 0 });
+        }
+
+        let mut published_uris: Vec<Url> = Vec::new();
+        for (target_uri_str, diags) in resp.by_uri.iter() {
+            let target_url = match Url::parse(target_uri_str) {
+                Ok(u) => u,
+                Err(e) => {
+                    tracing::warn!(target = %target_uri_str, %e, "invalid target URI; dropping diags");
+                    continue;
+                }
+            };
+            let text_for_target: Option<String> = if target_url == uri {
+                Some(text.clone())
+            } else {
+                match target_url.to_file_path() {
+                    Ok(p) => match tokio::fs::read_to_string(&p).await {
+                        Ok(s) => Some(s),
+                        Err(e) => {
+                            tracing::warn!(target = %target_url, %e, "cross-URI target unreadable; skipping publish");
+                            None
+                        }
+                    },
+                    Err(()) => {
+                        tracing::warn!(target = %target_url, "cross-URI target URI is not a file path; skipping publish");
+                        None
+                    }
+                }
+            };
+            let Some(text_for_target) = text_for_target else {
+                continue;
+            };
+            let lsp_diags: Vec<Diagnostic> = diags
+                .iter()
+                .map(|d| to_lsp_diag(&text_for_target, d))
+                .collect();
+            // Pre-warm never echoes an LSP version (we did not see a
+            // did_open from the editor for this URI).
+            self.client
+                .publish_diagnostics(target_url.clone(), lsp_diags, None)
+                .await;
+            published_uris.push(target_url);
+        }
+
+        let previous: Vec<Url> = {
+            let mut g = self.last_published.lock().await;
+            g.insert(uri.clone(), published_uris.clone()).unwrap_or_default()
+        };
+        for prev in previous {
+            if prev == uri {
+                continue;
+            }
+            if !published_uris.iter().any(|u| u == &prev) {
+                self.client
+                    .publish_diagnostics(prev, Vec::new(), None)
+                    .await;
+            }
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -272,12 +378,13 @@ impl LanguageServer for Backend {
             .await;
 
         // Phase 3: kick off SCM-aware pre-warm in the background so the
-        // initialize response stays fast. Once pre-warm finishes the
-        // spawned task drives `refresh` per warmed URI, which publishes
-        // diagnostics on the target files via the existing Phase 2 path.
+        // initialize response stays fast. The spawned task drives
+        // `refresh_from_pre_warm` per warmed URI; that path never
+        // touches `pending`, so a real editor `did_open` racing pre-warm
+        // cannot have its version checkpoint clobbered.
         let inner = self.inner.clone();
         let pre_warm_root = root.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let sprf = inner.sprf().await;
             let resp = match sprf
                 .lsp_pre_warm(LspPreWarmReq {
@@ -294,6 +401,8 @@ impl LanguageServer for Backend {
             };
             tracing::info!(
                 warmed = resp.source_uris.len(),
+                walked = resp.walked,
+                deadline_hit = resp.deadline_hit,
                 watchman_ok = resp.watchman_ok,
                 scm_changed = ?resp.scm_changed_count,
                 "pre-warm complete",
@@ -302,9 +411,10 @@ impl LanguageServer for Backend {
                 let Ok(uri) = Url::parse(&uri_str) else { continue };
                 let Ok(path) = uri.to_file_path() else { continue };
                 let Ok(text) = tokio::fs::read_to_string(&path).await else { continue };
-                inner.refresh(uri, text, 0, true).await;
+                inner.refresh_from_pre_warm(uri, text).await;
             }
         });
+        *self.inner.pre_warm_handle.lock().await = Some(handle);
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -353,7 +463,12 @@ impl LanguageServer for Backend {
         self.inner.client.log_message(MessageType::INFO, "sprefa-lsp ready").await;
     }
 
-    async fn shutdown(&self) -> RpcResult<()> { Ok(()) }
+    async fn shutdown(&self) -> RpcResult<()> {
+        if let Some(h) = self.inner.pre_warm_handle.lock().await.take() {
+            h.abort();
+        }
+        Ok(())
+    }
 
     async fn semantic_tokens_full(
         &self, params: SemanticTokensParams,
