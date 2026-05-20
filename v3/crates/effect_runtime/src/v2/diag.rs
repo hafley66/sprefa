@@ -28,12 +28,25 @@ pub struct Diag {
     /// requesting `.sprf` URI (back-compat). `Some` => publish on this
     /// URI (set when a lint targets a non-`.sprf` file via FS column).
     pub target_uri: Option<String>,
+    /// Line/col tuple resolved at emit time against the SAME bytes that
+    /// `span` is keyed on. When present, the LSP publisher uses these
+    /// directly instead of re-computing from disk at publish time (which
+    /// races buffer edits and produces drift on file change).
+    pub position: Option<DiagPosition>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ByteRange {
     pub lo: u32,
     pub hi: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DiagPosition {
+    pub line_lo: u32,
+    pub col_lo: u32,
+    pub line_hi: u32,
+    pub col_hi: u32,
 }
 
 pub trait DiagSink: Send + Sync + 'static {
@@ -56,6 +69,7 @@ impl Diag {
             span: None,
             op_path: Vec::new(),
             target_uri: None,
+            position: None,
         }
     }
 
@@ -67,6 +81,7 @@ impl Diag {
             span: None,
             op_path: Vec::new(),
             target_uri: None,
+            position: None,
         }
     }
 
@@ -78,6 +93,7 @@ impl Diag {
             span: None,
             op_path: Vec::new(),
             target_uri: None,
+            position: None,
         }
     }
 
@@ -89,6 +105,7 @@ impl Diag {
             span: None,
             op_path: Vec::new(),
             target_uri: None,
+            position: None,
         }
     }
 
@@ -104,6 +121,11 @@ impl Diag {
 
     pub fn with_target_uri(mut self, uri: impl Into<String>) -> Self {
         self.target_uri = Some(uri.into());
+        self
+    }
+
+    pub fn with_position(mut self, p: DiagPosition) -> Self {
+        self.position = Some(p);
         self
     }
 }

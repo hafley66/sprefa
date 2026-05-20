@@ -42,10 +42,6 @@ fs > glob`**/*.rs`
         resp.source_uris,
     );
 
-    // watchman_ok deserialized as a bool (true or false depending on
-    // local install state); we only verify the field round-trips.
-    let _watchman_ok: bool = resp.watchman_ok;
-
     let a_uri = url::Url::from_file_path(&a_rs).unwrap().to_string();
     let diags = client
         .lsp_diags_by_uri(LspDiagsByUriReq {

@@ -24,6 +24,12 @@ use tokio::sync::Mutex;
 /// firing the RPC. 80ms is below human-noticeable LSP latency and well
 /// above keyboard repeat rates.
 const DID_CHANGE_DEBOUNCE: Duration = Duration::from_millis(80);
+
+/// Hard cap on `last_published` map size. A buggy lint pointing diags
+/// at fresh target URIs per row could otherwise grow the map without
+/// bound. 4096 source URIs is well above any realistic editor session
+/// and well below the OS file-handle ceiling.
+const LAST_PUBLISHED_CAP: usize = 4096;
 use tower_lsp::jsonrpc::Result as RpcResult;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
@@ -74,6 +80,10 @@ struct BackendInner {
     /// `initialize`. Aborted on `shutdown` so we never leak a walker
     /// thread or an in-flight RPC past LSP teardown.
     pre_warm_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Per-source-URI publish locks. Two refreshes racing on the same
+    /// URI serialize through the per-key Mutex so the second sees the
+    /// first's `last_published` writes. Different URIs never contend.
+    publish_locks: dashmap::DashMap<Url, Arc<tokio::sync::Mutex<()>>>,
 }
 
 #[allow(dead_code)]
@@ -93,6 +103,7 @@ impl Backend {
                 pending: Mutex::new(HashMap::new()),
                 last_published: Mutex::new(HashMap::new()),
                 pre_warm_handle: Mutex::new(None),
+                publish_locks: dashmap::DashMap::new(),
             }),
         }
     }
@@ -161,6 +172,18 @@ impl BackendInner {
                 return;
             }
         }
+
+        // Per-URI publish lock. Concurrent refreshes on the same URI
+        // serialize so the later one observes the earlier's writes to
+        // `last_published`. Different URIs never contend (DashMap shard
+        // keeps lookup O(1) and the lock itself is per-key). Acquired
+        // BEFORE the RPC so the daemon-side ingest also serializes per
+        // URI.
+        let lock = self.publish_locks
+            .entry(uri.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
 
         let req_uri = uri.to_string();
         let sprf = self.sprf().await;
@@ -248,6 +271,7 @@ impl BackendInner {
         // under this source but that are absent from this round.
         let previous: Vec<Url> = {
             let mut g = self.last_published.lock().await;
+            evict_last_published_to_cap(&mut g, &uri);
             g.insert(uri.clone(), published_uris.clone()).unwrap_or_default()
         };
         for prev in previous {
@@ -278,6 +302,15 @@ impl BackendInner {
     /// `lsp_open` is idempotent on the daemon side (just re-ingests the
     /// same text), so this is safe to call concurrently.
     async fn refresh_from_pre_warm(&self, uri: Url, text: String) {
+        // Serialize on the same per-URI lock `refresh` uses so a pre-warm
+        // racing an editor `did_open` doesn't interleave their writes to
+        // `last_published`.
+        let lock = self.publish_locks
+            .entry(uri.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
         let req_uri = uri.to_string();
         let sprf = self.sprf().await;
         if let Err(e) = sprf
@@ -353,6 +386,7 @@ impl BackendInner {
 
         let previous: Vec<Url> = {
             let mut g = self.last_published.lock().await;
+            evict_last_published_to_cap(&mut g, &uri);
             g.insert(uri.clone(), published_uris.clone()).unwrap_or_default()
         };
         for prev in previous {
@@ -365,6 +399,20 @@ impl BackendInner {
                     .await;
             }
         }
+    }
+}
+
+/// Hold `last_published` at or below `LAST_PUBLISHED_CAP`. Called
+/// before each insert; if the incoming URI is already a key the map
+/// won't grow, so we only evict for NEW keys at capacity. Eviction
+/// picks an arbitrary entry (HashMap iteration order is randomized
+/// per-process) — not LRU, but bounded.
+fn evict_last_published_to_cap(g: &mut HashMap<Url, Vec<Url>>, incoming: &Url) {
+    if g.contains_key(incoming) || g.len() < LAST_PUBLISHED_CAP {
+        return;
+    }
+    if let Some(victim) = g.keys().next().cloned() {
+        g.remove(&victim);
     }
 }
 
@@ -383,12 +431,11 @@ impl LanguageServer for Backend {
         // touches `pending`, so a real editor `did_open` racing pre-warm
         // cannot have its version checkpoint clobbered.
         let inner = self.inner.clone();
-        let pre_warm_root = root.clone();
         let handle = tokio::spawn(async move {
             let sprf = inner.sprf().await;
             let resp = match sprf
                 .lsp_pre_warm(LspPreWarmReq {
-                    root: pre_warm_root,
+                    root: root.clone(),
                     scm_branch: "main".to_string(),
                 })
                 .await
@@ -653,8 +700,15 @@ impl LanguageServer for Backend {
 // ── diag conversion ──────────────────────────────────────────────────
 
 fn to_lsp_diag(src: &str, d: &SprfDiag) -> Diagnostic {
-    let range = match (d.lo, d.hi) {
-        (Some(lo), Some(hi)) => Range::new(
+    let range = match (&d.position, d.lo, d.hi) {
+        // Prefer the emit-time (T0) position when the runtime carried
+        // one. Avoids the T0/T1 race where `src` here is the file at
+        // publish time but the byte offsets were minted at expand time.
+        (Some(p), _, _) => Range {
+            start: Position { line: p.line_lo, character: p.col_lo },
+            end:   Position { line: p.line_hi, character: p.col_hi },
+        },
+        (None, Some(lo), Some(hi)) => Range::new(
             byte_to_position(src, lo as usize),
             byte_to_position(src, hi as usize),
         ),

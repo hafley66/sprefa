@@ -41,7 +41,7 @@ pub use component::{
     par_render, Component, ComponentLifecycle, DynComponent, EffectTelemetry,
     EffectTelemetrySnapshot, Purity, RenderCtx, RuntimePut,
 };
-pub use diag::{ByteRange, Diag, DiagSink, NoopDiagSink, Severity};
+pub use diag::{ByteRange, Diag, DiagPosition, DiagSink, NoopDiagSink, Severity};
 pub use effect_dispatch::{EffectDispatch, Spawner, ThreadSpawner, TokioSpawner};
 pub use event_bus::BusListener;
 pub use event_bus::{Event, EventBus};

@@ -57,13 +57,31 @@ impl WatchmanIngress {
             ..Default::default()
         };
 
-        let qr: watchman_client::pdu::QueryResult<NameOnly> =
-            match self.client.query::<NameOnly>(&resolved, query).await {
-                Ok(qr) => qr,
-                Err(Error::WatchmanResponseError { .. })
-                | Err(Error::WatchmanServerError { .. }) => return Ok(None),
-                Err(e) => return Err(e),
-            };
+        let qr: watchman_client::pdu::QueryResult<NameOnly> = match self
+            .client
+            .query::<NameOnly>(&resolved, query)
+            .await
+        {
+            Ok(qr) => qr,
+            Err(Error::WatchmanResponseError { message, .. }) => {
+                tracing::warn!(
+                    target = "watchman",
+                    message = %message,
+                    "SCM query unsupported; pre-warm degrades to walker only",
+                );
+                return Ok(None);
+            }
+            Err(Error::WatchmanServerError { message, command, .. }) => {
+                tracing::warn!(
+                    target = "watchman",
+                    message = %message,
+                    command = %command,
+                    "Watchman server error; pre-warm degrades to walker only",
+                );
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        };
 
         let root_path = resolved.path();
         let files = qr

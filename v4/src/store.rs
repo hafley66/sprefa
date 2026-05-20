@@ -91,6 +91,11 @@ pub struct SprfStore {
     inner: Arc<dyn FactStore<Cursor>>,
     strings_lru: StripedLru<StringId, Arc<str>>,
     files_lru: StripedLru<FileId, ([u8; 32], Arc<str>)>,
+    /// Retains the bytes that were used at `intern_file` time, keyed by
+    /// `FileId`. Lets diagnostic emitters compute (line, col) against the
+    /// SAME source the byte span was minted from, without re-reading the
+    /// file at publish time (which races buffer edits).
+    file_bytes_lru: StripedLru<FileId, Arc<[u8]>>,
     refs_lru: StripedLru<Ref, crate::Coord>,
     where_bytes_lru: StripedLru<WhereBytesId, WhereBytes>,
     repos_lru: StripedLru<RepoId, (Arc<str>, Arc<str>)>,
@@ -126,6 +131,7 @@ impl SprfStore {
             inner,
             strings_lru: StripedLru::new(strings_cap),
             files_lru: StripedLru::new(files_cap),
+            file_bytes_lru: StripedLru::new(files_cap),
             refs_lru: StripedLru::new(refs_cap),
             where_bytes_lru: StripedLru::new(refs_cap),
             repos_lru: StripedLru::new(DEFAULT_REPOS_CAP),
@@ -340,6 +346,8 @@ impl SprfStore {
         if !self.seen_files.insert(id) {
             self.files_lru
                 .put_if_absent_with(id, || (hash_bytes, Arc::<str>::from(first_path)));
+            self.file_bytes_lru
+                .put_if_absent_with(id, || Arc::<[u8]>::from(content));
             return id;
         }
         let mut row = Cursor::default();
@@ -349,7 +357,15 @@ impl SprfStore {
         row.set("size", content.len().to_string());
         self.insert_core(FILES_TABLE, row);
         self.files_lru.put(id, (hash_bytes, Arc::<str>::from(first_path)));
+        self.file_bytes_lru.put(id, Arc::<[u8]>::from(content));
         id
+    }
+
+    /// Bytes that were used at the most recent `intern_file(id, _)`. LRU-
+    /// scoped: a cold lookup after LRU eviction returns `None`. Callers
+    /// fall back to disk when this returns `None`.
+    pub fn file_bytes(&self, id: FileId) -> Option<Arc<[u8]>> {
+        self.file_bytes_lru.get(&id)
     }
 
     pub fn lookup_file(&self, id: FileId) -> Option<([u8; 32], Arc<str>)> {

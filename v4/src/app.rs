@@ -13,7 +13,7 @@
 //! the wire (hyper) and in-process (oneshot). Daemon transport is the
 //! same Router served by `hyper::Server` (slice 4, deferred).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -190,6 +190,31 @@ pub struct SprfDiag {
     /// requesting `.sprf` URI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri: Option<String>,
+    /// Pre-computed line/col at emit time. When present, the LSP
+    /// publisher uses it directly instead of re-computing from disk
+    /// (which races buffer edits between T0 emit and T1 publish).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<SprfDiagPosition>,
+}
+
+/// Wire mirror of `effect_runtime::v2::DiagPosition`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SprfDiagPosition {
+    pub line_lo: u32,
+    pub col_lo: u32,
+    pub line_hi: u32,
+    pub col_hi: u32,
+}
+
+impl From<effect_runtime::v2::DiagPosition> for SprfDiagPosition {
+    fn from(p: effect_runtime::v2::DiagPosition) -> Self {
+        Self {
+            line_lo: p.line_lo,
+            col_lo: p.col_lo,
+            line_hi: p.line_hi,
+            col_hi: p.col_hi,
+        }
+    }
 }
 
 impl From<&effect_runtime::v2::Diag> for SprfDiag {
@@ -208,6 +233,7 @@ impl From<&effect_runtime::v2::Diag> for SprfDiag {
             code: d.code.to_string(),
             message: d.message.clone(),
             uri: d.target_uri.clone(),
+            position: d.position.map(SprfDiagPosition::from),
         }
     }
 }
@@ -585,7 +611,20 @@ pub struct SprfState {
     /// `lsp_buffer_change` / `lsp_buffer_close`. Read by `SourceReader`
     /// before disk; key is `vfs::canon_path(absolute)`.
     pub vfs: Arc<crate::vfs::VfsOverlay>,
+    /// URIs that were inserted via `lsp_pre_warm` and have not been
+    /// claimed by an editor `lsp_open`. The next `lsp_pre_warm` evicts
+    /// (set MINUS `editor_opened_uris`) before walking again, so a
+    /// daemon sharing across sessions does not grow `docs` monotonically.
+    pre_warmed_uris: Mutex<HashSet<String>>,
+    /// URIs the editor opened explicitly via `lsp_open`. Insertions and
+    /// removals are paired with the corresponding handler; never written
+    /// by the pre-warm path. Pre-warm reads this to decide which of the
+    /// previous pre-warmed URIs to evict (the ones the editor never
+    /// adopted).
+    editor_opened_uris: Mutex<HashSet<String>>,
 }
+
+const DEFAULT_SCM_BRANCH: &str = "main";
 
 struct AnalysisPassThrough;
 
@@ -693,6 +732,8 @@ impl SprfState {
             registry: Arc::new(default_registry()),
             root,
             vfs: Arc::new(crate::vfs::VfsOverlay::new()),
+            pre_warmed_uris: Mutex::new(HashSet::new()),
+            editor_opened_uris: Mutex::new(HashSet::new()),
         }
     }
 
@@ -1519,6 +1560,13 @@ fn strip_as_alias(s: &str) -> &str {
 #[async_trait::async_trait]
 impl SprfHandlers for SprfState {
     async fn lsp_open(&self, req: LspOpenReq) -> Result<(), SprfError> {
+        // Mark this URI as editor-claimed so a later pre-warm round does
+        // not evict it. Mirrors `lsp_close` removal below; pre-warm does
+        // not touch this set.
+        self.editor_opened_uris
+            .lock()
+            .unwrap()
+            .insert(req.uri.clone());
         self.ingest(req.uri, req.text, req.version);
         Ok(())
     }
@@ -1528,6 +1576,8 @@ impl SprfHandlers for SprfState {
     }
     async fn lsp_close(&self, req: LspCloseReq) -> Result<(), SprfError> {
         self.docs.lock().unwrap().remove(&req.uri);
+        self.editor_opened_uris.lock().unwrap().remove(&req.uri);
+        self.pre_warmed_uris.lock().unwrap().remove(&req.uri);
         Ok(())
     }
     async fn lsp_buffer_open(
@@ -1597,6 +1647,30 @@ impl SprfHandlers for SprfState {
         const PRE_WARM_MAX_FILES: usize = 50_000;
         const PRE_WARM_WALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
+        // Evict URIs the previous pre-warm seeded that the editor never
+        // adopted. Bounds `docs` growth across long-lived daemons shared
+        // across multiple sessions. A URI the editor `lsp_open`'d earlier
+        // stays in `docs` regardless of pre-warm churn.
+        let prev: Vec<String> = {
+            let editor = self.editor_opened_uris.lock().unwrap();
+            let mut warmed = self.pre_warmed_uris.lock().unwrap();
+            let drained: Vec<String> = warmed
+                .iter()
+                .filter(|u| !editor.contains(u.as_str()))
+                .cloned()
+                .collect();
+            for u in &drained {
+                warmed.remove(u);
+            }
+            drained
+        };
+        if !prev.is_empty() {
+            let mut docs = self.docs.lock().unwrap();
+            for u in &prev {
+                docs.remove(u);
+            }
+        }
+
         let root = if req.root.is_absolute() {
             req.root.clone()
         } else {
@@ -1654,7 +1728,7 @@ impl SprfHandlers for SprfState {
         };
 
         let branch = if req.scm_branch.is_empty() {
-            "main".to_string()
+            DEFAULT_SCM_BRANCH.to_string()
         } else {
             req.scm_branch.clone()
         };
@@ -1680,14 +1754,12 @@ impl SprfHandlers for SprfState {
                 }
             };
 
+        // Direct ingest (not `lsp_open`) so we DON'T mark the URI as
+        // editor-claimed. Track in `pre_warmed_uris` so the next pre-warm
+        // can evict the ones the editor never adopted.
         for (uri, text) in to_open {
-            let _ = self
-                .lsp_open(LspOpenReq {
-                    uri,
-                    text,
-                    version: 0,
-                })
-                .await;
+            self.ingest(uri.clone(), text, 0);
+            self.pre_warmed_uris.lock().unwrap().insert(uri);
         }
 
         Ok(LspPreWarmResp {

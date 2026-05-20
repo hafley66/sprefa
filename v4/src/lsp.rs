@@ -37,8 +37,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use effect_runtime::v2::{
-    splice_into, BarrierScope, ByteRange, Component, ComponentLifecycle, Diag, Node, PendingSummary,
-    Pipe, QueueBackend, QueueRow, RenderCtx, Severity,
+    splice_into, BarrierScope, ByteRange, Component, ComponentLifecycle, Diag, DiagPosition, Node,
+    PendingSummary, Pipe, QueueBackend, QueueRow, RenderCtx, Severity,
 };
 
 use crate::compile::lower::ctx::{LowerCtx, LowerError};
@@ -121,6 +121,74 @@ fn span_from_ref(at: Ref, store: Option<&Arc<SprfStore>>) -> Option<(u32, u32)> 
     }
     let coord = store?.coord_of(at)?;
     Some((coord.lo, coord.hi))
+}
+
+/// Resolve `(file_id, bytes)` for a focal cursor coord. The bytes are
+/// the SAME ones that `intern_file` retained when the source was first
+/// ingested. Returns None when the cursor has no coord, no FileId, or
+/// the bytes were evicted from the SprfStore LRU.
+fn bytes_for_diag(
+    focus: &LspDiagFocus,
+    c: &Cursor,
+    store: Option<&Arc<SprfStore>>,
+) -> Option<Arc<[u8]>> {
+    let store = store?;
+    let at = match focus {
+        LspDiagFocus::Focal => c.at,
+        LspDiagFocus::Term(name) => {
+            let name_id = StringId::of(name.as_ref());
+            c.term(name_id)?.at
+        }
+    };
+    if at == Ref::SYNTHETIC {
+        return None;
+    }
+    let coord = store.coord_of(at)?;
+    if coord.fs == 0 {
+        return None;
+    }
+    store.file_bytes(coord.fs)
+}
+
+/// Compute LSP (line, utf16-col) for a byte offset against `src`. Same
+/// shape as the publisher-side `byte_to_position` in sprefa-lsp; lifted
+/// here so positions are minted T0 (at emit, against bytes that were
+/// just read) rather than T1 (at publish, after a buffer edit).
+fn byte_to_line_col(src: &[u8], off: usize) -> (u32, u32) {
+    let off = off.min(src.len());
+    let mut line: u32 = 0;
+    let mut line_start: usize = 0;
+    for (i, b) in src.iter().enumerate() {
+        if i == off {
+            break;
+        }
+        if *b == b'\n' {
+            line += 1;
+            line_start = i + 1;
+        }
+    }
+    // utf16 column: count UTF-16 code units between line_start..off.
+    let slice = &src[line_start..off];
+    let col: u32 = if slice.is_ascii() {
+        slice.len() as u32
+    } else {
+        match std::str::from_utf8(slice) {
+            Ok(s) => s.chars().map(|c| c.len_utf16() as u32).sum(),
+            Err(_) => slice.len() as u32,
+        }
+    };
+    (line, col)
+}
+
+fn position_for_span(bytes: &[u8], lo: u32, hi: u32) -> DiagPosition {
+    let (line_lo, col_lo) = byte_to_line_col(bytes, lo as usize);
+    let (line_hi, col_hi) = byte_to_line_col(bytes, hi as usize);
+    DiagPosition {
+        line_lo,
+        col_lo,
+        line_hi,
+        col_hi,
+    }
 }
 
 fn span_from_legacy(c: &Cursor, lo_key: &str, hi_key: &str) -> Option<(u32, u32)> {
@@ -246,6 +314,9 @@ impl Component for LspBodyComponent {
                 let mut diag = mk_diag(sev, self.code.clone(), message);
                 if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
                     diag = diag.with_span(lo, hi);
+                    if let Some(bytes) = bytes_for_diag(&self.focus, c, self.store.as_ref()) {
+                        diag = diag.with_position(position_for_span(&bytes, lo, hi));
+                    }
                 }
                 if let Some(uri) = cross_file_uri_for(c) {
                     diag = diag.with_target_uri(uri);
@@ -257,6 +328,9 @@ impl Component for LspBodyComponent {
                 if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
                     let message = render_dsl_message(&self.template, &self.interps, c);
                     let mut diag = Diag::hint(self.code.clone(), message).with_span(lo, hi);
+                    if let Some(bytes) = bytes_for_diag(&self.focus, c, self.store.as_ref()) {
+                        diag = diag.with_position(position_for_span(&bytes, lo, hi));
+                    }
                     if let Some(uri) = cross_file_uri_for(c) {
                         diag = diag.with_target_uri(uri);
                     }
@@ -269,6 +343,9 @@ impl Component for LspBodyComponent {
                 let mut diag = mk_diag(sev, self.code.clone(), message);
                 if let Some((lo, hi)) = resolve_diag_span(&self.focus, c, self.store.as_ref()) {
                     diag = diag.with_span(lo, hi);
+                    if let Some(bytes) = bytes_for_diag(&self.focus, c, self.store.as_ref()) {
+                        diag = diag.with_position(position_for_span(&bytes, lo, hi));
+                    }
                 }
                 if let Some(uri) = cross_file_uri_for(c) {
                     diag = diag.with_target_uri(uri);

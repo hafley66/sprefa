@@ -1712,6 +1712,7 @@ dependencies = [
 name = "sprefa-lsp"
 version = "0.1.0"
 dependencies = [
+ "dashmap 5.5.3",
  "effect_runtime",
  "lsp-types 0.97.0",
  "serde",

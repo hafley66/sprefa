@@ -36,8 +36,24 @@ export function activate(_context: vscode.ExtensionContext): void {
     const isSprf = (uri: vscode.Uri): boolean =>
         (uri.fsPath ?? uri.path).endsWith('.sprf');
 
+    // documentSelector is a finite list of languages we currently lint
+    // (sprf + the host langs sprefa rules can target). The language
+    // client subscribes to TextDocument events for these languages so
+    // INBOUND publishDiagnostics on their URIs is surfaced through VS
+    // Code's DiagnosticCollection. OUTBOUND traffic is narrowed by the
+    // middleware below: only .sprf files push didOpen / didChange /
+    // didClose / didSave into the server. Widen this list (don't try to
+    // do it dynamically) when a new lint target lang ships.
     const clientOptions: LanguageClientOptions = {
-        documentSelector: [{ scheme: 'file' }],
+        documentSelector: [
+            { scheme: 'file', language: 'sprf' },
+            { scheme: 'file', language: 'rust' },
+            { scheme: 'file', language: 'typescript' },
+            { scheme: 'file', language: 'typescriptreact' },
+            { scheme: 'file', language: 'javascript' },
+            { scheme: 'file', language: 'javascriptreact' },
+            { scheme: 'file', language: 'python' },
+        ],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.sprf'),
         },
