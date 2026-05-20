@@ -198,21 +198,29 @@ impl Backend {
                     continue;
                 }
             };
-            let text_for_target: std::borrow::Cow<'_, str> = if target_url == uri {
-                std::borrow::Cow::Borrowed(text.as_str())
+            let text_for_target: Option<String> = if target_url == uri {
+                Some(text.clone())
             } else {
-                match target_url
-                    .to_file_path()
-                    .ok()
-                    .and_then(|p| std::fs::read_to_string(p).ok())
-                {
-                    Some(s) => std::borrow::Cow::Owned(s),
-                    None => std::borrow::Cow::Borrowed(""),
+                match target_url.to_file_path() {
+                    Ok(p) => match tokio::fs::read_to_string(&p).await {
+                        Ok(s) => Some(s),
+                        Err(e) => {
+                            tracing::warn!(target = %target_url, %e, "cross-URI target unreadable; skipping publish");
+                            None
+                        }
+                    },
+                    Err(()) => {
+                        tracing::warn!(target = %target_url, "cross-URI target URI is not a file path; skipping publish");
+                        None
+                    }
                 }
+            };
+            let Some(text_for_target) = text_for_target else {
+                continue;
             };
             let lsp_diags: Vec<Diagnostic> = diags
                 .iter()
-                .map(|d| to_lsp_diag(text_for_target.as_ref(), d))
+                .map(|d| to_lsp_diag(&text_for_target, d))
                 .collect();
             // Only echo `version` on the source `.sprf` URI; for
             // cross-URI publish we have no LSP-tracked version.

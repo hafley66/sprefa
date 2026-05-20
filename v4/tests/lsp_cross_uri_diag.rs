@@ -34,7 +34,7 @@ fs > glob`**/*.rs`
 
     let (_state, client) = build_in_process(tmp.path().to_path_buf());
 
-    let source_uri = format!("file://{}", lint_sprf.display());
+    let source_uri = url::Url::from_file_path(&lint_sprf).unwrap().to_string();
     client
         .lsp_open(LspOpenReq {
             uri: source_uri.clone(),
@@ -51,8 +51,8 @@ fs > glob`**/*.rs`
         .await
         .unwrap();
 
-    let a_uri = format!("file://{}", a_rs.display());
-    let b_uri = format!("file://{}", b_rs.display());
+    let a_uri = url::Url::from_file_path(&a_rs).unwrap().to_string();
+    let b_uri = url::Url::from_file_path(&b_rs).unwrap().to_string();
 
     let keys: Vec<&String> = resp.by_uri.keys().collect();
     assert!(

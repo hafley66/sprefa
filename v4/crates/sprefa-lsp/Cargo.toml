@@ -13,7 +13,7 @@ path = "src/main.rs"
 v4             = { path = "../.." }
 effect_runtime = { path = "../../../v3/crates/effect_runtime", default-features = false, features = ["sqlite"] }
 tower-lsp      = "0.20"
-tokio          = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync"] }
+tokio          = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "fs"] }
 tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json     = "1"

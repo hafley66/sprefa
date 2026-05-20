@@ -2433,6 +2433,7 @@ dependencies = [
  "tree-sitter-sprefa",
  "tree-sitter-toml-ng",
  "tree-sitter-yaml",
+ "url",
  "v3_effect_runtime_v2_fact_store",
 ]
 

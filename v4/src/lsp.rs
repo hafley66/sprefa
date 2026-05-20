@@ -153,7 +153,11 @@ fn cross_file_uri_for(c: &Cursor) -> Option<String> {
     if fs.ends_with(".sprf") {
         return None;
     }
-    Some(format!("file://{}", p.display()))
+    // Url::from_file_path returns Err(()) for non-absolute paths or
+    // platforms that cannot represent the path; we just checked
+    // is_absolute() so the only remaining failure is platform shape
+    // (Windows UNC paths on non-Windows), which we treat as None.
+    url::Url::from_file_path(p).ok().map(|u| u.to_string())
 }
 
 // ─── LspBodyComponent ──────────────────────────────────────────────────────
