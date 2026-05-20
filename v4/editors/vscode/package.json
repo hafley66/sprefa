@@ -27,7 +27,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:sprf"
+    "onLanguage:sprf",
+    "workspaceContains:**/*.sprf"
   ],
   "contributes": {
     "languages": [

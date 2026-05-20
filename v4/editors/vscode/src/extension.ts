@@ -27,10 +27,25 @@ export function activate(_context: vscode.ExtensionContext): void {
         debug: { command, args, transport: TransportKind.stdio },
     };
 
+    // documentSelector is wide so inbound `publishDiagnostics` for ANY
+    // file URI (e.g. .rs / .ts / .py raised by sprf lint rules) is accepted
+    // by VS Code's DiagnosticCollection and surfaced through
+    // `mcp__ide__getDiagnostics`. Sync notifications are narrowed by
+    // middleware below: only .sprf files push didOpen / didChange /
+    // didClose / didSave into the server's buffer overlay.
+    const isSprf = (uri: vscode.Uri): boolean =>
+        (uri.fsPath ?? uri.path).endsWith('.sprf');
+
     const clientOptions: LanguageClientOptions = {
-        documentSelector: [{ scheme: 'file', language: 'sprf' }],
+        documentSelector: [{ scheme: 'file' }],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.sprf'),
+        },
+        middleware: {
+            didOpen:   (doc, next) => isSprf(doc.uri)        ? next(doc) : Promise.resolve(),
+            didChange: (e,   next) => isSprf(e.document.uri) ? next(e)   : Promise.resolve(),
+            didClose:  (doc, next) => isSprf(doc.uri)        ? next(doc) : Promise.resolve(),
+            didSave:   (doc, next) => isSprf(doc.uri)        ? next(doc) : Promise.resolve(),
         },
     };
 
