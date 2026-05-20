@@ -16,3 +16,5 @@
 rule(:hits, :FS, :LO, :HI) {
   fs(glob`**/*.{c,h}`) > ast(:c)`printk($$$)`
 };
+
+hits();

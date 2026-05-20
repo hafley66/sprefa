@@ -666,9 +666,11 @@ pub fn record_fact_support_batch(
         return;
     }
     let ledger = SupportLedger::new(store);
-    for (support_cursor_id, table, row_id) in supports {
-        ledger.add(support_cursor_id, table, row_id);
-    }
+    ledger.add_batch(
+        supports
+            .iter()
+            .map(|(a, b, c)| (a.as_str(), b.as_str(), c.as_str())),
+    );
 }
 
 /// Phase 5: counted (DRed) teardown for the generic memo path. Given
@@ -784,6 +786,57 @@ impl<'a> SupportLedger<'a> {
             return; // idempotent: same path re-rendered
         }
         self.write_triple(cursor_id, table, row_id, 1);
+    }
+
+    /// Batched `add`. One SUPPORT_TABLE scan + one `insert_batch` for
+    /// every absent triple — eliminates the O(N²) per-row scan and the
+    /// O(N) `insert_batch(SUPPORT_TABLE, vec![1 row])` calls a naive
+    /// loop produces. Already-present triples stay at their existing
+    /// `mult` (idempotent; same semantics as the single-row `add`).
+    pub fn add_batch<I, S1, S2, S3>(&self, triples: I)
+    where
+        I: IntoIterator<Item = (S1, S2, S3)>,
+        S1: AsRef<str>,
+        S2: AsRef<str>,
+        S3: AsRef<str>,
+    {
+        let triples: Vec<(String, String, String)> = triples
+            .into_iter()
+            .map(|(a, b, c)| (a.as_ref().to_string(), b.as_ref().to_string(), c.as_ref().to_string()))
+            .collect();
+        if triples.is_empty() {
+            return;
+        }
+        let present: std::collections::HashSet<(String, String, String)> = self
+            .store
+            .rows_of(SUPPORT_TABLE)
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.get(SUPPORT_CURSOR_ID)?.to_string(),
+                    r.get(SUPPORT_TABLE_NAME)?.to_string(),
+                    r.get(SUPPORT_ROW_ID)?.to_string(),
+                ))
+            })
+            .collect();
+        let mut seen_in_batch: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
+        let mut rows: Vec<Arc<Cursor>> = Vec::with_capacity(triples.len());
+        for (cursor_id, table, row_id) in triples {
+            let key = (cursor_id.clone(), table.clone(), row_id.clone());
+            if present.contains(&key) || !seen_in_batch.insert(key) {
+                continue;
+            }
+            let mut row = Cursor::default();
+            row.set(SUPPORT_CURSOR_ID, cursor_id.as_str());
+            row.set(SUPPORT_TABLE_NAME, table.as_str());
+            row.set(SUPPORT_ROW_ID, row_id.as_str());
+            row.set(SUPPORT_MULT, "1");
+            rows.push(Arc::new(row));
+        }
+        if !rows.is_empty() {
+            self.store.insert_batch(SUPPORT_TABLE, rows);
+        }
     }
 
     /// Decrement the triple's `mult` (the DRed teardown half). Returns
@@ -909,8 +962,12 @@ pub fn reconcile_owner_table(
         }
     }
 
+    ledger.add_batch(
+        current_row_ids
+            .iter()
+            .map(|row_id| (row_id.as_str(), owner_table, row_id.as_str())),
+    );
     for row_id in current_row_ids {
-        ledger.add(row_id, owner_table, row_id);
         produced_this_epoch.insert(row_id.clone());
     }
 

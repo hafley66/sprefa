@@ -115,6 +115,13 @@ pub struct RuntimeGraph {
     /// on first access and reused thereafter.
     source_index:
         Arc<dashmap::DashMap<PathBuf, Arc<crate::source_index::SourceIndex>>>,
+    /// Memoizes `resolve_source_root(hint)` per-hint so a hot path
+    /// (ast.dispatch's serial pre-par_render loop, 63k file cursors per
+    /// bench) doesn't fork+exec `git rev-parse --show-toplevel` on
+    /// every call. With 63k×~10ms forks the bench wall was ~10 min;
+    /// one fork+memo collapses it. Keyed by the INPUT hint so we never
+    /// re-resolve the same hint twice.
+    resolved_root_cache: Arc<dashmap::DashMap<PathBuf, PathBuf>>,
     /// Read-side cache for `_memo_deps`, keyed by `(owner_op_id,
     /// in_key)`. The seam probes ONE owner/in_key per input row, so a
     /// 63k-file run did 63k×2 `read_where` point-queries (prepare +
@@ -437,6 +444,7 @@ impl RuntimeGraph {
             clock,
             memo,
             source_index: Arc::new(dashmap::DashMap::new()),
+            resolved_root_cache: Arc::new(dashmap::DashMap::new()),
             memo_deps_cache: Arc::new(Mutex::new(None)),
             memo_deps_dirty: Arc::new(Mutex::new(std::collections::HashSet::new())),
             memo_deps_loaded_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -460,6 +468,7 @@ impl RuntimeGraph {
             clock,
             memo,
             source_index: Arc::new(dashmap::DashMap::new()),
+            resolved_root_cache: Arc::new(dashmap::DashMap::new()),
             memo_deps_cache: Arc::new(Mutex::new(None)),
             memo_deps_dirty: Arc::new(Mutex::new(std::collections::HashSet::new())),
             memo_deps_loaded_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -507,7 +516,19 @@ impl RuntimeGraph {
         &self,
         hint: &Path,
     ) -> Arc<crate::source_index::SourceIndex> {
+        // Per-hint short-circuit: the actual git toplevel resolution is
+        // a `git rev-parse` fork+exec (`resolve_source_root` below), so
+        // a hot caller hitting the same hint per row must NEVER pay
+        // that twice. Hits the DashMap directly without resolving.
+        if let Some(root) = self.resolved_root_cache.get(hint) {
+            if let Some(entry) = self.source_index.get(root.value()) {
+                return entry.clone();
+            }
+        }
         let key = resolve_source_root(hint);
+        self.resolved_root_cache
+            .entry(hint.to_path_buf())
+            .or_insert_with(|| key.clone());
         if let Some(entry) = self.source_index.get(&key) {
             return entry.clone();
         }
@@ -1741,24 +1762,27 @@ const COMPACT_FS_CURSOR_MAGIC: &[u8] = b"sprf:fs-cursor:v1\0";
 /// hints inside the same toplevel resolve to the same key and share
 /// one index; hints in different repos get separate entries.
 fn resolve_source_root(hint: &Path) -> PathBuf {
+    // Walk up looking for `.git` (a dir for normal clones, a file for
+    // worktrees pointing to the gitdir). A few stat calls vs the prior
+    // `git rev-parse --show-toplevel` fork+exec (~10ms each). Off-git
+    // path returns instantly instead of paying the failing-git-call
+    // tax. The per-hint memo above this still applies; this just makes
+    // the first-hit path cheap too.
     let start = if hint.is_dir() {
         hint.to_path_buf()
     } else {
         hint.parent().unwrap_or(Path::new(".")).to_path_buf()
     };
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&start)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| {
-            PathBuf::from(
-                String::from_utf8_lossy(&o.stdout).trim().to_string(),
-            )
-        })
-        .unwrap_or(start)
+    let mut cur: &Path = &start;
+    loop {
+        if cur.join(".git").exists() {
+            return cur.to_path_buf();
+        }
+        match cur.parent() {
+            Some(p) if p != cur => cur = p,
+            _ => return start,
+        }
+    }
 }
 
 fn encode_runtime_cursor(cursor: &Cursor) -> Vec<u8> {

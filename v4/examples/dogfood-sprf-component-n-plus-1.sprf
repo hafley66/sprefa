@@ -1,0 +1,103 @@
+# dogfood-sprf-component-n-plus-1.sprf
+#
+# Lint: per-row IO inside a hot loop (for/while/loop OR iter-adapter)
+# in v4/src/**/*.rs without a `loop-justify` comment above.
+#
+# Catches the archetypes we hit in this session:
+#   - reconcile_owner_table looping ledger.add → per-row insert_batch(vec![1])
+#   - resolve_source_root fork+exec called per row from ast.dispatch
+#
+# Justification escape hatch (single-line comment immediately above):
+#   // loop-justify: invariant=<txt>; side-effect=<txt>; throughput=<txt>
+#
+# Run:
+#   sprefa-run v4/examples/dogfood-sprf-component-n-plus-1.sprf \
+#     --root v4/src --no-show-rows
+#
+# CI gate: exit non-zero if `lsp_error` lines appear. (sprefa-run prints
+# diagnostics to stderr.)
+
+# Every hot loop in v4/src.
+rule(:hot_loops, FS?, LO?, HI?) {
+  fs > glob`**/*.rs`
+     > ast_yaml(:rs)`
+        rule:
+          any:
+            - { kind: for_expression }
+            - { kind: while_expression }
+            - { kind: loop_expression }
+            - { pattern: "$$$.for_each($$$)" }
+            - { pattern: "$$$.map($$$)" }
+            - { pattern: "$$$.filter($$$)" }
+            - { pattern: "$$$.flat_map($$$)" }
+            - { pattern: "$$$.filter_map($$$)" }
+            - { pattern: "$$$.par_iter().for_each($$$)" }
+            - { pattern: "$$$.par_iter().map($$$)" }
+       `
+};
+
+# Same set but with the justifying comment on the immediately
+# preceding sibling line.
+rule(:justified_loops, FS?, LO?, HI?) {
+  fs > glob`**/*.rs`
+     > ast_yaml(:rs)`
+        rule:
+          all:
+            - any:
+                - { kind: for_expression }
+                - { kind: while_expression }
+                - { kind: loop_expression }
+                - { pattern: "$$$.for_each($$$)" }
+                - { pattern: "$$$.map($$$)" }
+                - { pattern: "$$$.filter($$$)" }
+                - { pattern: "$$$.flat_map($$$)" }
+                - { pattern: "$$$.filter_map($$$)" }
+                - { pattern: "$$$.par_iter().for_each($$$)" }
+                - { pattern: "$$$.par_iter().map($$$)" }
+            - follows:
+                kind: line_comment
+                regex: "^\\s*//\\s*loop-justify:\\s*invariant=[^;]+;\\s*side-effect=[^;]+;\\s*throughput=[^;]+\\s*$"
+                stopBy: neighbor
+       `
+};
+
+# Forbidden primitive callsites — the calls that cost per-row.
+# Anywhere in v4/src, not yet restricted to inside hot loops at the
+# ast-grep level (the antijoin below scopes by file/range).
+rule(:hot_calls, FS?, LO?, HI?, KIND?) {
+  fs > glob`**/*.rs`
+     > ast_yaml(:rs)`
+        rule:
+          any:
+            - { pattern: "std::process::Command::new($$$)" }
+            - { pattern: "Command::new($$$)" }
+            - { pattern: "std::fs::read($$$)" }
+            - { pattern: "std::fs::metadata($$$)" }
+            - { pattern: "std::fs::File::open($$$)" }
+            - { pattern: "$$$.insert_batch($$$, vec![$$$])" }
+            - { pattern: "$$$.read_where($$$)" }
+            - { pattern: "$$$.rows_of($$$)" }
+            - { pattern: "$$$.coord_of($$$)" }
+            - { pattern: "$$$.intern_ref($$$)" }
+            - { pattern: "$$$.intern_string($$$)" }
+            - { pattern: "$$$.intern_file($$$)" }
+       `
+};
+
+# A hot loop is "bad" if it has a forbidden callsite inside it AND
+# lacks a loop-justify comment. The byte-range overlap check is done
+# via the LO/HI columns: a hot call at (FS, callLO) is inside a hot
+# loop at (FS, loopLO..loopHI) iff loopLO <= callLO <= loopHI.
+#
+# sprf cross-join: read hot_loops × hot_calls on FS, filter by range,
+# anti-join justified_loops.
+rule(:bad_callsite, FS?, LO?, HI?, KIND?) {
+  hot_loops?(FS?, LO_LOOP?, HI_LOOP?)
+    > hot_calls?(FS, LO?, HI?, KIND?)
+    > where`${LO} >= ${LO_LOOP} and ${LO} <= ${HI_LOOP}`
+    > not(justified_loops?(FS, LO_LOOP, HI_LOOP))
+};
+
+bad_callsite?(FS?, LO?, HI?, KIND?)
+  > lsp_error(:sprf-component-n-plus-1)
+      `per-row primitive "${KIND}" inside an unjustified hot loop at ${FS}:${LO} — add // loop-justify: invariant=...; side-effect=...; throughput=... above the loop, or refactor to batch`;
