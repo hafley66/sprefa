@@ -52,6 +52,23 @@ pub fn walk_program(
     let (graph, _gdiag) = super::binding_graph::build_graph(program, reg, ctx);
     let rule_decls = collect_rule_decl_cols(program);
 
+    // Build rule-dep graph from the flow graph and stratify it ONCE
+    // for the program. `recursive_rules` is the single source of truth
+    // for fixpoint-iteration need: any positive self-edge OR any SCC
+    // of size > 1 (mutual recursion). The fuser consumes this instead
+    // of a local self-table heuristic, so mutual recursion can no
+    // longer slip past as "non-recursive".
+    let rule_deps = rule_deps_from_program(&graph);
+    let recursive_rules: std::collections::BTreeSet<Arc<str>> =
+        match crate::stratify::stratify(&rule_deps) {
+            Ok(r) => r
+                .recursive_rules
+                .into_iter()
+                .map(Arc::<str>::from)
+                .collect(),
+            Err(_) => std::collections::BTreeSet::new(),
+        };
+
     // ── pass 2: lower per-pipe; route rule bodies through the fuser ─
     for p in program {
         if let Some(pipe) = walk_pipe(p, reg, ctx, &mut diags) {
@@ -79,6 +96,7 @@ pub fn walk_program(
                             pipe,
                             &graph,
                             &rule_decls,
+                            &recursive_rules,
                             &mut diags,
                         )
                         .unwrap_or_else(|| {
@@ -97,6 +115,33 @@ pub fn walk_program(
         }
     }
     (pipes, diags)
+}
+
+/// Extract `(rule, dep, is_negative)` triples from a ProgramFlowGraph
+/// and build [`stratify::RuleDep`] entries — one per rule body. Only
+/// rule-query reads (`r?(…)`) contribute edges; lower stages do not
+/// surface antijoin polarity in this graph, so today every edge is
+/// positive. A future antijoin pass can flip the `false` to a real
+/// polarity here without touching the consumers.
+fn rule_deps_from_program(
+    graph: &super::binding_graph::ProgramFlowGraph,
+) -> Vec<crate::stratify::RuleDep> {
+    graph
+        .bodies
+        .iter()
+        .map(|body| {
+            let mut rd = crate::stratify::RuleDep::new(body.rule.as_ref());
+            for step in &body.steps {
+                if !step.is_rule_query {
+                    continue;
+                }
+                if let Some(target) = step.rule_target.as_ref() {
+                    rd = rd.reads(target.as_ref());
+                }
+            }
+            rd
+        })
+        .collect()
 }
 
 fn collect_rule_decl_cols(

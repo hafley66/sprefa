@@ -1137,7 +1137,7 @@ mod sqlite {
                             row_placeholders.push(format!("({})", placeholders.join(", ")));
                         }
                         let sql = format!(
-                            "INSERT OR IGNORE INTO {table}_facts ({col_list}) VALUES {}",
+                            "INSERT OR IGNORE INTO {table}_facts ({col_list}) VALUES {} RETURNING _id",
                             row_placeholders.join(", "),
                         );
                         self.stats
@@ -1146,13 +1146,15 @@ mod sqlite {
                         self.stats
                             .sqlite_insert_exec_rows
                             .fetch_add(insert_rows.len() as u64, Ordering::Relaxed);
-                        let changed = tx
-                            .execute(&sql, params_from_iter(params.iter()))
-                            .expect("fact batch insert");
-                        if changed > 0 {
-                            accepted
-                                .extend(insert_rows.iter().map(|(id_hex, _values)| id_hex.clone()));
-                        }
+                        let mut stmt = tx.prepare(&sql).expect("fact batch insert prepare");
+                        let returned: Vec<String> = stmt
+                            .query_map(params_from_iter(params.iter()), |row| {
+                                row.get::<_, String>(0)
+                            })
+                            .expect("fact batch insert")
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                            .expect("fact batch insert rows");
+                        accepted.extend(returned);
                     }
                     self.stats.sqlite_insert_ns.fetch_add(
                         sqlite_insert_t0.elapsed().as_nanos() as u64,

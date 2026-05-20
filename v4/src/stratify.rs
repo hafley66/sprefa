@@ -70,6 +70,18 @@ pub struct Stratum {
     pub rules: Vec<String>,
 }
 
+/// Output of [`stratify`]. `strata` is the LOW→HIGH ordered list of
+/// strata; `recursive_rules` is the set of rule names that need
+/// fixpoint iteration (any rule on a positive self-edge, or any rule
+/// in a strongly-connected component of size > 1). The fuser and the
+/// run-time wire consult `recursive_rules` so neither has to re-detect
+/// recursion locally.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StratifyResult {
+    pub strata: Vec<Stratum>,
+    pub recursive_rules: BTreeSet<String>,
+}
+
 /// Unstratifiable rule graph: a negative edge inside a strongly
 /// connected component. A user error, surfaced as a lower-time
 /// diagnostic (NOT a panic, NOT a hang).
@@ -196,7 +208,7 @@ fn tarjan(
 /// dependency on any other stratum; a rule that negates relation `S`
 /// lands strictly above `S`'s stratum. Positive recursion stays in one
 /// stratum. An unstratifiable negative cycle is `Err` (→ diagnostic).
-pub fn stratify(rules: &[RuleDep]) -> Result<Vec<Stratum>, StratifyError> {
+pub fn stratify(rules: &[RuleDep]) -> Result<StratifyResult, StratifyError> {
     // Node set: every rule plus every relation it mentions (a base
     // relation with no rule is its own stratum-0 component).
     let mut nodes: BTreeSet<String> = BTreeSet::new();
@@ -295,7 +307,28 @@ pub fn stratify(rules: &[RuleDep]) -> Result<Vec<Stratum>, StratifyError> {
     // Drop empty strata while keeping order (a level with only base
     // relations contributes none).
     strata.retain(|s| !s.rules.is_empty());
-    Ok(strata)
+
+    // Compute recursive_rules: a rule needs fixpoint iteration iff it
+    // sits on a positive self-edge OR shares an SCC with at least one
+    // other rule (mutual recursion). Both are detected from `comp`
+    // (SCC membership) and the original `rules` (self-name in `pos`).
+    let mut comp_size: BTreeMap<usize, usize> = BTreeMap::new();
+    for &cid in comp.values() {
+        *comp_size.entry(cid).or_default() += 1;
+    }
+    let mut recursive_rules: BTreeSet<String> = BTreeSet::new();
+    for rd in rules {
+        let cid = comp[&rd.rule];
+        if comp_size[&cid] > 1 {
+            recursive_rules.insert(rd.rule.clone());
+            continue;
+        }
+        if rd.pos.iter().any(|p| *p == rd.rule) {
+            recursive_rules.insert(rd.rule.clone());
+        }
+    }
+
+    Ok(StratifyResult { strata, recursive_rules })
 }
 
 #[cfg(test)]
@@ -307,9 +340,10 @@ mod tests {
         // reach :- edge ; reach :- reach, edge  → reach + edge in
         // stratum 0 (no negation, positive recursion is fine).
         let rules = vec![RuleDep::new("reach").reads("edge").reads("reach")];
-        let strata = stratify(&rules).unwrap();
-        assert_eq!(strata.len(), 1);
-        assert_eq!(strata[0].rules, vec!["reach"]);
+        let result = stratify(&rules).unwrap();
+        assert_eq!(result.strata.len(), 1);
+        assert_eq!(result.strata[0].rules, vec!["reach"]);
+        assert!(result.recursive_rules.contains("reach"));
     }
 
     #[test]
@@ -320,10 +354,12 @@ mod tests {
             RuleDep::new("reach").reads("edge").reads("reach"),
             RuleDep::new("stale").reads("dep").negates("reach"),
         ];
-        let strata = stratify(&rules).unwrap();
-        assert_eq!(strata.len(), 2, "two strata: reach below, stale above");
-        assert_eq!(strata[0].rules, vec!["reach"]);
-        assert_eq!(strata[1].rules, vec!["stale"]);
+        let result = stratify(&rules).unwrap();
+        assert_eq!(result.strata.len(), 2, "two strata: reach below, stale above");
+        assert_eq!(result.strata[0].rules, vec!["reach"]);
+        assert_eq!(result.strata[1].rules, vec!["stale"]);
+        assert!(result.recursive_rules.contains("reach"));
+        assert!(!result.recursive_rules.contains("stale"));
     }
 
     #[test]
@@ -348,10 +384,20 @@ mod tests {
             RuleDep::new("a").reads("b"),
             RuleDep::new("b").reads("a"),
         ];
-        let strata = stratify(&rules).unwrap();
-        assert_eq!(strata.len(), 1);
-        let mut got = strata[0].rules.clone();
+        let result = stratify(&rules).unwrap();
+        assert_eq!(result.strata.len(), 1);
+        let mut got = result.strata[0].rules.clone();
         got.sort();
         assert_eq!(got, vec!["a", "b"]);
+        assert!(result.recursive_rules.contains("a"));
+        assert!(result.recursive_rules.contains("b"));
+    }
+
+    #[test]
+    fn non_recursive_rule_not_marked() {
+        // a :- src   (no self-loop, no mutual cycle) → not recursive.
+        let rules = vec![RuleDep::new("a").reads("src")];
+        let result = stratify(&rules).unwrap();
+        assert!(!result.recursive_rules.contains("a"));
     }
 }

@@ -128,7 +128,7 @@ pub fn decode(buf: &[u8]) -> Result<Cursor, &'static str> {
     }
 
     if !terms.iter().any(|term| term.name.as_ref() == FOCAL_TERM) {
-        terms.insert(0, Term::focal());
+        return Err("focal term missing");
     }
 
     Ok(Cursor { terms, store: None })

@@ -324,21 +324,23 @@ impl MemoSeam<Cursor> for V4MemoSeam {
         }
         let deps_ch = self.deps_ch_of(&owner_hex, &in_hex);
         // Build/get the per-run no-read oracle. Hint = any recorded
-        // absolute dep path (resolves to the same git toplevel the
-        // dispatch side builds from); "." if none recorded yet (legacy/
-        // empty rows are already conservatively STALE, so the oracle
-        // value is moot there).
+        // absolute dep path, which resolves to its own git toplevel via
+        // the DashMap-keyed cache. Legacy/empty rows are conservatively
+        // STALE (see `probe_ch`), so when no recorded path is available
+        // we skip the oracle entirely.
         let hint = deps_ch
             .iter()
             .find_map(|(_, _, _, p)| {
                 (!p.is_empty()).then(|| std::path::PathBuf::from(p))
-            })
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+            });
+        let Some(hint) = hint else {
+            return MemoProbe::Miss;
+        };
         let idx = self.graph.source_index(&hint);
         match self
             .graph
             .memo()
-            .probe_ch(&owner_hex, &in_hex, &deps_ch, idx)
+            .probe_ch(&owner_hex, &in_hex, &deps_ch, &idx)
         {
             None => MemoProbe::Miss,
             Some((val, false)) => {

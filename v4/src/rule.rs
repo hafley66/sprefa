@@ -373,22 +373,21 @@ impl Component for RuleInvokeComponent {
             // identity (git OID / stat, from the per-run oracle) is
             // unchanged — unchanged files are never opened. A coarse
             // rule whose input is a directory has no resolvable dep
-            // path ⇒ STALE ⇒ body re-runs, and the INNER `ast`/`read`
-            // owners' per-file memo carries the replay win. No clock /
-            // event bump consulted.
-            let idx_hint = deps
-                .iter()
-                .find_map(|(_, _, _, p)| {
-                    (!p.is_empty()).then(|| std::path::PathBuf::from(p))
-                })
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let idx = graph.source_index(&idx_hint);
-            if let Some((val, stale)) =
-                graph.memo().probe_ch(&owner_id, &in_key, &deps, idx)
-            {
-                if !stale {
-                    // Pure replay: do NOT run the rule body.
-                    return rows_to_node(val.out_rows);
+            // path ⇒ skip the oracle and force a body re-run; the
+            // INNER `ast`/`read` owners' per-file memo carries the
+            // replay win. No clock / event bump consulted.
+            let idx_hint = deps.iter().find_map(|(_, _, _, p)| {
+                (!p.is_empty()).then(|| std::path::PathBuf::from(p))
+            });
+            if let Some(idx_hint) = idx_hint {
+                let idx = graph.source_index(&idx_hint);
+                if let Some((val, stale)) =
+                    graph.memo().probe_ch(&owner_id, &in_key, &deps, &idx)
+                {
+                    if !stale {
+                        // Pure replay: do NOT run the rule body.
+                        return rows_to_node(val.out_rows);
+                    }
                 }
             }
         }

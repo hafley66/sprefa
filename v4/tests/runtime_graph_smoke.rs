@@ -791,7 +791,7 @@ fn parsing_a_file_records_its_source_id_in_memo_deps() {
     // recording still happens during expand; this test asserts the
     // PERSISTED form, so it must trigger the run's flush — exactly what
     // the CLI does after expand completes.
-    graph.flush();
+    graph.flush(None);
     graph.store.flush();
     facts.commit(1, None);
 

@@ -107,12 +107,14 @@ pub struct RuntimeGraph {
     /// result cache; hot tier is a bounded `StripedLru`, cold tier the
     /// `MEMO` fact table.
     memo: Arc<crate::memo::Memo>,
-    /// Per-run no-read staleness oracle (git OID / stat snapshot). Built
-    /// ONCE, lazily, on the first probe or dispatch that needs it; the
-    /// `OnceLock` makes the two sides order-independent (a recorded
-    /// absolute dep path and the scan root resolve to the same git
-    /// toplevel, so whichever side builds first wins identically).
-    source_index: std::sync::OnceLock<crate::source_index::SourceIndex>,
+    /// Per-run no-read staleness oracle (git OID / stat snapshot).
+    /// Built lazily PER GIT TOPLEVEL (or per non-git directory) so two
+    /// hints in different repos cannot share one stale index. The map
+    /// is keyed by the resolved root (`git rev-parse --show-toplevel`,
+    /// or the start directory when off-git); each entry is built once
+    /// on first access and reused thereafter.
+    source_index:
+        Arc<dashmap::DashMap<PathBuf, Arc<crate::source_index::SourceIndex>>>,
     /// Read-side cache for `_memo_deps`, keyed by `(owner_op_id,
     /// in_key)`. The seam probes ONE owner/in_key per input row, so a
     /// 63k-file run did 63k×2 `read_where` point-queries (prepare +
@@ -434,7 +436,7 @@ impl RuntimeGraph {
             rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
             clock,
             memo,
-            source_index: std::sync::OnceLock::new(),
+            source_index: Arc::new(dashmap::DashMap::new()),
             memo_deps_cache: Arc::new(Mutex::new(None)),
             memo_deps_dirty: Arc::new(Mutex::new(std::collections::HashSet::new())),
             memo_deps_loaded_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -457,7 +459,7 @@ impl RuntimeGraph {
             rule_memo: Arc::new(Mutex::new(RuleMemo::new())),
             clock,
             memo,
-            source_index: std::sync::OnceLock::new(),
+            source_index: Arc::new(dashmap::DashMap::new()),
             memo_deps_cache: Arc::new(Mutex::new(None)),
             memo_deps_dirty: Arc::new(Mutex::new(std::collections::HashSet::new())),
             memo_deps_loaded_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -496,13 +498,24 @@ impl RuntimeGraph {
         self.clock.current_gen(Self::run_epoch_source())
     }
 
-    /// The per-run no-read staleness oracle. Built once from `hint`
-    /// (the scan root on the dispatch side, or any recorded absolute
-    /// dependency path on the probe side — both resolve to the same git
-    /// toplevel). Two `git` invocations total per process.
-    pub fn source_index(&self, hint: &Path) -> &crate::source_index::SourceIndex {
+    /// The per-run no-read staleness oracle, scoped to the git toplevel
+    /// (or start directory off-git) that `hint` resolves to. Two hints
+    /// in DIFFERENT repos build separate indexes; two hints in the same
+    /// repo share one. Returned as `Arc<SourceIndex>` so closures can
+    /// own a clone independent of `&self`.
+    pub fn source_index(
+        &self,
+        hint: &Path,
+    ) -> Arc<crate::source_index::SourceIndex> {
+        let key = resolve_source_root(hint);
+        if let Some(entry) = self.source_index.get(&key) {
+            return entry.clone();
+        }
+        let built = Arc::new(crate::source_index::SourceIndex::build(&key));
         self.source_index
-            .get_or_init(|| crate::source_index::SourceIndex::build(hint))
+            .entry(key)
+            .or_insert_with(|| built)
+            .clone()
     }
 
     /// Warm-skip predicate for the `fs` source. Returns a closure
@@ -558,11 +571,7 @@ impl RuntimeGraph {
     ) -> Option<std::collections::HashSet<PathBuf>> {
         let compact = self.compact_sources.as_ref()?;
         let (prev_head, prev_dirty) = compact.load_repo_state()?;
-        let _ = self.source_index(hint);
-        let si = self
-            .source_index
-            .get()
-            .expect("source_index initialized above");
+        let si = self.source_index(hint);
         let mut out: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
         for p in si.diff_names_since(&prev_head) {
@@ -587,11 +596,7 @@ impl RuntimeGraph {
         if recorded.is_empty() {
             return None;
         }
-        let _ = self.source_index(hint);
-        let si = self
-            .source_index
-            .get()
-            .expect("source_index initialized above");
+        let si = self.source_index(hint);
         let mut out: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
         for (path, rec) in &recorded {
@@ -624,15 +629,10 @@ impl RuntimeGraph {
         if recorded.is_empty() {
             return Arc::new(|_: &str| false);
         }
-        // Build the oracle once (shared OnceLock); clone the handle for
-        // the closure via a fresh build off the same hint — the oracle
-        // is process-global state, so resolve it through `self`.
-        let _ = self.source_index(hint);
-        let si = self
-            .source_index
-            .get()
-            .expect("source_index initialized above")
-            .clone();
+        // Resolve and clone the oracle once; closure owns the Arc and
+        // can outlive `self`. Different hints in different repos get
+        // separate per-toplevel indexes (DashMap-keyed).
+        let si = self.source_index(hint);
         Arc::new(move |path: &str| match recorded.get(path) {
             Some(rec) => *rec == si.identity(Path::new(path)).encode(),
             None => false,
@@ -871,30 +871,31 @@ impl RuntimeGraph {
     /// transaction each, cost ∝ changes not corpus. MUST be called once
     /// after expand completes (the CLI does this) so the next process
     /// can `rows_of`-load and replay.
-    pub fn flush(&self) {
+    ///
+    /// `source_root_hint` identifies WHICH git toplevel the repo-state
+    /// token should be recorded for. The CLI passes the corpus scan
+    /// root; non-CLI paths may pass `None` (no token persisted, next
+    /// run falls back to a cold full walk — safe).
+    pub fn flush(&self, source_root_hint: Option<&Path>) {
         self.memo.flush();
         self.flush_memo_deps();
         // Task #6: persist the O(1) repo-state token so the next run is
         // WARM. Replaces the 63k-row `_memo_deps` end-of-run write. The
         // token = current `git rev-parse HEAD` + the worktree
         // dirty/untracked set with each file's no-read identity (the
-        // only files whose content can move while HEAD is fixed). The
-        // `SourceIndex` was eagerly initialized in `app.rs::run` before
-        // expand; if absent (some non-CLI path) skip — the next run
-        // simply falls back to a cold full walk, which is safe.
-        if let Some(compact) = &self.compact_sources {
-            if let Some(si) = self.source_index.get() {
-                let head = si.head_oid().unwrap_or("").to_string();
-                let dirty: Vec<(String, String)> = si
-                    .dirty_abs()
-                    .into_iter()
-                    .map(|p| {
-                        let id = si.identity(&p).encode();
-                        (p.to_string_lossy().into_owned(), id)
-                    })
-                    .collect();
-                compact.store_repo_state(&head, &dirty);
-            }
+        // only files whose content can move while HEAD is fixed).
+        if let (Some(compact), Some(hint)) = (&self.compact_sources, source_root_hint) {
+            let si = self.source_index(hint);
+            let head = si.head_oid().unwrap_or("").to_string();
+            let dirty: Vec<(String, String)> = si
+                .dirty_abs()
+                .into_iter()
+                .map(|p| {
+                    let id = si.identity(&p).encode();
+                    (p.to_string_lossy().into_owned(), id)
+                })
+                .collect();
+            compact.store_repo_state(&head, &dirty);
         }
     }
 
@@ -1733,6 +1734,32 @@ struct CompactSourceGraph {
 }
 
 const COMPACT_FS_CURSOR_MAGIC: &[u8] = b"sprf:fs-cursor:v1\0";
+
+/// Resolve a hint path to the cache key under which its `SourceIndex`
+/// is stored. Inside a work tree the key is `git rev-parse
+/// --show-toplevel`; off-git it is the start directory itself. Two
+/// hints inside the same toplevel resolve to the same key and share
+/// one index; hints in different repos get separate entries.
+fn resolve_source_root(hint: &Path) -> PathBuf {
+    let start = if hint.is_dir() {
+        hint.to_path_buf()
+    } else {
+        hint.parent().unwrap_or(Path::new(".")).to_path_buf()
+    };
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(&start)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            PathBuf::from(
+                String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            )
+        })
+        .unwrap_or(start)
+}
 
 fn encode_runtime_cursor(cursor: &Cursor) -> Vec<u8> {
     if is_plain_fs_cursor(cursor) {

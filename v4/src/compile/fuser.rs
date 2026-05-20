@@ -393,6 +393,7 @@ pub(crate) fn try_fuse(
     rule_pipe: Pipe<Cursor>,
     graph: &ProgramFlowGraph,
     rule_decls: &std::collections::HashMap<Arc<str>, Vec<Arc<str>>>,
+    recursive_rules: &std::collections::BTreeSet<Arc<str>>,
     diags: &mut Vec<Diag>,
 ) -> Option<FusedRule> {
     let body_id = graph.rule_body_id(rule_name)?;
@@ -499,7 +500,16 @@ pub(crate) fn try_fuse(
             rule_name, body, &classified, rule_pipe,
         ));
     }
-    Some(fuse_full_sql(rule_name, body, &classified, rule_pipe, diags))
+    let is_recursive =
+        recursive_rules.contains(&Arc::<str>::from(rule_name));
+    Some(fuse_full_sql(
+        rule_name,
+        body,
+        &classified,
+        rule_pipe,
+        is_recursive,
+        diags,
+    ))
 }
 
 /// Live captures = rule's declared cols intersected with non-Dead
@@ -610,6 +620,7 @@ fn fuse_full_sql(
     body: &TermFlowGraph,
     classified: &[ClassifiedStep<'_>],
     pipe: Pipe<Cursor>,
+    is_recursive: bool,
     diags: &mut Vec<Diag>,
 ) -> FusedRule {
     let live = live_cols(body);
@@ -886,11 +897,11 @@ fn fuse_full_sql(
     );
 
     let create = create_table_sql(rule_name, body);
-    // Recursive overload: a RuleQuery in this body reads the rule's own
-    // `{rule_name}_facts`. The run path keys self-source-view creation
-    // and fixpoint iteration off this.
-    let self_facts = format!("{rule_name}_facts");
-    let recursive = joined_tables.iter().any(|t| *t == self_facts.as_str());
+    // Recursion comes from a single source of truth: the SCC + self-
+    // edge analysis in `stratify::stratify`, threaded as `is_recursive`.
+    // A local self-table heuristic misses mutual recursion (`a :- b;
+    // b :- a`), so consult the stratify-derived flag instead.
+    let recursive = is_recursive;
     // The single fused-SQL view returned by `fused_sql()` concatenates
     // facts insert + support_edges insert in transactional order so
     // callers that only sniff one string still see both. The split

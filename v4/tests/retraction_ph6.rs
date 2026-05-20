@@ -506,10 +506,14 @@ fn stratified_negation_evaluated_after_base() {
         RuleDep::new(STALE).reads(DEP).negates(REACH),
     ])
     .expect("stratifiable: one negative edge, no cycle");
-    assert_eq!(strata_plan.len(), 2, "two strata");
-    assert_eq!(strata_plan[0].rules, vec![REACH], "reach is the base stratum");
+    assert_eq!(strata_plan.strata.len(), 2, "two strata");
     assert_eq!(
-        strata_plan[1].rules,
+        strata_plan.strata[0].rules,
+        vec![REACH],
+        "reach is the base stratum"
+    );
+    assert_eq!(
+        strata_plan.strata[1].rules,
         vec![STALE],
         "stale antijoins reach → strictly higher stratum"
     );

@@ -760,7 +760,7 @@ pub fn build_graph(
             cols: Vec::new(),
             has_body: true,
         });
-        let body = build_body_graph(name.clone(), &decl, block, &rule_decls);
+        let body = build_body_graph(name.clone(), &decl, block, &rule_decls, reg);
         let idx = graph.bodies.len();
         graph.bodies.push(body);
         graph.by_rule.insert(name, idx);
@@ -781,6 +781,7 @@ fn build_body_graph(
     decl: &RuleDecl,
     body: &PipeAst,
     rule_decls: &HashMap<Arc<str>, RuleDecl>,
+    reg: &Registry,
 ) -> TermFlowGraph {
     let scope_id: ScopeId = 0;
     let mut captures: HashMap<Arc<str>, CaptureInfo> = HashMap::new();
@@ -849,7 +850,7 @@ fn build_body_graph(
 
         // 1) Binders from the op's grammar (ast metavars, re groups,
         //    glob captures) and from `${X?}` host-position binders.
-        record_binders(op, op_idx, scope_id, &mut captures, &mut eq_classes);
+        record_binders(op, op_idx, scope_id, reg, &mut captures, &mut eq_classes);
 
         // 2) Reads from `${X}` in dsl bodies and CAPS / `${X}` host-
         //    position reads. Includes a free-form `${X}` scan inside
@@ -902,11 +903,22 @@ fn record_binders(
     op: &OpCall,
     op_idx: OpIdx,
     scope_id: ScopeId,
+    reg: &Registry,
     captures: &mut HashMap<Arc<str>, CaptureInfo>,
     eq_classes: &mut UnionFind<Arc<str>>,
 ) {
     // Op-declared imperative cursor binds (fs sets FS, etc.).
-    let cursor_binds: Vec<Arc<str>> = op_cursor_binds(&op.name);
+    // Consult the registry directly so this view cannot drift from
+    // each op's `OperatorDef::cursor_binds`.
+    let cursor_binds: Vec<Arc<str>> = reg
+        .get(op.name.as_ref())
+        .map(|d| {
+            d.cursor_binds()
+                .iter()
+                .map(|s| Arc::<str>::from(*s))
+                .collect()
+        })
+        .unwrap_or_default();
     for name in cursor_binds {
         let prov = CaptureSource::CursorBind { name: name.clone() };
         let lattice = cursor_bind_lattice(&op.name, &name);
@@ -1286,25 +1298,13 @@ fn strip_literal_quotes(raw: &str) -> &str {
     raw
 }
 
-/// Op-declared cursor binds: hard-coded mirror of the registry. Kept
-/// local so the graph builder doesn't depend on the full op registry
-/// surface (only on names + arg shapes).
-fn op_cursor_binds(name: &str) -> Vec<Arc<str>> {
-    match name {
-        "fs" => vec![Arc::<str>::from("FS")],
-        "ast" => vec![
-            Arc::<str>::from("FILE"),
-            Arc::<str>::from("LO"),
-            Arc::<str>::from("HI"),
-        ],
-        _ => Vec::new(),
-    }
-}
-
+/// Per-op id-lattice tightening for cursor-bind terms. Kept as a
+/// small local table; the registry doesn't carry lattice info on
+/// `cursor_binds` today. If this list grows, lift it onto
+/// `OperatorDef::cursor_bind_lattice`.
 fn cursor_bind_lattice(op_name: &str, capture: &str) -> TypeLattice {
     match (op_name, capture) {
         ("fs", "FS") => TypeLattice::PathId,
-        ("ast", "FILE") => TypeLattice::FileId,
         ("ast", "LO") | ("ast", "HI") => TypeLattice::Int,
         _ => TypeLattice::String,
     }
