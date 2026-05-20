@@ -13,6 +13,11 @@
 //!                row schema (column → IdKind) so the rule's prepared
 //!                INSERT can be built once.
 //!   RuleQuery  — query against another rule's `<rule>_facts` table.
+//!   AntiJoin   — `not(rule?(args))`: filter rows whose outer captures
+//!                / literals DO NOT match any row in `<rule>_facts`.
+//!                Lifts to a `NOT EXISTS (...)` subquery in full-SQL
+//!                kind. Carries no Bind binders (an antijoin produces
+//!                no values — only Read / Literal / Atom).
 //!
 //! Note: there is no `Source` variant and no separate `Sink` variant.
 //! Source-like ops (fs / repo / rev / ast) are Stream because they
@@ -91,6 +96,16 @@ pub enum Liftable {
         table: Arc<str>,
         binds: Vec<(Col, TermBind)>,
     },
+    /// `not(rule?(args))`. Same shape as `RuleQuery` but emits a
+    /// `NOT EXISTS` filter against `<rule>_facts` rather than joining
+    /// in the row. The fuser walks `binds` to build the correlated
+    /// equality predicate against outer captures / literals. Bind
+    /// (`X?` projection) entries here are a user error — the antijoin
+    /// produces no values.
+    AntiJoin {
+        table: Arc<str>,
+        binds: Vec<(Col, TermBind)>,
+    },
     /// Anything that doesn't lift — apply forms, side effects with
     /// observable state, etc. The fuser refuses to compose around it
     /// today; future fusers may treat Opaque as a "stream-with-no-
@@ -113,6 +128,11 @@ impl std::fmt::Debug for Liftable {
                 .finish(),
             Liftable::RuleQuery { table, binds } => f
                 .debug_struct("RuleQuery")
+                .field("table", table)
+                .field("binds", binds)
+                .finish(),
+            Liftable::AntiJoin { table, binds } => f
+                .debug_struct("AntiJoin")
                 .field("table", table)
                 .field("binds", binds)
                 .finish(),

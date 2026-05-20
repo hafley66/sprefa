@@ -189,6 +189,103 @@ fn classify_op(op: &OpCall) -> Option<Liftable> {
     }
 }
 
+/// Classify `not(rule?(args))` as an AntiJoin. Returns `None` if the
+/// shape is malformed (and pushes a diag), in which case the caller
+/// falls back to unfused passthrough.
+///
+/// Accepted shape, single positional arg whose body re-parses to a
+/// single `<rule>?(args)` call on a declared rule. Reject:
+///   - non-singular args / kw args / dsl / block on the outer `not`
+///   - inner force / apply / non-predicate (a bare-call not a query)
+///   - inner rule not in `rule_decls`
+///   - inner arg with a Bind (`X?`) — antijoin produces no captures
+fn classify_antijoin(
+    op: &OpCall,
+    rule_decls: &std::collections::HashMap<Arc<str>, Vec<Arc<str>>>,
+    diags: &mut Vec<Diag>,
+) -> Option<Liftable> {
+    if op.args.len() != 1 || op.dsl.is_some() || op.block.is_some() {
+        diags.push(
+            Diag::error(
+                "lower/antijoin-shape",
+                "not(...): expected one positional arg of shape `rule?(args)` and no body/dsl",
+            )
+            .with_span(op.span.lo, op.span.hi),
+        );
+        return None;
+    }
+    let inner_raw = op.args[0].raw.as_ref().trim();
+    let mut frag = String::with_capacity(inner_raw.len() + 1);
+    frag.push_str(inner_raw);
+    frag.push(';');
+    let (inner_pipes, _) = crate::compile::parse::host_parse(&frag);
+    if inner_pipes.len() != 1 || inner_pipes[0].steps.len() != 1 {
+        diags.push(
+            Diag::error(
+                "lower/antijoin-shape",
+                "not(...): arg must be a single `rule?(args)` call",
+            )
+            .with_span(op.span.lo, op.span.hi),
+        );
+        return None;
+    }
+    let inner = &inner_pipes[0].steps[0];
+    if !inner.predicate || inner.apply || inner.force {
+        diags.push(
+            Diag::error(
+                "lower/antijoin-shape",
+                "not(...): inner call must be the query form `rule?(args)` (no `!`, no apply)",
+            )
+            .with_span(op.span.lo, op.span.hi),
+        );
+        return None;
+    }
+    let cols = match rule_decls.get(&inner.name) {
+        Some(c) => c,
+        None => {
+            diags.push(
+                Diag::error(
+                    "lower/antijoin-shape",
+                    format!(
+                        "not({}?(...)): `{}` is not a declared rule",
+                        inner.name, inner.name,
+                    ),
+                )
+                .with_span(op.span.lo, op.span.hi),
+            );
+            return None;
+        }
+    };
+    let lift = classify_rule_call(inner, inner.name.as_ref(), cols);
+    let (table, binds) = match lift {
+        Liftable::RuleQuery { table, binds } => (table, binds),
+        _ => {
+            diags.push(
+                Diag::error(
+                    "lower/antijoin-shape",
+                    "not(...): inner classify did not yield RuleQuery",
+                )
+                .with_span(op.span.lo, op.span.hi),
+            );
+            return None;
+        }
+    };
+    for (_, b) in &binds {
+        if matches!(b, TermBind::Bind(_)) {
+            diags.push(
+                Diag::error(
+                    "lower/antijoin-bind",
+                    "not(rule?(... X? ...)): projection binders (`X?`) are not allowed inside `not` — \
+                     an antijoin produces no captures",
+                )
+                .with_span(op.span.lo, op.span.hi),
+            );
+            return None;
+        }
+    }
+    Some(Liftable::AntiJoin { table, binds })
+}
+
 /// Classify a rule-call op (no registry entry; the rule is in
 /// rule_decls). Bare → RuleQuery; apply → Opaque.
 fn classify_rule_call(op: &OpCall, target: &str, decl_cols: &[Arc<str>]) -> Liftable {
@@ -303,6 +400,15 @@ pub(crate) fn try_fuse(
 
     let mut classified: Vec<ClassifiedStep<'_>> = Vec::with_capacity(rule_block.steps.len());
     for op in &rule_block.steps {
+        if op.name.as_ref() == "not" {
+            match classify_antijoin(op, rule_decls, diags) {
+                Some(lift) => {
+                    classified.push(ClassifiedStep { op, lift });
+                    continue;
+                }
+                None => return Some(passthrough(Arc::<str>::from(rule_name), rule_pipe)),
+            }
+        }
         if let Some(cols) = rule_decls.get(&op.name) {
             classified.push(ClassifiedStep {
                 op,
@@ -326,6 +432,8 @@ pub(crate) fn try_fuse(
     //   - any Opaque                        → unfused
     let mut has_stream = false;
     let mut has_opaque = false;
+    let mut has_antijoin = false;
+    let mut first_antijoin_span = None;
     let mut bad_stream_then_rq = false;
     let mut first_rq_after_stream = None;
     for step in &classified {
@@ -333,15 +441,38 @@ pub(crate) fn try_fuse(
             Liftable::Stream { .. } => {
                 has_stream = true;
             }
-            Liftable::RuleQuery { .. } if has_stream && first_rq_after_stream.is_none() => {
+            Liftable::RuleQuery { .. } | Liftable::AntiJoin { .. }
+                if has_stream && first_rq_after_stream.is_none() =>
+            {
                 bad_stream_then_rq = true;
                 first_rq_after_stream = Some(step.op.span);
+            }
+            Liftable::AntiJoin { .. } => {
+                if !has_antijoin {
+                    first_antijoin_span = Some(step.op.span);
+                }
+                has_antijoin = true;
             }
             Liftable::Opaque => {
                 has_opaque = true;
             }
             _ => {}
         }
+    }
+
+    if has_antijoin && has_stream {
+        let span = first_antijoin_span.unwrap();
+        diags.push(
+            Diag::error(
+                "lower/rule-antijoin-with-stream",
+                format!(
+                    "rule `{rule_name}`: `not(rule?(...))` antijoin is only supported in full-SQL bodies. \
+                     Move the Stream source into its own rule and read its `_facts` table here."
+                ),
+            )
+            .with_span(span.lo, span.hi),
+        );
+        return Some(passthrough(Arc::<str>::from(rule_name), rule_pipe));
     }
 
     if bad_stream_then_rq {
@@ -368,7 +499,7 @@ pub(crate) fn try_fuse(
             rule_name, body, &classified, rule_pipe,
         ));
     }
-    Some(fuse_full_sql(rule_name, body, &classified, rule_pipe))
+    Some(fuse_full_sql(rule_name, body, &classified, rule_pipe, diags))
 }
 
 /// Live captures = rule's declared cols intersected with non-Dead
@@ -479,6 +610,7 @@ fn fuse_full_sql(
     body: &TermFlowGraph,
     classified: &[ClassifiedStep<'_>],
     pipe: Pipe<Cursor>,
+    diags: &mut Vec<Diag>,
 ) -> FusedRule {
     let live = live_cols(body);
 
@@ -557,6 +689,74 @@ fn fuse_full_sql(
                 }
             }
             _ => {}
+        }
+    }
+
+    // AntiJoin emission: each `not(rule?(args))` becomes a
+    // `NOT EXISTS (SELECT 1 FROM <table> AS axN WHERE …)` predicate
+    // correlating inner cols to outer captures / literals. Antijoins
+    // are filters (no captures), so they don't join into the FROM —
+    // they slot into the WHERE/ON predicate set alongside `where`
+    // pushdown.
+    for (idx, step) in classified.iter().enumerate() {
+        if let Liftable::AntiJoin { table, binds } = &step.lift {
+            let sub = format!("ax{idx}");
+            let mut sub_preds: Vec<String> = Vec::with_capacity(binds.len());
+            let mut bind_err: Option<String> = None;
+            for (col, bind) in binds {
+                match bind {
+                    TermBind::Read(capture) => {
+                        let cap_str = capture.to_string();
+                        if let Some((outer_alias, outer_col)) = capture_to_source.get(&cap_str) {
+                            sub_preds.push(format!(
+                                "{sub}.{} = {outer_alias}.{}",
+                                qid(col.as_ref()),
+                                qid(outer_col),
+                            ));
+                        } else {
+                            bind_err = Some(format!(
+                                "not({table}?(…)): capture `{cap_str}` is not bound by any outer rule-query step",
+                            ));
+                            break;
+                        }
+                    }
+                    TermBind::Literal(lit) | TermBind::Atom(lit) => {
+                        let escaped = lit.replace('\'', "''");
+                        sub_preds.push(format!(
+                            "{sub}.{} = (SELECT id FROM _strings WHERE value = '{escaped}')",
+                            qid(col.as_ref()),
+                        ));
+                    }
+                    TermBind::Bind(_) => {
+                        // Already rejected in classify_antijoin; defensive
+                        // catch in case the path changes.
+                        bind_err = Some(
+                            "not(rule?(... X? ...)): projection binders are forbidden inside `not`".into(),
+                        );
+                        break;
+                    }
+                }
+            }
+            if let Some(msg) = bind_err {
+                diags.push(
+                    Diag::error("lower/antijoin-bind", msg)
+                        .with_span(step.op.span.lo, step.op.span.hi),
+                );
+                continue;
+            }
+            let pred = if sub_preds.is_empty() {
+                format!("NOT EXISTS (SELECT 1 FROM {table} AS {sub})")
+            } else {
+                format!(
+                    "NOT EXISTS (SELECT 1 FROM {table} AS {sub} WHERE {})",
+                    sub_preds.join(" AND "),
+                )
+            };
+            // Antijoin predicates always land in the trailing WHERE.
+            // `on_clauses` is only emitted into the FIRST JOIN's ON
+            // section (line ~735), so an antijoin in a body with only
+            // ONE RuleQuery (no subsequent JOIN) would otherwise vanish.
+            where_clauses.push(pred);
         }
     }
 

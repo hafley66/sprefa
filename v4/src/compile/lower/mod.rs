@@ -102,6 +102,7 @@ pub fn default_registry() -> Registry {
     r.register(Arc::new(ops::RenderDotMarkdownDef));
     r.register(Arc::new(ops::CollectDef));
     r.register(Arc::new(ops::CollectReadyDef));
+    r.register(Arc::new(ops::NotDef));
     r.register(Arc::new(crate::sql::SqlDef));
     #[cfg(feature = "ghcache")]
     r.register(Arc::new(crate::ghcache::GhPrsDef));

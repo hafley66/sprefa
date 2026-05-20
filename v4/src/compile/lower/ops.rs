@@ -1901,6 +1901,47 @@ impl OperatorDef for TagDef {
     }
 }
 
+// ─── not ──────────────────────────────────────────────────────────────────
+// `not(rule?(args))` — antijoin surface. The runtime pipe is a no-op
+// step (the fuser owns the actual `NOT EXISTS` SQL emission for the
+// fused-SQL kind). Lowering this to a Void step keeps the AST valid
+// for the walker and the fuser pattern-matches `not` by name on the
+// OpCall AST, not by inspecting the runtime pipe. The walker's
+// `paren_args()` is left empty so the single arg slot is parsed
+// generically as a sub-pipe and accepted; the actual shape check
+// (single `rule?(args)` call, no projection binders) lives in the
+// fuser's `classify_antijoin` so the inner re-parse happens at the
+// same place that produces the AntiJoin liftable.
+
+pub struct NotDef;
+
+const NOT_SPEC: &[ArgSig] = &[ArgSig {
+    kind: ArgKind::Pipe,
+    name: "query",
+    doc: "the `rule?(args)` query to negate",
+    required: true,
+}];
+
+impl OperatorDef for NotDef {
+    fn name(&self) -> &'static str {
+        "not"
+    }
+    fn paren_args(&self) -> &[ArgSig] {
+        NOT_SPEC
+    }
+
+    fn lower(
+        &self,
+        _ctx: &LowerCtx,
+        _flow: Option<Value>,
+        _args: &[Value],
+        _block: Option<Pipe<Cursor>>,
+        _dsl: Option<&DslBody>,
+    ) -> Result<Pipe<Cursor>, LowerError> {
+        Ok(Pipe::new().step(Arc::new(VoidComponent)))
+    }
+}
+
 // ─── void ─────────────────────────────────────────────────────────────────
 
 pub struct VoidDef;
