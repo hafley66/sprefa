@@ -755,14 +755,54 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
 - No watcher yet.
 - **User-visible outcome:** zero direct user effect. `contains_path(p)` and `owners_of_path(p)` are now O(1). Internal precondition for Phase 6.
 
-### Phase 6 — WatchmanIngress + drain task
-- Implement `WatchmanIngress`, `WakeEvent::FsChange | ScmStateEnter | ScmStateLeave`, `Clocks { durable, ephemeral }`.
-- `connect()` on `initialize`; emit `window/showMessage` with install command on connect failure.
-- `watch_project` per workspace root, single persistent connection multiplexed.
-- `_watchman_clock` table persists per-root last clock token for replay across daemon restart.
-- Drain task with mpsc cap 1024 honors `is_settling` flag during `ScmStateEnter`.
-- Extend `DiagPublisher` to subscribe to per-URI diag bus and publish reactively.
-- **User-visible outcome:** edits to .rs/.ts files (via any tool, including Claude Code's own Edit, including `git checkout` of a branch) trigger re-lint in <100ms; agent sees fresh diagnostics on next `mcp__ide__getDiagnostics` call. This is the goal state.
+### Phase 6 — WatchmanIngress + drain task (REVISED 2026-05-20, MVP-6a scope)
+
+A two-reviewer audit (notes appended below) found that the original Phase 6 design routed wakes through `mark_memo_owner_dirty` + `dirty_memo_owners`, which the daemon NEVER reads. The actual reactive arc the daemon uses is:
+
+| step | code site |
+|---|---|
+| `ast` / `read` write `SubscribeEdge(owner → file_dirty_source_uri(path))` | `v2_ops.rs:820, 887, 3013-3016` |
+| `RuntimeGraph::dispatch_source_wake(SourceWake)` ⇒ `incoming_subscribers` ⇒ core mark-dirty | `runtime_graph.rs:1604-1620, :1808-1828` |
+| `SprfState::drain_ready` ⇒ `drain_runtime_until_idle` ⇒ `drain_graph_jobs` (GraphReplayRunner) | `app.rs:791-826` |
+
+Phase 5's `MemoDepsCache::by_path` + `mark_memo_owner_dirty` is **parallel infrastructure**, not on the daemon path: `dirty_memo_owners` is only consumed by `DirtySourceDriver::sweep_to_quiescence` (`dirty_source.rs:139-178`), and that sweep has zero non-test callers. Phase 5 stays (working code, tests pass) as parked infrastructure for a future "wake fewer than all open .sprf docs" optimization but is NOT on the MVP-6a critical path.
+
+#### MVP-6a (this slice)
+
+- New file `v4/src/wake.rs`: `WakeEvent::FsChange { paths: Vec<PathBuf> }`. ONLY this variant. No buffer events here (Phase 4's RPCs already cover them); no SCM state events (Phase 6b).
+- `tokio::sync::mpsc::channel(1024)` from `WatchmanIngress` subscriber task to `SprfState`-owned drain task.
+- `WatchmanIngress::start(root, suffixes, tx)`: connects, `resolve_root`, `subscribe::<NameOnly>` with `Expr::Suffix([".sprf", ".rs", ".ts", ".tsx", ".js", ".jsx", ".py"])`, spawns a tokio task that translates `SubscriptionData::FilesChanged` into ONE `WakeEvent::FsChange { paths }`. NO per-file fanout (each Watchman batch is one mpsc send).
+- Drain task lives in `SprfState`; consumes `WakeEvent::FsChange { paths }`:
+  ```
+  for path in paths:
+      sid = SourceId::for_file(path.to_string_lossy())   // RAW path, no canonicalize (matches v2_ops.rs:838 recorder)
+      gen = clock.bump(sid)
+      graph.dispatch_source_wake(SourceWake::dirty(file_dirty_source_uri(&path), gen))
+  drain_ready()
+  // Re-publish: re-run lsp_change for every open .sprf doc (typical: 1-5)
+  ```
+- LSP frontend wires `Backend::initialize` to call a new `lsp_start_watch` RPC (or piggyback on `lsp_pre_warm`'s existing watchman_ok flag) and spawns the drain task in the LSP-side backend.
+- **User-visible outcome:** `std::fs::write("foo.rs", ...)` from outside the IDE wakes any `.sprf` lint that depended on `foo.rs`; agent sees the resulting diag via `mcp__ide__getDiagnostics` within ~100ms of the write.
+
+#### Why no `Clocks::ephemeral` split (review #1 finding 4)
+
+The seam's staleness oracle is `SourceIdentity` (git-OID / stat tuple) compared content-hash-wise; `SourceClock::current_gen` is consulted only by the SQL cache key (`v4/src/sql.rs:1525`). Splitting `durable` vs `ephemeral` buys nothing the current architecture cares about. Drop from the plan; keep ONE `FactStoreClock`.
+
+#### Why no `vfs.is_owned` suppression (review #1 finding 5)
+
+`SourceId::for_buffer` has ZERO callsites outside its own tests; the live read path uses `SourceId::for_file(path)` regardless of overlay presence. Save-then-Watchman-wake on an overlay-owned path is harmless: the next expand reads overlay bytes; `SourceIdentity` of the disk file moved; staleness fires; refresh runs once over overlay text. The "double refresh" cost is one expand; the suppression's race window (save → buffer-close in <50ms drops the disk wake) is worse than the redundant refresh.
+
+#### Window/showMessage on connect failure (review #1 finding 6)
+
+`SprfState` has no `tower-lsp::Client` handle. Phase 6 reuses `LspPreWarmResp.watchman_ok: bool` (already in `app.rs`) and adds an optional `watchman_hint: Option<String>`; LSP frontend (`v4/crates/sprefa-lsp/src/main.rs`) calls `self.client.show_message(...)` when `watchman_ok == false`.
+
+#### Deferred to Phase 6b
+
+- `WakeEvent::ScmStateEnter { state } | ScmStateLeave { state }` (no `files_changed` field — review #1 finding 9: Watchman delivers the settle batch as a separate `FilesChanged` after `StateLeave`).
+- `defer: ["hg.update", "git-checkout"]` SCM-aware settle.
+- `_watchman_clock` table for replay-after-restart.
+- Reconnect backoff (250ms → 30s).
+- Batch coalescing window (per-batch is already coalesced by Watchman; rapid-edit-tool case is open).
 
 ### Phase 7 — `DiagPublisher.last` dedup + reconnect hardening
 - Implement publish-side throttle window (default 50ms) and `last` hash-skip.
@@ -796,10 +836,10 @@ Skip pre-warm entirely; rely on `did_open` for the user's currently-open file. R
   5. **empty-path / SQL-mount entry**: `record_memo_deps` called with a row whose `source_path` is `""` (SQL mount, mounted_query.rs:430-431); assert `forward` still contains it (so the dirty sweep can find it via `memo_dep_owners_for_source`) but `by_path` does NOT get an empty-PathBuf key.
   6. **singular `record_memo_dep` write-through**: call the singular API once per source for a key; assert `by_path` has one bucket per non-empty path with the (owner, in_key) inside.
 
-### Phase 6
-- `tests/lsp_fs_watcher_wakes.rs`: register lint over `**/*.rs`; write a `.rs` file via tempfile; assert diag published within 200ms.
-- `tests/lsp_buffer_suppresses_fs.rs`: open buffer for `a.rs`; edit disk via `std::fs::write(a.rs)`; assert no clock bump and no expand.
-- `tests/lsp_close_picks_up_disk_edit.rs`: open buffer; edit disk; close buffer; assert disk content's diags appear.
+### Phase 6 (MVP-6a)
+- `tests/lsp_fs_watcher_wakes.rs`: register lint over `**/*.rs`; spawn ingest + drain; write a `.rs` file via `std::fs::write` (no LSP did_change); assert `lsp_diags_by_uri` reflects the new diag within 1s. Requires Watchman on PATH; skip with `tracing::warn` if absent (CI default).
+- `tests/lsp_fs_watcher_no_clobber.rs`: open buffer for `a.rs` (overlay text differs from disk); write disk; assert the next refresh's diag count matches the overlay (overlay wins), not the disk.
+- `tests/lsp_fs_watcher_close_picks_up_disk.rs`: open buffer; edit disk; close buffer; assert the disk-content diags appear after close.
 
 ### Phase 7
 - `tests/lsp_git_checkout_burst.rs`: simulate 1000-file `notify` burst; assert one expand call, p99 latency <1s.

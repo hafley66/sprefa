@@ -145,6 +145,24 @@ pub struct LspPreWarmReq {
     /// Empty defaults to "main".
     pub scm_branch: String,
 }
+/// MVP-6a wake. Producer (Watchman subscription task or test) hands a
+/// batch of changed FS paths to the daemon; daemon bumps the SourceClock
+/// for each, dispatches source wakes through the existing reactive arc,
+/// drains, then re-ingests all currently-open `.sprf` docs so any rule
+/// that subscribed to one of these files re-publishes. Returns the URIs
+/// the caller should re-poll `lsp_diags_by_uri` for.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspWakeFsReq {
+    pub paths: Vec<PathBuf>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspWakeFsResp {
+    /// `.sprf` URIs the daemon re-ingested in response. Caller fans out
+    /// `lsp_diags_by_uri` queries to these.
+    pub woken_sprf_uris: Vec<String>,
+    /// Echo of input batch size for telemetry.
+    pub paths_seen: usize,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LspPreWarmResp {
     /// `.sprf` source URIs the daemon opened during pre-warm.
@@ -560,6 +578,7 @@ sprf_rpc! {
     fn get_diags   (GetDiagsReq)  -> Vec<SprfDiag>       => "/lsp/diags";
     fn lsp_diags_by_uri (LspDiagsByUriReq) -> LspDiagsByUriResp => "/lsp/diags/by-uri";
     fn lsp_pre_warm     (LspPreWarmReq)    -> LspPreWarmResp    => "/lsp/pre-warm";
+    fn lsp_wake_fs      (LspWakeFsReq)     -> LspWakeFsResp     => "/lsp/wake-fs";
     fn get_inlays  (GetInlaysReq) -> Vec<InlayProbe>     => "/lsp/inlays";
     fn lsp_locate_dsl (LspLocateDslReq) -> LspLocateDslResp => "/lsp/locate-dsl";
     fn lsp_hover      (LspHoverReq) -> LspHoverResp      => "/lsp/hover";
@@ -1643,6 +1662,58 @@ impl SprfHandlers for SprfState {
         }
         Ok(LspDiagsByUriResp { by_uri })
     }
+
+    /// MVP-6a wake handler. Producer hands a path batch (Watchman
+    /// subscription, test, or any other source); daemon:
+    ///   1. For each path: bump `SourceClock::for_file(path)` and call
+    ///      `RuntimeGraph::dispatch_source_wake(SourceWake::dirty(uri, gen))`.
+    ///      `file_dirty_source_uri(path)` mirrors what `v2_ops.rs:820`
+    ///      records, so the existing `SubscribeEdge` arc finds the right
+    ///      owners. `SourceId::for_file` takes the path string verbatim
+    ///      to match `v2_ops.rs:838` (no canonicalization here — the
+    ///      canonical/raw mismatch is a Phase 6b concern).
+    ///   2. `drain_ready()` runs the existing dispatcher to completion.
+    ///   3. Re-ingest every open `.sprf` doc (heuristic: any of them may
+    ///      have subscribed to one of the woken sources; MVP scope keeps
+    ///      this O(open docs) rather than maintaining an owner→.sprf
+    ///      reverse map). Per-doc memoization makes unchanged sources
+    ///      cheap.
+    /// Returns the `.sprf` URIs the caller should re-poll for diags.
+    async fn lsp_wake_fs(&self, req: LspWakeFsReq) -> Result<LspWakeFsResp, SprfError> {
+        use crate::runtime_graph::SourceWake;
+        use crate::source_clock::{SourceClock, SourceId};
+        use crate::v2_ops::file_dirty_source_uri;
+
+        let paths_seen = req.paths.len();
+        for path in &req.paths {
+            let path_str = path.to_string_lossy();
+            let sid = SourceId::for_file(&path_str);
+            let gen = self.runtime_graph.clock().bump(sid);
+            self.runtime_graph
+                .dispatch_source_wake(SourceWake::dirty(file_dirty_source_uri(path), gen));
+        }
+        self.drain_ready();
+
+        // Snapshot open .sprf docs, then re-ingest each. `ingest`
+        // re-acquires the docs lock per call, so we cannot hold it.
+        let to_refresh: Vec<(String, String, i32)> = {
+            let docs = self.docs.lock().unwrap();
+            docs.iter()
+                .filter(|(uri, _)| uri.ends_with(".sprf"))
+                .map(|(uri, d)| (uri.clone(), d.text.clone(), d.version))
+                .collect()
+        };
+        let mut woken_sprf_uris = Vec::with_capacity(to_refresh.len());
+        for (uri, text, version) in to_refresh {
+            self.ingest(uri.clone(), text, version);
+            woken_sprf_uris.push(uri);
+        }
+        Ok(LspWakeFsResp {
+            woken_sprf_uris,
+            paths_seen,
+        })
+    }
+
     async fn lsp_pre_warm(&self, req: LspPreWarmReq) -> Result<LspPreWarmResp, SprfError> {
         const PRE_WARM_MAX_FILES: usize = 50_000;
         const PRE_WARM_WALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);

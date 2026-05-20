@@ -56,7 +56,7 @@ mod semantic;
 use v4::app::{
     build_in_process, GetInlaysReq, HttpClient,
     LspChangeReq, LspCloseReq, LspCompletionReq, LspDefinitionReq, LspDiagsByUriReq, LspHoverReq,
-    LspLocateDslReq, LspLocateDslResp, LspOpenReq, LspPreWarmReq, SprfClient, SprfDiag,
+    LspLocateDslReq, LspLocateDslResp, LspOpenReq, LspPreWarmReq, LspWakeFsReq, SprfClient, SprfDiag,
 };
 
 struct Backend {
@@ -80,6 +80,10 @@ struct BackendInner {
     /// `initialize`. Aborted on `shutdown` so we never leak a walker
     /// thread or an in-flight RPC past LSP teardown.
     pre_warm_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Phase 6 (MVP-6a). Handle to the background Watchman subscription
+    /// loop. Aborted on `shutdown`. None when Watchman was unreachable
+    /// at initialize.
+    watch_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Per-source-URI publish locks. Two refreshes racing on the same
     /// URI serialize through the per-key Mutex so the second sees the
     /// first's `last_published` writes. Different URIs never contend.
@@ -103,6 +107,7 @@ impl Backend {
                 pending: Mutex::new(HashMap::new()),
                 last_published: Mutex::new(HashMap::new()),
                 pre_warm_handle: Mutex::new(None),
+                watch_handle: Mutex::new(None),
                 publish_locks: dashmap::DashMap::new(),
             }),
         }
@@ -400,6 +405,166 @@ impl BackendInner {
             }
         }
     }
+
+    /// Phase 6 (MVP-6a). Background Watchman subscription loop. Connects
+    /// to the local Watchman daemon, subscribes per workspace root for
+    /// `.rs/.ts/.tsx/.js/.jsx/.py/.sprf` suffixes, then loops on
+    /// `subscription.next().await`. On `FilesChanged`, joins relative
+    /// paths against the resolved root and calls
+    /// `lsp_wake_fs({paths})` on the sprf RPC; each returned woken
+    /// `.sprf` URI is re-refreshed so its cross-URI diagnostics
+    /// re-publish. Logs and exits on connect failure (Watchman not
+    /// installed) and on `Canceled` (root deleted / daemon shut down).
+    async fn run_watchman_loop(self: Arc<Self>, root: PathBuf) {
+        use v4::watchman::{SubscriptionData, WatchmanIngress};
+
+        let ingress = match WatchmanIngress::connect().await {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::info!(
+                    %e,
+                    "watchman unreachable; FS watch disabled (install: brew install watchman)",
+                );
+                return;
+            }
+        };
+        let (mut sub, resolved) = match ingress
+            .start_subscription(&root, &["rs", "ts", "tsx", "js", "jsx", "py", "sprf"])
+            .await
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::warn!(%e, "watchman subscribe failed; FS watch disabled");
+                return;
+            }
+        };
+        let root_path = resolved.path().to_path_buf();
+        tracing::info!(?root_path, "watchman subscription active");
+        loop {
+            match sub.next().await {
+                Ok(SubscriptionData::FilesChanged(qr)) => {
+                    let files = qr.files.unwrap_or_default();
+                    if files.is_empty() {
+                        continue;
+                    }
+                    let paths: Vec<PathBuf> = files
+                        .into_iter()
+                        .map(|nf| {
+                            let rel: PathBuf = nf.name.into_inner();
+                            if rel.is_absolute() {
+                                rel
+                            } else {
+                                root_path.join(rel)
+                            }
+                        })
+                        .collect();
+                    let sprf = self.sprf().await;
+                    let wake = match sprf.lsp_wake_fs(LspWakeFsReq { paths }).await {
+                        Ok(w) => w,
+                        Err(e) => {
+                            tracing::warn!(%e, "lsp_wake_fs failed; skipping batch");
+                            continue;
+                        }
+                    };
+                    for uri_str in wake.woken_sprf_uris {
+                        let Ok(uri) = Url::parse(&uri_str) else { continue };
+                        let (text, version) = {
+                            let docs = self.docs.lock().await;
+                            match docs.get(&uri) {
+                                Some(d) => (d.text.clone(), d.version),
+                                None => continue,
+                            }
+                        };
+                        self.republish_from_wake(uri, text, version).await;
+                    }
+                }
+                Ok(SubscriptionData::Canceled) => {
+                    tracing::warn!("watchman subscription canceled");
+                    return;
+                }
+                Ok(SubscriptionData::StateEnter { state_name, .. }) => {
+                    tracing::debug!(state = %state_name, "watchman state-enter");
+                }
+                Ok(SubscriptionData::StateLeave { state_name, .. }) => {
+                    tracing::debug!(state = %state_name, "watchman state-leave");
+                }
+                Err(e) => {
+                    tracing::warn!(%e, "watchman subscription error; exiting watch loop");
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Phase 6 (MVP-6a). Re-publish a doc's diags after a watchman wake.
+    /// The daemon's `lsp_wake_fs` already re-ingested; we just fetch
+    /// fresh diags via `lsp_diags_by_uri` and run the same cross-URI
+    /// publish path `refresh` uses. Holds the per-URI publish lock so a
+    /// concurrent keystroke-driven `refresh` and a watchman-driven
+    /// `republish_from_wake` linearize.
+    async fn republish_from_wake(&self, uri: Url, text: String, version: i32) {
+        let lock = self
+            .publish_locks
+            .entry(uri.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+        let sprf = self.sprf().await;
+        let resp = match sprf
+            .lsp_diags_by_uri(LspDiagsByUriReq {
+                source_uri: uri.to_string(),
+            })
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(uri = %uri, %e, "lsp_diags_by_uri after wake failed");
+                return;
+            }
+        };
+        let mut published_uris: Vec<Url> = Vec::new();
+        for (target_uri_str, diags) in resp.by_uri.iter() {
+            let target_url = match Url::parse(target_uri_str) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            let text_for_target: Option<String> = if target_url == uri {
+                Some(text.clone())
+            } else {
+                match target_url.to_file_path() {
+                    Ok(p) => tokio::fs::read_to_string(&p).await.ok(),
+                    Err(()) => None,
+                }
+            };
+            let Some(text_for_target) = text_for_target else {
+                continue;
+            };
+            let lsp_diags: Vec<Diagnostic> = diags
+                .iter()
+                .map(|d| to_lsp_diag(&text_for_target, d))
+                .collect();
+            let version_for_publish = if target_url == uri { Some(version) } else { None };
+            self.client
+                .publish_diagnostics(target_url.clone(), lsp_diags, version_for_publish)
+                .await;
+            published_uris.push(target_url);
+        }
+        let previous: Vec<Url> = {
+            let mut g = self.last_published.lock().await;
+            evict_last_published_to_cap(&mut g, &uri);
+            g.insert(uri.clone(), published_uris.clone()).unwrap_or_default()
+        };
+        for prev in previous {
+            if prev == uri {
+                continue;
+            }
+            if !published_uris.iter().any(|u| u == &prev) {
+                self.client
+                    .publish_diagnostics(prev, Vec::new(), None)
+                    .await;
+            }
+        }
+    }
 }
 
 /// Hold `last_published` at or below `LAST_PUBLISHED_CAP`. Called
@@ -463,6 +628,18 @@ impl LanguageServer for Backend {
         });
         *self.inner.pre_warm_handle.lock().await = Some(handle);
 
+        // Phase 6 (MVP-6a). Background Watchman subscription. On each
+        // FilesChanged batch, call `lsp_wake_fs(paths)` to drive the
+        // daemon's wake (clock bump + dispatch_source_wake + drain_ready
+        // + per-doc re-ingest), then refresh each returned `.sprf` URI
+        // so its cross-URI diagnostics re-publish.
+        let watch_inner = self.inner.clone();
+        let watch_root = Self::root_from_initialize(&params);
+        let watch_handle = tokio::spawn(async move {
+            watch_inner.run_watchman_loop(watch_root).await;
+        });
+        *self.inner.watch_handle.lock().await = Some(watch_handle);
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -512,6 +689,9 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> RpcResult<()> {
         if let Some(h) = self.inner.pre_warm_handle.lock().await.take() {
+            h.abort();
+        }
+        if let Some(h) = self.inner.watch_handle.lock().await.take() {
             h.abort();
         }
         Ok(())
