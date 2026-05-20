@@ -122,6 +122,22 @@ pub struct LspDiagsByUriResp {
     pub by_uri: std::collections::HashMap<String, Vec<SprfDiag>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspPreWarmReq {
+    pub root: PathBuf,
+    /// Empty defaults to "main".
+    pub scm_branch: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LspPreWarmResp {
+    /// `.sprf` source URIs the daemon opened during pre-warm.
+    pub source_uris: Vec<String>,
+    /// Watchman daemon was reachable.
+    pub watchman_ok: bool,
+    /// File count Watchman reported changed since `scm_branch` merge-base.
+    /// `None` when watchman_ok is false or the SCM query returned None.
+    pub scm_changed_count: Option<usize>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunReq {
     pub path: PathBuf,
     pub root: Option<PathBuf>,
@@ -490,6 +506,7 @@ sprf_rpc! {
     fn lsp_close   (LspCloseReq)  -> ()                  => "/lsp/close";
     fn get_diags   (GetDiagsReq)  -> Vec<SprfDiag>       => "/lsp/diags";
     fn lsp_diags_by_uri (LspDiagsByUriReq) -> LspDiagsByUriResp => "/lsp/diags/by-uri";
+    fn lsp_pre_warm     (LspPreWarmReq)    -> LspPreWarmResp    => "/lsp/pre-warm";
     fn get_inlays  (GetInlaysReq) -> Vec<InlayProbe>     => "/lsp/inlays";
     fn lsp_locate_dsl (LspLocateDslReq) -> LspLocateDslResp => "/lsp/locate-dsl";
     fn lsp_hover      (LspHoverReq) -> LspHoverResp      => "/lsp/hover";
@@ -1515,6 +1532,71 @@ impl SprfHandlers for SprfState {
             by_uri.entry(key).or_default().push(diag);
         }
         Ok(LspDiagsByUriResp { by_uri })
+    }
+    async fn lsp_pre_warm(&self, req: LspPreWarmReq) -> Result<LspPreWarmResp, SprfError> {
+        let root = if req.root.is_absolute() {
+            req.root.clone()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(&req.root)
+        };
+
+        let mut source_uris: Vec<String> = Vec::new();
+        let mut to_open: Vec<(String, String)> = Vec::new();
+        for entry in ignore::WalkBuilder::new(&root).build() {
+            let Ok(entry) = entry else { continue };
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("sprf") {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(text) = std::fs::read_to_string(path) else { continue };
+            let Ok(uri) = url::Url::from_file_path(path) else { continue };
+            let uri_str = uri.to_string();
+            to_open.push((uri_str.clone(), text));
+            source_uris.push(uri_str);
+        }
+
+        let branch = if req.scm_branch.is_empty() {
+            "main".to_string()
+        } else {
+            req.scm_branch.clone()
+        };
+        let (watchman_ok, scm_changed_count) =
+            match crate::watchman::WatchmanIngress::connect().await {
+                Ok(w) => match w
+                    .try_scm_changed_since(&root, &branch, &["rs", "ts", "py", "sprf"])
+                    .await
+                {
+                    Ok(Some(files)) => (true, Some(files.len())),
+                    Ok(None) => (true, None),
+                    Err(e) => {
+                        tracing::warn!(%e, "watchman scm query failed; continuing without it");
+                        (true, None)
+                    }
+                },
+                Err(e) => {
+                    tracing::info!(
+                        %e,
+                        "watchman unreachable; pre-warm degrades to scan only (install: brew install watchman)",
+                    );
+                    (false, None)
+                }
+            };
+
+        for (uri, text) in to_open {
+            let _ = self
+                .lsp_open(LspOpenReq {
+                    uri,
+                    text,
+                    version: 0,
+                })
+                .await;
+        }
+
+        Ok(LspPreWarmResp {
+            source_uris,
+            watchman_ok,
+            scm_changed_count,
+        })
     }
     async fn get_inlays(&self, req: GetInlaysReq) -> Result<Vec<InlayProbe>, SprfError> {
         let docs = self.docs.lock().unwrap();

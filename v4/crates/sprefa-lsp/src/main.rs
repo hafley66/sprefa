@@ -50,10 +50,14 @@ mod semantic;
 use v4::app::{
     build_in_process, GetInlaysReq, HttpClient,
     LspChangeReq, LspCloseReq, LspCompletionReq, LspDefinitionReq, LspDiagsByUriReq, LspHoverReq,
-    LspLocateDslReq, LspLocateDslResp, LspOpenReq, SprfClient, SprfDiag,
+    LspLocateDslReq, LspLocateDslResp, LspOpenReq, LspPreWarmReq, SprfClient, SprfDiag,
 };
 
 struct Backend {
+    inner: Arc<BackendInner>,
+}
+
+struct BackendInner {
     client: Client,
     sprf:   Mutex<Arc<dyn SprfClient>>,
     docs:   Mutex<HashMap<Url, DocEntry>>,
@@ -76,16 +80,35 @@ struct DocEntry {
 
 impl Backend {
     fn new(client: Client) -> Self {
-        let sprf = Self::build_client(default_root());
+        let sprf = BackendInner::build_client(default_root());
         Self {
-            client,
-            sprf: Mutex::new(sprf),
-            docs: Mutex::new(HashMap::new()),
-            pending: Mutex::new(HashMap::new()),
-            last_published: Mutex::new(HashMap::new()),
+            inner: Arc::new(BackendInner {
+                client,
+                sprf: Mutex::new(sprf),
+                docs: Mutex::new(HashMap::new()),
+                pending: Mutex::new(HashMap::new()),
+                last_published: Mutex::new(HashMap::new()),
+            }),
         }
     }
 
+    fn root_from_initialize(params: &InitializeParams) -> PathBuf {
+        params
+            .workspace_folders
+            .as_ref()
+            .and_then(|folders| folders.first())
+            .and_then(|folder| folder.uri.to_file_path().ok())
+            .or_else(|| {
+                params
+                    .root_uri
+                    .as_ref()
+                    .and_then(|uri| uri.to_file_path().ok())
+            })
+            .unwrap_or_else(default_root)
+    }
+}
+
+impl BackendInner {
     fn build_client(root: PathBuf) -> Arc<dyn SprfClient> {
         match std::env::var("SPREFA_LSP_DAEMON_URL") {
             Ok(base) if !base.trim().is_empty() => Arc::new(HttpClient::new(base)),
@@ -108,21 +131,6 @@ impl Backend {
             return;
         }
         *self.sprf.lock().await = Self::build_client(root);
-    }
-
-    fn root_from_initialize(params: &InitializeParams) -> PathBuf {
-        params
-            .workspace_folders
-            .as_ref()
-            .and_then(|folders| folders.first())
-            .and_then(|folder| folder.uri.to_file_path().ok())
-            .or_else(|| {
-                params
-                    .root_uri
-                    .as_ref()
-                    .and_then(|uri| uri.to_file_path().ok())
-            })
-            .unwrap_or_else(default_root)
     }
 
     /// Push doc through the sprf RPC, then publish converted diags.
@@ -258,10 +266,46 @@ impl Backend {
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> RpcResult<InitializeResult> {
         let root = Self::root_from_initialize(&params);
-        self.set_workspace_root(root.clone()).await;
-        self.client
+        self.inner.set_workspace_root(root.clone()).await;
+        self.inner.client
             .log_message(MessageType::INFO, format!("sprefa-lsp root {}", root.display()))
             .await;
+
+        // Phase 3: kick off SCM-aware pre-warm in the background so the
+        // initialize response stays fast. Once pre-warm finishes the
+        // spawned task drives `refresh` per warmed URI, which publishes
+        // diagnostics on the target files via the existing Phase 2 path.
+        let inner = self.inner.clone();
+        let pre_warm_root = root.clone();
+        tokio::spawn(async move {
+            let sprf = inner.sprf().await;
+            let resp = match sprf
+                .lsp_pre_warm(LspPreWarmReq {
+                    root: pre_warm_root,
+                    scm_branch: "main".to_string(),
+                })
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(%e, "lsp_pre_warm failed");
+                    return;
+                }
+            };
+            tracing::info!(
+                warmed = resp.source_uris.len(),
+                watchman_ok = resp.watchman_ok,
+                scm_changed = ?resp.scm_changed_count,
+                "pre-warm complete",
+            );
+            for uri_str in resp.source_uris {
+                let Ok(uri) = Url::parse(&uri_str) else { continue };
+                let Ok(path) = uri.to_file_path() else { continue };
+                let Ok(text) = tokio::fs::read_to_string(&path).await else { continue };
+                inner.refresh(uri, text, 0, true).await;
+            }
+        });
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -306,7 +350,7 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.client.log_message(MessageType::INFO, "sprefa-lsp ready").await;
+        self.inner.client.log_message(MessageType::INFO, "sprefa-lsp ready").await;
     }
 
     async fn shutdown(&self) -> RpcResult<()> { Ok(()) }
@@ -319,7 +363,7 @@ impl LanguageServer for Backend {
         // a non-LSP shell wants the same data.
         let uri = params.text_document.uri;
         let text = {
-            let g = self.docs.lock().await;
+            let g = self.inner.docs.lock().await;
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
         let data = semantic::tokens_for(&text);
@@ -333,10 +377,10 @@ impl LanguageServer for Backend {
     ) -> RpcResult<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
         let text = {
-            let g = self.docs.lock().await;
+            let g = self.inner.docs.lock().await;
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
-        let sprf = self.sprf().await;
+        let sprf = self.inner.sprf().await;
         let probes = match sprf.get_inlays(GetInlaysReq {
             uri: uri.to_string(),
         }).await {
@@ -364,11 +408,11 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         let text = {
-            let g = self.docs.lock().await;
+            let g = self.inner.docs.lock().await;
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
         let host_byte = position_to_byte(&text, pos);
-        let sprf = self.sprf().await;
+        let sprf = self.inner.sprf().await;
         let resp = match sprf.lsp_hover(LspHoverReq {
             uri:  uri.to_string(),
             byte: host_byte as u32,
@@ -389,11 +433,11 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
         let text = {
-            let g = self.docs.lock().await;
+            let g = self.inner.docs.lock().await;
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
         let host_byte = position_to_byte(&text, pos);
-        let sprf = self.sprf().await;
+        let sprf = self.inner.sprf().await;
         let hit: LspLocateDslResp = match sprf.lsp_locate_dsl(LspLocateDslReq {
             uri:  uri.to_string(),
             byte: host_byte as u32,
@@ -434,11 +478,11 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         let text = {
-            let g = self.docs.lock().await;
+            let g = self.inner.docs.lock().await;
             match g.get(&uri) { Some(e) => e.text.clone(), None => return Ok(None) }
         };
         let host_byte = position_to_byte(&text, pos);
-        let sprf = self.sprf().await;
+        let sprf = self.inner.sprf().await;
         let resp = match sprf.lsp_definition(LspDefinitionReq {
             uri: uri.to_string(),
             byte: host_byte as u32,
@@ -460,7 +504,7 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let td = params.text_document;
-        self.refresh(td.uri, td.text, td.version, true).await;
+        self.inner.refresh(td.uri, td.text, td.version, true).await;
     }
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
@@ -470,22 +514,22 @@ impl LanguageServer for Backend {
             Some(c) => c.text,
             None    => return,
         };
-        self.refresh(uri, text, version, false).await;
+        self.inner.refresh(uri, text, version, false).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        let sprf = self.sprf().await;
+        let sprf = self.inner.sprf().await;
         let _ = sprf.lsp_close(LspCloseReq { uri: uri.to_string() }).await;
-        { let mut g = self.docs.lock().await; g.remove(&uri); }
+        { let mut g = self.inner.docs.lock().await; g.remove(&uri); }
         let cross_targets = {
-            let mut g = self.last_published.lock().await;
+            let mut g = self.inner.last_published.lock().await;
             g.remove(&uri).unwrap_or_default()
         };
-        self.client.publish_diagnostics(uri.clone(), Vec::new(), None).await;
+        self.inner.client.publish_diagnostics(uri.clone(), Vec::new(), None).await;
         for prev in cross_targets {
             if prev != uri {
-                self.client.publish_diagnostics(prev, Vec::new(), None).await;
+                self.inner.client.publish_diagnostics(prev, Vec::new(), None).await;
             }
         }
     }
