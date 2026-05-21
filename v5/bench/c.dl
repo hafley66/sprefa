@@ -1,0 +1,14 @@
+# ast-grep extraction bench (C) — the linux-checkout equivalent.
+# Point bench/run.sh at a Linux kernel checkout:
+#   bench/run.sh bench/c.dl /path/to/linux
+# C function-definition patterns are best-effort (return types vary widely);
+# refine the def patterns for the codebase you target.
+
+rel def(NAME: text, path: file, line: int).
+rel call(CALLEE: text, path: file, line: int).
+
+def(NAME, path, line) <- scan("WORK", "**/*.c", path, rev), sg(path, rev, :c, "$RET $NAME($$$PARAMS) { $$$BODY }", line).
+call(CALLEE, path, line) <- scan("WORK", "**/*.c", path, rev), sg(path, rev, :c, "$CALLEE($$$ARGS)", line).
+
+? def(NAME, path, line).
+? call(CALLEE, path, line).

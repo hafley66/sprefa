@@ -1,0 +1,56 @@
+# v5 (dl) — datalog over files in repo/rev/time
+# `just` runs from this directory. `repo` is the sprefa root (parent of v5).
+
+repo := justfile_directory() / ".."
+
+# list recipes
+default:
+    @just --list
+
+# debug build
+build:
+    cargo build
+
+# release build
+release:
+    cargo build --release
+
+# run any example by name (without .dl): `just ex callgraph-sg`
+ex name="callgraph-ast":
+    cargo run --bin dl -- examples/{{name}}.dl --root {{repo}}
+
+# the AST (tree-sitter) call graph
+callgraph-ast:
+    cargo run --bin dl -- examples/callgraph-ast.dl --root {{repo}}
+
+# the ast-grep call graph
+callgraph-sg:
+    cargo run --bin dl -- examples/callgraph-sg.dl --root {{repo}}
+
+# openapi coverage: json + regex + anti-join
+openapi:
+    cargo run --bin dl -- examples/openapi.dl --root {{repo}}
+
+# WORK vs HEAD diff across git revs
+time:
+    cargo run --bin dl -- examples/time.dl --root {{repo}}
+
+# watch an example live; edit a source file and watch facts re-tick
+watch name="callgraph-ast":
+    cargo run --bin dl -- examples/{{name}}.dl --db /tmp/dl-{{name}}.db --root {{repo}} --watch
+
+# ast-grep extraction bench (timing + peak RSS), cold then warm
+bench prog="bench/rust.dl" root=repo:
+    bash bench/run.sh {{prog}} {{root}}
+
+# v4 linux bench equivalent: count printk() call sites
+# local stand-in fixture:
+bench-printk:
+    bash bench/run.sh bench/printk.dl bench/linux-sim
+# real kernel:  just bench-printk-on /path/to/linux
+bench-printk-on linux:
+    bash bench/run.sh bench/printk.dl {{linux}}
+
+# remove scratch dbs
+clean-db:
+    rm -f /tmp/dl-*.db* /tmp/dlbench.db*

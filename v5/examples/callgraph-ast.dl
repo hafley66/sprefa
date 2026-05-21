@@ -1,0 +1,33 @@
+# Call graph of dl's own source, this time via tree-sitter AST queries
+# instead of regex. def = a real function_item; call = a real call_expression
+# whose callee is a bare identifier (so Vec::new() and method calls do NOT
+# pollute it). This is "graph queries on the AST": the strings in quotes are
+# S-expression patterns matched against the syntax tree.
+
+rel def(name: text, path: file, line: int).
+rel call(callee: text, path: file, line: int).
+rel calls(caller: text, callee: text).
+rel reaches(src: text, dst: text).
+rel unused(name: text).
+
+def(name, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(function_item name: (identifier) @name)", line).
+
+call(callee, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(call_expression function: (identifier) @callee)", line).
+
+calls(caller, callee) <-
+  def(caller, p, _),
+  call(callee, p, _),
+  def(callee, _, _),
+  caller != callee.
+
+reaches(src, dst) <- calls(src, dst).
+reaches(src, dst) <- reaches(src, mid), calls(mid, dst).
+
+unused(name) <- def(name, _, _), !call(name, _, _).
+
+? unused(name).
+? reaches(src, dst) where src = "run".

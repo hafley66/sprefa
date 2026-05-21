@@ -1,0 +1,16 @@
+# v4 linux-bench equivalent: find every printk() call site in a C tree.
+# One source rule, so "files parsed" is the true file count.
+#
+# Point it at a kernel checkout:
+#   bench/run.sh bench/printk.dl /path/to/linux
+# Locally it runs against bench/linux-sim (a tiny stand-in) via the justfile.
+
+rel printk(path: file, line: int).
+
+# The trailing `;` makes the pattern an expression statement; bare
+# `printk($$$)` is ambiguous in C (looks like a declaration) and matches nothing.
+printk(path, line) <-
+  scan("WORK", "**/*.c", path, rev),
+  sg(path, rev, :c, "printk($$$ARGS);", line).
+
+? printk(path, line).

@@ -1,0 +1,7 @@
+{
+  "paths": {
+    "/users":      { "get":  { "operationId": "listUsers" } },
+    "/users/{id}": { "get":  { "operationId": "getUser" } },
+    "/orders":     { "post": { "operationId": "createOrder" } }
+  }
+}

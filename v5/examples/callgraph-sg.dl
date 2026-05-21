@@ -1,0 +1,46 @@
+# Same call graph as callgraph-ast.dl, but using ast-grep PATTERNS instead of
+# tree-sitter S-expressions. A pattern is written in the target language's own
+# syntax with $METAVARS (uppercase). The metavar binds to a dl variable of the
+# same name, so the head must use the uppercase name too.
+#
+# ast-grep patterns are structurally exact: a `pub`, an `async`, or a return
+# type is part of the shape. So "any function" is the union of four shapes.
+# Four rules with the same head union their rows. (ast-grep's other mode, a
+# YAML `kind: function_item` rule, would collapse these to one; not wired here.)
+
+rel def(NAME: text, path: file, line: int).
+rel call(CALLEE: text, path: file, line: int).
+rel calls(caller: text, callee: text).
+rel reaches(src: text, dst: text).
+rel unused(name: text).
+
+def(NAME, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  sg(path, rev, :rust, "fn $NAME($$$P) -> $R { $$$B }", line).
+def(NAME, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  sg(path, rev, :rust, "fn $NAME($$$P) { $$$B }", line).
+def(NAME, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  sg(path, rev, :rust, "pub fn $NAME($$$P) -> $R { $$$B }", line).
+def(NAME, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  sg(path, rev, :rust, "pub fn $NAME($$$P) { $$$B }", line).
+
+call(CALLEE, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  sg(path, rev, :rust, "$CALLEE($$$A)", line).
+
+calls(caller, callee) <-
+  def(caller, p, _),
+  call(callee, p, _),
+  def(callee, _, _),
+  caller != callee.
+
+reaches(src, dst) <- calls(src, dst).
+reaches(src, dst) <- reaches(src, mid), calls(mid, dst).
+
+unused(name) <- def(name, _, _), !call(name, _, _).
+
+? unused(name).
+? reaches(src, dst) where src = "run".

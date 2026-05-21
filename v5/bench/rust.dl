@@ -1,0 +1,21 @@
+# ast-grep extraction throughput bench (Rust).
+# Scans every Rust file at WORK and extracts function defs (4 shapes) and call
+# sites with ast-grep patterns. Run under bench/run.sh, which wraps it in
+# /usr/bin/time -l to read wall time and peak RSS.
+#
+# Note: each sg(...) re-parses the file, so this does 5 ast-grep parses per
+# file. That is the honest cost today; a per-(file,lang) parse cache is the
+# obvious optimization the bench is here to justify.
+
+rel def(NAME: text, path: file, line: int).
+rel call(CALLEE: text, path: file, line: int).
+
+def(NAME, path, line) <- scan("WORK", "**/*.rs", path, rev), sg(path, rev, :rust, "fn $NAME($$$P) -> $R { $$$B }", line).
+def(NAME, path, line) <- scan("WORK", "**/*.rs", path, rev), sg(path, rev, :rust, "fn $NAME($$$P) { $$$B }", line).
+def(NAME, path, line) <- scan("WORK", "**/*.rs", path, rev), sg(path, rev, :rust, "pub fn $NAME($$$P) -> $R { $$$B }", line).
+def(NAME, path, line) <- scan("WORK", "**/*.rs", path, rev), sg(path, rev, :rust, "pub fn $NAME($$$P) { $$$B }", line).
+
+call(CALLEE, path, line) <- scan("WORK", "**/*.rs", path, rev), sg(path, rev, :rust, "$CALLEE($$$A)", line).
+
+? def(NAME, path, line).
+? call(CALLEE, path, line).

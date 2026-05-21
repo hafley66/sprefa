@@ -1,0 +1,19 @@
+# The time axis: same pattern run against two revs of the tree, then an
+# anti-join across rev. added = functions present in the working tree but not
+# at git HEAD. (v5/src is untracked, so HEAD has none: every fn reads as added.)
+
+rel work_fn(name: text).
+rel head_fn(name: text).
+rel added(name: text).
+
+work_fn(name) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  match(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
+
+head_fn(name) <-
+  scan("HEAD", "v5/src/**/*.rs", path, rev),
+  match(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
+
+added(name) <- work_fn(name), !head_fn(name).
+
+? added(name).
