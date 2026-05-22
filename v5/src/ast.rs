@@ -73,6 +73,8 @@ pub enum BodyItem {
     Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term },
     Json { path: Term, rev: Term, jpath: String, out: Term },
     Cmp(Constraint),
+    /// Transitive closure of an edge relation, e.g. `reaches(a,b) <- closure(calls).`
+    Closure { rel: String },
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +85,14 @@ impl Rule {
         self.body.iter().any(|b| matches!(b,
             BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
             | BodyItem::Sg { .. } | BodyItem::Json { .. }))
+    }
+
+    /// Some(edge) iff this rule is exactly `head(..) <- closure(edge).`
+    pub fn closure_edge(&self) -> Option<&str> {
+        match self.body.as_slice() {
+            [BodyItem::Closure { rel }] => Some(rel),
+            _ => None,
+        }
     }
 }
 

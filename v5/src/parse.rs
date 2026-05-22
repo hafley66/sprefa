@@ -124,6 +124,7 @@ impl Parser {
             if s == "ast" { return self.ast(); }
             if s == "sg" { return self.sg(); }
             if s == "json" { return self.json(); }
+            if s == "closure" { return self.closure(); }
             // relation atom vs constraint: lookahead for '('
             if matches!(self.peek2(), Some(Tok::LParen)) {
                 return Ok(BodyItem::Pos(self.atom()?));
@@ -207,6 +208,14 @@ impl Parser {
         let out = self.term()?;
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Json { path, rev, jpath, out })
+    }
+
+    fn closure(&mut self) -> Result<BodyItem> {
+        self.ident()?; // closure
+        self.expect(Tok::LParen)?;
+        let rel = self.ident()?;
+        self.expect(Tok::RParen)?;
+        Ok(BodyItem::Closure { rel })
     }
 
     fn constraint(&mut self) -> Result<Constraint> {

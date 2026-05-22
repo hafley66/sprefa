@@ -23,8 +23,7 @@ calls(caller, callee) <-
   def(callee, _, _),
   caller != callee.
 
-reaches(src, dst) <- calls(src, dst).
-reaches(src, dst) <- reaches(src, mid), calls(mid, dst).
+reaches(src, dst) <- closure(calls).
 
 unused(name) <- def(name, _, _), !calls(_, name).
 

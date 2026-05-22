@@ -9,6 +9,45 @@ use std::sync::OnceLock;
 
 use crate::ast::*;
 use crate::lower::{lower_query, lower_rule, tbl};
+use crate::scc;
+
+fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
+fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
+
+/// head relation -> edge relation, for every `head(..) <- closure(edge).` rule.
+fn closure_map(rules: &[&Rule]) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for r in rules {
+        if let Some(edge) = r.closure_edge() { m.insert(r.head.rel.clone(), edge.to_string()); }
+    }
+    m
+}
+
+/// Unique edge relations across all closure heads (one condensation per graph).
+fn dedup_edges(closures: &HashMap<String, String>) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    for e in closures.values() { if !out.contains(&e.as_str()) { out.push(e.as_str()); } }
+    out
+}
+
+/// Closure heads are rebuilt *after* the derived fixpoint, so a derived rule body
+/// that reads one would see stale/empty data in the same tick. Reject it (queries
+/// run last and are fine; only rule bodies are stratified wrong).
+fn check_stratification(derived_rules: &[&Rule], closures: &HashMap<String, String>) -> Result<()> {
+    for r in derived_rules {
+        for item in &r.body {
+            if let BodyItem::Pos(a) | BodyItem::Neg(a) = item {
+                if closures.contains_key(&a.rel) {
+                    bail!("rule '{}' reads closure relation '{}' in its body; closures are \
+                           rebuilt after the derived fixpoint and cannot be consumed by a rule \
+                           in the same tick (queries can). Materialize '{}' into a base relation \
+                           first, or query it directly.", r.head.rel, a.rel, a.rel);
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 type Bind = HashMap<String, Value>;
 /// (path, rev) -> (content hash, mtime secs, size bytes)
@@ -62,16 +101,17 @@ impl Engine {
     /// derived only if a source fact changed, then run queries.
     pub fn tick(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         self.rev_cache.clear();
-        for item in &prog.items {
-            if let Item::Rel(d) = item { self.declare(d)?; }
-        }
-        self.ensure_meta()?;
-
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i {
             Item::Rule(r) => Some(r), _ => None,
         }).collect();
+        let closures = closure_map(&rules);
+        self.declare_all(prog, &closures)?;
+        self.ensure_meta()?;
+
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
-        let derived_rules: Vec<&Rule> = rules.iter().copied().filter(|r| !r.is_source()).collect();
+        // derived = neither source nor a closure rule (closures bypass lower_rule).
+        let derived_rules: Vec<&Rule> = rules.iter().copied()
+            .filter(|r| !r.is_source() && r.closure_edge().is_none()).collect();
 
         // source rels are heads of source rules; they get incremental retraction.
         let mut source_rels: Vec<String> = Vec::new();
@@ -82,6 +122,8 @@ impl Engine {
         for r in &derived_rules {
             if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); }
         }
+        let edges: Vec<&str> = dedup_edges(&closures);
+        check_stratification(&derived_rules, &closures)?;
 
         let t_src = std::time::Instant::now();
         let recon = self.reconcile_sources(&source_rules, &source_rels)?;
@@ -89,21 +131,9 @@ impl Engine {
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
-        if changed || self.any_derived_empty(&derived_rels)? {
-            for rel in &derived_rels {
-                self.conn.execute(&format!("DELETE FROM {}", tbl(rel)), [])?;
-            }
-            let mut iters = 0;
-            loop {
-                let mut delta = 0usize;
-                for r in &derived_rules {
-                    let sql = lower_rule(r, &self.rels)?;
-                    delta += self.conn.execute(&sql, [])?;
-                }
-                iters += 1;
-                if delta == 0 { break; }
-                if iters > 100_000 { bail!("fixpoint did not converge"); }
-            }
+        if changed || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)? {
+            self.rebuild_derived(&derived_rules, &derived_rels)?;
+            self.rebuild_closures(&edges)?;
         }
         let der_ms = t_der.elapsed().as_secs_f64() * 1000.0;
 
@@ -127,16 +157,20 @@ impl Engine {
     /// tree. Only WORK source rules participate; route git-rev changes to `tick`.
     pub fn tick_paths(&mut self, prog: &Program, changed: &[PathBuf], quiet: bool) -> Result<()> {
         self.rev_cache.clear();
-        for item in &prog.items { if let Item::Rel(d) = item { self.declare(d)?; } }
+        let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
+        let closures = closure_map(&rules);
+        self.declare_all(prog, &closures)?;
         self.ensure_meta()?;
 
-        let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
-        let derived_rules: Vec<&Rule> = rules.iter().copied().filter(|r| !r.is_source()).collect();
+        let derived_rules: Vec<&Rule> = rules.iter().copied()
+            .filter(|r| !r.is_source() && r.closure_edge().is_none()).collect();
         let mut source_rels: Vec<String> = Vec::new();
         for r in &source_rules { if !source_rels.contains(&r.head.rel) { source_rels.push(r.head.rel.clone()); } }
         let mut derived_rels: Vec<String> = Vec::new();
         for r in &derived_rules { if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); } }
+        let edges: Vec<&str> = dedup_edges(&closures);
+        check_stratification(&derived_rules, &closures)?;
 
         // WORK source rules with compiled glob matchers
         let mut work_rules: Vec<(&Rule, globset::GlobMatcher)> = Vec::new();
@@ -182,16 +216,9 @@ impl Engine {
             }
         }
 
-        if changed_facts || self.any_derived_empty(&derived_rels)? {
-            for rel in &derived_rels { self.conn.execute(&format!("DELETE FROM {}", tbl(rel)), [])?; }
-            let mut iters = 0;
-            loop {
-                let mut delta = 0usize;
-                for r in &derived_rules { delta += self.conn.execute(&lower_rule(r, &self.rels)?, [])?; }
-                iters += 1;
-                if delta == 0 { break; }
-                if iters > 100_000 { bail!("fixpoint did not converge"); }
-            }
+        if changed_facts || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)? {
+            self.rebuild_derived(&derived_rules, &derived_rels)?;
+            self.rebuild_closures(&edges)?;
         }
 
         if !quiet {
@@ -249,8 +276,8 @@ impl Engine {
             if !current.contains_key(key) { to_retract.insert(key.0.clone()); }
         }
 
-        let mut retracted = 0usize;
-        for path in &to_retract { retracted += self.retract_path(path, source_rels)?; }
+        let retract_list: Vec<&str> = to_retract.iter().map(|s| s.as_str()).collect();
+        let retracted = self.retract_paths(&retract_list, source_rels)?;
 
         let to_extract: Vec<(usize, String, String)> = rule_files.iter()
             .filter(|(_, p, r, h)| hash_of(&prev, p, r).as_ref() != Some(h))
@@ -289,7 +316,18 @@ impl Engine {
     }
 
     fn retract_path(&self, path: &str, source_rels: &[String]) -> Result<usize> {
-        self.conn.execute("DELETE FROM _prov WHERE path = ?1", [path])?;
+        self.retract_paths(&[path], source_rels)
+    }
+
+    /// Retract every row sourced only from these paths. Prune `_prov` for all
+    /// paths first, then run the orphan sweep once per relation (not once per
+    /// path): a row survives iff some remaining path still provides its `__src`.
+    /// Turns the old O(paths x rels x table) into O(rels x table).
+    fn retract_paths(&self, paths: &[&str], source_rels: &[String]) -> Result<usize> {
+        if paths.is_empty() { return Ok(0); }
+        for path in paths {
+            self.conn.execute("DELETE FROM _prov WHERE path = ?1", [path])?;
+        }
         let mut removed = 0usize;
         for rel in source_rels {
             let sql = format!(
@@ -336,6 +374,127 @@ impl Engine {
         );
         self.conn.execute(&sql, [])?;
         self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
+        Ok(())
+    }
+
+    /// Declare every relation: closure heads become a VIEW over the condensation,
+    /// everything else a base table.
+    fn declare_all(&mut self, prog: &Program, closures: &HashMap<String, String>) -> Result<()> {
+        for item in &prog.items {
+            if let Item::Rel(d) = item {
+                match closures.get(&d.name) {
+                    Some(edge) => self.declare_closure(d, edge)?,
+                    None => self.declare(d)?,
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A closure head `rel_<head>` is a recursive-CTE view over the condensation
+    /// tables of its edge relation. The view yields cross-component reach plus
+    /// same-cyclic-component pairs (so a node on a cycle reaches itself).
+    fn declare_closure(&mut self, d: &RelDecl, edge: &str) -> Result<()> {
+        if d.cols.len() != 2 { bail!("closure head {} must have 2 columns", d.name); }
+        self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
+        let (nt, et, v) = (scc_node_tbl(edge), scc_edge_tbl(edge), tbl(&d.name));
+        self.conn.execute_batch(&format!(
+            "CREATE TABLE IF NOT EXISTS {nt} (name TEXT PRIMARY KEY, comp INTEGER, cyclic INTEGER);
+             CREATE TABLE IF NOT EXISTS {et} (comp_src INTEGER, comp_dst INTEGER, PRIMARY KEY(comp_src, comp_dst));"
+        ))?;
+        // a prior run may have left rel_<head> as a view or a real table; clear both.
+        self.conn.execute(&format!("DROP VIEW IF EXISTS {v}"), [])?;
+        self.conn.execute(&format!("DROP TABLE IF EXISTS {v}"), [])?;
+        let (c0, c1) = (&d.cols[0].name, &d.cols[1].name);
+        self.conn.execute_batch(&format!(
+            "CREATE VIEW {v} AS
+             WITH RECURSIVE cr(a, b) AS (
+               SELECT comp_src, comp_dst FROM {et}
+               UNION
+               SELECT cr.a, e.comp_dst FROM cr JOIN {et} e ON e.comp_src = cr.b
+             )
+             SELECT na.name AS \"{c0}\", nb.name AS \"{c1}\"
+               FROM cr JOIN {nt} na ON na.comp = cr.a JOIN {nt} nb ON nb.comp = cr.b
+             UNION
+             SELECT na.name AS \"{c0}\", nb.name AS \"{c1}\"
+               FROM {nt} na JOIN {nt} nb ON na.comp = nb.comp AND na.cyclic = 1;"
+        ))?;
+        Ok(())
+    }
+
+    /// Wipe derived tables and run the semi-naive fixpoint to convergence.
+    fn rebuild_derived(&self, derived_rules: &[&Rule], derived_rels: &[String]) -> Result<()> {
+        for rel in derived_rels { self.conn.execute(&format!("DELETE FROM {}", tbl(rel)), [])?; }
+        let mut iters = 0;
+        loop {
+            let mut delta = 0usize;
+            for r in derived_rules { delta += self.conn.execute(&lower_rule(r, &self.rels)?, [])?; }
+            iters += 1;
+            if delta == 0 { break; }
+            if iters > 100_000 { bail!("fixpoint did not converge"); }
+        }
+        Ok(())
+    }
+
+    fn any_closure_empty(&self, edges: &[&str]) -> Result<bool> {
+        for edge in edges {
+            let n: i64 = self.conn.query_row(
+                &format!("SELECT COUNT(*) FROM {}", scc_node_tbl(edge)), [], |r| r.get(0))?;
+            if n == 0 { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// Load a 2-col edge relation, intern node names to dense u32 (transient),
+    /// return adjacency + id->name. No persistent interning (see plan).
+    fn load_edges(&self, edge: &str, c0: &str, c1: &str) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
+        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", tbl(edge));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut intern: HashMap<String, u32> = HashMap::new();
+        let mut names: Vec<String> = Vec::new();
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows.flatten() {
+            let mut id = |s: String| -> u32 {
+                if let Some(&i) = intern.get(&s) { return i; }
+                let i = names.len() as u32; intern.insert(s.clone(), i); names.push(s); i
+            };
+            let a = id(row.0); let b = id(row.1);
+            pairs.push((a, b));
+        }
+        let mut adj = vec![Vec::new(); names.len()];
+        for (a, b) in pairs { adj[a as usize].push(b); }
+        Ok((adj, names))
+    }
+
+    /// For each edge relation: condense, then replace its scc_node/scc_edge tables.
+    /// The closure VIEW reads these; the Theta(V^2) pair table is never built.
+    fn rebuild_closures(&self, edges: &[&str]) -> Result<()> {
+        for edge in edges {
+            let meta = self.rels.get(*edge)
+                .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
+            if meta.cols.len() != 2 { bail!("closure edge {edge} must have 2 columns"); }
+            let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
+            let (adj, names) = self.load_edges(edge, &c0, &c1)?;
+            let cond = scc::build_condensed(&adj);
+            let (nt, et) = (scc_node_tbl(edge), scc_edge_tbl(edge));
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute(&format!("DELETE FROM {nt}"), [])?;
+            tx.execute(&format!("DELETE FROM {et}"), [])?;
+            {
+                let mut ins = tx.prepare(&format!("INSERT INTO {nt}(name, comp, cyclic) VALUES (?1, ?2, ?3)"))?;
+                for (id, name) in names.iter().enumerate() {
+                    let comp = cond.comp[id] as i64;
+                    let cyc = cond.cyclic[cond.comp[id] as usize] as i64;
+                    ins.execute(rusqlite::params![name, comp, cyc])?;
+                }
+                let mut ins_e = tx.prepare(&format!("INSERT OR IGNORE INTO {et}(comp_src, comp_dst) VALUES (?1, ?2)"))?;
+                for (cu, succ) in cond.cadj.iter().enumerate() {
+                    for &cw in succ { ins_e.execute(rusqlite::params![cu as i64, cw as i64])?; }
+                }
+            }
+            tx.commit()?;
+        }
         Ok(())
     }
 

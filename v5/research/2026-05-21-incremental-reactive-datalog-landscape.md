@@ -472,6 +472,47 @@ Side note: the file-scoped `calls` heuristic over-connects into one giant SCC
 (most functions share a reach set) — the live argument for a sparser AST-resolved
 `calls` extraction, which compounds with the SCC structural fix.
 
+## Wiring result (2026-05-21): SCC folded into the engine
+
+`scc_reach` lifted to `src/scc.rs` (pure graph) and wired into `tick`/`tick_paths`.
+Explicit surface, no auto-detection: `reaches(a,b) <- closure(calls).` declares a
+transitive closure. `reaches` becomes a SQL VIEW over per-edge condensation tables
+`scc_node_<edge>(name,comp,cyclic)` + `scc_edge_<edge>(comp_src,comp_dst)`; the
+recursive INSERT fixpoint is skipped for closure heads.
+
+**Parity proven** on the sprefa Rust call graph: old recursive `reaches` vs SCC
+view produce **identical 6508-row closures** (sqlite diff empty). Derived step
+**304.7ms -> 7.4ms** even on this tiny graph. Cross-check: engine view (6508) ==
+standalone `scc_reach` count (6508) == naive. Condensation exposes the megablob:
+85 nodes, 5 components, **one SCC of 77**, 83/85 cyclic.
+
+## E6 result (2026-05-21): the VIEW does NOT seed point queries
+
+The reaches VIEW is a recursive CTE over `scc_edge`. SQLite **cannot push an outer
+`WHERE src=?` into the recursive seed** — the CTE always materializes the *entire*
+component-level closure `cr`, then the node filter applies afterward. So the view's
+cost is governed by the size of `cr` (the condensed transitive closure), not by the
+point filter.
+
+| condensation | point query `reaches WHERE src=?` |
+|---|---|
+| megablob today (5 comps) | ~0 ms (cr is trivially small) |
+| synthetic deep DAG (8000 comps, 23.5k condensed edges) | **>30 s, timed out** |
+| same, Rust `reaches_from` (seeded BFS) | ~µs (proven: kernel `reaches(run)`=942 in 7µs) |
+
+**Decision gate resolves to (b):** point/seeded queries (LSP call-hierarchy from a
+cursor) must use Rust `scc::reaches_from` over the in-memory/loaded condensation,
+which IS seeded. The VIEW is correct and fine for (i) the megablob today, and (ii)
+genuine full-closure / anti-join consumers that pay for all pairs anyway. The view
+becomes a trap exactly when the condensation gets deep — i.e. **after E5**. So E5
+(sparser AST-resolved `calls`) and the Rust seeded point-query path land together;
+shipping E5 without the Rust path would regress point queries from µs to seconds.
+
+Note the irony confirmed here: fixing the megablob (E5) makes the condensed DAG
+*deeper*, so it makes the VIEW *slower* for point queries while making meaning
+correct. The condensation is still Θ(condensed) << Θ(V²); the fix is the query
+path, not the storage.
+
 ## Agent handles (for follow-up via SendMessage)
 - incremental datalog + Soufflé: `a7b2b8b8d37531ddf`
 - DBSP / differential dataflow: `a9096a9201a2e285f`
