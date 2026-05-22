@@ -16,6 +16,7 @@ of curiosity.
 4. [Incremental maintenance](04-incremental-maintenance.md) — inserts vs deletes, ownership, the source/derived split.
 5. [Where the bytes live](05-where-bytes-live.md) — storage engines vs databases, the bounded-RSS discipline, the zoo.
 6. [Gold standards and your engine](06-gold-standards-and-your-engine.md) — Glean, Zoekt, and how `dl` is the same ideas.
+7. [The fast paths](07-the-fast-paths.md) — the loops that make it scale: semi-naive fixpoint, Tarjan/condensation, seeded reachability, stratification, auto-index, with citations and exercises.
 
 ## The running example (used in every chapter)
 
