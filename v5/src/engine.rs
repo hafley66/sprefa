@@ -972,7 +972,8 @@ fn eval_cmp(c: &Constraint, b: &Bind) -> Result<bool> {
 fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
     match lang {
         "rust" | "rs" => Ok(tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)),
-        other => bail!("no ast grammar for :{other} (compiled in: rust)"),
+        "c" => Ok(tree_sitter::Language::new(tree_sitter_c::LANGUAGE)),
+        other => bail!("no ast grammar for :{other} (compiled in: rust, c)"),
     }
 }
 

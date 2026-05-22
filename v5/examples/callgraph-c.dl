@@ -1,0 +1,36 @@
+# Resolved call graph for C, e.g. the Linux kernel. Same shape as
+# callgraph-resolved.dl, with C tree-sitter node types:
+#   function span:  (function_definition declarator: (function_declarator
+#                      declarator: (identifier) @name)) @fn
+#   call site:      (call_expression function: (identifier) @callee)
+# Point the glob at a kernel subtree and run with --root /path/to/linux.
+
+rel fndef(name: text, path: file, s: int, e: int).
+rel callsite(callee: text, path: file, line: int).
+rel calls(caller: text, callee: text).
+rel reaches(src: text, dst: text).
+rel unused(name: text).
+
+fndef(name, path, s, e) <-
+  scan("WORK", "kernel/**/*.c", path, rev),
+  ast(path, rev, :c, "(function_definition declarator: (function_declarator declarator: (identifier) @name)) @fn", s, e).
+
+callsite(callee, path, line) <-
+  scan("WORK", "kernel/**/*.c", path, rev),
+  ast(path, rev, :c, "(call_expression function: (identifier) @callee)", line).
+
+calls(caller, callee) <-
+  fndef(caller, p, s, e),
+  callsite(callee, p, l),
+  s <= l, l <= e,
+  fndef(callee, _, _, _).
+
+reaches(src, dst) <- closure(calls).
+
+unused(name) <- fndef(name, _, _, _), !calls(_, name).
+
+# panic() lives in kernel/panic.c. Forward = what panic reaches (callees),
+# reverse = who reaches panic (callers); both answered by the seeded Rust walk.
+? calls(caller, callee) where caller = "panic".
+? reaches(src, dst) where src = "panic".
+? reaches(src, dst) where dst = "panic".

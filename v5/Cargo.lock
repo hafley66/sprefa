@@ -711,6 +711,7 @@ dependencies = [
  "serde_json",
  "streaming-iterator",
  "tree-sitter",
+ "tree-sitter-c",
  "tree-sitter-rust",
 ]
 
