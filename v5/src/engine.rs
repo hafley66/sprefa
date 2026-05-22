@@ -980,6 +980,7 @@ fn parse_file(
                     .ok_or_else(|| anyhow::anyhow!("head var {v} unbound in source rule"))?,
                 Term::Str(s) => Value::Text(s.clone()),
                 Term::Int(n) => Value::Int(*n),
+                Term::Interp(parts) => interp_value(parts, &b)?,
                 Term::Wild => bail!("'_' in head not allowed"),
             };
             if !check_type(head_meta.cols[i].ty, &v, rev, root, rev_index) { dropped += 1; continue 'bind; }
@@ -1006,11 +1007,25 @@ fn var_of(t: &Term) -> Result<String> {
     match t { Term::Var(v) => Ok(v.clone()), _ => bail!("expected variable, got {t:?}") }
 }
 
+/// Build an interpolated string from bindings: `"${ty}::${name}"` -> "Foo::bar".
+fn interp_value(parts: &[InterpPart], b: &Bind) -> Result<Value> {
+    let mut s = String::new();
+    for p in parts {
+        match p {
+            InterpPart::Lit(l) => s.push_str(l),
+            InterpPart::Var(v) => s.push_str(
+                &b.get(v).ok_or_else(|| anyhow::anyhow!("unbound var {v} in interpolation"))?.as_str()),
+        }
+    }
+    Ok(Value::Text(s))
+}
+
 fn val_of(t: &Term, b: &Bind) -> Result<Value> {
     match t {
         Term::Var(v) => b.get(v).cloned().ok_or_else(|| anyhow::anyhow!("unbound var {v} in constraint")),
         Term::Str(s) => Ok(Value::Text(s.clone())),
         Term::Int(n) => Ok(Value::Int(*n)),
+        Term::Interp(parts) => interp_value(parts, b),
         Term::Wild => bail!("'_' in constraint"),
     }
 }

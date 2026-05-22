@@ -15,11 +15,26 @@ fn lit_sql(t: &Term) -> Option<String> {
     }
 }
 
+/// SQL string concatenation for an interpolated term: literals quoted, vars are
+/// the canonical column reference. `"${ty}::${name}"` -> `ty_col || '::' || name_col`.
+fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>) -> Result<String> {
+    let mut pieces = Vec::new();
+    for p in parts {
+        pieces.push(match p {
+            InterpPart::Lit(s) => format!("'{}'", esc(s)),
+            InterpPart::Var(v) => canon.get(v).cloned()
+                .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in interpolation"))?,
+        });
+    }
+    Ok(if pieces.is_empty() { "''".into() } else { pieces.join(" || ") })
+}
+
 fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
     match t {
         Term::Var(v) => canon.get(v).cloned()
             .ok_or_else(|| anyhow::anyhow!("unbound variable {v}")),
         Term::Str(_) | Term::Int(_) => Ok(lit_sql(t).unwrap()),
+        Term::Interp(parts) => interp_sql(parts, canon),
         Term::Wild => bail!("'_' not allowed here"),
     }
 }
@@ -47,6 +62,7 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
                         None => { canon.insert(v.clone(), cell); }
                     },
                     Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
+                    Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::Wild => {}
                 }
             }
@@ -79,6 +95,7 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
                         }
                     }
                     Term::Str(_) | Term::Int(_) => sub.push(format!("{cell} = {}", lit_sql(term).unwrap())),
+                    Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::Wild => {}
                 }
             }
@@ -140,6 +157,7 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
                 }
             },
             Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
+            Term::Interp(_) => bail!("interpolated string not supported in a query head"),
             Term::Wild => {}
         }
     }

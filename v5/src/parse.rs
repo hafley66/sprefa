@@ -238,6 +238,10 @@ impl Parser {
         match self.next()? {
             Tok::Ident(s) => Ok(if s == "_" { Term::Wild } else { Term::Var(s) }),
             Tok::Str(s) => Ok(Term::Str(s)),
+            Tok::InterpStr(parts) => Ok(Term::Interp(parts.into_iter().map(|p| match p {
+                crate::lex::StrPart::Lit(s) => InterpPart::Lit(s),
+                crate::lex::StrPart::Var(v) => InterpPart::Var(v),
+            }).collect())),
             Tok::Int(n) => Ok(Term::Int(n)),
             other => bail!("expected term, got {:?}", other),
         }

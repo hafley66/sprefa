@@ -1,9 +1,13 @@
 use anyhow::{bail, Result};
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum StrPart { Lit(String), Var(String) }
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
     Ident(String),
     Str(String),
+    InterpStr(Vec<StrPart>), // a "..." containing ${var} holes
     Int(i64),
     Regex(String),
     LParen, RParen, Comma, Dot, Colon, Bang, Question, Arrow,
@@ -42,16 +46,32 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                 else { out.push(Tok::Gt); i += 1; }
             }
             b'"' => {
-                let mut s = String::new();
                 i += 1;
+                let mut cur = String::new();
+                let mut parts: Vec<StrPart> = Vec::new();
+                let mut interp = false;
                 while i < b.len() && b[i] != b'"' {
                     if b[i] == b'\\' && i + 1 < b.len() {
-                        s.push(b[i + 1] as char); i += 2;
-                    } else { s.push(b[i] as char); i += 1; }
+                        cur.push(b[i + 1] as char); i += 2;
+                    } else if b[i] == b'$' && b.get(i + 1) == Some(&b'{') {
+                        interp = true;
+                        if !cur.is_empty() { parts.push(StrPart::Lit(std::mem::take(&mut cur))); }
+                        i += 2;
+                        let start = i;
+                        while i < b.len() && b[i] != b'}' { i += 1; }
+                        if i >= b.len() { bail!("unterminated ${{ in string"); }
+                        parts.push(StrPart::Var(src[start..i].to_string()));
+                        i += 1; // skip }
+                    } else { cur.push(b[i] as char); i += 1; }
                 }
                 if i >= b.len() { bail!("unterminated string"); }
                 i += 1;
-                out.push(Tok::Str(s));
+                if interp {
+                    if !cur.is_empty() { parts.push(StrPart::Lit(cur)); }
+                    out.push(Tok::InterpStr(parts));
+                } else {
+                    out.push(Tok::Str(cur));
+                }
             }
             b'/' => {
                 let mut s = String::new();

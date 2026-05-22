@@ -55,7 +55,10 @@ impl CmpOp {
 }
 
 #[derive(Clone, Debug)]
-pub enum Term { Var(String), Str(String), Int(i64), Wild }
+pub enum InterpPart { Lit(String), Var(String) }
+
+#[derive(Clone, Debug)]
+pub enum Term { Var(String), Str(String), Int(i64), Wild, Interp(Vec<InterpPart>) }
 
 #[derive(Clone, Debug)]
 pub struct Atom { pub rel: String, pub terms: Vec<Term> }
