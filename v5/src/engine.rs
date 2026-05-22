@@ -65,6 +65,74 @@ fn check_stratification(derived_rules: &[&Rule], closures: &HashMap<String, Stri
     Ok(())
 }
 
+fn intern_rel(s: &str, id: &mut HashMap<String, u32>, name: &mut Vec<String>) -> u32 {
+    if let Some(&i) = id.get(s) { return i; }
+    let i = name.len() as u32; id.insert(s.to_string(), i); name.push(s.to_string()); i
+}
+
+/// stratum(C) = max over edges C->D of (stratum(D) + 1 if that edge is negative).
+/// The condensed graph is a DAG, so this memoized recursion terminates.
+fn comp_stratum(c: usize, succ: &[Vec<(u32, u32)>], memo: &mut [u32]) -> u32 {
+    if memo[c] != u32::MAX { return memo[c]; }
+    let mut s = 0u32;
+    for &(d, w) in &succ[c] { s = s.max(comp_stratum(d as usize, succ, memo) + w); }
+    memo[c] = s;
+    s
+}
+
+/// Stratify derived rules: a rule that negates relation R lands in a stratum
+/// strictly above every rule defining R, so `!R` reads a finished relation.
+/// Returns rule indices grouped by stratum, ascending. Errors if a negation
+/// sits inside a recursive cycle (unstratifiable; positive recursion is fine).
+fn stratify(rules: &[&Rule]) -> Result<Vec<Vec<usize>>> {
+    let mut id: HashMap<String, u32> = HashMap::new();
+    let mut name: Vec<String> = Vec::new();
+    let mut edges: Vec<(u32, u32, bool)> = Vec::new(); // (head, body, negative)
+    for r in rules {
+        let h = intern_rel(&r.head.rel, &mut id, &mut name);
+        for item in &r.body {
+            let (b, neg) = match item {
+                BodyItem::Pos(a) => (intern_rel(&a.rel, &mut id, &mut name), false),
+                BodyItem::Neg(a) => (intern_rel(&a.rel, &mut id, &mut name), true),
+                _ => continue,
+            };
+            edges.push((h, b, neg));
+        }
+    }
+    let n = name.len();
+    let mut adj = vec![Vec::new(); n];
+    for &(h, b, _) in &edges { adj[h as usize].push(b); }
+    let (comp, ncomp) = scc::tarjan(&adj);
+
+    // negation inside a recursive cycle has no stratified meaning
+    for &(h, b, neg) in &edges {
+        if neg && comp[h as usize] == comp[b as usize] {
+            bail!("unstratifiable: relation '{}' is negated inside a recursive cycle", name[b as usize]);
+        }
+    }
+    // condensed edge weight: 1 if any negative edge crosses these components
+    let mut cw: HashMap<(u32, u32), u32> = HashMap::new();
+    for &(h, b, neg) in &edges {
+        let (cu, cv) = (comp[h as usize], comp[b as usize]);
+        if cu != cv {
+            let e = cw.entry((cu, cv)).or_insert(0);
+            *e = (*e).max(if neg { 1 } else { 0 });
+        }
+    }
+    let mut succ = vec![Vec::new(); ncomp];
+    for (&(cu, cv), &w) in &cw { succ[cu as usize].push((cv, w)); }
+
+    let mut memo = vec![u32::MAX; ncomp];
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (ri, r) in rules.iter().enumerate() {
+        let c = comp[id[&r.head.rel] as usize] as usize;
+        let s = comp_stratum(c, &succ, &mut memo) as usize;
+        if s >= groups.len() { groups.resize(s + 1, Vec::new()); }
+        groups[s].push(ri);
+    }
+    Ok(groups)
+}
+
 type Bind = HashMap<String, Value>;
 /// (path, rev) -> (content hash, mtime secs, size bytes)
 type FileMeta = HashMap<(String, String), (String, i64, i64)>;
@@ -452,13 +520,18 @@ impl Engine {
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.
     fn rebuild_derived(&self, derived_rules: &[&Rule], derived_rels: &[String]) -> Result<()> {
         for rel in derived_rels { self.conn.execute(&format!("DELETE FROM {}", tbl(rel)), [])?; }
-        let mut iters = 0;
-        loop {
-            let mut delta = 0usize;
-            for r in derived_rules { delta += self.conn.execute(&lower_rule(r, &self.rels)?, [])?; }
-            iters += 1;
-            if delta == 0 { break; }
-            if iters > 100_000 { bail!("fixpoint did not converge"); }
+        // Evaluate stratum by stratum: each runs a positive (monotone) semi-naive
+        // fixpoint to convergence, so a higher stratum's negation reads relations
+        // that lower strata have already finished.
+        for group in stratify(derived_rules)? {
+            let mut iters = 0;
+            loop {
+                let mut delta = 0usize;
+                for &ri in &group { delta += self.conn.execute(&lower_rule(derived_rules[ri], &self.rels)?, [])?; }
+                iters += 1;
+                if delta == 0 { break; }
+                if iters > 100_000 { bail!("fixpoint did not converge"); }
+            }
         }
         Ok(())
     }
