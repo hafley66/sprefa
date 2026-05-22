@@ -30,6 +30,22 @@ fn dedup_edges(closures: &HashMap<String, String>) -> Vec<&str> {
     out
 }
 
+/// The literal a query pins head position `pos` to, via a literal head term or a
+/// `where col = "lit"` constraint. None if that position is a free variable.
+fn pinned_value(q: &Query, pos: usize) -> Option<String> {
+    match &q.head.terms[pos] {
+        Term::Str(s) => Some(s.clone()),
+        Term::Var(v) => q.wheres.iter().find_map(|c| {
+            if c.op != CmpOp::Eq { return None; }
+            match (&c.lhs, &c.rhs) {
+                (Term::Var(lv), Term::Str(s)) | (Term::Str(s), Term::Var(lv)) if lv == v => Some(s.clone()),
+                _ => None,
+            }
+        }),
+        _ => None,
+    }
+}
+
 /// Closure heads are rebuilt *after* the derived fixpoint, so a derived rule body
 /// that reads one would see stale/empty data in the same tick. Reject it (queries
 /// run last and are fine; only rule bodies are stratified wrong).
@@ -54,6 +70,15 @@ type Bind = HashMap<String, Value>;
 type FileMeta = HashMap<(String, String), (String, i64, i64)>;
 
 struct Reconcile { changed: bool, extracted: usize, retracted: usize, parsed: usize, total: usize }
+
+/// In-memory condensation for a closure edge relation, held for the tick's query
+/// phase. A src-pinned `reaches` query becomes a seeded BFS (microseconds)
+/// instead of materializing the recursive-CTE view's whole component closure.
+struct ClosureCache {
+    cond: scc::Cond,
+    names: Vec<String>,       // node id -> name
+    id: HashMap<String, u32>, // name -> node id
+}
 
 fn mtime_secs(md: &std::fs::Metadata) -> i64 {
     md.modified().ok()
@@ -142,8 +167,9 @@ impl Engine {
                 recon.parsed, recon.total, recon.extracted, recon.retracted,
                 if changed { "rebuilt" } else { "unchanged" }, src_ms, der_ms);
         }
+        let cond_cache = self.build_cond_cache(&edges)?;
         for item in &prog.items {
-            if let Item::Query(q) = item { self.run_query(q)?; }
+            if let Item::Query(q) = item { self.run_query(q, &closures, &cond_cache)?; }
         }
         if self.dropped > 0 {
             eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
@@ -225,7 +251,8 @@ impl Engine {
             eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, derived {}",
                 if changed_facts { "rebuilt" } else { "unchanged" });
         }
-        for item in &prog.items { if let Item::Query(q) = item { self.run_query(q)?; } }
+        let cond_cache = self.build_cond_cache(&edges)?;
+        for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures, &cond_cache)?; } }
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
         Ok(())
     }
@@ -569,7 +596,57 @@ impl Engine {
         }
     }
 
-    fn run_query(&self, q: &Query) -> Result<()> {
+    /// Build the in-memory condensation for each closure edge relation, for the
+    /// query phase. One build per edge per tick (a few ms even on a large repo).
+    fn build_cond_cache(&self, edges: &[&str]) -> Result<HashMap<String, ClosureCache>> {
+        let mut m = HashMap::new();
+        for edge in edges {
+            let meta = self.rels.get(*edge)
+                .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
+            if meta.cols.len() != 2 { continue; }
+            let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
+            let (adj, names) = self.load_edges(edge, &c0, &c1)?;
+            let cond = scc::build_condensed(&adj);
+            let id = names.iter().enumerate().map(|(i, n)| (n.clone(), i as u32)).collect();
+            m.insert(edge.to_string(), ClosureCache { cond, names, id });
+        }
+        Ok(m)
+    }
+
+    /// Answer `reaches(src=SEED, dst=?)` as a seeded BFS over the condensation.
+    /// Same row set as the view's src-pinned slice, computed in microseconds.
+    fn run_reaches_point(&self, q: &Query, cc: &ClosureCache, seed: &str) -> Result<()> {
+        let meta = self.rels.get(&q.head.rel).unwrap();
+        let header = |pos: usize| match &q.head.terms[pos] {
+            Term::Var(v) => v.clone(),
+            _ => meta.col_name(pos).to_string(),
+        };
+        println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
+        let mut n = 0;
+        if let Some(&sid) = cc.id.get(seed) {
+            let mut hits: Vec<&str> = scc::reaches_from(&cc.cond, sid)
+                .iter().map(|&i| cc.names[i as usize].as_str()).collect();
+            hits.sort_unstable();
+            for h in hits { println!("  {seed}\t{h}"); n += 1; }
+        }
+        println!("  ({n} rows)\n");
+        Ok(())
+    }
+
+    fn run_query(&self, q: &Query, closures: &HashMap<String, String>,
+                 cache: &HashMap<String, ClosureCache>) -> Result<()> {
+        // Seeded Rust path: a closure head with src pinned and dst free is a
+        // forward reachability walk. Anything else (dst-pinned reverse, both
+        // pinned, both free) falls through to the SQL view.
+        if let Some(edge) = closures.get(&q.head.rel) {
+            if q.head.terms.len() == 2 && matches!(q.head.terms[1], Term::Var(_)) {
+                if let (Some(seed), None) = (pinned_value(q, 0), pinned_value(q, 1)) {
+                    if let Some(cc) = cache.get(edge) {
+                        return self.run_reaches_point(q, cc, &seed);
+                    }
+                }
+            }
+        }
         let (sql, headers) = lower_query(q, &self.rels)?;
         let mut stmt = self.conn.prepare(&sql)?;
         let ncols = stmt.column_count();
