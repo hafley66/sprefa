@@ -1,0 +1,56 @@
+# Typed call graph: nodes are QUALIFIED names (Type::method), so two functions
+# that share a bare name are distinct graph nodes. This kills the method-name
+# aliasing that callgraph-resolved.dl suffers (every new() edged to every fn new,
+# inflating SCCs). Resolution is exact and inference-free:
+#   - free   f()        -> "f"          (must be a known free fn)
+#   - scoped T::m()      -> "T::m"        (type is in the syntax)
+#   - self   self.m()    -> "<impl>::m"   (enclosing impl, by span containment)
+# Non-self method calls (x.m where x != self) need receiver-type inference and
+# are left out of this first cut.
+
+rel fn_span(name: text, path: file, s: int, e: int).
+rel impl_span(ty: text, path: file, s: int, e: int).
+rel cs_free(f: text, path: file, line: int).
+rel cs_scoped(ty: text, m: text, path: file, line: int).
+rel cs_self(m: text, path: file, line: int).
+
+rel inside_impl(name: text, path: file, s: int).
+rel qfn(q: text, path: file, s: int, e: int).
+rel calls(caller: text, callee: text).
+rel reaches(src: text, dst: text).
+
+# --- extraction (tree-sitter-rust) ---
+fn_span(name, path, s, e) <- scan("WORK","v4/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(function_item name: (identifier) @name) @fn", s, e).
+
+impl_span(ty, path, s, e) <- scan("WORK","v4/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(impl_item type: [ (type_identifier) @ty (generic_type type: (type_identifier) @ty) ]) @impl", s, e).
+
+cs_free(f, path, line) <- scan("WORK","v4/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(call_expression function: (identifier) @f)", line).
+
+cs_scoped(ty, m, path, line) <- scan("WORK","v4/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(call_expression function: (scoped_identifier path: (identifier) @ty name: (identifier) @m))", line).
+
+cs_self(m, path, line) <- scan("WORK","v4/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(call_expression function: (field_expression value: (identifier) @recv field: (field_identifier) @m))", line),
+  recv = "self".
+
+# --- qualified function nodes (method = Type::name, by span containment) ---
+inside_impl(name, path, s) <- fn_span(name,path,s,e), impl_span(ty,path,is,ie), is <= s, e <= ie.
+qfn("${ty}::${name}", path, s, e) <- fn_span(name,path,s,e), impl_span(ty,path,is,ie), is <= s, e <= ie.
+qfn(name, path, s, e) <- fn_span(name,path,s,e), !inside_impl(name,path,s).
+
+# --- resolve each call to a qualified callee, attached to its enclosing caller ---
+calls(caller, callee) <-
+  qfn(caller, p, cs, ce), cs_free(callee, p, l), cs <= l, l <= ce, qfn(callee,_,_,_).
+calls(caller, "${ty}::${m}") <-
+  qfn(caller, p, cs, ce), cs_scoped(ty, m, p, l), cs <= l, l <= ce.
+calls(caller, "${ty}::${m}") <-
+  qfn(caller, p, cs, ce), cs_self(m, p, l), cs <= l, l <= ce, impl_span(ty, p, is, ie), is <= l, l <= ie.
+
+reaches(src, dst) <- closure(calls).
+
+# qualified seeds: e.g. SprfState::run. Both endpoints are Type::method nodes.
+? calls(caller, callee) where caller = "SprfState::run".
+? reaches(src, dst) where src = "SprfState::run".
