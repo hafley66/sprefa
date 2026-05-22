@@ -694,14 +694,16 @@ fn parse_file(
                 }
                 binds = next;
             }
-            BodyItem::Ast { lang, query, line, .. } => {
+            BodyItem::Ast { lang, query, line, end, .. } => {
                 let alv = var_of(line)?;
+                let elv = end.as_ref().map(var_of).transpose()?;
                 let hits = run_ts(&content, lang, query)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
-                    for (ln, caps) in &hits {
+                    for (start, endln, caps) in &hits {
                         let mut ext = b.clone();
-                        ext.insert(alv.clone(), Value::Int(*ln));
+                        ext.insert(alv.clone(), Value::Int(*start));
+                        if let Some(ev) = &elv { ext.insert(ev.clone(), Value::Int(*endln)); }
                         for (n, t) in caps { ext.insert(n.clone(), Value::Text(t.clone())); }
                         next.push(ext);
                     }
@@ -815,8 +817,10 @@ fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
 }
 
 /// Run a tree-sitter S-expression query over file content.
-/// Returns (line, captures) per match; captures are (capture_name, node_text).
-fn run_ts(content: &str, lang: &str, query_str: &str) -> Result<Vec<(i64, Vec<(String, String)>)>> {
+/// Returns (start_line, end_line, captures) per match; start = min capture start
+/// row, end = max capture end row (the matched region's span). Captures are
+/// (capture_name, node_text).
+fn run_ts(content: &str, lang: &str, query_str: &str) -> Result<Vec<(i64, i64, Vec<(String, String)>)>> {
     use streaming_iterator::StreamingIterator;
     let language = ts_lang(lang)?;
     let mut parser = tree_sitter::Parser::new();
@@ -831,14 +835,16 @@ fn run_ts(content: &str, lang: &str, query_str: &str) -> Result<Vec<(i64, Vec<(S
     while let Some(m) = it.next() {
         let mut caps = Vec::new();
         let mut line = i64::MAX;
+        let mut end = 1i64;
         for c in m.captures {
             let name = names[c.index as usize].to_string();
             let text = c.node.utf8_text(src).unwrap_or("").to_string();
             line = line.min(c.node.start_position().row as i64 + 1);
+            end = end.max(c.node.end_position().row as i64 + 1);
             caps.push((name, text));
         }
         if line == i64::MAX { line = 1; }
-        out.push((line, caps));
+        out.push((line, end, caps));
     }
     Ok(out)
 }

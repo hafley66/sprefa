@@ -69,7 +69,7 @@ pub enum BodyItem {
     Neg(Atom),
     Scan { rev: Term, glob: Term, path: Term, rev_out: Term },
     Match { path: Term, rev: Term, regex: String, line: Term },
-    Ast { path: Term, rev: Term, lang: String, query: String, line: Term },
+    Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term> },
     Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term },
     Json { path: Term, rev: Term, jpath: String, out: Term },
     Cmp(Constraint),

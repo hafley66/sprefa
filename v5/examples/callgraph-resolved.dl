@@ -1,0 +1,34 @@
+# Resolved call graph: A calls B only when a bare call B(...) appears INSIDE A's
+# body. fndef carries each function's body span [s,e]; callsite carries each call
+# line; the range join s <= l <= e assigns every call to its enclosing function.
+# `fndef(callee,...)` keeps only calls to functions defined in this corpus (drops
+# std / method / macro calls). Contrast examples/callgraph.dl, whose file-scoped
+# co-occurrence heuristic collapses everything into one giant SCC.
+
+rel fndef(name: text, path: file, s: int, e: int).
+rel callsite(callee: text, path: file, line: int).
+rel calls(caller: text, callee: text).
+rel reaches(src: text, dst: text).
+rel unused(name: text).
+
+fndef(name, path, s, e) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(function_item name: (identifier) @name) @fn", s, e).
+
+callsite(callee, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(call_expression function: [ (identifier) @callee (field_expression field: (field_identifier) @callee) (scoped_identifier name: (identifier) @callee) ])", line).
+
+calls(caller, callee) <-
+  fndef(caller, p, s, e),
+  callsite(callee, p, l),
+  s <= l, l <= e,
+  fndef(callee, _, _, _).
+
+reaches(src, dst) <- closure(calls).
+
+unused(name) <- fndef(name, _, _, _), !calls(_, name).
+
+? calls(caller, callee) where caller = "tick".
+? reaches(src, dst) where src = "run".
+? unused(name).

@@ -173,8 +173,12 @@ impl Parser {
         };
         self.expect(Tok::Comma)?;
         let line = self.term()?;
+        // optional 6th term binds the match's end line (for body-span queries)
+        let end = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?; Some(self.term()?)
+        } else { None };
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Ast { path, rev, lang, query, line })
+        Ok(BodyItem::Ast { path, rev, lang, query, line, end })
     }
 
     fn sg(&mut self) -> Result<BodyItem> {
