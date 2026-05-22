@@ -688,7 +688,10 @@ impl Engine {
 
     /// Answer `reaches(src=SEED, dst=?)` as a seeded BFS over the condensation.
     /// Same row set as the view's src-pinned slice, computed in microseconds.
-    fn run_reaches_point(&self, q: &Query, cc: &ClosureCache, seed: &str) -> Result<()> {
+    /// Seeded closure point query. `forward` = src pinned (walk out, callees);
+    /// otherwise dst pinned (walk in, callers). Emits the same rows as the view's
+    /// pinned slice, in microseconds.
+    fn run_reaches_point(&self, q: &Query, cc: &ClosureCache, seed: &str, forward: bool) -> Result<()> {
         let meta = self.rels.get(&q.head.rel).unwrap();
         let header = |pos: usize| match &q.head.terms[pos] {
             Term::Var(v) => v.clone(),
@@ -697,10 +700,13 @@ impl Engine {
         println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
         let mut n = 0;
         if let Some(&sid) = cc.id.get(seed) {
-            let mut hits: Vec<&str> = scc::reaches_from(&cc.cond, sid)
-                .iter().map(|&i| cc.names[i as usize].as_str()).collect();
+            let walk = if forward { scc::reaches_from(&cc.cond, sid) } else { scc::reached_by(&cc.cond, sid) };
+            let mut hits: Vec<&str> = walk.iter().map(|&i| cc.names[i as usize].as_str()).collect();
             hits.sort_unstable();
-            for h in hits { println!("  {seed}\t{h}"); n += 1; }
+            for h in hits {
+                if forward { println!("  {seed}\t{h}"); } else { println!("  {h}\t{seed}"); }
+                n += 1;
+            }
         }
         println!("  ({n} rows)\n");
         Ok(())
@@ -708,14 +714,18 @@ impl Engine {
 
     fn run_query(&self, q: &Query, closures: &HashMap<String, String>,
                  cache: &HashMap<String, ClosureCache>) -> Result<()> {
-        // Seeded Rust path: a closure head with src pinned and dst free is a
-        // forward reachability walk. Anything else (dst-pinned reverse, both
-        // pinned, both free) falls through to the SQL view.
+        // Seeded Rust path on a closure head: src pinned + dst free is a forward
+        // walk (callees); dst pinned + src free is a reverse walk (callers).
+        // Both-pinned, both-free, or anything else falls through to the SQL view.
         if let Some(edge) = closures.get(&q.head.rel) {
-            if q.head.terms.len() == 2 && matches!(q.head.terms[1], Term::Var(_)) {
-                if let (Some(seed), None) = (pinned_value(q, 0), pinned_value(q, 1)) {
-                    if let Some(cc) = cache.get(edge) {
-                        return self.run_reaches_point(q, cc, &seed);
+            if q.head.terms.len() == 2 {
+                if let Some(cc) = cache.get(edge) {
+                    match (pinned_value(q, 0), pinned_value(q, 1)) {
+                        (Some(seed), None) if matches!(q.head.terms[1], Term::Var(_)) =>
+                            return self.run_reaches_point(q, cc, &seed, true),
+                        (None, Some(seed)) if matches!(q.head.terms[0], Term::Var(_)) =>
+                            return self.run_reaches_point(q, cc, &seed, false),
+                        _ => {}
                     }
                 }
             }

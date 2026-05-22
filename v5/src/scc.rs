@@ -65,8 +65,9 @@ pub struct Cond {
     pub ncomp: usize,
     pub size: Vec<u64>,
     pub cyclic: Vec<bool>,
-    pub cadj: Vec<Vec<u32>>,    // condensed DAG, deduped
-    pub members: Vec<Vec<u32>>, // comp -> member node ids
+    pub cadj: Vec<Vec<u32>>,     // condensed DAG, deduped (out-edges)
+    pub cadj_rev: Vec<Vec<u32>>, // condensed DAG reversed (in-edges), for reverse reach
+    pub members: Vec<Vec<u32>>,  // comp -> member node ids
 }
 
 pub fn build_condensed(adj: &[Vec<u32>]) -> Cond {
@@ -91,7 +92,11 @@ pub fn build_condensed(adj: &[Vec<u32>]) -> Cond {
         }
     }
     let cadj: Vec<Vec<u32>> = sets.into_iter().map(|s| s.into_iter().collect()).collect();
-    Cond { comp, ncomp, size, cyclic, cadj, members }
+    let mut cadj_rev = vec![Vec::new(); ncomp];
+    for (u, succ) in cadj.iter().enumerate() {
+        for &v in succ { cadj_rev[v as usize].push(u as u32); }
+    }
+    Cond { comp, ncomp, size, cyclic, cadj, cadj_rev, members }
 }
 
 /// Total reaches pairs (incl cyclic self-reach), counted from the condensation.
@@ -148,6 +153,25 @@ pub fn reaches_from(c: &Cond, start: u32) -> Vec<u32> {
         for &s in &c.cadj[cc as usize] { if !seen_comp[s as usize] { q.push_back(s); } }
     }
     if c.cyclic[c0 as usize] { seen_comp[c0 as usize] = true; } // self-reach via the cycle
+    let mut out = Vec::new();
+    for cc in 0..c.ncomp {
+        if seen_comp[cc] { out.extend_from_slice(&c.members[cc]); }
+    }
+    out
+}
+
+/// Everything that reaches `target`: the mirror of `reaches_from`, walking the
+/// reversed condensed DAG. Same algorithm, in-edges instead of out-edges.
+pub fn reached_by(c: &Cond, target: u32) -> Vec<u32> {
+    let c0 = c.comp[target as usize];
+    let mut seen_comp = vec![false; c.ncomp];
+    let mut q: VecDeque<u32> = c.cadj_rev[c0 as usize].iter().copied().collect();
+    while let Some(cc) = q.pop_front() {
+        if seen_comp[cc as usize] { continue; }
+        seen_comp[cc as usize] = true;
+        for &s in &c.cadj_rev[cc as usize] { if !seen_comp[s as usize] { q.push_back(s); } }
+    }
+    if c.cyclic[c0 as usize] { seen_comp[c0 as usize] = true; }
     let mut out = Vec::new();
     for cc in 0..c.ncomp {
         if seen_comp[cc] { out.extend_from_slice(&c.members[cc]); }
