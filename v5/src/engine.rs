@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use rayon::prelude::*;
 use regex::Regex;
 use rusqlite::Connection;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -63,6 +63,52 @@ fn check_stratification(derived_rules: &[&Rule], closures: &HashMap<String, Stri
         }
     }
     Ok(())
+}
+
+// Auto-index. A derived rule joins relations on a shared variable; that variable
+// is the join key. Without an index the join is a nested scan, with one it is a
+// lookup:
+//
+//   calls(c1,c2) <- fndef(c1, p, s, e), callsite(c2, p, l), ...
+//                              \_______________/
+//                          shared var p  =  the join key (path)
+//
+//   NO index                          index on the probe column
+//   ────────                          ────────────────────────────
+//   for each fndef row (F):           for each fndef row (F):
+//     scan ALL callsite rows (C)        seek callsite WHERE path = p
+//   cost  O(F * C)                     cost  O(F * log C)
+//
+// On the kernel/ subtree F=16k, C=96k, so the scan version is ~1.5e9 row touches
+// (the 30s run). Indexing the path column collapses it to seeks.
+//
+// Heuristic: index every column a variable reaches across >= 2 body atoms (an
+// equality join key), plus a negated atom's correlation column. This is the
+// cheap form of Souffle's automatic index selection (Subotic, Jordan, Scholz,
+// "Automatic index selection for large-scale datalog", which computes the
+// minimal set of composite, ordered indexes via a min-chain-cover / Dilworth on
+// the lattice of search orders). One single-column index per join key captures
+// most of the win and stays trivial.
+fn auto_indexes(rules: &[&Rule], rels: &Rels) -> Vec<(String, String)> {
+    let mut occ: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+    for r in rules {
+        for item in &r.body {
+            let atom = match item { BodyItem::Pos(a) | BodyItem::Neg(a) => a, _ => continue };
+            for (pos, t) in atom.terms.iter().enumerate() {
+                if let Term::Var(v) = t { occ.entry(v.clone()).or_default().push((atom.rel.clone(), pos)); }
+            }
+        }
+    }
+    let mut out: BTreeSet<(String, String)> = BTreeSet::new();
+    for places in occ.values() {
+        if places.len() < 2 { continue; } // a variable in one atom is not a join key
+        for (rel, pos) in places {
+            if let Some(meta) = rels.get(rel) {
+                if *pos < meta.cols.len() { out.insert((rel.clone(), meta.cols[*pos].name.clone())); }
+            }
+        }
+    }
+    out.into_iter().collect()
 }
 
 fn intern_rel(s: &str, id: &mut HashMap<String, u32>, name: &mut Vec<String>) -> u32 {
@@ -217,6 +263,7 @@ impl Engine {
         }
         let edges: Vec<&str> = dedup_edges(&closures);
         check_stratification(&derived_rules, &closures)?;
+        self.create_auto_indexes(&derived_rules, &closures)?;
 
         let t_src = std::time::Instant::now();
         let recon = self.reconcile_sources(&source_rules, &source_rels)?;
@@ -265,6 +312,7 @@ impl Engine {
         for r in &derived_rules { if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); } }
         let edges: Vec<&str> = dedup_edges(&closures);
         check_stratification(&derived_rules, &closures)?;
+        self.create_auto_indexes(&derived_rules, &closures)?;
 
         // WORK source rules with compiled glob matchers
         let mut work_rules: Vec<(&Rule, globset::GlobMatcher)> = Vec::new();
@@ -469,6 +517,18 @@ impl Engine {
         );
         self.conn.execute(&sql, [])?;
         self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
+        Ok(())
+    }
+
+    /// Create the join-key indexes derived rules need (see auto_indexes). Skips
+    /// closure heads, which are views. Idempotent (CREATE INDEX IF NOT EXISTS).
+    fn create_auto_indexes(&self, derived_rules: &[&Rule], closures: &HashMap<String, String>) -> Result<()> {
+        for (rel, col) in auto_indexes(derived_rules, &self.rels) {
+            if closures.contains_key(&rel) { continue; }
+            let ix = format!("idx_{rel}_{col}");
+            self.conn.execute(
+                &format!("CREATE INDEX IF NOT EXISTS \"{ix}\" ON {}(\"{col}\")", tbl(&rel)), [])?;
+        }
         Ok(())
     }
 
