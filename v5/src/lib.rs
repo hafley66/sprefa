@@ -19,6 +19,18 @@ pub fn run_file(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Res
     eng.run(&prog)
 }
 
+/// Drive one incremental tick over an existing db for a set of changed paths
+/// (relative to root or absolute). The delta entry point the watcher uses.
+pub fn run_changed(program_path: &str, db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
+    let src = std::fs::read_to_string(program_path)?;
+    let prog = parse::parse(lex::lex(&src)?)?;
+    let conn = db::open(db_path)?;
+    let mut eng = engine::Engine::new(conn, root.clone());
+    let abs: Vec<PathBuf> = changed.into_iter()
+        .map(|p| if p.is_absolute() { p } else { root.join(p) }).collect();
+    eng.tick_paths(&prog, &abs, false)
+}
+
 pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {
     use notify::{RecursiveMode, Watcher};
     let src = std::fs::read_to_string(program_path)?;

@@ -111,6 +111,28 @@ fn auto_indexes(rules: &[&Rule], rels: &Rels) -> Vec<(String, String)> {
     out.into_iter().collect()
 }
 
+/// Derived relations transitively reachable from a set of changed relations in
+/// the rule dependency graph. A derived rel is a pure function of its body rels,
+/// so a rel whose body never (transitively) touches a changed source CANNOT have
+/// changed and need not be rebuilt. Returns the affected derived heads only.
+fn affected_derived(derived_rules: &[&Rule], changed: &HashSet<String>) -> HashSet<String> {
+    let mut affected: HashSet<String> = changed.clone(); // seed with changed sources
+    loop {
+        let mut grew = false;
+        for r in derived_rules {
+            if affected.contains(&r.head.rel) { continue; }
+            let touches = r.body.iter().any(|it| match it {
+                BodyItem::Pos(a) | BodyItem::Neg(a) => affected.contains(&a.rel),
+                _ => false,
+            });
+            if touches { affected.insert(r.head.rel.clone()); grew = true; }
+        }
+        if !grew { break; }
+    }
+    derived_rules.iter().map(|r| r.head.rel.clone())
+        .filter(|h| affected.contains(h)).collect()
+}
+
 fn intern_rel(s: &str, id: &mut HashMap<String, u32>, name: &mut Vec<String>) -> u32 {
     if let Some(&i) = id.get(s) { return i; }
     let i = name.len() as u32; id.insert(s.to_string(), i); name.push(s.to_string()); i
@@ -323,6 +345,7 @@ impl Engine {
 
         let prev = self.load_file_meta()?;
         let mut changed_facts = false;
+        let mut changed_source_rels: HashSet<String> = HashSet::new();
         let (mut extracted, mut retracted, mut npaths) = (0usize, 0usize, 0usize);
         let mut seen: HashSet<String> = HashSet::new();
 
@@ -344,6 +367,7 @@ impl Engine {
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
                     extracted += self.insert_source_rows(&rule.head.rel, &meta, &rel, &rows)?;
+                    changed_source_rels.insert(rule.head.rel.clone());
                 }
                 let (mt, sz) = std::fs::metadata(&abs).ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
                 self.conn.execute(
@@ -354,18 +378,38 @@ impl Engine {
             } else {
                 retracted += self.retract_path(&rel, &source_rels)?;
                 self.conn.execute("DELETE FROM _file WHERE path = ?1 AND rev = 'WORK'", [&rel])?;
+                for rule in &matching { changed_source_rels.insert(rule.head.rel.clone()); }
                 changed_facts = true;
             }
         }
 
-        if changed_facts || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)? {
+        // Cold start (or empty derived/closure) needs a full rebuild; otherwise
+        // rebuild only the derived rels dependency-reachable from what changed,
+        // plus the closures over affected edges. Untouched chains are left intact.
+        let need_full = self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
+        let mut rebuilt: Vec<String> = Vec::new();
+        if need_full {
             self.rebuild_derived(&derived_rules, &derived_rels)?;
             self.rebuild_closures(&edges)?;
+            rebuilt = derived_rels.clone();
+        } else if changed_facts {
+            let affected = affected_derived(&derived_rules, &changed_source_rels);
+            let sub_rules: Vec<&Rule> = derived_rules.iter().copied()
+                .filter(|r| affected.contains(&r.head.rel)).collect();
+            let sub_rels: Vec<String> = derived_rels.iter()
+                .filter(|r| affected.contains(*r)).cloned().collect();
+            self.rebuild_derived(&sub_rules, &sub_rels)?;
+            let aff_edges: Vec<&str> = edges.iter().copied()
+                .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e)).collect();
+            self.rebuild_closures(&aff_edges)?;
+            rebuilt = sub_rels;
         }
 
         if !quiet {
-            eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, derived {}",
-                if changed_facts { "rebuilt" } else { "unchanged" });
+            let what = if need_full { "ALL".to_string() }
+                       else if rebuilt.is_empty() { "none".to_string() }
+                       else { rebuilt.join(",") };
+            eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, rebuilt derived: {what}");
         }
         let cond_cache = self.build_cond_cache(&edges)?;
         for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures, &cond_cache)?; } }
