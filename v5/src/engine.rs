@@ -14,6 +14,18 @@ use crate::scc;
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
 fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
 
+/// Parse a 64-char hex string into 32 bytes. Errs on wrong length or non-hex
+/// (e.g. the `''` __src default on a derived row), so the caller can skip it.
+fn hex_to_32(s: &str) -> Result<[u8; 32]> {
+    let b = s.as_bytes();
+    if b.len() != 64 { bail!("not a 32-byte hex digest"); }
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)?;
+    }
+    Ok(out)
+}
+
 /// One row of the `diag` relation, normalized for the LSP. Columns are mapped
 /// by NAME from the `.dl` author's `rel diag(...)` decl (order-free); only
 /// path/line/msg are required, the span/severity fields default. See docs/lsp.md.
@@ -355,6 +367,9 @@ impl Engine {
         let t_src = std::time::Instant::now();
         let recon = self.reconcile_sources(&source_rules, &source_rels)?;
         let changed = recon.changed;
+        // Baseline each source relation's content digest so the next incremental
+        // tick can skip a rebuild when bytes move but rows don't (see tick_paths).
+        self.seed_rel_digests(&source_rels)?;
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -448,6 +463,14 @@ impl Engine {
             }
         }
 
+        // A changed file's bytes moved, but did its extracted rows? Prune the
+        // source rels whose content digest is unchanged (comment/format edits),
+        // so they do not propagate a rebuild. v4's `Replay` at relation grain.
+        if changed_facts {
+            changed_source_rels = self.prune_unchanged_by_digest(changed_source_rels)?;
+            if changed_source_rels.is_empty() { changed_facts = false; }
+        }
+
         // Cold start (or empty derived/closure) needs a full rebuild; otherwise
         // rebuild only the derived rels dependency-reachable from what changed,
         // plus the closures over affected edges. Untouched chains are left intact.
@@ -486,11 +509,72 @@ impl Engine {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS _file (path TEXT, rev TEXT, hash TEXT,
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (path, rev));
-             CREATE TABLE IF NOT EXISTS _prov (rel TEXT, path TEXT, src TEXT, PRIMARY KEY (rel, path, src));"
+             CREATE TABLE IF NOT EXISTS _prov (rel TEXT, path TEXT, src TEXT, PRIMARY KEY (rel, path, src));
+             CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);"
         )?;
         // tolerate dbs created before mtime/size existed
         let _ = self.conn.execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
         let _ = self.conn.execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
+        Ok(())
+    }
+
+    /// Order-independent content digest of a relation: XOR-fold of the per-row
+    /// `__src` hashes in `rel_<rel>`. The table is a set (PK on user cols), so
+    /// each `__src` contributes once and XOR cannot cancel a duplicate; XOR is
+    /// commutative + associative, so insert order does not matter. All-zero ⇒
+    /// empty relation. Same row set ⇒ same digest; different rows ⇒ different
+    /// (blake3). Lets a comment-only edit (bytes move, rows don't) skip rebuild.
+    fn rel_digest(&self, rel: &str) -> Result<[u8; 32]> {
+        let mut acc = [0u8; 32];
+        let mut stmt = self.conn.prepare(&format!("SELECT __src FROM {}", tbl(rel)))?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let src: String = row.get(0).unwrap_or_default();
+            if let Ok(bytes) = hex_to_32(&src) {
+                for (a, b) in acc.iter_mut().zip(bytes.iter()) { *a ^= *b; }
+            }
+        }
+        Ok(acc)
+    }
+
+    fn load_rel_digest(&self, rel: &str) -> Result<Option<[u8; 32]>> {
+        let hex: Option<String> = self.conn
+            .query_row("SELECT digest FROM _reldigest WHERE rel = ?1", [rel], |r| r.get(0))
+            .ok();
+        Ok(hex.and_then(|h| hex_to_32(&h).ok()))
+    }
+
+    fn save_rel_digest(&self, rel: &str, digest: &[u8; 32]) -> Result<()> {
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        self.conn.execute(
+            "INSERT INTO _reldigest(rel, digest) VALUES (?1, ?2)
+             ON CONFLICT(rel) DO UPDATE SET digest = excluded.digest",
+            rusqlite::params![rel, hex])?;
+        Ok(())
+    }
+
+    /// Drop from `changed` every relation whose freshly computed digest equals
+    /// its stored digest (the file's bytes moved but the extracted rows did
+    /// not). Records the new digest for the relations that really changed.
+    /// This is v4's `Replay` short-circuit at relation granularity.
+    fn prune_unchanged_by_digest(&self, changed: HashSet<String>) -> Result<HashSet<String>> {
+        let mut out = HashSet::new();
+        for rel in changed {
+            let d_new = self.rel_digest(&rel)?;
+            if self.load_rel_digest(&rel)? == Some(d_new) { continue; }
+            self.save_rel_digest(&rel, &d_new)?;
+            out.insert(rel);
+        }
+        Ok(out)
+    }
+
+    /// Seed `_reldigest` for every source relation, so the first delta after a
+    /// cold run has a baseline to compare against.
+    fn seed_rel_digests(&self, source_rels: &[String]) -> Result<()> {
+        for rel in source_rels {
+            let d = self.rel_digest(rel)?;
+            self.save_rel_digest(rel, &d)?;
+        }
         Ok(())
     }
 
