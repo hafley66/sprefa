@@ -4,6 +4,7 @@ pub mod engine;
 pub mod lex;
 pub mod lower;
 pub mod lsp;
+pub mod modgraph;
 pub mod parse;
 pub mod scc;
 pub mod sg;
