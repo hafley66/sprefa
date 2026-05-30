@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 
 use crate::ast::*;
 use crate::lower::{lower_query, lower_rule, tbl};
+use crate::modgraph::{self, ProjectCx, Resolution};
 use crate::scc;
 
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
@@ -21,6 +22,12 @@ fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
 /// rev string / content hash (no interning yet; that is Stage 2).
 const BUILTIN_RELS: [&str; 4] = ["repo", "rev", "content", "file"];
 
+/// The module-graph relations (modgraph.rs). Reserved like BUILTIN_RELS, declared
+/// every tick, but populated by `refresh_module_rels` only when the program
+/// references one (resolution parses every file, so it is lazy). `module_edge` is
+/// the 2-col closure edge: `reaches(a,b) <- closure(module_edge).`
+const MODULE_RELS: [&str; 3] = ["module_import", "module_edge", "module_unresolved"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
     vec![
@@ -29,6 +36,37 @@ fn builtin_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)] },
         RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Text), c("path", Type::Path), c("content", Type::Text)] },
     ]
+}
+
+fn module_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    vec![
+        RelDecl { name: "module_import".into(), cols: vec![
+            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)] },
+        RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)] },
+        RelDecl { name: "module_unresolved".into(), cols: vec![
+            c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text)] },
+    ]
+}
+
+/// Does the program reference any module-graph relation (body atom, closure edge,
+/// or query head)? Gates the resolver pass so unrelated programs pay nothing.
+fn module_rels_used(prog: &Program) -> bool {
+    let hit = |r: &str| MODULE_RELS.contains(&r);
+    for item in &prog.items {
+        match item {
+            Item::Rule(r) => for b in &r.body {
+                match b {
+                    BodyItem::Pos(a) | BodyItem::Neg(a) => if hit(&a.rel) { return true; },
+                    BodyItem::Closure { rel } => if hit(rel) { return true; },
+                    _ => {}
+                }
+            },
+            Item::Query(q) => if hit(&q.head.rel) { return true; },
+            Item::Rel(_) => {}
+        }
+    }
+    false
 }
 
 /// Parse a 64-char hex string into 32 bytes. Errs on wrong length or non-hex
@@ -390,6 +428,7 @@ impl Engine {
         // refresh built-in repo/rev/content/file from the updated _file cache,
         // before derived rules that may join them are rebuilt.
         self.refresh_builtin_rels()?;
+        if module_rels_used(prog) { self.refresh_module_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -498,6 +537,10 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
+            if module_rels_used(prog) {
+                self.refresh_module_rels()?;
+                for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
+            }
         }
         if changed_source_rels.is_empty() { changed_facts = false; }
 
@@ -763,6 +806,9 @@ impl Engine {
                 if BUILTIN_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in relation (repo/rev/content/file); pick another name", d.name);
                 }
+                if MODULE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in module-graph relation (module_import/module_edge/module_unresolved); pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -779,6 +825,7 @@ impl Engine {
     /// them. Populated by `refresh_builtin_rels`, not by source rules.
     fn declare_builtins(&mut self) -> Result<()> {
         for d in builtin_rel_decls() { self.declare(&d)?; }
+        for d in module_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -803,6 +850,49 @@ impl Engine {
             ins_rev.execute(rusqlite::params![rev, slug, rev])?;
             ins_content.execute(rusqlite::params![hash])?;
             ins_file.execute(rusqlite::params![slug, rev, path, hash])?;
+        }
+        Ok(())
+    }
+
+    /// Rebuild the module-graph relations from the `_file` set, per rev. Reads each
+    /// file's content, picks the language resolver by extension, and writes one
+    /// `module_import` row per reference plus a `module_edge(src,dst)` for resolved
+    /// project files and a `module_unresolved` for ones that should have resolved.
+    /// Wholesale wipe + repopulate; gated by `module_rels_used` at the call site.
+    /// Edges are resolved within a single rev (cross-rev merge is a Stage-1 corner).
+    fn refresh_module_rels(&self) -> Result<()> {
+        for r in MODULE_RELS { self.conn.execute(&format!("DELETE FROM {}", tbl(r)), [])?; }
+        // rev -> [(path, hash)]
+        let mut by_rev: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        {
+            let mut sel = self.conn.prepare("SELECT path, rev, hash FROM _file")?;
+            let rows = sel.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+            for row in rows.flatten() { by_rev.entry(row.1).or_default().push((row.0, row.2)); }
+        }
+        let resolvers = modgraph::resolvers(&self.root);
+        let mut ins_import = self.conn.prepare(
+            "INSERT OR IGNORE INTO rel_module_import(file, rev, specifier, kind, line) VALUES (?1,?2,?3,?4,?5)")?;
+        let mut ins_edge = self.conn.prepare(
+            "INSERT OR IGNORE INTO rel_module_edge(src, dst) VALUES (?1,?2)")?;
+        let mut ins_unres = self.conn.prepare(
+            "INSERT OR IGNORE INTO rel_module_unresolved(file, specifier, reason) VALUES (?1,?2,?3)")?;
+        for (rev, files) in &by_rev {
+            let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
+            let cx = ProjectCx::new(&self.root, &fileset);
+            for (path, _hash) in files {
+                let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
+                let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) else { continue };
+                let content = read_content(&self.root, rev, path).unwrap_or_default();
+                for mref in res.edges(path, &content, &cx) {
+                    ins_import.execute(rusqlite::params![path, rev, mref.specifier, mref.kind, mref.line as i64])?;
+                    match mref.target {
+                        Resolution::File(dst) => { ins_edge.execute(rusqlite::params![path, dst])?; }
+                        Resolution::Unresolved(reason) => { ins_unres.execute(rusqlite::params![path, mref.specifier, reason])?; }
+                        Resolution::External(_) => {}
+                    }
+                }
+            }
         }
         Ok(())
     }
