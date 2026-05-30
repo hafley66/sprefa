@@ -86,6 +86,58 @@ seen(path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "fn $
     assert!(out.contains("(2 rows)"), "both files seen: {out}");
 }
 
+// Scans both languages into one file set; one `reaches` closure spans the union.
+const PROG_XLANG: &str = r#"
+rel seen_rs(path: file).
+rel seen_ts(path: file).
+seen_rs(path) <- scan("WORK", "**/*.rs", path, rev), sg(path, rev, :rust, "fn $N() {}", line).
+seen_ts(path) <- scan("WORK", "**/*.ts", path, rev), match(path, rev, /export/, line).
+rel reaches(a: text, b: text).
+reaches(a, b) <- closure(module_edge).
+? module_edge(s, d).
+? reaches(a, b).
+"#;
+
+#[test]
+fn ts_import_edges_via_oxc() {
+    let d = sandbox("ts");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/app.ts"), "import './utils';\nimport { y } from './lib/helper';\nexport const z = 1;\n").unwrap();
+    fs::write(d.join("src/utils.ts"), "export const x = 1;\n").unwrap();
+    fs::create_dir_all(d.join("src/lib")).unwrap();
+    fs::write(d.join("src/lib/helper.ts"), "export const y = 2;\n").unwrap();
+
+    let (code, out, _) = run(&d, PROG_XLANG, &[]);
+    assert_eq!(code, 0, "run failed: {out}");
+    // relative import with extension probing
+    assert!(out.contains("src/app.ts\tsrc/utils.ts"), "app->utils import edge: {out}");
+    // nested relative import
+    assert!(out.contains("src/app.ts\tsrc/lib/helper.ts"), "app->lib/helper edge: {out}");
+}
+
+#[test]
+fn cross_language_union_in_one_edge_relation() {
+    let d = sandbox("xlang");
+    fs::create_dir_all(d.join("rs/src")).unwrap();
+    fs::create_dir_all(d.join("ts/src")).unwrap();
+    // Rust subgraph: lib -> a
+    fs::write(d.join("rs/src/lib.rs"), "mod a;\nfn x() {}\n").unwrap();
+    fs::write(d.join("rs/src/a.rs"), "fn x() {}\n").unwrap();
+    // TS subgraph: app -> util
+    fs::write(d.join("ts/src/app.ts"), "import './util';\nexport const z = 1;\n").unwrap();
+    fs::write(d.join("ts/src/util.ts"), "export const x = 1;\n").unwrap();
+
+    let (code, out, _) = run(&d, PROG_XLANG, &[]);
+    assert_eq!(code, 0, "run failed: {out}");
+    // Both languages' edges live in the same module_edge relation
+    assert!(out.contains("rs/src/lib.rs\trs/src/a.rs"), "rust edge present: {out}");
+    assert!(out.contains("ts/src/app.ts\tts/src/util.ts"), "ts edge present: {out}");
+    // The single reaches closure covers both subgraphs
+    let reaches_block = out.split("? reaches").nth(1).unwrap_or("");
+    assert!(reaches_block.contains("rs/src/lib.rs\trs/src/a.rs"), "rust reach: {out}");
+    assert!(reaches_block.contains("ts/src/app.ts\tts/src/util.ts"), "ts reach: {out}");
+}
+
 #[test]
 fn edge_drops_when_target_file_deleted() {
     let d = sandbox("drop");
