@@ -5,3 +5,4 @@ shots/
 src/frames.json
 graphs/*.d2
 public/*.svg
+src/glossary.json

@@ -18,6 +18,8 @@ const MD = path.join(root, 'src/frames.md')
 const DECK = path.join(root, 'src/deck')
 const OUT = path.join(root, 'src/frames.json')
 const KIT = path.join(root, 'src/kit.d2')
+const GLOSS = path.join(root, 'src/glossary.md')
+const GLOSS_OUT = path.join(root, 'src/glossary.json')
 const GRAPHS = path.join(root, 'graphs')
 const PUBLIC = path.join(root, 'public')
 
@@ -260,6 +262,13 @@ export function buildFrames() {
     }
   }
   writeFileSync(OUT, JSON.stringify(frames, null, 2) + '\n')
+  // glossary: `term :: definition` lines -> {term: def}, hover cards in the app
+  const gloss = {}
+  if (existsSync(GLOSS)) for (const line of readFileSync(GLOSS, 'utf8').split('\n')) {
+    if (line.startsWith('#') || line.includes('`')) continue
+    const m = line.match(/^(.{1,40}?)\s*::\s*(.+)$/); if (m) gloss[m[1].trim()] = m[2].trim()
+  }
+  writeFileSync(GLOSS_OUT, JSON.stringify(gloss, null, 2) + '\n')
   return { frames: frames.length, graphs: graphs.length }
 }
 

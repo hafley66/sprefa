@@ -7,13 +7,48 @@ import panzoom from 'panzoom'
 // prose (a durable discussion note), prose + code, prose + graph, or all three.
 // Frames carry a `chapter` (from the src/deck/ tree) shown as a breadcrumb, and
 // `o` opens an outline of the whole tree to jump around.
-export default function Frames({ frames, highlighter, theme }) {
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+// Wrap the first occurrence of each glossary term in the narration DOM with an
+// <abbr> hover card. Walks text nodes so it never breaks code spans / links.
+function wrapGlossary(root, gloss) {
+  if (!root || !gloss) return
+  const terms = Object.keys(gloss)
+  if (!terms.length) return
+  const re = new RegExp('\\b(' + terms.map(reEscape).sort((a, b) => b.length - a.length).join('|') + ')\\b', 'i')
+  const used = new Set()
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.nodeValue.trim() && !n.parentElement.closest('abbr, a, code, .xref')) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+  })
+  const targets = []
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) targets.push(n)
+  for (const tn of targets) {
+    const text = tn.nodeValue
+    const rg = new RegExp(re.source, 'ig')
+    let m, last = 0, found = false
+    const frag = document.createDocumentFragment()
+    while ((m = rg.exec(text))) {
+      const key = terms.find((k) => k.toLowerCase() === m[0].toLowerCase())
+      if (used.has(key)) continue
+      used.add(key)
+      found = true
+      frag.appendChild(document.createTextNode(text.slice(last, m.index)))
+      const ab = document.createElement('abbr')
+      ab.className = 'gloss'; ab.title = gloss[key]; ab.textContent = m[0]
+      frag.appendChild(ab)
+      last = m.index + m[0].length
+    }
+    if (found) { frag.appendChild(document.createTextNode(text.slice(last))); tn.replaceWith(frag) }
+  }
+}
+
+export default function Frames({ frames, highlighter, theme, glossary }) {
   const start = Math.min(Number(sessionStorage.getItem('frame') || 0), frames.length - 1)
   const [i, setI] = useState(start)
   const [outline, setOutline] = useState(false)
   const [map, setMap] = useState(false)
   const [lit, setLit] = useState(null) // graph node labels to highlight on anchor hover
   const codeWrapRef = useRef(null)
+  const narrationRef = useRef(null)
   useEffect(() => { sessionStorage.setItem('frame', String(i)) }, [i])
   useEffect(() => { setLit(null) }, [i])
   const f = frames[i]
@@ -25,6 +60,9 @@ export default function Frames({ frames, highlighter, theme }) {
     r.querySelectorAll('span').forEach((s) => { if (s.textContent.trim() === token) s.classList.toggle('code-lit', on) })
   }
   const hoverAnchor = (a, on) => { setLit(on ? a.nodes : null); markCode(a.token, on) }
+
+  // wrap glossary terms in the narration after each frame renders
+  useEffect(() => { wrapGlossary(narrationRef.current, glossary) }, [i, glossary])
   const go = (d) => setI((p) => Math.max(0, Math.min(frames.length - 1, p + d)))
 
   useEffect(() => {
@@ -70,7 +108,7 @@ export default function Frames({ frames, highlighter, theme }) {
             </div>
             <h2 className="title">{f.title}</h2>
           </div>
-          <div key={i} className={`narration fade md${hasCode ? '' : ' grow'}`} dangerouslySetInnerHTML={{ __html: html }} />
+          <div ref={narrationRef} key={i} className={`narration fade md${hasCode ? '' : ' grow'}`} dangerouslySetInnerHTML={{ __html: html }} />
           {hasCode && (
             <div className="code" ref={codeWrapRef}>
               <ShikiMagicMove

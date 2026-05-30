@@ -89,6 +89,7 @@ html, body, #root { height: 100%; margin: 0; }
 g.lit rect, g.lit ellipse, g.lit path { stroke: #d08770 !important; stroke-width: 4px !important; }
 .crumb { color: #88c0d0; }
 .md .xref { color: #b48ead; border-bottom: 1px dashed #b48ead66; }
+.md .gloss { border-bottom: 1px dotted #88c0d0; cursor: help; text-decoration: none; }
 
 /* Outline overlay: the deck tree (FS = table of contents), jump by clicking. */
 .outline {
