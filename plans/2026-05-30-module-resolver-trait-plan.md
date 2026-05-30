@@ -76,6 +76,27 @@ Cross-rev: edges resolved within one rev; module_edge merges path pairs across r
 - [ ] TsResolver + oxc_resolver dep; cross-language reaches test
 - [ ] session/doc update
 
+## Lever coverage (2026-05-30, all ✓)
+
+Rust: mod decl, inline mod (no edge), use crate/self/super (multi-level), external
+crate → External, brace groups + alias + pub use, glob, **#[path] override**,
+**multi-crate crate:: namespace** (Cargo.toml registry), **cross-crate use othercrate::**,
+**nested braces**, **raw idents r#**.
+TS: relative/ext-probe/index, import/export-from/export*/require/dynamic import(),
+import type, bare → External, **per-package tsconfig (Auto + resolve_file)**,
+**workspace package.json fallback**, **static template literal** (interpolated import()
+→ Unresolved(dynamic), correctly unresolvable).
+Cross-cutting: **comment/string stripping** (no phantom edges from use/import in
+comments or string literals).
+
+Validation: `rust-analyzer scip` differential oracle (tests/oracle_rust.rs) — on the
+2-crate workspace fixture, module_edge == RA's symbol-resolved file graph, precision
+1.00, recall 1.00. 8 unit + 8 integration + 1 oracle.
+
+Remaining genuine gaps (not levers, harder): `#[path]` nested >1 level; macro-generated
+modules; cfg-gated mods over-approximated (emitted regardless); cross-rev edge merge;
+recall on large code (method/type-resolved refs are SCIP's hard 10%, by design out of scope).
+
 ## Known cut corners (diet, by design)
 
 - regex extraction (not ast-grep) -> string-literal `mod`/`use` in comments could
