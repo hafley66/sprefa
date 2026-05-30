@@ -12,8 +12,19 @@ export default function Frames({ frames, highlighter, theme }) {
   const [i, setI] = useState(start)
   const [outline, setOutline] = useState(false)
   const [map, setMap] = useState(false)
+  const [lit, setLit] = useState(null) // graph node labels to highlight on anchor hover
+  const codeWrapRef = useRef(null)
   useEffect(() => { sessionStorage.setItem('frame', String(i)) }, [i])
+  useEffect(() => { setLit(null) }, [i])
   const f = frames[i]
+
+  // anchor hover: light the graph node(s) and the matching code token together
+  const markCode = (token, on) => {
+    const r = codeWrapRef.current
+    if (!r) return
+    r.querySelectorAll('span').forEach((s) => { if (s.textContent.trim() === token) s.classList.toggle('code-lit', on) })
+  }
+  const hoverAnchor = (a, on) => { setLit(on ? a.nodes : null); markCode(a.token, on) }
   const go = (d) => setI((p) => Math.max(0, Math.min(frames.length - 1, p + d)))
 
   useEffect(() => {
@@ -61,7 +72,7 @@ export default function Frames({ frames, highlighter, theme }) {
           </div>
           <div key={i} className={`narration fade md${hasCode ? '' : ' grow'}`} dangerouslySetInnerHTML={{ __html: html }} />
           {hasCode && (
-            <div className="code">
+            <div className="code" ref={codeWrapRef}>
               <ShikiMagicMove
                 lang={f.lang}
                 theme={theme}
@@ -71,11 +82,25 @@ export default function Frames({ frames, highlighter, theme }) {
               />
             </div>
           )}
+          {f.anchors && f.anchors.length > 0 && (
+            <div className="anchors">
+              {f.anchors.map((a) => (
+                <button
+                  key={a.token}
+                  className="anchor-chip"
+                  onMouseEnter={() => hoverAnchor(a, true)}
+                  onMouseLeave={() => hoverAnchor(a, false)}
+                >
+                  <code>{a.token}</code> → {a.nodes.join(' · ')}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="help">← prev · → next · o outline · m map{hasGraph ? ' · scroll/drag graph' : ''}</div>
         </div>
         {hasGraph && (
           <div className="right">
-            <Graph src={f.graph} />
+            <Graph src={f.graph} lit={lit} />
           </div>
         )}
       </div>
@@ -162,9 +187,10 @@ function MapView({ current, onJump, onClose }) {
 // wrap it in panzoom for scroll-zoom + drag-pan. The pan target is stable across
 // frames, so your zoom/pan persists; the fade is opacity-only so it never fights
 // the panzoom transform.
-function Graph({ src }) {
+function Graph({ src, lit }) {
   const panRef = useRef(null)
   const svgRef = useRef(null)
+  const [ready, setReady] = useState(0)
 
   useEffect(() => {
     if (!panRef.current) return
@@ -187,9 +213,22 @@ function Graph({ src }) {
         el.classList.remove('graph-anim')
         void el.offsetWidth
         el.classList.add('graph-anim')
+        setReady((n) => n + 1)
       })
     return () => { alive = false }
   }, [src])
+
+  // light the graph node(s) whose label matches an anchor's targets
+  useEffect(() => {
+    const el = svgRef.current
+    if (!el) return
+    el.querySelectorAll('g.lit').forEach((g) => g.classList.remove('lit'))
+    if (!lit || !lit.length) return
+    const want = new Set(lit.map((s) => s.toLowerCase()))
+    el.querySelectorAll('text').forEach((t) => {
+      if (want.has((t.textContent || '').trim().toLowerCase())) t.closest('g')?.classList.add('lit')
+    })
+  }, [lit, ready])
 
   return (
     <div className="graph-viewport">

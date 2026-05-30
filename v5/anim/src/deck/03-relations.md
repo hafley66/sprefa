@@ -26,6 +26,9 @@ edge -> reaches: base rule
 reaches -> reaches: recursive rule
 ```
 
+anchor: reaches -> reaches
+anchor: edge -> edge
+
 ## strata = SCCs of the relation graph
 
 The same Tarjan/condensation, now applied to the relation graph, gives the strata: the order to evaluate relations in. A self-loop (reaches on reaches) means "recurse to fixpoint inside this stratum". A negated edge between relations that sat in a cycle would be the unstratifiable error the engine rejects.

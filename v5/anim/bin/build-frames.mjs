@@ -147,6 +147,9 @@ export function parseFrames(md) {
     if (g) { cur.graph = g[1].startsWith('/') ? g[1] : `/${g[1]}.svg`; continue }
     const c = line.match(/^code:\s+(.+?)\s*$/)
     if (c) { cur.codeRef = c[1]; continue }
+    // anchor: <code-token> -> <graph node>[, node]  binds code to graph nodes
+    const an = line.match(/^anchor:\s*(.+?)\s*->\s*(.+)$/)
+    if (an) { (cur.anchors ||= []).push({ token: an[1].trim(), nodes: an[2].split(',').map((s) => s.trim()).filter(Boolean) }); continue }
     cur._narr.push(line)
   }
   finishFrame()

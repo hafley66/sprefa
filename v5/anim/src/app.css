@@ -76,6 +76,17 @@ html, body, #root { height: 100%; margin: 0; }
 .code pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 
 .help { font-size: 12.5px; opacity: 0.5; }
+
+/* Anchors: hover a chip to light the matching graph node + code token. */
+.anchors { display: flex; flex-wrap: wrap; gap: 8px; }
+.anchor-chip {
+  background: #3b4252; color: #d8dee9; border: 1px solid #4c566a; border-radius: 999px;
+  padding: 4px 11px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.anchor-chip code { color: #88c0d0; background: none; padding: 0; }
+.anchor-chip:hover { background: #434c5e; border-color: #d08770; }
+.code .code-lit { background: #d0877055; border-radius: 3px; box-shadow: 0 0 0 2px #d0877055; }
+g.lit rect, g.lit ellipse, g.lit path { stroke: #d08770 !important; stroke-width: 4px !important; }
 .crumb { color: #88c0d0; }
 .md .xref { color: #b48ead; border-bottom: 1px dashed #b48ead66; }
 
