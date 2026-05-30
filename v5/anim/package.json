@@ -9,7 +9,8 @@
     "build:md": "node bin/build-frames.mjs",
     "frames": "node bin/from-git.mjs",
     "graphs": "bash bin/render-d2.sh",
-    "check": "node bin/build-frames.mjs --check"
+    "check": "node bin/build-frames.mjs --check",
+    "seed": "node bin/seed-demo-db.mjs"
   },
   "dependencies": {
     "marked": "^18.0.4",

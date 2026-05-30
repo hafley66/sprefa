@@ -44,6 +44,14 @@ depends(reaches, reaches).   % self-loop = recurse to fixpoint
 % stratum(reaches, 1).
 ```
 
+## the same graph, straight from SQLite
+
+Every graph so far was drawn by hand in d2. This one is **a SQL query**. At build time the animator opens a SQLite database read-only, runs the SELECT, and turns the rows into the graph below — then the same pipeline auto-colors the cycle. It never imports the engine; it just reads the database file. The day `dl` lands its facts in SQLite, this fence points at the real kernel and the deck draws live code.
+
+```sql-graph callgraph data/callgraph.sqlite
+SELECT caller, callee FROM call_edge
+```
+
 ## session note: what this deck is for
 
 A frame needs **no code and no graph** — it can be a pure discussion note, so the deck doubles as a durable record of a session's thinking. Things parked here:

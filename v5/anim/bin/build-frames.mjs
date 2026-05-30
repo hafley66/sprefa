@@ -11,7 +11,14 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import path from 'node:path'
+
+// node:sqlite is built into Node 22.5+/24 (no dependency). Loaded via require so
+// the vite-config bundler never tries to resolve it. Read-only: the animator
+// reads a database file, it never imports or runs the engine that produced it.
+let DatabaseSync = null
+try { ({ DatabaseSync } = createRequire(import.meta.url)('node:sqlite')) } catch {}
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const MD = path.join(root, 'src/frames.md')
@@ -65,6 +72,27 @@ function resolveCodeRef(spec) {
   const indent = Math.min(...slice.filter((l) => l.trim()).map((l) => l.match(/^\s*/)[0].length))
   if (isFinite(indent) && indent > 0) slice = slice.map((l) => l.slice(indent))
   return { code: slice.join('\n').replace(/\s+$/, '') + '\n', lang: lang || EXT_LANG[path.extname(fp).slice(1).toLowerCase()] || 'text' }
+}
+
+// `sql-graph <name> <db>` fence: run the SQL read-only and turn rows into a graph.
+// 2 columns -> src/dst edges (3rd = edge label), 1 column -> bare nodes. The result
+// goes through the same kit + auto-cycle-color pipeline, so a cycle in the QUERY
+// RESULT colors itself. Point <db> at any SQLite file (later: dl's kernel).
+const d2id = (v) => { const s = String(v); return /^[A-Za-z0-9_.-]+$/.test(s) ? s : `"${s.replace(/"/g, "'")}"` }
+function sqlToD2(dbRel, sql) {
+  let s = 'direction: right\n'
+  if (!DatabaseSync) { console.error('sql-graph: node:sqlite unavailable (need Node 22.5+)'); return s }
+  const dbPath = path.resolve(root, dbRel)
+  if (!existsSync(dbPath)) { console.error(`sql-graph: db not found: ${dbRel}`); return s }
+  let rows
+  try { const db = new DatabaseSync(dbPath, { readOnly: true }); rows = db.prepare(sql).all(); db.close() }
+  catch (e) { console.error(`sql-graph query failed: ${e.message}`); return s }
+  for (const r of rows) {
+    const v = Object.values(r)
+    if (v.length >= 2 && v[1] != null) s += `${d2id(v[0])} -> ${d2id(v[1])}` + (v[2] != null ? `: "${d2str(v[2])}"` : '') + '\n'
+    else if (v.length >= 1 && v[0] != null) s += `${d2id(v[0])}\n`
+  }
+  return s
 }
 
 function collectSources() {
@@ -131,11 +159,16 @@ export function parseFrames(md) {
     if (fence && !inFence) { inFence = true; info = fence[1].trim(); body = []; continue }
     if (fence && inFence) {
       inFence = false
-      const [kind, name] = info.split(/\s+/)
+      const parts = info.split(/\s+/)
+      const kind = parts[0]
       const text = body.join('\n').replace(/\s*$/, '') + '\n'
       if (kind === 'd2') {
-        const gname = name || cur.title.replace(/\W+/g, '-').toLowerCase()
+        const gname = parts[1] || cur.title.replace(/\W+/g, '-').toLowerCase()
         graphs.push({ name: gname, src: text })
+        cur.graph = `/${gname}.svg`
+      } else if (kind === 'sql-graph') {
+        const gname = parts[1] || cur.title.replace(/\W+/g, '-').toLowerCase()
+        graphs.push({ name: gname, kind: 'sql', db: parts[2], sql: text })
         cur.graph = `/${gname}.svg`
       } else {
         cur.lang = kind || 'text'
@@ -250,6 +283,7 @@ export function buildFrames() {
   mkdirSync(GRAPHS, { recursive: true })
   mkdirSync(PUBLIC, { recursive: true })
   const kit = existsSync(KIT) ? readFileSync(KIT, 'utf8') + '\n' : ''
+  for (const g of graphs) if (g.kind === 'sql') g.src = sqlToD2(g.db, g.sql) // query -> d2
   for (const g of graphs) {
     const d2path = path.join(GRAPHS, `${g.name}.d2`)
     const noauto = /(^|\n)\s*#\s*noautocolor/.test(g.src)
@@ -294,7 +328,7 @@ export function checkDeck() {
       for (const L of f.links || []) if (!slugs.has(norm(L)) && !titles.has(norm(L))) diags.push(`WARN  ${at}: [[${L}]] resolves to nothing`)
       if ((f.anchors || []).length && !f.graph) diags.push(`WARN  ${at}: anchor(s) but no graph in this frame`)
     }
-    for (const g of pf.graphs) for (const m of g.src.matchAll(/\.class:\s*(\w+)/g)) if (!KIT_CLASSES.has(m[1])) diags.push(`WARN  ${rel} (graph ${g.name}): unknown kit class "${m[1]}"`)
+    for (const g of pf.graphs) if (g.src) for (const m of g.src.matchAll(/\.class:\s*(\w+)/g)) if (!KIT_CLASSES.has(m[1])) diags.push(`WARN  ${rel} (graph ${g.name}): unknown kit class "${m[1]}"`)
   }
   return diags
 }
