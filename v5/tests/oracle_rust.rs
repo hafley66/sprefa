@@ -1,0 +1,139 @@
+//! Differential oracle: validate our Rust `module_edge` against `rust-analyzer
+//! scip` (real symbol-resolved ground truth). RA's SCIP index records, per file,
+//! occurrences of symbols with a Definition/Reference role. Aggregating to file
+//! level — a reference to symbol S in file A whose definition is in file B — gives
+//! the ground-truth file dependency graph. We assert every edge we emit is a real
+//! RA edge (precision == 1.0) and report recall (we are diet, so recall < 1).
+//!
+//! Skips (does not fail) when no rust-analyzer binary is found, since CI machines
+//! may lack one. Set SPREFA_RUST_ANALYZER to point at a binary explicitly.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use protobuf::Message;
+use scip::types::{Index, SymbolRole};
+
+const DL: &str = env!("CARGO_BIN_EXE_dl");
+
+/// Locate a real rust-analyzer binary (the rustup proxy on this machine is a
+/// stub, so prefer the VSCode-bundled server). None -> skip the test.
+fn find_ra() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("SPREFA_RUST_ANALYZER") {
+        let p = PathBuf::from(p);
+        if p.is_file() { return Some(p); }
+    }
+    let home = std::env::var("HOME").ok()?;
+    let ext = Path::new(&home).join(".vscode/extensions");
+    let mut found: Option<PathBuf> = None;
+    if let Ok(entries) = std::fs::read_dir(&ext) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with("rust-lang.rust-analyzer-") {
+                let bin = e.path().join("server/rust-analyzer");
+                if bin.is_file() { found = Some(bin); }
+            }
+        }
+    }
+    found
+}
+
+fn copy_dir(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for e in std::fs::read_dir(src).unwrap().flatten() {
+        let p = e.path();
+        let d = dst.join(e.file_name());
+        if p.is_dir() { copy_dir(&p, &d); } else { std::fs::copy(&p, &d).unwrap(); }
+    }
+}
+
+/// file -> file edges from a SCIP index: for each symbol, the file that defines it;
+/// then every reference occurrence in a different file yields ref_file -> def_file.
+/// Local symbols only (def is in some indexed document).
+fn ra_edges(index: &Index) -> HashSet<(String, String)> {
+    let mut def_file: HashMap<String, String> = HashMap::new();
+    for doc in &index.documents {
+        for occ in &doc.occurrences {
+            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 && !occ.symbol.starts_with("local ") {
+                def_file.entry(occ.symbol.clone()).or_insert_with(|| doc.relative_path.clone());
+            }
+        }
+    }
+    let mut edges = HashSet::new();
+    for doc in &index.documents {
+        for occ in &doc.occurrences {
+            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 { continue; }
+            if let Some(def) = def_file.get(&occ.symbol) {
+                if *def != doc.relative_path {
+                    edges.insert((doc.relative_path.clone(), def.clone()));
+                }
+            }
+        }
+    }
+    edges
+}
+
+fn our_edges(dir: &Path) -> HashSet<(String, String)> {
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
+? module_edge(s, d).
+"#;
+    std::fs::write(dir.join("mg.dl"), prog).unwrap();
+    let out = Command::new(DL)
+        .arg(dir.join("mg.dl"))
+        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("mg.db").to_str().unwrap()])
+        .output().expect("run dl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut edges = HashSet::new();
+    let mut in_edge = false;
+    for line in stdout.lines() {
+        if line.starts_with("? module_edge") { in_edge = true; continue; }
+        if line.starts_with('?') { in_edge = false; continue; }
+        if in_edge {
+            if let Some((s, d)) = line.trim().split_once('\t') {
+                edges.insert((s.to_string(), d.to_string()));
+            }
+        }
+    }
+    edges
+}
+
+#[test]
+fn module_edge_is_subset_of_rust_analyzer() {
+    let Some(ra) = find_ra() else {
+        eprintln!("SKIP oracle_rust: no rust-analyzer binary (set SPREFA_RUST_ANALYZER)");
+        return;
+    };
+    let tmp = std::env::temp_dir().join("sprefa_oracle_ra_ws");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ra_ws");
+    copy_dir(&fixture, &tmp);
+
+    let scip_out = tmp.join("index.scip");
+    let status = Command::new(&ra)
+        .args(["scip", tmp.to_str().unwrap(), "--output", scip_out.to_str().unwrap()])
+        .output().expect("run rust-analyzer scip");
+    assert!(scip_out.is_file(), "rust-analyzer scip produced no index: {}",
+        String::from_utf8_lossy(&status.stderr));
+
+    let bytes = std::fs::read(&scip_out).unwrap();
+    let index = Index::parse_from_bytes(&bytes).expect("parse scip");
+    let ra = ra_edges(&index);
+    let ours = our_edges(&tmp);
+
+    let inter: HashSet<_> = ours.intersection(&ra).cloned().collect();
+    let precision = if ours.is_empty() { 1.0 } else { inter.len() as f64 / ours.len() as f64 };
+    let recall = if ra.is_empty() { 1.0 } else { inter.len() as f64 / ra.len() as f64 };
+    let extra: Vec<_> = ours.difference(&ra).collect();
+    let missed: Vec<_> = ra.difference(&ours).collect();
+
+    eprintln!("[oracle] our edges={} ra edges={} matched={} precision={:.2} recall={:.2}",
+        ours.len(), ra.len(), inter.len(), precision, recall);
+    eprintln!("[oracle] ours not in RA (should be empty): {extra:?}");
+    eprintln!("[oracle] RA not in ours (diet misses): {missed:?}");
+
+    assert!(!ours.is_empty(), "we produced no edges");
+    assert!(extra.is_empty(), "every emitted edge must be a real RA edge; extras: {extra:?}");
+}
