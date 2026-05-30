@@ -73,7 +73,8 @@ pub enum BodyItem {
     Scan { rev: Term, glob: Term, path: Term, rev_out: Term },
     Match { path: Term, rev: Term, regex: String, line: Term },
     Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term> },
-    Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term },
+    Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term,
+         col: Option<Term>, end_line: Option<Term>, end_col: Option<Term> },
     Json { path: Term, rev: Term, jpath: String, out: Term },
     Cmp(Constraint),
     /// Transitive closure of an edge relation, e.g. `reaches(a,b) <- closure(calls).`

@@ -28,9 +28,11 @@ fn metavar_names(pattern: &str) -> Vec<String> {
 }
 
 /// Match an ast-grep pattern (target-language syntax with `$META` vars) over
-/// file content. Returns (line, captures) per match; captures bind each
-/// metavar name to the matched node's text.
-pub fn run_sg(content: &str, lang: &str, pattern_str: &str) -> Result<Vec<(i64, Vec<(String, String)>)>> {
+/// file content. Returns `(line, col, end_line, end_col, captures)` per match:
+/// 1-based lines, 0-based byte columns (tree-sitter's convention, == char/UTF-16
+/// for ASCII source). Captures bind each metavar name to the matched node text.
+pub fn run_sg(content: &str, lang: &str, pattern_str: &str)
+    -> Result<Vec<(i64, i64, i64, i64, Vec<(String, String)>)>> {
     let l = sg_lang(lang)?;
     let grep = AstGrep::new(content, l);
     let pattern = Pattern::new(pattern_str, l);
@@ -44,8 +46,9 @@ pub fn run_sg(content: &str, lang: &str, pattern_str: &str) -> Result<Vec<(i64, 
                 caps.push((n.clone(), node.text().to_string()));
             }
         }
-        let line = m.start_pos().line() as i64 + 1;
-        out.push((line, caps));
+        let (sl, sc) = m.start_pos().byte_point();
+        let (el, ec) = m.end_pos().byte_point();
+        out.push((sl as i64 + 1, sc as i64, el as i64 + 1, ec as i64, caps));
     }
     Ok(out)
 }

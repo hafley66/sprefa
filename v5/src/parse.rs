@@ -195,8 +195,13 @@ impl Parser {
         };
         self.expect(Tok::Comma)?;
         let line = self.term()?;
+        // optional trailing span binds: sg(.., line [, col [, end_line [, end_col]]]).
+        // 0-based byte columns, 1-based lines. Each only parsed if the prior is present.
+        let col = if matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
+        let end_line = if col.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
+        let end_col = if end_line.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Sg { path, rev, lang, pattern, line })
+        Ok(BodyItem::Sg { path, rev, lang, pattern, line, col, end_line, end_col })
     }
 
     fn json(&mut self) -> Result<BodyItem> {

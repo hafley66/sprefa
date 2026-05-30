@@ -1123,8 +1123,11 @@ fn parse_file(
                 }
                 binds = next;
             }
-            BodyItem::Sg { lang, pattern, line, .. } => {
+            BodyItem::Sg { lang, pattern, line, col, end_line, end_col, .. } => {
                 let slv = var_of(line)?;
+                let clv = col.as_ref().map(var_of).transpose()?;
+                let ellv = end_line.as_ref().map(var_of).transpose()?;
+                let eclv = end_col.as_ref().map(var_of).transpose()?;
                 // prefilter: a file lacking any literal token cannot match
                 let lits = pattern_literals(pattern);
                 if !lits.iter().all(|t| content.contains(t.as_str())) {
@@ -1134,9 +1137,12 @@ fn parse_file(
                 let hits = crate::sg::run_sg(&content, lang, pattern)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
-                    for (ln, caps) in &hits {
+                    for (ln, c, eln, ec, caps) in &hits {
                         let mut ext = b.clone();
                         ext.insert(slv.clone(), Value::Int(*ln));
+                        if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
+                        if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
+                        if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }
                         for (n, t) in caps { ext.insert(n.clone(), Value::Text(t.clone())); }
                         next.push(ext);
                     }

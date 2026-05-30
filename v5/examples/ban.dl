@@ -7,18 +7,20 @@
 # `diag` is a plain relation; --check is one renderer of it, --lsp is another.
 # Columns are mapped by name: path/line/msg required; severity/code/hint optional.
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text, hint: text).
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text, hint: text).
 
-# Ban 1: a `dbg!(...)` left in committed code. $X captures the inner expr.
-diag(path, line, "error", "no-dbg", "dbg!() left in code: `dbg!(${X})`",
+# Ban 1: a `dbg!(...)` left in committed code. $X captures the inner expr; the
+# trailing line/col/end_line/end_col bind the match span for a tight squiggle.
+diag(path, line, col, end_line, end_col, "error", "no-dbg", "dbg!() left in code: `dbg!(${X})`",
      "remove the debug macro before committing") <-
   scan("WORK", "v5/src/**/*.rs", path, rev),
-  sg(path, rev, :rust, "dbg!($X)", line).
+  sg(path, rev, :rust, "dbg!($X)", line, col, end_line, end_col).
 
 # Ban 2: a bare `panic!(...)` in library code. `$$$M` is the VARIADIC metavar:
 # it matches the whole argument list (zero or more nodes), so `panic!("x", y)`
 # matches too. A single `$M` would only match a one-argument panic!.
-diag(path, line, "error", "no-panic", "panic!() in library code",
+diag(path, line, col, end_line, end_col, "error", "no-panic", "panic!() in library code",
      "return a Result and let the caller decide") <-
   scan("WORK", "v5/src/**/*.rs", path, rev),
-  sg(path, rev, :rust, "panic!($$$M)", line).
+  sg(path, rev, :rust, "panic!($$$M)", line, col, end_line, end_col).
