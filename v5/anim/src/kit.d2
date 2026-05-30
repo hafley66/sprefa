@@ -1,0 +1,13 @@
+# frame-anim d2 kit — shared vocabulary prepended to every graph at build time.
+# Reference a word with `.class`, e.g.  helper.class: dead   log.class: sink
+# Cycles are coloured automatically, so you never style a loop by hand.
+classes: {
+  fn:       { shape: rectangle; style: { fill: "#eceff4"; stroke: "#5e81ac" } }
+  relation: { shape: cylinder;  style: { fill: "#88c0d0"; stroke: "#2e3440" } }
+  type:     { shape: hexagon;   style: { fill: "#a3be8c"; stroke: "#2e3440" } }
+  module:   { shape: page;      style: { fill: "#b48ead"; stroke: "#2e3440" } }
+  sink:     { style: { fill: "#ebcb8b"; stroke: "#2e3440" } }
+  dead:     { style: { fill: "#4c566a"; stroke: "#3b4252"; font-color: "#e5e9f0" } }
+  hub:      { style: { stroke-width: 3 } }
+  ghost:    { style: { opacity: 0.45; stroke-dash: 3 } }
+}

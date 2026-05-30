@@ -1,0 +1,7 @@
+node_modules/
+dist/
+shots/
+# generated from src/frames.md by bin/build-frames.mjs
+src/frames.json
+graphs/*.d2
+public/*.svg
