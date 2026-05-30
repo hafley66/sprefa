@@ -39,6 +39,32 @@ function chapterName(p) {
     .map((s) => s.replace(/^\d+[-_]?/, '').replace(/[-_]/g, ' '))
     .join(' · ')
 }
+// `code: ../src/foo.rs#L10-24 [as lang]` pulls a snippet from a real file at build
+// time instead of pasting it — kills copy-drift and token cost. Paths resolve
+// relative to the app root. Line range optional (whole file if omitted).
+const EXT_LANG = {
+  rs: 'rust', ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx', mjs: 'javascript',
+  py: 'python', go: 'go', c: 'c', h: 'cpp', cc: 'cpp', cpp: 'cpp', hpp: 'cpp', java: 'java',
+  rb: 'ruby', sql: 'sql', sh: 'bash', bash: 'bash', json: 'json', toml: 'toml',
+  yaml: 'yaml', yml: 'yaml', md: 'markdown', prolog: 'prolog', pl: 'prolog',
+}
+function resolveCodeRef(spec) {
+  let lang = null
+  const asM = spec.match(/\s+as\s+(\S+)\s*$/)
+  if (asM) { lang = asM[1]; spec = spec.slice(0, asM.index) }
+  const m = spec.trim().match(/^(.+?)(?:#L(\d+)(?:-(\d+))?)?$/)
+  if (!m) return null
+  const fp = path.resolve(root, m[1])
+  if (!existsSync(fp)) { console.error(`code: file not found: ${m[1]}`); return null }
+  const all = readFileSync(fp, 'utf8').split('\n')
+  const a = m[2] ? +m[2] : 1
+  const b = m[3] ? +m[3] : (m[2] ? a : all.length)
+  let slice = all.slice(a - 1, b)
+  const indent = Math.min(...slice.filter((l) => l.trim()).map((l) => l.match(/^\s*/)[0].length))
+  if (isFinite(indent) && indent > 0) slice = slice.map((l) => l.slice(indent))
+  return { code: slice.join('\n').replace(/\s+$/, '') + '\n', lang: lang || EXT_LANG[path.extname(fp).slice(1).toLowerCase()] || 'text' }
+}
+
 function collectSources() {
   if (existsSync(DECK)) return walkMd(DECK).map((file) => ({ file, chapter: chapterName(file), slug: path.basename(file, '.md') }))
   return [{ file: MD, chapter: '', slug: 'frames' }]
@@ -119,6 +145,8 @@ export function parseFrames(md) {
 
     const g = line.match(/^graph:\s*(\S+)\s*$/)
     if (g) { cur.graph = g[1].startsWith('/') ? g[1] : `/${g[1]}.svg`; continue }
+    const c = line.match(/^code:\s+(.+?)\s*$/)
+    if (c) { cur.codeRef = c[1]; continue }
     cur._narr.push(line)
   }
   finishFrame()
@@ -186,6 +214,13 @@ export function buildFrames() {
     for (const f of r.frames) { f.chapter = chapter; f.chapterSlug = slug }
     frames.push(...r.frames)
     graphs.push(...r.graphs)
+  }
+  // resolve `code:` source-spans against real files
+  for (const f of frames) {
+    if (f.codeRef && !(f.code && f.code.trim())) {
+      const r = resolveCodeRef(f.codeRef)
+      if (r) { f.code = r.code; f.lang = r.lang }
+    }
   }
   graphs.push({ name: '_map', src: buildMapD2(frames) })
   mkdirSync(GRAPHS, { recursive: true })

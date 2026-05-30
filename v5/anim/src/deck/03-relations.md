@@ -2,18 +2,11 @@
 
 ## in the engine
 
-This is not a metaphor: dl runs exactly this. scc.rs finds the components with Tarjan, and the condensed DAG drives stratified evaluation. The animation you just stepped through is the algorithm the engine executes.
+This is not a metaphor: dl runs exactly this. The code below is pulled straight from `v5/src/scc.rs` at build time (not pasted) — the real `Cond` struct the engine produces when it condenses the call graph. `comp` maps each node to its SCC; `cyclic` marks the looping ones; `cadj` is the condensed DAG that drives stratified evaluation.
 
 graph: scc
 
-```rust
-// v5/src/scc.rs — Tarjan, then evaluate per condensed node
-let sccs = tarjan(&edges);          // run/parse/lex -> one component
-let dag = condense(&edges, &sccs);  // self-loops dropped -> a DAG
-for comp in topo_order(&dag) {      // stratified: deps first
-    fixpoint(comp);                 // saturate inside the component
-}
-```
+code: ../src/scc.rs#L63-71
 
 ## now zoom out: the relations themselves form a graph
 
