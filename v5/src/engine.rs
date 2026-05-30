@@ -14,6 +14,20 @@ use crate::scc;
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
 fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
 
+/// One row of the `diag` relation, normalized for the LSP. Columns are mapped
+/// by NAME from the `.dl` author's `rel diag(...)` decl (order-free); only
+/// path/line/msg are required, the span/severity fields default. See docs/lsp.md.
+#[derive(Clone, Debug)]
+pub struct DiagRow {
+    pub path: String,
+    pub line: i64,
+    pub col: i64,
+    pub end_line: i64,
+    pub end_col: i64,
+    pub severity: String,
+    pub msg: String,
+}
+
 /// head relation -> edge relation, for every `head(..) <- closure(edge).` rule.
 fn closure_map(rules: &[&Rule]) -> HashMap<String, String> {
     let mut m = HashMap::new();
@@ -256,6 +270,53 @@ impl Engine {
 
     pub fn run(&mut self, prog: &Program) -> Result<()> {
         self.tick(prog, false)
+    }
+
+    /// Read the `diag` relation, if declared, as normalized DiagRows. Maps each
+    /// row by column NAME (recognized: path, line, col, end_line, end_col,
+    /// severity, msg); missing optional columns take defaults. Returns empty if
+    /// the program declares no `diag` relation. Drives LSP publishDiagnostics.
+    /// `only` filters to one path (the changed file) when Some.
+    pub fn diags(&self, only: Option<&str>) -> Result<Vec<DiagRow>> {
+        let Some(meta) = self.rels.get("diag") else { return Ok(Vec::new()); };
+        // column name -> position in the rel table
+        let idx: HashMap<&str, usize> =
+            meta.cols.iter().enumerate().map(|(i, c)| (c.name.as_str(), i)).collect();
+        let need = |k: &str| idx.get(k).copied();
+        let (pi, li, mi) = match (need("path"), need("line"), need("msg")) {
+            (Some(p), Some(l), Some(m)) => (p, l, m),
+            _ => bail!("diag relation must have columns: path, line, msg"),
+        };
+        let select: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+        let mut sql = format!("SELECT {} FROM {}", select.join(", "), tbl("diag"));
+        if only.is_some() { sql.push_str(&format!(" WHERE \"{}\" = ?1", meta.cols[pi].name)); }
+        let mut stmt = self.conn.prepare(&sql)?;
+        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<DiagRow> {
+            let text = |i: usize| row.get::<_, rusqlite::types::Value>(i)
+                .map(|v| match v {
+                    rusqlite::types::Value::Text(s) => s,
+                    rusqlite::types::Value::Integer(n) => n.to_string(),
+                    _ => String::new(),
+                }).unwrap_or_default();
+            let int = |i: usize| row.get::<_, i64>(i).unwrap_or(0);
+            let line = int(li);
+            Ok(DiagRow {
+                path: text(pi),
+                line,
+                col: need("col").map(int).unwrap_or(0),
+                end_line: need("end_line").map(int).unwrap_or(line),
+                end_col: need("end_col").map(int).unwrap_or(0),
+                severity: need("severity").map(text).unwrap_or_else(|| "warn".into()),
+                msg: text(mi),
+            })
+        };
+        let mut out = Vec::new();
+        let mut rows = match only {
+            Some(p) => stmt.query(rusqlite::params![p])?,
+            None => stmt.query([])?,
+        };
+        while let Some(row) = rows.next()? { out.push(map_row(row)?); }
+        Ok(out)
     }
 
     /// One reactive tick: declare, reconcile sources incrementally, rebuild

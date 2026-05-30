@@ -3,6 +3,7 @@ pub mod db;
 pub mod engine;
 pub mod lex;
 pub mod lower;
+pub mod lsp;
 pub mod parse;
 pub mod scc;
 pub mod sg;
@@ -29,6 +30,12 @@ pub fn run_changed(program_path: &str, db_path: Option<&str>, root: PathBuf, cha
     let abs: Vec<PathBuf> = changed.into_iter()
         .map(|p| if p.is_absolute() { p } else { root.join(p) }).collect();
     eng.tick_paths(&prog, &abs, false)
+}
+
+/// Run as an LSP server over stdio. The program's `diag` relation becomes live
+/// editor diagnostics; lint fires on file open / save. See docs/lsp.md.
+pub fn run_lsp(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {
+    lsp::run_lsp(program_path, db_path, root)
 }
 
 pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {

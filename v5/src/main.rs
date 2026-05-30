@@ -12,6 +12,10 @@ struct Cli {
     root: PathBuf,
     #[arg(long)]
     watch: bool,
+    /// Run as an LSP server over stdio: the program's `diag` relation becomes
+    /// live editor diagnostics (lint on open/save). See docs/lsp.md.
+    #[arg(long)]
+    lsp: bool,
     /// Drive one incremental tick for these changed paths (the delta path the
     /// watcher uses), instead of a full run. Repeatable.
     #[arg(long)]
@@ -21,7 +25,9 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = cli.root.canonicalize()?;
-    if !cli.changed.is_empty() {
+    if cli.lsp {
+        sprefa_v5::run_lsp(&cli.program, cli.db.as_deref(), root)
+    } else if !cli.changed.is_empty() {
         sprefa_v5::run_changed(&cli.program, cli.db.as_deref(), root, cli.changed)
     } else if cli.watch {
         sprefa_v5::run_watch(&cli.program, cli.db.as_deref(), root)

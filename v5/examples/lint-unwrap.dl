@@ -1,0 +1,20 @@
+# Lint: flag `.unwrap()` outside test code. Run as a live linter:
+#   dl examples/lint-unwrap.dl --root . --lsp
+# and any LSP client (VSCode, Claude Code) shows a squiggle per match.
+#
+# The sg pattern `$X.unwrap()` captures the RECEIVER into the metavar $X, which
+# binds to the dl variable X (uppercase, same name). The diag message then names
+# what was unwrapped via ${X}. sg returns the match line (no column yet), so the
+# whole line is underlined for now.
+
+rel hit(X: text, path: file, line: int).
+rel diag(path: file, line: int, severity: text, msg: text).
+
+hit(X, path, line) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  sg(path, rev, :rust, "$X.unwrap()", line).
+
+diag(path, line, "warn", "unwrap() on `${X}`: use ? or expect(\"reason\")") <-
+  hit(X, path, line).
+
+? diag(path, line, severity, msg).
