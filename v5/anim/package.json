@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "build:md": "node bin/build-frames.mjs",
     "frames": "node bin/from-git.mjs",
-    "graphs": "bash bin/render-d2.sh"
+    "graphs": "bash bin/render-d2.sh",
+    "check": "node bin/build-frames.mjs --check"
   },
   "dependencies": {
     "marked": "^18.0.4",

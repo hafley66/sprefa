@@ -244,7 +244,41 @@ export function buildFrames() {
   return { frames: frames.length, graphs: graphs.length }
 }
 
+const KIT_CLASSES = new Set(['fn', 'relation', 'type', 'module', 'sink', 'dead', 'hub', 'ghost'])
+// Lint the deck without launching the app: an AI gets compiler-style errors it can
+// fix in one turn. Checks broken [[links]], undefined graphs, missing code: files,
+// unknown kit classes, empty frames, anchors without a graph.
+export function checkDeck() {
+  const norm = (s) => String(s).toLowerCase().replace(/^\d+[-_]?/, '').replace(/[^a-z0-9]/g, '')
+  const sources = collectSources()
+  const perFile = sources.map((s) => ({ ...s, ...parseFrames(readFileSync(s.file, 'utf8')) }))
+  const graphNames = new Set(perFile.flatMap((pf) => pf.graphs.map((g) => g.name)))
+  const slugs = new Set(perFile.flatMap((pf) => pf.frames.map(() => norm(pf.slug))))
+  const titles = new Set(perFile.flatMap((pf) => pf.frames.map((f) => norm(f.title))))
+  const diags = []
+  for (const pf of perFile) {
+    const rel = path.relative(root, pf.file)
+    for (const f of pf.frames) {
+      const at = `${rel} › "${f.title}"`
+      if (!(f.narration || '').trim() && !(f.code || '').trim() && !f.codeRef && !f.graph) diags.push(`ERROR ${at}: empty frame`)
+      if (f.graph) { const n = f.graph.replace(/^\//, '').replace(/\.svg$/, ''); if (!graphNames.has(n)) diags.push(`ERROR ${at}: graph "${n}" is never defined`) }
+      if (f.codeRef && !resolveCodeRef(f.codeRef)) diags.push(`ERROR ${at}: code: ${f.codeRef} did not resolve`)
+      for (const L of f.links || []) if (!slugs.has(norm(L)) && !titles.has(norm(L))) diags.push(`WARN  ${at}: [[${L}]] resolves to nothing`)
+      if ((f.anchors || []).length && !f.graph) diags.push(`WARN  ${at}: anchor(s) but no graph in this frame`)
+    }
+    for (const g of pf.graphs) for (const m of g.src.matchAll(/\.class:\s*(\w+)/g)) if (!KIT_CLASSES.has(m[1])) diags.push(`WARN  ${rel} (graph ${g.name}): unknown kit class "${m[1]}"`)
+  }
+  return diags
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
+  if (process.argv.includes('--check')) {
+    const d = checkDeck()
+    d.forEach((x) => console.log(x))
+    const errs = d.filter((x) => x.startsWith('ERROR')).length
+    console.log(`${d.length} issue(s), ${errs} error(s)`)
+    process.exit(errs ? 1 : 0)
+  }
   const r = buildFrames()
-  console.log(`built ${r.frames} frames, ${r.graphs} graphs from frames.md`)
+  console.log(`built ${r.frames} frames, ${r.graphs} graphs`)
 }

@@ -49,7 +49,7 @@ depends(reaches, reaches).   % self-loop = recurse to fixpoint
 A frame needs **no code and no graph** — it can be a pure discussion note, so the deck doubles as a durable record of a session's thinking. Things parked here:
 
 - **book/tree layout** — the deck is now a `src/deck/` tree of chapter files, mirrored in the FS. See [[01-reachability]] and [[02-cycles]].
-- **the deck's own graph** — `[[links]]` between slides form an import/export graph, rendered by the same d2 kit. Next: a map view from any slide.
+- **the deck's own graph** — double-bracket links between slides form an import/export graph, rendered by the same d2 kit. Press `m` for the map.
 - **no commits required** — edit a chapter file and it live-reloads.
 
 > Authoring is just markdown: `## heading`, prose, optional ```` ```code ```` and ```` ```d2 ```` blocks. The FS tree is the table of contents.
