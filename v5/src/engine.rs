@@ -879,7 +879,8 @@ impl Engine {
             "INSERT OR IGNORE INTO rel_module_unresolved(file, specifier, reason) VALUES (?1,?2,?3)")?;
         for (rev, files) in &by_rev {
             let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
-            let cx = ProjectCx::new(&self.root, &fileset);
+            let manifests = self.collect_manifests(rev, &fileset);
+            let cx = ProjectCx::new(&self.root, &fileset, &manifests);
             for (path, _hash) in files {
                 let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
                 let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) else { continue };
@@ -895,6 +896,32 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// Read the Cargo.toml / package.json manifests above the file set, at this
+    /// rev, into a map (manifest path -> contents) for the resolver's crate /
+    /// package registries. Probes the distinct ancestor directories of the files;
+    /// `read_content` errors (no such manifest) are skipped. Rev-correct (git show
+    /// for a git rev, disk for WORK).
+    fn collect_manifests(&self, rev: &str, files: &HashSet<String>) -> HashMap<String, String> {
+        let mut dirs: HashSet<String> = HashSet::new();
+        for f in files {
+            let mut d = Path::new(f);
+            while let Some(p) = d.parent() {
+                dirs.insert(p.to_string_lossy().replace('\\', "/"));
+                d = p;
+            }
+        }
+        let mut out = HashMap::new();
+        for dir in dirs {
+            for name in ["Cargo.toml", "package.json"] {
+                let rel = if dir.is_empty() { name.to_string() } else { format!("{dir}/{name}") };
+                if let Ok(content) = read_content(&self.root, rev, &rel) {
+                    out.insert(rel, content);
+                }
+            }
+        }
+        out
     }
 
     /// A closure head `rel_<head>` is a recursive-CTE view over the condensation
