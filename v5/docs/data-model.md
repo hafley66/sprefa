@@ -5,6 +5,17 @@ version. v3, v4, and v5 each re-derived it; v4 got it right; v5 collapsed it to
 ship the call graph fast. This is the stable form. Build on these relations, not
 on the collapsed `_file` table.
 
+## Implementation status
+
+- **Stage 1 (landed, commit 67af575):** `repo` / `rev` / `content` / `file` are
+  DSL-queryable built-in relations, refreshed each tick from the `_file` cache.
+  Any rule joins the file set without a `scan`. Reserved names (declaring one
+  errors). Stage-1 ids are the raw rev string / content hash (no interning).
+  `_file` remains the change-detection cache. See
+  `plans/2026-05-30-data-model-migration-plan.md`.
+- **Stage 2 (deferred):** content interning (short dedup ids), file-id-keyed
+  `_prov` retraction, multi-repo config. Do when cross-repo is real.
+
 ## The one idea: content is separate from location
 
 A file's bytes and where you found those bytes are two different things.
