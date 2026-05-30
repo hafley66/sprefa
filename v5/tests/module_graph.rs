@@ -138,6 +138,59 @@ fn cross_language_union_in_one_edge_relation() {
     assert!(reaches_block.contains("ts/src/app.ts\tts/src/util.ts"), "ts reach: {out}");
 }
 
+const PROG_TS: &str = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.ts", path, rev), match(path, rev, /./, line).
+rel reaches(a: text, b: text).
+reaches(a, b) <- closure(module_edge).
+? module_edge(s, d).
+? module_unresolved(f, spec, why).
+"#;
+
+#[test]
+fn ts_per_package_tsconfig_paths() {
+    let d = sandbox("ts_tsconfig");
+    fs::create_dir_all(d.join("packages/app/src")).unwrap();
+    fs::create_dir_all(d.join("packages/lib/src")).unwrap();
+    // app's own tsconfig defines a @lib/* alias (baseUrl = the packages dir).
+    fs::write(d.join("packages/app/tsconfig.json"),
+        r#"{"compilerOptions":{"baseUrl":"..","paths":{"@lib/*":["lib/src/*"]}}}"#).unwrap();
+    fs::write(d.join("packages/app/src/main.ts"), "import { u } from '@lib/util';\nexport const z = 1;\n").unwrap();
+    fs::write(d.join("packages/lib/src/util.ts"), "export const u = 1;\n").unwrap();
+
+    let (code, out, _) = run(&d, PROG_TS, &[]);
+    assert_eq!(code, 0, "run failed: {out}");
+    assert!(out.contains("packages/app/src/main.ts\tpackages/lib/src/util.ts"),
+        "per-package tsconfig paths alias must resolve: {out}");
+}
+
+#[test]
+fn ts_workspace_package_json_fallback() {
+    let d = sandbox("ts_workspace");
+    fs::create_dir_all(d.join("packages/app/src")).unwrap();
+    fs::create_dir_all(d.join("packages/shared")).unwrap();
+    // No node_modules: a bare import of a workspace package resolves via package.json name.
+    fs::write(d.join("packages/shared/package.json"), r#"{"name":"shared","version":"1.0.0"}"#).unwrap();
+    fs::write(d.join("packages/shared/index.ts"), "export const s = 1;\n").unwrap();
+    fs::write(d.join("packages/app/src/main.ts"), "import { s } from 'shared';\nexport const z = 1;\n").unwrap();
+
+    let (code, out, _) = run(&d, PROG_TS, &[]);
+    assert_eq!(code, 0, "run failed: {out}");
+    assert!(out.contains("packages/app/src/main.ts\tpackages/shared/index.ts"),
+        "workspace package.json fallback must resolve: {out}");
+}
+
+#[test]
+fn ts_dynamic_template_import_is_unresolved_not_silent() {
+    let d = sandbox("ts_dyn");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/app.ts"), "const m = await import(`./mods/${name}`);\nexport const z = 1;\n").unwrap();
+    let (code, out, _) = run(&d, PROG_TS, &[]);
+    assert_eq!(code, 0, "run failed: {out}");
+    let unres = out.split("? module_unresolved").nth(1).unwrap_or("");
+    assert!(unres.contains("dynamic"), "interpolated import() must be flagged dynamic, not dropped silently: {out}");
+}
+
 #[test]
 fn edge_drops_when_target_file_deleted() {
     let d = sandbox("drop");

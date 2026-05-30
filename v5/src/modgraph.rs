@@ -562,7 +562,6 @@ impl ModuleResolver for TsResolver {
     fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef> {
         let clean = strip_noise(content, false);
         let abs = self.root.join(file);
-        let dir = abs.parent().unwrap_or(&self.root).to_path_buf();
         let mut out = Vec::new();
         for c in ts_spec_re().captures_iter(&clean) {
             let spec = c[1].to_string();
@@ -573,7 +572,9 @@ impl ModuleResolver for TsResolver {
                     target: Resolution::Unresolved(format!("{spec}: dynamic")) });
                 continue;
             }
-            let target = match self.resolver.resolve(&dir, &spec) {
+            // resolve_file (not resolve) so TsconfigDiscovery::Auto finds the nearest
+            // tsconfig.json walking up from the importing file (per-package monorepo).
+            let target = match self.resolver.resolve_file(&abs, &spec) {
                 Ok(r) => {
                     let full = r.full_path();
                     match full.strip_prefix(&self.root).ok()
