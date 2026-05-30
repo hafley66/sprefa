@@ -147,6 +147,9 @@ export function parseFrames(md) {
     if (g) { cur.graph = g[1].startsWith('/') ? g[1] : `/${g[1]}.svg`; continue }
     const c = line.match(/^code:\s+(.+?)\s*$/)
     if (c) { cur.codeRef = c[1]; continue }
+    // ![[slug#title]] / ![[#title]] / ![[slug]] transcludes another frame's graph+code
+    const inc = line.match(/^!\[\[([^\]]+)\]\]\s*$/)
+    if (inc) { cur.include = inc[1].trim(); continue }
     // anchor: <code-token> -> <graph node>[, node]  binds code to graph nodes
     const an = line.match(/^anchor:\s*(.+?)\s*->\s*(.+)$/)
     if (an) { (cur.anchors ||= []).push({ token: an[1].trim(), nodes: an[2].split(',').map((s) => s.trim()).filter(Boolean) }); continue }
@@ -218,6 +221,22 @@ export function buildFrames() {
     frames.push(...r.frames)
     graphs.push(...r.graphs)
   }
+  // resolve ![[...]] transclusions: copy the target frame's graph + code when the
+  // current frame omits them (one source of truth for a shared diagram/snippet)
+  const nt = (s) => String(s).toLowerCase().replace(/^\d+[-_]?/, '').replace(/[^a-z0-9]/g, '')
+  for (const f of frames) {
+    if (!f.include) continue
+    const [sl, ti] = f.include.split('#')
+    const ns = nt(sl || ''), nti = ti !== undefined ? nt(ti) : null
+    const t = frames.find((g) => (ns ? nt(g.chapterSlug) === ns : true) && (nti != null ? nt(g.title) === nti : true) && (ns || nti))
+    if (!t) { console.error(`![[${f.include}]] not found`); continue }
+    if (!f.graph && t.graph) f.graph = t.graph
+    if (!(f.code && f.code.trim()) && !f.codeRef) {
+      if (t.codeRef) f.codeRef = t.codeRef
+      else if (t.code) { f.code = t.code; f.lang = t.lang }
+    }
+  }
+
   // resolve `code:` source-spans against real files
   for (const f of frames) {
     if (f.codeRef && !(f.code && f.code.trim())) {
