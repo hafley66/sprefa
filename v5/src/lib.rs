@@ -20,6 +20,40 @@ pub fn run_file(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Res
     eng.run(&prog)
 }
 
+/// CLI lint/ban path: run the program, render the `diag` relation, and fail the
+/// command when any `error`-severity row exists. `json` emits a JSON array to
+/// stdout for hooks/CI; otherwise diags render to stderr (`path:line: sev[code]:
+/// msg`), the same role as v4's LogSink. The `diag` relation is just a relation;
+/// this function is one renderer of it (LSP is another). See docs/lsp.md.
+pub fn run_check(program_path: &str, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<()> {
+    let src = std::fs::read_to_string(program_path)?;
+    // Drop `?` queries so their stdout rows don't mix with --diag-json output.
+    let mut prog = parse::parse(lex::lex(&src)?)?;
+    if json { prog.items.retain(|i| !matches!(i, ast::Item::Query(_))); }
+    let conn = db::open(db_path)?;
+    let mut eng = engine::Engine::new(conn, root);
+    eng.tick(&prog, true)?;
+    let diags = eng.diags(None)?;
+
+    if json {
+        let arr: Vec<serde_json::Value> = diags.iter().map(|d| serde_json::json!({
+            "path": d.path, "line": d.line, "col": d.col,
+            "endLine": d.end_line, "endCol": d.end_col,
+            "severity": d.severity, "code": d.code, "message": d.msg, "hint": d.hint,
+        })).collect();
+        println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(arr))?);
+    } else {
+        for d in &diags {
+            let code = if d.code.is_empty() { String::new() } else { format!("[{}]", d.code) };
+            eprintln!("{}:{}: {}{}: {}", d.path, d.line, d.severity, code, d.msg);
+            if let Some(h) = &d.hint { eprintln!("    hint: {h}"); }
+        }
+    }
+    let errors = diags.iter().filter(|d| d.severity == "error").count();
+    if errors > 0 { anyhow::bail!("{errors} banned pattern(s) found"); }
+    Ok(())
+}
+
 /// Drive one incremental tick over an existing db for a set of changed paths
 /// (relative to root or absolute). The delta entry point the watcher uses.
 pub fn run_changed(program_path: &str, db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {

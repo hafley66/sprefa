@@ -25,7 +25,9 @@ pub struct DiagRow {
     pub end_line: i64,
     pub end_col: i64,
     pub severity: String,
+    pub code: String,
     pub msg: String,
+    pub hint: Option<String>,
 }
 
 /// head relation -> edge relation, for every `head(..) <- closure(edge).` rule.
@@ -307,7 +309,9 @@ impl Engine {
                 end_line: need("end_line").map(int).unwrap_or(line),
                 end_col: need("end_col").map(int).unwrap_or(0),
                 severity: need("severity").map(text).unwrap_or_else(|| "warn".into()),
+                code: need("code").map(text).unwrap_or_default(),
                 msg: text(mi),
+                hint: need("hint").map(text).filter(|s| !s.is_empty()),
             })
         };
         let mut out = Vec::new();

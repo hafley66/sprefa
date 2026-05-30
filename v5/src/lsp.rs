@@ -111,7 +111,12 @@ fn to_diag(d: DiagRow) -> Diagnostic {
         Range::new(Position::new(line0, d.col.max(0) as u32),
                    Position::new(end0, d.end_col.max(0) as u32))
     };
-    Diagnostic { range, severity, source: Some("dl".into()), message: d.msg, ..Default::default() }
+    let message = match &d.hint {
+        Some(h) => format!("{}\nhint: {h}", d.msg),
+        None => d.msg,
+    };
+    let code = (!d.code.is_empty()).then(|| lsp_types::NumberOrString::String(d.code));
+    Diagnostic { range, severity, code, source: Some("dl".into()), message, ..Default::default() }
 }
 
 /// abs path -> path relative to root, forward-slashed (matches stored diag.path).
