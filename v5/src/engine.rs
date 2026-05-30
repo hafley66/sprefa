@@ -14,6 +14,23 @@ use crate::scc;
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
 fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
 
+/// The built-in relations of the data-model contract (docs/data-model.md). A
+/// `.dl` program may not declare these names; they are registered with fixed
+/// schemas and refreshed each tick from the `_file` change-detection cache, so
+/// any rule can join the file set without a `scan`. Stage 1: ids are the raw
+/// rev string / content hash (no interning yet; that is Stage 2).
+const BUILTIN_RELS: [&str; 4] = ["repo", "rev", "content", "file"];
+
+fn builtin_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    vec![
+        RelDecl { name: "repo".into(), cols: vec![c("id", Type::Text), c("slug", Type::Text), c("root", Type::Path)] },
+        RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)] },
+        RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)] },
+        RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Text), c("path", Type::Path), c("content", Type::Text)] },
+    ]
+}
+
 /// Parse a 64-char hex string into 32 bytes. Errs on wrong length or non-hex
 /// (e.g. the `''` __src default on a derived row), so the caller can skip it.
 fn hex_to_32(s: &str) -> Result<[u8; 32]> {
@@ -370,6 +387,9 @@ impl Engine {
         // Baseline each source relation's content digest so the next incremental
         // tick can skip a rebuild when bytes move but rows don't (see tick_paths).
         self.seed_rel_digests(&source_rels)?;
+        // refresh built-in repo/rev/content/file from the updated _file cache,
+        // before derived rules that may join them are rebuilt.
+        self.refresh_builtin_rels()?;
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -466,10 +486,20 @@ impl Engine {
         // A changed file's bytes moved, but did its extracted rows? Prune the
         // source rels whose content digest is unchanged (comment/format edits),
         // so they do not propagate a rebuild. v4's `Replay` at relation grain.
+        let files_changed = changed_facts;
         if changed_facts {
             changed_source_rels = self.prune_unchanged_by_digest(changed_source_rels)?;
-            if changed_source_rels.is_empty() { changed_facts = false; }
         }
+        // The file set itself (path/hash/rev) is the built-in `file`/`content`/
+        // `rev` relations, so any file change makes them changed inputs: refresh
+        // them and mark them changed so rules that join `file` re-derive. This is
+        // separate from the per-source-rel digest prune above (a comment edit
+        // leaves `fn` unchanged but does change the file's content hash).
+        if files_changed {
+            self.refresh_builtin_rels()?;
+            for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
+        }
+        if changed_source_rels.is_empty() { changed_facts = false; }
 
         // Cold start (or empty derived/closure) needs a full rebuild; otherwise
         // rebuild only the derived rels dependency-reachable from what changed,
@@ -730,11 +760,49 @@ impl Engine {
     fn declare_all(&mut self, prog: &Program, closures: &HashMap<String, String>) -> Result<()> {
         for item in &prog.items {
             if let Item::Rel(d) = item {
+                if BUILTIN_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in relation (repo/rev/content/file); pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
                 }
             }
+        }
+        self.declare_builtins()?;
+        Ok(())
+    }
+
+    /// Register and create the built-in relation tables (repo/rev/content/file).
+    /// Reuses `declare`, so they get the same `rel_<name>` table shape and a
+    /// `self.rels` entry, which is what lets `lower_rule` join body atoms against
+    /// them. Populated by `refresh_builtin_rels`, not by source rules.
+    fn declare_builtins(&mut self) -> Result<()> {
+        for d in builtin_rel_decls() { self.declare(&d)?; }
+        Ok(())
+    }
+
+    /// Rebuild the built-in relations from the `_file` cache. Wholesale wipe +
+    /// repopulate (bounded by repo size, one row per tracked file). Stage 1:
+    /// repo = one row from `--root`; rev.id/file.rev = the raw rev string;
+    /// content.id = the content hash. No interning (Stage 2).
+    fn refresh_builtin_rels(&self) -> Result<()> {
+        for r in BUILTIN_RELS { self.conn.execute(&format!("DELETE FROM {}", tbl(r)), [])?; }
+        let root = self.root.to_string_lossy().to_string();
+        let slug = self.root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| root.clone());
+        self.conn.execute("INSERT OR IGNORE INTO rel_repo(id, slug, root) VALUES (?1, ?2, ?3)",
+            rusqlite::params![slug, slug, root])?;
+        let mut sel = self.conn.prepare("SELECT path, rev, hash FROM _file")?;
+        let rows: Vec<(String, String, String)> = sel
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .filter_map(|x| x.ok()).collect();
+        let mut ins_rev = self.conn.prepare("INSERT OR IGNORE INTO rel_rev(id, repo, oid, ts) VALUES (?1, ?2, ?3, 0)")?;
+        let mut ins_content = self.conn.prepare("INSERT OR IGNORE INTO rel_content(id, hash) VALUES (?1, ?1)")?;
+        let mut ins_file = self.conn.prepare("INSERT OR IGNORE INTO rel_file(repo, rev, path, content) VALUES (?1, ?2, ?3, ?4)")?;
+        for (path, rev, hash) in rows {
+            ins_rev.execute(rusqlite::params![rev, slug, rev])?;
+            ins_content.execute(rusqlite::params![hash])?;
+            ins_file.execute(rusqlite::params![slug, rev, path, hash])?;
         }
         Ok(())
     }
