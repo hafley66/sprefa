@@ -47,9 +47,10 @@ const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
 
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
-/// content; `ref(string, file, lo, hi)` locates each interned string's byte
-/// span. Join them to ask "where does <text> occur": `string(s, "Foo", _),
-/// ref(s, f, lo, hi)`. Populated only for WORK regex captures today.
+/// content; `ref(id, string, file, lo, hi)` locates each interned string's byte
+/// span, `id` being the `_where_bytes` id (the rewrite coordinate an `edit` keys
+/// off). Join them to ask "where does <text> occur": `string(s, "Foo", _),
+/// ref(_, s, f, lo, hi)`. Populated for regex/ast/sg captures and import refs.
 const SPINE_RELS: [&str; 2] = ["string", "ref"];
 
 fn builtin_rel_decls() -> Vec<RelDecl> {
@@ -99,7 +100,7 @@ fn spine_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)] },
         RelDecl { name: "ref".into(), cols: vec![
-            c("string", Type::Text), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)] },
+            c("id", Type::Text), c("string", Type::Text), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)] },
     ]
 }
 
@@ -362,6 +363,12 @@ struct ModuleRows {
     edges_rev: Vec<Vec<Value>>,
     unresolved_rev: Vec<Vec<Value>>,
     crate_edges: Vec<Vec<Value>>,
+    // Ref-spine: (path, leaf text, located bytes) of each import's rewrite
+    // coordinate. The text interns into `_strings` and the span into
+    // `_where_bytes` (both flushed once in `insert_module_rows`), so
+    // `ref(id,string,file,lo,hi)` ⋈ `string` covers the import graph, not just
+    // regex/ast/sg captures. Collect-then-flush, never N+1.
+    spans: Vec<(String, String, spine::WhereBytes)>,
 }
 
 impl ModuleRows {
@@ -370,6 +377,7 @@ impl ModuleRows {
         self.edges_rev.extend(other.edges_rev);
         self.unresolved_rev.extend(other.unresolved_rev);
         self.crate_edges.extend(other.crate_edges);
+        self.spans.extend(other.spans);
     }
 }
 
@@ -603,17 +611,20 @@ impl Engine {
                     module_full_work = true;
                 }
                 retracted += self.retract_path(&rel, &source_rels)?;
+                // Collect located spans across every matching rule for this file and
+                // flush once after the loop (one `bump()`), not per-rule. Per-rule
+                // flushing trips the N+1 screamer once enough files change.
+                let mut where_rows: Vec<(String, spine::WhereBytes)> = Vec::new();
                 for rule in &matching {
                     let (rows, where_bytes, dropped) = parse_file(rule, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index)?;
                     self.dropped += dropped;
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
                     extracted += self.insert_source_rows(&rule.head.rel, &meta, &rel, &rows)?;
-                    let where_rows: Vec<(String, spine::WhereBytes)> =
-                        where_bytes.into_iter().map(|w| (rel.clone(), w)).collect();
-                    self.insert_spine_where_bytes(&where_rows)?;
+                    where_rows.extend(where_bytes.into_iter().map(|w| (rel.clone(), w)));
                     changed_source_rels.insert(rule.head.rel.clone());
                 }
+                self.insert_spine_where_bytes(&where_rows)?;
                 let (mt, sz) = std::fs::metadata(&abs).ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
                 self.db.conn().execute(
                     "INSERT INTO _file(path, rev, hash, mtime, size) VALUES (?1, 'WORK', ?2, ?3, ?4)
@@ -1074,19 +1085,20 @@ impl Engine {
             ]))?
             .filter_map(|x| x.ok()).collect();
         let mut w = conn.prepare(
-            "SELECT string_id, file_id, lo, hi FROM _where_bytes WHERE id != '0'")?;
+            "SELECT id, string_id, file_id, lo, hi FROM _where_bytes WHERE id != '0'")?;
         let refs: Vec<Vec<Value>> = w
             .query_map([], |r| Ok(vec![
                 Value::Text(r.get::<_, String>(0)?),
                 Value::Text(r.get::<_, String>(1)?),
-                Value::Int(r.get::<_, i64>(2)?),
+                Value::Text(r.get::<_, String>(2)?),
                 Value::Int(r.get::<_, i64>(3)?),
+                Value::Int(r.get::<_, i64>(4)?),
             ]))?
             .filter_map(|x| x.ok()).collect();
         drop(s);
         drop(w);
         self.refresh_rel("string", &["id", "text", "norm"], &strings)?;
-        self.refresh_rel("ref", &["string", "file", "lo", "hi"], &refs)?;
+        self.refresh_rel("ref", &["id", "string", "file", "lo", "hi"], &refs)?;
         Ok(())
     }
 
@@ -1128,13 +1140,25 @@ impl Engine {
             })
             .collect();
 
-        let batches: Vec<ModuleRows> = selected.par_iter().map(|(path, _hash)| {
+        let batches: Vec<ModuleRows> = selected.par_iter().map(|(path, hash)| {
             let mut rows = ModuleRows::default();
             let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
             if let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) {
                 let content = read_content(&root, rev, path).unwrap_or_default();
+                // Same content-addressed file id `_files`/parse_file use, so import
+                // spans join `_files` for both WORK and committed revs.
+                let where_file = spine::FileId::from_content_address(hash, content.len() as i64)
+                    .filter(|f| *f != spine::FileId::SYNTHETIC);
                 for mref in res.edges(path, &content, &cx) {
                     rows.imports.push(vec![t(path), t(rev), t(&mref.specifier), Value::Text(mref.kind.to_string()), Value::Int(mref.line as i64)]);
+                    if let (Some(file), Some((lo, hi))) = (where_file, mref.span) {
+                        let text = content.get(lo as usize..hi as usize).unwrap_or("");
+                        if !text.is_empty() {
+                            rows.spans.push((path.to_string(), text.to_string(), spine::WhereBytes {
+                                string: spine::StringId::of(text), file, lo, hi, ..Default::default()
+                            }));
+                        }
+                    }
                     match mref.target {
                         // A self-edge (e.g. `use crate::X` where X is defined in this
                         // crate root) is not a dependency; drop it so the graph and
@@ -1170,6 +1194,20 @@ impl Engine {
         if include_crate_edges {
             self.db.insert_rows(&tbl("crate_edge"), &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
         }
+        self.insert_module_spans(rows)?;
+        Ok(())
+    }
+
+    /// Intern each import ref's leaf text into `_strings` and its span into
+    /// `_where_bytes`, both through their batched chokepoints, so `string ⋈ ref`
+    /// covers the import graph. Called by every module-refresh path.
+    fn insert_module_spans(&self, rows: &ModuleRows) -> Result<()> {
+        let string_rows: Vec<(String, Vec<Value>)> = rows.spans.iter()
+            .map(|(path, text, _)| (path.clone(), vec![Value::Text(text.clone())])).collect();
+        self.insert_spine_strings(&string_rows)?;
+        let where_rows: Vec<(String, spine::WhereBytes)> = rows.spans.iter()
+            .map(|(path, _, wb)| (path.clone(), *wb)).collect();
+        self.insert_spine_where_bytes(&where_rows)?;
         Ok(())
     }
 
@@ -1207,6 +1245,7 @@ impl Engine {
         self.refresh_rel("module_edge_rev", &["src", "dst", "rev"], &rows.edges_rev)?;
         self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
         self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
+        self.insert_module_spans(&rows)?;
         self.rebuild_legacy_module_rels()?;
         Ok(())
     }
@@ -1511,14 +1550,14 @@ impl Engine {
     /// by content-derived `WhereBytesId`, so duplicate occurrences (same string,
     /// same file, same span, reached via multiple binds) collapse to one row.
     /// `path` is the source path attribution used by `retract_paths` to prune a
-    /// file's located rows on reparse; it is not part of the row identity, so two
-    /// paths with byte-identical content collapse to a single row (the rare
-    /// duplicate-file case, repaired on a full tick).
+    /// file's located rows on reparse, and is folded into the row identity via
+    /// `of_located` so two byte-identical files keep distinct rows (otherwise the
+    /// second path is lost on `INSERT OR IGNORE` and retraction misfires).
     fn insert_spine_where_bytes(&self, wheres: &[(String, spine::WhereBytes)]) -> Result<usize> {
         if wheres.is_empty() { return Ok(0); }
         let mut by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         for (path, w) in wheres {
-            let id = spine::WhereBytesId::of(*w).to_string();
+            let id = spine::WhereBytesId::of_located(*w, path).to_string();
             by_id.entry(id.clone()).or_insert_with(|| vec![
                 Value::Text(id),
                 Value::Text(w.string.to_string()),

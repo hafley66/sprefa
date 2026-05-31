@@ -103,6 +103,22 @@ impl WhereBytesId {
     pub fn coord_only(w: WhereBytes) -> Self {
         Self(RefId::of_coord(w.into()).0)
     }
+
+    /// Like `of`, but folds the source `path` into the row identity so two
+    /// byte-identical files (re-export stubs, generated shims) keep distinct
+    /// located rows. `path` is the rewrite/retraction key; without it the two
+    /// files collapse to one id and the second path is lost on `INSERT OR
+    /// IGNORE`, corrupting `retract_paths`. The sentinel is preserved.
+    pub fn of_located(w: WhereBytes, path: &str) -> Self {
+        let base = Self::of(w);
+        if base == Self::SYNTHETIC {
+            return base;
+        }
+        let mut h = blake3::Hasher::new();
+        h.update(&base.0.to_be_bytes());
+        h.update(path.as_bytes());
+        Self(first_u64(h.finalize().as_bytes()))
+    }
 }
 
 impl From<RefId> for WhereBytesId {

@@ -80,6 +80,40 @@ fn rust_mod_and_use_edges_with_closure() {
 }
 
 #[test]
+fn use_paths_are_located_in_ref_spine() {
+    // The import graph feeds `_where_bytes`: a `use` leaf becomes a `ref` row whose
+    // `string` is the contiguous path text and whose (lo,hi) is its byte span in the
+    // file — the rewrite coordinate an `edit`/`--move` keys off.
+    let d = sandbox("usespan");
+    fs::create_dir_all(d.join("src")).unwrap();
+    // Two leaves under one brace: each gets its own span; the head `crate::b` is shared.
+    fs::write(d.join("src/lib.rs"), "mod a;\nmod b;\nfn x() {}\n").unwrap();
+    fs::write(d.join("src/a.rs"), "use crate::b::{Thing, Other};\nfn x() {}\n").unwrap();
+    fs::write(d.join("src/b.rs"), "pub struct Thing;\npub struct Other;\nfn x() {}\n").unwrap();
+
+    // Reference module_edge (drives the resolver) AND ref/string (drives the spine).
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "fn $N() {}", line).
+rel reaches(a: text, b: text).
+reaches(a, b) <- closure(module_edge).
+rel use_at(text: text, lo: int, hi: int).
+use_at(txt, lo, hi) <- ref(_, s, _, lo, hi), string(s, txt, _).
+? use_at(txt, lo, hi).
+"#;
+    let (code, out, _) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "run failed: {out}");
+    let block = out.split("? use_at").nth(1).unwrap_or("");
+    // Brace expansion synthesizes `crate::b::Thing`/`crate::b::Other`; each span
+    // points at the contiguous leaf text in `use crate::b::{Thing, Other};` —
+    // `Thing` at bytes 15..20, `Other` at 22..27. That byte range IS the rewrite
+    // coordinate `edit`/`--move` keys off. (`ref.file` is the content-addressed
+    // FileId, not the path, so the span is what we assert on.)
+    assert!(block.contains("Thing\t15\t20"), "Thing leaf span: {out}");
+    assert!(block.contains("Other\t22\t27"), "Other leaf span: {out}");
+}
+
+#[test]
 fn unreferenced_program_does_not_populate_module_rels() {
     // A program that never mentions a module relation pays nothing: the resolver
     // pass is skipped. Verified indirectly — querying file works, no module rows.

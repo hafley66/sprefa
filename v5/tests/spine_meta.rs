@@ -191,13 +191,13 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
     // "struct AuthService;\n" → "AuthService" spans bytes [7, 18).
     let lo = SRC.find("AuthService").unwrap() as i64;
     let hi = lo + "AuthService".len() as i64;
-    let expect_id = WhereBytesId::of(WhereBytes {
+    let expect_id = WhereBytesId::of_located(WhereBytes {
         string: string_id,
         file: file_id,
         lo: lo as u32,
         hi: hi as u32,
         ..Default::default()
-    });
+    }, "src/a.rs");
 
     let row: (String, String, String, i64, i64, String, String) = conn
         .query_row(
@@ -246,13 +246,13 @@ sym(N, path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "st
     let conn = Connection::open(d.join("db")).unwrap();
     let lo = SRC.find("AuthService").unwrap() as i64;
     let hi = lo + "AuthService".len() as i64;
-    let expect_id = WhereBytesId::of(WhereBytes {
+    let expect_id = WhereBytesId::of_located(WhereBytes {
         string: StringId::of("AuthService"),
         file: FileId::of_bytes(SRC.as_bytes()),
         lo: lo as u32,
         hi: hi as u32,
         ..Default::default()
-    });
+    }, "src/a.rs");
     let span: (i64, i64) = conn
         .query_row(
             "SELECT lo, hi FROM _where_bytes WHERE id = ?1",
@@ -291,13 +291,13 @@ sym(name, path) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /str
     let lo = SRC.find("AuthService").unwrap() as i64;
     let hi = lo + "AuthService".len() as i64;
     // The located span is keyed on the git blob OID file id, so it joins _files.
-    let expect_id = WhereBytesId::of(WhereBytes {
+    let expect_id = WhereBytesId::of_located(WhereBytes {
         string: StringId::of("AuthService"),
         file: file_id,
         lo: lo as u32,
         hi: hi as u32,
         ..Default::default()
-    });
+    }, "src/a.rs");
     let got: (String, i64, i64) = conn
         .query_row(
             "SELECT file_id, lo, hi FROM _where_bytes WHERE id = ?1",
@@ -319,7 +319,7 @@ fn string_and_ref_relations_are_queryable() {
 rel symbol(name: text, path: file).
 rel located(text: text, lo: int, hi: int).
 symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
-located(t, lo, hi) <- string(s, t, _), ref(s, _, lo, hi).
+located(t, lo, hi) <- string(s, t, _), ref(_, s, _, lo, hi).
 ? located(t, lo, hi).
 "#;
     let (code, out) = run_out(&d, prog);
@@ -340,7 +340,7 @@ fn editing_a_file_retracts_its_stale_located_spans() {
     let prog = r#"
 rel symbol(name: text, path: file).
 symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
-located(t, lo, hi) <- string(s, t, _), ref(s, _, lo, hi).
+located(t, lo, hi) <- string(s, t, _), ref(_, s, _, lo, hi).
 rel located(text: text, lo: int, hi: int).
 ? located(t, lo, hi).
 "#;

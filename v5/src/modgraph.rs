@@ -30,11 +30,16 @@ pub enum Resolution {
 }
 
 /// One reference out of a file. `kind` is "mod" | "use" | "import".
+/// `span` is the byte range, in the file's raw content, of the contiguous
+/// source text this ref rewrites: the leaf path of a `use` (or brace leaf), or
+/// the specifier-literal text of a TS `import`. `None` when the ref has no
+/// contiguous rewrite coordinate (`mod`/`#[path]` decls, dynamic imports).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleRef {
     pub specifier: String,
     pub kind: &'static str,
     pub line: u32,
+    pub span: Option<(u32, u32)>,
     pub target: Resolution,
 }
 
@@ -240,7 +245,7 @@ impl ModuleResolver for RustResolver {
             let cand = normalize_join(&base, rel);
             let target = if cx.files.contains(&cand) { Resolution::File(cand) }
                          else { Resolution::Unresolved(format!("#[path] {rel}: no file")) };
-            out.push(ModuleRef { specifier: format!("#[path] mod {name}"), kind: "mod", line, target });
+            out.push(ModuleRef { specifier: format!("#[path] mod {name}"), kind: "mod", line, span: None, target });
         }
 
         let clean = strip_noise(content, true);
@@ -255,15 +260,19 @@ impl ModuleResolver for RustResolver {
                 Some(f) => Resolution::File(f),
                 None => Resolution::Unresolved(format!("mod {name}: no child file")),
             };
-            out.push(ModuleRef { specifier: format!("mod {name}"), kind: "mod", line, target });
+            out.push(ModuleRef { specifier: format!("mod {name}"), kind: "mod", line, span: None, target });
         }
 
-        // `use path;` — intra- and cross-crate references.
+        // `use path;` — intra- and cross-crate references. `expand_use` returns
+        // each leaf's byte span relative to the captured body; add the body's
+        // start in `clean` (offset-preserving vs raw content) for a file coord.
         for c in rust_use_re().captures_iter(&clean) {
             let line = line_of(&clean, c.get(0).unwrap().start());
-            for cand in expand_use(&c[1]) {
+            let body_start = c.get(1).unwrap().start() as u32;
+            for (cand, lo, hi) in expand_use(&c[1]) {
                 let target = crates.resolve_use(file, &cand);
-                out.push(ModuleRef { specifier: cand, kind: "use", line, target });
+                out.push(ModuleRef { specifier: cand, kind: "use", line,
+                    span: Some((body_start + lo, body_start + hi)), target });
             }
         }
         out
@@ -304,29 +313,40 @@ fn normalize_join(base: &str, rel: &str) -> String {
 /// Expand a `use` body into the module-path candidates to resolve, recursing into
 /// brace groups: `a::{b::{c,d}, e as f}` -> [a::b::c, a::b::d, a::e]. `self`/`*`
 /// collapse to the enclosing module. `r#` raw-ident prefixes are stripped.
-fn expand_use(body: &str) -> Vec<String> {
-    fn rec(prefix: &str, seg: &str, out: &mut Vec<String>) {
-        let seg = seg.trim();
+///
+/// Each result carries `(lo, hi)`: the byte range, relative to `body`, of the
+/// contiguous leaf text this candidate came from. A brace-expanded path like
+/// `a::b` is synthesized from `a::{b}` and is NOT a contiguous substring, so the
+/// span points at the leaf segment (`b`) only — the head prefix is shared across
+/// siblings. A bare `use a::b::c` is contiguous, so its span covers the whole path.
+fn expand_use(body: &str) -> Vec<(String, u32, u32)> {
+    fn rec(prefix: &str, raw: &str, raw_off: usize, out: &mut Vec<(String, u32, u32)>) {
+        let lead = raw.len() - raw.trim_start().len();
+        let seg = raw.trim();
         if seg.is_empty() { return; }
+        let seg_off = raw_off + lead; // absolute (body-relative) start of trimmed seg
         if let Some(bi) = seg.find('{') {
             let head = seg[..bi].trim().trim_end_matches(':');
             let np = join(prefix, head);
             let close = matching_brace(seg, bi).unwrap_or(seg.len());
-            for item in split_top_commas(&seg[bi + 1..close]) {
-                rec(&np, &item, out);
+            for (item, item_off) in split_top_commas(&seg[bi + 1..close]) {
+                rec(&np, &item, seg_off + bi + 1 + item_off, out);
             }
         } else {
-            let leaf = seg.split(" as ").next().unwrap_or(seg).trim();
+            // The contiguous leaf is the path before any ` as ` alias.
+            let leaf = seg.split(" as ").next().unwrap_or(seg).trim_end();
+            let lo = seg_off as u32;
+            let hi = (seg_off + leaf.len()) as u32;
             let full = if leaf == "self" || leaf == "*" || leaf.is_empty() {
                 prefix.to_string()
             } else {
                 join(prefix, leaf)
             };
-            if !full.is_empty() { out.push(full.replace("r#", "")); }
+            if !full.is_empty() { out.push((full.replace("r#", ""), lo, hi)); }
         }
     }
     let mut out = Vec::new();
-    rec("", body, &mut out);
+    rec("", body, 0, &mut out);
     out
 }
 
@@ -346,7 +366,8 @@ fn matching_brace(s: &str, open: usize) -> Option<usize> {
     None
 }
 
-fn split_top_commas(s: &str) -> Vec<String> {
+/// Split on top-level commas, returning each item with its start offset in `s`.
+fn split_top_commas(s: &str) -> Vec<(String, usize)> {
     let mut out = Vec::new();
     let mut depth = 0; let mut start = 0;
     let b = s.as_bytes();
@@ -354,11 +375,11 @@ fn split_top_commas(s: &str) -> Vec<String> {
         match b[i] {
             b'{' => depth += 1,
             b'}' => depth -= 1,
-            b',' if depth == 0 => { out.push(s[start..i].to_string()); start = i + 1; }
+            b',' if depth == 0 => { out.push((s[start..i].to_string(), start)); start = i + 1; }
             _ => {}
         }
     }
-    out.push(s[start..].to_string());
+    out.push((s[start..].to_string(), start));
     out
 }
 
@@ -620,9 +641,11 @@ impl ModuleResolver for TsResolver {
         for c in ts_spec_re().captures_iter(&clean) {
             let spec = c[1].to_string();
             let line = line_of(&clean, c.get(0).unwrap().start());
+            let m = c.get(1).unwrap();
+            let span = Some((m.start() as u32, m.end() as u32));
             // a template literal with interpolation cannot be resolved statically
             if spec.contains("${") {
-                out.push(ModuleRef { specifier: spec.clone(), kind: "import", line,
+                out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span: None,
                     target: Resolution::Unresolved(format!("{spec}: dynamic")) });
                 continue;
             }
@@ -644,7 +667,7 @@ impl ModuleResolver for TsResolver {
                     None => Resolution::External(spec.clone()),
                 },
             };
-            out.push(ModuleRef { specifier: spec, kind: "import", line, target });
+            out.push(ModuleRef { specifier: spec, kind: "import", line, span, target });
         }
         out
     }
@@ -691,10 +714,17 @@ mod tests {
 
     #[test]
     fn nested_brace_groups() {
-        let v = expand_use("crate::a::{b::{c, d}, e as f}");
-        assert!(v.contains(&"crate::a::b::c".to_string()));
-        assert!(v.contains(&"crate::a::b::d".to_string()));
-        assert!(v.contains(&"crate::a::e".to_string()));
+        let body = "crate::a::{b::{c, d}, e as f}";
+        let v = expand_use(body);
+        let paths: Vec<&str> = v.iter().map(|(p, _, _)| p.as_str()).collect();
+        assert!(paths.contains(&"crate::a::b::c"));
+        assert!(paths.contains(&"crate::a::b::d"));
+        assert!(paths.contains(&"crate::a::e"));
+        // Each span points at the contiguous leaf text it was synthesized from.
+        for (path, lo, hi) in &v {
+            let leaf = &body[*lo as usize..*hi as usize];
+            assert!(path.ends_with(leaf), "{path} should end with leaf {leaf:?}");
+        }
     }
 
     #[test]
@@ -705,7 +735,9 @@ mod tests {
         // `mod r#match;` resolves; `use crate::r#match::X` strips r# for the path lookup
         let e = RustResolver.edges("src/lib.rs", "mod r#match;\n", &c);
         assert!(e.iter().any(|r| r.kind == "mod"));
-        assert_eq!(expand_use("crate::r#match::X"), vec!["crate::match::X".to_string()]);
+        let v = expand_use("crate::r#match::X");
+        assert_eq!(v.iter().map(|(p, _, _)| p.clone()).collect::<Vec<_>>(),
+            vec!["crate::match::X".to_string()]);
     }
 
     #[test]
