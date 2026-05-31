@@ -1,0 +1,20 @@
+# Self-hosted Rust type graph.
+#
+# `type_edge(from, to, kind)` is a built-in relation populated by the syn-backed
+# extractor. `kind` is one of field | variant | impl | generic. Closure walks the
+# first two columns, so derive a relation over those columns when you want blast
+# radius / fan-in queries.
+#
+# Run: dl v5/examples/typegraph.dl --root .
+
+rel seen(path: file).
+rel type_reaches(src: text, dst: text).
+
+seen(path) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  match(path, rev, /./, line).
+
+type_reaches(src, dst) <- closure(type_edge).
+
+? type_edge(from, to, kind) where from = "Engine".
+? type_reaches(src, dst) where src = "Engine".

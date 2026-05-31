@@ -1,0 +1,27 @@
+# Rev-aware module graph.
+#
+# `module_edge(src,dst)` is the convenient current edge set for simple closure
+# queries. `module_edge_rev(src,dst,rev)` keeps historical scans honest; filter
+# it into a 2-column relation before closure when comparing WORK vs HEAD.
+# `crate_edge(src,dst,kind,rev)` records workspace-internal Cargo dependencies.
+#
+# Run: dl v5/examples/module-history.dl --root .
+
+rel seen(path: file, rev: text).
+rel work_edge(src: text, dst: text).
+rel work_reaches(src: text, dst: text).
+
+seen(path, rev) <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  match(path, rev, /./, line).
+
+seen(path, rev) <-
+  scan("HEAD", "v5/src/**/*.rs", path, rev),
+  match(path, rev, /./, line).
+
+work_edge(src, dst) <- module_edge_rev(src, dst, "WORK").
+work_reaches(src, dst) <- closure(work_edge).
+
+? crate_edge(src, dst, kind, rev).
+? module_edge_rev(src, dst, rev) where rev = "WORK".
+? work_reaches(src, dst) where src = "v5/src/engine.rs".
