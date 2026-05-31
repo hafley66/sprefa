@@ -758,16 +758,19 @@ impl Engine {
     /// Turns the old O(paths x rels x table) into O(rels x table).
     fn retract_paths(&self, paths: &[&str], source_rels: &[String]) -> Result<usize> {
         if paths.is_empty() { return Ok(0); }
-        for path in paths {
-            self.db.conn().execute("DELETE FROM _prov WHERE path = ?1", [path])?;
-        }
+        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _retract_path(path TEXT PRIMARY KEY)")?;
+        self.db.exec("DELETE FROM _retract_path")?;
+        let path_rows: Vec<Vec<Value>> = paths.iter().map(|p| vec![Value::Text((*p).to_string())]).collect();
+        self.db.insert_rows("_retract_path", &["path"], &path_rows)?;
+        self.db.exec("DELETE FROM _prov WHERE path IN (SELECT path FROM _retract_path)")?;
         let mut removed = 0usize;
         for rel in source_rels {
+            let rel_lit = rel.replace('\'', "''");
             let sql = format!(
-                "DELETE FROM {} WHERE __src NOT IN (SELECT src FROM _prov WHERE rel = ?1)",
-                tbl(rel)
+                "DELETE FROM {} WHERE __src NOT IN (SELECT src FROM _prov WHERE rel = '{rel_lit}')",
+                tbl(rel),
             );
-            removed += self.db.conn().execute(&sql, [rel])?;
+            removed += self.db.exec(&sql)?;
         }
         Ok(removed)
     }
@@ -781,19 +784,19 @@ impl Engine {
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
-    fn save_file_meta(&self, current: &FileMeta, prev: &FileMeta) -> Result<()> {
+    fn save_file_meta(&self, current: &FileMeta, _prev: &FileMeta) -> Result<()> {
+        let mut rows: Vec<Vec<Value>> = Vec::with_capacity(current.len());
         for ((path, rev), (h, mt, sz)) in current {
-            self.db.conn().execute(
-                "INSERT INTO _file(path, rev, hash, mtime, size) VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(path, rev) DO UPDATE SET hash = excluded.hash, mtime = excluded.mtime, size = excluded.size",
-                rusqlite::params![path, rev, h, mt, sz],
-            )?;
+            rows.push(vec![
+                Value::Text(path.clone()),
+                Value::Text(rev.clone()),
+                Value::Text(h.clone()),
+                Value::Int(*mt),
+                Value::Int(*sz),
+            ]);
         }
-        for (path, rev) in prev.keys() {
-            if !current.contains_key(&(path.clone(), rev.clone())) {
-                self.db.conn().execute("DELETE FROM _file WHERE path = ?1 AND rev = ?2", rusqlite::params![path, rev])?;
-            }
-        }
+        self.db.exec("DELETE FROM _file")?;
+        self.db.insert_rows("_file", &["path", "rev", "hash", "mtime", "size"], &rows)?;
         Ok(())
     }
 
@@ -1083,46 +1086,41 @@ impl Engine {
             let (adj, names) = self.load_edges(edge, &c0, &c1)?;
             let cond = scc::build_condensed(&adj);
             let (nt, et) = (scc_node_tbl(edge), scc_edge_tbl(edge));
-            let tx = self.db.conn().unchecked_transaction()?;
-            tx.execute(&format!("DELETE FROM {nt}"), [])?;
-            tx.execute(&format!("DELETE FROM {et}"), [])?;
-            {
-                let mut ins = tx.prepare(&format!("INSERT INTO {nt}(name, comp, cyclic) VALUES (?1, ?2, ?3)"))?;
-                for (id, name) in names.iter().enumerate() {
-                    let comp = cond.comp[id] as i64;
-                    let cyc = cond.cyclic[cond.comp[id] as usize] as i64;
-                    ins.execute(rusqlite::params![name, comp, cyc])?;
-                }
-                let mut ins_e = tx.prepare(&format!("INSERT OR IGNORE INTO {et}(comp_src, comp_dst) VALUES (?1, ?2)"))?;
-                for (cu, succ) in cond.cadj.iter().enumerate() {
-                    for &cw in succ { ins_e.execute(rusqlite::params![cu as i64, cw as i64])?; }
-                }
+            let mut node_rows: Vec<Vec<Value>> = Vec::with_capacity(names.len());
+            for (id, name) in names.iter().enumerate() {
+                let comp = cond.comp[id] as i64;
+                let cyc = cond.cyclic[cond.comp[id] as usize] as i64;
+                node_rows.push(vec![Value::Text(name.clone()), Value::Int(comp), Value::Int(cyc)]);
             }
-            tx.commit()?;
+            let mut edge_rows: Vec<Vec<Value>> = Vec::new();
+            for (cu, succ) in cond.cadj.iter().enumerate() {
+                for &cw in succ { edge_rows.push(vec![Value::Int(cu as i64), Value::Int(cw as i64)]); }
+            }
+            self.db.exec(&format!("DELETE FROM {nt}"))?;
+            self.db.exec(&format!("DELETE FROM {et}"))?;
+            self.db.insert_rows(&nt, &["name", "comp", "cyclic"], &node_rows)?;
+            self.db.insert_rows(&et, &["comp_src", "comp_dst"], &edge_rows)?;
         }
         Ok(())
     }
 
     fn insert_source_rows(&self, rel: &str, meta: &RelMeta, path: &str, rows: &[Vec<Value>]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
-        let n = meta.cols.len();
-        let cols: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
-        let ph: Vec<String> = (1..=n).map(|i| format!("?{i}")).collect();
-        let sql = format!("INSERT OR IGNORE INTO {} ({}, __src) VALUES ({}, ?{})",
-            tbl(rel), cols.join(", "), ph.join(", "), n + 1);
-        let mut stmt = self.db.conn().prepare(&sql)?;
-        let mut prov = self.db.conn().prepare("INSERT OR IGNORE INTO _prov(rel, path, src) VALUES (?1, ?2, ?3)")?;
-        let mut inserted = 0usize;
+        let mut fact_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
+        let mut prov_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
         for row in rows {
             let src = row_hash(row);
-            let mut params: Vec<rusqlite::types::Value> = row.iter().map(|v| match v {
-                Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
-                Value::Int(k) => rusqlite::types::Value::Integer(*k),
-            }).collect();
-            params.push(rusqlite::types::Value::Text(src.clone()));
-            inserted += stmt.execute(rusqlite::params_from_iter(params))?;
-            prov.execute(rusqlite::params![rel, path, src])?;
+            let mut fact = row.clone();
+            fact.push(Value::Text(src.clone()));
+            fact_rows.push(fact);
+            prov_rows.push(vec![Value::Text(rel.to_string()), Value::Text(path.to_string()), Value::Text(src)]);
         }
+        let mut cols: Vec<String> = meta.cols.iter().map(|c| c.name.clone()).collect();
+        cols.push("__src".to_string());
+        let col_refs: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
+        let table = tbl(rel);
+        let inserted = self.db.insert_rows(&table, &col_refs, &fact_rows)?;
+        self.db.insert_rows("_prov", &["rel", "path", "src"], &prov_rows)?;
         Ok(inserted)
     }
 
