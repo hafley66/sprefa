@@ -21,6 +21,9 @@ npm run dev        # open the printed http://localhost:5173
 
 Arrow keys to step. `o` = outline, `m` = map (see [Navigation](#navigation)).
 
+Don't want to run it? `demo.webm` is a recorded walkthrough of the whole deck —
+code tween, graph draw-on, file-tree FLIP, and the git timeline, all in motion.
+
 ## The idea in one minute
 
 - A **deck** is a folder of markdown chapter files: `src/deck/01-foo.md`, `02-bar.md`, …

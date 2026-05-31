@@ -95,6 +95,19 @@ function sqlToD2(dbRel, sql) {
   return s
 }
 
+// `git: <repo> <rev> [count]` directive: read real `git log` ending at <rev>.
+// Stepping frames with an advancing rev makes commits slide in at the top.
+function resolveGitRef({ repo, rev, count }) {
+  const repoPath = path.resolve(root, repo)
+  try {
+    const out = execFileSync('git', ['-C', repoPath, 'log', '--format=%h\x1f%s\x1f%p', rev, '-n', String(count)], { encoding: 'utf8' })
+    return out.trim().split('\n').filter(Boolean).map((l) => {
+      const [sha, subject, parents] = l.split('\x1f')
+      return { sha, subject, parents: (parents || '').split(' ').filter(Boolean) }
+    })
+  } catch (e) { console.error(`git: failed for ${repo} ${rev}: ${e.message}`); return [] }
+}
+
 function collectSources() {
   if (existsSync(DECK)) return walkMd(DECK).map((file) => ({ file, chapter: chapterName(file), slug: path.basename(file, '.md') }))
   return [{ file: MD, chapter: '', slug: 'frames' }]
@@ -192,6 +205,8 @@ export function parseFrames(md) {
     // ![[slug#title]] / ![[#title]] / ![[slug]] transcludes another frame's graph+code
     const inc = line.match(/^!\[\[([^\]]+)\]\]\s*$/)
     if (inc) { cur.include = inc[1].trim(); continue }
+    const gt = line.match(/^git:\s+(.+?)\s*$/)
+    if (gt) { const p = gt[1].split(/\s+/); cur.gitRef = { repo: p[0], rev: p[1] || 'HEAD', count: +(p[2] || 8) }; continue }
     // anchor: <code-token> -> <graph node>[, node]  binds code to graph nodes
     const an = line.match(/^anchor:\s*(.+?)\s*->\s*(.+)$/)
     if (an) { (cur.anchors ||= []).push({ token: an[1].trim(), nodes: an[2].split(',').map((s) => s.trim()).filter(Boolean) }); continue }
@@ -286,6 +301,8 @@ export function buildFrames() {
       if (r) { f.code = r.code; f.lang = r.lang }
     }
   }
+  // resolve `git:` refs against the real repo
+  for (const f of frames) if (f.gitRef) f.git = resolveGitRef(f.gitRef)
   graphs.push({ name: '_map', src: buildMapD2(frames) })
   mkdirSync(GRAPHS, { recursive: true })
   mkdirSync(PUBLIC, { recursive: true })
@@ -329,7 +346,7 @@ export function checkDeck() {
     const rel = path.relative(root, pf.file)
     for (const f of pf.frames) {
       const at = `${rel} › "${f.title}"`
-      if (!(f.narration || '').trim() && !(f.code || '').trim() && !f.codeRef && !f.graph && !f.fs) diags.push(`ERROR ${at}: empty frame`)
+      if (!(f.narration || '').trim() && !(f.code || '').trim() && !f.codeRef && !f.graph && !f.fs && !f.gitRef) diags.push(`ERROR ${at}: empty frame`)
       if (f.graph) { const n = f.graph.replace(/^\//, '').replace(/\.svg$/, ''); if (!graphNames.has(n)) diags.push(`ERROR ${at}: graph "${n}" is never defined`) }
       if (f.codeRef && !resolveCodeRef(f.codeRef)) diags.push(`ERROR ${at}: code: ${f.codeRef} did not resolve`)
       for (const L of f.links || []) if (!slugs.has(norm(L)) && !titles.has(norm(L))) diags.push(`WARN  ${at}: [[${L}]] resolves to nothing`)

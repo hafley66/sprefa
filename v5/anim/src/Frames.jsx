@@ -79,7 +79,7 @@ export default function Frames({ frames, highlighter, theme, glossary }) {
 
   const hasCode = !!(f.code && f.code.trim())
   const hasGraph = !!f.graph
-  const hasRight = !!(f.graph || f.fs)
+  const hasRight = !!(f.graph || f.fs || f.git)
   const html = useMemo(() => {
     // render [[other-slide]] cross-links as styled references
     const src = (f.narration || '').replace(/\[\[([^\]]+)\]\]/g, '<span class="xref">$1</span>')
@@ -139,7 +139,9 @@ export default function Frames({ frames, highlighter, theme, glossary }) {
         </div>
         {hasRight && (
           <div className="right">
-            {f.fs ? <div className="fs-card"><FsTree tree={f.fs} /></div> : <Graph src={f.graph} lit={lit} />}
+            {f.git ? <div className="fs-card"><GitLens commits={f.git} /></div>
+              : f.fs ? <div className="fs-card"><FsTree tree={f.fs} /></div>
+              : <Graph src={f.graph} lit={lit} />}
           </div>
         )}
       </div>
@@ -171,6 +173,51 @@ export default function Frames({ frames, highlighter, theme, glossary }) {
   )
 }
 
+// Shared keyed-FLIP: rows present before & after slide to their new position; new
+// rows fade in. Keyed by [data-key]. Used by the fs and git lenses.
+function flipRows(wrap, rectsRef) {
+  if (!wrap) return
+  const now = new Map()
+  wrap.querySelectorAll('[data-key]').forEach((el) => {
+    const key = el.dataset.key
+    const rect = el.getBoundingClientRect()
+    now.set(key, rect)
+    const prev = rectsRef.current.get(key)
+    if (prev) {
+      const dy = prev.top - rect.top
+      if (dy) {
+        el.style.transition = 'none'; el.style.transform = `translateY(${dy}px)`
+        requestAnimationFrame(() => { el.style.transition = 'transform .42s cubic-bezier(.2,.7,.2,1)'; el.style.transform = '' })
+      }
+    } else {
+      el.style.transition = 'none'; el.style.opacity = '0'; el.style.transform = 'translateX(-10px)'
+      requestAnimationFrame(() => { el.style.transition = 'opacity .35s ease, transform .35s ease'; el.style.opacity = ''; el.style.transform = '' })
+    }
+  })
+  rectsRef.current = now
+}
+
+// Git lens: a commit timeline (newest on top) that FLIP-animates between frames —
+// advance the rev and new commits slide in at the top. Keyed by commit sha.
+function GitLens({ commits }) {
+  const wrapRef = useRef(null)
+  const rects = useRef(new Map())
+  useLayoutEffect(() => { flipRows(wrapRef.current, rects) }, [commits])
+  return (
+    <div className="gitlens" ref={wrapRef}>
+      {commits.length === 0 && <div className="git-empty">no commits (is the repo path right?)</div>}
+      {commits.map((c, idx) => (
+        <div className="git-row" data-key={c.sha} key={c.sha}>
+          <span className="git-rail"><span className={`git-dot${idx === 0 ? ' head' : ''}`} /></span>
+          <span className="git-sha">{c.sha}</span>
+          <span className="git-subject">{c.subject}</span>
+          {idx === 0 && <span className="git-head">HEAD</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // Build ordered explorer rows (dirs + files) from a flat path list.
 function buildRows(items) {
   const all = new Map()
@@ -195,29 +242,7 @@ function FsTree({ tree }) {
   const prevRows = useRef([])
   const [exiting, setExiting] = useState([])
 
-  useLayoutEffect(() => {
-    const wrap = wrapRef.current
-    if (!wrap) return
-    const now = new Map()
-    wrap.querySelectorAll('.fs-row[data-key]').forEach((el) => {
-      const key = el.dataset.key
-      const rect = el.getBoundingClientRect()
-      now.set(key, rect)
-      const prev = rects.current.get(key)
-      if (prev) {
-        const dy = prev.top - rect.top
-        if (dy) {
-          el.style.transition = 'none'
-          el.style.transform = `translateY(${dy}px)`
-          requestAnimationFrame(() => { el.style.transition = 'transform .42s cubic-bezier(.2,.7,.2,1)'; el.style.transform = '' })
-        }
-      } else {
-        el.style.transition = 'none'; el.style.opacity = '0'; el.style.transform = 'translateX(-10px)'
-        requestAnimationFrame(() => { el.style.transition = 'opacity .35s ease, transform .35s ease'; el.style.opacity = ''; el.style.transform = '' })
-      }
-    })
-    rects.current = now
-  }, [rows])
+  useLayoutEffect(() => { flipRows(wrapRef.current, rects) }, [rows])
 
   useEffect(() => {
     const wrap = wrapRef.current
