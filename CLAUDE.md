@@ -95,8 +95,11 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
 - [x] **`type_edge` rev-awareness**: `type_edge_rev(from, to, kind, rev)` is the history-aware
       source of truth; legacy `type_edge` is the rev-deduped union (mirrors module_edge split).
       Extractor keeps the rev it already iterated. WORK-vs-HEAD type-graph diff now possible.
-- [ ] merge `codex/v5-refresh-type-edge` → main; push. (The earlier `feat/v5-lsp-diag` arc —
-      Db seam + architecture doc — already landed on `main` at `f8c8e87`.)
+- [x] merge `codex/v5-refresh-type-edge` → main; push. Fast-forward (30 commits,
+      `f8c8e87..3a8afb4`), full suite green on main, pushed to origin. The arc
+      includes type_edge B/E/A, module-graph polish, SCIP importer, and ref-spine
+      C0–C5. (The earlier `feat/v5-lsp-diag` arc — Db seam + architecture doc —
+      landed earlier at `f8c8e87`.)
 
 ### Style notes for this repo
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
