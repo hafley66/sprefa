@@ -18,10 +18,19 @@ on the collapsed `_file` table.
   plus internal `_strings`, `_files`, and `_where_bytes` tables with zero
   sentinels. Source extraction batches real text values into `_strings`; WORK
   file content and committed git blobs batch into `_files` using the existing
-  blake3 hash or blob OID. The tables are not queryable built-ins yet.
-- **Stage 2 remaining:** populate real spans, expose queryable `ref`, add
-  file-id-keyed `_prov` retraction, and wire multi-repo config. Do the cross-repo
-  pieces when cross-repo is real.
+  blake3 hash or blob OID.
+- **Stage 2c (landed):** real spans are populated for regex/ast/sg captures and
+  for module-import `use` paths, and the spine is queryable: `string(id, text,
+  norm)` and `ref(id, string, file, lo, hi)`, where `id` is the `_where_bytes`
+  id (the rewrite coordinate the auto-refactor `edit`/`--move` sink keys off).
+  Located spans are path-keyed in `_where_bytes` (path folded into the id via
+  `WhereBytesId::of_located`) and pruned on reparse by `retract_paths`. This is
+  the complete single-repo spine: `repo`/`rev`/`content`/`file` + `string`/`ref`
+  with byte ranges all join.
+- **Stage 2 remaining (cross-repo only):** file-id-keyed `_prov` retraction and
+  multi-repo config. Both are cross-repo concerns — do them when cross-repo is
+  real. Also deferred "if needed": FTS5 trigram / fuzzy joins, orphan `_strings`
+  GC (interns linger after their last `ref` retracts — harmless, content-addressed).
 
 ## The one idea: content is separate from location
 
