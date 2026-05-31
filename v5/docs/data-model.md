@@ -17,8 +17,8 @@ on the collapsed `_file` table.
   primitives for `StringId`, `FileId`, `Coord`, `RefId`, and `WhereBytesId`,
   plus internal `_strings`, `_files`, and `_where_bytes` tables with zero
   sentinels. Source extraction batches real text values into `_strings`; WORK
-  file content batches into `_files` using the existing blake3 content hash. The
-  tables are not queryable built-ins yet.
+  file content and committed git blobs batch into `_files` using the existing
+  blake3 hash or blob OID. The tables are not queryable built-ins yet.
 - **Stage 2 remaining:** populate real spans, expose queryable `ref`, add
   file-id-keyed `_prov` retraction, and wire multi-repo config. Do the cross-repo
   pieces when cross-repo is real.

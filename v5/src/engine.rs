@@ -914,8 +914,8 @@ impl Engine {
     fn insert_spine_files(&self, current: &FileMeta) -> Result<usize> {
         let mut by_id: BTreeMap<String, (String, String, i64)> = BTreeMap::new();
         for ((path, _rev), (hash, _mt, size)) in current {
-            if *size == 0 { continue; }
-            let Some(id) = spine::FileId::from_nonempty_content_hash_hex(hash) else { continue };
+            let Some(id) = spine::FileId::from_content_address(hash, *size) else { continue };
+            if id == spine::FileId::SYNTHETIC { continue; }
             let entry = by_id.entry(id.to_string()).or_insert_with(|| (hash.clone(), path.clone(), *size));
             if path < &entry.1 {
                 entry.1 = path.clone();
@@ -1465,10 +1465,11 @@ impl Engine {
             out.sort();
             Ok(out)
         } else {
-            // `git ls-tree -r <rev>` lines: "<mode> <type> <oid>\t<path>"
+            // `git ls-tree -r -l <rev>` lines:
+            // "<mode> <type> <oid> <size>\t<path>"
             let output = Command::new("git")
                 .arg("-C").arg(&self.root)
-                .args(["ls-tree", "-r", rev])
+                .args(["ls-tree", "-r", "-l", rev])
                 .output()?;
             if !output.status.success() { return Ok(Vec::new()); }
             let text = String::from_utf8_lossy(&output.stdout);
@@ -1478,7 +1479,8 @@ impl Engine {
                 let parts: Vec<&str> = meta.split_whitespace().collect();
                 if parts.get(1) != Some(&"blob") { continue; }
                 let oid = parts.get(2).copied().unwrap_or_default();
-                if matcher.is_match(path) { out.push((path.to_string(), oid.to_string(), 0, 0)); }
+                let size = parts.get(3).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                if matcher.is_match(path) { out.push((path.to_string(), oid.to_string(), 0, size)); }
             }
             Ok(out)
         }

@@ -27,8 +27,11 @@ impl FileId {
         Self(hash64(content))
     }
 
-    pub fn from_nonempty_content_hash_hex(hash: &str) -> Option<Self> {
-        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+    pub fn from_content_address(hash: &str, size: i64) -> Option<Self> {
+        if size == 0 {
+            return Some(Self::SYNTHETIC);
+        }
+        if !matches!(hash.len(), 40 | 64) || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let id = u64::from_str_radix(&hash[..16], 16).ok()?;
@@ -229,10 +232,18 @@ mod tests {
         assert_eq!(FileId::of_bytes(b"alpha"), FileId::of_bytes(b"alpha"));
         assert_ne!(FileId::of_bytes(b"alpha"), FileId::of_bytes(b"beta"));
         assert_eq!(
-            FileId::from_nonempty_content_hash_hex(&content_hash_hex(b"alpha")),
+            FileId::from_content_address(&content_hash_hex(b"alpha"), 5),
             Some(FileId::of_bytes(b"alpha"))
         );
-        assert_eq!(FileId::from_nonempty_content_hash_hex("not-a-hash"), None);
+        assert_eq!(
+            FileId::from_content_address("0123456789abcdef0123456789abcdef01234567", 12),
+            Some(FileId(0x0123456789abcdef))
+        );
+        assert_eq!(FileId::from_content_address("not-a-hash", 1), None);
+        assert_eq!(
+            FileId::from_content_address(&content_hash_hex(b""), 0),
+            Some(FileId::SYNTHETIC)
+        );
 
         let coord = Coord {
             repo: RepoId(1),

@@ -34,6 +34,23 @@ fn run(dir: &Path, prog: &str) {
     );
 }
 
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {:?} failed:\nstdout:\n{}\nstderr:\n{}",
+        args,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 #[test]
 fn spine_meta_tables_are_created_with_sentinels() {
     let d = sandbox("sentinels");
@@ -135,6 +152,53 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
             StringId::of("AuthService").to_string(),
             "AuthService".to_string(),
             "authservice".to_string()
+        )
+    );
+}
+
+#[test]
+fn committed_git_blobs_populate_spine_files_without_readback_hashing() {
+    let d = sandbox("git_blob");
+    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    git(&d, &["init"]);
+    git(&d, &["add", "src/a.rs"]);
+    git(
+        &d,
+        &[
+            "-c",
+            "user.name=sprefa-test",
+            "-c",
+            "user.email=sprefa-test@example.invalid",
+            "commit",
+            "-m",
+            "init",
+        ],
+    );
+    let oid = git(&d, &["hash-object", "src/a.rs"]);
+    let file_id = FileId::from_content_address(&oid, SRC.len() as i64).unwrap();
+
+    let prog = r#"
+rel symbol(name: text, path: file).
+symbol(name, path) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+? symbol(name, path).
+"#;
+    run(&d, prog);
+
+    let conn = Connection::open(d.join("db")).unwrap();
+    let content_row: (String, String, String, i64) = conn
+        .query_row(
+            "SELECT id, content_hash, path, size FROM _files WHERE id = ?1",
+            [file_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        content_row,
+        (
+            file_id.to_string(),
+            oid,
+            "src/a.rs".to_string(),
+            SRC.len() as i64
         )
     );
 }
