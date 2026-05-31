@@ -18,6 +18,15 @@ of curiosity.
 6. [Gold standards and your engine](06-gold-standards-and-your-engine.md) — Glean, Zoekt, and how `dl` is the same ideas.
 7. [The fast paths](07-the-fast-paths.md) — the loops that make it scale: semi-naive fixpoint, Tarjan/condensation, seeded reachability, stratification, auto-index, with citations and exercises.
 
+For the math behind these chapters (lattices, fixpoints, semirings, evaluation, graph cores, incremental maintenance), see the [math sub-series](math/README.md).
+
+Two side surveys map the neighbouring territory:
+
+- [Logic language survey](logic-language-survey/README.md) — where `dl` sits among Prolog, Scryer, Datalog, Soufflé, Mercury, and Ciao, on the two axes of run-direction and compiler-knowledge.
+- [Beyond manual paging](beyond-manual-paging/README.md) — the algorithm theory the bounded-RSS frame hides: reachability labeling, succinct structures, graph sketches, cache-oblivious layouts, and delta-as-default maintenance.
+
+The [further-study backlog](further-study.md) lists the concepts still worth their own survey: worst-case optimal joins, CFL-reachability, Roaring bitmaps, demand- vs change-driven incremental, and more.
+
 ## The running example (used in every chapter)
 
 A tiny codebase. Five files, six functions, one cycle, one sink, one dead function.
