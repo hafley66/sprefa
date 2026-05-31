@@ -26,6 +26,18 @@ impl FileId {
         }
         Self(hash64(content))
     }
+
+    pub fn from_nonempty_content_hash_hex(hash: &str) -> Option<Self> {
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let id = u64::from_str_radix(&hash[..16], 16).ok()?;
+        if id == 0 {
+            Some(Self::SYNTHETIC)
+        } else {
+            Some(Self(id))
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -216,6 +228,11 @@ mod tests {
         assert_ne!(StringId::of("alpha"), StringId::of("beta"));
         assert_eq!(FileId::of_bytes(b"alpha"), FileId::of_bytes(b"alpha"));
         assert_ne!(FileId::of_bytes(b"alpha"), FileId::of_bytes(b"beta"));
+        assert_eq!(
+            FileId::from_nonempty_content_hash_hex(&content_hash_hex(b"alpha")),
+            Some(FileId::of_bytes(b"alpha"))
+        );
+        assert_eq!(FileId::from_nonempty_content_hash_hex("not-a-hash"), None);
 
         let coord = Coord {
             repo: RepoId(1),

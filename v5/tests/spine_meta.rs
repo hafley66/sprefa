@@ -1,10 +1,11 @@
 use rusqlite::Connection;
-use sprefa_v5::spine::{FileId, StringId, WhereBytesId, ZERO_HASH_HEX};
+use sprefa_v5::spine::{content_hash_hex, FileId, StringId, WhereBytesId, ZERO_HASH_HEX};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DL: &str = env!("CARGO_BIN_EXE_dl");
+const SRC: &str = "struct AuthService;\n";
 
 fn sandbox(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("spine_meta_{tag}"));
@@ -36,7 +37,7 @@ fn run(dir: &Path, prog: &str) {
 #[test]
 fn spine_meta_tables_are_created_with_sentinels() {
     let d = sandbox("sentinels");
-    fs::write(d.join("src/a.rs"), "struct AuthService;\n").unwrap();
+    fs::write(d.join("src/a.rs"), SRC).unwrap();
     let prog = r#"
 rel symbol(name: text, path: file).
 symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
@@ -71,6 +72,23 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
             ZERO_HASH_HEX.to_string(),
             String::new(),
             0
+        )
+    );
+
+    let content_row: (String, String, String, i64) = conn
+        .query_row(
+            "SELECT id, content_hash, path, size FROM _files WHERE id = ?1",
+            [FileId::of_bytes(SRC.as_bytes()).to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        content_row,
+        (
+            FileId::of_bytes(SRC.as_bytes()).to_string(),
+            content_hash_hex(SRC.as_bytes()),
+            "src/a.rs".to_string(),
+            SRC.len() as i64
         )
     );
 

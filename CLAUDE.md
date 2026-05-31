@@ -40,6 +40,8 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
       `_where_bytes` meta tables with zero sentinels.
 - [x] Ref-spine C1: source extraction now batches every text value into `_strings`
       with stable `StringId` and normalized text, without changing DSL behavior.
+- [x] Ref-spine C1b: WORK file content now batches into `_files` with stable
+      `FileId` derived from the existing blake3 content hash.
 
 ### Backlog (sequenced to ADD features without adding dup)
 
@@ -59,10 +61,10 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
 - [ ] **C — ref-spine Stage 2 remaining** (L, kills dup-shape #3 + unlocks refactor):
       `ref(string_id, file_id, lo, hi)` built-in + file-id-keyed source retraction. C0/C1
       are done: `Coord`/`WhereBytes`/`StringId` math, sentinel `_strings`/`_files`/
-      `_where_bytes` tables, and batched `_strings` ingestion. Next slice should feed
-      captures/source spans into `_where_bytes` with INSERT-only batches; then add
-      fuzzy joins/FTS5 trigram if needed. Do NOT port FactStore/runtime_graph/Memo/support
-      (DD machinery to exorcise).
+      `_where_bytes` tables, batched `_strings` ingestion, and WORK `_files`
+      ingestion. Next slice should feed captures/source spans into `_where_bytes`
+      with INSERT-only batches; then add fuzzy joins/FTS5 trigram if needed. Do
+      NOT port FactStore/runtime_graph/Memo/support (DD machinery to exorcise).
 - [x] **D — module-graph leftover**: incremental `refresh_module_rels` for `--changed`.
       Content edits refresh only touched WORK module sources; path-set/manifest changes
       fall back to the WORK rev. Parallel extraction and rev-aware relation variants are done.

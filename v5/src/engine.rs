@@ -907,7 +907,26 @@ impl Engine {
         }
         self.db.exec("DELETE FROM _file")?;
         self.db.insert_rows("_file", &["path", "rev", "hash", "mtime", "size"], &rows)?;
+        self.insert_spine_files(current)?;
         Ok(())
+    }
+
+    fn insert_spine_files(&self, current: &FileMeta) -> Result<usize> {
+        let mut by_id: BTreeMap<String, (String, String, i64)> = BTreeMap::new();
+        for ((path, _rev), (hash, _mt, size)) in current {
+            if *size == 0 { continue; }
+            let Some(id) = spine::FileId::from_nonempty_content_hash_hex(hash) else { continue };
+            let entry = by_id.entry(id.to_string()).or_insert_with(|| (hash.clone(), path.clone(), *size));
+            if path < &entry.1 {
+                entry.1 = path.clone();
+            }
+        }
+        let file_rows: Vec<Vec<Value>> = by_id.into_iter()
+            .map(|(id, (content_hash, path, size))| {
+                vec![Value::Text(id), Value::Text(content_hash), Value::Text(path), Value::Int(size)]
+            })
+            .collect();
+        self.db.insert_rows("_files", &["id", "content_hash", "path", "size"], &file_rows)
     }
 
     fn declare(&mut self, d: &RelDecl) -> Result<()> {

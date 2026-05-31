@@ -16,7 +16,8 @@ on the collapsed `_file` table.
 - **Stage 2a/b (landed on `codex/v5-refresh-type-edge`):** v5 has native spine
   primitives for `StringId`, `FileId`, `Coord`, `RefId`, and `WhereBytesId`,
   plus internal `_strings`, `_files`, and `_where_bytes` tables with zero
-  sentinels. Source extraction batches real text values into `_strings`. The
+  sentinels. Source extraction batches real text values into `_strings`; WORK
+  file content batches into `_files` using the existing blake3 content hash. The
   tables are not queryable built-ins yet.
 - **Stage 2 remaining:** populate real spans, expose queryable `ref`, add
   file-id-keyed `_prov` retraction, and wire multi-repo config. Do the cross-repo
