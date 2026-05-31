@@ -126,9 +126,9 @@ falls out of the column declarations.
 Dup-avoiding order for the type-graph module: **B → E → A**. Ref-spine **C** is separate
 (orthogonal, deferrable). Detail + file:line in `/CLAUDE.md`.
 
-- **B** (L1+L3 core, S): generalize built-in refresh → one `refresh_rel`; the module/matcher registration seam.
-- **E** (L3 module, S–M): `type_edge` syn extractor — self-hosted type graph; rides B; deterministic tokenless type map.
-- **A** (L2 paydown, S–M): migrate remaining N+1 write loops onto `Db::insert_rows`.
+- **B** (done): generalized built-in refresh → one `refresh_rel`; the module/matcher registration seam.
+- **E** (done): `type_edge` syn extractor — self-hosted type graph; rides B; deterministic tokenless type map.
+- **A** (done): migrated remaining obvious N+1 write loops onto `Db::insert_rows`.
 - **C** (L0, L): ref-spine Stage 2 — `_strings` interner + `ref` + content-derived ids; unlocks refactor + kills string dup.
 - **D** (L3, M): incremental + parallel `refresh_module_rels`; rev-as-variable soundness (engine.rs:837).
 - Effect edge (L4): minimal `sh`/`http`/`write` ops + content-cache; reconcile loop already exists.
@@ -138,5 +138,6 @@ Dup-avoiding order for the type-graph module: **B → E → A**. Ref-spine **C**
 
 ## Done (this arc)
 Module graph (all Rust+TS levers ✓, SCIP oracle precision 1.00, broken-import linter),
-Db seam (plural-only chokepoint + loud N+1 counter), Cargo rename. 31 tests. Branch
-`feat/v5-lsp-diag`, unmerged/unpushed.
+Db seam (plural-only chokepoint + loud N+1 counter), shared refresh seam,
+`type_edge(from,to,kind)`, remaining obvious N+1 write-loop paydown, Cargo rename.
+Branch `codex/v5-refresh-type-edge`.

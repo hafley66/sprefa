@@ -23,19 +23,21 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 - [x] **Db seam** (`db.rs`): plural-only SQL chokepoint + loud per-tick N+1 counter;
       `refresh_module_rels` migrated to batched `insert_rows`. `conn()` = metered escape hatch
       (36 sites left = grep `.conn()` in engine.rs).
+- [x] **B/E/A**: shared `refresh_rel` seam, syn-backed `type_edge(from,to,kind)`, and
+      remaining obvious N+1 write loops batched (`_file`, `_prov`, source rows, SCC tables).
 
 ### Backlog (sequenced to ADD features without adding dup)
 
 The dup-avoiding order for the `type_edge` feature: **B → E → A** (~M total, leaves *less*
 dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
 
-- [ ] **B — generalize built-in refresh** (S, kills dup-shape #2): one `refresh_rel(name, cols, rows)`
+- [x] **B — generalize built-in refresh** (S, kills dup-shape #2): one `refresh_rel(name, cols, rows)`
       so `refresh_builtin_rels` + `refresh_module_rels` + future `type_edge` share one emit path.
-- [ ] **E — `type_edge` self-hosted type graph** (S–M, rides B): a `syn`-based extractor (syn
+- [x] **E — `type_edge` self-hosted type graph** (S–M, rides B): a `syn`-based extractor (syn
       already in tree) emits `type_edge(from, to, kind∈field|variant|impl|generic)` over `v5/src`
       — same shape as `module_edge`. Then `reaches(Term, X)` = blast radius, fan-in/out per type
       as a query, cycles via `closure(type_edge)`. The deterministic, tokenless type-graph generator.
-- [ ] **A — migrate remaining N+1 write loops** (S–M, kills dup-shape #1): `refresh_builtin_rels`
+- [x] **A — migrate remaining N+1 write loops** (S–M, kills dup-shape #1): `refresh_builtin_rels`
       (engine.rs:840-845), `save_file_meta` (765), `retract_paths` (741/749), scc insert →
       `insert_rows`. The ~30 other `.conn()` sites are benign (count-checks, DDL, the fixpoint
       evaluator) — leave or wrap for counting, not N+1.
