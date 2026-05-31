@@ -37,7 +37,7 @@ rel reaches(a: text, b: text).
 reaches(a, b) <- closure(module_edge).
 ? module_edge(s, d).
 ? reaches(a, b).
-? module_unresolved(f, spec, why).
+? module_unresolved(f, spec, why, ln).
 "#;
 
 #[test]
@@ -144,7 +144,7 @@ seen(path) <- scan("WORK", "**/*.ts", path, rev), match(path, rev, /./, line).
 rel reaches(a: text, b: text).
 reaches(a, b) <- closure(module_edge).
 ? module_edge(s, d).
-? module_unresolved(f, spec, why).
+? module_unresolved(f, spec, why, ln).
 "#;
 
 #[test]
@@ -189,6 +189,29 @@ fn ts_dynamic_template_import_is_unresolved_not_silent() {
     assert_eq!(code, 0, "run failed: {out}");
     let unres = out.split("? module_unresolved").nth(1).unwrap_or("");
     assert!(unres.contains("dynamic"), "interpolated import() must be flagged dynamic, not dropped silently: {out}");
+}
+
+#[test]
+fn broken_imports_lint_via_check() {
+    // The module graph as a linter: unresolved refs become `error` diagnostics, so
+    // `--check` exits non-zero and names the offending file:line.
+    let d = sandbox("lint");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/lib.rs"), "mod real;\nmod ghost;\nfn x(){}\n").unwrap();
+    fs::write(d.join("src/real.rs"), "fn x(){}\n").unwrap();
+    fs::write(d.join("src/app.ts"), "import './missing';\nimport './present';\nexport const z=1;\n").unwrap();
+    fs::write(d.join("src/present.ts"), "export const p=1;\n").unwrap();
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.{rs,ts}", path, rev), match(path, rev, /./, line).
+rel diag(path: text, line: int, severity: text, code: text, msg: text).
+diag(p, l, "error", "broken-import", "unresolved `${spec}`") <- module_unresolved(p, spec, reason, l).
+"#;
+    let (code, _out, err) = run(&d, prog, &["--check"]);
+    assert_ne!(code, 0, "broken imports must fail --check");
+    assert!(err.contains("src/lib.rs:2") && err.contains("ghost"), "dangling mod ghost flagged at its line: {err}");
+    assert!(err.contains("src/app.ts:1") && err.contains("missing"), "broken TS import flagged at its line: {err}");
+    assert!(!err.contains("real") && !err.contains("present"), "resolved imports must not be flagged: {err}");
 }
 
 #[test]

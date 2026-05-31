@@ -1,0 +1,22 @@
+# Broken-import linter: the module graph as a diagnostic source.
+#
+# The resolver records every reference it could NOT resolve to a project file in
+# the built-in `module_unresolved(file, specifier, reason, line)` relation: a
+# `mod foo;` with no child file, a `use crate::x` where x is gone, a relative TS
+# import to a missing file, a dynamic `import(`${}`)`. Each is a real bug a grep
+# linter cannot see. We turn them into `error` diagnostics, so `dl --check` fails
+# CI / a pre-commit hook and `dl --lsp` squiggles the offending line in-editor.
+#
+# Run:  dl examples/lint-imports.dl --root <repo> --check
+#       dl examples/lint-imports.dl --root <repo> --lsp
+
+# Seed the file set so the resolver runs (it reads the built-in file relation).
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.{rs,ts,tsx,js}", path, rev), match(path, rev, /./, line).
+
+# Every unresolved reference becomes an error pointing at its line.
+rel diag(path: text, line: int, severity: text, code: text, msg: text).
+diag(p, l, "error", "broken-import", "unresolved import `${spec}` (${reason})") <-
+    module_unresolved(p, spec, reason, l).
+
+? diag(path, line, sev, code, msg).

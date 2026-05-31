@@ -45,7 +45,7 @@ fn module_rel_decls() -> Vec<RelDecl> {
             c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)] },
         RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)] },
         RelDecl { name: "module_unresolved".into(), cols: vec![
-            c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text)] },
+            c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)] },
     ]
 }
 
@@ -876,7 +876,7 @@ impl Engine {
         let mut ins_edge = self.conn.prepare(
             "INSERT OR IGNORE INTO rel_module_edge(src, dst) VALUES (?1,?2)")?;
         let mut ins_unres = self.conn.prepare(
-            "INSERT OR IGNORE INTO rel_module_unresolved(file, specifier, reason) VALUES (?1,?2,?3)")?;
+            "INSERT OR IGNORE INTO rel_module_unresolved(file, specifier, reason, line) VALUES (?1,?2,?3,?4)")?;
         for (rev, files) in &by_rev {
             let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
             let manifests = self.collect_manifests(rev, &fileset);
@@ -888,8 +888,12 @@ impl Engine {
                 for mref in res.edges(path, &content, &cx) {
                     ins_import.execute(rusqlite::params![path, rev, mref.specifier, mref.kind, mref.line as i64])?;
                     match mref.target {
-                        Resolution::File(dst) => { ins_edge.execute(rusqlite::params![path, dst])?; }
-                        Resolution::Unresolved(reason) => { ins_unres.execute(rusqlite::params![path, mref.specifier, reason])?; }
+                        // A self-edge (e.g. `use crate::X` where X is defined in this
+                        // crate root) is not a dependency; drop it so the graph and
+                        // its closure have no spurious self-loops.
+                        Resolution::File(dst) if &dst != path => { ins_edge.execute(rusqlite::params![path, dst])?; }
+                        Resolution::File(_) => {}
+                        Resolution::Unresolved(reason) => { ins_unres.execute(rusqlite::params![path, mref.specifier, reason, mref.line as i64])?; }
                         Resolution::External(_) => {}
                     }
                 }
