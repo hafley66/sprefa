@@ -68,10 +68,10 @@ fn cross_file_ref_drops_when_target_deleted() {
     fs::write(d.join("b.txt"), "hello\n").unwrap();
     // holds(a,b) only if `a` references `b` AND `b` is a real file (the join).
     let prog = r#"
-rel ref(src: file, dst: text).
+rel link(src: file, dst: text).
 rel holds(src: file, dst: text).
-ref(src, dst) <- scan("WORK", "*.txt", src, rev), match(src, rev, /ref (?<dst>\S+)/, line).
-holds(src, dst) <- ref(src, dst), file(_, "WORK", dst, _).
+link(src, dst) <- scan("WORK", "*.txt", src, rev), match(src, rev, /ref (?<dst>\S+)/, line).
+holds(src, dst) <- link(src, dst), file(_, "WORK", dst, _).
 ? holds(src, dst).
 "#;
     let (_, out, _) = run(&d, prog, &[]);

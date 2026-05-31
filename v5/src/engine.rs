@@ -45,6 +45,13 @@ const TYPE_RELS: [&str; 2] = ["type_edge", "type_edge_rev"];
 /// extracted from definition/reference occurrences in an existing index.scip.
 const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
 
+/// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
+/// meta tables. `string(id, text, norm)` resolves an interned StringId to its
+/// content; `ref(string, file, lo, hi)` locates each interned string's byte
+/// span. Join them to ask "where does <text> occur": `string(s, "Foo", _),
+/// ref(s, f, lo, hi)`. Populated only for WORK regex captures today.
+const SPINE_RELS: [&str; 2] = ["string", "ref"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
     vec![
@@ -87,6 +94,15 @@ fn scip_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn spine_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    vec![
+        RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)] },
+        RelDecl { name: "ref".into(), cols: vec![
+            c("string", Type::Text), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)] },
+    ]
+}
+
 /// Does the program reference any relation in `rels` (body atom, closure edge,
 /// or query head)? Gates lazy built-in indexers so unrelated programs pay nothing.
 fn rels_used(prog: &Program, rels: &[&str]) -> bool {
@@ -112,6 +128,8 @@ fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
 fn scip_rels_used(prog: &Program) -> bool { rels_used(prog, &SCIP_RELS) }
+
+fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -497,6 +515,7 @@ impl Engine {
         if module_rels_used(prog) { self.refresh_module_rels()?; }
         if type_rels_used(prog) { self.refresh_type_rels()?; }
         if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
+        if spine_rels_used(prog) { self.refresh_spine_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -626,6 +645,10 @@ impl Engine {
             if type_rels_used(prog) {
                 self.refresh_type_rels()?;
                 for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
+            }
+            if spine_rels_used(prog) {
+                self.refresh_spine_rels()?;
+                for s in SPINE_RELS { changed_source_rels.insert(s.to_string()); }
             }
         }
         if wants_module_rels && (module_full_work || !module_delta_paths.is_empty()) {
@@ -975,6 +998,9 @@ impl Engine {
                 if SCIP_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in SCIP relation; pick another name", d.name);
                 }
+                if SPINE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in ref-spine relation (string / ref); pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -994,6 +1020,7 @@ impl Engine {
         for d in module_rel_decls() { self.declare(&d)?; }
         for d in type_rel_decls() { self.declare(&d)?; }
         for d in scip_rel_decls() { self.declare(&d)?; }
+        for d in spine_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -1021,6 +1048,36 @@ impl Engine {
         self.refresh_rel("rev", &["id", "repo", "oid", "ts"], &revs)?;
         self.refresh_rel("content", &["id", "hash"], &contents)?;
         self.refresh_rel("file", &["repo", "rev", "path", "content"], &file_rows)?;
+        Ok(())
+    }
+
+    /// Project the durable `_strings` / `_where_bytes` meta tables into the
+    /// query-facing `string` / `ref` relations. Wholesale wipe + repopulate,
+    /// skipping the zero sentinels so queries see only real interned rows.
+    fn refresh_spine_rels(&self) -> Result<()> {
+        let conn = self.db.conn();
+        let mut s = conn.prepare("SELECT id, content, norm FROM _strings WHERE id != '0'")?;
+        let strings: Vec<Vec<Value>> = s
+            .query_map([], |r| Ok(vec![
+                Value::Text(r.get::<_, String>(0)?),
+                Value::Text(r.get::<_, String>(1)?),
+                Value::Text(r.get::<_, String>(2)?),
+            ]))?
+            .filter_map(|x| x.ok()).collect();
+        let mut w = conn.prepare(
+            "SELECT string_id, file_id, lo, hi FROM _where_bytes WHERE id != '0'")?;
+        let refs: Vec<Vec<Value>> = w
+            .query_map([], |r| Ok(vec![
+                Value::Text(r.get::<_, String>(0)?),
+                Value::Text(r.get::<_, String>(1)?),
+                Value::Int(r.get::<_, i64>(2)?),
+                Value::Int(r.get::<_, i64>(3)?),
+            ]))?
+            .filter_map(|x| x.ok()).collect();
+        drop(s);
+        drop(w);
+        self.refresh_rel("string", &["id", "text", "norm"], &strings)?;
+        self.refresh_rel("ref", &["string", "file", "lo", "hi"], &refs)?;
         Ok(())
     }
 

@@ -34,6 +34,24 @@ fn run(dir: &Path, prog: &str) {
     );
 }
 
+fn run_out(dir: &Path, prog: &str) -> (i32, String) {
+    fs::write(dir.join("p.dl"), prog).unwrap();
+    let out = Command::new(DL)
+        .arg(dir.join("p.dl"))
+        .args([
+            "--root",
+            dir.to_str().unwrap(),
+            "--db",
+            dir.join("db").to_str().unwrap(),
+        ])
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
@@ -210,6 +228,31 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
             "0".to_string(),
         )
     );
+}
+
+#[test]
+fn string_and_ref_relations_are_queryable() {
+    let d = sandbox("ref_query");
+    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    // The program never scans on its own; `located` joins the built-in `string`
+    // and `ref` relations, which a prior source rule must populate. Use one rule
+    // for both: extract symbols (fills _strings/_where_bytes), then query refs.
+    let prog = r#"
+rel symbol(name: text, path: file).
+rel located(text: text, lo: int, hi: int).
+symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+located(t, lo, hi) <- string(s, t, _), ref(s, _, lo, hi).
+? located(t, lo, hi).
+"#;
+    let (code, out) = run_out(&d, prog);
+    assert_eq!(code, 0, "dl failed: {out}");
+    let lo = SRC.find("AuthService").unwrap();
+    let hi = lo + "AuthService".len();
+    assert!(
+        out.contains(&format!("AuthService\t{lo}\t{hi}")),
+        "expected located(AuthService,{lo},{hi}): {out}"
+    );
+    assert!(out.contains("(1 rows)"), "expected exactly one ref: {out}");
 }
 
 #[test]
