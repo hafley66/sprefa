@@ -43,6 +43,11 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 - [x] Ref-spine C1b: WORK file content + committed git blobs now batch into
       `_files`; `FileId` derives from the existing blake3 hash or blob OID
       without per-blob content reads.
+- [x] Ref-spine C2: regex `match` captures locate into `_where_bytes` (per-capture
+      byte spans, WORK rev only; `FileId::of_bytes` joins `_files`), and built-in
+      `string(id,text,norm)` + `ref(string,file,lo,hi)` query relations project
+      `_strings`/`_where_bytes` via lazy sentinel-skipping `refresh_spine_rels`.
+      `ref` is now a reserved name. Tests in `tests/spine_meta.rs`.
 
 ### Backlog (sequenced to ADD features without adding dup)
 
@@ -60,11 +65,15 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       `insert_rows`. The ~30 other `.conn()` sites are benign (count-checks, DDL, the fixpoint
       evaluator) — leave or wrap for counting, not N+1.
 - [ ] **C — ref-spine Stage 2 remaining** (L, kills dup-shape #3 + unlocks refactor):
-      `ref(string_id, file_id, lo, hi)` built-in + file-id-keyed source retraction. C0/C1
-      are done: `Coord`/`WhereBytes`/`StringId` math, sentinel `_strings`/`_files`/
-      `_where_bytes` tables, batched `_strings` ingestion, and WORK/git-blob
-      `_files` ingestion. Next slice should feed captures/source spans into
-      `_where_bytes` with INSERT-only batches; then add fuzzy joins/FTS5 trigram
+      C0/C1/C1b/C2 are done — `Coord`/`WhereBytes`/`StringId` math, sentinel meta
+      tables, batched `_strings` + WORK/git-blob `_files` ingestion, regex-capture
+      `_where_bytes` spans, and the `string`/`ref` query relations. Remaining:
+      **(1)** ast/sg capture spans (those backends return line/col only — need a
+      line-offset index + per-capture node byte ranges); **(2)** git-rev located
+      spans (need the blob OID as the file id, not `of_bytes`); **(3)**
+      file-id-keyed source retraction so a deleted string's `_where_bytes` row is
+      pruned (today's ingestion is INSERT-only, content-derived ids, so stale
+      located rows persist across `--changed`); **(4)** fuzzy joins / FTS5 trigram
       if needed. Do NOT port FactStore/runtime_graph/Memo/support (DD machinery
       to exorcise).
 - [x] **D — module-graph leftover**: incremental `refresh_module_rels` for `--changed`.
