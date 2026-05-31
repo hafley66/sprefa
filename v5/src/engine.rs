@@ -609,7 +609,9 @@ impl Engine {
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
                     extracted += self.insert_source_rows(&rule.head.rel, &meta, &rel, &rows)?;
-                    self.insert_spine_where_bytes(&where_bytes)?;
+                    let where_rows: Vec<(String, spine::WhereBytes)> =
+                        where_bytes.into_iter().map(|w| (rel.clone(), w)).collect();
+                    self.insert_spine_where_bytes(&where_rows)?;
                     changed_source_rels.insert(rule.head.rel.clone());
                 }
                 let (mt, sz) = std::fs::metadata(&abs).ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
@@ -726,20 +728,24 @@ impl Engine {
                  lo INTEGER NOT NULL,
                  hi INTEGER NOT NULL,
                  repo TEXT NOT NULL DEFAULT '0',
-                 rev TEXT NOT NULL DEFAULT '0'
+                 rev TEXT NOT NULL DEFAULT '0',
+                 path TEXT NOT NULL DEFAULT ''
              );
              CREATE INDEX IF NOT EXISTS _strings_norm_idx ON _strings(norm);
              CREATE INDEX IF NOT EXISTS _where_bytes_string_idx ON _where_bytes(string_id);
              CREATE INDEX IF NOT EXISTS _where_bytes_file_span_idx ON _where_bytes(file_id, lo, hi);
+             CREATE INDEX IF NOT EXISTS _where_bytes_path_idx ON _where_bytes(path);
              INSERT OR IGNORE INTO _strings (id, content, norm) VALUES ('0', '', '');
              INSERT OR IGNORE INTO _files (id, content_hash, path, size)
                  VALUES ('0', '0000000000000000000000000000000000000000000000000000000000000000', '', 0);
-             INSERT OR IGNORE INTO _where_bytes (id, string_id, file_id, lo, hi, repo, rev)
-                 VALUES ('0', '0', '0', 0, 0, '0', '0');"
+             INSERT OR IGNORE INTO _where_bytes (id, string_id, file_id, lo, hi, repo, rev, path)
+                 VALUES ('0', '0', '0', 0, 0, '0', '0', '');"
         )?;
         // tolerate dbs created before mtime/size existed
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
+        // tolerate _where_bytes created before the path attribution column existed
+        let _ = self.db.conn().execute("ALTER TABLE _where_bytes ADD COLUMN path TEXT NOT NULL DEFAULT ''", []);
         Ok(())
     }
 
@@ -857,11 +863,11 @@ impl Engine {
         };
 
         let mut by_rel: HashMap<String, Vec<(String, Vec<Value>)>> = HashMap::new();
-        let mut where_bytes: Vec<spine::WhereBytes> = Vec::new();
+        let mut where_bytes: Vec<(String, spine::WhereBytes)> = Vec::new();
         for res in results {
             let (idx, path, rows, wheres, dropped) = res?;
             self.dropped += dropped;
-            where_bytes.extend(wheres);
+            where_bytes.extend(wheres.into_iter().map(|w| (path.clone(), w)));
             let rel = source_rules[idx].head.rel.clone();
             by_rel.entry(rel).or_default()
                 .extend(rows.into_iter().map(|row| (path.clone(), row)));
@@ -900,6 +906,9 @@ impl Engine {
         let path_rows: Vec<Vec<Value>> = paths.iter().map(|p| vec![Value::Text((*p).to_string())]).collect();
         self.db.insert_rows("_retract_path", &["path"], &path_rows)?;
         self.db.exec("DELETE FROM _prov WHERE path IN (SELECT path FROM _retract_path)")?;
+        // Drop located rows attributed to these paths; fresh spans re-insert on
+        // reparse. Sentinel row has path '' and is never retracted.
+        self.db.exec("DELETE FROM _where_bytes WHERE path IN (SELECT path FROM _retract_path)")?;
         let mut removed = 0usize;
         for rel in source_rels {
             let rel_lit = rel.replace('\'', "''");
@@ -1501,10 +1510,14 @@ impl Engine {
     /// "string S occupies bytes [lo, hi) in file F" — an INSERT-only index keyed
     /// by content-derived `WhereBytesId`, so duplicate occurrences (same string,
     /// same file, same span, reached via multiple binds) collapse to one row.
-    fn insert_spine_where_bytes(&self, wheres: &[spine::WhereBytes]) -> Result<usize> {
+    /// `path` is the source path attribution used by `retract_paths` to prune a
+    /// file's located rows on reparse; it is not part of the row identity, so two
+    /// paths with byte-identical content collapse to a single row (the rare
+    /// duplicate-file case, repaired on a full tick).
+    fn insert_spine_where_bytes(&self, wheres: &[(String, spine::WhereBytes)]) -> Result<usize> {
         if wheres.is_empty() { return Ok(0); }
         let mut by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        for w in wheres {
+        for (path, w) in wheres {
             let id = spine::WhereBytesId::of(*w).to_string();
             by_id.entry(id.clone()).or_insert_with(|| vec![
                 Value::Text(id),
@@ -1514,10 +1527,11 @@ impl Engine {
                 Value::Int(w.hi as i64),
                 Value::Text(w.repo.to_string()),
                 Value::Text(w.rev.to_string()),
+                Value::Text(path.clone()),
             ]);
         }
         let rows: Vec<Vec<Value>> = by_id.into_values().collect();
-        self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev"], &rows)
+        self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev", "path"], &rows)
     }
 
     /// Enumerate (path, hash, mtime, size) for a rev. For WORK, stat each file

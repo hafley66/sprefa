@@ -334,6 +334,55 @@ located(t, lo, hi) <- string(s, t, _), ref(s, _, lo, hi).
 }
 
 #[test]
+fn editing_a_file_retracts_its_stale_located_spans() {
+    let d = sandbox("where_bytes_retract");
+    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    let prog = r#"
+rel symbol(name: text, path: file).
+symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+located(t, lo, hi) <- string(s, t, _), ref(s, _, lo, hi).
+rel located(text: text, lo: int, hi: int).
+? located(t, lo, hi).
+"#;
+    let (code, out) = run_out(&d, prog);
+    assert_eq!(code, 0, "cold run failed: {out}");
+    assert!(out.contains("AuthService"), "cold: AuthService located: {out}");
+
+    // Rename the struct; the old located span for AuthService must drop and the
+    // new one for BillingService must appear. Tick only the changed file.
+    fs::write(d.join("src/a.rs"), "struct BillingService;\n").unwrap();
+    let _ = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args([
+            "--root", d.to_str().unwrap(),
+            "--db", d.join("db").to_str().unwrap(),
+            "--changed", "src/a.rs",
+        ])
+        .output()
+        .expect("run dl --changed");
+
+    let conn = Connection::open(d.join("db")).unwrap();
+    let stale: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _where_bytes w JOIN _strings s ON s.id = w.string_id
+             WHERE s.content = 'AuthService'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stale, 0, "stale AuthService span must be retracted");
+    let fresh: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _where_bytes w JOIN _strings s ON s.id = w.string_id
+             WHERE s.content = 'BillingService'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fresh, 1, "renamed BillingService span must be present");
+}
+
+#[test]
 fn committed_git_blobs_populate_spine_files_without_readback_hashing() {
     let d = sandbox("git_blob");
     fs::write(d.join("src/a.rs"), SRC).unwrap();
