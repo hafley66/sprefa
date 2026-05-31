@@ -739,14 +739,20 @@ impl Engine {
             }).collect()
         };
 
-        let mut extracted = 0usize;
+        let mut by_rel: HashMap<String, Vec<(String, Vec<Value>)>> = HashMap::new();
         for res in results {
             let (idx, path, rows, dropped) = res?;
             self.dropped += dropped;
             let rel = source_rules[idx].head.rel.clone();
+            by_rel.entry(rel).or_default()
+                .extend(rows.into_iter().map(|row| (path.clone(), row)));
+        }
+
+        let mut extracted = 0usize;
+        for (rel, rows) in by_rel {
             let meta = self.rels.get(&rel)
                 .ok_or_else(|| anyhow::anyhow!("unknown head relation {}", rel))?.clone();
-            extracted += self.insert_source_rows(&rel, &meta, &path, &rows)?;
+            extracted += self.insert_source_rows_for_paths(&rel, &meta, &rows)?;
         }
 
         self.save_file_meta(&current, &prev)?;
@@ -1148,9 +1154,15 @@ impl Engine {
 
     fn insert_source_rows(&self, rel: &str, meta: &RelMeta, path: &str, rows: &[Vec<Value>]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
+        let path_rows: Vec<(String, Vec<Value>)> = rows.iter().cloned().map(|row| (path.to_string(), row)).collect();
+        self.insert_source_rows_for_paths(rel, meta, &path_rows)
+    }
+
+    fn insert_source_rows_for_paths(&self, rel: &str, meta: &RelMeta, rows: &[(String, Vec<Value>)]) -> Result<usize> {
+        if rows.is_empty() { return Ok(0); }
         let mut fact_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
         let mut prov_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
-        for row in rows {
+        for (path, row) in rows {
             let src = row_hash(row);
             let mut fact = row.clone();
             fact.push(Value::Text(src.clone()));

@@ -77,12 +77,12 @@ impl Db {
         let ncol = cols.len();
         let collist = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
         let key = format!("INSERT {table}");
+        self.bump(&key);
         let mut total = 0;
         for chunk in rows.chunks(CHUNK) {
             let tuple = format!("({})", vec!["?"; ncol].join(","));
             let values = vec![tuple; chunk.len()].join(", ");
             let sql = format!("INSERT OR IGNORE INTO {table} ({collist}) VALUES {values}");
-            self.bump(&key);
             let params: Vec<rusqlite::types::Value> = chunk.iter().flatten().map(|v| match v {
                 Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
                 Value::Int(n) => rusqlite::types::Value::Integer(*n),
