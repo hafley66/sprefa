@@ -362,19 +362,24 @@ struct RustCrates {
     name_to_src: HashMap<String, String>,    // crate name -> "<dir>/src"
     roots: Vec<(String, String)>,            // (src root, crate name), longest first
     index: HashMap<(String, String), String>, // (crate name, mod path) -> file
+    renames: HashMap<(String, String), String>, // (owner crate, code name) -> real package
 }
 
 impl RustCrates {
     fn build(files: &HashSet<String>, manifests: &HashMap<String, String>) -> Self {
         let mut name_to_src = HashMap::new();
         let mut roots: Vec<(String, String)> = Vec::new();
+        let mut renames: HashMap<(String, String), String> = HashMap::new();
         for (path, content) in manifests {
             if !path.ends_with("Cargo.toml") { continue; }
-            let Some(name) = cargo_package_name(content) else { continue };
+            let (name, rns) = parse_cargo(content);
+            let Some(name) = name else { continue };
             let dir = parent_dir(path);
             let src = if dir.is_empty() { "src".to_string() } else { format!("{dir}/src") };
             name_to_src.insert(name.clone(), src.clone());
-            roots.push((src, name));
+            roots.push((src, name.clone()));
+            // `renamed = { package = "real" }`: code uses `renamed`, crate is `real`.
+            for (code, real) in rns { renames.insert((name.clone(), code), real); }
         }
         roots.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
 
@@ -391,7 +396,7 @@ impl RustCrates {
                 index.entry((owner(f), mp)).or_insert_with(|| f.clone());
             }
         }
-        RustCrates { name_to_src, roots, index }
+        RustCrates { name_to_src, roots, index, renames }
     }
 
     fn owner(&self, file: &str) -> String {
@@ -419,36 +424,45 @@ impl RustCrates {
                 None => Resolution::Unresolved(format!("{abs}: no file in crate '{owner}'")),
             };
         }
-        // cross-crate: first segment names another workspace crate
+        // cross-crate: first segment names another workspace crate, directly or
+        // via a Cargo `package =` rename in the importing crate's manifest.
         let mut segs = use_path.split("::");
         let first = segs.next().unwrap_or("").trim_start_matches("r#");
-        if self.name_to_src.contains_key(first) {
+        let real = if self.name_to_src.contains_key(first) {
+            Some(first.to_string())
+        } else {
+            self.renames.get(&(owner.clone(), first.to_string())).cloned()
+        };
+        if let Some(pkg) = real {
             let rest: Vec<&str> = segs.collect();
             let abs2 = if rest.is_empty() { "crate".to_string() } else { format!("crate::{}", rest.join("::")) };
-            return match self.lookup(first, &abs2) {
+            return match self.lookup(&pkg, &abs2) {
                 Some(f) => Resolution::File(f),
-                None => Resolution::Unresolved(format!("{use_path}: no file in crate '{first}'")),
+                None => Resolution::Unresolved(format!("{use_path}: no file in crate '{pkg}'")),
             };
         }
         Resolution::External(use_path.to_string())
     }
 }
 
-/// `[package] name = "x"` from a Cargo.toml (diet: first `name =` after a line
-/// that is not under `[workspace]`; good enough for standard manifests).
-fn cargo_package_name(content: &str) -> Option<String> {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"(?m)^\s*name\s*=\s*"([^"]+)""#).unwrap());
-    // Only accept a name in the [package] section.
-    let mut in_package = false;
-    for line in content.lines() {
-        let t = line.trim();
-        if t.starts_with('[') { in_package = t == "[package]"; continue; }
-        if in_package {
-            if let Some(c) = re.captures(line) { return Some(c[1].to_string()); }
+/// Parse a Cargo.toml into `([package].name, [(code_name, real_package)] renames)`.
+/// A rename is a dependency given as `code = { package = "real" }` where the name
+/// used in `use code::..` differs from the actual crate. Uses the `toml` crate so
+/// inline tables, `[dependencies.x]` sections, and quoted keys all parse correctly.
+fn parse_cargo(content: &str) -> (Option<String>, Vec<(String, String)>) {
+    let Ok(val) = toml::from_str::<toml::Value>(content) else { return (None, Vec::new()); };
+    let name = val.get("package").and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str()).map(|s| s.to_string());
+    let mut renames = Vec::new();
+    for sec in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        let Some(deps) = val.get(sec).and_then(|d| d.as_table()) else { continue };
+        for (code, spec) in deps {
+            if let Some(pkg) = spec.as_table().and_then(|t| t.get("package")).and_then(|p| p.as_str()) {
+                if pkg != code { renames.push((code.clone(), pkg.to_string())); }
+            }
         }
     }
-    None
+    (name, renames)
 }
 
 /// File path -> Rust module path. None if the path has no `src/` segment.
@@ -695,5 +709,20 @@ mod tests {
         let e2 = RustResolver.edges("crateA/src/lib.rs", "use crate_b::foo::B;\n", &c);
         assert_eq!(e2.iter().find(|r| r.kind == "use").unwrap().target,
             Resolution::File("crateB/src/foo.rs".into()), "cross-crate use must resolve: {e2:?}");
+    }
+
+    #[test]
+    fn cargo_dependency_rename() {
+        let files = set(&["crateA/src/lib.rs", "crateB/src/lib.rs", "crateB/src/foo.rs"]);
+        let mut m = HashMap::new();
+        // crateA depends on crate_b under the alias `renamed`.
+        m.insert("crateA/Cargo.toml".to_string(),
+            "[package]\nname = \"crate_a\"\n\n[dependencies]\nrenamed = { package = \"crate_b\", path = \"../crateB\" }\n".to_string());
+        m.insert("crateB/Cargo.toml".to_string(), "[package]\nname = \"crate_b\"\n".to_string());
+        let c = cx(Path::new("/repo"), &files, &m);
+        // `use renamed::foo::B` must resolve through the rename to crate_b's foo.
+        let e = RustResolver.edges("crateA/src/lib.rs", "use renamed::foo::B;\n", &c);
+        assert_eq!(e.iter().find(|r| r.kind == "use").unwrap().target,
+            Resolution::File("crateB/src/foo.rs".into()), "package= rename must resolve: {e:?}");
     }
 }
