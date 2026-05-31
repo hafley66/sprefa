@@ -837,24 +837,34 @@ impl Engine {
     /// repo = one row from `--root`; rev.id/file.rev = the raw rev string;
     /// content.id = the content hash. No interning (Stage 2).
     fn refresh_builtin_rels(&self) -> Result<()> {
-        for r in BUILTIN_RELS { self.db.conn().execute(&format!("DELETE FROM {}", tbl(r)), [])?; }
         let root = self.root.to_string_lossy().to_string();
         let slug = self.root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| root.clone());
-        self.db.conn().execute("INSERT OR IGNORE INTO rel_repo(id, slug, root) VALUES (?1, ?2, ?3)",
-            rusqlite::params![slug, slug, root])?;
         let mut sel = self.db.conn().prepare("SELECT path, rev, hash FROM _file")?;
-        let rows: Vec<(String, String, String)> = sel
+        let files: Vec<(String, String, String)> = sel
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .filter_map(|x| x.ok()).collect();
-        let mut ins_rev = self.db.conn().prepare("INSERT OR IGNORE INTO rel_rev(id, repo, oid, ts) VALUES (?1, ?2, ?3, 0)")?;
-        let mut ins_content = self.db.conn().prepare("INSERT OR IGNORE INTO rel_content(id, hash) VALUES (?1, ?1)")?;
-        let mut ins_file = self.db.conn().prepare("INSERT OR IGNORE INTO rel_file(repo, rev, path, content) VALUES (?1, ?2, ?3, ?4)")?;
-        for (path, rev, hash) in rows {
-            ins_rev.execute(rusqlite::params![rev, slug, rev])?;
-            ins_content.execute(rusqlite::params![hash])?;
-            ins_file.execute(rusqlite::params![slug, rev, path, hash])?;
+        let t = |s: &str| Value::Text(s.to_string());
+        let mut revs: Vec<Vec<Value>> = Vec::new();
+        let mut contents: Vec<Vec<Value>> = Vec::new();
+        let mut file_rows: Vec<Vec<Value>> = Vec::new();
+        for (path, rev, hash) in files {
+            revs.push(vec![t(&rev), t(&slug), t(&rev), Value::Int(0)]);
+            contents.push(vec![t(&hash), t(&hash)]);
+            file_rows.push(vec![t(&slug), t(&rev), t(&path), t(&hash)]);
         }
+        self.refresh_rel("repo", &["id", "slug", "root"], &[vec![t(&slug), t(&slug), t(&root)]])?;
+        self.refresh_rel("rev", &["id", "repo", "oid", "ts"], &revs)?;
+        self.refresh_rel("content", &["id", "hash"], &contents)?;
+        self.refresh_rel("file", &["repo", "rev", "path", "content"], &file_rows)?;
         Ok(())
+    }
+
+    /// Wholesale replace one engine-owned relation through the same plural write
+    /// seam every built-in module/indexer uses.
+    fn refresh_rel(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        let table = tbl(rel);
+        self.db.exec(&format!("DELETE FROM {table}"))?;
+        self.db.insert_rows(&table, cols, rows)
     }
 
     /// Rebuild the module-graph relations from the `_file` set, per rev. Reads each
@@ -864,7 +874,6 @@ impl Engine {
     /// Wholesale wipe + repopulate; gated by `module_rels_used` at the call site.
     /// Edges are resolved within a single rev (cross-rev merge is a Stage-1 corner).
     fn refresh_module_rels(&self) -> Result<()> {
-        for r in MODULE_RELS { self.db.exec(&format!("DELETE FROM {}", tbl(r)))?; }
         // rev -> [(path, hash)]
         let mut by_rev: HashMap<String, Vec<(String, String)>> = HashMap::new();
         {
@@ -903,9 +912,9 @@ impl Engine {
                 }
             }
         }
-        self.db.insert_rows("rel_module_import", &["file", "rev", "specifier", "kind", "line"], &imports)?;
-        self.db.insert_rows("rel_module_edge", &["src", "dst"], &edges)?;
-        self.db.insert_rows("rel_module_unresolved", &["file", "specifier", "reason", "line"], &unresolved)?;
+        self.refresh_rel("module_import", &["file", "rev", "specifier", "kind", "line"], &imports)?;
+        self.refresh_rel("module_edge", &["src", "dst"], &edges)?;
+        self.refresh_rel("module_unresolved", &["file", "specifier", "reason", "line"], &unresolved)?;
         Ok(())
     }
 
