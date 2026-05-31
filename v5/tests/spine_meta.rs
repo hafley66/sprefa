@@ -231,6 +231,84 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
 }
 
 #[test]
+fn sg_captures_are_located_in_where_bytes() {
+    let d = sandbox("where_bytes_sg");
+    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    // ast-grep metavar `$N` binds the `AuthService` identifier node; its byte
+    // range must land in _where_bytes the same as the regex backend.
+    let prog = r#"
+rel sym(name: text, path: file).
+sym(N, path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "struct $N;", line).
+? sym(name, path).
+"#;
+    run(&d, prog);
+
+    let conn = Connection::open(d.join("db")).unwrap();
+    let lo = SRC.find("AuthService").unwrap() as i64;
+    let hi = lo + "AuthService".len() as i64;
+    let expect_id = WhereBytesId::of(WhereBytes {
+        string: StringId::of("AuthService"),
+        file: FileId::of_bytes(SRC.as_bytes()),
+        lo: lo as u32,
+        hi: hi as u32,
+        ..Default::default()
+    });
+    let span: (i64, i64) = conn
+        .query_row(
+            "SELECT lo, hi FROM _where_bytes WHERE id = ?1",
+            [expect_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(span, (lo, hi));
+}
+
+#[test]
+fn git_rev_captures_are_located_against_blob_file_id() {
+    let d = sandbox("where_bytes_git");
+    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    git(&d, &["init"]);
+    git(&d, &["add", "src/a.rs"]);
+    git(
+        &d,
+        &[
+            "-c", "user.name=sprefa-test",
+            "-c", "user.email=sprefa-test@example.invalid",
+            "commit", "-m", "init",
+        ],
+    );
+    let oid = git(&d, &["hash-object", "src/a.rs"]);
+    let file_id = FileId::from_content_address(&oid, SRC.len() as i64).unwrap();
+
+    let prog = r#"
+rel sym(name: text, path: file).
+sym(name, path) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+? sym(name, path).
+"#;
+    run(&d, prog);
+
+    let conn = Connection::open(d.join("db")).unwrap();
+    let lo = SRC.find("AuthService").unwrap() as i64;
+    let hi = lo + "AuthService".len() as i64;
+    // The located span is keyed on the git blob OID file id, so it joins _files.
+    let expect_id = WhereBytesId::of(WhereBytes {
+        string: StringId::of("AuthService"),
+        file: file_id,
+        lo: lo as u32,
+        hi: hi as u32,
+        ..Default::default()
+    });
+    let got: (String, i64, i64) = conn
+        .query_row(
+            "SELECT file_id, lo, hi FROM _where_bytes WHERE id = ?1",
+            [expect_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(got, (file_id.to_string(), lo, hi));
+}
+
+#[test]
 fn string_and_ref_relations_are_queryable() {
     let d = sandbox("ref_query");
     fs::write(d.join("src/a.rs"), SRC).unwrap();

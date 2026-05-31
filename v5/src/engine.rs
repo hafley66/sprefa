@@ -604,7 +604,7 @@ impl Engine {
                 }
                 retracted += self.retract_path(&rel, &source_rels)?;
                 for rule in &matching {
-                    let (rows, where_bytes, dropped) = parse_file(rule, &rel, "WORK", &self.root, &self.rels, &self.rev_index)?;
+                    let (rows, where_bytes, dropped) = parse_file(rule, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index)?;
                     self.dropped += dropped;
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
@@ -840,9 +840,9 @@ impl Engine {
         let retract_list: Vec<&str> = to_retract.iter().map(|s| s.as_str()).collect();
         let retracted = self.retract_paths(&retract_list, source_rels)?;
 
-        let to_extract: Vec<(usize, String, String)> = rule_files.iter()
+        let to_extract: Vec<(usize, String, String, String)> = rule_files.iter()
             .filter(|(_, p, r, h)| hash_of(&prev, p, r).as_ref() != Some(h))
-            .map(|(idx, p, r, _)| (*idx, p.clone(), r.clone()))
+            .map(|(idx, p, r, h)| (*idx, p.clone(), r.clone(), h.clone()))
             .collect();
         let parsed = to_extract.len();
 
@@ -850,8 +850,8 @@ impl Engine {
         // then insert serially (SQLite is single-writer).
         let results: Vec<Result<(usize, String, Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)>> = {
             let Engine { rels, rev_index, root, .. } = &*self;
-            to_extract.par_iter().map(|(idx, path, rev)| {
-                let (rows, where_bytes, dropped) = parse_file(source_rules[*idx], path, rev, root, rels, rev_index)?;
+            to_extract.par_iter().map(|(idx, path, rev, hash)| {
+                let (rows, where_bytes, dropped) = parse_file(source_rules[*idx], path, rev, hash, root, rels, rev_index)?;
                 Ok((*idx, path.clone(), rows, where_bytes, dropped))
             }).collect()
         };
@@ -1713,20 +1713,32 @@ fn pattern_literals(pat: &str) -> Vec<String> {
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).
 /// Safe to call in parallel: reads file content, runs extractors, builds rows.
 fn parse_file(
-    rule: &Rule, path: &str, rev: &str,
+    rule: &Rule, path: &str, rev: &str, hash: &str,
     root: &Path, rels: &Rels, rev_index: &HashSet<(String, String)>,
 ) -> Result<(Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)> {
     let (_, _, pathvar, revvar) = scan_spec(rule)?;
     let cmps: Vec<&Constraint> = rule.body.iter()
         .filter_map(|i| if let BodyItem::Cmp(c) = i { Some(c) } else { None }).collect();
     let content = read_content(root, rev, path).unwrap_or_default();
-    // Ref-spine: for WORK files we can locate each regex capture's bytes in the
-    // file content, and `FileId::of_bytes` matches the `_files` row written by
-    // `insert_spine_files` (which derives the WORK id from the same blake3). Git
-    // revs key `_files` on the blob OID, which is not recoverable from content
-    // alone, so located spans there are deferred (left empty here).
-    let where_file = (rev == "WORK").then(|| spine::FileId::of_bytes(content.as_bytes()));
+    // Ref-spine: locate each capture's bytes in the file content. The file id is
+    // derived from the same stored content address `_files` uses (blake3 for
+    // WORK, blob OID for a git rev), so located rows join `_files` for both.
+    let where_file = spine::FileId::from_content_address(hash, content.len() as i64)
+        .filter(|f| *f != spine::FileId::SYNTHETIC);
     let mut where_bytes: Vec<spine::WhereBytes> = Vec::new();
+    let push_span = |text: &str, lo: usize, hi: usize, where_bytes: &mut Vec<spine::WhereBytes>| {
+        if let Some(file) = where_file {
+            if !text.is_empty() {
+                where_bytes.push(spine::WhereBytes {
+                    string: spine::StringId::of(text),
+                    file,
+                    lo: lo as u32,
+                    hi: hi as u32,
+                    ..Default::default()
+                });
+            }
+        }
+    };
     let head_meta = rels.get(&rule.head.rel)
         .ok_or_else(|| anyhow::anyhow!("unknown head relation {}", rule.head.rel))?;
     let mut re_cache: HashMap<String, Regex> = HashMap::new();
@@ -1757,17 +1769,7 @@ fn parse_file(
                                 if let Some(m) = caps.name(n) {
                                     let text = m.as_str();
                                     ext.insert((*n).to_string(), Value::Text(text.to_string()));
-                                    if let Some(file) = where_file {
-                                        if !text.is_empty() {
-                                            where_bytes.push(spine::WhereBytes {
-                                                string: spine::StringId::of(text),
-                                                file,
-                                                lo: (line_off + m.start()) as u32,
-                                                hi: (line_off + m.end()) as u32,
-                                                ..Default::default()
-                                            });
-                                        }
-                                    }
+                                    push_span(text, line_off + m.start(), line_off + m.end(), &mut where_bytes);
                                 }
                             }
                             next.push(ext);
@@ -1786,7 +1788,10 @@ fn parse_file(
                         let mut ext = b.clone();
                         ext.insert(alv.clone(), Value::Int(*start));
                         if let Some(ev) = &elv { ext.insert(ev.clone(), Value::Int(*endln)); }
-                        for (n, t) in caps { ext.insert(n.clone(), Value::Text(t.clone())); }
+                        for (n, t, lo, hi) in caps {
+                            ext.insert(n.clone(), Value::Text(t.clone()));
+                            push_span(t, *lo, *hi, &mut where_bytes);
+                        }
                         next.push(ext);
                     }
                 }
@@ -1812,7 +1817,10 @@ fn parse_file(
                         if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
                         if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
                         if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }
-                        for (n, t) in caps { ext.insert(n.clone(), Value::Text(t.clone())); }
+                        for (n, t, lo, hi) in caps {
+                            ext.insert(n.clone(), Value::Text(t.clone()));
+                            push_span(t, *lo, *hi, &mut where_bytes);
+                        }
                         next.push(ext);
                     }
                 }
@@ -1922,9 +1930,9 @@ fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
 
 /// Run a tree-sitter S-expression query over file content.
 /// Returns (start_line, end_line, captures) per match; start = min capture start
-/// row, end = max capture end row (the matched region's span). Captures are
-/// (capture_name, node_text).
-fn run_ts(content: &str, lang: &str, query_str: &str) -> Result<Vec<(i64, i64, Vec<(String, String)>)>> {
+/// row, end = max capture end row (the matched region's span). Each capture is
+/// `(name, text, lo, hi)` where `[lo, hi)` is the node's byte range in `content`.
+fn run_ts(content: &str, lang: &str, query_str: &str) -> Result<Vec<(i64, i64, Vec<(String, String, usize, usize)>)>> {
     use streaming_iterator::StreamingIterator;
     let language = ts_lang(lang)?;
     let mut parser = tree_sitter::Parser::new();
@@ -1945,7 +1953,7 @@ fn run_ts(content: &str, lang: &str, query_str: &str) -> Result<Vec<(i64, i64, V
             let text = c.node.utf8_text(src).unwrap_or("").to_string();
             line = line.min(c.node.start_position().row as i64 + 1);
             end = end.max(c.node.end_position().row as i64 + 1);
-            caps.push((name, text));
+            caps.push((name, text, c.node.start_byte(), c.node.end_byte()));
         }
         if line == i64::MAX { line = 1; }
         out.push((line, end, caps));
