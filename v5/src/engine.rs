@@ -1153,14 +1153,18 @@ impl Engine {
             let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
             for row in rows.flatten() { files.push(row); }
         }
-        let t = |s: &str| Value::Text(s.to_string());
-        let mut rows: Vec<Vec<Value>> = Vec::new();
-        for (path, rev) in files {
-            let content = read_content(&self.root, &rev, &path).unwrap_or_default();
-            for edge in typegraph::edges(&content) {
-                rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind)]);
-            }
-        }
+        // Parse + extract per file in parallel (same shape as module_rows_for_rev),
+        // then flatten and write once. Keeps the cold-build parse working set bounded
+        // by the rayon pool, not the corpus (peak-RSS invariant).
+        let root = self.root.clone();
+        let rows: Vec<Vec<Value>> = files.par_iter().flat_map(|(path, rev)| {
+            let t = |s: &str| Value::Text(s.to_string());
+            let content = read_content(&root, rev, path).unwrap_or_default();
+            typegraph::edges(&content)
+                .into_iter()
+                .map(|edge| vec![t(&edge.from), t(&edge.to), t(edge.kind)])
+                .collect::<Vec<_>>()
+        }).collect();
         self.refresh_rel("type_edge", &["from", "to", "kind"], &rows)?;
         Ok(())
     }
