@@ -28,6 +28,9 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 - [x] Module-graph polish after B/E/A: `module_edge_rev`/`module_unresolved_rev`
       for historical queries, parallel per-file resolver extraction, and `crate_edge`
       from workspace-internal Cargo dependencies.
+- [x] Incremental module refresh for `--changed`: content edits refresh only the
+      touched WORK module sources; path-set/manifest changes fall back to the WORK
+      rev, and legacy edges rebuild from rev-aware rows so other revs survive.
 - [x] Honest RA oracle recall snapshot for real `v5/src`: ignored test reports
       precision 0.86 / recall 0.83 against rust-analyzer SCIP on this checkout.
 
@@ -52,9 +55,9 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       + `_strings`/`_where_bytes` from `v4/src/store.rs`; `normalize()` + FTS5 trigram from the
       archive for cross-repo fuzzy join. Content-ids make the interner INSERT-only (no read-back
       N+1). Do NOT port FactStore/runtime_graph/Memo/support (DD machinery to exorcise).
-- [ ] **D — module-graph leftover**: incremental `refresh_module_rels` (today still wholesale
-      refreshes the built-in module relations when the file set changes). Parallel extraction and
-      rev-aware relation variants are done.
+- [x] **D — module-graph leftover**: incremental `refresh_module_rels` for `--changed`.
+      Content edits refresh only touched WORK module sources; path-set/manifest changes
+      fall back to the WORK rev. Parallel extraction and rev-aware relation variants are done.
 - [ ] **Auto-refactor (the OG v0 use case)**, rides C: thread specifier byte-spans out of the
       module resolver; port `rewrite_use_path`/`reconvert_prefix` from archive `crates/watch/src/rs_path.rs`;
       add an `edit(ref_id, new_string_id)` sink (`--fix` applies, LSP rename). `ref` = import graph

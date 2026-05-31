@@ -95,6 +95,10 @@ fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 
 fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
+fn module_manifest_path(path: &str) -> bool {
+    path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
+}
+
 /// Parse a 64-char hex string into 32 bytes. Errs on wrong length or non-hex
 /// (e.g. the `''` __src default on a derived row), so the caller can skip it.
 fn hex_to_32(s: &str) -> Result<[u8; 32]> {
@@ -316,6 +320,23 @@ type FileMeta = HashMap<(String, String), (String, i64, i64)>;
 
 struct Reconcile { changed: bool, extracted: usize, retracted: usize, parsed: usize, total: usize }
 
+#[derive(Default)]
+struct ModuleRows {
+    imports: Vec<Vec<Value>>,
+    edges_rev: Vec<Vec<Value>>,
+    unresolved_rev: Vec<Vec<Value>>,
+    crate_edges: Vec<Vec<Value>>,
+}
+
+impl ModuleRows {
+    fn extend(&mut self, other: ModuleRows) {
+        self.imports.extend(other.imports);
+        self.edges_rev.extend(other.edges_rev);
+        self.unresolved_rev.extend(other.unresolved_rev);
+        self.crate_edges.extend(other.crate_edges);
+    }
+}
+
 /// In-memory condensation for a closure edge relation, held for the tick's query
 /// phase. A src-pinned `reaches` query becomes a seeded BFS (microseconds)
 /// instead of materializing the recursive-CTE view's whole component closure.
@@ -515,20 +536,31 @@ impl Engine {
         let prev = self.load_file_meta()?;
         let mut changed_facts = false;
         let mut changed_source_rels: HashSet<String> = HashSet::new();
+        let mut module_delta_paths: HashSet<String> = HashSet::new();
+        let mut module_full_work = false;
         let (mut extracted, mut retracted, mut npaths) = (0usize, 0usize, 0usize);
         let mut seen: HashSet<String> = HashSet::new();
+        let wants_module_rels = module_rels_used(prog);
 
         for p in changed {
             let rel = match p.strip_prefix(&self.root) { Ok(r) => r.to_string_lossy().replace('\\', "/"), Err(_) => continue };
             if !seen.insert(rel.clone()) { continue; }
             let matching: Vec<&Rule> = work_rules.iter().filter(|(_, m)| m.is_match(&rel)).map(|(r, _)| *r).collect();
-            if matching.is_empty() { continue; }
+            if matching.is_empty() {
+                if wants_module_rels && module_manifest_path(&rel) { module_full_work = true; }
+                continue;
+            }
             npaths += 1;
             let abs = self.root.join(&rel);
             if abs.is_file() {
                 let bytes = std::fs::read(&abs).unwrap_or_default();
                 let h = blake3::hash(&bytes).to_hex().to_string();
                 if prev.get(&(rel.clone(), "WORK".to_string())).map(|t| &t.0) == Some(&h) { continue; }
+                if prev.contains_key(&(rel.clone(), "WORK".to_string())) {
+                    module_delta_paths.insert(rel.clone());
+                } else {
+                    module_full_work = true;
+                }
                 retracted += self.retract_path(&rel, &source_rels)?;
                 for rule in &matching {
                     let (rows, dropped) = parse_file(rule, &rel, "WORK", &self.root, &self.rels, &self.rev_index)?;
@@ -545,6 +577,7 @@ impl Engine {
                     rusqlite::params![rel, h, mt, sz])?;
                 changed_facts = true;
             } else {
+                if prev.contains_key(&(rel.clone(), "WORK".to_string())) { module_full_work = true; }
                 retracted += self.retract_path(&rel, &source_rels)?;
                 self.db.conn().execute("DELETE FROM _file WHERE path = ?1 AND rev = 'WORK'", [&rel])?;
                 for rule in &matching { changed_source_rels.insert(rule.head.rel.clone()); }
@@ -567,14 +600,19 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
-            if module_rels_used(prog) {
-                self.refresh_module_rels()?;
-                for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
-            }
             if type_rels_used(prog) {
                 self.refresh_type_rels()?;
                 for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
             }
+        }
+        if wants_module_rels && (module_full_work || !module_delta_paths.is_empty()) {
+            if module_full_work {
+                self.refresh_module_rels_for_revs(&["WORK"])?;
+            } else {
+                self.refresh_module_rels_for_paths("WORK", &module_delta_paths)?;
+            }
+            for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
+            changed_facts = true;
         }
         if changed_source_rels.is_empty() { changed_facts = false; }
 
@@ -912,6 +950,98 @@ impl Engine {
         self.db.insert_rows(&table, cols, rows)
     }
 
+    fn module_files_by_rev(&self) -> Result<HashMap<String, Vec<(String, String)>>> {
+        let mut by_rev: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        let conn = self.db.conn();
+        let mut sel = conn.prepare("SELECT path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+        for row in rows.flatten() { by_rev.entry(row.1).or_default().push((row.0, row.2)); }
+        Ok(by_rev)
+    }
+
+    fn module_rows_for_rev(
+        &self,
+        rev: &str,
+        files: &[(String, String)],
+        only_paths: Option<&HashSet<String>>,
+        include_crate_edges: bool,
+    ) -> ModuleRows {
+        let t = |s: &str| Value::Text(s.to_string());
+        let root = self.root.clone();
+        let resolvers = modgraph::resolvers(&root);
+        let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
+        let manifests = self.collect_manifests(rev, &fileset);
+        let cx = ProjectCx::new(&root, &fileset, &manifests);
+        let selected: Vec<&(String, String)> = files.iter()
+            .filter(|(path, _)| match only_paths {
+                Some(paths) => paths.contains(path.as_str()),
+                None => true,
+            })
+            .collect();
+
+        let batches: Vec<ModuleRows> = selected.par_iter().map(|(path, _hash)| {
+            let mut rows = ModuleRows::default();
+            let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
+            if let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) {
+                let content = read_content(&root, rev, path).unwrap_or_default();
+                for mref in res.edges(path, &content, &cx) {
+                    rows.imports.push(vec![t(path), t(rev), t(&mref.specifier), Value::Text(mref.kind.to_string()), Value::Int(mref.line as i64)]);
+                    match mref.target {
+                        // A self-edge (e.g. `use crate::X` where X is defined in this
+                        // crate root) is not a dependency; drop it so the graph and
+                        // its closure have no spurious self-loops.
+                        Resolution::File(dst) if &dst != path => {
+                            rows.edges_rev.push(vec![t(path), t(&dst), t(rev)]);
+                        }
+                        Resolution::File(_) => {}
+                        Resolution::Unresolved(reason) => {
+                            rows.unresolved_rev.push(vec![t(path), t(rev), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
+                        }
+                        Resolution::External(_) => {}
+                    }
+                }
+            }
+            rows
+        }).collect();
+
+        let mut out = ModuleRows::default();
+        for batch in batches { out.extend(batch); }
+        if include_crate_edges {
+            for edge in modgraph::crate_edges(&manifests) {
+                out.crate_edges.push(vec![t(&edge.src), t(&edge.dst), t(edge.kind), t(rev)]);
+            }
+        }
+        out
+    }
+
+    fn insert_module_rows(&self, rows: &ModuleRows, include_crate_edges: bool) -> Result<()> {
+        self.db.insert_rows(&tbl("module_import"), &["file", "rev", "specifier", "kind", "line"], &rows.imports)?;
+        self.db.insert_rows(&tbl("module_edge_rev"), &["src", "dst", "rev"], &rows.edges_rev)?;
+        self.db.insert_rows(&tbl("module_unresolved_rev"), &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
+        if include_crate_edges {
+            self.db.insert_rows(&tbl("crate_edge"), &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
+        }
+        Ok(())
+    }
+
+    fn rebuild_legacy_module_rels(&self) -> Result<()> {
+        let edge = tbl("module_edge");
+        let edge_rev = tbl("module_edge_rev");
+        let unresolved = tbl("module_unresolved");
+        let unresolved_rev = tbl("module_unresolved_rev");
+        self.db.exec(&format!("DELETE FROM {edge}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {edge} (\"src\", \"dst\") SELECT \"src\", \"dst\" FROM {edge_rev}"
+        ))?;
+        self.db.exec(&format!("DELETE FROM {unresolved}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {unresolved} (\"file\", \"specifier\", \"reason\", \"line\") \
+             SELECT \"file\", \"specifier\", \"reason\", \"line\" FROM {unresolved_rev}"
+        ))?;
+        Ok(())
+    }
+
     /// Rebuild the module-graph relations from the `_file` set, per rev. Reads each
     /// file's content, picks the language resolver by extension, and writes one
     /// `module_import` row per reference plus `module_edge(src,dst)` /
@@ -920,77 +1050,67 @@ impl Engine {
     /// Wholesale wipe + repopulate; gated by `module_rels_used` at the call site.
     /// Edges are resolved within a single rev (cross-rev merge is a Stage-1 corner).
     fn refresh_module_rels(&self) -> Result<()> {
-        // rev -> [(path, hash)]
-        let mut by_rev: HashMap<String, Vec<(String, String)>> = HashMap::new();
-        {
-            let conn = self.db.conn();
-            let mut sel = conn.prepare("SELECT path, rev, hash FROM _file")?;
-            let rows = sel.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
-            for row in rows.flatten() { by_rev.entry(row.1).or_default().push((row.0, row.2)); }
-        }
-        // Collect the whole graph first, then one batched insert per relation —
-        // never a write per reference (the interner-shaped N+1 this is built to avoid).
-        let t = |s: &str| Value::Text(s.to_string());
-        let mut imports: Vec<Vec<Value>> = Vec::new();
-        let mut edges: Vec<Vec<Value>> = Vec::new();
-        let mut edges_rev: Vec<Vec<Value>> = Vec::new();
-        let mut unresolved: Vec<Vec<Value>> = Vec::new();
-        let mut unresolved_rev: Vec<Vec<Value>> = Vec::new();
-        let mut crate_edges: Vec<Vec<Value>> = Vec::new();
-        let root = self.root.clone();
-        let resolvers = modgraph::resolvers(&root);
+        let by_rev = self.module_files_by_rev()?;
+        let mut rows = ModuleRows::default();
         for (rev, files) in &by_rev {
-            let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
-            let manifests = self.collect_manifests(rev, &fileset);
-            for edge in modgraph::crate_edges(&manifests) {
-                crate_edges.push(vec![t(&edge.src), t(&edge.dst), t(edge.kind), t(rev)]);
-            }
-            let cx = ProjectCx::new(&root, &fileset, &manifests);
-            let batches: Vec<(Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>)> = files.par_iter().map(|(path, _hash)| {
-                let mut imports: Vec<Vec<Value>> = Vec::new();
-                let mut edges: Vec<Vec<Value>> = Vec::new();
-                let mut edges_rev: Vec<Vec<Value>> = Vec::new();
-                let mut unresolved: Vec<Vec<Value>> = Vec::new();
-                let mut unresolved_rev: Vec<Vec<Value>> = Vec::new();
-                let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
-                if let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) {
-                    let content = read_content(&root, rev, path).unwrap_or_default();
-                    for mref in res.edges(path, &content, &cx) {
-                        imports.push(vec![t(path), t(rev), t(&mref.specifier), Value::Text(mref.kind.to_string()), Value::Int(mref.line as i64)]);
-                        match mref.target {
-                            // A self-edge (e.g. `use crate::X` where X is defined in this
-                            // crate root) is not a dependency; drop it so the graph and
-                            // its closure have no spurious self-loops.
-                            Resolution::File(dst) if &dst != path => {
-                                edges.push(vec![t(path), t(&dst)]);
-                                edges_rev.push(vec![t(path), t(&dst), t(rev)]);
-                            }
-                            Resolution::File(_) => {}
-                            Resolution::Unresolved(reason) => {
-                                unresolved.push(vec![t(path), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
-                                unresolved_rev.push(vec![t(path), t(rev), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
-                            }
-                            Resolution::External(_) => {}
-                        }
-                    }
-                }
-                (imports, edges, edges_rev, unresolved, unresolved_rev)
-            }).collect();
-            for (bi, be, ber, bu, bur) in batches {
-                imports.extend(bi);
-                edges.extend(be);
-                edges_rev.extend(ber);
-                unresolved.extend(bu);
-                unresolved_rev.extend(bur);
+            rows.extend(self.module_rows_for_rev(rev, files, None, true));
+        }
+        self.refresh_rel("module_import", &["file", "rev", "specifier", "kind", "line"], &rows.imports)?;
+        self.refresh_rel("module_edge_rev", &["src", "dst", "rev"], &rows.edges_rev)?;
+        self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
+        self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
+        self.rebuild_legacy_module_rels()?;
+        Ok(())
+    }
+
+    fn refresh_module_rels_for_revs(&self, revs: &[&str]) -> Result<()> {
+        if revs.is_empty() { return Ok(()); }
+        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _module_refresh_rev(rev TEXT PRIMARY KEY)")?;
+        self.db.exec("DELETE FROM _module_refresh_rev")?;
+        let rev_rows: Vec<Vec<Value>> = revs.iter().map(|rev| vec![Value::Text((*rev).to_string())]).collect();
+        self.db.insert_rows("_module_refresh_rev", &["rev"], &rev_rows)?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_import")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_edge_rev")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_unresolved_rev")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("crate_edge")))?;
+
+        let by_rev = self.module_files_by_rev()?;
+        let mut rows = ModuleRows::default();
+        for rev in revs {
+            if let Some(files) = by_rev.get(*rev) {
+                rows.extend(self.module_rows_for_rev(rev, files, None, true));
             }
         }
-        self.refresh_rel("module_import", &["file", "rev", "specifier", "kind", "line"], &imports)?;
-        self.refresh_rel("module_edge", &["src", "dst"], &edges)?;
-        self.refresh_rel("module_edge_rev", &["src", "dst", "rev"], &edges_rev)?;
-        self.refresh_rel("module_unresolved", &["file", "specifier", "reason", "line"], &unresolved)?;
-        self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &unresolved_rev)?;
-        self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &crate_edges)?;
+        self.insert_module_rows(&rows, true)?;
+        self.rebuild_legacy_module_rels()?;
+        Ok(())
+    }
+
+    fn refresh_module_rels_for_paths(&self, rev: &str, paths: &HashSet<String>) -> Result<()> {
+        if paths.is_empty() { return Ok(()); }
+        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _module_refresh_path(path TEXT PRIMARY KEY)")?;
+        self.db.exec("DELETE FROM _module_refresh_path")?;
+        let path_rows: Vec<Vec<Value>> = paths.iter().map(|p| vec![Value::Text(p.clone())]).collect();
+        self.db.insert_rows("_module_refresh_path", &["path"], &path_rows)?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            tbl("module_import"),
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"src\" IN (SELECT path FROM _module_refresh_path)",
+            tbl("module_edge_rev"),
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            tbl("module_unresolved_rev"),
+        ))?;
+
+        let by_rev = self.module_files_by_rev()?;
+        let rows = by_rev.get(rev)
+            .map(|files| self.module_rows_for_rev(rev, files, Some(paths), false))
+            .unwrap_or_default();
+        self.insert_module_rows(&rows, false)?;
+        self.rebuild_legacy_module_rels()?;
         Ok(())
     }
 

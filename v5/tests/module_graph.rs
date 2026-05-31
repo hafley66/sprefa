@@ -280,6 +280,41 @@ work_reaches(src, dst) <- closure(work_edge).
 }
 
 #[test]
+fn changed_work_module_source_preserves_other_revs() {
+    let d = sandbox("rev_delta");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/lib.rs"), "mod a;\nfn x() {}\n").unwrap();
+    fs::write(d.join("src/a.rs"), "fn x() {}\n").unwrap();
+    fs::write(d.join("src/b.rs"), "fn x() {}\n").unwrap();
+    fs::write(d.join("src/c.rs"), "fn x() {}\n").unwrap();
+    git(&d, &["init"]);
+    git(&d, &["config", "user.email", "test@example.com"]);
+    git(&d, &["config", "user.name", "Test User"]);
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-m", "head"]);
+
+    fs::write(d.join("src/lib.rs"), "mod b;\nfn x() {}\n").unwrap();
+
+    let prog = r#"
+rel seen(path: file, rev: text).
+seen(path, rev) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path, rev) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+? module_edge_rev(s, d, r).
+"#;
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
+    assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "cold HEAD edge present: {out}");
+    assert!(out.contains("src/lib.rs\tsrc/b.rs\tWORK"), "cold WORK edge present: {out}");
+
+    fs::write(d.join("src/lib.rs"), "mod c;\nfn x() {}\n").unwrap();
+    let (code, out, err) = run(&d, prog, &["--changed", "src/lib.rs"]);
+    assert_eq!(code, 0, "changed run failed:\nstdout={out}\nstderr={err}");
+    assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "delta keeps HEAD edge: {out}");
+    assert!(out.contains("src/lib.rs\tsrc/c.rs\tWORK"), "delta updates WORK edge: {out}");
+    assert!(!out.contains("src/lib.rs\tsrc/b.rs\tWORK"), "delta drops old WORK edge: {out}");
+}
+
+#[test]
 fn crate_edge_from_cargo_dependencies() {
     let d = sandbox("crate_edge");
     fs::create_dir_all(d.join("app/src")).unwrap();
@@ -299,4 +334,32 @@ seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("app\tcorelib\tdependencies\tWORK"),
         "Cargo package= rename dependency should be a crate_edge: {out}");
+}
+
+#[test]
+fn changed_manifest_rebuilds_module_derived_rels() {
+    let d = sandbox("manifest_delta");
+    fs::create_dir_all(d.join("app/src")).unwrap();
+    fs::create_dir_all(d.join("core/src")).unwrap();
+    fs::write(d.join("app/Cargo.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\ncorelib = { path = \"../core\" }\n").unwrap();
+    fs::write(d.join("core/Cargo.toml"), "[package]\nname = \"corelib\"\n").unwrap();
+    fs::write(d.join("app/src/lib.rs"), "fn app() {}\n").unwrap();
+    fs::write(d.join("core/src/lib.rs"), "fn core() {}\n").unwrap();
+
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
+rel dep(src: text, dst: text).
+dep(src, dst) <- crate_edge(src, dst, kind, rev).
+? dep(src, dst).
+"#;
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
+    assert!(out.contains("app\tcorelib"), "cold derived crate dep present: {out}");
+
+    fs::write(d.join("app/Cargo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    let (code, out, err) = run(&d, prog, &["--changed", "app/Cargo.toml"]);
+    assert_eq!(code, 0, "changed manifest run failed:\nstdout={out}\nstderr={err}");
+    assert!(!out.contains("app\tcorelib"), "manifest delta must rebuild derived dep: {out}");
 }
