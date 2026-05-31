@@ -29,7 +29,5 @@ lsp-server = "0.7.9"
 lsp-types = "0.97.0"
 oxc_resolver = "11.20.0"
 toml = "1.1.2"
-
-[dev-dependencies]
 protobuf = "3.7"
 scip = "0.7.1"

@@ -31,6 +31,9 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 - [x] Incremental module refresh for `--changed`: content edits refresh only the
       touched WORK module sources; path-set/manifest changes fall back to the WORK
       rev, and legacy edges rebuild from rev-aware rows so other revs survive.
+- [x] SCIP importer tier: existing `index.scip` (or `SPREFA_SCIP_INDEX`) loads into
+      `scip_def(symbol,file)`, `scip_ref(file,symbol,def_file)`, and
+      `scip_edge(src,dst)` for compiler-backed graph facts.
 - [x] Honest RA oracle recall snapshot for real `v5/src`: ignored test reports
       precision 0.86 / recall 0.83 against rust-analyzer SCIP on this checkout.
 
@@ -62,6 +65,8 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       module resolver; port `rewrite_use_path`/`reconvert_prefix` from archive `crates/watch/src/rs_path.rs`;
       add an `edit(ref_id, new_string_id)` sink (`--fix` applies, LSP rename). `ref` = import graph
       AND rewrite coordinate; v0's "reverse refs" demo IS the refactor query.
+- [x] **SCIP importer (L1')**: ingest an existing `index.scip` from `SPREFA_SCIP_INDEX`
+      or repo root into `scip_def`/`scip_ref`/`scip_edge` relations.
 - [x] crate-level dep edges (crate A→B from `[dependencies]`) as a relation.
 - [x] honest recall: run the RA oracle on a real crate (toy fixture's 1.00 isn't representative).
 - [ ] merge `feat/v5-lsp-diag` → main; push.

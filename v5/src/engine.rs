@@ -10,6 +10,7 @@ use crate::ast::*;
 use crate::lower::{lower_query, lower_rule, tbl};
 use crate::modgraph::{self, ProjectCx, Resolution};
 use crate::scc;
+use crate::scip_import;
 use crate::typegraph;
 
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
@@ -38,6 +39,10 @@ const MODULE_RELS: [&str; 6] = [
 /// Syntax-only Rust type graph. `kind` is edge metadata; closure(type_edge)
 /// walks the first two columns.
 const TYPE_RELS: [&str; 1] = ["type_edge"];
+
+/// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
+/// extracted from definition/reference occurrences in an existing index.scip.
+const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
 
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
@@ -71,6 +76,15 @@ fn type_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn scip_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    vec![
+        RelDecl { name: "scip_def".into(), cols: vec![c("symbol", Type::Text), c("file", Type::Path)] },
+        RelDecl { name: "scip_ref".into(), cols: vec![c("file", Type::Path), c("symbol", Type::Text), c("def_file", Type::Path)] },
+        RelDecl { name: "scip_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)] },
+    ]
+}
+
 /// Does the program reference any relation in `rels` (body atom, closure edge,
 /// or query head)? Gates lazy built-in indexers so unrelated programs pay nothing.
 fn rels_used(prog: &Program, rels: &[&str]) -> bool {
@@ -94,6 +108,8 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
 fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 
 fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
+
+fn scip_rels_used(prog: &Program) -> bool { rels_used(prog, &SCIP_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -469,7 +485,7 @@ impl Engine {
 
         let t_src = std::time::Instant::now();
         let recon = self.reconcile_sources(&source_rules, &source_rels)?;
-        let changed = recon.changed;
+        let mut changed = recon.changed;
         // Baseline each source relation's content digest so the next incremental
         // tick can skip a rebuild when bytes move but rows don't (see tick_paths).
         self.seed_rel_digests(&source_rels)?;
@@ -478,6 +494,7 @@ impl Engine {
         self.refresh_builtin_rels()?;
         if module_rels_used(prog) { self.refresh_module_rels()?; }
         if type_rels_used(prog) { self.refresh_type_rels()?; }
+        if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -538,13 +555,16 @@ impl Engine {
         let mut changed_source_rels: HashSet<String> = HashSet::new();
         let mut module_delta_paths: HashSet<String> = HashSet::new();
         let mut module_full_work = false;
+        let mut scip_changed = false;
         let (mut extracted, mut retracted, mut npaths) = (0usize, 0usize, 0usize);
         let mut seen: HashSet<String> = HashSet::new();
         let wants_module_rels = module_rels_used(prog);
+        let wants_scip_rels = scip_rels_used(prog);
 
         for p in changed {
             let rel = match p.strip_prefix(&self.root) { Ok(r) => r.to_string_lossy().replace('\\', "/"), Err(_) => continue };
             if !seen.insert(rel.clone()) { continue; }
+            if wants_scip_rels && rel == "index.scip" { scip_changed = true; }
             let matching: Vec<&Rule> = work_rules.iter().filter(|(_, m)| m.is_match(&rel)).map(|(r, _)| *r).collect();
             if matching.is_empty() {
                 if wants_module_rels && module_manifest_path(&rel) { module_full_work = true; }
@@ -612,6 +632,11 @@ impl Engine {
                 self.refresh_module_rels_for_paths("WORK", &module_delta_paths)?;
             }
             for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
+            changed_facts = true;
+        }
+        if wants_scip_rels && scip_changed {
+            self.refresh_scip_rels()?;
+            for s in SCIP_RELS { changed_source_rels.insert(s.to_string()); }
             changed_facts = true;
         }
         if changed_source_rels.is_empty() { changed_facts = false; }
@@ -894,6 +919,9 @@ impl Engine {
                 if TYPE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in type-graph relation (type_edge); pick another name", d.name);
                 }
+                if SCIP_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in SCIP relation; pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -912,6 +940,7 @@ impl Engine {
         for d in builtin_rel_decls() { self.declare(&d)?; }
         for d in module_rel_decls() { self.declare(&d)?; }
         for d in type_rel_decls() { self.declare(&d)?; }
+        for d in scip_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -1134,6 +1163,28 @@ impl Engine {
         }
         self.refresh_rel("type_edge", &["from", "to", "kind"], &rows)?;
         Ok(())
+    }
+
+    /// Import compiler-backed SCIP facts from `SPREFA_SCIP_INDEX` or
+    /// `<root>/index.scip`. Missing index means empty relations, so programs can
+    /// mention SCIP facts without making rust-analyzer a hard runtime dependency.
+    fn refresh_scip_rels(&self) -> Result<bool> {
+        let t = |s: &str| Value::Text(s.to_string());
+        let Some(path) = scip_import::index_path(&self.root) else {
+            self.refresh_rel("scip_def", &["symbol", "file"], &[])?;
+            self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &[])?;
+            self.refresh_rel("scip_edge", &["src", "dst"], &[])?;
+            return Ok(true);
+        };
+        let rows = scip_import::load(&path)?;
+        let defs: Vec<Vec<Value>> = rows.defs.iter().map(|(sym, file)| vec![t(sym), t(file)]).collect();
+        let refs: Vec<Vec<Value>> = rows.refs.iter()
+            .map(|(file, sym, def)| vec![t(file), t(sym), t(def)]).collect();
+        let edges: Vec<Vec<Value>> = rows.edges.iter().map(|(src, dst)| vec![t(src), t(dst)]).collect();
+        self.refresh_rel("scip_def", &["symbol", "file"], &defs)?;
+        self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &refs)?;
+        self.refresh_rel("scip_edge", &["src", "dst"], &edges)?;
+        Ok(true)
     }
 
     /// Read the Cargo.toml / package.json manifests above the file set, at this

@@ -136,7 +136,8 @@ Dup-avoiding order for the type-graph module: **B → E → A**. Ref-spine **C**
   from rev-aware rows.
 - Effect edge (L4): minimal `sh`/`http`/`write` ops + content-cache; reconcile loop already exists.
 - Sinks (L5): http renderer over relations (third frontend).
-- SCIP importer (L1'): ingest `index.scip` → `scip_*` predicates union into module/call edges.
+- SCIP importer (L1') (done): ingest existing `index.scip` from `SPREFA_SCIP_INDEX`
+  or repo root into `scip_def`/`scip_ref`/`scip_edge`.
 - Auto-refactor (rides C): specifier spans + port `rewrite_use_path` + `edit(ref_id,new_str)` sink.
 
 ## Done (this arc)
@@ -146,4 +147,5 @@ Db seam (plural-only chokepoint + loud N+1 counter), shared refresh seam,
 rev-aware module graph relations, parallel module extraction, `crate_edge`, Cargo rename.
 `--changed` module refresh now updates touched WORK module sources without reparsing
 other revs, and falls back to WORK-rev refresh when the file set or module manifests move.
+SCIP import now loads an existing compiler index into `scip_def`/`scip_ref`/`scip_edge`.
 Branch `codex/v5-refresh-type-edge`.
