@@ -585,11 +585,12 @@ impl Engine {
                 }
                 retracted += self.retract_path(&rel, &source_rels)?;
                 for rule in &matching {
-                    let (rows, dropped) = parse_file(rule, &rel, "WORK", &self.root, &self.rels, &self.rev_index)?;
+                    let (rows, where_bytes, dropped) = parse_file(rule, &rel, "WORK", &self.root, &self.rels, &self.rev_index)?;
                     self.dropped += dropped;
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
                     extracted += self.insert_source_rows(&rule.head.rel, &meta, &rel, &rows)?;
+                    self.insert_spine_where_bytes(&where_bytes)?;
                     changed_source_rels.insert(rule.head.rel.clone());
                 }
                 let (mt, sz) = std::fs::metadata(&abs).ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
@@ -824,18 +825,20 @@ impl Engine {
 
         // Parse + extract in parallel across files (CPU-bound, no DB touch),
         // then insert serially (SQLite is single-writer).
-        let results: Vec<Result<(usize, String, Vec<Vec<Value>>, usize)>> = {
+        let results: Vec<Result<(usize, String, Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)>> = {
             let Engine { rels, rev_index, root, .. } = &*self;
             to_extract.par_iter().map(|(idx, path, rev)| {
-                let (rows, dropped) = parse_file(source_rules[*idx], path, rev, root, rels, rev_index)?;
-                Ok((*idx, path.clone(), rows, dropped))
+                let (rows, where_bytes, dropped) = parse_file(source_rules[*idx], path, rev, root, rels, rev_index)?;
+                Ok((*idx, path.clone(), rows, where_bytes, dropped))
             }).collect()
         };
 
         let mut by_rel: HashMap<String, Vec<(String, Vec<Value>)>> = HashMap::new();
+        let mut where_bytes: Vec<spine::WhereBytes> = Vec::new();
         for res in results {
-            let (idx, path, rows, dropped) = res?;
+            let (idx, path, rows, wheres, dropped) = res?;
             self.dropped += dropped;
+            where_bytes.extend(wheres);
             let rel = source_rules[idx].head.rel.clone();
             by_rel.entry(rel).or_default()
                 .extend(rows.into_iter().map(|row| (path.clone(), row)));
@@ -847,6 +850,7 @@ impl Engine {
                 .ok_or_else(|| anyhow::anyhow!("unknown head relation {}", rel))?.clone();
             extracted += self.insert_source_rows_for_paths(&rel, &meta, &rows)?;
         }
+        self.insert_spine_where_bytes(&where_bytes)?;
 
         self.save_file_meta(&current, &prev)?;
         Ok(Reconcile {
@@ -1436,6 +1440,29 @@ impl Engine {
         self.db.insert_rows("_strings", &["id", "content", "norm"], &string_rows)
     }
 
+    /// Batch located string occurrences into `_where_bytes`. Each row says
+    /// "string S occupies bytes [lo, hi) in file F" — an INSERT-only index keyed
+    /// by content-derived `WhereBytesId`, so duplicate occurrences (same string,
+    /// same file, same span, reached via multiple binds) collapse to one row.
+    fn insert_spine_where_bytes(&self, wheres: &[spine::WhereBytes]) -> Result<usize> {
+        if wheres.is_empty() { return Ok(0); }
+        let mut by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        for w in wheres {
+            let id = spine::WhereBytesId::of(*w).to_string();
+            by_id.entry(id.clone()).or_insert_with(|| vec![
+                Value::Text(id),
+                Value::Text(w.string.to_string()),
+                Value::Text(w.file.to_string()),
+                Value::Int(w.lo as i64),
+                Value::Int(w.hi as i64),
+                Value::Text(w.repo.to_string()),
+                Value::Text(w.rev.to_string()),
+            ]);
+        }
+        let rows: Vec<Vec<Value>> = by_id.into_values().collect();
+        self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev"], &rows)
+    }
+
     /// Enumerate (path, hash, mtime, size) for a rev. For WORK, stat each file
     /// and reuse the stored hash when mtime+size are unchanged (the fast-path),
     /// reading+hashing only changed files. A git rev uses the blob OID from
@@ -1631,11 +1658,18 @@ fn pattern_literals(pat: &str) -> Vec<String> {
 fn parse_file(
     rule: &Rule, path: &str, rev: &str,
     root: &Path, rels: &Rels, rev_index: &HashSet<(String, String)>,
-) -> Result<(Vec<Vec<Value>>, usize)> {
+) -> Result<(Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)> {
     let (_, _, pathvar, revvar) = scan_spec(rule)?;
     let cmps: Vec<&Constraint> = rule.body.iter()
         .filter_map(|i| if let BodyItem::Cmp(c) = i { Some(c) } else { None }).collect();
     let content = read_content(root, rev, path).unwrap_or_default();
+    // Ref-spine: for WORK files we can locate each regex capture's bytes in the
+    // file content, and `FileId::of_bytes` matches the `_files` row written by
+    // `insert_spine_files` (which derives the WORK id from the same blake3). Git
+    // revs key `_files` on the blob OID, which is not recoverable from content
+    // alone, so located spans there are deferred (left empty here).
+    let where_file = (rev == "WORK").then(|| spine::FileId::of_bytes(content.as_bytes()));
+    let mut where_bytes: Vec<spine::WhereBytes> = Vec::new();
     let head_meta = rels.get(&rule.head.rel)
         .ok_or_else(|| anyhow::anyhow!("unknown head relation {}", rule.head.rel))?;
     let mut re_cache: HashMap<String, Regex> = HashMap::new();
@@ -1655,14 +1689,28 @@ fn parse_file(
                 let re = &re_cache[regex];
                 let names: Vec<&str> = re.capture_names().flatten().collect();
                 let mut next: Vec<Bind> = Vec::new();
+                let base = content.as_ptr() as usize;
                 for b in &binds {
                     for (lineno, ln) in content.lines().enumerate() {
+                        let line_off = ln.as_ptr() as usize - base;
                         for caps in re.captures_iter(ln) {
                             let mut ext = b.clone();
                             ext.insert(mlv.clone(), Value::Int((lineno + 1) as i64));
                             for n in &names {
                                 if let Some(m) = caps.name(n) {
-                                    ext.insert((*n).to_string(), Value::Text(m.as_str().to_string()));
+                                    let text = m.as_str();
+                                    ext.insert((*n).to_string(), Value::Text(text.to_string()));
+                                    if let Some(file) = where_file {
+                                        if !text.is_empty() {
+                                            where_bytes.push(spine::WhereBytes {
+                                                string: spine::StringId::of(text),
+                                                file,
+                                                lo: (line_off + m.start()) as u32,
+                                                hi: (line_off + m.end()) as u32,
+                                                ..Default::default()
+                                            });
+                                        }
+                                    }
                                 }
                             }
                             next.push(ext);
@@ -1751,7 +1799,7 @@ fn parse_file(
         }
         rows.push(row);
     }
-    Ok((rows, dropped))
+    Ok((rows, where_bytes, dropped))
 }
 
 fn row_hash(row: &[Value]) -> String {

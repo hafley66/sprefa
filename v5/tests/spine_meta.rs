@@ -1,5 +1,5 @@
 use rusqlite::Connection;
-use sprefa_v5::spine::{content_hash_hex, FileId, StringId, WhereBytesId, ZERO_HASH_HEX};
+use sprefa_v5::spine::{content_hash_hex, FileId, StringId, WhereBytes, WhereBytesId, ZERO_HASH_HEX};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -152,6 +152,62 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
             StringId::of("AuthService").to_string(),
             "AuthService".to_string(),
             "authservice".to_string()
+        )
+    );
+}
+
+#[test]
+fn regex_captures_are_located_in_where_bytes() {
+    let d = sandbox("where_bytes");
+    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    let prog = r#"
+rel symbol(name: text, path: file).
+symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+? symbol(name, path).
+"#;
+    run(&d, prog);
+
+    let conn = Connection::open(d.join("db")).unwrap();
+    let file_id = FileId::of_bytes(SRC.as_bytes());
+    let string_id = StringId::of("AuthService");
+    // "struct AuthService;\n" → "AuthService" spans bytes [7, 18).
+    let lo = SRC.find("AuthService").unwrap() as i64;
+    let hi = lo + "AuthService".len() as i64;
+    let expect_id = WhereBytesId::of(WhereBytes {
+        string: string_id,
+        file: file_id,
+        lo: lo as u32,
+        hi: hi as u32,
+        ..Default::default()
+    });
+
+    let row: (String, String, String, i64, i64, String, String) = conn
+        .query_row(
+            "SELECT id, string_id, file_id, lo, hi, repo, rev FROM _where_bytes WHERE id = ?1",
+            [expect_id.to_string()],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        row,
+        (
+            expect_id.to_string(),
+            string_id.to_string(),
+            file_id.to_string(),
+            lo,
+            hi,
+            "0".to_string(),
+            "0".to_string(),
         )
     );
 }
