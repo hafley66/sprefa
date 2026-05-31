@@ -432,6 +432,39 @@ impl Engine {
         self.tick(prog, false)
     }
 
+    /// Located byte spans with their interned text, for the refactor sink:
+    /// `_where_bytes ⋈ _strings`, sentinel skipped. Returns (path, lo, hi, text),
+    /// where (lo, hi) is the rewrite coordinate in `path`'s WORK bytes and `text`
+    /// is the contiguous source at that span. With a scan-only source program the
+    /// only rows are import refs (no capture spans), so this is the `--move` feed.
+    pub fn located_spans(&self) -> Result<Vec<(String, u32, u32, String)>> {
+        let conn = self.db.conn();
+        let mut s = conn.prepare(
+            "SELECT w.path, w.lo, w.hi, s.content FROM _where_bytes w \
+             JOIN _strings s ON s.id = w.string_id \
+             WHERE w.id != '0' AND w.path != ''")?;
+        let rows = s.query_map([], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)? as u32,
+            r.get::<_, i64>(2)? as u32,
+            r.get::<_, String>(3)?,
+        )))?;
+        Ok(rows.filter_map(|x| x.ok()).collect())
+    }
+
+    /// (file, specifier) for every `use`/`import` row in `module_import`. The
+    /// specifier is the resolver's synthesized full path (brace leaves expanded),
+    /// which the refactor sink uses to detect imports it cannot yet splice (a
+    /// brace leaf's located span covers the leaf name, not the full path).
+    pub fn module_imports(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.db.conn();
+        let mut s = conn.prepare(&format!(
+            "SELECT \"file\", \"specifier\" FROM {} WHERE \"kind\" IN ('use', 'import')",
+            tbl("module_import")))?;
+        let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        Ok(rows.filter_map(|x| x.ok()).collect())
+    }
+
     /// Read the `diag` relation, if declared, as normalized DiagRows. Maps each
     /// row by column NAME (recognized: path, line, col, end_line, end_col,
     /// severity, msg); missing optional columns take defaults. Returns empty if

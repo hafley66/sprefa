@@ -6,6 +6,7 @@ pub mod lower;
 pub mod lsp;
 pub mod modgraph;
 pub mod parse;
+pub mod refactor;
 pub mod rspath;
 pub mod scc;
 pub mod scip_import;
@@ -125,5 +126,83 @@ pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Re
             eng.tick_paths(&prog, &paths, false)?;
         }
     }
+    Ok(())
+}
+
+/// Auto-refactor: rewrite `use`-path references after a module move. Each `mv`
+/// is `OLD_FILE=NEW_FILE` (repo-relative Rust source paths). Runs a scan-only
+/// tick to populate the import graph + ref-spine, then for every located use
+/// span computes the rewritten path via `rspath::rewrite_import` and splices it
+/// back at the same byte coordinate. Dry-run by default (prints the planned
+/// edits); `--fix` writes the files. Does NOT move the file on disk or fix the
+/// moved file's own relative imports — those are separate steps.
+pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool) -> Result<()> {
+    // Parse OLD=NEW file-move specs.
+    let moves: Vec<(String, String)> = mv.iter().map(|s| {
+        let (old, new) = s.split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("--move expects OLD=NEW, got {s:?}"))?;
+        Ok((old.trim().to_string(), new.trim().to_string()))
+    }).collect::<Result<_>>()?;
+
+    // Scan-only source rule populates `_file` with no capture spans; referencing
+    // `module_import` drives the resolver, so `_where_bytes` holds only use refs.
+    let prog_src = "rel _src(p: file).\n\
+        _src(p) <- scan(\"WORK\", \"**/*.rs\", p, rev).\n\
+        rel _mi(f: text, rev: text, spec: text, kind: text, ln: int).\n\
+        _mi(f, rev, spec, kind, ln) <- module_import(f, rev, spec, kind, ln).\n";
+    let prog = parse::parse(lex::lex(prog_src)?)?;
+    let conn = db::open(db_path)?;
+    let mut eng = engine::Engine::new(conn, root.clone());
+    eng.tick(&prog, true)?;
+
+    // Each located use span -> the first move that rewrites it.
+    let mut edits: Vec<refactor::Edit> = Vec::new();
+    for (path, lo, hi, text) in eng.located_spans()? {
+        for (old, new) in &moves {
+            if let Some(new_text) = rspath::rewrite_import(&path, old, new, &text) {
+                if new_text != text {
+                    edits.push(refactor::Edit { path, lo, hi, old_text: text, new_text });
+                    break;
+                }
+            }
+        }
+    }
+
+    // Honest skip accounting: a brace leaf (`use a::{b, c}`) produces a
+    // module_import per leaf but its located span covers the leaf name, not the
+    // full path, so it has no clean rewrite coordinate yet. Count specifiers a
+    // move would change but that produced no edit, and say so.
+    let would_rewrite = eng.module_imports()?.iter().filter(|(file, spec)| {
+        moves.iter().any(|(old, new)| {
+            rspath::rewrite_import(file, old, new, spec).is_some_and(|n| &n != spec)
+        })
+    }).count();
+    let skipped = would_rewrite.saturating_sub(edits.len());
+    if skipped > 0 {
+        eprintln!("[move] {skipped} brace-import reference(s) not rewritten \
+            (brace head-span pending; see CLAUDE.md F1b)");
+    }
+
+    if edits.is_empty() {
+        eprintln!("[move] no use-path references to rewrite");
+        return Ok(());
+    }
+    let by_file = refactor::group_by_file(edits);
+    let (mut files, mut total) = (0usize, 0usize);
+    for (path, file_edits) in &by_file {
+        let abs = root.join(path);
+        let content = std::fs::read_to_string(&abs)?;
+        let rewritten = refactor::splice_file(&content, file_edits)?;
+        files += 1;
+        total += file_edits.len();
+        for e in file_edits {
+            println!("{path}: {} -> {}", e.old_text, e.new_text);
+        }
+        if fix {
+            std::fs::write(&abs, rewritten)?;
+        }
+    }
+    eprintln!("[move] {} edit(s) across {} file(s){}",
+        total, files, if fix { ", applied" } else { " (dry run; pass --fix to apply)" });
     Ok(())
 }
