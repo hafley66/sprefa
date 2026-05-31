@@ -2557,14 +2557,16 @@ impl Component for RevComponent {
                             let Some(child) = emit_resolved_rev(
                                 parent.value.as_ref(),
                                 store,
-                                repo_id,
-                                slug_str,
-                                "spec",
-                                spec,
-                                "",
-                                "",
-                                obj,
-                                None,
+                                ResolvedRev {
+                                    repo_id,
+                                    repo_slug: slug_str,
+                                    kind: "spec",
+                                    spec,
+                                    name: "",
+                                    full_ref: "",
+                                    obj,
+                                    target: None,
+                                },
                             ) else {
                                 continue;
                             };
@@ -2607,14 +2609,16 @@ impl Component for RevComponent {
                             let Some(mut child) = emit_resolved_rev(
                                 parent.value.as_ref(),
                                 store,
-                                repo_id,
-                                slug_str,
-                                &kind,
-                                "",
-                                &name,
-                                &full_ref,
-                                obj,
-                                Some(&target),
+                                ResolvedRev {
+                                    repo_id,
+                                    repo_slug: slug_str,
+                                    kind: &kind,
+                                    spec: "",
+                                    name: &name,
+                                    full_ref: &full_ref,
+                                    obj,
+                                    target: Some(&target),
+                                },
                             ) else {
                                 continue;
                             };
@@ -2660,68 +2664,65 @@ fn capture_terms(regex: &regex::Regex, caps: &regex::Captures<'_>) -> Vec<(Strin
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit_resolved_rev(
-    parent: &Cursor,
-    store: &SprfStore,
+struct ResolvedRev<'a> {
     repo_id: crate::RepoId,
-    repo_slug: &str,
-    kind: &str,
-    spec: &str,
-    name: &str,
-    full_ref: &str,
-    obj: git2::Object<'_>,
-    target: Option<&str>,
-) -> Option<Cursor> {
-    let commit = obj.peel_to_commit().ok()?;
+    repo_slug: &'a str,
+    kind: &'a str,
+    spec: &'a str,
+    name: &'a str,
+    full_ref: &'a str,
+    obj: git2::Object<'a>,
+    target: Option<&'a str>,
+}
+
+fn set_both(c: &mut Cursor, store: &SprfStore, key: &str, val: &str) {
+    c.set(key, val);
+    c.set_synthetic(key, val, store);
+}
+
+fn emit_resolved_rev(parent: &Cursor, store: &SprfStore, r: ResolvedRev<'_>) -> Option<Cursor> {
+    let commit = r.obj.peel_to_commit().ok()?;
     let oid_hex = commit.id().to_string();
     let ts = commit.time().seconds();
-    let rev_id = store.intern_rev(repo_id, &oid_hex, ts);
+    let rev_id = store.intern_rev(r.repo_id, &oid_hex, ts);
     let coord = Coord {
-        repo: repo_id,
+        repo: r.repo_id,
         rev: rev_id,
         fs: 0,
         lo: 0,
         hi: 0,
     };
     let oid_arc: Arc<str> = Arc::from(oid_hex.as_str());
+    let target = r.target.unwrap_or(oid_hex.as_str());
+    let ts_string = ts.to_string();
+
     let mut child = parent.clone();
     child.value = oid_arc.clone();
     child.value_id = crate::StringId::of(&oid_hex);
     child.at = store.intern_ref(coord);
-    child.set_arc("REV", oid_arc.clone());
+    child.set_arc("REV", oid_arc);
     child.set_synthetic("REV", &oid_hex, store);
-    child.set("REPO", repo_slug);
-    child.set_synthetic("REPO", repo_slug, store);
-    child.set("KIND", kind);
-    child.set_synthetic("KIND", kind, store);
-    if !spec.is_empty() {
-        child.set("SPEC", spec);
-        child.set_synthetic("SPEC", spec, store);
+    set_both(&mut child, store, "REPO", r.repo_slug);
+    set_both(&mut child, store, "KIND", r.kind);
+    if !r.spec.is_empty() {
+        set_both(&mut child, store, "SPEC", r.spec);
     }
-    if !name.is_empty() {
-        child.set("NAME", name);
-        child.set_synthetic("NAME", name, store);
+    if !r.name.is_empty() {
+        set_both(&mut child, store, "NAME", r.name);
     }
-    if !full_ref.is_empty() {
-        child.set("REF", full_ref);
-        child.set_synthetic("REF", full_ref, store);
+    if !r.full_ref.is_empty() {
+        set_both(&mut child, store, "REF", r.full_ref);
     }
-    let target = target.unwrap_or(oid_hex.as_str());
-    child.set("TARGET", target);
-    child.set_synthetic("TARGET", target, store);
-    let ts_string = ts.to_string();
-    child.set("COMMIT_TS", ts_string.as_str());
-    child.set_synthetic("COMMIT_TS", ts_string.as_str(), store);
-    child.set("TAG_TS", "");
-    child.set_synthetic("TAG_TS", "", store);
+    set_both(&mut child, store, "TARGET", target);
+    set_both(&mut child, store, "COMMIT_TS", &ts_string);
+    set_both(&mut child, store, "TAG_TS", "");
 
     let mut row = Cursor::default();
-    row.set("REPO", repo_slug);
-    row.set("KIND", kind);
-    row.set("SPEC", spec);
-    row.set("NAME", name);
-    row.set("REF", full_ref);
+    row.set("REPO", r.repo_slug);
+    row.set("KIND", r.kind);
+    row.set("SPEC", r.spec);
+    row.set("NAME", r.name);
+    row.set("REF", r.full_ref);
     row.set("REV", oid_hex.as_str());
     row.set("TARGET", target);
     row.set("COMMIT_TS", ts_string.as_str());

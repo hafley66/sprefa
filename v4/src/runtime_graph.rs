@@ -430,6 +430,17 @@ impl RuntimePut for SprfSupportRows {
     }
 }
 
+struct InsertNode<'a> {
+    node_uri_id: StringId,
+    kind: &'a str,
+    ast_uri: &'a str,
+    parent_uri: Option<&'a str>,
+    input_key: &'a str,
+    source_hash: &'a str,
+    mode: &'a str,
+    generation: u64,
+}
+
 impl RuntimeGraph {
     pub fn new(store: Arc<SprfStore>, facts: Arc<dyn FactStore<Cursor>>) -> Self {
         let core = FactRuntimeGraph::new(facts.clone());
@@ -1090,16 +1101,16 @@ impl RuntimeGraph {
         let uri = owner_uri(ast_uri, parent_owner_uri, input_key, source_hash, mode);
         let uri_id = self.intern_uri(uri.as_ref());
         let node = OwnerNode::new(uri_id, uri, ());
-        self.insert_node(
-            node.uri_id(),
-            Owner::TAG,
+        self.insert_node(InsertNode {
+            node_uri_id: node.uri_id(),
+            kind: Owner::TAG,
             ast_uri,
-            parent_owner_uri,
+            parent_uri: parent_owner_uri,
             input_key,
             source_hash,
             mode,
             generation,
-        );
+        });
         node
     }
 
@@ -1186,35 +1197,31 @@ impl RuntimeGraph {
     }
 
     pub fn declare_source(&self, source_uri: &str, generation: u64) -> SourceNode {
-        let uri = Arc::<str>::from(source_uri);
-        let uri_id = self.intern_uri(uri.as_ref());
-        self.insert_node(
-            uri_id,
-            Source::TAG,
-            "",
-            None,
-            "",
-            &hash_text(source_uri),
-            "",
-            generation,
-        );
-        SourceNode::new(uri_id, uri, ())
+        self.declare_singleton::<Source>(source_uri, generation)
     }
 
     pub fn declare_output_table(&self, table_uri: &str, generation: u64) -> OutputNode {
-        let uri = Arc::<str>::from(table_uri);
-        let uri_id = self.intern_uri(uri.as_ref());
-        self.insert_node(
-            uri_id,
-            Output::TAG,
-            "",
-            None,
-            "",
-            &hash_text(table_uri),
-            "",
+        self.declare_singleton::<Output>(table_uri, generation)
+    }
+
+    fn declare_singleton<K: NodeKind<Extra = ()>>(
+        &self,
+        uri: &str,
+        generation: u64,
+    ) -> GraphRef<K, StringId> {
+        let uri_arc = Arc::<str>::from(uri);
+        let uri_id = self.intern_uri(uri_arc.as_ref());
+        self.insert_node(InsertNode {
+            node_uri_id: uri_id,
+            kind: K::TAG,
+            ast_uri: "",
+            parent_uri: None,
+            input_key: "",
+            source_hash: &hash_text(uri),
+            mode: "",
             generation,
-        );
-        OutputNode::new(uri_id, uri, ())
+        });
+        GraphRef::new(uri_id, uri_arc, ())
     }
 
     pub fn declare_row(
@@ -1226,16 +1233,16 @@ impl RuntimeGraph {
         let row_key = row_key(table.uri.as_ref(), row_payload);
         let uri = row_uri(table.uri.as_ref(), row_key.as_ref());
         let uri_id = self.intern_uri(uri.as_ref());
-        self.insert_node(
-            uri_id,
-            Row::TAG,
-            "",
-            Some(table.uri.as_ref()),
-            row_key.as_ref(),
-            "",
-            "",
+        self.insert_node(InsertNode {
+            node_uri_id: uri_id,
+            kind: Row::TAG,
+            ast_uri: "",
+            parent_uri: Some(table.uri.as_ref()),
+            input_key: row_key.as_ref(),
+            source_hash: "",
+            mode: "",
             generation,
-        );
+        });
         self.insert_edge(
             KIND_MEMBER_OF,
             uri_id,
@@ -1593,26 +1600,16 @@ impl RuntimeGraph {
         }
     }
 
-    fn insert_node(
-        &self,
-        node_uri_id: StringId,
-        kind: &str,
-        ast_uri: &str,
-        parent_uri: Option<&str>,
-        input_key: &str,
-        source_hash: &str,
-        mode: &str,
-        generation: u64,
-    ) {
+    fn insert_node(&self, args: InsertNode<'_>) {
         self.core.insert_node(RuntimeNodeRow {
-            node_id: node_uri_id,
-            kind_id: self.intern_uri(kind),
-            ast_id: Some(self.intern_uri(ast_uri)),
-            parent_id: parent_uri.map(|uri| self.intern_uri(uri)),
-            input_key: input_key.to_string(),
-            source_key: source_hash.to_string(),
-            mode_id: Some(self.intern_uri(mode)),
-            generation,
+            node_id: args.node_uri_id,
+            kind_id: self.intern_uri(args.kind),
+            ast_id: Some(self.intern_uri(args.ast_uri)),
+            parent_id: args.parent_uri.map(|uri| self.intern_uri(uri)),
+            input_key: args.input_key.to_string(),
+            source_key: args.source_hash.to_string(),
+            mode_id: Some(self.intern_uri(args.mode)),
+            generation: args.generation,
         });
     }
 

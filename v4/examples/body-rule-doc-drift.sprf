@@ -11,7 +11,7 @@ rule(:expected_docs, DOC?) {
 v4-sql-rule-query-plan.md
 v4-runtime-batching.md
 v4-made-up-required-doc.md`
-    > split(DOC?)`
+    > split(FUCK?)`
 `
 };
 

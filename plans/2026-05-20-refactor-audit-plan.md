@@ -97,7 +97,7 @@ No `provenance` in scope.
 | C11 | `find_host_hole_outside_quotes` `#[allow(dead_code)]` | walk.rs:918 |
 | C12 | `_unused(c: &CallConstraint)` allow(dead_code); half of `TypeLattice/CaptureSource/ReadCtx/Fanout/CaptureInfo/CaptureConstraint/UnionFind` unread by fuser | fuser.rs:1050, binding_graph.rs:497-635 |
 | C13 | `RuleInvokeValue::Term` variant constructed nowhere | rule.rs:140 |
-| C14 | `v2_ops.rs` is a misnomer in v4; should split into `compile/lower/ops/<name>.rs` colocated with the Def | v2_ops.rs:1-3953 |
+| C14 | `v2_ops.rs` is a misnomer in v4; split it into a runtime tree (one Component per file) MIRRORING `compile/lower/ops/<name>.rs` (one Def per file). Two parallel trees; do NOT colocate Def + Component. See [[feedback_lowering_vs_runtime_separation]] | v2_ops.rs:1-3953 |
 | C15 | Bench-leftover Components without `OperatorDef`: `SinglePathComponent`, `CountComponent`, `FormatComponent`, `TrimComponent`, `BasenameComponent`, `DirnameComponent`, `LineComponent`, `MultiAstNmComponent`, `RepoFromTermComponent` | v2_ops.rs:1260,1361,1403,1481,1553,1582,1612,1643,2740 |
 
 ### 2.4 Effects lib + bridge findings
@@ -147,8 +147,11 @@ Phase 1  banned-word + dead-by-policy deletes (independent, ~1h)
    |
    +-> Phase 4  Sink → Write rename (independent, runs anytime)
 
-Phase 6  v2_ops.rs split + colocate Def+Component   DEFERRED until callable-value merges
-Phase 7  rule-shapes through RuleDef via CallSite   DEFERRED until callable-value merges
+Phase 6  v2_ops.rs split into a runtime tree (Components only),
+         mirrored against compile/lower/ops/<name>.rs (Defs only).
+         No colocation. callable-value is in main (e3ea0aa); gate cleared.
+Phase 7  rule-shapes through RuleDef via CallSite
+         callable-value is in main (e3ea0aa); gate cleared. Still wants Phase 5.1.
 Phase 8  Graph/store agent refire + acted-on follow-ups   DEFERRED until graph findings re-collected
 ```
 
@@ -614,36 +617,58 @@ impl SprfStateBuilder {
 
 ---
 
-## 9. Phase 6 — v2_ops.rs split (DEFERRED)
+## 9. Phase 6 — v2_ops.rs split (READY)
 
-Wait for `feat/callable-value` to merge to avoid rebase pain.
+Callable-value is in main (commit `e3ea0aa`); the prior callable gate is
+cleared. The architectural rule per
+[[feedback_lowering_vs_runtime_separation]]: lowering (`OperatorDef`) and
+runtime (`Component`) stay in SEPARATE file trees. Coupling is the registry
+op-name key, not file colocation.
 
 ```text
-// target layout
-v4/src/compile/lower/ops/
-   mod.rs        // re-exports + the small Defs
-   fs.rs         // FsDef + FsComponent
-   ast.rs        // AstDef + AstNmComponent (+ AstYamlDef + ...)
-   re.rs         // ReDef + ReComponent
-   sh.rs         // ShDef + ShComponent
-   where_.rs     // WhereDef + WhereComponent
-   path.rs       // PathDef + ...
+// target layout — TWO PARALLEL TREES, MIRRORED BY OP NAME
+
+v4/src/compile/lower/ops/        // Defs ONLY (no Component impls here)
+   mod.rs                        // registry wiring + small Defs
+   fs.rs                         // FsDef
+   ast.rs                        // AstDef + AstYamlDef
+   re.rs                         // ReDef
+   sh.rs                         // ShDef
+   where_.rs                     // WhereDef
+   path.rs                       // PathDef
    ...
-   rule.rs       // RuleDef + sql::rule_*_pipe private helpers (post-Phase 7)
+   rule.rs                       // RuleDef + sql::rule_*_pipe private helpers (post-Phase 7)
+
+v4/src/runtime/components/       // Components ONLY (no OperatorDef impls here)
+   mod.rs                        // re-exports
+   fs.rs                         // FsComponent
+   ast.rs                        // AstNmComponent (+ AstYamlComponent + ...)
+   re.rs                         // ReComponent
+   sh.rs                         // ShComponent
+   where_.rs                     // WhereComponent
+   path.rs                       // PathComponent
+   ...
 
 // pseudo:
-//   for each (Def, Component) pair in v2_ops.rs and ops.rs, move both into
-//   one file. Confirm the Component is registered through the Def.
-//   delete bench leftovers per C15 first.
+//   1. delete bench leftovers per C15 first (no Component without a Def)
+//   2. for each op N:
+//        move FsDef       from compile/lower/ops.rs  -> compile/lower/ops/<N>.rs
+//        move FsComponent from v2_ops.rs             -> runtime/components/<N>.rs
+//      A Def file imports NOTHING from a Component file.
+//      A Component file imports NOTHING from a Def file.
+//   3. delete v2_ops.rs. The "v2" name dies.
 //
-// rename: v2_ops.rs name dies. Nothing left is "v2"-specific in v4.
+// final destination of the runtime tree (runtime/components vs another sibling)
+// is open; the invariant is "not colocated with the Def".
 ```
 
 ---
 
-## 10. Phase 7 — Rule shapes through RuleDef (DEFERRED)
+## 10. Phase 7 — Rule shapes through RuleDef (READY pending Phase 5.1)
 
-Wait for `feat/callable-value` to merge.
+Callable-value is in main (commit `e3ea0aa`); the prior callable gate is
+cleared. Phase 5.1 (unified `OperatorDef::lower` shape) is still the
+upstream dependency.
 
 ```rust
 // before  walk.rs:419-541 has 5 forks:
@@ -678,8 +703,8 @@ impl OperatorDef for RuleDef {
 //           declares unconditionally as it already does at ops.rs:2283
 ```
 
-Migration risk: high. This is the active grammar area. Land after callable-value
-ships and after Phase 5.1 (the unified `OperatorDef::lower` shape).
+Migration risk: high. This is the active grammar area. Land after Phase 5.1
+(the unified `OperatorDef::lower` shape).
 
 ---
 
@@ -867,8 +892,10 @@ Items raised by an agent but deliberately excluded from this plan:
 | 3 (v3↔v4 dup folds) | ~1 day | one PR |
 | 4 (Sink rename) | ~half day | one PR, mechanical |
 | 5 (FactSqlExec + builder + clock unify) | ~2 days | three PRs (FactSqlExec, builder, clock) |
-| 6 (v2_ops split) | ~2 days | one mechanical PR after callable-value merges |
-| 7 (rule via RuleDef) | ~3 days | one careful PR after callable-value merges |
+| 6 (v2_ops split, parallel-trees mirror) | ~2 days | one mechanical PR; callable-value is in main, no gate |
+| 7 (rule via RuleDef) | ~3 days | one careful PR; needs Phase 5.1 landed first |
 | 8 (graph/store follow-ups) | TBD on refire | TBD |
 
-Total mainline (1+2+3+4+5): ~7-8 working days assuming no test regressions.
+Total mainline (1+2+3+4+5+6+7): ~10-11 working days assuming no test
+regressions. Phases 6 and 7 are no longer parked behind callable-value
+(commit `e3ea0aa` already in main).
