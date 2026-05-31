@@ -25,6 +25,9 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
       (36 sites left = grep `.conn()` in engine.rs).
 - [x] **B/E/A**: shared `refresh_rel` seam, syn-backed `type_edge(from,to,kind)`, and
       remaining obvious N+1 write loops batched (`_file`, `_prov`, source rows, SCC tables).
+- [x] Module-graph polish after B/E/A: `module_edge_rev`/`module_unresolved_rev`
+      for historical queries, parallel per-file resolver extraction, and `crate_edge`
+      from workspace-internal Cargo dependencies.
 
 ### Backlog (sequenced to ADD features without adding dup)
 
@@ -47,14 +50,14 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       + `_strings`/`_where_bytes` from `v4/src/store.rs`; `normalize()` + FTS5 trigram from the
       archive for cross-repo fuzzy join. Content-ids make the interner INSERT-only (no read-back
       N+1). Do NOT port FactStore/runtime_graph/Memo/support (DD machinery to exorcise).
-- [ ] **D — module-graph leftover**: incremental + parallel `refresh_module_rels` (today wholesale
-      re-read + re-resolve every tick); rev-as-variable soundness (`refresh_builtin_rels` hardcodes
-      `"WORK"` engine.rs:837 → git-rev/historical graphs silently empty).
+- [ ] **D — module-graph leftover**: incremental `refresh_module_rels` (today still wholesale
+      refreshes the built-in module relations when the file set changes). Parallel extraction and
+      rev-aware relation variants are done.
 - [ ] **Auto-refactor (the OG v0 use case)**, rides C: thread specifier byte-spans out of the
       module resolver; port `rewrite_use_path`/`reconvert_prefix` from archive `crates/watch/src/rs_path.rs`;
       add an `edit(ref_id, new_string_id)` sink (`--fix` applies, LSP rename). `ref` = import graph
       AND rewrite coordinate; v0's "reverse refs" demo IS the refactor query.
-- [ ] crate-level dep edges (crate A→B from `[dependencies]`) as a relation.
+- [x] crate-level dep edges (crate A→B from `[dependencies]`) as a relation.
 - [ ] honest recall: run the RA oracle on a real crate (toy fixture's 1.00 isn't representative).
 - [ ] merge `feat/v5-lsp-diag` → main; push.
 

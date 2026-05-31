@@ -130,7 +130,7 @@ Dup-avoiding order for the type-graph module: **B → E → A**. Ref-spine **C**
 - **E** (done): `type_edge` syn extractor — self-hosted type graph; rides B; deterministic tokenless type map.
 - **A** (done): migrated remaining obvious N+1 write loops onto `Db::insert_rows`.
 - **C** (L0, L): ref-spine Stage 2 — `_strings` interner + `ref` + content-derived ids; unlocks refactor + kills string dup.
-- **D** (L3, M): incremental + parallel `refresh_module_rels`; rev-as-variable soundness (engine.rs:837).
+- **D** (partial): parallel `refresh_module_rels` + rev-aware module relations done; incremental module refresh remains.
 - Effect edge (L4): minimal `sh`/`http`/`write` ops + content-cache; reconcile loop already exists.
 - Sinks (L5): http renderer over relations (third frontend).
 - SCIP importer (L1'): ingest `index.scip` → `scip_*` predicates union into module/call edges.
@@ -139,5 +139,6 @@ Dup-avoiding order for the type-graph module: **B → E → A**. Ref-spine **C**
 ## Done (this arc)
 Module graph (all Rust+TS levers ✓, SCIP oracle precision 1.00, broken-import linter),
 Db seam (plural-only chokepoint + loud N+1 counter), shared refresh seam,
-`type_edge(from,to,kind)`, remaining obvious N+1 write-loop paydown, Cargo rename.
+`type_edge(from,to,kind)`, remaining obvious N+1 write-loop paydown,
+rev-aware module graph relations, parallel module extraction, `crate_edge`, Cargo rename.
 Branch `codex/v5-refresh-type-edge`.
