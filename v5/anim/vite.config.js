@@ -31,4 +31,12 @@ function framesMd() {
 export default defineConfig({
   plugins: [framesMd(), react()],
   base: './',
+  build: {
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        explorer: fileURLToPath(new URL('./explorer.html', import.meta.url)),
+      },
+    },
+  },
 })

@@ -9,10 +9,13 @@
     "build:md": "node bin/build-frames.mjs",
     "frames": "node bin/from-git.mjs",
     "graphs": "bash bin/render-d2.sh",
+    "types:json": "node bin/types-to-d2.mjs --json",
     "check": "node bin/build-frames.mjs --check",
     "seed": "node bin/seed-demo-db.mjs"
   },
   "dependencies": {
+    "cytoscape": "^3.33.4",
+    "cytoscape-fcose": "^2.2.0",
     "marked": "^18.0.4",
     "panzoom": "^9.4.4",
     "react": "^18.3.1",
