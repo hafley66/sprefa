@@ -43,11 +43,20 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 - [x] Ref-spine C1b: WORK file content + committed git blobs now batch into
       `_files`; `FileId` derives from the existing blake3 hash or blob OID
       without per-blob content reads.
-- [x] Ref-spine C2: regex `match` captures locate into `_where_bytes` (per-capture
-      byte spans, WORK rev only; `FileId::of_bytes` joins `_files`), and built-in
-      `string(id,text,norm)` + `ref(string,file,lo,hi)` query relations project
-      `_strings`/`_where_bytes` via lazy sentinel-skipping `refresh_spine_rels`.
-      `ref` is now a reserved name. Tests in `tests/spine_meta.rs`.
+- [x] Ref-spine C2: regex `match` captures locate into `_where_bytes`, and
+      built-in `string(id,text,norm)` + `ref(string,file,lo,hi)` query relations
+      project `_strings`/`_where_bytes` via lazy sentinel-skipping
+      `refresh_spine_rels`. `ref` is now a reserved name.
+- [x] Ref-spine C3/C4: `run_ts`/`run_sg` carry each capture's byte range, so the
+      ast and sg backends locate too; `parse_file` keys the located `FileId` off
+      the file's stored content address (blake3 for WORK, blob OID for a git rev)
+      via `FileId::from_content_address`, so spans join `_files` for both rev
+      kinds. Shared `push_span` closure across all three arms.
+- [x] Ref-spine C5: `_where_bytes` gains a `path` attribution column (migrated on
+      open); `retract_paths` prunes a file's located rows alongside `_prov`, so
+      `ref` stays correct across `--changed` edits. `path` is not part of the
+      `WhereBytesId` identity (byte-identical files collapse, repaired on full
+      tick). All ref-spine tests in `tests/spine_meta.rs`.
 
 ### Backlog (sequenced to ADD features without adding dup)
 
@@ -64,18 +73,14 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       (engine.rs:840-845), `save_file_meta` (765), `retract_paths` (741/749), scc insert →
       `insert_rows`. The ~30 other `.conn()` sites are benign (count-checks, DDL, the fixpoint
       evaluator) — leave or wrap for counting, not N+1.
-- [ ] **C — ref-spine Stage 2 remaining** (L, kills dup-shape #3 + unlocks refactor):
-      C0/C1/C1b/C2 are done — `Coord`/`WhereBytes`/`StringId` math, sentinel meta
-      tables, batched `_strings` + WORK/git-blob `_files` ingestion, regex-capture
-      `_where_bytes` spans, and the `string`/`ref` query relations. Remaining:
-      **(1)** ast/sg capture spans (those backends return line/col only — need a
-      line-offset index + per-capture node byte ranges); **(2)** git-rev located
-      spans (need the blob OID as the file id, not `of_bytes`); **(3)**
-      file-id-keyed source retraction so a deleted string's `_where_bytes` row is
-      pruned (today's ingestion is INSERT-only, content-derived ids, so stale
-      located rows persist across `--changed`); **(4)** fuzzy joins / FTS5 trigram
-      if needed. Do NOT port FactStore/runtime_graph/Memo/support (DD machinery
-      to exorcise).
+- [x] **C — ref-spine Stage 2** (kills dup-shape #3 + unlocks refactor): C0–C5
+      done — `Coord`/`WhereBytes`/`StringId` math, sentinel meta tables, batched
+      `_strings` + WORK/git-blob `_files` ingestion, regex+ast+sg located
+      `_where_bytes` spans for WORK and git revs, the `string`/`ref` query
+      relations, and path-keyed span retraction. Remaining (deferred, "if
+      needed"): fuzzy joins / FTS5 trigram; orphan `_strings` GC (interns linger
+      after their last `ref` retracts — harmless, content-addressed). Did NOT
+      port FactStore/runtime_graph/Memo/support (DD machinery to exorcise).
 - [x] **D — module-graph leftover**: incremental `refresh_module_rels` for `--changed`.
       Content edits refresh only touched WORK module sources; path-set/manifest changes
       fall back to the WORK rev. Parallel extraction and rev-aware relation variants are done.
