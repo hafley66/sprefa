@@ -93,13 +93,48 @@ impl<T: Identity> Store for User<T> {}
 }
 
 #[test]
+fn type_edges_carry_rev() {
+    let d = sandbox("rev");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "struct Id;\nstruct User { id: Id }\n",
+    )
+    .unwrap();
+
+    // A fresh (non-git) root scans everything as the WORK rev, so the rev-aware
+    // table tags edges WORK and a WORK-filtered relation recovers them.
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+rel work_type(a: text, b: text).
+work_type(a, b) <- type_edge_rev(a, b, _, "WORK").
+? type_edge_rev(f, t, k, rev).
+? work_type(a, b).
+"#;
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
+    assert!(
+        out.contains("User\tId\tfield\tWORK"),
+        "rev-tagged edge: {out}"
+    );
+    let work = out.split("? work_type").nth(1).unwrap_or("");
+    assert!(
+        work.contains("User\tId"),
+        "WORK-filtered relation recovers the edge: {out}"
+    );
+}
+
+#[test]
 fn declaring_type_edge_errors() {
     let d = sandbox("collision");
-    let prog = "rel type_edge(a: text, b: text).\n";
-    let (code, _, err) = run(&d, prog, &[]);
-    assert_ne!(code, 0, "redeclaring `type_edge` must fail");
-    assert!(
-        err.contains("built-in type-graph relation"),
-        "expected type-edge error, got: {err}"
-    );
+    for name in ["type_edge", "type_edge_rev"] {
+        let prog = format!("rel {name}(a: text, b: text).\n");
+        let (code, _, err) = run(&d, &prog, &[]);
+        assert_ne!(code, 0, "redeclaring `{name}` must fail");
+        assert!(
+            err.contains("built-in type-graph relation"),
+            "expected type-edge error for {name}, got: {err}"
+        );
+    }
 }

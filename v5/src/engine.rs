@@ -38,7 +38,7 @@ const MODULE_RELS: [&str; 6] = [
 
 /// Syntax-only Rust type graph. `kind` is edge metadata; closure(type_edge)
 /// walks the first two columns.
-const TYPE_RELS: [&str; 1] = ["type_edge"];
+const TYPE_RELS: [&str; 2] = ["type_edge", "type_edge_rev"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
@@ -73,6 +73,7 @@ fn type_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
     vec![
         RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text)] },
+        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text)] },
     ]
 }
 
@@ -917,7 +918,7 @@ impl Engine {
                     bail!("{} is a built-in module-graph relation; pick another name", d.name);
                 }
                 if TYPE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in type-graph relation (type_edge); pick another name", d.name);
+                    bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev); pick another name", d.name);
                 }
                 if SCIP_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in SCIP relation; pick another name", d.name);
@@ -1155,17 +1156,34 @@ impl Engine {
         }
         // Parse + extract per file in parallel (same shape as module_rows_for_rev),
         // then flatten and write once. Keeps the cold-build parse working set bounded
-        // by the rayon pool, not the corpus (peak-RSS invariant).
+        // by the rayon pool, not the corpus (peak-RSS invariant). Rows carry their
+        // rev so the type graph is history-aware like module_edge_rev.
         let root = self.root.clone();
         let rows: Vec<Vec<Value>> = files.par_iter().flat_map(|(path, rev)| {
             let t = |s: &str| Value::Text(s.to_string());
             let content = read_content(&root, rev, path).unwrap_or_default();
             typegraph::edges(&content)
                 .into_iter()
-                .map(|edge| vec![t(&edge.from), t(&edge.to), t(edge.kind)])
+                .map(|edge| vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev)])
                 .collect::<Vec<_>>()
         }).collect();
-        self.refresh_rel("type_edge", &["from", "to", "kind"], &rows)?;
+        self.refresh_rel("type_edge_rev", &["from", "to", "kind", "rev"], &rows)?;
+        self.rebuild_legacy_type_rels()?;
+        Ok(())
+    }
+
+    /// Rebuild the convenient rev-less `type_edge(from, to, kind)` from the
+    /// rev-aware table, deduped across revs. Same shape as
+    /// `rebuild_legacy_module_rels`: the `_rev` table is the source of truth,
+    /// the legacy view is the simple closure target.
+    fn rebuild_legacy_type_rels(&self) -> Result<()> {
+        let edge = tbl("type_edge");
+        let edge_rev = tbl("type_edge_rev");
+        self.db.exec(&format!("DELETE FROM {edge}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {edge} (\"from\", \"to\", \"kind\") \
+             SELECT \"from\", \"to\", \"kind\" FROM {edge_rev}"
+        ))?;
         Ok(())
     }
 

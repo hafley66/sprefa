@@ -5,10 +5,17 @@
 # first two columns, so derive a relation over those columns when you want blast
 # radius / fan-in queries.
 #
+# `type_edge_rev(from, to, kind, rev)` is the history-aware source of truth (same
+# split as module_edge / module_edge_rev). Filter it to one rev before closure to
+# diff the type graph across WORK vs HEAD. Plain `type_edge` is the rev-deduped
+# union for simple current-state queries.
+#
 # Run: dl v5/examples/typegraph.dl --root .
 
 rel seen(path: file).
 rel type_reaches(src: text, dst: text).
+rel work_type(src: text, dst: text).
+rel work_reaches(src: text, dst: text).
 
 seen(path) <-
   scan("WORK", "v5/src/**/*.rs", path, rev),
@@ -16,5 +23,11 @@ seen(path) <-
 
 type_reaches(src, dst) <- closure(type_edge).
 
+# rev-scoped blast radius: only the WORK type graph.
+work_type(src, dst) <- type_edge_rev(src, dst, _, "WORK").
+work_reaches(src, dst) <- closure(work_type).
+
 ? type_edge(from, to, kind) where from = "Engine".
 ? type_reaches(src, dst) where src = "Engine".
+? type_edge_rev(from, to, kind, rev) where from = "Engine".
+? work_reaches(src, dst) where src = "Engine".
