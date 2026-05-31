@@ -54,9 +54,10 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
       kinds. Shared `push_span` closure across all three arms.
 - [x] Ref-spine C5: `_where_bytes` gains a `path` attribution column (migrated on
       open); `retract_paths` prunes a file's located rows alongside `_prov`, so
-      `ref` stays correct across `--changed` edits. `path` is not part of the
-      `WhereBytesId` identity (byte-identical files collapse, repaired on full
-      tick). All ref-spine tests in `tests/spine_meta.rs`.
+      `ref` stays correct across `--changed` edits. (P0 update 2026-05-31: `path`
+      IS now folded into the stored id via `WhereBytesId::of_located`, so
+      byte-identical files no longer collapse; the old "repaired on full tick"
+      invariant is gone.) All ref-spine tests in `tests/spine_meta.rs`.
 
 ### Backlog (sequenced to ADD features without adding dup)
 
@@ -88,6 +89,23 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       module resolver; port `rewrite_use_path`/`reconvert_prefix` from archive `crates/watch/src/rs_path.rs`;
       add an `edit(ref_id, new_string_id)` sink (`--fix` applies, LSP rename). `ref` = import graph
       AND rewrite coordinate; v0's "reverse refs" demo IS the refactor query.
+      Plan: `plans/2026-05-31-auto-refactor-use-path-rewrite.md` (3-Sonnet+1-Opus interning
+      panel: v4 N+1 was per-row writes + blob-as-string-column, NOT interning concept).
+      F1=brace leaves too; F2=Route A (Rust `--move`) now, Route B (DSL operator) deferred
+      (never B-naive per-row UDF intern). DONE so far (52/0/1 green, ALL uncommitted):
+      **P0** = path folded into `_where_bytes` identity via `WhereBytesId::of_located`
+      (byte-identical files no longer collapse → second path lost → retract misfire);
+      retires the C5 "collapse repaired on full tick" invariant. **P1** = hoisted
+      `insert_spine_where_bytes` out of the per-rule `--changed` loop (latent N+1).
+      **F1** = `ModuleRef.span: Option<(u32,u32)>`; `expand_use` threads byte offsets
+      (brace leaf span = leaf segment, head shared; bare use = whole path); TS gets the
+      specifier-literal span; `module_rows_for_rev` pushes (text, WhereBytes) into
+      `ModuleRows.spans`, flushed via new `insert_module_spans` (interns BOTH `_strings`
+      AND `_where_bytes`) from full-scan + incremental paths. **ref.id** = `ref` is now
+      5-ary `ref(id, string, file, lo, hi)` (id = `_where_bytes` id = the edit coordinate).
+      e2e test `use_paths_are_located_in_ref_spine`. NOTE `ref.file` = content FileId, not
+      path. NEXT: **Route A** = `edit` table + `rewrite_use_path`/`reconvert_prefix` port +
+      `--move OLD=NEW` driver + `drain_edits` (join⋈group-by-file⋈splice-DESC + overlap guard).
 - [x] **SCIP importer (L1')**: ingest an existing `index.scip` from `SPREFA_SCIP_INDEX`
       or repo root into `scip_def`/`scip_ref`/`scip_edge` relations.
 - [x] crate-level dep edges (crate A→B from `[dependencies]`) as a relation.
