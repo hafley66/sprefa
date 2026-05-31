@@ -69,9 +69,9 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       or repo root into `scip_def`/`scip_ref`/`scip_edge` relations.
 - [x] crate-level dep edges (crate A→B from `[dependencies]`) as a relation.
 - [x] honest recall: run the RA oracle on a real crate (toy fixture's 1.00 isn't representative).
-- [ ] **`type_edge` rev-awareness**: today emits `(from, to, kind)` with no rev column, so it is
-      WORK-only and cannot carry HEAD/history like `module_edge_rev`. E did not inherit D's
-      rev-correctness. Add a `type_edge_rev(from, to, kind, rev)` variant when history is needed.
+- [x] **`type_edge` rev-awareness**: `type_edge_rev(from, to, kind, rev)` is the history-aware
+      source of truth; legacy `type_edge` is the rev-deduped union (mirrors module_edge split).
+      Extractor keeps the rev it already iterated. WORK-vs-HEAD type-graph diff now possible.
 - [ ] merge `codex/v5-refresh-type-edge` → main; push. (The earlier `feat/v5-lsp-diag` arc —
       Db seam + architecture doc — already landed on `main` at `f8c8e87`.)
 
