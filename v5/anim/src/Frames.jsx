@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ShikiMagicMove } from 'shiki-magic-move/react'
 import { marked } from 'marked'
 import panzoom from 'panzoom'
@@ -79,6 +79,7 @@ export default function Frames({ frames, highlighter, theme, glossary }) {
 
   const hasCode = !!(f.code && f.code.trim())
   const hasGraph = !!f.graph
+  const hasRight = !!(f.graph || f.fs)
   const html = useMemo(() => {
     // render [[other-slide]] cross-links as styled references
     const src = (f.narration || '').replace(/\[\[([^\]]+)\]\]/g, '<span class="xref">$1</span>')
@@ -99,7 +100,7 @@ export default function Frames({ frames, highlighter, theme, glossary }) {
 
   return (
     <div className="stage">
-      <div className={`deck${hasGraph ? '' : ' nograph'}${hasCode ? '' : ' nocode'}`}>
+      <div className={`deck${hasRight ? '' : ' nograph'}${hasCode ? '' : ' nocode'}`}>
         <div className="left">
           <div className="head">
             <div className="counter">
@@ -136,9 +137,9 @@ export default function Frames({ frames, highlighter, theme, glossary }) {
           )}
           <div className="help">← prev · → next · o outline · m map{hasGraph ? ' · scroll/drag graph' : ''}</div>
         </div>
-        {hasGraph && (
+        {hasRight && (
           <div className="right">
-            <Graph src={f.graph} lit={lit} />
+            {f.fs ? <div className="fs-card"><FsTree tree={f.fs} /></div> : <Graph src={f.graph} lit={lit} />}
           </div>
         )}
       </div>
@@ -166,6 +167,90 @@ export default function Frames({ frames, highlighter, theme, glossary }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Build ordered explorer rows (dirs + files) from a flat path list.
+function buildRows(items) {
+  const all = new Map()
+  for (const { path, mark } of items) {
+    const clean = path.replace(/\/$/, '')
+    const parts = clean.split('/')
+    for (let k = 1; k < parts.length; k++) { const d = parts.slice(0, k).join('/'); if (!all.has(d)) all.set(d, { path: d, isDir: true, mark: '' }) }
+    all.set(clean, { path: clean, isDir: path.endsWith('/') || (all.get(clean)?.isDir ?? false), mark })
+  }
+  return [...all.values()]
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .map((n) => ({ key: n.path, depth: n.path.split('/').length - 1, name: n.path.split('/').pop(), isDir: n.isDir, mark: n.mark }))
+}
+
+// FS lens: a file-explorer view that FLIP-animates between frames. Rows present in
+// both frames slide to their new position; new rows fade in; removed rows fade out.
+// Same keyed-FLIP idea as magic-move (token keys) and d2 (node ids) — here, path keys.
+function FsTree({ tree }) {
+  const rows = useMemo(() => buildRows(tree), [tree])
+  const wrapRef = useRef(null)
+  const rects = useRef(new Map())
+  const prevRows = useRef([])
+  const [exiting, setExiting] = useState([])
+
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const now = new Map()
+    wrap.querySelectorAll('.fs-row[data-key]').forEach((el) => {
+      const key = el.dataset.key
+      const rect = el.getBoundingClientRect()
+      now.set(key, rect)
+      const prev = rects.current.get(key)
+      if (prev) {
+        const dy = prev.top - rect.top
+        if (dy) {
+          el.style.transition = 'none'
+          el.style.transform = `translateY(${dy}px)`
+          requestAnimationFrame(() => { el.style.transition = 'transform .42s cubic-bezier(.2,.7,.2,1)'; el.style.transform = '' })
+        }
+      } else {
+        el.style.transition = 'none'; el.style.opacity = '0'; el.style.transform = 'translateX(-10px)'
+        requestAnimationFrame(() => { el.style.transition = 'opacity .35s ease, transform .35s ease'; el.style.opacity = ''; el.style.transform = '' })
+      }
+    })
+    rects.current = now
+  }, [rows])
+
+  useEffect(() => {
+    const wrap = wrapRef.current
+    const nextKeys = new Set(rows.map((r) => r.key))
+    const gone = prevRows.current.filter((r) => !nextKeys.has(r.key))
+    if (gone.length && wrap) {
+      const top = wrap.getBoundingClientRect().top - wrap.scrollTop
+      setExiting(gone.map((r) => ({ ...r, y: (rects.current.get(r.key)?.top ?? 0) - top })))
+      const t = setTimeout(() => setExiting([]), 360)
+      prevRows.current = rows
+      return () => clearTimeout(t)
+    }
+    prevRows.current = rows
+  }, [rows])
+
+  const Row = (r, ghost) => (
+    <div
+      key={(ghost ? 'g-' : '') + r.key}
+      data-key={ghost ? undefined : r.key}
+      className={`fs-row${r.isDir ? ' dir' : ''}${r.mark === '*' ? ' focus' : ''}${ghost ? ' fs-ghost' : ''}`}
+      style={ghost ? { top: r.y } : { paddingLeft: 8 + r.depth * 16 }}
+    >
+      <span className="fs-ic">{r.isDir ? '▾' : '·'}</span>
+      <span className="fs-name">{r.name}</span>
+      {r.mark === '+' && <span className="fs-badge add">added</span>}
+      {r.mark === '~' && <span className="fs-badge chg">changed</span>}
+    </div>
+  )
+
+  return (
+    <div className="fstree" ref={wrapRef}>
+      {rows.map((r) => Row(r, false))}
+      {exiting.map((r) => Row(r, true))}
     </div>
   )
 }
