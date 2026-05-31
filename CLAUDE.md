@@ -38,6 +38,8 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
       precision 0.86 / recall 0.83 against rust-analyzer SCIP on this checkout.
 - [x] Ref-spine C0: v5-native `spine` ID primitives plus `_strings`, `_files`, and
       `_where_bytes` meta tables with zero sentinels.
+- [x] Ref-spine C1: source extraction now batches every text value into `_strings`
+      with stable `StringId` and normalized text, without changing DSL behavior.
 
 ### Backlog (sequenced to ADD features without adding dup)
 
@@ -55,12 +57,12 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       `insert_rows`. The ~30 other `.conn()` sites are benign (count-checks, DDL, the fixpoint
       evaluator) — leave or wrap for counting, not N+1.
 - [ ] **C — ref-spine Stage 2 remaining** (L, kills dup-shape #3 + unlocks refactor):
-      real `_strings` ingestion + `ref(string_id, file_id, lo, hi)` built-in + file-id-keyed
-      source retraction. C0 is done: `Coord`/`WhereBytes`/`StringId` math and sentinel
-      `_strings`/`_files`/`_where_bytes` tables. Next slice should feed captures/source spans
-      into the tables with INSERT-only batches; then add `normalize()`-backed fuzzy joins and
-      FTS5 trigram if needed. Do NOT port FactStore/runtime_graph/Memo/support (DD machinery
-      to exorcise).
+      `ref(string_id, file_id, lo, hi)` built-in + file-id-keyed source retraction. C0/C1
+      are done: `Coord`/`WhereBytes`/`StringId` math, sentinel `_strings`/`_files`/
+      `_where_bytes` tables, and batched `_strings` ingestion. Next slice should feed
+      captures/source spans into `_where_bytes` with INSERT-only batches; then add
+      fuzzy joins/FTS5 trigram if needed. Do NOT port FactStore/runtime_graph/Memo/support
+      (DD machinery to exorcise).
 - [x] **D — module-graph leftover**: incremental `refresh_module_rels` for `--changed`.
       Content edits refresh only touched WORK module sources; path-set/manifest changes
       fall back to the WORK rev. Parallel extraction and rev-aware relation variants are done.

@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use rayon::prelude::*;
 use regex::Regex;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -11,6 +11,7 @@ use crate::lower::{lower_query, lower_rule, tbl};
 use crate::modgraph::{self, ProjectCx, Resolution};
 use crate::scc;
 use crate::scip_import;
+use crate::spine;
 use crate::typegraph;
 
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
@@ -1381,6 +1382,7 @@ impl Engine {
 
     fn insert_source_rows_for_paths(&self, rel: &str, meta: &RelMeta, rows: &[(String, Vec<Value>)]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
+        self.insert_spine_strings(rows)?;
         let mut fact_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
         let mut prov_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
         for (path, row) in rows {
@@ -1397,6 +1399,22 @@ impl Engine {
         let inserted = self.db.insert_rows(&table, &col_refs, &fact_rows)?;
         self.db.insert_rows("_prov", &["rel", "path", "src"], &prov_rows)?;
         Ok(inserted)
+    }
+
+    fn insert_spine_strings(&self, rows: &[(String, Vec<Value>)]) -> Result<usize> {
+        let mut by_id: BTreeMap<String, (String, String)> = BTreeMap::new();
+        for (_, row) in rows {
+            for v in row {
+                let Value::Text(s) = v else { continue };
+                if s.is_empty() { continue; }
+                let id = spine::StringId::of(s).to_string();
+                by_id.entry(id).or_insert_with(|| (s.clone(), spine::normalize(s)));
+            }
+        }
+        let string_rows: Vec<Vec<Value>> = by_id.into_iter()
+            .map(|(id, (content, norm))| vec![Value::Text(id), Value::Text(content), Value::Text(norm)])
+            .collect();
+        self.db.insert_rows("_strings", &["id", "content", "norm"], &string_rows)
     }
 
     /// Enumerate (path, hash, mtime, size) for a rev. For WORK, stat each file

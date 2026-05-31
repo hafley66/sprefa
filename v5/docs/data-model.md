@@ -13,13 +13,14 @@ on the collapsed `_file` table.
   errors). Stage-1 ids are the raw rev string / content hash (no interning).
   `_file` remains the change-detection cache. See
   `plans/2026-05-30-data-model-migration-plan.md`.
-- **Stage 2a (landed on `codex/v5-refresh-type-edge`):** v5 has native spine
+- **Stage 2a/b (landed on `codex/v5-refresh-type-edge`):** v5 has native spine
   primitives for `StringId`, `FileId`, `Coord`, `RefId`, and `WhereBytesId`,
   plus internal `_strings`, `_files`, and `_where_bytes` tables with zero
-  sentinels. The tables are not queryable built-ins yet.
-- **Stage 2 remaining:** populate real strings/spans, expose queryable `ref`,
-  add file-id-keyed `_prov` retraction, and wire multi-repo config. Do the
-  cross-repo pieces when cross-repo is real.
+  sentinels. Source extraction batches real text values into `_strings`. The
+  tables are not queryable built-ins yet.
+- **Stage 2 remaining:** populate real spans, expose queryable `ref`, add
+  file-id-keyed `_prov` retraction, and wire multi-repo config. Do the cross-repo
+  pieces when cross-repo is real.
 
 ## The one idea: content is separate from location
 

@@ -36,11 +36,11 @@ fn run(dir: &Path, prog: &str) {
 #[test]
 fn spine_meta_tables_are_created_with_sentinels() {
     let d = sandbox("sentinels");
-    fs::write(d.join("src/a.rs"), "fn alpha() {}\n").unwrap();
+    fs::write(d.join("src/a.rs"), "struct AuthService;\n").unwrap();
     let prog = r#"
-rel hit(path: file).
-hit(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /fn/, line).
-? hit(path).
+rel symbol(name: text, path: file).
+symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+? symbol(name, path).
 "#;
     run(&d, prog);
 
@@ -101,6 +101,22 @@ hit(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /fn/, line
             0,
             "0".to_string(),
             "0".to_string()
+        )
+    );
+
+    let symbol_row: (String, String, String) = conn
+        .query_row(
+            "SELECT id, content, norm FROM _strings WHERE id = ?1",
+            [StringId::of("AuthService").to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        symbol_row,
+        (
+            StringId::of("AuthService").to_string(),
+            "AuthService".to_string(),
+            "authservice".to_string()
         )
     );
 }
