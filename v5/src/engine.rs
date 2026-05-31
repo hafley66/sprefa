@@ -25,8 +25,14 @@ const BUILTIN_RELS: [&str; 4] = ["repo", "rev", "content", "file"];
 /// The module-graph relations (modgraph.rs). Reserved like BUILTIN_RELS, declared
 /// every tick, but populated by `refresh_module_rels` only when the program
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
-/// the 2-col closure edge: `reaches(a,b) <- closure(module_edge).`
-const MODULE_RELS: [&str; 3] = ["module_import", "module_edge", "module_unresolved"];
+/// the 2-col convenience closure edge; `module_edge_rev` is the rev-aware form.
+const MODULE_RELS: [&str; 5] = [
+    "module_import",
+    "module_edge",
+    "module_edge_rev",
+    "module_unresolved",
+    "module_unresolved_rev",
+];
 
 /// Syntax-only Rust type graph. `kind` is edge metadata; closure(type_edge)
 /// walks the first two columns.
@@ -48,8 +54,11 @@ fn module_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "module_import".into(), cols: vec![
             c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)] },
         RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)] },
+        RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Text)] },
         RelDecl { name: "module_unresolved".into(), cols: vec![
             c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)] },
+        RelDecl { name: "module_unresolved_rev".into(), cols: vec![
+            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)] },
     ]
 }
 
@@ -834,7 +843,7 @@ impl Engine {
                     bail!("{} is a built-in relation (repo/rev/content/file); pick another name", d.name);
                 }
                 if MODULE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in module-graph relation (module_import/module_edge/module_unresolved); pick another name", d.name);
+                    bail!("{} is a built-in module-graph relation; pick another name", d.name);
                 }
                 if TYPE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in type-graph relation (type_edge); pick another name", d.name);
@@ -897,8 +906,9 @@ impl Engine {
 
     /// Rebuild the module-graph relations from the `_file` set, per rev. Reads each
     /// file's content, picks the language resolver by extension, and writes one
-    /// `module_import` row per reference plus a `module_edge(src,dst)` for resolved
-    /// project files and a `module_unresolved` for ones that should have resolved.
+    /// `module_import` row per reference plus `module_edge(src,dst)` /
+    /// `module_edge_rev(src,dst,rev)` for resolved project files and unresolved
+    /// relations for ones that should have resolved.
     /// Wholesale wipe + repopulate; gated by `module_rels_used` at the call site.
     /// Edges are resolved within a single rev (cross-rev merge is a Stage-1 corner).
     fn refresh_module_rels(&self) -> Result<()> {
@@ -916,7 +926,9 @@ impl Engine {
         let t = |s: &str| Value::Text(s.to_string());
         let mut imports: Vec<Vec<Value>> = Vec::new();
         let mut edges: Vec<Vec<Value>> = Vec::new();
+        let mut edges_rev: Vec<Vec<Value>> = Vec::new();
         let mut unresolved: Vec<Vec<Value>> = Vec::new();
+        let mut unresolved_rev: Vec<Vec<Value>> = Vec::new();
         let resolvers = modgraph::resolvers(&self.root);
         for (rev, files) in &by_rev {
             let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
@@ -932,9 +944,15 @@ impl Engine {
                         // A self-edge (e.g. `use crate::X` where X is defined in this
                         // crate root) is not a dependency; drop it so the graph and
                         // its closure have no spurious self-loops.
-                        Resolution::File(dst) if &dst != path => edges.push(vec![t(path), t(&dst)]),
+                        Resolution::File(dst) if &dst != path => {
+                            edges.push(vec![t(path), t(&dst)]);
+                            edges_rev.push(vec![t(path), t(&dst), t(rev)]);
+                        }
                         Resolution::File(_) => {}
-                        Resolution::Unresolved(reason) => unresolved.push(vec![t(path), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]),
+                        Resolution::Unresolved(reason) => {
+                            unresolved.push(vec![t(path), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
+                            unresolved_rev.push(vec![t(path), t(rev), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
+                        }
                         Resolution::External(_) => {}
                     }
                 }
@@ -942,7 +960,9 @@ impl Engine {
         }
         self.refresh_rel("module_import", &["file", "rev", "specifier", "kind", "line"], &imports)?;
         self.refresh_rel("module_edge", &["src", "dst"], &edges)?;
+        self.refresh_rel("module_edge_rev", &["src", "dst", "rev"], &edges_rev)?;
         self.refresh_rel("module_unresolved", &["file", "specifier", "reason", "line"], &unresolved)?;
+        self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &unresolved_rev)?;
         Ok(())
     }
 

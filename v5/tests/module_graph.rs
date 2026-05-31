@@ -28,6 +28,17 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
      String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
+fn git(dir: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(out.status.success(), "git {:?} failed:\nstdout={}\nstderr={}",
+        args, String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+}
+
 // A scan rule populates the file set (built-in `file`); the resolver then runs
 // over it. Module relations are unpopulated unless the program references one.
 const PROG: &str = r#"
@@ -230,4 +241,40 @@ fn edge_drops_when_target_file_deleted() {
     let _ = run(&d, PROG, &["--changed", "src/a.rs"]);
     let (_, out2, _) = run(&d, PROG, &[]);
     assert!(!out2.contains("src/lib.rs\tsrc/a.rs"), "edge must drop when a.rs gone: {out2}");
+}
+
+#[test]
+fn module_edge_rev_keeps_head_and_work_separate() {
+    let d = sandbox("rev");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/lib.rs"), "mod a;\nfn x() {}\n").unwrap();
+    fs::write(d.join("src/a.rs"), "fn x() {}\n").unwrap();
+    git(&d, &["init"]);
+    git(&d, &["config", "user.email", "test@example.com"]);
+    git(&d, &["config", "user.name", "Test User"]);
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-m", "head"]);
+
+    fs::write(d.join("src/lib.rs"), "mod b;\nfn x() {}\n").unwrap();
+    fs::remove_file(d.join("src/a.rs")).unwrap();
+    fs::write(d.join("src/b.rs"), "fn x() {}\n").unwrap();
+
+    let prog = r#"
+rel seen(path: file, rev: text).
+seen(path, rev) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path, rev) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+rel work_edge(src: text, dst: text).
+work_edge(src, dst) <- module_edge_rev(src, dst, "WORK").
+rel work_reaches(src: text, dst: text).
+work_reaches(src, dst) <- closure(work_edge).
+? module_edge_rev(s, d, r).
+? work_reaches(s, d).
+"#;
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
+    assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "HEAD edge keeps its rev: {out}");
+    assert!(out.contains("src/lib.rs\tsrc/b.rs\tWORK"), "WORK edge keeps WORK rev: {out}");
+    let work = out.split("? work_reaches").nth(1).unwrap_or("");
+    assert!(work.contains("src/lib.rs\tsrc/b.rs"), "filtered WORK closure includes b: {out}");
+    assert!(!work.contains("src/lib.rs\tsrc/a.rs"), "filtered WORK closure must not include HEAD-only a: {out}");
 }
