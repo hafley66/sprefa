@@ -6,6 +6,7 @@ pub mod lower;
 pub mod lsp;
 pub mod modgraph;
 pub mod parse;
+pub mod rspath;
 pub mod scc;
 pub mod scip_import;
 pub mod sg;
