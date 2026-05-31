@@ -10,7 +10,7 @@ logs + `plans/`. This file is the standing task ledger only.
 
 ## v5 Work — Tasks Context
 
-Branch `feat/v5-lsp-diag` (unmerged, unpushed). The recurring debt we keep re-hitting
+Active branch `codex/v5-refresh-type-edge`. The recurring debt we keep re-hitting
 has two shapes: **(1) per-row write loops (N+1)** and **(2) bespoke per-relation refresh
 functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 
@@ -36,6 +36,8 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
       `scip_edge(src,dst)` for compiler-backed graph facts.
 - [x] Honest RA oracle recall snapshot for real `v5/src`: ignored test reports
       precision 0.86 / recall 0.83 against rust-analyzer SCIP on this checkout.
+- [x] Ref-spine C0: v5-native `spine` ID primitives plus `_strings`, `_files`, and
+      `_where_bytes` meta tables with zero sentinels.
 
 ### Backlog (sequenced to ADD features without adding dup)
 
@@ -52,12 +54,13 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       (engine.rs:840-845), `save_file_meta` (765), `retract_paths` (741/749), scc insert →
       `insert_rows`. The ~30 other `.conn()` sites are benign (count-checks, DDL, the fixpoint
       evaluator) — leave or wrap for counting, not N+1.
-- [ ] **C — ref-spine Stage 2** (L, kills dup-shape #3 + unlocks refactor): `_strings` interner
-      + `ref(string_id, file_id, lo, hi)` built-in + content-derived ids (`StringId=blake3(value)`,
-      `FileId=blake3(content)`). Port `Coord`/`WhereBytes`/`StringId` math from `v4/src/lib.rs`
-      + `_strings`/`_where_bytes` from `v4/src/store.rs`; `normalize()` + FTS5 trigram from the
-      archive for cross-repo fuzzy join. Content-ids make the interner INSERT-only (no read-back
-      N+1). Do NOT port FactStore/runtime_graph/Memo/support (DD machinery to exorcise).
+- [ ] **C — ref-spine Stage 2 remaining** (L, kills dup-shape #3 + unlocks refactor):
+      real `_strings` ingestion + `ref(string_id, file_id, lo, hi)` built-in + file-id-keyed
+      source retraction. C0 is done: `Coord`/`WhereBytes`/`StringId` math and sentinel
+      `_strings`/`_files`/`_where_bytes` tables. Next slice should feed captures/source spans
+      into the tables with INSERT-only batches; then add `normalize()`-backed fuzzy joins and
+      FTS5 trigram if needed. Do NOT port FactStore/runtime_graph/Memo/support (DD machinery
+      to exorcise).
 - [x] **D — module-graph leftover**: incremental `refresh_module_rels` for `--changed`.
       Content edits refresh only touched WORK module sources; path-set/manifest changes
       fall back to the WORK rev. Parallel extraction and rev-aware relation variants are done.

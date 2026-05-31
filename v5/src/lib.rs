@@ -9,6 +9,7 @@ pub mod parse;
 pub mod scc;
 pub mod scip_import;
 pub mod sg;
+pub mod spine;
 pub mod typegraph;
 
 use anyhow::Result;

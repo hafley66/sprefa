@@ -682,7 +682,35 @@ impl Engine {
             "CREATE TABLE IF NOT EXISTS _file (path TEXT, rev TEXT, hash TEXT,
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, path TEXT, src TEXT, PRIMARY KEY (rel, path, src));
-             CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);"
+             CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
+             CREATE TABLE IF NOT EXISTS _strings (
+                 id TEXT PRIMARY KEY,
+                 content TEXT NOT NULL,
+                 norm TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS _files (
+                 id TEXT PRIMARY KEY,
+                 content_hash TEXT NOT NULL,
+                 path TEXT NOT NULL DEFAULT '',
+                 size INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS _where_bytes (
+                 id TEXT PRIMARY KEY,
+                 string_id TEXT NOT NULL,
+                 file_id TEXT NOT NULL,
+                 lo INTEGER NOT NULL,
+                 hi INTEGER NOT NULL,
+                 repo TEXT NOT NULL DEFAULT '0',
+                 rev TEXT NOT NULL DEFAULT '0'
+             );
+             CREATE INDEX IF NOT EXISTS _strings_norm_idx ON _strings(norm);
+             CREATE INDEX IF NOT EXISTS _where_bytes_string_idx ON _where_bytes(string_id);
+             CREATE INDEX IF NOT EXISTS _where_bytes_file_span_idx ON _where_bytes(file_id, lo, hi);
+             INSERT OR IGNORE INTO _strings (id, content, norm) VALUES ('0', '', '');
+             INSERT OR IGNORE INTO _files (id, content_hash, path, size)
+                 VALUES ('0', '0000000000000000000000000000000000000000000000000000000000000000', '', 0);
+             INSERT OR IGNORE INTO _where_bytes (id, string_id, file_id, lo, hi, repo, rev)
+                 VALUES ('0', '0', '0', 0, 0, '0', '0');"
         )?;
         // tolerate dbs created before mtime/size existed
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
