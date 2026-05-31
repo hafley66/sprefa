@@ -8,6 +8,7 @@ pub mod modgraph;
 pub mod parse;
 pub mod scc;
 pub mod sg;
+pub mod typegraph;
 
 use anyhow::Result;
 use std::path::PathBuf;

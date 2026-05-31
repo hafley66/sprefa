@@ -10,6 +10,7 @@ use crate::ast::*;
 use crate::lower::{lower_query, lower_rule, tbl};
 use crate::modgraph::{self, ProjectCx, Resolution};
 use crate::scc;
+use crate::typegraph;
 
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
 fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
@@ -26,6 +27,10 @@ const BUILTIN_RELS: [&str; 4] = ["repo", "rev", "content", "file"];
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
 /// the 2-col closure edge: `reaches(a,b) <- closure(module_edge).`
 const MODULE_RELS: [&str; 3] = ["module_import", "module_edge", "module_unresolved"];
+
+/// Syntax-only Rust type graph. `kind` is edge metadata; closure(type_edge)
+/// walks the first two columns.
+const TYPE_RELS: [&str; 1] = ["type_edge"];
 
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
@@ -48,10 +53,17 @@ fn module_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-/// Does the program reference any module-graph relation (body atom, closure edge,
-/// or query head)? Gates the resolver pass so unrelated programs pay nothing.
-fn module_rels_used(prog: &Program) -> bool {
-    let hit = |r: &str| MODULE_RELS.contains(&r);
+fn type_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    vec![
+        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text)] },
+    ]
+}
+
+/// Does the program reference any relation in `rels` (body atom, closure edge,
+/// or query head)? Gates lazy built-in indexers so unrelated programs pay nothing.
+fn rels_used(prog: &Program, rels: &[&str]) -> bool {
+    let hit = |r: &str| rels.contains(&r);
     for item in &prog.items {
         match item {
             Item::Rule(r) => for b in &r.body {
@@ -67,6 +79,10 @@ fn module_rels_used(prog: &Program) -> bool {
     }
     false
 }
+
+fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
+
+fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
 /// Parse a 64-char hex string into 32 bytes. Errs on wrong length or non-hex
 /// (e.g. the `''` __src default on a derived row), so the caller can skip it.
@@ -429,6 +445,7 @@ impl Engine {
         // before derived rules that may join them are rebuilt.
         self.refresh_builtin_rels()?;
         if module_rels_used(prog) { self.refresh_module_rels()?; }
+        if type_rels_used(prog) { self.refresh_type_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -542,6 +559,10 @@ impl Engine {
             if module_rels_used(prog) {
                 self.refresh_module_rels()?;
                 for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
+            }
+            if type_rels_used(prog) {
+                self.refresh_type_rels()?;
+                for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
             }
         }
         if changed_source_rels.is_empty() { changed_facts = false; }
@@ -812,6 +833,9 @@ impl Engine {
                 if MODULE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in module-graph relation (module_import/module_edge/module_unresolved); pick another name", d.name);
                 }
+                if TYPE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in type-graph relation (type_edge); pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -829,6 +853,7 @@ impl Engine {
     fn declare_builtins(&mut self) -> Result<()> {
         for d in builtin_rel_decls() { self.declare(&d)?; }
         for d in module_rel_decls() { self.declare(&d)?; }
+        for d in type_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -915,6 +940,28 @@ impl Engine {
         self.refresh_rel("module_import", &["file", "rev", "specifier", "kind", "line"], &imports)?;
         self.refresh_rel("module_edge", &["src", "dst"], &edges)?;
         self.refresh_rel("module_unresolved", &["file", "specifier", "reason", "line"], &unresolved)?;
+        Ok(())
+    }
+
+    /// Rebuild the Rust type graph from the `_file` set. This is the same L3
+    /// shape as module graph: read tracked Rust files, run a deterministic
+    /// syntax extractor, flush one built-in relation through `refresh_rel`.
+    fn refresh_type_rels(&self) -> Result<()> {
+        let mut files: Vec<(String, String)> = Vec::new();
+        {
+            let mut sel = self.db.conn().prepare("SELECT path, rev FROM _file WHERE path LIKE '%.rs'")?;
+            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            for row in rows.flatten() { files.push(row); }
+        }
+        let t = |s: &str| Value::Text(s.to_string());
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for (path, rev) in files {
+            let content = read_content(&self.root, &rev, &path).unwrap_or_default();
+            for edge in typegraph::edges(&content) {
+                rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind)]);
+            }
+        }
+        self.refresh_rel("type_edge", &["from", "to", "kind"], &rows)?;
         Ok(())
     }
 
@@ -1031,7 +1078,7 @@ impl Engine {
         for edge in edges {
             let meta = self.rels.get(*edge)
                 .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
-            if meta.cols.len() != 2 { bail!("closure edge {edge} must have 2 columns"); }
+            if meta.cols.len() < 2 { bail!("closure edge {edge} must have at least 2 columns"); }
             let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
             let (adj, names) = self.load_edges(edge, &c0, &c1)?;
             let cond = scc::build_condensed(&adj);
@@ -1134,7 +1181,7 @@ impl Engine {
         for edge in edges {
             let meta = self.rels.get(*edge)
                 .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
-            if meta.cols.len() != 2 { continue; }
+            if meta.cols.len() < 2 { continue; }
             let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
             let (adj, names) = self.load_edges(edge, &c0, &c1)?;
             let cond = scc::build_condensed(&adj);
