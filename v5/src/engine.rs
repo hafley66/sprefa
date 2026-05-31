@@ -26,12 +26,13 @@ const BUILTIN_RELS: [&str; 4] = ["repo", "rev", "content", "file"];
 /// every tick, but populated by `refresh_module_rels` only when the program
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
 /// the 2-col convenience closure edge; `module_edge_rev` is the rev-aware form.
-const MODULE_RELS: [&str; 5] = [
+const MODULE_RELS: [&str; 6] = [
     "module_import",
     "module_edge",
     "module_edge_rev",
     "module_unresolved",
     "module_unresolved_rev",
+    "crate_edge",
 ];
 
 /// Syntax-only Rust type graph. `kind` is edge metadata; closure(type_edge)
@@ -59,6 +60,7 @@ fn module_rel_decls() -> Vec<RelDecl> {
             c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)] },
         RelDecl { name: "module_unresolved_rev".into(), cols: vec![
             c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)] },
+        RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)] },
     ]
 }
 
@@ -929,11 +931,15 @@ impl Engine {
         let mut edges_rev: Vec<Vec<Value>> = Vec::new();
         let mut unresolved: Vec<Vec<Value>> = Vec::new();
         let mut unresolved_rev: Vec<Vec<Value>> = Vec::new();
+        let mut crate_edges: Vec<Vec<Value>> = Vec::new();
         let root = self.root.clone();
         let resolvers = modgraph::resolvers(&root);
         for (rev, files) in &by_rev {
             let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
             let manifests = self.collect_manifests(rev, &fileset);
+            for edge in modgraph::crate_edges(&manifests) {
+                crate_edges.push(vec![t(&edge.src), t(&edge.dst), t(edge.kind), t(rev)]);
+            }
             let cx = ProjectCx::new(&root, &fileset, &manifests);
             let batches: Vec<(Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>)> = files.par_iter().map(|(path, _hash)| {
                 let mut imports: Vec<Vec<Value>> = Vec::new();
@@ -978,6 +984,7 @@ impl Engine {
         self.refresh_rel("module_edge_rev", &["src", "dst", "rev"], &edges_rev)?;
         self.refresh_rel("module_unresolved", &["file", "specifier", "reason", "line"], &unresolved)?;
         self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &unresolved_rev)?;
+        self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &crate_edges)?;
         Ok(())
     }
 

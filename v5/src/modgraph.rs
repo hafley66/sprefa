@@ -13,7 +13,7 @@
 //! string literals never produce a phantom edge. Validated against `rust-analyzer
 //! scip` (tests/oracle_rust.rs). See plans/2026-05-30-module-resolver-trait-plan.md.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -36,6 +36,13 @@ pub struct ModuleRef {
     pub kind: &'static str,
     pub line: u32,
     pub target: Resolution,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CrateEdge {
+    pub src: String,
+    pub dst: String,
+    pub kind: &'static str,
 }
 
 /// Per-(repo,rev) context shared across a language's `edges()` calls in one
@@ -463,6 +470,39 @@ fn parse_cargo(content: &str) -> (Option<String>, Vec<(String, String)>) {
         }
     }
     (name, renames)
+}
+
+/// Workspace-internal crate dependency edges from Cargo.toml manifests.
+pub fn crate_edges(manifests: &HashMap<String, String>) -> Vec<CrateEdge> {
+    let mut packages = HashSet::new();
+    let mut deps: Vec<(String, String, &'static str)> = Vec::new();
+    for (path, content) in manifests {
+        if !path.ends_with("Cargo.toml") { continue; }
+        let Ok(val) = toml::from_str::<toml::Value>(content) else { continue };
+        let Some(src) = val.get("package").and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str()).map(|s| s.to_string()) else { continue };
+        packages.insert(src.clone());
+        for (sec, kind) in [
+            ("dependencies", "dependencies"),
+            ("dev-dependencies", "dev-dependencies"),
+            ("build-dependencies", "build-dependencies"),
+        ] {
+            let Some(table) = val.get(sec).and_then(|d| d.as_table()) else { continue };
+            for (code, spec) in table {
+                let dst = spec.as_table()
+                    .and_then(|t| t.get("package"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or(code)
+                    .to_string();
+                deps.push((src.clone(), dst, kind));
+            }
+        }
+    }
+    let mut out = BTreeSet::new();
+    for (src, dst, kind) in deps {
+        if packages.contains(&dst) && src != dst { out.insert(CrateEdge { src, dst, kind }); }
+    }
+    out.into_iter().collect()
 }
 
 /// File path -> Rust module path. None if the path has no `src/` segment.

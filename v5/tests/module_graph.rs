@@ -278,3 +278,25 @@ work_reaches(src, dst) <- closure(work_edge).
     assert!(work.contains("src/lib.rs\tsrc/b.rs"), "filtered WORK closure includes b: {out}");
     assert!(!work.contains("src/lib.rs\tsrc/a.rs"), "filtered WORK closure must not include HEAD-only a: {out}");
 }
+
+#[test]
+fn crate_edge_from_cargo_dependencies() {
+    let d = sandbox("crate_edge");
+    fs::create_dir_all(d.join("app/src")).unwrap();
+    fs::create_dir_all(d.join("core/src")).unwrap();
+    fs::write(d.join("app/Cargo.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nrenamed = { package = \"corelib\", path = \"../core\" }\n").unwrap();
+    fs::write(d.join("core/Cargo.toml"), "[package]\nname = \"corelib\"\n").unwrap();
+    fs::write(d.join("app/src/lib.rs"), "fn app() {}\n").unwrap();
+    fs::write(d.join("core/src/lib.rs"), "fn core() {}\n").unwrap();
+
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
+? crate_edge(src, dst, kind, rev).
+"#;
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
+    assert!(out.contains("app\tcorelib\tdependencies\tWORK"),
+        "Cargo package= rename dependency should be a crate_edge: {out}");
+}
