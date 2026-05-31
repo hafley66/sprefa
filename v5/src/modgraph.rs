@@ -13,9 +13,9 @@
 //! string literals never produce a phantom edge. Validated against `rust-analyzer
 //! scip` (tests/oracle_rust.rs). See plans/2026-05-30-module-resolver-trait-plan.md.
 
-use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::OnceLock;
 
 use regex::Regex;
 
@@ -46,13 +46,13 @@ pub struct ProjectCx<'a> {
     pub root: &'a Path,
     pub files: &'a HashSet<String>,
     pub manifests: &'a HashMap<String, String>,
-    rust_crates: OnceCell<RustCrates>,
-    ts_packages: OnceCell<HashMap<String, String>>,
+    rust_crates: OnceLock<RustCrates>,
+    ts_packages: OnceLock<HashMap<String, String>>,
 }
 
 impl<'a> ProjectCx<'a> {
     pub fn new(root: &'a Path, files: &'a HashSet<String>, manifests: &'a HashMap<String, String>) -> Self {
-        ProjectCx { root, files, manifests, rust_crates: OnceCell::new(), ts_packages: OnceCell::new() }
+        ProjectCx { root, files, manifests, rust_crates: OnceLock::new(), ts_packages: OnceLock::new() }
     }
 
     fn rust_crates(&self) -> &RustCrates {
@@ -75,14 +75,14 @@ impl<'a> ProjectCx<'a> {
     }
 }
 
-pub trait ModuleResolver {
+pub trait ModuleResolver: Send + Sync {
     fn exts(&self) -> &'static [&'static str];
     fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef>;
 }
 
 /// Map a file's extension to its resolver. Built per refresh (root-scoped for TS).
-pub fn resolvers(root: &Path) -> Vec<Box<dyn ModuleResolver>> {
-    let mut v: Vec<Box<dyn ModuleResolver>> = vec![Box::new(RustResolver)];
+pub fn resolvers(root: &Path) -> Vec<Box<dyn ModuleResolver + Send + Sync>> {
+    let mut v: Vec<Box<dyn ModuleResolver + Send + Sync>> = vec![Box::new(RustResolver)];
     if let Some(ts) = TsResolver::new(root) { v.push(Box::new(ts)); }
     v
 }

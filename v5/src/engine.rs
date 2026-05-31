@@ -929,33 +929,48 @@ impl Engine {
         let mut edges_rev: Vec<Vec<Value>> = Vec::new();
         let mut unresolved: Vec<Vec<Value>> = Vec::new();
         let mut unresolved_rev: Vec<Vec<Value>> = Vec::new();
-        let resolvers = modgraph::resolvers(&self.root);
+        let root = self.root.clone();
+        let resolvers = modgraph::resolvers(&root);
         for (rev, files) in &by_rev {
             let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
             let manifests = self.collect_manifests(rev, &fileset);
-            let cx = ProjectCx::new(&self.root, &fileset, &manifests);
-            for (path, _hash) in files {
+            let cx = ProjectCx::new(&root, &fileset, &manifests);
+            let batches: Vec<(Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>)> = files.par_iter().map(|(path, _hash)| {
+                let mut imports: Vec<Vec<Value>> = Vec::new();
+                let mut edges: Vec<Vec<Value>> = Vec::new();
+                let mut edges_rev: Vec<Vec<Value>> = Vec::new();
+                let mut unresolved: Vec<Vec<Value>> = Vec::new();
+                let mut unresolved_rev: Vec<Vec<Value>> = Vec::new();
                 let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
-                let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) else { continue };
-                let content = read_content(&self.root, rev, path).unwrap_or_default();
-                for mref in res.edges(path, &content, &cx) {
-                    imports.push(vec![t(path), t(rev), t(&mref.specifier), Value::Text(mref.kind.to_string()), Value::Int(mref.line as i64)]);
-                    match mref.target {
-                        // A self-edge (e.g. `use crate::X` where X is defined in this
-                        // crate root) is not a dependency; drop it so the graph and
-                        // its closure have no spurious self-loops.
-                        Resolution::File(dst) if &dst != path => {
-                            edges.push(vec![t(path), t(&dst)]);
-                            edges_rev.push(vec![t(path), t(&dst), t(rev)]);
+                if let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) {
+                    let content = read_content(&root, rev, path).unwrap_or_default();
+                    for mref in res.edges(path, &content, &cx) {
+                        imports.push(vec![t(path), t(rev), t(&mref.specifier), Value::Text(mref.kind.to_string()), Value::Int(mref.line as i64)]);
+                        match mref.target {
+                            // A self-edge (e.g. `use crate::X` where X is defined in this
+                            // crate root) is not a dependency; drop it so the graph and
+                            // its closure have no spurious self-loops.
+                            Resolution::File(dst) if &dst != path => {
+                                edges.push(vec![t(path), t(&dst)]);
+                                edges_rev.push(vec![t(path), t(&dst), t(rev)]);
+                            }
+                            Resolution::File(_) => {}
+                            Resolution::Unresolved(reason) => {
+                                unresolved.push(vec![t(path), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
+                                unresolved_rev.push(vec![t(path), t(rev), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
+                            }
+                            Resolution::External(_) => {}
                         }
-                        Resolution::File(_) => {}
-                        Resolution::Unresolved(reason) => {
-                            unresolved.push(vec![t(path), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
-                            unresolved_rev.push(vec![t(path), t(rev), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
-                        }
-                        Resolution::External(_) => {}
                     }
                 }
+                (imports, edges, edges_rev, unresolved, unresolved_rev)
+            }).collect();
+            for (bi, be, ber, bu, bur) in batches {
+                imports.extend(bi);
+                edges.extend(be);
+                edges_rev.extend(ber);
+                unresolved.extend(bu);
+                unresolved_rev.extend(bur);
             }
         }
         self.refresh_rel("module_import", &["file", "rev", "specifier", "kind", "line"], &imports)?;
