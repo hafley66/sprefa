@@ -100,6 +100,56 @@ seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
     edges
 }
 
+struct OracleStats {
+    ours: HashSet<(String, String)>,
+    ra: HashSet<(String, String)>,
+    matched: HashSet<(String, String)>,
+    precision: f64,
+    recall: f64,
+    extra: Vec<(String, String)>,
+    missed: Vec<(String, String)>,
+}
+
+fn run_ra_edges(ra: &Path, root: &Path, name: &str) -> HashSet<(String, String)> {
+    let scip_out = std::env::temp_dir().join(format!("{name}.scip"));
+    let status = Command::new(ra)
+        .args(["scip", root.to_str().unwrap(), "--output", scip_out.to_str().unwrap()])
+        .output().expect("run rust-analyzer scip");
+    assert!(scip_out.is_file(), "rust-analyzer scip produced no index: {}",
+        String::from_utf8_lossy(&status.stderr));
+
+    let bytes = std::fs::read(&scip_out).unwrap();
+    let index = Index::parse_from_bytes(&bytes).expect("parse scip");
+    ra_edges(&index)
+}
+
+fn filter_prefix(edges: HashSet<(String, String)>, prefix: Option<&str>) -> HashSet<(String, String)> {
+    match prefix {
+        Some(prefix) => edges.into_iter()
+            .filter(|(src, dst)| src.starts_with(prefix) && dst.starts_with(prefix))
+            .collect(),
+        None => edges,
+    }
+}
+
+fn compare_with_ra(ra: &Path, root: &Path, name: &str, prefix: Option<&str>) -> OracleStats {
+    let ra_edges = filter_prefix(run_ra_edges(ra, root, name), prefix);
+    let ours = filter_prefix(our_edges(root), prefix);
+    let matched: HashSet<_> = ours.intersection(&ra_edges).cloned().collect();
+    let precision = if ours.is_empty() { 1.0 } else { matched.len() as f64 / ours.len() as f64 };
+    let recall = if ra_edges.is_empty() { 1.0 } else { matched.len() as f64 / ra_edges.len() as f64 };
+    let extra: Vec<_> = ours.difference(&ra_edges).cloned().collect();
+    let missed: Vec<_> = ra_edges.difference(&ours).cloned().collect();
+    OracleStats { ours, ra: ra_edges, matched, precision, recall, extra, missed }
+}
+
+fn print_stats(label: &str, s: &OracleStats) {
+    eprintln!("[oracle:{label}] our edges={} ra edges={} matched={} precision={:.2} recall={:.2}",
+        s.ours.len(), s.ra.len(), s.matched.len(), s.precision, s.recall);
+    eprintln!("[oracle:{label}] ours not in RA: {:?}", s.extra);
+    eprintln!("[oracle:{label}] RA not in ours: {:?}", s.missed);
+}
+
 #[test]
 fn module_edge_is_subset_of_rust_analyzer() {
     let Some(ra) = find_ra() else {
@@ -111,29 +161,22 @@ fn module_edge_is_subset_of_rust_analyzer() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ra_ws");
     copy_dir(&fixture, &tmp);
 
-    let scip_out = tmp.join("index.scip");
-    let status = Command::new(&ra)
-        .args(["scip", tmp.to_str().unwrap(), "--output", scip_out.to_str().unwrap()])
-        .output().expect("run rust-analyzer scip");
-    assert!(scip_out.is_file(), "rust-analyzer scip produced no index: {}",
-        String::from_utf8_lossy(&status.stderr));
+    let stats = compare_with_ra(&ra, &tmp, "sprefa_oracle_ra_ws", None);
+    print_stats("fixture", &stats);
 
-    let bytes = std::fs::read(&scip_out).unwrap();
-    let index = Index::parse_from_bytes(&bytes).expect("parse scip");
-    let ra = ra_edges(&index);
-    let ours = our_edges(&tmp);
+    assert!(!stats.ours.is_empty(), "we produced no edges");
+    assert!(stats.extra.is_empty(), "every emitted edge must be a real RA edge; extras: {:?}", stats.extra);
+}
 
-    let inter: HashSet<_> = ours.intersection(&ra).cloned().collect();
-    let precision = if ours.is_empty() { 1.0 } else { inter.len() as f64 / ours.len() as f64 };
-    let recall = if ra.is_empty() { 1.0 } else { inter.len() as f64 / ra.len() as f64 };
-    let extra: Vec<_> = ours.difference(&ra).collect();
-    let missed: Vec<_> = ra.difference(&ours).collect();
-
-    eprintln!("[oracle] our edges={} ra edges={} matched={} precision={:.2} recall={:.2}",
-        ours.len(), ra.len(), inter.len(), precision, recall);
-    eprintln!("[oracle] ours not in RA (should be empty): {extra:?}");
-    eprintln!("[oracle] RA not in ours (diet misses): {missed:?}");
-
-    assert!(!ours.is_empty(), "we produced no edges");
-    assert!(extra.is_empty(), "every emitted edge must be a real RA edge; extras: {extra:?}");
+#[test]
+#[ignore = "manual recall snapshot over the real v5 crate; RA output includes known duplicate-symbol warnings"]
+fn real_v5_crate_recall_snapshot() {
+    let Some(ra) = find_ra() else {
+        eprintln!("SKIP oracle_rust real crate: no rust-analyzer binary (set SPREFA_RUST_ANALYZER)");
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let stats = compare_with_ra(&ra, root, "sprefa_oracle_v5_real", Some("src/"));
+    print_stats("v5-real", &stats);
+    assert!(!stats.ours.is_empty(), "we produced no edges");
 }

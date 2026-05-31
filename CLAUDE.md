@@ -28,6 +28,8 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 - [x] Module-graph polish after B/E/A: `module_edge_rev`/`module_unresolved_rev`
       for historical queries, parallel per-file resolver extraction, and `crate_edge`
       from workspace-internal Cargo dependencies.
+- [x] Honest RA oracle recall snapshot for real `v5/src`: ignored test reports
+      precision 0.86 / recall 0.83 against rust-analyzer SCIP on this checkout.
 
 ### Backlog (sequenced to ADD features without adding dup)
 
@@ -58,7 +60,7 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       add an `edit(ref_id, new_string_id)` sink (`--fix` applies, LSP rename). `ref` = import graph
       AND rewrite coordinate; v0's "reverse refs" demo IS the refactor query.
 - [x] crate-level dep edges (crate A→B from `[dependencies]`) as a relation.
-- [ ] honest recall: run the RA oracle on a real crate (toy fixture's 1.00 isn't representative).
+- [x] honest recall: run the RA oracle on a real crate (toy fixture's 1.00 isn't representative).
 - [ ] merge `feat/v5-lsp-diag` → main; push.
 
 ### Style notes for this repo
