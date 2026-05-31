@@ -1,7 +1,6 @@
 use anyhow::{bail, Result};
 use rayon::prelude::*;
 use regex::Regex;
-use rusqlite::Connection;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -307,7 +306,7 @@ fn mtime_secs(md: &std::fs::Metadata) -> i64 {
 }
 
 pub struct Engine {
-    conn: Connection,
+    db: crate::db::Db,
     rels: Rels,
     root: PathBuf,
     pub dropped: usize,
@@ -316,9 +315,9 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(conn: Connection, root: PathBuf) -> Self {
+    pub fn new(db: crate::db::Db, root: PathBuf) -> Self {
         Engine {
-            conn, rels: HashMap::new(), root, dropped: 0,
+            db, rels: HashMap::new(), root, dropped: 0,
             rev_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
         }
@@ -359,7 +358,7 @@ impl Engine {
         let select: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
         let mut sql = format!("SELECT {} FROM {}", select.join(", "), tbl("diag"));
         if only.is_some() { sql.push_str(&format!(" WHERE \"{}\" = ?1", meta.cols[pi].name)); }
-        let mut stmt = self.conn.prepare(&sql)?;
+        let mut stmt = self.db.conn().prepare(&sql)?;
         let map_row = |row: &rusqlite::Row| -> rusqlite::Result<DiagRow> {
             let text = |i: usize| row.get::<_, rusqlite::types::Value>(i)
                 .map(|v| match v {
@@ -394,6 +393,7 @@ impl Engine {
     /// derived only if a source fact changed, then run queries.
     pub fn tick(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         self.rev_cache.clear();
+        self.db.tick_begin();
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i {
             Item::Rule(r) => Some(r), _ => None,
         }).collect();
@@ -451,6 +451,7 @@ impl Engine {
             eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
             self.dropped = 0;
         }
+        self.db.tick_end();
         Ok(())
     }
 
@@ -459,6 +460,7 @@ impl Engine {
     /// tree. Only WORK source rules participate; route git-rev changes to `tick`.
     pub fn tick_paths(&mut self, prog: &Program, changed: &[PathBuf], quiet: bool) -> Result<()> {
         self.rev_cache.clear();
+        self.db.tick_begin();
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
         let closures = closure_map(&rules);
         self.declare_all(prog, &closures)?;
@@ -509,14 +511,14 @@ impl Engine {
                     changed_source_rels.insert(rule.head.rel.clone());
                 }
                 let (mt, sz) = std::fs::metadata(&abs).ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
-                self.conn.execute(
+                self.db.conn().execute(
                     "INSERT INTO _file(path, rev, hash, mtime, size) VALUES (?1, 'WORK', ?2, ?3, ?4)
                      ON CONFLICT(path, rev) DO UPDATE SET hash=excluded.hash, mtime=excluded.mtime, size=excluded.size",
                     rusqlite::params![rel, h, mt, sz])?;
                 changed_facts = true;
             } else {
                 retracted += self.retract_path(&rel, &source_rels)?;
-                self.conn.execute("DELETE FROM _file WHERE path = ?1 AND rev = 'WORK'", [&rel])?;
+                self.db.conn().execute("DELETE FROM _file WHERE path = ?1 AND rev = 'WORK'", [&rel])?;
                 for rule in &matching { changed_source_rels.insert(rule.head.rel.clone()); }
                 changed_facts = true;
             }
@@ -575,19 +577,20 @@ impl Engine {
         let cond_cache = self.build_cond_cache(&edges)?;
         for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures, &cond_cache)?; } }
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
+        self.db.tick_end();
         Ok(())
     }
 
     fn ensure_meta(&self) -> Result<()> {
-        self.conn.execute_batch(
+        self.db.conn().execute_batch(
             "CREATE TABLE IF NOT EXISTS _file (path TEXT, rev TEXT, hash TEXT,
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, path TEXT, src TEXT, PRIMARY KEY (rel, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);"
         )?;
         // tolerate dbs created before mtime/size existed
-        let _ = self.conn.execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
-        let _ = self.conn.execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
+        let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
+        let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
         Ok(())
     }
 
@@ -599,7 +602,7 @@ impl Engine {
     /// (blake3). Lets a comment-only edit (bytes move, rows don't) skip rebuild.
     fn rel_digest(&self, rel: &str) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];
-        let mut stmt = self.conn.prepare(&format!("SELECT __src FROM {}", tbl(rel)))?;
+        let mut stmt = self.db.conn().prepare(&format!("SELECT __src FROM {}", tbl(rel)))?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let src: String = row.get(0).unwrap_or_default();
@@ -611,7 +614,7 @@ impl Engine {
     }
 
     fn load_rel_digest(&self, rel: &str) -> Result<Option<[u8; 32]>> {
-        let hex: Option<String> = self.conn
+        let hex: Option<String> = self.db.conn()
             .query_row("SELECT digest FROM _reldigest WHERE rel = ?1", [rel], |r| r.get(0))
             .ok();
         Ok(hex.and_then(|h| hex_to_32(&h).ok()))
@@ -619,7 +622,7 @@ impl Engine {
 
     fn save_rel_digest(&self, rel: &str, digest: &[u8; 32]) -> Result<()> {
         let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-        self.conn.execute(
+        self.db.conn().execute(
             "INSERT INTO _reldigest(rel, digest) VALUES (?1, ?2)
              ON CONFLICT(rel) DO UPDATE SET digest = excluded.digest",
             rusqlite::params![rel, hex])?;
@@ -653,7 +656,7 @@ impl Engine {
 
     fn any_derived_empty(&self, derived_rels: &[String]) -> Result<bool> {
         for rel in derived_rels {
-            let n: i64 = self.conn.query_row(&format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
+            let n: i64 = self.db.conn().query_row(&format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
             if n == 0 { return Ok(true); }
         }
         Ok(false)
@@ -735,7 +738,7 @@ impl Engine {
     fn retract_paths(&self, paths: &[&str], source_rels: &[String]) -> Result<usize> {
         if paths.is_empty() { return Ok(0); }
         for path in paths {
-            self.conn.execute("DELETE FROM _prov WHERE path = ?1", [path])?;
+            self.db.conn().execute("DELETE FROM _prov WHERE path = ?1", [path])?;
         }
         let mut removed = 0usize;
         for rel in source_rels {
@@ -743,13 +746,13 @@ impl Engine {
                 "DELETE FROM {} WHERE __src NOT IN (SELECT src FROM _prov WHERE rel = ?1)",
                 tbl(rel)
             );
-            removed += self.conn.execute(&sql, [rel])?;
+            removed += self.db.conn().execute(&sql, [rel])?;
         }
         Ok(removed)
     }
 
     fn load_file_meta(&self) -> Result<FileMeta> {
-        let mut stmt = self.conn.prepare("SELECT path, rev, hash, mtime, size FROM _file")?;
+        let mut stmt = self.db.conn().prepare("SELECT path, rev, hash, mtime, size FROM _file")?;
         let rows = stmt.query_map([], |r| Ok((
             (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
             (r.get::<_, String>(2)?, r.get::<_, i64>(3)?, r.get::<_, i64>(4)?),
@@ -759,7 +762,7 @@ impl Engine {
 
     fn save_file_meta(&self, current: &FileMeta, prev: &FileMeta) -> Result<()> {
         for ((path, rev), (h, mt, sz)) in current {
-            self.conn.execute(
+            self.db.conn().execute(
                 "INSERT INTO _file(path, rev, hash, mtime, size) VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(path, rev) DO UPDATE SET hash = excluded.hash, mtime = excluded.mtime, size = excluded.size",
                 rusqlite::params![path, rev, h, mt, sz],
@@ -767,7 +770,7 @@ impl Engine {
         }
         for (path, rev) in prev.keys() {
             if !current.contains_key(&(path.clone(), rev.clone())) {
-                self.conn.execute("DELETE FROM _file WHERE path = ?1 AND rev = ?2", rusqlite::params![path, rev])?;
+                self.db.conn().execute("DELETE FROM _file WHERE path = ?1 AND rev = ?2", rusqlite::params![path, rev])?;
             }
         }
         Ok(())
@@ -781,7 +784,7 @@ impl Engine {
             "CREATE TABLE IF NOT EXISTS {} ({}, __src TEXT DEFAULT '', PRIMARY KEY ({}))",
             tbl(&d.name), cols.join(", "), pk.join(", ")
         );
-        self.conn.execute(&sql, [])?;
+        self.db.conn().execute(&sql, [])?;
         self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
         Ok(())
     }
@@ -792,7 +795,7 @@ impl Engine {
         for (rel, col) in auto_indexes(derived_rules, &self.rels) {
             if closures.contains_key(&rel) { continue; }
             let ix = format!("idx_{rel}_{col}");
-            self.conn.execute(
+            self.db.conn().execute(
                 &format!("CREATE INDEX IF NOT EXISTS \"{ix}\" ON {}(\"{col}\")", tbl(&rel)), [])?;
         }
         Ok(())
@@ -834,18 +837,18 @@ impl Engine {
     /// repo = one row from `--root`; rev.id/file.rev = the raw rev string;
     /// content.id = the content hash. No interning (Stage 2).
     fn refresh_builtin_rels(&self) -> Result<()> {
-        for r in BUILTIN_RELS { self.conn.execute(&format!("DELETE FROM {}", tbl(r)), [])?; }
+        for r in BUILTIN_RELS { self.db.conn().execute(&format!("DELETE FROM {}", tbl(r)), [])?; }
         let root = self.root.to_string_lossy().to_string();
         let slug = self.root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| root.clone());
-        self.conn.execute("INSERT OR IGNORE INTO rel_repo(id, slug, root) VALUES (?1, ?2, ?3)",
+        self.db.conn().execute("INSERT OR IGNORE INTO rel_repo(id, slug, root) VALUES (?1, ?2, ?3)",
             rusqlite::params![slug, slug, root])?;
-        let mut sel = self.conn.prepare("SELECT path, rev, hash FROM _file")?;
+        let mut sel = self.db.conn().prepare("SELECT path, rev, hash FROM _file")?;
         let rows: Vec<(String, String, String)> = sel
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .filter_map(|x| x.ok()).collect();
-        let mut ins_rev = self.conn.prepare("INSERT OR IGNORE INTO rel_rev(id, repo, oid, ts) VALUES (?1, ?2, ?3, 0)")?;
-        let mut ins_content = self.conn.prepare("INSERT OR IGNORE INTO rel_content(id, hash) VALUES (?1, ?1)")?;
-        let mut ins_file = self.conn.prepare("INSERT OR IGNORE INTO rel_file(repo, rev, path, content) VALUES (?1, ?2, ?3, ?4)")?;
+        let mut ins_rev = self.db.conn().prepare("INSERT OR IGNORE INTO rel_rev(id, repo, oid, ts) VALUES (?1, ?2, ?3, 0)")?;
+        let mut ins_content = self.db.conn().prepare("INSERT OR IGNORE INTO rel_content(id, hash) VALUES (?1, ?1)")?;
+        let mut ins_file = self.db.conn().prepare("INSERT OR IGNORE INTO rel_file(repo, rev, path, content) VALUES (?1, ?2, ?3, ?4)")?;
         for (path, rev, hash) in rows {
             ins_rev.execute(rusqlite::params![rev, slug, rev])?;
             ins_content.execute(rusqlite::params![hash])?;
@@ -861,22 +864,23 @@ impl Engine {
     /// Wholesale wipe + repopulate; gated by `module_rels_used` at the call site.
     /// Edges are resolved within a single rev (cross-rev merge is a Stage-1 corner).
     fn refresh_module_rels(&self) -> Result<()> {
-        for r in MODULE_RELS { self.conn.execute(&format!("DELETE FROM {}", tbl(r)), [])?; }
+        for r in MODULE_RELS { self.db.exec(&format!("DELETE FROM {}", tbl(r)))?; }
         // rev -> [(path, hash)]
         let mut by_rev: HashMap<String, Vec<(String, String)>> = HashMap::new();
         {
-            let mut sel = self.conn.prepare("SELECT path, rev, hash FROM _file")?;
+            let conn = self.db.conn();
+            let mut sel = conn.prepare("SELECT path, rev, hash FROM _file")?;
             let rows = sel.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
             for row in rows.flatten() { by_rev.entry(row.1).or_default().push((row.0, row.2)); }
         }
+        // Collect the whole graph first, then one batched insert per relation —
+        // never a write per reference (the interner-shaped N+1 this is built to avoid).
+        let t = |s: &str| Value::Text(s.to_string());
+        let mut imports: Vec<Vec<Value>> = Vec::new();
+        let mut edges: Vec<Vec<Value>> = Vec::new();
+        let mut unresolved: Vec<Vec<Value>> = Vec::new();
         let resolvers = modgraph::resolvers(&self.root);
-        let mut ins_import = self.conn.prepare(
-            "INSERT OR IGNORE INTO rel_module_import(file, rev, specifier, kind, line) VALUES (?1,?2,?3,?4,?5)")?;
-        let mut ins_edge = self.conn.prepare(
-            "INSERT OR IGNORE INTO rel_module_edge(src, dst) VALUES (?1,?2)")?;
-        let mut ins_unres = self.conn.prepare(
-            "INSERT OR IGNORE INTO rel_module_unresolved(file, specifier, reason, line) VALUES (?1,?2,?3,?4)")?;
         for (rev, files) in &by_rev {
             let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
             let manifests = self.collect_manifests(rev, &fileset);
@@ -886,19 +890,22 @@ impl Engine {
                 let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) else { continue };
                 let content = read_content(&self.root, rev, path).unwrap_or_default();
                 for mref in res.edges(path, &content, &cx) {
-                    ins_import.execute(rusqlite::params![path, rev, mref.specifier, mref.kind, mref.line as i64])?;
+                    imports.push(vec![t(path), t(rev), t(&mref.specifier), Value::Text(mref.kind.to_string()), Value::Int(mref.line as i64)]);
                     match mref.target {
                         // A self-edge (e.g. `use crate::X` where X is defined in this
                         // crate root) is not a dependency; drop it so the graph and
                         // its closure have no spurious self-loops.
-                        Resolution::File(dst) if &dst != path => { ins_edge.execute(rusqlite::params![path, dst])?; }
+                        Resolution::File(dst) if &dst != path => edges.push(vec![t(path), t(&dst)]),
                         Resolution::File(_) => {}
-                        Resolution::Unresolved(reason) => { ins_unres.execute(rusqlite::params![path, mref.specifier, reason, mref.line as i64])?; }
+                        Resolution::Unresolved(reason) => unresolved.push(vec![t(path), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]),
                         Resolution::External(_) => {}
                     }
                 }
             }
         }
+        self.db.insert_rows("rel_module_import", &["file", "rev", "specifier", "kind", "line"], &imports)?;
+        self.db.insert_rows("rel_module_edge", &["src", "dst"], &edges)?;
+        self.db.insert_rows("rel_module_unresolved", &["file", "specifier", "reason", "line"], &unresolved)?;
         Ok(())
     }
 
@@ -935,15 +942,15 @@ impl Engine {
         if d.cols.len() != 2 { bail!("closure head {} must have 2 columns", d.name); }
         self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
         let (nt, et, v) = (scc_node_tbl(edge), scc_edge_tbl(edge), tbl(&d.name));
-        self.conn.execute_batch(&format!(
+        self.db.conn().execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS {nt} (name TEXT PRIMARY KEY, comp INTEGER, cyclic INTEGER);
              CREATE TABLE IF NOT EXISTS {et} (comp_src INTEGER, comp_dst INTEGER, PRIMARY KEY(comp_src, comp_dst));"
         ))?;
         // a prior run may have left rel_<head> as a view or a real table; clear both.
-        self.conn.execute(&format!("DROP VIEW IF EXISTS {v}"), [])?;
-        self.conn.execute(&format!("DROP TABLE IF EXISTS {v}"), [])?;
+        self.db.conn().execute(&format!("DROP VIEW IF EXISTS {v}"), [])?;
+        self.db.conn().execute(&format!("DROP TABLE IF EXISTS {v}"), [])?;
         let (c0, c1) = (&d.cols[0].name, &d.cols[1].name);
-        self.conn.execute_batch(&format!(
+        self.db.conn().execute_batch(&format!(
             "CREATE VIEW {v} AS
              WITH RECURSIVE cr(a, b) AS (
                SELECT comp_src, comp_dst FROM {et}
@@ -961,7 +968,7 @@ impl Engine {
 
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.
     fn rebuild_derived(&self, derived_rules: &[&Rule], derived_rels: &[String]) -> Result<()> {
-        for rel in derived_rels { self.conn.execute(&format!("DELETE FROM {}", tbl(rel)), [])?; }
+        for rel in derived_rels { self.db.conn().execute(&format!("DELETE FROM {}", tbl(rel)), [])?; }
         // Evaluate stratum by stratum: each runs a positive (monotone) semi-naive
         // fixpoint to convergence, so a higher stratum's negation reads relations
         // that lower strata have already finished.
@@ -969,7 +976,7 @@ impl Engine {
             let mut iters = 0;
             loop {
                 let mut delta = 0usize;
-                for &ri in &group { delta += self.conn.execute(&lower_rule(derived_rules[ri], &self.rels)?, [])?; }
+                for &ri in &group { delta += self.db.conn().execute(&lower_rule(derived_rules[ri], &self.rels)?, [])?; }
                 iters += 1;
                 if delta == 0 { break; }
                 if iters > 100_000 { bail!("fixpoint did not converge"); }
@@ -980,7 +987,7 @@ impl Engine {
 
     fn any_closure_empty(&self, edges: &[&str]) -> Result<bool> {
         for edge in edges {
-            let n: i64 = self.conn.query_row(
+            let n: i64 = self.db.conn().query_row(
                 &format!("SELECT COUNT(*) FROM {}", scc_node_tbl(edge)), [], |r| r.get(0))?;
             if n == 0 { return Ok(true); }
         }
@@ -991,7 +998,7 @@ impl Engine {
     /// return adjacency + id->name. No persistent interning (see plan).
     fn load_edges(&self, edge: &str, c0: &str, c1: &str) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
         let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", tbl(edge));
-        let mut stmt = self.conn.prepare(&sql)?;
+        let mut stmt = self.db.conn().prepare(&sql)?;
         let mut intern: HashMap<String, u32> = HashMap::new();
         let mut names: Vec<String> = Vec::new();
         let mut pairs: Vec<(u32, u32)> = Vec::new();
@@ -1020,7 +1027,7 @@ impl Engine {
             let (adj, names) = self.load_edges(edge, &c0, &c1)?;
             let cond = scc::build_condensed(&adj);
             let (nt, et) = (scc_node_tbl(edge), scc_edge_tbl(edge));
-            let tx = self.conn.unchecked_transaction()?;
+            let tx = self.db.conn().unchecked_transaction()?;
             tx.execute(&format!("DELETE FROM {nt}"), [])?;
             tx.execute(&format!("DELETE FROM {et}"), [])?;
             {
@@ -1047,8 +1054,8 @@ impl Engine {
         let ph: Vec<String> = (1..=n).map(|i| format!("?{i}")).collect();
         let sql = format!("INSERT OR IGNORE INTO {} ({}, __src) VALUES ({}, ?{})",
             tbl(rel), cols.join(", "), ph.join(", "), n + 1);
-        let mut stmt = self.conn.prepare(&sql)?;
-        let mut prov = self.conn.prepare("INSERT OR IGNORE INTO _prov(rel, path, src) VALUES (?1, ?2, ?3)")?;
+        let mut stmt = self.db.conn().prepare(&sql)?;
+        let mut prov = self.db.conn().prepare("INSERT OR IGNORE INTO _prov(rel, path, src) VALUES (?1, ?2, ?3)")?;
         let mut inserted = 0usize;
         for row in rows {
             let src = row_hash(row);
@@ -1173,7 +1180,7 @@ impl Engine {
             }
         }
         let (sql, headers) = lower_query(q, &self.rels)?;
-        let mut stmt = self.conn.prepare(&sql)?;
+        let mut stmt = self.db.conn().prepare(&sql)?;
         let ncols = stmt.column_count();
         let mut rows = stmt.query([])?;
         println!("? {} => {}", q.head.rel, if headers.is_empty() { "(count)".into() } else { headers.join("\t") });
