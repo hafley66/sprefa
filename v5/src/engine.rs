@@ -429,15 +429,32 @@ impl Engine {
 
     /// Resolve a declared rev to a stable commit SHA (WORK stays WORK).
     /// Cached per tick so a moving ref is re-resolved each tick.
-    fn resolve_rev(&mut self, rev: &str) -> Result<String> {
+    fn resolve_rev(&mut self, repo_root: &Path, rev: &str) -> Result<String> {
         if rev == "WORK" { return Ok("WORK".to_string()); }
-        if let Some(s) = self.rev_cache.get(rev) { return Ok(s.clone()); }
-        let out = Command::new("git").arg("-C").arg(&self.root)
+        // Cache by (repo, rev): the same tag resolves to different shas per repo.
+        let key = format!("{}::{rev}", repo_root.display());
+        if let Some(s) = self.rev_cache.get(&key) { return Ok(s.clone()); }
+        let out = Command::new("git").arg("-C").arg(repo_root)
             .args(["rev-parse", rev]).output()?;
-        if !out.status.success() { bail!("git rev-parse {rev} failed"); }
+        if !out.status.success() { bail!("git rev-parse {rev} failed in {}", repo_root.display()); }
         let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        self.rev_cache.insert(rev.to_string(), sha.clone());
+        self.rev_cache.insert(key, sha.clone());
         Ok(sha)
+    }
+
+    /// Resolve a `scan` repo coordinate to an on-disk root. "." / "" / "self" =
+    /// the engine's own root; a config slug = that repo's root; otherwise an
+    /// existing path. (Lazy clone of an un-cloned repo is a later phase.)
+    fn resolve_repo_root(&self, repo: &str) -> Result<PathBuf> {
+        if repo.is_empty() || repo == "." || repo == "self" {
+            return Ok(self.root.clone());
+        }
+        if let Some(rc) = self.repos.iter().find(|r| r.slug == repo) {
+            return Ok(rc.root.clone());
+        }
+        let p = PathBuf::from(repo);
+        if p.exists() { return Ok(p); }
+        bail!("unknown repo {repo:?} (expected \".\", a config slug, or an existing path)")
     }
 
     pub fn run(&mut self, prog: &Program) -> Result<()> {
@@ -628,10 +645,13 @@ impl Engine {
         self.create_auto_indexes(&derived_rules, &closures)?;
 
         // WORK source rules with compiled glob matchers
+        // The incremental watcher delta covers the self repo's WORK tree only
+        // (changed paths under self.root); non-self repos scan via the full tick.
         let mut work_rules: Vec<(&Rule, globset::GlobMatcher)> = Vec::new();
         for r in &source_rules {
-            let (declared, glob, _, _) = scan_spec(r)?;
-            if declared == "WORK" { work_rules.push((*r, globset::Glob::new(&glob)?.compile_matcher())); }
+            let (repo, declared, glob, _, _) = scan_spec(r)?;
+            let is_self = repo.is_empty() || repo == "." || repo == "self";
+            if declared == "WORK" && is_self { work_rules.push((*r, globset::Glob::new(&glob)?.compile_matcher())); }
         }
 
         let prev = self.load_file_meta()?;
@@ -889,13 +909,21 @@ impl Engine {
 
         let mut current: FileMeta = HashMap::new();
         let mut rule_files: Vec<(usize, String, String, String)> = Vec::new();
+        // The repo root each source rule scans (its `scan` repo coordinate). One
+        // entry per source rule, indexed by rule idx; parse_file reads content
+        // from the matching root. (Phase 1: a program scanning >1 distinct repo
+        // shares the (path,rev)-keyed _file cache, so cross-repo lives behind the
+        // (repo,rev,path) re-key — single active repo is correct today.)
+        let mut rule_roots: Vec<PathBuf> = Vec::with_capacity(source_rules.len());
         for (idx, rule) in source_rules.iter().enumerate() {
-            let (declared, glob, _, _) = scan_spec(rule)?;
-            let rev = self.resolve_rev(&declared)?;
-            for (path, h, mt, sz) in self.enumerate_with_hash(&rev, &glob, &prev)? {
+            let (repo, declared, glob, _, _) = scan_spec(rule)?;
+            let repo_root = self.resolve_repo_root(&repo)?;
+            let rev = self.resolve_rev(&repo_root, &declared)?;
+            for (path, h, mt, sz) in self.enumerate_with_hash(&repo_root, &rev, &glob, &prev)? {
                 current.insert((path.clone(), rev.clone()), (h.clone(), mt, sz));
                 rule_files.push((idx, path, rev.clone(), h));
             }
+            rule_roots.push(repo_root);
         }
         self.rev_index = current.keys().map(|(p, r)| (r.clone(), p.clone())).collect();
 
@@ -921,8 +949,9 @@ impl Engine {
         // Parse + extract in parallel across files (CPU-bound, no DB touch),
         // then insert serially (SQLite is single-writer).
         let results: Vec<Result<(usize, String, Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)>> = {
-            let Engine { rels, rev_index, root, .. } = &*self;
+            let Engine { rels, rev_index, .. } = &*self;
             to_extract.par_iter().map(|(idx, path, rev, hash)| {
+                let root = &rule_roots[*idx];
                 let (rows, where_bytes, dropped) = parse_file(source_rules[*idx], path, rev, hash, root, rels, rev_index)?;
                 Ok((*idx, path.clone(), rows, where_bytes, dropped))
             }).collect()
@@ -1642,13 +1671,13 @@ impl Engine {
     /// and reuse the stored hash when mtime+size are unchanged (the fast-path),
     /// reading+hashing only changed files. A git rev uses the blob OID from
     /// `ls-tree`, so unchanged blobs are detected without fetching content.
-    fn enumerate_with_hash(&self, rev: &str, glob: &str, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
+    fn enumerate_with_hash(&self, repo_root: &Path, rev: &str, glob: &str, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
         let matcher = globset::Glob::new(glob)?.compile_matcher();
         if rev == "WORK" {
             let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
-            for entry in ignore::WalkBuilder::new(&self.root).hidden(false).build().flatten() {
+            for entry in ignore::WalkBuilder::new(repo_root).hidden(false).build().flatten() {
                 if !entry.path().is_file() { continue; }
-                let rel = match entry.path().strip_prefix(&self.root) { Ok(r) => r, Err(_) => continue };
+                let rel = match entry.path().strip_prefix(repo_root) { Ok(r) => r, Err(_) => continue };
                 let rel = rel.to_string_lossy().replace('\\', "/");
                 if !matcher.is_match(&rel) { continue; }
                 let (mt, sz) = entry.metadata().ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
@@ -1670,7 +1699,7 @@ impl Engine {
             // `git ls-tree -r -l <rev>` lines:
             // "<mode> <type> <oid> <size>\t<path>"
             let output = Command::new("git")
-                .arg("-C").arg(&self.root)
+                .arg("-C").arg(repo_root)
                 .args(["ls-tree", "-r", "-l", rev])
                 .output()?;
             if !output.status.success() { return Ok(Vec::new()); }
@@ -1772,10 +1801,13 @@ impl Engine {
     }
 }
 
-fn scan_spec(rule: &Rule) -> Result<(String, String, String, String)> {
+/// (repo, rev, glob, pathvar, revvar) of a source rule's `scan`. `repo` is the
+/// repo coordinate ("." = self repo); resolve it to a root via
+/// `Engine::resolve_repo_root`.
+fn scan_spec(rule: &Rule) -> Result<(String, String, String, String, String)> {
     for item in &rule.body {
-        if let BodyItem::Scan { rev, glob, path, rev_out } = item {
-            return Ok((str_of(rev)?, str_of(glob)?, var_of(path)?, var_of(rev_out)?));
+        if let BodyItem::Scan { repo, rev, glob, path, rev_out } = item {
+            return Ok((str_of(repo)?, str_of(rev)?, str_of(glob)?, var_of(path)?, var_of(rev_out)?));
         }
     }
     bail!("source rule {} missing scan", rule.head.rel)
@@ -1800,7 +1832,8 @@ fn check_type(ty: Type, v: &Value, rev: &str, root: &Path, rev_index: &HashSet<(
         return match ty {
             Type::File | Type::Path => rev_index.contains(&(rev.to_string(), p.clone())),
             Type::Dir => rev_index.iter().any(|(r, pp)| r == rev && pp.starts_with(&format!("{p}/"))),
-            Type::Text | Type::Int => true,
+            // repo/rev are coordinate values, not filesystem paths: no check here.
+            Type::Text | Type::Int | Type::Repo | Type::Rev => true,
         };
     }
     let full = root.join(p);
@@ -1808,7 +1841,7 @@ fn check_type(ty: Type, v: &Value, rev: &str, root: &Path, rev_index: &HashSet<(
         Type::File => full.is_file(),
         Type::Dir => full.is_dir(),
         Type::Path => full.exists(),
-        Type::Text | Type::Int => true,
+        Type::Text | Type::Int | Type::Repo | Type::Rev => true,
     }
 }
 
@@ -1834,7 +1867,7 @@ fn parse_file(
     rule: &Rule, path: &str, rev: &str, hash: &str,
     root: &Path, rels: &Rels, rev_index: &HashSet<(String, String)>,
 ) -> Result<(Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)> {
-    let (_, _, pathvar, revvar) = scan_spec(rule)?;
+    let (_, _, _, pathvar, revvar) = scan_spec(rule)?;
     let cmps: Vec<&Constraint> = rule.body.iter()
         .filter_map(|i| if let BodyItem::Cmp(c) = i { Some(c) } else { None }).collect();
     let content = read_content(root, rev, path).unwrap_or_default();

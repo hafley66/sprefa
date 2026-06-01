@@ -111,11 +111,17 @@ The repo coordinate proper is a **typed `scan` argument** (Phase 1), defaulting 
 self repo when omitted and naming a slug/var for cross-repo — composes by join, no
 keyword. **Immediately usable.**
 
-**Phase 1 — repo coordinate threads (S, the spike, single active repo/tick).**
-5-ary `scan(REPO,REV,GLOB,path,rev)` (4-ary ⇒ `"."`); repo-aware `resolve_rev` /
-`enumerate_with_hash` / `read_content` take `&RepoRoot`. Still one repo ingested per
-tick (no `_file` collision). Proves the coordinate end-to-end against a second config
-repo + an off-disk rev. **Usable for "scan rev T of repo R" one repo at a time.**
+**Phase 1 — repo coordinate threads — DONE 2026-06-01.**
+`Type::Repo`/`Type::Rev` reified (both map to TEXT in SQL). 5-ary
+`scan(repo, rev, glob, path, rev)` parses; 4-ary defaults `repo` to `"."`.
+`Engine::resolve_repo_root` maps `"."`/slug/path → root; `resolve_rev` (cache keyed
+`(repo,rev)`) + `enumerate_with_hash` take a `&Path` root; `reconcile_sources` resolves a
+root per source rule (`rule_roots[idx]`) and threads it into the parallel `parse_file`.
+tick_paths watcher stays self/WORK only. Verified: `scan(".", "HEAD", "v5/src/repo.rs", …)`
+finds the file at the committed rev (off-disk, no checkout); at `HEAD~5` returns 0 rows
+(repo.rs didn't exist yet → rev coordinate reads real history); unknown slug errors loudly.
+79/0/1, 0 warnings. STILL single-repo-per-tick: a program scanning >1 distinct repo shares
+the `(path,rev)`-keyed `_file`, so cross-repo queries wait on Phase 2.
 
 **Phase 2 — `(repo,rev,path)` re-key (M, the real work).**
 `_file`/`_prov`/`retract`/`check_type`/`file_meta` re-keyed; `refresh_builtin_rels`

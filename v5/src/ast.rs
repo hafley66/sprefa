@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Type { Text, Int, Path, File, Dir }
+pub enum Type { Text, Int, Path, File, Dir, Repo, Rev }
 
 impl Type {
     pub fn sql(self) -> &'static str {
@@ -14,6 +14,10 @@ impl Type {
             "path" => Type::Path,
             "file" => Type::File,
             "dir" => Type::Dir,
+            // The top two data-model layers, reified as types: a repo coordinate
+            // (config slug / path / "." self) and a rev coordinate (git rev).
+            "repo" => Type::Repo,
+            "rev" => Type::Rev,
             _ => return None,
         })
     }
@@ -70,7 +74,7 @@ pub struct Constraint { pub lhs: Term, pub op: CmpOp, pub rhs: Term }
 pub enum BodyItem {
     Pos(Atom),
     Neg(Atom),
-    Scan { rev: Term, glob: Term, path: Term, rev_out: Term },
+    Scan { repo: Term, rev: Term, glob: Term, path: Term, rev_out: Term },
     Match { path: Term, rev: Term, regex: String, line: Term },
     Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term> },
     Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term,

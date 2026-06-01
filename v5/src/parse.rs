@@ -136,12 +136,23 @@ impl Parser {
     fn scan(&mut self) -> Result<BodyItem> {
         self.ident()?; // scan
         self.expect(Tok::LParen)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
-        let glob = self.term()?; self.expect(Tok::Comma)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev_out = self.term()?;
+        // Comma-separated terms. 4-ary `scan(rev, glob, path, rev_out)` defaults
+        // the repo to "." (self); 5-ary `scan(repo, rev, glob, path, rev_out)`
+        // names a repo coordinate (slug / path / ".") that flows as a value.
+        let mut terms = vec![self.term()?];
+        while matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?; // ,
+            terms.push(self.term()?);
+        }
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Scan { rev, glob, path, rev_out })
+        let (repo, rev, glob, path, rev_out) = match terms.len() {
+            4 => { let mut t = terms.into_iter();
+                (Term::Str(".".into()), t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
+            5 => { let mut t = terms.into_iter();
+                (t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
+            n => bail!("scan expects 4 args (rev, glob, path, rev) or 5 (repo, rev, glob, path, rev), got {n}"),
+        };
+        Ok(BodyItem::Scan { repo, rev, glob, path, rev_out })
     }
 
     fn match_(&mut self) -> Result<BodyItem> {
