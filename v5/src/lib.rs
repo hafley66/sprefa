@@ -172,7 +172,12 @@ pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Re
 /// back at the same byte coordinate. Dry-run by default (prints the planned
 /// edits); `--fix` writes the files. Does NOT move the file on disk or fix the
 /// moved file's own relative imports — those are separate steps.
-pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool) -> Result<()> {
+/// Auto-refactor driver. `repo` selects which repo to rewrite: `None` = the
+/// `--root` repo (self); a config slug = that repo (cloned if needed); `"*"` /
+/// `"all"` = every configured repo. Each target repo is processed in isolation
+/// (its own engine scanning its own root), so the use-path resolver and located
+/// spans are self-correct for that repo and never cross-contaminate.
+pub fn run_move(db_path: Option<&str>, root: PathBuf, repo: Option<String>, mv: Vec<String>, fix: bool) -> Result<()> {
     // Parse OLD=NEW file-move specs.
     let moves: Vec<(String, String)> = mv.iter().map(|s| {
         let (old, new) = s.split_once('=')
@@ -180,6 +185,38 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
         Ok((old.trim().to_string(), new.trim().to_string()))
     }).collect::<Result<_>>()?;
 
+    // Resolve the target repos to rewrite.
+    let targets: Vec<(String, PathBuf)> = match repo.as_deref() {
+        None | Some("") | Some(".") | Some("self") => vec![("self".to_string(), root.clone())],
+        Some("*") | Some("all") => {
+            let repos = load_repos();
+            if repos.is_empty() { anyhow::bail!("--repo \"*\" needs a config with [[repos]]"); }
+            repos.iter().map(|rc| {
+                engine::Engine::ensure_cloned(rc)?;
+                Ok((rc.slug.clone(), rc.root.clone()))
+            }).collect::<Result<_>>()?
+        }
+        Some(slug) => {
+            let repos = load_repos();
+            let rc = repos.iter().find(|r| r.slug == slug)
+                .ok_or_else(|| anyhow::anyhow!("--repo {slug:?} is not a configured repo slug"))?;
+            engine::Engine::ensure_cloned(rc)?;
+            vec![(rc.slug.clone(), rc.root.clone())]
+        }
+    };
+
+    let multi = targets.len() > 1;
+    for (label, troot) in targets {
+        if multi { eprintln!("[move] repo {label} ({})", troot.display()); }
+        // A file db is only safe for a single target; fan-out gets a transient
+        // in-memory db per repo so their `_file` caches don't clobber each other.
+        let conn = db::open(if multi { None } else { db_path })?;
+        move_one_repo(conn, troot, &moves, fix)?;
+    }
+    Ok(())
+}
+
+fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: bool) -> Result<()> {
     // Scan-only source rule populates `_file` with no capture spans; referencing
     // `module_import` drives the resolver, so `_where_bytes` holds only use refs.
     let prog_src = "rel _src(p: file).\n\
@@ -187,7 +224,6 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
         rel _mi(f: text, rev: text, spec: text, kind: text, ln: int).\n\
         _mi(f, rev, spec, kind, ln) <- module_import(f, rev, spec, kind, ln).\n";
     let prog = parse::parse(lex::lex(prog_src)?)?;
-    let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
     eng.tick(&prog, true)?;
 
@@ -199,7 +235,7 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
     // Loud, not silent: a move whose endpoints resolve to no crate root at all
     // (outside `src/` AND outside any discovered root) can't be turned into a
     // module path. Say why instead of reporting a clean no-op.
-    for (old, new) in &moves {
+    for (old, new) in moves {
         if rspath::file_to_mod_path_rooted(old, &roots).is_none()
             || rspath::file_to_mod_path_rooted(new, &roots).is_none()
         {
@@ -211,7 +247,7 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
     // Each located use span -> the first move that rewrites it.
     let mut edits: Vec<refactor::Edit> = Vec::new();
     for (path, lo, hi, text) in eng.located_spans()? {
-        for (old, new) in &moves {
+        for (old, new) in moves {
             if let Some(new_text) = rspath::rewrite_import_rooted(&path, old, new, &text, &roots) {
                 if new_text != text {
                     edits.push(refactor::Edit { path, lo, hi, old_text: text, new_text });

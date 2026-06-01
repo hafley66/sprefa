@@ -64,3 +64,57 @@ fn move_with_no_matching_refs_is_a_noop() {
     assert_eq!(code, 0);
     assert!(err.contains("no use-path references to rewrite"), "no-op reported: {err}");
 }
+
+/// `--repo "*"` fans the move out over every config repo, rewriting each repo's
+/// own references against its own root; `--repo <slug>` scopes to one.
+#[test]
+fn move_repo_star_fans_out_and_slug_scopes() {
+    let d = sandbox("repos");
+    for slug in ["ra", "rb"] {
+        let r = d.join(slug);
+        fs::create_dir_all(r.join("src")).unwrap();
+        fs::write(r.join("src/lib.rs"), "pub mod clk;\npub mod cpufreq;\n").unwrap();
+        fs::write(r.join("src/clk.rs"), "pub struct Clk;\n").unwrap();
+        fs::write(r.join("src/cpufreq.rs"), "use crate::clk::Clk;\npub fn f(_: Clk) {}\n").unwrap();
+    }
+    fs::write(d.join("cfg.toml"), format!("\
+        [[repos]]\nslug = \"ra\"\nroot = \"{a}\"\n\
+        [[repos]]\nslug = \"rb\"\nroot = \"{b}\"\n",
+        a = d.join("ra").display(), b = d.join("rb").display())).unwrap();
+
+    let run = |args: &[&str]| {
+        let out = Command::new(DL).args(args)
+            .env("SPREFA_CONFIG", d.join("cfg.toml"))
+            .output().expect("run dl --move");
+        (out.status.code().unwrap_or(-1),
+         String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+
+    // --repo ra --fix: only ra is rewritten, rb untouched.
+    let (code, _err) = run(&["--repo", "ra", "--move", "src/clk.rs=src/hw/clk.rs", "--fix"]);
+    assert_eq!(code, 0);
+    assert!(fs::read_to_string(d.join("ra/src/cpufreq.rs")).unwrap().contains("crate::hw::clk::Clk"),
+        "ra rewritten");
+    assert!(fs::read_to_string(d.join("rb/src/cpufreq.rs")).unwrap().contains("crate::clk::Clk"),
+        "rb untouched by --repo ra");
+
+    // --repo "*" --fix: rb now rewritten too (ra already done, idempotent).
+    let (code, err) = run(&["--repo", "*", "--move", "src/clk.rs=src/hw/clk.rs", "--fix"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("repo ra") && err.contains("repo rb"), "fan-out names both repos: {err}");
+    assert!(fs::read_to_string(d.join("rb/src/cpufreq.rs")).unwrap().contains("crate::hw::clk::Clk"),
+        "rb rewritten by --repo *");
+}
+
+/// An unknown `--repo` slug is a loud error, not a silent no-op.
+#[test]
+fn move_unknown_repo_slug_errors() {
+    let d = sandbox("badrepo");
+    fs::write(d.join("cfg.toml"), "[[repos]]\nslug = \"ra\"\nroot = \"/tmp/ra\"\n").unwrap();
+    let out = Command::new(DL)
+        .args(["--repo", "nope", "--move", "a=b"])
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .output().expect("run dl --move");
+    assert!(!out.status.success(), "unknown slug fails");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not a configured repo slug"));
+}

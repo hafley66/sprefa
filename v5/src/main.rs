@@ -35,6 +35,10 @@ struct Cli {
     /// Repeatable. Ignores the `program` positional.
     #[arg(long = "move")]
     move_: Vec<String>,
+    /// With --move, which repo to rewrite: a config slug, or `*`/`all` for every
+    /// configured repo. Omitted = the --root repo (self).
+    #[arg(long)]
+    repo: Option<String>,
     /// With --move, write the rewritten files instead of previewing.
     #[arg(long)]
     fix: bool,
@@ -59,7 +63,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = resolve_root(&cli)?;
     if !cli.move_.is_empty() {
-        return sprefa_v5::run_move(cli.db.as_deref(), root, cli.move_, cli.fix);
+        return sprefa_v5::run_move(cli.db.as_deref(), root, cli.repo, cli.move_, cli.fix);
     }
     let program = cli.program.ok_or_else(|| anyhow::anyhow!("a .dl program path is required"))?;
     if cli.lsp {

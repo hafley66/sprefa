@@ -457,7 +457,7 @@ impl Engine {
             return Ok((self.self_slug(), self.root.clone()));
         }
         if let Some(rc) = self.repos.iter().find(|r| r.slug == repo) {
-            self.ensure_cloned(rc)?;
+            Self::ensure_cloned(rc)?;
             return Ok((rc.slug.clone(), rc.root.clone()));
         }
         let p = PathBuf::from(repo);
@@ -473,7 +473,7 @@ impl Engine {
     /// its `url` (full clone — pinned `(repo, rev)` scans stay deterministic by
     /// OID once cloned). No-op when the root already exists; an error when the
     /// root is missing and no `url` is configured.
-    fn ensure_cloned(&self, rc: &crate::config::RepoConfig) -> Result<()> {
+    pub fn ensure_cloned(rc: &crate::config::RepoConfig) -> Result<()> {
         if rc.root.exists() { return Ok(()); }
         let Some(url) = rc.url.as_deref() else {
             bail!("repo {:?} root {} does not exist and no url is configured to clone it",
@@ -500,7 +500,7 @@ impl Engine {
             }
             let mut out = Vec::with_capacity(self.repos.len());
             for rc in &self.repos {
-                self.ensure_cloned(rc)?;
+                Self::ensure_cloned(rc)?;
                 out.push((rc.slug.clone(), rc.root.clone()));
             }
             return Ok(out);
