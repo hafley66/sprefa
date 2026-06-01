@@ -352,8 +352,9 @@ fn stratify(rules: &[&Rule]) -> Result<Vec<Vec<usize>>> {
 }
 
 type Bind = HashMap<String, Value>;
-/// (path, rev) -> (content hash, mtime secs, size bytes)
-type FileMeta = HashMap<(String, String), (String, i64, i64)>;
+/// (repo slug, path, rev) -> (content hash, mtime secs, size bytes). The repo
+/// slug is the third coordinate so two repos sharing a path do not collide.
+type FileMeta = HashMap<(String, String, String), (String, i64, i64)>;
 
 struct Reconcile { changed: bool, extracted: usize, retracted: usize, parsed: usize, total: usize }
 
@@ -403,7 +404,10 @@ pub struct Engine {
     root: PathBuf,
     pub dropped: usize,
     rev_cache: HashMap<String, String>,
-    rev_index: std::collections::HashSet<(String, String)>,
+    /// (repo slug, rev, path) of every tracked source file this tick — the
+    /// existence oracle for `:file`/`:path`/`:dir` type checks against off-disk
+    /// revs (where the filesystem cannot answer).
+    rev_index: std::collections::HashSet<(String, String, String)>,
     /// Repos registered via the turnkey config. When non-empty the `repo`
     /// relation lists these instead of the single `--root`. Reloaded by the
     /// watcher when the config file changes. (File ingestion from the extra
@@ -442,19 +446,32 @@ impl Engine {
         Ok(sha)
     }
 
-    /// Resolve a `scan` repo coordinate to an on-disk root. "." / "" / "self" =
-    /// the engine's own root; a config slug = that repo's root; otherwise an
-    /// existing path. (Lazy clone of an un-cloned repo is a later phase.)
-    fn resolve_repo_root(&self, repo: &str) -> Result<PathBuf> {
+    /// Resolve a `scan` repo coordinate to `(slug, root)`. The slug is the
+    /// repo's stable identity in the `_file` cache and the `repo`/`rev`/`file`
+    /// relations (the third coordinate alongside path+rev). "." / "" / "self" =
+    /// this engine's own repo (slug = root dir name); a config slug names that
+    /// repo; otherwise an existing path (slug = its dir name). (Lazy clone of an
+    /// un-cloned repo is a later phase.)
+    fn resolve_repo(&self, repo: &str) -> Result<(String, PathBuf)> {
         if repo.is_empty() || repo == "." || repo == "self" {
-            return Ok(self.root.clone());
+            return Ok((self.self_slug(), self.root.clone()));
         }
         if let Some(rc) = self.repos.iter().find(|r| r.slug == repo) {
-            return Ok(rc.root.clone());
+            return Ok((rc.slug.clone(), rc.root.clone()));
         }
         let p = PathBuf::from(repo);
-        if p.exists() { return Ok(p); }
+        if p.exists() {
+            let slug = p.file_name().map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| repo.to_string());
+            return Ok((slug, p));
+        }
         bail!("unknown repo {repo:?} (expected \".\", a config slug, or an existing path)")
+    }
+
+    /// Stable slug for this engine's own repo: the `--root` directory name.
+    fn self_slug(&self) -> String {
+        self.root.file_name().map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.root.to_string_lossy().to_string())
     }
 
     pub fn run(&mut self, prog: &Program) -> Result<()> {
@@ -664,6 +681,9 @@ impl Engine {
         let mut seen: HashSet<String> = HashSet::new();
         let wants_module_rels = module_rels_used(prog);
         let wants_scip_rels = scip_rels_used(prog);
+        // The watcher only watches this engine's own `--root`, so every
+        // incrementally-changed file belongs to the self repo.
+        let slug = self.self_slug();
 
         for p in changed {
             let rel = match p.strip_prefix(&self.root) { Ok(r) => r.to_string_lossy().replace('\\', "/"), Err(_) => continue };
@@ -679,37 +699,37 @@ impl Engine {
             if abs.is_file() {
                 let bytes = std::fs::read(&abs).unwrap_or_default();
                 let h = blake3::hash(&bytes).to_hex().to_string();
-                if prev.get(&(rel.clone(), "WORK".to_string())).map(|t| &t.0) == Some(&h) { continue; }
-                if prev.contains_key(&(rel.clone(), "WORK".to_string())) {
+                if prev.get(&(slug.clone(), rel.clone(), "WORK".to_string())).map(|t| &t.0) == Some(&h) { continue; }
+                if prev.contains_key(&(slug.clone(), rel.clone(), "WORK".to_string())) {
                     module_delta_paths.insert(rel.clone());
                 } else {
                     module_full_work = true;
                 }
-                retracted += self.retract_path(&rel, &source_rels)?;
+                retracted += self.retract_path(&slug, &rel, &source_rels)?;
                 // Collect located spans across every matching rule for this file and
                 // flush once after the loop (one `bump()`), not per-rule. Per-rule
                 // flushing trips the N+1 screamer once enough files change.
                 let mut where_rows: Vec<(String, spine::WhereBytes)> = Vec::new();
                 for rule in &matching {
-                    let (rows, where_bytes, dropped) = parse_file(rule, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index)?;
+                    let (rows, where_bytes, dropped) = parse_file(rule, &slug, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index)?;
                     self.dropped += dropped;
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
-                    extracted += self.insert_source_rows(&rule.head.rel, &meta, &rel, &rows)?;
+                    extracted += self.insert_source_rows(&rule.head.rel, &meta, &slug, &rel, &rows)?;
                     where_rows.extend(where_bytes.into_iter().map(|w| (rel.clone(), w)));
                     changed_source_rels.insert(rule.head.rel.clone());
                 }
                 self.insert_spine_where_bytes(&where_rows)?;
                 let (mt, sz) = std::fs::metadata(&abs).ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
                 self.db.conn().execute(
-                    "INSERT INTO _file(path, rev, hash, mtime, size) VALUES (?1, 'WORK', ?2, ?3, ?4)
-                     ON CONFLICT(path, rev) DO UPDATE SET hash=excluded.hash, mtime=excluded.mtime, size=excluded.size",
-                    rusqlite::params![rel, h, mt, sz])?;
+                    "INSERT INTO _file(repo, path, rev, hash, mtime, size) VALUES (?1, ?2, 'WORK', ?3, ?4, ?5)
+                     ON CONFLICT(repo, path, rev) DO UPDATE SET hash=excluded.hash, mtime=excluded.mtime, size=excluded.size",
+                    rusqlite::params![slug, rel, h, mt, sz])?;
                 changed_facts = true;
             } else {
-                if prev.contains_key(&(rel.clone(), "WORK".to_string())) { module_full_work = true; }
-                retracted += self.retract_path(&rel, &source_rels)?;
-                self.db.conn().execute("DELETE FROM _file WHERE path = ?1 AND rev = 'WORK'", [&rel])?;
+                if prev.contains_key(&(slug.clone(), rel.clone(), "WORK".to_string())) { module_full_work = true; }
+                retracted += self.retract_path(&slug, &rel, &source_rels)?;
+                self.db.conn().execute("DELETE FROM _file WHERE repo = ?1 AND path = ?2 AND rev = 'WORK'", [&slug, &rel])?;
                 for rule in &matching { changed_source_rels.insert(rule.head.rel.clone()); }
                 changed_facts = true;
             }
@@ -792,9 +812,9 @@ impl Engine {
 
     fn ensure_meta(&self) -> Result<()> {
         self.db.conn().execute_batch(
-            "CREATE TABLE IF NOT EXISTS _file (path TEXT, rev TEXT, hash TEXT,
-                 mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (path, rev));
-             CREATE TABLE IF NOT EXISTS _prov (rel TEXT, path TEXT, src TEXT, PRIMARY KEY (rel, path, src));
+            "CREATE TABLE IF NOT EXISTS _file (repo TEXT NOT NULL DEFAULT '', path TEXT, rev TEXT, hash TEXT,
+                 mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (repo, path, rev));
+             CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
              CREATE TABLE IF NOT EXISTS _strings (
                  id TEXT PRIMARY KEY,
@@ -832,6 +852,34 @@ impl Engine {
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
         // tolerate _where_bytes created before the path attribution column existed
         let _ = self.db.conn().execute("ALTER TABLE _where_bytes ADD COLUMN path TEXT NOT NULL DEFAULT ''", []);
+        // Re-key `_file` and `_prov` on (repo, ...) for dbs that predate the repo
+        // coordinate. SQLite can't ALTER a PK, so rebuild: every old row is this
+        // engine's own repo (the only one ever ingested before Phase 2), so stamp
+        // its slug. The next reconcile wipes+rewrites `_file` anyway; stamping the
+        // real slug keeps that tick's prev/current keys matching (no false churn).
+        let slug = self.self_slug();
+        if !self.column_exists("_file", "repo")? {
+            self.db.conn().execute_batch(&format!(
+                "ALTER TABLE _file RENAME TO _file_old;
+                 CREATE TABLE _file (repo TEXT NOT NULL DEFAULT '', path TEXT, rev TEXT, hash TEXT,
+                     mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (repo, path, rev));
+                 INSERT INTO _file (repo, path, rev, hash, mtime, size)
+                     SELECT '{s}', path, rev, hash, mtime, size FROM _file_old;
+                 DROP TABLE _file_old;",
+                s = slug.replace('\'', "''"),
+            ))?;
+        }
+        if !self.column_exists("_prov", "repo")? {
+            self.db.conn().execute_batch(&format!(
+                "ALTER TABLE _prov RENAME TO _prov_old;
+                 CREATE TABLE _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT,
+                     PRIMARY KEY (rel, repo, path, src));
+                 INSERT INTO _prov (rel, repo, path, src)
+                     SELECT rel, '{s}', path, src FROM _prov_old;
+                 DROP TABLE _prov_old;",
+                s = slug.replace('\'', "''"),
+            ))?;
+        }
         Ok(())
     }
 
@@ -841,6 +889,16 @@ impl Engine {
     /// commutative + associative, so insert order does not matter. All-zero ⇒
     /// empty relation. Same row set ⇒ same digest; different rows ⇒ different
     /// (blake3). Lets a comment-only edit (bytes move, rows don't) skip rebuild.
+    /// Does `table` already have a column named `col`? Used to gate one-shot
+    /// schema migrations (a fresh db gets the new schema from `CREATE TABLE IF
+    /// NOT EXISTS`; an old db keeps its columns and needs the rebuild).
+    fn column_exists(&self, table: &str, col: &str) -> Result<bool> {
+        let n: i64 = self.db.conn().query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name = ?1", table.replace('\'', "''")),
+            [col], |r| r.get(0))?;
+        Ok(n > 0)
+    }
+
     fn rel_digest(&self, rel: &str) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];
         let mut stmt = self.db.conn().prepare(&format!("SELECT __src FROM {}", tbl(rel)))?;
@@ -908,64 +966,73 @@ impl Engine {
         let prev = self.load_file_meta()?;
 
         let mut current: FileMeta = HashMap::new();
-        let mut rule_files: Vec<(usize, String, String, String)> = Vec::new();
-        // The repo root each source rule scans (its `scan` repo coordinate). One
-        // entry per source rule, indexed by rule idx; parse_file reads content
-        // from the matching root. (Phase 1: a program scanning >1 distinct repo
-        // shares the (path,rev)-keyed _file cache, so cross-repo lives behind the
-        // (repo,rev,path) re-key — single active repo is correct today.)
-        let mut rule_roots: Vec<PathBuf> = Vec::with_capacity(source_rules.len());
+        // (rule idx, repo slug, path, rev, hash) for every enumerated file.
+        let mut rule_files: Vec<(usize, String, String, String, String)> = Vec::new();
+        // The repo (slug, root) each source rule scans (its `scan` repo
+        // coordinate). One entry per source rule, indexed by rule idx; parse_file
+        // reads content from the matching root and stamps the slug so two repos
+        // sharing a path stay distinct in `_file`/`_prov`.
+        let mut rule_repos: Vec<(String, PathBuf)> = Vec::with_capacity(source_rules.len());
         for (idx, rule) in source_rules.iter().enumerate() {
             let (repo, declared, glob, _, _) = scan_spec(rule)?;
-            let repo_root = self.resolve_repo_root(&repo)?;
+            let (slug, repo_root) = self.resolve_repo(&repo)?;
             let rev = self.resolve_rev(&repo_root, &declared)?;
-            for (path, h, mt, sz) in self.enumerate_with_hash(&repo_root, &rev, &glob, &prev)? {
-                current.insert((path.clone(), rev.clone()), (h.clone(), mt, sz));
-                rule_files.push((idx, path, rev.clone(), h));
+            for (path, h, mt, sz) in self.enumerate_with_hash(&slug, &repo_root, &rev, &glob, &prev)? {
+                current.insert((slug.clone(), path.clone(), rev.clone()), (h.clone(), mt, sz));
+                rule_files.push((idx, slug.clone(), path, rev.clone(), h));
             }
-            rule_roots.push(repo_root);
+            rule_repos.push((slug, repo_root));
         }
-        self.rev_index = current.keys().map(|(p, r)| (r.clone(), p.clone())).collect();
+        self.rev_index = current.keys().map(|(repo, p, r)| (repo.clone(), r.clone(), p.clone())).collect();
 
-        let hash_of = |m: &FileMeta, p: &str, r: &str| m.get(&(p.to_string(), r.to_string())).map(|t| t.0.clone());
+        let hash_of = |m: &FileMeta, repo: &str, p: &str, r: &str|
+            m.get(&(repo.to_string(), p.to_string(), r.to_string())).map(|t| t.0.clone());
 
-        let mut to_retract: HashSet<String> = HashSet::new();
-        for ((path, rev), (h, _, _)) in &current {
-            if hash_of(&prev, path, rev).as_ref() != Some(h) { to_retract.insert(path.clone()); }
+        // Retraction key is (repo, path): `_prov` prunes by that pair, so two
+        // repos at the same path do not retract each other's source rows.
+        let mut to_retract: HashSet<(String, String)> = HashSet::new();
+        for ((repo, path, rev), (h, _, _)) in &current {
+            if hash_of(&prev, repo, path, rev).as_ref() != Some(h) {
+                to_retract.insert((repo.clone(), path.clone()));
+            }
         }
-        for key in prev.keys() {
-            if !current.contains_key(key) { to_retract.insert(key.0.clone()); }
+        for (repo, path, _rev) in prev.keys() {
+            if !current.contains_key(&(repo.clone(), path.clone(), _rev.clone())) {
+                to_retract.insert((repo.clone(), path.clone()));
+            }
         }
 
-        let retract_list: Vec<&str> = to_retract.iter().map(|s| s.as_str()).collect();
+        let retract_list: Vec<(&str, &str)> = to_retract.iter()
+            .map(|(repo, p)| (repo.as_str(), p.as_str())).collect();
         let retracted = self.retract_paths(&retract_list, source_rels)?;
 
-        let to_extract: Vec<(usize, String, String, String)> = rule_files.iter()
-            .filter(|(_, p, r, h)| hash_of(&prev, p, r).as_ref() != Some(h))
-            .map(|(idx, p, r, h)| (*idx, p.clone(), r.clone(), h.clone()))
+        let to_extract: Vec<(usize, String, String, String, String)> = rule_files.iter()
+            .filter(|(_, repo, p, r, h)| hash_of(&prev, repo, p, r).as_ref() != Some(h))
+            .map(|(idx, repo, p, r, h)| (*idx, repo.clone(), p.clone(), r.clone(), h.clone()))
             .collect();
         let parsed = to_extract.len();
 
         // Parse + extract in parallel across files (CPU-bound, no DB touch),
         // then insert serially (SQLite is single-writer).
-        let results: Vec<Result<(usize, String, Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)>> = {
+        let results: Vec<Result<(String, String, Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)>> = {
             let Engine { rels, rev_index, .. } = &*self;
-            to_extract.par_iter().map(|(idx, path, rev, hash)| {
-                let root = &rule_roots[*idx];
-                let (rows, where_bytes, dropped) = parse_file(source_rules[*idx], path, rev, hash, root, rels, rev_index)?;
-                Ok((*idx, path.clone(), rows, where_bytes, dropped))
+            to_extract.par_iter().map(|(idx, repo, path, rev, hash)| {
+                let root = &rule_repos[*idx].1;
+                let (rows, where_bytes, dropped) =
+                    parse_file(source_rules[*idx], repo, path, rev, hash, root, rels, rev_index)?;
+                let rel = source_rules[*idx].head.rel.clone();
+                Ok((rel, path.clone(), rows, where_bytes, dropped))
             }).collect()
         };
 
-        let mut by_rel: HashMap<String, Vec<(String, Vec<Value>)>> = HashMap::new();
+        let mut by_rel: HashMap<String, Vec<(String, String, Vec<Value>)>> = HashMap::new();
         let mut where_bytes: Vec<(String, spine::WhereBytes)> = Vec::new();
-        for res in results {
-            let (idx, path, rows, wheres, dropped) = res?;
+        for (res, (_, repo, _, _, _)) in results.into_iter().zip(to_extract.iter()) {
+            let (rel, path, rows, wheres, dropped) = res?;
             self.dropped += dropped;
             where_bytes.extend(wheres.into_iter().map(|w| (path.clone(), w)));
-            let rel = source_rules[idx].head.rel.clone();
             by_rel.entry(rel).or_default()
-                .extend(rows.into_iter().map(|row| (path.clone(), row)));
+                .extend(rows.into_iter().map(|row| (repo.clone(), path.clone(), row)));
         }
 
         let mut extracted = 0usize;
@@ -986,23 +1053,29 @@ impl Engine {
         })
     }
 
-    fn retract_path(&self, path: &str, source_rels: &[String]) -> Result<usize> {
-        self.retract_paths(&[path], source_rels)
+    fn retract_path(&self, repo: &str, path: &str, source_rels: &[String]) -> Result<usize> {
+        self.retract_paths(&[(repo, path)], source_rels)
     }
 
-    /// Retract every row sourced only from these paths. Prune `_prov` for all
-    /// paths first, then run the orphan sweep once per relation (not once per
-    /// path): a row survives iff some remaining path still provides its `__src`.
-    /// Turns the old O(paths x rels x table) into O(rels x table).
-    fn retract_paths(&self, paths: &[&str], source_rels: &[String]) -> Result<usize> {
+    /// Retract every row sourced only from these `(repo, path)` pairs. Prune
+    /// `_prov` for all pairs first, then run the orphan sweep once per relation
+    /// (not once per pair): a row survives iff some remaining path still provides
+    /// its `__src`. Turns the old O(paths x rels x table) into O(rels x table).
+    /// Keying by `(repo, path)` keeps two repos sharing a path from retracting
+    /// each other's source rows.
+    fn retract_paths(&self, paths: &[(&str, &str)], source_rels: &[String]) -> Result<usize> {
         if paths.is_empty() { return Ok(0); }
-        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _retract_path(path TEXT PRIMARY KEY)")?;
+        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _retract_path(repo TEXT, path TEXT, PRIMARY KEY (repo, path))")?;
         self.db.exec("DELETE FROM _retract_path")?;
-        let path_rows: Vec<Vec<Value>> = paths.iter().map(|p| vec![Value::Text((*p).to_string())]).collect();
-        self.db.insert_rows("_retract_path", &["path"], &path_rows)?;
-        self.db.exec("DELETE FROM _prov WHERE path IN (SELECT path FROM _retract_path)")?;
+        let path_rows: Vec<Vec<Value>> = paths.iter()
+            .map(|(repo, p)| vec![Value::Text((*repo).to_string()), Value::Text((*p).to_string())]).collect();
+        self.db.insert_rows("_retract_path", &["repo", "path"], &path_rows)?;
+        self.db.exec(
+            "DELETE FROM _prov WHERE (repo, path) IN (SELECT repo, path FROM _retract_path)")?;
         // Drop located rows attributed to these paths; fresh spans re-insert on
-        // reparse. Sentinel row has path '' and is never retracted.
+        // reparse. Sentinel row has path '' and is never retracted. (Located rows
+        // are self-repo only today, so prune by path; the repo axis on
+        // `_where_bytes` is for the future cross-repo refactor sink.)
         self.db.exec("DELETE FROM _where_bytes WHERE path IN (SELECT path FROM _retract_path)")?;
         let mut removed = 0usize;
         for rel in source_rels {
@@ -1017,18 +1090,19 @@ impl Engine {
     }
 
     fn load_file_meta(&self) -> Result<FileMeta> {
-        let mut stmt = self.db.conn().prepare("SELECT path, rev, hash, mtime, size FROM _file")?;
+        let mut stmt = self.db.conn().prepare("SELECT repo, path, rev, hash, mtime, size FROM _file")?;
         let rows = stmt.query_map([], |r| Ok((
-            (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
-            (r.get::<_, String>(2)?, r.get::<_, i64>(3)?, r.get::<_, i64>(4)?),
+            (r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?),
+            (r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?),
         )))?;
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
     fn save_file_meta(&self, current: &FileMeta, _prev: &FileMeta) -> Result<()> {
         let mut rows: Vec<Vec<Value>> = Vec::with_capacity(current.len());
-        for ((path, rev), (h, mt, sz)) in current {
+        for ((repo, path, rev), (h, mt, sz)) in current {
             rows.push(vec![
+                Value::Text(repo.clone()),
                 Value::Text(path.clone()),
                 Value::Text(rev.clone()),
                 Value::Text(h.clone()),
@@ -1037,14 +1111,14 @@ impl Engine {
             ]);
         }
         self.db.exec("DELETE FROM _file")?;
-        self.db.insert_rows("_file", &["path", "rev", "hash", "mtime", "size"], &rows)?;
+        self.db.insert_rows("_file", &["repo", "path", "rev", "hash", "mtime", "size"], &rows)?;
         self.insert_spine_files(current)?;
         Ok(())
     }
 
     fn insert_spine_files(&self, current: &FileMeta) -> Result<usize> {
         let mut by_id: BTreeMap<String, (String, String, i64)> = BTreeMap::new();
-        for ((path, _rev), (hash, _mt, size)) in current {
+        for ((_repo, path, _rev), (hash, _mt, size)) in current {
             let Some(id) = spine::FileId::from_content_address(hash, *size) else { continue };
             if id == spine::FileId::SYNTHETIC { continue; }
             let entry = by_id.entry(id.to_string()).or_insert_with(|| (hash.clone(), path.clone(), *size));
@@ -1133,31 +1207,48 @@ impl Engine {
     /// repo = one row from `--root`; rev.id/file.rev = the raw rev string;
     /// content.id = the content hash. No interning (Stage 2).
     fn refresh_builtin_rels(&self) -> Result<()> {
-        let root = self.root.to_string_lossy().to_string();
-        let slug = self.root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| root.clone());
-        let mut sel = self.db.conn().prepare("SELECT path, rev, hash FROM _file")?;
-        let files: Vec<(String, String, String)> = sel
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let files: Vec<(String, String, String, String)> = sel
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
             .filter_map(|x| x.ok()).collect();
         let t = |s: &str| Value::Text(s.to_string());
-        let mut revs: Vec<Vec<Value>> = Vec::new();
-        let mut contents: Vec<Vec<Value>> = Vec::new();
-        let mut file_rows: Vec<Vec<Value>> = Vec::new();
-        for (path, rev, hash) in files {
-            revs.push(vec![t(&rev), t(&slug), t(&rev), Value::Int(0)]);
-            contents.push(vec![t(&hash), t(&hash)]);
-            file_rows.push(vec![t(&slug), t(&rev), t(&path), t(&hash)]);
+        // slug -> on-disk root for the repos we can name (self + config). Fills
+        // the `repo` relation's root column; an ingested-by-path repo not in
+        // either set gets ''.
+        let mut root_of: HashMap<String, String> = HashMap::new();
+        root_of.insert(self.self_slug(), self.root.to_string_lossy().to_string());
+        for rc in &self.repos {
+            root_of.insert(rc.slug.clone(), rc.root.to_string_lossy().to_string());
         }
-        // `repo` lists the configured repos when a config is loaded, else the
-        // single `--root` (the only one ingested into `_file` so far).
-        let repo_rows: Vec<Vec<Value>> = if self.repos.is_empty() {
-            vec![vec![t(&slug), t(&slug), t(&root)]]
-        } else {
+        // `rev`/`content` dedup by their own key (id / hash). `rev.id` is the rev
+        // string, so a `WORK` shared across repos folds to one row (the `repo`
+        // column then names just the first); committed revs are unique shas.
+        let mut revs: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        let mut contents: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        let mut file_rows: Vec<Vec<Value>> = Vec::new();
+        let mut repo_slugs: BTreeSet<String> = BTreeSet::new();
+        for (repo, path, rev, hash) in files {
+            revs.entry(rev.clone()).or_insert_with(|| vec![t(&rev), t(&repo), t(&rev), Value::Int(0)]);
+            contents.entry(hash.clone()).or_insert_with(|| vec![t(&hash), t(&hash)]);
+            file_rows.push(vec![t(&repo), t(&rev), t(&path), t(&hash)]);
+            repo_slugs.insert(repo);
+        }
+        // `repo` lists the configured repos when a config is loaded; otherwise
+        // every repo actually ingested into `_file`, or `--root` if nothing has
+        // been scanned yet.
+        let repo_rows: Vec<Vec<Value>> = if !self.repos.is_empty() {
             self.repos.iter().map(|r| {
-                let r_root = r.root.to_string_lossy().to_string();
-                vec![t(&r.slug), t(&r.slug), t(&r_root)]
+                vec![t(&r.slug), t(&r.slug), t(&r.root.to_string_lossy())]
+            }).collect()
+        } else {
+            if repo_slugs.is_empty() { repo_slugs.insert(self.self_slug()); }
+            repo_slugs.iter().map(|slug| {
+                let root = root_of.get(slug).cloned().unwrap_or_default();
+                vec![t(slug), t(slug), t(&root)]
             }).collect()
         };
+        let revs: Vec<Vec<Value>> = revs.into_values().collect();
+        let contents: Vec<Vec<Value>> = contents.into_values().collect();
         self.refresh_rel("repo", &["id", "slug", "root"], &repo_rows)?;
         self.refresh_rel("rev", &["id", "repo", "oid", "ts"], &revs)?;
         self.refresh_rel("content", &["id", "hash"], &contents)?;
@@ -1296,8 +1387,9 @@ impl Engine {
     /// `_where_bytes`, both through their batched chokepoints, so `string ⋈ ref`
     /// covers the import graph. Called by every module-refresh path.
     fn insert_module_spans(&self, rows: &ModuleRows) -> Result<()> {
-        let string_rows: Vec<(String, Vec<Value>)> = rows.spans.iter()
-            .map(|(path, text, _)| (path.clone(), vec![Value::Text(text.clone())])).collect();
+        let slug = self.self_slug();
+        let string_rows: Vec<(String, String, Vec<Value>)> = rows.spans.iter()
+            .map(|(path, text, _)| (slug.clone(), path.clone(), vec![Value::Text(text.clone())])).collect();
         self.insert_spine_strings(&string_rows)?;
         let where_rows: Vec<(String, spine::WhereBytes)> = rows.spans.iter()
             .map(|(path, _, wb)| (path.clone(), *wb)).collect();
@@ -1596,36 +1688,45 @@ impl Engine {
         Ok(())
     }
 
-    fn insert_source_rows(&self, rel: &str, meta: &RelMeta, path: &str, rows: &[Vec<Value>]) -> Result<usize> {
+    fn insert_source_rows(&self, rel: &str, meta: &RelMeta, repo: &str, path: &str, rows: &[Vec<Value>]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
-        let path_rows: Vec<(String, Vec<Value>)> = rows.iter().cloned().map(|row| (path.to_string(), row)).collect();
+        let path_rows: Vec<(String, String, Vec<Value>)> = rows.iter().cloned()
+            .map(|row| (repo.to_string(), path.to_string(), row)).collect();
         self.insert_source_rows_for_paths(rel, meta, &path_rows)
     }
 
-    fn insert_source_rows_for_paths(&self, rel: &str, meta: &RelMeta, rows: &[(String, Vec<Value>)]) -> Result<usize> {
+    /// Insert source facts plus their `_prov` map rows. Each input is
+    /// `(repo slug, path, row)`; `_prov` records `(rel, repo, path, __src)` so
+    /// retraction can prune by `(repo, path)` without cross-repo collision.
+    fn insert_source_rows_for_paths(&self, rel: &str, meta: &RelMeta, rows: &[(String, String, Vec<Value>)]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
         self.insert_spine_strings(rows)?;
         let mut fact_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
         let mut prov_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
-        for (path, row) in rows {
+        for (repo, path, row) in rows {
             let src = row_hash(row);
             let mut fact = row.clone();
             fact.push(Value::Text(src.clone()));
             fact_rows.push(fact);
-            prov_rows.push(vec![Value::Text(rel.to_string()), Value::Text(path.to_string()), Value::Text(src)]);
+            prov_rows.push(vec![
+                Value::Text(rel.to_string()),
+                Value::Text(repo.to_string()),
+                Value::Text(path.to_string()),
+                Value::Text(src),
+            ]);
         }
         let mut cols: Vec<String> = meta.cols.iter().map(|c| c.name.clone()).collect();
         cols.push("__src".to_string());
         let col_refs: Vec<&str> = cols.iter().map(|c| c.as_str()).collect();
         let table = tbl(rel);
         let inserted = self.db.insert_rows(&table, &col_refs, &fact_rows)?;
-        self.db.insert_rows("_prov", &["rel", "path", "src"], &prov_rows)?;
+        self.db.insert_rows("_prov", &["rel", "repo", "path", "src"], &prov_rows)?;
         Ok(inserted)
     }
 
-    fn insert_spine_strings(&self, rows: &[(String, Vec<Value>)]) -> Result<usize> {
+    fn insert_spine_strings(&self, rows: &[(String, String, Vec<Value>)]) -> Result<usize> {
         let mut by_id: BTreeMap<String, (String, String)> = BTreeMap::new();
-        for (_, row) in rows {
+        for (_, _, row) in rows {
             for v in row {
                 let Value::Text(s) = v else { continue };
                 if s.is_empty() { continue; }
@@ -1671,7 +1772,7 @@ impl Engine {
     /// and reuse the stored hash when mtime+size are unchanged (the fast-path),
     /// reading+hashing only changed files. A git rev uses the blob OID from
     /// `ls-tree`, so unchanged blobs are detected without fetching content.
-    fn enumerate_with_hash(&self, repo_root: &Path, rev: &str, glob: &str, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
+    fn enumerate_with_hash(&self, repo: &str, repo_root: &Path, rev: &str, glob: &str, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
         let matcher = globset::Glob::new(glob)?.compile_matcher();
         if rev == "WORK" {
             let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
@@ -1685,7 +1786,7 @@ impl Engine {
             }
             // reuse stored hash when mtime+size match; otherwise read+hash (parallel)
             let mut out: Vec<(String, String, i64, i64)> = files.par_iter().map(|(abs, rel, mt, sz)| {
-                if let Some((h, pmt, psz)) = prev.get(&(rel.clone(), "WORK".to_string())) {
+                if let Some((h, pmt, psz)) = prev.get(&(repo.to_string(), rel.clone(), "WORK".to_string())) {
                     if pmt == mt && psz == sz {
                         return (rel.clone(), h.clone(), *mt, *sz);
                     }
@@ -1826,12 +1927,12 @@ fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
     }
 }
 
-fn check_type(ty: Type, v: &Value, rev: &str, root: &Path, rev_index: &HashSet<(String, String)>) -> bool {
+fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index: &HashSet<(String, String, String)>) -> bool {
     let p = match v { Value::Text(s) => s, Value::Int(_) => return ty == Type::Int || ty == Type::Text };
     if rev != "WORK" {
         return match ty {
-            Type::File | Type::Path => rev_index.contains(&(rev.to_string(), p.clone())),
-            Type::Dir => rev_index.iter().any(|(r, pp)| r == rev && pp.starts_with(&format!("{p}/"))),
+            Type::File | Type::Path => rev_index.contains(&(repo.to_string(), rev.to_string(), p.clone())),
+            Type::Dir => rev_index.iter().any(|(rp, r, pp)| rp == repo && r == rev && pp.starts_with(&format!("{p}/"))),
             // repo/rev are coordinate values, not filesystem paths: no check here.
             Type::Text | Type::Int | Type::Repo | Type::Rev => true,
         };
@@ -1864,8 +1965,8 @@ fn pattern_literals(pat: &str) -> Vec<String> {
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).
 /// Safe to call in parallel: reads file content, runs extractors, builds rows.
 fn parse_file(
-    rule: &Rule, path: &str, rev: &str, hash: &str,
-    root: &Path, rels: &Rels, rev_index: &HashSet<(String, String)>,
+    rule: &Rule, repo: &str, path: &str, rev: &str, hash: &str,
+    root: &Path, rels: &Rels, rev_index: &HashSet<(String, String, String)>,
 ) -> Result<(Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)> {
     let (_, _, _, pathvar, revvar) = scan_spec(rule)?;
     let cmps: Vec<&Constraint> = rule.body.iter()
@@ -2010,7 +2111,7 @@ fn parse_file(
                 Term::Interp(parts) => interp_value(parts, &b)?,
                 Term::Wild => bail!("'_' in head not allowed"),
             };
-            if !check_type(head_meta.cols[i].ty, &v, rev, root, rev_index) { dropped += 1; continue 'bind; }
+            if !check_type(head_meta.cols[i].ty, &v, repo, rev, root, rev_index) { dropped += 1; continue 'bind; }
             row.push(v);
         }
         rows.push(row);
