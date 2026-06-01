@@ -197,7 +197,7 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         lo: lo as u32,
         hi: hi as u32,
         ..Default::default()
-    }, "src/a.rs");
+    }, "spine_meta_where_bytes", "src/a.rs");
 
     let row: (String, String, String, i64, i64, String, String) = conn
         .query_row(
@@ -224,7 +224,7 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
             file_id.to_string(),
             lo,
             hi,
-            "0".to_string(),
+            "spine_meta_where_bytes".to_string(),
             "0".to_string(),
         )
     );
@@ -252,7 +252,7 @@ sym(N, path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "st
         lo: lo as u32,
         hi: hi as u32,
         ..Default::default()
-    }, "src/a.rs");
+    }, "spine_meta_where_bytes_sg", "src/a.rs");
     let span: (i64, i64) = conn
         .query_row(
             "SELECT lo, hi FROM _where_bytes WHERE id = ?1",
@@ -297,7 +297,7 @@ sym(name, path) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /str
         lo: lo as u32,
         hi: hi as u32,
         ..Default::default()
-    }, "src/a.rs");
+    }, "spine_meta_where_bytes_git", "src/a.rs");
     let got: (String, i64, i64) = conn
         .query_row(
             "SELECT file_id, lo, hi FROM _where_bytes WHERE id = ?1",

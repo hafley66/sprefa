@@ -139,3 +139,51 @@ fn scan_star_fans_out_over_every_config_repo() {
     assert!(block.contains("rb\tWORK\tsrc/lib.rs"), "repo rb file row: {stdout}");
     assert!(block.contains("(2 rows)"), "both repos' files, distinct by repo: {stdout}");
 }
+
+/// Two config repos that share a path with byte-identical content keep DISTINCT
+/// located rows in `_where_bytes`. The bytes hash to the same FileId/StringId/
+/// span/path, so before `of_located` folded `repo`, both repos collapsed to one
+/// row (and a retract of either would prune the other's). One row per repo now.
+#[test]
+fn byte_identical_files_across_repos_keep_distinct_located_rows() {
+    let d = std::env::temp_dir().join("cfg_wb_repo_test");
+    let _ = fs::remove_dir_all(&d);
+    // identical bytes in both repos at the same path
+    for slug in ["ra", "rb"] {
+        let r = d.join(slug);
+        fs::create_dir_all(r.join("src")).unwrap();
+        fs::write(r.join("src/lib.rs"), "struct Auth;\n").unwrap();
+    }
+    fs::write(d.join("cfg.toml"), format!("\
+        [[repos]]\n\
+        slug = \"ra\"\n\
+        root = \"{a}\"\n\
+        [[repos]]\n\
+        slug = \"rb\"\n\
+        root = \"{b}\"\n",
+        a = d.join("ra").display(), b = d.join("rb").display())).unwrap();
+    fs::write(d.join("p.dl"), "\
+        rel sym(name: text, path: file).\n\
+        sym(name, path) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /struct (?<name>\\w+)/, line).\n\
+        ? sym(name, path).\n").unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", d.join("ra").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .output().expect("run dl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+
+    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
+    let repos: Vec<String> = conn
+        .prepare("SELECT w.repo FROM _where_bytes w JOIN _strings s ON s.id = w.string_id \
+                  WHERE s.content = 'Auth' ORDER BY w.repo")
+        .unwrap()
+        .query_map([], |r| r.get::<_, String>(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(repos, vec!["ra".to_string(), "rb".to_string()],
+        "one located row per repo, attributed by slug: got {repos:?}");
+}

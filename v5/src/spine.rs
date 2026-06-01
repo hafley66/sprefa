@@ -104,18 +104,22 @@ impl WhereBytesId {
         Self(RefId::of_coord(w.into()).0)
     }
 
-    /// Like `of`, but folds the source `path` into the row identity so two
-    /// byte-identical files (re-export stubs, generated shims) keep distinct
-    /// located rows. `path` is the rewrite/retraction key; without it the two
-    /// files collapse to one id and the second path is lost on `INSERT OR
-    /// IGNORE`, corrupting `retract_paths`. The sentinel is preserved.
-    pub fn of_located(w: WhereBytes, path: &str) -> Self {
+    /// Like `of`, but folds the source `(repo, path)` into the row identity so
+    /// two byte-identical files keep distinct located rows. Two cases collapse
+    /// without this: re-export stubs / generated shims that share bytes within a
+    /// repo (the `path` axis), and two config repos that share a path with
+    /// identical content (the `repo` axis). Either collapse loses the second
+    /// row on `INSERT OR IGNORE` and misfires `retract_paths`, which prunes by
+    /// `(repo, path)`. The sentinel is preserved.
+    pub fn of_located(w: WhereBytes, repo: &str, path: &str) -> Self {
         let base = Self::of(w);
         if base == Self::SYNTHETIC {
             return base;
         }
         let mut h = blake3::Hasher::new();
         h.update(&base.0.to_be_bytes());
+        h.update(repo.as_bytes());
+        h.update(&[0]); // separator: (repo="ab", path="") != (repo="a", path="b")
         h.update(path.as_bytes());
         Self(first_u64(h.finalize().as_bytes()))
     }

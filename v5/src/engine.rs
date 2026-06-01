@@ -749,14 +749,14 @@ impl Engine {
                 // Collect located spans across every matching rule for this file and
                 // flush once after the loop (one `bump()`), not per-rule. Per-rule
                 // flushing trips the N+1 screamer once enough files change.
-                let mut where_rows: Vec<(String, spine::WhereBytes)> = Vec::new();
+                let mut where_rows: Vec<(String, String, spine::WhereBytes)> = Vec::new();
                 for rule in &matching {
                     let (rows, where_bytes, dropped) = parse_file(rule, &slug, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index)?;
                     self.dropped += dropped;
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
                     extracted += self.insert_source_rows(&rule.head.rel, &meta, &slug, &rel, &rows)?;
-                    where_rows.extend(where_bytes.into_iter().map(|w| (rel.clone(), w)));
+                    where_rows.extend(where_bytes.into_iter().map(|w| (slug.clone(), rel.clone(), w)));
                     changed_source_rels.insert(rule.head.rel.clone());
                 }
                 self.insert_spine_where_bytes(&where_rows)?;
@@ -1069,11 +1069,11 @@ impl Engine {
         };
 
         let mut by_rel: HashMap<String, Vec<(String, String, Vec<Value>)>> = HashMap::new();
-        let mut where_bytes: Vec<(String, spine::WhereBytes)> = Vec::new();
+        let mut where_bytes: Vec<(String, String, spine::WhereBytes)> = Vec::new();
         for (res, (_, repo, _, _, _)) in results.into_iter().zip(to_extract.iter()) {
             let (rel, path, rows, wheres, dropped) = res?;
             self.dropped += dropped;
-            where_bytes.extend(wheres.into_iter().map(|w| (path.clone(), w)));
+            where_bytes.extend(wheres.into_iter().map(|w| (repo.clone(), path.clone(), w)));
             by_rel.entry(rel).or_default()
                 .extend(rows.into_iter().map(|row| (repo.clone(), path.clone(), row)));
         }
@@ -1115,11 +1115,12 @@ impl Engine {
         self.db.insert_rows("_retract_path", &["repo", "path"], &path_rows)?;
         self.db.exec(
             "DELETE FROM _prov WHERE (repo, path) IN (SELECT repo, path FROM _retract_path)")?;
-        // Drop located rows attributed to these paths; fresh spans re-insert on
-        // reparse. Sentinel row has path '' and is never retracted. (Located rows
-        // are self-repo only today, so prune by path; the repo axis on
-        // `_where_bytes` is for the future cross-repo refactor sink.)
-        self.db.exec("DELETE FROM _where_bytes WHERE path IN (SELECT path FROM _retract_path)")?;
+        // Drop located rows attributed to these (repo, path) pairs; fresh spans
+        // re-insert on reparse. Sentinel row has path '' and is never retracted.
+        // Keying by (repo, path) keeps two config repos sharing a path from
+        // retracting each other's located rows.
+        self.db.exec(
+            "DELETE FROM _where_bytes WHERE (repo, path) IN (SELECT repo, path FROM _retract_path)")?;
         let mut removed = 0usize;
         for rel in source_rels {
             let rel_lit = rel.replace('\'', "''");
@@ -1434,8 +1435,8 @@ impl Engine {
         let string_rows: Vec<(String, String, Vec<Value>)> = rows.spans.iter()
             .map(|(path, text, _)| (slug.clone(), path.clone(), vec![Value::Text(text.clone())])).collect();
         self.insert_spine_strings(&string_rows)?;
-        let where_rows: Vec<(String, spine::WhereBytes)> = rows.spans.iter()
-            .map(|(path, _, wb)| (path.clone(), *wb)).collect();
+        let where_rows: Vec<(String, String, spine::WhereBytes)> = rows.spans.iter()
+            .map(|(path, _, wb)| (slug.clone(), path.clone(), *wb)).collect();
         self.insert_spine_where_bytes(&where_rows)?;
         Ok(())
     }
@@ -1787,22 +1788,25 @@ impl Engine {
     /// "string S occupies bytes [lo, hi) in file F" — an INSERT-only index keyed
     /// by content-derived `WhereBytesId`, so duplicate occurrences (same string,
     /// same file, same span, reached via multiple binds) collapse to one row.
-    /// `path` is the source path attribution used by `retract_paths` to prune a
-    /// file's located rows on reparse, and is folded into the row identity via
-    /// `of_located` so two byte-identical files keep distinct rows (otherwise the
-    /// second path is lost on `INSERT OR IGNORE` and retraction misfires).
-    fn insert_spine_where_bytes(&self, wheres: &[(String, spine::WhereBytes)]) -> Result<usize> {
+    /// `(repo, path)` is the source attribution `retract_paths` prunes by on
+    /// reparse, and is folded into the row identity via `of_located` so two
+    /// byte-identical files keep distinct rows — both within a repo (re-export
+    /// stubs) and across two config repos sharing a path (otherwise the second
+    /// row is lost on `INSERT OR IGNORE` and retraction misfires). The `repo`
+    /// column holds the real slug (matching `_file`/`_prov`), not the vestigial
+    /// `w.repo` u32.
+    fn insert_spine_where_bytes(&self, wheres: &[(String, String, spine::WhereBytes)]) -> Result<usize> {
         if wheres.is_empty() { return Ok(0); }
         let mut by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        for (path, w) in wheres {
-            let id = spine::WhereBytesId::of_located(*w, path).to_string();
+        for (repo, path, w) in wheres {
+            let id = spine::WhereBytesId::of_located(*w, repo, path).to_string();
             by_id.entry(id.clone()).or_insert_with(|| vec![
                 Value::Text(id),
                 Value::Text(w.string.to_string()),
                 Value::Text(w.file.to_string()),
                 Value::Int(w.lo as i64),
                 Value::Int(w.hi as i64),
-                Value::Text(w.repo.to_string()),
+                Value::Text(repo.clone()),
                 Value::Text(w.rev.to_string()),
                 Value::Text(path.clone()),
             ]);
