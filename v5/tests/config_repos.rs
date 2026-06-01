@@ -50,3 +50,54 @@ fn config_repos_populate_the_repo_relation() {
     let block2 = stdout2.split("? repo").nth(1).unwrap_or("");
     assert!(block2.contains("(1 rows)"), "no config -> single --root repo: {stdout2}");
 }
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let ok = Command::new("git").current_dir(dir).args(args).output().expect("git").status.success();
+    assert!(ok, "git {args:?} in {}", dir.display());
+}
+
+/// A configured repo whose `root` is not on disk but has a `url` is cloned on
+/// first scan, then its committed rev is ingested into the `file` relation.
+#[test]
+fn config_repo_with_url_is_cloned_on_first_scan() {
+    let d = std::env::temp_dir().join("cfg_clone_test");
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+
+    // The upstream we clone from: a real git repo with one committed file.
+    let upstream = d.join("upstream");
+    fs::create_dir_all(upstream.join("src")).unwrap();
+    fs::write(upstream.join("src/lib.rs"), "fn gamma() {}\n").unwrap();
+    git(&upstream, &["init", "-q"]);
+    git(&upstream, &["config", "user.email", "t@t"]);
+    git(&upstream, &["config", "user.name", "t"]);
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-qm", "x"]);
+
+    let clone_root = d.join("cache/gamma");
+    assert!(!clone_root.exists(), "clone target must not exist yet");
+
+    fs::write(d.join("cfg.toml"), format!("\
+        [[repos]]\n\
+        slug = \"gamma\"\n\
+        root = \"{root}\"\n\
+        url = \"{url}\"\n",
+        root = clone_root.display(), url = upstream.display())).unwrap();
+    fs::write(d.join("p.dl"), "\
+        rel s(p: file).\n\
+        s(p) <- scan(\"gamma\", \"HEAD\", \"src/**/*.rs\", p, rev).\n\
+        ? file(repo, rev, path, content).\n").unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", upstream.to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .output().expect("run dl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+
+    assert!(clone_root.join(".git").is_dir(), "repo was cloned into root: {stdout}");
+    let block = stdout.split("? file").nth(1).unwrap_or("");
+    assert!(block.contains("gamma\t"), "cloned repo's file row present: {stdout}");
+    assert!(block.contains("src/lib.rs"), "cloned file path present: {stdout}");
+}

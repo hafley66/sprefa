@@ -15,6 +15,13 @@
 //! [[repos]]
 //! slug = "beta/two"
 //! root = "/path/to/checkout-b"
+//!
+//! # A repo not yet on disk: give a `url` and the engine clones it into `root`
+//! # on first scan (full clone).
+//! [[repos]]
+//! slug = "gamma/three"
+//! root = "/path/to/cache/gamma"
+//! url  = "git@github.com:org/gamma.git"
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -22,11 +29,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-/// One configured repository: a logical `slug` plus its on-disk `root`.
+/// One configured repository: a logical `slug`, its on-disk `root`, and an
+/// optional `url` to clone from when `root` does not yet exist.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RepoConfig {
     pub slug: String,
     pub root: PathBuf,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// The whole config. Only `repos` for now; add sections as v5 needs them.

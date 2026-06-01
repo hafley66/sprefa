@@ -457,6 +457,7 @@ impl Engine {
             return Ok((self.self_slug(), self.root.clone()));
         }
         if let Some(rc) = self.repos.iter().find(|r| r.slug == repo) {
+            self.ensure_cloned(rc)?;
             return Ok((rc.slug.clone(), rc.root.clone()));
         }
         let p = PathBuf::from(repo);
@@ -466,6 +467,26 @@ impl Engine {
             return Ok((slug, p));
         }
         bail!("unknown repo {repo:?} (expected \".\", a config slug, or an existing path)")
+    }
+
+    /// Materialize a configured repo whose `root` is not yet on disk by cloning
+    /// its `url` (full clone — pinned `(repo, rev)` scans stay deterministic by
+    /// OID once cloned). No-op when the root already exists; an error when the
+    /// root is missing and no `url` is configured.
+    fn ensure_cloned(&self, rc: &crate::config::RepoConfig) -> Result<()> {
+        if rc.root.exists() { return Ok(()); }
+        let Some(url) = rc.url.as_deref() else {
+            bail!("repo {:?} root {} does not exist and no url is configured to clone it",
+                  rc.slug, rc.root.display());
+        };
+        if let Some(parent) = rc.root.parent() { std::fs::create_dir_all(parent)?; }
+        eprintln!("[clone] {} <- {url}", rc.root.display());
+        let out = Command::new("git").args(["clone", url]).arg(&rc.root).output()?;
+        if !out.status.success() {
+            bail!("git clone {url} into {} failed: {}", rc.root.display(),
+                  String::from_utf8_lossy(&out.stderr));
+        }
+        Ok(())
     }
 
     /// Stable slug for this engine's own repo: the `--root` directory name.
