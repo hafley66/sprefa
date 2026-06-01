@@ -15,6 +15,13 @@ has two shapes: **(1) per-row write loops (N+1)** and **(2) bespoke per-relation
 functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 
 ### Done (this arc)
+- [x] **Multi-repo coordinate** (main, 2026-06-01, commits 83821c3/dfe26ee/60f91ec):
+      typed repo/rev on `scan` (Phase 1); `_file`/`_prov` re-keyed on (repo,path,rev)
+      so two repos sharing a path don't collide (Phase 2, old dbs migrate on open);
+      lazy full-clone of an un-cloned config repo with a `url` (Phase 3); `scan("*")`
+      fans one rule over every config repo (the config-folder query). `--root`
+      defaults to nearest-.git. Residual: `_where_bytes`/`ref` + module-graph reads
+      still self-repo only (the --move-repo-aware + module-repo-aware follow-ons).
 - [x] Cross-language module graph: all Rust+TS levers ✓ (multi-crate namespace, cross-crate
       `use`, Cargo `package=` rename, `#[path]`, nested braces, raw idents, comment/string
       strip; TS per-package tsconfig, workspace `package.json` fallback, dynamic import).
