@@ -104,10 +104,7 @@ impl Rule {
 pub struct Query { pub head: Atom, pub wheres: Vec<Constraint> }
 
 #[derive(Clone, Debug)]
-pub enum RepoSpec { Nearest, Slug(String), Path(std::path::PathBuf) }
-
-#[derive(Clone, Debug)]
-pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Repo(RepoSpec) }
+pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query) }
 
 #[derive(Clone, Debug, Default)]
 pub struct Program { pub items: Vec<Item> }

@@ -42,11 +42,17 @@ pub fn resolve_repo(spec: &str, repos: &[RepoConfig], self_root: &Path) -> Resul
 /// `.dl` file's dir. Walk UP only (the above-.git submodule case is deferred).
 pub fn nearest_git(start: &Path) -> Option<PathBuf>;
 
-// directive in the .dl, parsed as a new top-level Item
-pub enum Item { Rel(..), Rule(..), Query(..), Repo(RepoSpec) }  // + Repo
-pub enum RepoSpec { Nearest, Slug(String), Path(PathBuf) }      // default = CLI --root
+// NO top-level statement. The default root is the nearest-.git of the .dl file,
+// resolved in the CLI (repo::nearest_git); --root overrides. Cross-repo is a
+// VALUE that flows into scan, not a directive.
 
-// scan gains an optional leading repo term (back-compat: 4-ary ⇒ repo ".")
+// repo + rev become first-class types (today both degraded to Type::Text on the
+// repo/rev builtin relations). file/path/dir are already types.
+pub enum Type { Text, Int, Path, File, Dir, Repo, Rev }   // + Repo, Rev
+
+// scan gains an optional leading repo term (back-compat: 4-ary ⇒ self repo).
+// The repo term is a repo-typed value: a literal slug/path, or a var bound from
+// the `repo(id,slug,root)` relation (config) — so cross-repo composes by join.
 BodyItem::Scan { repo: Term, rev: Term, glob: Term, path: Term, rev_out: Term }
 
 // engine methods take a resolved root, not self.root
@@ -93,14 +99,17 @@ crawl(R, T, glob):
 
 ## Phasing — usable value as early as possible
 
-**Phase 0 — nearest-`.git` + config-slug self-root (S, no re-key) — DONE 2026-06-01.**
-`repo.rs` (`nearest_git`, `resolve_self_root` for slug|path|nearest) + `RepoSpec`
-directive (`repo nearest.` | `repo "slug".` | `repo "/path".`) +
-`run_file`/`run_check`/`run_changed`/`run_watch`/`run_lsp` resolve the effective root
-from the directive (relative to the `.dl` file's dir), falling back to `--root` (which
-already defaults to `.`). Verified: `dl v5/examples/repo-nearest.dl` from `/tmp` with no
-`--root` resolves root to the repo and scans it. 89/0/1 green. No multi-repo-in-one-db
-yet. **Immediately usable.**
+**Phase 0 — nearest-`.git` default root (S, no re-key) — DONE 2026-06-01.**
+DESIGN CORRECTION: the first cut added a `repo nearest.` top-level **statement**
+(`Item::Repo(RepoSpec)`). Rejected — it is imperative config that does not compose, and
+"nearest .git" is a pure function of a path's parents, i.e. a derivable fact, not a
+language statement. **Reverted.** Instead: `repo.rs::nearest_git` is the resolver, and
+`--root` (now `Option`) **defaults to the nearest `.git` ancestor of the program file**
+(else cwd). So a `.dl` runs location-anchored with no `--root` and no new syntax.
+Verified: `dl v5/examples/repo-nearest.dl` from `/tmp` scans the repo. 79/0/1 green.
+The repo coordinate proper is a **typed `scan` argument** (Phase 1), defaulting to the
+self repo when omitted and naming a slug/var for cross-repo — composes by join, no
+keyword. **Immediately usable.**
 
 **Phase 1 — repo coordinate threads (S, the spike, single active repo/tick).**
 5-ary `scan(REPO,REV,GLOB,path,rev)` (4-ary ⇒ `"."`); repo-aware `resolve_rev` /

@@ -9,8 +9,10 @@ struct Cli {
     program: Option<String>,
     #[arg(long)]
     db: Option<String>,
-    #[arg(long, default_value = ".")]
-    root: PathBuf,
+    /// Source root. When omitted, defaults to the nearest `.git` ancestor of
+    /// the program file (the repo it lives in), else the current directory.
+    #[arg(long)]
+    root: Option<PathBuf>,
     #[arg(long)]
     watch: bool,
     /// Run as an LSP server over stdio: the program's `diag` relation becomes
@@ -38,9 +40,24 @@ struct Cli {
     fix: bool,
 }
 
+/// Explicit `--root` wins (canonicalized). Otherwise default to the repo the
+/// program file lives in (nearest `.git` ancestor of its dir), falling back to
+/// the current directory. With `--move` (no program), use the current dir.
+fn resolve_root(cli: &Cli) -> Result<PathBuf> {
+    if let Some(r) = &cli.root {
+        return Ok(r.canonicalize()?);
+    }
+    let base = cli.program.as_deref()
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .map(Ok)
+        .unwrap_or_else(std::env::current_dir)?;
+    Ok(sprefa_v5::repo::nearest_git(&base).unwrap_or(base))
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let root = cli.root.canonicalize()?;
+    let root = resolve_root(&cli)?;
     if !cli.move_.is_empty() {
         return sprefa_v5::run_move(cli.db.as_deref(), root, cli.move_, cli.fix);
     }
