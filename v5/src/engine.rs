@@ -118,7 +118,7 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                 }
             },
             Item::Query(q) => if hit(&q.head.rel) { return true; },
-            Item::Rel(_) => {}
+            Item::Rel(_) | Item::Repo(_) => {}
         }
     }
     false

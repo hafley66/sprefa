@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use std::path::PathBuf;
 
 use crate::ast::*;
 use crate::lex::Tok;
@@ -35,10 +36,42 @@ impl Parser {
     }
 
     fn item(&mut self) -> Result<Item> {
+        // `repo` is a directive only when followed by `nearest` (bareword) or a string literal.
+        // Otherwise it falls through as a rule head, since `repo` is also a valid relation name.
+        let is_repo_directive = matches!(self.peek(), Some(Tok::Ident(s)) if s == "repo")
+            && (matches!(self.peek2(), Some(Tok::Ident(s)) if s == "nearest")
+                || matches!(self.peek2(), Some(Tok::Str(_))));
+        if is_repo_directive {
+            return Ok(Item::Repo(self.repo_directive()?));
+        }
         match self.peek() {
             Some(Tok::Ident(s)) if s == "rel" => Ok(Item::Rel(self.rel_decl()?)),
             Some(Tok::Question) => Ok(Item::Query(self.query()?)),
             _ => Ok(Item::Rule(self.rule()?)),
+        }
+    }
+
+    fn repo_directive(&mut self) -> Result<RepoSpec> {
+        self.ident()?; // consume "repo"
+        match self.next()? {
+            Tok::Ident(s) if s == "nearest" => {
+                self.expect(Tok::Dot)?;
+                Ok(RepoSpec::Nearest)
+            }
+            Tok::Ident(s) => {
+                bail!("unknown repo directive: {s} (expected `nearest` or a \"slug\"/\"path\" string)")
+            }
+            Tok::Str(s) => {
+                // Path-like: starts with '/', './', or '../'. Everything else is a slug.
+                let spec = if s.starts_with('/') || s.starts_with("./") || s.starts_with("../") {
+                    RepoSpec::Path(PathBuf::from(s))
+                } else {
+                    RepoSpec::Slug(s)
+                };
+                self.expect(Tok::Dot)?;
+                Ok(spec)
+            }
+            other => bail!("expected `nearest` or a string in repo directive, got {:?}", other),
         }
     }
 
@@ -250,5 +283,46 @@ impl Parser {
             Tok::Int(n) => Ok(Term::Int(n)),
             other => bail!("expected term, got {:?}", other),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lex::lex;
+
+    fn parse_str(src: &str) -> Program {
+        parse(lex(src).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn repo_directive_nearest() {
+        let prog = parse_str("repo nearest.\n");
+        assert!(matches!(&prog.items[..], [Item::Repo(RepoSpec::Nearest)]));
+    }
+
+    #[test]
+    fn repo_directive_slug() {
+        let prog = parse_str("repo \"alpha/one\".\n");
+        match &prog.items[..] {
+            [Item::Repo(RepoSpec::Slug(s))] => assert_eq!(s, "alpha/one"),
+            other => panic!("expected Slug, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn repo_directive_path() {
+        let prog = parse_str("repo \"/tmp/x\".\n");
+        match &prog.items[..] {
+            [Item::Repo(RepoSpec::Path(p))] => assert_eq!(p, std::path::Path::new("/tmp/x")),
+            other => panic!("expected Path, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn repo_as_rule_head_still_parses() {
+        // `repo(...)` followed by `<-` must parse as Item::Rule, not a directive.
+        let prog = parse_str("repo(a,b,c) <- file(a,b,c,d).\n");
+        assert!(matches!(&prog.items[..], [Item::Rule(_)]));
     }
 }

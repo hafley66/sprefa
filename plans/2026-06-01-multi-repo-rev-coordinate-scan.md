@@ -93,11 +93,14 @@ crawl(R, T, glob):
 
 ## Phasing — usable value as early as possible
 
-**Phase 0 — nearest-`.git` + config-slug self-root (S, no re-key, ship first).**
-`repo.rs` (`nearest_git`, `resolve_repo` for slug|path|self) + `RepoSpec` directive +
-`run_file`/`run_check`/`run_watch`/`run_lsp` resolve `self_root` from the directive
-(falling back to `--root`). Outcome: drop a `.dl` anywhere in a repo and run with no
-`--root`; or point it at a config slug. No multi-repo-in-one-db yet. **Immediately usable.**
+**Phase 0 — nearest-`.git` + config-slug self-root (S, no re-key) — DONE 2026-06-01.**
+`repo.rs` (`nearest_git`, `resolve_self_root` for slug|path|nearest) + `RepoSpec`
+directive (`repo nearest.` | `repo "slug".` | `repo "/path".`) +
+`run_file`/`run_check`/`run_changed`/`run_watch`/`run_lsp` resolve the effective root
+from the directive (relative to the `.dl` file's dir), falling back to `--root` (which
+already defaults to `.`). Verified: `dl v5/examples/repo-nearest.dl` from `/tmp` with no
+`--root` resolves root to the repo and scans it. 89/0/1 green. No multi-repo-in-one-db
+yet. **Immediately usable.**
 
 **Phase 1 — repo coordinate threads (S, the spike, single active repo/tick).**
 5-ary `scan(REPO,REV,GLOB,path,rev)` (4-ary ⇒ `"."`); repo-aware `resolve_rev` /

@@ -8,6 +8,7 @@ pub mod lsp;
 pub mod modgraph;
 pub mod parse;
 pub mod refactor;
+pub mod repo;
 pub mod rspath;
 pub mod scc;
 pub mod scip_import;
@@ -22,10 +23,30 @@ pub fn run_file(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Res
     let src = std::fs::read_to_string(program_path)?;
     let toks = lex::lex(&src)?;
     let prog = parse::parse(toks)?;
+    let (root, repos) = effective_root(program_path, &prog, root)?;
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
-    eng.set_repos(load_repos());
+    eng.set_repos(repos);
     eng.run(&prog)
+}
+
+/// The source root a program runs against: a `repo` directive in the `.dl`
+/// wins (nearest-`.git` / config slug / explicit path, resolved relative to the
+/// `.dl` file's own location), else the CLI `--root`. Returns the resolved root
+/// plus the configured repo list (already loaded for slug resolution).
+fn effective_root(program_path: &str, prog: &ast::Program, cli_root: PathBuf)
+    -> Result<(PathBuf, Vec<config::RepoConfig>)> {
+    let repos = load_repos();
+    let directive = prog.items.iter().find_map(|i| match i {
+        ast::Item::Repo(s) => Some(s), _ => None,
+    });
+    let Some(spec) = directive else { return Ok((cli_root, repos)); };
+    // Anchor relative/nearest resolution on the .dl file's real directory.
+    let dl_abs = std::fs::canonicalize(program_path).unwrap_or_else(|_| PathBuf::from(program_path));
+    let dl_dir = dl_abs.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+    let root = repo::resolve_self_root(spec, &dl_dir, &cli_root, &repos)?;
+    eprintln!("[repo] source root resolved to {}", root.display());
+    Ok((root, repos))
 }
 
 /// Load the turnkey config's repos, logging the source/count. A malformed
@@ -50,6 +71,7 @@ pub fn run_check(program_path: &str, db_path: Option<&str>, root: PathBuf, json:
     let src = std::fs::read_to_string(program_path)?;
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
     let mut prog = parse::parse(lex::lex(&src)?)?;
+    let (root, _repos) = effective_root(program_path, &prog, root)?;
     if json { prog.items.retain(|i| !matches!(i, ast::Item::Query(_))); }
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
@@ -80,6 +102,7 @@ pub fn run_check(program_path: &str, db_path: Option<&str>, root: PathBuf, json:
 pub fn run_changed(program_path: &str, db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
     let src = std::fs::read_to_string(program_path)?;
     let prog = parse::parse(lex::lex(&src)?)?;
+    let (root, _repos) = effective_root(program_path, &prog, root)?;
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
     let abs: Vec<PathBuf> = changed.into_iter()
@@ -90,6 +113,8 @@ pub fn run_changed(program_path: &str, db_path: Option<&str>, root: PathBuf, cha
 /// Run as an LSP server over stdio. The program's `diag` relation becomes live
 /// editor diagnostics; lint fires on file open / save. See docs/lsp.md.
 pub fn run_lsp(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {
+    let prog = parse::parse(lex::lex(&std::fs::read_to_string(program_path)?)?)?;
+    let (root, _repos) = effective_root(program_path, &prog, root)?;
     lsp::run_lsp(program_path, db_path, root)
 }
 
@@ -97,9 +122,10 @@ pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Re
     use notify::{RecursiveMode, Watcher};
     let src = std::fs::read_to_string(program_path)?;
     let prog = parse::parse(lex::lex(&src)?)?;
+    let (root, repos) = effective_root(program_path, &prog, root)?;
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
-    eng.set_repos(load_repos());
+    eng.set_repos(repos);
     eng.tick(&prog, false)?;
     eprintln!("[watch] watching {} (ctrl-c to stop)", root.display());
 

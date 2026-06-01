@@ -1,0 +1,7 @@
+# Resolve the source root from the nearest .git ancestor of THIS file,
+# so the program runs without --root no matter the cwd.
+repo nearest.
+
+rel located(p: file).
+located(p) <- scan("WORK", "v5/src/repo.rs", p, rev).
+? located(p).
