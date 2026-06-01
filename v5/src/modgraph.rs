@@ -315,12 +315,16 @@ fn normalize_join(base: &str, rel: &str) -> String {
 /// collapse to the enclosing module. `r#` raw-ident prefixes are stripped.
 ///
 /// Each result carries `(lo, hi)`: the byte range, relative to `body`, of the
-/// contiguous leaf text this candidate came from. A brace-expanded path like
-/// `a::b` is synthesized from `a::{b}` and is NOT a contiguous substring, so the
-/// span points at the leaf segment (`b`) only — the head prefix is shared across
-/// siblings. A bare `use a::b::c` is contiguous, so its span covers the whole path.
+/// **contiguous rewrite coordinate** for that candidate, i.e. the text a module
+/// move splices. For a bare `use a::b::c` that is the whole path. For a brace
+/// group `a::{b, c}` the synthesized paths `a::b`/`a::c` are NOT contiguous, so
+/// every leaf points at the *outermost head prefix* (`a`) — the part that moves
+/// when module `a` moves, shared across siblings (dedups to one located row).
+/// A move whose old module is deeper than that head (e.g. `use crate::{old::A}`)
+/// simply won't prefix-match the head and is safely left alone.
 fn expand_use(body: &str) -> Vec<(String, u32, u32)> {
-    fn rec(prefix: &str, raw: &str, raw_off: usize, out: &mut Vec<(String, u32, u32)>) {
+    fn rec(prefix: &str, raw: &str, raw_off: usize, head_span: Option<(u32, u32)>,
+           out: &mut Vec<(String, u32, u32)>) {
         let lead = raw.len() - raw.trim_start().len();
         let seg = raw.trim();
         if seg.is_empty() { return; }
@@ -328,15 +332,20 @@ fn expand_use(body: &str) -> Vec<(String, u32, u32)> {
         if let Some(bi) = seg.find('{') {
             let head = seg[..bi].trim().trim_end_matches(':');
             let np = join(prefix, head);
+            // The first (outermost) brace fixes the head coordinate; deeper braces
+            // inherit it. `head` starts at seg_off (seg is already left-trimmed).
+            let this_head = head_span.or_else(||
+                (!head.is_empty()).then(|| (seg_off as u32, (seg_off + head.len()) as u32)));
             let close = matching_brace(seg, bi).unwrap_or(seg.len());
             for (item, item_off) in split_top_commas(&seg[bi + 1..close]) {
-                rec(&np, &item, seg_off + bi + 1 + item_off, out);
+                rec(&np, &item, seg_off + bi + 1 + item_off, this_head, out);
             }
         } else {
             // The contiguous leaf is the path before any ` as ` alias.
             let leaf = seg.split(" as ").next().unwrap_or(seg).trim_end();
-            let lo = seg_off as u32;
-            let hi = (seg_off + leaf.len()) as u32;
+            // Brace leaf -> the shared head span; bare leaf -> the whole path.
+            let (lo, hi) = head_span
+                .unwrap_or((seg_off as u32, (seg_off + leaf.len()) as u32));
             let full = if leaf == "self" || leaf == "*" || leaf.is_empty() {
                 prefix.to_string()
             } else {
@@ -346,7 +355,7 @@ fn expand_use(body: &str) -> Vec<(String, u32, u32)> {
         }
     }
     let mut out = Vec::new();
-    rec("", body, 0, &mut out);
+    rec("", body, 0, None, &mut out);
     out
 }
 
@@ -720,11 +729,22 @@ mod tests {
         assert!(paths.contains(&"crate::a::b::c"));
         assert!(paths.contains(&"crate::a::b::d"));
         assert!(paths.contains(&"crate::a::e"));
-        // Each span points at the contiguous leaf text it was synthesized from.
-        for (path, lo, hi) in &v {
-            let leaf = &body[*lo as usize..*hi as usize];
-            assert!(path.ends_with(leaf), "{path} should end with leaf {leaf:?}");
+        // Every brace leaf points at the outermost head prefix `crate::a` — the
+        // shared, contiguous rewrite coordinate that moves when module `a` moves.
+        for (_path, lo, hi) in &v {
+            assert_eq!(&body[*lo as usize..*hi as usize], "crate::a");
         }
+    }
+
+    #[test]
+    fn bare_use_span_covers_whole_path() {
+        // No brace -> the span is the full contiguous path (rewrite the lot).
+        let body = "crate::parser::expr::Foo";
+        let v = expand_use(body);
+        assert_eq!(v.len(), 1);
+        let (path, lo, hi) = &v[0];
+        assert_eq!(path, "crate::parser::expr::Foo");
+        assert_eq!(&body[*lo as usize..*hi as usize], "crate::parser::expr::Foo");
     }
 
     #[test]

@@ -179,6 +179,16 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
         Ok((old.trim().to_string(), new.trim().to_string()))
     }).collect::<Result<_>>()?;
 
+    // Loud, not silent: a move whose endpoints don't sit under a `src/` crate
+    // root (e.g. the kernel's rust/kernel/*.rs) can't be turned into a module
+    // path, so nothing matches. Say why instead of reporting a clean no-op.
+    for (old, new) in &moves {
+        if rspath::file_to_mod_path(old).is_none() || rspath::file_to_mod_path(new).is_none() {
+            eprintln!("[move] cannot derive a module path for {old} or {new} \
+                (not under a `src/` crate root) — its references will not be rewritten");
+        }
+    }
+
     // Scan-only source rule populates `_file` with no capture spans; referencing
     // `module_import` drives the resolver, so `_where_bytes` holds only use refs.
     let prog_src = "rel _src(p: file).\n\
@@ -203,26 +213,27 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
         }
     }
 
-    // Honest skip accounting: a brace leaf (`use a::{b, c}`) produces a
-    // module_import per leaf but its located span covers the leaf name, not the
-    // full path, so it has no clean rewrite coordinate yet. Count specifiers a
-    // move would change but that produced no edit, and say so.
-    let would_rewrite = eng.module_imports()?.iter().filter(|(file, spec)| {
-        moves.iter().any(|(old, new)| {
+    let by_file = refactor::group_by_file(edits);
+
+    // Honest skip accounting (file-level so brace heads don't false-positive: one
+    // head edit covers all `{a, b}` leaves). A move-relevant import in a file that
+    // produced NO edit is a genuine miss — e.g. `use crate::{old::A, ..}` whose
+    // head prefix isn't the moved module, so the head span doesn't match.
+    let edited: std::collections::HashSet<&String> = by_file.keys().collect();
+    let skipped = eng.module_imports()?.into_iter().filter(|(file, spec)| {
+        !edited.contains(file) && moves.iter().any(|(old, new)| {
             rspath::rewrite_import(file, old, new, spec).is_some_and(|n| &n != spec)
         })
     }).count();
-    let skipped = would_rewrite.saturating_sub(edits.len());
     if skipped > 0 {
-        eprintln!("[move] {skipped} brace-import reference(s) not rewritten \
-            (brace head-span pending; see CLAUDE.md F1b)");
+        eprintln!("[move] {skipped} move-relevant import(s) left alone \
+            (head prefix not the moved module, e.g. `use crate::{{old::A, ..}}`)");
     }
 
-    if edits.is_empty() {
+    if by_file.is_empty() {
         eprintln!("[move] no use-path references to rewrite");
         return Ok(());
     }
-    let by_file = refactor::group_by_file(edits);
     let (mut files, mut total) = (0usize, 0usize);
     for (path, file_edits) in &by_file {
         let abs = root.join(path);

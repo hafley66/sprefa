@@ -86,15 +86,16 @@ fn use_paths_are_located_in_ref_spine() {
     // file — the rewrite coordinate an `edit`/`--move` keys off.
     let d = sandbox("usespan");
     fs::create_dir_all(d.join("src")).unwrap();
-    // Two leaves under one brace: each gets its own span; the head `crate::b` is shared.
-    fs::write(d.join("src/lib.rs"), "mod a;\nmod b;\nfn x() {}\n").unwrap();
-    fs::write(d.join("src/a.rs"), "use crate::b::{Thing, Other};\nfn x() {}\n").unwrap();
-    fs::write(d.join("src/b.rs"), "pub struct Thing;\npub struct Other;\nfn x() {}\n").unwrap();
+    // A brace import: both leaves share the head prefix `crate::b`, which is the
+    // contiguous rewrite coordinate (F1b) — one located row, not per-leaf names.
+    fs::write(d.join("src/lib.rs"), "mod a;\nmod b;\n").unwrap();
+    fs::write(d.join("src/a.rs"), "use crate::b::{Thing, Other};\n").unwrap();
+    fs::write(d.join("src/b.rs"), "pub struct Thing;\npub struct Other;\n").unwrap();
 
     // Reference module_edge (drives the resolver) AND ref/string (drives the spine).
     let prog = r#"
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "fn $N() {}", line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "struct $N;", line).
 rel reaches(a: text, b: text).
 reaches(a, b) <- closure(module_edge).
 rel use_at(text: text, lo: int, hi: int).
@@ -104,13 +105,13 @@ use_at(txt, lo, hi) <- ref(_, s, _, lo, hi), string(s, txt, _).
     let (code, out, _) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed: {out}");
     let block = out.split("? use_at").nth(1).unwrap_or("");
-    // Brace expansion synthesizes `crate::b::Thing`/`crate::b::Other`; each span
-    // points at the contiguous leaf text in `use crate::b::{Thing, Other};` —
-    // `Thing` at bytes 15..20, `Other` at 22..27. That byte range IS the rewrite
-    // coordinate `edit`/`--move` keys off. (`ref.file` is the content-addressed
+    // `use crate::b::{Thing, Other};` — the head `crate::b` is at bytes 4..12.
+    // Both leaves locate that one shared span (deduped). That byte range IS the
+    // rewrite coordinate `--move` keys off. (`ref.file` is the content-addressed
     // FileId, not the path, so the span is what we assert on.)
-    assert!(block.contains("Thing\t15\t20"), "Thing leaf span: {out}");
-    assert!(block.contains("Other\t22\t27"), "Other leaf span: {out}");
+    assert!(block.contains("crate::b\t4\t12"), "brace head crate::b located at 4..12: {out}");
+    // The leaf names are NOT separately located — the head is the coordinate.
+    assert!(!block.contains("Thing\t"), "leaf name should not be a located span: {out}");
 }
 
 #[test]

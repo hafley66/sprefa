@@ -35,23 +35,24 @@ fn move_rewrites_bare_use_and_reports_brace_skips() {
         "use crate::utils::Foo;\nuse crate::utils::{Bar, Baz};\nfn go() {}\n").unwrap();
     fs::write(d.join("src/utils.rs"), "pub struct Foo;\npub struct Bar;\npub struct Baz;\n").unwrap();
 
-    // Dry run: previews the bare-use rewrite, applies nothing, warns about braces.
+    // Dry run: previews BOTH the bare use and the brace head (F1b), applies nothing.
     let (code, out, err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", false);
     assert_eq!(code, 0, "dry run failed: {out}\n{err}");
     assert!(out.contains("crate::utils::Foo -> crate::helpers::utils::Foo"),
         "previews bare-use rewrite: {out}");
-    assert!(err.contains("2 brace-import reference(s) not rewritten"),
-        "reports the two brace leaves as skipped: {err}");
+    // The brace head `crate::utils` rewrites once, covering both {Bar, Baz}.
+    assert!(out.contains("crate::utils -> crate::helpers::utils"),
+        "previews brace head rewrite (F1b): {out}");
     // Dry run must not touch the file.
     assert!(fs::read_to_string(d.join("src/app.rs")).unwrap().contains("use crate::utils::Foo;"),
         "dry run left the file unchanged");
 
-    // Apply: the bare use is rewritten on disk; the brace line is untouched.
+    // Apply: both the bare use AND the brace import are rewritten on disk.
     let (code, _out, _err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", true);
     assert_eq!(code, 0);
     let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
     assert!(after.contains("use crate::helpers::utils::Foo;"), "bare use rewritten: {after}");
-    assert!(after.contains("use crate::utils::{Bar, Baz};"), "brace line untouched: {after}");
+    assert!(after.contains("use crate::helpers::utils::{Bar, Baz};"), "brace head rewritten: {after}");
 }
 
 #[test]
