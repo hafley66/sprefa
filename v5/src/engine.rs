@@ -389,6 +389,7 @@ struct ClosureCache {
     cond: scc::Cond,
     names: Vec<String>,       // node id -> name
     id: HashMap<String, u32>, // name -> node id
+    digest: [u8; 32],         // content digest of the edge relation's (c0,c1) rows
 }
 
 fn mtime_secs(md: &std::fs::Metadata) -> i64 {
@@ -403,6 +404,10 @@ pub struct Engine {
     rels: Rels,
     root: PathBuf,
     pub dropped: usize,
+    /// Test/bench instrumentation: cumulative count of edge condensations
+    /// actually rebuilt (Tarjan invocations). A reused cond does not bump it, so
+    /// a bench can assert "this edit recondensed 0 graphs".
+    pub recondensed: usize,
     rev_cache: HashMap<String, String>,
     /// (repo slug, rev, path) of every tracked source file this tick — the
     /// existence oracle for `:file`/`:path`/`:dir` type checks against off-disk
@@ -413,12 +418,20 @@ pub struct Engine {
     /// watcher when the config file changes. (File ingestion from the extra
     /// roots is the next step; today only `--root` is scanned into `_file`.)
     repos: Vec<crate::config::RepoConfig>,
+    /// Per-edge SCC condensation, kept ACROSS ticks. The query phase reused to
+    /// rebuild every edge's condensation on every tick (the per-keystroke
+    /// closure tax); now an edge is recondensed only when its rows actually
+    /// changed (affected this tick AND its content digest moved). An unaffected
+    /// edge is reused with zero work; a comment-only edit (rows unchanged) skips
+    /// the Tarjan rebuild on the digest check.
+    closure_cache: HashMap<String, ClosureCache>,
 }
 
 impl Engine {
     pub fn new(db: crate::db::Db, root: PathBuf) -> Self {
         Engine {
-            db, rels: HashMap::new(), root, dropped: 0,
+            db, rels: HashMap::new(), root, dropped: 0, recondensed: 0,
+            closure_cache: HashMap::new(),
             rev_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
             repos: Vec::new(),
@@ -656,7 +669,8 @@ impl Engine {
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
-        if changed || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)? {
+        let rebuilt_all = changed || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
+        if rebuilt_all {
             self.rebuild_derived(&derived_rules, &derived_rels)?;
             self.rebuild_closures(&edges)?;
         }
@@ -667,9 +681,12 @@ impl Engine {
                 recon.parsed, recon.total, recon.extracted, recon.retracted,
                 if changed { "rebuilt" } else { "unchanged" }, src_ms, der_ms);
         }
-        let cond_cache = self.build_cond_cache(&edges)?;
+        // Full tick: every edge is potentially dirty when we rebuilt; the digest
+        // check inside still skips the Tarjan for edges whose rows didn't move.
+        let dirty: HashSet<&str> = if rebuilt_all { edges.iter().copied().collect() } else { HashSet::new() };
+        self.refresh_cond_cache(&edges, &dirty)?;
         for item in &prog.items {
-            if let Item::Query(q) = item { self.run_query(q, &closures, &cond_cache)?; }
+            if let Item::Query(q) = item { self.run_query(q, &closures)?; }
         }
         if self.dropped > 0 {
             eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
@@ -820,10 +837,14 @@ impl Engine {
         // plus the closures over affected edges. Untouched chains are left intact.
         let need_full = self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
         let mut rebuilt: Vec<String> = Vec::new();
+        // Edges whose source/derived relation was rebuilt this tick; only these
+        // are re-considered by the cond cache (the rest are reused untouched).
+        let mut dirty_edges: HashSet<&str> = HashSet::new();
         if need_full {
             self.rebuild_derived(&derived_rules, &derived_rels)?;
             self.rebuild_closures(&edges)?;
             rebuilt = derived_rels.clone();
+            dirty_edges = edges.iter().copied().collect();
         } else if changed_facts {
             let affected = affected_derived(&derived_rules, &changed_source_rels);
             let sub_rules: Vec<&Rule> = derived_rules.iter().copied()
@@ -834,6 +855,7 @@ impl Engine {
             let aff_edges: Vec<&str> = edges.iter().copied()
                 .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e)).collect();
             self.rebuild_closures(&aff_edges)?;
+            dirty_edges = aff_edges.iter().copied().collect();
             rebuilt = sub_rels;
         }
 
@@ -843,8 +865,8 @@ impl Engine {
                        else { rebuilt.join(",") };
             eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, rebuilt derived: {what}");
         }
-        let cond_cache = self.build_cond_cache(&edges)?;
-        for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures, &cond_cache)?; } }
+        self.refresh_cond_cache(&edges, &dirty_edges)?;
+        for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures)?; } }
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
         self.db.tick_end();
         Ok(())
@@ -1865,21 +1887,53 @@ impl Engine {
         }
     }
 
-    /// Build the in-memory condensation for each closure edge relation, for the
-    /// query phase. One build per edge per tick (a few ms even on a large repo).
-    fn build_cond_cache(&self, edges: &[&str]) -> Result<HashMap<String, ClosureCache>> {
-        let mut m = HashMap::new();
-        for edge in edges {
-            let meta = self.rels.get(*edge)
+    /// Order-independent content digest of a closure edge relation's `(c0,c1)`
+    /// rows. Same edge set ⇒ same digest, regardless of row order; the edge
+    /// table is a set (PK), so XOR cannot cancel a duplicate. Lets a tick that
+    /// touched the edge's source file skip the recondense when the actual edges
+    /// did not move (e.g. a comment edit that leaves call sites unchanged).
+    fn edge_content_digest(&self, edge: &str, c0: &str, c1: &str) -> Result<[u8; 32]> {
+        let mut acc = [0u8; 32];
+        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", tbl(edge));
+        let mut stmt = self.db.conn().prepare(&sql)?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let a: String = row.get(0).unwrap_or_default();
+            let b: String = row.get(1).unwrap_or_default();
+            let mut h = blake3::Hasher::new();
+            h.update(a.as_bytes());
+            h.update(&[0]);
+            h.update(b.as_bytes());
+            for (x, y) in acc.iter_mut().zip(h.finalize().as_bytes().iter()) { *x ^= *y; }
+        }
+        Ok(acc)
+    }
+
+    /// Refresh `self.closure_cache` for the query phase, recondensing an edge
+    /// ONLY when its rows actually changed. `dirty` is the set of edges whose
+    /// source/derived relation was rebuilt this tick. An edge not in `dirty` is
+    /// reused with zero work (no scan, no Tarjan). A dirty edge is digest-checked
+    /// first; the Tarjan rebuild runs only if the digest moved. This replaces the
+    /// old unconditional per-tick rebuild of every edge's condensation.
+    fn refresh_cond_cache(&mut self, edges: &[&str], dirty: &HashSet<&str>) -> Result<()> {
+        self.closure_cache.retain(|k, _| edges.iter().any(|e| *e == k.as_str()));
+        for &edge in edges {
+            let meta = self.rels.get(edge)
                 .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
             if meta.cols.len() < 2 { continue; }
+            // Unaffected edge already cached → reuse, no scan.
+            if !dirty.contains(edge) && self.closure_cache.contains_key(edge) { continue; }
             let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
+            let digest = self.edge_content_digest(edge, &c0, &c1)?;
+            // Dirty but rows unchanged (e.g. comment edit) → reuse, skip Tarjan.
+            if self.closure_cache.get(edge).map(|c| c.digest) == Some(digest) { continue; }
             let (adj, names) = self.load_edges(edge, &c0, &c1)?;
             let cond = scc::build_condensed(&adj);
+            self.recondensed += 1;
             let id = names.iter().enumerate().map(|(i, n)| (n.clone(), i as u32)).collect();
-            m.insert(edge.to_string(), ClosureCache { cond, names, id });
+            self.closure_cache.insert(edge.to_string(), ClosureCache { cond, names, id, digest });
         }
-        Ok(m)
+        Ok(())
     }
 
     /// Answer `reaches(src=SEED, dst=?)` as a seeded BFS over the condensation.
@@ -1908,14 +1962,13 @@ impl Engine {
         Ok(())
     }
 
-    fn run_query(&self, q: &Query, closures: &HashMap<String, String>,
-                 cache: &HashMap<String, ClosureCache>) -> Result<()> {
+    fn run_query(&self, q: &Query, closures: &HashMap<String, String>) -> Result<()> {
         // Seeded Rust path on a closure head: src pinned + dst free is a forward
         // walk (callees); dst pinned + src free is a reverse walk (callers).
         // Both-pinned, both-free, or anything else falls through to the SQL view.
         if let Some(edge) = closures.get(&q.head.rel) {
             if q.head.terms.len() == 2 {
-                if let Some(cc) = cache.get(edge) {
+                if let Some(cc) = self.closure_cache.get(edge) {
                     match (pinned_value(q, 0), pinned_value(q, 1)) {
                         (Some(seed), None) if matches!(q.head.terms[1], Term::Var(_)) =>
                             return self.run_reaches_point(q, cc, &seed, true),
