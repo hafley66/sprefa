@@ -404,6 +404,11 @@ pub struct Engine {
     pub dropped: usize,
     rev_cache: HashMap<String, String>,
     rev_index: std::collections::HashSet<(String, String)>,
+    /// Repos registered via the turnkey config. When non-empty the `repo`
+    /// relation lists these instead of the single `--root`. Reloaded by the
+    /// watcher when the config file changes. (File ingestion from the extra
+    /// roots is the next step; today only `--root` is scanned into `_file`.)
+    repos: Vec<crate::config::RepoConfig>,
 }
 
 impl Engine {
@@ -412,7 +417,14 @@ impl Engine {
             db, rels: HashMap::new(), root, dropped: 0,
             rev_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
+            repos: Vec::new(),
         }
+    }
+
+    /// Set the configured repos (from `SprfConfig`). Takes effect on the next
+    /// tick via `refresh_builtin_rels`.
+    pub fn set_repos(&mut self, repos: Vec<crate::config::RepoConfig>) {
+        self.repos = repos;
     }
 
     /// Resolve a declared rev to a stable commit SHA (WORK stays WORK).
@@ -1097,7 +1109,17 @@ impl Engine {
             contents.push(vec![t(&hash), t(&hash)]);
             file_rows.push(vec![t(&slug), t(&rev), t(&path), t(&hash)]);
         }
-        self.refresh_rel("repo", &["id", "slug", "root"], &[vec![t(&slug), t(&slug), t(&root)]])?;
+        // `repo` lists the configured repos when a config is loaded, else the
+        // single `--root` (the only one ingested into `_file` so far).
+        let repo_rows: Vec<Vec<Value>> = if self.repos.is_empty() {
+            vec![vec![t(&slug), t(&slug), t(&root)]]
+        } else {
+            self.repos.iter().map(|r| {
+                let r_root = r.root.to_string_lossy().to_string();
+                vec![t(&r.slug), t(&r.slug), t(&r_root)]
+            }).collect()
+        };
+        self.refresh_rel("repo", &["id", "slug", "root"], &repo_rows)?;
         self.refresh_rel("rev", &["id", "repo", "oid", "ts"], &revs)?;
         self.refresh_rel("content", &["id", "hash"], &contents)?;
         self.refresh_rel("file", &["repo", "rev", "path", "content"], &file_rows)?;

@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod config;
 pub mod db;
 pub mod engine;
 pub mod lex;
@@ -23,7 +24,21 @@ pub fn run_file(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Res
     let prog = parse::parse(toks)?;
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
+    eng.set_repos(load_repos());
     eng.run(&prog)
+}
+
+/// Load the turnkey config's repos, logging the source/count. A malformed
+/// config is surfaced (not silently empty) so a typo never analyzes nothing.
+fn load_repos() -> Vec<config::RepoConfig> {
+    match config::SprfConfig::load_default() {
+        Ok(cfg) if !cfg.repos.is_empty() => {
+            eprintln!("[config] {} repo(s) registered (file ingestion: --root only so far)", cfg.repos.len());
+            cfg.repos
+        }
+        Ok(_) => Vec::new(),
+        Err(e) => { eprintln!("[config] ignored: {e}"); Vec::new() }
+    }
 }
 
 /// CLI lint/ban path: run the program, render the `diag` relation, and fail the
@@ -84,12 +99,26 @@ pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Re
     let prog = parse::parse(lex::lex(&src)?)?;
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
+    eng.set_repos(load_repos());
     eng.tick(&prog, false)?;
     eprintln!("[watch] watching {} (ctrl-c to stop)", root.display());
 
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |res| { let _ = tx.send(res); })?;
     watcher.watch(&root, RecursiveMode::Recursive)?;
+
+    // Watch the turnkey config file too: editing the repo list re-registers
+    // repos and re-ticks. Watch its parent dir (the file may not exist yet, and
+    // editors replace-on-save, which a file-level watch can miss).
+    let cfg_path = config::SprfConfig::config_path().and_then(|p| p.canonicalize().ok()
+        .or(Some(p)));
+    if let Some(cp) = &cfg_path {
+        if let Some(dir) = cp.parent() {
+            if dir.exists() && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
+                eprintln!("[watch] also watching config {}", cp.display());
+            }
+        }
+    }
 
     // If the program scans any git rev, watch the git dir too so a moving ref
     // (commit, checkout, branch/tag update) fires a tick even when root is a
@@ -117,10 +146,16 @@ pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Re
         while let Ok(ev) = rx.try_recv() {
             if let Ok(ev) = ev { paths.extend(ev.paths); }
         }
-        // A ref move under the git dir needs the full sweep (git revs); a plain
-        // file edit reconciles only the changed paths.
+        // A config edit re-registers repos; a ref move under the git dir needs
+        // the full sweep (git revs); a plain file edit reconciles changed paths.
+        let touches_cfg = cfg_path.as_ref().is_some_and(|c|
+            paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
         let touches_git = git_dir.as_ref().is_some_and(|g| paths.iter().any(|p| p.starts_with(g)));
-        if touches_git || paths.is_empty() {
+        if touches_cfg {
+            eng.set_repos(load_repos());
+            eprintln!("[watch] config changed; repos reloaded");
+            eng.tick(&prog, false)?;
+        } else if touches_git || paths.is_empty() {
             eng.tick(&prog, false)?;
         } else {
             eng.tick_paths(&prog, &paths, false)?;

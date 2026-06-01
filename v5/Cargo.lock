@@ -1052,6 +1052,7 @@ dependencies = [
  "regex",
  "rusqlite",
  "scip",
+ "serde",
  "serde_json",
  "streaming-iterator",
  "syn",
