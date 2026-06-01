@@ -9,46 +9,83 @@
 
 use std::path::Path;
 
-/// Convert a file path to its Rust module path.
+/// Module path from the path components AFTER a crate source root.
 ///
-///   src/lib.rs         -> "crate"
-///   src/main.rs        -> "crate"
-///   src/foo.rs         -> "crate::foo"
-///   src/foo/mod.rs     -> "crate::foo"
-///   src/foo/bar.rs     -> "crate::foo::bar"
-///   src/foo/bar/mod.rs -> "crate::foo::bar"
+///   []  / ["lib.rs"] / ["main.rs"] -> "crate"
+///   ["foo.rs"]                      -> "crate::foo"
+///   ["foo", "mod.rs"]               -> "crate::foo"
+///   ["foo", "bar.rs"]               -> "crate::foo::bar"
+///   ["foo", "bar", "mod.rs"]        -> "crate::foo::bar"
 ///
-/// Keys off the last `src/` component, so workspace members
-/// (`crates/foo/src/bar.rs`) resolve within their own crate (`crate::bar`).
-/// Returns `None` for a path with no `src/` or nothing after it.
-pub fn file_to_mod_path(file_path: &str) -> Option<String> {
-    let components: Vec<&str> = Path::new(file_path)
-        .components()
-        .map(|c| c.as_os_str().to_str().unwrap_or(""))
-        .collect();
-    let src_idx = components.iter().rposition(|c| *c == "src")?;
-    let after_src: Vec<&str> = components[src_idx + 1..].to_vec();
-    if after_src.is_empty() {
-        return None;
-    }
-    let last = *after_src.last().unwrap();
+/// Shared by the `src/`-keyed `file_to_mod_path` and the root-anchored
+/// `file_to_mod_path_rooted`. Returns `None` for an empty tail.
+fn mod_path_from_tail(after_root: &[&str]) -> Option<String> {
+    let last = *after_root.last()?;
     let stem = Path::new(last).file_stem().and_then(|s| s.to_str()).unwrap_or(last);
-
     // lib.rs / main.rs at the crate root is the crate itself.
-    if after_src.len() == 1 && (stem == "lib" || stem == "main") {
+    if after_root.len() == 1 && (stem == "lib" || stem == "main") {
         return Some("crate".to_string());
     }
-    let mut segments = Vec::with_capacity(after_src.len() + 1);
+    let mut segments = Vec::with_capacity(after_root.len() + 1);
     segments.push("crate");
-    if stem == "mod" {
-        // src/foo/bar/mod.rs -> crate::foo::bar (directories only).
-        for dir in &after_src[..after_src.len() - 1] { segments.push(dir); }
-    } else {
-        // src/foo/bar.rs -> crate::foo::bar (directories + file stem).
-        for dir in &after_src[..after_src.len() - 1] { segments.push(dir); }
-        segments.push(stem);
-    }
+    // directories always contribute; the file stem does too unless it is `mod`.
+    for dir in &after_root[..after_root.len() - 1] { segments.push(dir); }
+    if stem != "mod" { segments.push(stem); }
     Some(segments.join("::"))
+}
+
+fn path_components(p: &str) -> Vec<&str> {
+    Path::new(p).components().map(|c| c.as_os_str().to_str().unwrap_or("")).collect()
+}
+
+/// Convert a file path to its Rust module path, keying off the last `src/`
+/// component, so workspace members (`crates/foo/src/bar.rs`) resolve within
+/// their own crate (`crate::bar`).
+///
+///   src/lib.rs -> "crate"; src/foo.rs -> "crate::foo"; src/foo/mod.rs -> "crate::foo".
+///
+/// Returns `None` for a path with no `src/` or nothing after it. Prefer
+/// `file_to_mod_path_rooted` when crate roots are known (handles non-`src/`
+/// layouts like the kernel's `rust/kernel/lib.rs`); this is the fallback.
+pub fn file_to_mod_path(file_path: &str) -> Option<String> {
+    let components = path_components(file_path);
+    let src_idx = components.iter().rposition(|c| *c == "src")?;
+    mod_path_from_tail(&components[src_idx + 1..])
+}
+
+/// Crate source roots discovered from a file set: every directory that directly
+/// holds a `lib.rs` or `main.rs`. Longest path first so a nested crate root wins
+/// over an enclosing one. These anchor `file_to_mod_path_rooted`, generalizing
+/// the bare `src/` convention to any crate layout (`rust/kernel/lib.rs` -> root
+/// `rust/kernel`).
+pub fn crate_roots(files: &[String]) -> Vec<String> {
+    let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for f in files {
+        let p = Path::new(f);
+        let stem = p.file_stem().and_then(|s| s.to_str());
+        if matches!(stem, Some("lib") | Some("main")) {
+            let dir = p.parent().and_then(|d| d.to_str()).unwrap_or("");
+            set.insert(dir.to_string());
+        }
+    }
+    let mut roots: Vec<String> = set.into_iter().collect();
+    roots.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    roots
+}
+
+/// Like `file_to_mod_path` but anchored on discovered crate `roots` (longest
+/// first). The module path is computed from the components after the longest
+/// root that contains the file; falls back to the `src/` heuristic when no root
+/// matches (so `--move` still works on a checkout with no discovered root).
+pub fn file_to_mod_path_rooted(file_path: &str, roots: &[String]) -> Option<String> {
+    let components = path_components(file_path);
+    for root in roots {
+        let rc = path_components(root);
+        if components.len() > rc.len() && components[..rc.len()] == rc[..] {
+            return mod_path_from_tail(&components[rc.len()..]);
+        }
+    }
+    file_to_mod_path(file_path)
 }
 
 /// Resolve a `use` path to absolute (`crate::...`) form for matching.
@@ -145,9 +182,23 @@ pub fn rewrite_import(
     new_target: &str,
     use_path: &str,
 ) -> Option<String> {
-    let old_mod = file_to_mod_path(old_target)?;
-    let new_mod = file_to_mod_path(new_target)?;
-    let from_mod = file_to_mod_path(from_file)?;
+    rewrite_import_rooted(from_file, old_target, new_target, use_path, &[])
+}
+
+/// `rewrite_import` with explicit crate `roots`, so non-`src/` layouts (the
+/// kernel's `rust/kernel/*.rs`) derive a module path and rewrite. Each of the
+/// three files resolves via `file_to_mod_path_rooted`, which falls back to the
+/// `src/` heuristic for files outside every discovered root.
+pub fn rewrite_import_rooted(
+    from_file: &str,
+    old_target: &str,
+    new_target: &str,
+    use_path: &str,
+    roots: &[String],
+) -> Option<String> {
+    let old_mod = file_to_mod_path_rooted(old_target, roots)?;
+    let new_mod = file_to_mod_path_rooted(new_target, roots)?;
+    let from_mod = file_to_mod_path_rooted(from_file, roots)?;
     rewrite_use_path(use_path, &old_mod, &new_mod, &from_mod)
 }
 
@@ -224,6 +275,54 @@ mod tests {
         assert_eq!(
             rewrite("/repo/src/app.rs", "/repo/src/utils.rs", "/repo/src/helpers/utils.rs",
                 "crate::config::Settings"),
+            None);
+    }
+
+    #[test]
+    fn crate_roots_discovers_non_src_layouts() {
+        let files = vec![
+            "rust/kernel/lib.rs".to_string(),
+            "rust/kernel/clk.rs".to_string(),
+            "rust/macros/lib.rs".to_string(),
+            "src/main.rs".to_string(),
+        ];
+        let roots = crate_roots(&files);
+        // longest first; dirs holding lib.rs/main.rs.
+        assert_eq!(roots, vec!["rust/kernel", "rust/macros", "src"]);
+    }
+
+    #[test]
+    fn rooted_mod_path_for_non_src_crate() {
+        let roots = vec!["rust/kernel".to_string()];
+        assert_eq!(file_to_mod_path_rooted("rust/kernel/lib.rs", &roots).as_deref(), Some("crate"));
+        assert_eq!(file_to_mod_path_rooted("rust/kernel/clk.rs", &roots).as_deref(), Some("crate::clk"));
+        assert_eq!(file_to_mod_path_rooted("rust/kernel/net/phy.rs", &roots).as_deref(),
+            Some("crate::net::phy"));
+        assert_eq!(file_to_mod_path_rooted("rust/kernel/net.rs", &roots).as_deref(),
+            Some("crate::net"));
+    }
+
+    #[test]
+    fn rooted_falls_back_to_src_heuristic_off_root() {
+        let roots = vec!["rust/kernel".to_string()];
+        // a file under no discovered root still resolves via the `src/` rule.
+        assert_eq!(file_to_mod_path_rooted("other/src/foo.rs", &roots).as_deref(),
+            Some("crate::foo"));
+    }
+
+    #[test]
+    fn rewrite_non_src_kernel_move() {
+        // move rust/kernel/clk.rs -> rust/kernel/hw/clk.rs; a sibling's
+        // `use crate::clk::Hertz` must follow to `crate::hw::clk::Hertz`.
+        let roots = vec!["rust/kernel".to_string()];
+        assert_eq!(
+            rewrite_import_rooted("rust/kernel/device.rs", "rust/kernel/clk.rs",
+                "rust/kernel/hw/clk.rs", "crate::clk::Hertz", &roots).as_deref(),
+            Some("crate::hw::clk::Hertz"));
+        // without roots, the same move can't derive a module path -> no rewrite.
+        assert_eq!(
+            rewrite_import("rust/kernel/device.rs", "rust/kernel/clk.rs",
+                "rust/kernel/hw/clk.rs", "crate::clk::Hertz"),
             None);
     }
 

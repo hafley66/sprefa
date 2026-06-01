@@ -464,6 +464,16 @@ impl Engine {
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
+    /// Distinct WORK source paths from the `_file` cache. Feeds crate-root
+    /// discovery (`rspath::crate_roots`) for the `--move` rewriter, so a crate
+    /// whose root is `rust/kernel/lib.rs` (no `src/`) still yields module paths.
+    pub fn source_paths(&self) -> Result<Vec<String>> {
+        let conn = self.db.conn();
+        let mut s = conn.prepare("SELECT DISTINCT path FROM _file WHERE rev = 'WORK'")?;
+        let rows = s.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.filter_map(|x| x.ok()).collect())
+    }
+
     /// (file, specifier) for every `use`/`import` row in `module_import`. The
     /// specifier is the resolver's synthesized full path (brace leaves expanded),
     /// which the refactor sink uses to detect imports it cannot yet splice (a

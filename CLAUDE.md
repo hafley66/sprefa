@@ -104,8 +104,15 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       AND `_where_bytes`) from full-scan + incremental paths. **ref.id** = `ref` is now
       5-ary `ref(id, string, file, lo, hi)` (id = `_where_bytes` id = the edit coordinate).
       e2e test `use_paths_are_located_in_ref_spine`. NOTE `ref.file` = content FileId, not
-      path. NEXT: **Route A** = `edit` table + `rewrite_use_path`/`reconvert_prefix` port +
-      `--move OLD=NEW` driver + `drain_edits` (join⋈group-by-file⋈splice-DESC + overlap guard).
+      path. Route A LANDED (79db9d9): rspath.rs port + refactor.rs edit sink + `--move OLD=NEW`
+      driver + brace head-span (F1b). **Non-src layouts** now rewrite too: `rspath::crate_roots`
+      discovers crate roots from the scanned file set (dirs holding lib.rs/main.rs, longest-first),
+      `file_to_mod_path_rooted` anchors there (falls back to `src/` off-root), `run_move` threads
+      `eng.source_paths()` -> roots into warning+edit+skip loops. Verified on the kernel (no
+      Cargo.toml): `--move rust/kernel/clk.rs=rust/kernel/hw/clk.rs` rewrites `crate::clk::Clk ->
+      crate::hw::clk::Clk` (was a loud no-op). modgraph resolver left untouched (don't perturb RA
+      recall). RESIDUAL: brace-head `use crate::{clk::X, ..}` still left alone (loudly counted);
+      physical on-disk file move + moved file's own imports still deferred.
 - [x] **SCIP importer (L1')**: ingest an existing `index.scip` from `SPREFA_SCIP_INDEX`
       or repo root into `scip_def`/`scip_ref`/`scip_edge` relations.
 - [x] crate-level dep edges (crate A→B from `[dependencies]`) as a relation.

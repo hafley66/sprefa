@@ -179,16 +179,6 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
         Ok((old.trim().to_string(), new.trim().to_string()))
     }).collect::<Result<_>>()?;
 
-    // Loud, not silent: a move whose endpoints don't sit under a `src/` crate
-    // root (e.g. the kernel's rust/kernel/*.rs) can't be turned into a module
-    // path, so nothing matches. Say why instead of reporting a clean no-op.
-    for (old, new) in &moves {
-        if rspath::file_to_mod_path(old).is_none() || rspath::file_to_mod_path(new).is_none() {
-            eprintln!("[move] cannot derive a module path for {old} or {new} \
-                (not under a `src/` crate root) — its references will not be rewritten");
-        }
-    }
-
     // Scan-only source rule populates `_file` with no capture spans; referencing
     // `module_import` drives the resolver, so `_where_bytes` holds only use refs.
     let prog_src = "rel _src(p: file).\n\
@@ -200,11 +190,28 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
     let mut eng = engine::Engine::new(conn, root.clone());
     eng.tick(&prog, true)?;
 
+    // Crate source roots discovered from the scanned file set (dirs holding
+    // lib.rs/main.rs), so non-`src/` layouts (the kernel's rust/kernel/*.rs)
+    // derive module paths instead of silently no-matching.
+    let roots = rspath::crate_roots(&eng.source_paths()?);
+
+    // Loud, not silent: a move whose endpoints resolve to no crate root at all
+    // (outside `src/` AND outside any discovered root) can't be turned into a
+    // module path. Say why instead of reporting a clean no-op.
+    for (old, new) in &moves {
+        if rspath::file_to_mod_path_rooted(old, &roots).is_none()
+            || rspath::file_to_mod_path_rooted(new, &roots).is_none()
+        {
+            eprintln!("[move] cannot derive a module path for {old} or {new} \
+                (under no crate root) — its references will not be rewritten");
+        }
+    }
+
     // Each located use span -> the first move that rewrites it.
     let mut edits: Vec<refactor::Edit> = Vec::new();
     for (path, lo, hi, text) in eng.located_spans()? {
         for (old, new) in &moves {
-            if let Some(new_text) = rspath::rewrite_import(&path, old, new, &text) {
+            if let Some(new_text) = rspath::rewrite_import_rooted(&path, old, new, &text, &roots) {
                 if new_text != text {
                     edits.push(refactor::Edit { path, lo, hi, old_text: text, new_text });
                     break;
@@ -222,7 +229,7 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, mv: Vec<String>, fix: bool
     let edited: std::collections::HashSet<&String> = by_file.keys().collect();
     let skipped = eng.module_imports()?.into_iter().filter(|(file, spec)| {
         !edited.contains(file) && moves.iter().any(|(old, new)| {
-            rspath::rewrite_import(file, old, new, spec).is_some_and(|n| &n != spec)
+            rspath::rewrite_import_rooted(file, old, new, spec, &roots).is_some_and(|n| &n != spec)
         })
     }).count();
     if skipped > 0 {
