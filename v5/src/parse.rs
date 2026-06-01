@@ -244,6 +244,7 @@ impl Parser {
             Tok::Eq => CmpOp::Eq, Tok::Ne => CmpOp::Ne,
             Tok::Lt => CmpOp::Lt, Tok::Le => CmpOp::Le,
             Tok::Gt => CmpOp::Gt, Tok::Ge => CmpOp::Ge,
+            Tok::Match => CmpOp::Match, Tok::Glob => CmpOp::Glob,
             other => bail!("expected comparison operator, got {:?}", other),
         };
         let rhs = self.term()?;

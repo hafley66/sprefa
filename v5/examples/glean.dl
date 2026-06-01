@@ -68,3 +68,9 @@ embedded_by(target, owner, kind) <- type_edge(owner, target, kind).
 ? reaches(src, dst) where src = "Engine::tick".
 ? embedded_by(target, owner, kind) where target = "crate::db::Db".
 ? module_unresolved(file, specifier, reason, line).
+
+# 6. PATTERN FILTERS — `=~` is regex (SQLite REGEXP), `~~` is glob (SQLite GLOB).
+#    Filter any derived column, not just source paths.
+? def(name, path, line) where name =~ "::tick".          # every Type::tick* method
+? def(name, path, line) where name =~ "^Engine::".       # all methods on Engine
+? def(name, path, line) where path ~~ "*db.rs".          # everything defined in db.rs

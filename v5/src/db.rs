@@ -36,7 +36,29 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         None => Connection::open_in_memory()?,
     };
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+    register_regexp(&conn)?;
     Ok(Db { conn, counts: RefCell::new(HashMap::new()) })
+}
+
+/// Register the `regexp(pattern, value)` SQL function so the `=~` constraint
+/// (lowered to `value REGEXP pattern`) works. `GLOB` is native to SQLite, so the
+/// `~~` constraint needs nothing. Compiles the pattern per call — fine for
+/// filtering query result rows; cache via aux data if it ever shows up hot.
+fn register_regexp(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "regexp",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let pattern = ctx.get::<String>(0)?;
+            let value = ctx.get::<String>(1)?;
+            let re = regex::Regex::new(&pattern)
+                .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+            Ok(re.is_match(&value))
+        },
+    )?;
+    Ok(())
 }
 
 impl Db {

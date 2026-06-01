@@ -11,7 +11,7 @@ pub enum Tok {
     Int(i64),
     Regex(String),
     LParen, RParen, Comma, Dot, Colon, Bang, Question, Arrow,
-    Eq, Ne, Lt, Le, Gt, Ge,
+    Eq, Ne, Lt, Le, Gt, Ge, Match, Glob,
 }
 
 pub fn lex(src: &str) -> Result<Vec<Tok>> {
@@ -29,7 +29,14 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
             b'.' => { out.push(Tok::Dot); i += 1; }
             b':' => { out.push(Tok::Colon); i += 1; }
             b'?' => { out.push(Tok::Question); i += 1; }
-            b'=' => { out.push(Tok::Eq); i += 1; }
+            b'=' => {
+                if b.get(i + 1) == Some(&b'~') { out.push(Tok::Match); i += 2; }
+                else { out.push(Tok::Eq); i += 1; }
+            }
+            b'~' => {
+                if b.get(i + 1) == Some(&b'~') { out.push(Tok::Glob); i += 2; }
+                else { bail!("lone '~' (use '~~' for glob, '=~' for regex)"); }
+            }
             b'!' => {
                 if b.get(i + 1) == Some(&b'=') { out.push(Tok::Ne); i += 2; }
                 else { out.push(Tok::Bang); i += 1; }

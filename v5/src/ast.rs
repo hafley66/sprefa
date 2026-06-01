@@ -46,7 +46,7 @@ impl RelMeta {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CmpOp { Eq, Ne, Lt, Le, Gt, Ge }
+pub enum CmpOp { Eq, Ne, Lt, Le, Gt, Ge, Match, Glob }
 
 impl CmpOp {
     pub fn sql(self) -> &'static str {
@@ -54,6 +54,7 @@ impl CmpOp {
             CmpOp::Eq => "=", CmpOp::Ne => "<>",
             CmpOp::Lt => "<", CmpOp::Le => "<=",
             CmpOp::Gt => ">", CmpOp::Ge => ">=",
+            CmpOp::Match => "REGEXP", CmpOp::Glob => "GLOB",
         }
     }
 }

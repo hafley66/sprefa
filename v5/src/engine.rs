@@ -2261,6 +2261,18 @@ fn val_of(t: &Term, b: &Bind) -> Result<Value> {
 fn eval_cmp(c: &Constraint, b: &Bind) -> Result<bool> {
     let l = val_of(&c.lhs, b)?;
     let r = val_of(&c.rhs, b)?;
+    // Pattern ops: lhs value tested against rhs pattern (a literal string).
+    match c.op {
+        CmpOp::Match => {
+            let re = regex::Regex::new(&r.as_str())?;
+            return Ok(re.is_match(&l.as_str()));
+        }
+        CmpOp::Glob => {
+            let g = globset::Glob::new(&r.as_str())?.compile_matcher();
+            return Ok(g.is_match(l.as_str()));
+        }
+        _ => {}
+    }
     let ord = match (&l, &r) {
         (Value::Int(a), Value::Int(b)) => a.cmp(b),
         _ => l.as_str().cmp(&r.as_str()),
@@ -2269,6 +2281,7 @@ fn eval_cmp(c: &Constraint, b: &Bind) -> Result<bool> {
         CmpOp::Eq => ord.is_eq(), CmpOp::Ne => ord.is_ne(),
         CmpOp::Lt => ord.is_lt(), CmpOp::Le => ord.is_le(),
         CmpOp::Gt => ord.is_gt(), CmpOp::Ge => ord.is_ge(),
+        CmpOp::Match | CmpOp::Glob => unreachable!("handled above"),
     })
 }
 
