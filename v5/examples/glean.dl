@@ -1,0 +1,70 @@
+# glean.dl — the "ask this codebase questions" showpiece, over v5's own source.
+#
+# This is the Glean loop in one file: extract facts from real code, then ask the
+# canonical code-navigation questions. No compiler, no index format — the answers
+# fall out of datalog rules over syn + tree-sitter facts.
+#
+#   Run: dl v5/examples/glean.dl --root .
+#
+# Questions answered (each is a `?` query at the bottom):
+#   1. WHERE IS IT DEFINED?   def(name, path, line)
+#   2. WHO CALLS IT?          callers of Engine::tick
+#   3. BLAST RADIUS           everything Engine::tick transitively reaches
+#   4. TYPE FAN-IN            which types embed `Db` as a field/variant
+#   5. BROKEN IMPORTS         module_unresolved (the linter question)
+
+# ---- typed call graph (qualified Type::method nodes, exact resolution) ----
+rel fn_span(name: text, path: file, s: int, e: int).
+rel impl_span(ty: text, path: file, s: int, e: int).
+rel cs_free(f: text, path: file, line: int).
+rel cs_scoped(ty: text, m: text, path: file, line: int).
+rel cs_self(m: text, path: file, line: int).
+rel inside_impl(name: text, path: file, s: int).
+rel qfn(q: text, path: file, s: int, e: int).
+rel calls(caller: text, callee: text).
+rel reaches(src: text, dst: text).
+
+# 1. DEFINITIONS — every function definition, qualified and located.
+rel def(name: text, path: file, line: int).
+
+fn_span(name, path, s, e) <- scan("WORK","v5/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(function_item name: (identifier) @name) @fn", s, e).
+impl_span(ty, path, s, e) <- scan("WORK","v5/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(impl_item type: [ (type_identifier) @ty (generic_type type: (type_identifier) @ty) ]) @impl", s, e).
+cs_free(f, path, line) <- scan("WORK","v5/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(call_expression function: (identifier) @f)", line).
+cs_scoped(ty, m, path, line) <- scan("WORK","v5/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(call_expression function: (scoped_identifier path: (identifier) @ty name: (identifier) @m))", line).
+cs_self(m, path, line) <- scan("WORK","v5/src/**/*.rs",path,rev),
+  ast(path, rev, :rust, "(call_expression function: (field_expression value: (identifier) @recv field: (field_identifier) @m))", line),
+  recv = "self".
+
+inside_impl(name, path, s) <- fn_span(name,path,s,e), impl_span(ty,path,is,ie), is <= s, e <= ie.
+qfn("${ty}::${name}", path, s, e) <- fn_span(name,path,s,e), impl_span(ty,path,is,ie), is <= s, e <= ie.
+qfn(name, path, s, e) <- fn_span(name,path,s,e), !inside_impl(name,path,s).
+
+def(q, path, s) <- qfn(q, path, s, e).
+
+calls(caller, callee) <-
+  qfn(caller, p, cs, ce), cs_free(callee, p, l), cs <= l, l <= ce, qfn(callee,_,_,_).
+calls(caller, "${ty}::${m}") <-
+  qfn(caller, p, cs, ce), cs_scoped(ty, m, p, l), cs <= l, l <= ce.
+calls(caller, "${ty}::${m}") <-
+  qfn(caller, p, cs, ce), cs_self(m, p, l), cs <= l, l <= ce, impl_span(ty, p, is, ie), is <= l, l <= ie.
+
+reaches(src, dst) <- closure(calls).
+
+# 2. CALLERS — fan-in: who calls a given qualified function.
+rel callers(callee: text, caller: text).
+callers(callee, caller) <- calls(caller, callee).
+
+# 4. TYPE FAN-IN — which types embed a given type (the inverse of type_edge).
+rel embedded_by(target: text, owner: text, kind: text).
+embedded_by(target, owner, kind) <- type_edge(owner, target, kind).
+
+# ---- the questions ----
+? def(name, path, line) where name = "Engine::tick".
+? callers(callee, caller) where callee = "dedup_edges".
+? reaches(src, dst) where src = "Engine::tick".
+? embedded_by(target, owner, kind) where target = "crate::db::Db".
+? module_unresolved(file, specifier, reason, line).
