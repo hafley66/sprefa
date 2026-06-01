@@ -101,3 +101,41 @@ fn config_repo_with_url_is_cloned_on_first_scan() {
     assert!(block.contains("gamma\t"), "cloned repo's file row present: {stdout}");
     assert!(block.contains("src/lib.rs"), "cloned file path present: {stdout}");
 }
+
+/// `scan("*", ...)` fans a single source rule out over every configured repo,
+/// so one program queries the whole config repo set.
+#[test]
+fn scan_star_fans_out_over_every_config_repo() {
+    let d = std::env::temp_dir().join("cfg_star_test");
+    let _ = fs::remove_dir_all(&d);
+    for (slug, body) in [("ra", "fn alpha() {}\n"), ("rb", "fn beta() {}\n")] {
+        let r = d.join(slug);
+        fs::create_dir_all(r.join("src")).unwrap();
+        fs::write(r.join("src/lib.rs"), body).unwrap();
+    }
+    fs::write(d.join("cfg.toml"), format!("\
+        [[repos]]\n\
+        slug = \"ra\"\n\
+        root = \"{a}\"\n\
+        [[repos]]\n\
+        slug = \"rb\"\n\
+        root = \"{b}\"\n",
+        a = d.join("ra").display(), b = d.join("rb").display())).unwrap();
+    fs::write(d.join("p.dl"), "\
+        rel s(p: file).\n\
+        s(p) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
+        ? file(repo, rev, path, content).\n").unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", d.join("ra").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .output().expect("run dl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+
+    let block = stdout.split("? file").nth(1).unwrap_or("");
+    assert!(block.contains("ra\tWORK\tsrc/lib.rs"), "repo ra file row: {stdout}");
+    assert!(block.contains("rb\tWORK\tsrc/lib.rs"), "repo rb file row: {stdout}");
+    assert!(block.contains("(2 rows)"), "both repos' files, distinct by repo: {stdout}");
+}

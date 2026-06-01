@@ -489,6 +489,25 @@ impl Engine {
         Ok(())
     }
 
+    /// Expand a `scan` repo coordinate into the concrete `(slug, root)` set to
+    /// scan this tick. `"*"` / `"all"` fans out over every configured repo (the
+    /// config-folder query: one program, the whole repo set), cloning any that
+    /// are not yet on disk; anything else resolves to a single repo.
+    fn resolve_scan_repos(&self, repo: &str) -> Result<Vec<(String, PathBuf)>> {
+        if repo == "*" || repo == "all" {
+            if self.repos.is_empty() {
+                return Ok(vec![(self.self_slug(), self.root.clone())]);
+            }
+            let mut out = Vec::with_capacity(self.repos.len());
+            for rc in &self.repos {
+                self.ensure_cloned(rc)?;
+                out.push((rc.slug.clone(), rc.root.clone()));
+            }
+            return Ok(out);
+        }
+        Ok(vec![self.resolve_repo(repo)?])
+    }
+
     /// Stable slug for this engine's own repo: the `--root` directory name.
     fn self_slug(&self) -> String {
         self.root.file_name().map(|s| s.to_string_lossy().to_string())
@@ -987,22 +1006,24 @@ impl Engine {
         let prev = self.load_file_meta()?;
 
         let mut current: FileMeta = HashMap::new();
-        // (rule idx, repo slug, path, rev, hash) for every enumerated file.
+        // (rule idx, repo slug, path, rev, hash) for every enumerated file. A
+        // single rule scanning `"*"` fans out to one batch of rows per config
+        // repo, all carrying the same rule idx but distinct repo slugs.
         let mut rule_files: Vec<(usize, String, String, String, String)> = Vec::new();
-        // The repo (slug, root) each source rule scans (its `scan` repo
-        // coordinate). One entry per source rule, indexed by rule idx; parse_file
-        // reads content from the matching root and stamps the slug so two repos
-        // sharing a path stay distinct in `_file`/`_prov`.
-        let mut rule_repos: Vec<(String, PathBuf)> = Vec::with_capacity(source_rules.len());
+        // slug -> on-disk root for every repo touched this tick; parse_file reads
+        // content from the matching root and the slug stamps `_file`/`_prov` so
+        // two repos sharing a path stay distinct.
+        let mut root_by_repo: HashMap<String, PathBuf> = HashMap::new();
         for (idx, rule) in source_rules.iter().enumerate() {
             let (repo, declared, glob, _, _) = scan_spec(rule)?;
-            let (slug, repo_root) = self.resolve_repo(&repo)?;
-            let rev = self.resolve_rev(&repo_root, &declared)?;
-            for (path, h, mt, sz) in self.enumerate_with_hash(&slug, &repo_root, &rev, &glob, &prev)? {
-                current.insert((slug.clone(), path.clone(), rev.clone()), (h.clone(), mt, sz));
-                rule_files.push((idx, slug.clone(), path, rev.clone(), h));
+            for (slug, repo_root) in self.resolve_scan_repos(&repo)? {
+                let rev = self.resolve_rev(&repo_root, &declared)?;
+                for (path, h, mt, sz) in self.enumerate_with_hash(&slug, &repo_root, &rev, &glob, &prev)? {
+                    current.insert((slug.clone(), path.clone(), rev.clone()), (h.clone(), mt, sz));
+                    rule_files.push((idx, slug.clone(), path, rev.clone(), h));
+                }
+                root_by_repo.insert(slug, repo_root);
             }
-            rule_repos.push((slug, repo_root));
         }
         self.rev_index = current.keys().map(|(repo, p, r)| (repo.clone(), r.clone(), p.clone())).collect();
 
@@ -1038,7 +1059,8 @@ impl Engine {
         let results: Vec<Result<(String, String, Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)>> = {
             let Engine { rels, rev_index, .. } = &*self;
             to_extract.par_iter().map(|(idx, repo, path, rev, hash)| {
-                let root = &rule_repos[*idx].1;
+                let root = root_by_repo.get(repo)
+                    .ok_or_else(|| anyhow::anyhow!("no root for repo {repo}"))?;
                 let (rows, where_bytes, dropped) =
                     parse_file(source_rules[*idx], repo, path, rev, hash, root, rels, rev_index)?;
                 let rel = source_rules[*idx].head.rel.clone();
