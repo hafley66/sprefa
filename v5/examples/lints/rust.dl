@@ -1,0 +1,40 @@
+# Rust lint pack — ast-grep patterns surfaced as LSP diagnostics.
+#
+# Load it live in any repo:
+#   dl examples/lints/rust.dl --root /path/to/repo --lsp     # squiggles in the editor
+# Gate a commit (exits non-zero iff any `error`-severity row exists):
+#   dl examples/lints/rust.dl --root /path/to/repo --check    # husky pre-commit
+#   dl examples/lints/rust.dl --root /path/to/repo --diag-json # CI / JSON
+#
+# To add a rule: ask the AI for an ast-grep pattern, paste it into a new `diag`
+# rule below. `$X` = one node, `$$$A` = a variadic list. The trailing
+# line/col/end_line/end_col bind the match span so the squiggle is tight.
+#
+# scan("*", ...) fans over every configured repo; use scan("WORK", ...) for self only.
+
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text, hint: text).
+
+# error: a debug macro left in committed code (blocks commit)
+diag(path, line, col, el, ec, "error", "no-dbg", "dbg!() left in code: `dbg!(${X})`",
+     "remove the debug macro before committing") <-
+  scan("*", "WORK", "**/*.rs", path, rev),
+  sg(path, rev, :rust, "dbg!($X)", line, col, el, ec).
+
+# warn: .unwrap() — prefer ? or .expect("reason")
+diag(path, line, col, el, ec, "warn", "no-unwrap", "unwrap() on `${X}`",
+     "use ? to propagate, or .expect(\"why this can't fail\")") <-
+  scan("*", "WORK", "**/*.rs", path, rev),
+  sg(path, rev, :rust, "$X.unwrap()", line, col, el, ec).
+
+# warn: bare panic!/todo!/unimplemented! in code
+diag(path, line, col, el, ec, "warn", "no-panic", "panic!() — return a Result instead", "") <-
+  scan("*", "WORK", "**/*.rs", path, rev),
+  sg(path, rev, :rust, "panic!($$$A)", line, col, el, ec).
+
+diag(path, line, col, el, ec, "warn", "no-todo", "todo!() left in code", "finish or open a ticket") <-
+  scan("*", "WORK", "**/*.rs", path, rev),
+  sg(path, rev, :rust, "todo!($$$A)", line, col, el, ec).
+
+# Plain-run view (ignored under --lsp/--check, shown by `dl rust.dl --root .`)
+? diag(path, line, col, end_line, end_col, severity, code, msg, hint).

@@ -1,0 +1,30 @@
+# TypeScript/JS lint pack — ast-grep patterns surfaced as LSP diagnostics.
+#
+#   dl examples/lints/ts.dl --root /path/to/repo --lsp
+#   dl examples/lints/ts.dl --root /path/to/repo --check
+#
+# `sg` lang tokens: :ts :tsx :js. Globs pick the files. Same pattern syntax as
+# Rust ($X one node, $$$A variadic).
+
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text, hint: text).
+
+# error: a leftover debugger statement (blocks commit)
+diag(path, line, col, el, ec, "error", "no-debugger", "debugger statement left in code",
+     "remove before committing") <-
+  scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
+  sg(path, rev, :tsx, "debugger", line, col, el, ec).
+
+# warn: console.log left in code
+diag(path, line, col, el, ec, "warn", "no-console", "console.log() left in code",
+     "use a logger or remove") <-
+  scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
+  sg(path, rev, :tsx, "console.log($$$A)", line, col, el, ec).
+
+# warn: `as any` escape hatch
+diag(path, line, col, el, ec, "warn", "no-any-cast", "`as any` defeats the type checker",
+     "narrow the type or use `unknown` + a guard") <-
+  scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
+  sg(path, rev, :tsx, "$X as any", line, col, el, ec).
+
+? diag(path, line, col, end_line, end_col, severity, code, msg, hint).
