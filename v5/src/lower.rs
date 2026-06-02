@@ -161,11 +161,6 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
             Term::Wild => {}
         }
     }
-    for c in &q.wheres {
-        let l = term_sql(&c.lhs, &canon)?;
-        let r = term_sql(&c.rhs, &canon)?;
-        wheres.push(format!("{l} {} {r}", c.op.sql()));
-    }
     if sel.is_empty() { sel.push("*".into()); }
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
     let sql = format!("SELECT DISTINCT {} FROM {}{} ORDER BY 1", sel.join(", "), tbl(&q.head.rel), where_sql);

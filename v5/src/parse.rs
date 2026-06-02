@@ -81,16 +81,13 @@ impl Parser {
     fn query(&mut self) -> Result<Query> {
         self.expect(Tok::Question)?;
         let head = self.atom()?;
-        let mut wheres = Vec::new();
         if matches!(self.peek(), Some(Tok::Ident(s)) if s == "where") {
-            self.ident()?;
-            loop {
-                wheres.push(self.constraint()?);
-                if matches!(self.peek(), Some(Tok::Comma)) { self.next()?; } else { break; }
-            }
+            bail!("`where` was removed. Filter by nesting: pin a column with a \
+                   literal head term (`? rel(\"X\", y).`), or derive a filtered \
+                   relation and query it (`r(...) <- rel(...), col =~ \"...\". ? r(...).`).");
         }
         self.expect(Tok::Dot)?;
-        Ok(Query { head, wheres })
+        Ok(Query { head })
     }
 
     fn atom(&mut self) -> Result<Atom> {

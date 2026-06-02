@@ -105,8 +105,12 @@ impl Rule {
     }
 }
 
+/// A `? atom.` query. Filtering is done by nesting (a literal head term pins a
+/// column; a derived rule with a body constraint filters), so a query carries no
+/// constraints of its own — the `where` clause was removed (see
+/// plans/2026-06-02-kill-where-seed-closures-by-nesting.md).
 #[derive(Clone, Debug)]
-pub struct Query { pub head: Atom, pub wheres: Vec<Constraint> }
+pub struct Query { pub head: Atom }
 
 #[derive(Clone, Debug)]
 pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query) }
