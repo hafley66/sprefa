@@ -499,6 +499,9 @@ pub struct Engine {
     /// edge is reused with zero work; a comment-only edit (rows unchanged) skips
     /// the Tarjan rebuild on the digest check.
     closure_cache: HashMap<String, ClosureCache>,
+    /// Emit `?` query results as JSON-lines (one object per query) instead of the
+    /// human TSV block. For tools/editors consuming answers (`--query-json`).
+    query_json: bool,
 }
 
 impl Engine {
@@ -509,8 +512,12 @@ impl Engine {
             rev_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
             repos: Vec::new(),
+            query_json: false,
         }
     }
+
+    /// Emit query results as JSON-lines instead of the human TSV block.
+    pub fn set_query_json(&mut self, on: bool) { self.query_json = on; }
 
     /// Set the configured repos (from `SprfConfig`). Takes effect on the next
     /// tick via `refresh_builtin_rels`.
@@ -2060,18 +2067,27 @@ impl Engine {
             Term::Var(v) => v.clone(),
             _ => meta.col_name(pos).to_string(),
         };
-        println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
-        let mut n = 0;
+        let mut hits: Vec<&str> = Vec::new();
         if let Some(&sid) = cc.id.get(seed) {
             let walk = if forward { scc::reaches_from(&cc.cond, sid) } else { scc::reached_by(&cc.cond, sid) };
-            let mut hits: Vec<&str> = walk.iter().map(|&i| cc.names[i as usize].as_str()).collect();
+            hits = walk.iter().map(|&i| cc.names[i as usize].as_str()).collect();
             hits.sort_unstable();
-            for h in hits {
-                if forward { println!("  {seed}\t{h}"); } else { println!("  {h}\t{seed}"); }
-                n += 1;
-            }
         }
-        println!("  ({n} rows)\n");
+        let row = |h: &str| if forward {
+            vec![serde_json::Value::String(seed.to_string()), serde_json::Value::String(h.to_string())]
+        } else {
+            vec![serde_json::Value::String(h.to_string()), serde_json::Value::String(seed.to_string())]
+        };
+        if self.query_json {
+            let rows: Vec<Vec<serde_json::Value>> = hits.iter().map(|h| row(h)).collect();
+            emit_query_json(&q.head.rel, &[header(0), header(1)], &rows);
+        } else {
+            println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
+            for h in &hits {
+                if forward { println!("  {seed}\t{h}"); } else { println!("  {h}\t{seed}"); }
+            }
+            println!("  ({} rows)\n", hits.len());
+        }
         Ok(())
     }
 
@@ -2152,23 +2168,59 @@ impl Engine {
         let mut stmt = self.db.conn().prepare(&sql)?;
         let ncols = stmt.column_count();
         let mut rows = stmt.query([])?;
-        println!("? {} => {}", q.head.rel, if headers.is_empty() { "(count)".into() } else { headers.join("\t") });
-        let mut n = 0;
+        let mut out: Vec<Vec<serde_json::Value>> = Vec::new();
         while let Some(row) = rows.next()? {
-            let cells: Vec<String> = (0..ncols).map(|i| {
-                match row.get::<_, rusqlite::types::Value>(i).unwrap_or(rusqlite::types::Value::Null) {
-                    rusqlite::types::Value::Text(s) => s,
-                    rusqlite::types::Value::Integer(n) => n.to_string(),
-                    rusqlite::types::Value::Real(f) => f.to_string(),
-                    _ => String::new(),
-                }
-            }).collect();
-            println!("  {}", cells.join("\t"));
-            n += 1;
+            let cells = (0..ncols)
+                .map(|i| sqlite_to_json(row.get::<_, rusqlite::types::Value>(i).unwrap_or(rusqlite::types::Value::Null)))
+                .collect();
+            out.push(cells);
         }
-        println!("  ({n} rows)\n");
+        if self.query_json {
+            emit_query_json(&q.head.rel, &headers, &out);
+        } else {
+            println!("? {} => {}", q.head.rel, if headers.is_empty() { "(count)".into() } else { headers.join("\t") });
+            for cells in &out {
+                println!("  {}", cells.iter().map(json_cell_tsv).collect::<Vec<_>>().join("\t"));
+            }
+            println!("  ({} rows)\n", out.len());
+        }
         Ok(())
     }
+}
+
+/// SQLite value -> JSON: text stays a string, integer/real become JSON numbers,
+/// everything else (NULL/blob) becomes JSON null. The TSV path stringifies these
+/// back via `json_cell_tsv`, so both renderers share one cell representation.
+fn sqlite_to_json(v: rusqlite::types::Value) -> serde_json::Value {
+    use rusqlite::types::Value as V;
+    match v {
+        V::Text(s) => serde_json::Value::String(s),
+        V::Integer(n) => serde_json::Value::from(n),
+        V::Real(f) => serde_json::Value::from(f),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// Render a JSON cell for the human TSV block: strings raw (no quotes), numbers
+/// as their text, null empty — matching the pre-JSON behavior exactly.
+fn json_cell_tsv(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// One JSON object per query (JSON-lines), so a program's multiple `?` queries
+/// stream as independent records a tool can read line by line.
+fn emit_query_json(rel: &str, columns: &[String], rows: &[Vec<serde_json::Value>]) {
+    let obj = serde_json::json!({
+        "query": rel,
+        "columns": columns,
+        "rows": rows,
+        "count": rows.len(),
+    });
+    println!("{obj}");
 }
 
 /// (repo, rev, glob, pathvar, revvar) of a source rule's `scan`. `repo` is the

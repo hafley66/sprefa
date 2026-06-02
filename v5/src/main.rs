@@ -26,6 +26,10 @@ struct Cli {
     /// Like --check but emit the diagnostics as a JSON array on stdout.
     #[arg(long)]
     diag_json: bool,
+    /// Emit `?` query results as JSON-lines (one object per query:
+    /// {query, columns, rows, count}) instead of the human TSV block.
+    #[arg(long)]
+    query_json: bool,
     /// Drive one incremental tick for these changed paths (the delta path the
     /// watcher uses), instead of a full run. Repeatable.
     #[arg(long)]
@@ -75,6 +79,6 @@ fn main() -> Result<()> {
     } else if cli.watch {
         sprefa_v5::run_watch(&program, cli.db.as_deref(), root)
     } else {
-        sprefa_v5::run_file(&program, cli.db.as_deref(), root)
+        sprefa_v5::run_file(&program, cli.db.as_deref(), root, cli.query_json)
     }
 }

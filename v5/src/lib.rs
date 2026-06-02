@@ -19,12 +19,13 @@ pub mod typegraph;
 use anyhow::Result;
 use std::path::PathBuf;
 
-pub fn run_file(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {
+pub fn run_file(program_path: &str, db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
     let src = std::fs::read_to_string(program_path)?;
     let toks = lex::lex(&src)?;
     let prog = parse::parse(toks)?;
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
+    eng.set_query_json(query_json);
     eng.set_repos(load_repos());
     eng.run(&prog)
 }
