@@ -5,6 +5,8 @@ facts extracted via `scan`+`regex`/`ast`/`sg`/`json`, recursive rules lower to a
 fixpoint. `v3/` and `v4/` are prior iterations kept for design-recovery; the OG
 coordinate model (strings/refs/byte-spans) lives in `~/projects/sprefa-archive-20260428`.
 
+User-facing overview (model, DSL surface, CLI, examples, known gaps): **`v5/README.md`**.
+
 Deep state lives in auto-memory (`project_v5_dl_engine`, etc.) + `chat_log/` session
 logs + `plans/`. This file is the standing task ledger only.
 
