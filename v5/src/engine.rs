@@ -2401,12 +2401,13 @@ fn parse_file(
             }
             BodyItem::Json { jpath, out, .. } => {
                 let ov = var_of(out)?;
-                let vals = json_extract(&content, jpath);
+                let vals = run_json(&content, jpath);
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
-                    for v in &vals {
+                    for (v, lo, hi) in &vals {
                         let mut ext = b.clone();
                         ext.insert(ov.clone(), Value::Text(v.clone()));
+                        push_span(v, *lo, *hi, &mut where_bytes);
                         next.push(ext);
                     }
                 }
@@ -2548,26 +2549,81 @@ fn run_ts(content: &str, lang: &str, query_str: &str) -> Result<Vec<(i64, i64, V
 }
 
 /// Extract leaf values along a dotted path; `*` matches any object key or array index.
-fn json_extract(content: &str, jpath: &str) -> Vec<String> {
-    let root: serde_json::Value = match serde_json::from_str(content) { Ok(v) => v, Err(_) => return vec![] };
-    let mut cur: Vec<&serde_json::Value> = vec![&root];
+fn run_json(content: &str, jpath: &str) -> Vec<(String, usize, usize)> {
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&tree_sitter_json::LANGUAGE.into()).is_err() { return vec![]; }
+    let tree = match parser.parse(content, None) { Some(t) => t, None => return vec![] };
+    let src = content.as_bytes();
+    // `document` root -> the single top-level value.
+    let mut cur: Vec<tree_sitter::Node> = {
+        let mut c = tree.root_node().walk();
+        tree.root_node().named_children(&mut c).take(1).collect()
+    };
     for seg in jpath.split('.') {
-        let mut next: Vec<&serde_json::Value> = Vec::new();
-        for node in cur {
-            if seg == "*" {
-                match node {
-                    serde_json::Value::Object(m) => next.extend(m.values()),
-                    serde_json::Value::Array(a) => next.extend(a.iter()),
-                    _ => {}
+        let mut next: Vec<tree_sitter::Node> = Vec::new();
+        for node in &cur {
+            match node.kind() {
+                "object" => {
+                    let mut c = node.walk();
+                    for pair in node.named_children(&mut c) {
+                        if pair.kind() != "pair" { continue; }
+                        let (k, v) = match (pair.child_by_field_name("key"), pair.child_by_field_name("value")) {
+                            (Some(k), Some(v)) => (k, v),
+                            _ => continue,
+                        };
+                        if seg == "*" || json_str_value(k, src) == seg { next.push(v); }
+                    }
                 }
-            } else if let serde_json::Value::Object(m) = node {
-                if let Some(v) = m.get(seg) { next.push(v); }
+                "array" => {
+                    let mut c = node.walk();
+                    if seg == "*" {
+                        next.extend(node.named_children(&mut c));
+                    } else if let Ok(idx) = seg.parse::<usize>() {
+                        if let Some(it) = node.named_child(idx) { next.push(it); }
+                    }
+                }
+                _ => {}
             }
         }
         cur = next;
     }
-    cur.iter().map(|v| match v {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
+    cur.iter().map(|n| {
+        let (lo, hi) = (n.start_byte(), n.end_byte());
+        if n.kind() == "string" && hi - lo >= 2 {
+            // inner span without the surrounding quotes, so `ref` points at the value
+            (json_unescape(&content[lo + 1..hi - 1]), lo + 1, hi - 1)
+        } else {
+            (content[lo..hi].to_string(), lo, hi)
+        }
     }).collect()
+}
+
+/// Text of a json string node with quotes stripped and escapes resolved.
+fn json_str_value(n: tree_sitter::Node, src: &[u8]) -> String {
+    let (lo, hi) = (n.start_byte(), n.end_byte());
+    if n.kind() == "string" && hi - lo >= 2 {
+        json_unescape(std::str::from_utf8(&src[lo + 1..hi - 1]).unwrap_or(""))
+    } else {
+        String::from_utf8_lossy(&src[lo..hi]).into_owned()
+    }
+}
+
+fn json_unescape(s: &str) -> String {
+    if !s.contains('\\') { return s.to_string(); }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' { out.push(c); continue; }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some('/') => out.push('/'),
+            Some(o) => { out.push('\\'); out.push(o); }
+            None => out.push('\\'),
+        }
+    }
+    out
 }

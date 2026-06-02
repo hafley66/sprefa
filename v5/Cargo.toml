@@ -23,6 +23,7 @@ syn = { version = "2", features = ["full"] }
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
 tree-sitter-c = "0.24"
+tree-sitter-json = "0.24"
 streaming-iterator = "0.1"
 ast-grep-core = "0.38"
 ast-grep-language = "0.38"
