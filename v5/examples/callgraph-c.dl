@@ -31,6 +31,6 @@ unused(name) <- fndef(name, _, _, _), !calls(_, name).
 
 # panic() lives in kernel/panic.c. Forward = what panic reaches (callees),
 # reverse = who reaches panic (callers); both answered by the seeded Rust walk.
-? calls(caller, callee) where caller = "panic".
-? reaches(src, dst) where src = "panic".
-? reaches(src, dst) where dst = "panic".
+? calls("panic", callee).
+? reaches("panic", dst).
+? reaches(src, "panic").

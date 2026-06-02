@@ -52,5 +52,5 @@ calls(caller, "${ty}::${m}") <-
 reaches(src, dst) <- closure(calls).
 
 # qualified seeds: e.g. SprfState::run. Both endpoints are Type::method nodes.
-? calls(caller, callee) where caller = "SprfState::run".
-? reaches(src, dst) where src = "SprfState::run".
+? calls("SprfState::run", callee).
+? reaches("SprfState::run", dst).

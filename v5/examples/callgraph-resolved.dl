@@ -29,6 +29,6 @@ reaches(src, dst) <- closure(calls).
 
 unused(name) <- fndef(name, _, _, _), !calls(_, name).
 
-? calls(caller, callee) where caller = "tick".
-? reaches(src, dst) where src = "run".
+? calls("tick", callee).
+? reaches("run", dst).
 ? unused(name).

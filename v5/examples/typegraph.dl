@@ -27,7 +27,7 @@ type_reaches(src, dst) <- closure(type_edge).
 work_type(src, dst) <- type_edge_rev(src, dst, _, "WORK").
 work_reaches(src, dst) <- closure(work_type).
 
-? type_edge(from, to, kind) where from = "Engine".
-? type_reaches(src, dst) where src = "Engine".
-? type_edge_rev(from, to, kind, rev) where from = "Engine".
-? work_reaches(src, dst) where src = "Engine".
+? type_edge("Engine", to, kind).
+? type_reaches("Engine", dst).
+? type_edge_rev("Engine", to, kind, rev).
+? work_reaches("Engine", dst).

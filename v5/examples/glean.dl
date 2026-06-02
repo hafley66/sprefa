@@ -63,14 +63,23 @@ rel embedded_by(target: text, owner: text, kind: text).
 embedded_by(target, owner, kind) <- type_edge(owner, target, kind).
 
 # ---- the questions ----
-? def(name, path, line) where name = "Engine::tick".
-? callers(callee, caller) where callee = "dedup_edges".
-? reaches(src, dst) where src = "Engine::tick".
-? embedded_by(target, owner, kind) where target = "crate::db::Db".
+# Pin a column by writing a literal in that position. A literal in a closure
+# head's src/dst seeds the transitive walk (find-refs / blast-radius).
+? def("Engine::tick", path, line).
+? callers("dedup_edges", caller).
+? reaches("Engine::tick", dst).
+? embedded_by("crate::db::Db", owner, kind).
 ? module_unresolved(file, specifier, reason, line).
 
 # 6. PATTERN FILTERS — `=~` is regex (SQLite REGEXP), `~~` is glob (SQLite GLOB).
-#    Filter any derived column, not just source paths.
-? def(name, path, line) where name =~ "::tick".          # every Type::tick* method
-? def(name, path, line) where name =~ "^Engine::".       # all methods on Engine
-? def(name, path, line) where path ~~ "*db.rs".          # everything defined in db.rs
+#    Filtering is nesting: derive a filtered relation with the constraint in its
+#    body, then query that. (Constraints live in rule bodies, not in queries.)
+rel def_tick(name: text, path: file, line: int).
+def_tick(name, path, line) <- def(name, path, line), name =~ "::tick".      # every Type::tick* method
+rel def_on_engine(name: text, path: file, line: int).
+def_on_engine(name, path, line) <- def(name, path, line), name =~ "^Engine::". # all methods on Engine
+rel def_in_db_rs(name: text, path: file, line: int).
+def_in_db_rs(name, path, line) <- def(name, path, line), path ~~ "*db.rs".   # everything defined in db.rs
+? def_tick(name, path, line).
+? def_on_engine(name, path, line).
+? def_in_db_rs(name, path, line).

@@ -23,5 +23,5 @@ work_edge(src, dst) <- module_edge_rev(src, dst, "WORK").
 work_reaches(src, dst) <- closure(work_edge).
 
 ? crate_edge(src, dst, kind, rev).
-? module_edge_rev(src, dst, rev) where rev = "WORK".
-? work_reaches(src, dst) where src = "v5/src/engine.rs".
+? module_edge_rev(src, dst, "WORK").
+? work_reaches("v5/src/engine.rs", dst).

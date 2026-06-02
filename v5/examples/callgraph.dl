@@ -28,5 +28,5 @@ reaches(src, dst) <- closure(calls).
 unused(name) <- def(name, _, _), !calls(_, name).
 
 ? unused(name).
-? calls(caller, callee) where caller = "lex".
-? reaches(src, dst) where src = "lex".
+? calls("lex", callee).
+? reaches("lex", dst).
