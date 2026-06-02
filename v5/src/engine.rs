@@ -180,37 +180,111 @@ fn dedup_edges(closures: &HashMap<String, String>) -> Vec<&str> {
     out
 }
 
-/// The literal a query pins head position `pos` to, via a literal head term or a
-/// `where col = "lit"` constraint. None if that position is a free variable.
+/// The literal a query pins head position `pos` to, via a literal head term.
+/// None if that position is a free variable. A pinned src/dst on a closure head
+/// seeds the transitive walk (the find-refs / blast-radius point query).
 fn pinned_value(q: &Query, pos: usize) -> Option<String> {
     match &q.head.terms[pos] {
         Term::Str(s) => Some(s.clone()),
-        Term::Var(v) => q.wheres.iter().find_map(|c| {
-            if c.op != CmpOp::Eq { return None; }
-            match (&c.lhs, &c.rhs) {
-                (Term::Var(lv), Term::Str(s)) | (Term::Str(s), Term::Var(lv)) if lv == v => Some(s.clone()),
-                _ => None,
-            }
-        }),
         _ => None,
     }
 }
 
-/// Closure heads are rebuilt *after* the derived fixpoint, so a derived rule body
-/// that reads one would see stale/empty data in the same tick. Reject it (queries
-/// run last and are fine; only rule bodies are stratified wrong).
+/// A derived rule that reads a closure head in a *seedable* shape: one endpoint
+/// of the 2-ary closure atom is pinned to a literal, the other is free. We answer
+/// it as a seeded reachability walk over the condensation (the same BFS the
+/// closure point query uses), not by materializing the Theta(V^2) closure.
+struct ClosureSeed {
+    /// The edge relation the closure head is over (`closures[head]`).
+    edge: String,
+    /// The pinned literal (the seed node).
+    seed: String,
+    /// true = src pinned (walk out / callees); false = dst pinned (walk in).
+    forward: bool,
+    /// Variable name of the free endpoint, as it appears in the closure atom.
+    free_var: String,
+}
+
+/// Classify a derived rule as closure-seedable. Returns `Some(seed)` iff:
+///   - exactly one positive body atom references a closure head, that head is
+///     2-ary, one column is pinned (a `Term::Str` there, or a `Term::Var` bound
+///     by a body `Cmp { var = "lit", Eq }`), the other column is a free
+///     `Term::Var`, and
+///   - no other positive body atom joins on the free var (the closure is a leaf:
+///     the free var occurs only in the closure atom and the head).
+/// Otherwise `None` (caller decides: not-a-closure-read = fine; closure-read but
+/// not seedable = a hard error in `check_stratification`).
+fn closure_seed_of(rule: &Rule, closures: &HashMap<String, String>) -> Option<ClosureSeed> {
+    // The single positive closure atom, if exactly one exists.
+    let mut closure_atoms = rule.body.iter().filter_map(|it| match it {
+        BodyItem::Pos(a) if closures.contains_key(&a.rel) => Some(a),
+        _ => None,
+    });
+    let atom = closure_atoms.next()?;
+    if closure_atoms.next().is_some() { return None; } // >1 closure read: not seedable
+    if atom.terms.len() != 2 { return None; }
+    let edge = closures.get(&atom.rel)?.clone();
+
+    // An Eq body constraint `v = "lit"` (either operand order) pins var `v`.
+    let lit_for = |v: &str| -> Option<String> {
+        rule.body.iter().find_map(|it| match it {
+            BodyItem::Cmp(c) if c.op == CmpOp::Eq => match (&c.lhs, &c.rhs) {
+                (Term::Var(lv), Term::Str(s)) | (Term::Str(s), Term::Var(lv)) if lv == v => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+    };
+    // Resolve each endpoint to either a literal seed or a free var name.
+    enum End { Seed(String), Free(String) }
+    let classify = |t: &Term| -> Option<End> {
+        match t {
+            Term::Str(s) => Some(End::Seed(s.clone())),
+            Term::Var(v) => Some(match lit_for(v) { Some(s) => End::Seed(s), None => End::Free(v.clone()) }),
+            _ => None,
+        }
+    };
+    let (e0, e1) = (classify(&atom.terms[0])?, classify(&atom.terms[1])?);
+    let (seed, forward, free_var) = match (e0, e1) {
+        (End::Seed(s), End::Free(v)) => (s, true, v),
+        (End::Free(v), End::Seed(s)) => (s, false, v),
+        _ => return None, // both pinned or both free: not the seedable shape
+    };
+    // The free var must be a leaf: it may appear only in this closure atom and the
+    // head, never in another positive body atom (that would be a real join we
+    // cannot answer from the walk alone).
+    let other_join = rule.body.iter().any(|it| match it {
+        BodyItem::Pos(a) if !std::ptr::eq(a, atom) =>
+            a.terms.iter().any(|t| matches!(t, Term::Var(v) if *v == free_var)),
+        _ => false,
+    });
+    if other_join { return None; }
+    Some(ClosureSeed { edge, seed, forward, free_var })
+}
+
+/// Reject a derived rule body that reads a closure head in a non-seedable shape.
+/// Seedable reads (one endpoint pinned to a literal) ARE allowed — they evaluate
+/// as a seeded reachability walk after the condensation is built (see
+/// `eval_closure_seed_rule`). An unpinned read would require materializing the
+/// full closure, which the SCC condensation exists to avoid; keep that out.
 fn check_stratification(derived_rules: &[&Rule], closures: &HashMap<String, String>) -> Result<()> {
     for r in derived_rules {
-        for item in &r.body {
-            if let BodyItem::Pos(a) | BodyItem::Neg(a) = item {
-                if closures.contains_key(&a.rel) {
-                    bail!("rule '{}' reads closure relation '{}' in its body; closures are \
-                           rebuilt after the derived fixpoint and cannot be consumed by a rule \
-                           in the same tick (queries can). Materialize '{}' into a base relation \
-                           first, or query it directly.", r.head.rel, a.rel, a.rel);
-                }
-            }
-        }
+        let reads_closure = r.body.iter().any(|it| matches!(it,
+            BodyItem::Pos(a) | BodyItem::Neg(a) if closures.contains_key(&a.rel)));
+        if !reads_closure { continue; }
+        // Negated closure reads are never seedable.
+        let neg_closure = r.body.iter().any(|it| matches!(it,
+            BodyItem::Neg(a) if closures.contains_key(&a.rel)));
+        if !neg_closure && closure_seed_of(r, closures).is_some() { continue; }
+        let name = r.body.iter().find_map(|it| match it {
+            BodyItem::Pos(a) | BodyItem::Neg(a) if closures.contains_key(&a.rel) => Some(a.rel.clone()),
+            _ => None,
+        }).unwrap_or_default();
+        bail!("rule '{}' reads closure relation '{}' in its body in an unpinned shape; \
+               reading a closure from a rule body is only supported when one endpoint is \
+               pinned to a literal (seeded reachability), e.g. \
+               `h(b) <- {}(a, b), a = \"X\".`. An unpinned read would materialize the \
+               full closure; query '{}' directly instead.", r.head.rel, name, name, name);
     }
     Ok(())
 }
@@ -636,9 +710,31 @@ impl Engine {
         self.ensure_meta()?;
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
-        // derived = neither source nor a closure rule (closures bypass lower_rule).
-        let derived_rules: Vec<&Rule> = rules.iter().copied()
+        // non-source, non-closure rules. A rule whose body reads a closure head in
+        // the seedable shape is split out: it can't go through `lower_rule` (the
+        // closure head is a VIEW that isn't populated mid-fixpoint), so it is
+        // evaluated by a seeded BFS in the query phase instead.
+        let all_derived: Vec<&Rule> = rules.iter().copied()
             .filter(|r| !r.is_source() && r.closure_edge().is_none()).collect();
+        check_stratification(&all_derived, &closures)?;
+        let seed_rules: Vec<(&Rule, ClosureSeed)> = all_derived.iter().copied()
+            .filter_map(|r| closure_seed_of(r, &closures).map(|cs| (r, cs))).collect();
+        let derived_rules: Vec<&Rule> = all_derived.iter().copied()
+            .filter(|r| closure_seed_of(r, &closures).is_none()).collect();
+        // A seeded-closure head must not feed another derived rule (it is filled
+        // only in the query phase, so a tier-0 rule reading it would see it empty).
+        let seed_heads: HashSet<&str> = seed_rules.iter().map(|(r, _)| r.head.rel.as_str()).collect();
+        for r in &derived_rules {
+            for it in &r.body {
+                if let BodyItem::Pos(a) | BodyItem::Neg(a) = it {
+                    if seed_heads.contains(a.rel.as_str()) {
+                        bail!("relation '{}' is seeded from a closure and cannot feed another \
+                               derived rule ('{}') in the same tick; query it directly.",
+                              a.rel, r.head.rel);
+                    }
+                }
+            }
+        }
 
         // source rels are heads of source rules; they get incremental retraction.
         let mut source_rels: Vec<String> = Vec::new();
@@ -650,7 +746,6 @@ impl Engine {
             if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); }
         }
         let edges: Vec<&str> = dedup_edges(&closures);
-        check_stratification(&derived_rules, &closures)?;
         self.create_auto_indexes(&derived_rules, &closures)?;
 
         let t_src = std::time::Instant::now();
@@ -685,6 +780,7 @@ impl Engine {
         // check inside still skips the Tarjan for edges whose rows didn't move.
         let dirty: HashSet<&str> = if rebuilt_all { edges.iter().copied().collect() } else { HashSet::new() };
         self.refresh_cond_cache(&edges, &dirty)?;
+        for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for item in &prog.items {
             if let Item::Query(q) = item { self.run_query(q, &closures)?; }
         }
@@ -708,14 +804,30 @@ impl Engine {
         self.ensure_meta()?;
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
-        let derived_rules: Vec<&Rule> = rules.iter().copied()
+        let all_derived: Vec<&Rule> = rules.iter().copied()
             .filter(|r| !r.is_source() && r.closure_edge().is_none()).collect();
+        check_stratification(&all_derived, &closures)?;
+        let seed_rules: Vec<(&Rule, ClosureSeed)> = all_derived.iter().copied()
+            .filter_map(|r| closure_seed_of(r, &closures).map(|cs| (r, cs))).collect();
+        let derived_rules: Vec<&Rule> = all_derived.iter().copied()
+            .filter(|r| closure_seed_of(r, &closures).is_none()).collect();
+        let seed_heads: HashSet<&str> = seed_rules.iter().map(|(r, _)| r.head.rel.as_str()).collect();
+        for r in &derived_rules {
+            for it in &r.body {
+                if let BodyItem::Pos(a) | BodyItem::Neg(a) = it {
+                    if seed_heads.contains(a.rel.as_str()) {
+                        bail!("relation '{}' is seeded from a closure and cannot feed another \
+                               derived rule ('{}') in the same tick; query it directly.",
+                              a.rel, r.head.rel);
+                    }
+                }
+            }
+        }
         let mut source_rels: Vec<String> = Vec::new();
         for r in &source_rules { if !source_rels.contains(&r.head.rel) { source_rels.push(r.head.rel.clone()); } }
         let mut derived_rels: Vec<String> = Vec::new();
         for r in &derived_rules { if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); } }
         let edges: Vec<&str> = dedup_edges(&closures);
-        check_stratification(&derived_rules, &closures)?;
         self.create_auto_indexes(&derived_rules, &closures)?;
 
         // WORK source rules with compiled glob matchers
@@ -866,6 +978,7 @@ impl Engine {
             eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, rebuilt derived: {what}");
         }
         self.refresh_cond_cache(&edges, &dirty_edges)?;
+        for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures)?; } }
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
         self.db.tick_end();
@@ -1959,6 +2072,62 @@ impl Engine {
             }
         }
         println!("  ({n} rows)\n");
+        Ok(())
+    }
+
+    /// Evaluate a closure-seedable derived rule (one closure endpoint pinned to a
+    /// literal) by a seeded BFS over the cross-tick condensation, writing its head
+    /// table. This is the rule-body twin of `run_reaches_point`: same walk, but
+    /// the reached set is projected through the head and inserted, not printed.
+    /// Runs in the query phase (after `refresh_cond_cache`), so the condensation
+    /// is ready; it reads `self.closure_cache` and never recondenses.
+    fn eval_closure_seed_rule(&self, rule: &Rule, cs: &ClosureSeed) -> Result<()> {
+        let head = &rule.head.rel;
+        let head_meta = self.rels.get(head)
+            .ok_or_else(|| anyhow::anyhow!("unknown head relation {head}"))?;
+        if rule.head.terms.len() != head_meta.cols.len() {
+            bail!("head {} expects {} cols, got {}", head, head_meta.cols.len(), rule.head.terms.len());
+        }
+        self.db.exec(&format!("DELETE FROM {}", tbl(head)))?;
+        // The closure atom binds `free_var`; the pinned endpoint var (if any)
+        // binds to the seed. The rule head may project these plus literals.
+        let pinned_var: Option<&str> = rule.body.iter().find_map(|it| match it {
+            BodyItem::Pos(a) if a.rel != *head && a.terms.len() == 2 => {
+                // the closure atom: the non-free endpoint's var, if it is a var
+                let other = a.terms.iter().find(|t| !matches!(t, Term::Var(v) if *v == cs.free_var));
+                match other { Some(Term::Var(v)) => Some(v.as_str()), _ => None }
+            }
+            _ => None,
+        });
+        let cells: Result<Vec<Value>> = rule.head.terms.iter().map(|t| match t {
+            Term::Str(s) => Ok(Value::Text(s.clone())),
+            Term::Int(n) => Ok(Value::Int(*n)),
+            Term::Var(v) if *v == cs.free_var => Ok(Value::Text(String::new())), // filled per-row
+            Term::Var(v) if Some(v.as_str()) == pinned_var => Ok(Value::Text(cs.seed.clone())),
+            Term::Var(v) => bail!("seeded closure rule head var '{v}' is neither the \
+                                   free reached endpoint nor the pinned seed; only those \
+                                   two (plus literals) can appear in the head"),
+            Term::Wild => bail!("'_' not allowed in a seeded closure rule head"),
+            Term::Interp(_) => bail!("interpolation not supported in a seeded closure rule head"),
+        }).collect();
+        let template = cells?;
+        let free_positions: Vec<usize> = rule.head.terms.iter().enumerate()
+            .filter_map(|(i, t)| matches!(t, Term::Var(v) if *v == cs.free_var).then_some(i))
+            .collect();
+
+        let Some(cc) = self.closure_cache.get(&cs.edge) else { return Ok(()); };
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        if let Some(&sid) = cc.id.get(&cs.seed) {
+            let walk = if cs.forward { scc::reaches_from(&cc.cond, sid) } else { scc::reached_by(&cc.cond, sid) };
+            for &i in &walk {
+                let name = &cc.names[i as usize];
+                let mut row = template.clone();
+                for &p in &free_positions { row[p] = Value::Text(name.clone()); }
+                rows.push(row);
+            }
+        }
+        let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
+        self.db.insert_rows(&tbl(head), &cols, &rows)?; // one flush, never N+1
         Ok(())
     }
 
