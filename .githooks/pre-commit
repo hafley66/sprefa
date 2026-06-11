@@ -1,0 +1,4 @@
+#!/bin/sh
+# Rails gate: blocks the commit on any error-severity diag (exit 2) or a
+# broken rails program (exit 1). See v5/docs/rails.md. Bypass: git commit -n
+exec dl --check

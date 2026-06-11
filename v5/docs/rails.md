@@ -49,7 +49,19 @@ command is launch-dir independent. On exit 2, Claude Code feeds stderr back
 to the model and it self-corrects; exit 0 is silent; exit 1 surfaces to you
 only.
 
-The same command works as a pre-commit hook or CI step unchanged.
+## Git hook
+
+Commit a `.githooks/pre-commit` containing `exec dl --check`, then once per
+clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Any non-zero exit blocks the commit (`git commit -n` bypasses). Grain caveat:
+`changed(p)` is worktree-vs-HEAD, not staged-only, so a violating unstaged
+file blocks unrelated commits — stricter than pre-commit semantics requires.
+The same command works as a CI step unchanged.
 
 ## Writing a rail
 
