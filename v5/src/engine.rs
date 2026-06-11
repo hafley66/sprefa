@@ -45,6 +45,13 @@ const TYPE_RELS: [&str; 2] = ["type_edge", "type_edge_rev"];
 /// extracted from definition/reference occurrences in an existing index.scip.
 const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
 
+/// Worktree diff relation. `changed(path)` holds every path `git status` says
+/// differs from HEAD in the self repo: modified, added, renamed (new side),
+/// untracked. Lazily refreshed like the other built-in indexers; the rails use
+/// case is `diag(...) <- some_hit(p, ...), changed(p).` so a check scoped to
+/// what an edit session touched never fires on pre-existing repo debt.
+const CHANGED_RELS: [&str; 1] = ["changed"];
+
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
 /// content; `ref(id, string, file, lo, hi)` locates each interned string's byte
@@ -95,6 +102,13 @@ fn scip_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn changed_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "changed".into(), cols: vec![c("path", Type::Path)] },
+    ]
+}
+
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -131,6 +145,8 @@ fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 fn scip_rels_used(prog: &Program) -> bool { rels_used(prog, &SCIP_RELS) }
 
 fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
+
+fn changed_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -926,6 +942,10 @@ impl Engine {
         if type_rels_used(prog) { self.refresh_type_rels()?; }
         if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
         if spine_rels_used(prog) { self.refresh_spine_rels()?; }
+        // The diff can move without any file content changing (a commit moves
+        // HEAD under an identical worktree), so the refresh result feeds
+        // `changed` directly rather than riding the reconcile delta.
+        if changed_rels_used(prog) { changed |= self.refresh_changed_rel()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -1107,6 +1127,13 @@ impl Engine {
         if wants_scip_rels && scip_changed {
             self.refresh_scip_rels()?;
             for s in SCIP_RELS { changed_source_rels.insert(s.to_string()); }
+            changed_facts = true;
+        }
+        // Every save can move the worktree diff, so re-read it whenever the
+        // program joins `changed`; the refresh returns false (set unchanged)
+        // on the common no-op, keeping the rebuild scope tight.
+        if changed_rels_used(prog) && self.refresh_changed_rel()? {
+            changed_source_rels.insert("changed".to_string());
             changed_facts = true;
         }
         if changed_source_rels.is_empty() { changed_facts = false; }
@@ -1526,6 +1553,9 @@ impl Engine {
                 if SPINE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in ref-spine relation (string / ref); pick another name", d.name);
                 }
+                if CHANGED_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in worktree-diff relation; pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -1546,6 +1576,7 @@ impl Engine {
         for d in type_rel_decls() { self.declare(&d)?; }
         for d in scip_rel_decls() { self.declare(&d)?; }
         for d in spine_rel_decls() { self.declare(&d)?; }
+        for d in changed_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -1914,6 +1945,54 @@ impl Engine {
         self.refresh_rel("scip_def", &["symbol", "file"], &defs)?;
         self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &refs)?;
         self.refresh_rel("scip_edge", &["src", "dst"], &edges)?;
+        Ok(true)
+    }
+
+    /// Refresh the `changed` relation from `git status --porcelain -uall` at the
+    /// self repo's root: modified, added, renamed (new side), and untracked
+    /// paths, re-anchored from the git toplevel to `--root` (paths outside the
+    /// root are dropped). A non-repo root or git failure yields an empty
+    /// relation, not an error. One subprocess, one batched write. Returns
+    /// whether the row set differs from what was stored, so an incremental tick
+    /// only propagates a rebuild when the diff actually moved.
+    fn refresh_changed_rel(&self) -> Result<bool> {
+        let mut paths: Vec<String> = Vec::new();
+        let top = Command::new("git").arg("-C").arg(&self.root)
+            .args(["rev-parse", "--show-toplevel"]).output();
+        if let Ok(out) = top {
+            if out.status.success() {
+                let toplevel = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
+                let status = Command::new("git").arg("-C").arg(&self.root)
+                    .args(["status", "--porcelain", "-uall"]).output()?;
+                if status.status.success() {
+                    // canonicalize for prefix-stripping: git prints the physical
+                    // toplevel (macOS /private/var) while --root may be the symlink
+                    let root = std::fs::canonicalize(&self.root)
+                        .unwrap_or_else(|_| self.root.clone());
+                    for line in String::from_utf8_lossy(&status.stdout).lines() {
+                        if line.len() < 4 { continue; }
+                        let entry = &line[3..];
+                        // a rename prints "old -> new"; the worktree file is the new side
+                        let p = entry.rsplit(" -> ").next().unwrap_or(entry).trim_matches('"');
+                        if let Ok(rel) = toplevel.join(p).strip_prefix(&root) {
+                            paths.push(rel.to_string_lossy().replace('\\', "/"));
+                        }
+                    }
+                }
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        let existing: Vec<String> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"path\" FROM {} ORDER BY \"path\"", tbl("changed")))?;
+            let rows = s.query_map([], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if existing == paths { return Ok(false); }
+        let rows: Vec<Vec<Value>> = paths.into_iter().map(|p| vec![Value::Text(p)]).collect();
+        self.refresh_rel("changed", &["path"], &rows)?;
         Ok(true)
     }
 

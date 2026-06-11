@@ -1,0 +1,54 @@
+# Agent rails: checks scoped to the worktree diff, not the whole repo.
+#
+# The built-in `changed(path)` holds every path `git status` reports as
+# differing from HEAD (modified, added, renamed, untracked). Joining a rail
+# against it keeps the check from firing on pre-existing repo debt: only what
+# the current edit session touched can trip it. That makes `--check` usable as
+# an agent feedback loop (pre-commit hook, Claude Code PostToolUse hook):
+# non-zero exit + diagnostic text comes back to the model, scoped to its diff.
+#
+# Run:   dl examples/rails.dl --root <repo> --check
+# Hook:  dl examples/rails.dl --root <repo> --db .dl/rails.db --check
+#
+# Source rules (scan + match) extract per file and cannot join relations, so
+# each rail is one extraction rule plus one derived rule joining `changed`.
+
+rel diag(path: text, line: int, severity: text, code: text, msg: text).
+
+# ---- banned identifiers ------------------------------------------------------
+rel banned_hit(p: file, l: int, w: text).
+banned_hit(p, l, w) <-
+    scan("WORK", "**/*.rs", p, rev),
+    match(p, rev, /\b(?<w>provenance|substrate|regime)\b/, l).
+
+diag(p, l, "error", "banned-word", "banned identifier `${w}`") <-
+    banned_hit(p, l, w), changed(p).
+
+# ---- no new raw conn() outside the Db seam ------------------------------------
+# The fenced typed literal fs:`src/db.rs` resolves against the scan root at
+# check time, so a typo'd exemption path is itself a --check error instead of
+# a silently never-matching string.
+rel conn_hit(p: file, l: int).
+conn_hit(p, l) <-
+    scan("WORK", "src/**/*.rs", p, rev),
+    match(p, rev, /\.conn\(\)/, l).
+
+diag(p, l, "warn", "conn-outside-db", "raw .conn() in a changed file outside the Db seam") <-
+    conn_hit(p, l), changed(p),
+    p != fs:`src/db.rs`.
+
+# ---- unwrap budget per changed file -------------------------------------------
+# Head-position aggregation: count(l) groups by p, so the budget is a number,
+# not a boolean. Only changed files are counted.
+rel unwrap_hit(p: file, l: int).
+unwrap_hit(p, l) <-
+    scan("WORK", "src/**/*.rs", p, rev),
+    match(p, rev, /\.unwrap\(\)/, l).
+
+rel unwrap_count(p: text, n: int).
+unwrap_count(p, count(l)) <- unwrap_hit(p, l), changed(p).
+
+diag(p, 1, "warn", "unwrap-budget", "${n} unwraps in a changed file") <-
+    unwrap_count(p, n), n > 10.
+
+? diag(path, line, sev, code, msg).
