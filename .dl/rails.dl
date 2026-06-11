@@ -1,0 +1,36 @@
+# Rails for this repo: checks scoped to the worktree diff via changed(p).
+# Run by the PostToolUse hook in .claude/settings.json (see v5/docs/rails.md).
+# error severity blocks the agent (exit 2); warn reports without failing.
+
+rel diag(path: file, line: int, severity: text, code: text, msg: text).
+
+# ---- banned identifiers (CLAUDE.md style rule) --------------------------------
+rel banned_hit(p: file, l: int, w: text).
+banned_hit(p, l, w) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    match(p, rev, /\b(?<w>provenance|substrate|regime|load_bearing)\b/, l).
+
+diag(p, l, "error", "banned-word", "banned identifier `${w}` (use source/base/mode)") <-
+    banned_hit(p, l, w), changed(p).
+
+# ---- no new raw conn() outside the Db seam ------------------------------------
+rel conn_hit(p: file, l: int).
+conn_hit(p, l) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    match(p, rev, /\.conn\(\)/, l).
+
+diag(p, l, "warn", "conn-outside-db", "raw .conn() in a changed file outside the Db seam") <-
+    conn_hit(p, l), changed(p),
+    p != fs:`v5/src/db.rs`.
+
+# ---- unwrap budget per changed file -------------------------------------------
+rel unwrap_hit(p: file, l: int).
+unwrap_hit(p, l) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    match(p, rev, /\.unwrap\(\)/, l).
+
+rel unwrap_count(p: file, n: int).
+unwrap_count(p, count(l)) <- unwrap_hit(p, l), changed(p).
+
+diag(p, 1, "warn", "unwrap-budget", "${n} unwraps in a changed file") <-
+    unwrap_count(p, n), n > 10.
