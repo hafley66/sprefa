@@ -32,7 +32,7 @@ impl Value {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Col {
     pub name: String,
     pub ty: Type,

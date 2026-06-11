@@ -19,22 +19,31 @@ use lsp_types::{
 use std::collections::HashMap;
 
 use crate::engine::{DiagRow, Engine};
-use crate::{ast, db, lex, parse};
+use crate::{ast, db};
 
-pub fn run_lsp(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {
-    let src = std::fs::read_to_string(program_path)?;
-    let mut prog = parse::parse(lex::lex(&src)?)?;
-    // Resolve typed path literals (`fs:`/`glob:`) to canonical text before any
-    // tick, and keep the TypeDiags: a brand mismatch / escaping literal becomes a
-    // squiggle on the `.dl` program file itself (not on a scanned file). These are
-    // static, computed once at load, and re-sent on every publish so they survive
-    // the per-file republish that clears a scanned file's squiggles.
-    let type_diags = crate::typecheck::check_and_normalize(&mut prog, program_path);
+pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
+    let files = crate::resolve_programs(program, &root)?;
+    // prepare_paths resolves typed path literals (`fs:`/`glob:`) to canonical
+    // text before any tick and keeps the TypeDiags: a brand mismatch / escaping
+    // literal becomes a squiggle on the `.dl` program file itself (not on a
+    // scanned file). These are static, computed once at load, and re-sent on
+    // every publish so they survive the per-file republish that clears a
+    // scanned file's squiggles.
+    let (mut prog, type_diags, display) = crate::prepare_paths(&files)?;
     // The program file's own absolute path: TypeDiags point at the `.dl` source,
-    // which need not live under the scan root, so they get their own URI.
-    let prog_abs = std::fs::canonicalize(program_path)
-        .unwrap_or_else(|_| PathBuf::from(program_path));
-    let prog_diags = type_diags_to_diagrows(&type_diags, &src);
+    // which need not live under the scan root, so they get their own URI. Only a
+    // single explicit file gets a URI; a discovered `.dl/*.dl` merge has no
+    // per-file span attribution, so its TypeDiags render to stderr instead.
+    let (prog_abs, prog_diags) = if files.len() == 1 {
+        let src = std::fs::read_to_string(&files[0]).unwrap_or_default();
+        let abs = std::fs::canonicalize(&files[0]).unwrap_or_else(|_| files[0].clone());
+        (Some(abs), type_diags_to_diagrows(&type_diags, &src))
+    } else {
+        for d in &type_diags {
+            eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
+        }
+        (None, Vec::new())
+    };
     // Drop `?` queries: their run_query prints to stdout, which in LSP mode is
     // the protocol channel. `diag` is a derived relation, populated by the
     // fixpoint during tick regardless of any query. We read it via eng.diags().
@@ -60,10 +69,12 @@ pub fn run_lsp(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Resu
     eng.tick(&prog, true)?;
     let n = eng.diags(None)?.len();
     eprintln!("[lsp] ready: {n} diagnostic(s) from {} ({} type diag(s))",
-        program_path, prog_diags.len());
+        display, type_diags.len());
     // The `.dl` program's own diagnostics (brand/literal type errors) publish once;
     // they do not change between ticks (the program is not re-read).
-    publish_program(&connection, &prog_abs, &prog_diags)?;
+    if let Some(pa) = &prog_abs {
+        publish_program(&connection, pa, &prog_diags)?;
+    }
     publish(&connection, &eng, &root, None)?;
 
     for msg in &connection.receiver {

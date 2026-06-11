@@ -5,7 +5,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "dl", about = "datalog over files in repo/rev/time space")]
 struct Cli {
-    /// The .dl program to run. Optional only with --move (which synthesizes its own).
+    /// The .dl program to run. When omitted, discovery: every `<root>/.dl/*.dl`
+    /// file (lexicographic) merges into one program. (--move synthesizes its own
+    /// and ignores this.)
     program: Option<String>,
     #[arg(long)]
     db: Option<String>,
@@ -69,16 +71,28 @@ fn main() -> Result<()> {
     if !cli.move_.is_empty() {
         return sprefa_v5::run_move(cli.db.as_deref(), root, cli.repo, cli.move_, cli.fix);
     }
-    let program = cli.program.ok_or_else(|| anyhow::anyhow!("a .dl program path is required"))?;
+    // Discovery mode (no positional) defaults the db to <root>/.dl/cache.db so
+    // repeated hook/check invocations get warm incremental ticks instead of a
+    // cold in-memory rescan. A generated .gitignore keeps the cache out of git.
+    let mut db = cli.db;
+    if cli.program.is_none() && db.is_none() {
+        let dir = root.join(".dl");
+        if dir.is_dir() {
+            let gi = dir.join(".gitignore");
+            if !gi.exists() { let _ = std::fs::write(&gi, "cache.db*\n"); }
+            db = Some(dir.join("cache.db").to_string_lossy().into_owned());
+        }
+    }
+    let program = cli.program.as_deref();
     if cli.lsp {
-        sprefa_v5::run_lsp(&program, cli.db.as_deref(), root)
+        sprefa_v5::run_lsp(program, db.as_deref(), root)
     } else if cli.check || cli.diag_json {
-        sprefa_v5::run_check(&program, cli.db.as_deref(), root, cli.diag_json)
+        sprefa_v5::run_check(program, db.as_deref(), root, cli.diag_json)
     } else if !cli.changed.is_empty() {
-        sprefa_v5::run_changed(&program, cli.db.as_deref(), root, cli.changed)
+        sprefa_v5::run_changed(program, db.as_deref(), root, cli.changed)
     } else if cli.watch {
-        sprefa_v5::run_watch(&program, cli.db.as_deref(), root)
+        sprefa_v5::run_watch(program, db.as_deref(), root)
     } else {
-        sprefa_v5::run_file(&program, cli.db.as_deref(), root, cli.query_json)
+        sprefa_v5::run_file(program, db.as_deref(), root, cli.query_json)
     }
 }

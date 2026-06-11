@@ -18,23 +18,53 @@ pub mod spine;
 pub mod typecheck;
 pub mod typegraph;
 
-use anyhow::Result;
-use std::path::PathBuf;
+use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 
-/// Parse a `.dl` source, then run the lower-time type passes (T2): validate
-/// brands/anchors, type-check every rule, and rewrite every typed path literal
-/// (`fs:`/`glob:`) to its canonical text in place. Returns the normalized program
-/// and the collected `TypeDiag`s. `dl_path` attributes the diagnostics. The engine
-/// never sees a `Term::PathLit`: the bail guards in lower/engine are defense only.
-fn prepare(src: &str, dl_path: &str) -> Result<(ast::Program, Vec<ast::TypeDiag>)> {
-    let mut prog = parse::parse(lex::lex(src)?)?;
-    let diags = typecheck::check_and_normalize(&mut prog, dl_path);
-    Ok((prog, diags))
+/// Resolve the program file set: an explicit path, or with no positional the
+/// repo-local discovery convention `<root>/.dl/*.dl` (lexicographic file
+/// order). A missing or empty directory is a loud error: a typo'd dir must
+/// never let `--check` pass green by checking nothing.
+pub fn resolve_programs(program: Option<&str>, root: &Path) -> Result<Vec<PathBuf>> {
+    if let Some(p) = program { return Ok(vec![PathBuf::from(p)]); }
+    let dir = root.join(".dl");
+    let rd = std::fs::read_dir(&dir)
+        .map_err(|_| anyhow::anyhow!("no program argument and no {} directory", dir.display()))?;
+    let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "dl")).collect();
+    if files.is_empty() { anyhow::bail!("no .dl files in {}", dir.display()); }
+    files.sort();
+    Ok(files)
 }
 
-pub fn run_file(program_path: &str, db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
-    let src = std::fs::read_to_string(program_path)?;
-    let (prog, type_diags) = prepare(&src, program_path)?;
+/// Parse each file, splice the items in file order into one program, then run
+/// the lower-time type passes (T2: brands/anchors, rule type-check, typed path
+/// literal rewrite) once over the merge. Per-file parse errors carry the file's
+/// path via context; merged TypeDiags attribute to the returned display path
+/// (the single file, or `<dir>/*.dl` for a discovered set — per-file
+/// attribution across a merge is a known coarseness). The engine never sees a
+/// `Term::PathLit`: the bail guards in lower/engine are defense only.
+pub(crate) fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDiag>, String)> {
+    let mut items = Vec::new();
+    for p in paths {
+        let src = std::fs::read_to_string(p).with_context(|| format!("read {}", p.display()))?;
+        let file_prog = lex::lex(&src).and_then(parse::parse)
+            .with_context(|| format!("in {}", p.display()))?;
+        items.extend(file_prog.items);
+    }
+    let display = if paths.len() == 1 {
+        paths[0].display().to_string()
+    } else {
+        format!("{}/*.dl", paths[0].parent().unwrap_or(Path::new(".dl")).display())
+    };
+    let mut prog = ast::Program { items };
+    let diags = typecheck::check_and_normalize(&mut prog, &display);
+    Ok((prog, diags, display))
+}
+
+pub fn run_file(program: Option<&str>, db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
+    let files = resolve_programs(program, &root)?;
+    let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
     // On a lower-time error, skip evaluation: the program is ill-defined and the
@@ -82,10 +112,10 @@ fn load_repos() -> Vec<config::RepoConfig> {
 /// stdout for hooks/CI; otherwise diags render to stderr (`path:line: sev[code]:
 /// msg`), the same role as v4's LogSink. The `diag` relation is just a relation;
 /// this function is one renderer of it (LSP is another). See docs/lsp.md.
-pub fn run_check(program_path: &str, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<()> {
-    let src = std::fs::read_to_string(program_path)?;
+pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<()> {
+    let files = resolve_programs(program, &root)?;
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
-    let (mut prog, type_diags) = prepare(&src, program_path)?;
+    let (mut prog, type_diags, _) = prepare_paths(&files)?;
     if json { prog.items.retain(|i| !matches!(i, ast::Item::Query(_))); }
     // A lower-time error (brand mismatch, escaping literal, not-stratified) means
     // the program is ill-defined: skip the tick so its diagnostic, not a downstream
@@ -128,9 +158,9 @@ pub fn run_check(program_path: &str, db_path: Option<&str>, root: PathBuf, json:
 
 /// Drive one incremental tick over an existing db for a set of changed paths
 /// (relative to root or absolute). The delta entry point the watcher uses.
-pub fn run_changed(program_path: &str, db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
-    let src = std::fs::read_to_string(program_path)?;
-    let (prog, type_diags) = prepare(&src, program_path)?;
+pub fn run_changed(program: Option<&str>, db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
+    let files = resolve_programs(program, &root)?;
+    let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
@@ -141,14 +171,14 @@ pub fn run_changed(program_path: &str, db_path: Option<&str>, root: PathBuf, cha
 
 /// Run as an LSP server over stdio. The program's `diag` relation becomes live
 /// editor diagnostics; lint fires on file open / save. See docs/lsp.md.
-pub fn run_lsp(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {
-    lsp::run_lsp(program_path, db_path, root)
+pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
+    lsp::run_lsp(program, db_path, root)
 }
 
-pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {
+pub fn run_watch(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
     use notify::{RecursiveMode, Watcher};
-    let src = std::fs::read_to_string(program_path)?;
-    let (prog, type_diags) = prepare(&src, program_path)?;
+    let files = resolve_programs(program, &root)?;
+    let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());

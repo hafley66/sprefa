@@ -1536,8 +1536,17 @@ impl Engine {
     /// Declare every relation: closure heads become a VIEW over the condensation,
     /// everything else a base table.
     fn declare_all(&mut self, prog: &Program, closures: &HashMap<String, String>) -> Result<()> {
+        // Discovery (`.dl/*.dl`) merges several files into one program, so the
+        // same relation may be declared in more than one file. An identical
+        // re-declaration is a no-op; a conflicting shape is an error.
+        let mut seen: HashMap<String, Vec<crate::ast::Col>> = HashMap::new();
         for item in &prog.items {
             if let Item::Rel(d) = item {
+                if let Some(prev) = seen.get(&d.name) {
+                    if *prev == d.cols { continue; }
+                    bail!("rel {} declared twice with different columns", d.name);
+                }
+                seen.insert(d.name.clone(), d.cols.clone());
                 if BUILTIN_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in relation (repo/rev/content/file); pick another name", d.name);
                 }
