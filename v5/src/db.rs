@@ -35,7 +35,9 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         Some(p) => Connection::open(p)?,
         None => Connection::open_in_memory()?,
     };
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+    // busy_timeout: a hook `--check` and a resident `--lsp` share .dl/cache.db
+    // across processes; a write collision should wait, not fail "locked".
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;")?;
     register_regexp(&conn)?;
     Ok(Db { conn, counts: RefCell::new(HashMap::new()) })
 }

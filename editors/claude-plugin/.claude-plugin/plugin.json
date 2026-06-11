@@ -1,0 +1,18 @@
+{
+  "name": "dl-rails",
+  "description": "dl language server: rails diagnostics + definition/references over the ref spine",
+  "version": "0.1.0",
+  "lspServers": {
+    "dl": {
+      "command": "dl",
+      "args": ["--lsp", "--root", "${CLAUDE_PROJECT_DIR}"],
+      "extensionToLanguage": {
+        ".rs": "rust"
+      },
+      "transport": "stdio",
+      "diagnostics": true,
+      "startupTimeout": 10000,
+      "maxRestarts": 3
+    }
+  }
+}
