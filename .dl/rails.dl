@@ -8,7 +8,9 @@ rel diag(path: file, line: int, severity: text, code: text, msg: text).
 rel banned_hit(p: file, l: int, w: text).
 banned_hit(p, l, w) <-
     scan("WORK", "v5/src/**/*.rs", p, rev),
-    match(p, rev, /\b(?<w>provenance|substrate|regime|load_bearing)\b/, l).
+# Substring + case-insensitive on purpose: identifiers concatenate
+# (ProvenanceRecord, substrate_id), so \b and exact case both leak.
+    match(p, rev, /(?i)(?<w>provenance|substrate|regime|load.?bearing)/, l).
 
 diag(p, l, "error", "banned-word", "banned identifier `${w}` (use source/base/mode)") <-
     banned_hit(p, l, w), changed(p).

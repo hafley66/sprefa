@@ -1016,6 +1016,14 @@ impl Engine {
         let edges: Vec<&str> = dedup_edges(&closures);
         self.create_auto_indexes(&derived_rules, &closures)?;
 
+        // An edited source rule invalidates extractions everywhere, not just at
+        // the delta paths: fall back to the full tick, whose reconcile
+        // re-extracts the dirty relation's entire file set and persists the new
+        // rule digests.
+        if !self.source_rule_digests(&source_rules)?.0.is_empty() {
+            return self.tick(prog, quiet);
+        }
+
         // WORK source rules with compiled glob matchers
         // The incremental watcher delta covers the self repo's WORK tree only
         // (changed paths under self.root); non-self repos scan via the full tick.
@@ -1297,6 +1305,35 @@ impl Engine {
         Ok(())
     }
 
+    /// Digest each relation's source-rule TEXT (not row content): extraction
+    /// rows are a function of (file content, rule), so an edited regex/glob/
+    /// capture invalidates the per-file hash fast path in `reconcile_sources`
+    /// even though no file moved. XOR-fold of per-rule blake3 over the Debug
+    /// repr, so rule order within a relation is irrelevant. Stored in
+    /// `_reldigest` under a `src:` key (distinct namespace from row-content
+    /// digests). Returns (dirty rels, pending saves); the caller persists the
+    /// saves only after re-extraction lands, so a failed tick retries.
+    fn source_rule_digests(&self, source_rules: &[&Rule])
+        -> Result<(HashSet<String>, Vec<(String, [u8; 32])>)>
+    {
+        let mut by_rel: HashMap<String, [u8; 32]> = HashMap::new();
+        for r in source_rules {
+            let h = blake3::hash(format!("{r:?}").as_bytes());
+            let acc = by_rel.entry(r.head.rel.clone()).or_insert([0u8; 32]);
+            for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= b; }
+        }
+        let mut dirty = HashSet::new();
+        let mut pending = Vec::new();
+        for (rel, d) in by_rel {
+            let key = format!("src:{rel}");
+            if self.load_rel_digest(&key)? != Some(d) {
+                dirty.insert(rel);
+                pending.push((key, d));
+            }
+        }
+        Ok((dirty, pending))
+    }
+
     /// Drop from `changed` every relation whose freshly computed digest equals
     /// its stored digest (the file's bytes moved but the extracted rows did
     /// not). Records the new digest for the relations that really changed.
@@ -1359,6 +1396,11 @@ impl Engine {
         let hash_of = |m: &FileMeta, repo: &str, p: &str, r: &str|
             m.get(&(repo.to_string(), p.to_string(), r.to_string())).map(|t| t.0.clone());
 
+        // An edited source rule must re-extract files whose content did not
+        // change. A dirty rel widens retraction to its whole file set; the new
+        // digests persist only after the re-extraction lands (end of this fn).
+        let (dirty_rels, pending_digests) = self.source_rule_digests(source_rules)?;
+
         // Retraction key is (repo, path): `_prov` prunes by that pair, so two
         // repos at the same path do not retract each other's source rows.
         let mut to_retract: HashSet<(String, String)> = HashSet::new();
@@ -1372,13 +1414,22 @@ impl Engine {
                 to_retract.insert((repo.clone(), path.clone()));
             }
         }
+        for (idx, repo, path, _rev, _h) in &rule_files {
+            if dirty_rels.contains(&source_rules[*idx].head.rel) {
+                to_retract.insert((repo.clone(), path.clone()));
+            }
+        }
 
         let retract_list: Vec<(&str, &str)> = to_retract.iter()
             .map(|(repo, p)| (repo.as_str(), p.as_str())).collect();
         let retracted = self.retract_paths(&retract_list, source_rels)?;
 
+        // Extract any file whose path was retracted, not just hash-moved ones:
+        // retraction is path-grain across ALL source rels, so a clean rule
+        // sharing a path with a dirty one must re-provide its rows too.
         let to_extract: Vec<(usize, String, String, String, String)> = rule_files.iter()
-            .filter(|(_, repo, p, r, h)| hash_of(&prev, repo, p, r).as_ref() != Some(h))
+            .filter(|(_, repo, p, r, h)| hash_of(&prev, repo, p, r).as_ref() != Some(h)
+                || to_retract.contains(&(repo.clone(), p.clone())))
             .map(|(idx, repo, p, r, h)| (*idx, repo.clone(), p.clone(), r.clone(), h.clone()))
             .collect();
         let parsed = to_extract.len();
@@ -1417,6 +1468,7 @@ impl Engine {
         self.insert_spine_where_bytes(&where_bytes)?;
 
         self.save_file_meta(&current, &prev)?;
+        for (key, d) in &pending_digests { self.save_rel_digest(key, d)?; }
         Ok(Reconcile {
             changed: retracted > 0 || extracted > 0,
             extracted,
