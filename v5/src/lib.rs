@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod config;
+pub mod datapath;
 pub mod db;
 pub mod desc;
 pub mod engine;

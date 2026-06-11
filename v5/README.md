@@ -41,7 +41,7 @@ cargo test
 | `match(path, rev, /re (?<cap>..)/, line)` | regex capture over file content |
 | `ast(path, rev, :rust\|:c, "(query) @cap", line, end)` | tree-sitter query |
 | `sg(path, rev, :lang, "pattern", line, ..)` | ast-grep pattern |
-| `json(path, rev, "a.*.b", out)` | json path (`*` = any value/element); value is **located** |
+| `json(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (by extension; `*` = any value/element); value is **located** |
 | `head(..) <- a(..), b(..).` | rule (recursive allowed) |
 | `reaches(s,d) <- closure(edge).` | transitive closure (seed one endpoint with a literal to query) |
 | `!rel(..)` | negation / anti-join |
