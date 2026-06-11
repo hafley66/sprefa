@@ -21,8 +21,9 @@ struct Cli {
     /// live editor diagnostics (lint on open/save). See docs/lsp.md.
     #[arg(long)]
     lsp: bool,
-    /// Lint/ban mode: render the `diag` relation to stderr and exit non-zero if
-    /// any `error`-severity row exists. For pre-commit / CI / Claude Code hooks.
+    /// Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if
+    /// any `error`-severity row exists (Claude Code's blocking-hook code), 1 on
+    /// a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md.
     #[arg(long)]
     check: bool,
     /// Like --check but emit the diagnostics as a JSON array on stdout.
@@ -87,7 +88,14 @@ fn main() -> Result<()> {
     if cli.lsp {
         sprefa_v5::run_lsp(program, db.as_deref(), root)
     } else if cli.check || cli.diag_json {
-        sprefa_v5::run_check(program, db.as_deref(), root, cli.diag_json)
+        // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
+        // code; stderr feeds the agent), 1 broken program (user-facing).
+        let errors = sprefa_v5::run_check(program, db.as_deref(), root, cli.diag_json)?;
+        if errors > 0 {
+            eprintln!("{errors} error-severity diagnostic(s) found");
+            std::process::exit(2);
+        }
+        Ok(())
     } else if !cli.changed.is_empty() {
         sprefa_v5::run_changed(program, db.as_deref(), root, cli.changed)
     } else if cli.watch {

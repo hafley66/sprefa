@@ -72,7 +72,7 @@ fn real_call_fails_with_exact_location() {
     // decoy in the same tree must stay silent
     write(&d, "v5/src/decoy.rs", "// dbg!(z) in a comment\n");
     let (code, _, err) = run(&d, &["--check"]);
-    assert_eq!(code, 1, "a real dbg!() call must fail the gate");
+    assert_eq!(code, 2, "a real dbg!() call must fail the gate with the blocking-hook code");
     assert!(err.contains("v5/src/bad.rs:3"), "must point at bad.rs:3, got: {err}");
     assert!(!err.contains("decoy.rs"), "decoy must not be reported, got: {err}");
 }
@@ -97,7 +97,7 @@ fn deterministic_round_trip() {
     let d = sandbox("roundtrip");
     write(&d, "v5/src/bad.rs", "fn risky() {\n    dbg!(7);\n}\n");
     let (code1, _, _) = run(&d, &["--check"]);
-    assert_eq!(code1, 1, "with the move present, gate fails");
+    assert_eq!(code1, 2, "with the move present, gate fails");
     fs::remove_file(d.join("v5/src/bad.rs")).unwrap();
     let (code2, _, _) = run(&d, &["--check"]);
     assert_eq!(code2, 0, "after removing the move, gate passes again");

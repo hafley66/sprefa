@@ -107,12 +107,17 @@ fn load_repos() -> Vec<config::RepoConfig> {
     }
 }
 
-/// CLI lint/ban path: run the program, render the `diag` relation, and fail the
-/// command when any `error`-severity row exists. `json` emits a JSON array to
-/// stdout for hooks/CI; otherwise diags render to stderr (`path:line: sev[code]:
-/// msg`), the same role as v4's LogSink. The `diag` relation is just a relation;
-/// this function is one renderer of it (LSP is another). See docs/lsp.md.
-pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<()> {
+/// CLI lint/ban path: run the program, render the `diag` relation, and return
+/// the count of `error`-severity rows. `json` emits a JSON array to stdout for
+/// hooks/CI; otherwise diags render to stderr (`path:line: sev[code]: msg`),
+/// the same role as v4's LogSink. The `diag` relation is just a relation; this
+/// function is one renderer of it (LSP is another). See docs/lsp.md.
+///
+/// Exit-code contract (enforced by main): rail violations -> 2, the Claude
+/// Code blocking-hook code whose stderr feeds the agent; a broken program
+/// (parse/type error) -> Err -> 1, user-facing only. A rails bug must read as
+/// "fix the rails", never as agent feedback.
+pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
     let files = resolve_programs(program, &root)?;
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
     let (mut prog, type_diags, _) = prepare_paths(&files)?;
@@ -150,10 +155,9 @@ pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, js
             if let Some(h) = &d.hint { eprintln!("    hint: {h}"); }
         }
     }
-    let errors = diags.iter().filter(|d| d.severity == "error").count()
-        + type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
-    if errors > 0 { anyhow::bail!("{errors} error-severity diagnostic(s) found"); }
-    Ok(())
+    let n_type = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    if n_type > 0 { anyhow::bail!("{n_type} type error(s) in the program"); }
+    Ok(diags.iter().filter(|d| d.severity == "error").count())
 }
 
 /// Drive one incremental tick over an existing db for a set of changed paths

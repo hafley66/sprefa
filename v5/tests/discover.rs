@@ -56,7 +56,7 @@ fn fixture(tag: &str) -> PathBuf {
 fn discovery_merges_files_and_dedupes_identical_decls() {
     let d = fixture("merge");
     let (code, _out, err) = run(&d, &["--check"]);
-    assert_ne!(code, 0, "rail-a is error severity:\n{err}");
+    assert_eq!(code, 2, "rail-a is error severity -> blocking-hook exit code:\n{err}");
     assert!(err.contains("rail-a"), "rule from 10-a.dl must fire:\n{err}");
     assert!(err.contains("rail-b"), "rule from 20-b.dl must fire:\n{err}");
 }
@@ -87,7 +87,7 @@ fn conflicting_decl_across_files_errors() {
     let d = fixture("conflict");
     fs::write(d.join(".dl/30-c.dl"), "rel diag(path: text, line: int).\n").unwrap();
     let (code, _out, err) = run(&d, &["--check"]);
-    assert_ne!(code, 0);
+    assert_eq!(code, 1, "a broken program is exit 1 (user-facing), not 2:\n{err}");
     assert!(err.contains("declared twice"), "conflict must be named:\n{err}");
 }
 
