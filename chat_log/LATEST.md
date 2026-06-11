@@ -1,1 +1,1 @@
-20260601.3.v5-closure-cond-cache-perf-and-opus-trio-validation.md
+20260611.0.sprefa-v5-typed-paths-lang-plan.md

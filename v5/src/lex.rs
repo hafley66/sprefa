@@ -1,5 +1,7 @@
 use anyhow::{bail, Result};
 
+use crate::desc;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum StrPart { Lit(String), Var(String) }
 
@@ -10,8 +12,55 @@ pub enum Tok {
     InterpStr(Vec<StrPart>), // a "..." containing ${var} holes
     Int(i64),
     Regex(String),
+    /// A typed path literal `scheme:body` (`fs:src/x`, `glob:src/**/*.rs`). `span`
+    /// is the (start, end) byte offset of the whole literal in the source, for
+    /// diagnostics. The body is the raw (still-escaped) text after the colon.
+    Scheme { scheme: String, body: String, span: (u32, u32) },
     LParen, RParen, Comma, Dot, Colon, Bang, Question, Arrow,
+    Lt2, // `<:` brand subtype operator
     Eq, Ne, Lt, Le, Gt, Ge, Match, Glob,
+}
+
+/// Scan a typed-literal body after the `scheme:` prefix. `i` points just past the
+/// colon and is advanced past the body. Returns the RAW body text (escapes kept;
+/// the descriptor resolver unescapes). Two forms (v4 rules):
+///   - fenced: `` `...` `` — only `` ` `` and `${` are special.
+///   - bare: ends at whitespace / `,` / `)` at depth 0; `()[]{}` tracked balanced;
+///     `\` escapes the next char; `${NAME}` is an interp hole.
+fn lex_scheme_body(b: &[u8], src: &str, i: &mut usize) -> Result<String> {
+    if b.get(*i) == Some(&b'`') {
+        // Fenced form.
+        *i += 1;
+        let start = *i;
+        while *i < b.len() && b[*i] != b'`' {
+            // `${...}` runs to its `}` (still inside the fence); a lone backslash
+            // is literal in fenced form (only backtick and `${` are special).
+            *i += 1;
+        }
+        if *i >= b.len() { bail!("unterminated fenced scheme literal"); }
+        let body = src[start..*i].to_string();
+        *i += 1; // closing backtick
+        return Ok(body);
+    }
+    // Bare form.
+    let start = *i;
+    let mut depth = 0i32;
+    while *i < b.len() {
+        let c = b[*i];
+        match c {
+            b'\\' if *i + 1 < b.len() => { *i += 2; continue; }
+            b'(' | b'[' | b'{' => { depth += 1; }
+            b')' | b']' | b'}' => {
+                if depth == 0 && c == b')' { break; }
+                depth -= 1;
+            }
+            b' ' | b'\t' | b'\r' | b'\n' | b',' if depth == 0 => break,
+            _ => {}
+        }
+        *i += 1;
+    }
+    if *i == start { bail!("empty scheme literal body"); }
+    Ok(src[start..*i].to_string())
 }
 
 pub fn lex(src: &str) -> Result<Vec<Tok>> {
@@ -45,6 +94,7 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                 match b.get(i + 1) {
                     Some(&b'-') => { out.push(Tok::Arrow); i += 2; }
                     Some(&b'=') => { out.push(Tok::Le); i += 2; }
+                    Some(&b':') => { out.push(Tok::Lt2); i += 2; }
                     _ => { out.push(Tok::Lt); i += 1; }
                 }
             }
@@ -100,7 +150,24 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
             _ if c == b'_' || c.is_ascii_alphabetic() => {
                 let start = i;
                 while i < b.len() && (b[i] == b'_' || b[i].is_ascii_alphanumeric()) { i += 1; }
-                out.push(Tok::Ident(src[start..i].to_string()));
+                let word = &src[start..i];
+                // A typed path literal: an identifier IMMEDIATELY followed by `:`
+                // (no space) where the identifier is a registered scheme. The
+                // `, :rust` form in ast()/sg() has a space before the colon and no
+                // scheme word, so it still lexes as Colon + Ident. An unknown
+                // `word:` adjacency is a parse error (unknown scheme).
+                if b.get(i) == Some(&b':') && b.get(i + 1).is_some_and(|&n| n != b' ' && n != b'\t' && n != b'\n' && n != b'\r') {
+                    if desc::is_scheme(word) {
+                        let scheme = word.to_string();
+                        i += 1; // consume ':'
+                        let body = lex_scheme_body(b, src, &mut i)?;
+                        out.push(Tok::Scheme { scheme, body, span: (start as u32, i as u32) });
+                    } else {
+                        bail!("unknown scheme `{word}:` (known: fs, glob)");
+                    }
+                } else {
+                    out.push(Tok::Ident(word.to_string()));
+                }
             }
             _ => bail!("unexpected char {:?}", c as char),
         }

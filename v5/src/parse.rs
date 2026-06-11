@@ -37,9 +37,43 @@ impl Parser {
     fn item(&mut self) -> Result<Item> {
         match self.peek() {
             Some(Tok::Ident(s)) if s == "rel" => Ok(Item::Rel(self.rel_decl()?)),
+            Some(Tok::Ident(s)) if s == "anchor" => Ok(Item::Anchor(self.anchor_decl()?)),
+            Some(Tok::Ident(s)) if s == "type" => Ok(Item::Brand(self.brand_decl()?)),
             Some(Tok::Question) => Ok(Item::Query(self.query()?)),
             _ => Ok(Item::Rule(self.rule()?)),
         }
+    }
+
+    /// `anchor <name> = fs:<body>.` `<name>` is `~` or an ident.
+    fn anchor_decl(&mut self) -> Result<AnchorDecl> {
+        self.ident()?; // "anchor"
+        let name = match self.peek() {
+            // `~` lexes as Glob only when doubled; a lone `~` errors in the lexer,
+            // so the default-anchor name is written as the bare ident `tilde`-free
+            // form is impossible. Accept an ident name only; `~` default is implicit.
+            Some(Tok::Ident(_)) => self.ident()?,
+            other => bail!("anchor name must be an identifier, got {other:?}"),
+        };
+        self.expect(Tok::Eq)?;
+        let (body, span) = match self.next()? {
+            Tok::Scheme { scheme, body, span } => {
+                if scheme != "fs" { bail!("anchor must be an `fs:` literal, got `{scheme}:`"); }
+                (body, span)
+            }
+            other => bail!("anchor must be assigned an `fs:` literal, got {other:?}"),
+        };
+        self.expect(Tok::Dot)?;
+        Ok(AnchorDecl { name, body, span })
+    }
+
+    /// `type <ident> <: <parent>.`
+    fn brand_decl(&mut self) -> Result<BrandDecl> {
+        self.ident()?; // "type"
+        let name = self.ident()?;
+        self.expect(Tok::Lt2)?;
+        let parent = self.ident()?;
+        self.expect(Tok::Dot)?;
+        Ok(BrandDecl { name, parent })
     }
 
     fn rel_decl(&mut self) -> Result<RelDecl> {
@@ -51,8 +85,14 @@ impl Parser {
             let cname = self.ident()?;
             self.expect(Tok::Colon)?;
             let tname = self.ident()?;
-            let ty = Type::parse(&tname).ok_or_else(|| anyhow::anyhow!("unknown type {tname}"))?;
-            cols.push(Col { name: cname, ty });
+            // A keyword that is not a base type is taken as a brand reference; its
+            // base storage type is resolved from the `type X <: Y` chain at load
+            // (brands store as text until then). check_rule_types uses the name.
+            let col = match Type::parse(&tname) {
+                Some(ty) => Col { name: cname, ty, brand: None },
+                None => Col { name: cname, ty: Type::Text, brand: Some(tname) },
+            };
+            cols.push(col);
             match self.next()? {
                 Tok::Comma => continue,
                 Tok::RParen => break,
@@ -64,7 +104,7 @@ impl Parser {
     }
 
     fn rule(&mut self) -> Result<Rule> {
-        let head = self.atom()?;
+        let (head, aggs) = self.head_atom()?;
         self.expect(Tok::Arrow)?;
         let mut body = Vec::new();
         loop {
@@ -75,7 +115,49 @@ impl Parser {
                 other => bail!("expected , or . in rule body, got {:?}", other),
             }
         }
-        Ok(Rule { head, body })
+        Ok(Rule { head, body, aggs })
+    }
+
+    /// Parse a rule head, allowing aggregate calls in term positions:
+    /// `fan_out(F, count(T)) <- ...`. Returns the head atom (the aggregate's arg
+    /// flows in as the term) plus a parallel `aggs` vec marking which terms are
+    /// aggregated. Aggregates are head-position only; a body `count(...)` parses as
+    /// a relation atom against a relation named `count` and is rejected at lowering
+    /// if no such relation exists (an agg call in the body is never special).
+    fn head_atom(&mut self) -> Result<(Atom, Vec<Option<AggFn>>)> {
+        let rel = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let mut terms = Vec::new();
+        let mut aggs: Vec<Option<AggFn>> = Vec::new();
+        if !matches!(self.peek(), Some(Tok::RParen)) {
+            loop {
+                // An `aggfn(arg)` call: a known aggregate name immediately followed
+                // by `(`. Otherwise a plain term.
+                let is_agg = matches!((self.peek(), self.peek2()),
+                    (Some(Tok::Ident(s)), Some(Tok::LParen)) if AggFn::parse(s).is_some());
+                if is_agg {
+                    let fname = self.ident()?;
+                    let f = AggFn::parse(&fname).unwrap();
+                    self.expect(Tok::LParen)?;
+                    let arg = self.term()?;
+                    self.expect(Tok::RParen)?;
+                    terms.push(arg);
+                    aggs.push(Some(f));
+                } else {
+                    terms.push(self.term()?);
+                    aggs.push(None);
+                }
+                match self.next()? {
+                    Tok::Comma => continue,
+                    Tok::RParen => break,
+                    other => bail!("expected , or ) in atom, got {:?}", other),
+                }
+            }
+        } else {
+            self.next()?; // RParen
+        }
+        if !aggs.iter().any(|a| a.is_some()) { aggs.clear(); }
+        Ok((Atom { rel, terms }, aggs))
     }
 
     fn query(&mut self) -> Result<Query> {
@@ -122,6 +204,11 @@ impl Parser {
             if s == "sg" { return self.sg(); }
             if s == "json" { return self.json(); }
             if s == "closure" { return self.closure(); }
+            // An aggregate call in body position is a parse error: aggregation is
+            // head-only (`fan_out(F, count(T)) <- type_edge(F, T, _).`).
+            if AggFn::parse(s).is_some() && matches!(self.peek2(), Some(Tok::LParen)) {
+                bail!("aggregate `{s}(...)` is only allowed in a rule head, not the body");
+            }
             // relation atom vs constraint: lookahead for '('
             if matches!(self.peek2(), Some(Tok::LParen)) {
                 return Ok(BodyItem::Pos(self.atom()?));
@@ -257,6 +344,7 @@ impl Parser {
                 crate::lex::StrPart::Var(v) => InterpPart::Var(v),
             }).collect())),
             Tok::Int(n) => Ok(Term::Int(n)),
+            Tok::Scheme { scheme, body, span } => Ok(Term::PathLit { scheme, body, span }),
             other => bail!("expected term, got {:?}", other),
         }
     }

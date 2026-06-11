@@ -54,7 +54,7 @@ const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
 const SPINE_RELS: [&str; 2] = ["string", "ref"];
 
 fn builtin_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "repo".into(), cols: vec![c("id", Type::Text), c("slug", Type::Text), c("root", Type::Path)] },
         RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)] },
@@ -64,7 +64,7 @@ fn builtin_rel_decls() -> Vec<RelDecl> {
 }
 
 fn module_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "module_import".into(), cols: vec![
             c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)] },
@@ -79,7 +79,7 @@ fn module_rel_decls() -> Vec<RelDecl> {
 }
 
 fn type_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text)] },
         RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text)] },
@@ -87,7 +87,7 @@ fn type_rel_decls() -> Vec<RelDecl> {
 }
 
 fn scip_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "scip_def".into(), cols: vec![c("symbol", Type::Text), c("file", Type::Path)] },
         RelDecl { name: "scip_ref".into(), cols: vec![c("file", Type::Path), c("symbol", Type::Text), c("def_file", Type::Path)] },
@@ -96,7 +96,7 @@ fn scip_rel_decls() -> Vec<RelDecl> {
 }
 
 fn spine_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col { name: n.to_string(), ty: t };
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)] },
         RelDecl { name: "ref".into(), cols: vec![
@@ -118,7 +118,7 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                 }
             },
             Item::Query(q) => if hit(&q.head.rel) { return true; },
-            Item::Rel(_) => {}
+            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) => {}
         }
     }
     false
@@ -162,6 +162,24 @@ pub struct DiagRow {
     pub code: String,
     pub msg: String,
     pub hint: Option<String>,
+}
+
+/// Carry set for `refresh_spine_rels_delta`. Accumulates the new rows produced
+/// during a single tick so the incremental Some() path can replay only those rows
+/// rather than projecting the full `_strings` / `_where_bytes` tables.
+///
+/// Incremental-load lever: the wholesale `_strings` / `_where_bytes` read in
+/// `refresh_spine_rels_delta(None)` is correct but scales with total interned
+/// strings, not per-tick delta. The staged per-tick vecs in
+/// `insert_spine_where_bytes` are the future `Some()` source: collect the new
+/// StringIds and WhereBytes there, pass them here, then flush one
+/// `insert_rows` call per table (collect-then-flush, never per-row). The
+/// `retracted_paths` list drives the corresponding delete from `string` / `ref`
+/// before the new rows land.
+pub struct SpineDelta {
+    pub strings_added: Vec<spine::StringId>,
+    pub spans_added: Vec<spine::WhereBytes>,
+    pub retracted_paths: Vec<(spine::RepoId, String)>,
 }
 
 /// head relation -> edge relation, for every `head(..) <- closure(edge).` rule.
@@ -379,16 +397,19 @@ fn comp_stratum(c: usize, succ: &[Vec<(u32, u32)>], memo: &mut [u32]) -> u32 {
 fn stratify(rules: &[&Rule]) -> Result<Vec<Vec<usize>>> {
     let mut id: HashMap<String, u32> = HashMap::new();
     let mut name: Vec<String> = Vec::new();
-    let mut edges: Vec<(u32, u32, bool)> = Vec::new(); // (head, body, negative)
+    // (head, body, stratum-forcing). A negation OR an aggregation over `body` forces
+    // the head into a strictly higher stratum (it must read a finished relation).
+    let mut edges: Vec<(u32, u32, bool)> = Vec::new();
     for r in rules {
         let h = intern_rel(&r.head.rel, &mut id, &mut name);
+        let agg = r.has_agg();
         for item in &r.body {
-            let (b, neg) = match item {
-                BodyItem::Pos(a) => (intern_rel(&a.rel, &mut id, &mut name), false),
+            let (b, force) = match item {
+                BodyItem::Pos(a) => (intern_rel(&a.rel, &mut id, &mut name), agg),
                 BodyItem::Neg(a) => (intern_rel(&a.rel, &mut id, &mut name), true),
                 _ => continue,
             };
-            edges.push((h, b, neg));
+            edges.push((h, b, force));
         }
     }
     let n = name.len();
@@ -396,19 +417,22 @@ fn stratify(rules: &[&Rule]) -> Result<Vec<Vec<usize>>> {
     for &(h, b, _) in &edges { adj[h as usize].push(b); }
     let (comp, ncomp) = scc::tarjan(&adj);
 
-    // negation inside a recursive cycle has no stratified meaning
-    for &(h, b, neg) in &edges {
-        if neg && comp[h as usize] == comp[b as usize] {
-            bail!("unstratifiable: relation '{}' is negated inside a recursive cycle", name[b as usize]);
+    // A negation OR aggregation inside a recursive cycle has no stratified meaning.
+    // (The typecheck path reports this as a `not-stratified` TypeDiag first; this
+    // bail is defense so eval never runs an ill-defined fixpoint.)
+    for &(h, b, force) in &edges {
+        if force && comp[h as usize] == comp[b as usize] {
+            bail!("unstratifiable: relation '{}' is aggregated or negated inside a recursive cycle", name[b as usize]);
         }
     }
-    // condensed edge weight: 1 if any negative edge crosses these components
+    // condensed edge weight: 1 if any stratum-forcing edge (negation or aggregation)
+    // crosses these components
     let mut cw: HashMap<(u32, u32), u32> = HashMap::new();
-    for &(h, b, neg) in &edges {
+    for &(h, b, force) in &edges {
         let (cu, cv) = (comp[h as usize], comp[b as usize]);
         if cu != cv {
             let e = cw.entry((cu, cv)).or_insert(0);
-            *e = (*e).max(if neg { 1 } else { 0 });
+            *e = (*e).max(if force { 1 } else { 0 });
         }
     }
     let mut succ = vec![Vec::new(); ncomp];
@@ -478,6 +502,13 @@ pub struct Engine {
     rels: Rels,
     root: PathBuf,
     pub dropped: usize,
+    /// Diag-shaped rows for the extraction type-drops counted in `dropped`, one
+    /// per (file, head relation) that lost rows this tick. The stderr counter
+    /// still fires; these additionally surface a file-level squiggle over LSP so
+    /// an editor shows a file whose rows were dropped. Span is unknown at a row
+    /// type-failure, so each lands at file-level line 1 (spec T3). Collected, then
+    /// read once after the tick; never a per-row publish.
+    extraction_drops: Vec<DiagRow>,
     /// Test/bench instrumentation: cumulative count of edge condensations
     /// actually rebuilt (Tarjan invocations). A reused cond does not bump it, so
     /// a bench can assert "this edit recondensed 0 graphs".
@@ -507,7 +538,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(db: crate::db::Db, root: PathBuf) -> Self {
         Engine {
-            db, rels: HashMap::new(), root, dropped: 0, recondensed: 0,
+            db, rels: HashMap::new(), root, dropped: 0, extraction_drops: Vec::new(), recondensed: 0,
             closure_cache: HashMap::new(),
             rev_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
@@ -632,6 +663,111 @@ impl Engine {
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
+    /// The WORK-content `FileId` for `path`, derived from the `_file` cache's
+    /// stored blake3 the same way extraction derives it. Span queries filter
+    /// `_where_bytes` by this id: a git-rev span shares the path attribution but
+    /// its offsets index the old blob, so only rows whose file id matches the
+    /// current WORK content are positionally valid for an editor cursor.
+    fn work_file_id(&self, path: &str) -> Result<Option<spine::FileId>> {
+        let conn = self.db.conn();
+        let mut s = conn.prepare(
+            "SELECT hash, size FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1")?;
+        let row = s.query_row(rusqlite::params![path], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+        )));
+        match row {
+            Ok((hash, size)) => Ok(spine::FileId::from_content_address(&hash, size)
+                .filter(|f| *f != spine::FileId::SYNTHETIC)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The innermost located WORK span containing `byte` in `path`, with its
+    /// interned string: (string_id, text, lo, hi). Innermost so a cursor inside
+    /// a brace-leaf import picks the leaf over the shared head span. None when
+    /// the cursor is not on any located string. Drives the LSP
+    /// definition/references handlers.
+    pub fn span_at(&self, path: &str, byte: u32) -> Result<Option<(String, String, u32, u32)>> {
+        let Some(fid) = self.work_file_id(path)? else { return Ok(None); };
+        let conn = self.db.conn();
+        let mut s = conn.prepare(
+            "SELECT w.string_id, s.content, w.lo, w.hi FROM _where_bytes w \
+             JOIN _strings s ON s.id = w.string_id \
+             WHERE w.id != '0' AND w.path = ?1 AND w.file_id = ?2 \
+               AND w.lo <= ?3 AND ?3 < w.hi \
+             ORDER BY (w.hi - w.lo) ASC LIMIT 1")?;
+        let row = s.query_row(rusqlite::params![path, fid.to_string(), byte as i64], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)? as u32,
+            r.get::<_, i64>(3)? as u32,
+        )));
+        match row {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Every located WORK span of `string_id`, as (path, lo, hi). The
+    /// file-id-matches-WORK-content filter runs in Rust per result path because
+    /// the FileId derivation (blake3 prefix) is not expressible in SQL.
+    pub fn string_spans(&self, string_id: &str) -> Result<Vec<(String, u32, u32)>> {
+        let candidates: Vec<(String, String, u32, u32)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(
+                "SELECT path, file_id, lo, hi FROM _where_bytes \
+                 WHERE string_id = ?1 AND id != '0' AND path != '' \
+                 ORDER BY path, lo")?;
+            let rows = s.query_map(rusqlite::params![string_id], |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)? as u32,
+                r.get::<_, i64>(3)? as u32,
+            )))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        let mut work_ids: HashMap<String, Option<String>> = HashMap::new();
+        let mut out = Vec::new();
+        for (path, fid, lo, hi) in candidates {
+            let want = match work_ids.get(&path) {
+                Some(w) => w.clone(),
+                None => {
+                    let w = self.work_file_id(&path)?.map(|f| f.to_string());
+                    work_ids.insert(path.clone(), w.clone());
+                    w
+                }
+            };
+            if want.as_deref() == Some(fid.as_str()) { out.push((path, lo, hi)); }
+        }
+        Ok(out)
+    }
+
+    /// Definition targets for the located string `text` under a cursor in
+    /// `file`: the `module_edge(file, dst)` rows where a segment of `text`
+    /// names dst's module stem (`mod.rs`/`index.*`/`lib.rs`/`main.rs` take the
+    /// parent dir). A single outgoing edge wins even without a stem match.
+    /// Empty when the span is not an import ref or the import did not resolve.
+    pub fn definition_targets(&self, file: &str, text: &str) -> Result<Vec<String>> {
+        let dsts: Vec<String> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT DISTINCT \"dst\" FROM {} WHERE \"src\" = ?1", tbl("module_edge")))?;
+            let rows = s.query_map(rusqlite::params![file], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        let segs: HashSet<&str> = text
+            .split(|c: char| c == ':' || c == '/')
+            .filter(|s| !s.is_empty() && !matches!(*s, "crate" | "self" | "super" | "." | ".."))
+            .collect();
+        let matched: Vec<String> = dsts.iter()
+            .filter(|d| segs.contains(module_stem(d)))
+            .cloned().collect();
+        if matched.is_empty() && dsts.len() == 1 { return Ok(dsts); }
+        Ok(matched)
+    }
+
     /// Distinct WORK source paths from the `_file` cache. Feeds crate-root
     /// discovery (`rspath::crate_roots`) for the `--move` rewriter, so a crate
     /// whose root is `rust/kernel/lib.rs` (no `src/`) still yields module paths.
@@ -704,10 +840,32 @@ impl Engine {
         Ok(out)
     }
 
+    /// The extraction type-drop diagnostics collected during the last tick (one
+    /// per file+relation that lost rows). The LSP publish path merges these with
+    /// the `diag` relation rows so a file whose rows were dropped shows a squiggle.
+    /// File-level, line 1 (a row type-failure has no byte span). Cleared at the
+    /// start of each tick.
+    pub fn extraction_drops(&self) -> &[DiagRow] { &self.extraction_drops }
+
+    /// Push a file-level drop diagnostic for `n` rows lost extracting `rel` from
+    /// `path`. `path` is repo-relative (matches `DiagRow.path` and how publish
+    /// joins it onto root). Collected, flushed once after the tick.
+    fn record_extraction_drop(&mut self, path: &str, rel: &str, n: usize) {
+        self.extraction_drops.push(DiagRow {
+            path: path.to_string(),
+            line: 1, col: 0, end_line: 1, end_col: 0,
+            severity: "warn".into(),
+            code: "checked-type".into(),
+            msg: format!("{n} row(s) failing file/dir/path checks dropped from `{rel}`"),
+            hint: None,
+        });
+    }
+
     /// One reactive tick: declare, reconcile sources incrementally, rebuild
     /// derived only if a source fact changed, then run queries.
     pub fn tick(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         self.rev_cache.clear();
+        self.extraction_drops.clear();
         self.db.tick_begin();
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i {
             Item::Rule(r) => Some(r), _ => None,
@@ -804,6 +962,7 @@ impl Engine {
     /// tree. Only WORK source rules participate; route git-rev changes to `tick`.
     pub fn tick_paths(&mut self, prog: &Program, changed: &[PathBuf], quiet: bool) -> Result<()> {
         self.rev_cache.clear();
+        self.extraction_drops.clear();
         self.db.tick_begin();
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
         let closures = closure_map(&rules);
@@ -889,6 +1048,7 @@ impl Engine {
                 for rule in &matching {
                     let (rows, where_bytes, dropped) = parse_file(rule, &slug, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index)?;
                     self.dropped += dropped;
+                    if dropped > 0 { self.record_extraction_drop(&rel, &rule.head.rel, dropped); }
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
                     extracted += self.insert_source_rows(&rule.head.rel, &meta, &slug, &rel, &rows)?;
@@ -1215,6 +1375,7 @@ impl Engine {
         for (res, (_, repo, _, _, _)) in results.into_iter().zip(to_extract.iter()) {
             let (rel, path, rows, wheres, dropped) = res?;
             self.dropped += dropped;
+            if dropped > 0 { self.record_extraction_drop(&path, &rel, dropped); }
             where_bytes.extend(wheres.into_iter().map(|w| (repo.clone(), path.clone(), w)));
             by_rel.entry(rel).or_default()
                 .extend(rows.into_iter().map(|row| (repo.clone(), path.clone(), row)));
@@ -1445,7 +1606,20 @@ impl Engine {
     /// Project the durable `_strings` / `_where_bytes` meta tables into the
     /// query-facing `string` / `ref` relations. Wholesale wipe + repopulate,
     /// skipping the zero sentinels so queries see only real interned rows.
-    fn refresh_spine_rels(&self) -> Result<()> {
+    ///
+    /// `delta = None` executes the wholesale body verbatim (current behavior).
+    /// `delta = Some(_)` is the incremental path: only the rows named in the
+    /// delta need to be merged into `string` / `ref`. That path is not yet
+    /// expanded; callers pass `None` at every existing call site. When the
+    /// incremental path is wired, replace the `None` calls in the per-tick
+    /// changed-file loop with `Some(&delta)` after `insert_spine_where_bytes`
+    /// flushes the staged vecs -- collect-then-flush, one `insert_rows` call
+    /// per table, never per-row.
+    fn refresh_spine_rels_delta(&self, delta: Option<&SpineDelta>) -> Result<()> {
+        // The incremental path is not yet expanded; fall through to wholesale.
+        // When Some() is implemented, remove this comment and the wholesale read
+        // below for the Some branch.
+        let _ = delta; // future Some() will drive a targeted merge instead
         let conn = self.db.conn();
         let mut s = conn.prepare("SELECT id, content, norm FROM _strings WHERE id != '0'")?;
         let strings: Vec<Vec<Value>> = s
@@ -1471,6 +1645,11 @@ impl Engine {
         self.refresh_rel("string", &["id", "text", "norm"], &strings)?;
         self.refresh_rel("ref", &["id", "string", "file", "lo", "hi"], &refs)?;
         Ok(())
+    }
+
+    /// Thin shim so existing call sites require no signature change.
+    fn refresh_spine_rels(&self) -> Result<()> {
+        self.refresh_spine_rels_delta(None)
     }
 
     /// Wholesale replace one engine-owned relation through the same plural write
@@ -2125,6 +2304,7 @@ impl Engine {
                                    two (plus literals) can appear in the head"),
             Term::Wild => bail!("'_' not allowed in a seeded closure rule head"),
             Term::Interp(_) => bail!("interpolation not supported in a seeded closure rule head"),
+            Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
         }).collect();
         let template = cells?;
         let free_positions: Vec<usize> = rule.head.terms.iter().enumerate()
@@ -2283,6 +2463,20 @@ fn pattern_literals(pat: &str) -> Vec<String> {
     out
 }
 
+/// The module name a file path answers to in an import specifier: the file
+/// stem, except `mod.rs`/`index.*`/`lib.rs`/`main.rs` answer to their parent
+/// directory's name. Used by `definition_targets` to pair a specifier segment
+/// with a `module_edge` dst.
+fn module_stem(path: &str) -> &str {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let stem = file.split('.').next().unwrap_or(file);
+    if matches!(stem, "mod" | "index" | "lib" | "main") {
+        path.rsplit('/').nth(1).unwrap_or(stem)
+    } else {
+        stem
+    }
+}
+
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).
 /// Safe to call in parallel: reads file content, runs extractors, builds rows.
 fn parse_file(
@@ -2432,6 +2626,7 @@ fn parse_file(
                 Term::Int(n) => Value::Int(*n),
                 Term::Interp(parts) => interp_value(parts, &b)?,
                 Term::Wild => bail!("'_' in head not allowed"),
+                Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
             };
             if !check_type(head_meta.cols[i].ty, &v, repo, rev, root, rev_index) { dropped += 1; continue 'bind; }
             row.push(v);
@@ -2477,6 +2672,7 @@ fn val_of(t: &Term, b: &Bind) -> Result<Value> {
         Term::Int(n) => Ok(Value::Int(*n)),
         Term::Interp(parts) => interp_value(parts, b),
         Term::Wild => bail!("'_' in constraint"),
+        Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
     }
 }
 

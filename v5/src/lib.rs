@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod config;
 pub mod db;
+pub mod desc;
 pub mod engine;
 pub mod lex;
 pub mod lower;
@@ -14,20 +15,53 @@ pub mod scc;
 pub mod scip_import;
 pub mod sg;
 pub mod spine;
+pub mod typecheck;
 pub mod typegraph;
 
 use anyhow::Result;
 use std::path::PathBuf;
 
+/// Parse a `.dl` source, then run the lower-time type passes (T2): validate
+/// brands/anchors, type-check every rule, and rewrite every typed path literal
+/// (`fs:`/`glob:`) to its canonical text in place. Returns the normalized program
+/// and the collected `TypeDiag`s. `dl_path` attributes the diagnostics. The engine
+/// never sees a `Term::PathLit`: the bail guards in lower/engine are defense only.
+fn prepare(src: &str, dl_path: &str) -> Result<(ast::Program, Vec<ast::TypeDiag>)> {
+    let mut prog = parse::parse(lex::lex(src)?)?;
+    let diags = typecheck::check_and_normalize(&mut prog, dl_path);
+    Ok((prog, diags))
+}
+
 pub fn run_file(program_path: &str, db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
     let src = std::fs::read_to_string(program_path)?;
-    let toks = lex::lex(&src)?;
-    let prog = parse::parse(toks)?;
-    let conn = db::open(db_path)?;
-    let mut eng = engine::Engine::new(conn, root);
-    eng.set_query_json(query_json);
-    eng.set_repos(load_repos());
-    eng.run(&prog)
+    let (prog, type_diags) = prepare(&src, program_path)?;
+    render_type_diags(&type_diags, false);
+    let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    // On a lower-time error, skip evaluation: the program is ill-defined and the
+    // engine would either bail (stratify defense) or hit a SQLite datatype error.
+    if n_errors == 0 {
+        let conn = db::open(db_path)?;
+        let mut eng = engine::Engine::new(conn, root);
+        eng.set_query_json(query_json);
+        eng.set_repos(load_repos());
+        eng.run(&prog)?;
+    }
+    if n_errors > 0 {
+        anyhow::bail!("{n_errors} type error(s) in path literals / brands / stratification");
+    }
+    Ok(())
+}
+
+/// Render `TypeDiag`s compiler-style to stderr (`path:line: sev[code]: msg`), the
+/// same shape the `diag` relation renders in `run_check`. A literal's byte span
+/// maps to line 1 (the source-to-line resolver is T3 work); a zero span (a
+/// structural brand/var diagnostic) also lands at line 1. `json` is reserved for
+/// the `--diag-json` path which folds these into the JSON array there.
+fn render_type_diags(diags: &[ast::TypeDiag], json: bool) {
+    if json { return; }
+    for d in diags {
+        eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
+    }
 }
 
 /// Load the turnkey config's repos, logging the source/count. A malformed
@@ -51,29 +85,44 @@ fn load_repos() -> Vec<config::RepoConfig> {
 pub fn run_check(program_path: &str, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<()> {
     let src = std::fs::read_to_string(program_path)?;
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
-    let mut prog = parse::parse(lex::lex(&src)?)?;
+    let (mut prog, type_diags) = prepare(&src, program_path)?;
     if json { prog.items.retain(|i| !matches!(i, ast::Item::Query(_))); }
+    // A lower-time error (brand mismatch, escaping literal, not-stratified) means
+    // the program is ill-defined: skip the tick so its diagnostic, not a downstream
+    // engine bail (e.g. the stratify defense) or a SQLite datatype error, surfaces.
+    let type_errors = type_diags.iter().any(|d| d.severity == ast::Severity::Error);
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
-    eng.tick(&prog, true)?;
-    let diags = eng.diags(None)?;
+    let diags = if type_errors { Vec::new() } else { eng.tick(&prog, true)?; eng.diags(None)? };
 
     if json {
-        let arr: Vec<serde_json::Value> = diags.iter().map(|d| serde_json::json!({
+        let mut arr: Vec<serde_json::Value> = diags.iter().map(|d| serde_json::json!({
             "path": d.path, "line": d.line, "col": d.col,
             "endLine": d.end_line, "endCol": d.end_col,
             "severity": d.severity, "code": d.code, "message": d.msg, "hint": d.hint,
         })).collect();
+        // Fold the lower-time type diagnostics into the same JSON array (line 1;
+        // span-to-line mapping is T3). The `diag`-relation rows and these share one
+        // shape so a consumer treats them uniformly.
+        for d in &type_diags {
+            arr.push(serde_json::json!({
+                "path": d.path, "line": 1, "col": d.span.0,
+                "endLine": 1, "endCol": d.span.1,
+                "severity": d.severity.as_str(), "code": d.code, "message": d.msg, "hint": serde_json::Value::Null,
+            }));
+        }
         println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(arr))?);
     } else {
+        render_type_diags(&type_diags, false);
         for d in &diags {
             let code = if d.code.is_empty() { String::new() } else { format!("[{}]", d.code) };
             eprintln!("{}:{}: {}{}: {}", d.path, d.line, d.severity, code, d.msg);
             if let Some(h) = &d.hint { eprintln!("    hint: {h}"); }
         }
     }
-    let errors = diags.iter().filter(|d| d.severity == "error").count();
-    if errors > 0 { anyhow::bail!("{errors} banned pattern(s) found"); }
+    let errors = diags.iter().filter(|d| d.severity == "error").count()
+        + type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    if errors > 0 { anyhow::bail!("{errors} error-severity diagnostic(s) found"); }
     Ok(())
 }
 
@@ -81,7 +130,8 @@ pub fn run_check(program_path: &str, db_path: Option<&str>, root: PathBuf, json:
 /// (relative to root or absolute). The delta entry point the watcher uses.
 pub fn run_changed(program_path: &str, db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
     let src = std::fs::read_to_string(program_path)?;
-    let prog = parse::parse(lex::lex(&src)?)?;
+    let (prog, type_diags) = prepare(&src, program_path)?;
+    render_type_diags(&type_diags, false);
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
     let abs: Vec<PathBuf> = changed.into_iter()
@@ -98,7 +148,8 @@ pub fn run_lsp(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Resu
 pub fn run_watch(program_path: &str, db_path: Option<&str>, root: PathBuf) -> Result<()> {
     use notify::{RecursiveMode, Watcher};
     let src = std::fs::read_to_string(program_path)?;
-    let prog = parse::parse(lex::lex(&src)?)?;
+    let (prog, type_diags) = prepare(&src, program_path)?;
+    render_type_diags(&type_diags, false);
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
     eng.set_repos(load_repos());

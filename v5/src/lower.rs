@@ -36,6 +36,7 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
         Term::Str(_) | Term::Int(_) => Ok(lit_sql(t).unwrap()),
         Term::Interp(parts) => interp_sql(parts, canon),
         Term::Wild => bail!("'_' not allowed here"),
+        Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
     }
 }
 
@@ -63,6 +64,7 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
                     },
                     Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
+                    Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
                     Term::Wild => {}
                 }
             }
@@ -96,6 +98,7 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
                     }
                     Term::Str(_) | Term::Int(_) => sub.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
+                    Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
                     Term::Wild => {}
                 }
             }
@@ -119,10 +122,45 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
         bail!("head {} expects {} cols, got {}", rule.head.rel, head_meta.cols.len(), rule.head.terms.len());
     }
     let cols: Vec<String> = head_meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+
+    // An aggregating head selects `AGG(arg)` for each aggregate term and the plain
+    // head terms as the GROUP BY list. `count(_)` aggregates the whole group, so a
+    // wildcard arg lowers to `COUNT(*)`.
+    if rule.has_agg() {
+        let mut exprs = Vec::new();
+        let mut group: Vec<String> = Vec::new();
+        for (i, term) in rule.head.terms.iter().enumerate() {
+            match rule.aggs.get(i).copied().flatten() {
+                Some(f) => {
+                    let arg = match term {
+                        Term::Wild => "*".to_string(),
+                        _ => term_sql(term, &canon)?,
+                    };
+                    exprs.push(format!("{}({arg})", f.sql()));
+                }
+                None => {
+                    let g = term_sql(term, &canon)?;
+                    exprs.push(g.clone());
+                    group.push(g);
+                }
+            }
+        }
+        let group_sql = if group.is_empty() { String::new() } else { format!(" GROUP BY {}", group.join(", ")) };
+        return Ok(format!(
+            "INSERT OR IGNORE INTO {} ({}) SELECT {} FROM {}{}{}",
+            tbl(&rule.head.rel),
+            cols.join(", "),
+            exprs.join(", "),
+            froms.join(", "),
+            where_sql,
+            group_sql,
+        ));
+    }
+
     let mut exprs = Vec::new();
     for term in &rule.head.terms { exprs.push(term_sql(term, &canon)?); }
 
-    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
     Ok(format!(
         "INSERT OR IGNORE INTO {} ({}) SELECT {} FROM {}{}",
         tbl(&rule.head.rel),
@@ -158,6 +196,7 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
             },
             Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
             Term::Interp(_) => bail!("interpolated string not supported in a query head"),
+            Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
             Term::Wild => {}
         }
     }
