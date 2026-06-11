@@ -13,7 +13,7 @@ cross-process writes wait instead of failing).
 ## Use
 
 ```sh
-cargo build --release --bin dl     # in v5/; put target/release/dl on PATH
+cargo install --path v5 --bin dl   # puts `dl` on PATH (~/.cargo/bin)
 claude --plugin-dir editors/claude-plugin
 ```
 

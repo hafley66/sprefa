@@ -25,6 +25,7 @@ as feedback the agent should act on.
 
 ## Claude Code hook
 
+Install once (`cargo install --path v5 --bin dl` puts `dl` on PATH), then
 `.claude/settings.json` in the repo:
 
 ```json
@@ -34,10 +35,7 @@ as feedback the agent should act on.
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          {
-            "type": "command",
-            "command": "dl --check --root \"$CLAUDE_PROJECT_DIR\""
-          }
+          { "type": "command", "command": "dl --check" }
         ]
       }
     ]
@@ -45,9 +43,11 @@ as feedback the agent should act on.
 }
 ```
 
-`dl` must be on PATH (or use an absolute path to the binary). On exit 2,
-Claude Code feeds stderr back to the model and it self-corrects; exit 0 is
-silent; exit 1 surfaces to you only.
+No flags: with no `--root` and no program, `dl` resolves the nearest `.git`
+ancestor of the cwd as root and discovers `<root>/.dl/*.dl` there, so the
+command is launch-dir independent. On exit 2, Claude Code feeds stderr back
+to the model and it self-corrects; exit 0 is silent; exit 1 surfaces to you
+only.
 
 The same command works as a pre-commit hook or CI step unchanged.
 
