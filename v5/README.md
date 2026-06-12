@@ -1,111 +1,344 @@
 # sprefa v5 (`dl`)
 
-Reactive datalog over code, in repo/rev/time space. Extract facts from source
-with `scan` + located matchers (`regex`/`ast`/`sg`/`json`), write recursive
-rules, and the engine lowers them to a SQLite fixpoint. ~6.4k LOC, SQLite-welded,
-sync-tick.
+Datalog over code, in repo/rev/time space. Extract facts from source files with
+`scan` + located matchers, write recursive rules, and the engine lowers them to
+a SQLite fixpoint. Sinks turn result rows into query output (`?`), editor
+diagnostics (`diag` + `--lsp`/`--check`), or generated/spliced files (`gen`).
+~9k LOC, sync-tick, no compiler dependency.
 
-It answers the canonical code-navigation questions — definition site, callers,
-blast radius, type fan-in, broken imports — from `syn` + tree-sitter facts, no
-compiler. See [examples/glean.dl](examples/glean.dl).
+This file is the reference for humans and agents alike: full DSL syntax, type
+system, built-in relations, CLI, hook/LSP installation, and pointers to every
+other doc in the tree.
 
-## Build & run
+## Install & run
 
+```sh
+cargo build                                    # debug binary at target/debug/dl
+cargo install --path v5 --bin dl               # put `dl` on PATH (run from repo root)
+
+dl examples/glean.dl --root .                  # run a program, print ? queries
+dl --check --root <repo>                       # discovery mode: runs <repo>/.dl/*.dl
+dl examples/lint-unwrap.dl --root <repo> --lsp # live LSP diagnostics
 ```
-cargo build                       # builds the `dl` binary
-cargo run --bin dl -- examples/glean.dl --root .
-cargo test
-```
 
-`--root` defaults to the nearest `.git` ancestor of the program file.
+`--root` defaults to the nearest `.git` ancestor of the program file (or of the
+cwd in discovery mode). Multi-repo analysis is configured in
+`~/.config/sprefa/config.toml` (see [Multi-repo](#multi-repo)).
 
 ## The model
 
-- **Coordinates.** Every fact is keyed on `(repo, path, rev)`. Files are
+- **Coordinates.** Every fact is keyed on `(repo, path, rev)`. File content is
   content-addressed (blake3 for the working tree, blob OID for a git rev), so
-  the same path in two repos or two revs never collides. Contract pinned in
+  the same path at two revs or in two repos never collides. Contract pinned in
   [docs/data-model.md](docs/data-model.md).
-- **Facts.** `scan(repo, glob, path, rev)` selects files; a matcher extracts
-  rows from each.
-- **Rules.** `head(..) <- body.` — ordinary datalog, recursive. Lowered to a SQL
-  fixpoint loop.
-- **Located spine.** Every matched value records its byte span in
-  `ref(id, string, file, lo, hi)`, joinable to `string(id, text, norm)`. This is
-  what makes a match a *coordinate* you can squiggle (LSP) or rewrite (`--move`).
+- **Facts.** `scan` selects files; a source op (`match`/`ast`/`sg`/`json`/
+  `cmd`/`comment`) extracts rows from each. Source-op rows are cached by
+  (file content hash, rule text) — a re-tick only re-runs what moved.
+- **Rules.** `head(..) <- body.` — ordinary datalog, recursion allowed,
+  lowered to a SQL fixpoint loop. A converged tick writes nothing.
+- **Located spine.** Matched values record their byte spans, queryable as
+  `string(id, text, norm)` + `ref(id, string, file, lo, hi)`. A match is a
+  coordinate you can squiggle (LSP) or rewrite (`--move`).
 
-## DSL surface
+## Program structure
 
-| Form | What it does |
+A `.dl` program is a sequence of items, each terminated by `.`:
+
+| item | syntax | purpose |
+|---|---|---|
+| relation decl | `rel name(col: type, ...).` | declare a derived relation and its column types |
+| brand decl | `type Name <: parent.` | named subtype of a base type or another brand; storage stays text, unification is checked |
+| anchor decl | `anchor name = fs:body.` | named filesystem anchor (v1: only the default scan-root anchor is referenced) |
+| rule | `head(..) <- body, body, ... .` | derive rows; recursion allowed |
+| aggregate rule | `fan_out(F, count(T)) <- edge(F, T).` | head-position aggregation; plain head terms are the GROUP BY |
+| closure rule | `reaches(a, b) <- closure(edge).` | transitive closure of a 2-col edge relation |
+| gen (file) | `gen("docs/{x}.md", "row {y}") <- body.` | render rows to a file, grouped by rendered path |
+| gen (splice) | `gen(p, l0, l1, "row {y}") <- body.` | replace lines strictly between two marker lines (pair with `comment`) |
+| query | `? rel(a, b, "literal").` | print results; a literal pins that column |
+| comment | `# ...` | to end of line |
+
+### Types
+
+Declared column types (`rel` and brand parents):
+
+| keyword | storage | meaning |
+|---|---|---|
+| `text` | TEXT | any string |
+| `int` | INTEGER | 64-bit integer |
+| `path` | TEXT | repo-relative path |
+| `file` | TEXT | path known to be a file |
+| `dir` | TEXT | path known to be a directory |
+| `repo` | TEXT | repo coordinate (config slug / path / `"."` self) |
+| `rev` | TEXT | git rev coordinate |
+| any brand | base's | `type Hub <: text.` then `rel hub(h: Hub, ...)` |
+
+Type errors surface as diagnostics under `--check` and in `--lsp`
+(`brand-mismatch`, `path-escapes-root`, `unknown-anchor`, `unknown-scheme`,
+`coerce-text-path`). See [src/typecheck.rs](src/typecheck.rs).
+
+### Terms
+
+| form | example | notes |
+|---|---|---|
+| variable | `Path`, `x` | any ident; scope is the rule |
+| wildcard | `_` | matches anything, binds nothing |
+| string | `"WORK"` | |
+| int | `42` | |
+| interpolation | `"${mod}::${name}"` | build strings from bound vars |
+| template hole | `"fan-out {n}"` | in `gen` row/path templates only |
+| typed path literal | `fs:src/db.rs`, fs:\`src/db.rs\`, `glob:src/**/*.rs` | resolved against the scan root at lower time; a typo'd `fs:` path is a check error, never a silently unmatched string. Backtick-fence bodies containing spaces/specials |
+
+### Source ops (body position, extract facts from files)
+
+| op | signature | what it does |
+|---|---|---|
+| `scan` | `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self, the 4-ary default) \| `"*"` (fan over every configured repo) |
+| `match` | `match(path, rev, /re/, line)` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor |
+| `ast` | `ast(path, rev, :rust\|:c, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
+| `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col])` | ast-grep pattern; metavar `$X` binds dl var `X`. Lines 1-based, columns 0-based byte offsets |
+| `json` | `json(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located |
+| `cmd` | `cmd(path, rev, "tool {file}", line, out)` | shell out per matched file, one row per stdout line. Cached by (file hash, rule text). Nonzero exit + stdout = findings; nonzero + empty = error |
+| `comment` | `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions in ANY file type (marker detection by line prefix: `//`, `#`, `<!--`, `/*`, `--`, `*`). One regex = sequential dividers; two = paired BEGIN/END with LIFO nesting. `l0`/`l1` are 1-based marker lines; `label` is the open regex's first named group or the trimmed tail. See [src/comment.rs](src/comment.rs) |
+
+Source rules extract per file and cannot join derived relations — a check that
+needs both is two rules: extract, then join (see [Rails](#git-hook--claude-code-hook)).
+
+### Body constructs (derived rules)
+
+| form | example |
 |---|---|
-| `scan("WORK"\|"HEAD"\|rev\|"*", glob, path, rev)` | select files; `"*"` fans over every configured repo |
-| `match(path, rev, /re (?<cap>..)/, line)` | regex capture over file content; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`), bare `$` stays the anchor |
-| `ast(path, rev, :rust\|:c, "(query) @cap", line, end)` | tree-sitter query |
-| `sg(path, rev, :lang, "pattern", line, ..)` | ast-grep pattern |
-| `json(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (by extension; `*` = any value/element); value is **located** |
-| `cmd(path, rev, "tool {file}", line, out)` | shell per matched file, one row per stdout line; cached by (file hash, rule text); nonzero exit + stdout = findings, nonzero + empty = error |
-| `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions: one regex = sequential dividers, two = paired BEGIN/END (LIFO nesting); binds 1-based marker lines + label |
-| `gen("path/{x}.md", "row {y}") <- body.` | codegen sink: render body rows to a file (groups by rendered path); write skipped when bytes match; never runs under `--check`/`--lsp` |
-| `gen(p, l0, l1, "row {y}") <- body.` | marker splice: replace the lines strictly between two marker lines (pair with `comment`'s coordinates) |
-| `head(..) <- a(..), b(..).` | rule (recursive allowed) |
-| `reaches(s,d) <- closure(edge).` | transitive closure (seed one endpoint with a literal to query) |
-| `!rel(..)` | negation / anti-join |
-| `x = y` `!=` `<` `<=` `>` `>=` | comparison |
-| `x =~ "re"` · `x ~~ "glob"` | regex / glob constraint (SQLite `REGEXP`/`GLOB`) |
-| `"${var}::${name}"` | string interpolation |
-| `? rel(..).` | query (literal in a position pins/seeds it) |
+| positive atom | `edge(f, t)` |
+| negation / anti-join | `!round(t, _)` |
+| comparison | `=` `!=` `<` `<=` `>` `>=` — `n >= 4`, `p != fs:src/db.rs` |
+| regex constraint | `f =~ "^[A-Za-z]+$"` (SQLite REGEXP) |
+| glob constraint | `p ~~ "src/*"` (SQLite GLOB) |
+| closure | `closure(edge)` as the entire body — see below |
 
-Built-in relations include `module_import`/`module_edge`/`module_unresolved`
-(import graph, cross-language Rust+TS), `type_edge` (syn type graph),
-`crate_edge`, the `string`/`ref` spine, and `scip_*` when a SCIP index is present.
+**Aggregation** is head-position only: `count` `sum` `min` `max`.
+Non-aggregate head terms are the grouping key. `count`/`sum` produce `int`;
+`min`/`max` carry the argument's type. A `count(...)` in body position is a
+parse error.
+
+```
+rel fan_out(f: text, n: int).
+fan_out(f, count(t)) <- edge(f, t).
+
+rel tgt_round(t: text, r: int).
+tgt_round(t, min(r)) <- round(f, r), edge(f, t).
+```
+
+**Closure**: `reaches(a, b) <- closure(edge).` materializes the transitive
+closure of a 2-col relation (SCC-condensed, see [src/scc.rs](src/scc.rs)).
+To ask a point query, pin an endpoint: `? reaches("Engine", x).` Closure in a
+mixed rule body is literal-seeded only — dynamic closure joins are a known gap.
+
+### Sinks
+
+**`?` query** — `? rel(a, b).` prints a TSV block (or JSON-lines with
+`--query-json`). A literal in any position filters. There is no `where`
+clause; filter by nesting a derived rule.
+
+**`diag`** — declare a relation named `diag` and the engine maps its columns BY
+NAME into editor diagnostics (`--lsp`) or check output (`--check`). Required:
+`path`, `line`, `msg`. Optional: `col`, `end_line`, `end_col`,
+`severity` (`error`|`warn`|`info`|`hint`, default `warn`). Full convention in
+[docs/lsp.md](docs/lsp.md).
+
+**`gen`** — codegen. File form renders body rows through a `{var}` path + row
+template, grouped by rendered path. Splice form replaces the lines strictly
+between two marker lines, pairing with `comment`'s `l0`/`l1` coordinates:
+
+```
+rel block(p: file, l0: int, l1: int, name: text).
+block(p, l0, l1, name) <- scan("WORK", "docs/tables.md", p, rev),
+  comment(p, rev, /BEGIN: $name$/, /END:/, l0, l1, name).
+
+gen(p, l0, l1, "{f} has fan-out {n}") <- block(p, l0, l1, "fanout"), fan_out(f, n).
+```
+
+Rows render in deterministic order; the write is skipped when bytes already
+match (convergence = a second tick writes nothing). `gen` never runs under
+`--check` or `--lsp`. Splices across multiple rules into one file batch into a
+single bottom-up write. Worked loop: [examples/gen-type-table.dl](examples/gen-type-table.dl),
+cross-repo deck maintenance: [examples/anim-deck.dl](examples/anim-deck.dl).
+
+## Built-in relations
+
+Reserved names, populated lazily — a program pays only for what it references.
+
+| relation | columns | source |
+|---|---|---|
+| `repo` | `(id, slug, root)` | configured repos + self |
+| `rev` | `(id, repo, oid, ts)` | git revs seen by scans |
+| `content` | `(id, hash)` | content addresses |
+| `file` | `(repo, rev, path, content)` | scanned files |
+| `changed` | `(path)` | `git status --porcelain -uall` vs HEAD: modified, added, renamed, untracked. Empty outside git. The rails join |
+| `module_import` | `(file, rev, specifier, kind, line)` | import statements, Rust + TS |
+| `module_edge` | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
+| `module_edge_rev` | `(src, dst, rev)` | rev-aware form |
+| `module_unresolved` | `(file, specifier, reason, line)` | broken imports (the linter question) |
+| `module_unresolved_rev` | `(file, rev, specifier, reason, line)` | rev-aware form |
+| `crate_edge` | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
+| `type_edge` | `(from, to, kind)` | syn-based Rust type graph; `kind` ∈ `field`\|`variant`\|`impl`\|`generic` |
+| `type_edge_rev` | `(from, to, kind, rev)` | rev-aware form (WORK-vs-HEAD type diff) |
+| `scip_def` | `(symbol, file)` | from an existing `index.scip` at root or `$SPREFA_SCIP_INDEX` |
+| `scip_ref` | `(file, symbol, def_file)` | compiler-backed references |
+| `scip_edge` | `(src, dst)` | file-to-file SCIP dependency edges |
+| `string` | `(id, text, norm)` | interned strings (ref spine) |
+| `ref` | `(id, string, file, lo, hi)` | byte span per interned string; `id` is the rewrite coordinate. "Where does Foo occur": `string(s, "Foo", _), ref(_, s, f, lo, hi)` |
+
+Declarations live at [src/engine.rs:25](src/engine.rs) (`BUILTIN_RELS` through
+`SPINE_RELS`).
 
 ## CLI
 
-| Flag | Effect |
+| invocation | effect |
 |---|---|
-| `dl prog.dl` | run; print `?` query results as a TSV block |
-| `--root <dir>` | source root (default: nearest `.git`) |
-| `--check` | render `diag` to stderr, exit non-zero on any `error` row (CI / pre-commit) |
-| `--diag-json` | `--check` as a JSON array on stdout |
-| `--query-json` | `?` results as JSON-lines (`{query, columns, rows, count}`) |
-| `--lsp` | LSP server over stdio: the `diag` relation becomes live editor diagnostics |
+| `dl prog.dl` | run; print `?` queries as TSV |
+| `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order, shared `rel` decls dedupe); auto-cache at `.dl/cache.db` (gitignored automatically) |
+| `--root <dir>` | source root (default: nearest `.git` ancestor) |
+| `--db <path>` | persist to SQLite (default: in-memory; discovery mode defaults to the cache). Derived tables land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
+| `--check` | render `diag` to stderr. Exit 0 clean, 2 on any `error`-severity row, 1 broken program |
+| `--diag-json` | `--check` with diagnostics as a JSON array on stdout |
+| `--query-json` | `?` results as JSON-lines `{query, columns, rows, count}` |
+| `--lsp` | LSP server over stdio; `diag` rows become live squiggles |
 | `--watch` | re-tick on file changes |
-| `--changed <path>` | drive one incremental tick for changed paths (repeatable) |
-| `--move OLD=NEW [--repo <slug>\|*] [--fix]` | rewrite `use`-path references for a module move (dry-run unless `--fix`) |
-| `--db <path>` | persist to a SQLite file (default: in-memory) |
+| `--changed <path>` | one incremental tick for changed paths (repeatable) |
+| `--move OLD=NEW [--repo slug\|*] [--fix]` | rewrite `use`-path references for a module move; dry-run unless `--fix` |
+
+## Git hook / Claude Code hook
+
+Rails = `diag` rules joined against `changed(p)`, so pre-existing repo debt
+never fires — only the current diff can trip a check. Full doc:
+[docs/rails.md](docs/rails.md), starter rules: [examples/rails.dl](examples/rails.dl).
+
+1. Put rules in `<repo>/.dl/*.dl`.
+2. **Git pre-commit**: commit `.githooks/pre-commit` containing
+   `exec dl --check`, then once per clone:
+   ```sh
+   git config core.hooksPath .githooks
+   ```
+   Non-zero exit blocks the commit (`git commit -n` bypasses). Same command is
+   the CI step. Grain caveat: `changed` is worktree-vs-HEAD, not staged-only.
+3. **Claude Code**: `.claude/settings.json` in the repo:
+   ```json
+   {
+     "hooks": {
+       "PostToolUse": [
+         { "matcher": "Edit|Write|NotebookEdit",
+           "hooks": [{ "type": "command", "command": "dl --check" }] }
+       ]
+     }
+   }
+   ```
+   Exit 2 feeds stderr back to the agent (blocking-hook contract); exit 1
+   (broken rails) surfaces to the user only. No flags needed — root and
+   program discovery are cwd-independent.
+
+A rail is two rules (source ops cannot join relations):
+
+```
+rel diag(path: text, line: int, severity: text, code: text, msg: text).
+
+rel todo_hit(p: file, l: int).
+todo_hit(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /TODO/, l).
+
+diag(p, l, "error", "no-todo", "TODO in a changed file") <- todo_hit(p, l), changed(p).
+```
+
+## LSP
+
+```sh
+dl <rules.dl> --root <repo> --lsp
+```
+
+Any program with a `diag` relation becomes a live linter: save a file, the
+engine ticks that path, rows become squiggles. Save-driven, disk-truth,
+deterministic. Editor glue (VSCode generic-LSP client settings) and the full
+column convention: [docs/lsp.md](docs/lsp.md). Claude Code's IDE bridge
+consumes the published diagnostics with no extra integration. Tight squiggles:
+bind `sg`'s span outputs (`line, col, end_line, end_col`) straight into the
+matching `diag` columns — [examples/lint-unwrap.dl](examples/lint-unwrap.dl).
+
+## Multi-repo
+
+`~/.config/sprefa/config.toml` (or `$SPREFA_CONFIG` / `$XDG_CONFIG_HOME`):
+
+```toml
+[[repos]]
+slug = "alpha/one"
+root = "/path/to/checkout-a"
+
+[[repos]]
+slug = "gamma/three"
+root = "/path/to/cache/gamma"
+url  = "git@github.com:org/gamma.git"   # cloned on first scan if root is absent
+```
+
+`scan("alpha/one", "WORK", glob, p, rev)` targets one repo;
+`scan("*", "WORK", ...)` fans the rule over every configured repo. Or point
+`--root` at a parent directory and use root-relative globs
+(`"sprefa/v5/src/**/*.rs"`), as [examples/anim-deck.dl](examples/anim-deck.dl) does.
 
 ## Examples
 
-`examples/` — [glean.dl](examples/glean.dl) (the 5 canonical questions),
-`callgraph*.dl` (ast/sg/c/typed/resolved variants), [typegraph.dl](examples/typegraph.dl),
-[lint-imports.dl](examples/lint-imports.dl) / [lint-unwrap.dl](examples/lint-unwrap.dl)
-(diagnostics via `--check`/`--lsp`), [openapi.dl](examples/openapi.dl) (json + anti-join),
-[time.dl](examples/time.dl) (cross-rev diff), [module-history.dl](examples/module-history.dl),
-[repo-nearest.dl](examples/repo-nearest.dl),
-[gen-type-table.dl](examples/gen-type-table.dl) (the marker-splice codegen loop:
-`comment` + `gen` keep a fan-out table fresh inside the program's own comments),
-[typegraph-anim.dl](examples/typegraph-anim.dl) (3-frame animated type-graph
-reveal: gen splices fan-out tiers into d2 `steps:` boards, render with
-`d2 --animate-interval=1200`), [typeports.dl](examples/typeports.dl)
-(node-editor shape: hub structs as d2 `sql_table` nodes, field types as port
-rows, wires anchored to the exact row).
+All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 
-## What it does NOT have yet
+| file | shows |
+|---|---|
+| [glean.dl](examples/glean.dl) | the 5 canonical questions: definitions, callers, blast radius, type fan-in, broken imports |
+| [callgraph.dl](examples/callgraph.dl) + `callgraph-{ast,sg,c,typed,resolved}.dl` | call graphs at increasing precision |
+| [typegraph.dl](examples/typegraph.dl) | `type_edge` + closure: type blast radius |
+| [lint-unwrap.dl](examples/lint-unwrap.dl) | `sg` spans → tight LSP squiggles |
+| [lint-imports.dl](examples/lint-imports.dl) | `module_unresolved` as a check |
+| [rails.dl](examples/rails.dl) | diff-scoped agent rails: banned words, exemptions via `fs:` literals, aggregate budgets |
+| [ban.dl](examples/ban.dl) | minimal banned-pattern check |
+| [openapi.dl](examples/openapi.dl) | `json` op + anti-join over a spec |
+| [time.dl](examples/time.dl) | cross-rev diff (WORK vs HEAD) |
+| [module-history.dl](examples/module-history.dl) | rev-aware module graph |
+| [repo-nearest.dl](examples/repo-nearest.dl) | multi-repo queries |
+| [gen-type-table.dl](examples/gen-type-table.dl) | the marker-splice codegen loop: `comment` + `gen` keep a table fresh inside the program's own comments |
+| [anim-deck.dl](examples/anim-deck.dl) | cross-repo splice: aggregates + round tiers written into a slide deck's d2 fences |
+| [typegraph-anim.dl](examples/typegraph-anim.dl) | gen → d2 `steps:` boards, `d2 --animate-interval` |
+| [typeports.dl](examples/typeports.dl) | hub structs as d2 `sql_table` nodes, wires anchored to field rows |
 
-The relational/graph/diff core is complete; *computing on values* is thin:
+## Where things live
 
-- **No aggregation** — no `count`/`sum`/`min`/`max`/group. The biggest gap.
-- **`Value` is `Text | Int`** — no float; `<` is lexical, not semver-aware.
-- **String manip is a modicum** — `${}` concat, the comparisons above, and
-  regex *capture over files*; no split/replace/substr, and no regex over a bound
-  string value.
-- **Closure in a rule body is literal-seeded only** — dynamic transitive closure
-  is a seeded point query, not a fixpoint join.
-- **No `sh`** — external tools aren't a first-class fact source yet.
+| path | contents |
+|---|---|
+| [src/parse.rs](src/parse.rs) / [src/lex.rs](src/lex.rs) / [src/ast.rs](src/ast.rs) | DSL grammar; `ast.rs` is the syntax's single source of truth |
+| [src/engine.rs](src/engine.rs) | tick loop, fixpoint lowering, built-in relation refresh, gen writes |
+| [src/typecheck.rs](src/typecheck.rs) | brands, anchors, path-literal resolution, stratification diags |
+| [src/lower.rs](src/lower.rs) | rule → SQL |
+| [src/db.rs](src/db.rs) | the plural-only SQL chokepoint (`insert_rows`); per-row writes are counted and screamed about |
+| [src/comment.rs](src/comment.rs) | comment-marker region scanner |
+| [src/modgraph.rs](src/modgraph.rs) | Rust+TS import resolver |
+| [src/typegraph.rs](src/typegraph.rs) | syn type-edge extractor |
+| [src/scc.rs](src/scc.rs) | closure / SCC condensation |
+| [src/spine.rs](src/spine.rs) / [src/datapath.rs](src/datapath.rs) | ref-spine IDs, located spans |
+| [src/lsp.rs](src/lsp.rs) | the LSP server |
+| [src/rspath.rs](src/rspath.rs) / [src/refactor.rs](src/refactor.rs) | `--move` use-path rewriting |
+| [src/scip_import.rs](src/scip_import.rs) | SCIP index ingestion |
+| [docs/data-model.md](docs/data-model.md) | the (repo, path, rev) coordinate contract |
+| [docs/lsp.md](docs/lsp.md) | diag convention + editor setup |
+| [docs/rails.md](docs/rails.md) | hook setup + exit-code contract |
+| [docs/](docs/) | research: portable relation-store seam, SQLite×graph landscape, ext-library extracts (Cozo/DBSP/petgraph/datafrog/lsp-server) |
+| [book/](book/) | the datalog-engine book: facts→rules→fixpoint→incremental→storage |
+| [tests/](tests/) | e2e + the rust-analyzer SCIP differential oracle (`oracle_rust.rs`) |
+| `plans/`, `../CLAUDE.md` | task ledger and design plans |
 
-## Layout & docs
+`v5/` is the active engine. `v3/`/`v4/` are prior iterations kept for
+design-recovery; the original coordinate model lives in
+`../../sprefa-archive-20260428`.
 
-`v5/` is the active engine. `v3/`, `v4/` are prior iterations kept for
-design-recovery; the original coordinate model lives in `../sprefa-archive-20260428`.
-Design docs in [docs/](docs/): the data model, LSP notes, and research on a
-portable relation-store seam, the SQLite×graph-theory landscape, and ext-library
-extracts (Cozo / DBSP / petgraph / datafrog / lsp-server).
+## Known gaps
+
+- **No arithmetic in heads** — `round(f, n / 2)` does not parse; tiered ranks
+  need one literal rule per tier (see anim-deck.dl's round rules).
+- **`Value` is `Text | Int`** — no float; `<` on text is lexical.
+- **String manipulation is thin** — `${}` concat and the constraints above;
+  no split/replace/substr, no regex over an already-bound value.
+- **Closure in a mixed rule body is literal-seeded only** — dynamic transitive
+  closure is a seeded point query, not a fixpoint join.
+- **`cmd` has no budget flag** — a slow tool runs once per matched file with
+  no cap.
