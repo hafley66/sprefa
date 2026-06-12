@@ -72,7 +72,11 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
         }
     }
 
-    if froms.is_empty() { bail!("rule {} has no positive body atom (unsafe)", rule.head.rel); }
+    // a ground fact (empty body) lowers to a FROM-less SELECT of literals;
+    // a non-empty body still needs a positive atom to range over
+    if froms.is_empty() && !rule.body.is_empty() {
+        bail!("rule {} has no positive body atom (unsafe)", rule.head.rel);
+    }
 
     let mut neg_m = 0usize;
     for item in &rule.body {
@@ -161,12 +165,13 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
     let mut exprs = Vec::new();
     for term in &rule.head.terms { exprs.push(term_sql(term, &canon)?); }
 
+    let from_sql = if froms.is_empty() { String::new() } else { format!(" FROM {}", froms.join(", ")) };
     Ok(format!(
-        "INSERT OR IGNORE INTO {} ({}) SELECT {} FROM {}{}",
+        "INSERT OR IGNORE INTO {} ({}) SELECT {}{}{}",
         tbl(&rule.head.rel),
         cols.join(", "),
         exprs.join(", "),
-        froms.join(", "),
+        from_sql,
         where_sql
     ))
 }

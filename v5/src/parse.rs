@@ -105,7 +105,18 @@ impl Parser {
 
     fn rule(&mut self) -> Result<Rule> {
         let (head, aggs) = self.head_atom()?;
-        self.expect(Tok::Arrow)?;
+        // ground fact: `slide(1, "intro").` is a rule with an empty body; the
+        // head must be all literals (lowering rejects unbound vars)
+        match self.next()? {
+            Tok::Dot => {
+                if aggs.iter().any(|a| a.is_some()) {
+                    bail!("aggregate not allowed in a fact head");
+                }
+                return Ok(Rule { head, body: Vec::new(), aggs });
+            }
+            Tok::Arrow => {}
+            other => bail!("expected <- or . after rule head, got {:?}", other),
+        }
         let mut body = Vec::new();
         loop {
             body.push(self.body_item()?);
@@ -203,6 +214,7 @@ impl Parser {
             if s == "ast" { return self.ast(); }
             if s == "sg" { return self.sg(); }
             if s == "json" { return self.json(); }
+            if s == "cmd" { return self.cmd(); }
             if s == "closure" { return self.closure(); }
             // An aggregate call in body position is a parse error: aggregation is
             // head-only (`fan_out(F, count(T)) <- type_edge(F, T, _).`).
@@ -312,6 +324,23 @@ impl Parser {
         let out = self.term()?;
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Json { path, rev, jpath, out })
+    }
+
+    fn cmd(&mut self) -> Result<BodyItem> {
+        self.ident()?; // cmd
+        self.expect(Tok::LParen)?;
+        let path = self.term()?; self.expect(Tok::Comma)?;
+        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let template = match self.next()? {
+            Tok::Str(s) => s,
+            other => bail!("expected command string in cmd(), got {:?}", other),
+        };
+        self.expect(Tok::Comma)?;
+        let line = self.term()?;
+        self.expect(Tok::Comma)?;
+        let out = self.term()?;
+        self.expect(Tok::RParen)?;
+        Ok(BodyItem::Cmd { path, rev, template, line, out })
     }
 
     fn closure(&mut self) -> Result<BodyItem> {

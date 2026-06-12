@@ -214,6 +214,22 @@ fn dedup_edges(closures: &HashMap<String, String>) -> Vec<&str> {
     out
 }
 
+/// One digest over the whole derived layer (derived rules, closure-seed rules,
+/// closure edges). Derived tables rebuild atomically, so a single moved bit
+/// forces the rebuild; without this an edited derived rule or ground fact keeps
+/// serving rows from a warm db (the derived twin of `source_rule_digests`).
+fn derived_program_digest(derived_rules: &[&Rule], seed_rules: &[(&Rule, ClosureSeed)], edges: &[&str]) -> [u8; 32] {
+    let mut acc = [0u8; 32];
+    let mut xor = |acc: &mut [u8; 32], s: String| {
+        let h = blake3::hash(s.as_bytes());
+        for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= b; }
+    };
+    for r in derived_rules { xor(&mut acc, format!("{r:?}")); }
+    for (r, _) in seed_rules { xor(&mut acc, format!("seed:{r:?}")); }
+    for e in edges { xor(&mut acc, format!("edge:{e}")); }
+    acc
+}
+
 /// The literal a query pins head position `pos` to, via a literal head term.
 /// None if that position is a free variable. A pinned src/dst on a closure head
 /// seeds the transitive walk (the find-refs / blast-radius point query).
@@ -949,11 +965,16 @@ impl Engine {
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
-        let rebuilt_all = changed || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
+        let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
+        let derived_moved = self.load_rel_digest("derived:program")? != Some(der_digest);
+        let rebuilt_all = changed || derived_moved
+            || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
         if rebuilt_all {
             self.rebuild_derived(&derived_rules, &derived_rels)?;
             self.rebuild_closures(&edges)?;
         }
+        // persisted only after the rebuild lands, so a failed tick retries
+        if derived_moved { self.save_rel_digest("derived:program", &der_digest)?; }
         let der_ms = t_der.elapsed().as_secs_f64() * 1000.0;
 
         if !quiet {
@@ -1021,6 +1042,12 @@ impl Engine {
         // re-extracts the dirty relation's entire file set and persists the new
         // rule digests.
         if !self.source_rule_digests(&source_rules)?.0.is_empty() {
+            return self.tick(prog, quiet);
+        }
+        // Same for the derived layer: an edited derived rule or ground fact
+        // rebuilds everything, which is the full tick's job.
+        let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
+        if self.load_rel_digest("derived:program")? != Some(der_digest) {
             return self.tick(prog, quiet);
         }
 
@@ -2728,6 +2755,43 @@ fn parse_file(
                             ext.insert(n.clone(), Value::Text(t.clone()));
                             push_span(t, *lo, *hi, &mut where_bytes);
                         }
+                        next.push(ext);
+                    }
+                }
+                binds = next;
+            }
+            BodyItem::Cmd { template, line, out, .. } => {
+                let lv = var_of(line)?;
+                let ov = var_of(out)?;
+                // {file}: WORK reads the on-disk path; a git rev materializes the
+                // cached content to a content-addressed temp file (reused across ticks)
+                let file_arg = if rev == "WORK" {
+                    root.join(path).display().to_string()
+                } else {
+                    let tmp = std::env::temp_dir().join(format!("dl_cmd_{hash}"));
+                    if !tmp.is_file() { std::fs::write(&tmp, &content)?; }
+                    tmp.display().to_string()
+                };
+                let cmdline = template
+                    .replace("{file}", &file_arg)
+                    .replace("{path}", path)
+                    .replace("{root}", &root.display().to_string());
+                let output = Command::new("sh").arg("-c").arg(&cmdline)
+                    .current_dir(root).output()?;
+                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                // nonzero exit WITH stdout is the diff-tool convention (findings
+                // exist); nonzero with empty stdout is a broken command, be loud
+                if !output.status.success() && stdout.trim().is_empty() {
+                    bail!("cmd `{cmdline}` failed (exit {:?}): {}",
+                          output.status.code(),
+                          String::from_utf8_lossy(&output.stderr).trim());
+                }
+                let mut next: Vec<Bind> = Vec::new();
+                for b in &binds {
+                    for (i, ln) in stdout.lines().enumerate() {
+                        let mut ext = b.clone();
+                        ext.insert(lv.clone(), Value::Int((i + 1) as i64));
+                        ext.insert(ov.clone(), Value::Text(ln.to_string()));
                         next.push(ext);
                     }
                 }

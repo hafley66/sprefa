@@ -128,6 +128,10 @@ pub enum BodyItem {
     Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term,
          col: Option<Term>, end_line: Option<Term>, end_col: Option<Term> },
     Json { path: Term, rev: Term, jpath: String, out: Term },
+    /// Shell out per matched file: `cmd(p, rev, "tool {file}", line, out)` binds
+    /// one row per stdout line. Cached like every source op: rows re-run only
+    /// when the file content or the rule text moves (the docker-layer contract).
+    Cmd { path: Term, rev: Term, template: String, line: Term, out: Term },
     Cmp(Constraint),
     /// Transitive closure of an edge relation, e.g. `reaches(a,b) <- closure(calls).`
     Closure { rel: String },
@@ -152,7 +156,7 @@ impl Rule {
     pub fn is_source(&self) -> bool {
         self.body.iter().any(|b| matches!(b,
             BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
-            | BodyItem::Sg { .. } | BodyItem::Json { .. }))
+            | BodyItem::Sg { .. } | BodyItem::Json { .. } | BodyItem::Cmd { .. }))
     }
 
     /// Some(edge) iff this rule is exactly `head(..) <- closure(edge).`

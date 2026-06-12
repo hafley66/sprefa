@@ -201,6 +201,9 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
         BodyItem::Json { path, rev, out, .. } => {
             for t in [path, rev, out] { normalize_term(t, dl_path, diags); }
         }
+        BodyItem::Cmd { path, rev, line, out, .. } => {
+            for t in [path, rev, line, out] { normalize_term(t, dl_path, diags); }
+        }
         BodyItem::Cmp(c) => {
             normalize_term(&mut c.lhs, dl_path, diags);
             normalize_term(&mut c.rhs, dl_path, diags);

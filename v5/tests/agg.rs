@@ -75,18 +75,20 @@ fan_out(f, count(t)) <- type_edge(f, t, _).
         rows.iter().find(|(f, _)| f == name).map(|(_, n)| n.parse().unwrap())
             .unwrap_or_else(|| panic!("no fan_out row for {name}\nout={out}"))
     };
-    // Live values (the 21/9/9 reference drifted; BodyItem held at 9).
+    // Live values (BodyItem went 9 -> 10 with the `cmd` op variant, tying Engine).
     assert_eq!(get("Tok"), 23, "Tok fan-out drifted again: {out}");
-    assert_eq!(get("BodyItem"), 9, "BodyItem fan-out drifted: {out}");
+    assert_eq!(get("BodyItem"), 10, "BodyItem fan-out drifted: {out}");
     assert_eq!(get("Engine"), 10, "Engine fan-out drifted again: {out}");
-    // Top-3 ordering by fan-out: Tok strictly highest, then Engine, then the 9-tie.
+    // Ordering: Tok strictly highest, then the 10-tie {Engine, BodyItem}, then a gap.
     let mut sorted: Vec<(i64, String)> = rows.iter()
         .map(|(f, n)| (n.parse::<i64>().unwrap(), f.clone())).collect();
     sorted.sort_by(|a, b| b.0.cmp(&a.0));
-    assert_eq!(sorted[0].1, "Tok", "Tok should be top fan-out: {:?}", &sorted[..3.min(sorted.len())]);
-    assert_eq!(sorted[1].1, "Engine", "Engine should be second: {:?}", &sorted[..3.min(sorted.len())]);
-    assert!(sorted[0].0 > sorted[1].0 && sorted[1].0 > sorted[2].0,
-        "top-3 strictly descending expected: {:?}", &sorted[..3.min(sorted.len())]);
+    assert_eq!(sorted[0].1, "Tok", "Tok should be top fan-out: {:?}", &sorted[..4.min(sorted.len())]);
+    let tie = [sorted[1].1.as_str(), sorted[2].1.as_str()];
+    assert!(tie.contains(&"Engine") && tie.contains(&"BodyItem"),
+        "second tier should be the Engine/BodyItem tie: {:?}", &sorted[..4.min(sorted.len())]);
+    assert!(sorted[0].0 > sorted[1].0 && sorted[2].0 > sorted[3].0,
+        "Tok above the tie, tie above the rest: {:?}", &sorted[..4.min(sorted.len())]);
 }
 
 /// (2) count/sum/min/max basics on a small fixture: three `fn` lines at 1,2,3

@@ -73,3 +73,28 @@ fn unedited_program_keeps_rows_on_warm_db() {
     assert_eq!(out1, out2, "identical program + warm db must be stable");
     assert!(out2.contains("src/x.rs"));
 }
+
+/// The derived twin: editing a derived rule's filter on a warm db (no file or
+/// source-rule change) must rebuild the derived layer (`derived:program`
+/// digest), in both directions.
+#[test]
+fn edited_derived_rule_rebuilds_on_warm_db() {
+    let d = sandbox("derived");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/x.rs"), "fn alpha() {}\nfn beta() {}\n").unwrap();
+    let prog = |needle: &str| format!(concat!(
+        "rel hit(p: file, l: int).\n",
+        "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /fn (?<w>\\w+)/, l).\n",
+        "rel keep(p: file, l: int).\n",
+        "keep(p, l) <- hit(p, l), l {}.\n",
+        "? keep(p, l).\n"), needle);
+
+    let (code, out, err) = run(&d, &prog("= 1"));
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("1") && !out.contains("2"), "v1 keeps line 1 only:\n{out}");
+
+    let (code, out, err) = run(&d, &prog("= 2"));
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("2"), "v2 must rebuild to line 2:\n{out}");
+    assert!(!out.contains("\t1\n"), "stale derived row survived the edit:\n{out}");
+}

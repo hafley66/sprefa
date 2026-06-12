@@ -42,6 +42,7 @@ cargo test
 | `ast(path, rev, :rust\|:c, "(query) @cap", line, end)` | tree-sitter query |
 | `sg(path, rev, :lang, "pattern", line, ..)` | ast-grep pattern |
 | `json(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (by extension; `*` = any value/element); value is **located** |
+| `cmd(path, rev, "tool {file}", line, out)` | shell per matched file, one row per stdout line; cached by (file hash, rule text); nonzero exit + stdout = findings, nonzero + empty = error |
 | `head(..) <- a(..), b(..).` | rule (recursive allowed) |
 | `reaches(s,d) <- closure(edge).` | transitive closure (seed one endpoint with a literal to query) |
 | `!rel(..)` | negation / anti-join |
