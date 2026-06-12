@@ -173,6 +173,12 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
                 for b in &mut r.body { normalize_body_item(b, dl_path, &mut diags); }
             }
             Item::Query(q) => normalize_atom(&mut q.head, dl_path, &mut diags),
+            Item::Gen(g) => {
+                if let GenTarget::Splice { path, l0, l1 } = &mut g.target {
+                    for t in [path, l0, l1] { normalize_term(t, dl_path, &mut diags); }
+                }
+                for b in &mut g.body { normalize_body_item(b, dl_path, &mut diags); }
+            }
             Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) => {}
         }
     }
@@ -203,6 +209,9 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
         }
         BodyItem::Cmd { path, rev, line, out, .. } => {
             for t in [path, rev, line, out] { normalize_term(t, dl_path, diags); }
+        }
+        BodyItem::Comment { path, rev, l0, l1, label, .. } => {
+            for t in [path, rev, l0, l1, label] { normalize_term(t, dl_path, diags); }
         }
         BodyItem::Cmp(c) => {
             normalize_term(&mut c.lhs, dl_path, diags);

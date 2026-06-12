@@ -47,7 +47,9 @@ pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
     // Drop `?` queries: their run_query prints to stdout, which in LSP mode is
     // the protocol channel. `diag` is a derived relation, populated by the
     // fixpoint during tick regardless of any query. We read it via eng.diags().
-    prog.items.retain(|i| !matches!(i, crate::ast::Item::Query(_)));
+    // Drop `gen` rules too: a diagnostics tick must never write files.
+    prog.items.retain(|i| !matches!(i,
+        crate::ast::Item::Query(_) | crate::ast::Item::Gen(_)));
     let conn = db::open(db_path)?;
     let mut eng = Engine::new(conn, root.clone());
 

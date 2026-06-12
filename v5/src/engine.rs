@@ -132,6 +132,13 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                 }
             },
             Item::Query(q) => if hit(&q.head.rel) { return true; },
+            Item::Gen(g) => for b in &g.body {
+                match b {
+                    BodyItem::Pos(a) | BodyItem::Neg(a) => if hit(&a.rel) { return true; },
+                    BodyItem::Closure { rel } => if hit(rel) { return true; },
+                    _ => {}
+                }
+            },
             Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) => {}
         }
     }
@@ -220,7 +227,7 @@ fn dedup_edges(closures: &HashMap<String, String>) -> Vec<&str> {
 /// serving rows from a warm db (the derived twin of `source_rule_digests`).
 fn derived_program_digest(derived_rules: &[&Rule], seed_rules: &[(&Rule, ClosureSeed)], edges: &[&str]) -> [u8; 32] {
     let mut acc = [0u8; 32];
-    let mut xor = |acc: &mut [u8; 32], s: String| {
+    let xor = |acc: &mut [u8; 32], s: String| {
         let h = blake3::hash(s.as_bytes());
         for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= b; }
     };
@@ -990,6 +997,7 @@ impl Engine {
         for item in &prog.items {
             if let Item::Query(q) = item { self.run_query(q, &closures)?; }
         }
+        self.run_gens(prog, quiet)?;
         if self.dropped > 0 {
             eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
             self.dropped = 0;
@@ -1209,6 +1217,7 @@ impl Engine {
         self.refresh_cond_cache(&edges, &dirty_edges)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures)?; } }
+        self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
         self.db.tick_end();
         Ok(())
@@ -2533,6 +2542,168 @@ impl Engine {
         }
         Ok(())
     }
+
+    /// Run every `gen` item after the fixpoint: evaluate the body, render the
+    /// templates, write the targets. A write is skipped when the target bytes
+    /// already match, so a converged tick leaves the tree untouched.
+    fn run_gens(&mut self, prog: &Program, quiet: bool) -> Result<()> {
+        let mut written: Vec<String> = Vec::new();
+        // Splice regions accumulate across ALL gen rules and apply per file in
+        // one bottom-up write: the line coordinates come from the pre-tick file
+        // content, so a second rule splicing the same file must not re-read a
+        // file an earlier rule already grew.
+        let mut splices = Splices::default();
+        for item in &prog.items {
+            if let Item::Gen(g) = item { self.run_gen(g, &mut written, &mut splices)?; }
+        }
+        self.apply_splices(&splices, &mut written)?;
+        if !written.is_empty() && !quiet {
+            eprintln!("[gen] wrote {}", written.join(", "));
+        }
+        Ok(())
+    }
+
+    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices) -> Result<()> {
+        // Target vars lead the SELECT so grouping reads prefix columns; the
+        // ORDER BY over all vars makes render order deterministic.
+        let target_vars: Vec<String> = match &g.target {
+            GenTarget::File { path_tmpl } => tmpl_holes(path_tmpl),
+            GenTarget::Splice { path, l0, l1 } => vec![var_of(path)?, var_of(l0)?, var_of(l1)?],
+        };
+        let mut vars = target_vars.clone();
+        for v in tmpl_holes(&g.row_tmpl) {
+            if !vars.contains(&v) { vars.push(v); }
+        }
+        let sql = crate::lower::lower_gen(&vars, &g.body, &self.rels)?;
+        let rows: Vec<HashMap<String, String>> = {
+            let mut stmt = self.db.conn().prepare(&sql)?;
+            let mut it = stmt.query([])?;
+            let mut out = Vec::new();
+            while let Some(row) = it.next()? {
+                let mut m = HashMap::new();
+                for (i, v) in vars.iter().enumerate() {
+                    use rusqlite::types::Value as V;
+                    let cell = match row.get::<_, V>(i)? {
+                        V::Text(s) => s,
+                        V::Integer(n) => n.to_string(),
+                        V::Real(f) => f.to_string(),
+                        _ => String::new(),
+                    };
+                    m.insert(v.clone(), cell);
+                }
+                out.push(m);
+            }
+            out
+        };
+
+        match &g.target {
+            GenTarget::File { path_tmpl } => {
+                let mut order: Vec<String> = Vec::new();
+                let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+                for m in &rows {
+                    let path = render_tmpl(path_tmpl, m);
+                    if path.starts_with('/') || path.split('/').any(|s| s == "..") {
+                        bail!("gen path `{path}` escapes the root");
+                    }
+                    if !groups.contains_key(&path) { order.push(path.clone()); }
+                    groups.entry(path).or_default().push(render_tmpl(&g.row_tmpl, m));
+                }
+                for p in order {
+                    let content = format!("{}\n", groups[&p].join("\n"));
+                    let full = self.root.join(&p);
+                    if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) { continue; }
+                    if let Some(dir) = full.parent() { std::fs::create_dir_all(dir)?; }
+                    std::fs::write(&full, &content)?;
+                    written.push(p);
+                }
+            }
+            GenTarget::Splice { .. } => {
+                // Rows group by (path, l0, l1) — the `comment` op's paired
+                // coordinates over WORK. Accumulate only; the file writes
+                // happen once, in apply_splices, after every gen rule ran.
+                for m in &rows {
+                    let path = m[&vars[0]].clone();
+                    let l0: i64 = m[&vars[1]].parse()
+                        .map_err(|_| anyhow::anyhow!("gen splice l0 must be an int, got `{}`", m[&vars[1]]))?;
+                    let l1: i64 = m[&vars[2]].parse()
+                        .map_err(|_| anyhow::anyhow!("gen splice l1 must be an int, got `{}`", m[&vars[2]]))?;
+                    if l1 <= l0 {
+                        bail!("gen splice needs l1 > l0 (paired marker lines), got {l0}..{l1} in {path}");
+                    }
+                    let key = (path, l0, l1);
+                    if !splices.groups.contains_key(&key) { splices.keys.push(key.clone()); }
+                    splices.groups.entry(key).or_default().push(render_tmpl(&g.row_tmpl, m));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Replace the lines strictly between each region's marker lines; the
+    /// markers stay. One read-modify-write per file, regions bottom-up so
+    /// earlier line numbers stay valid across the whole batch.
+    fn apply_splices(&self, splices: &Splices, written: &mut Vec<String>) -> Result<()> {
+        let mut files: Vec<&str> = Vec::new();
+        for (p, _, _) in &splices.keys { if !files.contains(&p.as_str()) { files.push(p); } }
+        for p in files {
+            let full = self.root.join(p);
+            let old = std::fs::read_to_string(&full)
+                .map_err(|e| anyhow::anyhow!("gen splice target {p}: {e}"))?;
+            let mut lines: Vec<String> = old.lines().map(|s| s.to_string()).collect();
+            let mut regions: Vec<&(String, i64, i64)> =
+                splices.keys.iter().filter(|k| k.0 == p).collect();
+            regions.sort_by_key(|k| std::cmp::Reverse(k.1));
+            for k in regions {
+                let (l0, l1) = (k.1 as usize, k.2 as usize);
+                if l1 > lines.len() {
+                    bail!("gen splice region {l0}..{l1} out of range in {p} ({} lines)", lines.len());
+                }
+                lines.splice(l0..l1 - 1, splices.groups[k].iter().cloned());
+            }
+            let content = format!("{}\n", lines.join("\n"));
+            if content != old {
+                std::fs::write(&full, &content)?;
+                written.push(p.to_string());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Splice regions collected across every gen rule in a tick: key order is
+/// first appearance, rows per key append in rule order.
+#[derive(Default)]
+struct Splices {
+    keys: Vec<(String, i64, i64)>,
+    groups: HashMap<(String, i64, i64), Vec<String>>,
+}
+
+/// `{var}` holes in a gen template, first-appearance order, deduped. A brace
+/// pair whose inside is not a plain identifier is literal text.
+fn tmpl_holes(t: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = t;
+    while let Some(i) = rest.find('{') {
+        rest = &rest[i + 1..];
+        let Some(j) = rest.find('}') else { break };
+        let name = &rest[..j];
+        if !name.is_empty()
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !out.iter().any(|v| v == name)
+        {
+            out.push(name.to_string());
+        }
+        rest = &rest[j + 1..];
+    }
+    out
+}
+
+fn render_tmpl(t: &str, vals: &HashMap<String, String>) -> String {
+    let mut out = t.to_string();
+    for (k, v) in vals {
+        out = out.replace(&format!("{{{k}}}"), v);
+    }
+    out
 }
 
 /// SQLite value -> JSON: text stays a string, integer/real become JSON numbers,
@@ -2792,6 +2963,32 @@ fn parse_file(
                         let mut ext = b.clone();
                         ext.insert(lv.clone(), Value::Int((i + 1) as i64));
                         ext.insert(ov.clone(), Value::Text(ln.to_string()));
+                        next.push(ext);
+                    }
+                }
+                binds = next;
+            }
+            BodyItem::Comment { open, close, l0, l1, label, .. } => {
+                let l0v = var_of(l0)?;
+                let l1v = var_of(l1)?;
+                let labv = var_of(label)?;
+                if !re_cache.contains_key(open) { re_cache.insert(open.clone(), Regex::new(open)?); }
+                if let Some(c) = close {
+                    if !re_cache.contains_key(c) { re_cache.insert(c.clone(), Regex::new(c)?); }
+                }
+                let open_re = &re_cache[open];
+                let close_re = close.as_ref().map(|c| &re_cache[c]);
+                let regions = crate::comment::run_comment(&content, open_re, close_re);
+                let mut next: Vec<Bind> = Vec::new();
+                for b in &binds {
+                    for r in &regions {
+                        let mut ext = b.clone();
+                        ext.insert(l0v.clone(), Value::Int(r.l0));
+                        ext.insert(l1v.clone(), Value::Int(r.l1));
+                        ext.insert(labv.clone(), Value::Text(r.label.clone()));
+                        if let Some((lo, hi)) = r.label_span {
+                            push_span(&r.label, lo, hi, &mut where_bytes);
+                        }
                         next.push(ext);
                     }
                 }

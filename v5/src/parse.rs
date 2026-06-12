@@ -39,6 +39,7 @@ impl Parser {
             Some(Tok::Ident(s)) if s == "rel" => Ok(Item::Rel(self.rel_decl()?)),
             Some(Tok::Ident(s)) if s == "anchor" => Ok(Item::Anchor(self.anchor_decl()?)),
             Some(Tok::Ident(s)) if s == "type" => Ok(Item::Brand(self.brand_decl()?)),
+            Some(Tok::Ident(s)) if s == "gen" => Ok(Item::Gen(self.gen_rule()?)),
             Some(Tok::Question) => Ok(Item::Query(self.query()?)),
             _ => Ok(Item::Rule(self.rule()?)),
         }
@@ -215,6 +216,7 @@ impl Parser {
             if s == "sg" { return self.sg(); }
             if s == "json" { return self.json(); }
             if s == "cmd" { return self.cmd(); }
+            if s == "comment" { return self.comment(); }
             if s == "closure" { return self.closure(); }
             // An aggregate call in body position is a parse error: aggregation is
             // head-only (`fan_out(F, count(T)) <- type_edge(F, T, _).`).
@@ -257,7 +259,7 @@ impl Parser {
         let path = self.term()?; self.expect(Tok::Comma)?;
         let rev = self.term()?; self.expect(Tok::Comma)?;
         let regex = match self.next()? {
-            Tok::Regex(r) => r,
+            Tok::Regex(r) => desugar_regex_holes(&r),
             other => bail!("expected regex literal in match, got {:?}", other),
         };
         self.expect(Tok::Comma)?;
@@ -343,6 +345,74 @@ impl Parser {
         Ok(BodyItem::Cmd { path, rev, template, line, out })
     }
 
+    /// `gen("path", "tmpl") <- body.` (file form) or
+    /// `gen(p, l0, l1, "tmpl") <- body.` (splice form). `gen` is a reserved
+    /// head; the body parses like any rule body.
+    fn gen_rule(&mut self) -> Result<GenRule> {
+        self.ident()?; // gen
+        self.expect(Tok::LParen)?;
+        let mut args: Vec<Term> = vec![self.term()?];
+        while matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?;
+            args.push(self.term()?);
+        }
+        self.expect(Tok::RParen)?;
+        let tmpl_of = |t: Term| -> Result<String> {
+            match t {
+                Term::Str(s) => Ok(s),
+                other => bail!("gen expects a template string here, got {other:?}"),
+            }
+        };
+        let (target, row_tmpl) = match args.len() {
+            2 => {
+                let mut it = args.into_iter();
+                let path_tmpl = tmpl_of(it.next().unwrap())?;
+                (GenTarget::File { path_tmpl }, tmpl_of(it.next().unwrap())?)
+            }
+            4 => {
+                let mut it = args.into_iter();
+                let (path, l0, l1) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
+                (GenTarget::Splice { path, l0, l1 }, tmpl_of(it.next().unwrap())?)
+            }
+            n => bail!("gen expects 2 args (\"path\", \"tmpl\") or 4 (p, l0, l1, \"tmpl\"), got {n}"),
+        };
+        self.expect(Tok::Arrow)?;
+        let mut body = Vec::new();
+        loop {
+            body.push(self.body_item()?);
+            match self.next()? {
+                Tok::Comma => continue,
+                Tok::Dot => break,
+                other => bail!("expected , or . in gen body, got {:?}", other),
+            }
+        }
+        Ok(GenRule { target, row_tmpl, body })
+    }
+
+    /// `comment(p, rev, /open/[, /close/], l0, l1, label)` — one regex is
+    /// sequential mode, two is paired. Both regexes take `$NAME` holes.
+    fn comment(&mut self) -> Result<BodyItem> {
+        self.ident()?; // comment
+        self.expect(Tok::LParen)?;
+        let path = self.term()?; self.expect(Tok::Comma)?;
+        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let open = match self.next()? {
+            Tok::Regex(r) => desugar_regex_holes(&r),
+            other => bail!("expected open regex literal in comment(), got {:?}", other),
+        };
+        self.expect(Tok::Comma)?;
+        let close = if matches!(self.peek(), Some(Tok::Regex(_))) {
+            let Tok::Regex(r) = self.next()? else { unreachable!() };
+            self.expect(Tok::Comma)?;
+            Some(desugar_regex_holes(&r))
+        } else { None };
+        let l0 = self.term()?; self.expect(Tok::Comma)?;
+        let l1 = self.term()?; self.expect(Tok::Comma)?;
+        let label = self.term()?;
+        self.expect(Tok::RParen)?;
+        Ok(BodyItem::Comment { path, rev, open, close, l0, l1, label })
+    }
+
     fn closure(&mut self) -> Result<BodyItem> {
         self.ident()?; // closure
         self.expect(Tok::LParen)?;
@@ -376,5 +446,55 @@ impl Parser {
             Tok::Scheme { scheme, body, span } => Ok(Term::PathLit { scheme, body, span }),
             other => bail!("expected term, got {:?}", other),
         }
+    }
+}
+
+/// Desugar `$NAME` holes in a /regex/ literal to lazy named capture groups:
+/// `/TODO\($WHO\)/` becomes `TODO\((?P<WHO>.*?)\)`. `\$` (escaped), a bare `$`
+/// (the EOL anchor), and `$1`-style digit tails pass through untouched. Runs at
+/// parse time so the rule digest, typecheck, and the engine all see the
+/// desugared form.
+fn desugar_regex_holes(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            out.push(c);
+            if let Some(c2) = chars.next() { out.push(c2); }
+        } else if c == '$' {
+            let mut name = String::new();
+            while let Some(&c2) = chars.peek() {
+                if c2.is_ascii_alphanumeric() || c2 == '_' { name.push(c2); chars.next(); } else { break; }
+            }
+            if name.is_empty() || name.as_bytes()[0].is_ascii_digit() {
+                out.push('$');
+                out.push_str(&name);
+            } else {
+                out.push_str("(?P<");
+                out.push_str(&name);
+                out.push_str(">.*?)");
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::desugar_regex_holes;
+
+    #[test]
+    fn holes_anchors_and_escapes() {
+        assert_eq!(desugar_regex_holes(r"TODO\($WHO\)"), r"TODO\((?P<WHO>.*?)\)");
+        assert_eq!(desugar_regex_holes(r"fn $name\("), r"fn (?P<name>.*?)\(");
+        // EOL anchor and escaped dollar untouched.
+        assert_eq!(desugar_regex_holes(r"\}$"), r"\}$");
+        assert_eq!(desugar_regex_holes(r"\$5"), r"\$5");
+        // Digit tail is not an ident hole.
+        assert_eq!(desugar_regex_holes(r"$1"), r"$1");
+        // Hand-written named groups pass through.
+        assert_eq!(desugar_regex_holes(r"struct (?<name>\w+)"), r"struct (?<name>\w+)");
     }
 }

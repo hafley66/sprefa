@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod comment;
 pub mod config;
 pub mod datapath;
 pub mod db;
@@ -123,6 +124,9 @@ pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, js
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
     let (mut prog, type_diags, _) = prepare_paths(&files)?;
     if json { prog.items.retain(|i| !matches!(i, ast::Item::Query(_))); }
+    // `gen` never writes from a check tick: --check is the enforcement rail
+    // (hooks, CI); codegen runs only on a direct `dl prog.dl` invocation.
+    prog.items.retain(|i| !matches!(i, ast::Item::Gen(_)));
     // A lower-time error (brand mismatch, escaping literal, not-stratified) means
     // the program is ill-defined: skip the tick so its diagnostic, not a downstream
     // engine bail (e.g. the stratify defense) or a SQLite datatype error, surfaces.

@@ -38,11 +38,14 @@ cargo test
 | Form | What it does |
 |---|---|
 | `scan("WORK"\|"HEAD"\|rev\|"*", glob, path, rev)` | select files; `"*"` fans over every configured repo |
-| `match(path, rev, /re (?<cap>..)/, line)` | regex capture over file content |
+| `match(path, rev, /re (?<cap>..)/, line)` | regex capture over file content; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`), bare `$` stays the anchor |
 | `ast(path, rev, :rust\|:c, "(query) @cap", line, end)` | tree-sitter query |
 | `sg(path, rev, :lang, "pattern", line, ..)` | ast-grep pattern |
 | `json(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (by extension; `*` = any value/element); value is **located** |
 | `cmd(path, rev, "tool {file}", line, out)` | shell per matched file, one row per stdout line; cached by (file hash, rule text); nonzero exit + stdout = findings, nonzero + empty = error |
+| `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions: one regex = sequential dividers, two = paired BEGIN/END (LIFO nesting); binds 1-based marker lines + label |
+| `gen("path/{x}.md", "row {y}") <- body.` | codegen sink: render body rows to a file (groups by rendered path); write skipped when bytes match; never runs under `--check`/`--lsp` |
+| `gen(p, l0, l1, "row {y}") <- body.` | marker splice: replace the lines strictly between two marker lines (pair with `comment`'s coordinates) |
 | `head(..) <- a(..), b(..).` | rule (recursive allowed) |
 | `reaches(s,d) <- closure(edge).` | transitive closure (seed one endpoint with a literal to query) |
 | `!rel(..)` | negation / anti-join |
@@ -77,7 +80,14 @@ Built-in relations include `module_import`/`module_edge`/`module_unresolved`
 [lint-imports.dl](examples/lint-imports.dl) / [lint-unwrap.dl](examples/lint-unwrap.dl)
 (diagnostics via `--check`/`--lsp`), [openapi.dl](examples/openapi.dl) (json + anti-join),
 [time.dl](examples/time.dl) (cross-rev diff), [module-history.dl](examples/module-history.dl),
-[repo-nearest.dl](examples/repo-nearest.dl).
+[repo-nearest.dl](examples/repo-nearest.dl),
+[gen-type-table.dl](examples/gen-type-table.dl) (the marker-splice codegen loop:
+`comment` + `gen` keep a fan-out table fresh inside the program's own comments),
+[typegraph-anim.dl](examples/typegraph-anim.dl) (3-frame animated type-graph
+reveal: gen splices fan-out tiers into d2 `steps:` boards, render with
+`d2 --animate-interval=1200`), [typeports.dl](examples/typeports.dl)
+(node-editor shape: hub structs as d2 `sql_table` nodes, field types as port
+rows, wires anchored to the exact row).
 
 ## What it does NOT have yet
 

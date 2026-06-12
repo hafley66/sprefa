@@ -132,6 +132,12 @@ pub enum BodyItem {
     /// one row per stdout line. Cached like every source op: rows re-run only
     /// when the file content or the rule text moves (the docker-layer contract).
     Cmd { path: Term, rev: Term, template: String, line: Term, out: Term },
+    /// Comment-marker regions: `comment(p, rev, /open/[, /close/], l0, l1, label)`.
+    /// One row per region; `l0`/`l1` are 1-based lines (open marker line and the
+    /// region's last line), `label` is the open regex's first named group or the
+    /// trimmed post-match tail ("" if neither). See comment.rs for the modes.
+    Comment { path: Term, rev: Term, open: String, close: Option<String>,
+              l0: Term, l1: Term, label: Term },
     Cmp(Constraint),
     /// Transitive closure of an edge relation, e.g. `reaches(a,b) <- closure(calls).`
     Closure { rel: String },
@@ -156,7 +162,8 @@ impl Rule {
     pub fn is_source(&self) -> bool {
         self.body.iter().any(|b| matches!(b,
             BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
-            | BodyItem::Sg { .. } | BodyItem::Json { .. } | BodyItem::Cmd { .. }))
+            | BodyItem::Sg { .. } | BodyItem::Json { .. } | BodyItem::Cmd { .. }
+            | BodyItem::Comment { .. }))
     }
 
     /// Some(edge) iff this rule is exactly `head(..) <- closure(edge).`
@@ -187,8 +194,32 @@ pub struct AnchorDecl { pub name: String, pub body: String, pub span: (u32, u32)
 #[derive(Clone, Debug)]
 pub struct BrandDecl { pub name: String, pub parent: String }
 
+/// Where a `gen` rule's rendered rows land.
 #[derive(Clone, Debug)]
-pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl) }
+pub enum GenTarget {
+    /// `gen("docs/{f}.md", ...)`: a path template with `{var}` holes, resolved
+    /// per row; rows group by rendered path. Relative to the scan root.
+    File { path_tmpl: String },
+    /// `gen(p, l0, l1, ...)`: splice between two marker lines of a WORK file
+    /// (exclusive of both), the `comment` op's paired coordinates. Rows group
+    /// by (path, l0, l1).
+    Splice { path: Term, l0: Term, l1: Term },
+}
+
+/// `gen(<target>, "row template") <- body.` — the codegen sink. The body is an
+/// ordinary derived-rule body (Pos/Neg/Cmp); after the fixpoint each result row
+/// renders through the template (`{var}` holes) in deterministic order and the
+/// joined lines are written to the target. Writes are skipped when the bytes
+/// already match, so a converged tick is a no-op.
+#[derive(Clone, Debug)]
+pub struct GenRule {
+    pub target: GenTarget,
+    pub row_tmpl: String,
+    pub body: Vec<BodyItem>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Gen(GenRule) }
 
 /// Diagnostic severity for a `TypeDiag`. `Error` fails `--check` (non-zero exit);
 /// `Warn` prints but does not fail (the coerce grandfather case).

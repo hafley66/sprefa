@@ -40,14 +40,18 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
     }
 }
 
-/// Lower a derived rule (Pos/Neg/Cmp only) to one `INSERT OR IGNORE ... SELECT`.
-pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
+/// Walk a body's Pos/Neg/Cmp items into (canon var->cell, FROM aliases, WHERE
+/// conds). Shared by `lower_rule` and `lower_gen`; other body items are the
+/// caller's concern (a derived rule never carries them, gen rejects them).
+fn body_sql(body: &[BodyItem], rels: &Rels)
+    -> Result<(HashMap<String, String>, Vec<String>, Vec<String>)>
+{
     let mut canon: HashMap<String, String> = HashMap::new();
     let mut wheres: Vec<String> = Vec::new();
     let mut froms: Vec<String> = Vec::new();
     let mut k = 0usize;
 
-    for item in &rule.body {
+    for item in body {
         if let BodyItem::Pos(a) = item {
             let meta = rels.get(&a.rel).ok_or_else(|| anyhow::anyhow!("unknown relation {}", a.rel))?;
             if a.terms.len() != meta.cols.len() {
@@ -72,14 +76,8 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
         }
     }
 
-    // a ground fact (empty body) lowers to a FROM-less SELECT of literals;
-    // a non-empty body still needs a positive atom to range over
-    if froms.is_empty() && !rule.body.is_empty() {
-        bail!("rule {} has no positive body atom (unsafe)", rule.head.rel);
-    }
-
     let mut neg_m = 0usize;
-    for item in &rule.body {
+    for item in body {
         if let BodyItem::Neg(a) = item {
             let meta = rels.get(&a.rel).ok_or_else(|| anyhow::anyhow!("unknown relation {}", a.rel))?;
             if a.terms.len() != meta.cols.len() {
@@ -112,12 +110,25 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
         }
     }
 
-    for item in &rule.body {
+    for item in body {
         if let BodyItem::Cmp(c) = item {
             let l = term_sql(&c.lhs, &canon)?;
             let r = term_sql(&c.rhs, &canon)?;
             wheres.push(format!("{l} {} {r}", c.op.sql()));
         }
+    }
+
+    Ok((canon, froms, wheres))
+}
+
+/// Lower a derived rule (Pos/Neg/Cmp only) to one `INSERT OR IGNORE ... SELECT`.
+pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
+    let (canon, froms, wheres) = body_sql(&rule.body, rels)?;
+
+    // a ground fact (empty body) lowers to a FROM-less SELECT of literals;
+    // a non-empty body still needs a positive atom to range over
+    if froms.is_empty() && !rule.body.is_empty() {
+        bail!("rule {} has no positive body atom (unsafe)", rule.head.rel);
     }
 
     let head_meta = rels.get(&rule.head.rel)
@@ -174,6 +185,30 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
         from_sql,
         where_sql
     ))
+}
+
+/// Lower a gen body to a deterministic row source:
+/// `SELECT DISTINCT v1, v2, ... FROM ... WHERE ... ORDER BY <all>`.
+/// `vars` are the variables the gen templates reference, target vars first.
+pub fn lower_gen(vars: &[String], body: &[BodyItem], rels: &Rels) -> Result<String> {
+    if let Some(b) = body.iter().find(|b|
+        !matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)))
+    {
+        bail!("gen body must be derived-style (relation atoms and comparisons only), got {b:?}");
+    }
+    let (canon, froms, wheres) = body_sql(body, rels)?;
+    if froms.is_empty() { bail!("gen body has no positive atom"); }
+    let mut sel = Vec::new();
+    for v in vars {
+        let cell = canon.get(v)
+            .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in gen template"))?;
+        sel.push(format!("{cell} AS \"{v}\""));
+    }
+    if sel.is_empty() { bail!("gen templates bind no variables (static content needs no gen)"); }
+    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+    let order: Vec<String> = (1..=vars.len()).map(|i| i.to_string()).collect();
+    Ok(format!("SELECT DISTINCT {} FROM {}{} ORDER BY {}",
+        sel.join(", "), froms.join(", "), where_sql, order.join(", ")))
 }
 
 /// Lower a query to (sql, headers).
