@@ -1,8 +1,9 @@
 //! Diet type graph extractors. Intentionally syntax-only: parse a file (`syn`
-//! for Rust, tree-sitter for Kotlin), walk item/type shapes, and emit
-//! deterministic edges the engine stores as `type_edge(from, to, kind)`.
-//! Both languages share one kind vocabulary — field | variant | impl |
-//! generic — so closure queries written for one work on the other.
+//! for Rust, tree-sitter for Kotlin, oxc for TypeScript/TSX), walk item/type
+//! shapes, and emit deterministic edges the engine stores as
+//! `type_edge(from, to, kind)`. All languages share one kind vocabulary —
+//! field | variant | impl | generic — so closure queries written for one
+//! work on the others.
 
 use std::collections::BTreeSet;
 
@@ -432,6 +433,267 @@ fn is_noise_kotlin(name: &str) -> bool {
     )
 }
 
+
+// ── TypeScript / JavaScript (oxc) ───────────────────────────────────────────
+//
+// Same diet-extractor contract as the syn and tree-sitter passes: parse one
+// file, walk declaration shapes, emit edges in the shared kind vocabulary.
+// Mapping: an interface's `extends` are "generic" (trait supertraits), a
+// class's `extends`/`implements` are "impl", property/parameter-property
+// types are "field", enum members are `Owner::Name` "variant" rows, and a
+// union type alias's referenced alternatives are "variant" (a sum type).
+// Declared type-parameter names are excluded from refs, like Kotlin.
+// Method signatures/bodies are skipped everywhere — shape only.
+// Top-level + exported declarations only (namespaces wait on demand).
+
+use oxc_ast::ast as ts_ast;
+use oxc_ast_visit::Visit as OxcVisit;
+
+pub fn ts_edges(content: &str, tsx: bool) -> Vec<TypeEdge> {
+    let alloc = oxc_allocator::Allocator::default();
+    let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+    let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
+    if ret.panicked {
+        return Vec::new();
+    }
+    let mut out: BTreeSet<(String, String, &'static str)> = BTreeSet::new();
+    for stmt in &ret.program.body {
+        use ts_ast::Statement as S;
+        match stmt {
+            S::ExportNamedDeclaration(e) => {
+                if let Some(d) = &e.declaration {
+                    ts_decl_edges(d, &mut out);
+                }
+            }
+            S::ExportDefaultDeclaration(e) => match &e.declaration {
+                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => ts_class_edges(c, &mut out),
+                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => ts_interface_edges(i, &mut out),
+                _ => {}
+            },
+            S::ClassDeclaration(c) => ts_class_edges(c, &mut out),
+            S::TSInterfaceDeclaration(i) => ts_interface_edges(i, &mut out),
+            S::TSTypeAliasDeclaration(a) => ts_alias_edges(a, &mut out),
+            S::TSEnumDeclaration(e) => ts_enum_edges(e, &mut out),
+            _ => {}
+        }
+    }
+    out.into_iter()
+        .map(|(from, to, kind)| TypeEdge { from, to, kind })
+        .collect()
+}
+
+/// Collect every `TSTypeReference` name under a type subtree, excluding the
+/// declaration's own type-parameter names. Keyword types (string, number, ...)
+/// are distinct AST variants, so primitives never show up.
+struct TsRefs<'p> {
+    params: &'p BTreeSet<String>,
+    out: Vec<String>,
+}
+
+impl<'a, 'p> OxcVisit<'a> for TsRefs<'p> {
+    fn visit_ts_type_reference(&mut self, it: &ts_ast::TSTypeReference<'a>) {
+        if let Some(name) = ts_type_name(&it.type_name) {
+            if !self.params.contains(&name) {
+                self.out.push(name);
+            }
+        }
+        oxc_ast_visit::walk::walk_ts_type_reference(self, it);
+    }
+}
+
+fn ts_type_name(n: &ts_ast::TSTypeName) -> Option<String> {
+    match n {
+        ts_ast::TSTypeName::IdentifierReference(id) => Some(id.name.to_string()),
+        ts_ast::TSTypeName::QualifiedName(q) => {
+            ts_type_name(&q.left).map(|l| format!("{l}.{}", q.right.name))
+        }
+        ts_ast::TSTypeName::ThisExpression(_) => None,
+    }
+}
+
+fn ts_refs_in_type(ty: &ts_ast::TSType, params: &BTreeSet<String>) -> Vec<String> {
+    let mut c = TsRefs { params, out: Vec::new() };
+    c.visit_ts_type(ty);
+    c.out.sort();
+    c.out.dedup();
+    c.out
+}
+
+/// Declared type-parameter names + their constraint refs as "generic" edges.
+fn ts_param_edges(
+    owner: &str,
+    tp: &Option<oxc_allocator::Box<ts_ast::TSTypeParameterDeclaration>>,
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) -> BTreeSet<String> {
+    let mut params = BTreeSet::new();
+    let Some(tp) = tp else { return params };
+    for p in &tp.params {
+        params.insert(p.name.name.to_string());
+    }
+    for p in &tp.params {
+        if let Some(c) = &p.constraint {
+            for to in ts_refs_in_type(c, &params) {
+                push(out, owner, &to, "generic");
+            }
+        }
+    }
+    params
+}
+
+fn ts_decl_edges(decl: &ts_ast::Declaration, out: &mut BTreeSet<(String, String, &'static str)>) {
+    match decl {
+        ts_ast::Declaration::ClassDeclaration(c) => ts_class_edges(c, out),
+        ts_ast::Declaration::TSInterfaceDeclaration(i) => ts_interface_edges(i, out),
+        ts_ast::Declaration::TSTypeAliasDeclaration(a) => ts_alias_edges(a, out),
+        ts_ast::Declaration::TSEnumDeclaration(e) => ts_enum_edges(e, out),
+        _ => {}
+    }
+}
+
+fn ts_class_edges(class: &ts_ast::Class, out: &mut BTreeSet<(String, String, &'static str)>) {
+    let Some(id) = &class.id else { return };
+    let owner = id.name.to_string();
+    let params = ts_param_edges(&owner, &class.type_parameters, out);
+
+    if let Some(sup) = &class.super_class {
+        if let ts_ast::Expression::Identifier(idr) = sup {
+            push(out, &owner, idr.name.as_str(), "impl");
+        }
+    }
+    if let Some(args) = &class.super_type_arguments {
+        for ty in &args.params {
+            for to in ts_refs_in_type(ty, &params) {
+                push(out, &owner, &to, "impl");
+            }
+        }
+    }
+    for imp in &class.implements {
+        if let Some(to) = ts_type_name(&imp.expression) {
+            push(out, &owner, &to, "impl");
+        }
+        if let Some(args) = &imp.type_arguments {
+            for ty in &args.params {
+                for to in ts_refs_in_type(ty, &params) {
+                    push(out, &owner, &to, "impl");
+                }
+            }
+        }
+    }
+    for el in &class.body.body {
+        match el {
+            ts_ast::ClassElement::PropertyDefinition(p) => {
+                if let Some(ann) = &p.type_annotation {
+                    for to in ts_refs_in_type(&ann.type_annotation, &params) {
+                        push(out, &owner, &to, "field");
+                    }
+                }
+            }
+            ts_ast::ClassElement::AccessorProperty(p) => {
+                if let Some(ann) = &p.type_annotation {
+                    for to in ts_refs_in_type(&ann.type_annotation, &params) {
+                        push(out, &owner, &to, "field");
+                    }
+                }
+            }
+            // constructor parameter properties (`constructor(private db: Db)`)
+            // declare fields; plain constructor args are not part of the shape
+            ts_ast::ClassElement::MethodDefinition(m) => {
+                if m.kind != ts_ast::MethodDefinitionKind::Constructor {
+                    continue;
+                }
+                for fp in &m.value.params.items {
+                    if fp.accessibility.is_none() && !fp.readonly {
+                        continue;
+                    }
+                    if let Some(ann) = &fp.type_annotation {
+                        for to in ts_refs_in_type(&ann.type_annotation, &params) {
+                            push(out, &owner, &to, "field");
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn ts_interface_edges(
+    i: &ts_ast::TSInterfaceDeclaration,
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
+    let owner = i.id.name.to_string();
+    let params = ts_param_edges(&owner, &i.type_parameters, out);
+    for ext in &i.extends {
+        if let ts_ast::Expression::Identifier(idr) = &ext.expression {
+            push(out, &owner, idr.name.as_str(), "generic");
+        }
+        if let Some(args) = &ext.type_arguments {
+            for ty in &args.params {
+                for to in ts_refs_in_type(ty, &params) {
+                    push(out, &owner, &to, "generic");
+                }
+            }
+        }
+    }
+    for member in &i.body.body {
+        if let ts_ast::TSSignature::TSPropertySignature(p) = member {
+            if let Some(ann) = &p.type_annotation {
+                for to in ts_refs_in_type(&ann.type_annotation, &params) {
+                    push(out, &owner, &to, "field");
+                }
+            }
+        }
+    }
+}
+
+fn ts_alias_edges(
+    a: &ts_ast::TSTypeAliasDeclaration,
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
+    let owner = a.id.name.to_string();
+    let params = ts_param_edges(&owner, &a.type_parameters, out);
+    // a union alias is a sum type: alternatives that are plain refs are
+    // "variant" edges (their type args stay "field"); anything else is shape
+    if let ts_ast::TSType::TSUnionType(u) = &a.type_annotation {
+        for member in &u.types {
+            if let ts_ast::TSType::TSTypeReference(r) = member {
+                if let Some(to) = ts_type_name(&r.type_name) {
+                    if !params.contains(&to) {
+                        push(out, &owner, &to, "variant");
+                    }
+                }
+                if let Some(args) = &r.type_arguments {
+                    for ty in &args.params {
+                        for to in ts_refs_in_type(ty, &params) {
+                            push(out, &owner, &to, "field");
+                        }
+                    }
+                }
+            } else {
+                for to in ts_refs_in_type(member, &params) {
+                    push(out, &owner, &to, "field");
+                }
+            }
+        }
+        return;
+    }
+    for to in ts_refs_in_type(&a.type_annotation, &params) {
+        push(out, &owner, &to, "field");
+    }
+}
+
+fn ts_enum_edges(e: &ts_ast::TSEnumDeclaration, out: &mut BTreeSet<(String, String, &'static str)>) {
+    let owner = e.id.name.to_string();
+    for m in &e.body.members {
+        let name = match &m.id {
+            ts_ast::TSEnumMemberName::Identifier(id) => id.name.to_string(),
+            ts_ast::TSEnumMemberName::String(s) => s.value.to_string(),
+            _ => continue,
+        };
+        push(out, &owner, &format!("{owner}::{name}"), "variant");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,5 +786,54 @@ class Outer {
             to: "Store".into(),
             kind: "impl"
         }));
+    }
+
+    #[test]
+    fn ts_fields_supers_variants_and_generics() {
+        let src = r#"
+interface Pricing {}
+interface Entity { id: Id }
+export interface Catalog<T extends Entity> extends Pricing {
+    items: Map<Sku, T>
+    name: string
+}
+export class Repo extends Base implements Pricing {
+    cache: Cache<Item>
+    constructor(private db: Db, wire: Wire) {}
+}
+export type Event = Created | Deleted<Reason> | "tombstone"
+type Pair = [Left, Right]
+enum Color { Red, Green = "g" }
+"#;
+        let got = ts_edges(src, false);
+        assert!(has(&got, "Entity", "Id", "field"), "interface property: {got:?}");
+        assert!(has(&got, "Catalog", "Pricing", "generic"), "interface extends: {got:?}");
+        assert!(has(&got, "Catalog", "Entity", "generic"), "type-param bound: {got:?}");
+        assert!(has(&got, "Catalog", "Sku", "field"), "generic arg in property: {got:?}");
+        assert!(!got.iter().any(|e| e.to == "T"), "type-param name leaked: {got:?}");
+        assert!(has(&got, "Repo", "Base", "impl"), "class extends: {got:?}");
+        assert!(has(&got, "Repo", "Pricing", "impl"), "class implements: {got:?}");
+        assert!(has(&got, "Repo", "Cache", "field"), "class property: {got:?}");
+        assert!(has(&got, "Repo", "Item", "field"), "property generic arg: {got:?}");
+        assert!(has(&got, "Repo", "Db", "field"), "ctor parameter property: {got:?}");
+        assert!(!got.iter().any(|e| e.to == "Wire"), "plain ctor arg is not a field: {got:?}");
+        assert!(has(&got, "Event", "Created", "variant"), "union alternative: {got:?}");
+        assert!(has(&got, "Event", "Deleted", "variant"), "generic union alternative: {got:?}");
+        assert!(has(&got, "Event", "Reason", "field"), "union alternative arg: {got:?}");
+        assert!(has(&got, "Pair", "Left", "field"), "tuple alias member: {got:?}");
+        assert!(has(&got, "Color", "Color::Red", "variant"), "enum member: {got:?}");
+        assert!(has(&got, "Color", "Color::Green", "variant"), "initialized enum member: {got:?}");
+        assert!(!got.iter().any(|e| e.to == "string"), "keyword type leaked: {got:?}");
+    }
+
+    #[test]
+    fn tsx_parses_and_extracts() {
+        let src = r#"
+interface CardProps { item: Item; onPick: (s: Sku) => void }
+export function Card({ item }: CardProps) { return <div>{item.name}</div> }
+"#;
+        let got = ts_edges(src, true);
+        assert!(has(&got, "CardProps", "Item", "field"), "tsx interface prop: {got:?}");
+        assert!(has(&got, "CardProps", "Sku", "field"), "function-type param ref: {got:?}");
     }
 }

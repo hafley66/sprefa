@@ -2087,14 +2087,15 @@ impl Engine {
     }
 
     /// Rebuild the type graph from the `_file` set. This is the same L3
-    /// shape as module graph: read tracked Rust/Kotlin files, run a
+    /// shape as module graph: read tracked Rust/Kotlin/TS files, run a
     /// deterministic syntax extractor, flush one built-in relation through
     /// `refresh_rel`.
     fn refresh_type_rels(&self) -> Result<()> {
         let mut files: Vec<(String, String)> = Vec::new();
         {
             let mut sel = self.db.conn().prepare(
-                "SELECT path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts'")?;
+                "SELECT path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
+                 OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
             let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
             for row in rows.flatten() { files.push(row); }
         }
@@ -2106,10 +2107,15 @@ impl Engine {
         let rows: Vec<Vec<Value>> = files.par_iter().flat_map(|(path, rev)| {
             let t = |s: &str| Value::Text(s.to_string());
             let content = read_content(&root, rev, path).unwrap_or_default();
+            // .kts must be tested before .ts: LIKE '%.ts' matches both
             let edges = if path.ends_with(".rs") {
                 typegraph::edges(&content)
-            } else {
+            } else if path.ends_with(".kt") || path.ends_with(".kts") {
                 typegraph::kotlin_edges(&content)
+            } else if path.ends_with(".tsx") {
+                typegraph::ts_edges(&content, true)
+            } else {
+                typegraph::ts_edges(&content, false)
             };
             edges
                 .into_iter()
