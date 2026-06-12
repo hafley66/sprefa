@@ -1,0 +1,54 @@
+# Maintains the machine-written regions of the sprefa chapter in the anim deck
+# (~/projects/anim/src/deck/02-sprefa.md). The root spans both repos:
+#
+#   dl v5/examples/anim-deck.dl --root ~/projects
+#
+# Rebuild the deck after: cd ~/projects/anim && npm run check
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "sprefa/v5/src/**/*.rs", path, rev),
+  match(path, rev, /./, line).
+
+# Non-variant edges between plain-ident type names (variant nodes like
+# `Tok::Ident` are leaf noise and collide with d2 label syntax).
+rel edge0(f: text, t: text).
+edge0(f, t) <- type_edge(f, t, k), k != "variant",
+  f =~ "^[A-Za-z]+$", t =~ "^[A-Za-z]+$".
+
+rel fan_out(f: text, n: int).
+fan_out(f, count(t)) <- edge0(f, t).
+
+rel hub(f: text, n: int).
+hub(f, n) <- fan_out(f, n), n >= 4.
+
+# Marker regions inside the chapter's atlas fence. To the deck build these
+# are throwaway d2 comments; to dl they are splice coordinates.
+rel block(p: file, l0: int, l1: int, name: text).
+block(p, l0, l1, name) <- scan("WORK", "anim/src/deck/02-sprefa.md", p, rev),
+  comment(p, rev, /BEGIN: $name$/, /END:/, l0, l1, name).
+
+gen(p, l0, l1, "{f} -> {t}") <-
+  block(p, l0, l1, "edges"), hub(f, _), edge0(f, t).
+gen(p, l0, l1, "# tag {f} : hub") <-
+  block(p, l0, l1, "tags"), hub(f, _).
+gen(p, l0, l1, "# @ {f} : fan-out {n}") <-
+  block(p, l0, l1, "notes"), hub(f, n).
+
+# Round player: hubs land tier by tier; leaves inherit the round of their
+# earliest-revealed parent so nothing floats in unreachable. Literal round
+# numbers per threshold; computed ranks wait on int arithmetic.
+rel round(f: text, r: int).
+round(f, 0) <- fan_out(f, n), n >= 6.
+round(f, 1) <- fan_out(f, n), n >= 5, n < 6.
+round(f, 2) <- fan_out(f, n), n >= 4, n < 5.
+
+rel tgt_round(t: text, r: int).
+tgt_round(t, min(r)) <- round(f, r), edge0(f, t).
+
+rel leaf_round(t: text, r: int).
+leaf_round(t, r) <- tgt_round(t, r), !round(t, _).
+
+gen(p, l0, l1, "# step {f} = {r}") <-
+  block(p, l0, l1, "steps"), round(f, r).
+gen(p, l0, l1, "# step {t} = {r}") <-
+  block(p, l0, l1, "steps"), leaf_round(t, r).
