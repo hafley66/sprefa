@@ -168,6 +168,19 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       C0–C5. (The earlier `feat/v5-lsp-diag` arc — Db seam + architecture doc —
       landed earlier at `f8c8e87`.)
 
+- [x] **oxc TS/TSX type_edge producer** (main, 2026-06-12, 1098d80): typegraph.rs
+      `ts_edges(content, tsx)` via oxc_parser 0.135 — interface extends/bounds =
+      `generic`, class extends/implements = `impl`, properties + ctor parameter
+      properties = `field`, enum members + union-alias alternatives = `variant`;
+      ref collection rides oxc_ast_visit. engine selects %.ts/%.tsx (.kts
+      dispatches before .ts). e2e: tests/type_graph_ts.rs. NOT pushed (default-
+      branch push needs Chris).
+- [x] **anim-deck.dl emits relational deck rows** (main, 2026-06-12, df9063d):
+      node/edge/tag derived from the type graph, node_ref fs refs from decl
+      matches (`ref` is reserved — the span spine), tour/tour_step/card/view as
+      facts. anim's `atlas-db` fence reads the rel_* tables straight from
+      anim/data/sprefa.sqlite.
+
 ### Style notes for this repo
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
 - No `provenance`/`substrate`/`load-bearing`/`regime` as prose or identifiers (use source/base/critical/mode).
