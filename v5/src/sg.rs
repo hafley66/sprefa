@@ -13,6 +13,7 @@ fn sg_lang(lang: &str) -> Result<SupportLang> {
         "json" => SupportLang::Json,
         "c" => SupportLang::C,
         "cpp" | "cc" | "cxx" => SupportLang::Cpp,
+        "kotlin" | "kt" => SupportLang::Kotlin,
         other => bail!("no ast-grep grammar for :{other}"),
     })
 }

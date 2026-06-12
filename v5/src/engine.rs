@@ -1810,7 +1810,8 @@ impl Engine {
         let resolvers = modgraph::resolvers(&root);
         let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
         let manifests = self.collect_manifests(rev, &fileset);
-        let cx = ProjectCx::new(&root, &fileset, &manifests);
+        let reader = |p: &str| read_content(&root, rev, p).ok();
+        let cx = ProjectCx::new(&root, &fileset, &manifests).with_reader(&reader);
         let selected: Vec<&(String, String)> = files.iter()
             .filter(|(path, _)| match only_paths {
                 Some(paths) => paths.contains(path.as_str()),
@@ -3108,7 +3109,8 @@ fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
     match lang {
         "rust" | "rs" => Ok(tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)),
         "c" => Ok(tree_sitter::Language::new(tree_sitter_c::LANGUAGE)),
-        other => bail!("no ast grammar for :{other} (compiled in: rust, c)"),
+        "kotlin" | "kt" => Ok(tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE)),
+        other => bail!("no ast grammar for :{other} (compiled in: rust, c, kotlin)"),
     }
 }
 

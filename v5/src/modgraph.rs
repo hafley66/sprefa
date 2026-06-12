@@ -8,7 +8,8 @@
 //! Resolution math is Rust (path arithmetic), so `.dl` never needs a `dir()`/
 //! `join()` expression layer. Monorepo-aware: Cargo workspaces (per-crate
 //! `crate::` namespace + cross-crate `use`), `#[path]` overrides, npm/pnpm
-//! workspaces (per-package tsconfig + workspace package.json fallback). Extraction
+//! workspaces (per-package tsconfig + workspace package.json fallback), Kotlin
+//! packages (package declaration is truth, directory layout advisory). Extraction
 //! runs over comment/string-stripped content so `use`/`import` in comments or
 //! string literals never produce a phantom edge. Validated against `rust-analyzer
 //! scip` (tests/oracle_rust.rs). See plans/2026-05-30-module-resolver-trait-plan.md.
@@ -58,13 +59,27 @@ pub struct ProjectCx<'a> {
     pub root: &'a Path,
     pub files: &'a HashSet<String>,
     pub manifests: &'a HashMap<String, String>,
+    /// Rev-correct content reader, for resolvers whose index needs file contents
+    /// (Kotlin: the `package` declaration is truth, the directory is not). None
+    /// (unit tests without one) leaves such indexes empty.
+    reader: Option<&'a (dyn Fn(&str) -> Option<String> + Send + Sync)>,
     rust_crates: OnceLock<RustCrates>,
     ts_packages: OnceLock<HashMap<String, String>>,
+    kotlin: OnceLock<KotlinIndex>,
 }
 
 impl<'a> ProjectCx<'a> {
     pub fn new(root: &'a Path, files: &'a HashSet<String>, manifests: &'a HashMap<String, String>) -> Self {
-        ProjectCx { root, files, manifests, rust_crates: OnceLock::new(), ts_packages: OnceLock::new() }
+        ProjectCx { root, files, manifests, reader: None,
+            rust_crates: OnceLock::new(), ts_packages: OnceLock::new(), kotlin: OnceLock::new() }
+    }
+
+    pub fn with_reader(mut self, reader: &'a (dyn Fn(&str) -> Option<String> + Send + Sync)) -> Self {
+        self.reader = Some(reader); self
+    }
+
+    fn kotlin_index(&self) -> &KotlinIndex {
+        self.kotlin.get_or_init(|| KotlinIndex::build(self.files, self.reader))
     }
 
     fn rust_crates(&self) -> &RustCrates {
@@ -96,6 +111,7 @@ pub trait ModuleResolver: Send + Sync {
 pub fn resolvers(root: &Path) -> Vec<Box<dyn ModuleResolver + Send + Sync>> {
     let mut v: Vec<Box<dyn ModuleResolver + Send + Sync>> = vec![Box::new(RustResolver)];
     if let Some(ts) = TsResolver::new(root) { v.push(Box::new(ts)); }
+    v.push(Box::new(KotlinResolver));
     v
 }
 
@@ -682,6 +698,141 @@ impl ModuleResolver for TsResolver {
     }
 }
 
+// ── Kotlin ──────────────────────────────────────────────────────────────────
+//
+// Static resolution without kotlinc. The compiler's rule is that the `package`
+// declaration is the source of truth and the directory layout is advisory, so
+// the index maps package -> files and (package, top-level decl name) -> file by
+// reading every .kt's header and column-0 declarations. `import a.b.C` then
+// resolves by longest package prefix; `import a.b.*` edges to every file of the
+// package. Residual (documented, not silently wrong): same-package references
+// without an import produce no edge, and expect/actual twins collide on the
+// decl key (first sorted file wins). Compiler-exact graphs come from scip-kotlin
+// via the SCIP importer instead.
+
+pub struct KotlinResolver;
+
+struct KotlinIndex {
+    /// package name -> .kt files declaring it (sorted, deterministic).
+    packages: HashMap<String, Vec<String>>,
+    /// (package, top-level decl name) -> defining file (first sorted file wins).
+    decls: HashMap<(String, String), String>,
+}
+
+fn kotlin_package_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?m)^[ \t]*package[ \t]+([\w.`]+)").unwrap())
+}
+
+fn kotlin_import_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?m)^[ \t]*import[ \t]+([\w`]+(?:\.[\w`]+)*(?:\.\*)?)").unwrap())
+}
+
+/// Column-0 declarations only — Kotlin convention indents members, so a line
+/// that starts at column 0 with modifiers + a declaring keyword is top-level.
+/// `fun interface Name` comes before bare `fun` in the alternation; an optional
+/// generic param list and extension receiver sit between `fun` and the name.
+fn kotlin_decl_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(
+        r"(?m)^(?:(?:public|internal|private|protected|open|abstract|final|sealed|data|inline|value|annotation|enum|expect|actual|external|suspend|operator|infix|tailrec|const)[ \t]+)*(?:fun[ \t]+interface|class|interface|object|fun|val|var|typealias)[ \t]+(?:<[^>\n]*>[ \t]*)?(?:[\w.<>?]+\.)?(`[^`\n]+`|\w+)").unwrap())
+}
+
+/// Blank `"""…"""` bodies (newlines kept) so a raw string containing `import`
+/// lines never reaches the import scan; then the shared rust-mode strip handles
+/// `//`, nested `/* */`, ordinary strings, and chars — all valid for Kotlin.
+fn strip_kotlin(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' && b.get(i + 1) == Some(&b'"') && b.get(i + 2) == Some(&b'"') {
+            let mut j = i + 3;
+            while j < b.len() && !(b[j] == b'"' && b.get(j + 1) == Some(&b'"') && b.get(j + 2) == Some(&b'"')) { j += 1; }
+            let end = (j + 3).min(b.len());
+            for k in i..end { out.push(if b[k] == b'\n' { b'\n' } else { b' ' }); }
+            i = end;
+        } else {
+            out.push(b[i]); i += 1;
+        }
+    }
+    strip_noise(&String::from_utf8(out).unwrap_or_else(|_| src.to_string()), true)
+}
+
+impl KotlinIndex {
+    fn build(files: &HashSet<String>, reader: Option<&(dyn Fn(&str) -> Option<String> + Send + Sync)>) -> Self {
+        let mut packages: HashMap<String, Vec<String>> = HashMap::new();
+        let mut decls = HashMap::new();
+        let Some(read) = reader else { return KotlinIndex { packages, decls } };
+        let mut kt: Vec<&String> = files.iter().filter(|f| f.ends_with(".kt") || f.ends_with(".kts")).collect();
+        kt.sort();
+        for f in kt {
+            let Some(content) = read(f) else { continue };
+            let clean = strip_kotlin(&content);
+            let pkg = kotlin_package_re().captures(&clean)
+                .map(|c| c[1].replace('`', "")).unwrap_or_default();
+            packages.entry(pkg.clone()).or_default().push(f.clone());
+            for c in kotlin_decl_re().captures_iter(&clean) {
+                let name = c[1].trim_matches('`').to_string();
+                decls.entry((pkg.clone(), name)).or_insert_with(|| f.clone());
+            }
+        }
+        KotlinIndex { packages, decls }
+    }
+
+    /// Longest-package-prefix resolution: first prefix split whose (package,
+    /// next segment) is a known decl wins (handles `a.b.Outer.Inner`); else a
+    /// known package with no such decl is Unresolved; else External (a jar).
+    fn resolve(&self, spec: &str) -> Resolution {
+        let segs: Vec<&str> = spec.split('.').collect();
+        for len in (1..segs.len()).rev() {
+            let pkg = segs[..len].join(".");
+            if let Some(f) = self.decls.get(&(pkg, segs[len].to_string())) {
+                return Resolution::File(f.clone());
+            }
+        }
+        for len in (1..segs.len()).rev() {
+            if self.packages.contains_key(&segs[..len].join(".")) {
+                return Resolution::Unresolved(
+                    format!("{spec}: no column-0 decl `{}` in package {}", segs[len], segs[..len].join(".")));
+            }
+        }
+        Resolution::External(spec.to_string())
+    }
+}
+
+impl ModuleResolver for KotlinResolver {
+    fn exts(&self) -> &'static [&'static str] { &["kt", "kts"] }
+
+    fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef> {
+        let clean = strip_kotlin(content);
+        let idx = cx.kotlin_index();
+        let mut out = Vec::new();
+        for c in kotlin_import_re().captures_iter(&clean) {
+            let m = c.get(1).unwrap();
+            let spec = m.as_str().replace('`', "");
+            let line = line_of(&clean, c.get(0).unwrap().start());
+            let span = Some((m.start() as u32, m.end() as u32));
+            if let Some(pkg) = spec.strip_suffix(".*") {
+                match idx.packages.get(pkg) {
+                    // a wildcard import depends on every file of the package
+                    Some(fs) => for f in fs.iter().filter(|f| f.as_str() != file) {
+                        out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span,
+                            target: Resolution::File(f.clone()) });
+                    },
+                    None => out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span,
+                        target: Resolution::External(spec.clone()) }),
+                }
+                continue;
+            }
+            out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span,
+                target: idx.resolve(&spec) });
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -801,6 +952,74 @@ mod tests {
         let e2 = RustResolver.edges("crateA/src/lib.rs", "use crate_b::foo::B;\n", &c);
         assert_eq!(e2.iter().find(|r| r.kind == "use").unwrap().target,
             Resolution::File("crateB/src/foo.rs".into()), "cross-crate use must resolve: {e2:?}");
+    }
+
+    fn kt_reader(contents: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + Send + Sync {
+        let m: HashMap<String, String> =
+            contents.iter().map(|(p, c)| (p.to_string(), c.to_string())).collect();
+        move |p: &str| m.get(p).cloned()
+    }
+
+    #[test]
+    fn kotlin_package_decl_beats_directory_layout() {
+        // B.kt lives in a directory that does NOT match its package; the
+        // declaration is truth, so the import still resolves.
+        let contents = [
+            ("weird/spot/B.kt", "package com.foo\n\nclass Bar(val n: Int)\nfun topLevel() = 1\n"),
+            ("app/Main.kt", "package com.app\n\nimport com.foo.Bar\nimport com.foo.topLevel\n"),
+        ];
+        let files = set(&["weird/spot/B.kt", "app/Main.kt"]);
+        let m = no_manifests();
+        let r = kt_reader(&contents);
+        let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
+        let e = KotlinResolver.edges("app/Main.kt", contents[1].1, &c);
+        assert_eq!(e.len(), 2, "{e:?}");
+        for r in &e {
+            assert_eq!(r.target, Resolution::File("weird/spot/B.kt".into()), "{r:?}");
+        }
+    }
+
+    #[test]
+    fn kotlin_wildcard_external_and_unresolved() {
+        let contents = [
+            ("lib/A.kt", "package com.foo\nclass A\n"),
+            ("lib/B.kt", "package com.foo\nclass B\n"),
+            ("app/Main.kt", "package com.app\n\nimport com.foo.*\nimport kotlin.collections.List\nimport com.foo.Missing\n"),
+        ];
+        let files = set(&["lib/A.kt", "lib/B.kt", "app/Main.kt"]);
+        let m = no_manifests();
+        let r = kt_reader(&contents);
+        let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
+        let e = KotlinResolver.edges("app/Main.kt", contents[2].1, &c);
+        // wildcard fans to both files of the package
+        let wild: Vec<_> = e.iter().filter(|r| r.specifier == "com.foo.*").collect();
+        assert_eq!(wild.len(), 2, "{e:?}");
+        // unknown package -> External, known package + missing decl -> Unresolved
+        assert!(e.iter().any(|r| matches!(&r.target, Resolution::External(s) if s == "kotlin.collections.List")), "{e:?}");
+        assert!(e.iter().any(|r| matches!(&r.target, Resolution::Unresolved(s) if s.contains("Missing"))), "{e:?}");
+    }
+
+    #[test]
+    fn kotlin_nested_class_and_noise_immunity() {
+        let contents = [
+            ("lib/A.kt", "package com.foo\nclass Outer {\n    class Inner\n}\n"),
+            ("app/Main.kt", concat!(
+                "package com.app\n",
+                "// import com.foo.Commented\n",
+                "val s = \"\"\"\nimport com.foo.InString\n\"\"\"\n",
+                "import com.foo.Outer.Inner\n")),
+        ];
+        let files = set(&["lib/A.kt", "app/Main.kt"]);
+        let m = no_manifests();
+        let r = kt_reader(&contents);
+        let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
+        let e = KotlinResolver.edges("app/Main.kt", contents[1].1, &c);
+        assert_eq!(e.len(), 1, "comment/raw-string imports must not match: {e:?}");
+        // `Outer.Inner` resolves through the (package, Outer) decl
+        assert_eq!(e[0].target, Resolution::File("lib/A.kt".into()), "{e:?}");
+        // span is the dotted path text (the rewrite coordinate)
+        let (lo, hi) = e[0].span.unwrap();
+        assert_eq!(&contents[1].1[lo as usize..hi as usize], "com.foo.Outer.Inner");
     }
 
     #[test]

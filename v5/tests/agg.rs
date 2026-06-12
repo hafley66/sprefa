@@ -75,20 +75,23 @@ fan_out(f, count(t)) <- type_edge(f, t, _).
         rows.iter().find(|(f, _)| f == name).map(|(_, n)| n.parse().unwrap())
             .unwrap_or_else(|| panic!("no fan_out row for {name}\nout={out}"))
     };
-    // Live values (BodyItem went 10 -> 11 with the `comment` op variant,
-    // breaking the previous Engine tie).
+    // Live values (ProjectCx went 8 -> 11 with the Kotlin resolver: content
+    // reader + kotlin index fields, tying BodyItem and displacing Engine).
     assert_eq!(get("Tok"), 23, "Tok fan-out drifted again: {out}");
     assert_eq!(get("BodyItem"), 11, "BodyItem fan-out drifted: {out}");
+    assert_eq!(get("ProjectCx"), 11, "ProjectCx fan-out drifted: {out}");
     assert_eq!(get("Engine"), 10, "Engine fan-out drifted again: {out}");
-    // Ordering: Tok > BodyItem > Engine > the rest, strictly.
+    // Ordering: Tok > {BodyItem, ProjectCx} > Engine > the rest.
     let mut sorted: Vec<(i64, String)> = rows.iter()
         .map(|(f, n)| (n.parse::<i64>().unwrap(), f.clone())).collect();
     sorted.sort_by(|a, b| b.0.cmp(&a.0));
-    let top: Vec<&str> = sorted.iter().take(3).map(|(_, f)| f.as_str()).collect();
-    assert_eq!(top, ["Tok", "BodyItem", "Engine"],
-        "top-3 fan-out order drifted: {:?}", &sorted[..4.min(sorted.len())]);
-    assert!(sorted[0].0 > sorted[1].0 && sorted[1].0 > sorted[2].0 && sorted[2].0 > sorted[3].0,
-        "top 3 strictly descending with a gap to 4th: {:?}", &sorted[..4.min(sorted.len())]);
+    assert_eq!(sorted[0].1, "Tok", "top fan-out drifted: {:?}", &sorted[..4.min(sorted.len())]);
+    let tied: Vec<&str> = sorted[1..3].iter().map(|(_, f)| f.as_str()).collect();
+    assert!(tied.contains(&"BodyItem") && tied.contains(&"ProjectCx"),
+        "tied pair drifted: {:?}", &sorted[..4.min(sorted.len())]);
+    assert_eq!(sorted[3].1, "Engine", "rank-4 drifted: {:?}", &sorted[..5.min(sorted.len())]);
+    assert!(sorted[0].0 > sorted[1].0 && sorted[1].0 == sorted[2].0 && sorted[2].0 > sorted[3].0,
+        "Tok above the 11-11 tie, tie above Engine: {:?}", &sorted[..4.min(sorted.len())]);
 }
 
 /// (2) count/sum/min/max basics on a small fixture: three `fn` lines at 1,2,3

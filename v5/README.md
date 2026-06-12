@@ -94,8 +94,8 @@ Type errors surface as diagnostics under `--check` and in `--lsp`
 |---|---|---|
 | `scan` | `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self, the 4-ary default) \| `"*"` (fan over every configured repo) |
 | `match` | `match(path, rev, /re/, line)` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor |
-| `ast` | `ast(path, rev, :rust\|:c, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
-| `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col])` | ast-grep pattern; metavar `$X` binds dl var `X`. Lines 1-based, columns 0-based byte offsets |
+| `ast` | `ast(path, rev, :rust\|:c\|:kotlin, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
+| `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col])` | ast-grep pattern; metavar `$X` binds dl var `X`. Lines 1-based, columns 0-based byte offsets. `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
 | `json` | `json(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located |
 | `cmd` | `cmd(path, rev, "tool {file}", line, out)` | shell out per matched file, one row per stdout line. Cached by (file hash, rule text). Nonzero exit + stdout = findings; nonzero + empty = error |
 | `comment` | `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions in ANY file type (marker detection by line prefix: `//`, `#`, `<!--`, `/*`, `--`, `*`). One regex = sequential dividers; two = paired BEGIN/END with LIFO nesting. `l0`/`l1` are 1-based marker lines; `label` is the open regex's first named group or the trimmed tail. See [src/comment.rs](src/comment.rs) |
@@ -173,7 +173,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `content` | `(id, hash)` | content addresses |
 | `file` | `(repo, rev, path, content)` | scanned files |
 | `changed` | `(path)` | `git status --porcelain -uall` vs HEAD: modified, added, renamed, untracked. Empty outside git. The rails join |
-| `module_import` | `(file, rev, specifier, kind, line)` | import statements, Rust + TS |
+| `module_import` | `(file, rev, specifier, kind, line)` | import statements, Rust + TS + Kotlin |
 | `module_edge` | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
 | `module_edge_rev` | `(src, dst, rev)` | rev-aware form |
 | `module_unresolved` | `(file, specifier, reason, line)` | broken imports (the linter question) |
