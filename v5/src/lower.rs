@@ -37,6 +37,8 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
         Term::Interp(parts) => interp_sql(parts, canon),
         Term::Wild => bail!("'_' not allowed here"),
         Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+        Term::Arith { op, lhs, rhs } => Ok(format!(
+            "({} {} {})", term_sql(lhs, canon)?, op.sql(), term_sql(rhs, canon)?)),
     }
 }
 
@@ -69,6 +71,7 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                     Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+                    Term::Arith { .. } => bail!("arithmetic only allowed in a rule head or comparison, not a body atom"),
                     Term::Wild => {}
                 }
             }
@@ -101,6 +104,7 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                     Term::Str(_) | Term::Int(_) => sub.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+                    Term::Arith { .. } => bail!("arithmetic only allowed in a rule head or comparison, not a body atom"),
                     Term::Wild => {}
                 }
             }
@@ -237,6 +241,7 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
             Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
             Term::Interp(_) => bail!("interpolated string not supported in a query head"),
             Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+            Term::Arith { .. } => bail!("arithmetic not supported in a query head (derive a relation with the computed column and query that)"),
             Term::Wild => {}
         }
     }

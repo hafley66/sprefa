@@ -320,6 +320,29 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                         }
                     }
                 }
+                // An arithmetic expression produces an int: the column it fills
+                // must be int, and every var operand unifies as int.
+                Term::Arith { .. } => {
+                    if cty.base != Type::Int {
+                        diags.push(TypeDiag {
+                            path: dl_path.to_string(), span: (0, 0),
+                            severity: Severity::Error, code: "brand-mismatch".into(),
+                            msg: format!("arithmetic expression cannot fill non-int column `{}`", meta.cols[i].name),
+                        });
+                    }
+                    let int_ty = ColTy { base: Type::Int, brand: None };
+                    let mut stack = vec![term];
+                    while let Some(t) = stack.pop() {
+                        match t {
+                            Term::Arith { lhs, rhs, .. } => { stack.push(lhs); stack.push(rhs); }
+                            Term::Var(v) if v != "_" => match seen.get(v).cloned() {
+                                None => { seen.insert(v.clone(), int_ty.clone()); }
+                                Some(prev) => unify(v, &prev, &int_ty, brands, dl_path, diags),
+                            },
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             }
         }

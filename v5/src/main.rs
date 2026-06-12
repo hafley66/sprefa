@@ -49,6 +49,15 @@ struct Cli {
     /// With --move, write the rewritten files instead of previewing.
     #[arg(long)]
     fix: bool,
+    /// Profile mode (or DL_PROFILE=1): log slow SQL statements (threshold
+    /// DL_PROFILE_SQL_MS, default 25), per-repo scan times, tick phase
+    /// breakdown, and per-tick statement counts.
+    #[arg(long)]
+    profile: bool,
+    /// Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud
+    /// error, never a silent truncation. Default: unlimited.
+    #[arg(long)]
+    cmd_budget: Option<u32>,
 }
 
 /// Explicit `--root` wins (canonicalized). Otherwise default to the repo the
@@ -68,6 +77,8 @@ fn resolve_root(cli: &Cli) -> Result<PathBuf> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.profile { sprefa_v5::db::set_profile(true); }
+    if let Some(n) = cli.cmd_budget { sprefa_v5::engine::set_cmd_budget(n); }
     let root = resolve_root(&cli)?;
     if !cli.move_.is_empty() {
         return sprefa_v5::run_move(cli.db.as_deref(), root, cli.repo, cli.move_, cli.fix);

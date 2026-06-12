@@ -76,8 +76,9 @@ fan_out(f, count(t)) <- type_edge(f, t, _).
             .unwrap_or_else(|| panic!("no fan_out row for {name}\nout={out}"))
     };
     // Live values (ProjectCx went 8 -> 11 with the Kotlin resolver: content
-    // reader + kotlin index fields, tying BodyItem and displacing Engine).
-    assert_eq!(get("Tok"), 23, "Tok fan-out drifted again: {out}");
+    // reader + kotlin index fields, tying BodyItem and displacing Engine; Tok
+    // went 23 -> 28 with the five arithmetic operator tokens).
+    assert_eq!(get("Tok"), 28, "Tok fan-out drifted again: {out}");
     assert_eq!(get("BodyItem"), 11, "BodyItem fan-out drifted: {out}");
     assert_eq!(get("ProjectCx"), 11, "ProjectCx fan-out drifted: {out}");
     assert_eq!(get("Engine"), 10, "Engine fan-out drifted again: {out}");

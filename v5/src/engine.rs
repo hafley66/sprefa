@@ -17,6 +17,22 @@ use crate::typegraph;
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
 fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
 
+/// Per-tick `cmd` invocation counter (parse_file runs across rayon, hence
+/// atomic; process-global like the profile stats — one engine per process in
+/// real use, e2e tests get their own subprocess).
+static CMD_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The cmd budget: `--cmd-budget` (via `set_cmd_budget`) wins, else
+/// `DL_CMD_BUDGET`, else unlimited. Fixed after first read.
+static CMD_BUDGET: OnceLock<Option<u32>> = OnceLock::new();
+
+/// Force the cmd budget (the `--cmd-budget` flag). Call before the first tick.
+pub fn set_cmd_budget(n: u32) { let _ = CMD_BUDGET.set(Some(n)); }
+
+fn cmd_budget() -> Option<u32> {
+    *CMD_BUDGET.get_or_init(|| std::env::var("DL_CMD_BUDGET").ok().and_then(|v| v.parse().ok()))
+}
+
 /// The built-in relations of the data-model contract (docs/data-model.md). A
 /// `.dl` program may not declare these names; they are registered with fixed
 /// schemas and refreshed each tick from the `_file` change-detection cache, so
@@ -905,6 +921,7 @@ impl Engine {
     pub fn tick(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         self.rev_cache.clear();
         self.extraction_drops.clear();
+        CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i {
             Item::Rule(r) => Some(r), _ => None,
@@ -953,18 +970,41 @@ impl Engine {
         self.create_auto_indexes(&derived_rules, &closures)?;
 
         let t_src = std::time::Instant::now();
+        // In profile mode each sub-phase reports its own wall time, so a hung or
+        // crawling tick says WHERE it is spending the wait.
+        let phase = |label: &'static str, t: std::time::Instant| {
+            if crate::db::profiling() {
+                eprintln!("[profile] {label}: {:.1}ms", t.elapsed().as_secs_f64() * 1000.0);
+            }
+        };
+        let t = std::time::Instant::now();
         let recon = self.reconcile_sources(&source_rules, &source_rels)?;
+        phase("reconcile-sources", t);
         let mut changed = recon.changed;
         // Baseline each source relation's content digest so the next incremental
         // tick can skip a rebuild when bytes move but rows don't (see tick_paths).
         self.seed_rel_digests(&source_rels)?;
         // refresh built-in repo/rev/content/file from the updated _file cache,
         // before derived rules that may join them are rebuilt.
+        let t = std::time::Instant::now();
         self.refresh_builtin_rels()?;
-        if module_rels_used(prog) { self.refresh_module_rels()?; }
-        if type_rels_used(prog) { self.refresh_type_rels()?; }
+        phase("builtin-rels", t);
+        if module_rels_used(prog) {
+            let t = std::time::Instant::now();
+            self.refresh_module_rels()?;
+            phase("module-rels", t);
+        }
+        if type_rels_used(prog) {
+            let t = std::time::Instant::now();
+            self.refresh_type_rels()?;
+            phase("type-rels", t);
+        }
         if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
-        if spine_rels_used(prog) { self.refresh_spine_rels()?; }
+        if spine_rels_used(prog) {
+            let t = std::time::Instant::now();
+            self.refresh_spine_rels()?;
+            phase("spine-rels", t);
+        }
         // The diff can move without any file content changing (a commit moves
         // HEAD under an identical worktree), so the refresh result feeds
         // `changed` directly rather than riding the reconcile delta.
@@ -1012,6 +1052,7 @@ impl Engine {
     pub fn tick_paths(&mut self, prog: &Program, changed: &[PathBuf], quiet: bool) -> Result<()> {
         self.rev_cache.clear();
         self.extraction_drops.clear();
+        CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
         let closures = closure_map(&rules);
@@ -1416,15 +1457,45 @@ impl Engine {
         // content from the matching root and the slug stamps `_file`/`_prov` so
         // two repos sharing a path stay distinct.
         let mut root_by_repo: HashMap<String, PathBuf> = HashMap::new();
+        // Group rules by (slug, rev) so one repo×rev walks/ls-trees ONCE no
+        // matter how many rules scan it (the old shape re-walked per rule —
+        // rules × repos walks across a big config). Clones + rev-parse stay in
+        // this serial loop (rev_cache needs &mut self); the walks parallelize.
+        let mut groups: BTreeMap<(String, String), (PathBuf, Vec<(usize, String)>)> = BTreeMap::new();
         for (idx, rule) in source_rules.iter().enumerate() {
             let (repo, declared, glob, _, _) = scan_spec(rule)?;
             for (slug, repo_root) in self.resolve_scan_repos(&repo)? {
                 let rev = self.resolve_rev(&repo_root, &declared)?;
-                for (path, h, mt, sz) in self.enumerate_with_hash(&slug, &repo_root, &rev, &glob, &prev)? {
-                    current.insert((slug.clone(), path.clone(), rev.clone()), (h.clone(), mt, sz));
-                    rule_files.push((idx, slug.clone(), path, rev.clone(), h));
+                root_by_repo.insert(slug.clone(), repo_root.clone());
+                groups.entry((slug, rev)).or_insert_with(|| (repo_root, Vec::new()))
+                    .1.push((idx, glob.clone()));
+            }
+        }
+        let group_list: Vec<(&(String, String), &(PathBuf, Vec<(usize, String)>))> = groups.iter().collect();
+        let enumerated: Vec<Result<Vec<(String, String, i64, i64)>>> = group_list.par_iter()
+            .map(|((slug, rev), (repo_root, rules))| {
+                let t = std::time::Instant::now();
+                let mut union = globset::GlobSetBuilder::new();
+                for (_, g) in rules { union.add(globset::Glob::new(g)?); }
+                let files = enumerate_with_hash(slug, repo_root, rev, &union.build()?, &prev)?;
+                if crate::db::profiling() {
+                    eprintln!("[scan {slug}@{}] {} file(s) in {:.1}ms",
+                        if rev == "WORK" { "WORK" } else { &rev[..rev.len().min(8)] },
+                        files.len(), t.elapsed().as_secs_f64() * 1000.0);
                 }
-                root_by_repo.insert(slug, repo_root);
+                Ok(files)
+            }).collect();
+        for (((slug, rev), (_, rules)), files) in group_list.iter().zip(enumerated) {
+            let matchers: Vec<(usize, globset::GlobMatcher)> = rules.iter()
+                .map(|(idx, g)| Ok((*idx, globset::Glob::new(g)?.compile_matcher())))
+                .collect::<Result<_>>()?;
+            for (path, h, mt, sz) in files? {
+                current.insert((slug.clone(), path.clone(), rev.clone()), (h.clone(), mt, sz));
+                for (idx, m) in &matchers {
+                    if m.is_match(&path) {
+                        rule_files.push((*idx, slug.clone(), path.clone(), rev.clone(), h.clone()));
+                    }
+                }
             }
         }
         self.rev_index = current.keys().map(|(repo, p, r)| (repo.clone(), r.clone(), p.clone())).collect();
@@ -1560,21 +1631,44 @@ impl Engine {
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
-    fn save_file_meta(&self, current: &FileMeta, _prev: &FileMeta) -> Result<()> {
-        let mut rows: Vec<Vec<Value>> = Vec::with_capacity(current.len());
-        for ((repo, path, rev), (h, mt, sz)) in current {
-            rows.push(vec![
-                Value::Text(repo.clone()),
-                Value::Text(path.clone()),
-                Value::Text(rev.clone()),
-                Value::Text(h.clone()),
-                Value::Int(*mt),
-                Value::Int(*sz),
-            ]);
+    /// Persist the `_file` cache DIFFERENTIALLY: delete keys that vanished or
+    /// changed, insert keys that changed or are new. A warm no-change tick
+    /// writes zero rows (the old shape rewrote the whole table every tick —
+    /// O(total files) of churn per tick across a big repo config). The spine
+    /// `_files` insert rides the same delta: content rows are INSERT-only and
+    /// content-addressed, so unchanged keys need no re-touch.
+    fn save_file_meta(&self, current: &FileMeta, prev: &FileMeta) -> Result<()> {
+        let mut delta: FileMeta = HashMap::new();
+        let mut stale: Vec<Vec<Value>> = Vec::new();
+        for (k, v) in current {
+            if prev.get(k) != Some(v) {
+                delta.insert(k.clone(), v.clone());
+                if prev.contains_key(k) {
+                    stale.push(vec![Value::Text(k.0.clone()), Value::Text(k.1.clone()), Value::Text(k.2.clone())]);
+                }
+            }
         }
-        self.db.exec("DELETE FROM _file")?;
+        for k in prev.keys() {
+            if !current.contains_key(k) {
+                stale.push(vec![Value::Text(k.0.clone()), Value::Text(k.1.clone()), Value::Text(k.2.clone())]);
+            }
+        }
+        if !stale.is_empty() {
+            self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _stale_file(repo TEXT, path TEXT, rev TEXT, PRIMARY KEY (repo, path, rev))")?;
+            self.db.exec("DELETE FROM _stale_file")?;
+            self.db.insert_rows("_stale_file", &["repo", "path", "rev"], &stale)?;
+            self.db.exec("DELETE FROM _file WHERE (repo, path, rev) IN (SELECT repo, path, rev FROM _stale_file)")?;
+        }
+        let rows: Vec<Vec<Value>> = delta.iter().map(|((repo, path, rev), (h, mt, sz))| vec![
+            Value::Text(repo.clone()),
+            Value::Text(path.clone()),
+            Value::Text(rev.clone()),
+            Value::Text(h.clone()),
+            Value::Int(*mt),
+            Value::Int(*sz),
+        ]).collect();
         self.db.insert_rows("_file", &["repo", "path", "rev", "hash", "mtime", "size"], &rows)?;
-        self.insert_spine_files(current)?;
+        self.insert_spine_files(&delta)?;
         Ok(())
     }
 
@@ -2313,55 +2407,6 @@ impl Engine {
         self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev", "path"], &rows)
     }
 
-    /// Enumerate (path, hash, mtime, size) for a rev. For WORK, stat each file
-    /// and reuse the stored hash when mtime+size are unchanged (the fast-path),
-    /// reading+hashing only changed files. A git rev uses the blob OID from
-    /// `ls-tree`, so unchanged blobs are detected without fetching content.
-    fn enumerate_with_hash(&self, repo: &str, repo_root: &Path, rev: &str, glob: &str, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
-        let matcher = globset::Glob::new(glob)?.compile_matcher();
-        if rev == "WORK" {
-            let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
-            for entry in ignore::WalkBuilder::new(repo_root).hidden(false).build().flatten() {
-                if !entry.path().is_file() { continue; }
-                let rel = match entry.path().strip_prefix(repo_root) { Ok(r) => r, Err(_) => continue };
-                let rel = rel.to_string_lossy().replace('\\', "/");
-                if !matcher.is_match(&rel) { continue; }
-                let (mt, sz) = entry.metadata().ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
-                files.push((entry.path().to_path_buf(), rel, mt, sz));
-            }
-            // reuse stored hash when mtime+size match; otherwise read+hash (parallel)
-            let mut out: Vec<(String, String, i64, i64)> = files.par_iter().map(|(abs, rel, mt, sz)| {
-                if let Some((h, pmt, psz)) = prev.get(&(repo.to_string(), rel.clone(), "WORK".to_string())) {
-                    if pmt == mt && psz == sz {
-                        return (rel.clone(), h.clone(), *mt, *sz);
-                    }
-                }
-                let bytes = std::fs::read(abs).unwrap_or_default();
-                (rel.clone(), blake3::hash(&bytes).to_hex().to_string(), *mt, *sz)
-            }).collect();
-            out.sort();
-            Ok(out)
-        } else {
-            // `git ls-tree -r -l <rev>` lines:
-            // "<mode> <type> <oid> <size>\t<path>"
-            let output = Command::new("git")
-                .arg("-C").arg(repo_root)
-                .args(["ls-tree", "-r", "-l", rev])
-                .output()?;
-            if !output.status.success() { return Ok(Vec::new()); }
-            let text = String::from_utf8_lossy(&output.stdout);
-            let mut out = Vec::new();
-            for line in text.lines() {
-                let Some((meta, path)) = line.split_once('\t') else { continue };
-                let parts: Vec<&str> = meta.split_whitespace().collect();
-                if parts.get(1) != Some(&"blob") { continue; }
-                let oid = parts.get(2).copied().unwrap_or_default();
-                let size = parts.get(3).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-                if matcher.is_match(path) { out.push((path.to_string(), oid.to_string(), 0, size)); }
-            }
-            Ok(out)
-        }
-    }
 
     /// Order-independent content digest of a closure edge relation's `(c0,c1)`
     /// rows. Same edge set ⇒ same digest, regardless of row order; the edge
@@ -2482,6 +2527,7 @@ impl Engine {
             Term::Wild => bail!("'_' not allowed in a seeded closure rule head"),
             Term::Interp(_) => bail!("interpolation not supported in a seeded closure rule head"),
             Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+            Term::Arith { .. } => bail!("arithmetic not supported in a seeded closure rule head"),
         }).collect();
         let template = cells?;
         let free_positions: Vec<usize> = rule.head.terms.iter().enumerate()
@@ -2816,6 +2862,63 @@ fn module_stem(path: &str) -> &str {
     }
 }
 
+/// Enumerate (path, hash, mtime, size) for one repo×rev against the UNION of
+/// that group's rule globs — one walk / one `ls-tree` per repo×rev per tick,
+/// however many rules scan it. Free function (no `&self`) so groups enumerate
+/// in parallel across repos. For WORK, stat each file and reuse the stored hash
+/// when mtime+size are unchanged (the fast-path), reading+hashing only changed
+/// files. A git rev uses the blob OID from `ls-tree`, so unchanged blobs are
+/// detected without fetching content. The walk skips `.git` explicitly:
+/// `hidden(false)` un-hides it, and crawling the object store made big-repo
+/// scans pathological.
+fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset::GlobSet, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
+    if rev == "WORK" {
+        let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
+        let walk = ignore::WalkBuilder::new(repo_root).hidden(false)
+            .filter_entry(|e| e.file_name() != ".git")
+            .build();
+        for entry in walk.flatten() {
+            if !entry.path().is_file() { continue; }
+            let rel = match entry.path().strip_prefix(repo_root) { Ok(r) => r, Err(_) => continue };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if !union.is_match(&rel) { continue; }
+            let (mt, sz) = entry.metadata().ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
+            files.push((entry.path().to_path_buf(), rel, mt, sz));
+        }
+        // reuse stored hash when mtime+size match; otherwise read+hash (parallel)
+        let mut out: Vec<(String, String, i64, i64)> = files.par_iter().map(|(abs, rel, mt, sz)| {
+            if let Some((h, pmt, psz)) = prev.get(&(repo.to_string(), rel.clone(), "WORK".to_string())) {
+                if pmt == mt && psz == sz {
+                    return (rel.clone(), h.clone(), *mt, *sz);
+                }
+            }
+            let bytes = std::fs::read(abs).unwrap_or_default();
+            (rel.clone(), blake3::hash(&bytes).to_hex().to_string(), *mt, *sz)
+        }).collect();
+        out.sort();
+        Ok(out)
+    } else {
+        // `git ls-tree -r -l <rev>` lines:
+        // "<mode> <type> <oid> <size>\t<path>"
+        let output = Command::new("git")
+            .arg("-C").arg(repo_root)
+            .args(["ls-tree", "-r", "-l", rev])
+            .output()?;
+        if !output.status.success() { return Ok(Vec::new()); }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut out = Vec::new();
+        for line in text.lines() {
+            let Some((meta, path)) = line.split_once('\t') else { continue };
+            let parts: Vec<&str> = meta.split_whitespace().collect();
+            if parts.get(1) != Some(&"blob") { continue; }
+            let oid = parts.get(2).copied().unwrap_or_default();
+            let size = parts.get(3).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            if union.is_match(path) { out.push((path.to_string(), oid.to_string(), 0, size)); }
+        }
+        Ok(out)
+    }
+}
+
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).
 /// Safe to call in parallel: reads file content, runs extractors, builds rows.
 fn parse_file(
@@ -2935,6 +3038,17 @@ fn parse_file(
             BodyItem::Cmd { template, line, out, .. } => {
                 let lv = var_of(line)?;
                 let ov = var_of(out)?;
+                // Budget guard: one cmd rule shells out once per matched file, so
+                // a broad glob is a subprocess storm. Over budget = a loud bail
+                // naming the command, never a silent truncation of the relation.
+                if let Some(budget) = cmd_budget() {
+                    let n = CMD_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if n > budget {
+                        bail!("cmd budget exceeded: tick needs more than {budget} `cmd` \
+                               invocation(s) (next: `{template}` on {path}) — raise \
+                               --cmd-budget / DL_CMD_BUDGET or narrow the scan glob");
+                    }
+                }
                 // {file}: WORK reads the on-disk path; a git rev materializes the
                 // cached content to a content-addressed temp file (reused across ticks)
                 let file_arg = if rev == "WORK" {
@@ -2948,8 +3062,12 @@ fn parse_file(
                     .replace("{file}", &file_arg)
                     .replace("{path}", path)
                     .replace("{root}", &root.display().to_string());
+                let t_cmd = std::time::Instant::now();
                 let output = Command::new("sh").arg("-c").arg(&cmdline)
                     .current_dir(root).output()?;
+                if crate::db::profiling() && t_cmd.elapsed().as_millis() >= 250 {
+                    eprintln!("[cmd {:.0}ms] {cmdline}", t_cmd.elapsed().as_secs_f64() * 1000.0);
+                }
                 let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
                 // nonzero exit WITH stdout is the diff-tool convention (findings
                 // exist); nonzero with empty stdout is a broken command, be loud
@@ -3029,6 +3147,7 @@ fn parse_file(
                 Term::Interp(parts) => interp_value(parts, &b)?,
                 Term::Wild => bail!("'_' in head not allowed"),
                 Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+                Term::Arith { .. } => val_of(term, &b)?,
             };
             if !check_type(head_meta.cols[i].ty, &v, repo, rev, root, rev_index) { dropped += 1; continue 'bind; }
             row.push(v);
@@ -3075,6 +3194,25 @@ fn val_of(t: &Term, b: &Bind) -> Result<Value> {
         Term::Interp(parts) => interp_value(parts, b),
         Term::Wild => bail!("'_' in constraint"),
         Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+        Term::Arith { op, lhs, rhs } => {
+            let (l, r) = (val_of(lhs, b)?, val_of(rhs, b)?);
+            let (Value::Int(a), Value::Int(c)) = (&l, &r) else {
+                bail!("arithmetic needs int operands, got {l:?} {} {r:?}", op.sql());
+            };
+            Ok(Value::Int(match op {
+                ArithOp::Add => a + c,
+                ArithOp::Sub => a - c,
+                ArithOp::Mul => a * c,
+                ArithOp::Div => {
+                    if *c == 0 { bail!("division by zero in source-rule arithmetic"); }
+                    a / c
+                }
+                ArithOp::Mod => {
+                    if *c == 0 { bail!("modulo by zero in source-rule arithmetic"); }
+                    a % c
+                }
+            }))
+        }
     }
 }
 

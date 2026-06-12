@@ -66,6 +66,37 @@ fn broken_command_is_loud() {
     assert!(err.contains("no_such_tool_zzz"), "{err}");
 }
 
+/// `--cmd-budget N`: more than N invocations in a tick is a loud error naming
+/// the command, never a silent truncation. Under budget runs clean.
+#[test]
+fn cmd_budget_caps_invocations() {
+    let d = sandbox("budget");
+    fs::write(d.join("a.txt"), "x\n").unwrap();
+    fs::write(d.join("b.txt"), "y\n").unwrap();
+    fs::write(d.join("c.txt"), "z\n").unwrap();
+    let prog = concat!(
+        "rel f(p: file, l: int, v: text).\n",
+        "f(p, l, v) <- scan(\"WORK\", \"*.txt\", p, rev), cmd(p, rev, \"cat {file}\", l, v).\n",
+        "? f(p, l, v).\n");
+    fs::write(d.join("p.dl"), prog).unwrap();
+    let over = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", d.to_str().unwrap(), "--db", d.join("db1").to_str().unwrap(),
+               "--cmd-budget", "2"])
+        .output().expect("run dl");
+    assert_eq!(over.status.code(), Some(1), "3 files > budget 2 must fail");
+    let err = String::from_utf8_lossy(&over.stderr);
+    assert!(err.contains("cmd budget exceeded"), "{err}");
+    assert!(err.contains("cat {file}"), "diag names the command: {err}");
+    let under = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", d.to_str().unwrap(), "--db", d.join("db2").to_str().unwrap(),
+               "--cmd-budget", "3"])
+        .output().expect("run dl");
+    assert_eq!(under.status.code(), Some(0), "3 files at budget 3 runs clean: {}",
+        String::from_utf8_lossy(&under.stderr));
+}
+
 /// Warm db + unchanged file + unchanged command: the second run must not
 /// re-execute the command. Observable via a side-effect counter file the
 /// command appends to.

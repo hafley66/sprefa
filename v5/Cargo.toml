@@ -8,7 +8,7 @@ name = "dl"
 path = "src/main.rs"
 
 [dependencies]
-rusqlite = { version = "0.31", features = ["bundled", "functions"] }
+rusqlite = { version = "0.31", features = ["bundled", "functions", "trace"] }
 regex = "1"
 globset = "0.4"
 ignore = "0.4"

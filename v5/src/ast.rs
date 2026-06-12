@@ -74,6 +74,20 @@ impl CmpOp {
 #[derive(Clone, Debug)]
 pub enum InterpPart { Lit(String), Var(String) }
 
+/// Integer arithmetic operator for `Term::Arith`. `/` is SQLite/Rust integer
+/// division (truncating); `%` is the remainder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArithOp { Add, Sub, Mul, Div, Mod }
+
+impl ArithOp {
+    pub fn sql(self) -> &'static str {
+        match self {
+            ArithOp::Add => "+", ArithOp::Sub => "-",
+            ArithOp::Mul => "*", ArithOp::Div => "/", ArithOp::Mod => "%",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Term {
     Var(String),
@@ -85,6 +99,11 @@ pub enum Term {
     /// the raw body and the source span for diagnostics. Resolved to canonical
     /// text/pattern (then rewritten to `Str`) at lower time by the engine.
     PathLit { scheme: String, body: String, span: (u32, u32) },
+    /// Int arithmetic `a + 1`, `n * 2 - 1` — allowed in rule heads (derived AND
+    /// source) and on either side of a comparison; never a binding position, so
+    /// body atoms reject it. Derived rules lower it to SQL arithmetic; source
+    /// rules evaluate it on the bound row values.
+    Arith { op: ArithOp, lhs: Box<Term>, rhs: Box<Term> },
 }
 
 #[derive(Clone, Debug)]

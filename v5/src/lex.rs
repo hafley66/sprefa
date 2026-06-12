@@ -19,6 +19,7 @@ pub enum Tok {
     LParen, RParen, Comma, Dot, Colon, Bang, Question, Arrow,
     Lt2, // `<:` brand subtype operator
     Eq, Ne, Lt, Le, Gt, Ge, Match, Glob,
+    Plus, Minus, Star, Slash, Percent, // int arithmetic (heads + comparisons)
 }
 
 /// Scan a typed-literal body after the `scheme:` prefix. `i` points just past the
@@ -130,17 +131,30 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                     out.push(Tok::Str(cur));
                 }
             }
+            b'+' => { out.push(Tok::Plus); i += 1; }
+            b'-' => { out.push(Tok::Minus); i += 1; }
+            b'*' => { out.push(Tok::Star); i += 1; }
+            b'%' => { out.push(Tok::Percent); i += 1; }
             b'/' => {
-                let mut s = String::new();
-                i += 1;
-                while i < b.len() && b[i] != b'/' {
-                    if b[i] == b'\\' && i + 1 < b.len() {
-                        s.push(b[i] as char); s.push(b[i + 1] as char); i += 2;
-                    } else { s.push(b[i] as char); i += 1; }
+                // `/` is division after a value (ident, int, `)`), a regex
+                // opener everywhere else (after `,`, `(`, `=~`, ...). The same
+                // value-position rule JS lexers use for / vs /re/.
+                let after_value = matches!(out.last(),
+                    Some(Tok::Ident(_)) | Some(Tok::Int(_)) | Some(Tok::RParen));
+                if after_value {
+                    out.push(Tok::Slash); i += 1;
+                } else {
+                    let mut s = String::new();
+                    i += 1;
+                    while i < b.len() && b[i] != b'/' {
+                        if b[i] == b'\\' && i + 1 < b.len() {
+                            s.push(b[i] as char); s.push(b[i + 1] as char); i += 2;
+                        } else { s.push(b[i] as char); i += 1; }
+                    }
+                    if i >= b.len() { bail!("unterminated regex"); }
+                    i += 1;
+                    out.push(Tok::Regex(s));
                 }
-                if i >= b.len() { bail!("unterminated regex"); }
-                i += 1;
-                out.push(Tok::Regex(s));
             }
             _ if c.is_ascii_digit() => {
                 let start = i;

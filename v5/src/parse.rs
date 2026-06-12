@@ -156,7 +156,7 @@ impl Parser {
                     terms.push(arg);
                     aggs.push(Some(f));
                 } else {
-                    terms.push(self.term()?);
+                    terms.push(self.expr()?);
                     aggs.push(None);
                 }
                 match self.next()? {
@@ -422,7 +422,7 @@ impl Parser {
     }
 
     fn constraint(&mut self) -> Result<Constraint> {
-        let lhs = self.term()?;
+        let lhs = self.expr()?;
         let op = match self.next()? {
             Tok::Eq => CmpOp::Eq, Tok::Ne => CmpOp::Ne,
             Tok::Lt => CmpOp::Lt, Tok::Le => CmpOp::Le,
@@ -430,8 +430,42 @@ impl Parser {
             Tok::Match => CmpOp::Match, Tok::Glob => CmpOp::Glob,
             other => bail!("expected comparison operator, got {:?}", other),
         };
-        let rhs = self.term()?;
+        let rhs = self.expr()?;
         Ok(Constraint { lhs, op, rhs })
+    }
+
+    /// Int arithmetic over terms, in non-binding positions only (rule heads and
+    /// comparison sides): `expr := mul (('+'|'-') mul)*`. Body atoms keep plain
+    /// `term()` — an operator there is a parse error, since an atom position
+    /// binds rather than computes.
+    fn expr(&mut self) -> Result<Term> {
+        let mut lhs = self.mul_expr()?;
+        loop {
+            let op = match self.peek() {
+                Some(Tok::Plus) => ArithOp::Add,
+                Some(Tok::Minus) => ArithOp::Sub,
+                _ => return Ok(lhs),
+            };
+            self.next()?;
+            let rhs = self.mul_expr()?;
+            lhs = Term::Arith { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+        }
+    }
+
+    /// `mul := term (('*'|'/'|'%') term)*` — binds tighter than +/-.
+    fn mul_expr(&mut self) -> Result<Term> {
+        let mut lhs = self.term()?;
+        loop {
+            let op = match self.peek() {
+                Some(Tok::Star) => ArithOp::Mul,
+                Some(Tok::Slash) => ArithOp::Div,
+                Some(Tok::Percent) => ArithOp::Mod,
+                _ => return Ok(lhs),
+            };
+            self.next()?;
+            let rhs = self.term()?;
+            lhs = Term::Arith { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+        }
     }
 
     fn term(&mut self) -> Result<Term> {
@@ -444,6 +478,12 @@ impl Parser {
             }).collect())),
             Tok::Int(n) => Ok(Term::Int(n)),
             Tok::Scheme { scheme, body, span } => Ok(Term::PathLit { scheme, body, span }),
+            // Parenthesized sub-expression: `(a + b) * 2`.
+            Tok::LParen => {
+                let inner = self.expr()?;
+                self.expect(Tok::RParen)?;
+                Ok(inner)
+            }
             other => bail!("expected term, got {:?}", other),
         }
     }

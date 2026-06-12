@@ -113,6 +113,7 @@ needs both is two rules: extract, then join (see [Rails](#git-hook--claude-code-
 | regex constraint | `f =~ "^[A-Za-z]+$"` (SQLite REGEXP) |
 | glob constraint | `p ~~ "src/*"` (SQLite GLOB) |
 | closure | `closure(edge)` as the entire body — see below |
+| int arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(p, line + 1) <- fns(p, line).`, `line * 2 > 4`. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |
 
 **Aggregation** is head-position only: `count` `sum` `min` `max`.
 Non-aggregate head terms are the grouping key. `count`/`sum` produce `int`;
@@ -205,6 +206,8 @@ Declarations live at [src/engine.rs:25](src/engine.rs) (`BUILTIN_RELS` through
 | `--watch` | re-tick on file changes |
 | `--changed <path>` | one incremental tick for changed paths (repeatable) |
 | `--move OLD=NEW [--repo slug\|*] [--fix]` | rewrite `use`-path references for a module move; dry-run unless `--fix` |
+| `--profile` (or `DL_PROFILE=1`) | log slow SQL statements (threshold `DL_PROFILE_SQL_MS`, default 25ms), per-repo×rev scan times, tick phase breakdown, per-tick statement counts, slow `cmd` invocations (≥250ms) |
+| `--cmd-budget N` (or `DL_CMD_BUDGET`) | cap `cmd` invocations per tick; over budget errors loudly (never silent truncation). Default unlimited |
 
 ## Git hook / Claude Code hook
 
@@ -333,12 +336,9 @@ design-recovery; the original coordinate model lives in
 
 ## Known gaps
 
-- **No arithmetic in heads** — `round(f, n / 2)` does not parse; tiered ranks
-  need one literal rule per tier (see anim-deck.dl's round rules).
-- **`Value` is `Text | Int`** — no float; `<` on text is lexical.
+- **`Value` is `Text | Int`** — no float; `<` on text is lexical. Int
+  arithmetic (`+ - * / %`) works in heads and comparisons.
 - **String manipulation is thin** — `${}` concat and the constraints above;
   no split/replace/substr, no regex over an already-bound value.
 - **Closure in a mixed rule body is literal-seeded only** — dynamic transitive
   closure is a seeded point query, not a fixpoint join.
-- **`cmd` has no budget flag** — a slow tool runs once per matched file with
-  no cap.
