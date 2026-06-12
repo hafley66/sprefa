@@ -52,3 +52,46 @@ gen(p, l0, l1, "# step {f} = {r}") <-
   block(p, l0, l1, "steps"), round(f, r).
 gen(p, l0, l1, "# step {t} = {r}") <-
   block(p, l0, l1, "steps"), leaf_round(t, r).
+
+# ---- relational deck rows --------------------------------------------------
+# The anim `atlas-db` fence reads rel_node / rel_edge / rel_tag / rel_node_ref
+# / rel_tour / rel_tour_step / rel_card / rel_card_about / rel_view straight
+# from this db (modelFromRows). No d2 text, no gen splice: the deck's atlas IS
+# the database. `ref` is reserved (the engine's span spine), hence node_ref.
+
+rel node(id: text, kind: text, label: text).
+node(f, "type", f) <- hub(f, _).
+node(t, "type", t) <- hub(f, _), edge0(f, t).
+
+rel edge(f: text, t: text).
+edge(f, t) <- hub(f, _), edge0(f, t).
+
+rel tag(node: text, ns: text, value: text).
+tag(f, "tag", "hub") <- hub(f, _).
+
+# where each shown type is declared, as an fs ref (panel rows + periscope)
+rel decl(name: text, path: file, line: int).
+decl(name, path, line) <- scan("WORK", "sprefa/v5/src/**/*.rs", path, rev),
+  match(path, rev, /pub (?:struct|enum) (?<name>[A-Za-z]+)/, line).
+
+rel node_ref(node: text, panel: text, locator: text).
+node_ref(n, "fs", "${path}:${line}") <- node(n, _, _), decl(n, path, line).
+
+# notes: fan-out per hub (cards render as the node's hover/detail note)
+rel card(id: text, body: text).
+card("about.hubs", "every node here fans out to 4+ types; edges and tags are dl rows, not d2 text").
+
+rel card_about(card: text, node: text).
+card_about("about.hubs", f) <- hub(f, _).
+
+# the authored layer: a tour and the opening view are plain facts
+rel tour(id: text, title: text).
+tour("rows", "the deck the engine wrote").
+
+rel tour_step(tour: text, seq: int, target: text, comment: text).
+tour_step("rows", 0, "Engine", "`Engine` owns the tick: scan, extract, fixpoint, sinks").
+tour_step("rows", 1, "Engine+Db", "the engine drives one `Db`; every fact and derived row lands there").
+tour_step("rows", 2, "Rule+GenRule", "parse lowers source into `Rule` and `GenRule`, the shapes the fixpoint executes").
+
+rel view(id: text, focus: text, mode: text, layout: text, dir: text, iso: int).
+view("seed", "Engine", "downstream", "dagre", "LR", 0).
