@@ -106,6 +106,88 @@ fn move_repo_star_fans_out_and_slug_scopes() {
         "rb rewritten by --repo *");
 }
 
+/// Brace-inner leaf (#17a): `use crate::{utils::Foo, app}` — the moved module
+/// sits INSIDE a leaf, below the shared brace head. The leaf-level second pass
+/// rewrites the leaf text in place.
+#[test]
+fn move_rewrites_brace_inner_leaf() {
+    let d = sandbox("braceleaf");
+    fs::write(d.join("src/lib.rs"), "mod utils;\nmod app;\nmod misc;\nfn main() {}\n").unwrap();
+    fs::write(d.join("src/app.rs"),
+        "use crate::{utils::Foo, misc};\nfn go() { misc::x() }\n").unwrap();
+    fs::write(d.join("src/utils.rs"), "pub struct Foo;\n").unwrap();
+    fs::write(d.join("src/misc.rs"), "pub fn x() {}\n").unwrap();
+
+    let (code, out, err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", false);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("utils::Foo -> helpers::utils::Foo"), "leaf preview: {out}");
+
+    let (code, _out, _err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", true);
+    assert_eq!(code, 0);
+    let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
+    assert!(after.contains("use crate::{helpers::utils::Foo, misc};"),
+        "brace-inner leaf rewritten, sibling untouched: {after}");
+}
+
+/// Physical move (#17b) + moved file's own content (#17c): `--fix` renames the
+/// file, re-homes the `mod` decl (creating the parent-module chain), and
+/// re-anchors the moved file's own `super::` imports.
+#[test]
+fn move_fix_renames_and_rehomes_mod_decl() {
+    let d = sandbox("physical");
+    fs::write(d.join("src/lib.rs"), "mod utils;\nmod config;\nmod app;\n").unwrap();
+    fs::write(d.join("src/utils.rs"),
+        "use super::config::Settings;\npub struct Foo(pub Settings);\n").unwrap();
+    fs::write(d.join("src/config.rs"), "pub struct Settings;\n").unwrap();
+    fs::write(d.join("src/app.rs"), "use crate::utils::Foo;\nfn go(_: Foo) {}\n").unwrap();
+
+    // Dry run: plans the rename + surgery, touches nothing.
+    let (code, out, err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", false);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("src/utils.rs -> src/helpers/utils.rs (rename)"), "{out}");
+    assert!(out.contains("src/lib.rs: - mod utils;"), "{out}");
+    assert!(out.contains("create src/helpers.rs"), "{out}");
+    assert!(d.join("src/utils.rs").is_file(), "dry run must not rename");
+
+    let (code, out, err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", true);
+    assert_eq!(code, 0, "{out}\n{err}");
+    // file moved on disk
+    assert!(!d.join("src/utils.rs").exists(), "old path gone");
+    let moved = fs::read_to_string(d.join("src/helpers/utils.rs")).unwrap();
+    // the moved file's own super:: re-anchored (crate::config no longer super::)
+    assert!(moved.contains("use crate::config::Settings;"), "re-anchored: {moved}");
+    // mod decl re-homed: lib.rs lost `mod utils;`, gained `mod helpers;`; the
+    // created helpers.rs declares utils promoted to pub(crate)
+    let lib = fs::read_to_string(d.join("src/lib.rs")).unwrap();
+    assert!(!lib.contains("mod utils;"), "{lib}");
+    assert!(lib.contains("mod helpers;"), "{lib}");
+    let helpers = fs::read_to_string(d.join("src/helpers.rs")).unwrap();
+    assert!(helpers.contains("pub(crate) mod utils;"), "{helpers}");
+    // and the reference rewrite still happened
+    let app = fs::read_to_string(d.join("src/app.rs")).unwrap();
+    assert!(app.contains("use crate::helpers::utils::Foo;"), "{app}");
+}
+
+/// Kotlin physical move: `--fix` renames the file and rewrites its own
+/// `package` declaration to the new package.
+#[test]
+fn move_fix_kotlin_renames_and_rewrites_package_decl() {
+    let d = sandbox("ktphysical");
+    fs::create_dir_all(d.join("src/com/lib")).unwrap();
+    fs::create_dir_all(d.join("src/com/app")).unwrap();
+    fs::write(d.join("src/com/lib/Util.kt"), "package com.lib\n\nclass Util\n").unwrap();
+    fs::write(d.join("src/com/app/Main.kt"),
+        "package com.app\n\nimport com.lib.Util\nfun main() { Util() }\n").unwrap();
+
+    let (code, out, err) = run_move(&d, "src/com/lib/Util.kt=src/com/core/Util.kt", true);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(!d.join("src/com/lib/Util.kt").exists(), "old path gone");
+    let moved = fs::read_to_string(d.join("src/com/core/Util.kt")).unwrap();
+    assert!(moved.contains("package com.core\n"), "package decl follows: {moved}");
+    let main = fs::read_to_string(d.join("src/com/app/Main.kt")).unwrap();
+    assert!(main.contains("import com.core.Util"), "{main}");
+}
+
 /// Kotlin: `--move OLD.kt=NEW.kt` derives the package change from the moved
 /// file's own `package` decl + the directory delta under its source root, then
 /// rewrites import specifiers at their ref-spine spans. Wildcard imports and

@@ -86,6 +86,16 @@ impl KotlinMove {
     pub fn old_wildcard(&self) -> String { format!("{}.*", self.old_pkg) }
 }
 
+/// Byte span of the package name in the moved file's `package` declaration —
+/// the edit coordinate for rewriting the decl to the new package. Matched on
+/// stripped content (offset-preserving), spliced into the raw content.
+pub fn package_decl_span(content: &str) -> Option<(u32, u32)> {
+    let clean = strip_kotlin(content);
+    let c = kotlin_package_re().captures(&clean)?;
+    let m = c.get(1)?;
+    Some((m.start() as u32, m.end() as u32))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

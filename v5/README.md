@@ -205,7 +205,7 @@ Declarations live at [src/engine.rs:25](src/engine.rs) (`BUILTIN_RELS` through
 | `--lsp` | LSP server over stdio; `diag` rows become live squiggles |
 | `--watch` | re-tick on file changes |
 | `--changed <path>` | one incremental tick for changed paths (repeatable) |
-| `--move OLD=NEW [--repo slug\|*] [--fix]` | rewrite references for a file move; dry-run unless `--fix`. `.rs`: `use`-path rewriting against discovered crate roots. `.kt`: import rewriting from the package delta under the file's source root (wildcard imports and same-package bare uses are counted loudly, not rewritten) |
+| `--move OLD=NEW [--repo slug\|*] [--fix]` | full file move; dry-run prints the plan unless `--fix`. `.rs`: `use`-path rewriting against discovered crate roots — bare uses, brace heads, AND brace-inner leaves (`use crate::{old::A, b}`); the moved file's own `super::` imports re-anchor; `--fix` renames on disk and re-homes the `mod` decl (creating the parent-module chain, promoting a private decl to `pub(crate)` when it leaves the crate root). `.kt`: import rewriting from the package delta under the file's source root; `--fix` renames and rewrites the moved file's `package` decl (wildcard imports and same-package bare uses are counted loudly, not rewritten). A moved file's child `mod x;` decls do not follow — counted loudly |
 | `--profile` (or `DL_PROFILE=1`) | log slow SQL statements (threshold `DL_PROFILE_SQL_MS`, default 25ms), per-repo×rev scan times, tick phase breakdown, per-tick statement counts, slow `cmd` invocations (≥250ms) |
 | `--cmd-budget N` (or `DL_CMD_BUDGET`) | cap `cmd` invocations per tick; over budget errors loudly (never silent truncation). Default unlimited |
 

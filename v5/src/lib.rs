@@ -325,12 +325,12 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // moved file's own `package` declaration.
     let (kt_specs, rs_moves): (Vec<_>, Vec<_>) = moves.iter()
         .partition(|(old, _)| old.ends_with(".kt") || old.ends_with(".kts"));
-    let mut kt_moves: Vec<ktpath::KotlinMove> = Vec::new();
+    let mut kt_moves: Vec<(String, String, ktpath::KotlinMove)> = Vec::new();
     for (old, new) in &kt_specs {
         let content = std::fs::read_to_string(root.join(old))
             .map_err(|e| anyhow::anyhow!("--move {old}: cannot read the file to move: {e}"))?;
         match ktpath::plan_move(old, new, &content) {
-            Ok(mv) => kt_moves.push(mv),
+            Ok(mv) => kt_moves.push((old.clone(), new.clone(), mv)),
             Err(e) => eprintln!("[move] {e} — its references will not be rewritten"),
         }
     }
@@ -343,24 +343,86 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // Loud, not silent: a move whose endpoints resolve to no crate root at all
     // (outside `src/` AND outside any discovered root) can't be turned into a
     // module path. Say why instead of reporting a clean no-op.
+    // `rs_mods` carries the derived module paths for the moves that can rewrite.
+    let mut rs_mods: Vec<(String, String, String, String)> = Vec::new();
     for (old, new) in &rs_moves {
-        if rspath::file_to_mod_path_rooted(old, &roots).is_none()
-            || rspath::file_to_mod_path_rooted(new, &roots).is_none()
-        {
-            eprintln!("[move] cannot derive a module path for {old} or {new} \
-                (under no crate root) — its references will not be rewritten");
+        match (rspath::file_to_mod_path_rooted(old, &roots), rspath::file_to_mod_path_rooted(new, &roots)) {
+            (Some(om), Some(nm)) => rs_mods.push((old.clone(), new.clone(), om, nm)),
+            _ => eprintln!("[move] cannot derive a module path for {old} or {new} \
+                (under no crate root) — its references will not be rewritten"),
         }
     }
 
-    // Each located use span -> the first move that rewrites it.
+    // PASS 1 — located spans. A span in a moved file re-anchors against the
+    // file's own module move (`super::` shifts, self-references follow), then
+    // the other moves apply from the file's NEW module path; spans elsewhere
+    // take the first move that rewrites them.
     let mut edits: Vec<refactor::Edit> = Vec::new();
     for (path, lo, hi, text) in eng.located_spans()? {
-        let rewritten = rs_moves.iter()
-            .find_map(|(old, new)| rspath::rewrite_import_rooted(&path, old, new, &text, &roots))
-            .or_else(|| kt_moves.iter().find_map(|mv| mv.rewrite_import(&text)));
-        if let Some(new_text) = rewritten {
-            if new_text != text {
-                edits.push(refactor::Edit { path, lo, hi, old_text: text, new_text });
+        let own = rs_mods.iter().find(|(old, _, _, _)| *old == path);
+        let new_text = match own {
+            Some((_, _, old_mod, new_mod)) => {
+                let mut t = text.clone();
+                if let Some(nt) = rspath::rewrite_moved_file_use(&t, old_mod, new_mod) { t = nt; }
+                for (other_old, _, o_old_mod, o_new_mod) in &rs_mods {
+                    if other_old == &path { continue; }
+                    if let Some(nt) = rspath::rewrite_use_path(&t, o_old_mod, o_new_mod, new_mod) { t = nt; }
+                }
+                (t != text).then_some(t)
+            }
+            None => rs_mods.iter()
+                .find_map(|(old, new, _, _)| rspath::rewrite_import_rooted(&path, old, new, &text, &roots))
+                .or_else(|| kt_moves.iter().find_map(|(_, _, mv)| mv.rewrite_import(&text)))
+                .filter(|nt| *nt != text),
+        };
+        if let Some(new_text) = new_text {
+            edits.push(refactor::Edit { path, lo, hi, old_text: text, new_text });
+        }
+    }
+
+    // PASS 2 — brace leaves the shared head span can't reach
+    // (`use crate::{old::A, b}`): re-expand each move-relevant .rs file's use
+    // statements at leaf granularity and rewrite the leaf text in place when
+    // the new path still sits under the unchanged brace head. Spans already
+    // edited by pass 1 (bare uses double as leaves) are skipped.
+    let spanned: std::collections::HashSet<(String, u32, u32)> =
+        edits.iter().map(|e| (e.path.clone(), e.lo, e.hi)).collect();
+    let imports = eng.module_imports()?;
+    if !rs_mods.is_empty() {
+        let leaf_files: std::collections::BTreeSet<&String> = imports.iter()
+            .filter(|(file, spec)| file.ends_with(".rs") && rs_mods.iter().any(|(old, new, _, _)| {
+                rspath::rewrite_import_rooted(file, old, new, spec, &roots).is_some_and(|n| &n != spec)
+            }))
+            .map(|(file, _)| file)
+            .collect();
+        for file in leaf_files {
+            // moved files re-anchor in pass 1; their brace leaves stay counted
+            if rs_mods.iter().any(|(old, _, _, _)| old == file) { continue; }
+            let Some(from_mod) = rspath::file_to_mod_path_rooted(file, &roots) else { continue };
+            let Ok(content) = std::fs::read_to_string(root.join(file)) else { continue };
+            for leaf in modgraph::rust_use_leaves(&content) {
+                if leaf.collapsed { continue; }
+                let (lo, hi) = leaf.leaf;
+                if spanned.contains(&(file.clone(), lo, hi)) { continue; }
+                let Some(old_text) = content.get(lo as usize..hi as usize) else { continue };
+                let rewritten = rs_mods.iter().find_map(|(_, _, old_mod, new_mod)|
+                    rspath::rewrite_brace_leaf(&leaf.full, &leaf.prefix, old_mod, new_mod, &from_mod));
+                if let Some(new_text) = rewritten {
+                    if new_text != old_text {
+                        edits.push(refactor::Edit { path: file.clone(), lo, hi,
+                            old_text: old_text.to_string(), new_text });
+                    }
+                }
+            }
+        }
+    }
+
+    // The moved Kotlin file's own `package` declaration follows the move.
+    for (old, _, mv) in &kt_moves {
+        if let Ok(content) = std::fs::read_to_string(root.join(old)) {
+            if let Some((lo, hi)) = ktpath::package_decl_span(&content) {
+                edits.push(refactor::Edit { path: old.clone(), lo, hi,
+                    old_text: mv.old_pkg.clone(), new_text: mv.new_pkg.clone() });
             }
         }
     }
@@ -369,25 +431,24 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
 
     // Honest skip accounting (file-level so brace heads don't false-positive: one
     // head edit covers all `{a, b}` leaves). A move-relevant import in a file that
-    // produced NO edit is a genuine miss — e.g. `use crate::{old::A, ..}` whose
-    // head prefix isn't the moved module, so the head span doesn't match.
+    // produced NO edit is a genuine miss — e.g. a brace leaf whose rewritten path
+    // left the brace head, which pass 2 can't express in place.
     let edited: std::collections::HashSet<&String> = by_file.keys().collect();
-    let imports = eng.module_imports()?;
     let skipped = imports.iter().filter(|(file, spec)| {
         !edited.contains(file) && (
             rs_moves.iter().any(|(old, new)| {
                 rspath::rewrite_import_rooted(file, old, new, spec, &roots).is_some_and(|n| &n != spec)
-            }) || kt_moves.iter().any(|mv| mv.rewrite_import(spec).is_some_and(|n| &n != spec))
+            }) || kt_moves.iter().any(|(_, _, mv)| mv.rewrite_import(spec).is_some_and(|n| &n != spec))
         )
     }).count();
     if skipped > 0 {
         eprintln!("[move] {skipped} move-relevant import(s) left alone \
-            (head prefix not the moved module, e.g. `use crate::{{old::A, ..}}`)");
+            (a brace leaf whose rewrite leaves the brace head cannot be spliced in place)");
     }
     // Kotlin-specific honesty: a wildcard import of the old package may or may
     // not still cover the moved decls, and a same-package bare use breaks when
     // the file leaves the package — neither is an import-text rewrite.
-    for mv in &kt_moves {
+    for (_, _, mv) in &kt_moves {
         let wild = imports.iter().filter(|(_, spec)| *spec == mv.old_wildcard()).count();
         if wild > 0 {
             eprintln!("[move] {wild} wildcard import(s) of {} left alone \
@@ -401,10 +462,6 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
         }
     }
 
-    if by_file.is_empty() {
-        eprintln!("[move] no use-path references to rewrite");
-        return Ok(());
-    }
     let (mut files, mut total) = (0usize, 0usize);
     for (path, file_edits) in &by_file {
         let abs = root.join(path);
@@ -419,7 +476,112 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
             std::fs::write(&abs, rewritten)?;
         }
     }
-    eprintln!("[move] {} edit(s) across {} file(s){}",
-        total, files, if fix { ", applied" } else { " (dry run; pass --fix to apply)" });
+    if by_file.is_empty() {
+        eprintln!("[move] no use-path references to rewrite");
+    } else {
+        eprintln!("[move] {} edit(s) across {} file(s){}",
+            total, files, if fix { ", applied" } else { " (dry run; pass --fix to apply)" });
+    }
+
+    // PASS 3 — the physical move: rename on disk, then for Rust re-home the
+    // `mod` decl (remove from the old parent, declare in the new, creating the
+    // parent-module chain up to an existing ancestor). Dry run prints the plan.
+    for (old, new) in moves {
+        if !root.join(old).is_file() {
+            eprintln!("[move] {old} does not exist on disk — rename skipped");
+            continue;
+        }
+        // a moved Rust file's child `mod x;` decls resolve relative to its
+        // location and do NOT follow — say so instead of silently breaking
+        if old.ends_with(".rs") {
+            if let Ok(content) = std::fs::read_to_string(root.join(old)) {
+                let kids = refactor::child_mod_decls(&content);
+                if !kids.is_empty() {
+                    eprintln!("[move] {old} declares child module(s) {kids:?} — \
+                        their files do not follow the rename; move them separately");
+                }
+            }
+        }
+        println!("{old} -> {new} (rename)");
+        if fix {
+            if let Some(parent) = root.join(new).parent() { std::fs::create_dir_all(parent)?; }
+            std::fs::rename(root.join(old), root.join(new))?;
+        }
+        if old.ends_with(".rs") {
+            rust_mod_surgery(&root, old, new, fix)?;
+        }
+    }
     Ok(())
+}
+
+/// Re-home the `mod` declaration after a Rust file rename: remove
+/// `mod <old_stem>;` from the old parent module file, declare `<new_stem>` in
+/// the new parent, creating intermediate parent-module files (and registering
+/// each in ITS parent) until an existing ancestor takes the chain. A private
+/// decl leaving the crate root is promoted to `pub(crate)` so existing
+/// `crate::`-path references stay visible.
+fn rust_mod_surgery(root: &Path, old: &str, new: &str, fix: bool) -> Result<()> {
+    let stem = |p: &str| Path::new(p).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let (old_stem, new_stem) = (stem(old), stem(new));
+    if matches!(old_stem.as_str(), "mod" | "lib" | "main") || matches!(new_stem.as_str(), "mod" | "lib" | "main") {
+        eprintln!("[move] {old} or {new} is a directory-defining file (mod.rs/lib.rs/main.rs) — \
+            mod-decl surgery skipped; adjust declarations manually");
+        return Ok(());
+    }
+
+    // remove from the old parent
+    let mut vis = String::new();
+    let mut removed = false;
+    for cand in rspath::mod_parent_candidates(old) {
+        let abs = root.join(&cand);
+        if !abs.is_file() { continue; }
+        let content = std::fs::read_to_string(&abs)?;
+        if let Some((without, v)) = refactor::remove_mod_decl(&content, &old_stem) {
+            println!("{cand}: - {v}mod {old_stem};");
+            if fix { std::fs::write(&abs, without)?; }
+            vis = v;
+            removed = true;
+            break;
+        }
+    }
+    if !removed {
+        eprintln!("[move] no `mod {old_stem};` declaration found near {old} \
+            (a #[path] decl or non-standard layout) — remove it manually");
+    }
+
+    // a private decl is crate-visible only at the crate root; relocating it
+    // deeper would shrink its scope, so promote
+    let is_root_file = |p: &str| matches!(stem(p).as_str(), "lib" | "main");
+    let mut name = new_stem;
+    let mut at = new.to_string();
+    loop {
+        let mut declared = false;
+        for cand in rspath::mod_parent_candidates(&at) {
+            let abs = root.join(&cand);
+            if !abs.is_file() { continue; }
+            let v = if vis.is_empty() && !is_root_file(&cand) { "pub(crate) " } else { vis.as_str() };
+            let content = std::fs::read_to_string(&abs)?;
+            let with = refactor::add_mod_decl(&content, &name, v);
+            if with != content {
+                println!("{cand}: + {v}mod {name};");
+                if fix { std::fs::write(&abs, with)?; }
+            }
+            declared = true;
+            break;
+        }
+        if declared { return Ok(()); }
+        // no parent module file exists: create the directory's sibling file
+        // (`a/b.rs` for files in `a/b/`) and register IT in its own parent
+        let Some(dir) = Path::new(&at).parent().and_then(|d| d.to_str()).filter(|d| !d.is_empty()) else {
+            eprintln!("[move] no parent module file found for {new} and none creatable — \
+                declare `mod {name};` manually");
+            return Ok(());
+        };
+        let parent_file = format!("{dir}.rs");
+        let v = if vis.is_empty() { "pub(crate) " } else { vis.as_str() };
+        println!("create {parent_file} with `{v}mod {name};`");
+        if fix { std::fs::write(root.join(&parent_file), format!("{v}mod {name};\n"))?; }
+        name = stem(&parent_file);
+        at = parent_file;
+    }
 }

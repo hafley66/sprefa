@@ -51,6 +51,48 @@ pub fn group_by_file(edits: Vec<Edit>) -> BTreeMap<String, Vec<Edit>> {
     by_file
 }
 
+fn mod_decl_re(name: &str) -> regex::Regex {
+    regex::Regex::new(&format!(
+        r"(?m)^[ \t]*((?:pub(?:\([^)]*\))?[ \t]+)?)mod[ \t]+{}[ \t]*;[ \t]*\r?\n?",
+        regex::escape(name)
+    )).unwrap()
+}
+
+/// Remove `mod <name>;` from a parent module file's content. Returns the
+/// content without the decl line plus the decl's visibility modifier (`""`,
+/// `"pub "`, `"pub(crate) "`, …) so the new parent re-declares it verbatim.
+/// `None` when the file declares no such mod.
+pub fn remove_mod_decl(content: &str, name: &str) -> Option<(String, String)> {
+    let re = mod_decl_re(name);
+    let c = re.captures(content)?;
+    let vis = c[1].to_string();
+    let m = c.get(0).unwrap();
+    let mut out = String::with_capacity(content.len());
+    out.push_str(&content[..m.start()]);
+    out.push_str(&content[m.end()..]);
+    Some((out, vis))
+}
+
+/// Append `mod <name>;` to a parent module file's content (no-op when already
+/// declared). End-of-file placement is always syntactically valid.
+pub fn add_mod_decl(content: &str, name: &str, vis: &str) -> String {
+    if mod_decl_re(name).is_match(content) { return content.to_string(); }
+    let mut out = content.to_string();
+    if !out.is_empty() && !out.ends_with('\n') { out.push('\n'); }
+    out.push_str(&format!("{vis}mod {name};\n"));
+    out
+}
+
+/// Names of the child modules a file declares (`mod x;`). A moved file's
+/// children resolve relative to the file's location and do NOT follow a
+/// rename — the caller warns loudly.
+pub fn child_mod_decls(content: &str) -> Vec<String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(
+        r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;").unwrap());
+    re.captures_iter(content).map(|c| c[1].to_string()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +128,30 @@ mod tests {
         let content = "abcdef";
         let edits = vec![ed(1, 4, "bcd", "X"), ed(2, 5, "cde", "Y")];
         assert!(splice_file(content, &edits).is_err());
+    }
+
+    #[test]
+    fn mod_decl_surgery() {
+        let lib = "mod utils;\npub(crate) mod config;\nfn main() {}\n";
+        let (without, vis) = remove_mod_decl(lib, "utils").unwrap();
+        assert_eq!(without, "pub(crate) mod config;\nfn main() {}\n");
+        assert_eq!(vis, "");
+        let (without2, vis2) = remove_mod_decl(lib, "config").unwrap();
+        assert_eq!(without2, "mod utils;\nfn main() {}\n");
+        assert_eq!(vis2, "pub(crate) ");
+        assert!(remove_mod_decl(lib, "nope").is_none());
+        // `mod utils_extra;` must not match `utils`
+        assert!(remove_mod_decl("mod utils_extra;\n", "utils").is_none());
+
+        assert_eq!(add_mod_decl("fn x() {}", "utils", "pub "), "fn x() {}\npub mod utils;\n");
+        // already declared -> no-op
+        assert_eq!(add_mod_decl(lib, "utils", ""), lib);
+    }
+
+    #[test]
+    fn child_mods_listed() {
+        let src = "pub mod a;\nmod b;\nfn f() { /* mod c; */ }\nmod d { }\n";
+        assert_eq!(child_mod_decls(src), vec!["a", "b"]);
     }
 
     #[test]

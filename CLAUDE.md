@@ -133,6 +133,18 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
 - [x] **`type_edge` rev-awareness**: `type_edge_rev(from, to, kind, rev)` is the history-aware
       source of truth; legacy `type_edge` is the rev-deduped union (mirrors module_edge split).
       Extractor keeps the rev it already iterated. WORK-vs-HEAD type-graph diff now possible.
+- [x] **--move residuals (#17)** (main, 2026-06-12): brace-inner leaves rewrite
+      in place via a leaf-level second pass (`modgraph::rust_use_leaves` +
+      `rspath::rewrite_brace_leaf`; leaf edits dedup against pass-1 spans, a
+      rewrite that leaves the brace head stays a loud skip); the moved file's
+      own `super::`/self-references re-anchor (`rewrite_moved_file_use`);
+      `--fix` now does the physical rename plus Rust `mod`-decl surgery
+      (`refactor::remove_mod_decl`/`add_mod_decl`, parent-chain creation,
+      private→`pub(crate)` promotion off the crate root) and rewrites a moved
+      .kt file's `package` decl. Child `mod x;` decls of a moved file are
+      loudly counted, they do not follow. mod.rs/lib.rs/main.rs moves skip
+      surgery loudly. Tests: 3 new e2e in move_refactor.rs + rspath/refactor
+      units.
 - [x] **Kotlin completion arc** (main, 2026-06-12): Kotlin `type_edge` via
       tree-sitter walk in typegraph.rs (interface keyword split: interface
       supertypes = `generic`, class/object = `impl`, val/var ctor params +

@@ -172,6 +172,62 @@ pub fn rewrite_use_path(
     None
 }
 
+/// Rewrite the leaf text of a brace import — `use <prefix>::{ <leaf>, .. }` —
+/// when the moved-module boundary sits INSIDE the leaf, where the shared head
+/// span can't reach (`use crate::{old::A, b}`). Returns the new leaf text;
+/// `None` when the leaf is unaffected, or when the rewritten path no longer
+/// sits under the unchanged brace head (then it stays a loud skip). An empty
+/// `prefix` (bare use) returns the whole rewritten path.
+pub fn rewrite_brace_leaf(
+    full: &str,
+    prefix: &str,
+    old_mod: &str,
+    new_mod: &str,
+    from_mod: &str,
+) -> Option<String> {
+    let new_full = rewrite_use_path(full, old_mod, new_mod, from_mod)?;
+    if prefix.is_empty() { return Some(new_full); }
+    new_full.strip_prefix(&format!("{prefix}::")).map(str::to_string)
+}
+
+/// Re-anchor a `use` path written inside the MOVED file itself: the file's own
+/// module path changes `old_mod -> new_mod`, so `super::` anchors shift and
+/// self-references to the old module follow the move. `self::` paths track the
+/// module wherever it goes (no edit). Returns `None` for external paths or
+/// when nothing changes.
+pub fn rewrite_moved_file_use(use_path: &str, old_mod: &str, new_mod: &str) -> Option<String> {
+    let abs = resolve_to_absolute(use_path, old_mod)?;
+    let abs2 = if abs == old_mod {
+        new_mod.to_string()
+    } else if let Some(rest) = abs.strip_prefix(&format!("{old_mod}::")) {
+        format!("{new_mod}::{rest}")
+    } else {
+        abs
+    };
+    let out = reconvert_prefix(&abs2, use_path, new_mod);
+    (out != use_path).then_some(out)
+}
+
+/// Module files that could declare `mod <stem>;` for a file at `path`, in
+/// preference order: the directory's sibling file (`a/b.rs` for `a/b/c.rs`),
+/// its `mod.rs`, and — when the directory is a crate root — `lib.rs`/`main.rs`.
+pub fn mod_parent_candidates(path: &str) -> Vec<String> {
+    let p = Path::new(path);
+    let Some(dir) = p.parent().and_then(|d| d.to_str()) else { return Vec::new() };
+    let mut out = Vec::new();
+    if !dir.is_empty() {
+        out.push(format!("{dir}.rs"));
+        out.push(format!("{dir}/mod.rs"));
+        out.push(format!("{dir}/lib.rs"));
+        out.push(format!("{dir}/main.rs"));
+    } else {
+        out.push("mod.rs".to_string());
+        out.push("lib.rs".to_string());
+        out.push("main.rs".to_string());
+    }
+    out
+}
+
 /// Rewrite a `use` specifier in `from_file` for a file move `old_target ->
 /// new_target` (all file paths). Composes `file_to_mod_path` on the three files
 /// with `rewrite_use_path`. Returns `None` if any file is not a `src/` Rust file
@@ -324,6 +380,57 @@ mod tests {
             rewrite_import("rust/kernel/device.rs", "rust/kernel/clk.rs",
                 "rust/kernel/hw/clk.rs", "crate::clk::Hertz"),
             None);
+    }
+
+    #[test]
+    fn brace_leaf_rewrites_inside_head() {
+        // use crate::{utils::Foo, b}: leaf "utils::Foo" under head "crate"
+        assert_eq!(
+            rewrite_brace_leaf("crate::utils::Foo", "crate",
+                "crate::utils", "crate::helpers::utils", "crate::app").as_deref(),
+            Some("helpers::utils::Foo"));
+        // the leaf IS the moved module
+        assert_eq!(
+            rewrite_brace_leaf("crate::utils", "crate",
+                "crate::utils", "crate::helpers::utils", "crate::app").as_deref(),
+            Some("helpers::utils"));
+        // unaffected leaf
+        assert_eq!(
+            rewrite_brace_leaf("crate::misc", "crate",
+                "crate::utils", "crate::helpers::utils", "crate::app"),
+            None);
+        // rewrite leaves the brace head -> unexpressible in place
+        assert_eq!(
+            rewrite_brace_leaf("crate::a::utils::Foo", "crate::a",
+                "crate::a::utils", "crate::b::utils", "crate::app"),
+            None);
+    }
+
+    #[test]
+    fn moved_file_use_reanchors() {
+        // src/utils.rs -> src/helpers/utils.rs; its `use super::config::C`
+        // anchored at the old parent must fall back to crate::
+        assert_eq!(
+            rewrite_moved_file_use("super::config::C", "crate::utils", "crate::helpers::utils").as_deref(),
+            Some("crate::config::C"));
+        // self:: tracks the module wherever it goes — no edit
+        assert_eq!(
+            rewrite_moved_file_use("self::sub::X", "crate::utils", "crate::helpers::utils"),
+            None);
+        // a self-reference through crate:: follows the move
+        assert_eq!(
+            rewrite_moved_file_use("crate::utils::helper", "crate::utils", "crate::helpers::utils").as_deref(),
+            Some("crate::helpers::utils::helper"));
+        // external paths are untouched
+        assert_eq!(rewrite_moved_file_use("std::io::Read", "crate::utils", "crate::helpers::utils"), None);
+    }
+
+    #[test]
+    fn mod_parent_candidate_order() {
+        assert_eq!(mod_parent_candidates("src/foo/bar.rs"),
+            vec!["src/foo.rs", "src/foo/mod.rs", "src/foo/lib.rs", "src/foo/main.rs"]);
+        assert_eq!(mod_parent_candidates("bar.rs"),
+            vec!["mod.rs", "lib.rs", "main.rs"]);
     }
 
     #[test]

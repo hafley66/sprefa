@@ -326,6 +326,19 @@ fn normalize_join(base: &str, rel: &str) -> String {
     segs.join("/")
 }
 
+/// One expanded `use` leaf with BOTH coordinates: the shared brace-head span
+/// (the located/ref-spine coordinate, `None` for a bare use) and the leaf's own
+/// contiguous span. `prefix` is the path accumulated above the leaf ("" for a
+/// bare use), `full` the synthesized module path. Spans are body-relative.
+pub struct UseLeaf {
+    pub full: String,
+    pub prefix: String,
+    pub leaf: (u32, u32),
+    pub head: Option<(u32, u32)>,
+    /// `self` / `*` leaf: its own span is the keyword, not a rewritable path.
+    pub collapsed: bool,
+}
+
 /// Expand a `use` body into the module-path candidates to resolve, recursing into
 /// brace groups: `a::{b::{c,d}, e as f}` -> [a::b::c, a::b::d, a::e]. `self`/`*`
 /// collapse to the enclosing module. `r#` raw-ident prefixes are stripped.
@@ -337,10 +350,20 @@ fn normalize_join(base: &str, rel: &str) -> String {
 /// every leaf points at the *outermost head prefix* (`a`) — the part that moves
 /// when module `a` moves, shared across siblings (dedups to one located row).
 /// A move whose old module is deeper than that head (e.g. `use crate::{old::A}`)
-/// simply won't prefix-match the head and is safely left alone.
+/// won't prefix-match the head; the move sink's leaf-level second pass
+/// (`use_leaves`) covers it.
 fn expand_use(body: &str) -> Vec<(String, u32, u32)> {
+    expand_use_leaves(body).into_iter().map(|l| {
+        let (lo, hi) = l.head.unwrap_or(l.leaf);
+        (l.full, lo, hi)
+    }).collect()
+}
+
+/// The full per-leaf expansion behind `expand_use` — same recursion, nothing
+/// projected away.
+pub fn expand_use_leaves(body: &str) -> Vec<UseLeaf> {
     fn rec(prefix: &str, raw: &str, raw_off: usize, head_span: Option<(u32, u32)>,
-           out: &mut Vec<(String, u32, u32)>) {
+           out: &mut Vec<UseLeaf>) {
         let lead = raw.len() - raw.trim_start().len();
         let seg = raw.trim();
         if seg.is_empty() { return; }
@@ -359,19 +382,38 @@ fn expand_use(body: &str) -> Vec<(String, u32, u32)> {
         } else {
             // The contiguous leaf is the path before any ` as ` alias.
             let leaf = seg.split(" as ").next().unwrap_or(seg).trim_end();
-            // Brace leaf -> the shared head span; bare leaf -> the whole path.
-            let (lo, hi) = head_span
-                .unwrap_or((seg_off as u32, (seg_off + leaf.len()) as u32));
-            let full = if leaf == "self" || leaf == "*" || leaf.is_empty() {
-                prefix.to_string()
-            } else {
-                join(prefix, leaf)
-            };
-            if !full.is_empty() { out.push((full.replace("r#", ""), lo, hi)); }
+            let collapsed = leaf == "self" || leaf == "*" || leaf.is_empty();
+            let full = if collapsed { prefix.to_string() } else { join(prefix, leaf) };
+            if !full.is_empty() {
+                out.push(UseLeaf {
+                    full: full.replace("r#", ""),
+                    prefix: prefix.replace("r#", ""),
+                    leaf: (seg_off as u32, (seg_off + leaf.len()) as u32),
+                    head: head_span,
+                    collapsed,
+                });
+            }
         }
     }
     let mut out = Vec::new();
     rec("", body, 0, None, &mut out);
+    out
+}
+
+/// Every `use` leaf in a file's content with file-absolute spans, comment/
+/// string-stripped before matching (offset-preserving, so spans splice into the
+/// raw content). The move sink's leaf-level pass.
+pub fn rust_use_leaves(content: &str) -> Vec<UseLeaf> {
+    let clean = strip_noise(content, true);
+    let mut out = Vec::new();
+    for c in rust_use_re().captures_iter(&clean) {
+        let body_start = c.get(1).unwrap().start() as u32;
+        for mut l in expand_use_leaves(&c[1]) {
+            l.leaf = (body_start + l.leaf.0, body_start + l.leaf.1);
+            l.head = l.head.map(|(lo, hi)| (body_start + lo, body_start + hi));
+            out.push(l);
+        }
+    }
     out
 }
 
