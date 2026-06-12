@@ -50,6 +50,30 @@ known(p) <- file(_, "WORK", p, _).
     assert!(out.contains("(2 rows)"), "expected both files: {out}");
 }
 
+/// The walk runs with hidden(false) (dotfiles are scannable), which un-hides
+/// `.git` too — it must be filter_entry'd out explicitly or big-repo scans
+/// crawl the object store.
+#[test]
+fn scan_never_enters_dot_git() {
+    let d = sandbox("dotgit");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::create_dir_all(d.join(".git/objects")).unwrap();
+    fs::create_dir_all(d.join(".hidden")).unwrap();
+    fs::write(d.join("src/x.txt"), "real\n").unwrap();
+    fs::write(d.join(".hidden/y.txt"), "dotdir, scannable\n").unwrap();
+    fs::write(d.join(".git/objects/z.txt"), "object store, never\n").unwrap();
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.txt", path, rev).
+? seen(p).
+"#;
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("src/x.txt"), "{out}");
+    assert!(out.contains(".hidden/y.txt"), "hidden dirs other than .git scan: {out}");
+    assert!(!out.contains(".git/objects/z.txt"), ".git must be skipped: {out}");
+}
+
 #[test]
 fn declaring_a_builtin_name_errors() {
     let d = sandbox("collision");

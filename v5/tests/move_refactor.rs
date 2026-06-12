@@ -106,6 +106,54 @@ fn move_repo_star_fans_out_and_slug_scopes() {
         "rb rewritten by --repo *");
 }
 
+/// Kotlin: `--move OLD.kt=NEW.kt` derives the package change from the moved
+/// file's own `package` decl + the directory delta under its source root, then
+/// rewrites import specifiers at their ref-spine spans. Wildcard imports and
+/// same-package bare uses are counted loudly, not rewritten.
+#[test]
+fn move_rewrites_kotlin_imports() {
+    let d = sandbox("kotlin");
+    fs::create_dir_all(d.join("src/com/lib")).unwrap();
+    fs::create_dir_all(d.join("src/com/app")).unwrap();
+    fs::write(d.join("src/com/lib/Util.kt"),
+        "package com.lib\n\nclass Util\nfun helper() = 1\n").unwrap();
+    fs::write(d.join("src/com/lib/Peer.kt"),
+        "package com.lib\n\nclass Peer {\n    val u = Util()\n}\n").unwrap();
+    fs::write(d.join("src/com/app/Main.kt"), concat!(
+        "package com.app\n\n",
+        "import com.lib.Util\n",
+        "import com.lib.helper\n",
+        "import com.lib.*\n",
+        "fun main() { Util(); helper() }\n")).unwrap();
+
+    // Dry run previews the rewrites and counts the wildcard + same-package uses.
+    let (code, out, err) = run_move(&d, "src/com/lib/Util.kt=src/com/core/Util.kt", false);
+    assert_eq!(code, 0, "dry run failed: {out}\n{err}");
+    assert!(out.contains("com.lib.Util -> com.core.Util"), "previews class import: {out}");
+    assert!(out.contains("com.lib.helper -> com.core.helper"), "previews fn import: {out}");
+    assert!(err.contains("wildcard import(s) of com.lib"), "wildcard counted: {err}");
+    assert!(err.contains("same-package bare use(s)"), "Peer.kt's bare Util counted: {err}");
+
+    // Apply: import lines rewritten on disk; wildcard left alone.
+    let (code, _out, _err) = run_move(&d, "src/com/lib/Util.kt=src/com/core/Util.kt", true);
+    assert_eq!(code, 0);
+    let after = fs::read_to_string(d.join("src/com/app/Main.kt")).unwrap();
+    assert!(after.contains("import com.core.Util\n"), "{after}");
+    assert!(after.contains("import com.core.helper\n"), "{after}");
+    assert!(after.contains("import com.lib.*\n"), "wildcard untouched: {after}");
+}
+
+/// A Kotlin file whose directory disagrees with its package declaration is a
+/// loud skip — the new package cannot be inferred from the path delta.
+#[test]
+fn move_kotlin_layout_mismatch_is_loud() {
+    let d = sandbox("ktmismatch");
+    fs::write(d.join("src/Util.kt"), "package com.lib\nclass Util\n").unwrap();
+    let (code, _out, err) = run_move(&d, "src/Util.kt=src/core/Util.kt", false);
+    assert_eq!(code, 0);
+    assert!(err.contains("does not match its package"), "{err}");
+}
+
 /// An unknown `--repo` slug is a loud error, not a silent no-op.
 #[test]
 fn move_unknown_repo_slug_errors() {

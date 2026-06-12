@@ -705,21 +705,25 @@ impl ModuleResolver for TsResolver {
 // the index maps package -> files and (package, top-level decl name) -> file by
 // reading every .kt's header and column-0 declarations. `import a.b.C` then
 // resolves by longest package prefix; `import a.b.*` edges to every file of the
-// package. Residual (documented, not silently wrong): same-package references
-// without an import produce no edge, and expect/actual twins collide on the
-// decl key (first sorted file wins). Compiler-exact graphs come from scip-kotlin
-// via the SCIP importer instead.
+// package. expect/actual twins share a decl key, so a decl maps to ALL its
+// declaring files and an import fans an edge to each (wildcard-style).
+// Same-package references need no import: a word-boundary hit of another
+// file's column-0 decl name emits a kind="same-package" edge — by design any
+// such match counts, so a name in a comment is a (loud, inspectable) false
+// positive. Compiler-exact graphs come from scip-kotlin via the SCIP importer
+// instead.
 
 pub struct KotlinResolver;
 
 struct KotlinIndex {
     /// package name -> .kt files declaring it (sorted, deterministic).
     packages: HashMap<String, Vec<String>>,
-    /// (package, top-level decl name) -> defining file (first sorted file wins).
-    decls: HashMap<(String, String), String>,
+    /// (package, top-level decl name) -> ALL defining files (sorted; more than
+    /// one means expect/actual twins or a redeclaration).
+    decls: HashMap<(String, String), Vec<String>>,
 }
 
-fn kotlin_package_re() -> &'static Regex {
+pub(crate) fn kotlin_package_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?m)^[ \t]*package[ \t]+([\w.`]+)").unwrap())
 }
@@ -733,7 +737,7 @@ fn kotlin_import_re() -> &'static Regex {
 /// that starts at column 0 with modifiers + a declaring keyword is top-level.
 /// `fun interface Name` comes before bare `fun` in the alternation; an optional
 /// generic param list and extension receiver sit between `fun` and the name.
-fn kotlin_decl_re() -> &'static Regex {
+pub(crate) fn kotlin_decl_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| Regex::new(
         r"(?m)^(?:(?:public|internal|private|protected|open|abstract|final|sealed|data|inline|value|annotation|enum|expect|actual|external|suspend|operator|infix|tailrec|const)[ \t]+)*(?:fun[ \t]+interface|class|interface|object|fun|val|var|typealias)[ \t]+(?:<[^>\n]*>[ \t]*)?(?:[\w.<>?]+\.)?(`[^`\n]+`|\w+)").unwrap())
@@ -742,7 +746,7 @@ fn kotlin_decl_re() -> &'static Regex {
 /// Blank `"""…"""` bodies (newlines kept) so a raw string containing `import`
 /// lines never reaches the import scan; then the shared rust-mode strip handles
 /// `//`, nested `/* */`, ordinary strings, and chars — all valid for Kotlin.
-fn strip_kotlin(src: &str) -> String {
+pub(crate) fn strip_kotlin(src: &str) -> String {
     let b = src.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -775,31 +779,51 @@ impl KotlinIndex {
             packages.entry(pkg.clone()).or_default().push(f.clone());
             for c in kotlin_decl_re().captures_iter(&clean) {
                 let name = c[1].trim_matches('`').to_string();
-                decls.entry((pkg.clone(), name)).or_insert_with(|| f.clone());
+                let files = decls.entry((pkg.clone(), name)).or_insert_with(Vec::new);
+                if !files.contains(f) { files.push(f.clone()); }
             }
         }
         KotlinIndex { packages, decls }
     }
 
     /// Longest-package-prefix resolution: first prefix split whose (package,
-    /// next segment) is a known decl wins (handles `a.b.Outer.Inner`); else a
+    /// next segment) is a known decl wins (handles `a.b.Outer.Inner`) and
+    /// yields one File per declaring file (expect/actual twins fan out); else a
     /// known package with no such decl is Unresolved; else External (a jar).
-    fn resolve(&self, spec: &str) -> Resolution {
+    fn resolve(&self, spec: &str) -> Vec<Resolution> {
         let segs: Vec<&str> = spec.split('.').collect();
         for len in (1..segs.len()).rev() {
             let pkg = segs[..len].join(".");
-            if let Some(f) = self.decls.get(&(pkg, segs[len].to_string())) {
-                return Resolution::File(f.clone());
+            if let Some(fs) = self.decls.get(&(pkg, segs[len].to_string())) {
+                return fs.iter().map(|f| Resolution::File(f.clone())).collect();
             }
         }
         for len in (1..segs.len()).rev() {
             if self.packages.contains_key(&segs[..len].join(".")) {
-                return Resolution::Unresolved(
-                    format!("{spec}: no column-0 decl `{}` in package {}", segs[len], segs[..len].join(".")));
+                return vec![Resolution::Unresolved(
+                    format!("{spec}: no column-0 decl `{}` in package {}", segs[len], segs[..len].join(".")))];
             }
         }
-        Resolution::External(spec.to_string())
+        vec![Resolution::External(spec.to_string())]
     }
+}
+
+/// First word-boundary occurrence of `name` in `text` (identifier chars on
+/// neither side), or None. The same-package scan's matcher — substring find +
+/// boundary check, no per-name regex compile.
+fn word_boundary_find(text: &str, name: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0;
+    while let Some(off) = text[from..].find(name) {
+        let start = from + off;
+        let end = start + name.len();
+        let left_ok = start == 0 || !is_ident(bytes[start - 1]);
+        let right_ok = end >= bytes.len() || !is_ident(bytes[end]);
+        if left_ok && right_ok { return Some(start); }
+        from = start + 1;
+    }
+    None
 }
 
 impl ModuleResolver for KotlinResolver {
@@ -826,8 +850,29 @@ impl ModuleResolver for KotlinResolver {
                 }
                 continue;
             }
-            out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span,
-                target: idx.resolve(&spec) });
+            for target in idx.resolve(&spec) {
+                out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span, target });
+            }
+        }
+
+        // Same-package implicit refs: another file's column-0 decl name used
+        // with no import. A name this file also declares is skipped (local
+        // wins, expect/actual twins would self-match every keyword hit).
+        let pkg = kotlin_package_re().captures(&clean)
+            .map(|c| c[1].replace('`', "")).unwrap_or_default();
+        let mut hits: Vec<(&str, usize, &Vec<String>)> = idx.decls.iter()
+            .filter(|((p, _), fs)| *p == pkg && !fs.iter().any(|f| f == file))
+            .filter_map(|((_, name), fs)| {
+                word_boundary_find(&clean, name).map(|pos| (name.as_str(), pos, fs))
+            })
+            .collect();
+        hits.sort();
+        for (name, pos, fs) in hits {
+            let line = line_of(&clean, pos);
+            for f in fs.iter().filter(|f| f.as_str() != file) {
+                out.push(ModuleRef { specifier: name.to_string(), kind: "same-package", line,
+                    span: None, target: Resolution::File(f.clone()) });
+            }
         }
         out
     }
@@ -1020,6 +1065,63 @@ mod tests {
         // span is the dotted path text (the rewrite coordinate)
         let (lo, hi) = e[0].span.unwrap();
         assert_eq!(&contents[1].1[lo as usize..hi as usize], "com.foo.Outer.Inner");
+    }
+
+    #[test]
+    fn kotlin_expect_actual_fans_to_all_declaring_files() {
+        // expect/actual twins: one decl key, two declaring files; an import
+        // edges to BOTH (wildcard-style), not first-sorted-wins.
+        let contents = [
+            ("common/Clock.kt", "package com.lib\nexpect class Clock\n"),
+            ("jvm/Clock.kt", "package com.lib\nactual class Clock\n"),
+            ("app/Main.kt", "package com.app\n\nimport com.lib.Clock\n"),
+        ];
+        let files = set(&["common/Clock.kt", "jvm/Clock.kt", "app/Main.kt"]);
+        let m = no_manifests();
+        let r = kt_reader(&contents);
+        let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
+        let e = KotlinResolver.edges("app/Main.kt", contents[2].1, &c);
+        let targets: Vec<_> = e.iter().map(|r| &r.target).collect();
+        assert_eq!(e.len(), 2, "{e:?}");
+        assert!(targets.contains(&&Resolution::File("common/Clock.kt".into())), "{e:?}");
+        assert!(targets.contains(&&Resolution::File("jvm/Clock.kt".into())), "{e:?}");
+    }
+
+    #[test]
+    fn kotlin_same_package_implicit_edges() {
+        let contents = [
+            ("lib/Util.kt", "package com.app\nclass Util\nfun helper() = 1\n"),
+            ("lib/Other.kt", "package com.other\nclass Stray\n"),
+            ("app/Main.kt", "package com.app\n\nfun main() {\n    val u = Util()\n    val s = Strayed()\n}\n"),
+        ];
+        let files = set(&["lib/Util.kt", "lib/Other.kt", "app/Main.kt"]);
+        let m = no_manifests();
+        let r = kt_reader(&contents);
+        let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
+        let e = KotlinResolver.edges("app/Main.kt", contents[2].1, &c);
+        // Util used bare -> same-package edge; helper unused -> none; Stray is
+        // another package (and `Strayed` is not a word-boundary hit anyway).
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert_eq!(e[0].kind, "same-package");
+        assert_eq!(e[0].specifier, "Util");
+        assert_eq!(e[0].target, Resolution::File("lib/Util.kt".into()));
+        assert_eq!(e[0].line, 4, "1-based line of the first use: {e:?}");
+    }
+
+    #[test]
+    fn kotlin_same_package_skips_locally_declared_names() {
+        // Main.kt declares Util itself (expect/actual style twin): a bare
+        // `Util` use resolves locally, no same-package edge.
+        let contents = [
+            ("lib/Util.kt", "package com.app\nactual class Util\n"),
+            ("app/Main.kt", "package com.app\nexpect class Util\nval u = Util()\n"),
+        ];
+        let files = set(&["lib/Util.kt", "app/Main.kt"]);
+        let m = no_manifests();
+        let r = kt_reader(&contents);
+        let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
+        let e = KotlinResolver.edges("app/Main.kt", contents[1].1, &c);
+        assert!(e.is_empty(), "{e:?}");
     }
 
     #[test]

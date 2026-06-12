@@ -133,6 +133,23 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
 - [x] **`type_edge` rev-awareness**: `type_edge_rev(from, to, kind, rev)` is the history-aware
       source of truth; legacy `type_edge` is the rev-deduped union (mirrors module_edge split).
       Extractor keeps the rev it already iterated. WORK-vs-HEAD type-graph diff now possible.
+- [x] **Kotlin completion arc** (main, 2026-06-12): Kotlin `type_edge` via
+      tree-sitter walk in typegraph.rs (interface keyword split: interface
+      supertypes = `generic`, class/object = `impl`, val/var ctor params +
+      body properties = `field`, enum entries = `variant`; declared type
+      params excluded); expect/actual decl keys map to ALL declaring files
+      and imports fan out; same-package implicit edges (`kind="same-package"`,
+      word-boundary scan of other files' column-0 decl names); `--move` for
+      .kt (ktpath.rs: package math from the moved file's package decl +
+      source-root delta; wildcard imports and same-package uses counted
+      loudly); scip-java differential oracle (tests/oracle_kotlin.rs +
+      tests/fixtures/kt_ws, runtime-skips without JDK/scip-java); git-rev
+      content reads batched through one `git cat-file --batch` process per
+      repo root (was one `git show` spawn per file); `insert_rows` chunks by
+      param budget (32000/ncol rows per statement, was 256) and wraps
+      multi-chunk batches in one transaction. Tests: typegraph/modgraph/
+      ktpath/db units + kotlin.rs, move_refactor.rs, builtin_file_rel.rs
+      (.git-skip) e2e.
 - [x] merge `codex/v5-refresh-type-edge` → main; push. Fast-forward (30 commits,
       `f8c8e87..3a8afb4`), full suite green on main, pushed to origin. The arc
       includes type_edge B/E/A, module-graph polish, SCIP importer, and ref-spine

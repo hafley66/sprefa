@@ -5,6 +5,7 @@ pub mod datapath;
 pub mod db;
 pub mod desc;
 pub mod engine;
+pub mod ktpath;
 pub mod lex;
 pub mod lower;
 pub mod lsp;
@@ -312,11 +313,27 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // `module_import` drives the resolver, so `_where_bytes` holds only use refs.
     let prog_src = "rel _src(p: file).\n\
         _src(p) <- scan(\"WORK\", \"**/*.rs\", p, rev).\n\
+        _src(p) <- scan(\"WORK\", \"**/*.kt\", p, rev).\n\
         rel _mi(f: text, rev: text, spec: text, kind: text, ln: int).\n\
         _mi(f, rev, spec, kind, ln) <- module_import(f, rev, spec, kind, ln).\n";
     let prog = parse::parse(lex::lex(prog_src)?)?;
     let mut eng = engine::Engine::new(conn, root.clone());
     eng.tick(&prog, true)?;
+
+    // Moves split by language: Rust rewrites are module-path math against
+    // discovered crate roots; Kotlin rewrites are package math against the
+    // moved file's own `package` declaration.
+    let (kt_specs, rs_moves): (Vec<_>, Vec<_>) = moves.iter()
+        .partition(|(old, _)| old.ends_with(".kt") || old.ends_with(".kts"));
+    let mut kt_moves: Vec<ktpath::KotlinMove> = Vec::new();
+    for (old, new) in &kt_specs {
+        let content = std::fs::read_to_string(root.join(old))
+            .map_err(|e| anyhow::anyhow!("--move {old}: cannot read the file to move: {e}"))?;
+        match ktpath::plan_move(old, new, &content) {
+            Ok(mv) => kt_moves.push(mv),
+            Err(e) => eprintln!("[move] {e} — its references will not be rewritten"),
+        }
+    }
 
     // Crate source roots discovered from the scanned file set (dirs holding
     // lib.rs/main.rs), so non-`src/` layouts (the kernel's rust/kernel/*.rs)
@@ -326,7 +343,7 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // Loud, not silent: a move whose endpoints resolve to no crate root at all
     // (outside `src/` AND outside any discovered root) can't be turned into a
     // module path. Say why instead of reporting a clean no-op.
-    for (old, new) in moves {
+    for (old, new) in &rs_moves {
         if rspath::file_to_mod_path_rooted(old, &roots).is_none()
             || rspath::file_to_mod_path_rooted(new, &roots).is_none()
         {
@@ -338,12 +355,12 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // Each located use span -> the first move that rewrites it.
     let mut edits: Vec<refactor::Edit> = Vec::new();
     for (path, lo, hi, text) in eng.located_spans()? {
-        for (old, new) in moves {
-            if let Some(new_text) = rspath::rewrite_import_rooted(&path, old, new, &text, &roots) {
-                if new_text != text {
-                    edits.push(refactor::Edit { path, lo, hi, old_text: text, new_text });
-                    break;
-                }
+        let rewritten = rs_moves.iter()
+            .find_map(|(old, new)| rspath::rewrite_import_rooted(&path, old, new, &text, &roots))
+            .or_else(|| kt_moves.iter().find_map(|mv| mv.rewrite_import(&text)));
+        if let Some(new_text) = rewritten {
+            if new_text != text {
+                edits.push(refactor::Edit { path, lo, hi, old_text: text, new_text });
             }
         }
     }
@@ -355,14 +372,33 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // produced NO edit is a genuine miss — e.g. `use crate::{old::A, ..}` whose
     // head prefix isn't the moved module, so the head span doesn't match.
     let edited: std::collections::HashSet<&String> = by_file.keys().collect();
-    let skipped = eng.module_imports()?.into_iter().filter(|(file, spec)| {
-        !edited.contains(file) && moves.iter().any(|(old, new)| {
-            rspath::rewrite_import_rooted(file, old, new, spec, &roots).is_some_and(|n| &n != spec)
-        })
+    let imports = eng.module_imports()?;
+    let skipped = imports.iter().filter(|(file, spec)| {
+        !edited.contains(file) && (
+            rs_moves.iter().any(|(old, new)| {
+                rspath::rewrite_import_rooted(file, old, new, spec, &roots).is_some_and(|n| &n != spec)
+            }) || kt_moves.iter().any(|mv| mv.rewrite_import(spec).is_some_and(|n| &n != spec))
+        )
     }).count();
     if skipped > 0 {
         eprintln!("[move] {skipped} move-relevant import(s) left alone \
             (head prefix not the moved module, e.g. `use crate::{{old::A, ..}}`)");
+    }
+    // Kotlin-specific honesty: a wildcard import of the old package may or may
+    // not still cover the moved decls, and a same-package bare use breaks when
+    // the file leaves the package — neither is an import-text rewrite.
+    for mv in &kt_moves {
+        let wild = imports.iter().filter(|(_, spec)| *spec == mv.old_wildcard()).count();
+        if wild > 0 {
+            eprintln!("[move] {wild} wildcard import(s) of {} left alone \
+                (moved decls may need explicit imports of {})", mv.old_pkg, mv.new_pkg);
+        }
+        let bare = eng.same_package_uses()?.into_iter()
+            .filter(|(_, spec)| mv.decls.iter().any(|d| d == spec)).count();
+        if bare > 0 {
+            eprintln!("[move] {bare} same-package bare use(s) of moved decl(s) left alone \
+                (the file leaves {}; add imports of {} manually)", mv.old_pkg, mv.new_pkg);
+        }
     }
 
     if by_file.is_empty() {

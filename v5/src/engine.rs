@@ -846,6 +846,17 @@ impl Engine {
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
+    /// (file, decl-name) for every Kotlin same-package implicit ref. These have
+    /// no import text to rewrite, so `--move` can only count them loudly.
+    pub fn same_package_uses(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.db.conn();
+        let mut s = conn.prepare(&format!(
+            "SELECT \"file\", \"specifier\" FROM {} WHERE \"kind\" = 'same-package'",
+            tbl("module_import")))?;
+        let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        Ok(rows.filter_map(|x| x.ok()).collect())
+    }
+
     /// Read the `diag` relation, if declared, as normalized DiagRows. Maps each
     /// row by column NAME (recognized: path, line, col, end_line, end_col,
     /// severity, msg); missing optional columns take defaults. Returns empty if
@@ -2075,13 +2086,15 @@ impl Engine {
         Ok(())
     }
 
-    /// Rebuild the Rust type graph from the `_file` set. This is the same L3
-    /// shape as module graph: read tracked Rust files, run a deterministic
-    /// syntax extractor, flush one built-in relation through `refresh_rel`.
+    /// Rebuild the type graph from the `_file` set. This is the same L3
+    /// shape as module graph: read tracked Rust/Kotlin files, run a
+    /// deterministic syntax extractor, flush one built-in relation through
+    /// `refresh_rel`.
     fn refresh_type_rels(&self) -> Result<()> {
         let mut files: Vec<(String, String)> = Vec::new();
         {
-            let mut sel = self.db.conn().prepare("SELECT path, rev FROM _file WHERE path LIKE '%.rs'")?;
+            let mut sel = self.db.conn().prepare(
+                "SELECT path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts'")?;
             let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
             for row in rows.flatten() { files.push(row); }
         }
@@ -2093,7 +2106,12 @@ impl Engine {
         let rows: Vec<Vec<Value>> = files.par_iter().flat_map(|(path, rev)| {
             let t = |s: &str| Value::Text(s.to_string());
             let content = read_content(&root, rev, path).unwrap_or_default();
-            typegraph::edges(&content)
+            let edges = if path.ends_with(".rs") {
+                typegraph::edges(&content)
+            } else {
+                typegraph::kotlin_edges(&content)
+            };
+            edges
                 .into_iter()
                 .map(|edge| vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev)])
                 .collect::<Vec<_>>()
@@ -2804,13 +2822,69 @@ fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
     if rev == "WORK" {
         Ok(std::fs::read_to_string(root.join(path))?)
     } else {
-        let output = Command::new("git")
-            .arg("-C").arg(root)
-            .args(["show", &format!("{rev}:{path}")])
-            .output()?;
-        if !output.status.success() { bail!("git show failed for {rev}:{path}"); }
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        git_batch_read(root, rev, path)
     }
+}
+
+/// One long-lived `git cat-file --batch` process per repo root, shared across
+/// the whole run. Spawning `git show` per file made committed-rev scans
+/// pathological (one fork+exec per blob); the batch protocol answers
+/// `rev:path` requests over a single pipe. Requests are serialized per root —
+/// the pipe is one stream — but parallel readers across repos don't contend.
+struct GitBatch {
+    // Held only so the process handle isn't dropped while the pipes live.
+    _child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+}
+
+impl GitBatch {
+    fn open(root: &Path) -> Result<GitBatch> {
+        let mut child = Command::new("git")
+            .arg("-C").arg(root)
+            .args(["cat-file", "--batch"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+        let stdin = child.stdin.take().expect("piped stdin");
+        let stdout = std::io::BufReader::new(child.stdout.take().expect("piped stdout"));
+        Ok(GitBatch { _child: child, stdin, stdout })
+    }
+
+    fn read(&mut self, rev: &str, path: &str) -> Result<String> {
+        use std::io::{BufRead, Read, Write};
+        writeln!(self.stdin, "{rev}:{path}")?;
+        self.stdin.flush()?;
+        // header: `<oid> <type> <size>` or `<object> missing` / `... ambiguous`
+        let mut header = String::new();
+        self.stdout.read_line(&mut header)?;
+        let header = header.trim_end();
+        let size: usize = match header.rsplit(' ').next().and_then(|s| s.parse().ok()) {
+            Some(n) => n,
+            None => bail!("git cat-file failed for {rev}:{path} ({header})"),
+        };
+        let mut buf = vec![0u8; size + 1]; // content + trailing LF
+        self.stdout.read_exact(&mut buf)?;
+        buf.pop();
+        Ok(String::from_utf8_lossy(&buf).to_string())
+    }
+}
+
+fn git_batch_read(root: &Path, rev: &str, path: &str) -> Result<String> {
+    static BATCHES: OnceLock<std::sync::Mutex<HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<GitBatch>>>>> = OnceLock::new();
+    let map = BATCHES.get_or_init(Default::default);
+    let batch = {
+        let mut m = map.lock().unwrap();
+        match m.entry(root.to_path_buf()) {
+            std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(std::sync::Arc::new(std::sync::Mutex::new(GitBatch::open(root)?))).clone()
+            }
+        }
+    };
+    let mut b = batch.lock().unwrap();
+    b.read(rev, path)
 }
 
 fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index: &HashSet<(String, String, String)>) -> bool {

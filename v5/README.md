@@ -174,13 +174,13 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `content` | `(id, hash)` | content addresses |
 | `file` | `(repo, rev, path, content)` | scanned files |
 | `changed` | `(path)` | `git status --porcelain -uall` vs HEAD: modified, added, renamed, untracked. Empty outside git. The rails join |
-| `module_import` | `(file, rev, specifier, kind, line)` | import statements, Rust + TS + Kotlin |
+| `module_import` | `(file, rev, specifier, kind, line)` | import statements, Rust + TS + Kotlin. Kotlin adds `kind="same-package"` rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files |
 | `module_edge` | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
 | `module_edge_rev` | `(src, dst, rev)` | rev-aware form |
 | `module_unresolved` | `(file, specifier, reason, line)` | broken imports (the linter question) |
 | `module_unresolved_rev` | `(file, rev, specifier, reason, line)` | rev-aware form |
 | `crate_edge` | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
-| `type_edge` | `(from, to, kind)` | syn-based Rust type graph; `kind` ∈ `field`\|`variant`\|`impl`\|`generic` |
+| `type_edge` | `(from, to, kind)` | type graph, Rust (syn) + Kotlin (tree-sitter); `kind` ∈ `field`\|`variant`\|`impl`\|`generic`. Kotlin: an interface's supertypes are `generic` (mirrors Rust supertraits), a class/object's are `impl`, val/var constructor params + body properties are `field`, enum entries are `variant` |
 | `type_edge_rev` | `(from, to, kind, rev)` | rev-aware form (WORK-vs-HEAD type diff) |
 | `scip_def` | `(symbol, file)` | from an existing `index.scip` at root or `$SPREFA_SCIP_INDEX` |
 | `scip_ref` | `(file, symbol, def_file)` | compiler-backed references |
@@ -205,7 +205,7 @@ Declarations live at [src/engine.rs:25](src/engine.rs) (`BUILTIN_RELS` through
 | `--lsp` | LSP server over stdio; `diag` rows become live squiggles |
 | `--watch` | re-tick on file changes |
 | `--changed <path>` | one incremental tick for changed paths (repeatable) |
-| `--move OLD=NEW [--repo slug\|*] [--fix]` | rewrite `use`-path references for a module move; dry-run unless `--fix` |
+| `--move OLD=NEW [--repo slug\|*] [--fix]` | rewrite references for a file move; dry-run unless `--fix`. `.rs`: `use`-path rewriting against discovered crate roots. `.kt`: import rewriting from the package delta under the file's source root (wildcard imports and same-package bare uses are counted loudly, not rewritten) |
 | `--profile` (or `DL_PROFILE=1`) | log slow SQL statements (threshold `DL_PROFILE_SQL_MS`, default 25ms), per-repo×rev scan times, tick phase breakdown, per-tick statement counts, slow `cmd` invocations (≥250ms) |
 | `--cmd-budget N` (or `DL_CMD_BUDGET`) | cap `cmd` invocations per tick; over budget errors loudly (never silent truncation). Default unlimited |
 
@@ -320,14 +320,14 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [src/scc.rs](src/scc.rs) | closure / SCC condensation |
 | [src/spine.rs](src/spine.rs) / [src/datapath.rs](src/datapath.rs) | ref-spine IDs, located spans |
 | [src/lsp.rs](src/lsp.rs) | the LSP server |
-| [src/rspath.rs](src/rspath.rs) / [src/refactor.rs](src/refactor.rs) | `--move` use-path rewriting |
+| [src/rspath.rs](src/rspath.rs) / [src/ktpath.rs](src/ktpath.rs) / [src/refactor.rs](src/refactor.rs) | `--move` rewriting (Rust use-paths / Kotlin imports) |
 | [src/scip_import.rs](src/scip_import.rs) | SCIP index ingestion |
 | [docs/data-model.md](docs/data-model.md) | the (repo, path, rev) coordinate contract |
 | [docs/lsp.md](docs/lsp.md) | diag convention + editor setup |
 | [docs/rails.md](docs/rails.md) | hook setup + exit-code contract |
 | [docs/](docs/) | research: portable relation-store seam, SQLite×graph landscape, ext-library extracts (Cozo/DBSP/petgraph/datafrog/lsp-server) |
 | [book/](book/) | the datalog-engine book: facts→rules→fixpoint→incremental→storage |
-| [tests/](tests/) | e2e + the rust-analyzer SCIP differential oracle (`oracle_rust.rs`) |
+| [tests/](tests/) | e2e + the SCIP differential oracles (`oracle_rust.rs` vs rust-analyzer, `oracle_kotlin.rs` vs scip-java; both skip when the tool is absent) |
 | `plans/`, `../CLAUDE.md` | task ledger and design plans |
 
 `v5/` is the active engine. `v3/`/`v4/` are prior iterations kept for

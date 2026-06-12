@@ -74,12 +74,13 @@ pub struct Db {
 
 /// One statement running more than this many times in a tick is almost certainly
 /// a per-row loop that escaped the plural API. Chunked batches stay well under it
-/// (a 5k-row insert is ~20 chunks).
+/// (a 3-col relation flushes ~10k rows per statement, so even 100k rows is ~10).
 const N1_THRESHOLD: u32 = 64;
 
-/// Rows per multi-row `VALUES` statement. 256 * (cols ≤ ~8) stays under SQLite's
-/// bound-parameter limit with margin.
-const CHUNK: usize = 256;
+/// Bound-parameter budget per multi-row `VALUES` statement. SQLite's default
+/// SQLITE_MAX_VARIABLE_NUMBER is 32766; rows-per-chunk = PARAM_BUDGET / ncol,
+/// so a 3-col relation flushes ~10k rows per statement.
+const PARAM_BUDGET: usize = 32000;
 
 pub fn open(path: Option<&str>) -> Result<Db> {
     let mut conn = match path {
@@ -178,8 +179,11 @@ impl Db {
         let collist = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
         let key = format!("INSERT {table}");
         self.bump(&key);
+        let chunk_rows = (PARAM_BUDGET / ncol.max(1)).max(1);
+        let multi = rows.len() > chunk_rows;
+        if multi { self.conn.execute_batch("BEGIN")?; }
         let mut total = 0;
-        for chunk in rows.chunks(CHUNK) {
+        for chunk in rows.chunks(chunk_rows) {
             let tuple = format!("({})", vec!["?"; ncol].join(","));
             let values = vec![tuple; chunk.len()].join(", ");
             let sql = format!("INSERT OR IGNORE INTO {table} ({collist}) VALUES {values}");
@@ -187,8 +191,53 @@ impl Db {
                 Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
                 Value::Int(n) => rusqlite::types::Value::Integer(*n),
             }).collect();
-            total += self.conn.execute(&sql, rusqlite::params_from_iter(params))?;
+            let res = self.conn.execute(&sql, rusqlite::params_from_iter(params));
+            match res {
+                Ok(n) => total += n,
+                Err(e) => {
+                    if multi { let _ = self.conn.execute_batch("ROLLBACK"); }
+                    return Err(e.into());
+                }
+            }
         }
+        if multi { self.conn.execute_batch("COMMIT")?; }
         Ok(total)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_rows_chunks_by_param_budget() {
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+        // 2 cols -> 16000 rows per statement; 33k rows = 3 chunks under one
+        // transaction, still ONE counted logical op (no n+1 scream).
+        let rows: Vec<Vec<Value>> = (0..33_000)
+            .map(|i| vec![Value::Int(i), Value::Text(format!("r{i}"))])
+            .collect();
+        db.tick_begin();
+        let n = db.insert_rows("t", &["a", "b"], &rows).unwrap();
+        assert_eq!(n, 33_000);
+        assert!(db.tick_end().is_none(), "chunked insert must not trip the n+1 counter");
+        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 33_000);
+    }
+
+    #[test]
+    fn insert_rows_or_ignore_holds_across_chunks() {
+        // OR IGNORE semantics survive the chunk/transaction plumbing: a
+        // constraint-violating row anywhere in a multi-chunk batch is skipped,
+        // never an error, never a partial abort.
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        let mut rows: Vec<Vec<Value>> = (0..40_000).map(|i| vec![Value::Int(i)]).collect();
+        rows.push(vec![Value::Int(7)]); // duplicate key, lands in the last chunk
+        let n = db.insert_rows("t", &["a"], &rows).unwrap();
+        assert_eq!(n, 40_000, "duplicate ignored, everything else lands");
+        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 40_000);
     }
 }

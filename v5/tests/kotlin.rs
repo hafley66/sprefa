@@ -87,6 +87,34 @@ seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line
 }
 
 #[test]
+fn type_edge_covers_kotlin_files() {
+    let d = sandbox("typeedge");
+    fs::write(d.join("src/Model.kt"), "\
+package com.app
+
+interface Pricing
+abstract class Repo(val store: Store) : Base(), Pricing
+class Store
+open class Base
+enum class Color { RED }
+").unwrap();
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line).
+? type_edge(from, to, kind).
+"#;
+    let recs = run_json(&d, prog);
+    let rows = recs[0]["rows"].as_array().expect("rows");
+    let edges: Vec<(&str, &str, &str)> = rows.iter()
+        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap(), r[2].as_str().unwrap()))
+        .collect();
+    assert!(edges.contains(&("Repo", "Store", "field")), "{edges:?}");
+    assert!(edges.contains(&("Repo", "Base", "impl")), "{edges:?}");
+    assert!(edges.contains(&("Repo", "Pricing", "impl")), "{edges:?}");
+    assert!(edges.contains(&("Color", "Color::RED", "variant")), "{edges:?}");
+}
+
+#[test]
 fn sg_op_matches_kotlin_patterns() {
     let d = sandbox("sg");
     fs::write(d.join("src/a.kt"), KT).unwrap();
