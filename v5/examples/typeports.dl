@@ -1,0 +1,28 @@
+# Node-editor rendering of the type graph: each hub struct is a d2 sql_table
+# node, one port row per outgoing edge (the row's "type" column shows the edge
+# kind), and each wire leaves its exact port row. Everything is flat dotted
+# d2, one line per fact row, so three gen splices cover nodes/ports/wires.
+#
+#   dl v5/examples/typeports.dl
+#   d2 v5/examples/typeports.d2 /tmp/typeviz/typeports.svg
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+rel edge0(f: text, t: text, k: text).
+edge0(f, t, k) <- type_edge(f, t, k), k != "variant",
+  f =~ "^[A-Za-z]+$", t =~ "^[A-Za-z]+$".
+
+rel fan_out(f: text, n: int).
+fan_out(f, count(t)) <- edge0(f, t, _).
+
+rel hub(f: text).
+hub(f) <- fan_out(f, n), n >= 4.
+
+rel block(p: file, l0: int, l1: int, name: text).
+block(p, l0, l1, name) <- scan("WORK", "v5/examples/typeports.d2", p, rev),
+  comment(p, rev, /BEGIN: $name$/, /END:/, l0, l1, name).
+
+gen(p, l0, l1, "{f}.shape: sql_table") <- block(p, l0, l1, "nodes"), hub(f).
+gen(p, l0, l1, "{f}.{t}: {k}") <- block(p, l0, l1, "ports"), hub(f), edge0(f, t, k).
+gen(p, l0, l1, "{f}.{t} -> {t}") <- block(p, l0, l1, "wires"), hub(f), edge0(f, t, _).

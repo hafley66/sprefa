@@ -1,0 +1,32 @@
+# Animated type-graph reveal: three d2 `steps:` boards, hottest hubs first.
+# Each step inherits the previous one, so the splice for sN carries only the
+# edges new at that tier and d2 keeps node positions stable across frames.
+#
+# Run from the repo root, then render:
+#   dl v5/examples/typegraph-anim.dl
+#   d2 --animate-interval=1200 v5/examples/typegraph-anim.d2 /tmp/typeviz/typegraph.svg
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+# Plain-ident endpoints only: enum-variant nodes (`Tok::Ident`) collide with
+# d2's `:` label syntax and unit variants are leaf noise (101 of 275 edges).
+rel edge0(f: text, t: text).
+edge0(f, t) <- type_edge(f, t, k), k != "variant",
+  f =~ "^[A-Za-z]+$", t =~ "^[A-Za-z]+$".
+
+rel fan_out(f: text, n: int).
+fan_out(f, count(t)) <- edge0(f, t).
+
+rel edge(f: text, t: text, n: int).
+edge(f, t, n) <- edge0(f, t), fan_out(f, n).
+
+rel block(p: file, l0: int, l1: int, name: text).
+block(p, l0, l1, name) <- scan("WORK", "v5/examples/typegraph-anim.d2", p, rev),
+  comment(p, rev, /BEGIN: $name$/, /END:/, l0, l1, name).
+
+# Three gen rules, one target file: splices batch across rules and apply in a
+# single bottom-up write, so every rule sees the pre-tick line coordinates.
+gen(p, l0, l1, "{f} -> {t}") <- block(p, l0, l1, "s1"), edge(f, t, n), n >= 5.
+gen(p, l0, l1, "{f} -> {t}") <- block(p, l0, l1, "s2"), edge(f, t, n), n >= 4, n < 5.
+gen(p, l0, l1, "{f} -> {t}") <- block(p, l0, l1, "s3"), edge(f, t, n), n >= 3, n < 4.

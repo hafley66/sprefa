@@ -1,0 +1,103 @@
+direction: right
+
+# BEGIN: nodes
+Cli.shape: sql_table
+Coord.shape: sql_table
+Db.shape: sql_table
+Desc.shape: sql_table
+Engine.shape: sql_table
+GenRule.shape: sql_table
+ProjectCx.shape: sql_table
+Rule.shape: sql_table
+WhereBytes.shape: sql_table
+# END:
+# BEGIN: ports
+Cli.Option: field
+Cli.PathBuf: field
+Cli.String: field
+Cli.Vec: field
+Coord.FileId: field
+Coord.From: impl
+Coord.RepoId: field
+Coord.RevId: field
+Db.Connection: field
+Db.HashMap: field
+Db.RefCell: field
+Db.String: field
+Desc.DescKind: field
+Desc.Segment: field
+Desc.String: field
+Desc.Vec: field
+Engine.ClosureCache: field
+Engine.DiagRow: field
+Engine.HashMap: field
+Engine.PathBuf: field
+Engine.Rels: field
+Engine.String: field
+Engine.Vec: field
+GenRule.BodyItem: field
+GenRule.GenTarget: field
+GenRule.String: field
+GenRule.Vec: field
+ProjectCx.HashMap: field
+ProjectCx.HashSet: field
+ProjectCx.OnceLock: field
+ProjectCx.Path: field
+ProjectCx.RustCrates: field
+ProjectCx.String: field
+Rule.AggFn: field
+Rule.Atom: field
+Rule.BodyItem: field
+Rule.Option: field
+Rule.Vec: field
+WhereBytes.FileId: field
+WhereBytes.From: impl
+WhereBytes.RepoId: field
+WhereBytes.RevId: field
+WhereBytes.StringId: field
+# END:
+# BEGIN: wires
+Cli.Option -> Option
+Cli.PathBuf -> PathBuf
+Cli.String -> String
+Cli.Vec -> Vec
+Coord.FileId -> FileId
+Coord.From -> From
+Coord.RepoId -> RepoId
+Coord.RevId -> RevId
+Db.Connection -> Connection
+Db.HashMap -> HashMap
+Db.RefCell -> RefCell
+Db.String -> String
+Desc.DescKind -> DescKind
+Desc.Segment -> Segment
+Desc.String -> String
+Desc.Vec -> Vec
+Engine.ClosureCache -> ClosureCache
+Engine.DiagRow -> DiagRow
+Engine.HashMap -> HashMap
+Engine.PathBuf -> PathBuf
+Engine.Rels -> Rels
+Engine.String -> String
+Engine.Vec -> Vec
+GenRule.BodyItem -> BodyItem
+GenRule.GenTarget -> GenTarget
+GenRule.String -> String
+GenRule.Vec -> Vec
+ProjectCx.HashMap -> HashMap
+ProjectCx.HashSet -> HashSet
+ProjectCx.OnceLock -> OnceLock
+ProjectCx.Path -> Path
+ProjectCx.RustCrates -> RustCrates
+ProjectCx.String -> String
+Rule.AggFn -> AggFn
+Rule.Atom -> Atom
+Rule.BodyItem -> BodyItem
+Rule.Option -> Option
+Rule.Vec -> Vec
+WhereBytes.FileId -> FileId
+WhereBytes.From -> From
+WhereBytes.RepoId -> RepoId
+WhereBytes.RevId -> RevId
+WhereBytes.StringId -> StringId
+# END:

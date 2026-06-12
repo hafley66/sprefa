@@ -1,0 +1,89 @@
+direction: right
+
+steps: {
+  s1: {
+    # BEGIN: s1
+Engine -> ClosureCache
+Engine -> DiagRow
+Engine -> HashMap
+Engine -> PathBuf
+Engine -> Rels
+Engine -> String
+Engine -> Vec
+ProjectCx -> HashMap
+ProjectCx -> HashSet
+ProjectCx -> OnceLock
+ProjectCx -> Path
+ProjectCx -> RustCrates
+ProjectCx -> String
+Rule -> AggFn
+Rule -> Atom
+Rule -> BodyItem
+Rule -> Option
+Rule -> Vec
+WhereBytes -> FileId
+WhereBytes -> From
+WhereBytes -> RepoId
+WhereBytes -> RevId
+WhereBytes -> StringId
+    # END:
+  }
+  s2: {
+    # BEGIN: s2
+Cli -> Option
+Cli -> PathBuf
+Cli -> String
+Cli -> Vec
+Coord -> FileId
+Coord -> From
+Coord -> RepoId
+Coord -> RevId
+Db -> Connection
+Db -> HashMap
+Db -> RefCell
+Db -> String
+Desc -> DescKind
+Desc -> Segment
+Desc -> String
+Desc -> Vec
+GenRule -> BodyItem
+GenRule -> GenTarget
+GenRule -> String
+GenRule -> Vec
+    # END:
+  }
+  s3: {
+    # BEGIN: s3
+Atom -> String
+Atom -> Term
+Atom -> Vec
+ClosureCache -> HashMap
+ClosureCache -> String
+ClosureCache -> Vec
+Col -> Option
+Col -> String
+Col -> Type
+ColTy -> Option
+ColTy -> String
+ColTy -> Type
+ModuleRef -> Option
+ModuleRef -> Resolution
+ModuleRef -> String
+ModuleRows -> String
+ModuleRows -> Value
+ModuleRows -> Vec
+RelDecl -> Col
+RelDecl -> String
+RelDecl -> Vec
+RepoConfig -> Option
+RepoConfig -> PathBuf
+RepoConfig -> String
+RustCrates -> HashMap
+RustCrates -> String
+RustCrates -> Vec
+Splices -> HashMap
+Splices -> String
+Splices -> Vec
+    # END:
+  }
+}
