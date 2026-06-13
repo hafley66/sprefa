@@ -4,10 +4,13 @@
 # functions that render this slide. anim reads the result through its
 # `atlas-db data/animself.sqlite` fence.
 #
-#   dl sprefa/v5/examples/anim-self.dl --root ~/projects --db ~/projects/anim/data/animself.sqlite
+# Root is the anim repo itself, so every path matches anim's `doc:` keys
+# (span targets must equal the docs key byte-for-byte).
+#
+#   dl sprefa/v5/examples/anim-self.dl --root ~/projects/anim --db ~/projects/anim/data/animself.sqlite
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "anim/src/**/*.{ts,tsx}", path, rev),
+seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev),
   match(path, rev, /./, line).
 
 # plain-ident edges, TS stdlib/DOM containers dropped (Map in a field is
@@ -34,7 +37,7 @@ tag(f, "tag", "hub") <- fan(f, n), n >= 5.
 
 # where each shown type is declared (panel rows + periscope)
 rel decl(name: text, path: file, line: int).
-decl(name, path, line) <- seen(path), scan("WORK", "anim/src/**/*.{ts,tsx}", path, rev),
+decl(name, path, line) <- seen(path), scan("WORK", "src/**/*.{ts,tsx}", path, rev),
   match(path, rev, /^(?:export )?(?:type|interface|class|enum) (?<name>[A-Za-z][A-Za-z0-9]*)/, line).
 
 rel node_ref(node: text, panel: text, locator: text).
@@ -48,17 +51,37 @@ card_about("about.today", "Model").
 card_about("about.today", "RelRows").
 
 # the day's diff as a tour: focus steps over the types, span steps into the
-# exact functions, rendered by the machinery the spans describe
+# exact functions, rendered by the machinery the spans describe.
+# Span line numbers are DERIVED, not pinned: each step pins to a regex hit
+# (a function head or a distinctive comment) and opens a fixed window below
+# it, so the tour survives edits that shift the files.
+rel pin(name: text, path: file, line: int).
+pin(name, path, line) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev),
+  match(path, rev, /^(?:export )?function (?<name>[A-Za-z][A-Za-z0-9]*)/, line).
+pin(name, path, line) <- scan("WORK", "bin/*.mjs", path, rev),
+  match(path, rev, /^(?:export )?function (?<name>[A-Za-z][A-Za-z0-9]*)/, line).
+pin("tokenize", path, line) <- scan("WORK", "src/CodeSpotlight.tsx", path, rev),
+  match(path, rev, /tokenize per file/, line).
+
+rel win(name: text, len: int).
+win("resolveIdent", 16).
+win("Periscope", 46).
+win("tokenize", 16).
+win("rowsFromDb", 36).
+
+rel span_of(name: text, path: file, lo: int, hi: int).
+span_of(name, path, line, line + len) <- pin(name, path, line), win(name, len).
+
 rel tour(id: text, title: text).
 tour("today", "the deck tours its own diff").
 
 rel tour_step(tour: text, seq: int, target: text, comment: text).
 tour_step("today", 0, "RelRows", "`RelRows` is the contract: nine rel_* tables in, one model out. This slide IS that path -- the fence below names a db this program wrote.").
-tour_step("today", 1, "src/core/views.ts:79..95", "the periscope query: `resolveIdent` matches id|label|lastSeg, `identRefs` returns the files. Hover any node on this slide to run it.").
-tour_step("today", 2, "src/Frames.tsx:285..331", "the Periscope dock itself: kept rows FLIP, entering rows draw on with an index-staggered connector.").
+tour_step("today", 1, "${path}:${lo}..${hi}", "the periscope query: `resolveIdent` matches id|label|lastSeg, `identRefs` returns the files. Hover any node on this slide to run it.") <- span_of("resolveIdent", path, lo, hi).
+tour_step("today", 2, "${path}:${lo}..${hi}", "the Periscope dock itself: kept rows FLIP, entering rows draw on with an index-staggered connector.") <- span_of("Periscope", path, lo, hi).
 tour_step("today", 3, "PanelState+Spot", "renderer state: tour position and the active span mirror into `PanelState` so the once-bound window hook never goes stale.").
-tour_step("today", 4, "src/CodeSpotlight.tsx:44..60", "the shiki tokenize effect coloring the very text you are reading: lang by extension, light theme lazy, plain fallback.").
-tour_step("today", 5, "bin/build-frames.mjs:99..135", "rowsFromDb: the build step that read rel_node/rel_edge/rel_tour rows out of animself.sqlite and put this slide on screen.").
+tour_step("today", 4, "${path}:${lo}..${hi}", "the shiki tokenize effect coloring the very text you are reading: lang by extension, light theme lazy, plain fallback.") <- span_of("tokenize", path, lo, hi).
+tour_step("today", 5, "${path}:${lo}..${hi}", "rowsFromDb: the build step that read rel_node/rel_edge/rel_tour rows out of animself.sqlite and put this slide on screen.") <- span_of("rowsFromDb", path, lo, hi).
 
 rel view(id: text, focus: text, mode: text, layout: text, dir: text, iso: int).
 view("seed", "RelRows", "cone", "dagre", "LR", 0).
