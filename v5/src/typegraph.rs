@@ -982,6 +982,7 @@ fn ts_enum_edges(e: &ts_ast::TSEnumDeclaration, out: &mut BTreeSet<(String, Stri
 // the arrow type. Parses a second time (independent of the edge pass) so the
 // tested edge extraction stays untouched; one file, two cheap syntax walks. ---
 
+#[cfg(test)]
 fn ts_entities(file: &str, content: &str, tsx: bool) -> Vec<TypeEntity> {
     let alloc = oxc_allocator::Allocator::default();
     let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
@@ -1142,6 +1143,7 @@ fn push_entity(
 // functions and impl methods as callables with arrow types. Lines come from
 // proc-macro2 span-locations (the `Spanned` ident span). ---
 
+#[cfg(test)]
 fn rust_entities(file: &str, content: &str) -> Vec<TypeEntity> {
     let Ok(parsed) = syn::parse_file(content) else {
         return Vec::new();

@@ -1009,6 +1009,20 @@ impl Engine {
         for r in &derived_rules {
             if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); }
         }
+        // A rel written by BOTH a source rule (scan/match/ast/sg/json/cmd/comment)
+        // and a derived rule cannot share one table: `reconcile_sources` fills the
+        // source rows incrementally (tracked in `_prov`), then `rebuild_derived`
+        // does a full `DELETE FROM rel` + recompute, which silently drops every
+        // scanned row. Bail loudly instead — split into two rels and union them in
+        // a third derived rule (see examples/anim-self.dl's pin/fpin -> span_of).
+        for rel in &source_rels {
+            if derived_rels.contains(rel) {
+                bail!("relation '{rel}' is written by both a source rule (scan/match/ast/...) \
+                       and a derived rule; the scanned rows would be dropped on rebuild. Put \
+                       the source rule and the derived rule in two separate relations and union \
+                       them in a third derived rule.");
+            }
+        }
         let edges: Vec<&str> = dedup_edges(&closures);
         self.create_auto_indexes(&derived_rules, &closures)?;
 
