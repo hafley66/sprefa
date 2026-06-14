@@ -202,12 +202,35 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       Rust emits fn/method entities (self dropped); Kotlin emits type + fn
       entities. Tests: typegraph units, type_graph_ts e2e (entity+sig+resolved
       links), type_entity_xlang e2e (one query finds every "network" interface +
-      function across TS and Kotlin). NOT pushed (default-branch push needs Chris).
-      Known: entity pass re-parses (double parse per file); a rel mixing a
-      `scan()` rule with a derived-rel rule drops the scanned rows (anim-self.dl
-      keeps `pin` scan-only, `fpin` type_entity-only, unions in `span_of`).
+      function across TS and Kotlin). Pushed (Chris ran `git push`, 2026-06-13).
+
+- [x] **typegraph single-parse + Kotlin fn arrows** (main, 2026-06-13, 156f179):
+      each `TypeLang::extract` now parses the file ONCE and runs both the entity
+      walk and the edge walk over that AST (was a double parse per file). The
+      standalone `edges`/`rust_entities`/`ts_entities`/`kotlin_edges` are now
+      test-only wrappers over new `*_from` helpers; dead `kotlin_entities`
+      removed; `rust_entities`/`ts_entities` are `#[cfg(test)]`. Kotlin `fun`
+      entities now carry the arrow `[...A] => B` via `kotlin_fn_type`
+      (function_value_parameters -> param slots, trailing type node -> ret;
+      declared type-params + builtins excluded), so `type_sig` covers Kotlin
+      callables like Rust/TS. Test: `kotlin_function_entities_carry_arrow_types`.
+- [x] **mixed source/derived rel now bails** (main, 2026-06-13, ba97aa4): a rel
+      headed by BOTH a source rule (scan/match/ast/sg/json/cmd/comment) and a
+      derived rule lands in both source_rels and derived_rels; reconcile fills
+      the scanned rows, then `rebuild_derived`'s `DELETE FROM rel` drops them.
+      `tick` now bails loudly (split into two rels, union in a third) instead of
+      silently losing rows. Test: `tests/mixed_source_derived.rs`. anim-self.dl's
+      pin/fpin -> span_of split IS the sanctioned shape.
+
+### Open (sprefa type graph)
+- [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
+      from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds
+      for real cross-file edges and function-vs-type node styling. Bigger lift:
+      changes node identity (names -> syms), so tour/card/view name references
+      and atlas styling must move together.
 
 ### Style notes for this repo
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
 - No `provenance`/`substrate`/`load-bearing`/`regime` as prose or identifiers (use source/base/critical/mode).
 - Sync tick engine: plural-API + collect-then-flush, NOT async DataLoader (the redux-out-of-hand trap).
+- One rel = one rule kind: never head a rel with both a source rule (scan/match/ast/sg/json/cmd/comment) and a derived rule. `rebuild_derived` does a full `DELETE FROM rel` that would wipe the reconciled source rows. The engine now bails; split into two rels and union in a third derived rule.
