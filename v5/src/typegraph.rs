@@ -136,25 +136,55 @@ pub struct TsTypes;
 impl TypeLang for RustTypes {
     fn name(&self) -> &'static str { "rust" }
     fn matches(&self, path: &str) -> bool { path.ends_with(".rs") }
+    // One syn parse feeds both the entity pass and the edge pass.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
-        TypeFacts { entities: rust_entities(file, content), edges: edges(content) }
+        let Ok(parsed) = syn::parse_file(content) else {
+            return TypeFacts::default();
+        };
+        TypeFacts {
+            entities: rust_entities_from(&parsed, file),
+            edges: edges_from(&parsed),
+        }
     }
 }
 
 impl TypeLang for KotlinTypes {
     fn name(&self) -> &'static str { "kotlin" }
     fn matches(&self, path: &str) -> bool { path.ends_with(".kt") || path.ends_with(".kts") }
+    // One tree-sitter parse feeds both walks.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
-        TypeFacts { entities: kotlin_entities(file, content), edges: kotlin_edges(content) }
+        let mut parser = tree_sitter::Parser::new();
+        let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
+        if parser.set_language(&lang).is_err() {
+            return TypeFacts::default();
+        }
+        let Some(tree) = parser.parse(content, None) else {
+            return TypeFacts::default();
+        };
+        let src = content.as_bytes();
+        let root = tree.root_node();
+        let mut entities = Vec::new();
+        walk_kotlin_entities(root, src, file, &mut entities);
+        TypeFacts { entities, edges: kotlin_edges_from(root, src) }
     }
 }
 
 impl TypeLang for TsTypes {
     fn name(&self) -> &'static str { "ts" }
     fn matches(&self, path: &str) -> bool { path.ends_with(".ts") || path.ends_with(".tsx") }
+    // One oxc parse feeds both walks.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
         let tsx = path_is_tsx(file);
-        TypeFacts { entities: ts_entities(file, content, tsx), edges: ts_edges(content, tsx) }
+        let alloc = oxc_allocator::Allocator::default();
+        let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+        let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
+        if ret.panicked {
+            return TypeFacts::default();
+        }
+        TypeFacts {
+            entities: ts_entities_from(&ret.program, file, content),
+            edges: ts_edges_from(&ret.program),
+        }
     }
 }
 
@@ -185,6 +215,10 @@ pub fn edges(content: &str) -> Vec<TypeEdge> {
     let Ok(file) = syn::parse_file(content) else {
         return Vec::new();
     };
+    edges_from(&file)
+}
+
+fn edges_from(file: &syn::File) -> Vec<TypeEdge> {
     let mut out: BTreeSet<(String, String, &'static str)> = BTreeSet::new();
     for item in &file.items {
         item_edges(item, &mut out);
@@ -452,9 +486,12 @@ pub fn kotlin_edges(content: &str) -> Vec<TypeEdge> {
     let Some(tree) = parser.parse(content, None) else {
         return Vec::new();
     };
-    let src = content.as_bytes();
+    kotlin_edges_from(tree.root_node(), content.as_bytes())
+}
+
+fn kotlin_edges_from(root: tree_sitter::Node, src: &[u8]) -> Vec<TypeEdge> {
     let mut out: BTreeSet<(String, String, &'static str)> = BTreeSet::new();
-    walk_kotlin(tree.root_node(), src, &mut out);
+    walk_kotlin(root, src, &mut out);
     out.into_iter()
         .map(|(from, to, kind)| TypeEdge { from, to, kind })
         .collect()
@@ -618,8 +655,12 @@ pub fn ts_edges(content: &str, tsx: bool) -> Vec<TypeEdge> {
     if ret.panicked {
         return Vec::new();
     }
+    ts_edges_from(&ret.program)
+}
+
+fn ts_edges_from(program: &ts_ast::Program) -> Vec<TypeEdge> {
     let mut out: BTreeSet<(String, String, &'static str)> = BTreeSet::new();
-    for stmt in &ret.program.body {
+    for stmt in &program.body {
         use ts_ast::Statement as S;
         match stmt {
             S::ExportNamedDeclaration(e) => {
@@ -948,9 +989,13 @@ fn ts_entities(file: &str, content: &str, tsx: bool) -> Vec<TypeEntity> {
     if ret.panicked {
         return Vec::new();
     }
+    ts_entities_from(&ret.program, file, content)
+}
+
+fn ts_entities_from(program: &ts_ast::Program, file: &str, content: &str) -> Vec<TypeEntity> {
     let starts = line_index(content);
     let mut out = Vec::new();
-    for stmt in &ret.program.body {
+    for stmt in &program.body {
         use ts_ast::Statement as S;
         match stmt {
             S::ExportNamedDeclaration(e) => {
@@ -1101,6 +1146,10 @@ fn rust_entities(file: &str, content: &str) -> Vec<TypeEntity> {
     let Ok(parsed) = syn::parse_file(content) else {
         return Vec::new();
     };
+    rust_entities_from(&parsed, file)
+}
+
+fn rust_entities_from(parsed: &syn::File, file: &str) -> Vec<TypeEntity> {
     let mut out = Vec::new();
     for item in &parsed.items {
         rust_item_entity(item, file, &mut out);
@@ -1175,23 +1224,9 @@ fn rust_fn_type(sig: &syn::Signature) -> TypeExpr {
     TypeExpr { params, ret }
 }
 
-// --- Kotlin entity pass (tree-sitter): the declared types. Functions wait on
-// demand; the deck's first consumer is TypeScript. Line is the node's row. ---
-
-fn kotlin_entities(file: &str, content: &str) -> Vec<TypeEntity> {
-    let mut parser = tree_sitter::Parser::new();
-    let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
-    if parser.set_language(&lang).is_err() {
-        return Vec::new();
-    }
-    let Some(tree) = parser.parse(content, None) else {
-        return Vec::new();
-    };
-    let src = content.as_bytes();
-    let mut out = Vec::new();
-    walk_kotlin_entities(tree.root_node(), src, file, &mut out);
-    out
-}
+// --- Kotlin entity pass (tree-sitter): declared types plus functions, the
+// latter carrying their arrow `[...A] => B` like Rust/TS. Line is the node's
+// row. ---
 
 fn walk_kotlin_entities(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Vec<TypeEntity>) {
     let mut cursor = node.walk();
@@ -1231,12 +1266,63 @@ fn walk_kotlin_entities(node: tree_sitter::Node, src: &[u8], file: &str, out: &m
                     parent: None,
                     file: file.to_string(),
                     line: (child.start_position().row + 1) as u32,
-                    ty: None,
+                    ty: Some(kotlin_fn_type(child, src)),
                 });
             }
         }
         walk_kotlin_entities(child, src, file, out);
     }
+}
+
+/// Build the arrow `[...A] => B` for a `fun`: each `parameter` under
+/// `function_value_parameters` becomes a slot of its referenced type names
+/// (declared type-param names and Kotlin builtins excluded), and the return
+/// type node after the parameter list fills `ret`. A function with no declared
+/// return type leaves `ret` empty (Unit), matching the keyword-slot convention.
+fn kotlin_fn_type(node: tree_sitter::Node, src: &[u8]) -> TypeExpr {
+    let mut cursor = node.walk();
+    let children: Vec<tree_sitter::Node> = node.children(&mut cursor).collect();
+
+    // declared type-parameter names: excluded from refs, like the decl pass
+    let mut tparams: BTreeSet<String> = BTreeSet::new();
+    for n in &children {
+        if n.kind() != "type_parameters" { continue; }
+        let mut c = n.walk();
+        for tp in n.children(&mut c).filter(|n| n.kind() == "type_parameter") {
+            let mut cc = tp.walk();
+            let kids: Vec<tree_sitter::Node> = tp.children(&mut cc).collect();
+            if let Some(name) = kids.iter().find(|n| n.kind() == "type_identifier") {
+                tparams.insert(name.utf8_text(src).unwrap_or("").to_string());
+            }
+        }
+    }
+
+    let named = |refs: Vec<String>| refs.into_iter().map(TypeRef::Named).collect::<Vec<_>>();
+    let mut params = Vec::new();
+    let mut ret = Vec::new();
+    for n in &children {
+        match n.kind() {
+            "function_value_parameters" => {
+                let mut c = n.walk();
+                for p in n.children(&mut c).filter(|n| n.kind() == "parameter") {
+                    // the parameter's name is a simple_identifier (not collected,
+                    // collect_kotlin_refs only reads user_type); its type recurses
+                    params.push(named(kotlin_type_refs(p, src, &tparams)));
+                }
+            }
+            // the return type is a type-node sibling after the parameter list
+            k if is_kotlin_type_node(k) => ret = named(kotlin_type_refs(*n, src, &tparams)),
+            _ => {}
+        }
+    }
+    TypeExpr { params, ret }
+}
+
+fn is_kotlin_type_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "user_type" | "nullable_type" | "function_type" | "parenthesized_type"
+    )
 }
 
 #[cfg(test)]
@@ -1273,6 +1359,30 @@ enum class Color(val rgb: Int) { RED, GREEN }
         assert!(!got.iter().any(|e| e.to == "Wire"), "{got:?}");
         assert!(!got.iter().any(|e| e.to == "T"), "{got:?}");
         assert!(!got.iter().any(|e| e.to == "Int"), "{got:?}");
+    }
+
+    #[test]
+    fn kotlin_function_entities_carry_arrow_types() {
+        let src = "\
+package com.app
+fun resolve(model: Model, n: Int): NodeId { return n }
+fun <T : Entity> wrap(item: T, sink: Sink<Report>) {}
+";
+        let es = KotlinTypes.extract("src/app.kt", src).entities;
+        let by = |name: &str| es.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("missing {name}: {es:?}"));
+        let resolve = by("resolve");
+        assert_eq!(resolve.kind, EntityKind::Function);
+        let ty = resolve.ty.as_ref().unwrap();
+        assert_eq!(ty.params[0], vec![TypeRef::Named("Model".into())]);
+        assert!(ty.params[1].is_empty(), "Int is a builtin, no ref: {ty:?}");
+        assert_eq!(ty.ret, vec![TypeRef::Named("NodeId".into())]);
+        // declared type-param T excluded; owner + nested generic arg both kept;
+        // no return type -> empty ret
+        let wrap = by("wrap").ty.as_ref().unwrap();
+        assert!(wrap.params[0].is_empty(), "type-param T is not a ref: {wrap:?}");
+        assert!(wrap.params[1].contains(&TypeRef::Named("Sink".into())), "owner: {wrap:?}");
+        assert!(wrap.params[1].contains(&TypeRef::Named("Report".into())), "nested arg: {wrap:?}");
+        assert!(wrap.ret.is_empty(), "no declared return: {wrap:?}");
     }
 
     #[test]
