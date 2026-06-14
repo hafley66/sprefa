@@ -3,7 +3,10 @@
 //! shapes, and emit deterministic edges the engine stores as
 //! `type_edge(from, to, kind)`. All languages share one kind vocabulary —
 //! field | variant | impl | generic — so closure queries written for one
-//! work on the others.
+//! work on the others. The TS extractor additionally treats functions as
+//! edge owners: param | returns | uses (input types, the output type, and
+//! types referenced in the body), so a function node reaches the types it
+//! consumes, produces, and mentions.
 
 use std::collections::BTreeSet;
 
@@ -468,12 +471,15 @@ pub fn ts_edges(content: &str, tsx: bool) -> Vec<TypeEdge> {
             S::ExportDefaultDeclaration(e) => match &e.declaration {
                 ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => ts_class_edges(c, &mut out),
                 ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => ts_interface_edges(i, &mut out),
+                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => ts_function_edges(f, &mut out),
                 _ => {}
             },
             S::ClassDeclaration(c) => ts_class_edges(c, &mut out),
             S::TSInterfaceDeclaration(i) => ts_interface_edges(i, &mut out),
             S::TSTypeAliasDeclaration(a) => ts_alias_edges(a, &mut out),
             S::TSEnumDeclaration(e) => ts_enum_edges(e, &mut out),
+            S::FunctionDeclaration(f) => ts_function_edges(f, &mut out),
+            S::VariableDeclaration(v) => ts_var_fn_edges(v, &mut out),
             _ => {}
         }
     }
@@ -546,7 +552,85 @@ fn ts_decl_edges(decl: &ts_ast::Declaration, out: &mut BTreeSet<(String, String,
         ts_ast::Declaration::TSInterfaceDeclaration(i) => ts_interface_edges(i, out),
         ts_ast::Declaration::TSTypeAliasDeclaration(a) => ts_alias_edges(a, out),
         ts_ast::Declaration::TSEnumDeclaration(e) => ts_enum_edges(e, out),
+        ts_ast::Declaration::FunctionDeclaration(f) => ts_function_edges(f, out),
+        ts_ast::Declaration::VariableDeclaration(v) => ts_var_fn_edges(v, out),
         _ => {}
+    }
+}
+
+/// A named `function foo(...)`. Anonymous functions have no owner, so skip.
+fn ts_function_edges(f: &ts_ast::Function, out: &mut BTreeSet<(String, String, &'static str)>) {
+    let Some(id) = &f.id else { return };
+    ts_fn_signature_edges(
+        &id.name,
+        &f.type_parameters,
+        &f.params,
+        &f.return_type,
+        f.body.as_deref(),
+        out,
+    );
+}
+
+/// `const foo = (...) => ...` / `const foo = function (...) {...}` at the top
+/// level: the binding name owns the function's edges. Plain value consts (no
+/// function initializer) carry no type shape and are skipped.
+fn ts_var_fn_edges(v: &ts_ast::VariableDeclaration, out: &mut BTreeSet<(String, String, &'static str)>) {
+    for d in &v.declarations {
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        match &d.init {
+            Some(ts_ast::Expression::ArrowFunctionExpression(a)) => ts_fn_signature_edges(
+                &name.name,
+                &a.type_parameters,
+                &a.params,
+                &a.return_type,
+                Some(&a.body),
+                out,
+            ),
+            Some(ts_ast::Expression::FunctionExpression(f)) => ts_fn_signature_edges(
+                &name.name,
+                &f.type_parameters,
+                &f.params,
+                &f.return_type,
+                f.body.as_deref(),
+                out,
+            ),
+            _ => {}
+        }
+    }
+}
+
+/// The shared body of every function form: type-parameter bounds are "generic"
+/// (and excluded from refs), parameter types are "param", the return type is
+/// "returns", and every TSTypeReference inside the body is "uses".
+fn ts_fn_signature_edges(
+    owner: &str,
+    type_parameters: &Option<oxc_allocator::Box<ts_ast::TSTypeParameterDeclaration>>,
+    params: &ts_ast::FormalParameters,
+    return_type: &Option<oxc_allocator::Box<ts_ast::TSTypeAnnotation>>,
+    body: Option<&ts_ast::FunctionBody>,
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
+    let tp = ts_param_edges(owner, type_parameters, out);
+    for p in &params.items {
+        if let Some(ann) = &p.type_annotation {
+            for to in ts_refs_in_type(&ann.type_annotation, &tp) {
+                push(out, owner, &to, "param");
+            }
+        }
+    }
+    if let Some(rt) = return_type {
+        for to in ts_refs_in_type(&rt.type_annotation, &tp) {
+            push(out, owner, &to, "returns");
+        }
+    }
+    if let Some(b) = body {
+        let mut v = TsRefs { params: &tp, out: Vec::new() };
+        v.visit_function_body(b);
+        v.out.sort();
+        v.out.dedup();
+        for to in v.out {
+            push(out, owner, &to, "uses");
+        }
     }
 }
 
@@ -835,5 +919,36 @@ export function Card({ item }: CardProps) { return <div>{item.name}</div> }
         let got = ts_edges(src, true);
         assert!(has(&got, "CardProps", "Item", "field"), "tsx interface prop: {got:?}");
         assert!(has(&got, "CardProps", "Sku", "field"), "function-type param ref: {got:?}");
+    }
+
+    #[test]
+    fn ts_function_param_return_and_body_edges() {
+        let src = r#"
+export function resolveIdent(model: Model, ident: string): NodeId[] {
+    const seen: Visited = new Map()
+    return model.lookup(ident) as NodeId[]
+}
+export const cone = <C extends Ctx>(model: Model, mode: ConeMode): View => {
+    const acc: Accumulator = init()
+    return acc.done()
+}
+function helper(raw: Raw) {}
+"#;
+        let got = ts_edges(src, false);
+        // function declaration: params in, return out, body refs internal
+        assert!(has(&got, "resolveIdent", "Model", "param"), "fn param type: {got:?}");
+        assert!(has(&got, "resolveIdent", "NodeId", "returns"), "fn return type: {got:?}");
+        assert!(has(&got, "resolveIdent", "Visited", "uses"), "body annotation: {got:?}");
+        assert!(has(&got, "resolveIdent", "NodeId", "uses"), "body cast `as NodeId[]`: {got:?}");
+        // arrow const: same three kinds, type-param bound is generic + excluded
+        assert!(has(&got, "cone", "Model", "param"), "arrow param: {got:?}");
+        assert!(has(&got, "cone", "ConeMode", "param"), "arrow param 2: {got:?}");
+        assert!(has(&got, "cone", "View", "returns"), "arrow return: {got:?}");
+        assert!(has(&got, "cone", "Accumulator", "uses"), "arrow body: {got:?}");
+        assert!(has(&got, "cone", "Ctx", "generic"), "type-param bound: {got:?}");
+        assert!(!got.iter().any(|e| e.from == "cone" && e.to == "C"), "type-param name leaked: {got:?}");
+        // un-exported function still owns edges; keyword param type is no ref
+        assert!(has(&got, "helper", "Raw", "param"), "non-exported fn: {got:?}");
+        assert!(!got.iter().any(|e| e.to == "string"), "keyword param leaked: {got:?}");
     }
 }
